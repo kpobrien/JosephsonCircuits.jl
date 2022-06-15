@@ -13,11 +13,9 @@ import OrderedCollections: OrderedDict
 
 using LinearAlgebra
 using SparseArrays
-# using MKL
 using Printf
 using Requires
 using BandedMatrices
-# using FLoops
 
 # define the zero for symbolic numbers so that we can view the sparse arrays
 Base.zero(::Type{Symbolic{Number}}) = 0
@@ -44,7 +42,7 @@ function __init__()
         julia> import Symbolics;Symbolics.@variables w;JosephsonCircuits.checkissymbolic(w)
         true
 
-        julia> JosephsonCircuitsJosephsonCircuits.checkissymbolic(1.0)
+        julia> JosephsonCircuits.checkissymbolic(1.0)
         false
         ```
         """
