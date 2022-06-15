@@ -67,9 +67,9 @@ Until this package is registered, you can install it by starting Julia using the
 ```
 JULIA_PKG_USE_CLI_GIT=true julia
 ```
-then typing (replacing kpobrien with your GitHub username):
+then type ] followed by (replacing kpobrien with your GitHub username):
 ```
-]add git@github.com:kpobrien/JosephsonCircuits.jl.git
+add git@github.com:kpobrien/JosephsonCircuits.jl.git
 ```
 or once we make the repository public:
 ```
