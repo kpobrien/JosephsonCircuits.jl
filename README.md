@@ -1,11 +1,11 @@
 
 # JosephsonCircuits.jl 
 
-[JosephsonCircuits.jl]() is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl]() simulates the frequency domain behavior using a variant [1] of nodal analysis [2] and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
+[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) simulates the frequency domain behavior using a variant [1] of nodal analysis [2] and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
 
 Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by (potentially) frequency dependent resistors or capacitors with an imaginary capacitance proportional to the loss tangent.
 
-[JosephsonCircuits.jl]() supports the following:
+[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) supports the following:
 * Nonlinear simulations in which the user defines a circuit, the drive current, frequency, and number of harmonics and the code calculates the node flux or equivalently node voltage at each harmonic.
 * Simulations linearized about the nonlinear operating point calculated above. This effectively simulates the small signal response of a time dependent linear circuit and is useful for simulating parametric amplification and frequency conversion in the undepleted (strong) pump limit. Calculation of X parameters [4-5], which are a generalization of scattering parameters which quantifies how waves with different frequencies interact with the circuit and with each other. 
 * Linear simulations of linear circuits. Calculation of node fluxes (or node voltages) and scattering parameters.
