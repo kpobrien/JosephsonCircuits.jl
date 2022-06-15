@@ -113,7 +113,7 @@ precompile(JosephsonCircuits.calcphibports!,(Vector{ComplexF64}, Vector{ComplexF
 precompile(JosephsonCircuits.calcphibports!,(Matrix{ComplexF64}, Matrix{ComplexF64}, Dict{Tuple{Int64, Int64}, Real}, Int64))
 precompile(JosephsonCircuits.calcphibports!,(Vector{ComplexF64}, Vector{ComplexF64}, Dict{Tuple{Int64, Int64}, Real}, Int64))
 
-precompile(JosephsonCircuits.checknumbervector,(Vector{Symbol}, Vector{Number}))
+# precompile(JosephsonCircuits.checknumbervector,(Vector{Symbol}, Vector{Number}))
 
 precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol},Matrix{Int64},Vector{Symbol},Vector{Number}))
 precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{Symbol}, Vector{Real}))

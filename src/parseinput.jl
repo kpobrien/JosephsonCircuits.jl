@@ -1189,86 +1189,6 @@ end
 
 
 """
-    consolidatecomponents()
-
-Calculate the component dictionaries where the key is the edge and the value
-is the value of the component. 
-
-This function should be retired. Check if it's used in the spice export. 
-
-"""
-function consolidatecomponents(typevector,nodeindexarraysorted,
-    mutualinductorvector,valuevector,uniquenodevector)
-
-    Nnodes = length(uniquenodevector)
-
-    # nodearraysorted,nodearraysortedw,valuevector)
-    componenttypes =unique(typevector)
-
-    # dictionary to hold dictionaries of components
-    cdict = Dict()
-
-    # dictionaries to hold arrays of edges for each component type
-    edgearray = Dict()
-
-    for componenttype in componenttypes
-        # make a different one for mutual inductors, K
-        if componenttype == :K
-            error("Error: Mutual inductors, :K, not handled yet")
-        else
-            if componenttype ==:P                
-                tmp = Dict{Tuple{Int64,Int64},Int64}()       
-            else
-                tmp = Dict{Tuple{Int64,Int64},Complex{Float64}}()
-            end
-
-            for (i,j) in enumerate(findall(x->x==componenttype,typevector))
-                key= (nodeindexarraysorted[1,j],nodeindexarraysorted[2,j])
-                if haskey(tmp,key)
-                    if componenttype == :C
-                        # add capacitor in parallel
-                        tmp[key]+=valuevector[j]
-                    elseif componenttype == :Lj
-                        error("No support for multiple JJs on same branch")
-                    elseif componenttype == :R || componenttype == :L
-                        # add inductor or resistor in parallel
-                        tmp[key]=1/(1/valuevector[j]+1/cdict[componenttype][key])
-                    else
-                        error("Only one of these per branch.")
-                    end
-                else
-                    tmp[key]=valuevector[j]
-                end
-            end
-            cdict[componenttype]=tmp
-        end
-    end
-
-
-    for componenttype in componenttypes
-        edgearray[componenttype] = collect(keys(cdict[componenttype]))
-    end
-
-
-    # set some values to zero
-    Lmean = 0.0
-    ninductors = 0
-
-    # calculate the mean inductance
-    for (i,j) in enumerate(findall(x->(x==:Lj) || (x==:L),typevector))
-        ninductors+=1
-        Lmean = Lmean + (valuevector[j]-Lmean)/ninductors
-    end
-    if ninductors == 0
-        Lmean = 1.0+0.0im
-    end
-
-    # return (cdict=cdict,cdictw=cdictw,edgearray=edgearray,Lmean=Lmean,Nnodes=Nnodes)
-    return (cdict=cdict,edgearray=edgearray,Lmean=Lmean,Nnodes=Nnodes)
-end
-
-
-"""
     valuevectortonumber(valuevector,circuitdefs)
 
 Convert the array of component values to numbers, if defined in circuitdefs. 
@@ -1402,28 +1322,28 @@ end
 
 # end
 
-"""
-    checknumbervector(typevector,numbervector)
+# """
+#     checknumbervector(typevector,numbervector)
 
-Enforce various constraints on the parameters such as real inductances and warn
-if the imaginary part of the capacitance is positive (implying gain not dissipation).
+# Enforce various constraints on the parameters such as real inductances and warn
+# if the imaginary part of the capacitance is positive (implying gain not dissipation).
 
-"""
-function checknumbervector(typevector::Vector{Symbol},numbervector::Vector)
-    if length(typevector) != length(numbervector)
-        throw(DimensionMismatch("typevector and numbervector must be the same length."))
-    end
+# """
+# function checknumbervector(typevector::Vector{Symbol},numbervector::Vector)
+#     if length(typevector) != length(numbervector)
+#         throw(DimensionMismatch("typevector and numbervector must be the same length."))
+#     end
 
-    for i in eachindex(typevector)
-        if typevector[i] == :L && imag(numbervector[i]) != 0
-            throw(DomainError("Inductance values must be real."))
-        elseif typevector[i] == :Lj && imag(numbervector[i]) != 0
-            throw(DomainError("Josephson inductance values must be real."))
-        elseif typevector[i] == :K && imag(numbervector[i]) != 0
-            throw(DomainError("Mutual inductance values must be real."))
-        elseif typevector[i] == :C && imag(numbervector[i]) > 0
-            println("Warning: positive imaginary capacitance implies gain.")
-        end
-    end
-    return nothing
-end
+#     for i in eachindex(typevector)
+#         if typevector[i] == :L && imag(numbervector[i]) != 0
+#             throw(DomainError("Inductance values must be real."))
+#         elseif typevector[i] == :Lj && imag(numbervector[i]) != 0
+#             throw(DomainError("Josephson inductance values must be real."))
+#         elseif typevector[i] == :K && imag(numbervector[i]) != 0
+#             throw(DomainError("Mutual inductance values must be real."))
+#         elseif typevector[i] == :C && imag(numbervector[i]) > 0
+#             println("Warning: positive imaginary capacitance implies gain.")
+#         end
+#     end
+#     return nothing
+# end
