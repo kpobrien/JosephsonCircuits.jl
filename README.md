@@ -58,8 +58,10 @@ We can also sweep the pump frequency.
 
 * Floquet JTWPA
 
-# Additional Examples:
+# Additional examples:
 
+# Performance tips:
+Edit NLsolve.jl as described [here](https://github.com/JuliaNLSolvers/NLsolve.jl/issues/278) to enable caching of the factorization objects for about a factor of two speedup using KLU.
 
 # Installation:
 
