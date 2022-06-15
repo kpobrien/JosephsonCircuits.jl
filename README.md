@@ -63,10 +63,17 @@ We can also sweep the pump frequency.
 
 # Installation:
 
-Until this package is registered, you can install it using the command:
-
+Until this package is registered, you can install it by starting Julia using the command:
 ```
-pkg> add https://github.com/kpobrien/JosephsonCircuits.jl
+JULIA_PKG_USE_CLI_GIT=true julia
+```
+then typing (replacing kpobrien with your GitHub username):
+```
+]add git@github.com:kpobrien/JosephsonCircuits.jl.git
+```
+or once we make the repository public:
+```
+]add https://github.com/kpobrien/JosephsonCircuits.jl
 ```
 
 # References:
