@@ -20,6 +20,8 @@ using BandedMatrices
 # define the zero for symbolic numbers so that we can view the sparse arrays
 Base.zero(::Type{Symbolic{Number}}) = 0
 Base.zero(::Type{Any}) = 0
+Base.zero(::Type{Nothing}) = 0
+
 
 # Symbolics is needed for calculating the inverse inductance matrix if there
 # are mutual inductors. For large systems with many mutual inductors this may

@@ -758,7 +758,8 @@ function calcLmean_inner(typevector::Vector,valuevector::Vector,valuetypevector:
     end
 
     # take the mean
-    Lmean = zero(eltype(valuetypevector))
+    # Lmean = zero(eltype(valuetypevector))
+    Lmean = 0
     ninductors = 0
     for v in Vn
         ninductors+=1
