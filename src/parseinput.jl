@@ -21,11 +21,11 @@ Nnodes: number of nodes including the ground node.
 struct ParsedSortedCircuit
     nodeindexarraysorted::Matrix{Int64}
     uniquenodevectorsorted::Vector{String}
-    mutualinductorvector::Vector{Symbol} 
-    namevector::Vector{Symbol}
+    mutualinductorvector::Vector{String} 
+    namevector::Vector{String}
     typevector::Vector{Symbol}
     valuevector::Vector
-    namedict::Dict{Symbol, Int64}
+    namedict::Dict{String, Int64}
     Nnodes::Int64
 end
 
@@ -48,7 +48,7 @@ push!(circuit,("C2","2","0",Cj))
 println(parsesortcircuit(circuit))
 
 # output
-JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 3 3; 1 1 1 3 1 1], ["0", "1", "2"], Symbol[], [:P1, :I1, :R1, :C1, :Lj1, :C2], [:P, :I, :R, :C, :Lj, :C], Any[1, Ipump, Rleft, Cc, Lj, Cj], Dict(:C2 => 6, :C1 => 4, :P1 => 1, :Lj1 => 5, :I1 => 2, :R1 => 3), 3)
+JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 3 3; 1 1 1 3 1 1], ["0", "1", "2"], String[], ["P1", "I1", "R1", "C1", "Lj1", "C2"], [:P, :I, :R, :C, :Lj, :C], Any[1, Ipump, Rleft, Cc, Lj, Cj], Dict("I1" => 2, "C1" => 4, "C2" => 6, "R1" => 3, "P1" => 1, "Lj1" => 5), 3)
 ```
 ```jldoctest
 @syms Ipump Rleft L1 L2 C2 Ksym(L1)
@@ -63,7 +63,7 @@ push!(circuit,("C2","2","0",C2))
 println(parsesortcircuit(circuit))
 
 # output
-JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 0 3 3; 1 1 1 1 0 1 1], ["0", "1", "2"], [:L1, :L2], [:P1, :I1, :R1, :L1, :K1, :L2, :C2], [:P, :I, :R, :L, :K, :L, :C], Any[1, Ipump, Rleft, L1, Ksym(L1), L2, C2], Dict(:C2 => 7, :P1 => 1, :L2 => 6, :L1 => 4, :I1 => 2, :R1 => 3, :K1 => 5), 3)
+JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 0 3 3; 1 1 1 1 0 1 1], ["0", "1", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Any[1, Ipump, Rleft, L1, Ksym(L1), L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
 ```
 """
 function parsesortcircuit(circuit;sorting=:number)
@@ -109,11 +109,11 @@ See also[`parsecircuit`](@ref).
 struct ParsedCircuit
     nodeindexvector::Vector{Int64}
     uniquenodevector::Vector{String}
-    mutualinductorvector::Vector{Symbol} 
-    namevector::Vector{Symbol}
+    mutualinductorvector::Vector{String} 
+    namevector::Vector{String}
     typevector::Vector{Symbol}
     valuevector::Vector
-    namedict::Dict{Symbol, Int64}
+    namedict::Dict{String, Int64}
     Nnodes::Int64
 end
 
@@ -144,7 +144,7 @@ push!(circuit,("C2","2","0",:Cj))
 parsecircuit(circuit)
 
 # output
-JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["1", "0", "2"], Symbol[], [:P1, :I1, :R1, :C1, :Lj1, :C2], [:P, :I, :R, :C, :Lj, :C], Union{Int64, Symbol, ComplexF64}[1, :Ipump, :Rleft, :Cc, :Lj, :Cj], Dict(:C2 => 6, :C1 => 4, :P1 => 1, :Lj1 => 5, :I1 => 2, :R1 => 3), 3)
+JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["1", "0", "2"], String[], ["P1", "I1", "R1", "C1", "Lj1", "C2"], [:P, :I, :R, :C, :Lj, :C], Union{Int64, Symbol, ComplexF64}[1, :Ipump, :Rleft, :Cc, :Lj, :Cj], Dict("I1" => 2, "C1" => 4, "C2" => 6, "R1" => 3, "P1" => 1, "Lj1" => 5), 3)
 ```
 ```jldoctest
 circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int64}},1}(undef,0)
@@ -157,7 +157,7 @@ push!(circuit,("C2","Two","0",:Cj))
 parsecircuit(circuit)
 
 # output
-JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["One", "0", "Two"], Symbol[], [:P1, :I1, :R1, :C1, :Lj1, :C2], [:P, :I, :R, :C, :Lj, :C], Union{Int64, Symbol, ComplexF64}[1, :Ipump, :Rleft, :Cc, :Lj, :Cj], Dict(:C2 => 6, :C1 => 4, :P1 => 1, :Lj1 => 5, :I1 => 2, :R1 => 3), 3)
+JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["One", "0", "Two"], String[], ["P1", "I1", "R1", "C1", "Lj1", "C2"], [:P, :I, :R, :C, :Lj, :C], Union{Int64, Symbol, ComplexF64}[1, :Ipump, :Rleft, :Cc, :Lj, :Cj], Dict("I1" => 2, "C1" => 4, "C2" => 6, "R1" => 3, "P1" => 1, "Lj1" => 5), 3)
 ```
 ```jldoctest
 circuit = []
@@ -170,7 +170,7 @@ push!(circuit,("C2","2","0",:Cj))
 parsecircuit(circuit)
 
 # output
-JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["1", "0", "2"], Symbol[], [:P1, :I1, :R1, :C1, :Lj1, :C2], [:P, :I, :R, :C, :Lj, :C], Any[1, :Ipump, :Rleft, :Cc, :Lj, :Cj], Dict(:C2 => 6, :C1 => 4, :P1 => 1, :Lj1 => 5, :I1 => 2, :R1 => 3), 3)
+JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["1", "0", "2"], String[], ["P1", "I1", "R1", "C1", "Lj1", "C2"], [:P, :I, :R, :C, :Lj, :C], Any[1, :Ipump, :Rleft, :Cc, :Lj, :Cj], Dict("I1" => 2, "C1" => 4, "C2" => 6, "R1" => 3, "P1" => 1, "Lj1" => 5), 3)
 ```
 ```jldoctest
 circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int64}},1}(undef,0)
@@ -184,7 +184,7 @@ push!(circuit,("C2","2","0",:C2))
 parsecircuit(circuit)
 
 # output
-JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], [:L1, :L2], [:P1, :I1, :R1, :L1, :K1, :L2, :C2], [:P, :I, :R, :L, :K, :L, :C], Union{Int64, Symbol, ComplexF64}[1, :Ipump, :Rleft, :L1, :K1, :L2, :C2], Dict(:C2 => 7, :P1 => 1, :L2 => 6, :L1 => 4, :I1 => 2, :R1 => 3, :K1 => 5), 3)
+JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Union{Int64, Symbol, ComplexF64}[1, :Ipump, :Rleft, :L1, :K1, :L2, :C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
 ```
 ```jldoctest
 @syms Ipump Rleft L1 K1 L2 C2
@@ -199,7 +199,7 @@ push!(circuit,("C2","2","0",C2))
 parsecircuit(circuit)
 
 # output
-JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], [:L1, :L2], [:P1, :I1, :R1, :L1, :K1, :L2, :C2], [:P, :I, :R, :L, :K, :L, :C], Any[1, Ipump, Rleft, L1, K1, L2, C2], Dict(:C2 => 7, :P1 => 1, :L2 => 6, :L1 => 4, :I1 => 2, :R1 => 3, :K1 => 5), 3)
+JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Any[1, Ipump, Rleft, L1, K1, L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
 ```
 ```jldoctest
 @syms Ipump Rleft L1 L2 C2 Ksym(L1)
@@ -214,7 +214,7 @@ push!(circuit,("C2","2","0",C2))
 parsecircuit(circuit)
 
 # output
-JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], [:L1, :L2], [:P1, :I1, :R1, :L1, :K1, :L2, :C2], [:P, :I, :R, :L, :K, :L, :C], Any[1, Ipump, Rleft, L1, Ksym(L1), L2, C2], Dict(:C2 => 7, :P1 => 1, :L2 => 6, :L1 => 4, :I1 => 2, :R1 => 3, :K1 => 5), 3)
+JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Any[1, Ipump, Rleft, L1, Ksym(L1), L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
 ```
 """
 function parsecircuit(circuit)
@@ -236,10 +236,10 @@ function parsecircuit(circuit)
 
     # empty dictionary for all of the component names. to check of they 
     # are unique. 
-    namedict = Dict{Symbol,Int64}()
+    namedict = Dict{String,Int64}()
 
     # array to hold the component names
-    namevector = Vector{Symbol}(undef,0)
+    namevector = Vector{String}(undef,0)
 
     # array to hold the component indices, the index in "circuit" at which
     # the component occurs
@@ -259,7 +259,7 @@ function parsecircuit(circuit)
     nodeindexvector = Array{Int64,1}(undef,0)
 
     # arrays to hold the inductors which the mutual inductance connects
-    mutualinductorvector = Array{Symbol,1}(undef,0)
+    mutualinductorvector = Array{String,1}(undef,0)
 
     # dictionary of unique nodes where the key is the node and the value is the
     # node index
@@ -283,18 +283,18 @@ function parsecircuit(circuit)
         # node1 = line[2]
         # node2 = line[3]
         # value = line[4]
-        sname = Symbol(name)
+        # sname = Symbol(name)
         componenttypeindex = parsecomponenttype(name,allowedcomponents)
         componenttype=allowedsymbols[componenttypeindex]
 
-        if haskey(namedict,sname) || haskey(namedict,sname)
-           throw(ArgumentError("Name \"$(sname)\" on line $(i) is not unique."))
+        if haskey(namedict,name) || haskey(namedict,name)
+           throw(ArgumentError("Name \"$(name)\" on line $(i) is not unique."))
         else
             # add the name to the dictionary
-            namedict[sname] = i
+            namedict[name] = i
 
             # store the component name, type, index, and value
-            push!(namevector,sname)
+            push!(namevector,name)
             push!(typevector,componenttype)
             # push!(indexarray,i)
             push!(valuevector,value)
@@ -305,8 +305,8 @@ function parsecircuit(circuit)
             # to keep their length the same as the other arrays. 
 
             if componenttype == :K
-                push!(mutualinductorvector,Symbol(node1))
-                push!(mutualinductorvector,Symbol(node2))
+                push!(mutualinductorvector,node1)
+                push!(mutualinductorvector,node2)
                 push!(nodeindexvector,0)
                 push!(nodeindexvector,0)
             else
