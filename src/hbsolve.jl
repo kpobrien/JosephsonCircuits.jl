@@ -194,6 +194,17 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
 end
 
+struct LinearHB
+    S
+    Nmodes
+    v
+    phin
+    Nnodes
+    Nbranches
+    signalindex
+    w
+end
+
 
 function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
     invLnm,Cnm,Gnm,bnm,
@@ -223,7 +234,7 @@ function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
     elseif solver ==:klu
         # if using the KLU factorization and sparse solver then make a 
         # factorization for the sparsity pattern. 
-        F = KLU.klu(Asparse)
+        F = KLU.klu(Asparsecopy)
     else
         error("Error: Unknown solver")
     end
@@ -294,16 +305,107 @@ function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
     return nothing
 end
 
-struct LinearHB
-    S
-    Nmodes
-    v
-    phin
-    Nnodes
-    Nbranches
-    signalindex
-    w
+
+function hblinsolve_noise_inner!(Snoise,voltages,Asparse,AoLjnm,
+    invLnm,Cnm,Gnm,bnm,
+    AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
+    Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+    portdict,resistordict,
+    w,indices,wp,
+    Nports,Nmodes,Nnodes,solver,
+    symfreqvar,wi)
+
+    input = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
+    output = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    phibports = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
+
+    # operate on a copy of Asparse because it may be modified by multiple threads
+    # at the same time. 
+    Asparsecopy = copy(Asparse)
+
+
+    #if banded=true, then calculate the bandwidths and convert the matrices to 
+    # banded matrices. 
+    if solver == :banded
+        # (lb,ub) = calcbandwidths(AoLjnm,m.invLnm,m.Cnm,m.Gnm)
+        (lb,ub) = calcbandwidths(AoLjnm,invLnm,Cnm,Gnm)
+        Abanded = BandedMatrix(AoLjnm,(lb,ub))
+
+    elseif solver ==:klu
+        # if using the KLU factorization and sparse solver then make a 
+        # factorization for the sparsity pattern. 
+        F = KLU.klu(Asparsecopy)
+    else
+        error("Error: Unknown solver")
+    end
+
+    for i in wi
+
+        ws = w[i]
+        wmodes = calcw(ws,indices,wp);
+        wmodesm = Diagonal(repeat(wmodes,outer=Nnodes-1));
+        wmodes2m = Diagonal(repeat(wmodes.^2,outer=Nnodes-1));
+
+        # perform the operation below in a way that doesn't allocate significant
+        # memory, plus take the conjugates mentioned below. 
+        # A = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
+
+        fill!(Asparsecopy.nzval,zero(eltype(Asparsecopy.nzval)))
+        sparseadd!(Asparsecopy,1,AoLjnm,AoLjnmindexmap)
+
+        # take the complex conjugate of the negative frequency terms in
+        # the capacitance and conductance matrices. substitute in the symbolic
+        # frequency variable if present. 
+        sparseaddconjsubst!(Asparsecopy,-1,Cnm,wmodes2m,Cnmindexmap,
+            wmodesm .< 0,wmodesm,Cnmfreqsubstindices,symfreqvar)
+        sparseaddconjsubst!(Asparsecopy,im,Gnm,wmodesm,Gnmindexmap,
+            wmodesm .< 0,wmodesm,Gnmfreqsubstindices,symfreqvar)
+        sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
+            wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
+
+
+        # solve the linear system
+        if solver == :banded
+
+            fill!(Abanded,0)
+            sparsetobanded!(Abanded,Asparsecopy)
+
+            # # phin = A \ bnm
+            ldiv!(phin,Abanded,bnm)
+        elseif solver == :klu
+            # update the factorization. the sparsity structure does not change
+            # so we can reuse the factorization object.
+            KLU.klu!(F,Asparsecopy)
+
+            # solve the linear system
+            # phin = klu(A) \ bnm
+            ldiv!(phin,F,bnm)
+        else
+            error("Error: Unknown solver")
+        end
+
+        # convert to node voltages. node flux is defined as the time integral of 
+        # node voltage so node voltage is derivative of node flux which can be
+        # accomplished in the frequency domain by multiplying by j*w.
+        voltages[:,:,i] = im*wmodesm*phin
+
+        # calculate the branch fluxes
+        calcphibports!(phibports,phin,portdict,Nmodes)
+
+        # it seems weird i am defining Ip here. i should be taking it from
+        # bbm. 
+
+        # calculate the input and output voltage waves at each port
+        calcinput!(input,1.0,phibports,portdict,resistordict,wmodes,symfreqvar)
+        calcoutput!(output,phibports,portdict,resistordict,wmodes,symfreqvar)
+
+        # calculate the scattering parameters
+        calcS!(view(S,:,:,i),input,output)
+    end
+    return nothing
 end
+
 
 
 

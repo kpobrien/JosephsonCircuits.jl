@@ -20,9 +20,9 @@ struct CircuitMatrices
     invLnm::SparseMatrixCSC
     Rbnm::SparseMatrixCSC{Int64, Int64}
     portdict::OrderedDict
-    resistordict::Dict
-    capacitornoiseports::SparseMatrixCSC
-    resistornoiseports::SparseMatrixCSC
+    resistordict::OrderedDict
+    capacitornoiseports::OrderedDict
+    resistornoiseports::OrderedDict
     Lmean
 end
 
@@ -51,7 +51,7 @@ push!(circuit,("C2","2","0",Cj))
 println(symbolicmatrices(circuit))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.Symbolic{Number}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.Symbolic{Number}[1 / Rleft], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  Lj,   [2]  =  Lj, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), Dict((2, 1) => 1), Dict{Tuple{Int64, Int64}, SymbolicUtils.Sym{Number, Nothing}}((2, 1) => Rleft), sparse(Int64[], Int64[], SymbolicUtils.Symbolic{Number}[], 0, 0), sparse(Int64[], Int64[], Any[], 0, 0), Lj)
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.Symbolic{Number}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.Symbolic{Number}[1 / Rleft], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  Lj,   [2]  =  Lj, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), OrderedCollections.OrderedDict((2, 1) => 1), OrderedCollections.OrderedDict{Tuple{Int64, Int64}, SymbolicUtils.Sym{Number, Nothing}}((2, 1) => Rleft), OrderedCollections.OrderedDict{Tuple{Int64, Int64}, SymbolicUtils.Symbolic{Number}}(), OrderedCollections.OrderedDict{Tuple{Int64, Int64}, SymbolicUtils.Symbolic{Number}}(), Lj)
 ```
 """
 function symbolicmatrices(circuit;Nmodes=1,sorting=:number)
@@ -88,7 +88,7 @@ circuitdefs = Dict(Lj =>1000.0e-12,Cc => 100.0e-15,Cj => 1000.0e-15,Rleft => 50.
 println(numericmatrices(circuit,circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  1.0e-9,   [2]  =  1.0e-9, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), Dict((2, 1) => 1), Dict((2, 1) => 50.0), sparse(Int64[], Int64[], Float64[], 0, 0), sparse(Int64[], Int64[], Real[], 0, 0), 1.0e-9)
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  1.0e-9,   [2]  =  1.0e-9, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), OrderedCollections.OrderedDict((2, 1) => 1), OrderedCollections.OrderedDict((2, 1) => 50.0), OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}(), OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}(), 1.0e-9)
 ```
 """
 function numericmatrices(circuit,circuitdefs;Nmodes=1,sorting=:number)
@@ -632,7 +632,6 @@ function calcinvLn_inner(Lb::SparseVector,Mb::SparseMatrixCSC,Rbn::SparseMatrixC
             # efficiency reasons. 
 
         if eltype(valuetypevector) <: Symbolic
-
 
             # take a subset of the arrays
             Mbs = Mb[Lb.nzind,Lb.nzind]

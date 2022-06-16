@@ -666,20 +666,35 @@ julia> A = sparse([1,2,1], [1,2,2], [1,1.0,2+3im]);JosephsonCircuits.symbolicind
 Int64[]
 ```
 """
-function symbolicindices(A::SparseMatrixCSC)
+function symbolicindices(A)
     
     indices = Vector{Int64}(undef,0)
     
-    @inbounds for i = 1:length(A.colptr)-1
-        for j in A.colptr[i]:(A.colptr[i+1]-1)
-            if checkissymbolic(A.nzval[j])
-                push!(indices,j)
-            end
+    # @inbounds for i = 1:length(A.colptr)-1
+    #     for j in A.colptr[i]:(A.colptr[i+1]-1)
+    #         if checkissymbolic(A.nzval[j])
+    #             push!(indices,j)
+    #         end
+    #     end
+    # end
+    # return indices
+
+    for (i,j) in enumerate(A)
+        if checkissymbolic(j)
+            push!(indices,i)
         end
     end
     return indices
+
 end
 
+function symbolicindices(A::SparseMatrixCSC)
+    return symbolicindices(A.nzval)
+end
+
+function symbolicindices(A::OrderedDict)
+    return symbolicindices(values(A))
+end
 
 """
     checkissymbolic(a)

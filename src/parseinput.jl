@@ -782,7 +782,7 @@ julia> JosephsonCircuits.componentdictionaryP(
             [],
             [1,:Ipump,:Rleft,:Cc,:Lj,:Cj],
         )
-Dict{Tuple{Int64, Int64}, Int64} with 1 entry:
+OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Int64} with 1 entry:
   (2, 1) => 1
 
 julia> JosephsonCircuits.componentdictionaryP(
@@ -791,7 +791,7 @@ julia> JosephsonCircuits.componentdictionaryP(
             [],
             [:Port1,:Ipump,:Rleft,:Cc,:Lj,:Cj],
         )
-Dict{Tuple{Int64, Int64}, Symbol} with 1 entry:
+OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Symbol} with 1 entry:
   (2, 1) => :Port1
 ```
 """
@@ -858,7 +858,7 @@ julia> JosephsonCircuits.componentdictionaryR(
            [],
            [:Port1,:Ipump,:Rleft,:Cc,:Lj,:Cj],
        )
-Dict{Tuple{Int64, Int64}, Symbol} with 1 entry:
+OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Symbol} with 1 entry:
   (2, 1) => :Rleft
 
 julia> JosephsonCircuits.componentdictionaryR(
@@ -867,7 +867,7 @@ julia> JosephsonCircuits.componentdictionaryR(
            [],
            [1,1e-6,50,50e-15,1e-12,50e-15,50],
        )
-Dict{Tuple{Int64, Int64}, Float64} with 1 entry:
+OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64} with 1 entry:
   (2, 1) => 25.0
 ```
 """
@@ -891,7 +891,9 @@ function componentdictionaryR(typevector::Vector{Symbol},nodeindexarray::Matrix{
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
-    out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+    # out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+    out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+
 
     for i in eachindex(typevector)
         type=typevector[i]
@@ -927,20 +929,25 @@ julia> JosephsonCircuits.calcnoiseportsR(
                   [2 2 2 3 3; 1 1 3 1 1],
                   [],
                   [1e-9,50,5e-15,1e-12,30e-15])
-2×1 SparseMatrixCSC{Float64, Int64} with 1 stored entry:
-   ⋅ 
- 50.0
+OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64} with 1 entry:
+  (2, 1) => 50.0
 
 julia> JosephsonCircuits.calcnoiseportsR(
                   [:P,:I,:R,:C,:Lj,:C],
                   [2 2 2 2 3 3; 1 1 1 3 1 1],
                   [],
                   [1,1e-9,50,5e-15,1e-12,30e-15])
-0×0 SparseMatrixCSC{Float64, Int64} with 0 stored entries
+OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}()
 ```
 """
+
 function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
     mutualinductorvector::Vector,valuevector::Vector)
+    return calcnoiseportsR(typevector,nodeindexarray,mutualinductorvector,
+        valuevector,calcvaluetype(typevector,valuevector,[:R],checkinverse=true))
+end
+function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+    mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
 
     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
         throw(DimensionMismatch("Input arrays must have the same length"))
@@ -954,12 +961,14 @@ function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
+
     # calculate the dictionary of ports
     portdict = componentdictionaryP(typevector,nodeindexarray,
         mutualinductorvector,valuevector)
 
+    # out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+    out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
 
-    indices = Vector{Int64}(undef,0)
 
     for i in eachindex(typevector)
         type=typevector[i]
@@ -972,13 +981,18 @@ function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64
             elseif haskey(portdict,keyreversed)
                 nothing
             else
-                push!(indices,i)
+                if haskey(out,key)
+                    out[key]=1/(1/valuevector[i]+1/out[key])
+                elseif haskey(out,keyreversed)
+                    out[keyreversed]=1/(1/valuevector[i]+1/out[keyreversed])
+                else
+                    out[key]=valuevector[i]
+                end
             end
         end
     end
 
-    return sparse(nodeindexarray[1,indices],nodeindexarray[2,indices],valuevector[indices])
-
+    return out
 end
 
 
@@ -997,10 +1011,9 @@ julia> JosephsonCircuits.calcnoiseportsC(
                   [],
                   [1,1e-9,50,5e-15*(1-3e-3*im),1e-12,30e-15*(1-3e-3*im)],
               )
-3×3 SparseMatrixCSC{ComplexF64, Int64} with 2 stored entries:
-         ⋅              ⋅              ⋅    
-         ⋅              ⋅      5.0e-15-1.5e-17im
- 3.0e-14-9.0e-17im      ⋅              ⋅    
+OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64} with 2 entries:
+  (2, 3) => 5.0e-15-1.5e-17im
+  (3, 1) => 3.0e-14-9.0e-17im
 
 julia> JosephsonCircuits.calcnoiseportsC(
                   [:P,:I,:R,:C,:Lj,:C],
@@ -1008,13 +1021,13 @@ julia> JosephsonCircuits.calcnoiseportsC(
                   [],
                   [1,1e-9,50,5e-15,1e-12,30e-15],
               )
-0×0 SparseMatrixCSC{Float64, Int64} with 0 stored entries
+OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}()
 ```
 """
 function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
     mutualinductorvector::Vector,valuevector::Vector)
     return calcnoiseportsC(typevector,nodeindexarray,mutualinductorvector,
-        valuevector,calcvaluetype(typevector,valuevector,[:C]))
+        valuevector,calcvaluetype(typevector,valuevector,[:C],checkinverse=true))
 end
 function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
     mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
@@ -1031,7 +1044,14 @@ function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
-    indices = Vector{Int64}(undef,0)
+
+    # # calculate the dictionary of ports
+    # portdict = componentdictionaryP(typevector,nodeindexarray,
+    #     mutualinductorvector,valuevector)
+
+    # out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+    out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+
 
     for i in eachindex(typevector)
         type=typevector[i]
@@ -1043,29 +1063,127 @@ function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64
                 if isreal(valuevector[i])
                     nothing
                 else
-                    push!(indices,i)
+                    key = (nodeindexarray[1,i],nodeindexarray[2,i])
+                    keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
+
+                    if haskey(out,key)
+                        out[key]=valuevector[i]+out[key]
+                    elseif haskey(out,keyreversed)
+                        out[keyreversed]=valuevector[i]+out[keyreversed]
+                    else
+                        out[key]=valuevector[i]
+                    end
                 end
             end
+
         end
     end
 
-
-    # define empty vectors of zero length for the row indices, column indices,
-    # and values
-    In = Array{Int64, 1}(undef, 0)
-    Jn = Array{Int64, 1}(undef, 0)
-    Vn = Array{eltype(valuetypevector), 1}(undef, 0)
-
-    for i in indices
-        push!(In,nodeindexarray[1,i])
-        push!(Jn,nodeindexarray[2,i])
-        push!(Vn,valuevector[i])
-    end
-
-    return sparse(In,Jn,Vn)
-    # return (In,Jn,Vn)
-    # return nothing
+    return out
 end
+
+
+
+# function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector)
+
+#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+#         throw(DimensionMismatch("Input arrays must have the same length"))
+#     end
+
+#     if length(size(nodeindexarray)) != 2
+#         throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
+#     end
+
+#     if size(nodeindexarray,1) != 2
+#         throw(DimensionMismatch("The length of the first axis must be 2"))
+#     end
+
+#     # calculate the dictionary of ports
+#     portdict = componentdictionaryP(typevector,nodeindexarray,
+#         mutualinductorvector,valuevector)
+
+#     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+
+#     # indices = Vector{Int64}(undef,0)
+
+#     for i in eachindex(typevector)
+#         type=typevector[i]
+#         if type == :R
+#             key= (nodeindexarray[1,i],nodeindexarray[2,i])
+#             keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
+
+#             if haskey(portdict,key)
+#                 nothing
+#             elseif haskey(portdict,keyreversed)
+#                 nothing
+#             else
+#                 push!(indices,i)
+#             end
+#         end
+#     end
+
+#     return sparse(nodeindexarray[1,indices],nodeindexarray[2,indices],valuevector[indices])
+
+# end
+
+
+
+# function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector)
+#     return calcnoiseportsC(typevector,nodeindexarray,mutualinductorvector,
+#         valuevector,calcvaluetype(typevector,valuevector,[:C]))
+# end
+# function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
+
+#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+#         throw(DimensionMismatch("Input arrays must have the same length"))
+#     end
+
+#     if length(size(nodeindexarray)) != 2
+#         throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
+#     end
+
+#     if size(nodeindexarray,1) != 2
+#         throw(DimensionMismatch("The length of the first axis must be 2"))
+#     end
+
+#     indices = Vector{Int64}(undef,0)
+
+#     for i in eachindex(typevector)
+#         type=typevector[i]
+#         if type == :C
+
+#             # isreal throws an error for symbolic
+#             # variables so first check if it is type complex
+#             if valuevector[i] isa Complex
+#                 if isreal(valuevector[i])
+#                     nothing
+#                 else
+#                     push!(indices,i)
+#                 end
+#             end
+#         end
+#     end
+
+
+#     # define empty vectors of zero length for the row indices, column indices,
+#     # and values
+#     In = Array{Int64, 1}(undef, 0)
+#     Jn = Array{Int64, 1}(undef, 0)
+#     Vn = Array{eltype(valuetypevector), 1}(undef, 0)
+
+#     for i in indices
+#         push!(In,nodeindexarray[1,i])
+#         push!(Jn,nodeindexarray[2,i])
+#         push!(Vn,valuevector[i])
+#     end
+
+#     return sparse(In,Jn,Vn)
+#     # return (In,Jn,Vn)
+#     # return nothing
+# end
 
 
 # function calcnoiseportindices(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
