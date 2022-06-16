@@ -692,10 +692,6 @@ end
 
 
 """
-
-
-julia> calcvaluetype([:R,:C,:R],[1,2,3],[:R])
-
     calcvaluetype(typevector,valuevector,components::Vector;checkinverse=true)
 
 Returns a vector with the (computer science) type which will hold a set of 
@@ -819,7 +815,9 @@ function componentdictionaryP(typevector::Vector{Symbol},nodeindexarray::Matrix{
          throw(DimensionMismatch("The length of the first axis must be 2."))
     end
 
-    out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+    # out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+    out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+
 
     for i in eachindex(typevector)
         type=typevector[i]
@@ -833,6 +831,9 @@ function componentdictionaryP(typevector::Vector{Symbol},nodeindexarray::Matrix{
             end
         end
     end
+
+    # sort the ordered dictionary by the values
+    sort!(out; byvalue=true)
 
     return out
 end

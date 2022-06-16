@@ -172,7 +172,6 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
 
     # calculate the source terms in the branch basis
     bbm = zeros(Complex{Float64},Nbranches*Nmodes)    
-    # for (key,val) in sort(collect(cdict[:P]), by=x->x[2])
 
     for source in sources
         for (key,val) in portdict

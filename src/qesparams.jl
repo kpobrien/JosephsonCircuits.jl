@@ -25,12 +25,9 @@ Return the branch flux from the node flux at each of the ports and modes.
 """
 function calcphibports!(phibports,phin,portdict,Nmodes)
 
-    sortindices = sortperm(collect(values(portdict)))
-    sortedkeys = collect(keys(portdict))[sortindices]
 
     j=0
-    for key in sortedkeys
-    # for (key,val) in sort(collect(portdict), by=x->real(x[2]))
+    for (key,val) in portdict
         j+=1
         # calculate the branch flux from the node flux. if there are flux
         # quanta in the loop this might be incorrect. if any of the keys
@@ -55,13 +52,9 @@ function calcinput!(input,Ip,phibports,portdict,resistordict,wmodes,symfreqvar)
 
     Nmodes = length(wmodes)
 
-    sortindices = sortperm(collect(values(portdict)))
-    sortedkeys = collect(keys(portdict))[sortindices]
-
     j=0
     # i should have a case for when there is no resistor at the port. 
-    for key in sortedkeys
-    # for (key,val) in sort(collect(portdict), by=x->real(x[2]))
+    for (key,val) in portdict
         j+=1
         for k = 1:Nmodes
 
@@ -92,14 +85,9 @@ function calcoutput!(output,phibports,portdict,resistordict,wmodes,symfreqvar)
         error("Error: inconsistent dimensions for output and phibports.")
     end
 
-    sortindices = sortperm(collect(values(portdict)))
-    sortedkeys = collect(keys(portdict))[sortindices]
-
-
     j=0
     # i should have a case for when there is no resistor at the port. 
-    # for (key,val) in sort(collect(portdict), by=x->real(x[2]))
-    for key in sortedkeys
+    for (key,val) in portdict
         j+=1
         # for k = 1:Nmodes
         #     output[(j-1)*Nmodes+k,:] .= 

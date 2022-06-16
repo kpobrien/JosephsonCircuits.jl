@@ -19,7 +19,7 @@ struct CircuitMatrices
     Mb::SparseMatrixCSC
     invLnm::SparseMatrixCSC
     Rbnm::SparseMatrixCSC{Int64, Int64}
-    portdict::Dict
+    portdict::OrderedDict
     resistordict::Dict
     capacitornoiseports::SparseMatrixCSC
     resistornoiseports::SparseMatrixCSC

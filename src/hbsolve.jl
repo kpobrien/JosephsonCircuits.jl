@@ -104,10 +104,8 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # calculate the source terms in the branch basis
     bbm = zeros(Complex{Float64},Nbranches*Nmodes,Nmodes*Nports)
 
-    sortindices = sortperm(collect(values(portdict)))
-    sortedkeys = collect(keys(portdict))[sortindices]
     i=1
-    for key in sortedkeys
+    for (key,val) in portdict
         for j = 1:Nmodes
             bbm[(edge2indexdict[key]-1)*Nmodes+j,(i-1)*Nmodes+j] = 1
             # bbm2[(i-1)*Nmodes+j,(i-1)*Nmodes+j] = Lmean*1/phi0
@@ -373,16 +371,12 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # calculate the source terms in the branch basis
     bbm = zeros(Complex{Float64},Nbranches*Nmodes)    
 
-
-    sortindices = sortperm(collect(values(portdict)))
-    sortedkeys = collect(keys(portdict))[sortindices]
-    for key in sortedkeys
-    # for (key,val) in sort(collect(portdict), by=x->real(x[2]))
-        # if val in ports
-        if portdict[key] in ports
+    for (key,val) in portdict
+        if val in ports
           bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip/phi0
         end
     end
+
 
     # convert from the node basis to the branch basis
     bnm = transpose(Rbnm)*bbm
