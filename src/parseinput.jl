@@ -891,9 +891,7 @@ function componentdictionaryR(typevector::Vector{Symbol},nodeindexarray::Matrix{
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
-    # out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
-
 
     for i in eachindex(typevector)
         type=typevector[i]
@@ -919,8 +917,8 @@ end
     mutualinductorvector::Vector,valuevector::Vector)
 
 Find the resistors (not located at a port) and the node indices. Store them 
-as a sparse matrix where the nodes are the coordinates and the value is the
-value.
+as an ordered dictionary where the keys are the coordinates and the value is 
+the value.
 
 # Examples
 ```jldoctest
@@ -966,7 +964,6 @@ function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64
     portdict = componentdictionaryP(typevector,nodeindexarray,
         mutualinductorvector,valuevector)
 
-    # out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
 
 
@@ -1000,8 +997,8 @@ end
     calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
     mutualinductorvector::Vector,valuevector::Vector)
 
-Find the lossy capacitors and the node indices. Store them as a sparse matrix
-where the nodes are the coordinates and the value is the value.
+Find the lossy capacitors and the node indices. Store them as an ordered
+dictionary where the keys are the coordinates and the value is the value.
 
 # Examples
 ```jldoctest
@@ -1044,14 +1041,7 @@ function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
-
-    # # calculate the dictionary of ports
-    # portdict = componentdictionaryP(typevector,nodeindexarray,
-    #     mutualinductorvector,valuevector)
-
-    # out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
-
 
     for i in eachindex(typevector)
         type=typevector[i]
@@ -1078,159 +1068,8 @@ function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64
 
         end
     end
-
     return out
 end
-
-
-
-# function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-#     mutualinductorvector::Vector,valuevector::Vector)
-
-#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
-#         throw(DimensionMismatch("Input arrays must have the same length"))
-#     end
-
-#     if length(size(nodeindexarray)) != 2
-#         throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
-#     end
-
-#     if size(nodeindexarray,1) != 2
-#         throw(DimensionMismatch("The length of the first axis must be 2"))
-#     end
-
-#     # calculate the dictionary of ports
-#     portdict = componentdictionaryP(typevector,nodeindexarray,
-#         mutualinductorvector,valuevector)
-
-#     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
-
-#     # indices = Vector{Int64}(undef,0)
-
-#     for i in eachindex(typevector)
-#         type=typevector[i]
-#         if type == :R
-#             key= (nodeindexarray[1,i],nodeindexarray[2,i])
-#             keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
-
-#             if haskey(portdict,key)
-#                 nothing
-#             elseif haskey(portdict,keyreversed)
-#                 nothing
-#             else
-#                 push!(indices,i)
-#             end
-#         end
-#     end
-
-#     return sparse(nodeindexarray[1,indices],nodeindexarray[2,indices],valuevector[indices])
-
-# end
-
-
-
-# function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-#     mutualinductorvector::Vector,valuevector::Vector)
-#     return calcnoiseportsC(typevector,nodeindexarray,mutualinductorvector,
-#         valuevector,calcvaluetype(typevector,valuevector,[:C]))
-# end
-# function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-#     mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
-
-#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
-#         throw(DimensionMismatch("Input arrays must have the same length"))
-#     end
-
-#     if length(size(nodeindexarray)) != 2
-#         throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
-#     end
-
-#     if size(nodeindexarray,1) != 2
-#         throw(DimensionMismatch("The length of the first axis must be 2"))
-#     end
-
-#     indices = Vector{Int64}(undef,0)
-
-#     for i in eachindex(typevector)
-#         type=typevector[i]
-#         if type == :C
-
-#             # isreal throws an error for symbolic
-#             # variables so first check if it is type complex
-#             if valuevector[i] isa Complex
-#                 if isreal(valuevector[i])
-#                     nothing
-#                 else
-#                     push!(indices,i)
-#                 end
-#             end
-#         end
-#     end
-
-
-#     # define empty vectors of zero length for the row indices, column indices,
-#     # and values
-#     In = Array{Int64, 1}(undef, 0)
-#     Jn = Array{Int64, 1}(undef, 0)
-#     Vn = Array{eltype(valuetypevector), 1}(undef, 0)
-
-#     for i in indices
-#         push!(In,nodeindexarray[1,i])
-#         push!(Jn,nodeindexarray[2,i])
-#         push!(Vn,valuevector[i])
-#     end
-
-#     return sparse(In,Jn,Vn)
-#     # return (In,Jn,Vn)
-#     # return nothing
-# end
-
-
-# function calcnoiseportindices(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-#     mutualinductorvector::Vector,valuevector::Vector,componenttype)
-
-#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
-#         throw(DimensionMismatch("Input arrays must have the same length"))
-#     end
-
-#     if length(size(nodeindexarray)) != 2
-#         throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
-#     end
-
-#     if size(nodeindexarray,1) != 2
-#         throw(DimensionMismatch("The length of the first axis must be 2"))
-#     end
-
-#     # out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuevector)}()
-#     out = Vector{Int64}(
-
-
-#     for i in eachindex(typevector)
-#         type=typevector[i]
-
-#         if type in componenttype
-
-#             if type == :C && imag(out[key]) ~= 0
-#                 key= (nodeindexarray[1,i],nodeindexarray[2,i])
-#                 keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
-
-#                 if haskey(out,key)
-#                     out[key]=1/(1/valuevector[i]+1/out[key])
-#                 elseif haskey(out,keyreversed)
-#                     out[keyreversed]=1/(1/valuevector[i]+1/out[keyreversed])
-#                 else
-#                     out[key]=valuevector[i]
-#                 end
-#             elseif type == :R
-
-
-#         end
-#     end
-
-#     return out
-
-# end
-
 
 # function componentdictionary(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
 #     mutualinductorvector::Vector,valuevector::Vector)
@@ -1439,30 +1278,4 @@ end
 #     # return substitute(unwrap(value),circuitdefs)
 #     return substitute(value,circuitdefs)
 
-# end
-
-# """
-#     checknumbervector(typevector,numbervector)
-
-# Enforce various constraints on the parameters such as real inductances and warn
-# if the imaginary part of the capacitance is positive (implying gain not dissipation).
-
-# """
-# function checknumbervector(typevector::Vector{Symbol},numbervector::Vector)
-#     if length(typevector) != length(numbervector)
-#         throw(DimensionMismatch("typevector and numbervector must be the same length."))
-#     end
-
-#     for i in eachindex(typevector)
-#         if typevector[i] == :L && imag(numbervector[i]) != 0
-#             throw(DomainError("Inductance values must be real."))
-#         elseif typevector[i] == :Lj && imag(numbervector[i]) != 0
-#             throw(DomainError("Josephson inductance values must be real."))
-#         elseif typevector[i] == :K && imag(numbervector[i]) != 0
-#             throw(DomainError("Mutual inductance values must be real."))
-#         elseif typevector[i] == :C && imag(numbervector[i]) > 0
-#             println("Warning: positive imaginary capacitance implies gain.")
-#         end
-#     end
-#     return nothing
 # end
