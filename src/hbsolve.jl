@@ -80,6 +80,8 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     invLnm = nm.invLnm
     portdict = nm.portdict
     resistordict = nm.resistordict
+    capacitornoiseports  = nm.capacitornoiseports
+    resistornoiseports = nm.resistornoiseports
 
     # generate the mode indices and find the signal index
     indices = calcindices(Nmodes)
@@ -131,6 +133,8 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     Cnmfreqsubstindices  = symbolicindices(Cnm)
     Gnmfreqsubstindices  = symbolicindices(Gnm)
     invLnmfreqsubstindices  = symbolicindices(invLnm)
+    capacitornoiseportsfreqsubstindices  = symbolicindices(capacitornoiseports)
+    resistornoiseportsfreqsubstindices = symbolicindices(resistornoiseports)
 
     # drop any zeros in AoLjnm
     dropzeros!(AoLjnm)
@@ -159,12 +163,17 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     # conj!(AoLjnm.nzval)
 
+    # Nnoiseports = length(capacitornoiseports)+length(resistornoiseports)
+    # println("noise ports: ", Nnoiseports)
+
     ### single threaded
     if nbatches == 1
 
         hblinsolve_inner!(S,voltages,Asparse,AoLjnm,invLnm,
                 Cnm,Gnm,bnm,AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
                 Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+                capacitornoiseports,resistornoiseports,
+                capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
                 portdict,resistordict,w,indices,wp,Nports,Nmodes,Nnodes,solver,
                 symfreqvar,1:length(w))
     else
@@ -184,6 +193,8 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
                 invLnm,Cnm,Gnm,bnm,
                 AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
                 Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+                capacitornoiseports,resistornoiseports,
+                capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
                 portdict,resistordict,w,indices,wp,Nports,Nmodes,Nnodes,solver,
                 symfreqvar,wi)
         end
@@ -209,8 +220,10 @@ end
 function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
     invLnm,Cnm,Gnm,bnm,
     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-    Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,portdict,
-    resistordict,w,indices,wp,
+    Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+    capacitornoiseports,resistornoiseports,
+    capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
+    portdict,resistordict,w,indices,wp,
     Nports,Nmodes,Nnodes,solver,
     symfreqvar,wi)
 
@@ -219,10 +232,16 @@ function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
     phibports = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
     phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
 
+    # for noise experiments
+    Nports2 = length(resistornoiseports)
+    phibports2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    input2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    output2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    Snoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+
     # operate on a copy of Asparse because it may be modified by multiple threads
     # at the same time. 
     Asparsecopy = copy(Asparse)
-
 
     #if banded=true, then calculate the bandwidths and convert the matrices to 
     # banded matrices. 
@@ -292,12 +311,30 @@ function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
         # calculate the branch fluxes
         calcphibports!(phibports,phin,portdict,Nmodes)
 
-        # it seems weird i am defining Ip here. i should be taking it from
-        # bbm. 
-
         # calculate the input and output voltage waves at each port
-        calcinput!(input,1.0,phibports,portdict,resistordict,wmodes,symfreqvar)
-        calcoutput!(output,phibports,portdict,resistordict,wmodes,symfreqvar)
+        # calcinput!(input,1.0,phibports,resistordict,wmodes,symfreqvar)
+        calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
+        calcoutput!(output,phibports,resistordict,wmodes,symfreqvar)
+
+
+        # println(size(input))
+        # println(length(resistordict))
+        # println(size(bnm))
+
+        # println("Snoise: ",size(Snoise), "input: ",size(input), "output2: ",size(output2))
+
+        # for noise. this is fairly similar to what i need except i need to
+        # # invert, take imaginary part, and multiply capacitors by w^2. 
+        calcphibports!(phibports2,phin,resistornoiseports,Nmodes)
+        calcoutput!(output2,phibports2,resistornoiseports,wmodes,symfreqvar)
+        calcphibthevenin!(input2,bnm,resistornoiseports,wmodes,symfreqvar)
+
+        println(size(input))
+        println(size(output2))
+        println(size(((output2 .- input2) / input)))
+        # println(size(Snoise))
+        # calcS!(Snoise,input2,output2)
+
 
         # calculate the scattering parameters
         calcS!(view(S,:,:,i),input,output)
@@ -310,8 +347,9 @@ function hblinsolve_noise_inner!(Snoise,voltages,Asparse,AoLjnm,
     invLnm,Cnm,Gnm,bnm,
     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-    portdict,resistordict,
-    w,indices,wp,
+    capacitornoiseports,resistornoiseports,
+    capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
+    portdict,resistordict,w,indices,wp,
     Nports,Nmodes,Nnodes,solver,
     symfreqvar,wi)
 
@@ -397,11 +435,11 @@ function hblinsolve_noise_inner!(Snoise,voltages,Asparse,AoLjnm,
         # bbm. 
 
         # calculate the input and output voltage waves at each port
-        calcinput!(input,1.0,phibports,portdict,resistordict,wmodes,symfreqvar)
-        calcoutput!(output,phibports,portdict,resistordict,wmodes,symfreqvar)
+        # calcinput!(input,1.0,phibports,resistordict,wmodes,symfreqvar)
+        # calcoutput!(output,phibports,resistordict,wmodes,symfreqvar)
 
         # calculate the scattering parameters
-        calcS!(view(S,:,:,i),input,output)
+        # calcS!(view(Snoise,:,:,i),input,output)
     end
     return nothing
 end
@@ -567,27 +605,30 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # Nports = length(cdict[:P])
     Nports = length(portdict)
     # input = zeros(Complex{Float64},Nports*Nmodes)
-    input = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
+    # input = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
 
+    input = zeros(Complex{Float64},Nports*Nmodes)    
     output = zeros(Complex{Float64},Nports*Nmodes)
     phibports = zeros(Complex{Float64},Nports*Nmodes)
-    inputval = zero(Complex{Float64})
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
     phin = out.zero
 
-    # calculate the branch fluxes
+    # calculate the branch fluxes at the ports
     calcphibports!(phibports,phin,portdict,Nmodes)
+    # calculate the branch flux in ladder operator units
+    calcoutput!(output,phibports,resistordict,wmodes,symfreqvar)
 
     # calculate the input and output voltage waves at each port
-    calcinput!(input,Ip/phi0,phibports,portdict,resistordict,wmodes,symfreqvar)
-    calcoutput!(output,phibports,portdict,resistordict,wmodes,symfreqvar)
+    # calcinput!(input,Ip/phi0,phibports,resistordict,wmodes,symfreqvar)
+
+    # oops, this isn'at actually a branch flux. it
+    # has the same units as the ladder operator. 
+    calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
 
     # calculate the scattering parameters
-    # calcS!(S,input,output,phibports,portdict,resistordict,wmodes)
-
     if Ip > 0
-        calcS!(S,input,output)
+        calcS!(S,input/Lmean,output)
     end
 
     return NonlinearHB(out,phin,Rbnm,Ljb,Lb,Ljbm,Nmodes,Nbranches,S)

@@ -149,8 +149,14 @@ function numericmatrices(psc::ParsedSortedCircuit,cg::CircuitGraph,
     portdict=componentdictionaryP(psc.typevector,psc.nodeindexarraysorted,
         psc.mutualinductorvector,vvn)
 
-    resistordict=componentdictionaryR(psc.typevector,psc.nodeindexarraysorted,
+    # resistordict=componentdictionaryR(psc.typevector,psc.nodeindexarraysorted,
+    #     psc.mutualinductorvector,vvn)
+
+
+    portimpedance=calcportimpedance(psc.typevector,psc.nodeindexarraysorted,
         psc.mutualinductorvector,vvn)
+
+
 
     capacitornoiseports = calcnoiseportsC(psc.typevector,psc.nodeindexarraysorted,
         psc.mutualinductorvector,vvn)
@@ -159,7 +165,10 @@ function numericmatrices(psc::ParsedSortedCircuit,cg::CircuitGraph,
         psc.mutualinductorvector,vvn)
 
     return CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portdict,
-        resistordict,capacitornoiseports,resistornoiseports,Lmean)
+        portimpedance,capacitornoiseports,resistornoiseports,Lmean)
+
+    # return CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portdict,
+    #     resistordict,capacitornoiseports,resistornoiseports,Lmean)
 end
 
 

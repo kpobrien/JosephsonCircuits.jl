@@ -912,6 +912,55 @@ function componentdictionaryR(typevector::Vector{Symbol},nodeindexarray::Matrix{
     return out
 end
 
+
+function calcportimpedance(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+    mutualinductorvector::Vector,valuevector::Vector)
+    return calcportimpedance(typevector,nodeindexarray,mutualinductorvector,
+        valuevector,calcvaluetype(typevector,valuevector,[:R],checkinverse=false))
+end
+function calcportimpedance(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+    mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
+
+    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+        throw(DimensionMismatch("Input arrays must have the same length"))
+    end
+
+    if length(size(nodeindexarray)) != 2
+        throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
+    end
+
+    if size(nodeindexarray,1) != 2
+        throw(DimensionMismatch("The length of the first axis must be 2"))
+    end
+
+    out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+
+    portdict = componentdictionaryP(typevector,nodeindexarray,mutualinductorvector,valuevector)
+
+    for i in eachindex(typevector)
+        type=typevector[i]
+        if type == :R
+            key= (nodeindexarray[1,i],nodeindexarray[2,i])
+            keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
+
+            if haskey(portdict,key) || haskey(portdict,keyreversed)
+
+                if haskey(out,key)
+                    out[key]=1/(1/valuevector[i]+1/out[key])
+                elseif haskey(out,keyreversed)
+                    out[keyreversed]=1/(1/valuevector[i]+1/out[keyreversed])
+                else
+                    out[key]=valuevector[i]
+                end
+            end
+            
+        end
+    end
+
+    return out
+end
+
+
 """
     calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
     mutualinductorvector::Vector,valuevector::Vector)

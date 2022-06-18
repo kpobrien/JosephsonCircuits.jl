@@ -74,7 +74,7 @@ include("fftutils.jl")
 include("qesparams.jl")
 
 # Experimental multi-tone harmonic balance code.
-include("hbsolve2.jl")
+# include("hbsolve2.jl")
 
 # These are for exporting SPICE netlists and running simulations in
 # WRSPICE or Xyce. 
@@ -87,7 +87,7 @@ include("spiceraw.jl")
 include("touchstone.jl")
 
 # Precompile directives to improve time to first use. 
-include("precompile.jl")
+# include("precompile.jl")
 
 
 """
