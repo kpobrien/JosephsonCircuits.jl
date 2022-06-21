@@ -13,8 +13,7 @@ julia> JosephsonCircuits.diagrepeat([1 2;3 4],2)
  0  1  0  2
  3  0  4  0
  0  3  0  4
-```
-```jldoctest
+
 julia> JosephsonCircuits.diagrepeat([1,2],2)
 4-element Vector{Int64}:
  1
@@ -788,217 +787,217 @@ function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
 end
 
 
-"""
-    sparsetobanded(As::SparseMatrixCSC)
+# """
+#     sparsetobanded(As::SparseMatrixCSC)
 
-Return a sparse matrix converted to a banded matrix. Note: This function is
-only used for testing sparsetobanded!
+# Return a sparse matrix converted to a banded matrix. Note: This function is
+# only used for testing sparsetobanded!
 
-# Examples
-```jldoctest
-julia> JosephsonCircuits.sparsetobanded(sparse([1,2], [1,2], [1,2+0im]))
-2×2 BandedMatrix{Complex{Int64}} with bandwidths (0, 0):
- 1+0im    ⋅  
-   ⋅    2+0im
-```
+# # Examples
+# ```jldoctest
+# julia> JosephsonCircuits.sparsetobanded(sparse([1,2], [1,2], [1,2+0im]))
+# 2×2 BandedMatrix{Complex{Int64}} with bandwidths (0, 0):
+#  1+0im    ⋅  
+#    ⋅    2+0im
+# ```
 
-julia> As = sprand(10,10,0.1);all(JosephsonCircuits.sparsetobanded(As) .== BandedMatrix(As))
-true
-"""
-function sparsetobanded(As::SparseMatrixCSC)
+# julia> As = sprand(10,10,0.1);all(JosephsonCircuits.sparsetobanded(As) .== BandedMatrix(As))
+# true
+# """
+# function sparsetobanded(As::SparseMatrixCSC)
 
-    Ab = BandedMatrix(Zeros{eltype(As)}(size(As)),bandwidths(As))
-    sparsetobanded!(Ab,As)
-    return Ab
-end
-
-
-"""
-    sparsetobanded!(Ab::BandedMatrix,As::SparseMatrixCSC)
-
-Converts sparse matrix As to a banded matrix Ab. Overwrites Ab with the output.
-The bandwidth of Ab must be greater or equal to the bandwidth of As. Out of band
-values of As are SILENTLY DROPPED. 
-
-# Examples
-```jldoctest
-As = sparse([1,2,1], [1,2,2], [1,2+0im,1])
-Ab = BandedMatrix(Zeros{eltype(As)}(size(As)),(1,1))
-JosephsonCircuits.sparsetobanded!(Ab,As)
-all(Ab .== BandedMatrix(As))
-
-# output
-true
-```
-"""
-function sparsetobanded!(Ab::BandedMatrix,As::SparseMatrixCSC)
-    @inbounds for i = 1:length(As.colptr)-1
-        for j in As.colptr[i]:(As.colptr[i+1]-1)
-#             println(As.rowval[j]," ",i," ",As.nzval[j])
-            BandedMatrices.inbands_setindex!(Ab, As.nzval[j], As.rowval[j],i)
-        end
-    end
-end
+#     Ab = BandedMatrix(Zeros{eltype(As)}(size(As)),bandwidths(As))
+#     sparsetobanded!(Ab,As)
+#     return Ab
+# end
 
 
-"""
-  bandedsparseadd!(Ab::BandedMatrix,As::SparseMatrixCSC)
+# """
+#     sparsetobanded!(Ab::BandedMatrix,As::SparseMatrixCSC)
 
-Overwrite banded matrix Ab with the sum of Ab and a sparse matrix As. The
-bandwidth of Ab must be greater or equal to the bandwidth of As. Out of band
-values of As are SILENTLY DROPPED.
+# Converts sparse matrix As to a banded matrix Ab. Overwrites Ab with the output.
+# The bandwidth of Ab must be greater or equal to the bandwidth of As. Out of band
+# values of As are SILENTLY DROPPED. 
 
-# Examples
-```jldoctest
-Ab = BandedMatrix(0 => [5,2])
-As = sparse([1,2], [1,2], [1,2])
-JosephsonCircuits.bandedsparseadd!(Ab,As)
-Ab
+# # Examples
+# ```jldoctest
+# As = sparse([1,2,1], [1,2,2], [1,2+0im,1])
+# Ab = BandedMatrix(Zeros{eltype(As)}(size(As)),(1,1))
+# JosephsonCircuits.sparsetobanded!(Ab,As)
+# all(Ab .== BandedMatrix(As))
 
-# output
-2×2 BandedMatrix{Int64} with bandwidths (0, 0):
- 6  ⋅
- ⋅  4
-```
-"""
-function bandedsparseadd!(Ab::BandedMatrix,As::SparseMatrixCSC)
-    @inbounds for i = 1:length(As.colptr)-1
-        for j in As.colptr[i]:(As.colptr[i+1]-1)
-#             println(As.rowval[j]," ",i," ",As.nzval[j])
-            BandedMatrices.inbands_setindex!(
-                Ab,
-                As.nzval[j] + BandedMatrices.inbands_getindex(Ab, As.rowval[j],i), 
-                As.rowval[j],
-                i,
-            )
-        end
-    end
-end
-
-"""
-  bandedsparseadd!(Ab::BandedMatrix,c::Number,As::SparseMatrixCSC)
-
-Overwrite banded matrix Ab with the sum of Ab and a constant c times a sparse
-matrix As. The bandwidth of Ab must be greater or equal to the bandwidth of 
-As. Out of band values of As are SILENTLY DROPPED.
-
-# Examples
-```jldoctest
-Ab = BandedMatrix(0 => [5,2])
-As = sparse([1,2], [1,2], [1,2])
-JosephsonCircuits.bandedsparseadd!(Ab,2,As)
-Ab
-
-# output
-2×2 BandedMatrix{Int64} with bandwidths (0, 0):
- 7  ⋅
- ⋅  6
-```
-"""
-function bandedsparseadd!(Ab::BandedMatrix,c::Number,As::SparseMatrixCSC)
-    @inbounds for i = 1:length(As.colptr)-1
-        for j in As.colptr[i]:(As.colptr[i+1]-1)
-#             println(As.rowval[j]," ",i," ",As.nzval[j])
-            BandedMatrices.inbands_setindex!(
-                Ab,
-                c*As.nzval[j] + BandedMatrices.inbands_getindex(Ab, As.rowval[j],i), 
-                As.rowval[j],
-                i,
-            )
-        end
-    end
-end
+# # output
+# true
+# ```
+# """
+# function sparsetobanded!(Ab::BandedMatrix,As::SparseMatrixCSC)
+#     @inbounds for i = 1:length(As.colptr)-1
+#         for j in As.colptr[i]:(As.colptr[i+1]-1)
+# #             println(As.rowval[j]," ",i," ",As.nzval[j])
+#             BandedMatrices.inbands_setindex!(Ab, As.nzval[j], As.rowval[j],i)
+#         end
+#     end
+# end
 
 
-"""
-  bandedsparseadd!(Ab::BandedMatrix,c::Number,As::SparseMatrixCSC,Ad::Diagonal)
+# """
+#   bandedsparseadd!(Ab::BandedMatrix,As::SparseMatrixCSC)
 
-Overwrite banded matrix Ab with the sum of Ab and a constant c times a sparse
-matrix As times a diagonal matrix Ad. The bandwidth of Ab must be greater or 
-equal to the bandwidth of As. Out of band values of As are SILENTLY DROPPED.
+# Overwrite banded matrix Ab with the sum of Ab and a sparse matrix As. The
+# bandwidth of Ab must be greater or equal to the bandwidth of As. Out of band
+# values of As are SILENTLY DROPPED.
 
-# Examples
-```jldoctest
-Ab = BandedMatrix(0 => [5,2],1 => [3],-1 => [-1])
-Ad = Diagonal([1,-2])
-As = sparse([1,2,1], [1,2,2], [1,2,-3])
-JosephsonCircuits.bandedsparseadd!(Ab,2,As,Ad)
-Ab
+# # Examples
+# ```jldoctest
+# Ab = BandedMatrix(0 => [5,2])
+# As = sparse([1,2], [1,2], [1,2])
+# JosephsonCircuits.bandedsparseadd!(Ab,As)
+# Ab
 
-# output
-2×2 BandedMatrix{Int64} with bandwidths (1, 1):
-  7  15
- -1  -6
-```
-"""
-function bandedsparseadd!(Ab::BandedMatrix,c::Number,As::SparseMatrixCSC,Ad::Diagonal)
-    @inbounds for i = 1:length(As.colptr)-1
-        for j in As.colptr[i]:(As.colptr[i+1]-1)
-#             println(As.rowval[j]," ",i," ",As.nzval[j])
-            BandedMatrices.inbands_setindex!(
-                Ab,
-                c*Ad[i,i]*As.nzval[j] + BandedMatrices.inbands_getindex(Ab, As.rowval[j],i), 
-                As.rowval[j],
-                i,
-            )
-        end
-    end
-end
+# # output
+# 2×2 BandedMatrix{Int64} with bandwidths (0, 0):
+#  6  ⋅
+#  ⋅  4
+# ```
+# """
+# function bandedsparseadd!(Ab::BandedMatrix,As::SparseMatrixCSC)
+#     @inbounds for i = 1:length(As.colptr)-1
+#         for j in As.colptr[i]:(As.colptr[i+1]-1)
+# #             println(As.rowval[j]," ",i," ",As.nzval[j])
+#             BandedMatrices.inbands_setindex!(
+#                 Ab,
+#                 As.nzval[j] + BandedMatrices.inbands_getindex(Ab, As.rowval[j],i), 
+#                 As.rowval[j],
+#                 i,
+#             )
+#         end
+#     end
+# end
 
-"""
-  bandedsparseadd!(Ab::BandedMatrix,c::Number,,Ad::Diagonal,As::SparseMatrixCSC)
+# """
+#   bandedsparseadd!(Ab::BandedMatrix,c::Number,As::SparseMatrixCSC)
 
-Overwrite banded matrix Ab with the sum of Ab and a constant c times a sparse
-matrix As times a diagonal matrix Ad. The bandwidth of Ab must be greater or 
-equal to the bandwidth of As. Out of band values of As are SILENTLY DROPPED.
+# Overwrite banded matrix Ab with the sum of Ab and a constant c times a sparse
+# matrix As. The bandwidth of Ab must be greater or equal to the bandwidth of 
+# As. Out of band values of As are SILENTLY DROPPED.
 
-# Examples
-```jldoctest
-Ab = BandedMatrix(0 => [5,2],1 => [3],-1 => [-1])
-Ad = Diagonal([1,-2])
-As = sparse([1,2,1], [1,2,2], [1,2,-3])
-JosephsonCircuits.bandedsparseadd!(Ab,2,Ad,As)
-Ab
+# # Examples
+# ```jldoctest
+# Ab = BandedMatrix(0 => [5,2])
+# As = sparse([1,2], [1,2], [1,2])
+# JosephsonCircuits.bandedsparseadd!(Ab,2,As)
+# Ab
 
-# output
-2×2 BandedMatrix{Int64} with bandwidths (1, 1):
-  7  -3
- -1  -6
-```
-"""
-function bandedsparseadd!(Ab::BandedMatrix,c::Number,Ad::Diagonal,As::SparseMatrixCSC)
-    @inbounds for i = 1:length(As.colptr)-1
-        for j in As.colptr[i]:(As.colptr[i+1]-1)
-#             println(As.rowval[j]," ",i," ",As.nzval[j])
-            BandedMatrices.inbands_setindex!(
-                Ab,
-                c*Ad[As.rowval[j],As.rowval[j]]*As.nzval[j] + BandedMatrices.inbands_getindex(Ab, As.rowval[j],i), 
-                As.rowval[j],
-                i,
-            )
-        end
-    end
-end
+# # output
+# 2×2 BandedMatrix{Int64} with bandwidths (0, 0):
+#  7  ⋅
+#  ⋅  6
+# ```
+# """
+# function bandedsparseadd!(Ab::BandedMatrix,c::Number,As::SparseMatrixCSC)
+#     @inbounds for i = 1:length(As.colptr)-1
+#         for j in As.colptr[i]:(As.colptr[i+1]-1)
+# #             println(As.rowval[j]," ",i," ",As.nzval[j])
+#             BandedMatrices.inbands_setindex!(
+#                 Ab,
+#                 c*As.nzval[j] + BandedMatrices.inbands_getindex(Ab, As.rowval[j],i), 
+#                 As.rowval[j],
+#                 i,
+#             )
+#         end
+#     end
+# end
 
 
+# """
+#   bandedsparseadd!(Ab::BandedMatrix,c::Number,As::SparseMatrixCSC,Ad::Diagonal)
 
-function calcbandwidths(AoLjn,invLn,Cn,Gn)
+# Overwrite banded matrix Ab with the sum of Ab and a constant c times a sparse
+# matrix As times a diagonal matrix Ad. The bandwidth of Ab must be greater or 
+# equal to the bandwidth of As. Out of band values of As are SILENTLY DROPPED.
 
-    bwvals = [bandwidths(AoLjn),bandwidths(invLn),bandwidths(Gn),bandwidths(Cn)]
-    nnzvals = [nnz(AoLjn),nnz(invLn),nnz(Gn),nnz(Cn)]
-    lb = 0;ub = 0
-    for i = 1:length(bwvals)
-        bw = bwvals[i]
-        if nnzvals[i] > 0
-            if bw[1] > lb
-                lb = bw[1]
-            end
-            if bw[2] > ub
-                ub = bw[2]
-            end
-        end
-    end
+# # Examples
+# ```jldoctest
+# Ab = BandedMatrix(0 => [5,2],1 => [3],-1 => [-1])
+# Ad = Diagonal([1,-2])
+# As = sparse([1,2,1], [1,2,2], [1,2,-3])
+# JosephsonCircuits.bandedsparseadd!(Ab,2,As,Ad)
+# Ab
 
-    return (lb,ub)
-end
+# # output
+# 2×2 BandedMatrix{Int64} with bandwidths (1, 1):
+#   7  15
+#  -1  -6
+# ```
+# """
+# function bandedsparseadd!(Ab::BandedMatrix,c::Number,As::SparseMatrixCSC,Ad::Diagonal)
+#     @inbounds for i = 1:length(As.colptr)-1
+#         for j in As.colptr[i]:(As.colptr[i+1]-1)
+# #             println(As.rowval[j]," ",i," ",As.nzval[j])
+#             BandedMatrices.inbands_setindex!(
+#                 Ab,
+#                 c*Ad[i,i]*As.nzval[j] + BandedMatrices.inbands_getindex(Ab, As.rowval[j],i), 
+#                 As.rowval[j],
+#                 i,
+#             )
+#         end
+#     end
+# end
+
+# """
+#   bandedsparseadd!(Ab::BandedMatrix,c::Number,,Ad::Diagonal,As::SparseMatrixCSC)
+
+# Overwrite banded matrix Ab with the sum of Ab and a constant c times a sparse
+# matrix As times a diagonal matrix Ad. The bandwidth of Ab must be greater or 
+# equal to the bandwidth of As. Out of band values of As are SILENTLY DROPPED.
+
+# # Examples
+# ```jldoctest
+# Ab = BandedMatrix(0 => [5,2],1 => [3],-1 => [-1])
+# Ad = Diagonal([1,-2])
+# As = sparse([1,2,1], [1,2,2], [1,2,-3])
+# JosephsonCircuits.bandedsparseadd!(Ab,2,Ad,As)
+# Ab
+
+# # output
+# 2×2 BandedMatrix{Int64} with bandwidths (1, 1):
+#   7  -3
+#  -1  -6
+# ```
+# """
+# function bandedsparseadd!(Ab::BandedMatrix,c::Number,Ad::Diagonal,As::SparseMatrixCSC)
+#     @inbounds for i = 1:length(As.colptr)-1
+#         for j in As.colptr[i]:(As.colptr[i+1]-1)
+# #             println(As.rowval[j]," ",i," ",As.nzval[j])
+#             BandedMatrices.inbands_setindex!(
+#                 Ab,
+#                 c*Ad[As.rowval[j],As.rowval[j]]*As.nzval[j] + BandedMatrices.inbands_getindex(Ab, As.rowval[j],i), 
+#                 As.rowval[j],
+#                 i,
+#             )
+#         end
+#     end
+# end
+
+
+
+# function calcbandwidths(AoLjn,invLn,Cn,Gn)
+
+#     bwvals = [bandwidths(AoLjn),bandwidths(invLn),bandwidths(Gn),bandwidths(Cn)]
+#     nnzvals = [nnz(AoLjn),nnz(invLn),nnz(Gn),nnz(Cn)]
+#     lb = 0;ub = 0
+#     for i = 1:length(bwvals)
+#         bw = bwvals[i]
+#         if nnzvals[i] > 0
+#             if bw[1] > lb
+#                 lb = bw[1]
+#             end
+#             if bw[2] > ub
+#                 ub = bw[2]
+#             end
+#         end
+#     end
+
+#     return (lb,ub)
+# end
 

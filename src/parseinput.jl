@@ -1248,13 +1248,13 @@ println(JosephsonCircuits.substitute.(out,(Dict(w=>11),)))
 [50, 50]
 ```
 """
+# function valuevectortonumber(@nospecialize(valuevector),circuitdefs::Dict)
 function valuevectortonumber(valuevector::Vector,circuitdefs::Dict)
-    # this calls collect()
-    return [valuetonumber(v,circuitdefs) for v in valuevector]
-
+    # return [valuetonumber(v,circuitdefs) for v in valuevector]
+    return map(valuetonumber,valuevector,Base.Iterators.repeated(circuitdefs,length(valuevector)))
 end
 
-"""
+"""s
     valuetonumber(value::Symbol,circuitdefs)
 
 If the component value is a symbol, assume it is a dictionary key.

@@ -16,11 +16,12 @@ function hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports
     cg = calccircuitgraph(psc)
 
     # solve the nonlinear system    
-    pump=hbnlsolve(wp,Ip,Npumpmodes,psc,cg,circuitdefs,ports=pumpports,
+    @time pump=hbnlsolve(wp,Ip,Npumpmodes,psc,cg,circuitdefs,ports=pumpports,
         solver=solver,iterations=iterations, symfreqvar=symfreqvar)
 
     # the node flux
-    phin = pump.out.zero
+    # phin = pump.out.zero
+    phin = pump.phin    
 
     # convert from node flux to branch flux
     phib = pump.Rbnm*phin
@@ -122,6 +123,8 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     voltages = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
     # phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes,length(w))
+    QE = zeros(Float64,Nports*Nmodes,Nports*Nmodes,length(w))
+    CM = zeros(Float64,Nports*Nmodes,length(w))
 
     # as a test don't save voltages and node fluxes
     # voltages = Vector{Complex{Float64}}(undef,0)
@@ -160,6 +163,8 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # times and let FLoops decide how many threads to spawn and schedule.
     # nbatches will put a cap on the number of threads.
 
+    resistornoiseportskeys =  collect(keys(resistornoiseports))
+    resistornoiseportsvalues = collect(values(resistornoiseports))
 
     # conj!(AoLjnm.nzval)
 
@@ -169,10 +174,11 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     ### single threaded
     if nbatches == 1
 
-        hblinsolve_inner!(S,voltages,Asparse,AoLjnm,invLnm,
+        hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,invLnm,
                 Cnm,Gnm,bnm,AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
                 Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
                 capacitornoiseports,resistornoiseports,
+                resistornoiseportskeys,resistornoiseportsvalues,
                 capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
                 portdict,resistordict,w,indices,wp,Nports,Nmodes,Nnodes,solver,
                 symfreqvar,1:length(w))
@@ -189,11 +195,12 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
         ### parallel using native threading
         @sync for wi in Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
-            Base.Threads.@spawn hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
+            Base.Threads.@spawn hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
                 invLnm,Cnm,Gnm,bnm,
                 AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
                 Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
                 capacitornoiseports,resistornoiseports,
+                resistornoiseportskeys,resistornoiseportsvalues,
                 capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
                 portdict,resistordict,w,indices,wp,Nports,Nmodes,Nnodes,solver,
                 symfreqvar,wi)
@@ -201,12 +208,18 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     end
 
-    return LinearHB(S, Nmodes,voltages,phin,Nnodes,Nbranches,signalindex,w)
+    QEideal =  1 ./(2 .- 1 ./abs2.(S))
+
+
+    return LinearHB(S,QE,QEideal,CM,Nmodes,voltages,phin,Nnodes,Nbranches,signalindex,w)
 
 end
 
 struct LinearHB
     S
+    QE
+    QEideal
+    CM
     Nmodes
     v
     phin
@@ -217,11 +230,12 @@ struct LinearHB
 end
 
 
-function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
+function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
     invLnm,Cnm,Gnm,bnm,
     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
     capacitornoiseports,resistornoiseports,
+    resistornoiseportskeys,resistornoiseportsvalues,
     capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
     portdict,resistordict,w,indices,wp,
     Nports,Nmodes,Nnodes,solver,
@@ -233,11 +247,11 @@ function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
     phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
 
     # for noise experiments
-    Nports2 = length(resistornoiseports)
-    phibports2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    input2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    output2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    Snoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    # Nports2 = length(resistornoiseports)
+    # phibports2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    # input2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    # output2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    # Snoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
 
     # operate on a copy of Asparse because it may be modified by multiple threads
     # at the same time. 
@@ -246,9 +260,8 @@ function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
     #if banded=true, then calculate the bandwidths and convert the matrices to 
     # banded matrices. 
     if solver == :banded
-        # (lb,ub) = calcbandwidths(AoLjnm,m.invLnm,m.Cnm,m.Gnm)
-        (lb,ub) = calcbandwidths(AoLjnm,invLnm,Cnm,Gnm)
-        Abanded = BandedMatrix(AoLjnm,(lb,ub))
+        # (lb,ub) = calcbandwidths(AoLjnm,invLnm,Cnm,Gnm)
+        # Abanded = BandedMatrix(AoLjnm,(lb,ub))
 
     elseif solver ==:klu
         # if using the KLU factorization and sparse solver then make a 
@@ -282,15 +295,14 @@ function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
         sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
             wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
 
-
         # solve the linear system
         if solver == :banded
 
-            fill!(Abanded,0)
-            sparsetobanded!(Abanded,Asparsecopy)
+            # fill!(Abanded,0)
+            # sparsetobanded!(Abanded,Asparsecopy)
 
-            # # phin = A \ bnm
-            ldiv!(phin,Abanded,bnm)
+            # # # phin = A \ bnm
+            # ldiv!(phin,Abanded,bnm)
         elseif solver == :klu
             # update the factorization. the sparsity structure does not change
             # so we can reuse the factorization object.
@@ -309,13 +321,14 @@ function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
         voltages[:,:,i] = im*wmodesm*phin
 
         # calculate the branch fluxes
-        calcphibports!(phibports,phin,portdict,Nmodes)
+        calcbranchvalues!(phibports,phin,keys(portdict),Nmodes)
+        # calcphibports!(phibports2,phin,resistornoiseportskeys,Nmodes)
+
 
         # calculate the input and output voltage waves at each port
         # calcinput!(input,1.0,phibports,resistordict,wmodes,symfreqvar)
         calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
-        calcoutput!(output,phibports,resistordict,wmodes,symfreqvar)
-
+        calcoutput!(output,phibports,values(resistordict),wmodes,symfreqvar)
 
         # println(size(input))
         # println(length(resistordict))
@@ -325,127 +338,48 @@ function hblinsolve_inner!(S,voltages,Asparse,AoLjnm,
 
         # for noise. this is fairly similar to what i need except i need to
         # # invert, take imaginary part, and multiply capacitors by w^2. 
-        calcphibports!(phibports2,phin,resistornoiseports,Nmodes)
-        calcoutput!(output2,phibports2,resistornoiseports,wmodes,symfreqvar)
-        calcphibthevenin!(input2,bnm,resistornoiseports,wmodes,symfreqvar)
 
-        println(size(input))
-        println(size(output2))
-        println(size(((output2 .- input2) / input)))
+        # println(typeof(phibports2))
+        # println(typeof(phin))
+        # println(typeof(resistornoiseports))
+        # error("")
+        # println(length(resistornoiseports))
+        # @time calcphibports!(phibports2,phin,resistornoiseports,Nmodes)
+
+        # calcphibports!(phibports2,phin,resistornoiseports,Nmodes)
+
+        # println(typeof(key))
+        # println(typeof(vals))
+        # println(typeof(phibports2))
+        # println(typeof(Nmodes))
+        # calcbranchvalues!(phibports2,phin,resistornoiseportskeys,Nmodes)
+        # calcoutput!(output2,phibports2,resistornoiseportsvalues,wmodes,symfreqvar)
+
+        # @time calcoutput!(output2,phibports2,resistornoiseports,wmodes,symfreqvar)
+        # calcphibthevenin!(input2,bnm,resistornoiseports,wmodes,symfreqvar)
+
+        # println(size(input))
+        # println(size(output2))
+        # i'm not sure if i need to subtract input2.
+        # println(size(((output2 .- input2) / input)))
         # println(size(Snoise))
         # calcS!(Snoise,input2,output2)
 
 
+        # i'm not sure if i need to subtract off input2
+        # Snoise .= (output2 .- input2) / input
+        # Snoise .= output2 / input
+
         # calculate the scattering parameters
         calcS!(view(S,:,:,i),input,output)
+
+        calcqe!(view(QE,:,:,i),view(S,:,:,i))
+
+        calccm!(view(CM,:,i),view(S,:,:,i), wmodes)
+
     end
     return nothing
 end
-
-
-function hblinsolve_noise_inner!(Snoise,voltages,Asparse,AoLjnm,
-    invLnm,Cnm,Gnm,bnm,
-    AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-    Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-    capacitornoiseports,resistornoiseports,
-    capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
-    portdict,resistordict,w,indices,wp,
-    Nports,Nmodes,Nnodes,solver,
-    symfreqvar,wi)
-
-    input = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
-    output = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-    phibports = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-    phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
-
-    # operate on a copy of Asparse because it may be modified by multiple threads
-    # at the same time. 
-    Asparsecopy = copy(Asparse)
-
-
-    #if banded=true, then calculate the bandwidths and convert the matrices to 
-    # banded matrices. 
-    if solver == :banded
-        # (lb,ub) = calcbandwidths(AoLjnm,m.invLnm,m.Cnm,m.Gnm)
-        (lb,ub) = calcbandwidths(AoLjnm,invLnm,Cnm,Gnm)
-        Abanded = BandedMatrix(AoLjnm,(lb,ub))
-
-    elseif solver ==:klu
-        # if using the KLU factorization and sparse solver then make a 
-        # factorization for the sparsity pattern. 
-        F = KLU.klu(Asparsecopy)
-    else
-        error("Error: Unknown solver")
-    end
-
-    for i in wi
-
-        ws = w[i]
-        wmodes = calcw(ws,indices,wp);
-        wmodesm = Diagonal(repeat(wmodes,outer=Nnodes-1));
-        wmodes2m = Diagonal(repeat(wmodes.^2,outer=Nnodes-1));
-
-        # perform the operation below in a way that doesn't allocate significant
-        # memory, plus take the conjugates mentioned below. 
-        # A = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
-
-        fill!(Asparsecopy.nzval,zero(eltype(Asparsecopy.nzval)))
-        sparseadd!(Asparsecopy,1,AoLjnm,AoLjnmindexmap)
-
-        # take the complex conjugate of the negative frequency terms in
-        # the capacitance and conductance matrices. substitute in the symbolic
-        # frequency variable if present. 
-        sparseaddconjsubst!(Asparsecopy,-1,Cnm,wmodes2m,Cnmindexmap,
-            wmodesm .< 0,wmodesm,Cnmfreqsubstindices,symfreqvar)
-        sparseaddconjsubst!(Asparsecopy,im,Gnm,wmodesm,Gnmindexmap,
-            wmodesm .< 0,wmodesm,Gnmfreqsubstindices,symfreqvar)
-        sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
-            wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
-
-
-        # solve the linear system
-        if solver == :banded
-
-            fill!(Abanded,0)
-            sparsetobanded!(Abanded,Asparsecopy)
-
-            # # phin = A \ bnm
-            ldiv!(phin,Abanded,bnm)
-        elseif solver == :klu
-            # update the factorization. the sparsity structure does not change
-            # so we can reuse the factorization object.
-            KLU.klu!(F,Asparsecopy)
-
-            # solve the linear system
-            # phin = klu(A) \ bnm
-            ldiv!(phin,F,bnm)
-        else
-            error("Error: Unknown solver")
-        end
-
-        # convert to node voltages. node flux is defined as the time integral of 
-        # node voltage so node voltage is derivative of node flux which can be
-        # accomplished in the frequency domain by multiplying by j*w.
-        voltages[:,:,i] = im*wmodesm*phin
-
-        # calculate the branch fluxes
-        calcphibports!(phibports,phin,portdict,Nmodes)
-
-        # it seems weird i am defining Ip here. i should be taking it from
-        # bbm. 
-
-        # calculate the input and output voltage waves at each port
-        # calcinput!(input,1.0,phibports,resistordict,wmodes,symfreqvar)
-        # calcoutput!(output,phibports,resistordict,wmodes,symfreqvar)
-
-        # calculate the scattering parameters
-        # calcS!(view(Snoise,:,:,i),input,output)
-    end
-    return nothing
-end
-
-
-
 
 """
     hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs)
@@ -572,13 +506,13 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     # calculate the structure of the Jacobian, depending on the solver type
     if solver == :banded
-        (lb,ub) = calcbandwidths(AoLjnm,invLnm,Cnm,Gnm)
-        Jbanded = BandedMatrix(Jsparse,(lb,ub))
+        # (lb,ub) = calcbandwidths(AoLjnm,invLnm,Cnm,Gnm)
+        # Jbanded = BandedMatrix(Jsparse,(lb,ub))
 
-        odbanded = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse!),x,F,Jbanded)
+        # odbanded = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse!),x,F,Jbanded)
 
-        # use the default solver for banded matrices
-        out=NLsolve.nlsolve(odbanded,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->ldiv!(x,A,b))
+        # # use the default solver for banded matrices
+        # out=NLsolve.nlsolve(odbanded,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->ldiv!(x,A,b))
 
     elseif solver == :klu
 
@@ -590,7 +524,9 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
         # if the sparsity structure doesn't change, we can cache the 
         # factorization. this is a significant speed improvement.
-        out=NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
+        # out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
+        out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
+
     else
         error("Error: Unknown solver")
     end
@@ -600,6 +536,86 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
         guess at the solution vector, increase the number of pump harmonics, or
         increase the number of iterations.")
     end
+
+    phin = out.zero
+
+
+    # # perform a factorization. this will be updated later for each 
+    # # interation
+    # FK = KLU.klu(Jsparse)
+
+    # xtmp = copy(x)
+
+    # #perform Newton's method
+    # for n = 1:iterations
+    #     #update the residual and Jacobian
+    #     # calcfj!(F,J,x,wi,Lj,LCw2,Vsource,Zsource,msource,A)
+    #     # FJsparse!(F,Jsparse,x)
+
+    #     xold = copy(x)
+
+    #     calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+    #     Ljb,Ljbm,Nmodes,
+    #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
+    #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+
+    #     KLU.klu!(FK,Jsparse)
+
+    #         # # solve the linear system
+    #         # # phin = klu(A) \ bnm
+    #         # ldiv!(phin,F,bnm)
+    #     ldiv!(xtmp,FK,F)
+    #     x .-= xtmp
+
+    #     normF1 = norm(F)
+
+    #     # println("n: ",n, " norm(F): ", norm(F))
+    #     calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+    #     Ljb,Ljbm,Nmodes,
+    #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
+    #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
+    #     # println("n: ",n, " norm(F): ", norm(F))
+    #     normF2 = norm(F)
+
+    #     if normF2 > normF1
+    #         # println("n: ",n," taking a half step back")
+    #         x .+= 0.5*xtmp
+
+    #         calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+    #         Ljb,Ljbm,Nmodes,
+    #         Nbranches,Lmean,AoLjbmvector,AoLjbm,
+    #         AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
+    #         # println("n: ",n, " norm(F): ", norm(F))
+    #         normF2 = norm(F)
+
+    #         if normF2 > normF1
+    #             # println("n: ",n," taking a half step back")
+    #             x .+= 0.4*xtmp
+
+    #             calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+    #             Ljb,Ljbm,Nmodes,
+    #             Nbranches,Lmean,AoLjbmvector,AoLjbm,
+    #             AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
+    #             # println("n: ",n, " norm(F): ", norm(F))
+    #             normF2 = norm(F)
+
+    #             if normF2 > normF1
+    #                 # println("n: ",n," taking a half step back")
+    #                 x .+= 0.05*xtmp
+    #             end
+
+    #         end
+    #     end
+    #     # if norm(F)/norm(x) < 1e-8
+    #     if norm(F) < 1e-8
+    #         println("converged to: ",norm(F)," after ",n," iterations")
+    #         println("norm(phi): ",norm(x))
+    #         break
+    #     end
+    # end
+    # phin = x
+    # out = nothing
+
 
     # calculate the scattering parameters for the pump
     # Nports = length(cdict[:P])
@@ -612,12 +628,12 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     phibports = zeros(Complex{Float64},Nports*Nmodes)
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
-    phin = out.zero
+
 
     # calculate the branch fluxes at the ports
-    calcphibports!(phibports,phin,portdict,Nmodes)
+    calcbranchvalues!(phibports,phin,keys(portdict),Nmodes)
     # calculate the branch flux in ladder operator units
-    calcoutput!(output,phibports,resistordict,wmodes,symfreqvar)
+    calcoutput!(output,phibports,values(resistordict),wmodes,symfreqvar)
 
     # calculate the input and output voltage waves at each port
     # calcinput!(input,Ip/phi0,phibports,resistordict,wmodes,symfreqvar)
@@ -720,19 +736,19 @@ function calcfj!(F,
 
         # if isbanded(J)
 
-        if typeof(J) == BandedMatrix{ComplexF64, Matrix{ComplexF64}, Base.OneTo{Int64}}
+        # if typeof(J) == BandedMatrix{ComplexF64, Matrix{ComplexF64}, Base.OneTo{Int64}}
 
-            # calculate the Jacobian. Convert to a banded matrix if J is banded. 
-            # J .= BandedMatrix(AoLjnm + invLnm - im*Gnm*wmodesm - Cnm*wmodes2m)
-            # the code below converts the sparse matrices into banded matrices
-            # with minimal memory allocations. this is a significant speed
-            # improvement. 
-            fill!(J,0)
-            sparsetobanded!(J,AoLjnm)
-            bandedsparseadd!(J,invLnm)
-            bandedsparseadd!(J,im,Gnm,wmodesm)
-            bandedsparseadd!(J,-1,Cnm,wmodes2m)
-        else
+        #     # calculate the Jacobian. Convert to a banded matrix if J is banded. 
+        #     # J .= BandedMatrix(AoLjnm + invLnm - im*Gnm*wmodesm - Cnm*wmodes2m)
+        #     # the code below converts the sparse matrices into banded matrices
+        #     # with minimal memory allocations. this is a significant speed
+        #     # improvement. 
+        #     fill!(J,0)
+        #     sparsetobanded!(J,AoLjnm)
+        #     bandedsparseadd!(J,invLnm)
+        #     bandedsparseadd!(J,im,Gnm,wmodesm)
+        #     bandedsparseadd!(J,-1,Cnm,wmodes2m)
+        # else
             # calculate the Jacobian. If J is sparse, keep it sparse. 
             # @time J .= AoLjnm .+ invLnm .- im.*Gnm*wmodesm .- Cnm*wmodes2m
             # the code below adds the sparse matrices together with minimal
@@ -742,7 +758,7 @@ function calcfj!(F,
             sparseadd!(J,invLnm,invLnmindexmap)
             sparseadd!(J,im,Gnm,wmodesm,Gnmindexmap)
             sparseadd!(J,-1,Cnm,wmodes2m,Cnmindexmap)
-        end
+        # end
     end
     return nothing
 end

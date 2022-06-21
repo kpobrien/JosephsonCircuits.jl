@@ -8,14 +8,16 @@ import Statistics
 import NLsolve
 import KLU
 import UUIDs
-import SymbolicUtils: @syms, substitute, Symbolic
-import OrderedCollections: OrderedDict
+import SymbolicUtils: @syms, substitute, Symbolic, Sym
+# import OrderedCollections: OrderedDict
 
+# using SymbolicUtils
+using OrderedCollections
 using LinearAlgebra
 using SparseArrays
 using Printf
 using Requires
-using BandedMatrices
+# using BandedMatrices
 
 # define the zero for symbolic numbers so that we can view the sparse arrays
 Base.zero(::Type{Symbolic{Number}}) = 0
@@ -87,7 +89,7 @@ include("spiceraw.jl")
 include("touchstone.jl")
 
 # Precompile directives to improve time to first use. 
-# include("precompile.jl")
+include("precompile.jl")
 
 
 """
@@ -206,6 +208,145 @@ function warmupsyms()
     return hbsolve(2*pi*(4.5:0.1:5.0)*1e9,2*pi*4.75001*1e9,0.00565e-6,8,8,circuit,circuitdefs,pumpports=[1],solver=:klu);
 
 end
+
+function warmupparse()
+
+    @syms Ipump Rleft Cc Lj Cj
+
+    # define the circuit components
+    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+
+    # port on the left side
+    push!(circuit,("P1","1","0",1))
+    push!(circuit,("I1","1","0",Ipump))
+    push!(circuit,("R1","1","0",Rleft))
+
+    push!(circuit,("C1","1","2",Cc)) 
+    push!(circuit,("Lj1","2","0",Lj)) 
+    push!(circuit,("C2","2","0",Cj))
+
+    circuitdefs = Dict(
+        Lj =>1000.0e-12,
+        Cc => 100.0e-15,
+        Cj => 1000.0e-15,
+        Rleft => 50.0,
+        Ipump => 1.0e-8,
+    )
+
+    return parsecircuit(circuit)
+end
+
+function warmupparsesort()
+
+    @syms Ipump Rleft Cc Lj Cj
+
+    # define the circuit components
+    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+
+    # port on the left side
+    push!(circuit,("P1","1","0",1))
+    push!(circuit,("I1","1","0",Ipump))
+    push!(circuit,("R1","1","0",Rleft))
+
+    push!(circuit,("C1","1","2",Cc)) 
+    push!(circuit,("Lj1","2","0",Lj)) 
+    push!(circuit,("C2","2","0",Cj))
+
+    circuitdefs = Dict(
+        Lj =>1000.0e-12,
+        Cc => 100.0e-15,
+        Cj => 1000.0e-15,
+        Rleft => 50.0,
+        Ipump => 1.0e-8,
+    )
+
+    return parsesortcircuit(circuit)
+end
+
+function warmupnumericmatrices()
+
+    @syms Ipump Rleft Cc Lj Cj
+
+    # define the circuit components
+    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+
+    # port on the left side
+    push!(circuit,("P1","1","0",1))
+    push!(circuit,("I1","1","0",Ipump))
+    push!(circuit,("R1","1","0",Rleft))
+
+    push!(circuit,("C1","1","2",Cc)) 
+    push!(circuit,("Lj1","2","0",Lj)) 
+    push!(circuit,("C2","2","0",Cj))
+
+    circuitdefs = Dict(
+        Lj =>1000.0e-12,
+        Cc => 100.0e-15,
+        Cj => 1000.0e-15,
+        Rleft => 50.0,
+        Ipump => 1.0e-8,
+    )
+
+    return numericmatrices(circuit,circuitdefs)
+end
+
+function warmuphblinsolve()
+
+    @syms Ipump Rleft Cc Lj Cj
+
+    # define the circuit components
+    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+
+    # port on the left side
+    push!(circuit,("P1","1","0",1))
+    push!(circuit,("I1","1","0",Ipump))
+    push!(circuit,("R1","1","0",Rleft))
+
+    push!(circuit,("C1","1","2",Cc)) 
+    push!(circuit,("Lj1","2","0",Lj)) 
+    push!(circuit,("C2","2","0",Cj))
+
+    circuitdefs = Dict(
+        Lj =>1000.0e-12,
+        Cc => 100.0e-15,
+        Cj => 1000.0e-15,
+        Rleft => 50.0,
+        Ipump => 1.0e-8,
+    )
+
+    return hblinsolve(2*pi*(4.5:0.001:5.0)*1e9,circuit,circuitdefs,Nmodes=1)
+end
+
+function warmupvvn()
+
+    @syms Ipump Rleft Cc Lj Cj
+
+    # define the circuit components
+    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+
+    # port on the left side
+    push!(circuit,("P1","1","0",1))
+    push!(circuit,("I1","1","0",Ipump))
+    push!(circuit,("R1","1","0",Rleft))
+
+    push!(circuit,("C1","1","2",Cc)) 
+    push!(circuit,("Lj1","2","0",Lj)) 
+    push!(circuit,("C2","2","0",Cj))
+
+    circuitdefs = Dict(
+        Lj =>1000.0e-12,
+        Cc => 100.0e-15,
+        Cj => 1000.0e-15,
+        Rleft => 50.0,
+        Ipump => 1.0e-8,
+    )
+
+    psc = parsesortcircuit(circuit,sorting=:number)
+
+
+    return valuevectortonumber(psc.valuevector,circuitdefs)
+end
+
 
 export @syms, hbnlsolve, hblinsolve, hbsolve, hbsolve2, hbnlsolve2, parsecircuit,
     parsesortcircuit, calccircuitgraph, symbolicmatrices, numericmatrices,
