@@ -496,125 +496,125 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     Cnmindexmap = sparseaddmap(Jsparse,Cnm)
 
 
-    function FJsparse!(F,J,x)
-        calcfj!(F,J,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        Ljb,Ljbm,Nmodes,
-        Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
-        return F,J
-    end
-
-    # calculate the structure of the Jacobian, depending on the solver type
-    if solver == :banded
-        # (lb,ub) = calcbandwidths(AoLjnm,invLnm,Cnm,Gnm)
-        # Jbanded = BandedMatrix(Jsparse,(lb,ub))
-
-        # odbanded = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse!),x,F,Jbanded)
-
-        # # use the default solver for banded matrices
-        # out=NLsolve.nlsolve(odbanded,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->ldiv!(x,A,b))
-
-    elseif solver == :klu
-
-        # perform a factorization. this will be updated later for each 
-        # interation
-        FK = KLU.klu(Jsparse)
-
-        odsparse = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse!),x,F,Jsparse)
-
-        # if the sparsity structure doesn't change, we can cache the 
-        # factorization. this is a significant speed improvement.
-        # out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-        out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-
-    else
-        error("Error: Unknown solver")
-    end
-
-    if out.f_converged == false
-        println("Nonlinear solver not converged. You may need to supply a better
-        guess at the solution vector, increase the number of pump harmonics, or
-        increase the number of iterations.")
-    end
-
-    phin = out.zero
-
-
-    # # perform a factorization. this will be updated later for each 
-    # # interation
-    # FK = KLU.klu(Jsparse)
-
-    # xtmp = copy(x)
-
-    # #perform Newton's method
-    # for n = 1:iterations
-    #     #update the residual and Jacobian
-    #     # calcfj!(F,J,x,wi,Lj,LCw2,Vsource,Zsource,msource,A)
-    #     # FJsparse!(F,Jsparse,x)
-
-    #     xold = copy(x)
-
-    #     calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+    # function FJsparse!(F,J,x)
+    #     calcfj!(F,J,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
     #     Ljb,Ljbm,Nmodes,
     #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
     #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
-
-    #     KLU.klu!(FK,Jsparse)
-
-    #         # # solve the linear system
-    #         # # phin = klu(A) \ bnm
-    #         # ldiv!(phin,F,bnm)
-    #     ldiv!(xtmp,FK,F)
-    #     x .-= xtmp
-
-    #     normF1 = norm(F)
-
-    #     # println("n: ",n, " norm(F): ", norm(F))
-    #     calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-    #     Ljb,Ljbm,Nmodes,
-    #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
-    #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
-    #     # println("n: ",n, " norm(F): ", norm(F))
-    #     normF2 = norm(F)
-
-    #     if normF2 > normF1
-    #         # println("n: ",n," taking a half step back")
-    #         x .+= 0.5*xtmp
-
-    #         calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-    #         Ljb,Ljbm,Nmodes,
-    #         Nbranches,Lmean,AoLjbmvector,AoLjbm,
-    #         AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
-    #         # println("n: ",n, " norm(F): ", norm(F))
-    #         normF2 = norm(F)
-
-    #         if normF2 > normF1
-    #             # println("n: ",n," taking a half step back")
-    #             x .+= 0.4*xtmp
-
-    #             calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-    #             Ljb,Ljbm,Nmodes,
-    #             Nbranches,Lmean,AoLjbmvector,AoLjbm,
-    #             AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
-    #             # println("n: ",n, " norm(F): ", norm(F))
-    #             normF2 = norm(F)
-
-    #             if normF2 > normF1
-    #                 # println("n: ",n," taking a half step back")
-    #                 x .+= 0.05*xtmp
-    #             end
-
-    #         end
-    #     end
-    #     # if norm(F)/norm(x) < 1e-8
-    #     if norm(F) < 1e-8
-    #         println("converged to: ",norm(F)," after ",n," iterations")
-    #         println("norm(phi): ",norm(x))
-    #         break
-    #     end
+    #     return F,J
     # end
-    # phin = x
-    # out = nothing
+
+    # # calculate the structure of the Jacobian, depending on the solver type
+    # if solver == :banded
+    #     # (lb,ub) = calcbandwidths(AoLjnm,invLnm,Cnm,Gnm)
+    #     # Jbanded = BandedMatrix(Jsparse,(lb,ub))
+
+    #     # odbanded = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse!),x,F,Jbanded)
+
+    #     # # use the default solver for banded matrices
+    #     # out=NLsolve.nlsolve(odbanded,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->ldiv!(x,A,b))
+
+    # elseif solver == :klu
+
+    #     # perform a factorization. this will be updated later for each 
+    #     # interation
+    #     FK = KLU.klu(Jsparse)
+
+    #     odsparse = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse!),x,F,Jsparse)
+
+    #     # if the sparsity structure doesn't change, we can cache the 
+    #     # factorization. this is a significant speed improvement.
+    #     # out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
+    #     out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
+
+    # else
+    #     error("Error: Unknown solver")
+    # end
+
+    # if out.f_converged == false
+    #     println("Nonlinear solver not converged. You may need to supply a better
+    #     guess at the solution vector, increase the number of pump harmonics, or
+    #     increase the number of iterations.")
+    # end
+
+    # phin = out.zero
+
+
+    # perform a factorization. this will be updated later for each 
+    # interation
+    FK = KLU.klu(Jsparse)
+
+    xtmp = copy(x)
+
+    #perform Newton's method
+    for n = 1:iterations
+        #update the residual and Jacobian
+        # calcfj!(F,J,x,wi,Lj,LCw2,Vsource,Zsource,msource,A)
+        # FJsparse!(F,Jsparse,x)
+
+        xold = copy(x)
+
+        calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        Ljb,Ljbm,Nmodes,
+        Nbranches,Lmean,AoLjbmvector,AoLjbm,
+        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+
+        KLU.klu!(FK,Jsparse)
+
+            # # solve the linear system
+            # # phin = klu(A) \ bnm
+            # ldiv!(phin,F,bnm)
+        ldiv!(xtmp,FK,F)
+        x .-= xtmp
+
+        normF1 = norm(F)
+
+        # println("n: ",n, " norm(F): ", norm(F))
+        calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        Ljb,Ljbm,Nmodes,
+        Nbranches,Lmean,AoLjbmvector,AoLjbm,
+        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
+        # println("n: ",n, " norm(F): ", norm(F))
+        normF2 = norm(F)
+
+        if normF2 > normF1
+            # println("n: ",n," taking a half step back")
+            x .+= 0.5*xtmp
+
+            calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+            Ljb,Ljbm,Nmodes,
+            Nbranches,Lmean,AoLjbmvector,AoLjbm,
+            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
+            # println("n: ",n, " norm(F): ", norm(F))
+            normF2 = norm(F)
+
+            if normF2 > normF1
+                # println("n: ",n," taking a half step back")
+                x .+= 0.4*xtmp
+
+                calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+                Ljb,Ljbm,Nmodes,
+                Nbranches,Lmean,AoLjbmvector,AoLjbm,
+                AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
+                # println("n: ",n, " norm(F): ", norm(F))
+                normF2 = norm(F)
+
+                if normF2 > normF1
+                    # println("n: ",n," taking a half step back")
+                    x .+= 0.05*xtmp
+                end
+
+            end
+        end
+        # if norm(F)/norm(x) < 1e-8
+        if norm(F) < 1e-8
+            println("converged to: ",norm(F)," after ",n," iterations")
+            println("norm(phi): ",norm(x))
+            break
+        end
+    end
+    phin = x
+    out = nothing
 
 
     # calculate the scattering parameters for the pump
