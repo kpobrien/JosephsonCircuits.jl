@@ -67,7 +67,6 @@ precompile(KLU.klu!,(KLU.KLUFactorization{ComplexF64, Int64}, Vector{ComplexF64}
 precompile(KLU.LibKLU.klu_zl_solve,(Ptr{Nothing}, Ptr{Nothing}, Int64, Int64, Matrix{ComplexF64}, Base.RefValue{KLU.LibKLU.klu_l_common_struct}))
 precompile(KLU.LibKLU.klu_zl_refactor,(Vector{Int64}, Vector{Int64}, Vector{ComplexF64}, Ptr{Nothing}, Ptr{Nothing}, Base.RefValue{KLU.LibKLU.klu_l_common_struct}))
 precompile(KLU.LibKLU.klu_zl_factor,(Vector{Int64}, Vector{Int64}, Vector{ComplexF64}, Ptr{Nothing}, Base.RefValue{KLU.LibKLU.klu_l_common_struct}))
-# precompile(KLU.LibKLU.klu_zl_factor,(Vector{Int64}, Vector{Int64}, Vector{ComplexF64}, Ptr{Nothing}, Base.RefValue{KLU.LibKLU.klu_l_common_struct}))
 precompile(KLU.LibKLU.klu_l_analyze,(Int64, Vector{Int64}, Vector{Int64}, Base.RefValue{KLU.LibKLU.klu_l_common_struct}))
 precompile(KLU.LibKLU.klu_zl_solve,(Ptr{Nothing}, Ptr{Nothing}, Int64, Int64, Vector{ComplexF64}, Base.RefValue{KLU.LibKLU.klu_l_common_struct}))
 precompile(KLU.LibKLU.klu_l_free_symbolic,(Base.RefValue{Ptr{KLU.LibKLU.klu_l_symbolic}}, Base.RefValue{KLU.LibKLU.klu_l_common_struct}))

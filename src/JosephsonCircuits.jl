@@ -6,6 +6,8 @@ import Graphs
 import FFTW
 import Statistics
 import NLsolve
+import LineSearches
+
 import KLU
 import UUIDs
 import SymbolicUtils: @syms, substitute, Symbolic, Sym

@@ -6,7 +6,7 @@
 """
 
 function hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports=[1],
-    solver =:klu, iterations=100,symfreqvar=nothing,
+    solver =:klu, iterations=1000,ftol=1e-8,symfreqvar=nothing,
     nbatches = Base.Threads.nthreads(), sorting=:number)
 
     # parse and sort the circuit
@@ -17,7 +17,7 @@ function hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports
 
     # solve the nonlinear system    
     @time pump=hbnlsolve(wp,Ip,Npumpmodes,psc,cg,circuitdefs,ports=pumpports,
-        solver=solver,iterations=iterations, symfreqvar=symfreqvar)
+        solver=solver,iterations=iterations,ftol=ftol,symfreqvar=symfreqvar)
 
     # the node flux
     # phin = pump.out.zero
@@ -304,13 +304,28 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
             # # # phin = A \ bnm
             # ldiv!(phin,Abanded,bnm)
         elseif solver == :klu
-            # update the factorization. the sparsity structure does not change
-            # so we can reuse the factorization object.
-            KLU.klu!(F,Asparsecopy)
 
-            # solve the linear system
-            # phin = klu(A) \ bnm
-            ldiv!(phin,F,bnm)
+            try 
+                # update the factorization. the sparsity structure does not change
+                # so we can reuse the factorization object.
+                KLU.klu!(F,Asparsecopy)
+
+                # solve the linear system
+                # phin = KLU.klu(Asparsecopy) \ bnm
+                
+                ldiv!(phin,F,bnm)
+            catch e
+                if isa(e, SingularException)
+                    # reusing the symbolic factorization can sometimes lead to
+                    # numerical problems. if the first linear solve fails
+                    # try factoring and solving again
+                    F = KLU.klu(Asparsecopy)
+                    ldiv!(phin,F,bnm)z
+                else
+                    throw(e)
+                end
+            end
+
         else
             error("Error: Unknown solver")
         end
@@ -392,7 +407,7 @@ numeric matrices.
 """
 
 function hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs;ports=[1],solver=:klu,
-    iterations=100,symfreqvar=nothing, sorting=:number)
+    iterations=1000,symfreqvar=nothing,ftol=1e-8,sorting=:number)
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit,sorting=sorting)
@@ -401,12 +416,12 @@ function hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs;ports=[1],solver=:klu,
     cg = calccircuitgraph(psc)
 
     return hbnlsolve(wp,Ip,Nmodes,psc,cg,circuitdefs;ports=ports,
-        solver=solver,iterations=iterations,symfreqvar=symfreqvar)
+        solver=solver,iterations=iterations,ftol=ftol,symfreqvar=symfreqvar)
 
 end
 
 function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
-    circuitdefs;ports=[1],solver=:klu,iterations=100,symfreqvar=nothing)
+    circuitdefs;ports=[1],solver=:klu,iterations=1000,ftol = 1e-8,symfreqvar=nothing)
 
 
     # calculate the numeric matrices
@@ -525,7 +540,9 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     #     # if the sparsity structure doesn't change, we can cache the 
     #     # factorization. this is a significant speed improvement.
     #     # out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-    #     out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
+    #    # out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
+    #    out= NLsolve.nlsolve(odsparse,method = :newton,linesearch=LineSearches.BackTracking(),autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
+    #    # out= NLsolve.nlsolve(odsparse,method = :newton,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
 
     # else
     #     error("Error: Unknown solver")
@@ -542,75 +559,136 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     # perform a factorization. this will be updated later for each 
     # interation
-    FK = KLU.klu(Jsparse)
+    factorization = KLU.klu(Jsparse)
 
-    xtmp = copy(x)
+    minusdeltax = copy(x)
 
-    #perform Newton's method
+    Nsamples = 100
+    samples = Float64[]
+    fmin = Float64[]
+    fvals = Float64[]
+    fpvals = Float64[]
+    dfdalphavals = Float64[]
+    alphas = Float64[]
+
+    # perform Newton's method with linesearch based on Nocedal and Wright
+    # chapter 3 section 5. 
     for n = 1:iterations
-        #update the residual and Jacobian
-        # calcfj!(F,J,x,wi,Lj,LCw2,Vsource,Zsource,msource,A)
-        # FJsparse!(F,Jsparse,x)
 
-        xold = copy(x)
-
+        # update the residual function and the Jacobian
         calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
         Ljb,Ljbm,Nmodes,
         Nbranches,Lmean,AoLjbmvector,AoLjbm,
         AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
 
-        KLU.klu!(FK,Jsparse)
+        # solve the linear system
+        try 
+            # update the factorization. the sparsity structure does not change
+            # so we can reuse the factorization object.
+            KLU.klu!(factorization,Jsparse)
 
-            # # solve the linear system
-            # # phin = klu(A) \ bnm
-            # ldiv!(phin,F,bnm)
-        ldiv!(xtmp,FK,F)
-        x .-= xtmp
-
-        normF1 = norm(F)
-
-        # println("n: ",n, " norm(F): ", norm(F))
-        calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        Ljb,Ljbm,Nmodes,
-        Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
-        # println("n: ",n, " norm(F): ", norm(F))
-        normF2 = norm(F)
-
-        if normF2 > normF1
-            # println("n: ",n," taking a half step back")
-            x .+= 0.5*xtmp
-
-            calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-            Ljb,Ljbm,Nmodes,
-            Nbranches,Lmean,AoLjbmvector,AoLjbm,
-            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
-            # println("n: ",n, " norm(F): ", norm(F))
-            normF2 = norm(F)
-
-            if normF2 > normF1
-                # println("n: ",n," taking a half step back")
-                x .+= 0.4*xtmp
-
-                calcfj!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-                Ljb,Ljbm,Nmodes,
-                Nbranches,Lmean,AoLjbmvector,AoLjbm,
-                AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)        
-                # println("n: ",n, " norm(F): ", norm(F))
-                normF2 = norm(F)
-
-                if normF2 > normF1
-                    # println("n: ",n," taking a half step back")
-                    x .+= 0.05*xtmp
-                end
-
+            # solve the linear system            
+            ldiv!(minusdeltax,factorization,F)
+        catch e
+            if isa(e, SingularException)
+                # reusing the symbolic factorization can sometimes lead to
+                # numerical problems. if the first linear solve fails
+                # try factoring and solving again
+                F = KLU.klu(Jsparse)
+                ldiv!(minusdeltax,factorization,F)
+            else
+                throw(e)
             end
         end
+
+        # calculate the objective function and the derivative of the objective
+        # with respect to the scalar variable alpha which parameterizes the
+        # path between the old x and the new x. 
+        # Note: the dot product takes the complex conjugate of the first vector
+        f = real(0.5*dot(F,F))
+        dfdalpha = real(dot(F,-Jsparse*minusdeltax))
+
+        # # evaluate the objective function at Nsample points
+        # for alpha in range(0,1,Nsamples)
+        #     calcfj!(F,nothing,x - alpha*x1,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        #     Ljb,Ljbm,Nmodes,
+        #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
+        #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)    
+        #     push!(samples,real(0.5*dot(F,F)))
+        # end
+
+        # evaluate the function at the trial point
+        calcfj!(F,nothing,x-minusdeltax,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        Ljb,Ljbm,Nmodes,
+        Nbranches,Lmean,AoLjbmvector,AoLjbm,
+        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+
+        fp = real(0.5*dot(F,F))
+
+        # coefficients of the quadratic equation a*alpha^2+b*alpha+c to interpolate
+        # f vs alpha
+        a = -dfdalpha + fp - f
+        b = dfdalpha
+        c = f
+        alpha1 = -b/(2*a)
+        f1fit = -b*b/(4*a) + c
+
+        if f1fit > fp
+            f1fit = fp
+            alpha1 = 1
+        end
+        if alpha1 > 1 || alpha1 <= 0
+            alpha1 = 1
+            f1fit = f
+        end
+
+        # update x
+        x .-= minusdeltax*alpha1
+
+
+
+        # # fit with a cubic. 
+        # alpha1 = alphafit
+        # # evaluate the function at the trial point
+        # calcfj!(F,nothing,x-x1*alpha1,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        #     Ljb,Ljbm,Nmodes,
+        #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
+        #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+
+        # f1 = real(0.5*dot(F,F))
+
+        # denom = (-1+alpha1)*alpha1^2
+        # a = (-alpha1*dfdalpha + f1 - f + alpha1^2*(dfdalpha-fp+f))/denom
+        # b = (alpha1*dfdalpha - f1 + f - alpha1^3*(dfdalpha-fp+f))/denom
+        # c = dfdalpha
+        # d = f
+        # alphafit = real(-b+sqrt(complex(b^2-3*a*c)))/(3*a)
+
+        # println(alphafit)
+        # # println(b^2 - 3*a*c)
+        # # if b^2 - 3*a*c >= 0
+        # #     alphafit = (-b+sqrt(b^2-3*a*c))/(3*a)
+        # #     fminfit = (2*b^3-9*a*b*c-2*b^2*sqrt(b^2-3*a*c)+6*a*c*sqrt(b^2-3*a*c)+27*a^2*d)/(27*a^2)
+        # #     println("n = ",n," cubic")
+        # # end
+
+        # x .-= minusdeltax*alpha1
+
+        # push!(alphas,alphafit)
+        # push!(fmin,fminfit)
+        # push!(fvals,f)
+        # push!(fpvals,fp)
+        # push!(dfdalphavals,dfdalpha)
+
         # if norm(F)/norm(x) < 1e-8
-        if norm(F) < 1e-8
-            println("converged to: ",norm(F)," after ",n," iterations")
-            println("norm(phi): ",norm(x))
+        if norm(F,Inf) < ftol
+            # println("converged to infinity norm of : ",norm(F,Inf)," after ",n," iterations")
+            # println("norm(phi): ",norm(x))
             break
+        end
+
+        if n == iterations
+            println("Warning: Solver did not converge with infinity norm of : ",norm(F,Inf)," after maximum iterations of ", n)
         end
     end
     phin = x
@@ -648,6 +726,9 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     end
 
     return NonlinearHB(out,phin,Rbnm,Ljb,Lb,Ljbm,Nmodes,Nbranches,S)
+    # return (samples=samples,fmin=fmin,alphas=alphas,
+    #     fvals=fvals,fpvals=fpvals,dfdalphavals=dfdalphavals)
+
 
 end
 
