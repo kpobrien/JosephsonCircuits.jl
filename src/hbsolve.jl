@@ -16,7 +16,7 @@ function hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports
     cg = calccircuitgraph(psc)
 
     # solve the nonlinear system    
-    @time pump=hbnlsolve(wp,Ip,Npumpmodes,psc,cg,circuitdefs,ports=pumpports,
+    pump=hbnlsolve(wp,Ip,Npumpmodes,psc,cg,circuitdefs,ports=pumpports,
         solver=solver,iterations=iterations,ftol=ftol,symfreqvar=symfreqvar)
 
     # the node flux
@@ -120,14 +120,14 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     bnm = transpose(Rbnm)*bbm
 
     # make empty matrices for the voltages, node fluxes, and scattering parameters
-    voltages = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
+    # voltages = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
     # phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes,length(w))
     QE = zeros(Float64,Nports*Nmodes,Nports*Nmodes,length(w))
     CM = zeros(Float64,Nports*Nmodes,length(w))
 
     # as a test don't save voltages and node fluxes
-    # voltages = Vector{Complex{Float64}}(undef,0)
+    voltages = Vector{Complex{Float64}}(undef,0)
     phin = Vector{Complex{Float64}}(undef,0)
 
 
@@ -247,11 +247,11 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
     phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
 
     # for noise experiments
-    # Nports2 = length(resistornoiseports)
-    # phibports2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    # input2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    # output2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    # Snoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    Nports2 = length(resistornoiseports)
+    phibports2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    input2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    output2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    Snoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
 
     # operate on a copy of Asparse because it may be modified by multiple threads
     # at the same time. 
@@ -333,17 +333,90 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
         # convert to node voltages. node flux is defined as the time integral of 
         # node voltage so node voltage is derivative of node flux which can be
         # accomplished in the frequency domain by multiplying by j*w.
-        voltages[:,:,i] = im*wmodesm*phin
+        # voltages[:,:,i] = im*wmodesm*phin
 
-        # calculate the branch fluxes
-        calcbranchvalues!(phibports,phin,keys(portdict),Nmodes)
-        # calcphibports!(phibports2,phin,resistornoiseportskeys,Nmodes)
+        # calculate the branch source currents at the ports from the node
+        # source current array bnm
+        calcbranchvalues!(input,bnm,keys(portdict),Nmodes)
+
+        # divide the current by two
+        input .*= 1/2
 
 
-        # calculate the input and output voltage waves at each port
-        # calcinput!(input,1.0,phibports,resistordict,wmodes,symfreqvar)
-        calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
-        calcoutput!(output,phibports,values(resistordict),wmodes,symfreqvar)
+        # inputconj = copy(input)
+
+        # convert from current to sqrt(photons/second)
+        currenttosqrtphotonflux!(input,values(resistordict),wmodes,symfreqvar)
+        # currenttosqrtphotonfluxconj!(inputconj,values(resistordict),wmodes,symfreqvar)
+
+        # calculate the branch fluxes at the ports from the node flux array phibn
+        calcbranchvalues!(output,phin,keys(portdict),Nmodes)
+
+        # convert from flux to sqrt(photons/second)
+        fluxtosqrtphotonflux!(output,values(resistordict),wmodes,symfreqvar)
+
+
+
+        # for a port with a given impedance and an ideal current source with
+        # an impedance equal to the port impedance in parallel with the resistor,
+        # the output wave will be absorbed by the port impedance.
+        # the input wave to the device is what's left over. we calculate that by
+        # taking the difference between these.
+        # output .-= inputconj
+        output .-= input
+
+        # calculate the scattering parameters
+        # the scattering matrix relates input and output waves
+
+        # output = S * input
+        # which can be computed by right division
+        # S = output / input
+        rdiv!(output,input)
+        copy!(view(S,:,:,i),output)
+
+        # calculate the quantum efficiency, and commutation relations.
+        # calcS!(view(S,:,:,i),input,output)
+        calcqe!(view(QE,:,:,i),view(S,:,:,i))
+        calccm!(view(CM,:,i),view(S,:,:,i), wmodes)
+
+        # scale the source currents by Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
+        # i should calculate numerical value for the port impedances
+
+        # calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
+
+        # calculate the source currents from the matrix bnm.
+        # calcsourcecurrents!(input,bnm,keys(portdict),Nmodes))
+
+        # i should make a vector of port impedances converted to numerical values
+        # portimpedance = calcportimpedance(values(resistordict),wmodes,symfreqvar)
+        # portvoltage
+        # portcurrent
+        # S = portvoltage ./sqrt(abs.(wmodes))
+
+        # i could make the functions that scale by resistance and frequency
+        # happen in place. 
+        # fluxtovoltage()
+        # 
+
+
+        # convert the branch flux to voltage by multiplying the branch flux by 
+        # im*w. convert the voltage to a field ladder opperator (unitless power
+        # wave) by dividing by the square root of frequency.
+                # output[(j-1)*Nmodes+k,l] = 
+                    # im*wmodes[k]*phibports[(j-1)*Nmodes+k,l]/sqrt(resistance)/sqrt(abs(wmodes[k]))
+        # calcoutput!(output,phibports,values(resistordict),wmodes,symfreqvar)
+
+
+
+        # # i need to handle capacitors also.
+        # # this should work for resistors. can i just try it out?
+        # calcbranchvalues!(phibports2,phin,resistornoiseportskeys,Nmodes)
+        # calcoutput!(output2,phibports2,resistornoiseportsvalues,wmodes,symfreqvar)
+        # calcphibthevenin!(input2,bnm,resistornoiseports,wmodes,symfreqvar)
+
+        # i'm not sure if i need to subtract off input2
+        # Snoise .= (output2 .- input2) / input
+        # Snoise .= output2 / input
 
         # println(size(input))
         # println(length(resistordict))
@@ -367,11 +440,9 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
         # println(typeof(vals))
         # println(typeof(phibports2))
         # println(typeof(Nmodes))
-        # calcbranchvalues!(phibports2,phin,resistornoiseportskeys,Nmodes)
-        # calcoutput!(output2,phibports2,resistornoiseportsvalues,wmodes,symfreqvar)
+
 
         # @time calcoutput!(output2,phibports2,resistornoiseports,wmodes,symfreqvar)
-        # calcphibthevenin!(input2,bnm,resistornoiseports,wmodes,symfreqvar)
 
         # println(size(input))
         # println(size(output2))
@@ -381,16 +452,9 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
         # calcS!(Snoise,input2,output2)
 
 
-        # i'm not sure if i need to subtract off input2
-        # Snoise .= (output2 .- input2) / input
-        # Snoise .= output2 / input
 
-        # calculate the scattering parameters
-        calcS!(view(S,:,:,i),input,output)
 
-        calcqe!(view(QE,:,:,i),view(S,:,:,i))
 
-        calccm!(view(CM,:,i),view(S,:,:,i), wmodes)
 
     end
     return nothing
@@ -466,7 +530,6 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
         end
     end
 
-
     # convert from the node basis to the branch basis
     bnm = transpose(Rbnm)*bbm
 
@@ -509,7 +572,6 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     invLnmindexmap = sparseaddmap(Jsparse,invLnm)
     Gnmindexmap = sparseaddmap(Jsparse,Gnm)
     Cnmindexmap = sparseaddmap(Jsparse,Cnm)
-
 
     # function FJsparse!(F,J,x)
     #     calcfj!(F,J,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
@@ -561,7 +623,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # interation
     factorization = KLU.klu(Jsparse)
 
-    minusdeltax = copy(x)
+    deltax = copy(x)
 
     Nsamples = 100
     samples = Float64[]
@@ -570,16 +632,36 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     fpvals = Float64[]
     dfdalphavals = Float64[]
     alphas = Float64[]
+    normF = Float64[]
+
+    alpha1 = 0.0
 
     # perform Newton's method with linesearch based on Nocedal and Wright
     # chapter 3 section 5. 
     for n = 1:iterations
 
-        # update the residual function and the Jacobian
-        calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        Ljb,Ljbm,Nmodes,
-        Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+        if alpha1 == 1.0
+            # if alpha was 1, we don't need to update the function 
+            # because we have already calculated that in the last
+            # loop. just update the jacobian. since we set alpha1=0
+            # before the loop, this will never be called on the first
+            # iteration. 
+            calcfj!(nothing,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+            Ljb,Ljbm,Nmodes,
+            Nbranches,Lmean,AoLjbmvector,AoLjbm,
+            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+        else
+            # update the residual function and the Jacobian
+            calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+            Ljb,Ljbm,Nmodes,
+            Nbranches,Lmean,AoLjbmvector,AoLjbm,
+            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+        end
+
+        push!(normF,norm(F))
+
+        # Jsparse.nzval .*= invnormJ
+        # F .*= invnormJ
 
         # solve the linear system
         try 
@@ -588,25 +670,28 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
             KLU.klu!(factorization,Jsparse)
 
             # solve the linear system            
-            ldiv!(minusdeltax,factorization,F)
+            ldiv!(deltax,factorization,F)
         catch e
             if isa(e, SingularException)
                 # reusing the symbolic factorization can sometimes lead to
                 # numerical problems. if the first linear solve fails
                 # try factoring and solving again
                 F = KLU.klu(Jsparse)
-                ldiv!(minusdeltax,factorization,F)
+                ldiv!(deltax,factorization,F)
             else
                 throw(e)
             end
         end
+
+        # multiply deltax by -1
+        rmul!(deltax,-1)
 
         # calculate the objective function and the derivative of the objective
         # with respect to the scalar variable alpha which parameterizes the
         # path between the old x and the new x. 
         # Note: the dot product takes the complex conjugate of the first vector
         f = real(0.5*dot(F,F))
-        dfdalpha = real(dot(F,-Jsparse*minusdeltax))
+        dfdalpha = real(dot(F,Jsparse*deltax))
 
         # # evaluate the objective function at Nsample points
         # for alpha in range(0,1,Nsamples)
@@ -618,10 +703,12 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
         # end
 
         # evaluate the function at the trial point
-        calcfj!(F,nothing,x-minusdeltax,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        calcfj!(F,nothing,x+deltax,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
         Ljb,Ljbm,Nmodes,
         Nbranches,Lmean,AoLjbmvector,AoLjbm,
         AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+
+        # F .*= invnormJ
 
         fp = real(0.5*dot(F,F))
 
@@ -635,16 +722,27 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
         if f1fit > fp
             f1fit = fp
-            alpha1 = 1
+            alpha1 = 1.0
         end
+        # if the fitted alpha overshoots the size of the interval (from 0 to 1),
+        # then set alpha to 1 and make a full length step. 
         if alpha1 > 1 || alpha1 <= 0
-            alpha1 = 1
-            f1fit = f
+            alpha1 = 1.0
+            f1fit = fp
         end
+
+        # switch to newton once the norm is small enough
+        switchofflinesearchtol = 1e-5
+        # switchofflinesearchtol = 0
+        normx = norm(x)
+        if sqrt(fp)/normx <= switchofflinesearchtol && sqrt(f)/normx <= switchofflinesearchtol
+            alpha1 = 1.0
+            # println("norm(F)/norm(phi): ",sqrt(fp)/norm(x))
+        end
+        # alpha1 = 1
 
         # update x
-        x .-= minusdeltax*alpha1
-
+        x .+= deltax*alpha1
 
 
         # # fit with a cubic. 
@@ -680,15 +778,18 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
         # push!(fpvals,fp)
         # push!(dfdalphavals,dfdalpha)
 
-        # if norm(F)/norm(x) < 1e-8
-        if norm(F,Inf) < ftol
-            # println("converged to infinity norm of : ",norm(F,Inf)," after ",n," iterations")
-            # println("norm(phi): ",norm(x))
+        if norm(F)/norm(x) < 1e-8
+        # if norm(F,Inf) <= ftol
+            # i should switch to using a relative tolerance here.
+            # is infinity norm or norm the right thing to use?
+            # println("converged to: infinity norm of : ",norm(F,Inf)," after ",n," iterations")
+            # println("norm(F)/norm(phi): ",norm(F)/norm(x))
             break
         end
 
         if n == iterations
             println("Warning: Solver did not converge with infinity norm of : ",norm(F,Inf)," after maximum iterations of ", n)
+            println("norm(F)/norm(x): ", norm(F)/norm(x))
         end
     end
     phin = x
@@ -706,11 +807,10 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     phibports = zeros(Complex{Float64},Nports*Nmodes)
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
-
-
     # calculate the branch fluxes at the ports
     calcbranchvalues!(phibports,phin,keys(portdict),Nmodes)
-    # calculate the branch flux in ladder operator units
+
+
     calcoutput!(output,phibports,values(resistordict),wmodes,symfreqvar)
 
     # calculate the input and output voltage waves at each port
@@ -728,7 +828,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     return NonlinearHB(out,phin,Rbnm,Ljb,Lb,Ljbm,Nmodes,Nbranches,S)
     # return (samples=samples,fmin=fmin,alphas=alphas,
     #     fvals=fvals,fpvals=fpvals,dfdalphavals=dfdalphavals)
-
+    # return normF
 
 end
 

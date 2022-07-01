@@ -1,5 +1,11 @@
 __precompile__(true)
 
+"""
+    JosephsonCircuits
+
+Julia package for frequency domain simulations of nonlinear electrical circuits,
+particularly superconducting circuits containing Josephson junctions.     
+"""
 module JosephsonCircuits
 
 import Graphs
@@ -33,8 +39,10 @@ Base.zero(::Type{Nothing}) = 0
 function __init__()
     @require Symbolics="0c5d862f-8b57-4792-8d23-62f2024744c7" begin
         function calcsymbolicinvLn(L,Lb,Rbn)
-            s =  sparse(transpose(Rbn[Lb.nzind,:])*(Symbolics.sym_lu(L)\ Matrix(Rbn[Lb.nzind,:])))
-            return SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,Symbolics.value.(s.nzval))
+            s =  sparse(transpose(Rbn[Lb.nzind,:])*(Symbolics.sym_lu(Matrix(L))\ Matrix(Rbn[Lb.nzind,:])))
+            return SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,s.nzval)
+            # return SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,Symbolics.value.(s.nzval))
+
         end
 
         """
@@ -78,7 +86,7 @@ include("fftutils.jl")
 include("qesparams.jl")
 
 # Experimental multi-tone harmonic balance code.
-# include("hbsolve2.jl")
+include("hbsolve2.jl")
 
 # These are for exporting SPICE netlists and running simulations in
 # WRSPICE or Xyce. 
@@ -124,10 +132,8 @@ julia> IctoLj(3.29105976e-6)
 ```
 """
 function IctoLj(Ic)
-    #reduced flux quantum in Weber, H*A
-    # hbar/(2*charge of electron)
-    # phi0 = 3.29105976e-16
-    return phi0./Ic
+    # the formula is the same for the two conversions
+    return LjtoIc(Ic)
 end
 
 function warmup()

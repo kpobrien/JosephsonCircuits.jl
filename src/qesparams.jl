@@ -82,6 +82,54 @@ function calcbranchvalues!(branchvalues,nodevalues,branches,Nmodes)
     return nothing
 end
 
+# function calcportcurrent!(input,bnm,resistordict,wmodes,symfreqvar)
+
+#     Nmodes = length(wmodes)
+
+#     if size(input,1) != length(resistordict)*Nmodes
+#         throw(DimensionMismatch("First axis of input matrix must be number of ports times number of modes"))
+#     end
+
+#     if size(input,2) != size(bnm,2)
+#         throw(DimensionMismatch("Size of second dimension of input matrix must be the same as the size of the second dimension of bnm"))
+#     end
+
+#     # loop over the ports
+#     for (j,(key,val)) in enumerate(resistordict)
+#         # loop over the modes
+#         for k = 1:Nmodes
+#             # if symbolic, convert to numeric
+#             if val isa Symbolic
+#                 if !(symfreqvar isa Symbolic)
+#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+#                 end
+#                 resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
+#             else
+#                 resistance = val
+#             end
+
+#             # find the right term in bnm
+#             if key[1] == 1
+#                 Ip = -bnm[(key[2]-2)*Nmodes+k,:]
+#             elseif key[2] == 1
+#                 Ip =  bnm[(key[1]-2)*Nmodes+k,:]
+#             else
+#                 Ip =  bnm[(key[1]-2)*Nmodes+k,:] 
+#                 Ip .-= bnm[(key[2]-2)*Nmodes+k,:]
+#             end
+
+#             input[(j-1)*Nmodes+k,:] .= 
+#                 Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
+#                 # 1*resistance/phi0/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
+
+#             # input[(j-1)*Nmodes+k,(j-1)*Nmodes+k] = 
+#             #     Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
+#             #     # 1*resistance/phi0/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
+#         end
+#     end
+
+#     return nothing
+# end
 
 # # i should get this from the boundary condition matrix.
 # function calcinput!(input,Ip,phibports,resistordict,wmodes,symfreqvar)
@@ -245,6 +293,112 @@ end
 #     return nothing
 # end
 
+"""
+
+
+Convert current from amperes to units of sqrt energy or sqrt(photons/second), 
+up to a factor of Planck's constant which we will not apply because it cancels
+out (and is a very small number).
+"""
+function currenttosqrtphotonflux!(current,resistorvalues,wmodes,symfreqvar)
+
+    Nmodes = length(wmodes)
+
+    for (j,val) in enumerate(resistorvalues)
+        for k = 1:Nmodes
+            # if symbolic, convert to numeric
+            if val isa Symbolic
+                if !(symfreqvar isa Symbolic)
+                    error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                end
+                resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
+            else
+                resistance = val
+            end
+
+            # take the complex conjugate if frequency is negative
+            if wmodes[k] < 0
+                resistance = conj(resistance)
+            end
+
+            for l = 1:size(current,2)
+                # current[(j-1)*Nmodes+k,l] *= resistance/sqrt(resistance)/sqrt(abs(wmodes[k]))
+                current[(j-1)*Nmodes+k,l] *= (resistance)/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
+
+            end
+        end
+    end
+
+    return nothing
+end
+
+
+function currenttosqrtphotonfluxconj!(current,resistorvalues,wmodes,symfreqvar)
+
+    Nmodes = length(wmodes)
+
+    for (j,val) in enumerate(resistorvalues)
+        for k = 1:Nmodes
+            # if symbolic, convert to numeric
+            if val isa Symbolic
+                if !(symfreqvar isa Symbolic)
+                    error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                end
+                resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
+            else
+                resistance = val
+            end
+
+            # take the complex conjugate if frequency is negative
+            if wmodes[k] < 0
+                resistance = conj(resistance)
+            end
+
+            for l = 1:size(current,2)
+                # current[(j-1)*Nmodes+k,l] *= resistance/sqrt(resistance)/sqrt(abs(wmodes[k]))
+                current[(j-1)*Nmodes+k,l] *= conj(resistance)/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
+
+            end
+        end
+    end
+
+    return nothing
+end
+
+
+"""
+
+Convert flux from units of volt / frequency to units of sqrt energy or sqrt(photons/second), up to a factor
+of Planck's constant which we will not apply because it cancels out (and is a 
+very small number).
+
+"""
+function fluxtosqrtphotonflux!(flux,resistorvalues,wmodes,symfreqvar)
+
+    Nmodes = length(wmodes)
+
+    for (j,val) in enumerate(resistorvalues)
+        for k = 1:Nmodes
+            # if symbolic, convert to numeric
+            if val isa Symbolic
+                if !(symfreqvar isa Symbolic)
+                    error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                end
+                resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
+            else
+                resistance = val
+            end
+
+            for l = 1:size(flux,2)
+                # flux[(j-1)*Nmodes+k,l] *= im*wmodes[k]/sqrt(resistance)/sqrt(abs(wmodes[k]))
+                flux[(j-1)*Nmodes+k,l] *= im*wmodes[k]/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
+            end
+        end
+    end
+
+    return nothing
+end
+
 
 function calcoutput!(output,phibports,resistorvalues,wmodes,symfreqvar)
 
@@ -348,6 +502,7 @@ function calcS!(S,input,output)
     #waves
     # S .= ((output .- input) / input)
     S .= ((output .- input) / input)
+    # S .= output / input
 
 
     return nothing

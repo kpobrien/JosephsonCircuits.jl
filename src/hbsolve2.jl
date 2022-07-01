@@ -9,7 +9,7 @@ ports, sources, and pumps. Still under development.
 """
 
 function hbsolve2(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports=[1],
-    solver =:klu, iterations=100,symfreqvar = nothing, sorting=:number,
+    solver =:klu, iterations=1000,ftol=1e-8,symfreqvar = nothing, sorting=:number,
     nbatches = Base.Threads.nthreads())
     # solve the nonlinear system    
     # use the old syntax externally
@@ -19,7 +19,7 @@ function hbsolve2(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpport
     sources = ((w=w[1],port=pumpports[1],current=Ip),)
     pump=hbnlsolve2(w,Nharmonics,sources,circuit,circuitdefs,
         solver=solver,odd=true,dc=false,even=false,symfreqvar = symfreqvar,
-        sorting=sorting)
+        sorting=sorting,ftol=ftol)
     # pump=hbnlsolve2(w,Nharmonics,sources,circuit,circuitdefs,
     #     solver=solver,odd=true,dc=false,even=false)
     # the node flux
@@ -46,12 +46,12 @@ end
 """
 
 function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::NamedTuple,circuit,circuitdefs;ports=[1],
-    solver=:klu,iterations=100,maxintermodorder=Inf,dc=false,odd=true,even=false,
-    x0=nothing,symfreqvar = nothing,  sorting=:number)
+    solver=:klu,iterations=1000,maxintermodorder=Inf,dc=false,odd=true,even=false,
+    x0=nothing,ftol=1e-8,symfreqvar = nothing,  sorting=:number)
 
     return hbnlsolve2(w,Nharmonics,(sources,),circuit,circuitdefs;
     solver=solver,iterations=iterations,maxintermodorder=maxintermodorder,
-    dc=dc,odd=odd,even=even,x0=x0,freqvar = freqvar, sorting=sorting)
+    dc=dc,odd=odd,even=even,x0=x0,ftol=1e-8,symfreqvar = symfreqvar, sorting=sorting)
 end
 
 # function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::NamedTuple,circuit,circuitdefs;ports=[1],
@@ -64,8 +64,8 @@ end
 # end
 
 function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdefs;
-    solver=:klu,iterations=100,maxintermodorder=Inf,dc=false,odd=true,even=false,
-    x0=nothing,symfreqvar = nothing, sorting= sorting)
+    solver=:klu,iterations=1000,maxintermodorder=Inf,dc=false,odd=true,even=false,
+    x0=nothing,ftol=1e-8,symfreqvar = nothing, sorting= sorting)
 
 # function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdefs;
 #     solver=:klu,iterations=100,maxintermodorder=Inf,dc=false,odd=true,even=false,
@@ -88,82 +88,108 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     wmodes = values2[:]
     Nmodes = length(wmodes)
 
-    # parse the circuit components
-    c0 = parsecircuit(circuit)
+    # # parse the circuit components
+    # c0 = parsecircuit(circuit)
 
-    numbervector = valuevectortonumber(c0.valuevector,circuitdefs)
+    # numbervector = valuevectortonumber(c0.valuevector,circuitdefs)
 
-    # sort the nodes
-    uniquenodevectorsorted,nodeindexarraysorted = sortnodes(c0.uniquenodevector,
-        c0.nodeindexvector,sorting=:number)
+    # # sort the nodes
+    # uniquenodevectorsorted,nodeindexarraysorted = sortnodes(c0.uniquenodevector,
+    #     c0.nodeindexvector,sorting=:number)
 
-    branchvector = extractbranches(c0.typevector,nodeindexarraysorted)
+    # branchvector = extractbranches(c0.typevector,nodeindexarraysorted)
 
-    # calculate the graph of inductive components glelist, the
-    # superconducting spanning tree selist, and the list of loop
-    # indices celist. 
-    g = calcgraphs(branchvector,length(uniquenodevectorsorted))
+    # # calculate the graph of inductive components glelist, the
+    # # superconducting spanning tree selist, and the list of loop
+    # # indices celist. 
+    # g = calcgraphs(branchvector,length(uniquenodevectorsorted))
 
-    portdict=componentdictionaryP(c0.typevector,nodeindexarraysorted,
-        c0.mutualinductorvector,numbervector)
+    # portdict=componentdictionaryP(c0.typevector,nodeindexarraysorted,
+    #     c0.mutualinductorvector,numbervector)
 
-    resistordict=componentdictionaryR(c0.typevector,nodeindexarraysorted,
-        c0.mutualinductorvector,numbervector)
+    # resistordict=componentdictionaryR(c0.typevector,nodeindexarraysorted,
+    #     c0.mutualinductorvector,numbervector)
 
 
-    # # calculate the capacitance, inductance, and inverse inductances matrices
-    # m = calcmatrices(c0.typevector,nodeindexarraysorted,numbervector,c0.namedict,
-    #     c0.mutualinductorvector,g.edge2indexdict,g.Rbn,Nmodes,
-    #     length(uniquenodevectorsorted),g.Nbranches)
+    # # # calculate the capacitance, inductance, and inverse inductances matrices
+    # # m = calcmatrices(c0.typevector,nodeindexarraysorted,numbervector,c0.namedict,
+    # #     c0.mutualinductorvector,g.edge2indexdict,g.Rbn,Nmodes,
+    # #     length(uniquenodevectorsorted),g.Nbranches)
 
-    # Nnodes = length(uniquenodevectorsorted)
+    # # Nnodes = length(uniquenodevectorsorted)
+    # # Nbranches = g.Nbranches
+    # # Lmean = m.Lmean
+    # # invLnm = m.invLnm*Lmean
+    # # Gnm = m.Gnm*Lmean
+    # # Cnm = m.Cnm*Lmean
+    # # Ljb = m.Ljb
+    # # Ljbm = m.Ljbm
+    # # Lb = m.Lb
+    # # Rbnm = m.Rbnm
+
+
+    # typevector = c0.typevector
+    # namedict = c0.namedict
+    # mutualinductorvector = c0.mutualinductorvector
+    # edge2indexdict = g.edge2indexdict
+    # Rbn = g.Rbn
+    # Nnodes = length(c0.uniquenodevector)
     # Nbranches = g.Nbranches
-    # Lmean = m.Lmean
-    # invLnm = m.invLnm*Lmean
-    # Gnm = m.Gnm*Lmean
-    # Cnm = m.Cnm*Lmean
-    # Ljb = m.Ljb
-    # Ljbm = m.Ljbm
-    # Lb = m.Lb
-    # Rbnm = m.Rbnm
+
+    # # calculate Lmean
+    # Lmean = calcLmean(typevector,numbervector)
+    # # Lmean = 1.0
+
+    # # capacitance matrix
+    # Cnm = calcCn(typevector,nodeindexarraysorted,numbervector,Nmodes,Nnodes)
+
+    # # conductance matrix
+    # Gnm = calcGn(typevector,nodeindexarraysorted,numbervector,Nmodes,Nnodes)
+
+    # # branch inductance vectors
+    # Lb = calcLb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,1,Nbranches)
+    # Lbm = calcLb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,Nmodes,Nbranches)
+
+    # # branch Josephson inductance vectors
+    # Ljb = calcLjb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,1,Nbranches)
+    # Ljbm = calcLjb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,Nmodes,Nbranches)
+
+    # # mutual branch inductance matrix
+    # Mb = calcMb(typevector,nodeindexarraysorted,numbervector,namedict,
+    #     mutualinductorvector,edge2indexdict,1,Nbranches)
+
+    # # inverse nodal inductance matrix from branch inductance vector and branch
+    # # inductance matrix
+    # invLnm = calcinvLn(Lb,Mb,Rbn,Nmodes)
+
+    # # expand the size of the indicidence matrix
+    # Rbnm = diagrepeat(Rbn,Nmodes)
+
+    # parse and sort the circuit
+    psc = parsesortcircuit(circuit,sorting=sorting)
+
+    # calculate the circuit graph
+    cg = calccircuitgraph(psc)
 
 
-    typevector = c0.typevector
-    namedict = c0.namedict
-    mutualinductorvector = c0.mutualinductorvector
-    edge2indexdict = g.edge2indexdict
-    Rbn = g.Rbn
-    Nnodes = length(c0.uniquenodevector)
-    Nbranches = g.Nbranches
+    # calculate the numeric matrices
+    nm=numericmatrices(psc,cg,circuitdefs,Nmodes=Nmodes)
 
-    # calculate Lmean
-    Lmean = calcLmean(typevector,numbervector)
+    # extract the elements we need
+    Nnodes = psc.Nnodes
+    Nbranches = cg.Nbranches
+    edge2indexdict = cg.edge2indexdict
+    Ljb = nm.Ljb
+    Ljbm = nm.Ljbm
+    Rbnm = nm.Rbnm
+    Cnm = nm.Cnm
+    Gnm = nm.Gnm
+    invLnm = nm.invLnm
+    portdict = nm.portdict
+    resistordict = nm.resistordict
+    Lmean = nm.Lmean
     # Lmean = 1.0
-
-    # capacitance matrix
-    Cnm = calcCn(typevector,nodeindexarraysorted,numbervector,Nmodes,Nnodes)
-
-    # conductance matrix
-    Gnm = calcGn(typevector,nodeindexarraysorted,numbervector,Nmodes,Nnodes)
-
-    # branch inductance vectors
-    Lb = calcLb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,1,Nbranches)
-    Lbm = calcLb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,Nmodes,Nbranches)
-
-    # branch Josephson inductance vectors
-    Ljb = calcLjb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,1,Nbranches)
-    Ljbm = calcLjb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,Nmodes,Nbranches)
-
-    # mutual branch inductance matrix
-    Mb = calcMb(typevector,nodeindexarraysorted,numbervector,namedict,
-        mutualinductorvector,edge2indexdict,1,Nbranches)
-
-    # inverse nodal inductance matrix from branch inductance vector and branch
-    # inductance matrix
-    invLnm = calcinvLn(Lb,Mb,Rbn,Nmodes)
-
-    # expand the size of the indicidence matrix
-    Rbnm = diagrepeat(Rbn,Nmodes)
+    Lb = nm.Lb
 
 
     # calculate the diagonal frequency matrices
@@ -181,7 +207,7 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
                 # i should calculate that in the right way now. 
                 for i = 1:length(values)
                     if values[i] == source[:w]
-                        bbm[(g.edge2indexdict[key]-1)*Nmodes+i] = Lmean*source[:current]/phi0
+                        bbm[(edge2indexdict[key]-1)*Nmodes+i] = Lmean*source[:current]/phi0
                         break
                     end
                 end
@@ -206,7 +232,6 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
             for i = 1:length(Nt) + 1
         )
     phimatrix = zeros(Complex{Float64},Nwtuple)
-
 
     Amatrix = rand(Complex{Float64},Nwtuple)
 
@@ -243,8 +268,12 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     # Calculate something with the same sparsity structure as the Jacobian.
     # Don't bother multiplying by the diagonal frequency matrices since they
     # won't change the sparsity structure. 
-    # Jsparse = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
-    Jsparse = (AoLjnm + invLnm - im*Gnm - Cnm)
+    AoLjnm.nzval .= rand(Complex{Float64},length(AoLjnm.nzval))
+    Jsparse = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
+    # Jsparse = (AoLjnm + invLnm - im*Gnm - Cnm)
+
+
+    # return (Jsparse,AoLjnm)
 
     # make the index maps so we can add the sparse matrices together without
     # memory allocations. 
@@ -254,36 +283,202 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     Cnmindexmap = sparseaddmap(Jsparse,Cnm)
 
 
-    function FJsparse2!(F,J,x)
-        calcfj2!(F,J,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+    # function FJsparse2!(F,J,x)
+    #     calcfj2!(F,J,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+    #     Ljb,Ljbm,Nmodes,
+    #     Nbranches,Lmean,AoLjbm2,AoLjbm,
+    #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
+    #     freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
+    #     return F,J
+    # end
+
+    # if solver == :klu
+    #     # perform a factorization. this will be updated later for each 
+    #     # interation
+    #     FK = KLU.klu(Jsparse)
+
+    #     odsparse = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse2!),x,F,Jsparse)
+
+    #     # if the sparsity structure doesn't change, we can cache the 
+    #     # factorization. this is a significant speed improvement.
+    #     # out=NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
+    #     out=NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
+
+    # else
+    #     error("Error: Unknown solver")
+    # end
+
+    # if out.f_converged == false
+    #     println("Nonlinear solver not converged. You may need to supply a better
+    #     guess at the solution vector, increase the number of pump harmonics, or
+    #     increase the number of iterations.")
+    # end
+    # phin = out.zero
+
+    # perform a factorization. this will be updated later for each 
+    # interation
+    factorization = KLU.klu(Jsparse)
+
+    deltax = copy(x)
+
+    Nsamples = 100
+    samples = Float64[]
+    fmin = Float64[]
+    fvals = Float64[]
+    fpvals = Float64[]
+    dfdalphavals = Float64[]
+    alphas = Float64[]
+    normF = Float64[]
+
+    # perform Newton's method with linesearch based on Nocedal and Wright
+    # chapter 3 section 5. 
+    for n = 1:iterations
+
+        # update the residual function and the Jacobian
+        # calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        # Ljb,Ljbm,Nmodes,
+        # Nbranches,Lmean,AoLjbmvector,AoLjbm,
+        # AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+
+        calcfj2!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
         Ljb,Ljbm,Nmodes,
         Nbranches,Lmean,AoLjbm2,AoLjbm,
         AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
         freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
-        return F,J
+
+        push!(normF,norm(F))
+
+        # solve the linear system
+        try 
+            # update the factorization. the sparsity structure does not change
+            # so we can reuse the factorization object.
+            KLU.klu!(factorization,Jsparse)
+
+            # solve the linear system            
+            ldiv!(deltax,factorization,F)
+        catch e
+            if isa(e, SingularException)
+                # reusing the symbolic factorization can sometimes lead to
+                # numerical problems. if the first linear solve fails
+                # try factoring and solving again
+                F = KLU.klu(Jsparse)
+                ldiv!(deltax,factorization,F)
+            else
+                throw(e)
+            end
+        end
+
+        # multiply deltax by -1
+        rmul!(deltax,-1)
+
+        # calculate the objective function and the derivative of the objective
+        # with respect to the scalar variable alpha which parameterizes the
+        # path between the old x and the new x. 
+        # Note: the dot product takes the complex conjugate of the first vector
+        f = real(0.5*dot(F,F))
+        dfdalpha = real(dot(F,Jsparse*deltax))
+
+        # # evaluate the objective function at Nsample points
+        # for alpha in range(0,1,Nsamples)
+        #     calcfj!(F,nothing,x - alpha*x1,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        #     Ljb,Ljbm,Nmodes,
+        #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
+        #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)    
+        #     push!(samples,real(0.5*dot(F,F)))
+        # end
+
+        # # evaluate the function at the trial point
+        # calcfj!(F,nothing,x+deltax,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        # Ljb,Ljbm,Nmodes,
+        # Nbranches,Lmean,AoLjbmvector,AoLjbm,
+        # AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+
+
+        calcfj2!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        Ljb,Ljbm,Nmodes,
+        Nbranches,Lmean,AoLjbm2,AoLjbm,
+        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
+        freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
+
+        fp = real(0.5*dot(F,F))
+
+        # coefficients of the quadratic equation a*alpha^2+b*alpha+c to interpolate
+        # f vs alpha
+        a = -dfdalpha + fp - f
+        b = dfdalpha
+        c = f
+        alpha1 = -b/(2*a)
+        f1fit = -b*b/(4*a) + c
+
+        if f1fit > fp
+            f1fit = fp
+            alpha1 = 1
+        end
+        # if the fitted alpha overshoots the size of the interval (from 0 to 1),
+        # then set alpha to 1 and make a full length step. 
+        if alpha1 > 1 || alpha1 <= 0
+            alpha1 = 1
+            f1fit = fp
+        end
+
+        # switch to newton once the norm is small enough
+        switchofflinesearchtol = 1e-3
+        if fp <= switchofflinesearchtol && f <= switchofflinesearchtol && f1fit <= switchofflinesearchtol
+            alpha1 = 1
+        end
+        # alpha1 = 1
+
+        # update x
+        x .+= deltax*alpha1
+
+
+        # # fit with a cubic. 
+        # alpha1 = alphafit
+        # # evaluate the function at the trial point
+        # calcfj!(F,nothing,x-x1*alpha1,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+        #     Ljb,Ljbm,Nmodes,
+        #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
+        #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+
+        # f1 = real(0.5*dot(F,F))
+
+        # denom = (-1+alpha1)*alpha1^2
+        # a = (-alpha1*dfdalpha + f1 - f + alpha1^2*(dfdalpha-fp+f))/denom
+        # b = (alpha1*dfdalpha - f1 + f - alpha1^3*(dfdalpha-fp+f))/denom
+        # c = dfdalpha
+        # d = f
+        # alphafit = real(-b+sqrt(complex(b^2-3*a*c)))/(3*a)
+
+        # println(alphafit)
+        # # println(b^2 - 3*a*c)
+        # # if b^2 - 3*a*c >= 0
+        # #     alphafit = (-b+sqrt(b^2-3*a*c))/(3*a)
+        # #     fminfit = (2*b^3-9*a*b*c-2*b^2*sqrt(b^2-3*a*c)+6*a*c*sqrt(b^2-3*a*c)+27*a^2*d)/(27*a^2)
+        # #     println("n = ",n," cubic")
+        # # end
+
+        # x .-= minusdeltax*alpha1
+
+        # push!(alphas,alphafit)
+        # push!(fmin,fminfit)
+        # push!(fvals,f)
+        # push!(fpvals,fp)
+        # push!(dfdalphavals,dfdalpha)
+
+        # if norm(F)/norm(x) < 1e-8
+        if norm(F,Inf) <= ftol
+            # println("converged to infinity norm of : ",norm(F,Inf)," after ",n," iterations")
+            # println("norm(phi): ",norm(x))
+            break
+        end
+
+        if n == iterations
+            println("Warning: Solver did not converge with infinity norm of : ",norm(F,Inf)," after maximum iterations of ", n)
+        end
     end
+    phin = x
+    out = nothing
 
-    if solver == :klu
-        # perform a factorization. this will be updated later for each 
-        # interation
-        FK = KLU.klu(Jsparse)
-
-        odsparse = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse2!),x,F,Jsparse)
-
-        # if the sparsity structure doesn't change, we can cache the 
-        # factorization. this is a significant speed improvement.
-        # out=NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-        out=NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-
-    else
-        error("Error: Unknown solver")
-    end
-
-    if out.f_converged == false
-        println("Nonlinear solver not converged. You may need to supply a better
-        guess at the solution vector, increase the number of pump harmonics, or
-        increase the number of iterations.")
-    end
 
     # calculate the scattering parameters for the pump
     # Nports = length(cdict[:P])
@@ -296,7 +491,7 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     inputval = zero(Complex{Float64})
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
-    phin = out.zero
+    # phin = out.zero
 
     # calculate the branch fluxes
     # calcphibports!(phibports,phin,portdict,Nmodes)
@@ -458,14 +653,20 @@ function calcAoLjbm2(Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches,freqindexmap)
 
     V = Vector{type}(undef,nnz(Ljb)*Nmodes^2)
 
+    # println(size(Am))
+    # println(nnz(Ljb))
+    # println(Nbranches)
+    # println(length(Ljb))
 
-    if size(Am,2) != nnz(Ljb)
-        throw(DimensionError("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
-    end
+    # if size(Am,3) != nnz(Ljb)
+    #     throw(DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
+    # end
 
-    if length(Ljb) > Nbranches
-        throw(DimensionError("The length of Ljb cannot be larger than the number of branches."))
-    end
+    # if length(Ljb) != Nbranches
+    #     throw(DimensionMismatch("The length of Ljb should be the same as the number of branches."))
+    # end
+
+
 
     Nfreq = prod(size(Am)[1:end-1])
 
@@ -524,17 +725,17 @@ function updateAoLjbm2!(AoLjbm::SparseMatrixCSC,Am,Ljb::SparseVector,Lmean,Nmode
     # check that there are the right number of nonzero values. 
     # check that the dimensions are consistent with Nmode and Nbranches.
 
-    if nnz(Ljb)*Nmodes^2 != nnz(AoLjbm)
-        throw(DimensionError("The number of nonzero elements in AoLjbm are not consistent with nnz(Ljb) and Nmodes."))
-    end
+    # if nnz(Ljb)*Nmodes^2 != nnz(AoLjbm)
+    #     throw(DimensionError("The number of nonzero elements in AoLjbm are not consistent with nnz(Ljb) and Nmodes."))
+    # end
 
-    if size(Am,2) != nnz(Ljb)
-        throw(DimensionError("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
-    end
+    # if size(Am,2) != nnz(Ljb)
+    #     throw(DimensionError("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
+    # end
 
-    if length(Ljb) > Nbranches
-        throw(DimensionError("The length of Ljb cannot be larger than the number of branches."))
-    end
+    # if length(Ljb) > Nbranches
+    #     throw(DimensionError("The length of Ljb cannot be larger than the number of branches."))
+    # end
 
     # i want a vector length(Ljb) where the indices are the values Ljb.nzind
     # and the values are the indices of Ljb.nzind

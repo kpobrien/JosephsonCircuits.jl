@@ -706,8 +706,10 @@ function calcinvLn_inner(Lb::SparseVector,Mb::SparseMatrixCSC,Rbn::SparseMatrixC
 
                 try
                     s = calcsymbolicinvLn(L,Lb,Rbn)
-                catch
-                    throw(MethodError("Calculating the inverse inductance matrix with calcsymbolicinvLn(L,Lb,Rbn) when there are mutual inductors requires Symbolics.jl. Run the command:  using Symbolics"))
+                catch e
+                    # throw(MethodError("Calculating the inverse inductance matrix with calcsymbolicinvLn(L,Lb,Rbn) when there are mutual inductors requires Symbolics.jl. Run the command:  using Symbolics"))
+                    println("Calculating the inverse inductance matrix with calcsymbolicinvLn(L,Lb,Rbn) when there are mutual inductors requires Symbolics.jl. Run the command:  using Symbolics")
+                    throw(e)
                 end
 
                 # s =  sparse(transpose(Rbn[Lb.nzind,:])*(sym_lu(L)\ Matrix(Rbn[Lb.nzind,:])))
