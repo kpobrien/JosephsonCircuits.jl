@@ -296,6 +296,77 @@ end
 """
 
 
+portimpedance can be for several sets of independent inputs. 
+second dimension is arbitrary
+first dimension is length(resistorvalues)*Nmodes
+
+"""
+function calcportimpedance!(portimpedance,resistorvalues,wmodes,symfreqvar)
+
+    Nmodes = length(wmodes)
+
+    # if size(branchvalues,2) != size(nodevalues,2)
+    #     error("Error: inconsistent second dimension for branchflux and nodeflux.")
+    # end
+
+    if size(portimpedance,1) != length(resistorvalues)*Nmodes
+        error("Error: inconsistent dimensions for portimpedance and number of resistorvalues and modes.")
+    end
+
+
+    for (j,val) in enumerate(resistorvalues)
+        for k = 1:Nmodes
+            # if symbolic, convert to numeric
+            # i might want to put the check for type outside of this loop
+            if val isa Symbolic
+                if !(symfreqvar isa Symbolic)
+                    error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                end
+                resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
+            else
+                resistance = val
+            end
+
+            # take the complex conjugate if frequency is negative
+            if wmodes[k] < 0
+                resistance = conj(resistance)
+            end
+
+            for l = 1:size(portimpedance,2)
+                # current[(j-1)*Nmodes+k,l] *= resistance/sqrt(resistance)/sqrt(abs(wmodes[k]))
+                portimpedance[(j-1)*Nmodes+k,l] = resistance
+
+            end
+        end
+    end
+
+    return nothing
+end
+
+
+function scaleby!(portimpedance,wmodes)
+
+    Nmodes = length(wmodes)
+    Nbranches = div(size(portimpedance,1),Nmodes)
+
+    if size(portimpedance,1) != Nbranches*Nmodes
+        error("length of first axis of portimpedance must be an integer multiple of Nmodes")
+    end
+
+    for i = 1:Nbranches
+        for j = 1:Nmodes
+            for k = 1:size(portimpedance,2)
+                portimpedance[(i-1)*Nmodes+j,k] *= wmodes[j]
+            end
+        end
+    end
+
+    return nothing
+end
+
+"""
+
+
 Convert current from amperes to units of sqrt energy or sqrt(photons/second), 
 up to a factor of Planck's constant which we will not apply because it cancels
 out (and is a very small number).

@@ -229,7 +229,22 @@ struct LinearHB
     w
 end
 
-
+# i should remove QE and CM from this. and compute this after
+# should i use views to compute Snoise for all? or should i compute them 
+# separately?
+# should i separate input and output ports? would that be possible?
+# if that worked, would it enable me to use the same function
+# for the solve and the conjugate solve? i would just take the conjugate
+# of Asparse. maybe i could combine everything into one portimpedance
+# vector outside of this function so i would know the dimensions of Snoise
+# and could use exactly the same function.
+# i'll have to calculate separate currents for each and use different
+# impedances for each. i could simplify the formulas if i don't want
+# to have all of the extra variables. although not bad to be explicit.
+# i think i'll go through and write it in terms of the discrete functions
+# then consider turning it into loops. 
+# for the ones with Nports2 that's allocation a fair amount of memory
+# so might as well not do that.
 function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
     invLnm,Cnm,Gnm,bnm,
     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
@@ -243,6 +258,19 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
 
     input = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
     output = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+
+
+    # matrices used in calculating the scattering parameters
+    # inputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
+    outputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    sourcecurrent = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
+    portvoltage = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    portcurrent = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    portimpedance = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    k = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+
+
     phibports = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
     phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
 
@@ -252,6 +280,11 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
     input2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
     output2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
     Snoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+
+    outputwavenoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    portvoltagenoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    portimpedancenoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    knoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
 
     # operate on a copy of Asparse because it may be modified by multiple threads
     # at the same time. 
@@ -330,54 +363,128 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
             error("Error: Unknown solver")
         end
 
-        # convert to node voltages. node flux is defined as the time integral of 
-        # node voltage so node voltage is derivative of node flux which can be
-        # accomplished in the frequency domain by multiplying by j*w.
-        # voltages[:,:,i] = im*wmodesm*phin
+        # # convert to node voltages. node flux is defined as the time integral of 
+        # # node voltage so node voltage is derivative of node flux which can be
+        # # accomplished in the frequency domain by multiplying by j*w.
+        # # voltages[:,:,i] = im*wmodesm*phin
+
+        # # calculate the branch source currents at the ports from the node
+        # # source current array bnm
+        # calcbranchvalues!(input,bnm,keys(portdict),Nmodes)
+
+        # # divide the current by two
+        # input .*= 1/2
+
+
+        # # inputconj = copy(input)
+
+        # # convert from current to sqrt(photons/second)
+        # # currenttosqrtphotonflux!(input,values(resistordict),wmodes,symfreqvar)
+        # # currenttosqrtphotonfluxconj!(inputconj,values(resistordict),wmodes,symfreqvar)
+
+
+        # # calculate the branch fluxes at the ports from the node flux array phibn
+        # calcbranchvalues!(output,phin,keys(portdict),Nmodes)
+
+        # # calculate the output port impedances
+        # calcportimpedance!(outputportimpedance,values(resistordict),wmodes,symfreqvar)
+
+        # # convert from flux to sqrt(photons/second)
+        # # fluxtosqrtphotonflux!(output,values(resistordict),wmodes,symfreqvar)
+
+        # # idea: i can use the same code for converting both capacitors and 
+        # # resistors to numerical values then do the post processing on the
+        # # cap numerical values. be careful on the order of the inverse
+        # # and the real. 
+
+        # output ./= sqrt.(real.(outputportimpedance))
+
+        # # should i make a scaleby function? can pass wmodes or sqrt.(wmodes)?
+        # scaleby!(output,im*wmodes./sqrt.(abs.(wmodes)))
+
+        # # make the input in the new way
+        #  # conj(resistance)/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
+        # input .*= conj.(outputportimpedance)./sqrt.(real.(outputportimpedance))
+        # scaleby!(input,1 ./sqrt.(abs.(wmodes)))
+
+
+        # # for a port with a given impedance and an ideal current source with
+        # # an impedance equal to the port impedance in parallel with the resistor,
+        # # the output wave will be absorbed by the port impedance.
+        # # the input wave to the device is what's left over. we calculate that by
+        # # taking the difference between these.
+        # # output .-= inputconj
+        # output .-= input
+
+        # # calculate the scattering parameters
+        # # the scattering matrix relates input and output waves
+
+        # # output = S * input
+        # # which can be computed by right division
+        # # S = output / input
+        # rdiv!(output,input)
+        # copy!(view(S,:,:,i),output)
+
+
+
+        ###### calculate the scattering parameters
 
         # calculate the branch source currents at the ports from the node
         # source current array bnm
-        calcbranchvalues!(input,bnm,keys(portdict),Nmodes)
-
-        # divide the current by two
-        input .*= 1/2
-
-
-        # inputconj = copy(input)
-
-        # convert from current to sqrt(photons/second)
-        currenttosqrtphotonflux!(input,values(resistordict),wmodes,symfreqvar)
-        # currenttosqrtphotonfluxconj!(inputconj,values(resistordict),wmodes,symfreqvar)
+        calcbranchvalues!(sourcecurrent,bnm,keys(portdict),Nmodes)
 
         # calculate the branch fluxes at the ports from the node flux array phibn
-        calcbranchvalues!(output,phin,keys(portdict),Nmodes)
+        calcbranchvalues!(portvoltage,phin,keys(portdict),Nmodes)
 
-        # convert from flux to sqrt(photons/second)
-        fluxtosqrtphotonflux!(output,values(resistordict),wmodes,symfreqvar)
+        # scale the branch flux by frequency to get voltage
+        scaleby!(portvoltage,im*wmodes)
 
+        # calculate the port impedances
+        calcportimpedance!(portimpedance,values(resistordict),wmodes,symfreqvar)
 
+        # calculate the current flowing through the port
+        portcurrent .= sourcecurrent .- portvoltage ./ portimpedance
 
-        # for a port with a given impedance and an ideal current source with
-        # an impedance equal to the port impedance in parallel with the resistor,
-        # the output wave will be absorbed by the port impedance.
-        # the input wave to the device is what's left over. we calculate that by
-        # taking the difference between these.
-        # output .-= inputconj
-        output .-= input
+        # calculate the scaling factor for the waves
+        k .= 1 ./ sqrt.(real.(portimpedance))
+        scaleby!(k,1 ./sqrt.(abs.(wmodes)))
 
-        # calculate the scattering parameters
-        # the scattering matrix relates input and output waves
+        ## for this specific set of inputs we can use a simpler formula
+        # inputwave .= 1/2*k .* (portvoltage .+ portimpedance .* portcurrent)
+        # we can simplify the above to:
+        inputwave .= 1/2*k .* portimpedance .* sourcecurrent
 
-        # output = S * input
-        # which can be computed by right division
-        # S = output / input
-        rdiv!(output,input)
-        copy!(view(S,:,:,i),output)
+        outputwave .= 1/2*k .* (portvoltage .- conj.(portimpedance) .* portcurrent)
+     
+        rdiv!(outputwave,inputwave)
+        copy!(view(S,:,:,i),outputwave)
+        # @time copy!(view(S,:,:,i),outputwave / inputwave)
 
         # calculate the quantum efficiency, and commutation relations.
         # calcS!(view(S,:,:,i),input,output)
         calcqe!(view(QE,:,:,i),view(S,:,:,i))
         calccm!(view(CM,:,i),view(S,:,:,i), wmodes)
+
+
+        ###### calculate the noise
+        calcbranchvalues!(portvoltagenoise,phin,keys(resistornoiseports),Nmodes)
+
+        # scale the branch flux by frequency to get voltage
+        scaleby!(portvoltagenoise,im*wmodes)
+
+        # calculate the port impedances
+        calcportimpedance!(portimpedancenoise,values(resistornoiseports),wmodes,symfreqvar)
+
+        # calculate the scaling factor for the waves
+        knoise .= 1 ./ sqrt.(real.(portimpedancenoise))
+        scaleby!(knoise,1 ./sqrt.(abs.(wmodes)))
+
+        outputwavenoise .= 1/2*knoise .* (portvoltagenoise .+ conj.(portimpedancenoise) .* portvoltagenoise ./ portimpedancenoise)
+
+        # outputwavenoise / inputwave
+        rdiv!(outputwavenoise,inputwave)
+        copy!(Snoise,outputwavenoise)
+
 
         # scale the source currents by Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
         # i should calculate numerical value for the port impedances
