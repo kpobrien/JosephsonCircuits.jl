@@ -7,7 +7,9 @@
 
 function hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports=[1],
     solver =:klu, iterations=1000,ftol=1e-8,symfreqvar=nothing,
-    nbatches = Base.Threads.nthreads(), sorting=:number)
+    nbatches = Base.Threads.nthreads(), sorting=:number, returnS = true,
+    returnSnoise = false, returnQE = true,returnCM = true,
+    returnnodeflux = false, returnvoltage = false,verbosity = 1)
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit,sorting=sorting)
@@ -17,7 +19,8 @@ function hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports
 
     # solve the nonlinear system    
     pump=hbnlsolve(wp,Ip,Npumpmodes,psc,cg,circuitdefs,ports=pumpports,
-        solver=solver,iterations=iterations,ftol=ftol,symfreqvar=symfreqvar)
+        solver=solver,iterations=iterations,ftol=ftol,symfreqvar=symfreqvar,
+        verbosity = verbosity)
 
     # the node flux
     # phin = pump.out.zero
@@ -31,8 +34,10 @@ function hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports
 
     # solve the linear system
     signal=hblinsolve(ws,psc,cg,circuitdefs,wp=wp,Nmodes=Nsignalmodes,
-        Am=Am,solver=solver,symfreqvar=symfreqvar,nbatches = nbatches)
-
+        Am=Am,solver=solver,symfreqvar=symfreqvar,nbatches = nbatches,
+        returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
+        returnCM = returnCM,returnnodeflux = returnnodeflux,
+        returnvoltage = returnvoltage,verbosity = verbosity)
     return HB(pump,Am,signal)
 end
 
@@ -49,7 +54,9 @@ end
 
 """
 function hblinsolve(w,circuit,circuitdefs;wp=0,Nmodes=1,Am=zeros(Complex{Float64},0,0),
-    solver=:klu,symfreqvar=nothing, nbatches = Base.Threads.nthreads(), sorting=:number)
+    solver=:klu,symfreqvar=nothing, nbatches = Base.Threads.nthreads(), 
+    sorting=:number,returnS = true, returnSnoise = false, returnQE = true,
+    returnCM = true,returnnodeflux = false, returnvoltage = false,verbosity = 1)
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit,sorting=sorting)
@@ -58,13 +65,17 @@ function hblinsolve(w,circuit,circuitdefs;wp=0,Nmodes=1,Am=zeros(Complex{Float64
     cg = calccircuitgraph(psc)
 
     return hblinsolve(w,psc,cg,circuitdefs;wp=wp,Nmodes=Nmodes,Am=Am,
-        solver=solver,symfreqvar=symfreqvar, nbatches = nbatches)
-
+        solver=solver,symfreqvar=symfreqvar, nbatches = nbatches, 
+        returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
+        returnCM = returnCM,returnnodeflux = returnnodeflux,
+        returnvoltage = returnvoltage,verbosity = verbosity)
 end
 
 function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     circuitdefs;wp=0.0,Nmodes::Integer=1,Am=zeros(Complex{Float64},0,0),
-    solver=:klu,symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads())
+    solver=:klu,symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
+    returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
+    returnnodeflux = false, returnvoltage = false,verbosity = 1)
 
     @assert nbatches >= 1
 
@@ -120,8 +131,6 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # calculate the source terms in the node basis
     bnm = transpose(Rbnm)*bbm
 
-
-
     # find the indices at which there are symbolic variables so we can
     # perform a substitution on only those. 
     Cnmfreqsubstindices  = symbolicindices(Cnm)
@@ -147,56 +156,68 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     invLnmindexmap = sparseaddmap(Asparse,invLnmcopy)
     AoLjnmindexmap = sparseaddmap(Asparse,AoLjnm)
 
-    # solve the linear system for the specified frequencies
-    # the response for each frequency is independent so it can be done in
-    # parallel; however we want to reuse the factorization object and other
-    # input arrays. perform array allocations and factorization "nbatches"
-    # times and let FLoops decide how many threads to spawn and schedule.
-    # nbatches will put a cap on the number of threads.
-
-
-
-    # conj!(AoLjnm.nzval)
-
-    # Nnoiseports = length(capacitornoiseports)+length(resistornoiseports)
-    # println("noise ports: ", Nnoiseports)
-
-    # # solve for node fluxes and scattering parameters
-    # inputportbranches = collect(keys(portdict))
-    # outputportbranches = collect(keys(portdict))
-    # inputportimpedance = collect(values(resistordict))
-    # outputportimpedance = collect(values(resistordict))
-
     # solve for node fluxes and scattering parameters
     portbranches = collect(keys(portdict))
     portimpedance = collect(values(resistordict))
     noiseportbranches = collect(keys(resistornoiseports))
     noiseportimpedance = collect(values(resistornoiseports))
 
-    # make empty matrices for the voltages, node fluxes, and scattering parameters
-    # voltages = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
-    # phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
-    S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes,length(w))
-    QE = zeros(Float64,Nports*Nmodes,Nports*Nmodes,length(w))
-    CM = zeros(Float64,Nports*Nmodes,length(w))
+    # make arrays for the voltages, node fluxes, scattering parameters,
+    # quantum efficiency, and commutatio relations. if we aren't returning a
+    # matrix, set it to be an empty array.
+    if returnS
+        S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes,length(w))
+    else
+        S = zeros(Complex{Float64},0,0,0)
+    end
 
-    # as a test don't save voltages and node fluxes
-    voltages = Vector{Complex{Float64}}(undef,0)
-    phin = Vector{Complex{Float64}}(undef,0)
+    if returnSnoise
+        Snoise = zeros(Complex{Float64},length(noiseportbranches)*Nmodes,Nports*Nmodes,length(w))
+    else
+        Snoise = zeros(Complex{Float64},0,0,0)
+    end
 
+    if returnQE
+        QE = zeros(Float64,Nports*Nmodes,Nports*Nmodes,length(w))
+    else
+        QE = zeros(Float64,0,0,0)
+    end
 
-    Snoise = zeros(Complex{Float64},length(noiseportbranches)*Nmodes,Nports*Nmodes,length(w))
+    if returnCM
+        CM = zeros(Float64,Nports*Nmodes,length(w))
+    else
+        CM = zeros(Float64,0,0)
+    end        
 
+    if returnnodeflux
+        nodeflux = Vector{Complex{Float64}}(undef,0)
+    else
+        nodeflux = Vector{Complex{Float64}}(undef,0)
+    end        
+
+    if returnvoltage
+        voltage = Vector{Complex{Float64}}(undef,0)
+    else
+        voltage = Vector{Complex{Float64}}(undef,0)    
+    end    
+
+    # solve the linear system for the specified frequencies. the response for
+    # each frequency is independent so it can be done in parallel; however
+    # we want to reuse the factorization object and other input arrays. 
+    # perform array allocations and factorization "nbatches" times.
 
     if nbatches == 1
-        hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
+        # the overhead of a single thread is negligible but we want a true
+        # single threaded case for debugging purposes. 
+        hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
                     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
                     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
                     portbranches,portimpedance,noiseportbranches,noiseportimpedance,
                     w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,1:length(w))
     else
+        # parallelize using native threading
         # give a warning about potentially problematic configurations
-        # Observed incorrect results and crashes on the machine below
+        # observed incorrect results and crashes on the machine below
         # but no issues on 11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz
         # julia> versioninfo()
         # Julia Version 1.8.0-rc1
@@ -211,24 +232,29 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
         # Environment:
         #   JULIA_NUM_THREADS = 16
         libstr = "libopenblas64_.so"
-        if libstr == LinearAlgebra.BLAS.get_config().loaded_libs[1].libname[end-length(libstr)+1:end]
-            @warn "OpenBLAS + Julia threads may cause memory errors on some systems. Consider MKL.jl or setting nbatches=1"
+        if verbosity > 0 && libstr == LinearAlgebra.BLAS.get_config().loaded_libs[1].libname[end-length(libstr)+1:end]
+            @warn "OpenBLAS + Julia threads may cause memory errors on some systems. Consider MKL.jl or setting nbatches=1 . Set verbosity=0 to hide this warning."
         end
-        # parallelize using native threading
-        @sync for wi in Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
-            Base.Threads.@spawn hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
+
+        batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
+        Base.Threads.@threads for i in 1:length(batches)
+            hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
                 AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
                 Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
                 portbranches,portimpedance,noiseportbranches,noiseportimpedance,
-                w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,wi)
+                w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,batches[i])
         end
     end
 
-    # calculate the ideal quantum efficiency.
-    QEideal =  1 ./(2 .- 1 ./abs2.(S))
 
+    if returnQE
+        # calculate the ideal quantum efficiency.
+        QEideal =  1 ./(2 .- 1 ./abs2.(S))
+    else
+        QEideal = zeros(Float64,0,0,0)
+    end
 
-    return LinearHB(S,Snoise,QE,QEideal,CM,Nmodes,voltages,phin,Nnodes,Nbranches,signalindex,w)
+    return LinearHB(S,Snoise,QE,QEideal,CM,nodeflux,voltage,Nmodes,Nnodes,Nbranches,signalindex,w)
 
 end
 
@@ -238,14 +264,15 @@ struct LinearHB
     QE
     QEideal
     CM
+    nodeflux
+    voltage
     Nmodes
-    v
-    phin
     Nnodes
     Nbranches
     signalindex
     w
 end
+
 
 # i should remove QE and CM from this. and compute this after
 # should i use views to compute Snoise for all? or should i compute them 
@@ -264,7 +291,7 @@ end
 # for the ones with Nports2 that's allocation a fair amount of memory
 # so might as well not do that.
 
-function hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
+function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
     portbranches,portimpedance,noiseportbranches,noiseportimpedance,
@@ -301,13 +328,30 @@ function hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm
         error("Error: Unknown solver")
     end
 
+    # if the scattering matrix is empty define a new working matrix
+    if isempty(S)
+        Sview = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    end
+
+    # if the noise scattering matrix is empty define a new working matrix
+    if isempty(Snoise)
+        Snoiseview = zeros(Complex{Float64},Nnoiseports*Nmodes,Nports*Nmodes)
+    end
+
+    # loop over the frequencies
     for i in wi
 
-        Sview = view(S,:,:,i)
-        Snoiseview = view(Snoise,:,:,i)
-        QEview = view(QE,:,:,i)
-        CMview = view(CM,:,i)
+        # if the scattering matrix is not empty define a view
+        if !isempty(S)
+            Sview = view(S,:,:,i)
+        end
 
+        # if the noise scattering matrix is not empty define a view
+        if !isempty(Snoise)
+            Snoiseview = view(Snoise,:,:,i)
+        end
+
+        # calculate the frequency matrices
         ws = w[i]
         wmodes = calcw(ws,indices,wp);
         wmodesm = Diagonal(repeat(wmodes,outer=Nnodes-1));
@@ -330,56 +374,50 @@ function hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm
         sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
             wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
 
+
         # solve the linear system
-        if solver == :banded
-
-            # fill!(Abanded,0)
-            # sparsetobanded!(Abanded,Asparsecopy)
-
-            # # # phin = A \ bnm
-            # ldiv!(phin,Abanded,bnm)
-        elseif solver == :klu
-
+        if solver == :klu
             try 
-                # update the factorization. the sparsity structure does not change
-                # so we can reuse the factorization object.
+                # update the factorization. the sparsity structure does 
+                # not change so we can reuse the factorization object.
                 KLU.klu!(F,Asparsecopy)
 
                 # solve the linear system
-                # phin .= KLU.klu(Asparsecopy) \ bnm
-                
                 ldiv!(phin,F,bnm)
-                # if norm(Asparsecopy*phin .- bnm) > 1e-6
-                #     println("warning, in accurate point")
-                # end
-
             catch e
                 if isa(e, SingularException)
-                    # reusing the symbolic factorization can sometimes lead to
-                    # numerical problems. if the first linear solve fails
-                    # try factoring and solving again
+                    # reusing the symbolic factorization can sometimes
+                    # lead to numerical problems. if the first linear
+                    # solve fails try factoring and solving again
                     F = KLU.klu(Asparsecopy)
                     ldiv!(phin,F,bnm)
                 else
                     throw(e)
                 end
             end
-
         else
             error("Error: Unknown solver")
         end
 
-        # # convert to node voltages. node flux is defined as the time integral of 
-        # # node voltage so node voltage is derivative of node flux which can be
-        # # accomplished in the frequency domain by multiplying by j*w.
-        # voltages[:,:,i] = im*wmodesm*phin
+        # convert to node voltages. node flux is defined as the time integral of 
+        # node voltage so node voltage is derivative of node flux which can be
+        # accomplished in the frequency domain by multiplying by j*w.
+        if !isempty(voltage)
+            voltage[:,:,i] .= im*wmodesm*phin
+        end
+
+        # copy the nodeflux for output
+        if !isempty(nodeflux)
+            copy!(view(nodeflux,:,:,i),phin)
+        end
 
         # calculate the scattering parameters
-        calcS!(Sview,inputwave,outputwave,phin,bnm,portbranches,portbranches,
-            portimpedance,portimpedance,wmodes,symfreqvar)
+        if !isempty(S) || !isempty(QE) || !isempty(CM)
+            calcS!(Sview,inputwave,outputwave,phin,bnm,portbranches,portbranches,
+                portimpedance,portimpedance,wmodes,symfreqvar)
+        end
 
-
-        if length(noiseportbranches) > 0
+        if Nnoiseports > 0 && (!isempty(Snoise) || !isempty(QE) || !isempty(CM))
 
             # solve the nonlinear system with the complex conjugate of the pump
             # modulation matrix
@@ -397,35 +435,19 @@ function hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm
                 wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
 
             # solve the linear system
-            if solver == :banded
-
-                # fill!(Abanded,0)
-                # sparsetobanded!(Abanded,Asparsecopy)
-
-                # # # phin = A \ bnm
-                # ldiv!(phin,Abanded,bnm)
-            elseif solver == :klu
-
+            if solver == :klu
                 try 
-                    # update the factorization. the sparsity structure does not change
-                    # so we can reuse the factorization object.
+                    # update the factorization. the sparsity structure does 
+                    # not change so we can reuse the factorization object.
                     KLU.klu!(F,Asparsecopy)
 
                     # solve the linear system
-                    # phin .= KLU.klu(Asparsecopy) \ bnm
-                    
                     ldiv!(phin,F,bnm)
-
-                    # if norm(Asparsecopy*phin .- bnm) > 1e-6
-                    #     println("warning, in accurate point")
-                    # end
-                
-
                 catch e
                     if isa(e, SingularException)
-                        # reusing the symbolic factorization can sometimes lead to
-                        # numerical problems. if the first linear solve fails
-                        # try factoring and solving again
+                        # reusing the symbolic factorization can sometimes
+                        # lead to numerical problems. if the first linear
+                        # solve fails try factoring and solving again
                         F = KLU.klu(Asparsecopy)
                         ldiv!(phin,F,bnm)
                     else
@@ -437,26 +459,36 @@ function hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm
             end
 
             # calculate the noise scattering parameters
-            calcS!(Snoiseview,inputwave,noiseoutputwave,phin,bnm,portbranches,noiseportbranches,
-                portimpedance,noiseportimpedance,wmodes,symfreqvar)
-            ## calculate the quantum efficiency and commutation relations.
-            calcqe!(QEview,Sview,transpose(Snoiseview))
-            calccm!(CMview,Sview,transpose(Snoiseview), wmodes)
+            if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
+                calcS!(Snoiseview,inputwave,noiseoutputwave,phin,bnm,portbranches,noiseportbranches,
+                    portimpedance,noiseportimpedance,wmodes,symfreqvar)
+            end
 
+            # calculate the quantum efficiency
+            if !isempty(QE)
+                calcqe!(view(QE,:,:,i),Sview,transpose(Snoiseview))
+            end
+
+            # calculate the commutation relations (Manley-Rowe relations)
+            if !isempty(CM)
+                calccm!(view(CM,:,i),Sview,transpose(Snoiseview), wmodes)
+            end
         else
-            # calculate the quantum efficiency and commutation relations
-            calcqe!(QEview,Sview)
-            calccm!(CMview,Sview, wmodes)
+            # calculate the quantum efficiency
+            if !isempty(QE)
+                calcqe!(view(QE,:,:,i),Sview)
+            end
 
+            # calculate the commutation relations (Manley-Rowe relations)
+            if !isempty(CM)
+                calccm!(view(CM,:,i),Sview, wmodes)
+            end
         end
 
 
     end
     return nothing
 end
-
-
-
 
 
 """
@@ -469,7 +501,8 @@ numeric matrices.
 
 """
 function hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs;ports=[1],solver=:klu,
-    iterations=1000,symfreqvar=nothing,ftol=1e-8,sorting=:number)
+    iterations=1000,symfreqvar=nothing,ftol=1e-8,sorting=:number,
+    verbosity=1)
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit,sorting=sorting)
@@ -478,12 +511,14 @@ function hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs;ports=[1],solver=:klu,
     cg = calccircuitgraph(psc)
 
     return hbnlsolve(wp,Ip,Nmodes,psc,cg,circuitdefs;ports=ports,
-        solver=solver,iterations=iterations,ftol=ftol,symfreqvar=symfreqvar)
+        solver=solver,iterations=iterations,ftol=ftol,symfreqvar=symfreqvar,
+        verbosity=verbosity)
 
 end
 
 function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
-    circuitdefs;ports=[1],solver=:klu,iterations=1000,ftol = 1e-8,symfreqvar=nothing)
+    circuitdefs;ports=[1],solver=:klu,iterations=1000,ftol = 1e-8,symfreqvar=nothing,
+    verbosity=1)
 
 
     # calculate the numeric matrices
@@ -570,52 +605,6 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     invLnmindexmap = sparseaddmap(Jsparse,invLnm)
     Gnmindexmap = sparseaddmap(Jsparse,Gnm)
     Cnmindexmap = sparseaddmap(Jsparse,Cnm)
-
-    # function FJsparse!(F,J,x)
-    #     calcfj!(F,J,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-    #     Ljb,Ljbm,Nmodes,
-    #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
-    #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
-    #     return F,J
-    # end
-
-    # # calculate the structure of the Jacobian, depending on the solver type
-    # if solver == :banded
-    #     # (lb,ub) = calcbandwidths(AoLjnm,invLnm,Cnm,Gnm)
-    #     # Jbanded = BandedMatrix(Jsparse,(lb,ub))
-
-    #     # odbanded = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse!),x,F,Jbanded)
-
-    #     # # use the default solver for banded matrices
-    #     # out=NLsolve.nlsolve(odbanded,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->ldiv!(x,A,b))
-
-    # elseif solver == :klu
-
-    #     # perform a factorization. this will be updated later for each 
-    #     # interation
-    #     FK = KLU.klu(Jsparse)
-
-    #     odsparse = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse!),x,F,Jsparse)
-
-    #     # if the sparsity structure doesn't change, we can cache the 
-    #     # factorization. this is a significant speed improvement.
-    #     # out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-    #    # out= NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-    #    out= NLsolve.nlsolve(odsparse,method = :newton,linesearch=LineSearches.BackTracking(),autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-    #    # out= NLsolve.nlsolve(odsparse,method = :newton,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-
-    # else
-    #     error("Error: Unknown solver")
-    # end
-
-    # if out.f_converged == false
-    #     println("Nonlinear solver not converged. You may need to supply a better
-    #     guess at the solution vector, increase the number of pump harmonics, or
-    #     increase the number of iterations.")
-    # end
-
-    # phin = out.zero
-
 
     # perform a factorization. this will be updated later for each 
     # interation
@@ -877,13 +866,9 @@ function calcfj!(F,
     phib = Rbnm*phin
 
     # calculate the sine and cosine nonlinearities 
-    # println("fft")
-    # @time 
     Am = sincosnloddtoboth(phib[Ljbm.nzind],nnz(Ljb),Nmodes)
 
     # calculate the residual
-    # println("F")
-    # @time 
     if !(F == nothing)
 
         # calculate the function. use the sine terms. Am[2:2:2*Nmodes,:]
@@ -899,45 +884,24 @@ function calcfj!(F,
         F .= Rbnmt*AoLjbmvector + (invLnm + im*Gnm*wmodesm - Cnm*wmodes2m)*phin - bnm
     end
 
-    #calculate the Jacobian
-    # println("J")
-    # @time 
+    # calculate the Jacobian
     if !(J == nothing)
 
         # calculate  AoLjbm
         updateAoLjbm!(AoLjbm,Am,Ljb,Lmean,Nmodes,Nbranches)
 
         # convert to a sparse node matrix
-        # println("AoLjnm")
-        # @time 
         AoLjnm = Rbnmt*AoLjbm*Rbnm
 
-
-        # if isbanded(J)
-
-        # if typeof(J) == BandedMatrix{ComplexF64, Matrix{ComplexF64}, Base.OneTo{Int64}}
-
-        #     # calculate the Jacobian. Convert to a banded matrix if J is banded. 
-        #     # J .= BandedMatrix(AoLjnm + invLnm - im*Gnm*wmodesm - Cnm*wmodes2m)
-        #     # the code below converts the sparse matrices into banded matrices
-        #     # with minimal memory allocations. this is a significant speed
-        #     # improvement. 
-        #     fill!(J,0)
-        #     sparsetobanded!(J,AoLjnm)
-        #     bandedsparseadd!(J,invLnm)
-        #     bandedsparseadd!(J,im,Gnm,wmodesm)
-        #     bandedsparseadd!(J,-1,Cnm,wmodes2m)
-        # else
-            # calculate the Jacobian. If J is sparse, keep it sparse. 
-            # @time J .= AoLjnm .+ invLnm .- im.*Gnm*wmodesm .- Cnm*wmodes2m
-            # the code below adds the sparse matrices together with minimal
-            # memory allocations and without changing the sparsity structure.
-            fill!(J,0)
-            sparseadd!(J,AoLjnm,AoLjnmindexmap)
-            sparseadd!(J,invLnm,invLnmindexmap)
-            sparseadd!(J,im,Gnm,wmodesm,Gnmindexmap)
-            sparseadd!(J,-1,Cnm,wmodes2m,Cnmindexmap)
-        # end
+        # calculate the sparse Jacobian.
+        # @time J .= AoLjnm .+ invLnm .- im.*Gnm*wmodesm .- Cnm*wmodes2m
+        # the code below adds the sparse matrices together with minimal
+        # memory allocations and without changing the sparsity structure.
+        fill!(J,0)
+        sparseadd!(J,AoLjnm,AoLjnmindexmap)
+        sparseadd!(J,invLnm,invLnmindexmap)
+        sparseadd!(J,im,Gnm,wmodesm,Gnmindexmap)
+        sparseadd!(J,-1,Cnm,wmodes2m,Cnmindexmap)
     end
     return nothing
 end
@@ -1215,11 +1179,7 @@ function applynl(am::Array{Complex{Float64}},f::Function)
     ftnlift = FFTW.rfft(nlift,1:length(size(am))-1)/normalization
     
     return ftnlift
-    # should i make the fft plans and return them here?
-    
-
 end
-
 
 
 """
