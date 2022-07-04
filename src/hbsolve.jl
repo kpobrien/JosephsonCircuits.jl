@@ -188,49 +188,43 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     Snoise = zeros(Complex{Float64},length(noiseportbranches)*Nmodes,Nports*Nmodes,length(w))
 
 
-    # parallelize using native threading
-    @sync for wi in Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
-        Base.Threads.@spawn hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
-            AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-            Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-            portbranches,portimpedance,noiseportbranches,noiseportimpedance,
-            w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,wi)
+    if nbatches == 1
+        hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
+                    AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
+                    Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+                    portbranches,portimpedance,noiseportbranches,noiseportimpedance,
+                    w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,1:length(w))
+    else
+        # give a warning about potentially problematic configurations
+        # Observed incorrect results and crashes on the machine below
+        # but no issues on 11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz
+        # julia> versioninfo()
+        # Julia Version 1.8.0-rc1
+        # Commit 6368fdc656 (2022-05-27 18:33 UTC)
+        # Platform Info:
+        #   OS: Linux (x86_64-pc-linux-gnu)
+        #   CPU: 32 × AMD Ryzen 9 3950X 16-Core Processor
+        #   WORD_SIZE: 64
+        #   LIBM: libopenlibm
+        #   LLVM: libLLVM-13.0.1 (ORCJIT, znver2)
+        #   Threads: 16 on 32 virtual cores
+        # Environment:
+        #   JULIA_NUM_THREADS = 16
+        libstr = "libopenblas64_.so"
+        if libstr == LinearAlgebra.BLAS.get_config().loaded_libs[1].libname[end-length(libstr)+1:end]
+            @warn "OpenBLAS + Julia threads may cause memory errors on some systems. Consider MKL.jl or setting nbatches=1"
+        end
+        # parallelize using native threading
+        @sync for wi in Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
+            Base.Threads.@spawn hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
+                AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
+                Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+                portbranches,portimpedance,noiseportbranches,noiseportimpedance,
+                w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,wi)
+        end
     end
 
-    # # solve for noise scattering parameters using the complex conjugate of
-    # # the pump modulation matrix
-    # noiseoutputportbranches = collect(keys(resistornoiseports))
-    # noiseoutputportimpedance = collect(values(resistornoiseports))
-
-    # # resistornoiseportskeys =  collect(keys(resistornoiseports))
-    # # resistornoiseportsvalues = collect(values(resistornoiseports))
-
-    # AoLjnmconj = copy(AoLjnm)
-    # conj!(AoLjnmconj.nzval)
-    # # i don't want to overwrite the voltages with this function
-    # # i could pass in nothing for Snoise or voltages if i don't want them to be
-    # # returned. i might have to calculate QE and CM inside of the function
-    # # because i don't want to keep all of these. 
-    # # shoot. i can't calculate QE and CM within the function because i need
-    # # the noise also. this might be a sign that i need to break up hblinsolve_inner
-    # # as a first pass, just returning Snoise might be ok.
-
-    # @sync for wi in Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
-    #     Base.Threads.@spawn hblinsolve_inner!(Snoise,voltages,Asparse,AoLjnmconj,invLnm,Cnm,Gnm,bnm,
-    #         AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-    #         Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-    #         inputportimpedance,noiseoutputportimpedance,inputportbranches,noiseoutputportbranches,
-    #         w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,wi)
-    # end
-
-
-    # # calculate the quantum efficiency and commutation relations
-    # for i = 1:length(w)
-    #     ws = w[i]
-    #     wmodes = calcw(ws,indices,wp);
-    #     calcqe!(view(QE,:,:,i),view(S,:,:,i))
-    #     calccm!(view(CM,:,i),view(S,:,:,i), wmodes)
-    # end
+    # calculate the ideal quantum efficiency.
     QEideal =  1 ./(2 .- 1 ./abs2.(S))
 
 
