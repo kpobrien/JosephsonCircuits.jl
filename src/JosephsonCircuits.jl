@@ -25,6 +25,7 @@ using LinearAlgebra
 using SparseArrays
 using Printf
 using Requires
+using Xsum
 # using BandedMatrices
 
 # define the zero for symbolic numbers so that we can view the sparse arrays

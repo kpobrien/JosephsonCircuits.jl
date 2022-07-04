@@ -1,5 +1,6 @@
 
 
+
 """
   calcphibports(nodevalues,branches,Nmodes)
 
@@ -335,7 +336,6 @@ function calcportimpedance!(portimpedance,resistorvalues,wmodes,symfreqvar)
             for l = 1:size(portimpedance,2)
                 # current[(j-1)*Nmodes+k,l] *= resistance/sqrt(resistance)/sqrt(abs(wmodes[k]))
                 portimpedance[(j-1)*Nmodes+k,l] = resistance
-
             end
         end
     end
@@ -364,111 +364,111 @@ function scaleby!(portimpedance,wmodes)
     return nothing
 end
 
-"""
+# """
 
 
-Convert current from amperes to units of sqrt energy or sqrt(photons/second), 
-up to a factor of Planck's constant which we will not apply because it cancels
-out (and is a very small number).
-"""
-function currenttosqrtphotonflux!(current,resistorvalues,wmodes,symfreqvar)
+# Convert current from amperes to units of sqrt energy or sqrt(photons/second), 
+# up to a factor of Planck's constant which we will not apply because it cancels
+# out (and is a very small number).
+# """
+# function currenttosqrtphotonflux!(current,resistorvalues,wmodes,symfreqvar)
 
-    Nmodes = length(wmodes)
+#     Nmodes = length(wmodes)
 
-    for (j,val) in enumerate(resistorvalues)
-        for k = 1:Nmodes
-            # if symbolic, convert to numeric
-            if val isa Symbolic
-                if !(symfreqvar isa Symbolic)
-                    error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-                end
-                resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
-            else
-                resistance = val
-            end
+#     for (j,val) in enumerate(resistorvalues)
+#         for k = 1:Nmodes
+#             # if symbolic, convert to numeric
+#             if val isa Symbolic
+#                 if !(symfreqvar isa Symbolic)
+#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+#                 end
+#                 resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
+#             else
+#                 resistance = val
+#             end
 
-            # take the complex conjugate if frequency is negative
-            if wmodes[k] < 0
-                resistance = conj(resistance)
-            end
+#             # take the complex conjugate if frequency is negative
+#             if wmodes[k] < 0
+#                 resistance = conj(resistance)
+#             end
 
-            for l = 1:size(current,2)
-                # current[(j-1)*Nmodes+k,l] *= resistance/sqrt(resistance)/sqrt(abs(wmodes[k]))
-                current[(j-1)*Nmodes+k,l] *= (resistance)/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
+#             for l = 1:size(current,2)
+#                 # current[(j-1)*Nmodes+k,l] *= resistance/sqrt(resistance)/sqrt(abs(wmodes[k]))
+#                 current[(j-1)*Nmodes+k,l] *= (resistance)/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
 
-            end
-        end
-    end
+#             end
+#         end
+#     end
 
-    return nothing
-end
-
-
-function currenttosqrtphotonfluxconj!(current,resistorvalues,wmodes,symfreqvar)
-
-    Nmodes = length(wmodes)
-
-    for (j,val) in enumerate(resistorvalues)
-        for k = 1:Nmodes
-            # if symbolic, convert to numeric
-            if val isa Symbolic
-                if !(symfreqvar isa Symbolic)
-                    error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-                end
-                resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
-            else
-                resistance = val
-            end
-
-            # take the complex conjugate if frequency is negative
-            if wmodes[k] < 0
-                resistance = conj(resistance)
-            end
-
-            for l = 1:size(current,2)
-                # current[(j-1)*Nmodes+k,l] *= resistance/sqrt(resistance)/sqrt(abs(wmodes[k]))
-                current[(j-1)*Nmodes+k,l] *= conj(resistance)/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
-
-            end
-        end
-    end
-
-    return nothing
-end
+#     return nothing
+# end
 
 
-"""
+# function currenttosqrtphotonfluxconj!(current,resistorvalues,wmodes,symfreqvar)
 
-Convert flux from units of volt / frequency to units of sqrt energy or sqrt(photons/second), up to a factor
-of Planck's constant which we will not apply because it cancels out (and is a 
-very small number).
+#     Nmodes = length(wmodes)
 
-"""
-function fluxtosqrtphotonflux!(flux,resistorvalues,wmodes,symfreqvar)
+#     for (j,val) in enumerate(resistorvalues)
+#         for k = 1:Nmodes
+#             # if symbolic, convert to numeric
+#             if val isa Symbolic
+#                 if !(symfreqvar isa Symbolic)
+#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+#                 end
+#                 resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
+#             else
+#                 resistance = val
+#             end
 
-    Nmodes = length(wmodes)
+#             # take the complex conjugate if frequency is negative
+#             if wmodes[k] < 0
+#                 resistance = conj(resistance)
+#             end
 
-    for (j,val) in enumerate(resistorvalues)
-        for k = 1:Nmodes
-            # if symbolic, convert to numeric
-            if val isa Symbolic
-                if !(symfreqvar isa Symbolic)
-                    error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-                end
-                resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
-            else
-                resistance = val
-            end
+#             for l = 1:size(current,2)
+#                 # current[(j-1)*Nmodes+k,l] *= resistance/sqrt(resistance)/sqrt(abs(wmodes[k]))
+#                 current[(j-1)*Nmodes+k,l] *= conj(resistance)/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
 
-            for l = 1:size(flux,2)
-                # flux[(j-1)*Nmodes+k,l] *= im*wmodes[k]/sqrt(resistance)/sqrt(abs(wmodes[k]))
-                flux[(j-1)*Nmodes+k,l] *= im*wmodes[k]/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
-            end
-        end
-    end
+#             end
+#         end
+#     end
 
-    return nothing
-end
+#     return nothing
+# end
+
+
+# """
+
+# Convert flux from units of volt / frequency to units of sqrt energy or sqrt(photons/second), up to a factor
+# of Planck's constant which we will not apply because it cancels out (and is a 
+# very small number).
+
+# """
+# function fluxtosqrtphotonflux!(flux,resistorvalues,wmodes,symfreqvar)
+
+#     Nmodes = length(wmodes)
+
+#     for (j,val) in enumerate(resistorvalues)
+#         for k = 1:Nmodes
+#             # if symbolic, convert to numeric
+#             if val isa Symbolic
+#                 if !(symfreqvar isa Symbolic)
+#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+#                 end
+#                 resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
+#             else
+#                 resistance = val
+#             end
+
+#             for l = 1:size(flux,2)
+#                 # flux[(j-1)*Nmodes+k,l] *= im*wmodes[k]/sqrt(resistance)/sqrt(abs(wmodes[k]))
+#                 flux[(j-1)*Nmodes+k,l] *= im*wmodes[k]/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
+#             end
+#         end
+#     end
+
+#     return nothing
+# end
 
 
 function calcoutput!(output,phibports,resistorvalues,wmodes,symfreqvar)
@@ -561,19 +561,169 @@ the strong pump.
 # end
 
 """
-  calcS!(S,phibports,resistordict,wmodes)
+  calcS!
 
-Return the generalized scattering parameters for the system linearized around
-the strong pump. 
+Return the scattering parameters for the system linearized around the strong pump. 
 """
-# function calcS!(S,input::Diagonal,output)
-function calcS!(S,input,output)
+function calcS!(S,inputwave,outputwave,phin,bnm,inputportbranches,outputportbranches,
+    inputportimpedance,outputportimpedance,wmodes,symfreqvar)
 
-    #solve for the scattering matrix from the sets of forward and backward
-    #waves
-    # S .= ((output .- input) / input)
-    S .= ((output .- input) / input)
-    # S .= output / input
+    # check the size of S
+
+    # check the size of inputwave
+
+    # check the size of outputwave
+
+    # check the sizes of all of the inputs
+
+    # loop over input branches and modes to define inputwaves
+    Ninputports = length(inputportbranches)
+    Noutputports = length(outputportbranches)
+    Nsolutions = size(phin,2)
+    Nmodes = length(wmodes)
+
+    for i = 1:Ninputports
+        for j = 1:Nmodes
+            for k = 1:Nsolutions
+
+                key = inputportbranches[i]
+
+                # calculate the branch source currents at the ports from the node
+                # source current array bnm
+                if key[1] == 1
+                    sourcecurrent = -bnm[(key[2]-2)*Nmodes+j,k]
+                elseif key[2] == 1
+                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k]
+                else
+                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k] 
+                    sourcecurrent -= bnm[(key[2]-2)*Nmodes+j,k]
+                end
+
+                # calculate the branch fluxes at the ports from the node flux array phin
+                if key[1] == 1
+                    portvoltage = -phin[(key[2]-2)*Nmodes+j,k]
+                elseif key[2] == 1
+                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k]
+                else
+                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k] 
+                    portvoltage -= phin[(key[2]-2)*Nmodes+j,k]
+                end
+
+                # scale the branch flux by frequency to get voltage
+                portvoltage *= im*wmodes[j]
+
+                # calculate the port impedance
+                if inputportimpedance[i] isa Symbolic
+                    if !(symfreqvar isa Symbolic)
+                        error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                    end
+                    portimpedance = substitute(inputportimpedance[i],Dict(symfreqvar=>wmodes[j]))
+                else
+                    portimpedance = inputportimpedance[i]
+                end
+
+                # take the complex conjugate if frequency is negative
+                if wmodes[j] < 0
+                    portimpedance = conj(portimpedance)
+                end
+
+
+                # calculate the current flowing through the port
+                portcurrent = sourcecurrent - portvoltage / portimpedance
+
+                # calculate the scaling factor for the waves
+                kval = 1 / sqrt(real(portimpedance))
+
+                # convert from sqrt(power) to sqrt(photons/second)
+                kval *= 1 /sqrt(abs(wmodes[j]))
+
+                # calculate the input and output power waves as defined in (except in
+                # units of sqrt(photons/second) instead of sqrt(power)
+                # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
+                # Micr. Theory and Tech. 13, 194–202 (1965) 
+                # doi: 10.1109/TMTT.1965.1125964
+                # inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage + portimpedance * portcurrent)
+                # we can simplify the above to:
+                inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
+                # outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
+
+            end
+        end
+    end
+
+    # loop over output branches and modes to define outputwaves
+    for i = 1:Noutputports
+        for j = 1:Nmodes
+            for k = 1:Nsolutions
+
+                key = outputportbranches[i]
+
+                # calculate the branch source currents at the ports from the node
+                # source current array bnm
+                if key[1] == 1
+                    sourcecurrent = -bnm[(key[2]-2)*Nmodes+j,k]
+                elseif key[2] == 1
+                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k]
+                else
+                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k] 
+                    sourcecurrent -= bnm[(key[2]-2)*Nmodes+j,k]
+                end
+
+                # calculate the branch fluxes at the ports from the node flux array phin
+                if key[1] == 1
+                    portvoltage = -phin[(key[2]-2)*Nmodes+j,k]
+                elseif key[2] == 1
+                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k]
+                else
+                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k] 
+                    portvoltage -= phin[(key[2]-2)*Nmodes+j,k]
+                end
+
+                # scale the branch flux by frequency to get voltage
+                portvoltage *= im*wmodes[j]
+
+                # calculate the port impedance
+                if outputportimpedance[i] isa Symbolic
+                    if !(symfreqvar isa Symbolic)
+                        error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                    end
+                    portimpedance = substitute(outputportimpedance[i],Dict(symfreqvar=>wmodes[j]))
+                else
+                    portimpedance = outputportimpedance[i]
+                end
+
+                # take the complex conjugate if frequency is negative
+                if wmodes[j] < 0
+                    portimpedance = conj(portimpedance)
+                end
+
+                # calculate the current flowing through the port
+                portcurrent = sourcecurrent - portvoltage / portimpedance
+
+                # calculate the scaling factor for the waves
+                kval = 1 / sqrt(real(portimpedance))
+
+                # convert from sqrt(power) to sqrt(photons/second)
+                kval *= 1 /sqrt(abs(wmodes[j]))
+
+                # calculate the input and output power waves as defined in (except in
+                # units of sqrt(photons/second) instead of sqrt(power)
+                # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
+                # Micr. Theory and Tech. 13, 194–202 (1965) 
+                # doi: 10.1109/TMTT.1965.1125964
+                # inputwave[(i-1)*Nmodes+j,k] = 1/2*k * (portvoltage + portimpedance * portcurrent)
+                # we can simplify the above to:
+                # inputwave[(i-1)*Nmodes+j,k] = 1/2*k * portimpedance * sourcecurrent
+                outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
+            end
+        end
+    end
+
+ 
+    # scattering matrix is defined as outputwave = S * inputwave
+    rdiv!(outputwave,inputwave)
+    copy!(S,outputwave)
+
 
 
     return nothing
@@ -625,7 +775,64 @@ function calccm!(cm,S,w)
 end
 
 """
-    calcqe(S,w,cm)
+    calccm(S,Snoise,w)
+
+Calculate the bosonic commutation relations for a scattering matrix S in the 
+field ladder operator basis. Sum the abs2 of each element along the horizontal
+axis, applying a minus sign if the corresponding frequency is negative. Represents
+energy conservation. 
+"""
+function calccm(S,Snoise,w)
+
+    cm = zeros(Float64,size(S,1))
+
+    calccm!(cm,S,Snoise,w)
+
+    return cm
+end
+
+"""
+    calccm!(cm,S,Snoise,w)
+
+Calculate the bosonic commutation relations for a scattering matrix S in the 
+field ladder operator basis. Overwrites cm with output. 
+
+This function is potentially vulnerable to loss of precision.
+Allocating a temporary array, filling it with the values, then using
+KahanSummation.jl or Xsum.jl to perform a more accurate sum are viable solutions
+if this ia a problem (I haven't seen any issues so far). 
+"""
+function calccm!(cm,S,Snoise,w)
+
+    m = length(w)
+
+    if any(mod.(size(S),m) .!=0)
+        throw(DimensionMismatch("Dimensions of scattering matrix must be an integer multiple of the number of frequencies"))
+    end
+
+    if size(S,1) != length(cm)
+        throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
+    end
+
+    if size(S,1) .!= size(Snoise,1)
+        throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
+    end
+
+
+    for i = 1:size(S,1)
+        for j = 1:size(S,2)
+            cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
+        end
+        for j = 1:size(Snoise,2)
+            cm[i] += abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+        end
+    end
+
+    return nothing
+end
+
+"""
+    calcqe(S)
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
 ladder operator basis. 
@@ -640,7 +847,7 @@ function calcqe(S)
 end
 
 """
-    calcqe!(S,qe)
+    calcqe!(qe,S)
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
 ladder operator basis. Overwrites qe with output. 
@@ -654,9 +861,62 @@ function calcqe!(qe,S)
     for i = 1:size(S,1)
         denom=0
         for j = 1:size(S,2)
-            denom += abs2.(S[i,j])
+            denom += abs2(S[i,j])
         end
-        qe[i,:] = abs2.(S[i,:]) ./ denom
+        for j = 1:size(S,2)
+            qe[i,j] = abs2(S[i,j]) / denom
+        end
+
+        # qe[i,:] = abs2.(S[i,:]) ./ denom
+    end
+
+    return nothing
+end
+
+"""
+    calcqe(S,Snoise)
+
+Calculate the quantum efficiency matrix for a scattering matrix in the field
+ladder operator basis. 
+"""
+function calcqe(S,Snoise)
+
+    qe = zeros(Float64,size(S))
+
+    calcqe!(qe,S,Snoise)
+
+    return qe
+end
+
+"""
+    calcqe!(qe,S,Snoise)
+
+Calculate the quantum efficiency matrix for a scattering matrix in the field
+ladder operator basis. Overwrites qe with output. 
+"""
+function calcqe!(qe,S,Snoise)
+
+    if any(size(qe) .!= size(S))
+        throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
+    end
+
+    if size(S,1) .!= size(Snoise,1)
+        throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
+    end
+
+    for i = 1:size(S,1)
+        denom=0
+        for j = 1:size(S,2)
+            denom += abs2(S[i,j])
+        end
+
+        for j = 1:size(Snoise,2)
+            denom += abs2(Snoise[i,j])
+        end
+        for j = 1:size(S,2)
+            qe[i,j] = abs2(S[i,j]) / denom
+        end
+        # qe[i,:] = abs2.(S[i,:]) ./ denom
     end
 
     return nothing

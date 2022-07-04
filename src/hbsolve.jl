@@ -63,9 +63,10 @@ function hblinsolve(w,circuit,circuitdefs;wp=0,Nmodes=1,Am=zeros(Complex{Float64
 end
 
 function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
-    circuitdefs;wp=0,Nmodes=1,Am=zeros(Complex{Float64},0,0),
-    solver=:klu,symfreqvar=nothing, nbatches = Base.Threads.nthreads())
+    circuitdefs;wp=0.0,Nmodes::Integer=1,Am=zeros(Complex{Float64},0,0),
+    solver=:klu,symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads())
 
+    @assert nbatches >= 1
 
     # calculate the numeric matrices
     nm=numericmatrices(psc,cg,circuitdefs,Nmodes=Nmodes)
@@ -119,16 +120,6 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # calculate the source terms in the node basis
     bnm = transpose(Rbnm)*bbm
 
-    # make empty matrices for the voltages, node fluxes, and scattering parameters
-    # voltages = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
-    # phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
-    S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes,length(w))
-    QE = zeros(Float64,Nports*Nmodes,Nports*Nmodes,length(w))
-    CM = zeros(Float64,Nports*Nmodes,length(w))
-
-    # as a test don't save voltages and node fluxes
-    voltages = Vector{Complex{Float64}}(undef,0)
-    phin = Vector{Complex{Float64}}(undef,0)
 
 
     # find the indices at which there are symbolic variables so we can
@@ -163,60 +154,93 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # times and let FLoops decide how many threads to spawn and schedule.
     # nbatches will put a cap on the number of threads.
 
-    resistornoiseportskeys =  collect(keys(resistornoiseports))
-    resistornoiseportsvalues = collect(values(resistornoiseports))
+
 
     # conj!(AoLjnm.nzval)
 
     # Nnoiseports = length(capacitornoiseports)+length(resistornoiseports)
     # println("noise ports: ", Nnoiseports)
 
-    ### single threaded
-    if nbatches == 1
+    # # solve for node fluxes and scattering parameters
+    # inputportbranches = collect(keys(portdict))
+    # outputportbranches = collect(keys(portdict))
+    # inputportimpedance = collect(values(resistordict))
+    # outputportimpedance = collect(values(resistordict))
 
-        hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,invLnm,
-                Cnm,Gnm,bnm,AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-                Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-                capacitornoiseports,resistornoiseports,
-                resistornoiseportskeys,resistornoiseportsvalues,
-                capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
-                portdict,resistordict,w,indices,wp,Nports,Nmodes,Nnodes,solver,
-                symfreqvar,1:length(w))
-    else
+    # solve for node fluxes and scattering parameters
+    portbranches = collect(keys(portdict))
+    portimpedance = collect(values(resistordict))
+    noiseportbranches = collect(keys(resistornoiseports))
+    noiseportimpedance = collect(values(resistornoiseports))
 
-        # ### parallel using floop. i like floop because it supports the partition
-        # ### iterator. 
-        # @floop for wi in Base.Iterators.partition(1:length(w),length(w)÷nbatches)
-        #    hblinsolve_inner!(S,voltages,Asparse,AoLjnm,invLnm,
-        #         Cnm,Gnm,bnm,AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-        #         portdict,resistordict,w,indices,wp,Nports,Nmodes,Nnodes,solver,
-        #         symfreqvar,wi)
-        # end
+    # make empty matrices for the voltages, node fluxes, and scattering parameters
+    # voltages = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
+    # phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
+    S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes,length(w))
+    QE = zeros(Float64,Nports*Nmodes,Nports*Nmodes,length(w))
+    CM = zeros(Float64,Nports*Nmodes,length(w))
 
-        ### parallel using native threading
-        @sync for wi in Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
-            Base.Threads.@spawn hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
-                invLnm,Cnm,Gnm,bnm,
-                AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-                Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-                capacitornoiseports,resistornoiseports,
-                resistornoiseportskeys,resistornoiseportsvalues,
-                capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
-                portdict,resistordict,w,indices,wp,Nports,Nmodes,Nnodes,solver,
-                symfreqvar,wi)
-        end
+    # as a test don't save voltages and node fluxes
+    voltages = Vector{Complex{Float64}}(undef,0)
+    phin = Vector{Complex{Float64}}(undef,0)
 
+
+    Snoise = zeros(Complex{Float64},length(noiseportbranches)*Nmodes,Nports*Nmodes,length(w))
+
+
+    # parallelize using native threading
+    @sync for wi in Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
+        Base.Threads.@spawn hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
+            AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
+            Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+            portbranches,portimpedance,noiseportbranches,noiseportimpedance,
+            w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,wi)
     end
 
+    # # solve for noise scattering parameters using the complex conjugate of
+    # # the pump modulation matrix
+    # noiseoutputportbranches = collect(keys(resistornoiseports))
+    # noiseoutputportimpedance = collect(values(resistornoiseports))
+
+    # # resistornoiseportskeys =  collect(keys(resistornoiseports))
+    # # resistornoiseportsvalues = collect(values(resistornoiseports))
+
+    # AoLjnmconj = copy(AoLjnm)
+    # conj!(AoLjnmconj.nzval)
+    # # i don't want to overwrite the voltages with this function
+    # # i could pass in nothing for Snoise or voltages if i don't want them to be
+    # # returned. i might have to calculate QE and CM inside of the function
+    # # because i don't want to keep all of these. 
+    # # shoot. i can't calculate QE and CM within the function because i need
+    # # the noise also. this might be a sign that i need to break up hblinsolve_inner
+    # # as a first pass, just returning Snoise might be ok.
+
+    # @sync for wi in Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
+    #     Base.Threads.@spawn hblinsolve_inner!(Snoise,voltages,Asparse,AoLjnmconj,invLnm,Cnm,Gnm,bnm,
+    #         AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
+    #         Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+    #         inputportimpedance,noiseoutputportimpedance,inputportbranches,noiseoutputportbranches,
+    #         w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,wi)
+    # end
+
+
+    # # calculate the quantum efficiency and commutation relations
+    # for i = 1:length(w)
+    #     ws = w[i]
+    #     wmodes = calcw(ws,indices,wp);
+    #     calcqe!(view(QE,:,:,i),view(S,:,:,i))
+    #     calccm!(view(CM,:,i),view(S,:,:,i), wmodes)
+    # end
     QEideal =  1 ./(2 .- 1 ./abs2.(S))
 
 
-    return LinearHB(S,QE,QEideal,CM,Nmodes,voltages,phin,Nnodes,Nbranches,signalindex,w)
+    return LinearHB(S,Snoise,QE,QEideal,CM,Nmodes,voltages,phin,Nnodes,Nbranches,signalindex,w)
 
 end
 
 struct LinearHB
     S
+    Snoise
     QE
     QEideal
     CM
@@ -245,50 +269,29 @@ end
 # then consider turning it into loops. 
 # for the ones with Nports2 that's allocation a fair amount of memory
 # so might as well not do that.
-function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
-    invLnm,Cnm,Gnm,bnm,
+
+function hblinsolve_inner!(S,Snoise,QE,CM,voltages,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-    capacitornoiseports,resistornoiseports,
-    resistornoiseportskeys,resistornoiseportsvalues,
-    capacitornoiseportsfreqsubstindices,resistornoiseportsfreqsubstindices,
-    portdict,resistordict,w,indices,wp,
-    Nports,Nmodes,Nnodes,solver,
-    symfreqvar,wi)
-
-    input = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
-    output = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    portbranches,portimpedance,noiseportbranches,noiseportimpedance,
+    w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,wi)
 
 
-    # matrices used in calculating the scattering parameters
-    # inputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    Nports = length(portbranches)
+    phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
     inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
     outputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-    sourcecurrent = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
-    portvoltage = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-    portcurrent = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-    portimpedance = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-    k = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
-
-    phibports = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-    phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
-
-    # for noise experiments
-    Nports2 = length(resistornoiseports)
-    phibports2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    input2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    output2 = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    Snoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-
-    outputwavenoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    portvoltagenoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    portimpedancenoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
-    knoise = zeros(Complex{Float64},Nports2*Nmodes,Nports*Nmodes)
+    Nnoiseports = length(noiseportbranches)
+    noiseoutputwave = zeros(Complex{Float64},Nnoiseports*Nmodes,Nports*Nmodes)
 
     # operate on a copy of Asparse because it may be modified by multiple threads
     # at the same time. 
     Asparsecopy = copy(Asparse)
+
+    # calculate the conjugate of AoLjnm
+    AoLjnmconj = copy(AoLjnm)
+    conj!(AoLjnmconj.nzval)
 
     #if banded=true, then calculate the bandwidths and convert the matrices to 
     # banded matrices. 
@@ -305,6 +308,11 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
     end
 
     for i in wi
+
+        Sview = view(S,:,:,i)
+        Snoiseview = view(Snoise,:,:,i)
+        QEview = view(QE,:,:,i)
+        CMview = view(CM,:,i)
 
         ws = w[i]
         wmodes = calcw(ws,indices,wp);
@@ -344,16 +352,20 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
                 KLU.klu!(F,Asparsecopy)
 
                 # solve the linear system
-                # phin = KLU.klu(Asparsecopy) \ bnm
+                # phin .= KLU.klu(Asparsecopy) \ bnm
                 
                 ldiv!(phin,F,bnm)
+                # if norm(Asparsecopy*phin .- bnm) > 1e-6
+                #     println("warning, in accurate point")
+                # end
+
             catch e
                 if isa(e, SingularException)
                     # reusing the symbolic factorization can sometimes lead to
                     # numerical problems. if the first linear solve fails
                     # try factoring and solving again
                     F = KLU.klu(Asparsecopy)
-                    ldiv!(phin,F,bnm)z
+                    ldiv!(phin,F,bnm)
                 else
                     throw(e)
                 end
@@ -366,206 +378,92 @@ function hblinsolve_inner!(S,QE,CM,voltages,Asparse,AoLjnm,
         # # convert to node voltages. node flux is defined as the time integral of 
         # # node voltage so node voltage is derivative of node flux which can be
         # # accomplished in the frequency domain by multiplying by j*w.
-        # # voltages[:,:,i] = im*wmodesm*phin
+        # voltages[:,:,i] = im*wmodesm*phin
 
-        # # calculate the branch source currents at the ports from the node
-        # # source current array bnm
-        # calcbranchvalues!(input,bnm,keys(portdict),Nmodes)
-
-        # # divide the current by two
-        # input .*= 1/2
+        # calculate the scattering parameters
+        calcS!(Sview,inputwave,outputwave,phin,bnm,portbranches,portbranches,
+            portimpedance,portimpedance,wmodes,symfreqvar)
 
 
-        # # inputconj = copy(input)
+        if length(noiseportbranches) > 0
 
-        # # convert from current to sqrt(photons/second)
-        # # currenttosqrtphotonflux!(input,values(resistordict),wmodes,symfreqvar)
-        # # currenttosqrtphotonfluxconj!(inputconj,values(resistordict),wmodes,symfreqvar)
+            # solve the nonlinear system with the complex conjugate of the pump
+            # modulation matrix
+            fill!(Asparsecopy.nzval,zero(eltype(Asparsecopy.nzval)))
+            sparseadd!(Asparsecopy,1,AoLjnmconj,AoLjnmindexmap)
 
+            # take the complex conjugate of the negative frequency terms in
+            # the capacitance and conductance matrices. substitute in the symbolic
+            # frequency variable if present. 
+            sparseaddconjsubst!(Asparsecopy,-1,Cnm,wmodes2m,Cnmindexmap,
+                wmodesm .< 0,wmodesm,Cnmfreqsubstindices,symfreqvar)
+            sparseaddconjsubst!(Asparsecopy,im,Gnm,wmodesm,Gnmindexmap,
+                wmodesm .< 0,wmodesm,Gnmfreqsubstindices,symfreqvar)
+            sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
+                wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
 
-        # # calculate the branch fluxes at the ports from the node flux array phibn
-        # calcbranchvalues!(output,phin,keys(portdict),Nmodes)
+            # solve the linear system
+            if solver == :banded
 
-        # # calculate the output port impedances
-        # calcportimpedance!(outputportimpedance,values(resistordict),wmodes,symfreqvar)
+                # fill!(Abanded,0)
+                # sparsetobanded!(Abanded,Asparsecopy)
 
-        # # convert from flux to sqrt(photons/second)
-        # # fluxtosqrtphotonflux!(output,values(resistordict),wmodes,symfreqvar)
+                # # # phin = A \ bnm
+                # ldiv!(phin,Abanded,bnm)
+            elseif solver == :klu
 
-        # # idea: i can use the same code for converting both capacitors and 
-        # # resistors to numerical values then do the post processing on the
-        # # cap numerical values. be careful on the order of the inverse
-        # # and the real. 
+                try 
+                    # update the factorization. the sparsity structure does not change
+                    # so we can reuse the factorization object.
+                    KLU.klu!(F,Asparsecopy)
 
-        # output ./= sqrt.(real.(outputportimpedance))
+                    # solve the linear system
+                    # phin .= KLU.klu(Asparsecopy) \ bnm
+                    
+                    ldiv!(phin,F,bnm)
 
-        # # should i make a scaleby function? can pass wmodes or sqrt.(wmodes)?
-        # scaleby!(output,im*wmodes./sqrt.(abs.(wmodes)))
+                    # if norm(Asparsecopy*phin .- bnm) > 1e-6
+                    #     println("warning, in accurate point")
+                    # end
+                
 
-        # # make the input in the new way
-        #  # conj(resistance)/sqrt(real(resistance))/sqrt(abs(wmodes[k]))
-        # input .*= conj.(outputportimpedance)./sqrt.(real.(outputportimpedance))
-        # scaleby!(input,1 ./sqrt.(abs.(wmodes)))
+                catch e
+                    if isa(e, SingularException)
+                        # reusing the symbolic factorization can sometimes lead to
+                        # numerical problems. if the first linear solve fails
+                        # try factoring and solving again
+                        F = KLU.klu(Asparsecopy)
+                        ldiv!(phin,F,bnm)
+                    else
+                        throw(e)
+                    end
+                end
+            else
+                error("Error: Unknown solver")
+            end
 
+            # calculate the noise scattering parameters
+            calcS!(Snoiseview,inputwave,noiseoutputwave,phin,bnm,portbranches,noiseportbranches,
+                portimpedance,noiseportimpedance,wmodes,symfreqvar)
+            ## calculate the quantum efficiency and commutation relations.
+            calcqe!(QEview,Sview,transpose(Snoiseview))
+            calccm!(CMview,Sview,transpose(Snoiseview), wmodes)
 
-        # # for a port with a given impedance and an ideal current source with
-        # # an impedance equal to the port impedance in parallel with the resistor,
-        # # the output wave will be absorbed by the port impedance.
-        # # the input wave to the device is what's left over. we calculate that by
-        # # taking the difference between these.
-        # # output .-= inputconj
-        # output .-= input
+        else
+            # calculate the quantum efficiency and commutation relations
+            calcqe!(QEview,Sview)
+            calccm!(CMview,Sview, wmodes)
 
-        # # calculate the scattering parameters
-        # # the scattering matrix relates input and output waves
-
-        # # output = S * input
-        # # which can be computed by right division
-        # # S = output / input
-        # rdiv!(output,input)
-        # copy!(view(S,:,:,i),output)
-
-
-
-        ###### calculate the scattering parameters
-
-        # calculate the branch source currents at the ports from the node
-        # source current array bnm
-        calcbranchvalues!(sourcecurrent,bnm,keys(portdict),Nmodes)
-
-        # calculate the branch fluxes at the ports from the node flux array phibn
-        calcbranchvalues!(portvoltage,phin,keys(portdict),Nmodes)
-
-        # scale the branch flux by frequency to get voltage
-        scaleby!(portvoltage,im*wmodes)
-
-        # calculate the port impedances
-        calcportimpedance!(portimpedance,values(resistordict),wmodes,symfreqvar)
-
-        # calculate the current flowing through the port
-        portcurrent .= sourcecurrent .- portvoltage ./ portimpedance
-
-        # calculate the scaling factor for the waves
-        k .= 1 ./ sqrt.(real.(portimpedance))
-        scaleby!(k,1 ./sqrt.(abs.(wmodes)))
-
-        ## for this specific set of inputs we can use a simpler formula
-        # inputwave .= 1/2*k .* (portvoltage .+ portimpedance .* portcurrent)
-        # we can simplify the above to:
-        inputwave .= 1/2*k .* portimpedance .* sourcecurrent
-
-        outputwave .= 1/2*k .* (portvoltage .- conj.(portimpedance) .* portcurrent)
-     
-        rdiv!(outputwave,inputwave)
-        copy!(view(S,:,:,i),outputwave)
-        # @time copy!(view(S,:,:,i),outputwave / inputwave)
-
-        # calculate the quantum efficiency, and commutation relations.
-        # calcS!(view(S,:,:,i),input,output)
-        calcqe!(view(QE,:,:,i),view(S,:,:,i))
-        calccm!(view(CM,:,i),view(S,:,:,i), wmodes)
-
-
-        ###### calculate the noise
-        calcbranchvalues!(portvoltagenoise,phin,keys(resistornoiseports),Nmodes)
-
-        # scale the branch flux by frequency to get voltage
-        scaleby!(portvoltagenoise,im*wmodes)
-
-        # calculate the port impedances
-        calcportimpedance!(portimpedancenoise,values(resistornoiseports),wmodes,symfreqvar)
-
-        # calculate the scaling factor for the waves
-        knoise .= 1 ./ sqrt.(real.(portimpedancenoise))
-        scaleby!(knoise,1 ./sqrt.(abs.(wmodes)))
-
-        outputwavenoise .= 1/2*knoise .* (portvoltagenoise .+ conj.(portimpedancenoise) .* portvoltagenoise ./ portimpedancenoise)
-
-        # outputwavenoise / inputwave
-        rdiv!(outputwavenoise,inputwave)
-        copy!(Snoise,outputwavenoise)
-
-
-        # scale the source currents by Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-        # i should calculate numerical value for the port impedances
-
-        # calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
-
-        # calculate the source currents from the matrix bnm.
-        # calcsourcecurrents!(input,bnm,keys(portdict),Nmodes))
-
-        # i should make a vector of port impedances converted to numerical values
-        # portimpedance = calcportimpedance(values(resistordict),wmodes,symfreqvar)
-        # portvoltage
-        # portcurrent
-        # S = portvoltage ./sqrt(abs.(wmodes))
-
-        # i could make the functions that scale by resistance and frequency
-        # happen in place. 
-        # fluxtovoltage()
-        # 
-
-
-        # convert the branch flux to voltage by multiplying the branch flux by 
-        # im*w. convert the voltage to a field ladder opperator (unitless power
-        # wave) by dividing by the square root of frequency.
-                # output[(j-1)*Nmodes+k,l] = 
-                    # im*wmodes[k]*phibports[(j-1)*Nmodes+k,l]/sqrt(resistance)/sqrt(abs(wmodes[k]))
-        # calcoutput!(output,phibports,values(resistordict),wmodes,symfreqvar)
-
-
-
-        # # i need to handle capacitors also.
-        # # this should work for resistors. can i just try it out?
-        # calcbranchvalues!(phibports2,phin,resistornoiseportskeys,Nmodes)
-        # calcoutput!(output2,phibports2,resistornoiseportsvalues,wmodes,symfreqvar)
-        # calcphibthevenin!(input2,bnm,resistornoiseports,wmodes,symfreqvar)
-
-        # i'm not sure if i need to subtract off input2
-        # Snoise .= (output2 .- input2) / input
-        # Snoise .= output2 / input
-
-        # println(size(input))
-        # println(length(resistordict))
-        # println(size(bnm))
-
-        # println("Snoise: ",size(Snoise), "input: ",size(input), "output2: ",size(output2))
-
-        # for noise. this is fairly similar to what i need except i need to
-        # # invert, take imaginary part, and multiply capacitors by w^2. 
-
-        # println(typeof(phibports2))
-        # println(typeof(phin))
-        # println(typeof(resistornoiseports))
-        # error("")
-        # println(length(resistornoiseports))
-        # @time calcphibports!(phibports2,phin,resistornoiseports,Nmodes)
-
-        # calcphibports!(phibports2,phin,resistornoiseports,Nmodes)
-
-        # println(typeof(key))
-        # println(typeof(vals))
-        # println(typeof(phibports2))
-        # println(typeof(Nmodes))
-
-
-        # @time calcoutput!(output2,phibports2,resistornoiseports,wmodes,symfreqvar)
-
-        # println(size(input))
-        # println(size(output2))
-        # i'm not sure if i need to subtract input2.
-        # println(size(((output2 .- input2) / input)))
-        # println(size(Snoise))
-        # calcS!(Snoise,input2,output2)
-
-
-
-
+        end
 
 
     end
     return nothing
 end
+
+
+
+
 
 """
     hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs)
@@ -576,7 +474,6 @@ so that i can pass in the already parsed circuit and already generated
 numeric matrices.
 
 """
-
 function hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs;ports=[1],solver=:klu,
     iterations=1000,symfreqvar=nothing,ftol=1e-8,sorting=:number)
 
@@ -929,7 +826,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     # calculate the scattering parameters
     if Ip > 0
-        calcS!(S,input/Lmean,output)
+        # calcS!(S,input/Lmean,output)
     end
 
     return NonlinearHB(out,phin,Rbnm,Ljb,Lb,Ljbm,Nmodes,Nbranches,S)

@@ -148,7 +148,7 @@ precompile(JosephsonCircuits.calcoutput!,(Vector{ComplexF64}, Vector{ComplexF64}
 precompile(JosephsonCircuits.calcphibthevenin!,(Vector{ComplexF64}, Vector{ComplexF64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}, Vector{Float64}, Nothing))
 precompile(JosephsonCircuits.calcphibthevenin!,(Vector{ComplexF64}, Vector{ComplexF64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}, Vector{Float64}, Nothing))
 
-precompile(JosephsonCircuits.calcS!,(Matrix{ComplexF64}, Vector{ComplexF64}, Vector{ComplexF64}))
+# precompile(JosephsonCircuits.calcS!,(Matrix{ComplexF64}, Vector{ComplexF64}, Vector{ComplexF64}))
 
 precompile(JosephsonCircuits.calcAoLjbm,(Matrix{ComplexF64}, SparseArrays.SparseVector{ComplexF64, Int64}, Int64, Int64, Int64))
 precompile(JosephsonCircuits.calcnoiseportsC,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
