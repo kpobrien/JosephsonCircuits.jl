@@ -737,6 +737,11 @@ Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Sum the abs2 of each element along the horizontal
 axis, applying a minus sign if the corresponding frequency is negative. Represents
 energy conservation. 
+
+this should equal 3.0e-200
+JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 -1])
+
+
 """
 function calccm(S,w)
 
@@ -752,6 +757,7 @@ end
 
 Calculate the bosonic commutation relations for a scattering matrix S in the 
 field ladder operator basis. Overwrites cm with output. 
+
 """
 function calccm!(cm,S,w)
 
@@ -765,10 +771,26 @@ function calccm!(cm,S,w)
         throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
     end
 
+    # for i = 1:size(S,1)
+    #     cm[i] = 0.0
+    #     for j = 1:size(S,2)
+    #         cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
+    #     end
+    # end
+
     for i = 1:size(S,1)
-        for j = 1:size(S,2)
-            cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
+        c = 0.0
+        cm[i] = abs2(S[i,1])*sign(w[(1-1) % m + 1])
+        for j = 2:size(S,2)
+            t = cm[i] + abs2(S[i,j])*sign(w[(j-1) % m + 1])
+            if abs(cm[i]) >= abs2(S[i,j])
+                c += (cm[i]-t) + abs2(S[i,j])*sign(w[(j-1) % m + 1])
+            else
+                c += (abs2(S[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i]
+            end
+            cm[i] = t
         end
+        cm[i]+=c
     end
 
     return nothing
@@ -781,6 +803,12 @@ Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Sum the abs2 of each element along the horizontal
 axis, applying a minus sign if the corresponding frequency is negative. Represents
 energy conservation. 
+
+this should equal 6.0e-200
+
+JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
+
+
 """
 function calccm(S,Snoise,w)
 
@@ -797,10 +825,6 @@ end
 Calculate the bosonic commutation relations for a scattering matrix S in the 
 field ladder operator basis. Overwrites cm with output. 
 
-This function is potentially vulnerable to loss of precision.
-Allocating a temporary array, filling it with the values, then using
-KahanSummation.jl or Xsum.jl to perform a more accurate sum are viable solutions
-if this ia a problem (I haven't seen any issues so far). 
 """
 function calccm!(cm,S,Snoise,w)
 
@@ -819,13 +843,39 @@ function calccm!(cm,S,Snoise,w)
     end
 
 
+    # for i = 1:size(S,1)
+    #     for j = 1:size(S,2)
+    #         cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
+    #     end
+    #     for j = 1:size(Snoise,2)
+    #         cm[i] += abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+    #     end
+    # end
+
+    # use a Kahan, Babushka, Neumaier compensated sum. 
     for i = 1:size(S,1)
-        for j = 1:size(S,2)
-            cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
+        c = 0.0
+        cm[i] = abs2(S[i,1])*sign(w[(1-1) % m + 1])
+        for j = 2:size(S,2)
+            t = cm[i] + abs2(S[i,j])*sign(w[(j-1) % m + 1])
+            if abs(cm[i]) >= abs2(S[i,j])
+                c += (cm[i]-t) + abs2(S[i,j])*sign(w[(j-1) % m + 1])
+            else
+                c += (abs2(S[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i]
+            end
+            cm[i] = t
         end
+
         for j = 1:size(Snoise,2)
-            cm[i] += abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+            t = cm[i] + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+            if abs(cm[i]) >= abs2(Snoise[i,j])
+                c += (cm[i]-t) + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+            else
+                c += (abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i]
+            end
+            cm[i] = t
         end
+        cm[i]+=c
     end
 
     return nothing
