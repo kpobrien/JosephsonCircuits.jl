@@ -461,9 +461,9 @@ function sparseaddconjsubst!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
         throw(DimensionMismatch("A and wmodesm must be the same size."))
     end
 
-    if !(symfreqvar isa Symbolic) && length(freqsubstindices) > 0
-        error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-    end
+    # if !(symfreqvar isa Symbolic || symfreqvar isa Num) && length(freqsubstindices) > 0
+    #     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+    # end
 
     k = 1
 
@@ -471,7 +471,9 @@ function sparseaddconjsubst!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
         for j in As.colptr[i]:(As.colptr[i+1]-1)
 
             if length(freqsubstindices) > 0 && j == freqsubstindices[k]
-                tmp = substitute(As.nzval[j],Dict(symfreqvar=>wmodesm[i,i]))
+                # tmp = substitute(As.nzval[j],Dict(symfreqvar=>wmodesm[i,i]))
+                tmp = valuetonumber(As.nzval[j],Dict(symfreqvar=>wmodesm[i,i]))
+
                 k+=1
             else
                 tmp = As.nzval[j]
@@ -775,7 +777,8 @@ function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
                 end
 
-                nzval[j] = substitute(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
+                # nzval[j] = substitute(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
+                nzval[j] = valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
             else
                 nzval[j] = A.nzval[j]
             end

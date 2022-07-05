@@ -1319,12 +1319,3 @@ julia> @syms Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,L
 function valuetonumber(value,circuitdefs::Dict)
     return substitute(value,circuitdefs)
 end
-
-### for Num types if we ever add Symbolics. unwrap helps speed up
-### their evaluation and evalutes to a number. 
-# function valuetonumber(value::Num,circuitdefs)
-#     # return Symbolics.substitute(Symbolics.unwrap(value),circuitdefs)
-#     # return substitute(unwrap(value),circuitdefs)
-#     return substitute(value,circuitdefs)
-
-# end

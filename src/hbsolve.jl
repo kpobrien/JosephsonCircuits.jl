@@ -374,7 +374,6 @@ function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm
         sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
             wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
 
-
         # solve the linear system
         if solver == :klu
             try 

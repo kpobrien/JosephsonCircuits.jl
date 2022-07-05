@@ -11,15 +11,18 @@ module JosephsonCircuits
 import Graphs
 import FFTW
 import Statistics
-import NLsolve
-import LineSearches
+# import NLsolve
+# import LineSearches
 
 import KLU
 import UUIDs
-import SymbolicUtils: @syms, substitute, Symbolic, Sym
+# import SymbolicUtils: @syms, substitute, Symbolic, Sym
 # import OrderedCollections: OrderedDict
 
-# using SymbolicUtils
+# import Symbolics: @variables, Num
+# import Symbolics: @variables, Num, @syms, substitute, Symbolic, Sym
+using Symbolics
+import Symbolics: Symbolic, Sym
 using OrderedCollections
 using LinearAlgebra
 using SparseArrays
@@ -36,13 +39,12 @@ Base.zero(::Type{Nothing}) = 0
 # Symbolics is needed for calculating the inverse inductance matrix if there
 # are mutual inductors. For large systems with many mutual inductors this may
 # result in very large equations so is not recommended. 
-function __init__()
-    @require Symbolics="0c5d862f-8b57-4792-8d23-62f2024744c7" begin
+# function __init__()
+#     @require Symbolics="0c5d862f-8b57-4792-8d23-62f2024744c7" begin
         function calcsymbolicinvLn(L,Lb,Rbn)
             s =  sparse(transpose(Rbn[Lb.nzind,:])*(Symbolics.sym_lu(Matrix(L))\ Matrix(Rbn[Lb.nzind,:])))
             return SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,s.nzval)
             # return SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,Symbolics.value.(s.nzval))
-
         end
 
         """
@@ -64,8 +66,18 @@ function __init__()
             return !(Symbolics.value(a) isa Number)
         end
 
-    end
-end
+        ## for Num types if we ever add Symbolics. unwrap helps speed up
+        ## their evaluation and evalutes to a number. 
+        function valuetonumber(value::Symbolics.Num,circuitdefs::Dict)
+            return Symbolics.substitute(Symbolics.unwrap(value),circuitdefs)
+            # return substitute(unwrap(value),circuitdefs)
+            # return substitute(value,circuitdefs)
+        end
+
+
+
+#     end
+# end
 
 
 # define the reduced flux quantum in Weber, H*A
@@ -358,7 +370,7 @@ end
 
 export @syms, hbnlsolve, hblinsolve, hbsolve, hbsolve2, hbnlsolve2, parsecircuit,
     parsesortcircuit, calccircuitgraph, symbolicmatrices, numericmatrices,
-    LjtoIc, IctoLj
+    LjtoIc, IctoLj, @variables, Num
 
 
 #end module
