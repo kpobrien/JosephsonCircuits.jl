@@ -66,13 +66,13 @@ Base.zero(::Type{Nothing}) = 0
             return !(Symbolics.value(a) isa Number)
         end
 
-        ## for Num types if we ever add Symbolics. unwrap helps speed up
-        ## their evaluation and evalutes to a number. 
-        function valuetonumber(value::Symbolics.Num,circuitdefs::Dict)
-            return Symbolics.substitute(Symbolics.unwrap(value),circuitdefs)
-            # return substitute(unwrap(value),circuitdefs)
-            # return substitute(value,circuitdefs)
-        end
+        # ## for Num types if we ever add Symbolics. unwrap helps speed up
+        # ## their evaluation and evalutes to a number. 
+        # function valuetonumber(value::Symbolics.Num,circuitdefs::Dict)
+        #     return Symbolics.substitute(Symbolics.unwrap(value),circuitdefs)
+        #     # return substitute(unwrap(value),circuitdefs)
+        #     # return substitute(value,circuitdefs)
+        # end
 
 
 
@@ -111,7 +111,7 @@ include("spiceraw.jl")
 include("touchstone.jl")
 
 # Precompile directives to improve time to first use. 
-include("precompile.jl")
+# include("precompile.jl")
 
 
 """

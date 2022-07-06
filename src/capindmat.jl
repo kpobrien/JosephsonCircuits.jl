@@ -19,11 +19,11 @@ struct CircuitMatrices
     Mb::SparseMatrixCSC
     invLnm::SparseMatrixCSC
     Rbnm::SparseMatrixCSC{Int64, Int64}
-    portdict::OrderedDict
-    resistordict::OrderedDict
-    capacitornoiseports::OrderedDict
-    resistornoiseports::OrderedDict
+    portindices::Vector{Int64}
+    portimpedanceindices::Vector{Int64}
+    noiseportimpedanceindices::Vector{Int64}
     Lmean
+    vvn
 end
 
 
@@ -145,25 +145,36 @@ function numericmatrices(psc::ParsedSortedCircuit,cg::CircuitGraph,
     # calculate Lmean
     Lmean = calcLmean(psc.typevector,vvn)    
 
-    # calculate the resistor and port dictionaries
-    portdict=componentdictionaryP(psc.typevector,psc.nodeindexarraysorted,
-        psc.mutualinductorvector,vvn)
+    # # calculate the resistor and port dictionaries
+    # portdict=componentdictionaryP(psc.typevector,psc.nodeindexarraysorted,
+    #     psc.mutualinductorvector,vvn)
 
     # resistordict=componentdictionaryR(psc.typevector,psc.nodeindexarraysorted,
     #     psc.mutualinductorvector,vvn)
 
 
-    portimpedance=calcportimpedance(psc.typevector,psc.nodeindexarraysorted,
+    # portimpedance=calcportimpedance(psc.typevector,psc.nodeindexarraysorted,
+    #     psc.mutualinductorvector,vvn)
+
+    # capacitornoiseports = calcnoiseportsC(psc.typevector,psc.nodeindexarraysorted,
+    #     psc.mutualinductorvector,vvn)
+
+    # resistornoiseports = calcnoiseportsR(psc.typevector,psc.nodeindexarraysorted,
+    #     psc.mutualinductorvector,vvn)
+
+    portindices = calcportindices(psc.typevector,psc.nodeindexarraysorted,
         psc.mutualinductorvector,vvn)
 
-    capacitornoiseports = calcnoiseportsC(psc.typevector,psc.nodeindexarraysorted,
+    portimpedanceindices = calcportimpedanceindices(psc.typevector,psc.nodeindexarraysorted,
         psc.mutualinductorvector,vvn)
 
-    resistornoiseports = calcnoiseportsR(psc.typevector,psc.nodeindexarraysorted,
+    noiseportimpedanceindices = calcnoiseportimpedanceindices(psc.typevector,psc.nodeindexarraysorted,
         psc.mutualinductorvector,vvn)
 
-    return CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portdict,
-        portimpedance,capacitornoiseports,resistornoiseports,Lmean)
+    return CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portindices,
+        portimpedanceindices,noiseportimpedanceindices,Lmean,vvn)
+    # return CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portdict,
+    #     portimpedance,capacitornoiseports,resistornoiseports,Lmean)
 
 end
 

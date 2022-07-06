@@ -84,6 +84,8 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     # extract the elements we need
     Nnodes = psc.Nnodes
+    typevector = psc.typevector
+    nodeindexarraysorted = psc.nodeindexarraysorted
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = nm.Ljb
@@ -91,10 +93,14 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     Cnm = nm.Cnm
     Gnm = nm.Gnm
     invLnm = nm.invLnm
-    portdict = nm.portdict
-    resistordict = nm.resistordict
-    capacitornoiseports  = nm.capacitornoiseports
-    resistornoiseports = nm.resistornoiseports
+    portindices = nm.portindices
+    portimpedanceindices = nm.portimpedanceindices
+    noiseportimpedanceindices = nm.noiseportimpedanceindices
+    vvn = nm.vvn
+    # portdict = nm.portdict
+    # resistordict = nm.resistordict
+    # capacitornoiseports  = nm.capacitornoiseports
+    # resistornoiseports = nm.resistornoiseports
 
     # generate the mode indices and find the signal index
     indices = calcindices(Nmodes)
@@ -114,19 +120,28 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     AoLjnm = transpose(Rbnm)*AoLjbm*Rbnm
 
     # calculate the source currents
-    Nports = length(portdict)
+    Nports = length(portindices)
 
     # calculate the source terms in the branch basis
     bbm = zeros(Complex{Float64},Nbranches*Nmodes,Nmodes*Nports)
 
-    i=1
-    for (key,val) in portdict
+    for (i,val) in enumerate(portindices)
+        key = (nodeindexarraysorted[1,val],nodeindexarraysorted[2,val])
         for j = 1:Nmodes
             bbm[(edge2indexdict[key]-1)*Nmodes+j,(i-1)*Nmodes+j] = 1
             # bbm2[(i-1)*Nmodes+j,(i-1)*Nmodes+j] = Lmean*1/phi0
         end
-        i+=1
     end
+
+
+    # i=1
+    # for (key,val) in portdict
+    #     for j = 1:Nmodes
+    #         bbm[(edge2indexdict[key]-1)*Nmodes+j,(i-1)*Nmodes+j] = 1
+    #         # bbm2[(i-1)*Nmodes+j,(i-1)*Nmodes+j] = Lmean*1/phi0
+    #     end
+    #     i+=1
+    # end
 
     # calculate the source terms in the node basis
     bnm = transpose(Rbnm)*bbm
@@ -136,8 +151,8 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     Cnmfreqsubstindices  = symbolicindices(Cnm)
     Gnmfreqsubstindices  = symbolicindices(Gnm)
     invLnmfreqsubstindices  = symbolicindices(invLnm)
-    capacitornoiseportsfreqsubstindices  = symbolicindices(capacitornoiseports)
-    resistornoiseportsfreqsubstindices = symbolicindices(resistornoiseports)
+    # capacitornoiseportsfreqsubstindices  = symbolicindices(capacitornoiseports)
+    # resistornoiseportsfreqsubstindices = symbolicindices(resistornoiseports)
 
     # drop any zeros in AoLjnm
     dropzeros!(AoLjnm)
@@ -156,11 +171,14 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     invLnmindexmap = sparseaddmap(Asparse,invLnmcopy)
     AoLjnmindexmap = sparseaddmap(Asparse,AoLjnm)
 
-    # solve for node fluxes and scattering parameters
-    portbranches = collect(keys(portdict))
-    portimpedance = collect(values(resistordict))
-    noiseportbranches = collect(keys(resistornoiseports))
-    noiseportimpedance = collect(values(resistornoiseports))
+    # # solve for node fluxes and scattering parameters
+    # portbranches = collect(keys(portdict))
+    # portimpedance = collect(values(resistordict))
+    # noiseportbranches = collect(keys(resistornoiseports))
+    # noiseportimpedance = collect(values(resistornoiseports))
+
+    portimpedances = [vvn[i] for i in portimpedanceindices]
+    noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
 
     # make arrays for the voltages, node fluxes, scattering parameters,
     # quantum efficiency, and commutatio relations. if we aren't returning a
@@ -172,7 +190,7 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     end
 
     if returnSnoise
-        Snoise = zeros(Complex{Float64},length(noiseportbranches)*Nmodes,Nports*Nmodes,length(w))
+        Snoise = zeros(Complex{Float64},length(noiseportimpedanceindices)*Nmodes,Nports*Nmodes,length(w))
     else
         Snoise = zeros(Complex{Float64},0,0,0)
     end
@@ -209,11 +227,19 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     if nbatches == 1
         # the overhead of a single thread is negligible but we want a true
         # single threaded case for debugging purposes. 
+        # hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
+        #             AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
+        #             Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+        #             portbranches,portimpedance,noiseportbranches,noiseportimpedance,
+        #             w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,1:length(w))
+
         hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
                     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
                     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-                    portbranches,portimpedance,noiseportbranches,noiseportimpedance,
+                    portindices,portimpedanceindices,noiseportimpedanceindices,
+                    portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,
                     w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,1:length(w))
+
     else
         # parallelize using native threading
         # give a warning about potentially problematic configurations
@@ -241,8 +267,14 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
             hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
                 AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
                 Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-                portbranches,portimpedance,noiseportbranches,noiseportimpedance,
+                portindices,portimpedanceindices,noiseportimpedanceindices,
+                portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,
                 w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,batches[i])
+            # hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
+            #     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
+            #     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+            #     portbranches,portimpedance,noiseportbranches,noiseportimpedance,
+            #     w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,batches[i])
         end
     end
 
@@ -294,16 +326,16 @@ end
 function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-    portbranches,portimpedance,noiseportbranches,noiseportimpedance,
+    portindices,portimpedanceindices,noiseportimpedanceindices,
+    portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,
     w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,wi)
 
-
-    Nports = length(portbranches)
+    Nports = length(portindices)
     phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
     inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
     outputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
-    Nnoiseports = length(noiseportbranches)
+    Nnoiseports = length(noiseportimpedanceindices)
     noiseoutputwave = zeros(Complex{Float64},Nnoiseports*Nmodes,Nports*Nmodes)
 
     # operate on a copy of Asparse because it may be modified by multiple threads
@@ -337,6 +369,8 @@ function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm
     if isempty(Snoise)
         Snoiseview = zeros(Complex{Float64},Nnoiseports*Nmodes,Nports*Nmodes)
     end
+
+
 
     # loop over the frequencies
     for i in wi
@@ -412,8 +446,10 @@ function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm
 
         # calculate the scattering parameters
         if !isempty(S) || !isempty(QE) || !isempty(CM)
-            calcS!(Sview,inputwave,outputwave,phin,bnm,portbranches,portbranches,
-                portimpedance,portimpedance,wmodes,symfreqvar)
+            # calcS!(Sview,inputwave,outputwave,phin,bnm,portbranches,portbranches,
+            #     portimpedance,portimpedance,wmodes,symfreqvar)
+            calcS!(Sview,inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
+                portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
         end
 
         if Nnoiseports > 0 && (!isempty(Snoise) || !isempty(QE) || !isempty(CM))
@@ -459,8 +495,10 @@ function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm
 
             # calculate the noise scattering parameters
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
-                calcS!(Snoiseview,inputwave,noiseoutputwave,phin,bnm,portbranches,noiseportbranches,
-                    portimpedance,noiseportimpedance,wmodes,symfreqvar)
+                # calcS!(Snoiseview,inputwave,noiseoutputwave,phin,bnm,portbranches,noiseportbranches,
+                    # portimpedance,noiseportimpedance,wmodes,symfreqvar)
+                calcSnoise!(Snoiseview,inputwave,noiseoutputwave,phin,bnm,portimpedanceindices,noiseportimpedanceindices,
+                    portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)                
             end
 
             # calculate the quantum efficiency
@@ -525,6 +563,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     # extract the elements we need
     Nnodes = psc.Nnodes
+    nodeindexarraysorted = psc.nodeindexarraysorted
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = nm.Ljb
@@ -533,8 +572,12 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     Cnm = nm.Cnm
     Gnm = nm.Gnm
     invLnm = nm.invLnm
-    portdict = nm.portdict
-    resistordict = nm.resistordict
+    # portdict = nm.portdict
+    # resistordict = nm.resistordict
+    portindices = nm.portindices
+    portimpedanceindices = nm.portimpedanceindices
+    noiseportimpedanceindices = nm.noiseportimpedanceindices
+    vvn = nm.vvn
     Lmean = nm.Lmean
     # Lmean = 1.0
     Lb = nm.Lb
@@ -556,9 +599,16 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # calculate the source terms in the branch basis
     bbm = zeros(Complex{Float64},Nbranches*Nmodes)    
 
-    for (key,val) in portdict
+    # for (key,val) in portdict
+    #     if val in ports
+    #       bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip/phi0
+    #     end
+    # end
+
+    for (i,val) in enumerate(portindices)
+        key = (nodeindexarraysorted[1,val],nodeindexarraysorted[2,val])
         if val in ports
-          bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip/phi0
+            bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip/phi0
         end
     end
 
@@ -784,7 +834,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     # calculate the scattering parameters for the pump
     # Nports = length(cdict[:P])
-    Nports = length(portdict)
+    Nports = length(portindices)
     # input = zeros(Complex{Float64},Nports*Nmodes)
     # input = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
 
@@ -793,18 +843,18 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     phibports = zeros(Complex{Float64},Nports*Nmodes)
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
-    # calculate the branch fluxes at the ports
-    calcbranchvalues!(phibports,phin,keys(portdict),Nmodes)
+    # # calculate the branch fluxes at the ports
+    # calcbranchvalues!(phibports,phin,keys(portdict),Nmodes)
 
 
-    calcoutput!(output,phibports,values(resistordict),wmodes,symfreqvar)
+    # calcoutput!(output,phibports,values(resistordict),wmodes,symfreqvar)
 
-    # calculate the input and output voltage waves at each port
-    # calcinput!(input,Ip/phi0,phibports,resistordict,wmodes,symfreqvar)
+    # # calculate the input and output voltage waves at each port
+    # # calcinput!(input,Ip/phi0,phibports,resistordict,wmodes,symfreqvar)
 
-    # oops, this isn'at actually a branch flux. it
-    # has the same units as the ladder operator. 
-    calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
+    # # oops, this isn'at actually a branch flux. it
+    # # has the same units as the ladder operator. 
+    # calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
 
     # calculate the scattering parameters
     if Ip > 0

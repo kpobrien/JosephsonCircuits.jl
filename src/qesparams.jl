@@ -565,9 +565,12 @@ the strong pump.
 
 Return the scattering parameters for the system linearized around the strong pump. 
 """
-function calcS!(S,inputwave,outputwave,phin,bnm,inputportbranches,outputportbranches,
-    inputportimpedance,outputportimpedance,wmodes,symfreqvar)
 
+
+# function calcS!(S,inputwave,outputwave,phin,bnm,inputportbranches,outputportbranches,
+#     inputportimpedance,outputportimpedance,wmodes,symfreqvar)
+function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindices,
+    inputportimpedances,outputportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
     # check the size of S
 
     # check the size of inputwave
@@ -577,8 +580,8 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportbranches,outputportbran
     # check the sizes of all of the inputs
 
     # loop over input branches and modes to define inputwaves
-    Ninputports = length(inputportbranches)
-    Noutputports = length(outputportbranches)
+    Ninputports = length(inputportindices)
+    Noutputports = length(outputportindices)
     Nsolutions = size(phin,2)
     Nmodes = length(wmodes)
 
@@ -586,7 +589,8 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportbranches,outputportbran
         for j = 1:Nmodes
             for k = 1:Nsolutions
 
-                key = inputportbranches[i]
+                # key = inputportbranches[i]
+                key = (nodeindexarraysorted[1,inputportindices[i]],nodeindexarraysorted[2,inputportindices[i]])
 
                 # calculate the branch source currents at the ports from the node
                 # source current array bnm
@@ -612,21 +616,23 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportbranches,outputportbran
                 # scale the branch flux by frequency to get voltage
                 portvoltage *= im*wmodes[j]
 
-                # calculate the port impedance
-                if inputportimpedance[i] isa Symbolic
-                    if !(symfreqvar isa Symbolic)
-                        error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-                    end
-                    portimpedance = substitute(inputportimpedance[i],Dict(symfreqvar=>wmodes[j]))
-                else
-                    portimpedance = inputportimpedance[i]
-                end
+                # # calculate the port impedance
+                # if inputportimpedances[i] isa Symbolic
+                #     if !(symfreqvar isa Symbolic)
+                #         error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                #     end
+                #     portimpedance = substitute(inputportimpedances[i],Dict(symfreqvar=>wmodes[j]))
+                # else
+                #     portimpedance = inputportimpedances[i]
+                # end
 
-                # take the complex conjugate if frequency is negative
-                if wmodes[j] < 0
-                    portimpedance = conj(portimpedance)
-                end
-
+                # # portimpedance = inputportimpedances[i]
+                # # take the complex conjugate if frequency is negative
+                # if wmodes[j] < 0
+                #     portimpedance = conj(portimpedance)
+                # end
+                # println(typevector[inputportindices[i]])
+                portimpedance = calcimpedance(inputportimpedances[i],typevector[inputportindices[i]],wmodes[j],symfreqvar)
 
                 # calculate the current flowing through the port
                 portcurrent = sourcecurrent - portvoltage / portimpedance
@@ -656,7 +662,8 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportbranches,outputportbran
         for j = 1:Nmodes
             for k = 1:Nsolutions
 
-                key = outputportbranches[i]
+                # key = outputportbranches[i]
+                key = (nodeindexarraysorted[1,outputportindices[i]],nodeindexarraysorted[2,outputportindices[i]])
 
                 # calculate the branch source currents at the ports from the node
                 # source current array bnm
@@ -682,20 +689,23 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportbranches,outputportbran
                 # scale the branch flux by frequency to get voltage
                 portvoltage *= im*wmodes[j]
 
-                # calculate the port impedance
-                if outputportimpedance[i] isa Symbolic
-                    if !(symfreqvar isa Symbolic)
-                        error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-                    end
-                    portimpedance = substitute(outputportimpedance[i],Dict(symfreqvar=>wmodes[j]))
-                else
-                    portimpedance = outputportimpedance[i]
-                end
+                # # calculate the port impedance
+                # if outputportimpedances[i] isa Symbolic
+                #     if !(symfreqvar isa Symbolic)
+                #         error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                #     end
+                #     portimpedance = substitute(outputportimpedances[i],Dict(symfreqvar=>wmodes[j]))
+                # else
+                #     portimpedance = outputportimpedances[i]
+                # end
 
-                # take the complex conjugate if frequency is negative
-                if wmodes[j] < 0
-                    portimpedance = conj(portimpedance)
-                end
+                # # portimpedance = vvn[outputportindices[i]]
+                # # take the complex conjugate if frequency is negative
+                # if wmodes[j] < 0
+                #     portimpedance = conj(portimpedance)
+                # end
+                portimpedance = calcimpedance(outputportimpedances[i],typevector[outputportindices[i]],wmodes[j],symfreqvar)
+
 
                 # calculate the current flowing through the port
                 portcurrent = sourcecurrent - portvoltage / portimpedance
@@ -718,15 +728,246 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportbranches,outputportbran
             end
         end
     end
-
  
     # scattering matrix is defined as outputwave = S * inputwave
     rdiv!(outputwave,inputwave)
     copy!(S,outputwave)
 
+    return nothing
+end
 
+
+
+# this is a bit of a hack but i ran into issues with complex capacitance when
+# the capacitor was at the same branch as a current source. the calcS function
+# would use that current source in calculating the output waves, which it should
+# not do. 
+function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindices,
+    inputportimpedances,outputportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+    # check the size of S
+
+    # check the size of inputwave
+
+    # check the size of outputwave
+
+    # check the sizes of all of the inputs
+
+    # loop over input branches and modes to define inputwaves
+    Ninputports = length(inputportindices)
+    Noutputports = length(outputportindices)
+    Nsolutions = size(phin,2)
+    Nmodes = length(wmodes)
+
+    for i = 1:Ninputports
+        for j = 1:Nmodes
+            for k = 1:Nsolutions
+
+                # key = inputportbranches[i]
+                key = (nodeindexarraysorted[1,inputportindices[i]],nodeindexarraysorted[2,inputportindices[i]])
+
+                # calculate the branch source currents at the ports from the node
+                # source current array bnm
+                if key[1] == 1
+                    sourcecurrent = -bnm[(key[2]-2)*Nmodes+j,k]
+                elseif key[2] == 1
+                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k]
+                else
+                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k] 
+                    sourcecurrent -= bnm[(key[2]-2)*Nmodes+j,k]
+                end
+
+                # calculate the branch fluxes at the ports from the node flux array phin
+                if key[1] == 1
+                    portvoltage = -phin[(key[2]-2)*Nmodes+j,k]
+                elseif key[2] == 1
+                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k]
+                else
+                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k] 
+                    portvoltage -= phin[(key[2]-2)*Nmodes+j,k]
+                end
+
+                # scale the branch flux by frequency to get voltage
+                portvoltage *= im*wmodes[j]
+
+                # # calculate the port impedance
+                # if inputportimpedances[i] isa Symbolic
+                #     if !(symfreqvar isa Symbolic)
+                #         error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                #     end
+                #     portimpedance = substitute(inputportimpedances[i],Dict(symfreqvar=>wmodes[j]))
+                # else
+                #     portimpedance = inputportimpedances[i]
+                # end
+
+                # # portimpedance = inputportimpedances[i]
+                # # take the complex conjugate if frequency is negative
+                # if wmodes[j] < 0
+                #     portimpedance = conj(portimpedance)
+                # end
+                # println(typevector[inputportindices[i]])
+                portimpedance = calcimpedance(inputportimpedances[i],typevector[inputportindices[i]],wmodes[j],symfreqvar)
+
+                # calculate the current flowing through the port
+                portcurrent = sourcecurrent - portvoltage / portimpedance
+
+                # calculate the scaling factor for the waves
+                kval = 1 / sqrt(real(portimpedance))
+
+                # convert from sqrt(power) to sqrt(photons/second)
+                kval *= 1 /sqrt(abs(wmodes[j]))
+
+                # calculate the input and output power waves as defined in (except in
+                # units of sqrt(photons/second) instead of sqrt(power)
+                # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
+                # Micr. Theory and Tech. 13, 194–202 (1965) 
+                # doi: 10.1109/TMTT.1965.1125964
+                # inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage + portimpedance * portcurrent)
+                # we can simplify the above to:
+                inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
+                # outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
+
+            end
+        end
+    end
+
+    # loop over output branches and modes to define outputwaves
+    for i = 1:Noutputports
+        for j = 1:Nmodes
+            for k = 1:Nsolutions
+
+                # key = outputportbranches[i]
+                key = (nodeindexarraysorted[1,outputportindices[i]],nodeindexarraysorted[2,outputportindices[i]])
+
+                # calculate the branch source currents at the ports from the node
+                # source current array bnm
+                if key[1] == 1
+                    sourcecurrent = -bnm[(key[2]-2)*Nmodes+j,k]
+                elseif key[2] == 1
+                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k]
+                else
+                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k] 
+                    sourcecurrent -= bnm[(key[2]-2)*Nmodes+j,k]
+                end
+
+                # calculate the branch fluxes at the ports from the node flux array phin
+                if key[1] == 1
+                    portvoltage = -phin[(key[2]-2)*Nmodes+j,k]
+                elseif key[2] == 1
+                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k]
+                else
+                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k] 
+                    portvoltage -= phin[(key[2]-2)*Nmodes+j,k]
+                end
+
+                # scale the branch flux by frequency to get voltage
+                portvoltage *= im*wmodes[j]
+
+                # # calculate the port impedance
+                # if outputportimpedances[i] isa Symbolic
+                #     if !(symfreqvar isa Symbolic)
+                #         error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                #     end
+                #     portimpedance = substitute(outputportimpedances[i],Dict(symfreqvar=>wmodes[j]))
+                # else
+                #     portimpedance = outputportimpedances[i]
+                # end
+
+                # # portimpedance = vvn[outputportindices[i]]
+                # # take the complex conjugate if frequency is negative
+                # if wmodes[j] < 0
+                #     portimpedance = conj(portimpedance)
+                # end
+                portimpedance = calcimpedance(outputportimpedances[i],typevector[outputportindices[i]],wmodes[j],symfreqvar)
+
+
+                # calculate the current flowing through the port
+                # portcurrent = sourcecurrent - portvoltage / portimpedance
+                portcurrent = - portvoltage / portimpedance
+
+                # calculate the scaling factor for the waves
+                kval = 1 / sqrt(real(portimpedance))
+
+                # convert from sqrt(power) to sqrt(photons/second)
+                kval *= 1 /sqrt(abs(wmodes[j]))
+
+                # calculate the input and output power waves as defined in (except in
+                # units of sqrt(photons/second) instead of sqrt(power)
+                # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
+                # Micr. Theory and Tech. 13, 194–202 (1965) 
+                # doi: 10.1109/TMTT.1965.1125964
+                # inputwave[(i-1)*Nmodes+j,k] = 1/2*k * (portvoltage + portimpedance * portcurrent)
+                # we can simplify the above to:
+                # inputwave[(i-1)*Nmodes+j,k] = 1/2*k * portimpedance * sourcecurrent
+                outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
+            end
+        end
+    end
+ 
+    # scattering matrix is defined as outputwave = S * inputwave
+    rdiv!(outputwave,inputwave)
+    copy!(S,outputwave)
 
     return nothing
+end
+
+
+
+
+function calcimpedance(c,type,w,symfreqvar)
+    if type == :R
+        if w >= 0
+            return c
+        else
+            return conj(c)
+        end
+    elseif type == :C
+        if w >= 0
+            return 1/abs(w*imag(c))
+            # return -1/(im*w*c)
+
+        else
+            return 1/abs(w*imag(c))
+            # return 1/imag(w*c)
+        end
+    else
+        error("Unknown component type")
+    end
+end
+
+function calcimpedance(c::Symbolics.Num,type,w,symfreqvar)
+    if type == :R
+        if w >= 0
+            return Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w)
+        else
+            return conj(Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w))
+        end
+    elseif type == :C
+        if w >= 0
+            return 1/(im*w*Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w))
+        else
+            return conj(1/(im*w*Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w)))
+        end
+    else
+        error("Unknown component type")
+    end
+end
+
+function calcimpedance(c::Symbolics.Symbolic,type,w,symfreqvar)
+    if type == :R
+        if w >= 0
+            return Symbolics.substitute(c,symfreqvar => w)
+        else
+            return conj(Symbolics.substitute(c,symfreqvar => w))
+        end
+    elseif type == :C
+        if w >= 0
+            return 1/(im*w*Symbolics.substitute(c,symfreqvar => w))
+        else
+            return conj(1/(im*w*Symbolics.substitute(c,symfreqvar => w)))
+        end
+    else
+        error("Unknown component type")
+    end
 end
 
 

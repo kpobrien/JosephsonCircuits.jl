@@ -764,205 +764,285 @@ function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
     return Array{valuetype, 1}(undef, 0)
 end
 
-"""
-    componentdictionaryP(typevector,nodeindexarray,mutualinductorvector,
-    valuevector)
+# """
+#     componentdictionaryP(typevector,nodeindexarray,mutualinductorvector,
+#     valuevector)
 
-Calculate the component dictionary for Ports where the key is the pair of nodes
-and the value is the value of the component. The netlist allows multiple
-components per pair of nodes, but this data structure does not, thus we have
-to error or potentially merge components together. For ports, we throw an 
-error as each port should be unique. 
+# Calculate the component dictionary for Ports where the key is the pair of nodes
+# and the value is the value of the component. The netlist allows multiple
+# components per pair of nodes, but this data structure does not, thus we have
+# to error or potentially merge components together. For ports, we throw an 
+# error as each port should be unique. 
 
-# Examples
-```jldoctest
-julia> JosephsonCircuits.componentdictionaryP(
-            [:P,:I,:R,:C,:Lj,:C],
-            [2 2 2 2 3 3; 1 1 1 3 1 1],
-            [],
-            [1,:Ipump,:Rleft,:Cc,:Lj,:Cj],
-        )
-OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Int64} with 1 entry:
-  (2, 1) => 1
+# # Examples
+# ```jldoctest
+# julia> JosephsonCircuits.componentdictionaryP(
+#             [:P,:I,:R,:C,:Lj,:C],
+#             [2 2 2 2 3 3; 1 1 1 3 1 1],
+#             [],
+#             [1,:Ipump,:Rleft,:Cc,:Lj,:Cj],
+#         )
+# OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Int64} with 1 entry:
+#   (2, 1) => 1
 
-julia> JosephsonCircuits.componentdictionaryP(
-            [:P,:I,:R,:C,:Lj,:C],
-            [2 2 2 2 3 3; 1 1 1 3 1 1],
-            [],
-            [:Port1,:Ipump,:Rleft,:Cc,:Lj,:Cj],
-        )
-OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Symbol} with 1 entry:
-  (2, 1) => :Port1
-```
-"""
-function componentdictionaryP(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-    mutualinductorvector::Vector,valuevector::Vector)
-    return componentdictionaryP(typevector,nodeindexarray,mutualinductorvector,
-        valuevector,calcvaluetype(typevector,valuevector,[:P],checkinverse=false))
-end
-function componentdictionaryP(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-    mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
+# julia> JosephsonCircuits.componentdictionaryP(
+#             [:P,:I,:R,:C,:Lj,:C],
+#             [2 2 2 2 3 3; 1 1 1 3 1 1],
+#             [],
+#             [:Port1,:Ipump,:Rleft,:Cc,:Lj,:Cj],
+#         )
+# OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Symbol} with 1 entry:
+#   (2, 1) => :Port1
+# ```
+# """
+# function componentdictionaryP(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector)
+#     return componentdictionaryP(typevector,nodeindexarray,mutualinductorvector,
+#         valuevector,calcvaluetype(typevector,valuevector,[:P],checkinverse=false))
+# end
+# function componentdictionaryP(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
 
-    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
-         throw(DimensionMismatch("Input arrays must have the same length"))
-    end
+#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+#          throw(DimensionMismatch("Input arrays must have the same length"))
+#     end
 
-    if length(size(nodeindexarray)) != 2
-         throw(DimensionMismatch("The nodeindexarray must have two dimensions."))
-    end
+#     if length(size(nodeindexarray)) != 2
+#          throw(DimensionMismatch("The nodeindexarray must have two dimensions."))
+#     end
 
-    if size(nodeindexarray,1) != 2
-         throw(DimensionMismatch("The length of the first axis must be 2."))
-    end
+#     if size(nodeindexarray,1) != 2
+#          throw(DimensionMismatch("The length of the first axis must be 2."))
+#     end
 
-    # out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
-    out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
-
-
-    for i in eachindex(typevector)
-        type=typevector[i]
-        if type == :P
-            key= (nodeindexarray[1,i],nodeindexarray[2,i])
-            keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
-            if haskey(out,key) || haskey(out,keyreversed)
-                throw(ArgumentError("Only one port for each pair of nodes allowed."))
-            else
-                out[key]=valuevector[i]
-            end
-        end
-    end
-
-    # sort the ordered dictionary by the values
-    sort!(out; byvalue=true)
-
-    return out
-end
+#     # out = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+#     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
 
 
-"""
-    componentdictionaryR(typevector,nodeindexarray,mutualinductorvector,
-    valuevector)
+#     for i in eachindex(typevector)
+#         type=typevector[i]
+#         if type == :P
+#             key= (nodeindexarray[1,i],nodeindexarray[2,i])
+#             keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
+#             if haskey(out,key) || haskey(out,keyreversed)
+#                 throw(ArgumentError("Only one port for each pair of nodes allowed."))
+#             else
+#                 out[key]=valuevector[i]
+#             end
+#         end
+#     end
 
-Calculate the component dictionary where the key is the pair of nodes and the
-value is the value of the component. The netlist allows multiple components per
-pair of nodes, but this data structure does not, thus we have to error or
-potentially merge components together. For resistors, we add them in parallel
-and use the first pair of nodes encountered as the key. Depending on the type
-of the elements (for example, for symbols), this addition could fail. 
+#     # sort the ordered dictionary by the values
+#     sort!(out; byvalue=true)
 
-# Examples
-```jldoctest
-julia> JosephsonCircuits.componentdictionaryR(
-           [:P,:I,:R,:C,:Lj,:C],
-           [2 2 2 2 3 3; 1 1 1 3 1 1],
-           [],
-           [:Port1,:Ipump,:Rleft,:Cc,:Lj,:Cj],
-       )
-OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Symbol} with 1 entry:
-  (2, 1) => :Rleft
-
-julia> JosephsonCircuits.componentdictionaryR(
-           [:P,:I,:R,:C,:Lj,:C,:R],
-           [2 2 2 2 3 3 2; 1 1 1 3 1 1 1],
-           [],
-           [1,1e-6,50,50e-15,1e-12,50e-15,50],
-       )
-OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64} with 1 entry:
-  (2, 1) => 25.0
-```
-"""
-function componentdictionaryR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-    mutualinductorvector::Vector,valuevector::Vector)
-    return componentdictionaryR(typevector,nodeindexarray,mutualinductorvector,
-        valuevector,calcvaluetype(typevector,valuevector,[:R],checkinverse=false))
-end
-function componentdictionaryR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-    mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
-
-    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
-        throw(DimensionMismatch("Input arrays must have the same length"))
-    end
-
-    if length(size(nodeindexarray)) != 2
-        throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
-    end
-
-    if size(nodeindexarray,1) != 2
-        throw(DimensionMismatch("The length of the first axis must be 2"))
-    end
-
-    out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
-
-    for i in eachindex(typevector)
-        type=typevector[i]
-        if type == :R
-            key= (nodeindexarray[1,i],nodeindexarray[2,i])
-            keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
-
-            if haskey(out,key)
-                out[key]=1/(1/valuevector[i]+1/out[key])
-            elseif haskey(out,keyreversed)
-                out[keyreversed]=1/(1/valuevector[i]+1/out[keyreversed])
-            else
-                out[key]=valuevector[i]
-            end
-        end
-    end
-
-    return out
-end
+#     return out
+# end
 
 
-function calcportimpedance(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-    mutualinductorvector::Vector,valuevector::Vector)
-    return calcportimpedance(typevector,nodeindexarray,mutualinductorvector,
-        valuevector,calcvaluetype(typevector,valuevector,[:R],checkinverse=false))
-end
-function calcportimpedance(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-    mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
+# """
+#     componentdictionaryR(typevector,nodeindexarray,mutualinductorvector,
+#     valuevector)
 
-    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
-        throw(DimensionMismatch("Input arrays must have the same length"))
-    end
+# Calculate the component dictionary where the key is the pair of nodes and the
+# value is the value of the component. The netlist allows multiple components per
+# pair of nodes, but this data structure does not, thus we have to error or
+# potentially merge components together. For resistors, we add them in parallel
+# and use the first pair of nodes encountered as the key. Depending on the type
+# of the elements (for example, for symbols), this addition could fail. 
 
-    if length(size(nodeindexarray)) != 2
-        throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
-    end
+# # Examples
+# ```jldoctest
+# julia> JosephsonCircuits.componentdictionaryR(
+#            [:P,:I,:R,:C,:Lj,:C],
+#            [2 2 2 2 3 3; 1 1 1 3 1 1],
+#            [],
+#            [:Port1,:Ipump,:Rleft,:Cc,:Lj,:Cj],
+#        )
+# OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Symbol} with 1 entry:
+#   (2, 1) => :Rleft
 
-    if size(nodeindexarray,1) != 2
-        throw(DimensionMismatch("The length of the first axis must be 2"))
-    end
+# julia> JosephsonCircuits.componentdictionaryR(
+#            [:P,:I,:R,:C,:Lj,:C,:R],
+#            [2 2 2 2 3 3 2; 1 1 1 3 1 1 1],
+#            [],
+#            [1,1e-6,50,50e-15,1e-12,50e-15,50],
+#        )
+# OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64} with 1 entry:
+#   (2, 1) => 25.0
+# ```
+# """
+# function componentdictionaryR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector)
+#     return componentdictionaryR(typevector,nodeindexarray,mutualinductorvector,
+#         valuevector,calcvaluetype(typevector,valuevector,[:R],checkinverse=false))
+# end
+# function componentdictionaryR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
 
-    out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+#         throw(DimensionMismatch("Input arrays must have the same length"))
+#     end
 
-    portdict = componentdictionaryP(typevector,nodeindexarray,mutualinductorvector,valuevector)
+#     if length(size(nodeindexarray)) != 2
+#         throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
+#     end
 
-    for i in eachindex(typevector)
-        type=typevector[i]
-        if type == :R
-            key= (nodeindexarray[1,i],nodeindexarray[2,i])
-            keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
+#     if size(nodeindexarray,1) != 2
+#         throw(DimensionMismatch("The length of the first axis must be 2"))
+#     end
 
-            if haskey(portdict,key) || haskey(portdict,keyreversed)
+#     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
 
-                if haskey(out,key)
-                    out[key]=1/(1/valuevector[i]+1/out[key])
-                elseif haskey(out,keyreversed)
-                    out[keyreversed]=1/(1/valuevector[i]+1/out[keyreversed])
-                else
-                    out[key]=valuevector[i]
-                end
-            end
+#     for i in eachindex(typevector)
+#         type=typevector[i]
+#         if type == :R
+#             key= (nodeindexarray[1,i],nodeindexarray[2,i])
+#             keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
+
+#             if haskey(out,key)
+#                 out[key]=1/(1/valuevector[i]+1/out[key])
+#             elseif haskey(out,keyreversed)
+#                 out[keyreversed]=1/(1/valuevector[i]+1/out[keyreversed])
+#             else
+#                 out[key]=valuevector[i]
+#             end
+#         end
+#     end
+
+#     return out
+# end
+
+
+# function calcportimpedance(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector)
+#     return calcportimpedance(typevector,nodeindexarray,mutualinductorvector,
+#         valuevector,calcvaluetype(typevector,valuevector,[:R],checkinverse=false))
+# end
+# function calcportimpedance(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
+
+#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+#         throw(DimensionMismatch("Input arrays must have the same length"))
+#     end
+
+#     if length(size(nodeindexarray)) != 2
+#         throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
+#     end
+
+#     if size(nodeindexarray,1) != 2
+#         throw(DimensionMismatch("The length of the first axis must be 2"))
+#     end
+
+#     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+
+#     portdict = componentdictionaryP(typevector,nodeindexarray,mutualinductorvector,valuevector)
+
+#     for i in eachindex(typevector)
+#         type=typevector[i]
+#         if type == :R
+#             key= (nodeindexarray[1,i],nodeindexarray[2,i])
+#             keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
+
+#             if haskey(portdict,key) || haskey(portdict,keyreversed)
+
+#                 if haskey(out,key)
+#                     out[key]=1/(1/valuevector[i]+1/out[key])
+#                 elseif haskey(out,keyreversed)
+#                     out[keyreversed]=1/(1/valuevector[i]+1/out[keyreversed])
+#                 else
+#                     out[key]=valuevector[i]
+#                 end
+#             end
             
-        end
-    end
+#         end
+#     end
 
-    return out
-end
+#     return out
+# end
+
+
+# """
+#     calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector)
+
+# Find the resistors (not located at a port) and the node indices. Store them 
+# as an ordered dictionary where the keys are the coordinates and the value is 
+# the value.
+
+# # Examples
+# ```jldoctest
+# julia> JosephsonCircuits.calcnoiseportsR(
+#                   [:I,:R,:C,:Lj,:C],
+#                   [2 2 2 3 3; 1 1 3 1 1],
+#                   [],
+#                   [1e-9,50,5e-15,1e-12,30e-15])
+# OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64} with 1 entry:
+#   (2, 1) => 50.0
+
+# julia> JosephsonCircuits.calcnoiseportsR(
+#                   [:P,:I,:R,:C,:Lj,:C],
+#                   [2 2 2 2 3 3; 1 1 1 3 1 1],
+#                   [],
+#                   [1,1e-9,50,5e-15,1e-12,30e-15])
+# OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}()
+# ```
+# """
+
+# function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector)
+#     return calcnoiseportsR(typevector,nodeindexarray,mutualinductorvector,
+#         valuevector,calcvaluetype(typevector,valuevector,[:R],checkinverse=true))
+# end
+# function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
+
+#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+#         throw(DimensionMismatch("Input arrays must have the same length"))
+#     end
+
+#     if length(size(nodeindexarray)) != 2
+#         throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
+#     end
+
+#     if size(nodeindexarray,1) != 2
+#         throw(DimensionMismatch("The length of the first axis must be 2"))
+#     end
+
+#     # calculate the dictionary of ports
+#     portdict = componentdictionaryP(typevector,nodeindexarray,
+#         mutualinductorvector,valuevector)
+
+#     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+
+
+#     for i in eachindex(typevector)
+#         type=typevector[i]
+#         if type == :R
+#             key= (nodeindexarray[1,i],nodeindexarray[2,i])
+#             keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
+
+#             if haskey(portdict,key)
+#                 nothing
+#             elseif haskey(portdict,keyreversed)
+#                 nothing
+#             else
+#                 if haskey(out,key)
+#                     out[key]=1/(1/valuevector[i]+1/out[key])
+#                 elseif haskey(out,keyreversed)
+#                     out[keyreversed]=1/(1/valuevector[i]+1/out[keyreversed])
+#                 else
+#                     out[key]=valuevector[i]
+#                 end
+#             end
+#         end
+#     end
+
+#     return out
+# end
 
 
 """
-    calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+    calcnoiseports(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
     mutualinductorvector::Vector,valuevector::Vector)
 
 Find the resistors (not located at a port) and the node indices. Store them 
@@ -971,30 +1051,24 @@ the value.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.calcnoiseportsR(
+julia> JosephsonCircuits.calcnoiseports(
                   [:I,:R,:C,:Lj,:C],
                   [2 2 2 3 3; 1 1 3 1 1],
                   [],
                   [1e-9,50,5e-15,1e-12,30e-15])
-OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64} with 1 entry:
-  (2, 1) => 50.0
+1-element Vector{Int64}:
+ 2
 
-julia> JosephsonCircuits.calcnoiseportsR(
+julia> JosephsonCircuits.calcnoiseports(
                   [:P,:I,:R,:C,:Lj,:C],
                   [2 2 2 2 3 3; 1 1 1 3 1 1],
                   [],
                   [1,1e-9,50,5e-15,1e-12,30e-15])
-OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}()
+Int64[]
 ```
 """
-
-function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+function calcnoiseportimpedanceindices(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
     mutualinductorvector::Vector,valuevector::Vector)
-    return calcnoiseportsR(typevector,nodeindexarray,mutualinductorvector,
-        valuevector,calcvaluetype(typevector,valuevector,[:R],checkinverse=true))
-end
-function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-    mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
 
     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
         throw(DimensionMismatch("Input arrays must have the same length"))
@@ -1008,75 +1082,68 @@ function calcnoiseportsR(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
+    portimpedanceindices = calcportimpedanceindices(typevector,nodeindexarray,mutualinductorvector,valuevector)
 
-    # calculate the dictionary of ports
-    portdict = componentdictionaryP(typevector,nodeindexarray,
-        mutualinductorvector,valuevector)
+    out = Int64[]
 
-    out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+    # portarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
+    # portnumbers = Vector{eltype(valuevector)}(undef,0)
+    portindices = Int64[]
 
+    # for i in eachindex(typevector)
+    #     type=typevector[i]
+    #     if type == :P
+    #         key= (nodeindexarray[1,i],nodeindexarray[2,i])
+
+    #         if valuevector[i] in portnumbers
+    #             error("Duplicate ports are not allowed.")
+    #         elseif key in portarray
+    #             error("Only one port allowed per branch.")
+    #         else
+    #             push!(portindices,i)
+    #             push!(portnumbers,valuevector[i])
+    #             push!(portarray,key)
+    #         end
+    #     end
+    # end
+
+
+    # for i in eachindex(typevector)
+    #     type=typevector[i]
+    #     if type == :R
+    #         key= (nodeindexarray[1,i],nodeindexarray[2,i])
+    #         if key in portarray
+    #             nothing
+    #         else
+    #             push!(out,i)
+    #         end
+    #     elseif type == :C && valuevector[i] isa Complex
+    #         push!(out,i)
+    #     elseif type == :L && valuevector[i] isa Complex
+    #         push!(out,i)
+    #     end
+    # end
 
     for i in eachindex(typevector)
         type=typevector[i]
         if type == :R
-            key= (nodeindexarray[1,i],nodeindexarray[2,i])
-            keyreversed= (nodeindexarray[2,i],nodeindexarray[1,i])
-
-            if haskey(portdict,key)
-                nothing
-            elseif haskey(portdict,keyreversed)
+            if i in portimpedanceindices
                 nothing
             else
-                if haskey(out,key)
-                    out[key]=1/(1/valuevector[i]+1/out[key])
-                elseif haskey(out,keyreversed)
-                    out[keyreversed]=1/(1/valuevector[i]+1/out[keyreversed])
-                else
-                    out[key]=valuevector[i]
-                end
+                push!(out,i)
             end
+        elseif type == :C && valuevector[i] isa Complex
+            push!(out,i)
+        elseif type == :L && valuevector[i] isa Complex
+            push!(out,i)
         end
     end
 
     return out
 end
 
-
-"""
-    calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+function calcportindices(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
     mutualinductorvector::Vector,valuevector::Vector)
-
-Find the lossy capacitors and the node indices. Store them as an ordered
-dictionary where the keys are the coordinates and the value is the value.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.calcnoiseportsC(
-                  [:P,:I,:R,:C,:Lj,:C],
-                  [2 2 2 2 3 3; 1 1 1 3 1 1],
-                  [],
-                  [1,1e-9,50,5e-15*(1-3e-3*im),1e-12,30e-15*(1-3e-3*im)],
-              )
-OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64} with 2 entries:
-  (2, 3) => 5.0e-15-1.5e-17im
-  (3, 1) => 3.0e-14-9.0e-17im
-
-julia> JosephsonCircuits.calcnoiseportsC(
-                  [:P,:I,:R,:C,:Lj,:C],
-                  [2 2 2 2 3 3; 1 1 1 3 1 1],
-                  [],
-                  [1,1e-9,50,5e-15,1e-12,30e-15],
-              )
-OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}()
-```
-"""
-function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-    mutualinductorvector::Vector,valuevector::Vector)
-    return calcnoiseportsC(typevector,nodeindexarray,mutualinductorvector,
-        valuevector,calcvaluetype(typevector,valuevector,[:C],checkinverse=true))
-end
-function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
-    mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
 
     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
         throw(DimensionMismatch("Input arrays must have the same length"))
@@ -1090,35 +1157,228 @@ function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
-    out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
 
+    portarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
+    portnumbers = Vector{eltype(valuevector)}(undef,0)
+    portindices = Int64[]
+
+    # find the ports
     for i in eachindex(typevector)
         type=typevector[i]
-        if type == :C
+        if type == :P
+            key= (nodeindexarray[1,i],nodeindexarray[2,i])
 
-            # isreal throws an error for symbolic
-            # variables so first check if it is type complex
-            if valuevector[i] isa Complex
-                if isreal(valuevector[i])
-                    nothing
-                else
-                    key = (nodeindexarray[1,i],nodeindexarray[2,i])
-                    keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
-
-                    if haskey(out,key)
-                        out[key]=valuevector[i]+out[key]
-                    elseif haskey(out,keyreversed)
-                        out[keyreversed]=valuevector[i]+out[keyreversed]
-                    else
-                        out[key]=valuevector[i]
-                    end
-                end
+            if valuevector[i] in portnumbers
+                error("Duplicate ports are not allowed.")
+            elseif key in portarray
+                error("Only one port allowed per branch.")
+            else
+                push!(portindices,i)
+                push!(portnumbers,valuevector[i])
+                push!(portarray,key)
             end
-
         end
     end
-    return out
+
+    # sort by the portnumber
+    sp = sortperm(portnumbers)
+
+    return portindices[sp]
 end
+
+
+function calcportimpedanceindices(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+    mutualinductorvector::Vector,valuevector::Vector)
+
+    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+        throw(DimensionMismatch("Input arrays must have the same length"))
+    end
+
+    if length(size(nodeindexarray)) != 2
+        throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
+    end
+
+    if size(nodeindexarray,1) != 2
+        throw(DimensionMismatch("The length of the first axis must be 2"))
+    end
+
+
+    portarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
+    portnumbers = Vector{eltype(valuevector)}(undef,0)
+    portindices = Int64[]
+
+    # find the ports
+    for i in eachindex(typevector)
+        type=typevector[i]
+        if type == :P
+            key= (nodeindexarray[1,i],nodeindexarray[2,i])
+
+            if valuevector[i] in portnumbers
+                error("Duplicate ports are not allowed.")
+            elseif key in portarray
+                error("Only one port allowed per branch.")
+            else
+                push!(portindices,i)
+                push!(portnumbers,valuevector[i])
+                push!(portarray,key)
+            end
+        end
+    end
+
+    # resistorindices = zeros(Int64,length(portindices))
+    resistorindices = Int64[]
+
+    # find the resistor associated with that port
+    for i in eachindex(typevector)
+        type=typevector[i]
+        if type == :R
+            key= (nodeindexarray[1,i],nodeindexarray[2,i])
+            if key in portarray
+                if i in resistorindices
+                    error("Only one resistor allowed per port.")
+                else
+                    push!(resistorindices,i)
+                end
+            end
+        end
+    end
+
+    # sort by the portnumber
+    sp = sortperm(portnumbers)
+
+    return resistorindices[sp]
+end
+
+# """
+#     calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector)
+
+# Find the lossy capacitors and the node indices. Store them as an ordered
+# dictionary where the keys are the coordinates and the value is the value.
+
+# # Examples
+# ```jldoctest
+# julia> JosephsonCircuits.calcnoiseportsC(
+#                   [:P,:I,:R,:C,:Lj,:C],
+#                   [2 2 2 2 3 3; 1 1 1 3 1 1],
+#                   [],
+#                   [1,1e-9,50,5e-15*(1-3e-3*im),1e-12,30e-15*(1-3e-3*im)],
+#               )
+# OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64} with 2 entries:
+#   (2, 3) => 5.0e-15-1.5e-17im
+#   (3, 1) => 3.0e-14-9.0e-17im
+
+# julia> JosephsonCircuits.calcnoiseportsC(
+#                   [:P,:I,:R,:C,:Lj,:C],
+#                   [2 2 2 2 3 3; 1 1 1 3 1 1],
+#                   [],
+#                   [1,1e-9,50,5e-15,1e-12,30e-15],
+#               )
+# OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}()
+# ```
+# """
+# function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector)
+#     return calcnoiseportsC(typevector,nodeindexarray,mutualinductorvector,
+#         valuevector,calcvaluetype(typevector,valuevector,[:C],checkinverse=true))
+# end
+# function calcnoiseportsC(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
+
+#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+#         throw(DimensionMismatch("Input arrays must have the same length"))
+#     end
+
+#     if length(size(nodeindexarray)) != 2
+#         throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
+#     end
+
+#     if size(nodeindexarray,1) != 2
+#         throw(DimensionMismatch("The length of the first axis must be 2"))
+#     end
+
+#     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+
+#     for i in eachindex(typevector)
+#         type=typevector[i]
+#         if type == :C
+
+#             # isreal throws an error for symbolic
+#             # variables so first check if it is type complex
+#             if valuevector[i] isa Complex
+#                 if isreal(valuevector[i])
+#                     nothing
+#                 else
+#                     key = (nodeindexarray[1,i],nodeindexarray[2,i])
+#                     keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
+
+#                     if haskey(out,key)
+#                         out[key]=valuevector[i]+out[key]
+#                     elseif haskey(out,keyreversed)
+#                         out[keyreversed]=valuevector[i]+out[keyreversed]
+#                     else
+#                         out[key]=valuevector[i]
+#                     end
+#                 end
+#             end
+
+#         end
+#     end
+#     return out
+# end
+
+# function calcnoiseportsC2(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector)
+#     return calcnoiseportsC2(typevector,nodeindexarray,mutualinductorvector,
+#         valuevector,calcvaluetype(typevector,valuevector,[:C],checkinverse=true))
+# end
+# function calcnoiseportsC2(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+#     mutualinductorvector::Vector,valuevector::Vector,valuetypevector::Vector)
+
+#     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+#         throw(DimensionMismatch("Input arrays must have the same length"))
+#     end
+
+#     if length(size(nodeindexarray)) != 2
+#         throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
+#     end
+
+#     if size(nodeindexarray,1) != 2
+#         throw(DimensionMismatch("The length of the first axis must be 2"))
+#     end
+
+#     out = OrderedDict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},eltype(valuetypevector)}()
+#     out = Int64[]
+
+#     for i in eachindex(typevector)
+#         type=typevector[i]
+#         if type == :C
+
+#             # isreal throws an error for symbolic
+#             # variables so first check if it is type complex
+#             if valuevector[i] isa Complex
+#                 if isreal(valuevector[i])
+#                     nothing
+#                 else
+#                     # key = (nodeindexarray[1,i],nodeindexarray[2,i])
+#                     # keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
+
+#                     # if haskey(out,key)
+#                     #     out[key]=valuevector[i]+out[key]
+#                     # elseif haskey(out,keyreversed)
+#                     #     out[keyreversed]=valuevector[i]+out[keyreversed]
+#                     # else
+#                     #     out[key]=valuevector[i]
+#                     # end
+#                     push!(out,i)
+#                 end
+#             end
+
+#         end
+#     end
+#     return out
+# end
+
 
 # function componentdictionary(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
 #     mutualinductorvector::Vector,valuevector::Vector)
@@ -1265,7 +1525,7 @@ julia> JosephsonCircuits.valuetonumber(:Lj1,Dict(:Lj1=>1e-12,:Lj2=>2e-12))
 1.0e-12
 ```
 """
-function valuetonumber(value::Symbol,circuitdefs::Dict)
+function valuetonumber(value::Symbol,circuitdefs)
     return circuitdefs[value]
 end
 
@@ -1280,7 +1540,7 @@ julia> JosephsonCircuits.valuetonumber("Lj1",Dict("Lj1"=>1e-12,"Lj2"=>2e-12))
 1.0e-12
 ```
 """
-function valuetonumber(value::String,circuitdefs::Dict)
+function valuetonumber(value::String,circuitdefs)
     return circuitdefs[value]
 end
 
@@ -1316,6 +1576,25 @@ julia> @syms Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,L
 4.0e-12
 ```
 """
-function valuetonumber(value,circuitdefs::Dict)
-    return substitute(value,circuitdefs)
+# function valuetonumber(value,circuitdefs)
+#     return substitute(value,circuitdefs)
+# end
+
+function valuetonumber(value,circuitdefs)
+    return value
+end
+
+
+## for Num types if we ever add Symbolics. unwrap helps speed up
+## their evaluation and evalutes to a number. 
+function valuetonumber(value::Symbolics.Num,circuitdefs)
+    return Symbolics.substitute(Symbolics.unwrap(value),circuitdefs)
+    # return substitute(unwrap(value),circuitdefs)
+    # return substitute(value,circuitdefs)
+end
+
+function valuetonumber(value::Symbolics.Symbolic,circuitdefs)
+    return Symbolics.substitute(value,circuitdefs)
+    # return substitute(unwrap(value),circuitdefs)
+    # return substitute(value,circuitdefs)
 end

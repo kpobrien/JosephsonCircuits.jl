@@ -467,19 +467,35 @@ function sparseaddconjsubst!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
 
     k = 1
 
+    # println(length(indexmap))
+    # println(length(A.nzval))
+    # println(maximum(indexmap))
+    # println(1:length(As.colptr)-1)
+    # println(length(freqsubstindices))
+    # println((freqsubstindices))
+    # println(" ")
+
     for i = 1:length(As.colptr)-1
         for j in As.colptr[i]:(As.colptr[i+1]-1)
 
-            if length(freqsubstindices) > 0 && j == freqsubstindices[k]
-                # tmp = substitute(As.nzval[j],Dict(symfreqvar=>wmodesm[i,i]))
-                tmp = valuetonumber(As.nzval[j],Dict(symfreqvar=>wmodesm[i,i]))
+            # if length(freqsubstindices) > 0 && j == freqsubstindices[k]
+            #     # tmp = substitute(As.nzval[j],Dict(symfreqvar=>wmodesm[i,i]))
+            #     # tmp = valuetonumber(As.nzval[j],Dict(symfreqvar=>wmodesm[i,i]))
+            #     tmp = valuetonumber(As.nzval[j],symfreqvar=>wmodesm[i,i])
 
-                k+=1
-            else
-                tmp = As.nzval[j]
-            end
+            #     k+=1
+            # else
+            #     tmp = As.nzval[j]
+            # end
+
+            # i don't notice a difference between these two. so i think i 
+            # should remove the freqsubstindices functionality. 
+            tmp = valuetonumber(As.nzval[j],symfreqvar=>wmodesm[i,i])
+            # tmp = As.nzval[j]
+
 
             if conjflag[i,i]
+                # println(j)
                 A.nzval[indexmap[j]] += c*Ad[i,i]*conj(tmp)
             else
                 A.nzval[indexmap[j]] += c*Ad[i,i]*tmp
