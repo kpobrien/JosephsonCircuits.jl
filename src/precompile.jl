@@ -4,14 +4,15 @@
 # when it is loaded or the functions are run. this is a helpful guide:
 # https://timholy.github.io/SnoopCompile.jl/stable/snoopi_deep_analysis/#inferrability
 # and the basic commands to look at the inference triggers
-# julia> using SnoopCompile
-# julia> using JosephsonCircuits
+# julia> using SnoopCompile, MKL, JosephsonCircuits
 # julia> tinf = @snoopi_deep JosephsonCircuits.warmupsyms();
 # julia> itrigs = inference_triggers(tinf)
 
 
 precompile(iterate,(Vector{Pair{Tuple{Int64, Int64}, Number}},))
 precompile(Base.indexed_iterate,(Pair{Tuple{Int64, Int64}, Number}, Int64))
+precompile(Base.Broadcast.broadcasted,(Function, Vector{ComplexF64}, Vector{ComplexF64}))
+precompile(Base.Broadcast.materialize!,(Vector{ComplexF64}, Base.Broadcast.Broadcasted{Base.Broadcast.DefaultArrayStyle{1}, Nothing, typeof(+), Tuple{Vector{ComplexF64}, Vector{ComplexF64}}}))
 precompile(setindex!,(Dict{Tuple{Int64, Int64},Number},Int64,Tuple{Int64, Int64}))
 precompile(setindex!,(Dict{Tuple{Int64, Int64}, Number}, ComplexF64, Tuple{Int64, Int64}))
 precompile(setindex!,(Dict{Tuple{Int64, Int64}, Real}, Int64, Tuple{Int64, Int64}))
@@ -41,6 +42,8 @@ precompile(values,(OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64},
 precompile(keys,(OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64},))
 precompile(keys,(OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Int64},))
 precompile(keys,(OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64},))
+precompile(hash,(SymbolicUtils.Sym{Real, Base.ImmutableDict{DataType, Any}}, UInt64))
+
 
 precompile(-,(ComplexF64, Int64))
 precompile(/,(Vector{ComplexF64}, Float64))
@@ -52,6 +55,7 @@ precompile(*,(SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, ComplexF64))
 precompile(*,(SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, Float64))
 precompile(*,(LinearAlgebra.Transpose{Int64, SparseArrays.SparseMatrixCSC{Int64, Int64}}, Vector{ComplexF64}))
 precompile(*,(LinearAlgebra.Transpose{Int64, SparseArrays.SparseMatrixCSC{Int64, Int64}}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{Int64, Int64}))
+precompile(*,(Vector{ComplexF64}, Float64))
 precompile(+,(SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}))
 precompile( +,(SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{Int64, Int64}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}))
 precompile(-,(SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}))
@@ -74,7 +78,7 @@ precompile(KLU.LibKLU.klu_zl_free_numeric,(Base.RefValue{Ptr{KLU.LibKLU.klu_l_nu
 
 precompile(LinearAlgebra.ldiv!,(Matrix{ComplexF64}, KLU.KLUFactorization{ComplexF64, Int64}, Matrix{ComplexF64}))
 precompile(LinearAlgebra.ldiv!,(Vector{ComplexF64}, KLU.KLUFactorization{ComplexF64, Int64}, Vector{ComplexF64}))
-
+precompile(LinearAlgebra.dot,(Vector{ComplexF64}, Vector{ComplexF64}))
 
 precompile(SparseArrays.sparsevec,(Vector{Int64}, Vector{Int64}, Int64))
 precompile(SparseArrays.sparsevec,(Vector{Int64}, Vector{ComplexF64}, Int64))
@@ -86,15 +90,15 @@ precompile(JosephsonCircuits.calcAoLjbm,(Matrix{ComplexF64}, SparseArrays.Sparse
 precompile(JosephsonCircuits.calcAoLjbm,(Matrix{ComplexF64}, SparseArrays.SparseVector{Float64, Int64}, Vector{Int64}, Float64, Int64, Int64, Vector{Int64}, Vector{Int64}, Vector{ComplexF64}))
 precompile(JosephsonCircuits.calcAoLjbm,(Matrix{ComplexF64}, SparseArrays.SparseVector{ComplexF64, Int64}, ComplexF64, Int64, Int64))
 precompile(JosephsonCircuits.calcAoLjbm,(Matrix{ComplexF64}, SparseArrays.SparseVector{Float64, Int64}, Int64, Int64, Int64))
-precompile( JosephsonCircuits.calcAoLjbm,(Matrix{ComplexF64}, SparseArrays.SparseVector{Float64, Int64}, Float64, Int64, Int64))
+precompile(JosephsonCircuits.calcAoLjbm,(Matrix{ComplexF64}, SparseArrays.SparseVector{Float64, Int64}, Float64, Int64, Int64))
 
-precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Number}, Vector{Float64}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
-precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Number}, Vector{ComplexF64}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
-precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Real}, Vector{Float64}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
-precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Real}, Vector{Nothing}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
-precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Number}, Vector{Nothing}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
+# precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Number}, Vector{Float64}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
+# precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Number}, Vector{ComplexF64}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
+# precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Real}, Vector{Float64}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
+# precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Real}, Vector{Nothing}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
+# precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Number}, Vector{Nothing}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
 
-precompile(JosephsonCircuits.calcbranchvalues!,(Vector{ComplexF64}, Vector{ComplexF64}, Base.KeySet{Tuple{Int64, Int64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Int64}}, Int64))
+# precompile(JosephsonCircuits.calcbranchvalues!,(Vector{ComplexF64}, Vector{ComplexF64}, Base.KeySet{Tuple{Int64, Int64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Int64}}, Int64))
 
 precompile(JosephsonCircuits.calcCn,(Vector{Symbol}, Matrix{Int64}, Vector{Number}, Int64, Int64))
 precompile(JosephsonCircuits.calcCn,(Vector{Symbol}, Matrix{Int64}, Vector{Real}, Int64, Int64))
@@ -142,35 +146,36 @@ precompile(JosephsonCircuits.calcnodematrix,(Vector{Symbol}, Matrix{Int64}, Vect
 precompile(JosephsonCircuits.calcnodematrix,(Vector{Symbol}, Matrix{Int64}, Vector{Number}, Vector{ComplexF64}, Int64, Int64, Symbol, Bool))
 precompile(JosephsonCircuits.calcnodematrix,(Vector{Symbol}, Matrix{Int64}, Vector{Real}, Vector{Float64}, Int64, Int64, Symbol, Bool))
 
-precompile(JosephsonCircuits.calcoutput!,(Vector{ComplexF64}, Vector{ComplexF64}, Base.ValueIterator{OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}}, Vector{Float64}, Nothing))
-precompile(JosephsonCircuits.calcoutput!,(Vector{ComplexF64}, Vector{ComplexF64}, Base.ValueIterator{OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}}, Vector{Float64}, Nothing))
+# precompile(JosephsonCircuits.calcoutput!,(Vector{ComplexF64}, Vector{ComplexF64}, Base.ValueIterator{OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}}, Vector{Float64}, Nothing))
+# precompile(JosephsonCircuits.calcoutput!,(Vector{ComplexF64}, Vector{ComplexF64}, Base.ValueIterator{OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}}, Vector{Float64}, Nothing))
 
-precompile(JosephsonCircuits.calcphibthevenin!,(Vector{ComplexF64}, Vector{ComplexF64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}, Vector{Float64}, Nothing))
-precompile(JosephsonCircuits.calcphibthevenin!,(Vector{ComplexF64}, Vector{ComplexF64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}, Vector{Float64}, Nothing))
+# precompile(JosephsonCircuits.calcphibthevenin!,(Vector{ComplexF64}, Vector{ComplexF64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}, Vector{Float64}, Nothing))
+# precompile(JosephsonCircuits.calcphibthevenin!,(Vector{ComplexF64}, Vector{ComplexF64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}, Vector{Float64}, Nothing))
 
 # precompile(JosephsonCircuits.calcS!,(Matrix{ComplexF64}, Vector{ComplexF64}, Vector{ComplexF64}))
 
 precompile(JosephsonCircuits.calcAoLjbm,(Matrix{ComplexF64}, SparseArrays.SparseVector{ComplexF64, Int64}, Int64, Int64, Int64))
-precompile(JosephsonCircuits.calcnoiseportsC,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
+# precompile(JosephsonCircuits.calcnoiseportsC,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
 
 precompile(JosephsonCircuits.symbolicindices,(OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64},))
 
-precompile(JosephsonCircuits.calcportimpedance,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}))
-precompile(JosephsonCircuits.calcportimpedance,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}, Vector{ComplexF64}))
-precompile(JosephsonCircuits.calcportimpedance,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
-precompile(JosephsonCircuits.calcportimpedance,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}, Vector{Float64}))
+# precompile(JosephsonCircuits.calcportimpedance,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}))
+# precompile(JosephsonCircuits.calcportimpedance,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}, Vector{ComplexF64}))
+# precompile(JosephsonCircuits.calcportimpedance,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
+# precompile(JosephsonCircuits.calcportimpedance,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}, Vector{Float64}))
 
-precompile(JosephsonCircuits.calcnoiseportsC,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}))
-precompile(JosephsonCircuits.calcnoiseportsC,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}, Vector{ComplexF64}))
-precompile(JosephsonCircuits.calcnoiseportsC,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}, Vector{Float64}))
+# precompile(JosephsonCircuits.calcnoiseportsC,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}))
+# precompile(JosephsonCircuits.calcnoiseportsC,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}, Vector{ComplexF64}))
+# precompile(JosephsonCircuits.calcnoiseportsC,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}, Vector{Float64}))
 
-precompile(JosephsonCircuits.calcnoiseportsR,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}))
-precompile(JosephsonCircuits.calcnoiseportsR,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}, Vector{ComplexF64}))
-precompile(JosephsonCircuits.calcnoiseportsR,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
-precompile(JosephsonCircuits.calcnoiseportsR,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}, Vector{Float64}))
+# precompile(JosephsonCircuits.calcnoiseportsR,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}))
+# precompile(JosephsonCircuits.calcnoiseportsR,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}, Vector{ComplexF64}))
+# precompile(JosephsonCircuits.calcnoiseportsR,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
+# precompile(JosephsonCircuits.calcnoiseportsR,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}, Vector{Float64}))
 
-precompile(JosephsonCircuits.CircuitMatrices,(SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseVector{Nothing, Int64}, SparseArrays.SparseVector{Nothing, Int64}, SparseArrays.SparseVector{ComplexF64, Int64}, SparseArrays.SparseVector{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Int64, Int64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Int64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}, ComplexF64))
-precompile(JosephsonCircuits.CircuitMatrices,(SparseArrays.SparseMatrixCSC{Float64, Int64}, SparseArrays.SparseMatrixCSC{Float64, Int64}, SparseArrays.SparseVector{Nothing, Int64}, SparseArrays.SparseVector{Nothing, Int64}, SparseArrays.SparseVector{Float64, Int64}, SparseArrays.SparseVector{Float64, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Int64, Int64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Int64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}, Float64))
+# precompile(JosephsonCircuits.CircuitMatrices,(SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseVector{Nothing, Int64}, SparseArrays.SparseVector{Nothing, Int64}, SparseArrays.SparseVector{ComplexF64, Int64}, SparseArrays.SparseVector{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Int64, Int64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Int64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, ComplexF64}, ComplexF64))
+# precompile(JosephsonCircuits.CircuitMatrices,(SparseArrays.SparseMatrixCSC{Float64, Int64}, SparseArrays.SparseMatrixCSC{Float64, Int64}, SparseArrays.SparseVector{Nothing, Int64}, SparseArrays.SparseVector{Nothing, Int64}, SparseArrays.SparseVector{Float64, Int64}, SparseArrays.SparseVector{Float64, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Int64, Int64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Int64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}, OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}, Float64))
+precompile(JosephsonCircuits.CircuitMatrices,(SparseArrays.SparseMatrixCSC{Float64, Int64}, SparseArrays.SparseMatrixCSC{Float64, Int64}, SparseArrays.SparseVector{Nothing, Int64}, SparseArrays.SparseVector{Nothing, Int64}, SparseArrays.SparseVector{Float64, Int64}, SparseArrays.SparseVector{Float64, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Int64, Int64}, Vector{Int64}, Vector{Int64}, Vector{Int64}, Float64, Vector{Real}))
 
 # precompile(JosephsonCircuits.calcoutput!,(Matrix{ComplexF64}, Matrix{ComplexF64}, Dict{Tuple{Int64, Int64}, Number}, Dict{Tuple{Int64, Int64}, Number}, Vector{Float64}))
 # precompile(JosephsonCircuits.calcoutput!,(Vector{ComplexF64}, Vector{ComplexF64}, Dict{Tuple{Int64, Int64}, Number}, Dict{Tuple{Int64, Int64}, Number}, Vector{Float64}))
@@ -186,14 +191,14 @@ precompile(JosephsonCircuits.CircuitMatrices,(SparseArrays.SparseMatrixCSC{Float
 
 # precompile(JosephsonCircuits.checknumbervector,(Vector{Symbol}, Vector{Number}))
 
-precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol},Matrix{Int64},Vector{Symbol},Vector{Number}))
-precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{Symbol}, Vector{Real}))
-precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}))
-precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}, Vector{Int64}))
-precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
-precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}, Vector{Int64}))
-precompile(JosephsonCircuits.componentdictionaryR,(Vector{Symbol},Matrix{Int64},Vector{Symbol},Vector{Number}))
-precompile(JosephsonCircuits.componentdictionaryR,(Vector{Symbol}, Matrix{Int64}, Vector{Symbol}, Vector{Real}))
+# precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol},Matrix{Int64},Vector{Symbol},Vector{Number}))
+# precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{Symbol}, Vector{Real}))
+# precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}))
+# precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Number}, Vector{Int64}))
+# precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
+# precompile(JosephsonCircuits.componentdictionaryP,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}, Vector{Int64}))
+# precompile(JosephsonCircuits.componentdictionaryR,(Vector{Symbol},Matrix{Int64},Vector{Symbol},Vector{Number}))
+# precompile(JosephsonCircuits.componentdictionaryR,(Vector{Symbol}, Matrix{Int64}, Vector{Symbol}, Vector{Real}))
 
 precompile(JosephsonCircuits.diagrepeat,(SparseArrays.SparseMatrixCSC{Int64, Int64}, Int64))
 
@@ -216,6 +221,7 @@ precompile(JosephsonCircuits.sparseadd!,(SparseArrays.SparseMatrixCSC{ComplexF64
 precompile(JosephsonCircuits.sparseaddconj!,(SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, Int64, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, LinearAlgebra.Diagonal{Float64, Vector{Float64}}, Vector{UInt32}, LinearAlgebra.Diagonal{Bool, Vector{Bool}}))
 precompile(JosephsonCircuits.sparseaddconj!,(SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, Complex{Bool}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, LinearAlgebra.Diagonal{Float64, Vector{Float64}}, Vector{UInt32}, LinearAlgebra.Diagonal{Bool, Vector{Bool}}))
 
+
 precompile(JosephsonCircuits.symbolicindices,(SparseArrays.SparseMatrixCSC{Nothing, Int64},))
 precompile(JosephsonCircuits.symbolicindices,(SparseArrays.SparseMatrixCSC{ComplexF64, Int64},))
 precompile(JosephsonCircuits.symbolicindices,(SparseArrays.SparseMatrixCSC{Float64, Int64},))
@@ -225,4 +231,17 @@ precompile(JosephsonCircuits.valuevectortonumber,(Vector{Union{Int64, Symbol, Co
 precompile(JosephsonCircuits.valuevectortonumber,(Vector{Union{Int64, Symbol, ComplexF64}}, Dict{Symbol, Float64}))
 # precompile(JosephsonCircuits.valuevectortonumber,(Vector{Any}, Dict{SymbolicUtils.Sym{Number, Nothing}, Float64}))
 precompile(JosephsonCircuits.valuevectortonumber,(Vector{Any}, Dict{Sym{Number, Nothing}, Float64}))
+precompile(JosephsonCircuits.valuevectortonumber,(Vector{Num}, Dict{Num, Float64}))
 
+precompile(SymbolicUtils.substitute,(Int64, Dict{Num, Float64}))
+precompile(isequal,(Int64, SymbolicUtils.Sym{Real, Base.ImmutableDict{DataType, Any}}))
+precompile(isequal,(SymbolicUtils.Sym{Real, Base.ImmutableDict{DataType, Any}}, SymbolicUtils.Sym{Real, Base.ImmutableDict{DataType, Any}}))
+precompile(SymbolicUtils.substitute,(SymbolicUtils.Sym{Real, Base.ImmutableDict{DataType, Any}}, Dict{Num, Float64}))
+precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Real}, Vector{Nothing}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
+precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Real}, Vector{Float64}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
+precompile(JosephsonCircuits.calcportindices,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
+precompile(in,(Int64, Vector{Real}))
+precompile(JosephsonCircuits.calcportimpedanceindices,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
+precompile(JosephsonCircuits.calcnoiseportimpedanceindices,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
+
+precompile(JosephsonCircuits.hblinsolve_inner!,(Array{ComplexF64, 3}, Array{ComplexF64, 3}, Array{Float64, 3}, Matrix{Float64}, Vector{ComplexF64}, Vector{ComplexF64}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{ComplexF64, Int64}, SparseArrays.SparseMatrixCSC{Nothing, Int64}, SparseArrays.SparseMatrixCSC{Float64, Int64}, SparseArrays.SparseMatrixCSC{Float64, Int64}, Matrix{ComplexF64}, Vector{Int64}, Vector{Int64}, Vector{Int64}, Vector{Int64}, Vector{Int64}, Vector{Int64}, Vector{Int64}, Vector{Int64}, Vector{Int64}, Vector{Int64}, Vector{Float64}, Vector{Real}, Matrix{Int64}, Vector{Symbol}, StepRangeLen{Float64, Base.TwicePrecision{Float64}, Base.TwicePrecision{Float64}, Int64}, UnitRange{Int64}, Float64, Int64, Int64, Symbol, Nothing, UnitRange{Int64}))

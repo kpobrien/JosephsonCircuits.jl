@@ -739,6 +739,15 @@ function calcinvLn_inner(Lb::SparseVector,Mb::SparseMatrixCSC,Rbn::SparseMatrixC
     end
 end
 
+# Symbolics is needed for calculating the inverse inductance matrix if there
+# are mutual inductors. For large systems with many mutual inductors this may
+# result in very large equations so is not recommended. 
+function calcsymbolicinvLn(L,Lb,Rbn)
+    s =  sparse(transpose(Rbn[Lb.nzind,:])*(Symbolics.sym_lu(Matrix(L))\ Matrix(Rbn[Lb.nzind,:])))
+    return SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,s.nzval)
+    # return SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,Symbolics.value.(s.nzval))
+end
+
 
 
 """

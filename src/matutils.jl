@@ -736,6 +736,25 @@ end
 
 
 """
+    checkissymbolic(a::Num)
+
+Check if a is a symbolic variable, when the Symbolics package is 
+loaded. The default version for SymbolicUtils is defined in matutils.jl.
+
+# Examples
+```jldoctest
+julia> import Symbolics;Symbolics.@variables w;JosephsonCircuits.checkissymbolic(w)
+true
+
+julia> JosephsonCircuits.checkissymbolic(1.0)
+false
+```
+"""
+function checkissymbolic(a::Symbolics.Num)
+    return !(Symbolics.value(a) isa Number)
+end
+
+"""
     freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
 
 Substitute the frequency dependent elements of A using the vector of mode
