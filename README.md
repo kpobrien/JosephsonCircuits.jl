@@ -61,7 +61,7 @@ We can also sweep the pump frequency.
 # Additional examples:
 
 # Performance tips:
-Edit NLsolve.jl as described [here](https://github.com/JuliaNLSolvers/NLsolve.jl/issues/278) to enable caching of the factorization objects for about a factor of two speedup using KLU.
+Simulations of the linearized system can be efficiently parallelized, so we suggest you enable multi-threading when starting Julia with the number of threads equal to the number of physical cores. 
 
 # Installation:
 
@@ -90,15 +90,13 @@ or once we make the repository public:
 
 The motivation for developing this package is to simulate the gain and noise performance of ultra low noise amplifiers for quantum computing applications such as the [Josephson traveling-wave parametric amplifier](https://www.science.org/doi/10.1126/science.aaa8525), which have thousands of linear and nonlinear circuit elements. 
 
-We prioritize speed (including compile time and time to first use), simplicity, and scalability over style. This motivates, for example, circuit input as an array rather than a DSL (domain-specific language).
+We prioritize speed (including compile time and time to first use), simplicity, and scalability.
 
 # Future developments:
 
 * Flux pumping, DC biasing, three wave mixing, fluxoid offsets, and two-tone harmonic balance.
-* Design optimization with analytic derivatives or autodiff.
-* Defining new nonlinear components by their branch flux response. 
-* Iterative solvers for larger scale problems and shooting method for more nonlinear behavior.
-* Interoperability with [BifurcationKit.jl](https://github.com/rveltz/BifurcationKit.jl) and [HarmonicBalance.jl](https://github.com/NonlinearOscillations/HarmonicBalance.jl) to perform bifurcation analysis and find unstable operating points.
+* Design optimization
+* User defined nonlinear components.
 * Interoperability with [DifferentialEquations.jl](https://github.com/SciML/DifferentialEquations.jl) for time domain simulations. 
 
 

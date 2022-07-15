@@ -11,24 +11,16 @@ module JosephsonCircuits
 import Graphs
 import FFTW
 import Statistics
-# import NLsolve
-# import LineSearches
-
 import KLU
 import UUIDs
-# import SymbolicUtils: @syms, substitute, Symbolic, Sym
-# import OrderedCollections: OrderedDict
-
-# import Symbolics: @variables, Num
-# import Symbolics: @variables, Num, @syms, substitute, Symbolic, Sym
-using Symbolics
 import Symbolics: Symbolic, Sym
+
+using Symbolics
 using OrderedCollections
 using LinearAlgebra
 using SparseArrays
 using Printf
 using Requires
-# using BandedMatrices
 
 # define the zero for symbolic numbers so that we can view the sparse arrays
 Base.zero(::Type{Symbolic{Number}}) = 0
