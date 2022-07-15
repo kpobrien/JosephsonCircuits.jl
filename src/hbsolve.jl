@@ -281,11 +281,11 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     if returnQE
         # calculate the ideal quantum efficiency.
-        # QEideal =  1 ./(2 .- 1 ./abs2.(S))
-        QEideal = zeros(Float64,size(S))
-        for i in eachindex(S)
-            QEideal[i] = 1 /(2 - 1 /abs2(S[i]))
-        end
+        QEideal =  1 ./(2 .- 1 ./abs2.(S))
+        # QEideal = zeros(Float64,size(S))
+        # for i in eachindex(S)
+            # QEideal[i] = 1 /(2 - 1 /abs2(S[i]))
+        # end
     else
         QEideal = zeros(Float64,0,0,0)
     end
