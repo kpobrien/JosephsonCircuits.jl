@@ -239,7 +239,7 @@ precompile(isequal,(SymbolicUtils.Sym{Real, Base.ImmutableDict{DataType, Any}}, 
 precompile(SymbolicUtils.substitute,(SymbolicUtils.Sym{Real, Base.ImmutableDict{DataType, Any}}, Dict{Num, Float64}))
 precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Real}, Vector{Nothing}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
 precompile(JosephsonCircuits.calcbranchvector,(Vector{Symbol}, Matrix{Int64}, Vector{Real}, Vector{Float64}, Dict{Tuple{Int64, Int64}, Int64}, Int64, Int64, Symbol))
-precompile(JosephsonCircuits.calcportindices,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
+# precompile(JosephsonCircuits.calcportindices,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
 precompile(in,(Int64, Vector{Real}))
 precompile(JosephsonCircuits.calcportimpedanceindices,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))
 precompile(JosephsonCircuits.calcnoiseportimpedanceindices,(Vector{Symbol}, Matrix{Int64}, Vector{String}, Vector{Real}))

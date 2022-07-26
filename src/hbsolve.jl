@@ -227,41 +227,14 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     if nbatches == 1
         # the overhead of a single thread is negligible but we want a true
         # single threaded case for debugging purposes. 
-        # hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
-        #             AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-        #             Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-        #             portbranches,portimpedance,noiseportbranches,noiseportimpedance,
-        #             w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,1:length(w))
-
         hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
                     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
                     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
                     portindices,portimpedanceindices,noiseportimpedanceindices,
                     portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,
                     w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,1:length(w))
-
     else
         # parallelize using native threading
-        # give a warning about potentially problematic configurations
-        # observed incorrect results and crashes on the machine below
-        # but no issues on 11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz
-        # julia> versioninfo()
-        # Julia Version 1.8.0-rc1
-        # Commit 6368fdc656 (2022-05-27 18:33 UTC)
-        # Platform Info:
-        #   OS: Linux (x86_64-pc-linux-gnu)
-        #   CPU: 32 × AMD Ryzen 9 3950X 16-Core Processor
-        #   WORD_SIZE: 64
-        #   LIBM: libopenlibm
-        #   LLVM: libLLVM-13.0.1 (ORCJIT, znver2)
-        #   Threads: 16 on 32 virtual cores
-        # Environment:
-        #   JULIA_NUM_THREADS = 16
-        libstr = "libopenblas64_.so"
-        if verbosity > 0 && libstr == LinearAlgebra.BLAS.get_config().loaded_libs[1].libname[end-length(libstr)+1:end]
-            @warn "OpenBLAS + Julia threads may cause memory errors on some systems. Consider MKL.jl or setting nbatches=1 . Set verbosity=0 to hide this warning."
-        end
-
         batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
         Base.Threads.@threads for i in 1:length(batches)
             hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
@@ -270,22 +243,19 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
                 portindices,portimpedanceindices,noiseportimpedanceindices,
                 portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,
                 w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,batches[i])
-            # hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
-            #     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-            #     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-            #     portbranches,portimpedance,noiseportbranches,noiseportimpedance,
-            #     w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,batches[i])
         end
     end
 
-
     if returnQE
         # calculate the ideal quantum efficiency.
-        QEideal =  1 ./(2 .- 1 ./abs2.(S))
+        # QEideal =  1 ./(2 .- 1 ./abs2.(S))
+        # QEideal[abs2.(S) .< 1] .= 1
         # QEideal = zeros(Float64,size(S))
         # for i in eachindex(S)
             # QEideal[i] = 1 /(2 - 1 /abs2(S[i]))
         # end
+        QEideal = zeros(Float64,size(S))
+        calcqeideal!(QEideal,S)
     else
         QEideal = zeros(Float64,0,0,0)
     end
@@ -562,6 +532,10 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     verbosity=1)
 
 
+    if length(ports) != length(Ip)
+        error("Number of currents Ip must be equal to number of pump ports")
+    end
+
     # calculate the numeric matrices
     nm=numericmatrices(psc,cg,circuitdefs,Nmodes=Nmodes)
 
@@ -579,6 +553,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # portdict = nm.portdict
     # resistordict = nm.resistordict
     portindices = nm.portindices
+    portnumbers = nm.portnumbers
     portimpedanceindices = nm.portimpedanceindices
     noiseportimpedanceindices = nm.noiseportimpedanceindices
     vvn = nm.vvn
@@ -609,10 +584,12 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     #     end
     # end
 
-    for (i,val) in enumerate(portindices)
-        key = (nodeindexarraysorted[1,val],nodeindexarraysorted[2,val])
-        if val in ports
-            bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip/phi0
+    for (i,portindex) in enumerate(portindices)
+        portnumber = portnumbers[i]
+        key = (nodeindexarraysorted[1,portindex],nodeindexarraysorted[2,portindex])
+        if portnumber in ports
+            # bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip/phi0
+            bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip[portindex]/phi0
         end
     end
 
@@ -861,7 +838,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
 
     # calculate the scattering parameters
-    if Ip > 0
+    if any(Ip .> 0)
         # calcS!(S,input/Lmean,output)
     end
 

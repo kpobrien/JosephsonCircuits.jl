@@ -20,6 +20,7 @@ struct CircuitMatrices
     invLnm::SparseMatrixCSC
     Rbnm::SparseMatrixCSC{Int64, Int64}
     portindices::Vector{Int64}
+    portnumbers::Vector{Int64}
     portimpedanceindices::Vector{Int64}
     noiseportimpedanceindices::Vector{Int64}
     Lmean
@@ -162,7 +163,7 @@ function numericmatrices(psc::ParsedSortedCircuit,cg::CircuitGraph,
     # resistornoiseports = calcnoiseportsR(psc.typevector,psc.nodeindexarraysorted,
     #     psc.mutualinductorvector,vvn)
 
-    portindices = calcportindices(psc.typevector,psc.nodeindexarraysorted,
+    portindices, portnumbers = calcportindicesnumbers(psc.typevector,psc.nodeindexarraysorted,
         psc.mutualinductorvector,vvn)
 
     portimpedanceindices = calcportimpedanceindices(psc.typevector,psc.nodeindexarraysorted,
@@ -171,7 +172,7 @@ function numericmatrices(psc::ParsedSortedCircuit,cg::CircuitGraph,
     noiseportimpedanceindices = calcnoiseportimpedanceindices(psc.typevector,psc.nodeindexarraysorted,
         psc.mutualinductorvector,vvn)
 
-    return CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portindices,
+    return CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portindices,portnumbers,
         portimpedanceindices,noiseportimpedanceindices,Lmean,vvn)
     # return CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portdict,
     #     portimpedance,capacitornoiseports,resistornoiseports,Lmean)

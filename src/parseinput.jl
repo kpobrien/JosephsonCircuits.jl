@@ -1142,7 +1142,7 @@ function calcnoiseportimpedanceindices(typevector::Vector{Symbol},nodeindexarray
     return out
 end
 
-function calcportindices(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
+function calcportindicesnumbers(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
     mutualinductorvector::Vector,valuevector::Vector)
 
     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
@@ -1183,7 +1183,8 @@ function calcportindices(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64
     # sort by the portnumber
     sp = sortperm(portnumbers)
 
-    return portindices[sp]
+    return portindices[sp],portnumbers[sp]
+    # return portindices[sp]
 end
 
 

@@ -1054,3 +1054,30 @@ function calcqe!(qe,S,Snoise)
     return nothing
 end
 
+
+"""
+    calcqeideal(S)
+
+Calculate the ideal (best possible) quantum efficiency for each element of a
+scattering matrix. 
+"""
+function calcqeideal(S)
+    qeideal = zeros(Float64,size(S))
+    calcqeideal!(qeideal,S)
+    return qeideal
+end
+
+function calcqeideal!(qeideal,S)
+    if size(qeideal) != size(S)
+        error("Sizes of QE and S matrices must be equal.")
+    end
+    for i in eachindex(S)
+        abs2S = abs2(S[i])
+        if abs2S <= 1
+            qeideal[i] = 1.0
+        else
+            qeideal[i] = 1.0 /(2.0 - 1.0 /abs2S)
+        end
+    end
+    return nothing
+end
