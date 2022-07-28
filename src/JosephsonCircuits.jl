@@ -20,6 +20,7 @@ using OrderedCollections
 using LinearAlgebra
 using SparseArrays
 using Printf
+using SnoopPrecompile
 
 # define the zero for symbolic numbers so that we can view the sparse arrays
 Base.zero(::Type{Symbolic{Number}}) = 0
@@ -56,9 +57,6 @@ include("spiceraw.jl")
 
 # This is for reading and writing files in the touchstone format. 
 include("touchstone.jl")
-
-# Precompile directives to improve time to first use. 
-include("precompile.jl")
 
 
 """
@@ -292,6 +290,20 @@ export @syms, hbnlsolve, hblinsolve, hbsolve, hbsolve2, hbnlsolve2, parsecircuit
     parsesortcircuit, calccircuitgraph, symbolicmatrices, numericmatrices,
     LjtoIc, IctoLj, @variables, Num
 
+
+# the below precompile directives are to help the compiler perform type inference
+# during the precompilation stage (when the package is installed) instead of
+# when it is loaded or the functions are run. this is a helpful guide:
+# https://timholy.github.io/SnoopCompile.jl/stable/snoopi_deep_analysis/#inferrability
+# and the basic commands to look at the inference triggers
+# julia> using SnoopCompile, JosephsonCircuits
+# julia> tinf = @snoopi_deep JosephsonCircuits.warmupsyms();
+# julia> itrigs = inference_triggers(tinf)
+
+@precompile_all_calls begin
+    warmup()
+    warmupsyms()
+end
 
 #end module
 end
