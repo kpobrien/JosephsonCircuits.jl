@@ -23,9 +23,9 @@ using Printf
 using SnoopPrecompile
 
 # define the zero for symbolic numbers so that we can view the sparse arrays
-Base.zero(::Type{Symbolic{Number}}) = 0
-Base.zero(::Type{Any}) = 0
-Base.zero(::Type{Nothing}) = 0
+# Base.zero(::Type{Symbolic{Number}}) = 0
+# Base.zero(::Type{Any}) = 0
+# Base.zero(::Type{Nothing}) = 0
 
 
 # define the reduced flux quantum in Weber, H*A
