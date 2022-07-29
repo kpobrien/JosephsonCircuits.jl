@@ -125,6 +125,7 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # calculate the source terms in the branch basis
     bbm = zeros(Complex{Float64},Nbranches*Nmodes,Nmodes*Nports)
 
+    # add a current source for each port and mode
     for (i,val) in enumerate(portindices)
         key = (nodeindexarraysorted[1,val],nodeindexarraysorted[2,val])
         for j = 1:Nmodes
@@ -132,16 +133,6 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
             # bbm2[(i-1)*Nmodes+j,(i-1)*Nmodes+j] = Lmean*1/phi0
         end
     end
-
-
-    # i=1
-    # for (key,val) in portdict
-    #     for j = 1:Nmodes
-    #         bbm[(edge2indexdict[key]-1)*Nmodes+j,(i-1)*Nmodes+j] = 1
-    #         # bbm2[(i-1)*Nmodes+j,(i-1)*Nmodes+j] = Lmean*1/phi0
-    #     end
-    #     i+=1
-    # end
 
     # calculate the source terms in the node basis
     bnm = transpose(Rbnm)*bbm
@@ -223,37 +214,19 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # each frequency is independent so it can be done in parallel; however
     # we want to reuse the factorization object and other input arrays. 
     # perform array allocations and factorization "nbatches" times.
-
-    if nbatches == 1
-        # the overhead of a single thread is negligible but we want a true
-        # single threaded case for debugging purposes. 
+    # parallelize using native threading
+    batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
+    Base.Threads.@threads for i in 1:length(batches)
         hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
-                    AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-                    Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-                    portindices,portimpedanceindices,noiseportimpedanceindices,
-                    portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,
-                    w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,1:length(w))
-    else
-        # parallelize using native threading
-        batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
-        Base.Threads.@threads for i in 1:length(batches)
-            hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
-                AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-                Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-                portindices,portimpedanceindices,noiseportimpedanceindices,
-                portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,
-                w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,batches[i])
-        end
+            AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
+            Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
+            portindices,portimpedanceindices,noiseportimpedanceindices,
+            portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,
+            w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,batches[i])
     end
 
     if returnQE
         # calculate the ideal quantum efficiency.
-        # QEideal =  1 ./(2 .- 1 ./abs2.(S))
-        # QEideal[abs2.(S) .< 1] .= 1
-        # QEideal = zeros(Float64,size(S))
-        # for i in eachindex(S)
-            # QEideal[i] = 1 /(2 - 1 /abs2(S[i]))
-        # end
         QEideal = zeros(Float64,size(S))
         calcqeideal!(QEideal,S)
     else
@@ -280,23 +253,6 @@ struct LinearHB
 end
 
 
-# i should remove QE and CM from this. and compute this after
-# should i use views to compute Snoise for all? or should i compute them 
-# separately?
-# should i separate input and output ports? would that be possible?
-# if that worked, would it enable me to use the same function
-# for the solve and the conjugate solve? i would just take the conjugate
-# of Asparse. maybe i could combine everything into one portimpedance
-# vector outside of this function so i would know the dimensions of Snoise
-# and could use exactly the same function.
-# i'll have to calculate separate currents for each and use different
-# impedances for each. i could simplify the formulas if i don't want
-# to have all of the extra variables. although not bad to be explicit.
-# i think i'll go through and write it in terms of the discrete functions
-# then consider turning it into loops. 
-# for the ones with Nports2 that's allocation a fair amount of memory
-# so might as well not do that.
-
 function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
     AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
     Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
@@ -320,13 +276,7 @@ function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm
     AoLjnmconj = copy(AoLjnm)
     conj!(AoLjnmconj.nzval)
 
-    #if banded=true, then calculate the bandwidths and convert the matrices to 
-    # banded matrices. 
-    if solver == :banded
-        # (lb,ub) = calcbandwidths(AoLjnm,invLnm,Cnm,Gnm)
-        # Abanded = BandedMatrix(AoLjnm,(lb,ub))
-
-    elseif solver ==:klu
+    if solver ==:klu
         # if using the KLU factorization and sparse solver then make a 
         # factorization for the sparsity pattern. 
         F = KLU.klu(Asparsecopy)
@@ -343,8 +293,6 @@ function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm
     if isempty(Snoise)
         Snoiseview = zeros(Complex{Float64},Nnoiseports*Nmodes,Nports*Nmodes)
     end
-
-
 
     # loop over the frequencies
     for i in wi
@@ -420,8 +368,6 @@ function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm
 
         # calculate the scattering parameters
         if !isempty(S) || !isempty(QE) || !isempty(CM)
-            # calcS!(Sview,inputwave,outputwave,phin,bnm,portbranches,portbranches,
-            #     portimpedance,portimpedance,wmodes,symfreqvar)
             calcS!(Sview,inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
                 portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
         end
@@ -469,8 +415,6 @@ function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm
 
             # calculate the noise scattering parameters
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
-                # calcS!(Snoiseview,inputwave,noiseoutputwave,phin,bnm,portbranches,noiseportbranches,
-                    # portimpedance,noiseportimpedance,wmodes,symfreqvar)
                 calcSnoise!(Snoiseview,inputwave,noiseoutputwave,phin,bnm,portimpedanceindices,noiseportimpedanceindices,
                     portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)                
             end
@@ -550,15 +494,12 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     Cnm = nm.Cnm
     Gnm = nm.Gnm
     invLnm = nm.invLnm
-    # portdict = nm.portdict
-    # resistordict = nm.resistordict
     portindices = nm.portindices
     portnumbers = nm.portnumbers
     portimpedanceindices = nm.portimpedanceindices
     noiseportimpedanceindices = nm.noiseportimpedanceindices
     vvn = nm.vvn
     Lmean = nm.Lmean
-    # Lmean = 1.0
     Lb = nm.Lb
 
     # generate the pump frequencies
@@ -571,19 +512,8 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     wmodes2m = Diagonal(repeat(wmodes.^2,outer=Nnodes-1))
 
 
-    # # i need to do the current sources correctly. 
-    # bm = zeros(Complex{Float64},(Nnodes-1)*Nmodes)
-    # bm[1] = Ip*Lmean/phi0
-
     # calculate the source terms in the branch basis
     bbm = zeros(Complex{Float64},Nbranches*Nmodes)    
-
-    # for (key,val) in portdict
-    #     if val in ports
-    #       bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip/phi0
-    #     end
-    # end
-
     for (i,portindex) in enumerate(portindices)
         portnumber = portnumbers[i]
         key = (nodeindexarraysorted[1,portindex],nodeindexarraysorted[2,portindex])
@@ -737,6 +667,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
         alpha1 = -b/(2*a)
         f1fit = -b*b/(4*a) + c
 
+
         if f1fit > fp
             f1fit = fp
             alpha1 = 1.0
@@ -746,6 +677,11 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
         if alpha1 > 1 || alpha1 <= 0
             alpha1 = 1.0
             f1fit = fp
+        end
+
+        # if a is zero, alpha1 will be NaN
+        if abs2(a) == 0 
+            alpha1 = 1.0
         end
 
         # switch to newton once the norm is small enough
@@ -761,44 +697,10 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
         # update x
         x .+= deltax*alpha1
 
-
-        # # fit with a cubic. 
-        # alpha1 = alphafit
-        # # evaluate the function at the trial point
-        # calcfj!(F,nothing,x-x1*alpha1,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        #     Ljb,Ljbm,Nmodes,
-        #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
-
-        # f1 = real(0.5*dot(F,F))
-
-        # denom = (-1+alpha1)*alpha1^2
-        # a = (-alpha1*dfdalpha + f1 - f + alpha1^2*(dfdalpha-fp+f))/denom
-        # b = (alpha1*dfdalpha - f1 + f - alpha1^3*(dfdalpha-fp+f))/denom
-        # c = dfdalpha
-        # d = f
-        # alphafit = real(-b+sqrt(complex(b^2-3*a*c)))/(3*a)
-
-        # println(alphafit)
-        # # println(b^2 - 3*a*c)
-        # # if b^2 - 3*a*c >= 0
-        # #     alphafit = (-b+sqrt(b^2-3*a*c))/(3*a)
-        # #     fminfit = (2*b^3-9*a*b*c-2*b^2*sqrt(b^2-3*a*c)+6*a*c*sqrt(b^2-3*a*c)+27*a^2*d)/(27*a^2)
-        # #     println("n = ",n," cubic")
-        # # end
-
-        # x .-= minusdeltax*alpha1
-
-        # push!(alphas,alphafit)
-        # push!(fmin,fminfit)
-        # push!(fvals,f)
-        # push!(fpvals,fp)
-        # push!(dfdalphavals,dfdalpha)
-
-        if norm(F)/norm(x) < 1e-8
-        # if norm(F,Inf) <= ftol
-            # i should switch to using a relative tolerance here.
-            # is infinity norm or norm the right thing to use?
+        if norm(F,Inf) <= ftol || ( norm(x) > 0 && norm(F)/norm(x) < ftol)
+            # terminate iterations if infinity norm or relative norm are less
+            # than ftol. check that norm(x) is greater than zero to avoid
+            # divide by zero errors. 
             # println("converged to: infinity norm of : ",norm(F,Inf)," after ",n," iterations")
             # println("norm(F)/norm(phi): ",norm(F)/norm(x))
             break
@@ -809,6 +711,8 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
             println("norm(F)/norm(x): ", norm(F)/norm(x))
         end
     end
+
+
     phin = x
     out = nothing
 
@@ -823,19 +727,6 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     output = zeros(Complex{Float64},Nports*Nmodes)
     phibports = zeros(Complex{Float64},Nports*Nmodes)
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-
-    # # calculate the branch fluxes at the ports
-    # calcbranchvalues!(phibports,phin,keys(portdict),Nmodes)
-
-
-    # calcoutput!(output,phibports,values(resistordict),wmodes,symfreqvar)
-
-    # # calculate the input and output voltage waves at each port
-    # # calcinput!(input,Ip/phi0,phibports,resistordict,wmodes,symfreqvar)
-
-    # # oops, this isn'at actually a branch flux. it
-    # # has the same units as the ladder operator. 
-    # calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
 
     # calculate the scattering parameters
     if any(Ip .> 0)
