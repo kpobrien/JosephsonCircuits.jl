@@ -41,8 +41,8 @@ See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref)
 
 # Examples
 ```jldoctest
-@syms Ipump Rleft Cc Lj Cj
-circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+@variables Ipump Rleft Cc Lj Cj
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
 push!(circuit,("P1","1","0",1))
 push!(circuit,("I1","1","0",Ipump))
 push!(circuit,("R1","1","0",Rleft))
@@ -52,7 +52,7 @@ push!(circuit,("C2","2","0",Cj))
 println(symbolicmatrices(circuit))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.Symbolic{Number}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.Symbolic{Number}[1 / Rleft], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  Lj,   [2]  =  Lj, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), OrderedCollections.OrderedDict((2, 1) => 1), OrderedCollections.OrderedDict{Tuple{Int64, Int64}, SymbolicUtils.Sym{Number, Nothing}}((2, 1) => Rleft), OrderedCollections.OrderedDict{Tuple{Int64, Int64}, SymbolicUtils.Symbolic{Number}}(), OrderedCollections.OrderedDict{Tuple{Int64, Int64}, SymbolicUtils.Symbolic{Number}}(), Lj)
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.Symbolic{Real}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.Symbolic{Real}[1 / Rleft], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  Lj,   [2]  =  Lj, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
 ```
 """
 function symbolicmatrices(circuit;Nmodes=1,sorting=:number)
@@ -77,8 +77,8 @@ See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref)
 
 # Examples
 ```jldoctest
-@syms Ipump Rleft Cc Lj Cj
-circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+@variables Ipump Rleft Cc Lj Cj
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
 push!(circuit,("P1","1","0",1))
 push!(circuit,("I1","1","0",Ipump))
 push!(circuit,("R1","1","0",Rleft))
@@ -89,7 +89,7 @@ circuitdefs = Dict(Lj =>1000.0e-12,Cc => 100.0e-15,Cj => 1000.0e-15,Rleft => 50.
 println(numericmatrices(circuit,circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  1.0e-9,   [2]  =  1.0e-9, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), OrderedCollections.OrderedDict((2, 1) => 1), OrderedCollections.OrderedDict((2, 1) => 50.0), OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}(), OrderedCollections.OrderedDict{Tuple{Int64, Int64}, Float64}(), 1.0e-9)
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  1.0e-9,   [2]  =  1.0e-9, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
 ```
 """
 function numericmatrices(circuit,circuitdefs;Nmodes=1,sorting=:number)
@@ -198,11 +198,11 @@ edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3)
 Ib = JosephsonCircuits.calcIb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2-element SparseVector{Float64, Int64} with 1 stored entry:
+2-element SparseArrays.SparseVector{Float64, Int64} with 1 stored entry:
   [1]  =  1.0e-9
 ```
 ```jldoctest
-@syms I1 C1 L1 C2
+@variables I1 C1 L1 C2
 Nmodes = 1
 Nbranches = 2
 typevector = [:I,:C,:L,:C]
@@ -213,7 +213,7 @@ edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3)
 Ib = JosephsonCircuits.calcIb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2-element SparseVector{SymbolicUtils.Symbolic{Number}, Int64} with 1 stored entry:
+2-element SparseArrays.SparseVector{Num, Int64} with 1 stored entry:
   [1]  =  I1
 ```
 """
@@ -242,11 +242,11 @@ edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3)
 Vb = JosephsonCircuits.calcVb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2-element SparseVector{Float64, Int64} with 1 stored entry:
+2-element SparseArrays.SparseVector{Float64, Int64} with 1 stored entry:
   [1]  =  1.0e-9
 ```
 ```jldoctest
-@syms V1 C1 L1 C2
+@variables V1 C1 L1 C2
 Nmodes = 1
 Nbranches = 2
 typevector = [:V,:C,:L,:C]
@@ -257,7 +257,7 @@ edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3)
 Vb = JosephsonCircuits.calcVb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2-element SparseVector{SymbolicUtils.Symbolic{Number}, Int64} with 1 stored entry:
+2-element SparseArrays.SparseVector{Num, Int64} with 1 stored entry:
   [1]  =  V1
 ```
 """
@@ -285,12 +285,12 @@ edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3)
 Lb = JosephsonCircuits.calcLb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2-element SparseVector{Float64, Int64} with 2 stored entries:
+2-element SparseArrays.SparseVector{Float64, Int64} with 2 stored entries:
   [1]  =  1.0e-9
   [2]  =  4.0e-9
 ```
 ```jldoctest
-@syms L1 K1 L2 C1
+@variables L1 K1 L2 C1
 Nmodes = 1
 Nbranches = 2
 typevector = [:L,:K,:L,:C]
@@ -301,7 +301,7 @@ edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3)
 Lb = JosephsonCircuits.calcLb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2-element SparseVector{SymbolicUtils.Symbolic{Number}, Int64} with 2 stored entries:
+2-element SparseArrays.SparseVector{Num, Int64} with 2 stored entries:
   [1]  =  L1
   [2]  =  L2
 ```
@@ -331,12 +331,12 @@ edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3)
 Ljb = JosephsonCircuits.calcLjb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2-element SparseVector{Float64, Int64} with 2 stored entries:
+2-element SparseArrays.SparseVector{Float64, Int64} with 2 stored entries:
   [1]  =  1.0e-9
   [2]  =  4.0e-9
 ```
 ```jldoctest
-@syms Lj1 K1 Lj2 C1
+@variables Lj1 K1 Lj2 C1
 Nmodes = 1
 Nbranches = 2
 typevector = [:Lj,:K,:Lj,:C]
@@ -347,7 +347,7 @@ edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3)
 Ljb = JosephsonCircuits.calcLjb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2-element SparseVector{SymbolicUtils.Symbolic{Number}, Int64} with 2 stored entries:
+2-element SparseArrays.SparseVector{Num, Int64} with 2 stored entries:
   [1]  =  Lj1
   [2]  =  Lj2
 ```
@@ -425,12 +425,12 @@ mutualinductorvector = [ :L1, :L2]
 Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2×2 SparseMatrixCSC{Float64, Int64} with 2 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
   ⋅           2.82843e-10
  2.82843e-10   ⋅ 
 ```
 ```jldoctest
-@syms L1 L2 K1 C1
+@variables L1 L2 K1 C1
 Nmodes = 1
 Nbranches = 2
 typevector = [:L,:K,:L,:C]
@@ -442,9 +442,9 @@ mutualinductorvector = [ :L1, :L2]
 Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2×2 SparseMatrixCSC{SymbolicUtils.Symbolic{Number}, Int64} with 2 stored entries:
- ⋅                 K1*sqrt(L1*L2)
-  K1*sqrt(L1*L2)  ⋅
+2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 2 stored entries:
+              ⋅  K1*sqrt(L1*L2)
+ K1*sqrt(L1*L2)               ⋅
 ```
 """
 
@@ -553,26 +553,26 @@ inductances Lb and the incidence matrix Rbn.
 # Examples
 ```jldoctest
 Nmodes = 1
-Lb = sparsevec([1,2],[1e-9,4e-9])
-Rbn = sparse([1,2], [1,2], [1,1])
+Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1e-9,4e-9])
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
 JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes)
 
 # output
-2×2 SparseMatrixCSC{Float64, Int64} with 2 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
  1.0e9   ⋅ 
   ⋅     2.5e8
 ```
 ```jldoctest
-@syms L1 L2
+@variables L1 L2
 Nmodes = 1
-Lb = sparsevec([1,2],[L1,L2])
-Rbn = sparse([1,2], [1,2], [1,1])
+Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2])
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
 JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes)
 
 # output
-2×2 SparseMatrixCSC{Any, Int64} with 2 stored entries:
-  1 / L1  ⋅
- ⋅         1 / L2
+2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 2 stored entries:
+ 1 / L1       ⋅
+      ⋅  1 / L2
 ```
 """
 function calcinvLn(Lb::SparseVector,Rbn::SparseMatrixCSC,Nmodes)
@@ -606,29 +606,27 @@ faster and more numerically stable.
 # Examples
 ```jldoctest
 Nmodes = 1
-Lb = sparsevec([1,2],[1e-9,4e-9])
-Mb = sparse([2,1], [1,2], [4e-10,4e-10])
-Rbn = sparse([1,2], [1,2], [1,1])
+Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1e-9,4e-9])
+Mb = JosephsonCircuits.SparseArrays.sparse([2,1], [1,2], [4e-10,4e-10])
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
 JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes)
 
 # output
-2×2 SparseMatrixCSC{Float64, Int64} with 4 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 4 stored entries:
   1.04167e9  -1.04167e8
  -1.04167e8   2.60417e8
 ```
 ```jldoctest
-using Symbolics
-@syms L1 L2 Lm
+@variables L1 L2 Lm
 Nmodes = 1
-Lb = sparsevec([1,2],[L1,L2]);
-Mb = sparse([2,1], [1,2], [Lm,Lm]);
-Rbn = sparse([1,2], [1,2], [1,1])
+Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2]);
+Mb = JosephsonCircuits.SparseArrays.sparse([2,1], [1,2], [Lm,Lm]);
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
 println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
 
 # output
-sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.Div{Number, N, D, Nothing} where {N, D}[(1 + (Lm*(Lm / L1)) / (L2 + (-(Lm^2)) / L1)) / L1, (-(Lm / L1)) / (L2 + (-(Lm^2)) / L1), (-(Lm / (L2 + (-(Lm^2)) / L1))) / L1, 1 / (L2 + (-(Lm^2)) / L1)], 2, 2)
+sparse([1, 2, 1, 2], [1, 1, 2, 2], Num[(1 + (Lm*(Lm / L1)) / (L2 + (-(Lm^2)) / L1)) / L1, (-(Lm / L1)) / (L2 + (-(Lm^2)) / L1), (-(Lm / (L2 + (-(Lm^2)) / L1))) / L1, 1 / (L2 + (-(Lm^2)) / L1)], 2, 2)
 ```
-
 """
 function calcinvLn(Lb::SparseVector,Mb::SparseMatrixCSC,Rbn::SparseMatrixCSC,Nmodes)
     if nnz(Lb) > 0 &&  nnz(Mb) > 0
@@ -761,7 +759,7 @@ Return the mean of the linear and Josephson inductors.
 julia> JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[10,4,5,1])
 2.5
 
-julia> @syms R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L1, C1, Lj1])
+julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L1, C1, Lj1])
 (1//2)*L1 + (1//2)*Lj1
 ```
 """
@@ -811,38 +809,38 @@ nodeindexarray is "one indexed" so 1 is the ground node.
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.calcCn([:C,:C],[2 3;1 1],[1.0,2.0],1,3)
-2×2 SparseMatrixCSC{Float64, Int64} with 2 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
  1.0   ⋅ 
   ⋅   2.0
 
 julia> JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[1.0,0.1,2.0],1,3)
-2×2 SparseMatrixCSC{Float64, Int64} with 4 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 4 stored entries:
   1.1  -0.1
  -0.1   2.1
 
 julia> JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[1.0,0.1,2.0],2,3)
-4×4 SparseMatrixCSC{Float64, Int64} with 8 stored entries:
+4×4 SparseArrays.SparseMatrixCSC{Float64, Int64} with 8 stored entries:
   1.1    ⋅   -0.1    ⋅ 
    ⋅    1.1    ⋅   -0.1
  -0.1    ⋅    2.1    ⋅ 
    ⋅   -0.1    ⋅    2.1
 
-julia> @syms Cg1 Cg2;JosephsonCircuits.calcCn([:C,:C],[2 3;1 1],[Cg1,Cg2],1,3)
-2×2 SparseMatrixCSC{SymbolicUtils.Symbolic{Number}, Int64} with 2 stored entries:
-  Cg1  ⋅
- ⋅      Cg2
+julia> @variables Cg1 Cg2;JosephsonCircuits.calcCn([:C,:C],[2 3;1 1],[Cg1,Cg2],1,3)
+2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 2 stored entries:
+ Cg1    ⋅
+   ⋅  Cg2
 
-julia> @syms Cg1 Cc Cg2;JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[Cg1, Cc, Cg1],1,3)
-2×2 SparseMatrixCSC{SymbolicUtils.Symbolic{Number}, Int64} with 4 stored entries:
- Cc + Cg1  -Cc
- -Cc       Cc + Cg1
+julia> @variables Cg1 Cc Cg2;JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[Cg1, Cc, Cg1],1,3)
+2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
+ Cc + Cg1       -Cc
+      -Cc  Cc + Cg1
 
-julia> @syms Cg1 Cc Cg2;JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[Cg1, Cc, Cg1],2,3)
-4×4 SparseMatrixCSC{SymbolicUtils.Symbolic{Number}, Int64} with 8 stored entries:
-  Cc + Cg1  ⋅           -Cc       ⋅
- ⋅           Cc + Cg1  ⋅           -Cc
-  -Cc       ⋅           Cc + Cg1  ⋅
- ⋅           -Cc       ⋅           Cc + Cg1
+julia> @variables Cg1 Cc Cg2;JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[Cg1, Cc, Cg1],2,3)
+4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 8 stored entries:
+ Cc + Cg1         ⋅       -Cc         ⋅
+        ⋅  Cc + Cg1         ⋅       -Cc
+      -Cc         ⋅  Cc + Cg1         ⋅
+        ⋅       -Cc         ⋅  Cc + Cg1
 ```
 """
 function calcCn(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
@@ -868,38 +866,38 @@ that allows that.
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.calcGn([:R,:R],[2 3;1 1],[1.0,2.0],1,3)
-2×2 SparseMatrixCSC{Float64, Int64} with 2 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
  1.0   ⋅ 
   ⋅   0.5
 
 julia> JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[1.0,100.0,2.0],1,3)
-2×2 SparseMatrixCSC{Float64, Int64} with 4 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 4 stored entries:
   1.01  -0.01
  -0.01   0.51
 
 julia> JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[1.0,100.0,2.0],2,3)
-4×4 SparseMatrixCSC{Float64, Int64} with 8 stored entries:
+4×4 SparseArrays.SparseMatrixCSC{Float64, Int64} with 8 stored entries:
   1.01    ⋅    -0.01    ⋅ 
    ⋅     1.01    ⋅    -0.01
  -0.01    ⋅     0.51    ⋅ 
    ⋅    -0.01    ⋅     0.51
 
-julia> @syms Rg1 Rg2;JosephsonCircuits.calcGn([:R,:R],[2 3;1 1],[Rg1,Rg2],1,3)
-2×2 SparseMatrixCSC{SymbolicUtils.Symbolic{Number}, Int64} with 2 stored entries:
-  1 / Rg1  ⋅
- ⋅          1 / Rg2
+julia> @variables Rg1 Rg2;JosephsonCircuits.calcGn([:R,:R],[2 3;1 1],[Rg1,Rg2],1,3)
+2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 2 stored entries:
+ 1 / Rg1        ⋅
+       ⋅  1 / Rg2
 
-julia> @syms Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],1,3)
-2×2 SparseMatrixCSC{SymbolicUtils.Symbolic{Number}, Int64} with 4 stored entries:
- 1 / Rc + 1 / Rg1  -1 / Rc
- -1 / Rc           1 / Rc + 1 / Rg2
+julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],1,3)
+2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
+ 1 / Rc + 1 / Rg1           -1 / Rc
+          -1 / Rc  1 / Rc + 1 / Rg2
 
-julia> @syms Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],2,3)
-4×4 SparseMatrixCSC{SymbolicUtils.Symbolic{Number}, Int64} with 8 stored entries:
-  1 / Rc + 1 / Rg1  ⋅                   -1 / Rc           ⋅
- ⋅                   1 / Rc + 1 / Rg1  ⋅                   -1 / Rc
-  -1 / Rc           ⋅                   1 / Rc + 1 / Rg2  ⋅
- ⋅                   -1 / Rc           ⋅                   1 / Rc + 1 / Rg2
+julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],2,3)
+4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 8 stored entries:
+ 1 / Rc + 1 / Rg1                 ⋅           -1 / Rc                 ⋅
+                ⋅  1 / Rc + 1 / Rg1                 ⋅           -1 / Rc
+          -1 / Rc                 ⋅  1 / Rc + 1 / Rg2                 ⋅
+                ⋅           -1 / Rc                 ⋅  1 / Rc + 1 / Rg2
 ```
 """
 function calcGn(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},

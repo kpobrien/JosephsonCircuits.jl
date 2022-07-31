@@ -59,8 +59,8 @@ counts times.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.diagrepeat(Diagonal([1,2]),2)
-4×4 Diagonal{Int64, Vector{Int64}}:
+julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.LinearAlgebra.Diagonal([1,2]),2)
+4×4 LinearAlgebra.Diagonal{Int64, Vector{Int64}}:
  1  ⋅  ⋅  ⋅
  ⋅  1  ⋅  ⋅
  ⋅  ⋅  2  ⋅
@@ -81,8 +81,8 @@ counts times.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.diagrepeat(sparse([1,1,2,2], [1,2,1,2], [1,2,3,4],2,2),2)
-4×4 SparseMatrixCSC{Int64, Int64} with 8 stored entries:
+julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,1,2,2], [1,2,1,2], [1,2,3,4],2,2),2)
+4×4 SparseArrays.SparseMatrixCSC{Int64, Int64} with 8 stored entries:
  1  ⋅  2  ⋅
  ⋅  1  ⋅  2
  3  ⋅  4  ⋅
@@ -119,8 +119,8 @@ counts times.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.diagrepeat(sparsevec([1,2],[1,2]),2)
-4-element SparseVector{Int64, Int64} with 4 stored entries:
+julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparsevec([1,2],[1,2]),2)
+4-element SparseArrays.SparseVector{Int64, Int64} with 4 stored entries:
   [1]  =  1
   [2]  =  1
   [3]  =  2
@@ -179,14 +179,14 @@ subset of the positions of elements in A. The indexmap can be generated with
 
 # Examples
 ```jldoctest
-A = sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-As = sparse([1,1], [1,2], [3,4],2,2)
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
 indexmap = JosephsonCircuits.sparseaddmap(A,As)
 JosephsonCircuits.sparseadd!(A,As,indexmap)
 A
 
 # output
-2×2 SparseMatrixCSC{Int64, Int64} with 3 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Int64, Int64} with 3 stored entries:
  4  1
  ⋅  2
 ```
@@ -219,14 +219,14 @@ nonzero (structural zeros are ok) entries.
 
 # Examples
 ```jldoctest
-A = sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-As = sparse([1,1], [1,2], [3,4],2,2)
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
 indexmap = JosephsonCircuits.sparseaddmap(A,As)
 JosephsonCircuits.sparseadd!(A,2,As,indexmap)
 A
 
 # output
-2×2 SparseMatrixCSC{Int64, Int64} with 3 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Int64, Int64} with 3 stored entries:
  7  5
  ⋅  2
 ```
@@ -260,15 +260,15 @@ nonzero (structural zeros are ok) entries.
 
 # Examples
 ```jldoctest
-A = sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-As = sparse([1,1], [1,2], [3,4],2,2)
-Ad = Diagonal([1,-2])
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
+Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
 indexmap = JosephsonCircuits.sparseaddmap(A,As)
 JosephsonCircuits.sparseadd!(A,2,As,Ad,indexmap)
 A
 
 # output
-2×2 SparseMatrixCSC{Int64, Int64} with 3 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Int64, Int64} with 3 stored entries:
  7  -19
  ⋅    2
 ```
@@ -305,15 +305,15 @@ nonzero (structural zeros are ok) entries.
 
 # Examples
 ```jldoctest
-A = sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-Ad = Diagonal([1,-2])
-As = sparse([1,1], [1,2], [3,4],2,2)
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
 indexmap = JosephsonCircuits.sparseaddmap(A,As)
 JosephsonCircuits.sparseadd!(A,2,Ad,As,indexmap)
 A
 
 # output
-2×2 SparseMatrixCSC{Int64, Int64} with 3 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{Int64, Int64} with 3 stored entries:
  7  5
  ⋅  2
 ```
@@ -357,16 +357,16 @@ positions in A which has nonzero lements.
 
 # Examples
 ```jldoctest
-A = sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
-Ad = Diagonal([1,-2])
-As = sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
-wmodesm = Diagonal([-1,1])
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
+Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
+wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
 indexmap = JosephsonCircuits.sparseaddmap(A,As)
 JosephsonCircuits.sparseaddconj!(A,2,As,Ad,indexmap,wmodesm .< 0)
 A
 
 # output
-2×2 SparseMatrixCSC{ComplexF64, Int64} with 3 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 3 stored entries:
  7.0-3.0im  -19.0-12.0im
      ⋅        2.0+1.0im
 ```
@@ -420,16 +420,16 @@ positions in A which has nonzero lements.
 
 # Examples
 ```jldoctest
-A = sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
-Ad = Diagonal([1,-2])
-As = sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
-wmodesm = Diagonal([-1,1])
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
+Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
+wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
 indexmap = JosephsonCircuits.sparseaddmap(A,As)
 JosephsonCircuits.sparseaddconj!(A,2,As,Ad,indexmap,wmodesm .< 0)
 A
 
 # output
-2×2 SparseMatrixCSC{ComplexF64, Int64} with 3 stored entries:
+2×2 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 3 stored entries:
  7.0-3.0im  -19.0-12.0im
      ⋅        2.0+1.0im
 ```
@@ -515,8 +515,8 @@ must have elements in a subset of the positions in A which have nonzero entries
 
 # Examples
 ```jldoctest
-A = sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-As = sparse([1], [2], [4],2,2)
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+As = JosephsonCircuits.SparseArrays.sparse([1], [2], [4],2,2)
 JosephsonCircuits.sparseaddmap(A,As)
 
 # output
@@ -524,8 +524,8 @@ JosephsonCircuits.sparseaddmap(A,As)
  2
 ```
 ```jldoctest
-A = sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
-As = sparse([1,2], [1,2], [4,2],2,2)
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+As = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [4,2],2,2)
 JosephsonCircuits.sparseaddmap(A,As)
 
 # output
@@ -610,12 +610,12 @@ Each axis of A should be an integer multiple of the length of wmodes.
 
 # Examples
 ```jldoctest
-julia> A = sparse([1,2,1,2], [1,1,2,2], [1+1im,1+1im,1+1im,1+1im],2,2);JosephsonCircuits.conjnegfreq(A,[-1,1])
-2×2 SparseMatrixCSC{Complex{Int64}, Int64} with 4 stored entries:
+julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1,2], [1,1,2,2], [1+1im,1+1im,1+1im,1+1im],2,2);JosephsonCircuits.conjnegfreq(A,[-1,1])
+2×2 SparseArrays.SparseMatrixCSC{Complex{Int64}, Int64} with 4 stored entries:
  1-1im  1+1im
  1-1im  1+1im
 
-julia> A = sparse([1,2,1,2], [1,1,2,2], [1im,1im,1im,1im],2,2);all(A*Diagonal([-1,1]) .== JosephsonCircuits.conjnegfreq(A,[-1,1]))
+julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1,2], [1,1,2,2], [1im,1im,1im,1im],2,2);all(A*JosephsonCircuits.LinearAlgebra.Diagonal([-1,1]) .== JosephsonCircuits.conjnegfreq(A,[-1,1]))
 true
 ```
 """
@@ -637,8 +637,8 @@ Each axis of A should be an integer multiple of the length of wmodes.
 
 # Examples
 ```jldoctest
-julia> A = sparse([1,2,1,2], [1,1,2,2], [1+1im,1+1im,1+1im,1+1im],2,2);JosephsonCircuits.conjnegfreq!(A,[-1,1]);A
-2×2 SparseMatrixCSC{Complex{Int64}, Int64} with 4 stored entries:
+julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1,2], [1,1,2,2], [1+1im,1+1im,1+1im,1+1im],2,2);JosephsonCircuits.conjnegfreq!(A,[-1,1]);A
+2×2 SparseArrays.SparseMatrixCSC{Complex{Int64}, Int64} with 4 stored entries:
  1-1im  1+1im
  1-1im  1+1im
 ```
@@ -673,13 +673,19 @@ variables.
 
 # Examples
 ```jldoctest
-julia> @syms w;A = sparse([1,2,1], [1,2,2], [w,1.0,3*w+1]);println(A.nzval);JosephsonCircuits.symbolicindices(A)
+julia> @syms w;A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,1.0,3*w+1]);println(A.nzval);JosephsonCircuits.symbolicindices(A)
 Any[w, 1 + 3w, 1.0]
 2-element Vector{Int64}:
  1
  2
 
-julia> A = sparse([1,2,1], [1,2,2], [1,1.0,2+3im]);JosephsonCircuits.symbolicindices(A)
+julia> @variables w;A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,1.0,3*w+1]);println(A.nzval);JosephsonCircuits.symbolicindices(A)
+Num[w, 1 + 3w, 1.0]
+2-element Vector{Int64}:
+ 1
+ 2
+
+julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,1.0,2+3im]);JosephsonCircuits.symbolicindices(A)
 Int64[]
 ```
 """
@@ -709,17 +715,15 @@ function symbolicindices(A::SparseMatrixCSC)
     return symbolicindices(A.nzval)
 end
 
-function symbolicindices(A::OrderedDict)
-    return symbolicindices(values(A))
-end
+# function symbolicindices(A::OrderedDict)
+#     return symbolicindices(values(A))
+# end
 
 """
     checkissymbolic(a)
 
 Check if a is a symbolic variable. Define a function to do this because a
-different function call is required for @syms vs @variables. The function for
-@variables is only defined if the Symbolics package is loaded (defined in
-JosephsonCircuits.jl)
+different function call is required for @syms vs @variables.
 
 # Examples
 ```jldoctest
@@ -738,16 +742,12 @@ end
 """
     checkissymbolic(a::Num)
 
-Check if a is a symbolic variable, when the Symbolics package is 
-loaded. The default version for SymbolicUtils is defined in matutils.jl.
+Check if a is a symbolic variable.
 
 # Examples
 ```jldoctest
-julia> import Symbolics;Symbolics.@variables w;JosephsonCircuits.checkissymbolic(w)
+julia> @variables w;JosephsonCircuits.checkissymbolic(w)
 true
-
-julia> JosephsonCircuits.checkissymbolic(1.0)
-false
 ```
 """
 function checkissymbolic(a::Symbolics.Num)
@@ -763,13 +763,13 @@ sparse matrix with type Complex{Float64}.
 
 # Examples
 ```jldoctest
-@syms w
+@variables w
 wmodes = [-1,2];
-A = JosephsonCircuits.diagrepeat(sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
+A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
 JosephsonCircuits.freqsubst(A,wmodes,w)
 
 # output
-4×4 SparseMatrixCSC{ComplexF64, Int64} with 6 stored entries:
+4×4 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 6 stored entries:
  -1.0+0.0im      ⋅      -3.0+0.0im      ⋅    
       ⋅      2.0+0.0im       ⋅      6.0+0.0im
       ⋅          ⋅      -2.0+0.0im      ⋅    
@@ -777,11 +777,11 @@ JosephsonCircuits.freqsubst(A,wmodes,w)
 ```
 ```jldoctest
 wmodes = [-1,2];
-A = JosephsonCircuits.diagrepeat(sparse([1,2,1], [1,2,2], [1,2,3],2,2),2);
+A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,3],2,2),2);
 JosephsonCircuits.freqsubst(A,wmodes,nothing)
 
 # output
-4×4 SparseMatrixCSC{ComplexF64, Int64} with 6 stored entries:
+4×4 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 6 stored entries:
  1.0+0.0im      ⋅      3.0+0.0im      ⋅    
      ⋅      1.0+0.0im      ⋅      3.0+0.0im
      ⋅          ⋅      2.0+0.0im      ⋅    

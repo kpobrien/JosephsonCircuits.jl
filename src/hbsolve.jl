@@ -832,20 +832,19 @@ end
     calcAoLjbm(Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches)
 
 
-
 # Examples
 ```jldoctest
-julia> @syms Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11;A21;A31],sparsevec([1],[Lj1]),1,2,1)
-2×2 SparseMatrixCSC{Any, Int64} with 4 stored entries:
- A11 / Lj1  conj(A31 / Lj1)
+julia> @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11;A21;A31],JosephsonCircuits.SparseArrays.sparsevec([1],[Lj1]),1,2,1)
+2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
+ A11 / Lj1  A31 / Lj1
  A31 / Lj1  A11 / Lj1
 
-julia> @syms Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],sparsevec([1,2],[Lj1,Lj2]),1,2,2)
-4×4 SparseMatrixCSC{Any, Int64} with 8 stored entries:
-  A11 / Lj1   conj(A31 / Lj1)  ⋅           ⋅
-  A31 / Lj1   A11 / Lj1        ⋅           ⋅
- ⋅           ⋅                  A12 / Lj2   conj(A32 / Lj2)
- ⋅           ⋅                  A32 / Lj2   A12 / Lj2
+julia> @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2)
+4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 8 stored entries:
+ A11 / Lj1  A31 / Lj1          ⋅          ⋅
+ A31 / Lj1  A11 / Lj1          ⋅          ⋅
+         ⋅          ⋅  A12 / Lj2  A32 / Lj2
+         ⋅          ⋅  A32 / Lj2  A12 / Lj2
 ```
 """
 function calcAoLjbm(Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches)
@@ -915,11 +914,11 @@ end
 
 # Examples
 ```jldoctest
-@syms Lj1 Lj2 A11 A12 A21 A22 A31 A32;
-AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],sparsevec([1,2],[Lj1,Lj2]),1,2,2);
+@variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
+AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2);
 AoLjbmcopy = copy(AoLjbm);
 AoLjbmcopy.nzval .= 0;
-JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12;A21 A22;A31 A32],sparsevec([1,2],[Lj1,Lj2]),1,2,2)
+JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2)
 all(AoLjbmcopy.nzval .- AoLjbm.nzval .== 0)
 
 # output

@@ -37,8 +37,8 @@ for more explanation.
 
 # Examples
 ```jldoctest
-@syms Ipump Rleft Cc Lj Cj
-circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+@variables Ipump Rleft Cc Lj Cj
+circuit = Vector{Tuple{String,String,String,Any}}(undef,0)
 push!(circuit,("P1","1","0",1))
 push!(circuit,("I1","1","0",Ipump))
 push!(circuit,("R1","1","0",Rleft))
@@ -51,19 +51,20 @@ println(parsesortcircuit(circuit))
 JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 3 3; 1 1 1 3 1 1], ["0", "1", "2"], String[], ["P1", "I1", "R1", "C1", "Lj1", "C2"], [:P, :I, :R, :C, :Lj, :C], Any[1, Ipump, Rleft, Cc, Lj, Cj], Dict("I1" => 2, "C1" => 4, "C2" => 6, "R1" => 3, "P1" => 1, "Lj1" => 5), 3)
 ```
 ```jldoctest
-@syms Ipump Rleft L1 L2 C2 Ksym(L1)
-circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+@variables Ipump Rleft L1 L2 C2
+Kfun(L) = sin(L);@register_symbolic Kfun(L1)
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
 push!(circuit,("P1","1","0",1))
 push!(circuit,("I1","1","0",Ipump))
 push!(circuit,("R1","1","0",Rleft))
 push!(circuit,("L1","1","0",L1)) 
-push!(circuit,("K1","L1","L2",Ksym(L1)))
+push!(circuit,("K1","L1","L2",Kfun(L1)))
 push!(circuit,("L2","2","0",L2)) 
 push!(circuit,("C2","2","0",C2))
 println(parsesortcircuit(circuit))
 
 # output
-JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 0 3 3; 1 1 1 1 0 1 1], ["0", "1", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Any[1, Ipump, Rleft, L1, Ksym(L1), L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
+JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 0 3 3; 1 1 1 1 0 1 1], ["0", "1", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Num[1, Ipump, Rleft, L1, Kfun(L1), L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
 ```
 """
 function parsesortcircuit(circuit;sorting=:number)
@@ -134,12 +135,43 @@ typically an array with a type union is preferable to an array of type Any.
 
 # Examples
 ```jldoctest
-circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int64}},1}(undef,0)
+@variables Ipump Rleft L1 K1 L2 C2
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("I1","1","0",Ipump))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("L1","1","0",L1))
+push!(circuit,("K1","L1","L2",K1))
+push!(circuit,("L2","2","0",L2))
+push!(circuit,("C2","2","0",C2))
+parsecircuit(circuit)
+
+# output
+JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Num[1, Ipump, Rleft, L1, K1, L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
+```
+```jldoctest
+@variables Ipump Rleft L1 L2 C2
+Kfun(L) = sin(L);@register_symbolic Kfun(L1)
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("I1","1","0",Ipump))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("L1","1","0",L1))
+push!(circuit,("K1","L1","L2",Kfun(L1)))
+push!(circuit,("L2","2","0",L2))
+push!(circuit,("C2","2","0",C2))
+parsecircuit(circuit)
+
+# output
+JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Num[1, Ipump, Rleft, L1, Kfun(L1), L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
+```
+```jldoctest
+circuit = Vector{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int64}}}(undef,0)
 push!(circuit,("P1","1","0",1))
 push!(circuit,("I1","1","0",:Ipump))
 push!(circuit,("R1","1","0",:Rleft))
-push!(circuit,("C1","1","2",:Cc)) 
-push!(circuit,("Lj1","2","0",:Lj)) 
+push!(circuit,("C1","1","2",:Cc))
+push!(circuit,("Lj1","2","0",:Lj))
 push!(circuit,("C2","2","0",:Cj))
 parsecircuit(circuit)
 
@@ -147,12 +179,12 @@ parsecircuit(circuit)
 JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["1", "0", "2"], String[], ["P1", "I1", "R1", "C1", "Lj1", "C2"], [:P, :I, :R, :C, :Lj, :C], Union{Int64, Symbol, ComplexF64}[1, :Ipump, :Rleft, :Cc, :Lj, :Cj], Dict("I1" => 2, "C1" => 4, "C2" => 6, "R1" => 3, "P1" => 1, "Lj1" => 5), 3)
 ```
 ```jldoctest
-circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int64}},1}(undef,0)
+circuit = Vector{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int64}}}(undef,0)
 push!(circuit,("P1","One","0",1))
 push!(circuit,("I1","One","0",:Ipump))
 push!(circuit,("R1","One","0",:Rleft))
-push!(circuit,("C1","One","Two",:Cc)) 
-push!(circuit,("Lj1","Two","0",:Lj)) 
+push!(circuit,("C1","One","Two",:Cc))
+push!(circuit,("Lj1","Two","0",:Lj))
 push!(circuit,("C2","Two","0",:Cj))
 parsecircuit(circuit)
 
@@ -164,8 +196,8 @@ circuit = []
 push!(circuit,("P1","1","0",1))
 push!(circuit,("I1","1","0",:Ipump))
 push!(circuit,("R1","1","0",:Rleft))
-push!(circuit,("C1","1","2",:Cc)) 
-push!(circuit,("Lj1","2","0",:Lj)) 
+push!(circuit,("C1","1","2",:Cc))
+push!(circuit,("Lj1","2","0",:Lj))
 push!(circuit,("C2","2","0",:Cj))
 parsecircuit(circuit)
 
@@ -173,48 +205,18 @@ parsecircuit(circuit)
 JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["1", "0", "2"], String[], ["P1", "I1", "R1", "C1", "Lj1", "C2"], [:P, :I, :R, :C, :Lj, :C], Any[1, :Ipump, :Rleft, :Cc, :Lj, :Cj], Dict("I1" => 2, "C1" => 4, "C2" => 6, "R1" => 3, "P1" => 1, "Lj1" => 5), 3)
 ```
 ```jldoctest
-circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int64}},1}(undef,0)
+circuit = Vector{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int64}}}(undef,0)
 push!(circuit,("P1","1","0",1))
 push!(circuit,("I1","1","0",:Ipump))
 push!(circuit,("R1","1","0",:Rleft))
-push!(circuit,("L1","1","0",:L1)) 
+push!(circuit,("L1","1","0",:L1))
 push!(circuit,("K1","L1","L2",:K1))
-push!(circuit,("L2","2","0",:L2)) 
+push!(circuit,("L2","2","0",:L2))
 push!(circuit,("C2","2","0",:C2))
 parsecircuit(circuit)
 
 # output
 JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Union{Int64, Symbol, ComplexF64}[1, :Ipump, :Rleft, :L1, :K1, :L2, :C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
-```
-```jldoctest
-@syms Ipump Rleft L1 K1 L2 C2
-circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("I1","1","0",Ipump))
-push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("L1","1","0",L1)) 
-push!(circuit,("K1","L1","L2",K1))
-push!(circuit,("L2","2","0",L2)) 
-push!(circuit,("C2","2","0",C2))
-parsecircuit(circuit)
-
-# output
-JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Any[1, Ipump, Rleft, L1, K1, L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
-```
-```jldoctest
-@syms Ipump Rleft L1 L2 C2 Ksym(L1)
-circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("I1","1","0",Ipump))
-push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("L1","1","0",L1)) 
-push!(circuit,("K1","L1","L2",Ksym(L1)))
-push!(circuit,("L2","2","0",L2)) 
-push!(circuit,("C2","2","0",C2))
-parsecircuit(circuit)
-
-# output
-JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Any[1, Ipump, Rleft, L1, Ksym(L1), L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
 ```
 """
 function parsecircuit(circuit)
@@ -709,6 +711,9 @@ Float64[]
 julia> JosephsonCircuits.calcvaluetype([:R,:C,:R],[1,2,3+0.0im],[:R])
 ComplexF64[]
 
+julia> @variables R1 C1 R2;JosephsonCircuits.calcvaluetype([:R,:C,:R],[R1,C1,R2],[:R])
+Num[]
+
 julia> @syms R1 C1 R2;JosephsonCircuits.calcvaluetype([:R,:C,:R],[R1,C1,R2],[:R])
 SymbolicUtils.Symbolic{Number}[]
 
@@ -1049,23 +1054,23 @@ Find the resistors (not located at a port) and the node indices. Store them
 as an ordered dictionary where the keys are the coordinates and the value is 
 the value.
 
-# Examples
-```jldoctest
-julia> JosephsonCircuits.calcnoiseports(
-                  [:I,:R,:C,:Lj,:C],
-                  [2 2 2 3 3; 1 1 3 1 1],
-                  [],
-                  [1e-9,50,5e-15,1e-12,30e-15])
-1-element Vector{Int64}:
- 2
+# # Examples
+# ```jldoctest
+# julia> JosephsonCircuits.calcnoiseports(
+#                   [:I,:R,:C,:Lj,:C],
+#                   [2 2 2 3 3; 1 1 3 1 1],
+#                   [],
+#                   [1e-9,50,5e-15,1e-12,30e-15])
+# 1-element Vector{Int64}:
+#  2
 
-julia> JosephsonCircuits.calcnoiseports(
-                  [:P,:I,:R,:C,:Lj,:C],
-                  [2 2 2 2 3 3; 1 1 1 3 1 1],
-                  [],
-                  [1,1e-9,50,5e-15,1e-12,30e-15])
-Int64[]
-```
+# julia> JosephsonCircuits.calcnoiseports(
+#                   [:P,:I,:R,:C,:Lj,:C],
+#                   [2 2 2 2 3 3; 1 1 1 3 1 1],
+#                   [],
+#                   [1,1e-9,50,5e-15,1e-12,30e-15])
+# Int64[]
+# ```
 """
 function calcnoiseportimpedanceindices(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
     mutualinductorvector::Vector,valuevector::Vector)
@@ -1083,46 +1088,8 @@ function calcnoiseportimpedanceindices(typevector::Vector{Symbol},nodeindexarray
     end
 
     portimpedanceindices = calcportimpedanceindices(typevector,nodeindexarray,mutualinductorvector,valuevector)
-
     out = Int64[]
-
-    # portarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
-    # portnumbers = Vector{eltype(valuevector)}(undef,0)
     portindices = Int64[]
-
-    # for i in eachindex(typevector)
-    #     type=typevector[i]
-    #     if type == :P
-    #         key= (nodeindexarray[1,i],nodeindexarray[2,i])
-
-    #         if valuevector[i] in portnumbers
-    #             error("Duplicate ports are not allowed.")
-    #         elseif key in portarray
-    #             error("Only one port allowed per branch.")
-    #         else
-    #             push!(portindices,i)
-    #             push!(portnumbers,valuevector[i])
-    #             push!(portarray,key)
-    #         end
-    #     end
-    # end
-
-
-    # for i in eachindex(typevector)
-    #     type=typevector[i]
-    #     if type == :R
-    #         key= (nodeindexarray[1,i],nodeindexarray[2,i])
-    #         if key in portarray
-    #             nothing
-    #         else
-    #             push!(out,i)
-    #         end
-    #     elseif type == :C && valuevector[i] isa Complex
-    #         push!(out,i)
-    #     elseif type == :L && valuevector[i] isa Complex
-    #         push!(out,i)
-    #     end
-    # end
 
     for i in eachindex(typevector)
         type=typevector[i]
@@ -1470,18 +1437,19 @@ julia> JosephsonCircuits.valuevectortonumber([:Lj1,:Lj2],Dict(:Lj1=>1e-12,:Lj2=>
  1.0e-12
  2.0e-12
 
-julia> @syms Lj1 Lj2;JosephsonCircuits.valuevectortonumber([Lj1,Lj1+Lj2],Dict(Lj1=>1e-12,Lj2=>2e-12))
+julia> @variables Lj1 Lj2;JosephsonCircuits.valuevectortonumber([Lj1,Lj1+Lj2],Dict(Lj1=>1e-12,Lj2=>2e-12))
 2-element Vector{Float64}:
  1.0e-12
  3.0e-12
 ```
 ```jldoctest
 # define a frequency dependent impedance function
-Z(w,R) = ifelse(w>10,R,100*R);
+Zfun(w,R) = ifelse(w>10,R,100*R);
 # create symbolic variables including a two argument function
-@syms w R Zsym(w,R);
+@variables w R
+@register_symbolic Zfun(w,R)
 # substitute in numerical values and functions for everything but w
-out=JosephsonCircuits.valuevectortonumber([R,Zsym(w,R)],Dict(R=>50,Zsym=>Z));
+out=JosephsonCircuits.valuevectortonumber([R,Zfun(w,R)],Dict(R=>50));
 println(out)
 # evaluate with w = 2
 println(JosephsonCircuits.substitute.(out,(Dict(w=>2),)))
@@ -1490,21 +1458,6 @@ println(JosephsonCircuits.substitute.(out,(Dict(w=>11),)))
 
 # output
 Any[50, Z(w, 50)]
-[50, 5000]
-[50, 50]
-```
-```jldoctest
-# same as above but anonymous function
-# create symbolic variables including a two argument function
-@syms w R Zsym(w,R);
-# substitute in numerical values and functions for everything but w
-out=JosephsonCircuits.valuevectortonumber([R,Zsym(w,R)],Dict(R=>50,Zsym=>(w,R)->ifelse(w>10,R,100*R)));
-# evaluate with w = 2
-println(JosephsonCircuits.substitute.(out,(Dict(w=>2),)))
-# evaluate with w = 11
-println(JosephsonCircuits.substitute.(out,(Dict(w=>11),)))
-
-# output
 [50, 5000]
 [50, 50]
 ```
@@ -1546,7 +1499,36 @@ function valuetonumber(value::String,circuitdefs)
 end
 
 """
-    valuetonumber(value::Number,circuitdefs)
+    valuetonumber(value,circuitdefs)
+
+If the component value is symbolic, then try substituting in the definition
+from circuitdefs. 
+
+# Examples
+```jldoctest
+julia> @variables Lj1;JosephsonCircuits.valuetonumber(Lj1,Dict(Lj1=>3.0e-12))
+3.0e-12
+
+julia> @variables Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
+4.0e-12
+```
+"""
+function valuetonumber(value::Symbolics.Num,circuitdefs)
+    # for Num types if we ever add Symbolics. unwrap helps speed up
+    # their evaluation and evalutes to a number. 
+    return Symbolics.substitute(Symbolics.unwrap(value),circuitdefs)
+    # return substitute(unwrap(value),circuitdefs)
+    # return substitute(value,circuitdefs)
+end
+function valuetonumber(value::Symbolics.Symbolic,circuitdefs)
+    return Symbolics.substitute(value,circuitdefs)
+    # return substitute(unwrap(value),circuitdefs)
+    # return substitute(value,circuitdefs)
+end
+
+
+"""
+    valuetonumber(value,circuitdefs)
 
 If the component value is a number (or a type we haven't considered, return it
 as is. 
@@ -1557,45 +1539,6 @@ julia> JosephsonCircuits.valuetonumber(1.0,Dict(:Lj1=>1e-12,:Lj2=>2e-12))
 1.0
 ```
 """
-# function valuetonumber(value::Number,circuitdefs::Dict)
-#     return value
-# end
-
-
-"""
-    valuetonumber(value,circuitdefs)
-
-If the component value is symbolic, then try substituting in the definition
-from circuitdefs. 
-
-# Examples
-```jldoctest
-julia> @syms Lj1;JosephsonCircuits.valuetonumber(Lj1,Dict(Lj1=>3.0e-12))
-3.0e-12
-
-julia> @syms Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
-4.0e-12
-```
-"""
-# function valuetonumber(value,circuitdefs)
-#     return substitute(value,circuitdefs)
-# end
-
 function valuetonumber(value,circuitdefs)
     return value
-end
-
-
-## for Num types if we ever add Symbolics. unwrap helps speed up
-## their evaluation and evalutes to a number. 
-function valuetonumber(value::Symbolics.Num,circuitdefs)
-    return Symbolics.substitute(Symbolics.unwrap(value),circuitdefs)
-    # return substitute(unwrap(value),circuitdefs)
-    # return substitute(value,circuitdefs)
-end
-
-function valuetonumber(value::Symbolics.Symbolic,circuitdefs)
-    return Symbolics.substitute(value,circuitdefs)
-    # return substitute(unwrap(value),circuitdefs)
-    # return substitute(value,circuitdefs)
 end
