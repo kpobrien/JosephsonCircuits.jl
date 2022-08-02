@@ -3,22 +3,34 @@
 
 [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) simulates the frequency domain behavior using a variant [1] of nodal analysis [2] and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
 
-Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by (potentially) frequency dependent resistors or capacitors with an imaginary capacitance proportional to the loss tangent.
+Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by capacitors with an imaginary capacitance or frequency dependent resistors. 
 
 [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) supports the following:
 * Nonlinear simulations in which the user defines a circuit, the drive current, frequency, and number of harmonics and the code calculates the node flux or equivalently node voltage at each harmonic.
-* Simulations linearized about the nonlinear operating point calculated above. This effectively simulates the small signal response of a time dependent linear circuit and is useful for simulating parametric amplification and frequency conversion in the undepleted (strong) pump limit. Calculation of X parameters [4-5], which are a generalization of scattering parameters which quantifies how waves with different frequencies interact with the circuit and with each other. 
+* Linearized simulations about the nonlinear operating point calculated above. This simulates the small signal response of a periodically time varying linear circuit and is useful for simulating parametric amplification and frequency conversion in the undepleted (strong) pump limit. Calculation of node fluxes (or node voltages) and X parameters, which are a nonlinear generalization of scattering parameters [4-5]. 
 * Linear simulations of linear circuits. Calculation of node fluxes (or node voltages) and scattering parameters.
-* Optional calculation of symbolic capacitance and inverse inductance matrices.
+* Calculation of symbolic capacitance and inverse inductance matrices.
+
+As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.keysight.com/us/en/products/software/pathwave-design-software/pathwave-advanced-design-system.html) simulations and Fourier analysis of time domain simulation performed by [WRSPICE](http://wrcad.com/wrspice.html).
+
+**Warning:** this package is under heavy development and there will be breaking changes. We will keep the examples updated to ease the burden of any breaking changes.
+
+
+# Installation:
+
+Until this package is registered, you can install it by starting Julia and entering the command:
+```
+]add https://github.com/kpobrien/JosephsonCircuits.jl
+```
 
 # Examples:
-Josephson parametric amplifier (a driven nonlinear LC resonator). Add a circuit diagram. 
+* Josephson parametric amplifier (a driven nonlinear LC resonator).
 
 ```julia
 using JosephsonCircuits
 
 @variables R Cc Lj Cj
-circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
+circuit = Tuple{String,String,String,Num}[]
 push!(circuit,("P1","1","0",1))
 push!(circuit,("R1","1","0",R))
 push!(circuit,("C1","1","2",Cc)) 
@@ -32,51 +44,347 @@ circuitdefs = Dict(
     R => 50.0,
 )
 
-@time jpa1 = hbsolve(2*pi*(4.5:0.001:5.0)*1e9,
+@time jpa = hbsolve(2*pi*(4.5:0.001:5.0)*1e9,
     2*pi*4.75001*1e9,0.00565e-6,8,8,circuit,circuitdefs,
     pumpports=[1]);
 
 using Plots
-plot(jpa1.signal.w/(2*pi*1e9),
-	10*log10.(abs2.(jpa1.signal.S[
-	jpa1.signal.signalindex,
-	jpa1.signal.signalindex,:])),
+plot(jpa.signal.w/(2*pi*1e9),
+	10*log10.(abs2.(jpa.signal.S[
+	jpa.signal.signalindex,
+	jpa.signal.signalindex,:])),
     xlabel="Frequency (GHz)",ylabel="Gain (dB)")
 ```
+
+![JPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/jpa.png)
+
+
+* [Josephson traveling wave parametric amplifier (JTWPA)](https://www.science.org/doi/10.1126/science.aaa8525)
+```julia
+using JosephsonCircuits
+using Plots
+
+@variables Rleft Rright Cg Lj Cj Cc Cr Lr
+circuit = Tuple{String,String,String,Num}[]
+
+# port on the input side
+push!(circuit,("P$(1)_$(0)","1","0",1))
+push!(circuit,("R$(1)_$(0)","1","0",Rleft))
+Nj=2048
+pmrpitch = 4
+#first half cap to ground
+push!(circuit,("C$(1)_$(0)","1","0",Cg/2))
+#middle caps and jj's
+push!(circuit,("Lj$(1)_$(2)","1","2",Lj)) 
+push!(circuit,("C$(1)_$(2)","1","2",Cj)) 
+
+j=2
+for i = 2:Nj-1
+    
+    if mod(i,pmrpitch) == pmrpitch÷2
+
+        # make the jj cell with modified capacitance to ground
+        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg-Cc))
+        push!(circuit,("Lj$(j)_$(j+2)","$(j)","$(j+2)",Lj))
+
+        push!(circuit,("C$(j)_$(j+2)","$(j)","$(j+2)",Cj))
+        
+        #make the pmr
+        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cc))
+        push!(circuit,("C$(j+1)_$(0)","$(j+1)","$(0)",Cr))
+        push!(circuit,("L$(j+1)_$(0)","$(j+1)","$(0)",Lr))
+        
+        # increment the index
+        j+=1
+    else
+        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg))
+        push!(circuit,("Lj$(j)_$(j+1)","$(j)","$(j+1)",Lj))
+        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cj))
+    end
+    
+    # increment the index
+    j+=1
+
+end
+
+#last jj
+push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg/2))
+push!(circuit,("R$(j)_$(0)","$(j)","$(0)",Rright))
+# port on the output side
+push!(circuit,("P$(j)_$(0)","$(j)","$(0)",2))
+
+circuitdefs = Dict(
+    Lj => IctoLj(3.4e-6),
+    Cg => 45.0e-15,
+    Cc => 30.0e-15,
+    Cr =>  2.8153e-12,
+    Lr => 1.70e-10,
+    Cj => 55e-15,
+    Rleft => 50.0,
+    Rright => 50.0,
+)
+
+wp=2*pi*7.12*1e9
+ws=2*pi*(1.0:0.1:14)*1e9
+
+Npumpmodes = 10
+Nsignalmodes = 10
+
+Ip=1.85e-6
+
+@time rpm = hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,
+    circuit,circuitdefs,pumpports=[1]);
+
+p1=plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.signal.S[end-Nsignalmodes+rpm.signal.signalindex,rpm.signal.signalindex,:])),
+    ylim=(-40,30),label="S21",
+    xlabel="Signal Frequency (GHz)",
+    legend=:bottomright,
+    title="Scattering Parameters",
+    ylabel="dB")
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.signal.S[rpm.signal.signalindex,end-Nsignalmodes+rpm.signal.signalindex,:])),
+    label="S12",
+    )
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.signal.S[rpm.signal.signalindex,rpm.signal.signalindex,:])),
+    label="S11",
+    )
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.signal.S[end-Nsignalmodes+rpm.signal.signalindex,end-Nsignalmodes+rpm.signal.signalindex,:])),
+    label="S22",
+    )
+
+p2=plot(ws/(2*pi*1e9),
+    rpm.signal.QE[end-Nsignalmodes+rpm.signal.signalindex,rpm.signal.signalindex,:]./rpm.signal.QEideal[end-Nsignalmodes+rpm.signal.signalindex,rpm.signal.signalindex,:],    
+    ylim=(0,1.05),
+    title="Quantum efficiency",legend=false,
+    ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)");
+
+p3=plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.signal.S[:,rpm.signal.signalindex,:]')),
+    ylim=(-40,30),label="S21",
+    xlabel="Signal Frequency (GHz)",
+    legend=false,
+    title="All idlers",
+    ylabel="dB")
+
+
+p4=plot(ws/(2*pi*1e9),
+    1 .- rpm.signal.CM[end-Nsignalmodes+rpm.signal.signalindex,:],    
+    legend=false,title="Commutation \n relation error",
+    ylabel="Commutation \n relation error",xlabel="Signal Frequency (GHz)");
+
+plot(p1, p2, p3,p4,layout = (2, 2))
 ```
-  0.004098 seconds (68.61 k allocations: 5.766 MiB)
+
+![JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/uniform.png)
+
+
+* [Floquet JTWPA](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306)
+```julia
+using JosephsonCircuits
+using Plots
+
+@variables Rleft Rright Lj Cg Cc Cr Lr Cj
+
+weightwidth = 745
+weight = (n,Nnodes,weightwidth) -> exp(-(n - Nnodes/2)^2/(weightwidth)^2)
+Nj=2000
+pmrpitch = 8
+
+# define the circuit components
+circuit = Tuple{String,String,String,Num}[]
+
+# port on the left side
+push!(circuit,("P$(1)_$(0)","1","0",1))
+push!(circuit,("R$(1)_$(0)","1","0",Rleft))
+
+#first half cap to ground
+push!(circuit,("C$(1)_$(0)","1","0",Cg/2*weight(1-0.5,Nj,weightwidth)))
+#middle caps and jj's
+push!(circuit,("Lj$(1)_$(2)","1","2",Lj*weight(1,Nj,weightwidth))) 
+push!(circuit,("C$(1)_$(2)","1","2",Cj/weight(1,Nj,weightwidth))) 
+    
+j=2
+for i = 2:Nj-1
+    
+    if mod(i,pmrpitch) == pmrpitch÷2
+
+        # make the jj cell with modified capacitance to ground
+        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",(Cg-Cc)*weight(i-0.5,Nj,weightwidth)))
+        push!(circuit,("Lj$(j)_$(j+2)","$(j)","$(j+2)",Lj*weight(i,Nj,weightwidth)))
+
+        push!(circuit,("C$(j)_$(j+2)","$(j)","$(j+2)",Cj/weight(i,Nj,weightwidth)))
+        
+        #make the pmr
+        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cc*weight(i-0.5,Nj,weightwidth)))
+        push!(circuit,("C$(j+1)_$(0)","$(j+1)","$(0)",Cr))
+        push!(circuit,("L$(j+1)_$(0)","$(j+1)","$(0)",Lr))
+        
+        # increment the index
+        j+=1
+    else
+        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg*weight(i-0.5,Nj,weightwidth)))
+        push!(circuit,("Lj$(j)_$(j+1)","$(j)","$(j+1)",Lj*weight(i,Nj,weightwidth)))
+        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cj/weight(i,Nj,weightwidth)))
+    end
+    
+    # increment the index
+    j+=1
+
+end
+
+#last jj
+push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg/2*weight(Nj-0.5,Nj,weightwidth)))
+push!(circuit,("R$(j)_$(0)","$(j)","$(0)",Rright))
+push!(circuit,("P$(j)_$(0)","$(j)","$(0)",2))
+
+circuitdefs = Dict(
+    Rleft => 50.0,
+    Rright => 50.0,
+    Lj => IctoLj(1.75e-6),
+    Cg => 76.6e-15,
+    Cc => 40.0e-15,
+    Cr =>  1.533e-12,
+    Lr => 2.47e-10,
+    Cj => 40e-15,
+)  
+
+wp=2*pi*7.9*1e9
+ws=2*pi*(1.0:0.1:14)*1e9
+
+Npumpmodes = 10
+Nsignalmodes = 10
+
+Ip=1.1e-6
+
+@time floquet = hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs,
+    pumpports=[1]);
+
+p1=plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(floquet.signal.S[end-Nsignalmodes+floquet.signal.signalindex,floquet.signal.signalindex,:])),
+    ylim=(-40,30),label="S21",
+    xlabel="Signal Frequency (GHz)",
+    legend=:bottomright,
+    title="Scattering Parameters",
+    ylabel="dB")
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(floquet.signal.S[floquet.signal.signalindex,end-Nsignalmodes+floquet.signal.signalindex,:])),
+    label="S12",
+    )
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(floquet.signal.S[floquet.signal.signalindex,floquet.signal.signalindex,:])),
+    label="S11",
+    )
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(floquet.signal.S[end-Nsignalmodes+floquet.signal.signalindex,end-Nsignalmodes+floquet.signal.signalindex,:])),
+    label="S22",
+    )
+
+p2=plot(ws/(2*pi*1e9),
+    floquet.signal.QE[end-Nsignalmodes+floquet.signal.signalindex,floquet.signal.signalindex,:]./floquet.signal.QEideal[end-Nsignalmodes+floquet.signal.signalindex,floquet.signal.signalindex,:],    
+    ylim=(0.99,1.001),
+    title="Quantum efficiency",legend=false,
+    ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)");
+
+p3=plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(floquet.signal.S[:,floquet.signal.signalindex,:]')),
+    ylim=(-40,30),label="S21",
+    xlabel="Signal Frequency (GHz)",
+    legend=false,
+    title="All idlers",
+    ylabel="dB")
+
+
+p4=plot(ws/(2*pi*1e9),
+    1 .- floquet.signal.CM[end-Nsignalmodes+floquet.signal.signalindex,:],    
+    legend=false,title="Commutation \n relation error",
+    ylabel="Commutation \n relation error",xlabel="Signal Frequency (GHz)");
+
+plot(p1, p2, p3,p4,layout = (2, 2))
 ```
-![alt text](https://qce.mit.edu/plot.png "Title")
 
-We find excellent agreement with the gain obtained by Fourier analysis of a time domain simulation performed by [WRSPICE](http://wrcad.com/wrspice.html) using the following [netlist]().
+![Floquet JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/floquet.png)
 
-We can also sweep the pump frequency.
 
-* LC ladder transmission line. That would be nice because i could compare with the analytic solution for the scattering parameters. I should intentionally impedance mismatch it. Add a circuit diagram.
+* Floquet JTWPA with dissipation (capacitors with dielectric loss)
+Run the above code block to define the circuit then run the following:
+```julia
+results = []
+tandeltas = [1.0e-6,1.0e-3, 2.0e-3, 3.0e-3]
+for tandelta in tandeltas
+    circuitdefs = Dict(
+        Rleft => 50,
+        Rright => 50,
+        Ipump => 1.0e-8,
+        Lj => IctoLj(1.75e-6),
+        Cg => 76.6e-15/(1+im*tandelta),
+        Cc => 40.0e-15/(1+im*tandelta),
+        Cr =>  1.533e-12/(1+im*tandelta),
+        Lr => 2.47e-10,
+        Cj => 40e-15,
+    )  
+    wp=2*pi*7.9*1e9
+    ws=2*pi*(1.0:0.1:14)*1e9
 
-* JTWPA (with dissipation)
+    Npumpmodes = 10
+    Nsignalmodes = 10
+    
+    Ip=1.1e-6*(1+125*tandelta)
+    @time floquet = hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs,pumpports=[1]);
+    push!(results,floquet)
+    
+end
 
-* Floquet JTWPA
+p1 = plot(title="Gain (S21)")
+for i = 1:length(results)
+        plot!(ws/(2*pi*1e9),
+        10*log10.(abs2.(results[i].signal.S[end-Nsignalmodes+results[i].signal.signalindex,results[i].signal.signalindex,:])),
+            ylim=(-60,30),label="tanδ=$(tandeltas[i])",
+            legend=:bottomleft,
+            xlabel="Signal Frequency (GHz)",ylabel="dB")
+end
 
-# Additional examples:
+p2 = plot(title="Quantum Efficiency")
+for i = 1:length(results)
+        plot!(ws/(2*pi*1e9),
+            results[i].signal.QE[end-Nsignalmodes+results[i].signal.signalindex,results[i].signal.signalindex,:]./results[i].signal.QEideal[end-Nsignalmodes+results[i].signal.signalindex,results[i].signal.signalindex,:],    
+            ylim=(0.6,1.05),legend=false,
+            title="Quantum efficiency",
+            ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)")
+end
+
+p3 = plot(title="Reverse Gain (S12)")
+for i = 1:length(results)
+        plot!(ws/(2*pi*1e9),
+        10*log10.(abs2.(results[i].signal.S[results[i].signal.signalindex,end-Nsignalmodes+results[i].signal.signalindex,:])),
+            ylim=(-10,1),legend=false,
+            xlabel="Signal Frequency (GHz)",ylabel="dB")
+end
+
+p4 = plot(title="Commutation \n relation error")
+for i = 1:length(results)
+        plot!(ws/(2*pi*1e9),
+            1 .- results[i].signal.CM[end-Nsignalmodes+results[i].signal.signalindex,:],    
+            legend=false,
+            ylabel="Commutation\n relation error",xlabel="Signal Frequency (GHz)")
+end
+
+plot(p1, p2, p3,p4,layout = (2, 2))
+```
+
+![Floquet JTWPA simulation with loss](https://qce.mit.edu/JosephsonCircuits.jl/floquetlossy.png)
+
 
 # Performance tips:
-Simulations of the linearized system can be efficiently parallelized, so we suggest you enable multi-threading when starting Julia with the number of threads equal to the number of physical cores. 
-
-# Installation:
-
-Until this package is registered, you can install it by starting Julia using the command:
-```
-JULIA_PKG_USE_CLI_GIT=true julia
-```
-then type ] followed by (replacing kpobrien with your GitHub username):
-```
-add git@github.com:kpobrien/JosephsonCircuits.jl.git
-```
-or once we make the repository public:
-```
-]add https://github.com/kpobrien/JosephsonCircuits.jl
-```
+Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores.
 
 # References:
 
@@ -85,6 +393,8 @@ or once we make the repository public:
 3. Stephen A. Maas "Nonlinear Microwave and RF Circuits" 2nd edition, [Artech House (1997)](https://us.artechhouse.com/Nonlinear-Microwave-and-RF-Circuits-Second-Edition-P1097.aspx)
 4. Jos&#233; Carlos Pedro, David E. Root, Jianjun Xu, and Lu&#237;s C&#243;timos Nunes. "Nonlinear Circuit Simulation and Modeling: Fundamentals for Microwave Design" The Cambridge RF and Microwave Engineering Series, [Cambridge University Press (2018)](https://www.cambridge.org/core/books/nonlinear-circuit-simulation-and-modeling/1705F3B449B4313A2BE890599DAC0E38)
 5. David E. Root, Jan Verspecht, Jason Horn, and Mihai Marcu. "X-Parameters: Characterization, Modeling, and Design of Nonlinear RF and Microwave Components" The Cambridge RF and microwave engineering series, [Cambridge University Press (2013)](https://www.cambridge.org/sb/academic/subjects/engineering/rf-and-microwave-engineering/x-parameters-characterization-modeling-and-design-nonlinear-rf-and-microwave-components)
+6. Kaidong Peng, Rick Poore, Philip Krantz, David E. Root, and Kevin P. O'Brien "X-parameter based design and simulation of Josephson traveling-wave parametric amplifiers for quantum computing applications" IEEE International Conference on Quantum Computing & Engineering (QCE22) (2022)
+
 
 # Philosophy:
 
@@ -94,11 +404,10 @@ We prioritize speed (including compile time and time to first use), simplicity, 
 
 # Future developments:
 
-* Flux pumping, DC biasing, three wave mixing, fluxoid offsets, and two-tone harmonic balance.
-* Design optimization
-* User defined nonlinear components.
-* Interoperability with [DifferentialEquations.jl](https://github.com/SciML/DifferentialEquations.jl) for time domain simulations. 
-
+* Currently only four-wave mixing interactions with a single pump tone are supported. We will next add support for three wave mixing interactions along with flux pumping, DC biasing, fluxoid offsets, and multi-tone harmonic balance (multiple pumps).
+* Design optimization.
+* More nonlinear components such as kinetic inductors.
+* Time domain simulations.
 
 # Related packages and software:
 * [Xyce.jl](https://github.com/JuliaComputing/Xyce.jl) provides a wrapper for [Xyce](https://xyce.sandia.gov/), the open source parallel circuit simulator from Sandia National Laboratories which can perform time domain and harmonic balance method simulations.
