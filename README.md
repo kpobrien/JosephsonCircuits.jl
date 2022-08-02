@@ -17,8 +17,8 @@ Josephson parametric amplifier (a driven nonlinear LC resonator). Add a circuit 
 ```julia
 using JosephsonCircuits
 
-@syms R Cc Lj Cj
-circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+@variables R Cc Lj Cj
+circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
 push!(circuit,("P1","1","0",1))
 push!(circuit,("R1","1","0",R))
 push!(circuit,("C1","1","2",Cc)) 
@@ -34,7 +34,7 @@ circuitdefs = Dict(
 
 @time jpa1 = hbsolve(2*pi*(4.5:0.001:5.0)*1e9,
     2*pi*4.75001*1e9,0.00565e-6,8,8,circuit,circuitdefs,
-    pumpports=[1],symfreqvar=w);
+    pumpports=[1]);
 
 using Plots
 plot(jpa1.signal.w/(2*pi*1e9),
