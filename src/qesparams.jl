@@ -479,7 +479,9 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindic
                 portcurrent = sourcecurrent - portvoltage / portimpedance
 
                 # calculate the scaling factor for the waves
-                kval = 1 / sqrt(real(portimpedance))
+                # kval = 1 / sqrt(real(portimpedance))
+                kval = 1 / sqrt(Complex(real(portimpedance)))
+
 
                 # convert from sqrt(power) to sqrt(photons/second)
                 kval *= 1 /sqrt(abs(wmodes[j]))
@@ -552,7 +554,9 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindic
                 portcurrent = sourcecurrent - portvoltage / portimpedance
 
                 # calculate the scaling factor for the waves
-                kval = 1 / sqrt(real(portimpedance))
+                # kval = 1 / sqrt(real(portimpedance))
+                kval = 1 / sqrt(Complex(real(portimpedance)))
+
 
                 # convert from sqrt(power) to sqrt(photons/second)
                 kval *= 1 /sqrt(abs(wmodes[j]))
@@ -652,7 +656,10 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
                 portcurrent = sourcecurrent - portvoltage / portimpedance
 
                 # calculate the scaling factor for the waves
-                kval = 1 / sqrt(real(portimpedance))
+                # kval = 1 / sqrt(real(portimpedance))
+                # kval = 1 / sqrt(Complex(real(portimpedance)))
+                kval = 1/sqrt(50.0)
+
 
                 # convert from sqrt(power) to sqrt(photons/second)
                 kval *= 1 /sqrt(abs(wmodes[j]))
@@ -726,7 +733,8 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
                 portcurrent = - portvoltage / portimpedance
 
                 # calculate the scaling factor for the waves
-                kval = 1 / sqrt(real(portimpedance))
+                # kval = 1 / sqrt(real(portimpedance))
+                kval = 1 / sqrt(Complex(real(portimpedance)))
 
                 # convert from sqrt(power) to sqrt(photons/second)
                 kval *= 1 /sqrt(abs(wmodes[j]))
