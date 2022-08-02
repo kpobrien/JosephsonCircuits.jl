@@ -6,7 +6,7 @@
 Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by capacitors with an imaginary capacitance or frequency dependent resistors. 
 
 [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) supports the following:
-* Nonlinear simulations in which the user defines a circuit, the drive current, frequency, and number of harmonics and the code calculates the node flux or equivalently node voltage at each harmonic.
+* Nonlinear simulations in which the user defines a circuit, the drive current, frequency, and number of harmonics and the code calculates the node flux or node voltage at each harmonic.
 * Linearized simulations about the nonlinear operating point calculated above. This simulates the small signal response of a periodically time varying linear circuit and is useful for simulating parametric amplification and frequency conversion in the undepleted (strong) pump limit. Calculation of node fluxes (or node voltages) and X parameters, which are a nonlinear generalization of scattering parameters [4-5]. 
 * Linear simulations of linear circuits. Calculation of node fluxes (or node voltages) and scattering parameters.
 * Calculation of symbolic capacitance and inverse inductance matrices.
@@ -16,15 +16,8 @@ As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.
 **Warning:** this package is under heavy development and there will be breaking changes. We will keep the examples updated to ease the burden of any breaking changes.
 
 
-# Installation:
-
-Until this package is registered, you can install it by starting Julia and entering the command:
-```
-]add https://github.com/kpobrien/JosephsonCircuits.jl
-```
-
 # Examples:
-* Josephson parametric amplifier (a driven nonlinear LC resonator).
+## Josephson parametric amplifier (a driven nonlinear LC resonator).
 
 ```julia
 using JosephsonCircuits
@@ -59,7 +52,7 @@ plot(jpa.signal.w/(2*pi*1e9),
 ![JPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/jpa.png)
 
 
-* [Josephson traveling wave parametric amplifier (JTWPA)](https://www.science.org/doi/10.1126/science.aaa8525)
+## [Josephson traveling wave parametric amplifier (JTWPA)](https://www.science.org/doi/10.1126/science.aaa8525)
 ```julia
 using JosephsonCircuits
 using Plots
@@ -184,7 +177,7 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 ![JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/uniform.png)
 
 
-* [Floquet JTWPA](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306)
+## [Floquet JTWPA](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306)
 ```julia
 using JosephsonCircuits
 using Plots
@@ -314,7 +307,8 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 ![Floquet JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/floquet.png)
 
 
-* Floquet JTWPA with dissipation (capacitors with dielectric loss)
+## Floquet JTWPA with dissipation (capacitors with dielectric loss)
+
 Run the above code block to define the circuit then run the following:
 ```julia
 results = []
@@ -382,6 +376,12 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 
 ![Floquet JTWPA simulation with loss](https://qce.mit.edu/JosephsonCircuits.jl/floquetlossy.png)
 
+# Installation:
+
+Until this package is registered, you can install it by starting Julia and entering the command:
+```
+]add https://github.com/kpobrien/JosephsonCircuits.jl
+```
 
 # Performance tips:
 Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores.
