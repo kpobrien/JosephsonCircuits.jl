@@ -17,10 +17,12 @@ As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.
 
 
 # Examples:
-## Josephson parametric amplifier (a driven nonlinear LC resonator).
+## Josephson parametric amplifier
+A driven nonlinear LC resonator.
 
 ```julia
 using JosephsonCircuits
+using Plots
 
 @variables R Cc Lj Cj
 circuit = Tuple{String,String,String,Num}[]
@@ -41,7 +43,6 @@ circuitdefs = Dict(
     2*pi*4.75001*1e9,0.00565e-6,8,8,circuit,circuitdefs,
     pumpports=[1]);
 
-using Plots
 plot(jpa.signal.w/(2*pi*1e9),
 	10*log10.(abs2.(jpa.signal.S[
 	jpa.signal.signalindex,
@@ -49,10 +50,17 @@ plot(jpa.signal.w/(2*pi*1e9),
     xlabel="Frequency (GHz)",ylabel="Gain (dB)")
 ```
 
+```
+  0.005982 seconds (65.01 k allocations: 6.878 MiB)
+```
+
 ![JPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/jpa.png)
 
 
-## [Josephson traveling wave parametric amplifier (JTWPA)](https://www.science.org/doi/10.1126/science.aaa8525)
+## Josephson traveling wave parametric amplifier (JTWPA)
+
+Circuit parameters from [here](https://www.science.org/doi/10.1126/science.aaa8525).
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -174,10 +182,16 @@ p4=plot(ws/(2*pi*1e9),
 plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
+```
+4.178419 seconds (302.46 k allocations: 5.586 GiB, 8.89% gc time)
+```
+
 ![JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/uniform.png)
 
 
-## [Floquet JTWPA](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306)
+## Floquet JTWPA
+
+Circuit parameters from [here](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306).
 ```julia
 using JosephsonCircuits
 using Plots
@@ -304,12 +318,16 @@ p4=plot(ws/(2*pi*1e9),
 plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
+```
+  2.406175 seconds (557.12 k allocations: 2.969 GiB, 1.52% gc time)
+```
+
 ![Floquet JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/floquet.png)
 
 
-## Floquet JTWPA with dissipation (capacitors with dielectric loss)
+## Floquet JTWPA with dissipation
 
-Run the above code block to define the circuit then run the following:
+Dissipation due to capacitors with dielectric loss, parameterized by a loss tangent. Run the above code block to define the circuit then run the following:
 ```julia
 results = []
 tandeltas = [1.0e-6,1.0e-3, 2.0e-3, 3.0e-3]
@@ -317,11 +335,10 @@ for tandelta in tandeltas
     circuitdefs = Dict(
         Rleft => 50,
         Rright => 50,
-        Ipump => 1.0e-8,
         Lj => IctoLj(1.75e-6),
         Cg => 76.6e-15/(1+im*tandelta),
         Cc => 40.0e-15/(1+im*tandelta),
-        Cr =>  1.533e-12/(1+im*tandelta),
+        Cr => 1.533e-12/(1+im*tandelta),
         Lr => 2.47e-10,
         Cj => 40e-15,
     )  
@@ -372,6 +389,13 @@ for i = 1:length(results)
 end
 
 plot(p1, p2, p3,p4,layout = (2, 2))
+```
+
+```
+  4.188929 seconds (543.15 k allocations: 3.229 GiB, 8.97% gc time)
+  4.228156 seconds (543.63 k allocations: 3.278 GiB, 8.39% gc time)
+  4.222535 seconds (544.01 k allocations: 3.327 GiB, 8.52% gc time)
+  4.242313 seconds (543.99 k allocations: 3.327 GiB, 8.49% gc time)
 ```
 
 ![Floquet JTWPA simulation with loss](https://qce.mit.edu/JosephsonCircuits.jl/floquetlossy.png)
