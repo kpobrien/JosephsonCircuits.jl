@@ -65,7 +65,7 @@ end
 
 function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdefs;
     solver=:klu,iterations=1000,maxintermodorder=Inf,dc=false,odd=true,even=false,
-    x0=nothing,ftol=1e-8,symfreqvar = nothing, sorting= sorting)
+    x0=nothing,ftol=1e-8,symfreqvar = nothing, sorting= :number)
 
 # function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdefs;
 #     solver=:klu,iterations=100,maxintermodorder=Inf,dc=false,odd=true,even=false,
@@ -177,6 +177,8 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
 
     # extract the elements we need
     Nnodes = psc.Nnodes
+    nodeindexarraysorted = psc.nodeindexarraysorted
+
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = nm.Ljb
@@ -185,8 +187,15 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     Cnm = nm.Cnm
     Gnm = nm.Gnm
     invLnm = nm.invLnm
-    portdict = nm.portdict
-    resistordict = nm.resistordict
+    # portdict = nm.portdict
+
+    portindices = nm.portindices
+    portnumbers = nm.portnumbers
+    portimpedanceindices = nm.portimpedanceindices
+
+    # noiseportimpedanceindices = nm.noiseportimpedanceindices
+
+    # resistordict = nm.resistordict
     Lmean = nm.Lmean
     # Lmean = 1.0
     Lb = nm.Lb
@@ -196,12 +205,35 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     wmodesm = Diagonal(repeat(wmodes,outer=Nnodes-1))
     wmodes2m = Diagonal(repeat(wmodes.^2,outer=Nnodes-1))
 
-    # calculate the source terms in the branch basis
-    bbm = zeros(Complex{Float64},Nbranches*Nmodes)    
+    # # calculate the source terms in the branch basis
+    # bbm = zeros(Complex{Float64},Nbranches*Nmodes)    
 
+    # for source in sources
+    #     for (key,val) in portdict
+    #         if val == source[:port]
+    #             # now i have to find the index.
+    #             # this will depend on the frequency index
+    #             # i should calculate that in the right way now. 
+    #             for i = 1:length(values)
+    #                 if values[i] == source[:w]
+    #                     bbm[(edge2indexdict[key]-1)*Nmodes+i] = Lmean*source[:current]/phi0
+    #                     break
+    #                 end
+    #             end
+    #             break
+    #         end
+    #     end
+    # end
+
+    # calculate the source terms in the branch basis
+    bbm = zeros(Complex{Float64},Nbranches*Nmodes)  
     for source in sources
-        for (key,val) in portdict
-            if val == source[:port]
+        # for (key,val) in portdict
+        for (i,portindex) in enumerate(portindices)
+            portnumber = portnumbers[i]
+            key = (nodeindexarraysorted[1,portindex],nodeindexarraysorted[2,portindex])
+
+            if portnumber == source[:port]
                 # now i have to find the index.
                 # this will depend on the frequency index
                 # i should calculate that in the right way now. 
@@ -214,8 +246,31 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
                 break
             end
         end
-
     end
+
+
+    # # calculate the source terms in the branch basis
+    # bbm = zeros(Complex{Float64},Nbranches*Nmodes)    
+    # for (i,portindex) in enumerate(portindices)
+    #     portnumber = portnumbers[i]
+    #     key = (nodeindexarraysorted[1,portindex],nodeindexarraysorted[2,portindex])
+    #     # if portnumber in ports
+    #     #     # bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip/phi0
+    #     #     bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip[portindex]/phi0
+    #     # end
+    #     if portnumber == source[:port]
+    #         # now i have to find the index.
+    #         # this will depend on the frequency index
+    #         # i should calculate that in the right way now. 
+    #         for i = 1:length(values)
+    #             if values[i] == source[:w]
+    #                 bbm[(edge2indexdict[key]-1)*Nmodes+i] = Lmean*source[:current]/phi0
+    #                 break
+    #             end
+    #         end
+    #         break
+    #     end
+    # end
 
 
     # convert from the node basis to the branch basis
@@ -361,7 +416,7 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
                 # reusing the symbolic factorization can sometimes lead to
                 # numerical problems. if the first linear solve fails
                 # try factoring and solving again
-                F = KLU.klu(Jsparse)
+                factorization = KLU.klu(Jsparse)
                 ldiv!(deltax,factorization,F)
             else
                 throw(e)
@@ -431,32 +486,6 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
         # update x
         x .+= deltax*alpha1
 
-
-        # # fit with a cubic. 
-        # alpha1 = alphafit
-        # # evaluate the function at the trial point
-        # calcfj!(F,nothing,x-x1*alpha1,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        #     Ljb,Ljbm,Nmodes,
-        #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
-
-        # f1 = real(0.5*dot(F,F))
-
-        # denom = (-1+alpha1)*alpha1^2
-        # a = (-alpha1*dfdalpha + f1 - f + alpha1^2*(dfdalpha-fp+f))/denom
-        # b = (alpha1*dfdalpha - f1 + f - alpha1^3*(dfdalpha-fp+f))/denom
-        # c = dfdalpha
-        # d = f
-        # alphafit = real(-b+sqrt(complex(b^2-3*a*c)))/(3*a)
-
-        # println(alphafit)
-        # # println(b^2 - 3*a*c)
-        # # if b^2 - 3*a*c >= 0
-        # #     alphafit = (-b+sqrt(b^2-3*a*c))/(3*a)
-        # #     fminfit = (2*b^3-9*a*b*c-2*b^2*sqrt(b^2-3*a*c)+6*a*c*sqrt(b^2-3*a*c)+27*a^2*d)/(27*a^2)
-        # #     println("n = ",n," cubic")
-        # # end
-
         # x .-= minusdeltax*alpha1
 
         # push!(alphas,alphafit)
@@ -482,7 +511,9 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
 
     # calculate the scattering parameters for the pump
     # Nports = length(cdict[:P])
-    Nports = length(portdict)
+    # Nports = length(portdict)
+    Nports = length(portindices)
+
     # input = zeros(Complex{Float64},Nports*Nmodes)
     input = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
 

@@ -623,7 +623,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
                 # reusing the symbolic factorization can sometimes lead to
                 # numerical problems. if the first linear solve fails
                 # try factoring and solving again
-                F = KLU.klu(Jsparse)
+                factorization = KLU.klu(Jsparse)
                 ldiv!(deltax,factorization,F)
             else
                 throw(e)
