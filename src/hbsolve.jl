@@ -485,6 +485,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     # extract the elements we need
     Nnodes = psc.Nnodes
+    typevector = psc.typevector
     nodeindexarraysorted = psc.nodeindexarraysorted
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
@@ -718,19 +719,19 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
 
     # calculate the scattering parameters for the pump
-    # Nports = length(cdict[:P])
     Nports = length(portindices)
-    # input = zeros(Complex{Float64},Nports*Nmodes)
-    # input = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
-
-    input = zeros(Complex{Float64},Nports*Nmodes)    
-    output = zeros(Complex{Float64},Nports*Nmodes)
-    phibports = zeros(Complex{Float64},Nports*Nmodes)
-    S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
     # calculate the scattering parameters
     if any(Ip .> 0)
-        # calcS!(S,input/Lmean,output)
+        # portimpedances = [vvn[i] for i in portimpedanceindices]
+        # noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
+
+        # inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
+        # outputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+        # S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+
+        # calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
+        #     portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
     end
 
     return NonlinearHB(out,phin,Rbnm,Ljb,Lb,Ljbm,Nmodes,Nbranches,S)

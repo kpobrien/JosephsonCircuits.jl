@@ -457,29 +457,13 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindic
                 # scale the branch flux by frequency to get voltage
                 portvoltage *= im*wmodes[j]
 
-                # # calculate the port impedance
-                # if inputportimpedances[i] isa Symbolic
-                #     if !(symfreqvar isa Symbolic)
-                #         error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-                #     end
-                #     portimpedance = substitute(inputportimpedances[i],Dict(symfreqvar=>wmodes[j]))
-                # else
-                #     portimpedance = inputportimpedances[i]
-                # end
-
-                # # portimpedance = inputportimpedances[i]
-                # # take the complex conjugate if frequency is negative
-                # if wmodes[j] < 0
-                #     portimpedance = conj(portimpedance)
-                # end
-                # println(typevector[inputportindices[i]])
+                # calculate the port impedance
                 portimpedance = calcimpedance(inputportimpedances[i],typevector[inputportindices[i]],wmodes[j],symfreqvar)
 
                 # calculate the current flowing through the port
                 portcurrent = sourcecurrent - portvoltage / portimpedance
 
                 # calculate the scaling factor for the waves
-                # kval = 1 / sqrt(real(portimpedance))
                 kval = 1 / sqrt(Complex(real(portimpedance)))
 
 
@@ -532,31 +516,14 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindic
                 # scale the branch flux by frequency to get voltage
                 portvoltage *= im*wmodes[j]
 
-                # # calculate the port impedance
-                # if outputportimpedances[i] isa Symbolic
-                #     if !(symfreqvar isa Symbolic)
-                #         error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-                #     end
-                #     portimpedance = substitute(outputportimpedances[i],Dict(symfreqvar=>wmodes[j]))
-                # else
-                #     portimpedance = outputportimpedances[i]
-                # end
-
-                # # portimpedance = vvn[outputportindices[i]]
-                # # take the complex conjugate if frequency is negative
-                # if wmodes[j] < 0
-                #     portimpedance = conj(portimpedance)
-                # end
+                # calculate the port impedance
                 portimpedance = calcimpedance(outputportimpedances[i],typevector[outputportindices[i]],wmodes[j],symfreqvar)
-
 
                 # calculate the current flowing through the port
                 portcurrent = sourcecurrent - portvoltage / portimpedance
 
                 # calculate the scaling factor for the waves
-                # kval = 1 / sqrt(real(portimpedance))
                 kval = 1 / sqrt(Complex(real(portimpedance)))
-
 
                 # convert from sqrt(power) to sqrt(photons/second)
                 kval *= 1 /sqrt(abs(wmodes[j]))
@@ -634,32 +601,14 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
                 # scale the branch flux by frequency to get voltage
                 portvoltage *= im*wmodes[j]
 
-                # # calculate the port impedance
-                # if inputportimpedances[i] isa Symbolic
-                #     if !(symfreqvar isa Symbolic)
-                #         error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-                #     end
-                #     portimpedance = substitute(inputportimpedances[i],Dict(symfreqvar=>wmodes[j]))
-                # else
-                #     portimpedance = inputportimpedances[i]
-                # end
-
-                # # portimpedance = inputportimpedances[i]
-                # # take the complex conjugate if frequency is negative
-                # if wmodes[j] < 0
-                #     portimpedance = conj(portimpedance)
-                # end
-                # println(typevector[inputportindices[i]])
+                # calculate the port impedance
                 portimpedance = calcimpedance(inputportimpedances[i],typevector[inputportindices[i]],wmodes[j],symfreqvar)
 
                 # calculate the current flowing through the port
                 portcurrent = sourcecurrent - portvoltage / portimpedance
 
                 # calculate the scaling factor for the waves
-                # kval = 1 / sqrt(real(portimpedance))
-                # kval = 1 / sqrt(Complex(real(portimpedance)))
-                kval = 1/sqrt(50.0)
-
+                kval = 1 / sqrt(Complex(real(portimpedance)))
 
                 # convert from sqrt(power) to sqrt(photons/second)
                 kval *= 1 /sqrt(abs(wmodes[j]))
@@ -710,30 +659,14 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
                 # scale the branch flux by frequency to get voltage
                 portvoltage *= im*wmodes[j]
 
-                # # calculate the port impedance
-                # if outputportimpedances[i] isa Symbolic
-                #     if !(symfreqvar isa Symbolic)
-                #         error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-                #     end
-                #     portimpedance = substitute(outputportimpedances[i],Dict(symfreqvar=>wmodes[j]))
-                # else
-                #     portimpedance = outputportimpedances[i]
-                # end
-
-                # # portimpedance = vvn[outputportindices[i]]
-                # # take the complex conjugate if frequency is negative
-                # if wmodes[j] < 0
-                #     portimpedance = conj(portimpedance)
-                # end
+                # calculate the port impedance
                 portimpedance = calcimpedance(outputportimpedances[i],typevector[outputportindices[i]],wmodes[j],symfreqvar)
-
 
                 # calculate the current flowing through the port
                 # portcurrent = sourcecurrent - portvoltage / portimpedance
                 portcurrent = - portvoltage / portimpedance
 
                 # calculate the scaling factor for the waves
-                # kval = 1 / sqrt(real(portimpedance))
                 kval = 1 / sqrt(Complex(real(portimpedance)))
 
                 # convert from sqrt(power) to sqrt(photons/second)
