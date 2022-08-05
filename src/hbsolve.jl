@@ -721,6 +721,9 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # calculate the scattering parameters for the pump
     Nports = length(portindices)
 
+    S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+
+
     # calculate the scattering parameters
     if any(Ip .> 0)
         # portimpedances = [vvn[i] for i in portimpedanceindices]
@@ -728,8 +731,6 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
         # inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
         # outputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-        S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-
         # calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
         #     portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
     end
