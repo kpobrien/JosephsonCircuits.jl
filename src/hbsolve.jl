@@ -199,13 +199,13 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     end        
 
     if returnnodeflux
-        nodeflux = Vector{Complex{Float64}}(undef,0)
+        nodeflux = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
     else
         nodeflux = Vector{Complex{Float64}}(undef,0)
     end        
 
     if returnvoltage
-        voltage = Vector{Complex{Float64}}(undef,0)
+        voltage = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
     else
         voltage = Vector{Complex{Float64}}(undef,0)    
     end    
