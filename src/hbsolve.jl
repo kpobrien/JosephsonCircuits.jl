@@ -97,10 +97,6 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     portimpedanceindices = nm.portimpedanceindices
     noiseportimpedanceindices = nm.noiseportimpedanceindices
     vvn = nm.vvn
-    # portdict = nm.portdict
-    # resistordict = nm.resistordict
-    # capacitornoiseports  = nm.capacitornoiseports
-    # resistornoiseports = nm.resistornoiseports
 
     # generate the mode indices and find the signal index
     indices = calcindices(Nmodes)
@@ -142,8 +138,6 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     Cnmfreqsubstindices  = symbolicindices(Cnm)
     Gnmfreqsubstindices  = symbolicindices(Gnm)
     invLnmfreqsubstindices  = symbolicindices(invLnm)
-    # capacitornoiseportsfreqsubstindices  = symbolicindices(capacitornoiseports)
-    # resistornoiseportsfreqsubstindices = symbolicindices(resistornoiseports)
 
     # drop any zeros in AoLjnm
     dropzeros!(AoLjnm)
@@ -161,12 +155,6 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     Gnmindexmap = sparseaddmap(Asparse,Gnmcopy)
     invLnmindexmap = sparseaddmap(Asparse,invLnmcopy)
     AoLjnmindexmap = sparseaddmap(Asparse,AoLjnm)
-
-    # # solve for node fluxes and scattering parameters
-    # portbranches = collect(keys(portdict))
-    # portimpedance = collect(values(resistordict))
-    # noiseportbranches = collect(keys(resistornoiseports))
-    # noiseportimpedance = collect(values(resistornoiseports))
 
     portimpedances = [vvn[i] for i in portimpedanceindices]
     noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
@@ -514,13 +502,14 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
 
     # calculate the source terms in the branch basis
-    bbm = zeros(Complex{Float64},Nbranches*Nmodes)    
-    for (i,portindex) in enumerate(portindices)
-        portnumber = portnumbers[i]
-        key = (nodeindexarraysorted[1,portindex],nodeindexarraysorted[2,portindex])
-        if portnumber in ports
-            # bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip/phi0
-            bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip[portindex]/phi0
+    bbm = zeros(Complex{Float64},Nbranches*Nmodes)
+    for (i,port) in enumerate(ports)
+        for (j,portnumber) in enumerate(portnumbers)
+            if portnumber == port
+                portindex = portindices[j]
+                key = (nodeindexarraysorted[1,portindex],nodeindexarraysorted[2,portindex])
+                bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip[i]/phi0
+            end
         end
     end
 
