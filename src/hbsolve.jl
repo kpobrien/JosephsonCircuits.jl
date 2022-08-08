@@ -95,8 +95,19 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     invLnm = nm.invLnm
     portindices = nm.portindices
     portimpedanceindices = nm.portimpedanceindices
-    noiseportimpedanceindices = nm.noiseportimpedanceindices
     vvn = nm.vvn
+
+    # if there is a symbolic frequency variable, then we need to redo the noise
+    # port calculation because calcnoiseportimpedanceindices() can't tell if a
+    # symbolic expression is complex. 
+    if symfreqvar == nothing
+        noiseportimpedanceindices = nm.noiseportimpedanceindices
+    else
+        noiseportimpedanceindices = calcnoiseportimpedanceindices(
+            psc.typevector,psc.nodeindexarraysorted,
+            psc.mutualinductorvector,
+            Symbolics.substitute.(nm.vvn,symfreqvar=>w[1]))
+    end
 
     # generate the mode indices and find the signal index
     indices = calcindices(Nmodes)

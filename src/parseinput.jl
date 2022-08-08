@@ -1100,9 +1100,13 @@ function calcnoiseportimpedanceindices(typevector::Vector{Symbol},nodeindexarray
                 push!(out,i)
             end
         elseif type == :C && valuevector[i] isa Complex
-            push!(out,i)
+            if !iszero(valuevector[i].im)
+                push!(out,i)
+            end
         elseif type == :L && valuevector[i] isa Complex
-            push!(out,i)
+            if !iszero(valuevector[i].im)
+                push!(out,i)
+            end
         end
     end
 
@@ -1126,7 +1130,8 @@ function calcportindicesnumbers(typevector::Vector{Symbol},nodeindexarray::Matri
 
 
     portarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
-    portnumbers = Vector{eltype(valuevector)}(undef,0)
+    # portnumbers = Vector{eltype(valuevector)}(undef,0)
+    portnumbers = Vector{Int64}(undef,0)
     portindices = Int64[]
 
     # find the ports
@@ -1172,7 +1177,8 @@ function calcportimpedanceindices(typevector::Vector{Symbol},nodeindexarray::Mat
 
 
     portarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
-    portnumbers = Vector{eltype(valuevector)}(undef,0)
+    # portnumbers = Vector{eltype(valuevector)}(undef,0)
+    portnumbers = Vector{Int64}(undef,0)
     portindices = Int64[]
 
     # find the ports
@@ -1468,7 +1474,7 @@ function valuevectortonumber(valuevector::Vector,circuitdefs::Dict)
     return map(valuetonumber,valuevector,Base.Iterators.repeated(circuitdefs,length(valuevector)))
 end
 
-"""s
+"""
     valuetonumber(value::Symbol,circuitdefs)
 
 If the component value is a symbol, assume it is a dictionary key.
@@ -1499,9 +1505,9 @@ function valuetonumber(value::String,circuitdefs)
 end
 
 """
-    valuetonumber(value,circuitdefs)
+    valuetonumber(value::Symbolics.Num,circuitdefs)
 
-If the component value is symbolic, then try substituting in the definition
+If the component value is Symbolics.Num, then try substituting in the definition
 from circuitdefs. 
 
 # Examples
@@ -1517,13 +1523,47 @@ function valuetonumber(value::Symbolics.Num,circuitdefs)
     # for Num types if we ever add Symbolics. unwrap helps speed up
     # their evaluation and evalutes to a number. 
     return Symbolics.substitute(Symbolics.unwrap(value),circuitdefs)
-    # return substitute(unwrap(value),circuitdefs)
-    # return substitute(value,circuitdefs)
 end
+
+
+"""
+    valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
+
+If the component value is Complex{Symbolics.Num}, then try substituting in the
+definition from circuitdefs. 
+
+NOTE: Below fails because Symbolics.jl doesn't have good support for complex 
+numbers. 
+@variables Lj1::Complex Lj2::Complex;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
+4.0e-12
+
+# Examples
+```jldoctest
+julia> @variables Lj1::Complex;JosephsonCircuits.valuetonumber(Lj1,Dict(Lj1=>3.0e-12))
+3.0e-12
+```
+"""
+function valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
+    return Symbolics.unwrap(Symbolics.substitute(value,circuitdefs))
+end
+
+"""
+    valuetonumber(value::Symbolics.Symbol,circuitdefs)
+
+If the component value is Complex{Symbolics.Num}, then try substituting in the
+definition from circuitdefs. 
+
+# Examples
+```jldoctest
+julia> @syms Lj1;JosephsonCircuits.valuetonumber(Lj1,Dict(Lj1=>3.0e-12))
+3.0e-12
+
+julia> @syms Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
+4.0e-12
+```
+"""
 function valuetonumber(value::Symbolics.Symbolic,circuitdefs)
     return Symbolics.substitute(value,circuitdefs)
-    # return substitute(unwrap(value),circuitdefs)
-    # return substitute(value,circuitdefs)
 end
 
 

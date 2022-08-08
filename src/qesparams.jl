@@ -704,12 +704,11 @@ function calcimpedance(c,type,w,symfreqvar)
         end
     elseif type == :C
         if w >= 0
-            return 1/abs(w*imag(c))
-            # return -1/(im*w*c)
-
+            # return 1/abs(w*imag(c))
+            return 1/(im*w*c)
         else
-            return 1/abs(w*imag(c))
-            # return 1/imag(w*c)
+            # return 1/abs(w*imag(c))
+            return 1/(im*w*conj(c))
         end
     else
         error("Unknown component type")
@@ -727,7 +726,7 @@ function calcimpedance(c::Symbolics.Num,type,w,symfreqvar)
         if w >= 0
             return 1/(im*w*Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w))
         else
-            return conj(1/(im*w*Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w)))
+            return 1/(im*w*conj(Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w)))
         end
     else
         error("Unknown component type")
@@ -745,7 +744,7 @@ function calcimpedance(c::Symbolics.Symbolic,type,w,symfreqvar)
         if w >= 0
             return 1/(im*w*Symbolics.substitute(c,symfreqvar => w))
         else
-            return conj(1/(im*w*Symbolics.substitute(c,symfreqvar => w)))
+            return 1/(im*w*conj(Symbolics.substitute(c,symfreqvar => w)))
         end
     else
         error("Unknown component type")
