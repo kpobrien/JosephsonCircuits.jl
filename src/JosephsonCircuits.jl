@@ -10,7 +10,6 @@ module JosephsonCircuits
 
 import Graphs
 import FFTW
-import Statistics
 import KLU
 import UUIDs
 import Symbolics: Symbolic, Sym

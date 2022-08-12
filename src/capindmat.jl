@@ -146,23 +146,6 @@ function numericmatrices(psc::ParsedSortedCircuit,cg::CircuitGraph,
     # calculate Lmean
     Lmean = calcLmean(psc.typevector,vvn)    
 
-    # # calculate the resistor and port dictionaries
-    # portdict=componentdictionaryP(psc.typevector,psc.nodeindexarraysorted,
-    #     psc.mutualinductorvector,vvn)
-
-    # resistordict=componentdictionaryR(psc.typevector,psc.nodeindexarraysorted,
-    #     psc.mutualinductorvector,vvn)
-
-
-    # portimpedance=calcportimpedance(psc.typevector,psc.nodeindexarraysorted,
-    #     psc.mutualinductorvector,vvn)
-
-    # capacitornoiseports = calcnoiseportsC(psc.typevector,psc.nodeindexarraysorted,
-    #     psc.mutualinductorvector,vvn)
-
-    # resistornoiseports = calcnoiseportsR(psc.typevector,psc.nodeindexarraysorted,
-    #     psc.mutualinductorvector,vvn)
-
     portindices, portnumbers = calcportindicesnumbers(psc.typevector,psc.nodeindexarraysorted,
         psc.mutualinductorvector,vvn)
 
@@ -174,9 +157,6 @@ function numericmatrices(psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     return CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portindices,portnumbers,
         portimpedanceindices,noiseportimpedanceindices,Lmean,vvn)
-    # return CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portdict,
-    #     portimpedance,capacitornoiseports,resistornoiseports,Lmean)
-
 end
 
 
