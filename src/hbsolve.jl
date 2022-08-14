@@ -1,46 +1,131 @@
 
 """
+    hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
+        pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+        symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
+        returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
+        returnnodeflux = false, returnvoltage = false, verbosity = 1)
 
-    hbsolve()
+Harmonic balance solver for single-pump four wave mixing processes in circuits
+containing Josephson junctions, capacitors, inductors, and resistors. Dissipation
+can be included through frequency dependent resistors or complex capacitance.
 
+Returns user specified scattering parameters, quantum efficiency, and node
+fluxes or voltages.
+
+# Arguments
+- `ws`: signal frequency or vector of signal frequencies in radians/second.
+- `wp`: pump frequency in radians/second. This function only supports a single
+    pump frequency. 
+- `Ip`: pump current or vector of pump currents in amps. Length of `Ip` must
+    be equal to length of `pumpports`.
+- `Nsignalmodes`: number of signal and idler modes.
+- `Npumpmodes`: number of pump modes (pump harmonics).
+- `circuit`: vector of tuples containing component names, nodes, and values. 
+- `circuitdefs`: dictionary defining the numerical values of circuit components.
+
+# Keywords
+- `pumpports = [1]`: vector of pump port numbers. Default is a single pump at port 1. 
+- `solver = :klu`: linear solver (actually the factorization method).
+- `iterations = 1000`: number of iterations at which the nonlinear solver stops
+    even if convergence criteria not reached. 
+- `ftol = 1e-8`: relative or absolute tolerance at which nonlinear solver stops
+    (whichever is reached first).
+- `symfreqvar = nothing`: symbolic frequency variable which is set to `nothing`
+    by default but should be set equal to the frequency variable like `w` if 
+    there is frequency dependence.
+- `nbatches = Base.Threads.nthreads()`: for the linearized harmonic balance solution,
+    split the solutions for different frequencies into this many batches. Set
+    equalt to the number of threads. Recommend configuring Julia to use 
+    Sys.CPU_THREADS/2 threads. 
+- `sorting = :number`: sort the ports by turning them into integers and sorting
+    those integers. See [`sortnodes`](@ref) for other options if this fails.
+- `returnS = true`: if `true`, return the scattering parameters for each set
+    of ports and signal and idler frequencies.
+- `returnSnoise = false`: if `true`, return the scattering parameters corresponding
+    to inputs at the noise ports (lossy components) and outputs at the physical
+    ports for the signal and idler frequencies. 
+- `returnQE = true`: if `true`, return the quantum efficiency for each signal
+    and idler at each combinaton of ports.
+- `returnCM = true`: if `true`, return the commutation relations for each signal
+    and idler at each combinaton of ports (should equal ±1).
+- `returnnodeflux = false`: if `true`, return the node fluxes for each signal
+    and idler at each node. Set to `false` by default to reduce memory usage. 
+- `returnvoltage = false`: if `true`, return the node voltages for each signal
+    and idler at each node. Set to `false` by default to reduce memory usage. 
+- `verbosity = 1`: Control how much info to print. Currently does nothing. 
+
+# Examples
+```
+@variables Rleft Cc Lj Cj w L1
+circuit = Tuple{String,String,String,Num}[]
+push!(circuit,("P1","1","0",1))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("C1","1","2",Cc)) 
+push!(circuit,("Lj1","2","0",Lj)) 
+push!(circuit,("C2","2","0",Cj))
+circuitdefs = Dict(
+    Lj =>1000.0e-12,
+    Cc => 100.0e-15,
+    Cj => 1000.0e-15,
+    Rleft => 50.0,
+)
+ws = 2*pi*(4.5:0.01:5.0)*1e9
+wp = 2*pi*4.75001*1e9
+Ip = 0.00565e-6
+Nsignalmodes = 8
+Npumpmodes = 8
+result=hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs,pumpports=[1])
+using Plots;plot(ws/(2*pi*1e9),10*log10.(abs2.(result.signal.S[result.signal.signalindex,result.signal.signalindex,:])))
+```
 """
-
-function hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports=[1],
-    solver =:klu, iterations=1000,ftol=1e-8,symfreqvar=nothing,
-    nbatches = Base.Threads.nthreads(), sorting=:number, returnS = true,
-    returnSnoise = false, returnQE = true,returnCM = true,
-    returnnodeflux = false, returnvoltage = false,verbosity = 1)
+function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
+    pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+    symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
+    returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
+    returnnodeflux = false, returnvoltage = false, verbosity = 1)
 
     # parse and sort the circuit
-    psc = parsesortcircuit(circuit,sorting=sorting)
+    psc = parsesortcircuit(circuit, sorting=sorting)
 
     # calculate the circuit graph
     cg = calccircuitgraph(psc)
 
     # solve the nonlinear system    
-    pump=hbnlsolve(wp,Ip,Npumpmodes,psc,cg,circuitdefs,ports=pumpports,
-        solver=solver,iterations=iterations,ftol=ftol,symfreqvar=symfreqvar,
-        verbosity = verbosity)
+    pump=hbnlsolve(wp, Ip, Npumpmodes, psc, cg, circuitdefs, ports = pumpports,
+        solver = solver, iterations = iterations, ftol = ftol,
+        symfreqvar = symfreqvar, verbosity = verbosity)
 
     # the node flux
     # phin = pump.out.zero
-    phin = pump.phin    
+    nodeflux = pump.nodeflux    
 
     # convert from node flux to branch flux
-    phib = pump.Rbnm*phin
+    phib = pump.Rbnm*nodeflux
 
     # calculate the sine and cosine nonlinearities from the pump flux
-    Am = sincosnloddtoboth(phib[pump.Ljbm.nzind],length(pump.Ljb.nzind),pump.Nmodes)
+    Am = sincosnloddtoboth(phib[pump.Ljbm.nzind], length(pump.Ljb.nzind), pump.Nmodes)
 
     # solve the linear system
-    signal=hblinsolve(ws,psc,cg,circuitdefs,wp=wp,Nmodes=Nsignalmodes,
-        Am=Am,solver=solver,symfreqvar=symfreqvar,nbatches = nbatches,
+    signal=hblinsolve(ws, psc, cg, circuitdefs, wp = wp, Nmodes = Nsignalmodes,
+        Am = Am, solver = solver, symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
-        returnCM = returnCM,returnnodeflux = returnnodeflux,
-        returnvoltage = returnvoltage,verbosity = verbosity)
-    return HB(pump,Am,signal)
+        returnCM = returnCM, returnnodeflux = returnnodeflux,
+        returnvoltage = returnvoltage, verbosity = verbosity)
+    return HB(pump, Am, signal)
 end
 
+
+"""
+    HB(pump, Am, signal)
+
+A simple structure to hold the nonlinear and linearized harmonic balance solutions.
+
+# Fields
+- `pump`: nonlinear harmonic balance solution for pump and pump harmonics
+- `Am`: matrix encoding pump modulation
+- `signal`: linearized harmonic balance solution
+"""
 struct HB
     pump
     Am
@@ -49,38 +134,103 @@ end
 
 
 """
+    hblinsolve(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
+        Am = zeros(Complex{Float64},0,0), solver = :klu, symfreqvar = nothing,
+        nbatches = Base.Threads.nthreads(), sorting = :number, returnS = true,
+        returnSnoise = false, returnQE = true, returnCM = true,
+        returnnodeflux = false, returnvoltage = false, verbosity = 1)
 
-    hblinsolve(w,wp,Nmodes,circuit,circuitdefs,Am)
+Linearized harmonic balance solver for single-pump four wave mixing processes in circuits
+containing Josephson junctions, capacitors, inductors, and resistors. Dissipation
+can be included through frequency dependent resistors or complex capacitance.
 
+Returns user specified scattering parameters, quantum efficiency, and node
+fluxes or voltages.
+
+# Arguments
+- `w`: signal frequency or vector of signal frequencies in radians/second.
+- `circuit`: vector of tuples containing component names, nodes, and values. 
+- `circuitdefs`: dictionary defining the numerical values of circuit components.
+
+# Keywords
+- `wp = 0.0`: pump frequency in radians/second. This function only supports a single
+    pump frequency.
+- `Nmodes = 1`: number of signal and idler modes.
+- `Am = zeros(Complex{Float64},0,0)`: 
+- `solver = :klu`: linear solver (actually the factorization method).
+- `symfreqvar = nothing`: symbolic frequency variable which is set to `nothing`
+    by default but should be set equal to the frequency variable like `w` if 
+    there is frequency dependence.
+- `nbatches = Base.Threads.nthreads()`: for the linearized harmonic balance solution,
+    split the solutions for different frequencies into this many batches. Set
+    equalt to the number of threads. Recommend configuring Julia to use 
+    Sys.CPU_THREADS/2 threads. 
+- `sorting = :number`: sort the ports by turning them into integers and sorting
+    those integers. See [`sortnodes`](@ref) for other options if this fails.
+- `returnS = true`: if `true`, return the scattering parameters for each set
+    of ports and signal and idler frequencies.
+- `returnSnoise = false`: if `true`, return the scattering parameters corresponding
+    to inputs at the noise ports (lossy components) and outputs at the physical
+    ports for the signal and idler frequencies. 
+- `returnQE = true`: if `true`, return the quantum efficiency for each signal
+    and idler at each combinaton of ports.
+- `returnCM = true`: if `true`, return the commutation relations for each signal
+    and idler at each combinaton of ports (should equal ±1).
+- `returnnodeflux = false`: if `true`, return the node fluxes for each signal
+    and idler at each node. Set to `false` by default to reduce memory usage. 
+- `returnvoltage = false`: if `true`, return the node voltages for each signal
+    and idler at each node. Set to `false` by default to reduce memory usage. 
+- `verbosity = 1`: Control how much info to print. Currently does nothing. 
+
+# Examples
+```
+@variables Rleft Cc Lj Cj w L1
+circuit = Tuple{String,String,String,Num}[]
+push!(circuit,("P1","1","0",1))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("C1","1","2",Cc)) 
+push!(circuit,("Lj1","2","0",Lj)) 
+push!(circuit,("C2","2","0",Cj))
+circuitdefs = Dict(
+    Lj =>1000.0e-12,
+    Cc => 100.0e-15,
+    Cj => 1000.0e-15,
+    Rleft => 50.0,
+)
+w = 2*pi*(4.5:0.01:5.0)*1e9
+result=hblinsolve(w, circuit, circuitdefs)
+using Plots;plot(w/(2*pi*1e9),angle.(result.S[:]))
+```
 """
-function hblinsolve(w,circuit,circuitdefs;wp=0,Nmodes=1,Am=zeros(Complex{Float64},0,0),
-    solver=:klu,symfreqvar=nothing, nbatches = Base.Threads.nthreads(), 
-    sorting=:number,returnS = true, returnSnoise = false, returnQE = true,
-    returnCM = true,returnnodeflux = false, returnvoltage = false,verbosity = 1)
+function hblinsolve(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
+    Am = zeros(Complex{Float64},0,0), solver = :klu, symfreqvar = nothing,
+    nbatches = Base.Threads.nthreads(), sorting = :number, returnS = true,
+    returnSnoise = false, returnQE = true, returnCM = true,
+    returnnodeflux = false, returnvoltage = false, verbosity = 1)
 
     # parse and sort the circuit
-    psc = parsesortcircuit(circuit,sorting=sorting)
+    psc = parsesortcircuit(circuit, sorting = sorting)
 
     # calculate the circuit graph
     cg = calccircuitgraph(psc)
 
-    return hblinsolve(w,psc,cg,circuitdefs;wp=wp,Nmodes=Nmodes,Am=Am,
-        solver=solver,symfreqvar=symfreqvar, nbatches = nbatches, 
+    return hblinsolve(w, psc, cg, circuitdefs; wp = wp, Nmodes = Nmodes,
+        Am = Am, solver = solver, symfreqvar = symfreqvar, nbatches = nbatches, 
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
-        returnCM = returnCM,returnnodeflux = returnnodeflux,
-        returnvoltage = returnvoltage,verbosity = verbosity)
+        returnCM = returnCM, returnnodeflux = returnnodeflux,
+        returnvoltage = returnvoltage, verbosity = verbosity)
 end
 
-function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
-    circuitdefs;wp=0.0,Nmodes::Integer=1,Am=zeros(Complex{Float64},0,0),
-    solver=:klu,symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
+function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
+    circuitdefs; wp = 0.0, Nmodes::Integer = 1, Am = zeros(Complex{Float64},0,0),
+    solver = :klu, symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-    returnnodeflux = false, returnvoltage = false,verbosity = 1)
+    returnnodeflux = false, returnvoltage = false, verbosity = 1)
 
     @assert nbatches >= 1
 
     # calculate the numeric matrices
-    nm=numericmatrices(psc,cg,circuitdefs,Nmodes=Nmodes)
+    nm = numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
     # extract the elements we need
     Nnodes = psc.Nnodes
@@ -104,9 +254,9 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
         noiseportimpedanceindices = nm.noiseportimpedanceindices
     else
         noiseportimpedanceindices = calcnoiseportimpedanceindices(
-            psc.typevector,psc.nodeindexarraysorted,
+            psc.typevector, psc.nodeindexarraysorted,
             psc.mutualinductorvector,
-            Symbolics.substitute.(nm.vvn,symfreqvar=>w[1]))
+            Symbolics.substitute.(nm.vvn, symfreqvar => w[1]))
     end
 
     # generate the mode indices and find the signal index
@@ -115,7 +265,7 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
 
     # if Am is undefined, define it. 
     if length(Am) == 0
-        Am = zeros(Complex{Float64},2*Nmodes,length(Ljb.nzval))
+        Am = zeros(Complex{Float64}, 2*Nmodes, length(Ljb.nzval))
 
         Am[1,:] .= 1.0
     end
@@ -216,12 +366,13 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
     # parallelize using native threading
     batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
     Base.Threads.@threads for i in 1:length(batches)
-        hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
-            AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-            Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-            portindices,portimpedanceindices,noiseportimpedanceindices,
-            portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,
-            w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,batches[i])
+        hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
+            AoLjnm, invLnm, Cnm, Gnm, bnm,
+            AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
+            Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
+            portindices, portimpedanceindices, noiseportimpedanceindices,
+            portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
+            w, indices, wp, Nmodes, Nnodes, solver, symfreqvar, batches[i])
     end
 
     if returnQE
@@ -232,10 +383,36 @@ function hblinsolve(w,psc::ParsedSortedCircuit,cg::CircuitGraph,
         QEideal = zeros(Float64,0,0,0)
     end
 
-    return LinearHB(S,Snoise,QE,QEideal,CM,nodeflux,voltage,Nmodes,Nnodes,Nbranches,signalindex,w)
-
+    return LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, voltage, Nmodes,
+        Nnodes, Nbranches, signalindex,w)
 end
 
+
+"""
+    LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, voltage, Nmodes, Nnodes,
+        Nbranches, signalindex, w)
+
+A simple structure to hold the linearized harmonic balance solutions.
+
+# Fields
+- `S`: the scattering matrix relating inputs and outputs for each combination
+    of port and frequency. 
+- `Snoise`: the scattering matrix relating inputs at the noise ports 
+    (lossy devices) and outputs at the physical ports for each combination of 
+    port and frequency. 
+- `QE`: the quantum efficiency for each combination of port and frequency. 
+- `QEideal`: the quantum efficiency for an ideal amplifier with the same level
+    of gain, for each combination of port and frequency. 
+- `CM`: the commutation relations (equal to ±1), for each combination of port
+    and frequency. 
+- `nodeflux`: the node fluxes resulting from inputs at each frequency and port. 
+- `voltage`: the node voltages resulting from inputs at each frequency and port. 
+- `Nmodes`: the number of signal and idler frequencies. 
+- `Nnodes`: the number of nodes in the circuit (including the ground node).
+- `Nbranches`: the number of branches in the circuit.
+- `signalindex`: the index of the signal mode. 
+- `w`: the signal frequencies.
+"""
 struct LinearHB
     S
     Snoise
@@ -251,13 +428,26 @@ struct LinearHB
     w
 end
 
+"""
+    hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
+        AoLjnm, invLnm, Cnm, Gnm, bnm,
+        AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
+        Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
+        portindices, portimpedanceindices, noiseportimpedanceindices,
+        portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
+        w, indices, wp, Nmodes, Nnodes, solver, symfreqvar, wi)
 
-function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm,Cnm,Gnm,bnm,
-    AoLjnmindexmap,invLnmindexmap,Cnmindexmap,Gnmindexmap,
-    Cnmfreqsubstindices,Gnmfreqsubstindices,invLnmfreqsubstindices,
-    portindices,portimpedanceindices,noiseportimpedanceindices,
-    portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,
-    w,indices,wp,Nmodes,Nnodes,solver,symfreqvar,wi)
+Solve the linearized harmonic balance problem for a subset of the frequencies
+given by `wi`. This function is thread safe in that different frequencies can
+be computed in parallel on separate threads. 
+"""
+function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
+    AoLjnm, invLnm, Cnm, Gnm, bnm,
+    AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
+    Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
+    portindices, portimpedanceindices, noiseportimpedanceindices,
+    portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
+    w, indices, wp, Nmodes, Nnodes, solver, symfreqvar, wi)
 
     Nports = length(portindices)
     phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
@@ -438,49 +628,89 @@ function hblinsolve_inner!(S,Snoise,QE,CM,nodeflux,voltage,Asparse,AoLjnm,invLnm
                 calccm!(view(CM,:,i),Sview, wmodes)
             end
         end
-
-
     end
     return nothing
 end
 
-
 """
-    hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs)
+    hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
+        solver = :klu, iterations = 1000, ftol = 1e-8, symfreqvar = nothing,
+        sorting = :number, verbosity = 1)
 
-I should make it so i can easily sweep pump frequency and pump current
-without parsing this again. at the very least i should define this
-so that i can pass in the already parsed circuit and already generated
-numeric matrices.
+Nonlinear harmonic balance solver for single-pump four wave mixing processes in circuits
+containing Josephson junctions, capacitors, inductors, and resistors. Dissipation
+can be included through frequency dependent resistors or complex capacitance.
 
+# Arguments
+- `wp`: pump frequency in radians/second. This function only supports a single
+    pump frequency. 
+- `Ip`: pump current or vector of pump currents in amps. Length of `Ip` must
+    be equal to length of `ports`.
+- `Nmodes`: number of modes (harmonics).
+- `circuit`: vector of tuples containing component names, nodes, and values. 
+- `circuitdefs`: dictionary defining the numerical values of circuit components.
+
+# Keywords
+- `ports = [1]`: vector of drive port numbers. Default is a single drive at port 1. 
+- `solver = :klu`: linear solver (actually the factorization method).
+- `iterations = 1000`: number of iterations at which the nonlinear solver stops
+    even if convergence criteria not reached. 
+- `ftol = 1e-8`: relative or absolute tolerance at which nonlinear solver stops
+    (whichever is reached first).
+- `symfreqvar = nothing`: symbolic frequency variable which is set to `nothing`
+    by default but should be set equal to the frequency variable like `w` if 
+    there is frequency dependence.
+- `sorting = :number`: sort the ports by turning them into integers and sorting
+    those integers. See [`sortnodes`](@ref) for other options if this fails.
+- `verbosity = 1`: Control how much info to print. Currently does nothing. 
+
+# Examples
+```
+@variables Rleft Cc Lj Cj w L1
+circuit = Tuple{String,String,String,Num}[]
+push!(circuit,("P1","1","0",1))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("C1","1","2",Cc)) 
+push!(circuit,("Lj1","2","0",Lj)) 
+push!(circuit,("C2","2","0",Cj))
+circuitdefs = Dict(
+    Lj =>1000.0e-12,
+    Cc => 100.0e-15,
+    Cj => 1000.0e-15,
+    Rleft => 50.0,
+)
+wp = 2*pi*4.75001*1e9
+Ip = 0.00565e-6
+Nmodes = 8
+hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs, ports=[1])
+```
 """
-function hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs;ports=[1],solver=:klu,
-    iterations=1000,symfreqvar=nothing,ftol=1e-8,sorting=:number,
-    verbosity=1)
+function hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
+    solver = :klu, iterations = 1000, ftol = 1e-8, symfreqvar = nothing,
+    sorting = :number, verbosity = 1)
 
     # parse and sort the circuit
-    psc = parsesortcircuit(circuit,sorting=sorting)
+    psc = parsesortcircuit(circuit, sorting = sorting)
 
     # calculate the circuit graph
     cg = calccircuitgraph(psc)
 
-    return hbnlsolve(wp,Ip,Nmodes,psc,cg,circuitdefs;ports=ports,
-        solver=solver,iterations=iterations,ftol=ftol,symfreqvar=symfreqvar,
-        verbosity=verbosity)
+    return hbnlsolve(wp, Ip, Nmodes, psc, cg, circuitdefs; ports = ports,
+        solver = solver, iterations = iterations, ftol = ftol,
+        symfreqvar = symfreqvar, verbosity = verbosity)
 
 end
 
-function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
-    circuitdefs;ports=[1],solver=:klu,iterations=1000,ftol = 1e-8,symfreqvar=nothing,
-    verbosity=1)
-
+function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
+    circuitdefs; ports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+    symfreqvar = nothing, verbosity = 1)
 
     if length(ports) != length(Ip)
         error("Number of currents Ip must be equal to number of pump ports")
     end
 
     # calculate the numeric matrices
-    nm=numericmatrices(psc,cg,circuitdefs,Nmodes=Nmodes)
+    nm = numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
     # extract the elements we need
     Nnodes = psc.Nnodes
@@ -510,7 +740,6 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     end
     wmodesm = Diagonal(repeat(wmodes,outer=Nnodes-1))
     wmodes2m = Diagonal(repeat(wmodes.^2,outer=Nnodes-1))
-
 
     # calculate the source terms in the branch basis
     bbm = zeros(Complex{Float64},Nbranches*Nmodes)
@@ -714,8 +943,7 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
     end
 
 
-    phin = x
-    out = nothing
+    nodeflux = x
 
 
     # calculate the scattering parameters for the pump
@@ -735,16 +963,32 @@ function hbnlsolve(wp,Ip,Nmodes,psc::ParsedSortedCircuit,cg::CircuitGraph,
         #     portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
     end
 
-    return NonlinearHB(out,phin,Rbnm,Ljb,Lb,Ljbm,Nmodes,Nbranches,S)
+    return NonlinearHB(nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
     # return (samples=samples,fmin=fmin,alphas=alphas,
     #     fvals=fvals,fpvals=fpvals,dfdalphavals=dfdalphavals)
     # return normF
 
 end
 
+"""
+    NonlinearHB(nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
+
+A simple structure to hold the nonlinear harmonic balance solutions.
+
+# Fields
+- `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
+- `Rbnm`: incidence matrix to convert between the node and branch basis.
+- `Ljb`: sparse vector of Josephson junction inductances.
+- `Lb`: sparse vector of linear inductances.
+- `Ljbm`: sparse vector of linear inductances with each element duplicated Nmodes times. 
+- `Nmodes`: the number of signal and idler frequencies.
+- `Nnodes`: the number of nodes in the circuit (including the ground node).
+- `Nbranches`: the number of branches in the circuit.
+- `S`: the scattering matrix relating inputs and outputs for each combination
+    of port and frequency (not currently functional).
+"""
 struct NonlinearHB
-    out
-    phin
+    nodeflux
     Rbnm
     Ljb
     Lb
@@ -754,9 +998,8 @@ struct NonlinearHB
     S
 end
 
-
 """
-    calcfj(F,J,phin,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
+    calcfj(F,J,nodeflux,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
         Ljbindicesm,Nmodes,Lmean,AoLjbm)
         
 Calculate the residual and the Jacobian. These are calculated with one function
@@ -764,11 +1007,10 @@ in order to reuse the time domain nonlinearity calculation.
 
 Leave off the type signatures on F and J because the solver will pass a type of
 Nothing if it only wants to calculate F or J. 
-
 """
 function calcfj!(F,
         J,
-        phin::AbstractVector,
+        nodeflux::AbstractVector,
         wmodesm::AbstractMatrix, 
         wmodes2m::AbstractMatrix, 
         Rbnm::AbstractArray{Int64,2}, 
@@ -783,10 +1025,10 @@ function calcfj!(F,
         Nbranches::Int64,
         Lmean,
         AoLjbmvector::AbstractVector,
-        AoLjbm,AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+        AoLjbm, AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap)
 
     # convert from a node flux to a branch flux
-    phib = Rbnm*phin
+    phib = Rbnm*nodeflux
 
     # calculate the sine and cosine nonlinearities 
     Am = sincosnloddtoboth(phib[Ljbm.nzind],nnz(Ljb),Nmodes)
@@ -800,11 +1042,10 @@ function calcfj!(F,
         @inbounds for i = 1:nnz(Ljb)
             for j = 1:Nmodes
                 AoLjbmvector[(Ljb.nzind[i]-1)*Nmodes + j] = Am[2*j,i]*(Lmean/Ljb.nzval[i])
-
             end
         end
 
-        F .= Rbnmt*AoLjbmvector + (invLnm + im*Gnm*wmodesm - Cnm*wmodes2m)*phin - bnm
+        F .= Rbnmt*AoLjbmvector + (invLnm + im*Gnm*wmodesm - Cnm*wmodes2m)*nodeflux - bnm
     end
 
     # calculate the Jacobian
@@ -817,7 +1058,7 @@ function calcfj!(F,
         AoLjnm = Rbnmt*AoLjbm*Rbnm
 
         # calculate the sparse Jacobian.
-        # @time J .= AoLjnm .+ invLnm .- im.*Gnm*wmodesm .- Cnm*wmodes2m
+        # @time J .= AoLjnm .+ invLnm .+ im.*Gnm*wmodesm .- Cnm*wmodes2m
         # the code below adds the sparse matrices together with minimal
         # memory allocations and without changing the sparsity structure.
         fill!(J,0)
@@ -831,8 +1072,7 @@ end
 
 
 """
-    calcAoLjbm(Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches)
-
+    calcAoLjbm(Am, Ljb::SparseVector, Lmean, Nmodes, Nbranches)
 
 # Examples
 ```jldoctest
@@ -849,7 +1089,7 @@ julia> @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([
          ⋅          ⋅  A32 / Lj2  A12 / Lj2
 ```
 """
-function calcAoLjbm(Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches)
+function calcAoLjbm(Am, Ljb::SparseVector, Lmean, Nmodes, Nbranches)
 
     # define empty vectors for the rows, columns, and values
     I = Vector{eltype(Ljb.nzind)}(undef,nnz(Ljb)*Nmodes^2)
@@ -912,7 +1152,8 @@ end
 
 
 """
-    updateAoLjbm!(AoLjbm::SparseMatrixCSC,Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches)
+    updateAoLjbm!(AoLjbm::SparseMatrixCSC, Am, Ljb::SparseVector, Lmean, Nmodes,
+        Nbranches)
 
 # Examples
 ```jldoctest
@@ -927,7 +1168,8 @@ all(AoLjbmcopy.nzval .- AoLjbm.nzval .== 0)
 true
 ```
 """
-function updateAoLjbm!(AoLjbm::SparseMatrixCSC,Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches)
+function updateAoLjbm!(AoLjbm::SparseMatrixCSC, Am, Ljb::SparseVector, Lmean,
+    Nmodes, Nbranches)
 
     # check that there are the right number of nonzero values. 
     # check that the dimensions are consistent with Nmode and Nbranches.
@@ -1006,7 +1248,7 @@ julia> JosephsonCircuits.sincosnloddtoboth([0.02+0.0im,0,0.01+0.0im,0],2,2)
 ```
 """
 function sincosnloddtoboth(amodd::Array{Complex{Float64},1},
-    Nbranches::Int64,m::Int64)
+    Nbranches::Int64, m::Int64)
 
     if length(amodd) != Nbranches*m
         error("Length of node flux vector not consistent with number of modes
@@ -1075,7 +1317,7 @@ function sincosnl(am::Array{Complex{Float64},2})
 end
 
 
-function applynl(am::Array{Complex{Float64}},f::Function)
+function applynl(am::Array{Complex{Float64}}, f::Function)
 
     #choose the number of time points based on the number of fourier
     #coefficients
@@ -1124,7 +1366,7 @@ function calcindices(m::Integer)
 end
 
 """
-    calcw(ws::Number,i::Integer,wp::Number)
+    calcw(ws::Number, i::Integer, wp::Number)
 
 Generate the signal and idler frequencies using the formula ws + 2*i*wp
 
@@ -1149,16 +1391,16 @@ julia> JosephsonCircuits.calcw([2*pi*4.0e9,2*pi*4.1e9],[-1,0,1],2*pi*5.0e9)/(2*p
  -5.9  4.1  14.1
 ```
 """
-function calcw(ws,i::Integer,wp)
+function calcw(ws, i::Integer, wp)
     return ws + 2*i*wp
 end
-function calcw(ws,i::AbstractVector,wp)
+function calcw(ws, i::AbstractVector, wp)
 
     w = zeros(typeof(ws),length(i))
     calcw!(ws,i,wp,w)
     return w
 end
-function calcw(ws::AbstractVector,i::AbstractVector,wp)
+function calcw(ws::AbstractVector, i::AbstractVector, wp)
 
     w = zeros(eltype(ws),length(ws),length(i))
     calcw!(ws,i,wp,w)
@@ -1166,12 +1408,12 @@ function calcw(ws::AbstractVector,i::AbstractVector,wp)
 end
 
 """
-    calcw!(ws,i,wp,w)
+    calcw!(ws, i, wp, w)
 
 Generate the signal and idler frequencies using the formula ws + 2*i*wp.
 Overwrites w with output. 
 """
-function calcw!(ws,i::AbstractVector,wp,w::AbstractVector)
+function calcw!(ws, i::AbstractVector, wp, w::AbstractVector)
 
     for j in 1:length(i)
         w[j] = calcw(ws,i[j],wp)
@@ -1179,7 +1421,7 @@ function calcw!(ws,i::AbstractVector,wp,w::AbstractVector)
 
     return nothing
 end
-function calcw!(ws::AbstractVector,i::AbstractVector,wp,w::AbstractMatrix)
+function calcw!(ws::AbstractVector, i::AbstractVector, wp, w::AbstractMatrix)
 
     for j in 1:length(ws)
         for k in 1:length(i)

@@ -120,29 +120,25 @@ end
 
 function warmupsyms()
 
-    @variables Ipump Rleft Cc Lj Cj w L1
-    # define the circuit components
-    circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
-
-    # port on the left side
+    @variables Rleft Cc Lj Cj w L1
+    circuit = Tuple{String,String,String,Num}[]
     push!(circuit,("P1","1","0",1))
-    push!(circuit,("I1","1","0",Ipump))
-    # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
     push!(circuit,("R1","1","0",Rleft))
-
     push!(circuit,("C1","1","2",Cc)) 
     push!(circuit,("Lj1","2","0",Lj)) 
     push!(circuit,("C2","2","0",Cj))
-
     circuitdefs = Dict(
         Lj =>1000.0e-12,
         Cc => 100.0e-15,
         Cj => 1000.0e-15,
         Rleft => 50.0,
-        Ipump => 1.0e-8,
     )
-
-    return hbsolve(2*pi*(4.5:0.1:5.0)*1e9,2*pi*4.75001*1e9,0.00565e-6,8,8,circuit,circuitdefs,pumpports=[1],solver=:klu);
+    ws = 2*pi*(4.5:0.1:5.0)*1e9
+    wp = 2*pi*4.75001*1e9
+    Ip = 0.00565e-6
+    Nsignalmodes = 8
+    Npumpmodes = 8
+    return hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1]);
 
 end
 

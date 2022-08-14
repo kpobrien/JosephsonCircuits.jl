@@ -89,28 +89,26 @@ end
 function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int64 = 1,
         jj::Bool = true)
 
-    # parse the circuit components
-    c0 = parsecircuit(circuit)
+    # parse and sort the circuit
+    psc = parsesortcircuit(circuit, sorting=:number)
 
-    numberarray = valuearraytonumber(c0.valuearray,circuitdefs)
-
-    # sort the nodes
-    nodearraysorted = sortnodes(c0.uniquenodearray,c0.nodearray,sorting=:number)
-
-    edgearray = extractedges(c0.typearray,nodearraysorted)
-
-    g = calcgraphs(edgearray,length(c0.uniquenodearray))
+    # calculate the circuit graph
+    cg = calccircuitgraph(psc)
     
-    c = consolidatecomponents(c0.typearray,nodearraysorted,
-        c0.mutualinductorbranches,numberarray,c0.uniquenodearray)
+    # convert as many values as we can to numerical values using definitions
+    # from circuitdefs
+    vvn = valuevectortonumber(psc.valuevector,circuitdefs)
 
-    Nnodes = length(c0.uniquenodearray)
+    c = consolidatecomponents(psc.typevector,psc.nodeindexarraysorted,
+        psc.mutualinductorvector,vvn,psc.uniquenodevectorsorted)
+
+    Nnodes = length(psc.uniquenodevectorsorted)
     cdict = c.cdict
-    typearray = c0.typearray
-    namearray = c0.namearray
-    nodearray = c0.nodearray
-    uniquenodearray = c0.uniquenodearray
-    mutualinductorbranches = c0.mutualinductorbranches
+    typearray = psc.typevector
+    namearray = psc.namevector
+    nodearray = psc.nodeindexarraysorted
+    uniquenodearray = psc.uniquenodevectorsorted
+    mutualinductorbranches = psc.mutualinductorvector
 
 
     # find the nodes for the selected port
@@ -121,7 +119,7 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int64 = 1,
         error("Port $(port) does not exist in dictionary.")
     else
         portnodes=first(portnodes)
-        portcurrent=cdict[:I][portnodes]
+        # portcurrent=cdict[:I][portnodes]
     end
 
     # define scale factors for prefixes
