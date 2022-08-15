@@ -28,8 +28,8 @@ function consolidatecomponents(typevector,nodeindexarraysorted,
         if componenttype == :K
             error("Error: Mutual inductors, :K, not handled yet")
         else
-            if componenttype ==:P                
-                tmp = Dict{Tuple{Int64,Int64},Int64}()       
+            if componenttype ==:P
+                tmp = Dict{Tuple{Int64,Int64},Int64}()
             else
                 tmp = Dict{Tuple{Int64,Int64},Complex{Float64}}()
             end
@@ -131,10 +131,10 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int64 = 1,
     giga = 1e-9
 
     # Set vm, (reference icrit)*rsub, which determines the junction resistance
-    # default is 16.5e-3 which is extremely lossy. The allowed range is 8e-3 to 
+    # default is 16.5e-3 which is extremely lossy. The allowed range is 8e-3 to
     # 100e-3. Once the force flag is enabled we can increase beyond this limit.
-    # To turn off the force flag remove force=1 from the jj model argument 
-    # setting that force=0 does nothing. 
+    # To turn off the force flag remove force=1 from the jj model argument
+    # setting that force=0 does nothing.
     # http://www.wrcad.com/ftp/pub/jj.va
     vm = 99e-1
 
@@ -226,7 +226,7 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int64 = 1,
                 # add any additional capacitance
                 if abs(real(cdict[:C][key]) - Ictmp*CjoIc) > 1e-18
                     push!(netlist,"Cj$(i) $(key[1]-1) $(key[2]-1) $(femto*real(cdict[:C][key]-Ictmp*CjoIc))f")
-                end       
+                end
             else
                 push!(netlist,"Lj$(i) $(key[1]-1) $(key[2]-1) $(pico*real(val))p")
                 inductorlabels[(key[1],key[2])] = "Lj$(i)"

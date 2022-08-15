@@ -345,13 +345,13 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         CM = zeros(Float64,Nports*Nmodes,length(w))
     else
         CM = zeros(Float64,0,0)
-    end        
+    end
 
     if returnnodeflux
         nodeflux = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
     else
         nodeflux = Vector{Complex{Float64}}(undef,0)
-    end        
+    end
 
     if returnvoltage
         voltage = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
@@ -396,21 +396,21 @@ A simple structure to hold the linearized harmonic balance solutions.
 
 # Fields
 - `S`: the scattering matrix relating inputs and outputs for each combination
-    of port and frequency. 
+    of port and frequency.
 - `Snoise`: the scattering matrix relating inputs at the noise ports 
-    (lossy devices) and outputs at the physical ports for each combination of 
-    port and frequency. 
-- `QE`: the quantum efficiency for each combination of port and frequency. 
+    (lossy devices) and outputs at the physical ports for each combination of
+    port and frequency.
+- `QE`: the quantum efficiency for each combination of port and frequency.
 - `QEideal`: the quantum efficiency for an ideal amplifier with the same level
     of gain, for each combination of port and frequency. 
 - `CM`: the commutation relations (equal to ±1), for each combination of port
     and frequency. 
-- `nodeflux`: the node fluxes resulting from inputs at each frequency and port. 
-- `voltage`: the node voltages resulting from inputs at each frequency and port. 
-- `Nmodes`: the number of signal and idler frequencies. 
+- `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
+- `voltage`: the node voltages resulting from inputs at each frequency and port.
+- `Nmodes`: the number of signal and idler frequencies.
 - `Nnodes`: the number of nodes in the circuit (including the ground node).
 - `Nbranches`: the number of branches in the circuit.
-- `signalindex`: the index of the signal mode. 
+- `signalindex`: the index of the signal mode.
 - `w`: the signal frequencies.
 """
 struct LinearHB
@@ -439,7 +439,7 @@ end
 
 Solve the linearized harmonic balance problem for a subset of the frequencies
 given by `wi`. This function is thread safe in that different frequencies can
-be computed in parallel on separate threads. 
+be computed in parallel on separate threads.
 """
 function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
     AoLjnm, invLnm, Cnm, Gnm, bnm,
@@ -458,7 +458,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
     noiseoutputwave = zeros(Complex{Float64},Nnoiseports*Nmodes,Nports*Nmodes)
 
     # operate on a copy of Asparse because it may be modified by multiple threads
-    # at the same time. 
+    # at the same time.
     Asparsecopy = copy(Asparse)
 
     # calculate the conjugate of AoLjnm
@@ -467,7 +467,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
 
     if solver ==:klu
         # if using the KLU factorization and sparse solver then make a 
-        # factorization for the sparsity pattern. 
+        # factorization for the sparsity pattern.
         F = KLU.klu(Asparsecopy)
     else
         error("Error: Unknown solver")
@@ -503,7 +503,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
         wmodes2m = Diagonal(repeat(wmodes.^2,outer=Nnodes-1));
 
         # perform the operation below in a way that doesn't allocate significant
-        # memory, plus take the conjugates mentioned below. 
+        # memory, plus take the conjugates mentioned below.
         # A = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
 
         fill!(Asparsecopy.nzval,zero(eltype(Asparsecopy.nzval)))
@@ -511,7 +511,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
 
         # take the complex conjugate of the negative frequency terms in
         # the capacitance and conductance matrices. substitute in the symbolic
-        # frequency variable if present. 
+        # frequency variable if present.
         sparseaddconjsubst!(Asparsecopy,-1,Cnm,wmodes2m,Cnmindexmap,
             wmodesm .< 0,wmodesm,Cnmfreqsubstindices,symfreqvar)
         sparseaddconjsubst!(Asparsecopy,im,Gnm,wmodesm,Gnmindexmap,
@@ -521,7 +521,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
 
         # solve the linear system
         if solver == :klu
-            try 
+            try
                 # update the factorization. the sparsity structure does 
                 # not change so we can reuse the factorization object.
                 KLU.klu!(F,Asparsecopy)
@@ -543,7 +543,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
             error("Error: Unknown solver")
         end
 
-        # convert to node voltages. node flux is defined as the time integral of 
+        # convert to node voltages. node flux is defined as the time integral of
         # node voltage so node voltage is derivative of node flux which can be
         # accomplished in the frequency domain by multiplying by j*w.
         if !isempty(voltage)
@@ -605,7 +605,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
             # calculate the noise scattering parameters
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
                 calcSnoise!(Snoiseview,inputwave,noiseoutputwave,phin,bnm,portimpedanceindices,noiseportimpedanceindices,
-                    portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)                
+                    portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
             end
 
             # calculate the quantum efficiency
@@ -643,26 +643,26 @@ can be included through frequency dependent resistors or complex capacitance.
 
 # Arguments
 - `wp`: pump frequency in radians/second. This function only supports a single
-    pump frequency. 
+    pump frequency.
 - `Ip`: pump current or vector of pump currents in amps. Length of `Ip` must
     be equal to length of `ports`.
 - `Nmodes`: number of modes (harmonics).
-- `circuit`: vector of tuples containing component names, nodes, and values. 
+- `circuit`: vector of tuples containing component names, nodes, and values.
 - `circuitdefs`: dictionary defining the numerical values of circuit components.
 
 # Keywords
-- `ports = [1]`: vector of drive port numbers. Default is a single drive at port 1. 
+- `ports = [1]`: vector of drive port numbers. Default is a single drive at port 1.
 - `solver = :klu`: linear solver (actually the factorization method).
 - `iterations = 1000`: number of iterations at which the nonlinear solver stops
-    even if convergence criteria not reached. 
+    even if convergence criteria not reached.
 - `ftol = 1e-8`: relative or absolute tolerance at which nonlinear solver stops
     (whichever is reached first).
 - `symfreqvar = nothing`: symbolic frequency variable which is set to `nothing`
-    by default but should be set equal to the frequency variable like `w` if 
+    by default but should be set equal to the frequency variable like `w` if
     there is frequency dependence.
 - `sorting = :number`: sort the ports by turning them into integers and sorting
     those integers. See [`sortnodes`](@ref) for other options if this fails.
-- `verbosity = 1`: Control how much info to print. Currently does nothing. 
+- `verbosity = 1`: Control how much info to print. Currently does nothing.
 
 # Examples
 ```
@@ -846,7 +846,7 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
             # so we can reuse the factorization object.
             KLU.klu!(factorization,Jsparse)
 
-            # solve the linear system            
+            # solve the linear system
             ldiv!(deltax,factorization,F)
         catch e
             if isa(e, SingularException)
@@ -875,7 +875,7 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
         #     calcfj!(F,nothing,x - alpha*x1,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
         #     Ljb,Ljbm,Nmodes,
         #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)    
+        #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
         #     push!(samples,real(0.5*dot(F,F)))
         # end
 
@@ -980,7 +980,7 @@ A simple structure to hold the nonlinear harmonic balance solutions.
 - `Rbnm`: incidence matrix to convert between the node and branch basis.
 - `Ljb`: sparse vector of Josephson junction inductances.
 - `Lb`: sparse vector of linear inductances.
-- `Ljbm`: sparse vector of linear inductances with each element duplicated Nmodes times. 
+- `Ljbm`: sparse vector of linear inductances with each element duplicated Nmodes times.
 - `Nmodes`: the number of signal and idler frequencies.
 - `Nnodes`: the number of nodes in the circuit (including the ground node).
 - `Nbranches`: the number of branches in the circuit.
@@ -1001,7 +1001,7 @@ end
 """
     calcfj(F,J,nodeflux,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
         Ljbindicesm,Nmodes,Lmean,AoLjbm)
-        
+
 Calculate the residual and the Jacobian. These are calculated with one function
 in order to reuse the time domain nonlinearity calculation.
 
@@ -1222,7 +1222,7 @@ end
     sincosnloddtoboth(amodd::Array{Complex{Float64},1},Nbranches::Int64,m::Int64)
 
 Applies the junction nonlinearity to a vector of branch fluxes of length Nbranches*m
-where m is the number of odd pump harmonics (1w, 3w, 5w, etc). The ordering is 
+where m is the number of odd pump harmonics (1w, 3w, 5w, etc). The ordering is
 (mode 1, node 1), (mode 2, node 1) ... (mode 1, node 2) ... Returns even AND
 odd terms in a 2d array with dimensions 2*m by Nbranches. 
 
@@ -1266,8 +1266,8 @@ end
     sincosnl(am::Array{Complex{Float64},2})
 
 Applies the junction nonlinearity to a vector of Fourier coefficients of the
-phases across the junction of size 2*m by (Nnodes-1) where m is the number of pump 
-harmonics (0w, 1w, 2w, 3w, etc). To save time, this calculates both the sine and 
+phases across the junction of size 2*m by (Nnodes-1) where m is the number of pump
+harmonics (0w, 1w, 2w, 3w, etc). To save time, this calculates both the sine and
 cosine nonlinearities at the same time. If the input is odd harmonics, the sine
 terms will also be odd harmonics the cosine terms will be even harmonics.
 
@@ -1301,17 +1301,17 @@ function sincosnl(am::Array{Complex{Float64},2})
         stepsperperiod = 2*size(am)[1]-1
     else
         stepsperperiod = 2*size(am)[1]-2
-    end        
+    end
 
     #transform back to time domain
     ift = FFTW.irfft(am,stepsperperiod,[1])*stepsperperiod
 
     #apply the nonlinear function
     nlift = cos.(ift) .+ sin.(ift)
-    
+
     #fourier transform back to the frequency domain
     ftnlift = FFTW.rfft(nlift,[1])/stepsperperiod
-    
+
     return ftnlift
 
 end
@@ -1327,7 +1327,7 @@ function applynl(am::Array{Complex{Float64}}, f::Function)
         stepsperperiod = 2*size(am,1)-1
     else
         stepsperperiod = 2*size(am,1)-2
-    end        
+    end
 
     #transform back to time domain
     ift = FFTW.irfft(am,stepsperperiod,1:length(size(am))-1)
@@ -1338,10 +1338,10 @@ function applynl(am::Array{Complex{Float64}}, f::Function)
 
     #apply the nonlinear function
     nlift = f.(ift)
-    
+
     #fourier transform back to the frequency domain
     ftnlift = FFTW.rfft(nlift,1:length(size(am))-1)/normalization
-    
+
     return ftnlift
 end
 

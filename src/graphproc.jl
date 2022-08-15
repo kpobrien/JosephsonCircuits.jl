@@ -3,7 +3,7 @@
     CircuitGraph(edge2indexdict,Rbn,searray,cearray,glearray,lvarray,
         isolatednodes,gl,Nbranches)
 
-A simple structure to hold the circuit graph information. 
+A simple structure to hold the circuit graph information.
 """
 struct CircuitGraph
     edge2indexdict
@@ -47,7 +47,7 @@ end
 Calculate the superconducting spanning tree, closure branches,
 and loops. Accepts the graph of linear inductors and Josephson
 junctions. Outputs lists of edges that can be used to generate
-graphs. 
+graphs.
 
 """
 function calcgraphs(Ledgearray::Array{Tuple{Int64, Int64}, 1},Nnodes::Int64)
@@ -99,10 +99,10 @@ function calcgraphs(Ledgearray::Array{Tuple{Int64, Int64}, 1},Nnodes::Int64)
             elseif length(ul) < 1
                 #error("No loops found.")
                 # println("Warning: Loop exists but max loop size too small to find vertices.")
-                push!(lvarray,[])            
+                push!(lvarray,[])
             else
     #             println("closure branch: ",cj,", loop vertices:", first(ul))
-                push!(lvarray,vmap[first(ul)])            
+                push!(lvarray,vmap[first(ul)])
             end
         end
         

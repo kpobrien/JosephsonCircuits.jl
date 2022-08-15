@@ -674,7 +674,7 @@ function matrixindices(nports,format,twoportdataorder)
     i = 1
     j = 1
     nold = 1
-    for n = 1:ntotal    
+    for n = 1:ntotal
         # this is the row index.
         # increment it when we have written ncol
         # data points since the last one. 
@@ -992,12 +992,12 @@ function touchstone_save(frequencies::AbstractArray,N::AbstractArray,
             end
 
             # write the reference keyword
-            write(io,"[Reference]")            
+            write(io,"[Reference]")
             for r in header[:reference]
                 write(io," $(real(r))")
             end
 
-            write(io,"\n")            
+            write(io,"\n")
 
 
             # write the matrix format
@@ -1078,7 +1078,7 @@ function touchstone_save(frequencies::AbstractArray,N::AbstractArray,
                 write(io,"\n")
             end
 
-            write(io,"[End]\n")            
+            write(io,"[End]\n")
 
 
         end

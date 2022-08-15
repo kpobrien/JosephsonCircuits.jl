@@ -426,9 +426,9 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindic
     Nsolutions = size(phin,2)
     Nmodes = length(wmodes)
 
-    for i = 1:Ninputports
-        for j = 1:Nmodes
-            for k = 1:Nsolutions
+    for i in 1:Ninputports
+        for j in 1:Nmodes
+            for k in 1:Nsolutions
 
                 # key = inputportbranches[i]
                 key = (nodeindexarraysorted[1,inputportindices[i]],nodeindexarraysorted[2,inputportindices[i]])
@@ -485,9 +485,9 @@ function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindic
     end
 
     # loop over output branches and modes to define outputwaves
-    for i = 1:Noutputports
-        for j = 1:Nmodes
-            for k = 1:Nsolutions
+    for i in 1:Noutputports
+        for j in 1:Nmodes
+            for k in 1:Nsolutions
 
                 # key = outputportbranches[i]
                 key = (nodeindexarraysorted[1,outputportindices[i]],nodeindexarraysorted[2,outputportindices[i]])
@@ -570,9 +570,9 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
     Nsolutions = size(phin,2)
     Nmodes = length(wmodes)
 
-    for i = 1:Ninputports
-        for j = 1:Nmodes
-            for k = 1:Nsolutions
+    for i in 1:Ninputports
+        for j in 1:Nmodes
+            for k in 1:Nsolutions
 
                 # key = inputportbranches[i]
                 key = (nodeindexarraysorted[1,inputportindices[i]],nodeindexarraysorted[2,inputportindices[i]])
@@ -628,9 +628,9 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
     end
 
     # loop over output branches and modes to define outputwaves
-    for i = 1:Noutputports
-        for j = 1:Nmodes
-            for k = 1:Nsolutions
+    for i in 1:Noutputports
+        for j in 1:Nmodes
+            for k in 1:Nsolutions
 
                 # key = outputportbranches[i]
                 key = (nodeindexarraysorted[1,outputportindices[i]],nodeindexarraysorted[2,outputportindices[i]])
@@ -760,17 +760,35 @@ field ladder operator basis. Sum the abs2 of each element along the horizontal
 axis, applying a minus sign if the corresponding frequency is negative. Represents
 energy conservation. 
 
-this should equal 3.0e-200
-JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 -1])
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calccm([3/5 4/5;4/5 3/5],[1])
+2-element Vector{Float64}:
+ 1.0
+ 1.0
 
+julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 0 0 1],[1 -1])
+2-element Vector{Float64}:
+ 3.0e-200
+ 0.0
 
+julia> @variables a b;JosephsonCircuits.calccm([a b; b a],[1 -1])
+2-element Vector{Num}:
+ abs2(a) - abs2(b)
+ abs2(b) - abs2(a)
+```
 """
-function calccm(S,w)
-
-    cm = zeros(Float64,size(S,1))
-
+function calccm(S::Matrix{T}, w) where {T}
+    cm = zeros(T,size(S,1))
     calccm!(cm,S,w)
+    return cm
+end
 
+function calccm(S::Matrix{Complex{T}}, w) where {T}
+    # commutation relations are real so if the type of complex, use this
+    # parametric method to define a real matrix.
+    cm = zeros(T,size(S,1))
+    calccm!(cm,S,w)
     return cm
 end
 
@@ -793,26 +811,62 @@ function calccm!(cm,S,w)
         throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
     end
 
-    # for i = 1:size(S,1)
+    # use a Kahan, Babushka, Neumaier compensated sum. more cache efficient version
+    fill!(cm,zero(eltype(cm)))
+    c = zeros(eltype(cm),size(cm))
+    @inbounds for j in 1:size(S,2)
+        for i in 1:size(S,1)
+            t = cm[i] + abs2(S[i,j])*sign(w[(j-1) % m + 1])
+            c[i] += ifelse(
+                abs(cm[i]) >= abs2(S[i,j]),
+                (cm[i]-t) + abs2(S[i,j])*sign(w[(j-1) % m + 1]),
+                (abs2(S[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i])
+            cm[i]  = t
+        end
+    end
+
+    @inbounds for i in 1:size(S,1)
+        cm[i]+=c[i]
+    end
+
+
+    return nothing
+end
+
+"""
+    calccm!(cm::Vector{Symbolics.Num},S,w)
+
+Calculate the bosonic commutation relations for a scattering matrix S in the 
+field ladder operator basis. Overwrites cm with output. Does not use a
+compensated sum because the output type is symbolic.
+
+"""
+function calccm!(cm::Vector{Symbolics.Num},S,w)
+
+    m = length(w)
+
+    if any(mod.(size(S),m) .!=0)
+        throw(DimensionMismatch("Dimensions of scattering matrix must be an integer multiple of the number of frequencies"))
+    end
+
+    if size(S,1) != length(cm)
+        throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
+    end
+
+    # # naive version
+    # for i in 1:size(S,1)
     #     cm[i] = 0.0
-    #     for j = 1:size(S,2)
+    #     for j in 1:size(S,2)
     #         cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
     #     end
     # end
 
-    for i = 1:size(S,1)
-        c = 0.0
-        cm[i] = abs2(S[i,1])*sign(w[(1-1) % m + 1])
-        for j = 2:size(S,2)
-            t = cm[i] + abs2(S[i,j])*sign(w[(j-1) % m + 1])
-            if abs(cm[i]) >= abs2(S[i,j])
-                c += (cm[i]-t) + abs2(S[i,j])*sign(w[(j-1) % m + 1])
-            else
-                c += (abs2(S[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i]
-            end
-            cm[i] = t
+    # more cache friendly version
+    fill!(cm,zero(eltype(cm)))
+    @inbounds for j in 1:size(S,2)
+        for i in 1:size(S,1)
+            cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
         end
-        cm[i]+=c
     end
 
     return nothing
@@ -830,16 +884,21 @@ this should equal 6.0e-200
 
 JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
 
-
 """
-function calccm(S,Snoise,w)
-
-    cm = zeros(Float64,size(S,1))
-
+function calccm(S::Matrix{T},Snoise::Matrix{T},w) where {T}
+    cm = zeros(T,size(S,1))
     calccm!(cm,S,Snoise,w)
-
     return cm
 end
+
+function calccm(S::Matrix{Complex{T}},Snoise::Matrix{Complex{T}},w) where {T}
+    # commutation relations are real so if the type of complex, use this
+    # parametric method to define a real matrix.
+    cm = zeros(T,size(S,1))
+    calccm!(cm,S,Snoise,w)
+    return cm
+end
+
 
 """
     calccm!(cm,S,Snoise,w)
@@ -864,7 +923,7 @@ function calccm!(cm,S,Snoise,w)
         throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
 
-
+    # # naive version
     # for i = 1:size(S,1)
     #     for j = 1:size(S,2)
     #         cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
@@ -874,47 +933,154 @@ function calccm!(cm,S,Snoise,w)
     #     end
     # end
 
-    # use a Kahan, Babushka, Neumaier compensated sum. 
-    for i = 1:size(S,1)
-        c = 0.0
-        cm[i] = abs2(S[i,1])*sign(w[(1-1) % m + 1])
-        for j = 2:size(S,2)
-            t = cm[i] + abs2(S[i,j])*sign(w[(j-1) % m + 1])
-            if abs(cm[i]) >= abs2(S[i,j])
-                c += (cm[i]-t) + abs2(S[i,j])*sign(w[(j-1) % m + 1])
-            else
-                c += (abs2(S[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i]
-            end
-            cm[i] = t
-        end
+    # # more cache friendly version
+    # fill!(cm,zero(eltype(cm)))
+    # @inbounds for j in 1:size(S,2)
+    #     for i in 1:size(S,1)
+    #         cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
+    #     end
+    # end
 
-        for j = 1:size(Snoise,2)
-            t = cm[i] + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
-            if abs(cm[i]) >= abs2(Snoise[i,j])
-                c += (cm[i]-t) + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
-            else
-                c += (abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i]
-            end
-            cm[i] = t
+    # @inbounds for j in 1:size(Snoise,2)
+    #     for i in 1:size(Snoise,1)
+    #         cm[i] += abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+    #     end
+    # end
+
+    # # use a Kahan, Babushka, Neumaier compensated sum. 
+    # for i in 1:size(S,1)
+    #     c = zero(eltype(cm))
+    #     cm[i] = abs2(S[i,1])*sign(w[(1-1) % m + 1])
+    #     for j in 2:size(S,2)
+    #         t = cm[i] + abs2(S[i,j])*sign(w[(j-1) % m + 1])
+    #         c += ifelse(
+    #             abs(cm[i]) >= abs2(S[i,j]),
+    #             (cm[i]-t) + abs2(S[i,j])*sign(w[(j-1) % m + 1]),
+    #             (abs2(S[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i])
+    #         cm[i] = t
+    #     end
+
+    #     for j in 1:size(Snoise,2)
+    #         t = cm[i] + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+    #         c += ifelse(
+    #             abs(cm[i]) >= abs2(Snoise[i,j]),
+    #             (cm[i]-t) + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1]),
+    #             (abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i])
+    #         cm[i] = t
+    #     end
+    #     cm[i]+=c
+    # end
+
+    # use a Kahan, Babushka, Neumaier compensated sum. more cache efficient version
+    fill!(cm,zero(eltype(cm)))
+    c = zeros(eltype(cm),size(cm))
+    @inbounds for j in 1:size(S,2)
+        for i in 1:size(S,1)
+            t = cm[i] + abs2(S[i,j])*sign(w[(j-1) % m + 1])
+            c[i] += ifelse(
+                abs(cm[i]) >= abs2(S[i,j]),
+                (cm[i]-t) + abs2(S[i,j])*sign(w[(j-1) % m + 1]),
+                (abs2(S[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i])
+            cm[i]  = t
         end
-        cm[i]+=c
+    end
+
+    @inbounds for j in 1:size(Snoise,2)
+        for i in 1:size(Snoise,1)
+            t = cm[i] + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+            c[i] += ifelse(
+                abs(cm[i]) >= abs2(Snoise[i,j]),
+                (cm[i]-t) + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1]),
+                (abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i])
+            cm[i]  = t
+        end
+    end
+
+    @inbounds for i in 1:size(S,1)
+        cm[i]+=c[i]
     end
 
     return nothing
 end
+
+
+"""
+    calccm!(cm::Vector{Symbolics.Num},S,Snoise,w)
+
+Calculate the bosonic commutation relations for a scattering matrix S in the 
+field ladder operator basis. Overwrites cm with output.  Does not use a
+compensated sum because the output type is symbolic.
+
+"""
+function calccm!(cm::Vector{Symbolics.Num},S,Snoise,w)
+
+    m = length(w)
+
+    if any(mod.(size(S),m) .!=0)
+        throw(DimensionMismatch("Dimensions of scattering matrix must be an integer multiple of the number of frequencies"))
+    end
+
+    if size(S,1) != length(cm)
+        throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
+    end
+
+    if size(S,1) .!= size(Snoise,1)
+        throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
+    end
+
+    # # naive version
+    # for i = 1:size(S,1)
+    #     for j = 1:size(S,2)
+    #         cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
+    #     end
+    #     for j = 1:size(Snoise,2)
+    #         cm[i] += abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+    #     end
+    # end
+
+    # more cache friendly version
+    fill!(cm,zero(eltype(cm)))
+    @inbounds for j in 1:size(S,2)
+        for i in 1:size(S,1)
+            cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
+        end
+    end
+
+    @inbounds for j in 1:size(Snoise,2)
+        for i in 1:size(Snoise,1)
+            cm[i] += abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+        end
+    end
+
+    return nothing
+end
+
 
 """
     calcqe(S)
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
 ladder operator basis. 
+
+# Examples
+```jldoctest
+julia> @variables a b c d;JosephsonCircuits.calcqe([a b; c d])
+2×2 Matrix{Num}:
+ abs2(a) / (abs2(a) + abs2(b))  abs2(b) / (abs2(a) + abs2(b))
+ abs2(c) / (abs2(c) + abs2(d))  abs2(d) / (abs2(c) + abs2(d))
+```
 """
-function calcqe(S)
-
-    qe = zeros(Float64,size(S))
-
+function calcqe(S::Matrix{T}) where {T}
+    qe = zeros(T,size(S))
     calcqe!(qe,S)
+    return qe
+end
 
+function calcqe(S::Matrix{Complex{T}}) where {T}
+    # commutation relations are real so if the type of complex, use this
+    # parametric method to define a real matrix.
+    qe = zeros(T,size(S))
+    calcqe!(qe,S)
     return qe
 end
 
@@ -930,16 +1096,28 @@ function calcqe!(qe,S)
         throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
     end
 
-    for i = 1:size(S,1)
-        denom=0
-        for j = 1:size(S,2)
-            denom += abs2(S[i,j])
-        end
-        for j = 1:size(S,2)
-            qe[i,j] = abs2(S[i,j]) / denom
-        end
+    # for i in 1:size(S,1)
+    #     denom=zero(eltype(qe))
+    #     for j in 1:size(S,2)
+    #         denom += abs2(S[i,j])
+    #     end
+    #     for j in 1:size(S,2)
+    #         qe[i,j] = abs2(S[i,j]) / denom
+    #     end
+    # end
 
-        # qe[i,:] = abs2.(S[i,:]) ./ denom
+    # more cache efficient version of QE calculation
+    denom = zeros(eltype(qe),size(S,1))
+    @inbounds for j in 1:size(S,2)
+        for i in 1:size(S,1)
+            denom[i] += abs2(S[i,j])
+        end
+    end
+
+    @inbounds for j in 1:size(S,2)
+        for i in 1:size(S,1)
+            qe[i,j] = abs2(S[i,j]) / denom[i]
+        end
     end
 
     return nothing
@@ -950,13 +1128,27 @@ end
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
 ladder operator basis. 
+
+# Examples
+```jldoctest
+julia> @variables a b c d an bn cn dn;JosephsonCircuits.calcqe([a b; c d],[an bn; cn dn])
+2×2 Matrix{Num}:
+ abs2(a) / (abs2(a) + abs2(an) + abs2(b) + abs2(bn))  …  abs2(b) / (abs2(a) + abs2(an) + abs2(b) + abs2(bn))
+ abs2(c) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))     abs2(d) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))
+```
+
 """
-function calcqe(S,Snoise)
-
-    qe = zeros(Float64,size(S))
-
+function calcqe(S::Matrix{T},Snoise::Matrix{T}) where {T}
+    qe = zeros(T,size(S))
     calcqe!(qe,S,Snoise)
+    return qe
+end
 
+function calcqe(S::Matrix{Complex{T}},Snoise::Matrix{Complex{T}}) where {T}
+    # commutation relations are real so if the type of complex, use this
+    # parametric method to define a real matrix.
+    qe = zeros(T,size(S))
+    calcqe!(qe,S,Snoise)
     return qe
 end
 
@@ -965,6 +1157,7 @@ end
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
 ladder operator basis. Overwrites qe with output. 
+
 """
 function calcqe!(qe,S,Snoise)
 
@@ -976,19 +1169,38 @@ function calcqe!(qe,S,Snoise)
         throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
 
-    for i = 1:size(S,1)
-        denom=0
-        for j = 1:size(S,2)
-            denom += abs2(S[i,j])
-        end
+    # for i in 1:size(S,1)
+    #     denom=0
+    #     for j in 1:size(S,2)
+    #         denom += abs2(S[i,j])
+    #     end
 
-        for j = 1:size(Snoise,2)
-            denom += abs2(Snoise[i,j])
+    #     for j in 1:size(Snoise,2)
+    #         denom += abs2(Snoise[i,j])
+    #     end
+    #     for j = 1:size(S,2)
+    #         qe[i,j] = abs2(S[i,j]) / denom
+    #     end
+    # end
+
+    # more cache efficient version of QE calculation
+    denom = zeros(eltype(qe),size(S,1))
+    @inbounds for j in 1:size(S,2)
+        for i in 1:size(S,1)
+            denom[i] += abs2(S[i,j])
         end
-        for j = 1:size(S,2)
-            qe[i,j] = abs2(S[i,j]) / denom
+    end
+
+    @inbounds for j in 1:size(Snoise,2)
+        for i in 1:size(Snoise,1)
+            denom[i] += abs2(Snoise[i,j])
         end
-        # qe[i,:] = abs2.(S[i,:]) ./ denom
+    end
+
+    @inbounds for j in 1:size(S,2)
+        for i in 1:size(S,1)
+            qe[i,j] = abs2(S[i,j]) / denom[i]
+        end
     end
 
     return nothing
@@ -1000,12 +1212,30 @@ end
 
 Calculate the ideal (best possible) quantum efficiency for each element of a
 scattering matrix. 
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcqeideal([3/5 4/5;4/5 3/5])
+2×2 Matrix{Float64}:
+ 1.0  1.0
+ 1.0  1.0
+ ```
+
 """
-function calcqeideal(S)
-    qeideal = zeros(Float64,size(S))
+function calcqeideal(S::Matrix{T}) where {T}
+    qeideal = zeros(T,size(S))
     calcqeideal!(qeideal,S)
     return qeideal
 end
+
+function calcqeideal(S::Matrix{Complex{T}}) where {T}
+    # quantum efficiency is real so if the type of complex, use this
+    # parametric method to define a real matrix.
+    qeideal = zeros(T,size(S))
+    calcqeideal!(qeideal,S)
+    return qeideal
+end
+
 
 function calcqeideal!(qeideal,S)
     if size(qeideal) != size(S)
@@ -1013,11 +1243,7 @@ function calcqeideal!(qeideal,S)
     end
     for i in eachindex(S)
         abs2S = abs2(S[i])
-        if abs2S <= 1
-            qeideal[i] = 1.0
-        else
-            qeideal[i] = 1.0 /(2.0 - 1.0 /abs2S)
-        end
+        qeideal[i] = ifelse(abs2S <= 1,one(eltype(qeideal)),1 /(2 - 1 /abs2S))
     end
     return nothing
 end

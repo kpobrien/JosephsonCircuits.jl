@@ -97,9 +97,9 @@ function diagrepeat(A::SparseMatrixCSC,counts::Integer)
     V = Vector{eltype(A.nzval)}(undef,nnz(A)*counts)
 
 
-    @inbounds for i = 1:length(A.colptr)-1
+    @inbounds for i in 1:length(A.colptr)-1
         for j in A.colptr[i]:(A.colptr[i+1]-1)
-            for k = 1:counts
+            for k in 1:counts
                 I[(j-1)*counts+k] = (A.rowval[j]-1)*counts+k
                 J[(j-1)*counts+k] = (i-1)*counts+k
                 V[(j-1)*counts+k] = A.nzval[j]
@@ -133,8 +133,8 @@ function diagrepeat(A::SparseVector,counts::Integer)
     I = Vector{eltype(A.nzind)}(undef,nnz(A)*counts)
     V = Vector{eltype(A.nzval)}(undef,nnz(A)*counts)
 
-    @inbounds for i = 1:length(A.nzind)
-        for j = 1:counts
+    @inbounds for i in 1:length(A.nzind)
+        for j in 1:counts
             I[(i-1)*counts+j] = (A.nzind[i]-1)*counts+j
             V[(i-1)*counts+j] = A.nzval[i]
         end
@@ -156,7 +156,7 @@ This is used for testing non-allocating sparse matrix addition.
 """
 function sprandsubset(A::SparseMatrixCSC,p::AbstractFloat,dropzeros=true)
     B = copy(A)
-    for i = 1:nnz(A)
+    for i in 1:nnz(A)
         if rand(1)[1] <= p
             B.nzval[i] = 0
         else
@@ -204,7 +204,7 @@ function sparseadd!(A::SparseMatrixCSC,As::SparseMatrixCSC,indexmap)
         throw(DimensionMismatch("A and As must be the same size."))
     end
 
-    for i = 1:nnz(As)
+    for i in 1:nnz(As)
         A.nzval[indexmap[i]] += As.nzval[i]
     end
     return nothing
@@ -245,7 +245,7 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,indexmap::V
         throw(DimensionMismatch("A and As must be the same size."))
     end
 
-    for i = 1:nnz(As)
+    for i in 1:nnz(As)
         A.nzval[indexmap[i]] += c*As.nzval[i]
     end
     return nothing
@@ -288,7 +288,7 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,Ad::Diagona
     end
 
 
-    for i = 1:length(As.colptr)-1
+    for i in 1:length(As.colptr)-1
         for j in As.colptr[i]:(As.colptr[i+1]-1)
             A.nzval[indexmap[j]] += c*Ad[i,i]*As.nzval[j]
         end
@@ -336,7 +336,7 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,Ad::Diagonal,As::SparseMatrixCS
         throw(DimensionMismatch("A and Ad must be the same size."))
     end
 
-    for i = 1:length(As.colptr)-1
+    for i in 1:length(As.colptr)-1
         for j in As.colptr[i]:(As.colptr[i+1]-1)
             A.nzval[indexmap[j]] += c*Ad[As.rowval[j],As.rowval[j]]*As.nzval[j]
         end
@@ -394,7 +394,7 @@ function sparseaddconj!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
         throw(DimensionMismatch("A and conjflag must be the same size."))
     end
 
-    for i = 1:length(As.colptr)-1
+    for i in 1:length(As.colptr)-1
         for j in As.colptr[i]:(As.colptr[i+1]-1)
             if conjflag[i,i]
                 A.nzval[indexmap[j]] += c*Ad[i,i]*conj(As.nzval[j])
@@ -475,7 +475,7 @@ function sparseaddconjsubst!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
     # println((freqsubstindices))
     # println(" ")
 
-    for i = 1:length(As.colptr)-1
+    for i in 1:length(As.colptr)-1
         for j in As.colptr[i]:(As.colptr[i+1]-1)
 
             # if length(freqsubstindices) > 0 && j == freqsubstindices[k]
@@ -544,7 +544,7 @@ function sparseaddmap(A::SparseMatrixCSC,B::SparseMatrixCSC)
     lstart=1
     indexmap = zeros(Int64,nnz(B))
 
-    for i = 1:length(B.colptr)-1
+    for i in 1:length(B.colptr)-1
         for j in B.colptr[i]:(B.colptr[i+1]-1)
             rowindexB = B.rowval[j]
             colindexB = i
@@ -560,10 +560,10 @@ end
 
 function sparseaddmap_innerloop(A::SparseMatrixCSC,B::SparseMatrixCSC,
     rowindexB::Int64,colindexB::Int64,kstart::Int64,lstart::Int64)
-    @inbounds for k = kstart:length(A.colptr) -1
+    @inbounds for k in kstart:length(A.colptr) -1
         # println("k: ",k, " kstart: ",kstart, " length(A.colptr) -1): ",(length(A.colptr) -1))
         tmp = A.colptr[k]:(A.colptr[k+1]-1)
-        for l = lstart:length(tmp)
+        for l in lstart:length(tmp)
             rowindexA = A.rowval[tmp[l]]
             colindexA = k
             valA = A.nzval[tmp[l]]
@@ -626,7 +626,6 @@ function conjnegfreq(A::SparseMatrixCSC,wmodes::Vector)
 end
 
 """
-
   conjnegfreq!(A,wmodes)
 
 Take the complex conjugate of any element of A which would be negative when
@@ -651,11 +650,8 @@ function conjnegfreq!(A::SparseMatrixCSC,wmodes::Vector)
         end
     end
 
-    @inbounds for i = 1:length(A.colptr)-1
+    @inbounds for i in 1:length(A.colptr)-1
         for j in A.colptr[i]:(A.colptr[i+1]-1)
-          #I[j] = A.rowval[j]
-          #J[j] = i
-          #V[j] = A.nzval[j]
           if wmodes[((i-1) % length(wmodes)) + 1] < 0
             A.nzval[j] = conj(A.nzval[j])
           end
@@ -714,10 +710,6 @@ end
 function symbolicindices(A::SparseMatrixCSC)
     return symbolicindices(A.nzval)
 end
-
-# function symbolicindices(A::OrderedDict)
-#     return symbolicindices(values(A))
-# end
 
 """
     checkissymbolic(a)
@@ -804,15 +796,13 @@ function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
     # weird like a symbolic type
     nzval = zeros(Complex{Float64},length(A.nzval))
 
-    @inbounds for i = 1:length(A.colptr)-1
+    @inbounds for i in 1:length(A.colptr)-1
         for j in A.colptr[i]:(A.colptr[i+1]-1)
             if checkissymbolic(A.nzval[j] )
 
                 if !checkissymbolic(symfreqvar)
                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
                 end
-
-                # nzval[j] = substitute(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
                 nzval[j] = valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
             else
                 nzval[j] = A.nzval[j]

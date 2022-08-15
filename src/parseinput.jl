@@ -63,7 +63,7 @@ for more explanation.
     be strings.
 
 # Keywords
-- `sorting = :name`: Sort the vector of strings. This always works but leads 
+- `sorting = :name`: Sort the vector of strings. This always works but leads
     to results like "101" comes before "11".
 - `sorting = :number`: Convert the node strings to integer and sort by these
     (this errors if the nodes names cannot be converted to integers).
@@ -77,8 +77,8 @@ circuit = Tuple{String,String,String,Num}[]
 push!(circuit,("P1","1","0",1))
 push!(circuit,("I1","1","0",Ipump))
 push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("C1","1","2",Cc)) 
-push!(circuit,("Lj1","2","0",Lj)) 
+push!(circuit,("C1","1","2",Cc))
+push!(circuit,("Lj1","2","0",Lj))
 push!(circuit,("C2","2","0",Cj))
 println(parsesortcircuit(circuit))
 
@@ -140,7 +140,7 @@ the unique node names, the inductors coupled by the mutual inductors, the
 component names, the component types, the values of the components, a
 dictionary of the names of the components as keys and the index at which the
 component occurs as the value, and dictionaries for the ports and resistors
-where the pair of nodes is the key and value is the component value. 
+where the pair of nodes is the key and value is the component value.
 
 See also [`parsecircuit`](@ref).
 
@@ -151,7 +151,7 @@ See also [`parsecircuit`](@ref).
 - `mutualinductorvector::Vector{String}`: the inductors coupled by the mutual
     inductors.
 - `namevector::Vector{String}`: component names.
-- `typevector::Vector{Symbol}`: the component (electrical engineering) types 
+- `typevector::Vector{Symbol}`: the component (electrical engineering) types
 - `valuevector::Vector`: the component values
 - `namedict::Dict{String, Int64}`: names of the components as keys and the
     index at which the component occurs as the value.
@@ -189,15 +189,15 @@ end
     parsecircuit(circuit)
 
 Parse `circuit` which is a vector where each element contains a tuple with the
-component name, the first node, the second node, and the component value. 
-Component values can be numbers, symbols, or symbolic variables (including 
+component name, the first node, the second node, and the component value.
+Component values can be numbers, symbols, or symbolic variables (including
 symbolic functions). Definitions for component values are stored in
-`circuitdefs`. 
+`circuitdefs`.
 
 The nodes can be arbitrary strings for SPICE compatibility. Integers are also
 supported but are converted internally to strings. The ground node is "0" and
 is required. Specifying the type of the vector `circuit` is optional; although,
-typically a vector with a type union is preferable to an array of type Any. 
+typically a vector with a type union is preferable to an array of type Any.
 
 # Arguments
 - `circuit`: vector of tuples each of which contain the component name, the
@@ -306,8 +306,8 @@ function parsecircuit(circuit)
         allowedsymbols[i]=Symbol(c)
     end
 
-    # empty dictionary for all of the component names. to check of they 
-    # are unique. 
+    # empty dictionary for all of the component names. to check of they
+    # are unique.
     namedict = Dict{String,Int64}()
 
     # array to hold the component names
@@ -374,7 +374,7 @@ function parsecircuit(circuit)
             # mutual inductors are treated differently because their "nodes"
             # refer to inductors rather than actual nodes. add zeros to
             # nodearray and nodearrayw whenever we find an inductor in order
-            # to keep their length the same as the other arrays. 
+            # to keep their length the same as the other arrays.
 
             if componenttype == :K
                 push!(mutualinductorvector,node1)
@@ -399,8 +399,8 @@ end
 
 Return the node index when given a node. Add the node string
 to the vector `uniquenodevector` and the dictionary `uniquenodedict` with the
-node string as the key and the node index (index at which it appears in 
-`uniquenodevector`) as the value. 
+node string as the key and the node index (index at which it appears in
+`uniquenodevector`) as the value.
 
 # Examples
 ```jldoctest
@@ -448,7 +448,7 @@ end
 Return the node index when given a node. Add the node string
 to the vector `uniquenodevector` and the dictionary `uniquenodedict` with the
 node string as the key and the node index (index at which it appears in 
-`uniquenodevector`) as the value. If "node" is not a string, make it a string. 
+`uniquenodevector`) as the value. If "node" is not a string, make it a string.
 
 # Examples
 ```jldoctest
@@ -558,7 +558,7 @@ end
 """
     extractbranches(typevector,nodeindexarray)
 
-Return an array of tuples of pairs of node indices (branches) which we will 
+Return an array of tuples of pairs of node indices (branches) which we will
 use to calculate the incidence matrix.  
 
 This will contain duplicates if multiple components are on the same branch. All
@@ -586,7 +586,7 @@ end
 """
     extractbranches!(branchvector,typevector,nodeindexarray)
 
-Append tuples consisting of a pair of node indices (branches) which we will 
+Append tuples consisting of a pair of node indices (branches) which we will
 use to calculate the incidence matrix.  Appends the tuples to branchvector.
 """
 function extractbranches!(branchvector::Vector,typevector::Vector,nodeindexarray::Array)
@@ -628,7 +628,7 @@ sorting scheme, always placing the ground node at the beginning. Return the
 indices which sort `uniquenodevector`.
 
 # Keywords
-- `sorting = :name`: Sort the vector of strings. This always works but leads 
+- `sorting = :name`: Sort the vector of strings. This always works but leads
     to results like "101" comes before "11".
 - `sorting = :number`: Convert the node strings to integer and sort by these
     (this errors if the nodes names cannot be converted to integers).
@@ -645,10 +645,10 @@ julia> JosephsonCircuits.calcnodesorting(["3","0","1"];sorting=:name)
 ```
 """
 function calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
-    
+
     # vector of indices for the sortperm
     uniquenodevectorsortindices = ones(Int,length(uniquenodevector))
-    
+
     # sort according to the desired scheme
     if sorting == :name
         # sort the vector of unique node strings
@@ -711,10 +711,10 @@ Sort the unique node names in `uniquenodevector` according to the specified
 sorting scheme, always placing the ground node at the beginning.
 
 Return the sorted `uniquenodevector` and `nodeindexvector` (with the vector reshaped
-from a vector of length 2*Nnodes into a matrix with dimensions 2 by Nnodes). 
+from a vector of length 2*Nnodes into a matrix with dimensions 2 by Nnodes).
 
 # Keywords
-- `sorting = :name`: Sort the vector of strings. This always works but leads 
+- `sorting = :name`: Sort the vector of strings. This always works but leads
     to results like "101" comes before "11".
 - `sorting = :number`: Convert the node strings to integer and sort by these
     (this errors if the nodes names cannot be converted to integers).
@@ -744,12 +744,11 @@ function sortnodes(uniquenodevector::Vector{String},nodeindexvector::Vector{Int6
 
     nodeindexarraysorted = zeros(eltype(nodeindexvector),2,length(nodeindexvector)÷2)
 
-    # 
     uniquenodevectorsortindices=calcnodesorting(uniquenodevector;sorting=sorting)
 
     for (i,j) in enumerate(eachindex(nodeindexvector))
-        # if it's a mutual inductor the node index will be zero because the 
-        # mutual inductor is between two inductors not between two nodes. 
+        # if it's a mutual inductor the node index will be zero because the
+        # mutual inductor is between two inductors not between two nodes.
         # it not a mutual inductor, assign the sorted node index.
         if nodeindexvector[j] == 0
             nothing
@@ -757,7 +756,7 @@ function sortnodes(uniquenodevector::Vector{String},nodeindexvector::Vector{Int6
             nodeindexarraysorted[i] = uniquenodevectorsortindices[nodeindexvector[j]]
         end
     end
-    
+
     return uniquenodevector[uniquenodevectorsortindices],nodeindexarraysorted
 end
 
@@ -807,7 +806,7 @@ function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
          throw(DimensionMismatch("typevector and valuevector should have the same length"))
     end
 
-    # use this to store the types we have seen so we don't call promote_type 
+    # use this to store the types we have seen so we don't call promote_type
     # or take the inverse for the same type more than once.
     typestore = Vector{DataType}(undef,0)
 

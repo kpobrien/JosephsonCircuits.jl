@@ -11,7 +11,7 @@ ports, sources, and pumps. Still under development.
 function hbsolve2(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports=[1],
     solver =:klu, iterations=1000,ftol=1e-8,symfreqvar = nothing, sorting=:number,
     nbatches = Base.Threads.nthreads())
-    # solve the nonlinear system    
+    # solve the nonlinear system
     # use the old syntax externally
 
     w = (wp,)
@@ -634,7 +634,7 @@ function calcfj2!(F,
         Nfreq = prod(size(Amsin)[1:end-1])
 
         # calculate the function. use the sine terms. Am[2:2:2*Nmodes,:]
-        # calculate  AoLjbm, this is just a diagonal matrix. 
+        # calculate  AoLjbm, this is just a diagonal matrix.
         for i = 1:nnz(Ljb)
             for j = 1:Nmodes
                 AoLjbmvector[(Ljb.nzind[i]-1)*Nmodes + j] = Amsin[freqindexmap[j]+Nfreq*(i-1)]*(Lmean/Ljb.nzval[i])

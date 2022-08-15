@@ -190,7 +190,7 @@ function calcspicesortperms(variabledict)
             p = sortperm(val)
             sp = vcat(sp,p .+ length(sp))
         end
-        
+
         sortperms[label] = sp
     end
 

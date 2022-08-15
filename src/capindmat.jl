@@ -144,7 +144,7 @@ function numericmatrices(psc::ParsedSortedCircuit,cg::CircuitGraph,
     Rbnm = diagrepeat(cg.Rbn,Nmodes)
 
     # calculate Lmean
-    Lmean = calcLmean(psc.typevector,vvn)    
+    Lmean = calcLmean(psc.typevector,vvn)
 
     portindices, portnumbers = calcportindicesnumbers(psc.typevector,psc.nodeindexarraysorted,
         psc.mutualinductorvector,vvn)
@@ -295,9 +295,9 @@ end
 """
     calcLjb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
-Calculate the sparse branch Josephson inductance vector whose length is 
+Calculate the sparse branch Josephson inductance vector whose length is
 Nbranches*Nmodes. Note that the nodeindexarray is "one indexed" so 1 is the
-ground node. 
+ground node.
 
 # Examples
 ```jldoctest
@@ -389,8 +389,8 @@ end
     calcMb(typevector,nodeindexarray,valuevector,namedict,
     mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
 
-Returns the branch mutual inductance matrix. Note that the 
-nodeindexarray is "one indexed" so 1 is the ground node. 
+Returns the branch mutual inductance matrix. Note that the
+nodeindexarray is "one indexed" so 1 is the ground node.
 
 # Examples
 ```jldoctest
@@ -483,7 +483,7 @@ function calcMb_inner(typevector::Vector{Symbol},nodeindexarray::Matrix{Int64},
 
             inductor1edge = (nodeindexarray[1,inductor1index],nodeindexarray[2,inductor1index])
             inductor2edge = (nodeindexarray[1,inductor2index],nodeindexarray[2,inductor2index])
-            
+
             # add the edges
             push!(Ib,edge2indexdict[inductor1edge])
             push!(Jb,edge2indexdict[inductor2edge])
@@ -573,14 +573,14 @@ end
     calcinvLn(Lb,Mb,Rbn)
 
 Returns the nodal inverse inductance matrix. Accepts the vector of branch
-inductances Lb, the branch mutual inductance matrix Mb, and the incidence 
+inductances Lb, the branch mutual inductance matrix Mb, and the incidence
 matrix Rbn.
 
 Using ldiv instead of an inverse: (where the extra div is an escape sequence)
-Can solve A x = B with: x = A \\ B or x = invA * B, so we can perform the 
+Can solve A x = B with: x = A \\ B or x = invA * B, so we can perform the
 inverse here with:
 s = RbnT * invL * Rbn or s = RbnT * (L \\ Rbn), the latter of which should be
-faster and more numerically stable. 
+faster and more numerically stable.
 
 
 # Examples
@@ -834,14 +834,14 @@ end
 
 Returns the node conductance matrix from the resistance values in valuevector
 when typevector has the symbol :R. The node indices are taken from nodeindexarray.
-Conductances to ground are diagonal elements. Conductance between elements is 
-an off-diagonal element with a minus sign and is added to the diagonal with a 
-plus sign. The dimensions of the output are (Nnodes-1) times Nmodes by 
+Conductances to ground are diagonal elements. Conductance between elements is
+an off-diagonal element with a minus sign and is added to the diagonal with a
+plus sign. The dimensions of the output are (Nnodes-1) times Nmodes by
 (Nnodes-1) times Nmodes. Note that the  nodeindexarray is "one indexed" so 1
-is the ground node. 
+is the ground node.
 
 We have to calculate the inverse of the individual components so select a type
-that allows that. 
+that allows that.
 
 # Examples
 ```jldoctest
@@ -998,7 +998,7 @@ julia> V = Array{Float64, 1}(undef, 0);JosephsonCircuits.pushval!(V,2.0,-1.0,tru
 function pushval!(V::Vector,val,c,invert::Bool)
     if invert
         push!(V,c/val)
-    else        
+    else
         push!(V,c*val)
     end
     return nothing
