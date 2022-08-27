@@ -778,13 +778,13 @@ julia> @variables a b;JosephsonCircuits.calccm([a b; b a],[1 -1])
  abs2(b) - abs2(a)
 ```
 """
-function calccm(S::Matrix{T}, w) where {T}
+function calccm(S::AbstractArray{T}, w) where {T}
     cm = zeros(T,size(S,1))
     calccm!(cm,S,w)
     return cm
 end
 
-function calccm(S::Matrix{Complex{T}}, w) where {T}
+function calccm(S::AbstractArray{Complex{T}}, w) where {T}
     # commutation relations are real so if the type of complex, use this
     # parametric method to define a real matrix.
     cm = zeros(T,size(S,1))
@@ -841,7 +841,7 @@ field ladder operator basis. Overwrites cm with output. Does not use a
 compensated sum because the output type is symbolic.
 
 """
-function calccm!(cm::Vector{Symbolics.Num},S,w)
+function calccm!(cm::AbstractArray{Symbolics.Num},S,w)
 
     m = length(w)
 
@@ -885,13 +885,13 @@ this should equal 6.0e-200
 JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
 
 """
-function calccm(S::Matrix{T},Snoise::Matrix{T},w) where {T}
+function calccm(S::AbstractArray{T},Snoise::AbstractArray{T},w) where {T}
     cm = zeros(T,size(S,1))
     calccm!(cm,S,Snoise,w)
     return cm
 end
 
-function calccm(S::Matrix{Complex{T}},Snoise::Matrix{Complex{T}},w) where {T}
+function calccm(S::AbstractArray{Complex{T}},Snoise::AbstractArray{Complex{T}},w) where {T}
     # commutation relations are real so if the type of complex, use this
     # parametric method to define a real matrix.
     cm = zeros(T,size(S,1))
@@ -1012,7 +1012,7 @@ field ladder operator basis. Overwrites cm with output.  Does not use a
 compensated sum because the output type is symbolic.
 
 """
-function calccm!(cm::Vector{Symbolics.Num},S,Snoise,w)
+function calccm!(cm::AbstractArray{Symbolics.Num},S,Snoise,w)
 
     m = length(w)
 
@@ -1070,13 +1070,13 @@ julia> @variables a b c d;JosephsonCircuits.calcqe([a b; c d])
  abs2(c) / (abs2(c) + abs2(d))  abs2(d) / (abs2(c) + abs2(d))
 ```
 """
-function calcqe(S::Matrix{T}) where {T}
+function calcqe(S::AbstractArray{T}) where {T}
     qe = zeros(T,size(S))
     calcqe!(qe,S)
     return qe
 end
 
-function calcqe(S::Matrix{Complex{T}}) where {T}
+function calcqe(S::AbstractArray{Complex{T}}) where {T}
     # commutation relations are real so if the type of complex, use this
     # parametric method to define a real matrix.
     qe = zeros(T,size(S))
@@ -1138,13 +1138,13 @@ julia> @variables a b c d an bn cn dn;JosephsonCircuits.calcqe([a b; c d],[an bn
 ```
 
 """
-function calcqe(S::Matrix{T},Snoise::Matrix{T}) where {T}
+function calcqe(S::AbstractArray{T},Snoise::AbstractArray{T}) where {T}
     qe = zeros(T,size(S))
     calcqe!(qe,S,Snoise)
     return qe
 end
 
-function calcqe(S::Matrix{Complex{T}},Snoise::Matrix{Complex{T}}) where {T}
+function calcqe(S::AbstractArray{Complex{T}},Snoise::AbstractArray{Complex{T}}) where {T}
     # commutation relations are real so if the type of complex, use this
     # parametric method to define a real matrix.
     qe = zeros(T,size(S))
@@ -1222,13 +1222,13 @@ julia> JosephsonCircuits.calcqeideal([3/5 4/5;4/5 3/5])
  ```
 
 """
-function calcqeideal(S::Matrix{T}) where {T}
+function calcqeideal(S::AbstractArray{T}) where {T}
     qeideal = zeros(T,size(S))
     calcqeideal!(qeideal,S)
     return qeideal
 end
 
-function calcqeideal(S::Matrix{Complex{T}}) where {T}
+function calcqeideal(S::AbstractArray{Complex{T}}) where {T}
     # quantum efficiency is real so if the type of complex, use this
     # parametric method to define a real matrix.
     qeideal = zeros(T,size(S))
