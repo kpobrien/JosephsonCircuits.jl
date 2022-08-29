@@ -32,7 +32,16 @@ function calcfrequencies(w::Tuple,Nharmonics::Tuple;maxintermodorder=Inf,
     dropvalues = Array{eltype(w),1}(undef,0)
     
     nvals = zeros(eltype(n),length(n))
-#     oddonly = true
+
+    calcfrequencies!(coords, values, dropcoords, dropvalues, w, n, nvals, Nw, dc,
+        even, odd, maxintermodorder)
+
+    return Nw,coords,values,dropcoords,dropvalues
+end
+
+
+function calcfrequencies!(coords, values, dropcoords, dropvalues, w, n, nvals,
+    Nw, dc, even, odd, maxintermodorder)
 
     for i in CartesianIndices(Nw)
         for (ni,nval) in enumerate(i.I)
@@ -43,19 +52,23 @@ function calcfrequencies(w::Tuple,Nharmonics::Tuple;maxintermodorder=Inf,
             end
         end
 
+        # for nval in nvals
+
         # to be returned as a valid frequency, the point has to match the
         # criteria of dc, even, or odd, and either only contain a single frequency
         # or be less than the max intermod order if it contains multiple
         # frequencies. 
         if (
                 # test for DC
-                (dc && all(nvals .== 0)) ||
+                # (dc && all(nvals .== 0)) ||
+                (dc && all(==(0),nvals)) ||
                 # test for even (and not DC)
                 (even && mod(sum(abs,nvals),2) == 0 && sum(abs,nvals) > 0) ||
                 # test for odd
                 (odd && mod(sum(abs,nvals),2) == 1)
             ) && # test for containing only one frequency or less than maxintermodorder
-                (sum( nvals .!== 0) == 1 || sum(abs,nvals) <= maxintermodorder)
+                # (sum( nvals .!== 0) == 1 || sum(abs,nvals) <= maxintermodorder)
+                (count(!=(0), nvals) == 1 || sum(abs,nvals) <= maxintermodorder)
 
             push!(coords,i)
             push!(values,dot(w,nvals))
@@ -64,7 +77,9 @@ function calcfrequencies(w::Tuple,Nharmonics::Tuple;maxintermodorder=Inf,
             push!(dropvalues,dot(w,nvals))
         end
     end
-    return Nw,coords,values,dropcoords,dropvalues
+
+
+    return nothing
 end
 
 function vectortodense(coords,values,Nharmonics)

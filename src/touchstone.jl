@@ -1,12 +1,26 @@
+
+# struct TouchstoneHeader
+#     version::Float64
+#     reference::Vector
+#     format::String
+#     comments::Vector{String}
+#     twoportdataorder::String
+#     matrixformat::String
+#     frequencyunit::Float64
+#     R::Float64
+# end
+
 """
     touchstone_load(filename)
 
-Read a file in the Touchstone format. Standards compliant. This is the 1.1 spec:
+Read a file in the Touchstone format. Standard compliant.
+
+This is the 1.1 spec:
 https://ibis.org/connector/touchstone_spec11.pdf
 and the 2.0 spec:
 https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf
 
-Outputs un-normalized network parameters with frequency units of Hz. 
+Outputs un-normalized network parameters with frequency units of Hz.
 """
 function touchstone_load(filename)
 
@@ -19,13 +33,66 @@ function touchstone_load(filename)
     return touchstone_parse(io)
 end
 
-function touchstone_parse(io)
+"""
+    touchstone_parse(io::IO)
+
+Parse the Touchstone file described by the IOBuffer or IOStream `io`.
+
+This is the 1.1 spec:
+https://ibis.org/connector/touchstone_spec11.pdf
+and the 2.0 spec:
+https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf
+
+# Examples
+```jldoctest
+str="!Example 1:\n!1-port S-parameter file, single frequency point\n# MHz S MA R 50\n!freq magS11 angS11\n2.000 0.894 -12.136";
+println(str);
+JosephsonCircuits.touchstone_parse(IOBuffer(str))
+
+# output
+!Example 1:
+!1-port S-parameter file, single frequency point
+# MHz S MA R 50
+!freq magS11 angS11
+2.000 0.894 -12.136
+(header = (numberoffrequencies = 1, comments = ["Example 1:", "1-port S-parameter file, single frequency point", "!freq magS11 angS11"], R = 50.0, numberofports = 1, reference = [50.0], format = "MA", frequencyunit = 1.0e6, parameter = "S"), networkdata = (S = [0.874020294860635 - 0.18794819544685323im;;;], f = [2.0e6]), noisedata = Float64[])
+```
+```jldoctest
+str="!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Reference]\n50 75 0.01 0.01\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4";
+println(str);
+JosephsonCircuits.touchstone_parse(IOBuffer(str))
+
+# output
+!Example 4 (Version 2.0):
+! 4-port S-parameter data
+! Default impedance is overridden by [Reference]
+! Data cannot be represented using 1.0 syntax
+! Note that the [Reference] keyword arguments appear on a separate line
+[Version] 2.0
+# GHz S MA R 50
+[Number of Ports] 4
+[Reference]
+50 75 0.01 0.01
+[Number of Frequencies] 1
+[Network Data]
+5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1
+0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2
+0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3
+0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4
+(header = (numberofports = 4, comments = ["Example 4 (Version 2.0):", " 4-port S-parameter data", " Default impedance is overridden by [Reference]", " Data cannot be represented using 1.0 syntax", " Note that the [Reference] keyword arguments appear on a separate line"], version = 2.0, R = 50.0, numberoffrequencies = 1, reference = [50.0, 75.0, 0.01, 0.01], format = "MA", frequencyunit = 1.0e9, parameter = "S"), networkdata = (S = [-0.5681244079815996 + 0.1929628385351877im 0.29632183851470006 - 0.2686882357291961im 0.16693665375723588 - 0.38539869438327984im 0.09803970583787712 - 0.5208533537179372im; 0.29632183851470006 - 0.2686882357291961im -0.5679895560694177 + 0.1933594171383067im 0.09803970583787712 - 0.5208533537179372im 0.16693665375723588 - 0.38539869438327984im; 0.16693665375723588 - 0.38539869438327984im 0.09803970583787712 - 0.5208533537179372im -0.5681244079815996 + 0.1929628385351877im 0.29632183851470006 - 0.2686882357291961im; 0.09803970583787712 - 0.5208533537179372im 0.16693665375723588 - 0.38539869438327984im 0.29632183851470006 - 0.2686882357291961im -0.5681244079815996 + 0.1929628385351877im;;;], f = [5.0e9]), noisedata = Float64[])
+```
+"""
+function touchstone_parse(io::IO)
 
     # define a dictionary for the contents of the header
     header = Dict()
 
     #other variables
     readoptionline = true
+
+    if eof(io)
+        error("Input is empty and not a valid touchstone file.")
+    end
 
     #loop over the contents of the header
     while !eof(io)
@@ -37,7 +104,7 @@ function touchstone_parse(io)
         m = findfirst('!',line)
         if m !== nothing
             if !haskey(header,:comments)
-                header[:comments] = []
+                header[:comments] = String[]
             end
             push!(header[:comments],line[m+1:end])
             line = line[1:m-1]
@@ -651,14 +718,88 @@ end
 """
     matrixindices(nports,format)
 
+Return the cartesian indices of the elements of a scattering matrix given the
+number of ports `nports` and the format `format` which can be "Full", "Upper",
+or "Lower". 
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.matrixindices(2,"Full",printflag=true)
+11 12 
+21 22 
+4-element Vector{CartesianIndex{2}}:
+ CartesianIndex(1, 1)
+ CartesianIndex(1, 2)
+ CartesianIndex(2, 1)
+ CartesianIndex(2, 2)
+
+julia> JosephsonCircuits.matrixindices(2,"Upper",printflag=true)
+11 12 
+   22 
+      3-element Vector{CartesianIndex{2}}:
+ CartesianIndex(1, 1)
+ CartesianIndex(1, 2)
+ CartesianIndex(2, 2)
+
+julia> JosephsonCircuits.matrixindices(2,"Lower",printflag=true)
+11 
+21 22 
+3-element Vector{CartesianIndex{2}}:
+ CartesianIndex(1, 1)
+ CartesianIndex(2, 1)
+ CartesianIndex(2, 2)
+```
 """
-function matrixindices(nports,format)
-    return matrixindices(nports,format,"12_21")
+function matrixindices(nports,format; printflag = false)
+    return matrixindices(nports,format,"12_21", printflag = printflag)
 end
 
-function matrixindices(nports,format,twoportdataorder)
-    indices = []
-    printflag = false
+"""
+    matrixindices(nports,format,twoportdataorder)
+
+Return the cartesian indices of the elements of a scattering matrix given the
+number of ports `nports` and the format `format` which can be "Full", "Upper",
+or "Lower". The two port data order `twoportdataorder` can be "`12_21`" or "`21_12`"
+for 2 ports but must be "`12_21`" for other numbers of ports.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.matrixindices(2,"Full","12_21")
+4-element Vector{CartesianIndex{2}}:
+ CartesianIndex(1, 1)
+ CartesianIndex(1, 2)
+ CartesianIndex(2, 1)
+ CartesianIndex(2, 2)
+
+julia> JosephsonCircuits.matrixindices(2,"Full","21_12")
+4-element Vector{CartesianIndex{2}}:
+ CartesianIndex(1, 1)
+ CartesianIndex(2, 1)
+ CartesianIndex(1, 2)
+ CartesianIndex(2, 2)
+
+julia> JosephsonCircuits.matrixindices(4,"Full","12_21")
+16-element Vector{CartesianIndex{2}}:
+ CartesianIndex(1, 1)
+ CartesianIndex(1, 2)
+ CartesianIndex(1, 3)
+ CartesianIndex(1, 4)
+ CartesianIndex(2, 1)
+ CartesianIndex(2, 2)
+ CartesianIndex(2, 3)
+ CartesianIndex(2, 4)
+ CartesianIndex(3, 1)
+ CartesianIndex(3, 2)
+ CartesianIndex(3, 3)
+ CartesianIndex(3, 4)
+ CartesianIndex(4, 1)
+ CartesianIndex(4, 2)
+ CartesianIndex(4, 3)
+ CartesianIndex(4, 4)
+```
+"""
+function matrixindices(nports,format,twoportdataorder;printflag = false)
+    indices = CartesianIndex{2}[]
     
     if format == "Lower"
         ncol = 1
@@ -694,23 +835,24 @@ function matrixindices(nports,format,twoportdataorder)
 
         if format == "Upper"
             if printflag
-                print("$(i)$(j+nrow-ncol) ")
+                print("$(i)$(j+nports-ncol) ")
             end
-            push!(indices,CartesianIndex(i,j+nrow-ncol))
+            push!(indices,CartesianIndex(i,j+nports-ncol))
         else
             if printflag
                 print("$(i)$(j) ")
             end
             push!(indices,CartesianIndex(i,j))
-
         end
         if j == ncol
             if printflag
                 print("\n")
             end
             if format == "Upper"
-                for k = 1:nrow-ncol+1
-                    print("   ")
+                for k = 1:1:nports-ncol+1
+                    if printflag
+                        print("   ")
+                    end
                 end
             end
         end
@@ -734,27 +876,107 @@ end
 
 
 """
-    touchstone_save(frequencies::AbstractArray,N::AbstractArray,
-    filename::String;version=1.0,reference=[50.0,50.0],R = 50.0,format="RI",
-    comments=[""],twoportdataorder="12_21",matrixformat="Full",frequencyunit="Hz")
+    touchstone_save(filename::String,frequencies::AbstractArray,
+        N::AbstractArray;version=1.0,reference=[50.0,50.0],R = 50.0,format="RI",
+        comments=[""],twoportdataorder="12_21",matrixformat="Full",frequencyunit="Hz")
 
 Write a file in the Touchstone format. Standards compliant except does not
-support writing noise data. This is the 1.1 spec:
+support writing noise data.
+
+This is the 1.1 spec:
 https://ibis.org/connector/touchstone_spec11.pdf
 and the 2.0 spec:
 https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf
+"""
+function touchstone_save(filename::String,frequencies::AbstractVector,
+    N::AbstractArray;version=1.0,reference=[50.0,50.0],R = 50.0,format="RI",
+    parameter = "S", comments=[""],twoportdataorder="12_21",matrixformat="Full",
+    frequencyunit="Hz")
+
+    # check that the network data doesn't have too many dimensions
+    if size(N)[1] == size(N)[2]
+        numberofports = size(N)[1]
+    else
+        error("Error: Network data arrays are not square.")
+    end
+
+    # check the filename. it the file doesn't have a .ts or .sNp extension,
+    # then add the .sNp extension, where N is the number of ports. 
+    if (m = match(r"\.ts$|\.s\dp$",lowercase(filename))) != nothing
+        if version == 1.0 || version == 1.1
+            if m.match != ".s$(numberofports)p"
+                println("Warning: Extension of $(m.match) is not the recommended extension of .s$(numberofports)p for a version 1.0 file with $(numberofports) ports.")
+            end
+        else
+            if m.match != ".s$(numberofports)p" && m.match != ".ts"
+                println("Warning: Extension of $(m.match) is not the recommended extension of .ts or .s$(numberofports)p for a file with $(numberofports) ports.")
+            end
+        end
+    else
+        println("Warning: Adding extension of .s$(numberofports)p")
+        filename = filename*".s$(numberofports)p"
+    end
+
+    io = open(filename,"w")
+
+    touchstone_write(io, frequencies, N; version = version, reference = reference,
+        R = R, format = format, parameter = parameter, comments = comments,
+        twoportdataorder = twoportdataorder, matrixformat = matrixformat,
+        frequencyunit = frequencyunit)
+
+    close(io)
+
+    return nothing
+end
+
 
 """
-function touchstone_save(frequencies::AbstractArray,N::AbstractArray,
-    filename::String;version=1.0,reference=[50.0,50.0],R = 50.0,format="RI",
-    comments=[""],twoportdataorder="12_21",matrixformat="Full",frequencyunit="Hz")
+    touchstone_write(io::IO,frequencies::AbstractVector,N::AbstractArray;
+        version=1.0,reference=[50.0,50.0],R = 50.0,format="RI",parameter = "S",
+        comments=[""],twoportdataorder="12_21",matrixformat="Full",frequencyunit="Hz")
 
+Write a Touchstone file to the IOStream or IOBuffer `io`.
+
+# Examples
+```jldoctest
+julia> io = IOBuffer();JosephsonCircuits.touchstone_write(io, [1.0e9, 2.0e9, 10.0e9], [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im];version=1.0,reference=[50.0,50.0],frequencyunit="Hz",comments=["Example 4:","2-port S-parameter file, three frequency points"]);println(String(take!(io)))
+!Example 4:
+!2-port S-parameter file, three frequency points
+# Hz S RI R 50.0
+! freq ReS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22 
+1.0e9 0.3926 -0.1211 -0.0003 -0.0021 -0.0003 -0.0021 0.3926 -0.1211
+2.0e9 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054
+1.0e10 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336
+
+
+julia> io = IOBuffer();JosephsonCircuits.touchstone_write(io, [1.0e9, 2.0e9, 10.0e9], [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im];version=2.0,reference=[50.0,50.0],frequencyunit="Hz",comments=["Example 4:","2-port S-parameter file, three frequency points"]);println(String(take!(io)))
+!Example 4:
+!2-port S-parameter file, three frequency points
+[Version] 2.0
+# Hz S RI R 50.0
+[Number of Ports] 2
+[Two-Port Data Order] 12_21
+[Number of Frequencies] 3
+[Reference] 50.0 50.0
+[Network Data]
+! freq ReS11 ImS11 ReS12 ImS12 ReS21 ImS21 ReS22 ImS22 
+1.0e9 0.3926 -0.1211 -0.0003 -0.0021 -0.0003 -0.0021 0.3926 -0.1211
+2.0e9 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054
+1.0e10 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336
+[End]
+
+```
+"""
+function touchstone_write(io::IO,frequencies::AbstractVector,N::AbstractArray;
+    version=1.0,reference=[50.0,50.0],R = 50.0,format="RI",parameter = "S",
+    comments=[""],twoportdataorder="12_21",matrixformat="Full",frequencyunit="Hz")
 
     header = Dict()
 
     header[:version] = version
     header[:reference] = reference
     header[:format] = format
+    header[:parameter] = parameter
     header[:comments] = comments
     header[:twoportdataorder] = twoportdataorder
     header[:matrixformat] = matrixformat
@@ -768,7 +990,6 @@ function touchstone_save(frequencies::AbstractArray,N::AbstractArray,
     # header[:twoportdataorder] = "12_21"
     # header[:matrixformat] = "Full"
     # header[:frequencyunit] = "Hz"
-
 
     # set the reference impedance to 50.0 Ohms if no impedance given.
     if !haskey(header,:R)
@@ -841,24 +1062,6 @@ function touchstone_save(frequencies::AbstractArray,N::AbstractArray,
         error("Error: Number of frequencies from length of frequencies variable and from network data not consistent.")
     end
 
-    # check the filename. it the file doesn't have a .ts or .sNp extension,
-    # then add the .sNp extension, where N is the number of ports. 
-    if (m = match(r"\.ts$|\.s\dp$",lowercase(filename))) != nothing
-        if header[:version] == 1.0 || header[:version] == 1.1  || !haskey(header,:version)
-            if m.match != ".s$(header[:numberofports])p"
-                println("Warning: Extension of $(m.match) is not the recommended extension of .s$(header[:numberofports])p for a version 1.0 file with $(header[:numberofports]) ports.")
-            end
-        else
-            if m.match != ".s$(header[:numberofports])p" && m.match != ".ts"
-                println("Warning: Extension of $(m.match) is not the recommended extension of .ts or .s$(header[:numberofports])p for a file with $(header[:numberofports]) ports.")
-            end
-        end
-
-    else
-        println("Warning: Adding extension of .s$(header[:numberofports])p")
-        filename = filename*".s$(header[:numberofports])p"
-    end
-
     # if reference impedance is given, make sure there is one per port
     if haskey(header,:reference)
         if length(header[:reference]) !=  header[:numberofports]
@@ -869,226 +1072,209 @@ function touchstone_save(frequencies::AbstractArray,N::AbstractArray,
     # if we are writing a version 1.0 file
     if header[:version] == 1.0 || header[:version] == 1.1  || !haskey(header,:version)
 
-        # open the file
+        # write the comments
+        for comment in header[:comments]
+            write(io,"!$(comment)\n")
+        end
 
-        open(filename,"w") do io
+        # write the option line
+        write(io,"# $(header[:frequencyunit]) $(header[:parameter]) $(header[:format]) R $(header[:R])\n")
 
-            # write the comments
-            for comment in header[:comments]
-                write(io,"!$(comment)\n")
-            end
+        if header[:numberofports] == 2
+            indices = matrixindices(header[:numberofports],header[:matrixformat],"21_12")
+        else
+            indices = matrixindices(header[:numberofports],header[:matrixformat])
+        end
 
-            # write the option line
-            write(io,"# $(header[:frequencyunit]) $(header[:parameter]) $(header[:format]) R $(header[:R])\n")
-
-            if header[:numberofports] == 2
-                indices = matrixindices(header[:numberofports],"Full","21_12")
-            else
-                indices = matrixindices(header[:numberofports],"Full")
-            end
-
-            # write a comment with the ports
-            write(io,"! freq ")
-            for j = 1:length(indices)
-                if header[:format] == "RI"
-                    write(io,"Re$(header[:parameter])$(indices[j][1])$(indices[j][2]) Im$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
-                elseif header[:format] == "MA"
-                    write(io,"mag$(header[:parameter])$(indices[j][1])$(indices[j][2]) ang$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
-                elseif header[:format] == "DB"
-                    write(io,"logmag$(header[:parameter])$(indices[j][1])$(indices[j][2]) ang$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
-                else
-                    error("Error: Unknown format")
-                end
-            end
-            write(io,"\n")
-
-            # normalize Z, Y, G, or H by the reference impedance per the spec. 
-            if header[:parameter] == "Z" || header[:parameter] == "Y" || header[:parameter] == "G" || header[:parameter] == "H"
-                normalization = header[:R]
-            elseif header[:parameter] == "S"
-                normalization = 1
+        # write a comment with the ports
+        write(io,"! freq ")
+        for j = 1:length(indices)
+            if header[:format] == "RI"
+                write(io,"Re$(header[:parameter])$(indices[j][1])$(indices[j][2]) Im$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
+            elseif header[:format] == "MA"
+                write(io,"mag$(header[:parameter])$(indices[j][1])$(indices[j][2]) ang$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
+            elseif header[:format] == "DB"
+                write(io,"logmag$(header[:parameter])$(indices[j][1])$(indices[j][2]) ang$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
             else
                 error("Error: Unknown format")
             end
+        end
+        write(io,"\n")
 
-            # write the network data
-            for i = 1:length(frequencies)
-                write(io,"$(frequencies[i])")
-                k=1
-                for j = 1:length(indices)
-
-                    # do different things for each format
-                    if header[:format] == "RI"
-                        s1 = "$(real(N[indices[j],i]/normalization) )"
-                        s2 = "$(imag(N[indices[j],i]/normalization) )"
-
-                    elseif header[:format] == "MA"
-                        s1 = "$(abs(N[indices[j],i]/normalization) )"
-                        s2 = "$(180/pi*angle(N[indices[j],i]/normalization) )"
-
-                    elseif header[:format] == "DB"
-                        s1 = "$(10*log10(abs2(N[indices[j],i]/normalization)) )"
-                        s2 = "$(180/pi*angle(N[indices[j],i]/normalization) )"
-                    else
-                        error("Error: Unknown format")
-                    end
-                    # write the strings
-                    write(io," "*s1)
-                    write(io," "*s2)
-
-                    # only 4 pairs allowed per line
-                    # the convention is to || mod(j,header[:numberofports]) == 0)
-                    if  k  == 4  && j != length(indices)
-                        k = 1
-                        write(io,"\n")
-                    elseif header[:numberofports] == 2
-                        nothing
-                    elseif mod(j,header[:numberofports]) == 0  && j != length(indices)
-                        k = 0
-                        write(io,"\n")
-                    end
-                    k+=1
-                end
-                write(io,"\n")
-            end
-
+        # normalize Z, Y, G, or H by the reference impedance per the spec. 
+        if header[:parameter] == "Z" || header[:parameter] == "Y" || header[:parameter] == "G" || header[:parameter] == "H"
+            normalization = header[:R]
+        elseif header[:parameter] == "S"
+            normalization = 1
+        else
+            error("Error: Unknown format")
         end
 
+        # write the network data
+        for i = 1:length(frequencies)
+            write(io,"$(frequencies[i])")
+            k=1
+            for j = 1:length(indices)
+
+                # do different things for each format
+                if header[:format] == "RI"
+                    s1 = "$(real(N[indices[j],i]/normalization) )"
+                    s2 = "$(imag(N[indices[j],i]/normalization) )"
+
+                elseif header[:format] == "MA"
+                    s1 = "$(abs(N[indices[j],i]/normalization) )"
+                    s2 = "$(180/pi*angle(N[indices[j],i]/normalization) )"
+
+                elseif header[:format] == "DB"
+                    s1 = "$(10*log10(abs2(N[indices[j],i]/normalization)) )"
+                    s2 = "$(180/pi*angle(N[indices[j],i]/normalization) )"
+                else
+                    error("Error: Unknown format")
+                end
+                # write the strings
+                write(io," "*s1)
+                write(io," "*s2)
+
+                # only 4 pairs allowed per line
+                # the convention is to || mod(j,header[:numberofports]) == 0)
+                if  k  == 4  && j != length(indices)
+                    k = 1
+                    write(io,"\n")
+                elseif header[:numberofports] == 2
+                    nothing
+                elseif mod(j,header[:numberofports]) == 0  && j != length(indices)
+                    k = 0
+                    write(io,"\n")
+                end
+                k+=1
+            end
+            write(io,"\n")
+        end
         # write the noise data. not implemented yet
 
-
+    # if we are writing a version 2.0 file.
     elseif header[:version] == 2.0
 
+        # write the comments
+        for comment in header[:comments]
+            write(io,"!$(comment)\n")
+        end
 
-        # open the file
+        # write the version keyword
+        write(io,"[Version] 2.0\n")
 
-        open(filename,"w") do io
+        # write the option line
+        write(io,"# $(header[:frequencyunit]) $(header[:parameter]) $(header[:format]) R $(header[:R])\n")
 
-            # write the comments
-            for comment in header[:comments]
-                write(io,"!$(comment)\n")
-            end
+        # write the number of ports
+        write(io,"[Number of Ports] $(header[:numberofports])\n")
 
-            # write the version keyword
-            write(io,"[Version] 2.0\n")
+        # write the two-port data order keyword if there are two ports
+        if header[:numberofports] == 2
+            write(io,"[Two-Port Data Order] $(header[:twoportdataorder])\n")
+        end
 
-            # write the option line
-            write(io,"# $(header[:frequencyunit]) $(header[:parameter]) $(header[:format]) R $(header[:R])\n")
+        # write the number of frequencies
+        write(io,"[Number of Frequencies] $(header[:numberoffrequencies])\n")
 
-            # write the number of ports
-            write(io,"[Number of Ports] $(header[:numberofports])\n")
+        if haskey(header,:numberofnoisefrequencies)
+            # write the number of noise frequencies
+            write(io,"[Number of Noise Frequencies] $(header[:numberofnoisefrequencies])\n")
+        end
 
-            # write the two-port data order keyword if there are two ports
-            if header[:numberofports] == 2
-                write(io,"[Two-Port Data Order] $(header[:twoportdataorder])\n")
-            end
+        # write the reference keyword
+        write(io,"[Reference]")
+        for r in header[:reference]
+            write(io," $(real(r))")
+        end
+        write(io,"\n")
 
-            # write the number of frequencies
-            write(io,"[Number of Frequencies] $(header[:numberoffrequencies])\n")
+        # write the matrix format
+        if header[:matrixformat] != "Full"
+            write(io,"[Matrix Format] $(header[:matrixformat])\n")
+        end
 
-            if haskey(header,:numberofnoisefrequencies)
-                # write the number of noise frequencies
-                write(io,"[Number of Noise Frequencies] $(header[:numberofnoisefrequencies])\n")
-            end
+        # write the network data keyword
+        write(io,"[Network Data]\n")
 
-            # write the reference keyword
-            write(io,"[Reference]")
-            for r in header[:reference]
-                write(io," $(real(r))")
-            end
+        # calculate the indices
+        if header[:numberofports] == 2
+            indices = matrixindices(header[:numberofports],header[:matrixformat],header[:twoportdataorder])
+        else
+            indices = matrixindices(header[:numberofports],header[:matrixformat])
+        end
 
-            write(io,"\n")
-
-
-            # write the matrix format
-
-
-            # write the network data keyword
-            write(io,"[Network Data]\n")
-
-            # calculate the indices
-            if header[:numberofports] == 2
-                indices = matrixindices(header[:numberofports],header[:matrixformat],header[:twoportdataorder])
-            else
-                indices = matrixindices(header[:numberofports],header[:matrixformat])
-            end
-
-            # write a comment with the ports
-            write(io,"! freq ")
-            for j = 1:length(indices)
-                if header[:format] == "RI"
-                    write(io,"Re$(header[:parameter])$(indices[j][1])$(indices[j][2]) Im$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
-                elseif header[:format] == "MA"
-                    write(io,"mag$(header[:parameter])$(indices[j][1])$(indices[j][2]) ang$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
-                elseif header[:format] == "DB"
-                    write(io,"logmag$(header[:parameter])$(indices[j][1])$(indices[j][2]) ang$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
-                else
-                    error("Error: Unknown format")
-                end
-            end
-            write(io,"\n")
-
-            # normalize Z, Y, G, or H by the reference impedance per the spec. 
-            if header[:parameter] == "Z" || header[:parameter] == "Y" || header[:parameter] == "G" || header[:parameter] == "H"
-                normalization = header[:R]
-            elseif header[:parameter] == "S"
-                normalization = 1
+        # write a comment with the ports
+        write(io,"! freq ")
+        for j = 1:length(indices)
+            if header[:format] == "RI"
+                write(io,"Re$(header[:parameter])$(indices[j][1])$(indices[j][2]) Im$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
+            elseif header[:format] == "MA"
+                write(io,"mag$(header[:parameter])$(indices[j][1])$(indices[j][2]) ang$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
+            elseif header[:format] == "DB"
+                write(io,"logmag$(header[:parameter])$(indices[j][1])$(indices[j][2]) ang$(header[:parameter])$(indices[j][1])$(indices[j][2]) ")
             else
                 error("Error: Unknown format")
             end
+        end
+        write(io,"\n")
 
-            # write the network data
-            for i = 1:length(frequencies)
-                write(io,"$(frequencies[i])")
-                k=1
-                for j = 1:length(indices)
-
-                    # do different things for each format
-                    if header[:format] == "RI"
-                        s1 = "$(real(N[indices[j],i]/normalization) )"
-                        s2 = "$(imag(N[indices[j],i]/normalization) )"
-
-                    elseif header[:format] == "MA"
-                        s1 = "$(abs(N[indices[j],i]/normalization) )"
-                        s2 = "$(180/pi*angle(N[indices[j],i]/normalization) )"
-
-                    elseif header[:format] == "DB"
-                        s1 = "$(10*log10(abs2(N[indices[j],i]/normalization)) )"
-                        s2 = "$(180/pi*angle(N[indices[j],i]/normalization) )"
-                    else
-                        error("Error: Unknown format")
-                    end
-                    # write the strings
-                    write(io," "*s1)
-                    write(io," "*s2)
-
-                    # only 4 pairs allowed per line
-                    # the convention is to || mod(j,header[:numberofports]) == 0)
-                    if  k  == 4  && j != length(indices)
-                        k = 1
-                        write(io,"\n")
-                    elseif header[:numberofports] == 2
-                        nothing
-                    elseif mod(j,header[:numberofports]) == 0  && j != length(indices)
-                        k = 0
-                        write(io,"\n")
-                    end
-                    k+=1
-                end
-                write(io,"\n")
-            end
-
-            write(io,"[End]\n")
-
-
+        # normalize Z, Y, G, or H by the reference impedance per the spec. 
+        if header[:parameter] == "Z" || header[:parameter] == "Y" || header[:parameter] == "G" || header[:parameter] == "H"
+            normalization = header[:R]
+        elseif header[:parameter] == "S"
+            normalization = 1
+        else
+            error("Error: Unknown format")
         end
 
-        # write the noise data. not implemented yet
+        # write the network data
+        for i = 1:length(frequencies)
+            write(io,"$(frequencies[i])")
+            k=1
+            for j = 1:length(indices)
 
+                # do different things for each format
+                if header[:format] == "RI"
+                    s1 = "$(real(N[indices[j],i]/normalization) )"
+                    s2 = "$(imag(N[indices[j],i]/normalization) )"
+
+                elseif header[:format] == "MA"
+                    s1 = "$(abs(N[indices[j],i]/normalization) )"
+                    s2 = "$(180/pi*angle(N[indices[j],i]/normalization) )"
+
+                elseif header[:format] == "DB"
+                    s1 = "$(10*log10(abs2(N[indices[j],i]/normalization)) )"
+                    s2 = "$(180/pi*angle(N[indices[j],i]/normalization) )"
+                else
+                    error("Error: Unknown format")
+                end
+                # write the strings
+                write(io," "*s1)
+                write(io," "*s2)
+
+                # only 4 pairs allowed per line
+                # the convention is to || mod(j,header[:numberofports]) == 0)
+                if  k  == 4  && j != length(indices)
+                    k = 1
+                    write(io,"\n")
+                elseif header[:numberofports] == 2
+                    nothing
+                elseif mod(j,header[:numberofports]) == 0  && j != length(indices)
+                    k = 0
+                    write(io,"\n")
+                end
+                k+=1
+            end
+            write(io,"\n")
+        end
+
+        write(io,"[End]\n")
+
+        # write the noise data. not implemented yet
 
     else
         error("Error: unsupported version $(header[:version])")
-
     end
 end
 

@@ -803,8 +803,10 @@ function calccm!(cm,S,w)
 
     m = length(w)
 
-    if any(mod.(size(S),m) .!=0)
-        throw(DimensionMismatch("Dimensions of scattering matrix must be an integer multiple of the number of frequencies"))
+    for d in size(S)
+        if mod(d, m) != 0
+            throw(DimensionMismatch("Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
+        end
     end
 
     if size(S,1) != length(cm)
@@ -845,8 +847,10 @@ function calccm!(cm::AbstractArray{Symbolics.Num},S,w)
 
     m = length(w)
 
-    if any(mod.(size(S),m) .!=0)
-        throw(DimensionMismatch("Dimensions of scattering matrix must be an integer multiple of the number of frequencies"))
+    for d in size(S)
+        if mod(d, m) != 0
+            throw(DimensionMismatch("Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
+        end
     end
 
     if size(S,1) != length(cm)
@@ -911,15 +915,23 @@ function calccm!(cm,S,Snoise,w)
 
     m = length(w)
 
-    if any(mod.(size(S),m) .!=0)
-        throw(DimensionMismatch("Dimensions of scattering matrix must be an integer multiple of the number of frequencies"))
+    for d in size(S)
+        if mod(d, m) != 0
+            throw(DimensionMismatch("Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
+        end
+    end
+
+    for d in size(Snoise)
+        if mod(d, m) != 0
+            throw(DimensionMismatch("Dimensions of noise scattering matrix must be integer multiples of the number of frequencies."))
+        end
     end
 
     if size(S,1) != length(cm)
         throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
     end
 
-    if size(S,1) .!= size(Snoise,1)
+    if size(S,1) != size(Snoise,1)
         throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
 
@@ -1016,15 +1028,23 @@ function calccm!(cm::AbstractArray{Symbolics.Num},S,Snoise,w)
 
     m = length(w)
 
-    if any(mod.(size(S),m) .!=0)
-        throw(DimensionMismatch("Dimensions of scattering matrix must be an integer multiple of the number of frequencies"))
+    for d in size(S)
+        if mod(d, m) != 0
+            throw(DimensionMismatch("Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
+        end
+    end
+
+    for d in size(Snoise)
+        if mod(d, m) != 0
+            throw(DimensionMismatch("Dimensions of noise scattering matrix must be integer multiples of the number of frequencies."))
+        end
     end
 
     if size(S,1) != length(cm)
         throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
     end
 
-    if size(S,1) .!= size(Snoise,1)
+    if size(S,1) != size(Snoise,1)
         throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
 
@@ -1092,7 +1112,7 @@ ladder operator basis. Overwrites qe with output.
 """
 function calcqe!(qe,S)
 
-    if any(size(qe) .!= size(S))
+    if size(qe) != size(S)
         throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
     end
 
@@ -1136,7 +1156,6 @@ julia> @variables a b c d an bn cn dn;JosephsonCircuits.calcqe([a b; c d],[an bn
  abs2(a) / (abs2(a) + abs2(an) + abs2(b) + abs2(bn))  …  abs2(b) / (abs2(a) + abs2(an) + abs2(b) + abs2(bn))
  abs2(c) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))     abs2(d) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))
 ```
-
 """
 function calcqe(S::AbstractArray{T},Snoise::AbstractArray{T}) where {T}
     qe = zeros(T,size(S))
@@ -1161,11 +1180,11 @@ ladder operator basis. Overwrites qe with output.
 """
 function calcqe!(qe,S,Snoise)
 
-    if any(size(qe) .!= size(S))
+    if size(qe) != size(S)
         throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
     end
 
-    if size(S,1) .!= size(Snoise,1)
+    if size(S,1) != size(Snoise,1)
         throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
 
@@ -1219,8 +1238,10 @@ julia> JosephsonCircuits.calcqeideal([3/5 4/5;4/5 3/5])
 2×2 Matrix{Float64}:
  1.0  1.0
  1.0  1.0
- ```
 
+julia> @variables S11 S12 S21 S22;println(JosephsonCircuits.calcqeideal([S11 S12;S21 S22]))
+Num[ifelse(abs2(S11) <= 1, 1, 1 / (2 + -1 / abs2(S11))) ifelse(abs2(S12) <= 1, 1, 1 / (2 + -1 / abs2(S12))); ifelse(abs2(S21) <= 1, 1, 1 / (2 + -1 / abs2(S21))) ifelse(abs2(S22) <= 1, 1, 1 / (2 + -1 / abs2(S22)))]
+ ```
 """
 function calcqeideal(S::AbstractArray{T}) where {T}
     qeideal = zeros(T,size(S))
@@ -1236,10 +1257,9 @@ function calcqeideal(S::AbstractArray{Complex{T}}) where {T}
     return qeideal
 end
 
-
 function calcqeideal!(qeideal,S)
     if size(qeideal) != size(S)
-        error("Sizes of QE and S matrices must be equal.")
+        throw(DimensionMismatch("Sizes of QE and S matrices must be equal."))
     end
     for i in eachindex(S)
         abs2S = abs2(S[i])

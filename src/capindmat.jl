@@ -756,7 +756,7 @@ end
 function calcLmean_inner(typevector::Vector, valuevector::Vector,
     valuetypevector::Vector)
 
-    if length(typevector) !== length(valuevector)
+    if length(typevector) != length(valuevector)
         throw(DimensionMismatch("typevector and valuevector should have the same length"))
     end
 

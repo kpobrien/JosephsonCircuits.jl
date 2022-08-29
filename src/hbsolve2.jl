@@ -431,7 +431,8 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
         # path between the old x and the new x. 
         # Note: the dot product takes the complex conjugate of the first vector
         f = real(0.5*dot(F,F))
-        dfdalpha = real(dot(F,Jsparse*deltax))
+        # dfdalpha = real(dot(F,Jsparse*deltax))
+        dfdalpha = real(dot(F,Jsparse,deltax))
 
         # # evaluate the objective function at Nsample points
         # for alpha in range(0,1,Nsamples)

@@ -868,7 +868,8 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
         # path between the old x and the new x. 
         # Note: the dot product takes the complex conjugate of the first vector
         f = real(0.5*dot(F,F))
-        dfdalpha = real(dot(F,Jsparse*deltax))
+        # dfdalpha = real(dot(F,Jsparse*deltax))
+        dfdalpha = real(dot(F,Jsparse,deltax))
 
         # # evaluate the objective function at Nsample points
         # for alpha in range(0,1,Nsamples)
@@ -885,8 +886,6 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
         Nbranches,Lmean,AoLjbmvector,AoLjbm,
         AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
 
-        # F .*= invnormJ
-
         fp = real(0.5*dot(F,F))
 
         # coefficients of the quadratic equation a*alpha^2+b*alpha+c to interpolate
@@ -896,7 +895,6 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
         c = f
         alpha1 = -b/(2*a)
         f1fit = -b*b/(4*a) + c
-
 
         if f1fit > fp
             f1fit = fp
@@ -922,7 +920,6 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
             alpha1 = 1.0
             # println("norm(F)/norm(phi): ",sqrt(fp)/norm(x))
         end
-        # alpha1 = 1
 
         # update x
         x .+= deltax*alpha1

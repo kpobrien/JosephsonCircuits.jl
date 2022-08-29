@@ -36,7 +36,7 @@ the diagonal.
 """
 function diagrepeat!(out,A,counts::Integer)
 
-    if any(size(A).*counts .!= size(out))
+    if size(A).*counts != size(out)
         error("Sizes not consistent")
     end
 
@@ -95,7 +95,6 @@ function diagrepeat(A::SparseMatrixCSC,counts::Integer)
     I = Vector{eltype(A.rowval)}(undef,nnz(A)*counts)
     J = Vector{eltype(A.rowval)}(undef,nnz(A)*counts)
     V = Vector{eltype(A.nzval)}(undef,nnz(A)*counts)
-
 
     @inbounds for i in 1:length(A.colptr)-1
         for j in A.colptr[i]:(A.colptr[i+1]-1)
@@ -200,7 +199,7 @@ function sparseadd!(A::SparseMatrixCSC,As::SparseMatrixCSC,indexmap)
         throw(DimensionMismatch("The indexmap must be the same length as As"))
     end
 
-    if any(size(A) .!= size(As))
+    if size(A) != size(As)
         throw(DimensionMismatch("A and As must be the same size."))
     end
 
@@ -241,7 +240,7 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,indexmap::V
         throw(DimensionMismatch("The indexmap must be the same length as As"))
     end
 
-    if any(size(A) .!= size(As))
+    if size(A) != size(As)
         throw(DimensionMismatch("A and As must be the same size."))
     end
 
@@ -283,7 +282,7 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,Ad::Diagona
         throw(DimensionMismatch("The indexmap must be the same length as As"))
     end
 
-    if any(size(A) .!= size(As))
+    if size(A) != size(As)
         throw(DimensionMismatch("A and As must be the same size."))
     end
 
@@ -328,11 +327,11 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,Ad::Diagonal,As::SparseMatrixCS
         throw(DimensionMismatch("The indexmap must be the same length as As"))
     end
 
-    if any(size(A) .!= size(As))
+    if size(A) != size(As)
         throw(DimensionMismatch("A and As must be the same size."))
     end
 
-    if any(size(A) .!= size(Ad))
+    if size(A) != size(Ad)
         throw(DimensionMismatch("A and Ad must be the same size."))
     end
 
@@ -382,15 +381,15 @@ function sparseaddconj!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
         throw(DimensionMismatch("The indexmap must be the same length as As"))
     end
 
-    if any(size(A) .!= size(As))
+    if size(A) != size(As)
         throw(DimensionMismatch("A and As must be the same size."))
     end
 
-    if any(size(A) .!= size(Ad))
+    if size(A) != size(Ad)
         throw(DimensionMismatch("A and Ad must be the same size."))
     end
 
-    if any(size(A) .!= size(conjflag))
+    if size(A) != size(conjflag)
         throw(DimensionMismatch("A and conjflag must be the same size."))
     end
 
@@ -445,19 +444,19 @@ function sparseaddconjsubst!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
         throw(DimensionMismatch("The indexmap must be the same length as As"))
     end
 
-    if any(size(A) .!= size(As))
+    if size(A) != size(As)
         throw(DimensionMismatch("A and As must be the same size."))
     end
 
-    if any(size(A) .!= size(Ad))
+    if size(A) != size(Ad)
         throw(DimensionMismatch("A and Ad must be the same size."))
     end
 
-    if any(size(A) .!= size(conjflag))
+    if size(A) != size(conjflag)
         throw(DimensionMismatch("A and conjflag must be the same size."))
     end
 
-    if any(size(A) .!= size(wmodesm))
+    if size(A) != size(wmodesm)
         throw(DimensionMismatch("A and wmodesm must be the same size."))
     end
 
@@ -536,7 +535,7 @@ JosephsonCircuits.sparseaddmap(A,As)
 """
 function sparseaddmap(A::SparseMatrixCSC,B::SparseMatrixCSC)
 
-    if any(size(A) .!= size(B))
+    if size(A) != size(B)
         throw(DimensionMismatch("A and B must be the same size."))
     end
 
