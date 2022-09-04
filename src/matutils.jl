@@ -144,6 +144,82 @@ end
 
 
 """
+    spaddkeepzeros(A::SparseMatrixCSC,B::SparseMatrixCSC)
+
+Add sparse matrices `A` and `B` and return the result, keeping any structural
+zeros, unlike the default Julia sparse matrix addition functions. 
+
+# Examples
+```jldoctest
+julia> A = JosephsonCircuits.SparseArrays.sprand(10,10,0.2); B = JosephsonCircuits.SparseArrays.sprand(10,10,0.2);JosephsonCircuits.spaddkeepzeros(A,B) == A+B
+true
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,0],2,2);
+B = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1],2,2);
+JosephsonCircuits.spaddkeepzeros(A,B)
+
+# output
+2×2 SparseArrays.SparseMatrixCSC{Int64, Int64} with 3 stored entries:
+ 2  0
+ ⋅  3
+```
+"""
+function spaddkeepzeros(A::SparseMatrixCSC,B::SparseMatrixCSC)
+
+    if !(A.m == B.m && A.n == B.n)
+        throw(DimensionMismatch("argument shapes must match"))
+    end
+
+    # column pointer has length number of columns + 1
+    colptr = zeros(Int64,A.n+1)
+
+    # the sum of the number of nonzero elements is an upper bound 
+    # for the number of nonzero elements in the sum.
+    # set rowval and nzval to be that size then reduce size later
+    rowval = Vector{Int64}(undef,nnz(A)+nnz(B))
+    nzval = zeros(promote_type(eltype(A.nzval),eltype(B.nzval)),nnz(A)+nnz(B))
+
+    colptr[1] = 1
+    # loop over the columns and combine the row elements
+    @inbounds for i in 2:length(A.colptr)
+        j = A.colptr[i-1]
+        jmax = A.colptr[i]-1
+        k = B.colptr[i-1]
+        kmax = B.colptr[i]-1
+        colptr[i] = colptr[i-1]
+        while j <= jmax  || k <= kmax
+            if k > kmax
+                rowval[colptr[i]] = A.rowval[j]
+                nzval[colptr[i]] += A.nzval[j]
+                j+=1
+            elseif j > jmax
+                rowval[colptr[i]] = B.rowval[k]
+                nzval[colptr[i]] += B.nzval[k]
+                k+=1
+            elseif A.rowval[j] < B.rowval[k]
+                rowval[colptr[i]] = A.rowval[j]
+                nzval[colptr[i]] += A.nzval[j]
+                j+=1
+            elseif A.rowval[j] > B.rowval[k]
+                rowval[colptr[i]] = B.rowval[k]
+                nzval[colptr[i]] += B.nzval[k]
+                k+=1
+            else
+                rowval[colptr[i]] = A.rowval[j]
+                nzval[colptr[i]] += A.nzval[j] + B.nzval[k]
+                j+=1
+                k+=1
+            end
+            colptr[i] += 1
+        end
+    end
+    resize!(rowval,colptr[end]-1)
+    resize!(nzval,colptr[end]-1)
+    return SparseMatrixCSC(A.m,A.n,colptr,rowval,nzval)
+end
+
+"""
     sprandsubset(A::SparseMatrixCSC,p::AbstractFloat)
 
 Given a sparse matrix A, return a sparse matrix with random values in some
