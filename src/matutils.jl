@@ -100,6 +100,14 @@ function diagrepeat(A::SparseMatrixCSC,counts::Integer)
     rowval = Vector{Int64}(undef,counts*nnz(A))
     nzval = Vector{eltype(A.nzval)}(undef,counts*nnz(A))
 
+    diagrepeat!(colptr,rowval,nzval,A,counts)
+
+    return SparseMatrixCSC(A.m*counts,A.n*counts,colptr,rowval,nzval)
+end
+
+function diagrepeat!(colptr::Vector,rowval::Vector,nzval::Vector,
+    A::SparseMatrixCSC,counts::Integer)
+
     colptr[1] = 1
     # loop over the columns
     @inbounds for i in 2:length(A.colptr)
@@ -115,9 +123,8 @@ function diagrepeat(A::SparseMatrixCSC,counts::Integer)
             end
         end
     end
-    return SparseMatrixCSC(A.m*counts,A.n*counts,colptr,rowval,nzval)
+    return nothing
 end
-
 
 # function diagrepeat(A::SparseMatrixCSC,counts::Integer)
 
