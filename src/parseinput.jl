@@ -1129,8 +1129,8 @@ Any[50, Zfun(w, 50)]
 ```
 """
 function valuevectortonumber(valuevector::Vector,circuitdefs::Dict)
-    # return [valuetonumber(v,circuitdefs) for v in valuevector]
-    return map(valuetonumber,valuevector,Base.Iterators.repeated(circuitdefs,length(valuevector)))
+    return [valuetonumber(v,circuitdefs) for v in valuevector]
+    # return map(valuetonumber,valuevector,Base.Iterators.repeated(circuitdefs,length(valuevector)))
 end
 
 """
