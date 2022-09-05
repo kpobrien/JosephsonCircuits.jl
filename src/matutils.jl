@@ -91,23 +91,53 @@ julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,1,2
 """
 function diagrepeat(A::SparseMatrixCSC,counts::Integer)
 
-    # define empty vectors for the rows, columns, and values
-    I = Vector{eltype(A.rowval)}(undef,nnz(A)*counts)
-    J = Vector{eltype(A.rowval)}(undef,nnz(A)*counts)
-    V = Vector{eltype(A.nzval)}(undef,nnz(A)*counts)
+    # column pointer has length number of columns + 1
+    colptr = Vector{Int64}(undef,counts*A.n+1)
+    
+    # the sum of the number of nonzero elements is an upper bound 
+    # for the number of nonzero elements in the sum.
+    # set rowval and nzval to be that size then reduce size later
+    rowval = Vector{Int64}(undef,counts*nnz(A))
+    nzval = Vector{eltype(A.nzval)}(undef,counts*nnz(A))
 
-    @inbounds for i in 1:length(A.colptr)-1
-        for j in A.colptr[i]:(A.colptr[i+1]-1)
-            for k in 1:counts
-                I[(j-1)*counts+k] = (A.rowval[j]-1)*counts+k
-                J[(j-1)*counts+k] = (i-1)*counts+k
-                V[(j-1)*counts+k] = A.nzval[j]
+    colptr[1] = 1
+    # loop over the columns
+    @inbounds for i in 2:length(A.colptr)
+        # the diagonally repeated elements are additional columns
+        # in between the original columns with the elements shifted
+        # down.
+        for k in 1:counts
+            colptr[(i-2)*counts+k+1] = colptr[(i-2)*counts+k]
+            for j in A.colptr[i-1]:(A.colptr[i]-1)
+                rowval[colptr[(i-2)*counts+k+1]] = (A.rowval[j]-1)*counts+k
+                nzval[colptr[(i-2)*counts+k+1]] = A.nzval[j]
+                colptr[(i-2)*counts+k+1] += 1
             end
         end
     end
-
-    return sparse(I,J,V,A.m*counts,A.n*counts)
+    return SparseMatrixCSC(A.m*counts,A.n*counts,colptr,rowval,nzval)
 end
+
+
+# function diagrepeat(A::SparseMatrixCSC,counts::Integer)
+
+#     # define empty vectors for the rows, columns, and values
+#     I = Vector{eltype(A.rowval)}(undef,nnz(A)*counts)
+#     J = Vector{eltype(A.rowval)}(undef,nnz(A)*counts)
+#     V = Vector{eltype(A.nzval)}(undef,nnz(A)*counts)
+
+#     @inbounds for i in 1:length(A.colptr)-1
+#         for j in A.colptr[i]:(A.colptr[i+1]-1)
+#             for k in 1:counts
+#                 I[(j-1)*counts+k] = (A.rowval[j]-1)*counts+k
+#                 J[(j-1)*counts+k] = (i-1)*counts+k
+#                 V[(j-1)*counts+k] = A.nzval[j]
+#             end
+#         end
+#     end
+
+#     return sparse(I,J,V,A.m*counts,A.n*counts)
+# end
 
 
 """
@@ -172,7 +202,7 @@ function spaddkeepzeros(A::SparseMatrixCSC,B::SparseMatrixCSC)
     end
 
     # column pointer has length number of columns + 1
-    colptr = zeros(Int64,A.n+1)
+    colptr = Vector{Int64}(undef,A.n+1)
 
     # the sum of the number of nonzero elements is an upper bound 
     # for the number of nonzero elements in the sum.
