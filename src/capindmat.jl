@@ -505,24 +505,26 @@ function calcMb_inner(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
     if Nmodes == 1
         return sparse(Ib,Jb,Vb,Nbranches,Nbranches)
     else
-        # define empty vectors for the row indices, column indices, and values
-        Ibm = Array{eltype(Ib), 1}(undef, length(Ib)*Nmodes)
-        Jbm = Array{eltype(Jb), 1}(undef, length(Jb)*Nmodes)
-        Vbm = Array{eltype(valuetypevector), 1}(undef, length(Vb)*Nmodes)
 
-        # repeat the elements along the diagonal Nmodes times
-        n = 1
-        @inbounds for i in eachindex(Ib)
-            for j = 1:Nmodes
-                Ibm[n] = (Ib[i]-1)*Nmodes+j
-                Jbm[n] = (Jb[i]-1)*Nmodes+j
-                Vbm[n] = Vb[i]
-                n+=1
-            end
-        end
+        return diagrepeat(sparse(Ib,Jb,Vb,Nbranches,Nbranches),Nmodes)
+        # # define empty vectors for the row indices, column indices, and values
+        # Ibm = Array{eltype(Ib), 1}(undef, length(Ib)*Nmodes)
+        # Jbm = Array{eltype(Jb), 1}(undef, length(Jb)*Nmodes)
+        # Vbm = Array{eltype(valuetypevector), 1}(undef, length(Vb)*Nmodes)
 
-        # make the sparse array        
-        return sparse(Ibm,Jbm,Vbm,Nbranches*Nmodes,Nbranches*Nmodes)
+        # # repeat the elements along the diagonal Nmodes times
+        # n = 1
+        # @inbounds for i in eachindex(Ib)
+        #     for j = 1:Nmodes
+        #         Ibm[n] = (Ib[i]-1)*Nmodes+j
+        #         Jbm[n] = (Jb[i]-1)*Nmodes+j
+        #         Vbm[n] = Vb[i]
+        #         n+=1
+        #     end
+        # end
+
+        # # make the sparse array        
+        # return sparse(Ibm,Jbm,Vbm,Nbranches*Nmodes,Nbranches*Nmodes)
 
     end
 end
@@ -966,24 +968,27 @@ function calcnodematrix(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64
     if Nmodes == 1
         return sparse(In.-1,Jn.-1,Vn,(Nnodes-1),(Nnodes-1))
     else
-        # define empty vectors for the row indices, column indices, and values
-        Inm = Array{eltype(In), 1}(undef, length(In)*Nmodes)
-        Jnm = Array{eltype(Jn), 1}(undef, length(Jn)*Nmodes)
-        Vnm = Array{eltype(valuetypevector), 1}(undef, length(Vn)*Nmodes)
 
-        # repeat the elements along the diagonal Nmodes times
-        n = 1
-        @inbounds for i in eachindex(In)
-            for j = 1:Nmodes
-                Inm[n] = (In[i]-2)*Nmodes+j
-                Jnm[n] = (Jn[i]-2)*Nmodes+j
-                Vnm[n] = Vn[i]
-                n+=1
-            end
-        end
+        return diagrepeat(sparse(In.-1,Jn.-1,Vn,(Nnodes-1),(Nnodes-1)),Nmodes)
 
-        # make the sparse array        
-        return sparse(Inm,Jnm,Vnm,(Nnodes-1)*Nmodes,(Nnodes-1)*Nmodes)
+        # # define empty vectors for the row indices, column indices, and values
+        # Inm = Array{eltype(In), 1}(undef, length(In)*Nmodes)
+        # Jnm = Array{eltype(Jn), 1}(undef, length(Jn)*Nmodes)
+        # Vnm = Array{eltype(valuetypevector), 1}(undef, length(Vn)*Nmodes)
+
+        # # repeat the elements along the diagonal Nmodes times
+        # n = 1
+        # @inbounds for i in eachindex(In)
+        #     for j = 1:Nmodes
+        #         Inm[n] = (In[i]-2)*Nmodes+j
+        #         Jnm[n] = (Jn[i]-2)*Nmodes+j
+        #         Vnm[n] = Vn[i]
+        #         n+=1
+        #     end
+        # end
+
+        # # make the sparse array        
+        # return sparse(Inm,Jnm,Vnm,(Nnodes-1)*Nmodes,(Nnodes-1)*Nmodes)
     end
 end
 

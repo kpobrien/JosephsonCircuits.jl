@@ -166,17 +166,17 @@ julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparsevec([1,
 function diagrepeat(A::SparseVector,counts::Integer)
 
     # define empty vectors for the rows, columns, and values
-    I = Vector{eltype(A.nzind)}(undef,nnz(A)*counts)
-    V = Vector{eltype(A.nzval)}(undef,nnz(A)*counts)
+    nzind = Vector{eltype(A.nzind)}(undef,nnz(A)*counts)
+    nzval = Vector{eltype(A.nzval)}(undef,nnz(A)*counts)
 
     @inbounds for i in 1:length(A.nzind)
         for j in 1:counts
-            I[(i-1)*counts+j] = (A.nzind[i]-1)*counts+j
-            V[(i-1)*counts+j] = A.nzval[i]
+            nzind[(i-1)*counts+j] = (A.nzind[i]-1)*counts+j
+            nzval[(i-1)*counts+j] = A.nzval[i]
         end
     end
 
-    return sparsevec(I,V,A.n*counts)
+    return SparseVec(n*counts,nzind,nzval)
 end
 
 
