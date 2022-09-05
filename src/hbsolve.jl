@@ -308,7 +308,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     Cnmcopy = freqsubst(Cnm,wmodes,symfreqvar)
     Gnmcopy = freqsubst(Gnm,wmodes,symfreqvar)
     invLnmcopy = freqsubst(invLnm,wmodes,symfreqvar)
-    Asparse = (AoLjnm + invLnmcopy + Gnmcopy + Cnmcopy)
+    # Asparse = (AoLjnm + invLnmcopy + Gnmcopy + Cnmcopy)
+    Asparse = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm,invLnmcopy),Gnmcopy),Cnmcopy)
 
     # make the index maps so we can efficiently add the sparse matrices
     # together without allocations or changing the sparsity structure. 
