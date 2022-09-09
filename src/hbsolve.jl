@@ -951,7 +951,7 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
 
     # calculate the scattering parameters
-    if any(Ip .> 0)
+    if any(abs.(Ip) .> 0)
         # portimpedances = [vvn[i] for i in portimpedanceindices]
         # noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
 
