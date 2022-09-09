@@ -1,6 +1,6 @@
 
 """
-    CircuitMatrices((Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portdict,
+    CircuitMatrices(Cnm,Gnm,Lb,Lbm,Ljb,Ljbm,Mb,invLnm,Rbnm,portdict,
         resistordict,Lmean)
 
 A simple structure to hold the circuit matrices including the capacitance
