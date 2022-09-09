@@ -176,7 +176,7 @@ function diagrepeat(A::SparseVector,counts::Integer)
         end
     end
 
-    return SparseVec(n*counts,nzind,nzval)
+    return SparseVector(A.n*counts,nzind,nzval)
 end
 
 
