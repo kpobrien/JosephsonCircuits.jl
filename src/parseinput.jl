@@ -826,12 +826,13 @@ function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
             break
         end
     end
+    tmp = valuevector[1]
 
     for (i,type) in enumerate(typevector)
         if type in components
 
             # if a different type is found, promote valuetype
-            if !(valuevector[i] isa valuetype)
+            if typeof(valuevector[i]) != valuetype
                 # if it is a type we have seen before, do nothing
                 valuetype = promote_type(typeof(valuevector[i]),valuetype)
                 if !(valuetype in typestore)
