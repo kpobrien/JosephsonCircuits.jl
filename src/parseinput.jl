@@ -826,7 +826,6 @@ function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
             break
         end
     end
-    tmp = valuevector[1]
 
     for (i,type) in enumerate(typevector)
         if type in components
