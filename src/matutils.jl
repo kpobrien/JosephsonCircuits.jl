@@ -925,3 +925,41 @@ function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
     return SparseMatrixCSC(A.m, A.n, A.colptr, A.rowval,nzval)
 
 end
+
+"""
+    spmatmul!(C::SparseMatrixCSC,A::SparseMatrixCSC, B::SparseMatrixCSC,xb::Vector{Bool})
+
+
+Non-allocating sparse matrix multiplication of `A` and `B` when sparsity pattern
+of product `C` is known. 
+
+```jldoctest
+julia> a = JosephsonCircuits.sprand(100,100,0.1);b = JosephsonCircuits.sprand(100,100,0.1);c = a*b; d = copy(c);xb = fill(false, size(a,1));JosephsonCircuits.spmatmul!(c,a,b,xb);c == d
+true
+```
+"""
+function spmatmul!(C::SparseMatrixCSC,A::SparseMatrixCSC, B::SparseMatrixCSC,xb::Vector{Bool})
+
+    if size(A,2) != size(B,1)
+        throw(DimensionMismatch("Number of columns in A must equal number of rows in B."))
+    end
+
+    if size(C,1) != size(A,1)
+        throw(DimensionMismatch("Number of rows in C must equal number of rows in A."))
+    end
+
+    if size(C,2) != size(B,2)
+        throw(DimensionMismatch("Number of columns in C must equal number of columns in B."))
+    end
+
+    if length(xb) != size(A,1)
+        throw(DimensionMismatch("Length of xb vector must equal number of rows in A."))
+    end
+
+    ip = 1
+    fill!(xb,false)
+    for i in 1:size(B,2)
+        ip = SparseArrays.spcolmul!(C.rowval, C.nzval, xb, i, ip, A, B)
+    end
+    return nothing
+end

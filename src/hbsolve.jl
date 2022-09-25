@@ -733,6 +733,9 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     Lmean = nm.Lmean
     Lb = nm.Lb
 
+    # make a sparse transpose (improves multiplication speed slightly)
+    Rbnmt = sparse(transpose(Rbnm))
+
     # generate the pump frequencies
     # odd harmonics of the pump
     wmodes = zeros(Float64,Nmodes)
@@ -767,15 +770,18 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     # convert to a sparse node matrix. Note: I was having problems with type 
     # instability when i used AoLjbm here instead of AoLjbmcopy. 
-    AoLjnm = transpose(Rbnm)*AoLjbmcopy*Rbnm;
+    # AoLjnm = transpose(Rbnm)*AoLjbmcopy*Rbnm;
+
+    AoLjbmRbnm = AoLjbmcopy*Rbnm
+    xbAoLjbmRbnm = fill(false, size(AoLjbmcopy,1))
+
+    AoLjnm = Rbnmt*AoLjbmRbnm
+    xbAoLjnm = fill(false, size(Rbnmt,1))
 
     # define arrays of zeros for the function
     x = zeros(Complex{Float64},(Nnodes-1)*Nmodes)
     F = zeros(Complex{Float64},(Nnodes-1)*Nmodes)
     AoLjbmvector = zeros(Complex{Float64},Nbranches*Nmodes)
-
-    # make a sparse transpose (improves multiplication speed slightly)
-    Rbnmt = sparse(transpose(Rbnm))
 
     # substitute in the symbolic variables
     Cnm = freqsubst(Cnm,wmodes,symfreqvar)
@@ -827,13 +833,15 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
             calcfj!(nothing,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
             Ljb,Ljbm,Nmodes,
             Nbranches,Lmean,AoLjbmvector,AoLjbm,
-            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
+            AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm)
         else
             # update the residual function and the Jacobian
             calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
             Ljb,Ljbm,Nmodes,
             Nbranches,Lmean,AoLjbmvector,AoLjbm,
-            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
+            AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm)
         end
 
         push!(normF,norm(F))
@@ -885,7 +893,8 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
         calcfj!(F,nothing,x+deltax,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
         Ljb,Ljbm,Nmodes,
         Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
+        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
+        AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm)
 
         fp = real(0.5*dot(F,F))
 
@@ -1023,7 +1032,8 @@ function calcfj!(F,
         Nbranches::Int64,
         Lmean,
         AoLjbmvector::AbstractVector,
-        AoLjbm, AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap)
+        AoLjbm, AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap,
+        AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm)
 
     # convert from a node flux to a branch flux
     phib = Rbnm*nodeflux
@@ -1037,13 +1047,13 @@ function calcfj!(F,
         # calculate the function. use the sine terms. Am[2:2:2*Nmodes,:]
         # calculate  AoLjbm, this is just a diagonal matrix. 
         # check if this is consistent with other calculations
-        @inbounds for i = 1:nnz(Ljb)
-            for j = 1:Nmodes
+        @inbounds for i in 1:nnz(Ljb)
+            for j in 1:Nmodes
                 AoLjbmvector[(Ljb.nzind[i]-1)*Nmodes + j] = Am[2*j,i]*(Lmean/Ljb.nzval[i])
             end
         end
 
-        F .= Rbnmt*AoLjbmvector + (invLnm + im*Gnm*wmodesm - Cnm*wmodes2m)*nodeflux - bnm
+        F .= Rbnmt*AoLjbmvector .+ invLnm*nodeflux .+ im*Gnm*wmodesm*nodeflux .- Cnm*wmodes2m*nodeflux .- bnm
     end
 
     # calculate the Jacobian
@@ -1053,7 +1063,10 @@ function calcfj!(F,
         updateAoLjbm!(AoLjbm,Am,Ljb,Lmean,Nmodes,Nbranches)
 
         # convert to a sparse node matrix
-        AoLjnm = Rbnmt*AoLjbm*Rbnm
+        # AoLjnm = Rbnmt*AoLjbm*Rbnm
+
+        spmatmul!(AoLjbmRbnm, AoLjbm, Rbnm, xbAoLjbmRbnm)
+        spmatmul!(AoLjnm, Rbnmt, AoLjbmRbnm, xbAoLjnm)
 
         # calculate the sparse Jacobian.
         # @time J .= AoLjnm .+ invLnm .+ im.*Gnm*wmodesm .- Cnm*wmodes2m
