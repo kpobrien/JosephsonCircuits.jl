@@ -402,7 +402,11 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 
 # Installation:
 
-Until this package is registered, you can install it by starting Julia and entering the command:
+To install the latest release, start Julia and enter the command:
+```
+]add JosephsonCircuits
+```
+To install the development version, start Julia and enter the command:
 ```
 ]add https://github.com/kpobrien/JosephsonCircuits.jl
 ```
