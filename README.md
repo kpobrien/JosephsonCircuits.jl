@@ -25,19 +25,18 @@ using JosephsonCircuits
 using Plots
 
 @variables R Cc Lj Cj
-circuit = Tuple{String,String,String,Num}[]
-push!(circuit,("P1","1","0",1))
-push!(circuit,("R1","1","0",R))
-push!(circuit,("C1","1","2",Cc)) 
-push!(circuit,("Lj1","2","0",Lj)) 
-push!(circuit,("C2","2","0",Cj))
+circuit = [
+    ("P1","1","0",1),
+    ("R1","1","0",R),
+    ("C1","1","2",Cc),
+    ("Lj1","2","0",Lj),
+    ("C2","2","0",Cj)]
 
 circuitdefs = Dict(
     Lj =>1000.0e-12,
     Cc => 100.0e-15,
     Cj => 1000.0e-15,
-    R => 50.0,
-)
+    R => 50.0)
 
 @time jpa = hbsolve(2*pi*(4.5:0.001:5.0)*1e9,
     2*pi*4.75001*1e9,0.00565e-6,8,8,circuit,circuitdefs,
