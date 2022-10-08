@@ -796,10 +796,11 @@ end
     calccm!(cm,S,w)
 
 Calculate the bosonic commutation relations for a scattering matrix S in the 
-field ladder operator basis. Overwrites cm with output. 
+field ladder operator basis. Overwrites cm with output. Use a compensated sum
+to reduce floating point errors.
 
 """
-function calccm!(cm,S,w)
+function calccm!(cm::AbstractArray{T},S,w) where {T<:AbstractFloat}
 
     m = length(w)
 
@@ -814,7 +815,7 @@ function calccm!(cm,S,w)
     end
 
     # use a Kahan, Babushka, Neumaier compensated sum. more cache efficient version
-    fill!(cm,zero(eltype(cm)))
+    fill!(cm,zero(T))
     c = zeros(eltype(cm),size(cm))
     @inbounds for j in 1:size(S,2)
         for i in 1:size(S,1)
@@ -836,14 +837,13 @@ function calccm!(cm,S,w)
 end
 
 """
-    calccm!(cm::Vector{Symbolics.Num},S,w)
+    calccm!(cm,S,w)
 
 Calculate the bosonic commutation relations for a scattering matrix S in the 
-field ladder operator basis. Overwrites cm with output. Does not use a
-compensated sum because the output type is symbolic.
+field ladder operator basis. Overwrites cm with output. 
 
 """
-function calccm!(cm::AbstractArray{Symbolics.Num},S,w)
+function calccm!(cm,S,w)
 
     m = length(w)
 
@@ -856,14 +856,6 @@ function calccm!(cm::AbstractArray{Symbolics.Num},S,w)
     if size(S,1) != length(cm)
         throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
     end
-
-    # # naive version
-    # for i in 1:size(S,1)
-    #     cm[i] = 0.0
-    #     for j in 1:size(S,2)
-    #         cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
-    #     end
-    # end
 
     # more cache friendly version
     fill!(cm,zero(eltype(cm)))
@@ -908,10 +900,11 @@ end
     calccm!(cm,S,Snoise,w)
 
 Calculate the bosonic commutation relations for a scattering matrix S in the 
-field ladder operator basis. Overwrites cm with output. 
+field ladder operator basis. Overwrites cm with output.  Use a compensated sum
+to reduce floating point errors.
 
 """
-function calccm!(cm,S,Snoise,w)
+function calccm!(cm::AbstractArray{T},S,Snoise,w) where {T<:AbstractFloat}
 
     m = length(w)
 
@@ -935,56 +928,8 @@ function calccm!(cm,S,Snoise,w)
         throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
 
-    # # naive version
-    # for i = 1:size(S,1)
-    #     for j = 1:size(S,2)
-    #         cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
-    #     end
-    #     for j = 1:size(Snoise,2)
-    #         cm[i] += abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
-    #     end
-    # end
-
-    # # more cache friendly version
-    # fill!(cm,zero(eltype(cm)))
-    # @inbounds for j in 1:size(S,2)
-    #     for i in 1:size(S,1)
-    #         cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
-    #     end
-    # end
-
-    # @inbounds for j in 1:size(Snoise,2)
-    #     for i in 1:size(Snoise,1)
-    #         cm[i] += abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
-    #     end
-    # end
-
-    # # use a Kahan, Babushka, Neumaier compensated sum. 
-    # for i in 1:size(S,1)
-    #     c = zero(eltype(cm))
-    #     cm[i] = abs2(S[i,1])*sign(w[(1-1) % m + 1])
-    #     for j in 2:size(S,2)
-    #         t = cm[i] + abs2(S[i,j])*sign(w[(j-1) % m + 1])
-    #         c += ifelse(
-    #             abs(cm[i]) >= abs2(S[i,j]),
-    #             (cm[i]-t) + abs2(S[i,j])*sign(w[(j-1) % m + 1]),
-    #             (abs2(S[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i])
-    #         cm[i] = t
-    #     end
-
-    #     for j in 1:size(Snoise,2)
-    #         t = cm[i] + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
-    #         c += ifelse(
-    #             abs(cm[i]) >= abs2(Snoise[i,j]),
-    #             (cm[i]-t) + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1]),
-    #             (abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i])
-    #         cm[i] = t
-    #     end
-    #     cm[i]+=c
-    # end
-
     # use a Kahan, Babushka, Neumaier compensated sum. more cache efficient version
-    fill!(cm,zero(eltype(cm)))
+    fill!(cm,zero(T))
     c = zeros(eltype(cm),size(cm))
     @inbounds for j in 1:size(S,2)
         for i in 1:size(S,1)
@@ -1017,14 +962,13 @@ end
 
 
 """
-    calccm!(cm::Vector{Symbolics.Num},S,Snoise,w)
+    calccm!(cm,S,Snoise,w)
 
 Calculate the bosonic commutation relations for a scattering matrix S in the 
-field ladder operator basis. Overwrites cm with output.  Does not use a
-compensated sum because the output type is symbolic.
+field ladder operator basis. Overwrites cm with output.
 
 """
-function calccm!(cm::AbstractArray{Symbolics.Num},S,Snoise,w)
+function calccm!(cm,S,Snoise,w)
 
     m = length(w)
 
@@ -1047,16 +991,6 @@ function calccm!(cm::AbstractArray{Symbolics.Num},S,Snoise,w)
     if size(S,1) != size(Snoise,1)
         throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
-
-    # # naive version
-    # for i = 1:size(S,1)
-    #     for j = 1:size(S,2)
-    #         cm[i] += abs2(S[i,j])*sign(w[(j-1) % m + 1])
-    #     end
-    #     for j = 1:size(Snoise,2)
-    #         cm[i] += abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
-    #     end
-    # end
 
     # more cache friendly version
     fill!(cm,zero(eltype(cm)))
@@ -1115,16 +1049,6 @@ function calcqe!(qe,S)
     if size(qe) != size(S)
         throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
     end
-
-    # for i in 1:size(S,1)
-    #     denom=zero(eltype(qe))
-    #     for j in 1:size(S,2)
-    #         denom += abs2(S[i,j])
-    #     end
-    #     for j in 1:size(S,2)
-    #         qe[i,j] = abs2(S[i,j]) / denom
-    #     end
-    # end
 
     # more cache efficient version of QE calculation
     denom = zeros(eltype(qe),size(S,1))
@@ -1187,20 +1111,6 @@ function calcqe!(qe,S,Snoise)
     if size(S,1) != size(Snoise,1)
         throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
-
-    # for i in 1:size(S,1)
-    #     denom=0
-    #     for j in 1:size(S,2)
-    #         denom += abs2(S[i,j])
-    #     end
-
-    #     for j in 1:size(Snoise,2)
-    #         denom += abs2(Snoise[i,j])
-    #     end
-    #     for j = 1:size(S,2)
-    #         qe[i,j] = abs2(S[i,j]) / denom
-    #     end
-    # end
 
     # more cache efficient version of QE calculation
     denom = zeros(eltype(qe),size(S,1))
