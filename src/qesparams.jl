@@ -1,415 +1,9 @@
 
-
-
-# """
-#   calcphibports(nodevalues,branches,Nmodes)
-
-# Calculate the branch values (variables) at the branches specified in the array 
-# of tuples which contain the two nodes that make up the branch. Nmodes gives
-# the number of frequency modes.
-
-# # Examples
-# ```jldoctest
-# julia> JosephsonCircuits.calcbranchvalues([1 2 3;4 5 6],[(2,1)],1)
-# 1×3 Matrix{Int64}:
-#  1  2  3
-# ```
-# """
-# function calcbranchvalues(nodevalues,branches,Nmodes)
-
-#     # branchvalues = Matrix(eltype(nodevalues),length(branches)*Nmodes,size(nodevalues,2))
-#     branchvalues = Matrix{eltype(nodevalues)}(undef,length(branches)*Nmodes,size(nodevalues,2))
-
-#     calcbranchvalues!(branchvalues,nodevalues,branches,Nmodes)
-
-#     return branchvalues
-
-# end
-
-
-# """
-#     calcbranchvalues!(branchvalues,nodevalues,branches,Nmodes)
-
-# Calculate the branch values (variables) at the branches specified in the array 
-# of tuples which contain the two nodes that make up the branch. Return the result
-# in branchvalues. Nmodes gives the number of frequency modes.
-
-# Note: I think this is using the wrong sign convention.
-# In Kerman et al.  
-# phib_{branch_{i,j}} = phin_j - phin_i
-# In Rasmussen it's end - start.
-
-# I need to find out where else this is swapped because changing the signs here
-# messes up the S11 calculation. 
-
-# """
-# function calcbranchvalues!(branchvalues,nodevalues,branches,Nmodes)
-
-#     if size(branchvalues,2) != size(nodevalues,2)
-#         error("Error: inconsistent second dimension for branchflux and nodeflux.")
-#     end
-
-#     if size(branchvalues,1) != length(branches)*Nmodes
-#         error("Error: inconsistent dimensions for branchflux and number of ports and modes.")
-#     end
-
-#     for (i,key) in enumerate(branches)
-#         # calculate the branch flux from the node flux. if there are flux
-#         # quanta in the loop this might be incorrect. if any of the keys
-#         # are equal to 1, then it is the ground node and that flux will be
-#         # zero
-
-#         if key[1] == 1
-#             for j in 1:Nmodes
-#                 for k in 1:size(nodevalues,2)
-#                     branchvalues[(i-1)*Nmodes+j,k] = -nodevalues[(key[2]-2)*Nmodes+j,k]
-#                 end
-#             end
-#         elseif key[2] == 1
-#             for j in 1:Nmodes
-#                 for k in 1:size(nodevalues,2)
-#                     branchvalues[(i-1)*Nmodes+j,k] =  nodevalues[(key[1]-2)*Nmodes+j,k]
-#                 end
-#             end
-#         else
-#             for j in 1:Nmodes
-#                 for k in 1:size(nodevalues,2)
-#                     branchvalues[(i-1)*Nmodes+j,k] =  nodevalues[(key[1]-2)*Nmodes+j,k] 
-#                     branchvalues[(i-1)*Nmodes+j,k] -= nodevalues[(key[2]-2)*Nmodes+j,k]
-#                 end
-#             end
-#         end
-#     end
-#     return nothing
-# end
-
-# function calcportcurrent!(input,bnm,resistordict,wmodes,symfreqvar)
-
-#     Nmodes = length(wmodes)
-
-#     if size(input,1) != length(resistordict)*Nmodes
-#         throw(DimensionMismatch("First axis of input matrix must be number of ports times number of modes"))
-#     end
-
-#     if size(input,2) != size(bnm,2)
-#         throw(DimensionMismatch("Size of second dimension of input matrix must be the same as the size of the second dimension of bnm"))
-#     end
-
-#     # loop over the ports
-#     for (j,(key,val)) in enumerate(resistordict)
-#         # loop over the modes
-#         for k = 1:Nmodes
-#             # if symbolic, convert to numeric
-#             if val isa Symbolic
-#                 if !(symfreqvar isa Symbolic)
-#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-#                 end
-#                 resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
-#             else
-#                 resistance = val
-#             end
-
-#             # find the right term in bnm
-#             if key[1] == 1
-#                 Ip = -bnm[(key[2]-2)*Nmodes+k,:]
-#             elseif key[2] == 1
-#                 Ip =  bnm[(key[1]-2)*Nmodes+k,:]
-#             else
-#                 Ip =  bnm[(key[1]-2)*Nmodes+k,:] 
-#                 Ip .-= bnm[(key[2]-2)*Nmodes+k,:]
-#             end
-
-#             input[(j-1)*Nmodes+k,:] .= 
-#                 Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-#                 # 1*resistance/phi0/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-
-#             # input[(j-1)*Nmodes+k,(j-1)*Nmodes+k] = 
-#             #     Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-#             #     # 1*resistance/phi0/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-#         end
-#     end
-
-#     return nothing
-# end
-
-# # i should get this from the boundary condition matrix.
-# function calcinput!(input,Ip,phibports,resistordict,wmodes,symfreqvar)
-
-#     Nmodes = length(wmodes)
-
-#     # i should have a case for when there is no resistor at the port. 
-#     for (j,(key,val)) in enumerate(resistordict)
-#         for k = 1:Nmodes
-
-#             # if symbolic, convert to numeric
-#             if val isa Symbolic
-#                 if !(symfreqvar isa Symbolic)
-#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-#                 end
-#                 resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
-#             else
-#                 resistance = val
-#             end
-#             input[(j-1)*Nmodes+k,(j-1)*Nmodes+k] = 
-#                 Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-#                 # 1*resistance/phi0/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-
-#         end
-#     end
-
-#     return nothing
-# end
-
-
-# """
-
-# """
-# function calcphibthevenin!(input,bnm,resistordict,wmodes,symfreqvar)
-
-#     Nmodes = length(wmodes)
-
-#     if size(input,1) != length(resistordict)*Nmodes
-#         throw(DimensionMismatch("First axis of input matrix must be number of ports times number of modes"))
-#     end
-
-#     if size(input,2) != size(bnm,2)
-#         throw(DimensionMismatch("Size of second dimension of input matrix must be the same as the size of the second dimension of bnm"))
-#     end
-
-#     # loop over the ports
-#     for (j,(key,val)) in enumerate(resistordict)
-#         # loop over the modes
-#         for k = 1:Nmodes
-#             # if symbolic, convert to numeric
-#             if val isa Symbolic
-#                 if !(symfreqvar isa Symbolic)
-#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-#                 end
-#                 resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
-#             else
-#                 resistance = val
-#             end
-
-#             # should i loop over bnm instead?
-#             # then take 1:Nmodes terms for each of those. 
-#             # this way i don't need to know where the inputs are. 
-#             # 
-#             # 
-
-#             # # find the right term in bnm
-#             # if key[1] == 1
-#             #     Ip = -bnm[(key[2]-2)*Nmodes+k,(j-1)*Nmodes+k]
-#             # elseif key[2] == 1
-#             #     Ip =  bnm[(key[1]-2)*Nmodes+k,(j-1)*Nmodes+k]
-#             # else
-#             #     Ip =  bnm[(key[1]-2)*Nmodes+k,(j-1)*Nmodes+k] 
-#             #     Ip -= bnm[(key[2]-2)*Nmodes+k,(j-1)*Nmodes+k]
-#             # end
-
-#             # find the right term in bnm
-#             if key[1] == 1
-#                 Ip = -bnm[(key[2]-2)*Nmodes+k,:]
-#             elseif key[2] == 1
-#                 Ip =  bnm[(key[1]-2)*Nmodes+k,:]
-#             else
-#                 Ip =  bnm[(key[1]-2)*Nmodes+k,:] 
-#                 Ip .-= bnm[(key[2]-2)*Nmodes+k,:]
-#             end
-
-#             input[(j-1)*Nmodes+k,:] .= 
-#                 Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-#                 # 1*resistance/phi0/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-
-#             # input[(j-1)*Nmodes+k,(j-1)*Nmodes+k] = 
-#             #     Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-#             #     # 1*resistance/phi0/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-#         end
-#     end
-
-#     return nothing
-# end
-
-
-# # i should get this from the boundary condition matrix.
-# function calcinput!(input,Ip,phibports,portdict,resistordict,wmodes,symfreqvar)
-
-#     Nmodes = length(wmodes)
-
-#     j=0
-#     # i should have a case for when there is no resistor at the port. 
-#     for (key,val) in portdict
-#         j+=1
-#         for k = 1:Nmodes
-
-#             # if symbolic, convert to numeric
-#             if resistordict[key] isa Symbolic
-#                 if !(symfreqvar isa Symbolic)
-#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-#                 end
-#                 resistance = substitute(resistordict[key],Dict(symfreqvar=>wmodes[k]))
-#             else
-#                 resistance = resistordict[key]
-#             end
-#             input[(j-1)*Nmodes+k,(j-1)*Nmodes+k] = 
-#                 Ip*resistance/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-#                 # 1*resistance/phi0/sqrt(resistance)/2/sqrt(abs(wmodes[k]))
-
-#         end
-#     end
-
-#     return nothing
-# end
-
-# function calcoutput!(output,phibports,resistordict,wmodes,symfreqvar)
-
-#     Nmodes = length(wmodes)
-
-#     if size(output,2) != size(phibports,2)
-#         error("Error: inconsistent dimensions for output and phibports.")
-#     end
-
-#     for (j,(key,val)) in enumerate(resistordict)
-#         # for k = 1:Nmodes
-#         #     output[(j-1)*Nmodes+k,:] .= 
-#         #         im*wmodes[k]*phibports[(j-1)*Nmodes+k,:]./sqrt(resistordict[key])/sqrt(abs(wmodes[k]))
-#         # end
-#         for k = 1:Nmodes
-#             # if symbolic, convert to numeric
-#             if val isa Symbolic
-#                 if !(symfreqvar isa Symbolic)
-#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-#                 end
-#                 resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
-#             else
-#                 resistance = val
-#             end
-
-#             for l = 1:size(output,2)
-#                 output[(j-1)*Nmodes+k,l] = 
-#                     im*wmodes[k]*phibports[(j-1)*Nmodes+k,l]/sqrt(resistance)/sqrt(abs(wmodes[k]))
-#             end
-#         end
-#     end
-
-#     return nothing
-# end
-
-# """
-
-
-# portimpedance can be for several sets of independent inputs. 
-# second dimension is arbitrary
-# first dimension is length(resistorvalues)*Nmodes
-
-# """
-# function calcportimpedance!(portimpedance,resistorvalues,wmodes,symfreqvar)
-
-#     Nmodes = length(wmodes)
-
-#     # if size(branchvalues,2) != size(nodevalues,2)
-#     #     error("Error: inconsistent second dimension for branchflux and nodeflux.")
-#     # end
-
-#     if size(portimpedance,1) != length(resistorvalues)*Nmodes
-#         error("Error: inconsistent dimensions for portimpedance and number of resistorvalues and modes.")
-#     end
-
-
-#     for (j,val) in enumerate(resistorvalues)
-#         for k = 1:Nmodes
-#             # if symbolic, convert to numeric
-#             # i might want to put the check for type outside of this loop
-#             if val isa Symbolic
-#                 if !(symfreqvar isa Symbolic)
-#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-#                 end
-#                 resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
-#             else
-#                 resistance = val
-#             end
-
-#             # take the complex conjugate if frequency is negative
-#             if wmodes[k] < 0
-#                 resistance = conj(resistance)
-#             end
-
-#             for l = 1:size(portimpedance,2)
-#                 # current[(j-1)*Nmodes+k,l] *= resistance/sqrt(resistance)/sqrt(abs(wmodes[k]))
-#                 portimpedance[(j-1)*Nmodes+k,l] = resistance
-#             end
-#         end
-#     end
-
-#     return nothing
-# end
-
-
-# function scaleby!(portimpedance,wmodes)
-
-#     Nmodes = length(wmodes)
-#     Nbranches = div(size(portimpedance,1),Nmodes)
-
-#     if size(portimpedance,1) != Nbranches*Nmodes
-#         error("length of first axis of portimpedance must be an integer multiple of Nmodes")
-#     end
-
-#     for i = 1:Nbranches
-#         for j = 1:Nmodes
-#             for k = 1:size(portimpedance,2)
-#                 portimpedance[(i-1)*Nmodes+j,k] *= wmodes[j]
-#             end
-#         end
-#     end
-
-#     return nothing
-# end
-
-
-# function calcoutput!(output,phibports,resistorvalues,wmodes,symfreqvar)
-
-#     Nmodes = length(wmodes)
-
-#     if size(output,2) != size(phibports,2)
-#         error("Error: inconsistent dimensions for output and phibports.")
-#     end
-
-#     # for (j,(key,val)) in enumerate(resistordict)
-#     for (j,val) in enumerate(resistorvalues)
-#         # for k = 1:Nmodes
-#         #     output[(j-1)*Nmodes+k,:] .= 
-#         #         im*wmodes[k]*phibports[(j-1)*Nmodes+k,:]./sqrt(resistordict[key])/sqrt(abs(wmodes[k]))
-#         # end
-#         for k = 1:Nmodes
-#             # if symbolic, convert to numeric
-#             if val isa Symbolic
-#                 if !(symfreqvar isa Symbolic)
-#                     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-#                 end
-#                 resistance = substitute(val,Dict(symfreqvar=>wmodes[k]))
-#             else
-#                 resistance = val
-#             end
-
-#             for l = 1:size(output,2)
-#                 output[(j-1)*Nmodes+k,l] = 
-#                     im*wmodes[k]*phibports[(j-1)*Nmodes+k,l]/sqrt(resistance)/sqrt(abs(wmodes[k]))
-#             end
-#         end
-#     end
-
-#     return nothing
-# end
-
-
 """
   calcS!
 
 Return the scattering parameters for the system linearized around the strong pump. 
 """
-
-
-# function calcS!(S,inputwave,outputwave,phin,bnm,inputportbranches,outputportbranches,
-#     inputportimpedance,outputportimpedance,wmodes,symfreqvar)
 function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindices,
     inputportimpedances,outputportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
     # check the size of S
@@ -550,10 +144,16 @@ end
 
 
 
-# this is a bit of a hack but i ran into issues with complex capacitance when
-# the capacitor was at the same branch as a current source. the calcS function
-# would use that current source in calculating the output waves, which it should
-# not do. 
+"""
+  calcSnoise!
+
+Return the scattering parameters for the system linearized around the strong pump. 
+
+This is a bit of a hack but I ran into issues with complex capacitance when
+the capacitor was at the same branch as a current source. the calcS function
+would use that current source in calculating the output waves, which it should
+not do.
+"""
 function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindices,
     inputportimpedances,outputportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
     # check the size of S
@@ -693,21 +293,30 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
 end
 
 
+"""
+    calcimpedance(c::Union{Integer,T,Complex{T}},type,w,symfreqvar) where {T<:AbstractFloat}
 
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcimpedance(30.0,:C,1.0,nothing)
+0.0 - 0.03333333333333333im
 
-function calcimpedance(c,type,w,symfreqvar)
+julia> JosephsonCircuits.calcimpedance(30.0,:R,1.0,nothing)
+30.0 + 0.0im
+```
+"""
+function calcimpedance(c::Union{Integer,T,Complex{T}},type,w,symfreqvar) where {T<:AbstractFloat}
+
     if type == :R
         if w >= 0
-            return c
+            return c+0.0im
         else
-            return conj(c)
+            return conj(c)+0.0im
         end
     elseif type == :C
         if w >= 0
-            # return 1/abs(w*imag(c))
             return 1/(im*w*c)
         else
-            # return 1/abs(w*imag(c))
             return 1/(im*w*conj(c))
         end
     else
@@ -715,36 +324,31 @@ function calcimpedance(c,type,w,symfreqvar)
     end
 end
 
-function calcimpedance(c::Symbolics.Num,type,w,symfreqvar)
-    if type == :R
-        if w >= 0
-            return Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w)
-        else
-            return conj(Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w))
-        end
-    elseif type == :C
-        if w >= 0
-            return 1/(im*w*Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w))
-        else
-            return 1/(im*w*conj(Symbolics.substitute(Symbolics.unwrap(c),symfreqvar => w)))
-        end
-    else
-        error("Unknown component type")
-    end
-end
 
-function calcimpedance(c::Symbolics.Symbolic,type,w,symfreqvar)
+"""
+    calcimpedance(c,type,w,symfreqvar)
+
+# Examples
+```jldoctest
+julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:R,2.0,w)
+60.0 + 0.0im
+
+julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:C,2.0,w)
+0.0 - 0.008333333333333333im
+```
+"""
+function calcimpedance(c,type,w,symfreqvar)
     if type == :R
         if w >= 0
-            return Symbolics.substitute(c,symfreqvar => w)
+            return valuetonumber(c,symfreqvar => w)+0.0im
         else
-            return conj(Symbolics.substitute(c,symfreqvar => w))
+            return conj(valuetonumber(c,symfreqvar => w))+0.0im
         end
     elseif type == :C
         if w >= 0
-            return 1/(im*w*Symbolics.substitute(c,symfreqvar => w))
+            return 1/(im*w*valuetonumber(c,symfreqvar => w))
         else
-            return 1/(im*w*conj(Symbolics.substitute(c,symfreqvar => w)))
+            return 1/(im*w*conj(valuetonumber(c,symfreqvar => w)))
         end
     else
         error("Unknown component type")
