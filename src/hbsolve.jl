@@ -794,7 +794,9 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     invLnm *= Lmean
 
     # calculate the structure of the Jacobian
-    Jsparse = (AoLjnm + invLnm - im*Gnm*wmodesm - Cnm*wmodes2m)
+    # Jsparse = (AoLjnm + invLnm - im*Gnm*wmodesm - Cnm*wmodes2m)
+    Jsparse = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm,invLnm),Gnm),Cnm)
+
 
     # make the index maps so we can efficiently add the sparse matrices 
     # together
