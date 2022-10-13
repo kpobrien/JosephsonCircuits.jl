@@ -401,13 +401,16 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 
 # Installation:
 
-To install the latest release, start Julia and enter the command:
+To install the latest release of the package, [install Julia](https://julialang.org/downloads/), start Julia, and enter the following command:
 ```
-]add JosephsonCircuits
+using Pkg
+Pkg.add("JosephsonCircuits")
 ```
+
 To install the development version, start Julia and enter the command:
 ```
-]add https://github.com/kpobrien/JosephsonCircuits.jl
+using Pkg
+Pkg.add(url="https://github.com/kpobrien/JosephsonCircuits.jl")
 ```
 
 # Performance tips:
