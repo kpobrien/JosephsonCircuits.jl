@@ -306,7 +306,7 @@ function parsecircuit(circuit)
         allowedsymbols[i]=Symbol(c)
     end
 
-    # empty dictionary for all of the component names. to check of they
+    # empty dictionary for all of the component names. to check if they
     # are unique.
     namedict = Dict{String,Int64}()
 
