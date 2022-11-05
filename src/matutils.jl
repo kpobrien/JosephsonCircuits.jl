@@ -931,7 +931,8 @@ end
 
 
 Non-allocating sparse matrix multiplication of `A` and `B` when sparsity pattern
-of product `C` is known. 
+of product `C` is known. Based on spmatmul from SparseArrays.jl
+https://github.com/JuliaSparse/SparseArrays.jl/blob/main/src/linalg.jl
 
 ```jldoctest
 julia> a = JosephsonCircuits.sprand(100,100,0.1);b = JosephsonCircuits.sprand(100,100,0.1);c = a*b; d = copy(c);xb = fill(false, size(a,1));JosephsonCircuits.spmatmul!(c,a,b,xb);c == d
@@ -956,10 +957,19 @@ function spmatmul!(C::SparseMatrixCSC,A::SparseMatrixCSC, B::SparseMatrixCSC,xb:
         throw(DimensionMismatch("Length of xb vector must equal number of rows in A."))
     end
 
+
+    nnzC = nnz(C)
     ip = 1
     fill!(xb,false)
     for i in 1:size(B,2)
+        if ip + size(A,1) - 1 > nnzC
+            nnzC += max(size(A,1), nnzC>>2)
+            resize!(C.rowval, nnzC)
+            resize!(C.nzval, nnzC)
+        end
         ip = SparseArrays.spcolmul!(C.rowval, C.nzval, xb, i, ip, A, B)
     end
+    resize!(C.rowval, ip - 1)
+    resize!(C.nzval, ip - 1)
     return nothing
 end
