@@ -680,26 +680,15 @@ function calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
         throw(ArgumentError("No ground node found in netlist."))
     end
 
-    # find the ground node in the sorted vector
-    sortedgroundnodeindex = 0
-    for (i,j) in enumerate(uniquenodevectorsortindices)
-        if uniquenodevector[j] == "0"
-            sortedgroundnodeindex = i
-            break
+    # if the ground index is not the first after sorting, make it first and
+    # increment earlier node indices
+    if uniquenodevectorsortindices[1] != groundnodeindex
+        for i = 2:groundnodeindex
+            j = groundnodeindex-i+2
+            uniquenodevectorsortindices[j]= uniquenodevectorsortindices[j-1]
         end
+        uniquenodevectorsortindices[1] = groundnodeindex
     end
-    if sortedgroundnodeindex == 0
-        throw(ArgumentError("No ground node found in netlist."))
-    end
-
-    # move the ground node to the first node in the sorted unique node vector
-    # and move all of the other elements one higher. if already the first
-    # element, this won't do anything. 
-    for i = 2:sortedgroundnodeindex
-        j = sortedgroundnodeindex-i+2
-        uniquenodevectorsortindices[j]= uniquenodevectorsortindices[j-1]
-    end
-    uniquenodevectorsortindices[1] = groundnodeindex
 
     return uniquenodevectorsortindices
 end
@@ -733,7 +722,7 @@ julia> uniquenodevectorsorted,nodeindexarray=JosephsonCircuits.sortnodes(["101",
 
 julia> uniquenodevectorsorted,nodeindexarray=JosephsonCircuits.sortnodes(["101","0","111","11"],[1,2,1,2,1,2,1,3,3,2,3,2,4,1],sorting=:number);println(uniquenodevectorsorted);println(nodeindexarray);
 ["0", "11", "101", "111"]
-[2 2 2 2 1 1 3; 4 4 4 1 4 4 2]
+[3 3 3 3 4 4 2; 1 1 1 4 1 1 3]
 
 julia> uniquenodevectorsorted,nodeindexarray=JosephsonCircuits.sortnodes(["1", "0", "2"],[1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2],sorting=:number);println(uniquenodevectorsorted);println(nodeindexarray);
 ["0", "1", "2"]
@@ -746,14 +735,17 @@ function sortnodes(uniquenodevector::Vector{String},nodeindexvector::Vector{Int6
 
     uniquenodevectorsortindices=calcnodesorting(uniquenodevector;sorting=sorting)
 
-    for (i,j) in enumerate(eachindex(nodeindexvector))
+    nodevectorsortindices = indexin(1:length(uniquenodevectorsortindices),uniquenodevectorsortindices)
+
+    # for (i,j) in enumerate(eachindex(nodeindexvector))
+    for (i,j) in enumerate(nodeindexvector)
         # if it's a mutual inductor the node index will be zero because the
         # mutual inductor is between two inductors not between two nodes.
         # it not a mutual inductor, assign the sorted node index.
-        if nodeindexvector[j] == 0
+        if j == 0
             nothing
         else
-            nodeindexarraysorted[i] = uniquenodevectorsortindices[nodeindexvector[j]]
+            nodeindexarraysorted[i] = nodevectorsortindices[j]
         end
     end
 

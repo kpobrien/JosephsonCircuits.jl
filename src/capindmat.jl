@@ -59,8 +59,7 @@ function symbolicmatrices(circuit; Nmodes = 1, sorting = :number)
     return numericmatrices(circuit, Dict(), Nmodes = Nmodes, sorting = sorting)
 end
 
-function symbolicmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph; Nmodes = 1,
-    sorting = :number)
+function symbolicmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph; Nmodes = 1)
     return numericmatrices(psc, cg, Dict(), Nmodes = Nmodes)
 end
 
