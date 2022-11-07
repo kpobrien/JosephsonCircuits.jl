@@ -156,7 +156,7 @@ function touchstone_parse(io::IO)
 
         # parse the line
         if isempty(line)
-            # don't bother parsing the string is empty
+            # don't bother parsing if the string is empty
             nothing
         
         elseif isversion(line)

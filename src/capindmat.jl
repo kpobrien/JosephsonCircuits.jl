@@ -66,7 +66,7 @@ end
 """
     numericmatrices(circuit;Nmodes=1,sorting=:number)
 
-Return the symbolic matrices describing the circuit properties. 
+Return the numeric matrices describing the circuit properties. 
 
 See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref), 
 [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
@@ -501,30 +501,13 @@ function calcMb_inner(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
 
     end
 
+    # if there is only one frequency mode return the sparse matrix generated
+    # from these vectors. if multiple modes then duplicate along the diagonal
+    # Nmodes times.
     if Nmodes == 1
         return sparse(Ib,Jb,Vb,Nbranches,Nbranches)
     else
-
         return diagrepeat(sparse(Ib,Jb,Vb,Nbranches,Nbranches),Nmodes)
-        # # define empty vectors for the row indices, column indices, and values
-        # Ibm = Array{eltype(Ib), 1}(undef, length(Ib)*Nmodes)
-        # Jbm = Array{eltype(Jb), 1}(undef, length(Jb)*Nmodes)
-        # Vbm = Array{eltype(valuetypevector), 1}(undef, length(Vb)*Nmodes)
-
-        # # repeat the elements along the diagonal Nmodes times
-        # n = 1
-        # @inbounds for i in eachindex(Ib)
-        #     for j = 1:Nmodes
-        #         Ibm[n] = (Ib[i]-1)*Nmodes+j
-        #         Jbm[n] = (Jb[i]-1)*Nmodes+j
-        #         Vbm[n] = Vb[i]
-        #         n+=1
-        #     end
-        # end
-
-        # # make the sparse array        
-        # return sparse(Ibm,Jbm,Vbm,Nbranches*Nmodes,Nbranches*Nmodes)
-
     end
 end
 
@@ -562,7 +545,6 @@ JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes)
 """
 function calcinvLn(Lb::SparseVector, Rbn::SparseMatrixCSC, Nmodes)
     if nnz(Lb)>0
-        # s = transpose(Rbn[Lb.nzind,:])*sparse(Diagonal(1 ./Lb.nzval))*Rbn[Lb.nzind,:]
         s = transpose(Rbn[Lb.nzind,:])*spdiagm(0 => 1 ./Lb.nzval)*Rbn[Lb.nzind,:]
         if Nmodes > 1
             return diagrepeat(s,Nmodes)
@@ -586,7 +568,6 @@ Can solve A x = B with: x = A \\ B or x = invA * B, so we can perform the
 inverse here with:
 s = RbnT * invL * Rbn or s = RbnT * (L \\ Rbn), the latter of which should be
 faster and more numerically stable.
-
 
 # Examples
 ```jldoctest
@@ -629,9 +610,9 @@ function calcinvLn_inner(Lb::SparseVector, Mb::SparseMatrixCSC,
     Rbn::SparseMatrixCSC, Nmodes, valuetypevector::Vector)
     if nnz(Lb) > 0 &&  nnz(Mb) > 0
             # add the mutual inductance matrix to a diagonal matrix made from the
-            # inductance vector. 
+            # inductance vector.
             # we pick out only the indices where there are inductors for
-            # efficiency reasons. 
+            # efficiency reasons.
 
         if eltype(valuetypevector) <: Symbolic
 
@@ -964,30 +945,13 @@ function calcnodematrix(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64
         end
     end
 
+    # if there is only one frequency mode return the sparse matrix generated
+    # from these vectors. if multiple modes then duplicate along the diagonal
+    # Nmodes times.
     if Nmodes == 1
         return sparse(In.-1,Jn.-1,Vn,(Nnodes-1),(Nnodes-1))
     else
-
         return diagrepeat(sparse(In.-1,Jn.-1,Vn,(Nnodes-1),(Nnodes-1)),Nmodes)
-
-        # # define empty vectors for the row indices, column indices, and values
-        # Inm = Array{eltype(In), 1}(undef, length(In)*Nmodes)
-        # Jnm = Array{eltype(Jn), 1}(undef, length(Jn)*Nmodes)
-        # Vnm = Array{eltype(valuetypevector), 1}(undef, length(Vn)*Nmodes)
-
-        # # repeat the elements along the diagonal Nmodes times
-        # n = 1
-        # @inbounds for i in eachindex(In)
-        #     for j = 1:Nmodes
-        #         Inm[n] = (In[i]-2)*Nmodes+j
-        #         Jnm[n] = (Jn[i]-2)*Nmodes+j
-        #         Vnm[n] = Vn[i]
-        #         n+=1
-        #     end
-        # end
-
-        # # make the sparse array        
-        # return sparse(Inm,Jnm,Vnm,(Nnodes-1)*Nmodes,(Nnodes-1)*Nmodes)
     end
 end
 

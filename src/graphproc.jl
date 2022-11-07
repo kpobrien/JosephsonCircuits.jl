@@ -21,11 +21,27 @@ end
     calccircuitgraph(parsedsortedcircuit::ParsedSortedCircuit)
 
 Calculate the superconducting spanning tree, incidence matrix, closure branches,
-and loops.
+and loops from the parsed and sorted circuit.
 
 See also [`CircuitGraph`](@ref), [`calcgraphs`](@ref), and [`extractbranches`](@ref) 
 for more explanation.
 
+# Examples
+```jldoctest
+@variables Ipump Rleft L1 K1 L2 C2
+psc = JosephsonCircuits.ParsedSortedCircuit(
+    [2 2 2 2 0 3 3; 1 1 1 1 0 1 1],
+    ["0", "1", "2"],
+    ["L1", "L2"],
+    ["P1", "I1", "R1", "L1", "K1", "L2", "C2"],
+    [:P, :I, :R, :L, :K, :L, :C],
+    Num[1, Ipump, Rleft, L1, K1, L2, C2],
+    Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5),
+    3)
+cg = JosephsonCircuits.calccircuitgraph(psc)
+# output
+JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), sparse([1, 2], [1, 2], [1, 1], 2, 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2)
+```
 """
 function calccircuitgraph(parsedsortedcircuit::ParsedSortedCircuit)
 
@@ -40,15 +56,21 @@ function calccircuitgraph(parsedsortedcircuit::ParsedSortedCircuit)
 end
 
 
-
 """
     calcgraphs(gl,Nnodes)
 
-Calculate the superconducting spanning tree, closure branches,
-and loops. Accepts the graph of linear inductors and Josephson
-junctions. Outputs lists of edges that can be used to generate
-graphs.
+Calculate the superconducting spanning tree, closure branches, and loops.
+Accepts the graph of linear inductors and Josephson junctions. Outputs lists
+of edges that can be used to generate graphs.
 
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcgraphs([(2, 1), (2, 1), (2, 1), (3, 1)], 3)
+JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), sparse([1, 2], [1, 2], [1, 1], 2, 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2)
+
+julia> JosephsonCircuits.calcgraphs([(4, 3), (3, 6), (5, 3), (3, 7), (2, 4), (6, 8), (2, 5), (8, 7), (2, 8)], 8)
+JosephsonCircuits.CircuitGraph(Dict((6, 8) => 8, (2, 5) => 2, (3, 7) => 7, (6, 3) => 6, (7, 8) => 9, (3, 4) => 4, (7, 3) => 7, (2, 8) => 3, (4, 2) => 1, (8, 6) => 8…), sparse([1, 2, 3, 4, 5, 6, 7, 1, 4, 2, 5, 6, 8, 7, 9, 3, 8, 9], [1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 7], [-1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, -1, 1, -1, 1, 1, 1], 9, 7), [(2, 4), (2, 5), (2, 8), (3, 4), (3, 6), (3, 7)], [(5, 3), (8, 6), (8, 7)], [(2, 4), (2, 5), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (6, 8), (7, 8)], [[2, 4, 3, 5], [2, 4, 3, 6, 8], [2, 4, 3, 7, 8]], [1], Graphs.SimpleGraphs.SimpleGraph{Int64}(9, [Int64[], [4, 5, 8], [4, 5, 6, 7], [2, 3], [2, 3], [3, 8], [3, 8], [2, 6, 7]]), 9)
+```
 """
 function calcgraphs(Ledgearray::Array{Tuple{Int64, Int64}, 1},Nnodes::Int64)
 
@@ -161,7 +183,23 @@ end
 """
     edge2index(graph::SimpleDiGraph{Int64})
 
-Generate a dictionary that maps an edge to an index.
+Generate a dictionary where the tuple of nodes defining an edge of a graph
+is the key and the value is an index. The index gives the order the edge
+is found when iterating over the edges of the graph. The same index is used
+for both orderings of source and destination nodes on the edge. We don't care
+about the ordering of the indices as long as they are sequential and unique.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.edge2index(JosephsonCircuits.Graphs.path_digraph(4))
+Dict{Tuple{Int64, Int64}, Int64} with 6 entries:
+  (3, 2) => 2
+  (1, 2) => 1
+  (2, 1) => 1
+  (3, 4) => 3
+  (4, 3) => 3
+  (2, 3) => 2
+```
 """
 function edge2index(graph::Graphs.SimpleDiGraph{Int64})
     edge2indexdict = Dict{Tuple{Int64, Int64},Int64}()
@@ -176,48 +214,99 @@ end
 
 
 """
-    tuple2edge(tuplearray)
+    tuple2edge(tuplevector::Vector{Tuple{Int64, Int64}})
 
-Changes edges specified with tuples of integers to LightGraph edges.
+Converts a vector of edges specified with tuples of integers to a vector of
+Graphs edges.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.tuple2edge([(1,2),(3,4)])
+2-element Vector{Graphs.SimpleGraphs.SimpleEdge{Int64}}:
+ Edge 1 => 2
+ Edge 3 => 4
+```
 """
-function tuple2edge(tuplearray::Array{Tuple{Int64, Int64}, 1})
-    edgearray = Array{Graphs.SimpleGraphs.SimpleEdge{Int64}, 1}(undef, 0)
+function tuple2edge(tuplevector::Vector{Tuple{Int64, Int64}})
+    edgevector = Vector{Graphs.SimpleGraphs.SimpleEdge{Int64}}(undef, 0)
 
-    for i = 1:length(tuplearray)
-        push!(edgearray,Graphs.Edge(tuplearray[i][1],tuplearray[i][2]))
+    for i = 1:length(tuplevector)
+        push!(edgevector,Graphs.Edge(tuplevector[i][1],tuplevector[i][2]))
     end
-    return edgearray
+    return edgevector
 end
 
-function tuple2edge(tuplearray::Array{Tuple{Int64, Int64, Int64, Int64}, 1})
-    edgearray = Array{
+"""
+    tuple2edge(tuplevector::Vector{Tuple{Int64, Int64, Int64, Int64}})
+
+Converts a vector of edges specified with tuples of integers to a vector of
+Graphs edges.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.tuple2edge([(1,2,3,4),(5,6,7,8)])
+2-element Vector{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}}:
+ (Edge 1 => 2, Edge 3 => 4)
+ (Edge 5 => 6, Edge 7 => 8)
+```
+"""
+function tuple2edge(tuplevector::Vector{Tuple{Int64, Int64, Int64, Int64}})
+    edgevector = Vector{
         Tuple{
             Graphs.SimpleGraphs.SimpleEdge{Int64},
             Graphs.SimpleGraphs.SimpleEdge{Int64}
         }
-        ,1
     }(undef, 0)
 
-    for i = 1:length(tuplearray)
+    for i = 1:length(tuplevector)
         push!(
-            edgearray,
+            edgevector,
             (
-                Graphs.Edge(tuplearray[i][1],tuplearray[i][2]),
-                Graphs.Edge(tuplearray[i][3],tuplearray[i][4])
+                Graphs.Edge(tuplevector[i][1],tuplevector[i][2]),
+                Graphs.Edge(tuplevector[i][3],tuplevector[i][4])
             )
         )
     end
 
-    return edgearray
+    return edgevector
 end
 
 """
     tuple2edge(tupledict)
 
-Changes dictionary keys specified with tuples of integers to LightGraph edges.
+Converts a dictionary whose keys are edges specified by tuples of integers to
+a dictionary whose keys are Graphs edges. The values associated with each key
+are preserved.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2))
+Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, Int64} with 3 entries:
+  Edge 1 => 2 => 1
+  Edge 3 => 4 => 3
+  Edge 2 => 3 => 2
+
+julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int64, Int64}, Float64}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2))
+Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, Float64} with 3 entries:
+  Edge 1 => 2 => 1.0
+  Edge 3 => 4 => 3.0
+  Edge 2 => 3 => 2.0
+
+julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int64, Int64}, Complex{Float64}}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2))
+Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, ComplexF64} with 3 entries:
+  Edge 1 => 2 => 1.0+0.0im
+  Edge 3 => 4 => 3.0+0.0im
+  Edge 2 => 3 => 2.0+0.0im
+
+julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int64, Int64}, Any}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2))
+Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, Any} with 3 entries:
+  Edge 1 => 2 => 1
+  Edge 3 => 4 => 3
+  Edge 2 => 3 => 2
+```
 """
-function tuple2edge(tupledict::Dict{Tuple{Int64, Int64},Any})
-    edgedict = Dict{Graphs.SimpleGraphs.SimpleEdge{Int64},Any}()
+function tuple2edge(tupledict::Dict{Tuple{Int64, Int64},T}) where T
+    edgedict = Dict{Graphs.SimpleGraphs.SimpleEdge{Int64},T}()
 
     for (key,val) in tupledict
         edgedict[Graphs.Edge(key[1],key[2])]=val
@@ -226,39 +315,44 @@ function tuple2edge(tupledict::Dict{Tuple{Int64, Int64},Any})
     return edgedict
 end
 
-function tuple2edge(tupledict::Dict{Tuple{Int64, Int64},Complex{Float64}})
-    edgedict = Dict{Graphs.SimpleGraphs.SimpleEdge{Int64},Complex{Float64}}()
 
-    for (key,val) in tupledict
-        edgedict[Graphs.Edge(key[1],key[2])]=val
-    end
+"""
+    tuple2edge(tupledict)
 
-    return edgedict
-end
+Converts a dictionary whose keys are edges specified by tuples of integers to
+a dictionary whose keys are Graphs edges. The values associated with each key
+are preserved.
 
-function tuple2edge(tupledict::Dict{Tuple{Int64, Int64, Int64, Int64},Any})
+# Examples
+```jldoctest
+julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int64, Int64, Int64, Int64}, Int64}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3))
+Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, Int64} with 2 entries:
+  (Edge 1 => 2, Edge 3 => 4) => 1
+  (Edge 5 => 6, Edge 7 => 8) => 3
+
+julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int64, Int64, Int64, Int64}, Float64}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3))
+Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, Float64} with 2 entries:
+  (Edge 1 => 2, Edge 3 => 4) => 1.0
+  (Edge 5 => 6, Edge 7 => 8) => 3.0
+
+julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int64, Int64, Int64, Int64}, Complex{Float64}}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3))
+Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, ComplexF64} with 2 entries:
+  (Edge 1 => 2, Edge 3 => 4) => 1.0+0.0im
+  (Edge 5 => 6, Edge 7 => 8) => 3.0+0.0im
+
+julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int64, Int64, Int64, Int64}, Any}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3))
+Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, Any} with 2 entries:
+  (Edge 1 => 2, Edge 3 => 4) => 1
+  (Edge 5 => 6, Edge 7 => 8) => 3
+```
+"""
+function tuple2edge(tupledict::Dict{Tuple{Int64, Int64, Int64, Int64},T}) where T
     edgedict = Dict{
         Tuple{
             Graphs.SimpleGraphs.SimpleEdge{Int64},
             Graphs.SimpleGraphs.SimpleEdge{Int64}
         },
-        Any
-    }()
-
-    for (key,val) in tupledict
-        edgedict[(Graphs.Edge(key[1],key[2]),Graphs.Edge(key[3],key[4]))]=val
-    end
-
-    return edgedict
-end
-
-function tuple2edge(tupledict::Dict{Tuple{Int64, Int64, Int64, Int64},Complex{Float64}})
-    edgedict = Dict{
-        Tuple{
-            Graphs.SimpleGraphs.SimpleEdge{Int64},
-            Graphs.SimpleGraphs.SimpleEdge{Int64}
-        },
-        Complex{Float64}
+        T
     }()
 
     for (key,val) in tupledict

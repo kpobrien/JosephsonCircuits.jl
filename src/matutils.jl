@@ -126,27 +126,6 @@ function diagrepeat!(colptr::Vector,rowval::Vector,nzval::Vector,
     return nothing
 end
 
-# function diagrepeat(A::SparseMatrixCSC,counts::Integer)
-
-#     # define empty vectors for the rows, columns, and values
-#     I = Vector{eltype(A.rowval)}(undef,nnz(A)*counts)
-#     J = Vector{eltype(A.rowval)}(undef,nnz(A)*counts)
-#     V = Vector{eltype(A.nzval)}(undef,nnz(A)*counts)
-
-#     @inbounds for i in 1:length(A.colptr)-1
-#         for j in A.colptr[i]:(A.colptr[i+1]-1)
-#             for k in 1:counts
-#                 I[(j-1)*counts+k] = (A.rowval[j]-1)*counts+k
-#                 J[(j-1)*counts+k] = (i-1)*counts+k
-#                 V[(j-1)*counts+k] = A.nzval[j]
-#             end
-#         end
-#     end
-
-#     return sparse(I,J,V,A.m*counts,A.n*counts)
-# end
-
-
 """
     diagrepeat(A::SparseVector,counts::Integer)
 
@@ -260,11 +239,11 @@ end
     sprandsubset(A::SparseMatrixCSC,p::AbstractFloat)
 
 Given a sparse matrix A, return a sparse matrix with random values in some
-fraction of the non-zero elements with probability p. If dropzeros is set to 
+fraction of the non-zero elements with probability p. If dropzeros is set to
 false, then the zeros will be retained as structural zeros otherwise they
-are dropped. 
+are dropped.
 
-This is used for testing non-allocating sparse matrix addition. 
+This is used for testing non-allocating sparse matrix addition.
 """
 function sprandsubset(A::SparseMatrixCSC,p::AbstractFloat,dropzeros=true)
     B = copy(A)
@@ -285,8 +264,8 @@ end
   sparseadd!(A::SparseMatrixCSC,As::SparseMatrixCSC,indexmap)
 
 Add sparse matrices A and As and return the result in A without performing any
-allocations. This is only possible if the positions of elements in As are a 
-subset of the positions of elements in A. The indexmap can be generated with 
+allocations. This is only possible if the positions of elements in As are a
+subset of the positions of elements in A. The indexmap can be generated with
 [`sparseaddmap`](@ref).
 
 # Examples
@@ -620,9 +599,9 @@ end
 """
   sparseaddmap(A::SparseMatrixCSC,B::SparseMatrixCSC)
 
-Return a vector of length nnz(B) which maps the indices of elements
-of B in B.nzval to the corresponding indices in A.nzval. The sparse matrix B 
-must have elements in a subset of the positions in A which have nonzero entries
+Return a vector of length nnz(B) which maps the indices of elements of B in
+B.nzval to the corresponding indices in A.nzval. The sparse matrix B must have
+elements in a subset of the positions in A which have nonzero entries
 (structural zeros are elements).
 
 # Examples
@@ -711,7 +690,6 @@ function sparseaddmap_innerloop(A::SparseMatrixCSC,B::SparseMatrixCSC,
 end
 
 """
-
   conjnegfreq(A,wmodes)
 
 Take the complex conjugate of any element of A which would be negative when
