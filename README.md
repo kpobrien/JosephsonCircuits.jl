@@ -410,7 +410,7 @@ Pkg.add("JosephsonCircuits")
 To install the development version, start Julia and enter the command:
 ```
 using Pkg
-Pkg.add(url="https://github.com/kpobrien/JosephsonCircuits.jl")
+Pkg.add(name="JosephsonCircuits",rev="main")
 ```
 
 # Performance tips:
