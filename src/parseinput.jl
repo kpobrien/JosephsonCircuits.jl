@@ -309,36 +309,37 @@ function parsecircuit(circuit)
     # empty dictionary for all of the component names. to check if they
     # are unique.
     namedict = Dict{String,Int64}()
+    sizehint!(namedict,length(circuit))
 
-    # array to hold the component names
-    namevector = Vector{String}(undef,0)
+    # vector to hold the component names
+    namevector = Vector{String}(undef,length(circuit))
 
-    # array to hold the component indices, the index in "circuit" at which
-    # the component occurs
-    indexarray = Vector{Int64}(undef,0)
+    # vector to hold the component type symbols, eg :L, :Lj, etc. 
+    typevector = Vector{Symbol}(undef,length(circuit))
 
-    # array to hold the component type symbols, eg :L, :Lj, etc. 
-    typevector = Vector{Symbol}(undef,0)
-
-    # array to hold the component values. take the type from the circuit array.
+    # vector to hold the component values. take the type from the circuit array.
     valuevector = try
-        Vector{fieldtype(eltype(circuit),4)}(undef,0)
+        Vector{fieldtype(eltype(circuit),4)}(undef,length(circuit))
     catch
-        Vector{Any}(undef,0)
+        Vector{Any}(undef,length(circuit))
     end
 
-    # arrays to hold the nodes
-    nodeindexvector = Array{Int64,1}(undef,0)
+    # vector to hold the nodes
+    # nodeindexvector = zeros(Int64,2*length(circuit))
+    nodeindexvector = Vector{Int64}(undef,2*length(circuit))
 
-    # arrays to hold the inductors which the mutual inductance connects
+    # vector to hold the inductors which the mutual inductance connects
     mutualinductorvector = Array{String,1}(undef,0)
 
     # dictionary of unique nodes where the key is the node and the value is the
     # node index
     uniquenodedict = Dict{String,Int64}()
-    # an array where the value is the node and the position in the array
+    sizehint!(uniquenodedict,length(circuit))
+
+    # a vector where the value is the node and the position in the array
     # is given by the node index
     uniquenodevector = Vector{String}(undef,0)
+    sizehint!(uniquenodevector,length(circuit))
 
 
     for (i,(name,node1,node2,value)) in enumerate(circuit)
@@ -347,46 +348,36 @@ function parsecircuit(circuit)
         # line should have the following format:
         # (name,node1,node2,value or function definition)
 
-        # if length(line) > 4
-        #     println("Warning: only the first four entries per line are used.")
-        # end
-
-        # name = line[1]
-        # node1 = line[2]
-        # node2 = line[3]
-        # value = line[4]
-        # sname = Symbol(name)
         componenttypeindex = parsecomponenttype(name,allowedcomponents)
         componenttype=allowedsymbols[componenttypeindex]
 
         if haskey(namedict,name) || haskey(namedict,name)
            throw(ArgumentError("Name \"$(name)\" on line $(i) is not unique."))
-        else
-            # add the name to the dictionary
-            namedict[name] = i
-
-            # store the component name, type, index, and value
-            push!(namevector,name)
-            push!(typevector,componenttype)
-            # push!(indexarray,i)
-            push!(valuevector,value)
-
-            # mutual inductors are treated differently because their "nodes"
-            # refer to inductors rather than actual nodes. add zeros to
-            # nodearray and nodearrayw whenever we find an inductor in order
-            # to keep their length the same as the other arrays.
-
-            if componenttype == :K
-                push!(mutualinductorvector,node1)
-                push!(mutualinductorvector,node2)
-                push!(nodeindexvector,0)
-                push!(nodeindexvector,0)
-            else
-                push!(nodeindexvector,processnode(uniquenodedict,uniquenodevector,node1))
-                push!(nodeindexvector,processnode(uniquenodedict,uniquenodevector,node2))
-            end
-
         end
+
+        # add the name to the dictionary
+        namedict[name] = i
+
+        # store the component name, type, and value
+        namevector[i] = name
+        typevector[i] = componenttype
+        valuevector[i] = value
+
+        # mutual inductors are treated differently because their "nodes"
+        # refer to inductors rather than actual nodes. add zeros to
+        # nodearray and nodearrayw whenever we find an inductor in order
+        # to keep their length the same as the other arrays.
+
+        if componenttype == :K
+            push!(mutualinductorvector,node1)
+            push!(mutualinductorvector,node2)
+            nodeindexvector[2*i-1] = 0
+            nodeindexvector[2*i] = 0
+        else
+            nodeindexvector[2*i-1] = processnode(uniquenodedict,uniquenodevector,node1)
+            nodeindexvector[2*i] = processnode(uniquenodedict,uniquenodevector,node2)
+        end
+
     end
 
     return ParsedCircuit(nodeindexvector,uniquenodevector,mutualinductorvector,
