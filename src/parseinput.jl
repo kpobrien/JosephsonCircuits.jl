@@ -68,7 +68,8 @@ for more explanation.
 - `sorting = :number`: Convert the node strings to integer and sort by these
     (this errors if the nodes names cannot be converted to integers).
 - `sorting = :none`: Don't perform any sorting except to place the ground node
-    first.
+    first. In other words, order the nodes in the order they are found in
+    `circuit`.
 
 # Examples
 ```jldoctest
@@ -365,7 +366,7 @@ function parsecircuit(circuit)
 
         # mutual inductors are treated differently because their "nodes"
         # refer to inductors rather than actual nodes. add zeros to
-        # nodearray and nodearrayw whenever we find an inductor in order
+        # nodeindexvector whenever we find an inductor in order
         # to keep their length the same as the other arrays.
 
         if componenttype == :K
@@ -422,7 +423,7 @@ Dict("10" => 1)
 function processnode(uniquenodedict::Dict{String, Int64},
     uniquenodevector::Vector{String},node::String)
     if !haskey(uniquenodedict,node)
-        # if this is a new node, add to the nodes array
+        # if this is a new node, add to the unique node vector
         push!(uniquenodevector,node)
         
         # use the length plus one so it starts with one
@@ -624,15 +625,31 @@ indices which sort `uniquenodevector`.
 - `sorting = :number`: Convert the node strings to integer and sort by these
     (this errors if the nodes names cannot be converted to integers).
 - `sorting = :none`: Don't perform any sorting except to place the ground node
-    first.
+    first. In other words, order the nodes in the order they are found in
+    `circuit`.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.calcnodesorting(["3","0","1"];sorting=:name)
-3-element Vector{Int64}:
+julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:name)
+4-element Vector{Int64}:
+ 3
  2
+ 4
+ 1
+
+julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:number)
+4-element Vector{Int64}:
+ 3
+ 4
+ 2
+ 1
+
+julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:none)
+4-element Vector{Int64}:
  3
  1
+ 2
+ 4
 ```
 """
 function calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
