@@ -907,39 +907,57 @@ function calcnodematrix(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     Jn = Vector{Int}(undef, 0)
     Vn = Vector{eltype(valuetypevector)}(undef, 0)
 
+    Nelements = 0
+    # calculate the expected number of elements
+    @inbounds for (i,type) in enumerate(typevector)
+        if type == component
+            if nodeindexarray[1,i] == 1
+                Nelements += 1
+            elseif nodeindexarray[2,i] == 1
+                Nelements += 1
+            else
+                Nelements += 4
+            end
+        end
+    end
+
+    sizehint!(In, Nelements)
+    sizehint!(Jn, Nelements)
+    sizehint!(Vn, Nelements)
+
     # generate the capacitance or conductance matrix values for Nmodes=1
     @inbounds for (i,type) in enumerate(typevector)
         if type == component
 
             if nodeindexarray[1,i] == 1
                 # capacitance to ground, add to diagonal
-                push!(In,nodeindexarray[2,i])
-                push!(Jn,nodeindexarray[2,i])
+                push!(In,nodeindexarray[2,i]-1)
+                push!(Jn,nodeindexarray[2,i]-1)
                 pushval!(Vn,valuevector[i],1,invert)
 
             elseif nodeindexarray[2,i] == 1
                 # capacitance to ground, add to diagonal
-                push!(In,nodeindexarray[1,i])
-                push!(Jn,nodeindexarray[1,i])
+                push!(In,nodeindexarray[1,i]-1)
+                push!(Jn,nodeindexarray[1,i]-1)
                 pushval!(Vn,valuevector[i],1,invert)
 
             else
                 # diagonal elements
-                push!(In,nodeindexarray[1,i])
-                push!(Jn,nodeindexarray[1,i])
+                push!(In,nodeindexarray[1,i]-1)
+                push!(Jn,nodeindexarray[1,i]-1)
                 pushval!(Vn,valuevector[i],1,invert)
 
-                push!(In,nodeindexarray[2,i])
-                push!(Jn,nodeindexarray[2,i])
+                push!(In,nodeindexarray[2,i]-1)
+                push!(Jn,nodeindexarray[2,i]-1)
                 pushval!(Vn,valuevector[i],1,invert)
 
                 # off diagonal elements
-                push!(In,nodeindexarray[1,i])
-                push!(Jn,nodeindexarray[2,i])
+                push!(In,nodeindexarray[1,i]-1)
+                push!(Jn,nodeindexarray[2,i]-1)
                 pushval!(Vn,valuevector[i],-1,invert)
 
-                push!(In,nodeindexarray[2,i])
-                push!(Jn,nodeindexarray[1,i])
+                push!(In,nodeindexarray[2,i]-1)
+                push!(Jn,nodeindexarray[1,i]-1)
                 pushval!(Vn,valuevector[i],-1,invert)
             end
         end
@@ -949,9 +967,9 @@ function calcnodematrix(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     # from these vectors. if multiple modes then duplicate along the diagonal
     # Nmodes times.
     if Nmodes == 1
-        return sparse(In.-1,Jn.-1,Vn,(Nnodes-1),(Nnodes-1))
+        return sparse(In,Jn,Vn,(Nnodes-1),(Nnodes-1))
     else
-        return diagrepeat(sparse(In.-1,Jn.-1,Vn,(Nnodes-1),(Nnodes-1)),Nmodes)
+        return diagrepeat(sparse(In,Jn,Vn,(Nnodes-1),(Nnodes-1)),Nmodes)
     end
 end
 
