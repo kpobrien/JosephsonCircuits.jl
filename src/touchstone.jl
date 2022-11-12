@@ -6,14 +6,14 @@
         format::String,
         R::Float64,
         version::Float64,
-        numberofports::Int64,
+        numberofports::Int,
         twoportdataorder::String,
-        numberoffrequencies::Int64,
-        numberofnoisefrequencies::Int64,
+        numberoffrequencies::Int,
+        numberofnoisefrequencies::Int,
         reference::Vector{Float64},
         information::Vector{String},
         matrixformat::String,
-        mixedmodeorder::Vector{Tuple{Char, Vector{Int64}}},
+        mixedmodeorder::Vector{Tuple{Char, Vector{Int}}},
         comments::Vector{String},
         networkdata::Vector{Float64},
         noisedata::Vector{Float64})
@@ -32,14 +32,14 @@ struct TouchstoneFile
     format::String
     R::Float64
     version::Float64
-    numberofports::Int64
+    numberofports::Int
     twoportdataorder::String
-    numberoffrequencies::Int64
-    numberofnoisefrequencies::Int64
+    numberoffrequencies::Int
+    numberofnoisefrequencies::Int
     reference::Vector{Float64}
     information::Vector{String}
     matrixformat::String
-    mixedmodeorder::Vector{Tuple{Char, Vector{Int64}}}
+    mixedmodeorder::Vector{Tuple{Char, Vector{Int}}}
     comments::Vector{String}
     networkdata::Vector{Float64}
     noisedata::Vector{Float64}
@@ -137,7 +137,7 @@ function touchstone_parse(io::IO)
     reference = Float64[]
     information = String[]
     matrixformat = "Full"
-    mixedmodeorder = Tuple{Char, Vector{Int64}}[]
+    mixedmodeorder = Tuple{Char, Vector{Int}}[]
 
     # network and noise data
     networkdata = Float64[]
@@ -252,16 +252,16 @@ function touchstone_parse(io::IO)
         # header and the information in the filename is unreliable so take the
         # number of ports form the network data.
         #  v1 files only have full matrices
-        numberofports = convert(Int64,sqrt((nvals -1)/2))
+        numberofports = convert(Int,sqrt((nvals -1)/2))
     elseif version == 2.0
         # compare the number of ports in the header with the number of ports
         # inferred from reading the network data. 
         if matrixformat == "Full"
-            if numberofports != convert(Int64,sqrt((nvals -1)/2))
+            if numberofports != convert(Int,sqrt((nvals -1)/2))
                 error("Number of ports not consistent between header and network data.")
             end
         else
-            if numberofports != convert(Int64,(sqrt(4*nvals-3)-1)/2)
+            if numberofports != convert(Int,(sqrt(4*nvals-3)-1)/2)
                 error("Number of ports not consistent between header and network data.")
             end
         end
@@ -450,7 +450,7 @@ function touchstone_write(io::IO,
     reference::Vector{Float64} = Float64[],
     information::Vector{String} = String[],
     matrixformat::String = "Full",
-    mixedmodeorder::Vector{Tuple{Char, Vector{Int64}}} = Tuple{Char, Vector{Int64}}[],
+    mixedmodeorder::Vector{Tuple{Char, Vector{Int}}} = Tuple{Char, Vector{Int}}[],
     comments::Vector{String} = String[],
     noisedata::Vector{Float64} = Float64[],
     )
@@ -680,11 +680,11 @@ end
         R::Float64 = 50.0, 
         version::Float64 = 2.0,
         twoportdataorder::String = "",
-        numberofnoisefrequencies::Int64 = 0,
+        numberofnoisefrequencies::Int = 0,
         reference::Vector{Float64} = Float64[],
         information::Vector{String} = String[],
         matrixformat::String = "Full",
-        mixedmodeorder::Vector{Tuple{Char, Vector{Int64}}} = Tuple{Char, Vector{Int64}}[],
+        mixedmodeorder::Vector{Tuple{Char, Vector{Int}}} = Tuple{Char, Vector{Int}}[],
         comments::Vector{String} = String[],
         noisedata::Vector{Float64} = Float64[])
 
@@ -698,14 +698,14 @@ function touchstone_file(f::Vector{Float64}, N::Array{Complex{Float64},3};
     format::String = "MA",
     R::Float64 = 50.0, 
     version::Float64 = 2.0,
-    # numberofports::Int64 = 0,
+    # numberofports::Int = 0,
     twoportdataorder::String = "",
-    # numberoffrequencies::Int64,
-    # numberofnoisefrequencies::Int64 = 0,
+    # numberoffrequencies::Int,
+    # numberofnoisefrequencies::Int = 0,
     reference::Vector{Float64} = Float64[],
     information::Vector{String} = String[],
     matrixformat::String = "Full",
-    mixedmodeorder::Vector{Tuple{Char, Vector{Int64}}} = Tuple{Char, Vector{Int64}}[],
+    mixedmodeorder::Vector{Tuple{Char, Vector{Int}}} = Tuple{Char, Vector{Int}}[],
     comments::Vector{String} = String[],
     # networkdata::Vector{Float64} = Float64[],
     noisedata::Vector{Float64} = Float64[]
@@ -1222,7 +1222,7 @@ julia> JosephsonCircuits.parsenumberofports("[number of ports] 1")
 ```
 """
 function parsenumberofports(line::String)
-    return parse(Int64,line[18:end])
+    return parse(Int,line[18:end])
 end
 
 """
@@ -1378,7 +1378,7 @@ julia> JosephsonCircuits.parsenumberoffrequencies("[number of frequencies] 10")
 ```
 """
 function parsenumberoffrequencies(line::String)
-    numberoffrequencies = parse(Int64,line[24:end])
+    numberoffrequencies = parse(Int,line[24:end])
     if numberoffrequencies < 1
         error("Error: Number of frequencies must be an integer greater than zero:\n$(line)")
     end
@@ -1418,7 +1418,7 @@ julia> JosephsonCircuits.parsenumberofnoisefrequencies("[number of noise frequen
 ```
 """
 function parsenumberofnoisefrequencies(line::String)
-    numberofnoisefrequencies = parse(Int64,line[30:end])
+    numberofnoisefrequencies = parse(Int,line[30:end])
     if numberofnoisefrequencies < 1
         error("Error: Number of noise frequencies must be an integer greater than zero:\n$(line)")
     end
@@ -1447,7 +1447,7 @@ end
 
 """
     parsereference!(reference::Vector{Float64}, comments::Vector{String},
-        line::String, numberofports::Int64, io::IO)
+        line::String, numberofports::Int, io::IO)
 
 Append the contents of the [reference] section of a Touchstone file from the
 IOBuffer or IOStream `io` to the vector `reference`. The reference impedance
@@ -1492,7 +1492,7 @@ println(reference)
 ```
 """
 function parsereference!(reference::Vector{Float64}, comments::Vector{String},
-    line::String, numberofports::Int64, io::IO)
+    line::String, numberofports::Int, io::IO)
     # reference can be multiple lines.
 
     # if there is a number on this line, parse the line
@@ -1593,14 +1593,14 @@ function ismixedmodeorder(line::String)
 end
 
 """
-    parsemixedmodeorder!(mixedmodeorder::Vector{Tuple{Char, Vector{Int64}}}, line::String)
+    parsemixedmodeorder!(mixedmodeorder::Vector{Tuple{Char, Vector{Int}}}, line::String)
 
 Append the contents of the [mixed-mode order] line of a Touchstone file
 from the to the vector `mixedmodeorder`.
 
 # Examples
 ```jldoctest
-julia> mixedmodeorder = Tuple{Char, Vector{Int64}}[];JosephsonCircuits.parsemixedmodeorder!(mixedmodeorder,"[Mixed-Mode Order] D2,3 D6,5 C2,3 C6,5 S4 S1");mixedmodeorder
+julia> mixedmodeorder = Tuple{Char, Vector{Int}}[];JosephsonCircuits.parsemixedmodeorder!(mixedmodeorder,"[Mixed-Mode Order] D2,3 D6,5 C2,3 C6,5 S4 S1");mixedmodeorder
 6-element Vector{Tuple{Char, Vector{Int64}}}:
  ('D', [2, 3])
  ('D', [6, 5])
@@ -1610,13 +1610,13 @@ julia> mixedmodeorder = Tuple{Char, Vector{Int64}}[];JosephsonCircuits.parsemixe
  ('S', [1])
 ```
 """
-function parsemixedmodeorder!(mixedmodeorder::Vector{Tuple{Char, Vector{Int64}}},
+function parsemixedmodeorder!(mixedmodeorder::Vector{Tuple{Char, Vector{Int}}},
         line::String)
     # parse the [Mixed-Mode Order] line
     splitline = split(strip(lowercase(line[19:end])),r"\s+");
 
     for l in splitline
-        splitline2 = parse.(Int64,split(strip(lowercase(l[2:end])),r","));
+        splitline2 = parse.(Int,split(strip(lowercase(l[2:end])),r","));
         push!(mixedmodeorder,(uppercase(l[1]),splitline2))
     end
     return nothing

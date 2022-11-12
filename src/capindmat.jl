@@ -18,11 +18,11 @@ struct CircuitMatrices
     Ljbm::SparseVector
     Mb::SparseMatrixCSC
     invLnm::SparseMatrixCSC
-    Rbnm::SparseMatrixCSC{Int64, Int64}
-    portindices::Vector{Int64}
-    portnumbers::Vector{Int64}
-    portimpedanceindices::Vector{Int64}
-    noiseportimpedanceindices::Vector{Int64}
+    Rbnm::SparseMatrixCSC{Int, Int}
+    portindices::Vector{Int}
+    portnumbers::Vector{Int}
+    portimpedanceindices::Vector{Int}
+    noiseportimpedanceindices::Vector{Int}
     Lmean
     vvn
 end
@@ -173,8 +173,8 @@ Nbranches = 2
 typevector = [:I,:C,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
 valuevector = [1e-9, 0.2, 4e-9, 1e-12]
-namedict = Dict{Symbol, Int64}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
-edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+namedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Ib = JosephsonCircuits.calcIb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
@@ -188,8 +188,8 @@ Nbranches = 2
 typevector = [:I,:C,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
 valuevector = [I1, C1, L1, C2]
-namedict = Dict{Symbol, Int64}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
-edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+namedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Ib = JosephsonCircuits.calcIb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
@@ -197,7 +197,7 @@ Ib = JosephsonCircuits.calcIb(typevector,nodeindexarray,valuevector,edge2indexdi
   [1]  =  I1
 ```
 """
-function calcIb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
+function calcIb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(typevector, nodeindexarray, valuevector,
         calcvaluetype(typevector, valuevector, [:I]), edge2indexdict, Nmodes,
@@ -218,8 +218,8 @@ Nbranches = 2
 typevector = [:V,:C,:L1,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
 valuevector = [1e-9, 0.2, 4e-9, 1e-12]
-namedict = Dict{Symbol, Int64}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
-edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+namedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Vb = JosephsonCircuits.calcVb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
@@ -233,8 +233,8 @@ Nbranches = 2
 typevector = [:V,:C,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
 valuevector = [V1, C1, L1, C2]
-namedict = Dict{Symbol, Int64}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
-edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+namedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Vb = JosephsonCircuits.calcVb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
@@ -242,7 +242,7 @@ Vb = JosephsonCircuits.calcVb(typevector,nodeindexarray,valuevector,edge2indexdi
   [1]  =  V1
 ```
 """
-function calcVb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
+function calcVb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(typevector, nodeindexarray, valuevector,
         calcvaluetype(typevector, valuevector, [:V]), edge2indexdict, Nmodes,
@@ -262,8 +262,8 @@ Nbranches = 2
 typevector = [:L,:K,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
 valuevector = [1e-9, 0.2, 4e-9, 1e-12]
-namedict = Dict{Symbol, Int64}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
-edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+namedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Lb = JosephsonCircuits.calcLb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
@@ -278,8 +278,8 @@ Nbranches = 2
 typevector = [:L,:K,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
 valuevector = [L1, K1, L2, C1]
-namedict = Dict{Symbol, Int64}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
-edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+namedict = Dict{Symbol, Int}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Lb = JosephsonCircuits.calcLb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
@@ -288,7 +288,7 @@ Lb = JosephsonCircuits.calcLb(typevector,nodeindexarray,valuevector,edge2indexdi
   [2]  =  L2
 ```
 """
-function calcLb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
+function calcLb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(typevector, nodeindexarray, valuevector,
         calcvaluetype(typevector, valuevector, [:L,:K]), edge2indexdict,
@@ -309,8 +309,8 @@ Nbranches = 2
 typevector = [:Lj,:C,:Lj,:C]
 nodeindexarray = [2 3 3 3; 1 2 1 1]
 valuevector = [1e-9, 1e-12, 4e-9, 1e-12]
-namedict = Dict{Symbol, Int64}(:C2 => 4,:L2 => 3,:L1 => 1,:Cc => 2)
-edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+namedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:Cc => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Ljb = JosephsonCircuits.calcLjb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
@@ -325,8 +325,8 @@ Nbranches = 2
 typevector = [:Lj,:K,:Lj,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
 valuevector = [Lj1, K1, Lj2, C1]
-namedict = Dict{Symbol, Int64}(:C1 => 4,:Lj2 => 3,:Lj1 => 1,:K1 => 2)
-edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+namedict = Dict{Symbol, Int}(:C1 => 4,:Lj2 => 3,:Lj1 => 1,:K1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Ljb = JosephsonCircuits.calcLjb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
 
 # output
@@ -335,7 +335,7 @@ Ljb = JosephsonCircuits.calcLjb(typevector,nodeindexarray,valuevector,edge2index
   [2]  =  Lj2
 ```
 """
-function calcLjb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
+function calcLjb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(typevector, nodeindexarray, valuevector,
         calcvaluetype(typevector, valuevector, [:Lj]), edge2indexdict, Nmodes,
@@ -350,13 +350,13 @@ Calculate the sparse branch vector whose length is Nbranches*Nmodes for the
 given component symbol. Note that the nodeindexarray is "one indexed" so 1 is
 the ground node. 
 """
-function calcbranchvector(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
+function calcbranchvector(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, valuetypevector::Vector, edge2indexdict::Dict,
     Nmodes, Nbranches, component::Symbol)
 
     # define empty vectors of zero length for the indices and values
-    Ib = Array{Int64, 1}(undef, 0)
-    Vb = Array{eltype(valuetypevector), 1}(undef, 0)
+    Ib = Vector{Int}(undef, 0)
+    Vb = Vector{eltype(valuetypevector)}(undef, 0)
 
     @inbounds for (i,type) in enumerate(typevector)
         if type == component
@@ -402,8 +402,8 @@ Nbranches = 2
 typevector = [:L,:K,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
 valuevector = [1e-9, 0.2, 2e-9, 1e-12]
-namedict = Dict{Symbol, Int64}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
-edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+namedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 mutualinductorvector = [ :L1, :L2]
 Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
 
@@ -419,8 +419,8 @@ Nbranches = 2
 typevector = [:L,:K,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
 valuevector = [L1, K1, L2, C1]
-namedict = Dict{Symbol, Int64}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
-edge2indexdict = Dict{Tuple{Int64, Int64}, Int64}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+namedict = Dict{Symbol, Int}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 mutualinductorvector = [ :L1, :L2]
 Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
 
@@ -431,7 +431,7 @@ Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mut
 ```
 """
 
-function calcMb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
+function calcMb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, namedict::Dict, mutualinductorvector::Vector,
     edge2indexdict::Dict, Nmodes, Nbranches)
     return calcMb_inner(typevector,nodeindexarray,valuevector,
@@ -439,15 +439,15 @@ function calcMb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
         mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
 end
 
-function calcMb_inner(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
+function calcMb_inner(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, valuetypevector::Vector, namedict::Dict,
     mutualinductorvector::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
 
     # define empty vectors of zero length for the row indices, column indices,
     # and values
-    Ib = Array{Int64, 1}(undef, 0)
-    Jb = Array{Int64, 1}(undef, 0)
-    Vb = Array{eltype(valuetypevector), 1}(undef, 0)
+    Ib = Vector{Int}(undef, 0)
+    Jb = Vector{Int}(undef, 0)
+    Vb = Vector{eltype(valuetypevector)}(undef, 0)
 
     n = 1
     #loop through typevector for mutual inductors
@@ -623,8 +623,8 @@ function calcinvLn_inner(Lb::SparseVector, Mb::SparseMatrixCSC,
             # add together the two sparse arrays
 
             # define empty vectors for the rows, columns, and values
-            In = Array{Int64, 1}(undef, nnz(Mbs)+nnz(Lbs))
-            Jn = Array{Int64, 1}(undef, nnz(Mbs)+nnz(Lbs))
+            In = Vector{Int}(undef, nnz(Mbs)+nnz(Lbs))
+            Jn = Vector{Int}(undef, nnz(Mbs)+nnz(Lbs))
             Vn = Vector{eltype(valuetypevector)}(undef, nnz(Mbs)+nnz(Lbs))
 
             for i = 1:length(Mbs.colptr)-1
@@ -813,7 +813,7 @@ julia> @variables Cg1 Cc Cg2;JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[
         ⋅       -Cc         ⋅  Cc + Cg1
 ```
 """
-function calcCn(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
+function calcCn(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, Nmodes, Nnodes)
     return calcnodematrix(typevector, nodeindexarray, valuevector,
         calcvaluetype(typevector, valuevector, [:C]), Nmodes, Nnodes, :C, false)
@@ -870,7 +870,7 @@ julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[
                 ⋅           -1 / Rc                 ⋅  1 / Rc + 1 / Rg2
 ```
 """
-function calcGn(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
+function calcGn(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, Nmodes, Nnodes)
 
     return calcnodematrix(typevector, nodeindexarray, valuevector,
@@ -889,7 +889,7 @@ conductance. The dimensions of the output are (Nnodes-1) times Nmodes by
 is the ground node. 
 
 """
-function calcnodematrix(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64},
+function calcnodematrix(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, valuetypevector::Vector, Nmodes, Nnodes,
     component::Symbol, invert::Bool)
 
@@ -903,9 +903,9 @@ function calcnodematrix(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int64
 
     # define empty vectors of zero length for the row indices, column indices,
     # and values
-    In = Array{Int64, 1}(undef, 0)
-    Jn = Array{Int64, 1}(undef, 0)
-    Vn = Array{eltype(valuetypevector), 1}(undef, 0)
+    In = Vector{Int}(undef, 0)
+    Jn = Vector{Int}(undef, 0)
+    Vn = Vector{eltype(valuetypevector)}(undef, 0)
 
     # generate the capacitance or conductance matrix values for Nmodes=1
     @inbounds for (i,type) in enumerate(typevector)

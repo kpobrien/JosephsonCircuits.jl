@@ -61,9 +61,9 @@ function spice_raw_load(filename)
         elseif linename == "Flags"
             header["flags"] = split(line,": ",limit=2)[2]
         elseif linename == "No. Variables"
-            header["nvariables"] = parse(Int64,split(line,": ",limit=2)[2])
+            header["nvariables"] = parse(Int,split(line,": ",limit=2)[2])
         elseif linename == "No. Points"
-            header["npoints"] = parse(Int64,split(line,": ",limit=2)[2])
+            header["npoints"] = parse(Int,split(line,": ",limit=2)[2])
         elseif linename == "Command"
             header["command"] = split(line,": ",limit=2)[2]
         elseif linename == "Option"
@@ -75,8 +75,8 @@ function spice_raw_load(filename)
     end
 
     #array of strings to contain all of the variable names
-    variables =  Dict{String,Array{String}}()
-    indices = Dict{String,Array{Int64}}()
+    variables =  Dict{String,Vector{String}}()
+    indices = Dict{String,Vector{Int}}()
 
     #loop over the variable names
     i = 0
@@ -103,8 +103,8 @@ function spice_raw_load(filename)
         end 
         # variables[i-headerlength] = splitline[3]
         if !haskey(variables,splitline[3])
-            variables[splitline[3]] = Array{String}(undef,0)
-            indices[splitline[3]] = Array{Int64}(undef,0)
+            variables[splitline[3]] = Vector{String}(undef,0)
+            indices[splitline[3]] = Vector{Int}(undef,0)
         end
 
         # store the variable and the index at which it occurs
@@ -166,12 +166,12 @@ function calcspicesortperms(variabledict)
             if m3 !== nothing
                 #if there is a separate number, use that
                 key = m1.match
-                val = parse(Int64,m3.match)
-        #         push!(sortdict[m1.match],parse(Int64,m3.match))
+                val = parse(Int,m3.match)
+        #         push!(sortdict[m1.match],parse(Int,m3.match))
             elseif m2 !== nothing
                 key = m1.match[1:m2.offset-1]
                 #otherwise if there is a symbol separated by a number 
-                val = parse(Int64,m2.match)
+                val = parse(Int,m2.match)
             else
                 key = m1.match
                 val = m1.match

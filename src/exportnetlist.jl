@@ -29,9 +29,9 @@ function consolidatecomponents(typevector,nodeindexarraysorted,
             error("Error: Mutual inductors, :K, not handled yet")
         else
             if componenttype ==:P
-                tmp = Dict{Tuple{Int64,Int64},Int64}()
+                tmp = Dict{Tuple{Int,Int},Int}()
             else
-                tmp = Dict{Tuple{Int64,Int64},Complex{Float64}}()
+                tmp = Dict{Tuple{Int,Int},Complex{Float64}}()
             end
 
             for (i,j) in enumerate(findall(x->x==componenttype,typevector))
@@ -82,11 +82,11 @@ end
 
 
 """
-    exportnetlist(circuit::Vector,circuitdefs::Dict,port::Int64 = true,
+    exportnetlist(circuit::Vector,circuitdefs::Dict,port::Int = true,
         jj::Bool = true)
 
 """
-function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int64 = 1,
+function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
         jj::Bool = true)
 
     # parse and sort the circuit
@@ -357,7 +357,7 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int64 = 1,
     return  (netlist=join(netlist,"\n"),portnodes=portnodes,port=port,portcurrent=portcurrent,Nnodes = Nnodes)
 end
 
-function exportnetlist(cdict::Dict{Any, Any},Nnodes::Int64,port::Int64 = 1,
+function exportnetlist(cdict::Dict{Any, Any},Nnodes::Int,port::Int = 1,
     jj::Bool = true)
 
     # find the nodes for the selected port

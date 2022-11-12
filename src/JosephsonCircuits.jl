@@ -95,7 +95,7 @@ end
 function warmup()
 
     # define the circuit components
-    circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int64}},1}(undef,0)
+    circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int}},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))

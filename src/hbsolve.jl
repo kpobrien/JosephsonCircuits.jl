@@ -1022,16 +1022,16 @@ function calcfj!(F,
         nodeflux::AbstractVector,
         wmodesm::AbstractMatrix, 
         wmodes2m::AbstractMatrix, 
-        Rbnm::AbstractArray{Int64,2}, 
-        Rbnmt::AbstractArray{Int64,2}, 
+        Rbnm::AbstractArray{Int,2}, 
+        Rbnmt::AbstractArray{Int,2}, 
         invLnm::AbstractMatrix, 
         Cnm::AbstractMatrix, 
         Gnm::AbstractMatrix, 
         bnm::AbstractVector, 
         Ljb::SparseVector, 
         Ljbm::SparseVector,
-        Nmodes::Int64, 
-        Nbranches::Int64,
+        Nmodes::Int,
+        Nbranches::Int,
         Lmean,
         AoLjbmvector::AbstractVector,
         AoLjbm, AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap,
@@ -1201,7 +1201,7 @@ function updateAoLjbm!(AoLjbm::SparseMatrixCSC, Am, Ljb::SparseVector, Lmean,
 
     # i want a vector length(Ljb) where the indices are the values Ljb.nzind
     # and the values are the indices of Ljb.nzind
-    indexconvert = zeros(Int64,length(Ljb))
+    indexconvert = zeros(Int,length(Ljb))
     for (i,j) in enumerate(Ljb.nzind)
         indexconvert[j] = i
     end
@@ -1232,7 +1232,7 @@ end
 
 
 """
-    sincosnloddtoboth(amodd::Array{Complex{Float64},1},Nbranches::Int64,m::Int64)
+    sincosnloddtoboth(amodd::Array{Complex{Float64},1},Nbranches::Int,m::Int)
 
 Applies the junction nonlinearity to a vector of branch fluxes of length Nbranches*m
 where m is the number of odd pump harmonics (1w, 3w, 5w, etc). The ordering is
@@ -1261,7 +1261,7 @@ julia> JosephsonCircuits.sincosnloddtoboth([0.02+0.0im,0,0.01+0.0im,0],2,2)
 ```
 """
 function sincosnloddtoboth(amodd::Array{Complex{Float64},1},
-    Nbranches::Int64, m::Int64)
+    Nbranches::Int, m::Int)
 
     if length(amodd) != Nbranches*m
         error("Length of node flux vector not consistent with number of modes

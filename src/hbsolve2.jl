@@ -74,7 +74,7 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     # calculate the 
     Nw,coords,values,dropcoords,dropvalues = calcfrequencies(w,Nharmonics,
         maxintermodorder=maxintermodorder,dc=dc,even=even,odd=odd)
-    Nt=NTuple{length(Nw),Int64}(ifelse(i == 1, 2*val-1, val) for (i,val) in enumerate(Nw))
+    Nt=NTuple{length(Nw),Int}(ifelse(i == 1, 2*val-1, val) for (i,val) in enumerate(Nw))
 
     dropdict = Dict(dropcoords .=> dropvalues)
 
@@ -276,7 +276,7 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     # convert from the node basis to the branch basis
     bnm = transpose(Rbnm)*bbm
 
-    Nwtuple=NTuple{length(Nt)+1,Int64}(
+    Nwtuple=NTuple{length(Nt)+1,Int}(
             if i==1 
                 (Nt[i] ÷ 2) +1 
             elseif i <= length(Nt)
@@ -607,16 +607,16 @@ function calcfj2!(F,
         phin::AbstractVector,
         wmodesm::AbstractMatrix, 
         wmodes2m::AbstractMatrix, 
-        Rbnm::AbstractArray{Int64,2}, 
-        Rbnmt::AbstractArray{Int64,2}, 
+        Rbnm::AbstractArray{Int,2}, 
+        Rbnmt::AbstractArray{Int,2}, 
         invLnm::AbstractMatrix, 
         Cnm::AbstractMatrix, 
         Gnm::AbstractMatrix, 
         bnm::AbstractVector, 
         Ljb::SparseVector, 
         Ljbm::SparseVector,
-        Nmodes::Int64, 
-        Nbranches::Int64,
+        Nmodes::Int, 
+        Nbranches::Int,
         Lmean,
         AoLjbmvector::AbstractVector,
         AoLjbm,AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
@@ -771,7 +771,7 @@ function updateAoLjbm2!(AoLjbm::SparseMatrixCSC,Am,Ljb::SparseVector,Lmean,Nmode
 
     # i want a vector length(Ljb) where the indices are the values Ljb.nzind
     # and the values are the indices of Ljb.nzind
-    indexconvert = zeros(Int64,length(Ljb))
+    indexconvert = zeros(Int,length(Ljb))
     for (i,j) in enumerate(Ljb.nzind)
         indexconvert[j] = i
     end

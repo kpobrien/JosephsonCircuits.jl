@@ -253,7 +253,7 @@ end
 
 
 function linsolvewrspice(circuit::Vector,circuitdefs::Dict,w,
-    port::Int64 = true,jj::Bool = true)
+    port::Int = true,jj::Bool = true)
 
     # c = parsecircuit(circuit,circuitdefs);
 

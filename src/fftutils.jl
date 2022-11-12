@@ -18,14 +18,14 @@ function calcfrequencies(w::Tuple,Nharmonics::Tuple;maxintermodorder=Inf,
     # double the size of all but the first n because 
     # only the first axis of a multi-dimensional rfft has
     # only positive frequencies.
-    Nw=NTuple{length(n),Int64}(ifelse(i == 1, val, 2*val-1) for (i,val) in enumerate(n))
+    Nw=NTuple{length(n),Int}(ifelse(i == 1, val, 2*val-1) for (i,val) in enumerate(n))
     
     # store the coordinates in an array of CartesianIndex structures
     # not sure if i want to use an array of tuples or cartesianindices
     coords = Array{CartesianIndex{length(n)},1}(undef,0)
     dropcoords = Array{CartesianIndex{length(n)},1}(undef,0)
 
-#     coords = Array{NTuple{length(n),Int64},1}(undef,0)
+#     coords = Array{NTuple{length(n),Int},1}(undef,0)
 
     # store the values in an array of the same type as w
     values = Array{eltype(w),1}(undef,0)
@@ -175,7 +175,7 @@ function printdftsymmetries(N::Tuple)
 
     d=calcdftsymmetries(N)
 
-    z=zeros(Int64,N)
+    z=zeros(Int,N)
     i = 1
     for (key,val) in sort(OrderedDict(d))
         z[key] = i
@@ -210,7 +210,7 @@ Dict{CartesianIndex{2}, CartesianIndex{2}} with 1 entry:
 """
 function calcrdftsymmetries(Nt::Tuple)
 
-    Nw=NTuple{length(Nt),Int64}(ifelse(i == 1, (val÷2)+1, val) for (i,val) in enumerate(Nt))
+    Nw=NTuple{length(Nt),Int}(ifelse(i == 1, (val÷2)+1, val) for (i,val) in enumerate(Nt))
 
 
     d = Dict{CartesianIndex{length(Nt)},CartesianIndex{length(Nt)}}()
@@ -261,11 +261,11 @@ julia> JosephsonCircuits.printrdftsymmetries((3,4))
 """
 function printrdftsymmetries(Nt::Tuple)
 
-    Nw=NTuple{length(Nt),Int64}(ifelse(i == 1, (val÷2)+1, val) for (i,val) in enumerate(Nt))
+    Nw=NTuple{length(Nt),Int}(ifelse(i == 1, (val÷2)+1, val) for (i,val) in enumerate(Nt))
 
     d=calcrdftsymmetries(Nt)
 
-    z=zeros(Int64,Nw)
+    z=zeros(Int,Nw)
     i = 1
     for (key,val) in sort(OrderedDict(d))
         z[key] = i
@@ -281,7 +281,7 @@ end
 
 function calcindexdict(N)
 #     d = Dict()
-    d = Dict{CartesianIndex{length(N)},Int64}()
+    d = Dict{CartesianIndex{length(N)},Int}()
 
     for (i,index) in enumerate(CartesianIndices(N))
         d[index] = i
@@ -294,7 +294,7 @@ end
 function calcfrequencies2(Nt,coords,values)
 
     indexdict = calcrdftsymmetries(Nt);
-    N2=NTuple{length(Nt),Int64}(ifelse(i == 1, (val÷2)+1, val) for (i,val) in enumerate(Nt))
+    N2=NTuple{length(Nt),Int}(ifelse(i == 1, (val÷2)+1, val) for (i,val) in enumerate(Nt))
     reverseindexdict = Dict{CartesianIndex{length(Nt)},CartesianIndex{length(Nt)}}()
     for (key,val) in indexdict
         reverseindexdict[val] = key
@@ -319,21 +319,21 @@ end
 function calcphiindices(N,dropindices)
 
     indices = calcrdftsymmetries(N);
-    N2=NTuple{length(N),Int64}(ifelse(i == 1, (val÷2)+1, val) for (i,val) in enumerate(N))
+    N2=NTuple{length(N),Int}(ifelse(i == 1, (val÷2)+1, val) for (i,val) in enumerate(N))
     conjindices = Dict{CartesianIndex{length(N)},CartesianIndex{length(N)}}()
     for (key,val) in indices
         conjindices[val] = key
     end
 
-    indexmap = Array{Int64,1}(undef,0)
+    indexmap = Array{Int,1}(undef,0)
 
     # the index of the element of the N dimensional array in the frequency domain
     # that i should copy to conjtargetindices and take the complex conjugate of. 
-    conjsourceindices = Array{Int64,1}(undef,0)
+    conjsourceindices = Array{Int,1}(undef,0)
 
     # the index of the element of the N dimensional array in the frequency domain
     # that i should take the complex conjugate of
-    conjtargetindices = Array{Int64,1}(undef,0)
+    conjtargetindices = Array{Int,1}(undef,0)
 
     carttoint = calcindexdict(N2)
     inttocart = CartesianIndices(N2)
@@ -358,8 +358,8 @@ end
 
 
 function phivectortomatrix!(phivector::Vector,phimatrix::Array,
-    indexmap::Vector{Int64},conjsourceindices::Vector{Int64},
-    conjtargetindices::Vector{Int64},Nbranches::Int64)
+    indexmap::Vector{Int},conjsourceindices::Vector{Int},
+    conjtargetindices::Vector{Int},Nbranches::Int)
 
 
     if length(indexmap)*Nbranches != length(phivector)
@@ -390,8 +390,8 @@ end
 
 
 function phimatrixtovector!(phivector::Vector,phimatrix::Array,
-    indexmap::Vector{Int64},conjsourceindices::Vector{Int64},
-    conjtargetindices::Vector{Int64},Nbranches::Int64)
+    indexmap::Vector{Int},conjsourceindices::Vector{Int},
+    conjtargetindices::Vector{Int},Nbranches::Int)
 
     Nvector = length(phivector)÷ Nbranches
     Nmatrix = prod(size(phimatrix)[1:end-1])

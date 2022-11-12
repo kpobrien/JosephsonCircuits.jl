@@ -205,7 +205,7 @@ plot(real.(out[2][2*c.Nnodes,:]/25))
 """
 
 function wrspice_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
-    portnodes::Tuple{Int64, Int64},portcurrent::Complex{Float64})
+    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
     if length(freqs) == 1
         return wrspice_input_ac(netlist,1,freqs[1],freqs[1],portnodes,portcurrent)
     else
@@ -214,13 +214,13 @@ function wrspice_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
 end
 
 function wrspice_input_ac(netlist::String,freqs::AbstractRange{Float64},
-    portnodes::Tuple{Int64, Int64},portcurrent::Complex{Float64})
+    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
 
     return wrspice_input_ac(netlist,length(freqs)-2,freqs[1],freqs[end],portnodes,portcurrent)
 end
 
 function wrspice_input_ac(netlist::String,freqs::Float64,
-    portnodes::Tuple{Int64, Int64},portcurrent::Complex{Float64})
+    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
 
     return wrspice_input_ac(netlist,1,freqs,freqs,portnodes,portcurrent)
 end
@@ -264,7 +264,7 @@ end
 
 
 function xyce_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
-    portnodes::Tuple{Int64, Int64},portcurrent::Complex{Float64})
+    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
     if length(freqs) == 1
         return xyce_input_ac(netlist,1,freqs[1],freqs[1],portnodes,portcurrent)
     else
@@ -273,13 +273,13 @@ function xyce_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
 end
 
 function xyce_input_ac(netlist::String,freqs::AbstractRange{Float64},
-    portnodes::Tuple{Int64, Int64},portcurrent::Complex{Float64})
+    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
 
     return xyce_input_ac(netlist,length(freqs),freqs[1],freqs[end],portnodes,portcurrent)
 end
 
 function xyce_input_ac(netlist::String,freqs::Float64,
-    portnodes::Tuple{Int64, Int64},portcurrent::Complex{Float64})
+    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
 
     return xyce_input_ac(netlist,1,freqs,freqs,portnodes,portcurrent)
 end

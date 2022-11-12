@@ -92,12 +92,12 @@ julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,1,2
 function diagrepeat(A::SparseMatrixCSC,counts::Integer)
 
     # column pointer has length number of columns + 1
-    colptr = Vector{Int64}(undef,counts*A.n+1)
+    colptr = Vector{Int}(undef,counts*A.n+1)
     
     # the sum of the number of nonzero elements is an upper bound 
     # for the number of nonzero elements in the sum.
     # set rowval and nzval to be that size then reduce size later
-    rowval = Vector{Int64}(undef,counts*nnz(A))
+    rowval = Vector{Int}(undef,counts*nnz(A))
     nzval = Vector{eltype(A.nzval)}(undef,counts*nnz(A))
 
     diagrepeat!(colptr,rowval,nzval,A,counts)
@@ -188,12 +188,12 @@ function spaddkeepzeros(A::SparseMatrixCSC,B::SparseMatrixCSC)
     end
 
     # column pointer has length number of columns + 1
-    colptr = Vector{Int64}(undef,A.n+1)
+    colptr = Vector{Int}(undef,A.n+1)
 
     # the sum of the number of nonzero elements is an upper bound 
     # for the number of nonzero elements in the sum.
     # set rowval and nzval to be that size then reduce size later
-    rowval = Vector{Int64}(undef,nnz(A)+nnz(B))
+    rowval = Vector{Int}(undef,nnz(A)+nnz(B))
     nzval = zeros(promote_type(eltype(A.nzval),eltype(B.nzval)),nnz(A)+nnz(B))
 
     colptr[1] = 1
@@ -633,7 +633,7 @@ function sparseaddmap(A::SparseMatrixCSC,B::SparseMatrixCSC)
 
     kstart=1
     lstart=1
-    indexmap = zeros(Int64,nnz(B))
+    indexmap = zeros(Int,nnz(B))
 
     for i in 1:length(B.colptr)-1
         for j in B.colptr[i]:(B.colptr[i+1]-1)
@@ -650,7 +650,7 @@ function sparseaddmap(A::SparseMatrixCSC,B::SparseMatrixCSC)
 end
 
 function sparseaddmap_innerloop(A::SparseMatrixCSC,B::SparseMatrixCSC,
-    rowindexB::Int64,colindexB::Int64,kstart::Int64,lstart::Int64)
+    rowindexB::Int,colindexB::Int,kstart::Int,lstart::Int)
     @inbounds for k in kstart:length(A.colptr) -1
         # println("k: ",k, " kstart: ",kstart, " length(A.colptr) -1): ",(length(A.colptr) -1))
         tmp = A.colptr[k]:(A.colptr[k+1]-1)
@@ -777,7 +777,7 @@ Int64[]
 """
 function symbolicindices(A)
     
-    indices = Vector{Int64}(undef,0)
+    indices = Vector{Int}(undef,0)
     
     # @inbounds for i = 1:length(A.colptr)-1
     #     for j in A.colptr[i]:(A.colptr[i+1]-1)
