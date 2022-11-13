@@ -3,6 +3,10 @@
     calcfrequencies(w::Tuple, Nharmonics::Tuple; maxintermodorder = Inf,
         dc = true, even = true, odd = true)
 
+Given the frequencies `w` and the number of harmonics for each frequency
+`Nharmonics`, return the dimensions of the frequency domain representation of
+the pumps with harmonics and intermodulation products up to `maxintermodorder`.
+
 # Arguments
 - `w::Tuple`: is a tuple of angular frequencies such as (2*pi*5.0e9, 2*pi*6.0e9)
 - `Nharmonics::Tuple`: is a tuple of the number of harmonics to calculate for
