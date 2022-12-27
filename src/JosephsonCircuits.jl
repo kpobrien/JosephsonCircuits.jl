@@ -1,11 +1,5 @@
 __precompile__(true)
 
-"""
-    JosephsonCircuits
-
-Julia package for frequency domain simulations of nonlinear electrical circuits,
-particularly superconducting circuits containing Josephson junctions.     
-"""
 module JosephsonCircuits
 
 import Graphs
