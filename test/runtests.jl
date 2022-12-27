@@ -16,7 +16,7 @@ end
     doctest(JosephsonCircuits, manual = false)
 end
 
-@testset "JosephsonCircuits" begin
+@testset verbose = true "JosephsonCircuits" begin
     # @info ""
     include("fftutils.jl")
 
