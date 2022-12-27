@@ -305,7 +305,8 @@ julia> JosephsonCircuits.calcimpedance(30.0,:R,1.0,nothing)
 30.0 + 0.0im
 ```
 """
-function calcimpedance(c::Union{Integer,T,Complex{T}},type,w,symfreqvar) where {T<:AbstractFloat}
+# function calcimpedance(c::Union{Integer,T,Complex{T}},type,w,symfreqvar) where {T<:AbstractFloat}
+function calcimpedance(c::Union{T,Complex{T}},type,w,symfreqvar) where {T<:Union{AbstractFloat,Integer}}
 
     if type == :R
         if w >= 0
