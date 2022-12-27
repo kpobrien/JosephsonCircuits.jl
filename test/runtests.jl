@@ -1,11 +1,23 @@
-using Test, Documenter, JosephsonCircuits
+using Aqua
+using Documenter
+using Test
+using JosephsonCircuits
 
-DocMeta.setdocmeta!(JosephsonCircuits, 
-	:DocTestSetup, 
-	:(using JosephsonCircuits);
-	recursive=true)
-#makedocs(sitename="My Documentation",modules=[QCE])
+@testset verbose = true "Code quality (Aqua.jl)" begin
+    Aqua.test_all(JosephsonCircuits; ambiguities = false)
+end
 
-doctest(JosephsonCircuits, manual = false)
+@testset verbose = true "Doctests (Documenter.jl)" begin
+    DocMeta.setdocmeta!(JosephsonCircuits, 
+        :DocTestSetup,
+        :(using JosephsonCircuits);
+        recursive=true)
+    #makedocs(sitename="My Documentation",modules=[QCE])
+    doctest(JosephsonCircuits, manual = false)
+end
 
+@testset "JosephsonCircuits" begin
+    # @info ""
+    include("fftutils.jl")
 
+end

@@ -679,3 +679,33 @@ function phimatrixtovector!(phivector::Vector, phimatrix::Array,
     end
     return nothing
 end
+
+
+
+function applynl(am::Array{Complex{Float64}}, f::Function)
+
+    #choose the number of time points based on the number of fourier
+    #coefficients
+    # changed to below because i wasn't using enough points when Nmodes=1.
+    # the results contained only real values. 
+    if size(am,1) == 2
+        stepsperperiod = 2*size(am,1)-1
+    else
+        stepsperperiod = 2*size(am,1)-2
+    end
+
+    #transform back to time domain
+    ift = FFTW.irfft(am,stepsperperiod,1:length(size(am))-1)
+
+    # normalize the fft
+    normalization = prod(size(ift)[1:end-1])
+    ift .*= normalization
+
+    #apply the nonlinear function
+    nlift = f.(ift)
+
+    #fourier transform back to the frequency domain
+    ftnlift = FFTW.rfft(nlift,1:length(size(am))-1)/normalization
+
+    return ftnlift
+end
