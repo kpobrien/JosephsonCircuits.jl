@@ -616,6 +616,34 @@ Fourier transform operates on multidimensional arrays with the proper
 conjugate symmetries and with dropped terms set to zero. This function converts
 a vector to an array with the above properties.
 
+# Examples
+```jldoctest
+freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+conjsourceindices = [16, 6]
+conjtargetindices = [21, 31]
+Nbranches = 1
+
+phivector = 1im.*Complex.(1:Nbranches*length(freqindexmap));
+phimatrix=zeros(Complex{Float64},5,7,1)
+
+JosephsonCircuits.phivectortomatrix!(phivector,
+    phimatrix,
+    freqindexmap,
+    conjsourceindices,
+    conjtargetindices,
+    Nbranches,
+)
+phimatrix
+
+# output
+5×7×1 Array{ComplexF64, 3}:
+[:, :, 1] =
+ 0.0+0.0im  0.0+3.0im  0.0+0.0im  0.0+6.0im  0.0-6.0im  0.0+0.0im  0.0-3.0im
+ 0.0+1.0im  0.0+0.0im  0.0+5.0im  0.0+0.0im  0.0+0.0im  0.0+7.0im  0.0+0.0im
+ 0.0+0.0im  0.0+4.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+8.0im
+ 0.0+2.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im
+ 0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im
+```
 """
 function phivectortomatrix!(phivector::Vector, phimatrix::Array,
     indexmap::Vector{Int}, conjsourceindices::Vector{Int},
@@ -659,6 +687,36 @@ Fourier transform operates on multidimensional arrays with the proper
 conjugate symmetries and with dropped terms set to zero. This function converts
 an array to a vector with the above properties.
 
+# Examples
+```jldoctest
+freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+conjsourceindices = [16, 6]
+conjtargetindices = [21, 31]
+Nbranches = 1
+
+phivector = zeros(Complex{Float64}, Nbranches*length(freqindexmap))
+phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
+
+JosephsonCircuits.phimatrixtovector!(phivector,
+    phimatrix,
+    freqindexmap,
+    conjsourceindices,
+    conjtargetindices,
+    Nbranches,
+)
+phivector
+
+# output
+8-element Vector{ComplexF64}:
+ 0.0 + 1.0im
+ 0.0 + 2.0im
+ 0.0 + 3.0im
+ 0.0 + 4.0im
+ 0.0 + 5.0im
+ 0.0 + 6.0im
+ 0.0 + 7.0im
+ 0.0 + 8.0im
+```
 """
 function phimatrixtovector!(phivector::Vector, phimatrix::Array,
     indexmap::Vector{Int}, conjsourceindices::Vector{Int},
@@ -681,7 +739,31 @@ function phimatrixtovector!(phivector::Vector, phimatrix::Array,
 end
 
 
+"""
+    applynl(am::Array{Complex{Float64}}, f::Function)
 
+Perform the inverse discrete Fourier transform on an array `am` of complex
+frequency domain data, apply the function `f` in the time domain, then perform
+the discrete Fourier transform to return to the frequency domain. Apply the
+Fourier transform on all but the last dimensions. 
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.applynl([[0, 0.2+0.0im, 0, 0];;],(x)->cos(x))
+4×1 Matrix{ComplexF64}:
+   0.9603980498951228 + 0.0im
+                  0.0 + 0.0im
+ -0.01966852794611884 + 0.0im
+                  0.0 + 0.0im
+
+julia> JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;],(x)->sin(x))
+3×3×1 Array{ComplexF64, 3}:
+[:, :, 1] =
+ -0.0209812+0.0im   0.295151+0.0im   0.295151+0.0im
+   0.359826+0.0im  -0.041417+0.0im  -0.041417+0.0im
+ 0.00788681+0.0im  -0.110947+0.0im  -0.110947+0.0im
+ ```
+"""
 function applynl(am::Array{Complex{Float64}}, f::Function)
 
     #choose the number of time points based on the number of fourier

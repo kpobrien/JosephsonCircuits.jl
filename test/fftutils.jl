@@ -2,7 +2,7 @@ using JosephsonCircuits
 using Test
 using SpecialFunctions
 
-@testset verbose = true "fftutils" begin
+@testset verbose=true "fftutils" begin
 
     @testset "applynl: cos(z*cos(theta))" begin
         # test against Jacobi-Anger expansion for cos(z*cos(theta))
@@ -118,6 +118,100 @@ using SpecialFunctions
                 @test isapprox(am2[i], 0, atol = tolerance)
             end
         end
+    end
+
+    @testset "phivectortomatrix! and phimatrixtovector!" begin
+
+        @variables w1,w2
+        w = (w1,w2)
+
+        # test whether vector -> matrix -> vector gives the same result
+        Nharmonics = (4,3)
+        maxintermodorder = 3
+
+        Nw,coords,values,dropcoords,dropvalues = JosephsonCircuits.calcfrequencies(w,Nharmonics,
+            maxintermodorder=maxintermodorder,dc=false,even=false,odd=true)
+        Nt=NTuple{length(Nw),Int64}(ifelse(i == 1, 2*val-1, val) for (i,val) in enumerate(Nw))
+
+        dropdict = Dict(dropcoords .=> dropvalues)
+
+        freqindexmap,conjsourceindices,conjtargetindices = JosephsonCircuits.calcphiindices(Nt,dropdict)
+
+        Nbranches = 2
+        Nfrequencies = length(freqindexmap)
+
+        phivector = rand(Complex{Float64},Nbranches*Nfrequencies);
+        phivector1 = rand(Complex{Float64},Nbranches*Nfrequencies);
+
+        phimatrix = zeros(Complex{Float64},(Nw...,Nbranches));
+
+        JosephsonCircuits.phivectortomatrix!(phivector,
+            phimatrix,
+            freqindexmap,
+            conjsourceindices,
+            conjtargetindices,
+            Nbranches,
+        )
+
+        JosephsonCircuits.phimatrixtovector!(phivector1,
+            phimatrix,
+            freqindexmap,
+            conjsourceindices,
+            conjtargetindices,
+            Nbranches,
+        )
+
+        # isapprox(phivector,phivector1)
+        @test all(phivector .== phivector1)
+
+    end
+
+    @testset "phimatrixtovector!"  begin
+
+        freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+        conjsourceindices = [16, 6]
+        conjtargetindices = [21, 31]
+        Nbranches = 1
+
+        phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
+        phivector = 1im.*Complex.(1:Nbranches*length(freqindexmap));
+
+        phimatrix1 = similar(phimatrix)
+        phivector1 = similar(phivector)
+
+        JosephsonCircuits.phimatrixtovector!(phivector1,
+            phimatrix,
+            freqindexmap,
+            conjsourceindices,
+            conjtargetindices,
+            Nbranches,
+        )
+
+        @test all(phivector .== phivector1)
+    end
+
+    @testset "phivectortomatrix!"  begin
+
+        freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+        conjsourceindices = [16, 6]
+        conjtargetindices = [21, 31]
+        Nbranches = 1
+
+        phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
+        phivector = 1im.*Complex.(1:Nbranches*length(freqindexmap));
+
+        phimatrix1 = similar(phimatrix)
+        phivector1 = similar(phivector)
+
+        JosephsonCircuits.phivectortomatrix!(phivector,
+            phimatrix1,
+            freqindexmap,
+            conjsourceindices,
+            conjtargetindices,
+            Nbranches,
+        )
+
+        @test all(phimatrix .== phimatrix1)
     end
 
 end
