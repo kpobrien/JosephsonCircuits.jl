@@ -8,11 +8,22 @@ New version of the harmonic balance solver suitable for arbitrary numbers of
 ports, sources, and pumps. Still under development. 
 """
 
-function hbsolve2(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports=[1],
-    solver =:klu, iterations=1000,ftol=1e-8,symfreqvar = nothing, sorting=:number,
-    nbatches = Base.Threads.nthreads())
+# function hbsolve2(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpports=[1],
+#     solver =:klu, iterations=1000,ftol=1e-8,symfreqvar = nothing, sorting=:number,
+#     nbatches = Base.Threads.nthreads())
+function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
+    pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+    symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
+    returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
+    returnnodeflux = false, returnvoltage = false, verbosity = 1)
     # solve the nonlinear system
     # use the old syntax externally
+
+    # parse and sort the circuit
+    psc = parsesortcircuit(circuit, sorting=sorting)
+
+    # calculate the circuit graph
+    cg = calccircuitgraph(psc)
 
     w = (wp,)
     Nharmonics = (2*Npumpmodes,)
@@ -20,25 +31,24 @@ function hbsolve2(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs; pumpport
     pump=hbnlsolve2(w,Nharmonics,sources,circuit,circuitdefs,
         solver=solver,odd=true,dc=false,even=false,symfreqvar = symfreqvar,
         sorting=sorting,ftol=ftol)
-    # pump=hbnlsolve2(w,Nharmonics,sources,circuit,circuitdefs,
-    #     solver=solver,odd=true,dc=false,even=false)
+
     # the node flux
-    phin = pump.out.zero
+    # phin = pump.out.zero
+    nodeflux = pump.nodeflux    
 
     # convert from node flux to branch flux
-    phib = pump.Rbnm*phin
+    phib = pump.Rbnm*nodeflux
 
     # calculate the sine and cosine nonlinearities from the pump flux
-    # Am = sincosnloddtoboth(phib[pump.Ljbm.nzind],length(pump.Ljb.nzind),pump.Nmodes)
-    Am = sincosnloddtoboth(phib[pump.Ljbm.nzind],length(pump.Ljb.nzind),Npumpmodes)
+    Am = sincosnloddtoboth(phib[pump.Ljbm.nzind], length(pump.Ljb.nzind), pump.Nmodes)
 
     # solve the linear system
-    signal=hblinsolve(ws,wp,Nsignalmodes,circuit,circuitdefs,Am=Am,solver=solver,
-        symfreqvar = symfreqvar, nbatches = nbatches, sorting = sorting)
-    # signal=hblinsolve(ws,wp,Nsignalmodes,circuit,circuitdefs,Am=Am,solver=solver)
-
-    # return (pump=pump, Am=Am, signal=signal)
-    return HB(pump,Am,signal)
+    signal=hblinsolve(ws, psc, cg, circuitdefs, wp = wp, Nmodes = Nsignalmodes,
+        Am = Am, solver = solver, symfreqvar = symfreqvar, nbatches = nbatches,
+        returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
+        returnCM = returnCM, returnnodeflux = returnnodeflux,
+        returnvoltage = returnvoltage, verbosity = verbosity)
+    return HB(pump, Am, signal)
 end
 
 """
@@ -495,15 +505,18 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
         # push!(fpvals,fp)
         # push!(dfdalphavals,dfdalpha)
 
-        # if norm(F)/norm(x) < 1e-8
-        if norm(F,Inf) <= ftol
-            # println("converged to infinity norm of : ",norm(F,Inf)," after ",n," iterations")
-            # println("norm(phi): ",norm(x))
+        if norm(F,Inf) <= ftol || ( norm(x) > 0 && norm(F)/norm(x) < ftol)
+            # terminate iterations if infinity norm or relative norm are less
+            # than ftol. check that norm(x) is greater than zero to avoid
+            # divide by zero errors. 
+            # println("converged to: infinity norm of : ",norm(F,Inf)," after ",n," iterations")
+            # println("norm(F)/norm(phi): ",norm(F)/norm(x))
             break
         end
 
         if n == iterations
             println("Warning: Solver did not converge with infinity norm of : ",norm(F,Inf)," after maximum iterations of ", n)
+            println("norm(F)/norm(x): ", norm(F)/norm(x))
         end
     end
     phin = x
@@ -563,7 +576,7 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     #     Ljbm = Ljbm,
     #     Ljb = Ljb,
     #     )
-    return NonlinearHB(out,phin,Rbnm,Ljb,Lb,Ljbm,Nmodes,Nbranches,S)
+    return NonlinearHB(phin,Rbnm,Ljb,Lb,Ljbm,Nmodes,Nbranches,S)
 
     # return (out=out,
     #     wmodesm = wmodesm,
