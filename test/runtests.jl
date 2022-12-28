@@ -20,4 +20,8 @@ end
     # @info ""
     include("fftutils.jl")
 
+    include("hbsolve.jl")
+
+    include("hbsolve2.jl")
+
 end
