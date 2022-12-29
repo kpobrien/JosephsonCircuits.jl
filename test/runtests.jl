@@ -26,4 +26,6 @@ end
 
     include("touchstone.jl")
 
+    include("spiceraw.jl")
+
 end
