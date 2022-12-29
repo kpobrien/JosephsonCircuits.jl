@@ -24,4 +24,6 @@ end
 
     include("hbsolve2.jl")
 
+    include("touchstone.jl")
+
 end
