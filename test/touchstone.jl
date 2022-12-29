@@ -85,7 +85,6 @@ import UUIDs
         out=JosephsonCircuits.touchstone_load(filename)
 
         # clean up the temporary file
-        GC.gc()
         rm(filename)
 
         @test out.f == frequencies
