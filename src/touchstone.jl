@@ -71,7 +71,11 @@ function touchstone_load(filename)
     #open a file handle
     io = open(filename)
 
-    return touchstone_parse(io)
+    out = touchstone_parse(io)
+
+    close(io)
+
+    return out
 end
 
 """
