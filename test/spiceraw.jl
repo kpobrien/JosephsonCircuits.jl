@@ -5,7 +5,7 @@ using Test
 
     @testset "spice_raw_load" begin
 
-        filepath = joinpath(dirname(Base.source_path()),"spiceraw/test01.raw")
+        filepath = joinpath(dirname(Base.source_path()),"spiceraw","test01.raw")
 
         out1 = JosephsonCircuits.spice_raw_load(filepath)
 
