@@ -44,7 +44,7 @@ function consolidatecomponents(typevector,nodeindexarraysorted,
                         error("No support for multiple JJs on same branch")
                     elseif componenttype == :R || componenttype == :L
                         # add inductor or resistor in parallel
-                        tmp[key]=1/(1/valuevector[j]+1/cdict[componenttype][key])
+                        tmp[key]=1/(1/valuevector[j]+1/tmp[key])
                     else
                         error("Only one of these per branch.")
                     end
@@ -87,7 +87,7 @@ end
 
 # Examples
 ```jldoctest
-@variables R Cc Lj Cj
+@variables R Cc Lj Cj I
 circuit = [
     ("P1","1","0",1),
     ("R1","1","0",R),
@@ -120,18 +120,22 @@ C1 1 2 100.0f
 R1 1 0 50.0
 ```
 ```jldoctest
-@variables R Cc L Cj
+@variables R Cc L1 L2 Cj1 Cj2
 circuit = [
     ("P1","1","0",1),
     ("R1","1","0",R),
     ("C1","1","2",Cc),
-    ("L1","2","0",L),
-    ("C2","2","0",Cj)]
+    ("L1","2","0",L1),
+    ("L2","2","0",L2),
+    ("C2","2","0",Cj1),
+    ("C3","2","0",Cj2)]
 
 circuitdefs = Dict(
-    L =>1000.0e-12,
+    L1 =>2000.0e-12,
+    L2 =>2000.0e-12,
     Cc => 100.0e-15,
-    Cj => 1000.0e-15,
+    Cj1 => 500.0e-15,
+    Cj2 => 500.0e-15,
     R => 50.0)
 
 println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = true).netlist)
