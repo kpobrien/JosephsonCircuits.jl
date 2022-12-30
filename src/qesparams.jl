@@ -303,6 +303,12 @@ julia> JosephsonCircuits.calcimpedance(30.0,:C,1.0,nothing)
 
 julia> JosephsonCircuits.calcimpedance(30.0,:R,1.0,nothing)
 30.0 + 0.0im
+
+julia> JosephsonCircuits.calcimpedance(30.0,:C,-1.0,nothing)
+-0.0 + 0.03333333333333333im
+
+julia> JosephsonCircuits.calcimpedance(30.0,:R,-1.0,nothing)
+30.0 + 0.0im
 ```
 """
 # function calcimpedance(c::Union{Integer,T,Complex{T}},type,w,symfreqvar) where {T<:AbstractFloat}
@@ -336,6 +342,12 @@ julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:R,2.0,w)
 
 julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:C,2.0,w)
 0.0 - 0.008333333333333333im
+
+julia> @variables w;JosephsonCircuits.calcimpedance(30,:R,-2.0,w)
+30.0 + 0.0im
+
+julia> @variables w;JosephsonCircuits.calcimpedance(30,:C,-2.0,w)
+-0.0 + 0.016666666666666666im
 ```
 """
 function calcimpedance(c,type,w,symfreqvar)
@@ -635,6 +647,16 @@ ladder operator basis.
 
 # Examples
 ```jldoctest
+julia> JosephsonCircuits.calcqe([3/5 4/5;4/5 3/5])
+2×2 Matrix{Float64}:
+ 0.36  0.64
+ 0.64  0.36
+
+julia> JosephsonCircuits.calcqe(Complex{Float64}[3/5 4/5;4/5 3/5])
+2×2 Matrix{Float64}:
+ 0.36  0.64
+ 0.64  0.36
+
 julia> @variables a b c d;JosephsonCircuits.calcqe([a b; c d])
 2×2 Matrix{Num}:
  abs2(a) / (abs2(a) + abs2(b))  abs2(b) / (abs2(a) + abs2(b))
