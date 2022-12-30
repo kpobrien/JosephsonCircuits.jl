@@ -430,7 +430,6 @@ Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mut
  K1*sqrt(L1*L2)               ⋅
 ```
 """
-
 function calcMb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, namedict::Dict, mutualinductorvector::Vector,
     edge2indexdict::Dict, Nmodes, Nbranches)
@@ -468,7 +467,6 @@ function calcMb_inner(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
         if type == :K
             # value of K
             K = valuevector[i]
-
             # names of inductors
             inductor1name = mutualinductorvector[2*n-1]
             inductor2name = mutualinductorvector[2*n]
@@ -541,6 +539,20 @@ JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes)
 2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 2 stored entries:
  1 / L1       ⋅
       ⋅  1 / L2
+```
+```jldoctest
+@variables L1 L2
+Nmodes = 2
+Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2])
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
+JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes)
+
+# output
+4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
+ 1 / L1       ⋅       ⋅       ⋅
+      ⋅  1 / L1       ⋅       ⋅
+      ⋅       ⋅  1 / L2       ⋅
+      ⋅       ⋅       ⋅  1 / L2
 ```
 """
 function calcinvLn(Lb::SparseVector, Rbn::SparseMatrixCSC, Nmodes)
