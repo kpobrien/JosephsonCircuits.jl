@@ -384,12 +384,12 @@ julia> JosephsonCircuits.calccm(Complex{Float64}[3/5 4/5;4/5 3/5],[1])
  1.0
  1.0
 
-julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 0 0 1],[1 -1])
+julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 0 0 1],[1, -1])
 2-element Vector{Float64}:
  3.0e-200
  0.0
 
-julia> @variables a b;JosephsonCircuits.calccm([a b; b a],[1 -1])
+julia> @variables a b;JosephsonCircuits.calccm([a b; b a],[1, -1])
 2-element Vector{Num}:
  abs2(a) - abs2(b)
  abs2(b) - abs2(a)
@@ -416,18 +416,6 @@ Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Overwrites cm with output. Use a compensated sum
 to reduce floating point errors.
 
-# Examples
-```jldoctest
-julia> JosephsonCircuits.calccm(Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
-2-element Vector{Float64}:
- 6.0e-200
- 0.0
-
-julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
-2-element Vector{Float64}:
- 6.0e-200
- 0.0
-```
 """
 function calccm!(cm::AbstractArray{T},S,w) where {T<:AbstractFloat}
 
@@ -507,15 +495,20 @@ energy conservation.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
+julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 1e-100 2e-100 1;1 1 1 1],[1, -1])
 2-element Vector{Float64}:
  6.0e-200
  0.0
 
-julia> JosephsonCircuits.calccm(Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
+julia> JosephsonCircuits.calccm(Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],[1, -1])
 2-element Vector{Float64}:
  6.0e-200
  0.0
+
+julia> @variables a b c d an bn cn dn;JosephsonCircuits.calccm([a b; c d],[an bn; cn dn],[1, -1])
+2-element Vector{Num}:
+ abs2(a) + abs2(an) - abs2(b) - abs2(bn)
+ abs2(c) + abs2(cn) - abs2(d) - abs2(dn)
 ```
 """
 function calccm(S::AbstractArray{T},Snoise::AbstractArray{T},w) where {T}
@@ -722,6 +715,16 @@ ladder operator basis.
 
 # Examples
 ```jldoctest
+julia> JosephsonCircuits.calcqe([3/5 4/5;4/5 3/5],[0.0 0.0;0.0 0.0])
+2×2 Matrix{Float64}:
+ 0.36  0.64
+ 0.64  0.36
+
+julia> JosephsonCircuits.calcqe(Complex{Float64}[3/5 4/5;4/5 3/5],Complex{Float64}[0.0 0.0;0.0 0.0])
+2×2 Matrix{Float64}:
+ 0.36  0.64
+ 0.64  0.36
+
 julia> @variables a b c d an bn cn dn;JosephsonCircuits.calcqe([a b; c d],[an bn; cn dn])
 2×2 Matrix{Num}:
  abs2(a) / (abs2(a) + abs2(an) + abs2(b) + abs2(bn))  …  abs2(b) / (abs2(a) + abs2(an) + abs2(b) + abs2(bn))
