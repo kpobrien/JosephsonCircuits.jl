@@ -367,7 +367,7 @@ energy conservation.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.calccm([3/5 4/5;4/5 3/5],[1])
+julia> JosephsonCircuits.calccm(Complex{Float64}[3/5 4/5;4/5 3/5],[1])
 2-element Vector{Float64}:
  1.0
  1.0
@@ -404,6 +404,18 @@ Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Overwrites cm with output. Use a compensated sum
 to reduce floating point errors.
 
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calccm(Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
+2-element Vector{Float64}:
+ 6.0e-200
+ 0.0
+
+julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
+2-element Vector{Float64}:
+ 6.0e-200
+ 0.0
+```
 """
 function calccm!(cm::AbstractArray{T},S,w) where {T<:AbstractFloat}
 
@@ -750,6 +762,11 @@ scattering matrix.
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.calcqeideal([3/5 4/5;4/5 3/5])
+2×2 Matrix{Float64}:
+ 1.0  1.0
+ 1.0  1.0
+
+julia> JosephsonCircuits.calcqeideal(Complex{Float64}[3/5 4/5;4/5 3/5])
 2×2 Matrix{Float64}:
  1.0  1.0
  1.0  1.0
