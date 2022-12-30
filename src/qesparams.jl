@@ -505,10 +505,18 @@ field ladder operator basis. Sum the abs2 of each element along the horizontal
 axis, applying a minus sign if the corresponding frequency is negative. Represents
 energy conservation. 
 
-this should equal 6.0e-200
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
+2-element Vector{Float64}:
+ 6.0e-200
+ 0.0
 
-JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 1 1 1],[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
-
+julia> JosephsonCircuits.calccm(Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],[1 -1])
+2-element Vector{Float64}:
+ 6.0e-200
+ 0.0
+```
 """
 function calccm(S::AbstractArray{T},Snoise::AbstractArray{T},w) where {T}
     cm = zeros(T,size(S,1))
