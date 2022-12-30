@@ -102,6 +102,8 @@ circuitdefs = Dict(
     R => 50.0)
 
 println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = true).netlist)
+println("")
+println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = false).netlist)
 
 # output
 * SPICE Simulation
@@ -109,6 +111,44 @@ B1 2 0 3 jjk ics=0.32910597599999997u
 Cj1 2 0 670.8940240000001f
 .model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=329.105976f,force=1,vm=9.9
 C1 1 2 100.0f
+R1 1 0 50.0
+
+* SPICE Simulation
+Lj1 2 0 1000.0000000000001p
+Cj1 2 0 1000.0f
+C1 1 2 100.0f
+R1 1 0 50.0
+```
+```jldoctest
+@variables R Cc L Cj
+circuit = [
+    ("P1","1","0",1),
+    ("R1","1","0",R),
+    ("C1","1","2",Cc),
+    ("L1","2","0",L),
+    ("C2","2","0",Cj)]
+
+circuitdefs = Dict(
+    L =>1000.0e-12,
+    Cc => 100.0e-15,
+    Cj => 1000.0e-15,
+    R => 50.0)
+
+println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = true).netlist)
+println("")
+println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = false).netlist)
+
+# output
+* SPICE Simulation
+L1 2 0 1000.0000000000001p
+C1 1 2 100.0f
+C2 2 0 1000.0f
+R1 1 0 50.0
+
+* SPICE Simulation
+L1 2 0 1000.0000000000001p
+C1 1 2 100.0f
+C2 2 0 1000.0f
 R1 1 0 50.0
 ```
 """
@@ -179,6 +219,8 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
     end
     CjoIc = 0
 
+    inductorlabels = Dict()
+
     if haskey(cdict,:Lj)
 
         for (Ljedge,val) in cdict[:Lj]
@@ -243,7 +285,6 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
 
 
         ## write the JJs (or linear inductors in place of JJs) ##
-        inductorlabels = Dict()
         i = 1
         for (key,val) in sort(collect(cdict[:Lj]), by=x->x[1][1])
             Ictmp = LjtoIc(real(val))
