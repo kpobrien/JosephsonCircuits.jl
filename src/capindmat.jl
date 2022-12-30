@@ -563,6 +563,18 @@ JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes).nzval
 # output
 Nothing[]
 ```
+```jldoctest
+@syms L1 L2
+Nmodes = 1
+Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2])
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
+JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes).nzval
+
+# output
+2-element Vector{Any}:
+ 1 / L1
+ 1 / L2
+```
 """
 function calcinvLn(Lb::SparseVector, Rbn::SparseMatrixCSC, Nmodes)
     if nnz(Lb)>0
