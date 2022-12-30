@@ -75,8 +75,8 @@ function comparestruct(x,y)
 end
 
 compare(x,y) = isequal(x,y)
-compare(x::Vector{Complex{Float64}},y::Vector{Complex{Float64}}) = isapprox(x,y,atol=1e-10)
-compare(x::Vector{Float64},y::Vector{Float64}) = isapprox(x,y,atol=1e-10)
+# compare(x::Vector{Complex{Float64}},y::Vector{Complex{Float64}}) = isapprox(x,y,atol=1e-10)
+# compare(x::Vector{Float64},y::Vector{Float64}) = isapprox(x,y,atol=1e-10)
 
 compare(x::Nothing,y::Nothing) = true
 compare(x::JosephsonCircuits.AbstractSparseVector,y::JosephsonCircuits.AbstractSparseVector) = compare(x.nzval,y.nzval) && compare(x.nzind,y.nzind)
