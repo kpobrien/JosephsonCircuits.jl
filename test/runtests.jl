@@ -3,6 +3,8 @@ using Documenter
 using Test
 using JosephsonCircuits
 
+
+
 @testset verbose = true "Code quality (Aqua.jl)" begin
     Aqua.test_all(JosephsonCircuits; ambiguities = false)
 end
@@ -27,5 +29,7 @@ end
     include("touchstone.jl")
 
     include("spiceraw.jl")
+
+    include("JosephsonCircuits.jl")
 
 end

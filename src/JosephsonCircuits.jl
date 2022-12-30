@@ -51,6 +51,9 @@ include("spiceraw.jl")
 # This is for reading and writing files in the touchstone format. 
 include("touchstone.jl")
 
+# These are functions for perofrming tests
+include("testutils.jl")
+
 
 """
     LjtoIc(Lj)
@@ -108,7 +111,7 @@ function warmup()
         :Ipump => 1.0e-8,
     )
 
-    return hbsolve(2*pi*(4.5:0.1:5.0)*1e9,2*pi*4.75001*1e9,0.00565e-6,8,8,circuit,circuitdefs,pumpports=[1],solver=:klu);
+    return hbsolve(2*pi*(4.5:0.5:5.0)*1e9,2*pi*4.75001*1e9,0.00565e-6,2,2,circuit,circuitdefs,pumpports=[1],solver=:klu);
 
 end
 
@@ -127,11 +130,11 @@ function warmupsyms()
         Cj => 1000.0e-15,
         Rleft => 50.0,
     )
-    ws = 2*pi*(4.5:0.1:5.0)*1e9
+    ws = 2*pi*(4.5:0.5:5.0)*1e9
     wp = 2*pi*4.75001*1e9
     Ip = 0.00565e-6
-    Nsignalmodes = 8
-    Npumpmodes = 8
+    Nsignalmodes = 2
+    Npumpmodes = 2
     return hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1]);
 
 end
@@ -241,7 +244,7 @@ function warmuphblinsolve()
         Ipump => 1.0e-8,
     )
 
-    return hblinsolve(2*pi*(4.5:0.001:5.0)*1e9,circuit,circuitdefs,Nmodes=1)
+    return hblinsolve(2*pi*(4.5:0.1:5.0)*1e9,circuit,circuitdefs,Nmodes=1)
 end
 
 function warmupvvn()
