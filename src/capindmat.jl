@@ -27,7 +27,6 @@ struct CircuitMatrices
     vvn
 end
 
-
 """
     symbolicmatrices(circuit;Nmodes=1,sorting=:number)
 
@@ -37,7 +36,6 @@ See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref)
 [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
 [`calcinvLn`](@ref), [`componentdictionaryP`](@ref),
 [`componentdictionaryR`](@ref), [`calcLmean`](@ref), and [`diagrepeat`](@ref).
-
 
 # Examples
 ```jldoctest
@@ -414,7 +412,7 @@ Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mut
 ```
 ```jldoctest
 @variables L1 L2 K1 C1
-Nmodes = 1
+Nmodes = 2
 Nbranches = 2
 typevector = [:L,:K,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
@@ -425,9 +423,11 @@ mutualinductorvector = [ :L1, :L2]
 Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
 
 # output
-2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 2 stored entries:
-              ⋅  K1*sqrt(L1*L2)
- K1*sqrt(L1*L2)               ⋅
+4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
+              ⋅               ⋅  K1*sqrt(L1*L2)               ⋅
+              ⋅               ⋅               ⋅  K1*sqrt(L1*L2)
+ K1*sqrt(L1*L2)               ⋅               ⋅               ⋅
+              ⋅  K1*sqrt(L1*L2)               ⋅               ⋅
 ```
 """
 function calcMb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
@@ -554,6 +554,15 @@ JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes)
       ⋅       ⋅  1 / L2       ⋅
       ⋅       ⋅       ⋅  1 / L2
 ```
+```jldoctest
+Nmodes = 1
+Lb = JosephsonCircuits.SparseArrays.sparsevec([],Nothing[])
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
+JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes).nzval
+
+# output
+Nothing[]
+```
 """
 function calcinvLn(Lb::SparseVector, Rbn::SparseMatrixCSC, Nmodes)
     if nnz(Lb)>0
@@ -620,12 +629,17 @@ end
 
 function calcinvLn_inner(Lb::SparseVector, Mb::SparseMatrixCSC,
     Rbn::SparseMatrixCSC, Nmodes, valuetypevector::Vector)
-    if nnz(Lb) > 0 &&  nnz(Mb) > 0
-            # add the mutual inductance matrix to a diagonal matrix made from the
-            # inductance vector.
-            # we pick out only the indices where there are inductors for
-            # efficiency reasons.
 
+    # if there are no mutual inductors, return the inverse of the diagonal
+    # elements
+    if nnz(Lb) > 0 &&  nnz(Mb) == 0
+        return calcinvLn(Lb,Rbn,Nmodes)
+    elseif nnz(Lb) > 0 &&  nnz(Mb) > 0
+        # add the mutual inductance matrix to a diagonal matrix made from the
+        # inductance vector.
+        # we pick out only the indices where there are inductors for
+        # efficiency reasons.
+        # calculate the symbolic inductance matrix
         if eltype(valuetypevector) <: Symbolic
 
             # take a subset of the arrays
@@ -673,46 +687,23 @@ function calcinvLn_inner(Lb::SparseVector, Mb::SparseMatrixCSC,
             end
 
         else
+            # calculate the numeric inductance matrix
             L = Mb[Lb.nzind,Lb.nzind] + Diagonal(Lb[Lb.nzind])
         end
 
-            ## using the inverse directly (bad)
-            # s = transpose(Rbn[Lb.nzind,:])*sparse(inv(Matrix(L)))*Rbn[Lb.nzind,:]
-            if eltype(valuetypevector) <: Union{AbstractFloat, Complex}
-                # using ldiv with klu. fastest option in most cases
-                s = transpose(Rbn[Lb.nzind,:])*sparse(KLU.klu(L) \ Matrix(Rbn[Lb.nzind,:]))
-                
-                # if above is not allowed, use ldiv with a dense matrix. this can be much
-                # slower but will work for symbolic matrices. 
-                # s = transpose(Rbn[Lb.nzind,:])*sparse(Matrix(L) \ Matrix(Rbn[Lb.nzind,:]))
-            else
+        # calculate the inverse inductance matrix
+        if eltype(valuetypevector) <: Union{AbstractFloat, Complex}
+            # using ldiv with klu. fastest option in most cases
+            s = transpose(Rbn[Lb.nzind,:])*sparse(KLU.klu(L) \ Matrix(Rbn[Lb.nzind,:]))
+        else
+            s = calcsymbolicinvLn(L,Lb,Rbn)
+        end 
 
-                # println(L)
-                # println(typeof(L))
-                # println(typeof(transpose(Rbn[Lb.nzind,:])))
-                # println( typeof(Matrix(Rbn[Lb.nzind,:])))
-                # s = transpose(Rbn[Lb.nzind,:])*(Matrix(L) \ Matrix(Rbn[Lb.nzind,:]))
-                # s = transpose(Rbn[Lb.nzind,:])*(Matrix(L) \ Matrix(Rbn[Lb.nzind,:]))
-
-                try
-                    s = calcsymbolicinvLn(L,Lb,Rbn)
-                catch e
-                    # throw(MethodError("Calculating the inverse inductance matrix with calcsymbolicinvLn(L,Lb,Rbn) when there are mutual inductors requires Symbolics.jl. Run the command:  using Symbolics"))
-                    println("Calculating the inverse inductance matrix with calcsymbolicinvLn(L,Lb,Rbn) when there are mutual inductors requires Symbolics.jl. Run the command:  using Symbolics")
-                    throw(e)
-                end
-
-                # s =  sparse(transpose(Rbn[Lb.nzind,:])*(sym_lu(L)\ Matrix(Rbn[Lb.nzind,:])))
-                # s = SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,value.(s.nzval))
-            end 
-
-            if Nmodes > 1
-                return diagrepeat(s,Nmodes)
-            else
-                return s
-            end 
-    elseif nnz(Lb) > 0
-        return calcinvLn(Lb,Rbn,Nmodes)
+        if Nmodes > 1
+            return diagrepeat(s,Nmodes)
+        else
+            return s
+        end 
     else
         return spzeros(eltype(Lb),Nmodes*size(Rbn)[2],Nmodes*size(Rbn)[2])
     end
