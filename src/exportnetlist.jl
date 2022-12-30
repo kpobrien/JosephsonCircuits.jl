@@ -120,7 +120,7 @@ C1 1 2 100.0f
 R1 1 0 50.0
 ```
 ```jldoctest
-@variables R Cc L1 L2 Cj1 Cj2
+@variables R Cc L1 L2 Cj1 Cj2 I1 V1
 circuit = [
     ("P1","1","0",1),
     ("R1","1","0",R),
@@ -128,7 +128,8 @@ circuit = [
     ("L1","2","0",L1),
     ("L2","2","0",L2),
     ("C2","2","0",Cj1),
-    ("C3","2","0",Cj2)]
+    ("C3","2","0",Cj2),
+    ("I1","2","0",I1)]
 
 circuitdefs = Dict(
     L1 =>2000.0e-12,
@@ -136,7 +137,8 @@ circuitdefs = Dict(
     Cc => 100.0e-15,
     Cj1 => 500.0e-15,
     Cj2 => 500.0e-15,
-    R => 50.0)
+    R => 50.0,
+    I1 =>0.1)
 
 println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = true).netlist)
 println("")
@@ -323,21 +325,21 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
         end
     end
 
-    if haskey(cdict,:Lm)
-        ## write the mutual inductors ##
-        # loop over the mutual inductors 
-        i = 1
-        for (key,val) in sort(collect(cdict[:Lm]), by=x->x[1][1])
-            L1label = inductorlabels[(key[1],key[2])]
-            L2label = inductorlabels[(key[3],key[4])]
-            L1 = cdict[:L][(key[1],key[2])]
-            L2 = cdict[:L][(key[3],key[4])]
+    # if haskey(cdict,:Lm)
+    #     ## write the mutual inductors ##
+    #     # loop over the mutual inductors 
+    #     i = 1
+    #     for (key,val) in sort(collect(cdict[:Lm]), by=x->x[1][1])
+    #         L1label = inductorlabels[(key[1],key[2])]
+    #         L2label = inductorlabels[(key[3],key[4])]
+    #         L1 = cdict[:L][(key[1],key[2])]
+    #         L2 = cdict[:L][(key[3],key[4])]
 
-            K = real(val/sqrt(L1*L2))
-            push!(netlist,"K$(i) $(L1label) $(L2label) $(K)")
-            i+=1
-        end
-    end
+    #         K = real(val/sqrt(L1*L2))
+    #         push!(netlist,"K$(i) $(L1label) $(L2label) $(K)")
+    #         i+=1
+    #     end
+    # end
 
     if haskey(cdict,:C)
         ## write the capacitors ##
@@ -357,14 +359,14 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
         end
     end
 
-    if haskey(cdict,:V)
-        ## write the voltage sources ##
-        i = 1
-        for (key,val) in sort(collect(cdict[:V]), by=x->x[1][1])
-            push!(netlist,"V$(i) $(key[1]-1) $(key[2]-1) $(real(val))")
-            i+=1
-        end
-    end
+    # if haskey(cdict,:V)
+    #     ## write the voltage sources ##
+    #     i = 1
+    #     for (key,val) in sort(collect(cdict[:V]), by=x->x[1][1])
+    #         push!(netlist,"V$(i) $(key[1]-1) $(key[2]-1) $(real(val))")
+    #         i+=1
+    #     end
+    # end
 
     if haskey(cdict,:I)
         ## write the current sources ##
