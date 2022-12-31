@@ -32,4 +32,6 @@ end
 
     include("JosephsonCircuits.jl")
 
+    include("spicewrapper.jl")
+
 end
