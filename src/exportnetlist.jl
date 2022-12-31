@@ -287,6 +287,48 @@ C1 1 2 100.0f
 L1 2 0 1000.0000000000001p
 C2 2 0 1000.0f
 ```
+```jldoctest
+@variables Rleft L1 K1 L2 C2 C3 Lj1
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("L1","1","0",L1))
+push!(circuit,("Lj1","2","0",Lj1))
+push!(circuit,("K1","L1","L2",K1))
+push!(circuit,("L2","2","0",L2))
+push!(circuit,("C2","2","0",C2))
+push!(circuit,("C3","2","0",C3))
+circuitdefs = Dict(
+    Rleft => 50.0,
+    L1 => 1000.0e-12,
+    Lj1 => 1000.0e-12,
+    K1 => 0.1,
+    L2 => 1000.0e-12,
+    C2 => 1000.0e-15,
+    C3 => 1000.0e-15)
+
+println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = true).netlist)
+println("")
+println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = false).netlist)
+
+# output
+* SPICE Simulation
+R1 1 0 50.0
+L1 1 0 1000.0000000000001p
+B1 2 0 2 jjk ics=0.32910597599999997u
+C2 2 0 1670.894024f
+K1 L1 L2 0.1
+L2 2 0 1000.0000000000001p
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=329.105976f,force=1,vm=9.9
+
+* SPICE Simulation
+R1 1 0 50.0
+L1 1 0 1000.0000000000001p
+Lj1 2 0 1000.0000000000001p
+K1 L1 L2 0.1
+L2 2 0 1000.0000000000001p
+C2 2 0 2000.0f
+```
 """
 function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
         jj::Bool = true)
@@ -324,6 +366,7 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
     nodeindexarray = psc.nodeindexarraysorted
     uniquenodevector = psc.uniquenodevectorsorted
     mutualinductorvector = psc.mutualinductorvector
+    namedict = psc.namedict
 
     # define scale factors for prefixes
     # multiply by these scale factors
