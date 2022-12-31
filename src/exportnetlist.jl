@@ -1,4 +1,112 @@
 
+"""
+    componentdictionaries(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
+        mutualinductorvector::Vector, namedict::Dict)
+
+# Examples
+```jldoctest
+@variables Ipump Rleft L1 K1 L2 C2 C3
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("I1","1","0",Ipump))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("L1","1","0",L1))
+push!(circuit,("K1","L1","L2",K1))
+push!(circuit,("L2","2","0",L2))
+push!(circuit,("C2","2","0",C2))
+push!(circuit,("C3","2","0",C3))
+psc = parsesortcircuit(circuit)
+countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.typevector,psc.nodeindexarraysorted,psc.mutualinductorvector,psc.namedict)
+
+println(countdict)
+println(indexdict)
+
+# output
+Dict((:L, 1, 3) => 1, (:K, 4, 6) => 1, (:R, 1, 2) => 1, (:I, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:L, 1, 2) => 1)
+Dict((:C, 1, 3, 1) => 7, (:I, 1, 2, 1) => 2, (:R, 1, 2, 1) => 3, (:L, 1, 3, 1) => 6, (:C, 1, 3, 2) => 8, (:L, 1, 2, 1) => 4, (:P, 1, 2, 1) => 1, (:K, 4, 6, 1) => 5)
+```
+"""
+function componentdictionaries(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
+    mutualinductorvector::Vector, namedict::Dict)
+
+    if  length(typevector) != size(nodeindexarray,2)
+        throw(DimensionMismatch("Input arrays must have the same length"))
+    end
+
+    if length(size(nodeindexarray)) != 2
+        throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
+    end
+
+    if size(nodeindexarray,1) != 2
+        throw(DimensionMismatch("The length of the first axis must be 2"))
+    end
+
+    # key = (componenttype,node1,node2), value = counts
+    # countdict = Dict{Tuple{eltype(typevector),eltype(nodeindexarray),eltype(nodeindexarray)},Int}()
+    countdict = Dict{Tuple{eltype(typevector),eltype(nodeindexarray),eltype(nodeindexarray)},Int}()
+    sizehint!(countdict,length(typevector))
+
+    # key = (node1,node2,count), value = index in typevector
+    # indexdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray),Int},Int}()
+    indexdict = Dict{Tuple{eltype(typevector),eltype(nodeindexarray),eltype(nodeindexarray),Int},Int}()
+    sizehint!(indexdict,length(typevector))
+
+    n = 1
+    for i in eachindex(typevector)
+        # i think i need to take the indices from mutualinductorvector
+        if typevector[i] == :K
+            # don't sort these because the mutual inductance changes sign
+            # if the nodes are changed
+            # names of inductors
+            inductor1name = mutualinductorvector[2*n-1]
+            inductor2name = mutualinductorvector[2*n]
+
+            # indices of inductors
+            node1 = namedict[inductor1name]
+            node2 = namedict[inductor2name]
+
+            countkey = (typevector[i], node1, node2)
+
+            if haskey(countdict,countkey)
+                countdict[countkey] += 1
+            else
+                countdict[countkey] = 1
+            end
+
+            indexkey = (typevector[i], node1, node2, countdict[countkey])
+            indexdict[indexkey] = i
+            n+=1
+
+        else
+
+            node1 = nodeindexarray[1,i]
+            node2 = nodeindexarray[2,i]
+            if node1 < node2
+                countkey = (typevector[i], node1, node2)
+            else
+                countkey = (typevector[i], node2, node1)
+            end
+
+            if haskey(countdict,countkey)
+                countdict[countkey] += 1
+            else
+                countdict[countkey] = 1
+            end
+
+            if node1 < node2
+                indexkey = (typevector[i], node1, node2, countdict[countkey])
+            else
+                indexkey = (typevector[i], node2, node1, countdict[countkey])
+            end
+
+            indexdict[indexkey] = i
+        end
+    end
+
+    return countdict, indexdict
+end
+
+
 
 """
     consolidatecomponents()
