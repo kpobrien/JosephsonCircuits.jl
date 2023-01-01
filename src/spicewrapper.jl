@@ -49,9 +49,9 @@ isrc2 0 1 1000.0u*sin(37.69911184307752g*x+6.28)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e
 
 * The control block
 .control
-set maxdata = 1.0e7
-set jjaccel = 1
-set dphimax = 0.01
+set maxdata=1.0e7
+set jjaccel=1
+set dphimax=0.01
 run
 set filetype=binary
 write
@@ -78,9 +78,9 @@ function wrspice_input_transient(netlist,idrive,fdrive,thetadrive,idrive2,
 
     * The control block
     .control
-    set maxdata = $(maxdata)
-    set jjaccel = $(jjaccel)
-    set dphimax = $(dphimax)
+    set maxdata=$(maxdata)
+    set jjaccel=$(jjaccel)
+    set dphimax=$(dphimax)
     run
     set filetype=binary
     write
@@ -93,68 +93,6 @@ function wrspice_input_transient(netlist,idrive,fdrive,thetadrive,idrive2,
     return input
 
 
-end
-
-
-"""
-    xyce_input_transient(netlist,idrive,fdrive,tstep,tstop)
-
-Generate the Xyce input file for a transient simulation using circuit 
-parameters from the given netlist, the source current and frequency, and the 
-time step and stop time. Example usage:
-
-# Examples
-```jldoctest
-julia> println(JosephsonCircuits.xyce_input_transient("* SPICE Simulation",1e-6,5e9,3.14,1e-3,6e9,6.28,1e-9,100e-9,10e-9))
-* SPICE Simulation
-* Current source
-isrc 1 0 sin(0.0V -1.0uV 5.0g 0.0 0.0 179.90874767107852)
-isrc2 1 0 sin(0.0V -1000.0uV 6.0g 0.0 0.0 359.81749534215703)
-
-* Set up the transient simulation
-.tran 1000.0000000000001p  100.0n 0n 1000.0000000000001p
-
-*.options timeint method=trap minord=2 reltol=1e-6 abstol=1e-6
-
-.end
-
-```
-"""
-function xyce_input_transient(netlist,idrive,fdrive,thetadrive,idrive2,fdrive2,thetadrive2,tstep,tstop,trise)
-
-    #A.3.6 Circuit 6 on page 389 shows how to use arbitrary functions in sources.
-    # trise = 10e-9
-
-    # * isrc 1 0 sin(0 1u 5g)
-    # * isrc 1 0 sin(0 $(idrive*1e6)u $(fdrive*1e-9)g)
-    # * isrc2 1 0 sin(0 $(idrive2*1e6)u $(fdrive2*1e-9)g)
-    # * isrc 1 0 $(idrive)*sin($(2*pi*fdrive)*x)+$(idrive2)*sin($(2*pi*fdrive2)*x)
-    # * isrc 1 0 $(idrive*1e6)u*sin($(2*pi*fdrive*1e-9)g*x)+$(idrive2*1e6)u*sin($(2*pi*fdrive2*1e-9)g*x)
-
-    # *isrc 1 0 0.5*(1+erf((x-$trise)*$(1/trise)))*($(idrive*1e6)u*sin($(2*pi*fdrive*1e-9)g*x)+$(idrive2*1e6)u*sin($(2*pi*fdrive2*1e-9)g*x))
-
-    # * exponential
-    # * isrc 1 0 exp(0 1 0n $(trise*1e9)n $(tstop*1e9)n $(trise*1e9)n)*sin(0 $(idrive*1e6)u $(fdrive*1e-9)g)
-    # * isrc2 1 0 exp(0 1 0n $(trise*1e9)n $(tstop*1e9)n $(trise*1e9)n)*sin(0 $(idrive2*1e6)u $(fdrive2*1e-9)g)
-
-    control="""
-
-    * Current source
-    isrc 1 0 sin(0.0V $(-idrive*1e6)uV $(fdrive*1e-9)g 0.0 0.0 $(thetadrive*180/pi))
-    isrc2 1 0 sin(0.0V $(-idrive2*1e6)uV $(fdrive2*1e-9)g 0.0 0.0 $(thetadrive2*180/pi))
-
-    * Set up the transient simulation
-    .tran $(tstep*1e12)p  $(tstop*1e9)n 0n $(tstep*1e12)p
-
-    *.options timeint method=trap minord=2 reltol=1e-6 abstol=1e-6
-
-    .end
-
-    """
-
-    input = netlist*control
-
-    return input
 end
 
 
@@ -313,104 +251,6 @@ end
 
 
 """
-    xyce_input_ac(netlist,nsteps,fstart,fstop)
-
-Generate the Xyce input file for an AC small signal simulation using circuit
-parameters from the given netlist, and the specified frequency range. Example
-usage:
-
-# Examples
-```jldoctest
-julia> println(JosephsonCircuits.xyce_input_ac("* SPICE Simulation",100,4e9,5e9,[1,2],1e-6))
-* SPICE Simulation
-* AC current source with magnitude 1 and phase 0
-isrc 1 0 ac 1.0e-6 0.0
-
-* Set up the AC small signal simulation
-.ac lin 100 4.0g 5.0g 
-
-* .options linsol-ac type=klu
-* .print ac
-
-.end
-
-```
-```jldoctest
-julia> println(JosephsonCircuits.xyce_input_ac("* SPICE Simulation",(4:0.01:5)*1e9,[1,2],1e-6))
-* SPICE Simulation
-* AC current source with magnitude 1 and phase 0
-isrc 1 0 ac 1.0e-6 0.0
-
-* Set up the AC small signal simulation
-.ac lin 101 4.0g 5.0g 
-
-* .options linsol-ac type=klu
-* .print ac
-
-.end
-
-```
-```jldoctest
-julia> println(JosephsonCircuits.xyce_input_ac("* SPICE Simulation",collect((4:0.01:5)*1e9),[1,2],1e-6))
-* SPICE Simulation
-* AC current source with magnitude 1 and phase 0
-isrc 1 0 ac 1.0e-6 0.0
-
-* Set up the AC small signal simulation
-.ac lin 101 4.0g 5.0g 
-
-* .options linsol-ac type=klu
-* .print ac
-
-.end
-
-```
-"""
-function xyce_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
-    portnodes,portcurrent)
-    if length(freqs) == 1
-        return xyce_input_ac(netlist,1,freqs[1],freqs[1],portnodes,portcurrent)
-    else
-        return xyce_input_ac(netlist,length(freqs),freqs[1],freqs[end],portnodes,portcurrent)
-    end
-end
-
-function xyce_input_ac(netlist::String,freqs::AbstractRange{Float64},
-    portnodes,portcurrent)
-
-    return xyce_input_ac(netlist,length(freqs),freqs[1],freqs[end],portnodes,portcurrent)
-end
-
-function xyce_input_ac(netlist::String,freqs::Float64,
-    portnodes, portcurrent)
-
-    return xyce_input_ac(netlist,1,freqs,freqs,portnodes,portcurrent)
-end
-
-function xyce_input_ac(netlist,nsteps,fstart,fstop,portnodes,portcurrent)
-
-    control="""
-
-    * AC current source with magnitude 1 and phase 0
-    isrc $(portnodes[2]-1) $(portnodes[1]-1) ac $(abs(portcurrent)) $(angle(portcurrent))
-
-    * Set up the AC small signal simulation
-    .ac lin $(nsteps) $(fstart*1e-9)g $(fstop*1e-9)g 
-
-    * .options linsol-ac type=klu
-    * .print ac
-
-    .end
-
-    """
-
-    input = netlist*control
-
-    return input
-end
-
-
-"""
     wrspice_run(input::String)
 
 Argument is a string containing the input commands for wrspice.  This function 
@@ -439,27 +279,6 @@ function wrspice_cmd()
     end
 
     return wrspicecmd
-
-end
-
-function xyce_cmd()
-    # Note: This code has been tested on Linux but not macOS or Windows. 
-    if Sys.isunix()
-        spicecmd = "/usr/bin/Xyce"
-    elseif Sys.iswindows()
-        spicecmd = "C:/usr/local/xictools/bin/wrspice.bat"  
-        error("Operating system not supported")  
-    else
-        error("Operating system not supported")
-    end
-
-    # Check if the wrspice executable exists
-    if !islink(spicecmd) && !isfile(spicecmd)
-        error("Xyce executable not found at $(spicecmd). Please install Xyce or change
-        the location of the executable (or edit the spicecmd line in the code.")
-    end
-
-    return spicecmd
 
 end
 

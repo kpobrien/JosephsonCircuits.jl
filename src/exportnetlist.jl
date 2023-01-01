@@ -239,7 +239,7 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 * SPICE Simulation
 R1 1 0 50.0
 C1 1 2 100.0f
-B1 2 0 2 jjk ics=0.32910597599999997u
+B1 2 0 3 jjk ics=0.32910597599999997u
 C2 2 0 670.8940240000001f
 .model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=329.105976f,force=1,vm=9.9
 
@@ -315,7 +315,7 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 * SPICE Simulation
 R1 1 0 50.0
 L1 1 0 1000.0000000000001p
-B1 2 0 2 jjk ics=0.32910597599999997u
+B1 2 0 3 jjk ics=0.32910597599999997u
 C2 2 0 1670.894024f
 K1 L1 L2 0.1
 L2 2 0 1000.0000000000001p
@@ -558,11 +558,11 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
             # if jj == true, then write the JJ otherwise write and inductor
             # Ictmp = LjtoIc(real(val))
             if jj == true
+                nJJ += 1
                 # push!(netlist,"B$(nJJ) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
                 push!(netlist,"B$(namevector[i][3:end]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
                 capflag, capvalue, capindex = sumbranchvalues!(:C, node1, node2, valuevector, countdictcopy, indexdictcopy)
 
-                nJJ += 1
                 # add any additional capacitance
                 if real(capvalue) > Ictmp*CjoIc
                     push!(netlist,"$(namevector[capindex]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(femto*real(capvalue-Ictmp*CjoIc))f")
