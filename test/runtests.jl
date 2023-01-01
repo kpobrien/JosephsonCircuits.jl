@@ -26,12 +26,14 @@ end
 
     include("hbsolve2.jl")
 
-    include("touchstone.jl")
+    include("JosephsonCircuits.jl")
 
     include("spiceraw.jl")
 
-    include("JosephsonCircuits.jl")
+    include("spiceutils.jl")
 
     include("spicewrapper.jl")
+
+    include("touchstone.jl")
 
 end

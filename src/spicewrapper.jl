@@ -251,23 +251,16 @@ end
 
 
 """
-    wrspice_run(input::String)
+    wrspice_cmd()
 
-Argument is a string containing the input commands for wrspice.  This function 
-saves the string to disk, runs wrspice, parses the results with wrsplice_load(), 
-then returns those parsed results.
-
-The input should not should have a file name listed after the write command 
-in the .control block so that we can specify the raw output file with a command 
-line argument.
+This returns the path of the WRSPICE executable.
 """
-
 function wrspice_cmd()
     # Note: This code has been tested on Linux but not macOS or Windows. 
     if Sys.isunix()
         wrspicecmd = "/usr/local/xictools/bin/wrspice"
     elseif Sys.iswindows()
-        wrspicecmd = "C:/usr/local/xictools/bin/wrspice.bat"        
+        wrspicecmd = "C:/usr/local/xictools/bin/wrspice.bat"
     else
         error("Operating system not supported")
     end
@@ -294,7 +287,7 @@ The input should not should have a file name listed after the write command
 in the .control block so that we can specify the raw output file with a command 
 line argument.
 """
-function spice_run(input::String,spicecmd::String)
+function spice_run(input::String,spicecmd)
 
     # #save a circuit file manually
     # write("julia.cir",input)
@@ -343,23 +336,26 @@ end
 """
     spice_run(input::AbstractArray{String,1})
 
-If the input to wrspice_run() is an array of strings, then call 
-multiple wrspice processes using in parallel. The number of
-parallel processes is decided from Threads.nthreads(). It can
-be changed manually. 
+If the input to wrspice_run() is an array of strings, then call multiple
+processes in parallel. The number of parallel processes is decided from
+Threads.nthreads(). It can be changed manually. 
 
 """
-function spice_run(input::AbstractArray{String,1},spicecmd::String)
+function spice_run(input::AbstractArray{String,1},spicecmd;
+    ntasks = Threads.nthreads())
     # Set the number of simultaneous parallel simulations equal to 
     # the number of threads. ntasks can be manually changed here 
     # or by changing the number of threads. Note this is only faster because
     # we are calling an external program which launches a new processes. 
-    ntasks = Threads.nthreads()
 
     return asyncmap((input) -> spice_run(input,spicecmd),input;ntasks=ntasks);
 end
 
+"""
+    spice_hb_load(filename)
 
+Load a Xyce harmonic balance simulation.
+"""
 function spice_hb_load(filename)
 
     #open a file handle
@@ -370,16 +366,11 @@ function spice_hb_load(filename)
 
     #loop over the contents of the header
     i=0
-    # while true
-    # line = readline(io)
-
     while !eof(io)
 
         i+=1
-        
-        line = readline(io)
 
-        # linename = split(line,":",limit=2)[1]
+        line = readline(io)
 
         if line[1:5] == "Index"
             header = split(strip(line),r"\s+")
@@ -391,11 +382,7 @@ function spice_hb_load(filename)
                 push!(data,val)
             end
         end
-
-        # println(line)
-
     end
-
 
     index = data[1:length(header):end]
     f = data[2:length(header):end];
