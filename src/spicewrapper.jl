@@ -1,6 +1,5 @@
 
 """
-
     wrspice_input_transient(netlist,idrive,fdrive,tstep,tstop)
 
 Generate the WRSPICE input file for a transient simulation using circuit 
@@ -166,31 +165,6 @@ Generate the WRSPICE input file for an AC small signal simulation using circuit
 parameters from the given netlist, and the specified frequency range. Example
 usage:
 
-
-c = twpa_params().c
-netlist = twpa_netlist(c,true);
-input = wrspice_input_ac(netlist,1000,4e9,10e9);
-out = wrspice_run(input);
-
-#plot the voltage vs frequency at the last unit cell
-plot(out[1]/1e9,10*log10.(abs2.(out[2][c.Nnodes,:]/25)),ylim=(-1,1))
-
-#plot the voltage vs position at the last frequency
-plot(real.(out[2][1:c.Nnodes,end]/25))
-
-#plot the phase vs frequency at the last unit cell
-plot(out[1]/1e9,real.(out[2][c.Nnodes,:]/25),ylim=(-1,1))
-
-#CANNOT plot the phase vs position at the last frequency because it is not
-#calculated in this mode
-plot(real.(out[2][c.Nnodes+1:2*c.Nnodes-1,end]/25))
-
-#plot the voltage vs pmr position at the last frequency
-plot(real.(out[2][2*c.Nnodes:end,end]/25))
-
-#plot the voltage vs frequency at the first pmr
-plot(real.(out[2][2*c.Nnodes,:]/25))
-
 # Examples
 ```jldoctest
 julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",100,4e9,5e9,[1,2],1e-6))
@@ -221,9 +195,67 @@ write
 .endc
 
 ```
+```jldoctest
+julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",(4:0.01:5)*1e9,[1,2],1e-6))
+* SPICE Simulation
+* AC current source with magnitude 1 and phase 0
+isrc 1 0 ac 1.0e-6 0.0
+
+* Set up the AC small signal simulation
+.ac lin 99 4.0g 5.0g
+
+* The control block
+.control
+
+* Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
+* default 2.56e5. This has to come before the run command
+set maxdata = 10e6
+
+* Run the simulation
+run
+
+* Binary files are faster to save and load. 
+set filetype=binary
+
+* Leave filename empty so we can add that as a command line argument.
+* Don't specify any variables so it saves everything.    
+write
+
+.endc
+
+```
+```jldoctest
+julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",collect((4:0.01:5)*1e9),[1,2],1e-6))
+* SPICE Simulation
+* AC current source with magnitude 1 and phase 0
+isrc 1 0 ac 1.0e-6 0.0
+
+* Set up the AC small signal simulation
+.ac lin 99 4.0g 5.0g
+
+* The control block
+.control
+
+* Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
+* default 2.56e5. This has to come before the run command
+set maxdata = 10e6
+
+* Run the simulation
+run
+
+* Binary files are faster to save and load. 
+set filetype=binary
+
+* Leave filename empty so we can add that as a command line argument.
+* Don't specify any variables so it saves everything.    
+write
+
+.endc
+
+```
 """
 function wrspice_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
-    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
+    portnodes,portcurrent)
     if length(freqs) == 1
         return wrspice_input_ac(netlist,1,freqs[1],freqs[1],portnodes,portcurrent)
     else
@@ -232,13 +264,13 @@ function wrspice_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
 end
 
 function wrspice_input_ac(netlist::String,freqs::AbstractRange{Float64},
-    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
+    portnodes,portcurrent)
 
     return wrspice_input_ac(netlist,length(freqs)-2,freqs[1],freqs[end],portnodes,portcurrent)
 end
 
 function wrspice_input_ac(netlist::String,freqs::Float64,
-    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
+    portnodes,portcurrent)
 
     return wrspice_input_ac(netlist,1,freqs,freqs,portnodes,portcurrent)
 end
@@ -281,9 +313,9 @@ end
 
 
 """
-    wrspice_input_ac(netlist,nsteps,fstart,fstop)
+    xyce_input_ac(netlist,nsteps,fstart,fstop)
 
-Generate the WRSPICE input file for an AC small signal simulation using circuit
+Generate the Xyce input file for an AC small signal simulation using circuit
 parameters from the given netlist, and the specified frequency range. Example
 usage:
 
@@ -303,9 +335,39 @@ isrc 1 0 ac 1.0e-6 0.0
 .end
 
 ```
+```jldoctest
+julia> println(JosephsonCircuits.xyce_input_ac("* SPICE Simulation",(4:0.01:5)*1e9,[1,2],1e-6))
+* SPICE Simulation
+* AC current source with magnitude 1 and phase 0
+isrc 1 0 ac 1.0e-6 0.0
+
+* Set up the AC small signal simulation
+.ac lin 101 4.0g 5.0g 
+
+* .options linsol-ac type=klu
+* .print ac
+
+.end
+
+```
+```jldoctest
+julia> println(JosephsonCircuits.xyce_input_ac("* SPICE Simulation",collect((4:0.01:5)*1e9),[1,2],1e-6))
+* SPICE Simulation
+* AC current source with magnitude 1 and phase 0
+isrc 1 0 ac 1.0e-6 0.0
+
+* Set up the AC small signal simulation
+.ac lin 101 4.0g 5.0g 
+
+* .options linsol-ac type=klu
+* .print ac
+
+.end
+
+```
 """
 function xyce_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
-    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
+    portnodes,portcurrent)
     if length(freqs) == 1
         return xyce_input_ac(netlist,1,freqs[1],freqs[1],portnodes,portcurrent)
     else
@@ -314,13 +376,13 @@ function xyce_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
 end
 
 function xyce_input_ac(netlist::String,freqs::AbstractRange{Float64},
-    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
+    portnodes,portcurrent)
 
     return xyce_input_ac(netlist,length(freqs),freqs[1],freqs[end],portnodes,portcurrent)
 end
 
 function xyce_input_ac(netlist::String,freqs::Float64,
-    portnodes::Tuple{Int, Int},portcurrent::Complex{Float64})
+    portnodes, portcurrent)
 
     return xyce_input_ac(netlist,1,freqs,freqs,portnodes,portcurrent)
 end
@@ -346,7 +408,6 @@ function xyce_input_ac(netlist,nsteps,fstart,fstop,portnodes,portcurrent)
 
     return input
 end
-
 
 
 """
