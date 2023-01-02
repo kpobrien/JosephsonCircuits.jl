@@ -544,8 +544,10 @@ function touchstone_write(io::IO,ts::TouchstoneFile)
             write(io,"[Noise Data]\n")
             for i in 1:length(ts.noisedata)
                 write(io,"$(ts.noisedata[i])")
-                if mod(i,5) == 5
+                if mod(i,5) == 0
                     write(io,"\n")
+                else
+                    write(io," ")
                 end
             end
         end
@@ -660,8 +662,10 @@ function touchstone_write(io::IO,ts::TouchstoneFile)
             write(io,"[Noise Data]\n")
             for i in 1:length(ts.noisedata)
                 write(io,"$(ts.noisedata[i])")
-                if mod(i,5) == 5
+                if mod(i,5) == 0
                     write(io,"\n")
+                else
+                    write(io," ")
                 end
             end
         end
