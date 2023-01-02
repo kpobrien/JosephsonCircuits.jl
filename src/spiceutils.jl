@@ -41,10 +41,7 @@ end
         Is = 1e-13)
 
 This function assume the first node is the input port and the last node is the
-output port.
-
-Nnodes is the number of nodes including the ground node.
-
+output port. Nnodes is the number of nodes including the ground node.
 
 # Examples
 ```jldoctest
@@ -117,9 +114,6 @@ function wrspice_calcS_paramp(out, wswrspice, Nnodes; stepsperperiod = 80,
                 # vsincos[k,j] = vsincos[k,j]*exp.(im*wswrspice[i]*t[j])
             end
         end
-
-        # println(size(vsincos))
-        # println(size(phasesincos))
 
         ftvsincos = FFTW.fft(vsincos,[2])/stepsperperiod;
         ftphasesincos = FFTW.fft(phasesincos,[2])/stepsperperiod;
