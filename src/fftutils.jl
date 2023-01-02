@@ -816,7 +816,7 @@ julia> JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55 + 
  -0.0209812+0.0im   0.295151+0.0im   0.295151+0.0im
    0.359826+0.0im  -0.041417+0.0im  -0.041417+0.0im
  0.00788681+0.0im  -0.110947+0.0im  -0.110947+0.0im
- ```
+```
 """
 function applynl(am::Array{Complex{Float64}}, f::Function)
 
