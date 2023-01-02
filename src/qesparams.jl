@@ -342,11 +342,11 @@ julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:R,2.0,w)
 julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:C,2.0,w)
 0.0 - 0.008333333333333333im
 
-julia> @variables w;JosephsonCircuits.calcimpedance(30,:R,-2.0,w)
-30.0 + 0.0im
+julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:R,-2.0,w)
+-60.0 + 0.0im
 
-julia> @variables w;JosephsonCircuits.calcimpedance(30,:C,-2.0,w)
--0.0 + 0.016666666666666666im
+julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:C,-2.0,w)
+0.0 - 0.008333333333333333im
 ```
 """
 function calcimpedance(c,type,w,symfreqvar)

@@ -496,8 +496,8 @@ Dict{CartesianIndex{2}, Int64} with 6 entries:
   CartesianIndex(1, 1) => 1
   CartesianIndex(2, 2) => 4
   CartesianIndex(1, 2) => 3
- ```
- """
+```
+"""
 function calcindexdict(N::Tuple)
     d = Dict{CartesianIndex{length(N)},Int}()
 
@@ -520,8 +520,8 @@ Dict{CartesianIndex{1}, Int64} with 3 entries:
   CartesianIndex(2,) => 2
   CartesianIndex(3,) => 3
   CartesianIndex(1,) => 1
- ```
- """
+```
+"""
 function calcindexdict(N)
     return calcindexdict(Tuple(N))
 end
