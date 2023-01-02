@@ -1,16 +1,13 @@
 """
-    tdsolvewrspice(ws, wp, Ip, circuit, circuitdefs; port = 1, jj = true,
-        stepsperperiod = 80, Is = 1e-13, tstop = 200e-9, trise = 10e-9)
+    wrspice_input_paramp(netlist, ws, wp, Ip; stepsperperiod = 80, Is = 1e-13,
+        tstop = 200e-9, trise = 10e-9)
 
 Generate the WRSPICE input files for a time domain domain simulation in which
 the signal angular frequency is swept over `ws` with pump angular frequency
 `wp` and pump current `Ip`. 
 """
-function tdsolvewrspice(ws, wp, Ip, circuit, circuitdefs; port = 1, jj = true,
-    stepsperperiod = 80, Is = 1e-13, tstop = 200e-9, trise = 10e-9)
-
-    n = exportnetlist(circuit,circuitdefs,port=port,jj=jj)
-    netlist = n.netlist
+function wrspice_input_paramp(netlist, ws, wp, Ip; stepsperperiod = 80, Is = 1e-13,
+    tstop = 200e-9, trise = 10e-9)
 
     #convert from angular frequency
     fp = wp/(2*pi)
@@ -40,18 +37,46 @@ function tdsolvewrspice(ws, wp, Ip, circuit, circuitdefs; port = 1, jj = true,
 end
 
 """
-    calcgwrspice(out, wswrspice, circuit, circuitdefs; port=1, jj = true,
-        stepsperperiod = 80)
+    wrspice_calcS_paramp(out, wswrspice, Nnodes, stepsperperiod = 80,
+        Is = 1e-13)
+
+This function assume the first node is the input port and the last node is the
+output port.
+
+Nnodes is the number of nodes including the ground node.
 
 
+# Examples
+```jldoctest
+Nnodes = 2
+ws = 2*pi*5e9
+wp = 2*pi*6e9
+stepsperperiod = 80
+t = LinRange(0,2*pi/wp,stepsperperiod)
+Is = 1e-13
+Vpump = zeros(1,length(t))
+Vsignalsin = zeros(1,length(t))
+Vsignalcos = zeros(1,length(t))
+Vpump[1,:] .= sin.(2*pi*wp*t)
+Vsignalsin[1,:] .= sin.(2*pi*wp*t)+Is/50*sin.(2*pi*ws*t)
+Vsignalcos[1,:] .= sin.(2*pi*wp*t)+Is/50*cos.(2*pi*ws*t)
+
+out = [[(values=Dict("S"=>t,"V"=>Vpump),),
+        (values=Dict("S"=>t,"V"=>Vsignalsin),),
+        (values=Dict("S"=>t,"V"=>Vsignalcos),),
+        ]];
+out[1][1].values["V"];
+out[1][2].values["V"];
+out[1][3].values["V"];
+JosephsonCircuits.wrspice_calcS_paramp(out, 2*pi, Nnodes;
+    stepsperperiod = stepsperperiod, Is = Is)
+
+# output
+(S11 = ComplexF64[-0.9999710828404902 + 2.7521387922213123e-5im], S21 = ComplexF64[2.8917159509832197e-5 + 2.7521387922213123e-5im])
+```
 """
-function calcgwrspice(out, wswrspice, circuit, circuitdefs; port=1, jj = true,
-    stepsperperiod = 80)
-
-    # generate the netlist
-    n = exportnetlist(circuit,circuitdefs,port=port,jj=jj)
-    netlist = n.netlist
-    Nnodes = n.Nnodes # includes the ground node
+function wrspice_calcS_paramp(out, wswrspice, Nnodes; stepsperperiod = 80,
+    Is = 1e-13)
 
     # empty arrays for the scattering parameters
     S11 = zeros(Complex{Float64},length(wswrspice))
@@ -100,7 +125,7 @@ function calcgwrspice(out, wswrspice, circuit, circuitdefs; port=1, jj = true,
         ftphasesincos = FFTW.fft(phasesincos,[2])/stepsperperiod;
 
         #calculate S11 and S21 from the wrspice simulation
-        Vth=1e-13*50
+        Vth=Is*50
 
         V1=ftvsincos[1,1]
         V2=ftvsincos[end,1]
