@@ -52,6 +52,22 @@ println(symbolicmatrices(circuit))
 # output
 JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.Symbolic{Real}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.Symbolic{Real}[1 / Rleft], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  Lj,   [2]  =  Lj, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
 ```
+```jldoctest
+@variables Ipump Rleft Cc Lj Cj
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("I1","1","0",Ipump))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("C1","1","2",Cc)) 
+push!(circuit,("Lj1","2","0",Lj)) 
+push!(circuit,("C2","2","0",Cj))
+psc = JosephsonCircuits.parsesortcircuit(circuit)
+cg = JosephsonCircuits.calccircuitgraph(psc)
+println(symbolicmatrices(psc, cg))
+
+# output
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.Symbolic{Real}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.Symbolic{Real}[1 / Rleft], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  Lj,   [2]  =  Lj, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
+```
 """
 function symbolicmatrices(circuit; Nmodes = 1, sorting = :number)
     return numericmatrices(circuit, Dict(), Nmodes = Nmodes, sorting = sorting)
@@ -84,6 +100,23 @@ push!(circuit,("Lj1","2","0",Lj))
 push!(circuit,("C2","2","0",Cj))
 circuitdefs = Dict(Lj =>1000.0e-12,Cc => 100.0e-15,Cj => 1000.0e-15,Rleft => 50.0,Ipump => 1.0e-8)
 println(numericmatrices(circuit,circuitdefs))
+
+# output
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  1.0e-9,   [2]  =  1.0e-9, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
+```
+```jldoctest
+@variables Ipump Rleft Cc Lj Cj
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("I1","1","0",Ipump))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("C1","1","2",Cc)) 
+push!(circuit,("Lj1","2","0",Lj)) 
+push!(circuit,("C2","2","0",Cj))
+circuitdefs = Dict(Lj =>1000.0e-12,Cc => 100.0e-15,Cj => 1000.0e-15,Rleft => 50.0,Ipump => 1.0e-8)
+psc = JosephsonCircuits.parsesortcircuit(circuit)
+cg = JosephsonCircuits.calccircuitgraph(psc)
+println(numericmatrices(psc, cg))
 
 # output
 JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  1.0e-9,   [2]  =  1.0e-9, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
@@ -565,10 +598,10 @@ JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes).nzval
 function calcinvLn(Lb::SparseVector, Rbn::SparseMatrixCSC, Nmodes)
     if nnz(Lb)>0
         s = transpose(Rbn[Lb.nzind,:])*spdiagm(0 => 1 ./Lb.nzval)*Rbn[Lb.nzind,:]
-        if Nmodes > 1
-            return diagrepeat(s,Nmodes)
-        else
+        if Nmodes == 1
             return s
+        else
+            return diagrepeat(s,Nmodes)
         end 
     else
         return spzeros(eltype(Lb),Nmodes*size(Rbn)[2],Nmodes*size(Rbn)[2])
@@ -721,10 +754,10 @@ function calcinvLn_inner(Lb::SparseVector, Mb::SparseMatrixCSC,
             s = calcsymbolicinvLn(L,Lb,Rbn)
         end 
 
-        if Nmodes > 1
-            return diagrepeat(s,Nmodes)
-        else
+        if Nmodes == 1
             return s
+        else
+            return diagrepeat(s,Nmodes)
         end 
     else
         return spzeros(eltype(Lb),Nmodes*size(Rbn)[2],Nmodes*size(Rbn)[2])
