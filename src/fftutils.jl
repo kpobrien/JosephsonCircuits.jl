@@ -267,6 +267,18 @@ function calcdftsymmetries(Nt)
     return d
 end
 
+
+"""
+    calcdftsymmetries(N::AbstractArray)
+
+Calculate the conjugate symmetries in the multi-dimensional DFT (or FFT).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcdftsymmetries([1 2;3 4])
+Dict{CartesianIndex{2}, CartesianIndex{2}}()
+```
+"""
 function calcdftsymmetries(A::AbstractArray)
     return calcdftsymmetries(size(A))
 end
@@ -380,6 +392,18 @@ function calcrdftsymmetries(Nt)
     return d
 end
 
+"""
+    calcrdftsymmetries(A::AbstractArray)
+
+Calculate the conjugate symmetries in the multi-dimensional RDFT (DFT of
+a real signal).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcrdftsymmetries([1 2;3 4])
+Dict{CartesianIndex{2}, CartesianIndex{2}}()
+```
+"""
 function calcrdftsymmetries(A::AbstractArray)
     return calcdftsymmetries(size(A))
 end
@@ -436,6 +460,22 @@ function printrdftsymmetries(Nt)
     return z
 end
 
+"""
+    printrdftsymmetries(A::AbstractArray)
+
+Print the conjugate symmetries in the multi-dimensional RDFT (DFT of a real
+signal) from the dimensions of the signal in the time domain. Negative numbers
+indicate that element is the complex conjugate of the corresponding positive
+number. A zero indicates that element has no corresponding complex conjugate.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.printrdftsymmetries([1 2 3;4 5 6;7 8 9])
+2×3 Matrix{Int64}:
+ 0  1  -1
+ 0  0   0
+```
+"""
 function printrdftsymmetries(A::AbstractArray)
     return printrdftsymmetries(size(A))
 end
@@ -448,12 +488,6 @@ and the index giving the order is the value.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.calcindexdict(3)
-Dict{CartesianIndex{1}, Int64} with 3 entries:
-  CartesianIndex(2,) => 2
-  CartesianIndex(3,) => 3
-  CartesianIndex(1,) => 1
-
 julia> JosephsonCircuits.calcindexdict((2,3))
 Dict{CartesianIndex{2}, Int64} with 6 entries:
   CartesianIndex(2, 3) => 6
@@ -473,7 +507,22 @@ function calcindexdict(N::Tuple)
     return d
 end
 
-function calcindexdict(N::Number)
+"""
+    calcindexdict(N::Int)
+
+Return a dictionary of Cartesian indices where the Cartesian index is the key
+and the index giving the order is the value.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcindexdict(3)
+Dict{CartesianIndex{1}, Int64} with 3 entries:
+  CartesianIndex(2,) => 2
+  CartesianIndex(3,) => 3
+  CartesianIndex(1,) => 1
+ ```
+ """
+function calcindexdict(N)
     return calcindexdict(Tuple(N))
 end
 
@@ -755,6 +804,11 @@ julia> JosephsonCircuits.applynl([[0, 0.2+0.0im, 0, 0];;],(x)->cos(x))
                   0.0 + 0.0im
  -0.01966852794611884 + 0.0im
                   0.0 + 0.0im
+
+julia> JosephsonCircuits.applynl([[0, 0.2+0.0im];;],(x)->cos(x))
+2×1 Matrix{ComplexF64}:
+   0.9603980498951228 + 0.0im
+ -0.01966852794611884 + 0.0im
 
 julia> JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;],(x)->sin(x))
 3×3×1 Array{ComplexF64, 3}:
