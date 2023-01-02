@@ -47,6 +47,17 @@ Num[w1, w2, 3w2, -3w2, -w2]
 CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(3, 1), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3), CartesianIndex(2, 4), CartesianIndex(3, 4), CartesianIndex(2, 5), CartesianIndex(3, 5), CartesianIndex(1, 6), CartesianIndex(2, 6), CartesianIndex(3, 6), CartesianIndex(2, 7), CartesianIndex(3, 7)]
 Num[0, 2w1, w1 + w2, w2 + 2w1, 2w2, w1 + 2w2, 2w1 + 2w2, w1 + 3w2, 2w1 + 3w2, w1 - 3w2, 2w1 - 3w2, -2w2, w1 - 2w2, 2w1 - 2w2, w1 - w2, 2w1 - w2]
 ```
+```jldoctest
+@variables w1,w2
+w = (w1,w2)
+Nharmonics = (2,)
+maxintermodorder = 2
+Nw,coords,values,dropcoords,dropvalues = JosephsonCircuits.calcfrequencies(w,Nharmonics,
+    maxintermodorder=maxintermodorder,dc=false,even=false,odd=true);
+
+# output
+ERROR: Each frequency must have a number of harmonics.
+```
 """
 function calcfrequencies(w::Tuple, Nharmonics::Tuple; maxintermodorder::Number = Inf,
     dc::Bool = true, even::Bool = true, odd::Bool = true)
@@ -84,6 +95,28 @@ end
         dc=true, even=true, odd=true)
 
 See the description for [`calcfrequencies`](@ref).
+
+# Examples
+```jldoctest
+@variables w1
+w = w1
+Nharmonics = 2
+maxintermodorder = 2
+Nw,coords,values,dropcoords,dropvalues = JosephsonCircuits.calcfrequencies(w,Nharmonics,
+    maxintermodorder=maxintermodorder,dc=false,even=false,odd=true);
+println(Nw)
+println(coords)
+println(values)
+println(dropcoords)
+println(dropvalues)
+
+# output
+(3,)
+CartesianIndex{1}[CartesianIndex(2,)]
+Num[w1]
+CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(3,)]
+Num[0, 2w1]
+```
 """
 function calcfrequencies(w::Number, Nharmonics::Number; maxintermodorder::Number = Inf,
     dc::Bool = true, even::Bool = true, odd::Bool = true)
@@ -334,6 +367,18 @@ function printdftsymmetries(N)
     return z
 end
 
+"""
+    printdftsymmetries(A::AbstractArray)
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.printdftsymmetries([1 2 3;4 5 6;7 8 9])
+3×3 Matrix{Int64}:
+  0   2  -2
+  1   3   4
+ -1  -4  -3
+```
+"""
 function printdftsymmetries(A::AbstractArray)
     return printdftsymmetries(size(A))
 end
@@ -429,15 +474,13 @@ julia> JosephsonCircuits.printrdftsymmetries((3,3))
 2×3 Matrix{Int64}:
  0  1  -1
  0  0   0
-```
-```jldoctest
+
 julia> JosephsonCircuits.printrdftsymmetries((4,3))
 3×3 Matrix{Int64}:
  0  1  -1
  0  0   0
  0  2  -2
-```
-```jldoctest
+
 julia> JosephsonCircuits.printrdftsymmetries((3,4))
 2×4 Matrix{Int64}:
  0  1  0  -1

@@ -787,6 +787,9 @@ julia> JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[10,4,5,1])
 
 julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L1, C1, Lj1])
 (1//2)*L1 + (1//2)*Lj1
+
+julia> JosephsonCircuits.calcLmean([:L,:C,:Lj],[10,4,5,1])
+ERROR: DimensionMismatch: typevector and valuevector should have the same length
 ```
 """
 function calcLmean(typevector::Vector{Symbol}, valuevector::Vector)
@@ -931,6 +934,12 @@ julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[
                 ⋅  1 / Rc + 1 / Rg1                 ⋅           -1 / Rc
           -1 / Rc                 ⋅  1 / Rc + 1 / Rg2                 ⋅
                 ⋅           -1 / Rc                 ⋅  1 / Rc + 1 / Rg2
+
+julia> JosephsonCircuits.calcGn([:R,:R],[2 3;1 1;0 0],[1.0,2.0],1,3)
+ERROR: DimensionMismatch: nodeindexarray should have a first dimension size of 2.
+
+julia> JosephsonCircuits.calcGn([:R],[2 3;1 1],[1.0,2.0],1,3)
+ERROR: DimensionMismatch: typevector and valuevector should have the same length
 ```
 """
 function calcGn(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
