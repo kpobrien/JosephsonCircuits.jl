@@ -18,6 +18,9 @@ julia> JosephsonCircuits.sumvalues(:C, 1.0, 4.0)
 
 julia> JosephsonCircuits.sumvalues(:K, 1.0, 4.0)
 5.0
+
+julia> JosephsonCircuits.sumvalues(:V, 1.0, 4.0)
+ERROR: unknown component type in sumvalues
 ```
 """
 function sumvalues(type::Symbol, value1, value2)
@@ -31,16 +34,11 @@ function sumvalues(type::Symbol, value1, value2)
 end
 
 """
+    sumbranchvalues!(type::Symbol, node1::Int, node2::Int,valuevector::Vector,
+        countdict, indexdict)
 
-The point of this function is that i give it a branch and a type, and it finds
-all of the values and sums them up. the sum will behave differently depending
-on the type. do i need to give it an index? i think no, because it will find
-    the index from the dictionary. 
-
-
-imagine we want to write a netlist where we consolidate all components
-i would loop through the indices and for each index, find the type, then
-find the branch, then calculate the nodes. 
+Given a branch and a type, return the sum of all of the values of the same
+type and branch. The sum will behave differently depending on the type.
 
 # Examples
 ```jldoctest
@@ -78,7 +76,8 @@ Dict((:L, 1, 3) => 2, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 0, (:C, 2,
 Dict((:C, 2, 3, 1) => 3, (:C, 1, 3, 1) => 6, (:R, 1, 2, 1) => 2, (:L, 1, 3, 1) => 4, (:C, 1, 3, 2) => 7, (:L, 1, 3, 2) => 5, (:P, 1, 2, 1) => 1, (:I, 1, 3, 1) => 8)
 ```
 """
-function sumbranchvalues!(type::Symbol, node1::Int, node2::Int, valuevector::Vector, countdict, indexdict)
+function sumbranchvalues!(type::Symbol, node1::Int, node2::Int,
+    valuevector::Vector, countdict, indexdict)
     countkey = (type, node1, node2)
     countflag = false
     value = zero(eltype(valuevector))
@@ -129,6 +128,28 @@ println(indexdict)
 Dict((:L, 1, 3) => 1, (:K, 4, 6) => 1, (:R, 1, 2) => 1, (:I, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:L, 1, 2) => 1)
 Dict((:C, 1, 3, 1) => 7, (:I, 1, 2, 1) => 2, (:R, 1, 2, 1) => 3, (:L, 1, 3, 1) => 6, (:C, 1, 3, 2) => 8, (:L, 1, 2, 1) => 4, (:P, 1, 2, 1) => 1, (:K, 4, 6, 1) => 5)
 ```
+```jldoctest
+@variables Ipump Rleft L1 K1 K2 L2 C2 C3
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("I1","1","0",Ipump))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("L1","1","0",L1))
+push!(circuit,("K1","L1","L2",K1))
+push!(circuit,("K2","L1","L2",K2))
+push!(circuit,("L2","2","0",L2))
+push!(circuit,("C2","2","0",C2))
+push!(circuit,("C3","2","0",C3))
+psc = parsesortcircuit(circuit)
+countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.typevector,psc.nodeindexarraysorted,psc.mutualinductorvector,psc.namedict)
+
+println(countdict)
+println(indexdict)
+
+# output
+Dict((:L, 1, 3) => 1, (:K, 4, 7) => 2, (:R, 1, 2) => 1, (:I, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:L, 1, 2) => 1)
+Dict((:C, 1, 3, 1) => 8, (:I, 1, 2, 1) => 2, (:R, 1, 2, 1) => 3, (:K, 4, 7, 1) => 5, (:K, 4, 7, 2) => 6, (:L, 1, 2, 1) => 4, (:L, 1, 3, 1) => 7, (:P, 1, 2, 1) => 1, (:C, 1, 3, 2) => 9)
+```
 """
 function componentdictionaries(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     mutualinductorvector::Vector, namedict::Dict)
@@ -160,7 +181,8 @@ function componentdictionaries(typevector::Vector{Symbol}, nodeindexarray::Matri
         # i think i need to take the indices from mutualinductorvector
         if typevector[i] == :K
             # don't sort these because the mutual inductance changes sign
-            # if the nodes are changed
+            # if the nodes are changed. this is OK because only values with
+            # the same inductor ordering will be summed. 
             # names of inductors
             inductor1name = mutualinductorvector[2*n-1]
             inductor2name = mutualinductorvector[2*n]
@@ -329,6 +351,48 @@ K1 L1 L2 0.1
 L2 2 0 1000.0000000000001p
 C2 2 0 2000.0f
 ```
+```jldoctest
+@variables Rleft L1 K1 L2 C2 C3 Lj1
+circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("L1","1","0",L1))
+push!(circuit,("Lj1","2","0",Lj1))
+push!(circuit,("K1","L2","L1",K1))
+push!(circuit,("L2","2","0",L2))
+push!(circuit,("C2","2","0",C2))
+push!(circuit,("C3","2","0",C3))
+circuitdefs = Dict(
+    Rleft => 50.0,
+    L1 => 1000.0e-12,
+    Lj1 => 1000.0e-12,
+    K1 => 0.1,
+    L2 => 1000.0e-12,
+    C2 => 1000.0e-15,
+    C3 => 1000.0e-15)
+
+println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = true).netlist)
+println("")
+println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = false).netlist)
+
+# output
+* SPICE Simulation
+R1 1 0 50.0
+L1 1 0 1000.0000000000001p
+B1 2 0 3 jjk ics=0.32910597599999997u
+C2 2 0 1670.894024f
+K1 L2 L1 0.1
+L2 2 0 1000.0000000000001p
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=329.105976f,force=1,vm=9.9
+
+* SPICE Simulation
+R1 1 0 50.0
+L1 1 0 1000.0000000000001p
+Lj1 2 0 1000.0000000000001p
+K1 L2 L1 0.1
+L2 2 0 1000.0000000000001p
+C2 2 0 2000.0f
+```
 """
 function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
         jj::Bool = true)
@@ -425,22 +489,17 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
         if typevector[i] == :K
             nK+=1
             # don't sort these because the mutual inductance changes sign
-            # if the nodes are changed
+            # if the nodes are changed. this is OK because only values with
+            # the same inductor ordering will be summed. 
+
             # names of inductors
             inductor1name = mutualinductorvector[2*nK-1]
             inductor2name = mutualinductorvector[2*nK]
 
             # indices of inductors
-            inductor1index = namedict[inductor1name]
-            inductor2index = namedict[inductor2name]
+            node1 = namedict[inductor1name]
+            node2 = namedict[inductor2name]
 
-            if inductor1index < inductor2index
-                node1 = inductor1index
-                node2 = inductor2index
-            else
-                node1 = inductor2index
-                node2 = inductor1index
-            end
         else
             if nodeindexarray[1,i] < nodeindexarray[2,i]
                 node1 = nodeindexarray[1,i]
@@ -520,22 +579,17 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
         if typevector[i] == :K
             nK+=1
             # don't sort these because the mutual inductance changes sign
-            # if the nodes are changed
+            # if the nodes are changed. this is OK because only values with
+            # the same inductor ordering will be summed. 
+
             # names of inductors
             inductor1name = mutualinductorvector[2*nK-1]
             inductor2name = mutualinductorvector[2*nK]
 
             # indices of inductors
-            inductor1index = namedict[inductor1name]
-            inductor2index = namedict[inductor2name]
+            node1 = namedict[inductor1name]
+            node2 = namedict[inductor2name]
 
-            if inductor1index < inductor2index
-                node1 = inductor1index
-                node2 = inductor2index
-            else
-                node1 = inductor2index
-                node2 = inductor1index
-            end
         else
             if nodeindexarray[1,i] < nodeindexarray[2,i]
                 node1 = nodeindexarray[1,i]
