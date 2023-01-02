@@ -244,6 +244,25 @@ false, then the zeros will be retained as structural zeros otherwise they
 are dropped.
 
 This is used for testing non-allocating sparse matrix addition.
+
+# Examples
+
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sprand(2,2,0.5)
+B = JosephsonCircuits.sprandsubset(A, 0.1)
+length(A.nzval) >= length(B.nzval)
+
+# output
+true
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sprand(100,100,0.5)
+B = JosephsonCircuits.sprandsubset(A, 0.1)
+length(A.nzval) >= length(B.nzval)
+
+# output
+true
+```
 """
 function sprandsubset(A::SparseMatrixCSC,p::AbstractFloat,dropzeros=true)
     B = copy(A)
