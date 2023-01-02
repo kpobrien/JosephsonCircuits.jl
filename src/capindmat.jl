@@ -362,26 +362,12 @@ function calcbranchvector(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int
             push!(Vb,valuevector[i])
         end
     end
+
+    branchvector = sparsevec(Ib,Vb,Nbranches)
     if Nmodes == 1
-        return sparsevec(Ib,Vb,Nbranches)
+        return branchvector
     else
-        #define empty vectors for the row indices and values
-        Ibm = Array{eltype(Ib), 1}(undef, length(Ib)*Nmodes)
-        Vbm = Array{eltype(valuetypevector), 1}(undef, length(Vb)*Nmodes)
-
-        # repeat the elements Nmodes times
-        n = 1
-        @inbounds for i in eachindex(Ib)
-            for j = 1:Nmodes
-                Ibm[n] = (Ib[i]-1)*Nmodes+j
-                Vbm[n] = Vb[i]
-                n+=1
-            end
-        end
-
-        # make the sparse array
-        return sparsevec(Ibm,Vbm,Nbranches*Nmodes)
-
+        return diagrepeat(branchvector, Nmodes)
     end
 end
 
@@ -604,16 +590,18 @@ faster and more numerically stable.
 
 # Examples
 ```jldoctest
-Nmodes = 1
+Nmodes = 2
 Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1e-9,4e-9])
 Mb = JosephsonCircuits.SparseArrays.sparse([2,1], [1,2], [4e-10,4e-10])
 Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
 JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes)
 
 # output
-2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 4 stored entries:
-  1.04167e9  -1.04167e8
- -1.04167e8   2.60417e8
+4×4 SparseArrays.SparseMatrixCSC{Float64, Int64} with 8 stored entries:
+  1.04167e9    ⋅         -1.04167e8    ⋅ 
+   ⋅          1.04167e9    ⋅         -1.04167e8
+ -1.04167e8    ⋅          2.60417e8    ⋅ 
+   ⋅         -1.04167e8    ⋅          2.60417e8
 ```
 ```jldoctest
 @variables L1 L2 Lm
@@ -636,6 +624,17 @@ println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
 
 # output
 sparse([1, 2, 1, 2], [1, 1, 2, 2], Num[(1 + (Lm*(Lm / L1)) / (L2 + (-(Lm^2)) / L1)) / L1, (-(Lm / L1)) / (L2 + (-(Lm^2)) / L1), (-(Lm / (L2 + (-(Lm^2)) / L1))) / L1, 1 / (L2 + (-(Lm^2)) / L1)], 2, 2)
+```
+```jldoctest
+@variables L1 L2
+Nmodes = 1
+Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2]);
+Mb = JosephsonCircuits.SparseArrays.sparse([], [], Nothing[]);
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
+println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
+
+# output
+sparse([1, 2], [1, 2], Num[1 / L1, 1 / L2], 2, 2)
 ```
 """
 function calcinvLn(Lb::SparseVector, Mb::SparseMatrixCSC,
