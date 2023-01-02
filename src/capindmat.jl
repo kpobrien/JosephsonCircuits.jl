@@ -870,6 +870,11 @@ julia> JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[1.0,100.0,2.0],1,3)
   1.01  -0.01
  -0.01   0.51
 
+ julia> JosephsonCircuits.calcGn([:R,:R,:R],[1 3 1;2 2 3],[1.0,100.0,2.0],1,3)
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 4 stored entries:
+  1.01  -0.01
+ -0.01   0.51
+
 julia> JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[1.0,100.0,2.0],2,3)
 4×4 SparseArrays.SparseMatrixCSC{Float64, Int64} with 8 stored entries:
   1.01    ⋅    -0.01    ⋅ 
