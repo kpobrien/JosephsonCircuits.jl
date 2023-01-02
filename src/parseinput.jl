@@ -796,6 +796,9 @@ SymbolicUtils.Symbolic{Number}[]
 julia> uniquenodevectorsorted,nodeindexarray=JosephsonCircuits.sortnodes(["1", "0", "2"],[1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2],sorting=:number);println(uniquenodevectorsorted);println(nodeindexarray);
 ["0", "1", "2"]
 [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
+
+julia> JosephsonCircuits.calcvaluetype([:C,:R],[1,2,3],[:R])
+ERROR: DimensionMismatch: typevector and valuevector should have the same length
 ```
 """
 function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
