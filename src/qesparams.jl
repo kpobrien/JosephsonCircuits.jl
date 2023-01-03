@@ -2,7 +2,51 @@
 """
   calcS!
 
-Return the scattering parameters for the system linearized around the strong pump. 
+Return the scattering parameters for the system linearized around the strong pump.
+
+# Examples
+```jldoctest
+S = ComplexF64[0;;]
+inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
+outputwave = ComplexF64[0;;]
+phin = ComplexF64[0; 0;;]
+bnm = ComplexF64[1; 0;;]
+portimpedanceindices = [3]
+portimpedances = ComplexF64[50]
+nodeindexarraysorted = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
+typevector = [:P, :I, :R, :L, :K, :L, :C]
+wmodes = [2*pi*5e9]
+symfreqvar = nothing
+JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
+    portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
+    wmodes,symfreqvar)
+S
+
+# output
+1×1 Matrix{ComplexF64}:
+ -0.9999999999999999 + 0.0im
+```
+```jldoctest
+S = ComplexF64[0;;]
+inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
+outputwave = ComplexF64[0;;]
+phin = ComplexF64[0; 0;;]
+bnm = ComplexF64[1; 0;;]
+portimpedanceindices = [3]
+portimpedances = ComplexF64[50]
+nodeindexarraysorted = [1 1 1 1 0 1 1; 2 2 2 2 0 3 3]
+typevector = [:P, :I, :R, :L, :K, :L, :C]
+wmodes = [2*pi*5e9]
+symfreqvar = nothing
+JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
+    portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
+    wmodes,symfreqvar)
+S
+
+# output
+1×1 Matrix{ComplexF64}:
+ -0.9999999999999999 + 0.0im
+```
 """
 function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindices,
     inputportimpedances,outputportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
@@ -877,7 +921,7 @@ end
     calcqeideal(S)
 
 Calculate the ideal (best possible) quantum efficiency for each element of a
-scattering matrix. 
+scattering matrix. See also [`calcqeideal!`](@ref). 
 
 # Examples
 ```jldoctest
@@ -912,6 +956,8 @@ end
 
 """
     calcqeideal!(qeideal,S)
+
+See [`calcqeideal`](@ref). 
 
 # Examples
 ```jldoctest
