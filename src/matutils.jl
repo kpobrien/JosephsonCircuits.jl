@@ -32,7 +32,20 @@ end
     diagrepeat!(out,A,counts::Integer)
 
 Overwrite "out" with the elements of A duplicated "counts" times along
-the diagonal. 
+the diagonal.
+
+# Examples
+```jldoctest
+julia> A = [1 2;3 4];out = zeros(eltype(A),4,4);JosephsonCircuits.diagrepeat!(out,A,2);out
+4×4 Matrix{Int64}:
+ 1  0  2  0
+ 0  1  0  2
+ 3  0  4  0
+ 0  3  0  4
+
+julia> A = [1 2;3 4];out = zeros(eltype(A),4,4);JosephsonCircuits.diagrepeat!(out,A,1);out
+ERROR: Sizes not consistent
+```
 """
 function diagrepeat!(out,A,counts::Integer)
 
@@ -179,6 +192,14 @@ JosephsonCircuits.spaddkeepzeros(A,B)
 2×2 SparseArrays.SparseMatrixCSC{Int64, Int64} with 3 stored entries:
  2  0
  ⋅  3
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,0],2,2);
+B = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1],3,2);
+JosephsonCircuits.spaddkeepzeros(A,B)
+
+# output
+ERROR: DimensionMismatch: argument shapes must match
 ```
 """
 function spaddkeepzeros(A::SparseMatrixCSC,B::SparseMatrixCSC)
@@ -455,66 +476,66 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,Ad::Diagonal,As::SparseMatrixCS
 end
 
 
-"""
-  sparseaddconj!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
-    Ad::Diagonal,indexmap::Vector,conjflag::Diagonal)
+# """
+#   sparseaddconj!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
+#     Ad::Diagonal,indexmap::Vector,conjflag::Diagonal)
 
-Perform the operation A+c*As*Ad and return the result in A. Take the complex
-conjugate of As for any column where conjflag is true. 
+# Perform the operation A+c*As*Ad and return the result in A. Take the complex
+# conjugate of As for any column where conjflag is true. 
 
-The sparse matrix As must have nonzero elements only in a subset of the 
-positions in A which has nonzero lements.
+# The sparse matrix As must have nonzero elements only in a subset of the 
+# positions in A which has nonzero lements.
 
-# Examples
-```jldoctest
-A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
-Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
-wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
-indexmap = JosephsonCircuits.sparseaddmap(A,As)
-JosephsonCircuits.sparseaddconj!(A,2,As,Ad,indexmap,wmodesm .< 0)
-A
+# # Examples
+# ```jldoctest
+# A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
+# Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
+# As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
+# wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
+# indexmap = JosephsonCircuits.sparseaddmap(A,As)
+# JosephsonCircuits.sparseaddconj!(A,2,As,Ad,indexmap,wmodesm .< 0)
+# A
 
-# output
-2×2 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 3 stored entries:
- 7.0-3.0im  -19.0-12.0im
-     ⋅        2.0+1.0im
-```
-"""
-function sparseaddconj!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
-    Ad::Diagonal,indexmap::Vector,conjflag::Diagonal)
+# # output
+# 2×2 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 3 stored entries:
+#  7.0-3.0im  -19.0-12.0im
+#      ⋅        2.0+1.0im
+# ```
+# """
+# function sparseaddconj!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
+#     Ad::Diagonal,indexmap::Vector,conjflag::Diagonal)
 
-    if nnz(A) < nnz(As)
-        throw(DimensionMismatch("As cannot have more nonzero elements than A"))
-    end
+#     if nnz(A) < nnz(As)
+#         throw(DimensionMismatch("As cannot have more nonzero elements than A"))
+#     end
 
-    if nnz(As) != length(indexmap)
-        throw(DimensionMismatch("The indexmap must be the same length as As"))
-    end
+#     if nnz(As) != length(indexmap)
+#         throw(DimensionMismatch("The indexmap must be the same length as As"))
+#     end
 
-    if size(A) != size(As)
-        throw(DimensionMismatch("A and As must be the same size."))
-    end
+#     if size(A) != size(As)
+#         throw(DimensionMismatch("A and As must be the same size."))
+#     end
 
-    if size(A) != size(Ad)
-        throw(DimensionMismatch("A and Ad must be the same size."))
-    end
+#     if size(A) != size(Ad)
+#         throw(DimensionMismatch("A and Ad must be the same size."))
+#     end
 
-    if size(A) != size(conjflag)
-        throw(DimensionMismatch("A and conjflag must be the same size."))
-    end
+#     if size(A) != size(conjflag)
+#         throw(DimensionMismatch("A and conjflag must be the same size."))
+#     end
 
-    for i in 1:length(As.colptr)-1
-        for j in As.colptr[i]:(As.colptr[i+1]-1)
-            if conjflag[i,i]
-                A.nzval[indexmap[j]] += c*Ad[i,i]*conj(As.nzval[j])
-            else
-                A.nzval[indexmap[j]] += c*Ad[i,i]*As.nzval[j]
-            end
-        end
-    end
-    return nothing
-end
+#     for i in 1:length(As.colptr)-1
+#         for j in As.colptr[i]:(As.colptr[i+1]-1)
+#             if conjflag[i,i]
+#                 A.nzval[indexmap[j]] += c*Ad[i,i]*conj(As.nzval[j])
+#             else
+#                 A.nzval[indexmap[j]] += c*Ad[i,i]*As.nzval[j]
+#             end
+#         end
+#     end
+#     return nothing
+# end
 
 
 """
@@ -535,13 +556,88 @@ Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
 As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
 wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
 indexmap = JosephsonCircuits.sparseaddmap(A,As)
-JosephsonCircuits.sparseaddconj!(A,2,As,Ad,indexmap,wmodesm .< 0)
+freqsubstindices  = JosephsonCircuits.symbolicindices(As)
+JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,wmodesm,freqsubstindices,nothing)
 A
 
 # output
 2×2 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 3 stored entries:
  7.0-3.0im  -19.0-12.0im
      ⋅        2.0+1.0im
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
+Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
+wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1,2])
+indexmap = JosephsonCircuits.sparseaddmap(A,As)
+freqsubstindices  = JosephsonCircuits.symbolicindices(As)
+JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,wmodesm,freqsubstindices,nothing)
+
+# output
+ERROR: DimensionMismatch: A and conjflag must be the same size.
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
+Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
+wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
+indexmap = JosephsonCircuits.sparseaddmap(A,As)
+freqsubstindices  = JosephsonCircuits.symbolicindices(As)
+JosephsonCircuits.sparseaddconjsubst!(As,2,A,Ad,indexmap,wmodesm .< 0,wmodesm,freqsubstindices,nothing)
+
+# output
+ERROR: DimensionMismatch: As cannot have more nonzero elements than A
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
+Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
+wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
+indexmap = JosephsonCircuits.sparseaddmap(A,As)
+freqsubstindices  = JosephsonCircuits.symbolicindices(As)
+JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap[1:end-1],wmodesm .< 0,wmodesm,freqsubstindices,nothing)
+
+# output
+ERROR: DimensionMismatch: The indexmap must be the same length as As
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
+Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
+wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
+wmodesm2 = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1,2])
+indexmap = JosephsonCircuits.sparseaddmap(A,As)
+freqsubstindices  = JosephsonCircuits.symbolicindices(As)
+JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,wmodesm2,freqsubstindices,nothing)
+
+# output
+ERROR: DimensionMismatch: A and wmodesm must be the same size.
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
+Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2,1])
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
+wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
+indexmap = JosephsonCircuits.sparseaddmap(A,As)
+freqsubstindices  = JosephsonCircuits.symbolicindices(As)
+JosephsonCircuits.sparseaddconjsubst!(A,2,As,Ad,indexmap,wmodesm .< 0,wmodesm,freqsubstindices,nothing)
+
+# output
+ERROR: DimensionMismatch: A and Ad must be the same size.
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
+Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
+As2 = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],3,3)
+wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
+indexmap = JosephsonCircuits.sparseaddmap(A,As)
+freqsubstindices  = JosephsonCircuits.symbolicindices(As)
+JosephsonCircuits.sparseaddconjsubst!(A,2,As2,Ad,indexmap,wmodesm .< 0,wmodesm,freqsubstindices,nothing)
+
+# output
+ERROR: DimensionMismatch: A and As must be the same size.
 ```
 """
 function sparseaddconjsubst!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
@@ -643,6 +739,22 @@ JosephsonCircuits.sparseaddmap(A,As)
  1
  3
 ```
+```jldoctest
+As = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+A = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [4,2],2,2)
+JosephsonCircuits.sparseaddmap(A,As)
+
+# output
+ERROR: Coordinate not found. Are the positions of elements in As a subset of the positions of elements in A?
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],4,4)
+As = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [4,2],2,2)
+JosephsonCircuits.sparseaddmap(A,As)
+
+# output
+ERROR: DimensionMismatch: A and B must be the same size.
+```
 """
 function sparseaddmap(A::SparseMatrixCSC,B::SparseMatrixCSC)
 
@@ -698,7 +810,7 @@ function sparseaddmap_innerloop(A::SparseMatrixCSC,B::SparseMatrixCSC,
                     # a column, increase lstart by 1
                     return k,l+1,indexA
                 end
-            else
+            # else
                 # println(l," ",lstart," ",length(tmp))
                 # println("match not found: ",rowindexA," ",colindexA," ",indexA," ",abs(valA))
             end
@@ -749,6 +861,9 @@ julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1,2], [1,1,2,2], [1+1im,1+
 2×2 SparseArrays.SparseMatrixCSC{Complex{Int64}, Int64} with 4 stored entries:
  1-1im  1+1im
  1-1im  1+1im
+
+julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1,2], [1,1,2,2], [1+1im,1+1im,1+1im,1+1im],2,2);JosephsonCircuits.conjnegfreq!(A,[-1,1,1]);A
+ERROR: The dimensions of A must be integer multiples of the length of wmodes.
 ```
 """
 function conjnegfreq!(A::SparseMatrixCSC,wmodes::Vector)
@@ -887,6 +1002,24 @@ JosephsonCircuits.freqsubst(A,wmodes,nothing)
      ⋅      1.0+0.0im      ⋅      3.0+0.0im
      ⋅          ⋅      2.0+0.0im      ⋅    
      ⋅          ⋅          ⋅      2.0+0.0im
+```
+```jldoctest
+@variables w
+wmodes = [-1,2];
+A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
+JosephsonCircuits.freqsubst(A,wmodes,nothing)
+
+# output
+ERROR: Error: Set symfreqvar equal to the symbolic variable representing frequency.
+```
+```jldoctest
+@variables w
+wmodes = [-1,1,2];
+A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
+JosephsonCircuits.freqsubst(A,wmodes,w)
+
+# output
+ERROR: The dimensions of A must be integer multiples of the length of wmodes.
 ```
 """
 function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
