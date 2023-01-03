@@ -636,6 +636,37 @@ function extractbranches!(branchvector::Vector,typevector::Vector{Symbol},nodein
     return nothing
 end
 
+"""
+    findgroundnodeindex(uniquenodevector::Vector{String})
+
+Find the index of the ground node.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.findgroundnodeindex(["1","0","2"])
+2
+
+julia> JosephsonCircuits.findgroundnodeindex(["1","2"])
+ERROR: ArgumentError: No ground node found in netlist.
+```
+"""
+function findgroundnodeindex(uniquenodevector::Vector{String})
+
+    # find the ground node. error if we don't find it.
+    groundnodeindex = 0
+    for i in eachindex(uniquenodevector)
+        if uniquenodevector[i] == "0"
+            groundnodeindex = i
+            break
+        end
+    end
+
+    if groundnodeindex == 0
+        throw(ArgumentError("No ground node found in netlist."))
+    end
+
+    return groundnodeindex
+end
 
 
 """
@@ -709,16 +740,7 @@ function calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
     end
 
     # find the ground node. error if we don't find it.
-    groundnodeindex = 0
-    for i in eachindex(uniquenodevector)
-        if uniquenodevector[i] == "0"
-            groundnodeindex = i
-            break
-        end
-    end
-    if groundnodeindex == 0
-        throw(ArgumentError("No ground node found in netlist."))
-    end
+    groundnodeindex = findgroundnodeindex(uniquenodevector)
 
     # if the ground index is not the first after sorting, make it first and
     # increment earlier node indices
