@@ -647,25 +647,27 @@ julia> JosephsonCircuits.findgroundnodeindex(["1","0","2"])
 2
 
 julia> JosephsonCircuits.findgroundnodeindex(["1","2"])
-ERROR: ArgumentError: No ground node found in netlist.
+0
 ```
 """
 function findgroundnodeindex(uniquenodevector::Vector{String})
 
     # find the ground node. error if we don't find it.
-    groundnodeindex = 0
+    # groundnodeindex = 0
     for i in eachindex(uniquenodevector)
         if uniquenodevector[i] == "0"
-            groundnodeindex = i
-            break
+            # groundnodeindex = i
+            return i
+            # break
         end
     end
 
-    if groundnodeindex == 0
-        throw(ArgumentError("No ground node found in netlist."))
-    end
+    # if groundnodeindex == 0
+    #     throw(ArgumentError("No ground node found in netlist."))
+    # end
 
-    return groundnodeindex
+    # return groundnodeindex
+    return 0
 end
 
 
@@ -741,6 +743,10 @@ function calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
 
     # find the ground node. error if we don't find it.
     groundnodeindex = findgroundnodeindex(uniquenodevector)
+
+    if groundnodeindex == 0
+        throw(ArgumentError("No ground node found in netlist."))
+    end
 
     # if the ground index is not the first after sorting, make it first and
     # increment earlier node indices
