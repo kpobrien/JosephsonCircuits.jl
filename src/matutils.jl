@@ -361,6 +361,34 @@ A
  7  5
  ⋅  2
 ```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
+As2 = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],3,3)
+indexmap = JosephsonCircuits.sparseaddmap(A,As)
+JosephsonCircuits.sparseadd!(A,2,As2,indexmap)
+
+# output
+ERROR: DimensionMismatch: A and As must be the same size.
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
+indexmap = JosephsonCircuits.sparseaddmap(A,As)
+JosephsonCircuits.sparseadd!(A,2,As,indexmap[1:end-1])
+
+# output
+ERROR: DimensionMismatch: The indexmap must be the same length as As
+```
+```jldoctest
+A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,-3],2,2)
+As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3,4],2,2)
+indexmap = JosephsonCircuits.sparseaddmap(A,As)
+JosephsonCircuits.sparseadd!(As,2,A,indexmap)
+
+# output
+ERROR: DimensionMismatch: As cannot have more nonzero elements than A
+```
 """
 function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,indexmap::Vector)
 

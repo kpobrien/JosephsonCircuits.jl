@@ -238,8 +238,20 @@ JosephsonCircuits.vectortodense(coords,values,Nharmonics)
  2w1  w2 + 2w1  2w1 + 2w2  2w1 - 2w2  2w1 - w2
  3w1  w2 + 3w1  2w2 + 3w1  3w1 - 2w2  3w1 - w2
 ```
+```jldoctest
+julia> JosephsonCircuits.vectortodense([CartesianIndex(1,1)],[1],(1,))
+ERROR: Dimensions of coords elements and Nharmonics must be consistent.
+
+julia> JosephsonCircuits.vectortodense([CartesianIndex(1,1,1)],[1],(1,1,1))
+ERROR: Not designed to visualize higher dimensional arrays
+```
 """
 function vectortodense(coords::Vector, values::Vector, Nharmonics)
+
+    if length(Nharmonics) != length(eltype(coords))
+        error("Dimensions of coords elements and Nharmonics must be consistent.")
+    end
+
     if length(eltype(coords)) == 1
         s = zeros(eltype(values),Nharmonics[1]+1)
         for (i,coord) in enumerate(coords)
@@ -736,6 +748,26 @@ phimatrix
  0.0+2.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im
  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im
 ```
+```jldoctest
+freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+conjsourceindices = [16, 6]
+conjtargetindices = [21, 31]
+Nbranches = 1
+
+phivector = 1im.*Complex.(1:(Nbranches*length(freqindexmap)-1));
+phimatrix=zeros(Complex{Float64},5,7,1)
+
+JosephsonCircuits.phivectortomatrix!(phivector,
+    phimatrix,
+    freqindexmap,
+    conjsourceindices,
+    conjtargetindices,
+    Nbranches,
+)
+
+# output
+ERROR: Unexpected length for phivector
+```
 """
 function phivectortomatrix!(phivector::Vector, phimatrix::Array,
     indexmap::Vector{Int}, conjsourceindices::Vector{Int},
@@ -752,14 +784,12 @@ function phivectortomatrix!(phivector::Vector, phimatrix::Array,
     fill!(phimatrix,0)
 
     for i in 1:Nbranches
-    # @inbounds for i in 1:Nbranches
         for j in 1:length(indexmap)
             phimatrix[indexmap[j]+(i-1)*Nmatrix] = phivector[j+(i-1)*Nvector]
         end
     end
 
     for i in 1:Nbranches
-    # @inbounds for i in 1:Nbranches
         for j in 1:length(conjtargetindices)
             phimatrix[conjtargetindices[j]+ (i-1)*Nmatrix] = conj(phimatrix[conjsourceindices[j]+ (i-1)*Nmatrix])
         end
@@ -809,6 +839,26 @@ phivector
  0.0 + 7.0im
  0.0 + 8.0im
 ```
+```jldoctest
+freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+conjsourceindices = [16, 6]
+conjtargetindices = [21, 31]
+Nbranches = 1
+
+phivector = zeros(Complex{Float64}, Nbranches*length(freqindexmap)-1)
+phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
+
+JosephsonCircuits.phimatrixtovector!(phivector,
+    phimatrix,
+    freqindexmap,
+    conjsourceindices,
+    conjtargetindices,
+    Nbranches,
+)
+
+# output
+ERROR: Unexpected length for phivector
+```
 """
 function phimatrixtovector!(phivector::Vector, phimatrix::Array,
     indexmap::Vector{Int}, conjsourceindices::Vector{Int},
@@ -820,8 +870,10 @@ function phimatrixtovector!(phivector::Vector, phimatrix::Array,
     # fill the vector with zeros
     fill!(phivector,0)
 
+    if length(indexmap)*Nbranches != length(phivector)
+        error("Unexpected length for phivector")
+    end
 
-    # @inbounds for i in 1:Nbranches
     for i in 1:Nbranches
         for j in 1:length(indexmap)
             phivector[j+(i-1)*Nvector] = phimatrix[indexmap[j]+(i-1)*Nmatrix]
