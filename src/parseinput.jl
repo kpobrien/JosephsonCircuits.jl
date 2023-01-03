@@ -563,14 +563,13 @@ function checkcomponenttypes(allowedcomponents::Vector{String})
     for i in eachindex(allowedcomponents)
         if i != parsecomponenttype(allowedcomponents[i],allowedcomponents)
             throw(ArgumentError("Allowed components parsing check has failed for $(allowedcomponents[i]). This can happen if a two letter long component comes after a one letter component. Please reorder allowedcomponents."))
-            return false
         end
     end
     return true
 end
 
 """
-    extractbranches(typevector,nodeindexarray)
+    extractbranches(typevector::Vector{Symbol},nodeindexarray::Matrix{Int})
 
 Return an array of tuples of pairs of node indices (branches) which we will
 use to calculate the incidence matrix.  
@@ -587,6 +586,15 @@ julia> JosephsonCircuits.extractbranches([:P,:I,:R,:C,:Lj,:C],[2 2 2 2 3 3; 1 1 
  (2, 1)
  (2, 1)
  (3, 1)
+
+julia> JosephsonCircuits.extractbranches([:P,:I,:R,:C,:Lj,:C],[2 2 2 2 3; 1 1 1 3 1])
+ERROR: DimensionMismatch: typevector must have the same length as the number of node indices
+
+julia> JosephsonCircuits.extractbranches([:P,:I,:R,:C,:Lj,:C],[2 2 2 2 3 3; 1 1 1 3 1 1; 0 0 0 0 0 0])
+ERROR: DimensionMismatch: the length of the first axis must be 2
+
+julia> JosephsonCircuits.extractbranches!([1],[:P,:I,:R,:C,:Lj,:C],[2 2 2 2 3 3; 1 1 1 3 1 1])
+ERROR: DimensionMismatch: branchvector should be length zero
 ```
 """
 function extractbranches(typevector::Vector{Symbol},nodeindexarray::Matrix{Int})
@@ -603,14 +611,10 @@ end
 Append tuples consisting of a pair of node indices (branches) which we will
 use to calculate the incidence matrix.  Appends the tuples to branchvector.
 """
-function extractbranches!(branchvector::Vector,typevector::Vector,nodeindexarray::Array)
+function extractbranches!(branchvector::Vector,typevector::Vector{Symbol},nodeindexarray::Matrix{Int})
 
     if  length(typevector) != size(nodeindexarray,2)
         throw(DimensionMismatch("typevector must have the same length as the number of node indices"))
-    end
-
-    if length(size(nodeindexarray)) != 2
-        throw(DimensionMismatch("the nodeindexarray must have two dimensions"))
     end
 
     if size(nodeindexarray,1) != 2
@@ -1127,6 +1131,56 @@ JosephsonCircuits.calcportimpedanceindices(
 # output
 Int64[]
 ```
+```jldoctest
+JosephsonCircuits.calcportimpedanceindices(
+    [:P,:R,:C,:Lj,:C],
+    [2 2 2 3 3; 1 1 3 1 1; 0 0 0 0 0],
+    [],
+    [1,50,5e-15,1e-12,30e-15])
+
+# output
+ERROR: DimensionMismatch: The length of the first axis must be 2
+```
+```jldoctest
+JosephsonCircuits.calcportimpedanceindices(
+    [:P,:R,:C,:Lj,:C],
+    [2 2 2 3; 1 1 3 1],
+    [],
+    [1,50,5e-15,1e-12,30e-15])
+
+# output
+ERROR: DimensionMismatch: Input arrays must have the same length
+```
+```jldoctest
+JosephsonCircuits.calcportimpedanceindices(
+    [:P,:P,:C,:Lj,:C],
+    [2 2 2 3 3; 1 1 3 1 1],
+    [],
+    [1,2,5e-15,1e-12,30e-15])
+
+# output
+ERROR: Only one port allowed per branch.
+```
+```jldoctest
+JosephsonCircuits.calcportimpedanceindices(
+    [:P,:R,:C,:Lj,:P],
+    [2 2 2 3 3; 1 1 3 1 1],
+    [],
+    [1,50,5e-15,1e-12,1])
+
+# output
+ERROR: Duplicate ports are not allowed.
+```
+```jldoctest
+JosephsonCircuits.calcportimpedanceindices(
+    [:P,:R,:R,:Lj,:C],
+    [2 2 2 2 3; 1 1 1 3 1],
+    [],
+    [1,50.0,50.0,1e-12,30e-15])
+
+# output
+ERROR: Only one resistor allowed per port.
+```
 """
 function calcportimpedanceindices(typevector::Vector{Symbol},
     nodeindexarray::Matrix{Int},mutualinductorvector::Vector,
@@ -1134,10 +1188,6 @@ function calcportimpedanceindices(typevector::Vector{Symbol},
 
     if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
         throw(DimensionMismatch("Input arrays must have the same length"))
-    end
-
-    if length(size(nodeindexarray)) != 2
-        throw(DimensionMismatch("The nodeindexarray must have two dimensions"))
     end
 
     if size(nodeindexarray,1) != 2
