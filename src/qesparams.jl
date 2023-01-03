@@ -9,13 +9,13 @@ Return the scattering parameters for the system linearized around the strong pum
 S = ComplexF64[0;;]
 inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
-phin = ComplexF64[0; 0;;]
 bnm = ComplexF64[1; 0;;]
 portimpedanceindices = [3]
 portimpedances = ComplexF64[50]
 nodeindexarraysorted = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
 typevector = [:P, :I, :R, :L, :K, :L, :C]
-wmodes = [2*pi*5e9]
+wmodes = [1]
+phin = ComplexF64[0;0;;]
 symfreqvar = nothing
 JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
@@ -24,19 +24,19 @@ S
 
 # output
 1×1 Matrix{ComplexF64}:
- -0.9999999999999999 + 0.0im
+ -1.0 + 0.0im
 ```
 ```jldoctest
 S = ComplexF64[0;;]
 inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
-phin = ComplexF64[0; 0;;]
 bnm = ComplexF64[1; 0;;]
 portimpedanceindices = [3]
 portimpedances = ComplexF64[50]
-nodeindexarraysorted = [1 1 1 1 0 1 1; 2 2 2 2 0 3 3]
+nodeindexarraysorted = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
 typevector = [:P, :I, :R, :L, :K, :L, :C]
-wmodes = [2*pi*5e9]
+wmodes = [1]
+phin = ComplexF64[50/(im*wmodes[1]);0;;]
 symfreqvar = nothing
 JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
@@ -45,7 +45,70 @@ S
 
 # output
 1×1 Matrix{ComplexF64}:
- -0.9999999999999999 + 0.0im
+ 1.0 + 0.0im
+```
+```jldoctest
+S = ComplexF64[0;;]
+inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
+outputwave = ComplexF64[0;;]
+bnm = ComplexF64[1; 0;;]
+portimpedanceindices = [3]
+portimpedances = ComplexF64[50]
+nodeindexarraysorted = [1 1 1 1 0 1 1; 2 2 2 2 0 3 3;]
+typevector = [:P, :I, :R, :L, :K, :L, :C]
+wmodes = [1]
+phin = ComplexF64[50/(im*wmodes[1]);0;;]
+symfreqvar = nothing
+JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
+    portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
+    wmodes,symfreqvar)
+S
+
+# output
+1×1 Matrix{ComplexF64}:
+ 1.0 - 0.0im
+```
+```jldoctest
+S = ComplexF64[0;;]
+inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
+outputwave = ComplexF64[0;;]
+bnm = ComplexF64[-1; 1;;]
+portimpedanceindices = [2]
+portimpedances = ComplexF64[50.0 + 0.0im]
+nodeindexarraysorted = [2 2 2 2 3; 3 3 1 1 1]
+typevector = [:P, :R, :L, :C, :C]
+wmodes = [1]
+phin = ComplexF64[0;0;;]
+symfreqvar = nothing
+JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
+    portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
+    wmodes,symfreqvar)
+S
+
+# output
+1×1 Matrix{ComplexF64}:
+ -1.0 - 0.0im
+```
+```jldoctest
+S = ComplexF64[0;;]
+inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
+outputwave = ComplexF64[0;;]
+bnm = ComplexF64[-1; 1;;]
+portimpedanceindices = [2]
+portimpedances = ComplexF64[50.0 + 0.0im]
+nodeindexarraysorted = [2 2 2 2 3; 3 3 1 1 1]
+typevector = [:P, :R, :L, :C, :C]
+wmodes = [1]
+phin = ComplexF64[-50/(im*wmodes[1]);50/(im*wmodes[1]);;]
+symfreqvar = nothing
+JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
+    portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
+    wmodes,symfreqvar)
+S
+
+# output
+1×1 Matrix{ComplexF64}:
+ 1.0 - 0.0im
 ```
 """
 function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindices,
