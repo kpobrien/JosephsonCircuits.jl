@@ -934,6 +934,18 @@ https://github.com/JuliaSparse/SparseArrays.jl/blob/main/src/linalg.jl
 ```jldoctest
 julia> a = JosephsonCircuits.sprand(100,100,0.1);b = JosephsonCircuits.sprand(100,100,0.1);c = a*b; d = copy(c);xb = fill(false, size(a,1));JosephsonCircuits.spmatmul!(c,a,b,xb);c == d
 true
+
+julia> a = JosephsonCircuits.sprand(100,100,0.1);b = JosephsonCircuits.sprand(100,100,0.1);c = a*b; d = copy(c);xb = fill(false, size(a,1));JosephsonCircuits.spmatmul!(c,a[:,1:end-1],b,xb)
+ERROR: DimensionMismatch: Number of columns in A must equal number of rows in B.
+
+julia> a = JosephsonCircuits.sprand(100,100,0.1);b = JosephsonCircuits.sprand(100,100,0.1);c = a*b; d = copy(c);xb = fill(false, size(a,1));JosephsonCircuits.spmatmul!(c,a[1:end-1,:],b,xb)
+ERROR: DimensionMismatch: Number of rows in C must equal number of rows in A.
+
+julia> a = JosephsonCircuits.sprand(100,100,0.1);b = JosephsonCircuits.sprand(100,100,0.1);c = a*b; d = copy(c);xb = fill(false, size(a,1));JosephsonCircuits.spmatmul!(c,a,b,xb[1:end-1])
+ERROR: DimensionMismatch: Length of xb vector must equal number of rows in A.
+
+julia> a = JosephsonCircuits.sprand(100,100,0.1);b = JosephsonCircuits.sprand(100,100,0.1);c = a*b; d = copy(c);xb = fill(false, size(a,1));JosephsonCircuits.spmatmul!(c[:,1:end-1],a,b,xb)
+ERROR: DimensionMismatch: Number of columns in C must equal number of columns in B.
 ```
 """
 function spmatmul!(C::SparseMatrixCSC,A::SparseMatrixCSC, B::SparseMatrixCSC,xb::Vector{Bool})
