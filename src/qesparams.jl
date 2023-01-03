@@ -347,6 +347,9 @@ julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:R,-2.0,w)
 
 julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:C,-2.0,w)
 0.0 - 0.008333333333333333im
+
+julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:D,-2.0,w)
+ERROR: Unknown component type
 ```
 """
 function calcimpedance(c,type,w,symfreqvar)
@@ -415,6 +418,19 @@ Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Overwrites cm with output. Use a compensated sum
 to reduce floating point errors.
 
+# Examples
+```jldoctest
+julia> cm=Float64[0,0];JosephsonCircuits.calccm!(cm,[3/5 4/5;4/5 3/5],[-1,1]);cm
+2-element Vector{Float64}:
+  0.28000000000000014
+ -0.28000000000000014
+
+julia> cm=Float64[0,0];JosephsonCircuits.calccm!(cm,[3/5 4/5;4/5 3/5],[-1,1,2]);cm
+ERROR: DimensionMismatch: Dimensions of scattering matrix must be integer multiples of the number of frequencies.
+
+julia> cm=Float64[0,0];JosephsonCircuits.calccm!(cm,[3/5 4/5;4/5 3/5;0 0;0 0],[-1,1]);cm
+ERROR: DimensionMismatch: First dimension of scattering matrix must equal the length of cm.
+```
 """
 function calccm!(cm::AbstractArray{T},S,w) where {T<:AbstractFloat}
 
@@ -458,6 +474,19 @@ end
 Calculate the bosonic commutation relations for a scattering matrix S in the 
 field ladder operator basis. Overwrites cm with output. 
 
+# Examples
+```jldoctest
+julia> @variables a b;cm=Num[0,0];JosephsonCircuits.calccm!(cm,[a b; b a],[-1,1]);cm
+2-element Vector{Num}:
+ abs2(b) - abs2(a)
+ abs2(a) - abs2(b)
+
+julia> @variables a b;cm=Num[0,0];JosephsonCircuits.calccm!(cm,[a b; b a],[-1,1,2]);cm
+ERROR: DimensionMismatch: Dimensions of scattering matrix must be integer multiples of the number of frequencies.
+
+julia> @variables a b;cm=Num[0,0];JosephsonCircuits.calccm!(cm,[a b; b a; 0 0; 0 0],[-1,1]);cm
+ERROR: DimensionMismatch: First dimension of scattering matrix must equal the length of cm.
+```
 """
 function calccm!(cm,S,w)
 
@@ -532,6 +561,22 @@ Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Overwrites cm with output.  Use a compensated sum
 to reduce floating point errors.
 
+# Examples
+```jldoctest
+julia> cm=Float64[0, 0];JosephsonCircuits.calccm!(cm,[1 2;3 4],[1 2 3 4;5 6 7 8],[-1,1]);cm
+2-element Vector{Float64}:
+ 13.0
+ 33.0
+
+julia> cm=Float64[0, 0];JosephsonCircuits.calccm!(cm,[1 2;3 4],[1 2 3;5 6 7],[-1,1]);cm
+ERROR: DimensionMismatch: Dimensions of noise scattering matrix must be integer multiples of the number of frequencies.
+
+julia> cm=Float64[0, 0];JosephsonCircuits.calccm!(cm,[1 2;3 4],[1 2; 3 4; 5 6; 7 8],[-1,1]);cm
+ERROR: DimensionMismatch: First dimensions of scattering parameter matrice and noise scattering matrix must be equal.
+
+julia> cm=Float64[0, 0];JosephsonCircuits.calccm!(cm,[1 2;3 4],[1 2 3 4;5 6 7 8],[-1,1,2]);cm
+ERROR: DimensionMismatch: Dimensions of scattering matrix must be integer multiples of the number of frequencies.
+```
 """
 function calccm!(cm::AbstractArray{T},S,Snoise,w) where {T<:AbstractFloat}
 
@@ -596,6 +641,19 @@ end
 Calculate the bosonic commutation relations for a scattering matrix S in the 
 field ladder operator basis. Overwrites cm with output.
 
+# Examples
+```jldoctest
+julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn],[1, -1]);cm
+2-element Vector{Num}:
+ abs2(a) + abs2(an) - abs2(b) - abs2(bn)
+ abs2(c) + abs2(cn) - abs2(d) - abs2(dn)
+
+julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn],[1, -1, 2])
+ERROR: DimensionMismatch: Dimensions of scattering matrix must be integer multiples of the number of frequencies.
+
+julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn; 0 0; 0 0],[1, -1]);cm
+ERROR: DimensionMismatch: First dimensions of scattering parameter matrice and noise scattering matrix must be equal.
+```
 """
 function calccm!(cm,S,Snoise,w)
 
@@ -681,7 +739,12 @@ end
     calcqe!(qe,S)
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
-ladder operator basis. Overwrites qe with output. 
+ladder operator basis. Overwrites qe with output.
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcqe!([1 2;3 4],[1 2 3;4 5 6])
+ERROR: DimensionMismatch: Dimensions of quantum efficiency and scattering parameter matrices must be equal.
+```
 """
 function calcqe!(qe,S)
 
@@ -750,6 +813,19 @@ end
 Calculate the quantum efficiency matrix for a scattering matrix in the field
 ladder operator basis. Overwrites qe with output. 
 
+# Examples
+```jldoctest
+julia> qe=Float64[1 2;3 4];JosephsonCircuits.calcqe!(qe,[1 2;3 4],[1 2 3;4 5 6]);qe
+2×2 Matrix{Float64}:
+ 0.0526316  0.210526
+ 0.0882353  0.156863
+
+julia> JosephsonCircuits.calcqe!([1 2;3 4],[1 2 3;4 5 6],[1 2;3 4])
+ERROR: DimensionMismatch: Dimensions of quantum efficiency and scattering parameter matrices must be equal.
+
+julia> JosephsonCircuits.calcqe!(Float64[1 2;3 4],[1 2;3 4],[1 2;3 4;5 6])
+ERROR: DimensionMismatch: First dimensions of scattering parameter matrice and noise scattering matrix must be equal.
+```
 """
 function calcqe!(qe,S,Snoise)
 
@@ -821,6 +897,16 @@ function calcqeideal(S::AbstractArray{Complex{T}}) where {T}
     return qeideal
 end
 
+
+"""
+    calcqeideal!(qeideal,S)
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcqeideal!([1 2;3 4],[1 2 3;4 5 6])
+ERROR: DimensionMismatch: Sizes of QE and S matrices must be equal.
+```
+"""
 function calcqeideal!(qeideal,S)
     if size(qeideal) != size(S)
         throw(DimensionMismatch("Sizes of QE and S matrices must be equal."))
