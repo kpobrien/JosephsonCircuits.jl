@@ -309,6 +309,9 @@ julia> JosephsonCircuits.calcimpedance(30.0,:C,-1.0,nothing)
 
 julia> JosephsonCircuits.calcimpedance(30.0,:R,-1.0,nothing)
 30.0 + 0.0im
+
+julia> JosephsonCircuits.calcimpedance(30.0,:D,-1.0,nothing)
+ERROR: Unknown component type
 ```
 """
 function calcimpedance(c::Union{T,Complex{T}},type,w,symfreqvar) where {T<:Union{AbstractFloat,Integer}}
@@ -576,6 +579,9 @@ ERROR: DimensionMismatch: First dimensions of scattering parameter matrice and n
 
 julia> cm=Float64[0, 0];JosephsonCircuits.calccm!(cm,[1 2;3 4],[1 2 3 4;5 6 7 8],[-1,1,2]);cm
 ERROR: DimensionMismatch: Dimensions of scattering matrix must be integer multiples of the number of frequencies.
+
+julia> cm=Float64[0, 0, 0];JosephsonCircuits.calccm!(cm,[1 2;3 4],[1 2 3 4;5 6 7 8],[-1,1]);cm
+ERROR: DimensionMismatch: First dimension of scattering matrix must equal the length of cm.
 ```
 """
 function calccm!(cm::AbstractArray{T},S,Snoise,w) where {T<:AbstractFloat}
@@ -653,6 +659,12 @@ ERROR: DimensionMismatch: Dimensions of scattering matrix must be integer multip
 
 julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn; 0 0; 0 0],[1, -1]);cm
 ERROR: DimensionMismatch: First dimensions of scattering parameter matrice and noise scattering matrix must be equal.
+
+julia> @variables a b c d an bn cn dn;cm = Num[0, 0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn],[1, -1])
+ERROR: DimensionMismatch: First dimension of scattering matrix must equal the length of cm.
+
+julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn 0; cn dn 0],[1, -1]);cm
+ERROR: DimensionMismatch: Dimensions of noise scattering matrix must be integer multiples of the number of frequencies.
 ```
 """
 function calccm!(cm,S,Snoise,w)
