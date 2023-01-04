@@ -1,6 +1,8 @@
 
 """
-  calcS!
+    calcS!(S, inputwave, outputwave, phin, bnm, inputportindices,
+        outputportindices, inputportimpedances, outputportimpedances,
+        nodeindexarraysorted, typevector, wmodes, symfreqvar)
 
 Return the scattering parameters for the system linearized around the strong pump.
 
@@ -111,148 +113,18 @@ S
  1.0 - 0.0im
 ```
 """
-function calcS!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindices,
-    inputportimpedances,outputportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
-    # check the size of S
-
-    # check the size of inputwave
-
-    # check the size of outputwave
-
-    # check the sizes of all of the inputs
-
-    # loop over input branches and modes to define inputwaves
-    Ninputports = length(inputportindices)
-    Noutputports = length(outputportindices)
-    Nsolutions = size(phin,2)
-    Nmodes = length(wmodes)
-
-    for i in 1:Ninputports
-        for j in 1:Nmodes
-            for k in 1:Nsolutions
-
-                # key = inputportbranches[i]
-                key = (nodeindexarraysorted[1,inputportindices[i]],nodeindexarraysorted[2,inputportindices[i]])
-
-                # calculate the branch source currents at the ports from the node
-                # source current array bnm
-                if key[1] == 1
-                    sourcecurrent = -bnm[(key[2]-2)*Nmodes+j,k]
-                elseif key[2] == 1
-                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k]
-                else
-                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k] 
-                    sourcecurrent -= bnm[(key[2]-2)*Nmodes+j,k]
-                end
-
-                # calculate the branch fluxes at the ports from the node flux array phin
-                if key[1] == 1
-                    portvoltage = -phin[(key[2]-2)*Nmodes+j,k]
-                elseif key[2] == 1
-                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k]
-                else
-                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k] 
-                    portvoltage -= phin[(key[2]-2)*Nmodes+j,k]
-                end
-
-                # scale the branch flux by frequency to get voltage
-                portvoltage *= im*wmodes[j]
-
-                # calculate the port impedance
-                portimpedance = calcimpedance(inputportimpedances[i],typevector[inputportindices[i]],wmodes[j],symfreqvar)
-
-                # calculate the current flowing through the port
-                portcurrent = sourcecurrent - portvoltage / portimpedance
-
-                # calculate the scaling factor for the waves
-                kval = 1 / sqrt(Complex(real(portimpedance)))
-
-
-                # convert from sqrt(power) to sqrt(photons/second)
-                kval *= 1 /sqrt(abs(wmodes[j]))
-
-                # calculate the input and output power waves as defined in (except in
-                # units of sqrt(photons/second) instead of sqrt(power)
-                # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
-                # Micr. Theory and Tech. 13, 194–202 (1965) 
-                # doi: 10.1109/TMTT.1965.1125964
-                # inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage + portimpedance * portcurrent)
-                # we can simplify the above to:
-                inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
-                # outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
-
-            end
-        end
-    end
-
-    # loop over output branches and modes to define outputwaves
-    for i in 1:Noutputports
-        for j in 1:Nmodes
-            for k in 1:Nsolutions
-
-                # key = outputportbranches[i]
-                key = (nodeindexarraysorted[1,outputportindices[i]],nodeindexarraysorted[2,outputportindices[i]])
-
-                # calculate the branch source currents at the ports from the node
-                # source current array bnm
-                if key[1] == 1
-                    sourcecurrent = -bnm[(key[2]-2)*Nmodes+j,k]
-                elseif key[2] == 1
-                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k]
-                else
-                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k] 
-                    sourcecurrent -= bnm[(key[2]-2)*Nmodes+j,k]
-                end
-
-                # calculate the branch fluxes at the ports from the node flux array phin
-                if key[1] == 1
-                    portvoltage = -phin[(key[2]-2)*Nmodes+j,k]
-                elseif key[2] == 1
-                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k]
-                else
-                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k] 
-                    portvoltage -= phin[(key[2]-2)*Nmodes+j,k]
-                end
-
-                # scale the branch flux by frequency to get voltage
-                portvoltage *= im*wmodes[j]
-
-                # calculate the port impedance
-                portimpedance = calcimpedance(outputportimpedances[i],typevector[outputportindices[i]],wmodes[j],symfreqvar)
-
-                # calculate the current flowing through the port
-                portcurrent = sourcecurrent - portvoltage / portimpedance
-
-                # calculate the scaling factor for the waves
-                kval = 1 / sqrt(Complex(real(portimpedance)))
-
-                # convert from sqrt(power) to sqrt(photons/second)
-                kval *= 1 /sqrt(abs(wmodes[j]))
-
-                # calculate the input and output power waves as defined in (except in
-                # units of sqrt(photons/second) instead of sqrt(power)
-                # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
-                # Micr. Theory and Tech. 13, 194–202 (1965) 
-                # doi: 10.1109/TMTT.1965.1125964
-                # inputwave[(i-1)*Nmodes+j,k] = 1/2*k * (portvoltage + portimpedance * portcurrent)
-                # we can simplify the above to:
-                # inputwave[(i-1)*Nmodes+j,k] = 1/2*k * portimpedance * sourcecurrent
-                outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
-            end
-        end
-    end
- 
-    # scattering matrix is defined as outputwave = S * inputwave
-    rdiv!(outputwave,inputwave)
-    copy!(S,outputwave)
-
-    return nothing
+function calcS!(S, inputwave, outputwave, phin, bnm, inputportindices,
+    outputportindices, inputportimpedances, outputportimpedances,
+    nodeindexarraysorted, typevector, wmodes, symfreqvar)
+    return calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
+        outputportindices, inputportimpedances, outputportimpedances,
+        nodeindexarraysorted, typevector, wmodes, symfreqvar, false)
 end
 
-
-
 """
-  calcSnoise!
+    calcSnoise!(S, inputwave, outputwave, phin, bnm, inputportindices,
+        outputportindices, inputportimpedances, outputportimpedances,
+        nodeindexarraysorted, typevector, wmodes, symfreqvar)
 
 Return the scattering parameters for the system linearized around the strong pump. 
 
@@ -287,8 +159,36 @@ Snoise
  -2.7915456687917157e-6 + 1.762749772454945e-10im
 ```
 """
-function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindices,
-    inputportimpedances,outputportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+function calcSnoise!(S, inputwave, outputwave, phin, bnm, inputportindices,
+    outputportindices, inputportimpedances, outputportimpedances,
+    nodeindexarraysorted, typevector, wmodes, symfreqvar)
+    return calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
+        outputportindices, inputportimpedances, outputportimpedances,
+        nodeindexarraysorted, typevector, wmodes, symfreqvar, true)
+end
+
+
+"""
+
+    calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
+        outputportindices, inputportimpedances, outputportimpedances,
+        nodeindexarraysorted, typevector, wmodes, symfreqvar, nosource)
+
+
+# calculate the input and output power waves as defined in (except in
+# units of sqrt(photons/second) instead of sqrt(power)
+# K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
+# Micr. Theory and Tech. 13, 194–202 (1965) 
+# doi: 10.1109/TMTT.1965.1125964
+# inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage + portimpedance * portcurrent)
+# we can simplify the above to:
+inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
+# outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
+
+"""
+function calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
+    outputportindices, inputportimpedances, outputportimpedances,
+    nodeindexarraysorted, typevector, wmodes, symfreqvar, nosource)
     # check the size of S
 
     # check the size of inputwave
@@ -307,38 +207,16 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
         for j in 1:Nmodes
             for k in 1:Nsolutions
 
-                # key = inputportbranches[i]
-                key = (nodeindexarraysorted[1,inputportindices[i]],nodeindexarraysorted[2,inputportindices[i]])
-
-                # calculate the branch source currents at the ports from the node
-                # source current array bnm
-                if key[1] == 1
-                    sourcecurrent = -bnm[(key[2]-2)*Nmodes+j,k]
-                elseif key[2] == 1
-                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k]
-                else
-                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k] 
-                    sourcecurrent -= bnm[(key[2]-2)*Nmodes+j,k]
-                end
-
-                # calculate the branch fluxes at the ports from the node flux array phin
-                if key[1] == 1
-                    portvoltage = -phin[(key[2]-2)*Nmodes+j,k]
-                elseif key[2] == 1
-                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k]
-                else
-                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k] 
-                    portvoltage -= phin[(key[2]-2)*Nmodes+j,k]
-                end
-
-                # scale the branch flux by frequency to get voltage
-                portvoltage *= im*wmodes[j]
+                sourcecurrent = calcsourcecurrent(
+                    nodeindexarraysorted[1,inputportindices[i]],
+                    nodeindexarraysorted[2,inputportindices[i]],
+                    bnm,Nmodes,j,k)
 
                 # calculate the port impedance
-                portimpedance = calcimpedance(inputportimpedances[i],typevector[inputportindices[i]],wmodes[j],symfreqvar)
-
-                # calculate the current flowing through the port
-                portcurrent = sourcecurrent - portvoltage / portimpedance
+                portimpedance = calcimpedance(
+                    inputportimpedances[i],
+                    typevector[inputportindices[i]],
+                    wmodes[j],symfreqvar)
 
                 # calculate the scaling factor for the waves
                 kval = 1 / sqrt(Complex(real(portimpedance)))
@@ -351,11 +229,7 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
                 # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
                 # Micr. Theory and Tech. 13, 194–202 (1965) 
                 # doi: 10.1109/TMTT.1965.1125964
-                # inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage + portimpedance * portcurrent)
-                # we can simplify the above to:
                 inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
-                # outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
-
             end
         end
     end
@@ -365,39 +239,30 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
         for j in 1:Nmodes
             for k in 1:Nsolutions
 
-                # key = outputportbranches[i]
-                key = (nodeindexarraysorted[1,outputportindices[i]],nodeindexarraysorted[2,outputportindices[i]])
+                sourcecurrent = calcsourcecurrent(
+                    nodeindexarraysorted[1,outputportindices[i]],
+                    nodeindexarraysorted[2,outputportindices[i]],
+                    bnm,Nmodes,j,k)
 
-                # calculate the branch source currents at the ports from the node
-                # source current array bnm
-                if key[1] == 1
-                    sourcecurrent = -bnm[(key[2]-2)*Nmodes+j,k]
-                elseif key[2] == 1
-                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k]
-                else
-                    sourcecurrent =  bnm[(key[1]-2)*Nmodes+j,k] 
-                    sourcecurrent -= bnm[(key[2]-2)*Nmodes+j,k]
-                end
-
-                # calculate the branch fluxes at the ports from the node flux array phin
-                if key[1] == 1
-                    portvoltage = -phin[(key[2]-2)*Nmodes+j,k]
-                elseif key[2] == 1
-                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k]
-                else
-                    portvoltage =  phin[(key[1]-2)*Nmodes+j,k] 
-                    portvoltage -= phin[(key[2]-2)*Nmodes+j,k]
-                end
-
-                # scale the branch flux by frequency to get voltage
-                portvoltage *= im*wmodes[j]
+                portvoltage = calcportvoltage(
+                    nodeindexarraysorted[1,outputportindices[i]],
+                    nodeindexarraysorted[2,outputportindices[i]],
+                    phin,
+                    wmodes,
+                    Nmodes,j,k)
 
                 # calculate the port impedance
-                portimpedance = calcimpedance(outputportimpedances[i],typevector[outputportindices[i]],wmodes[j],symfreqvar)
+                portimpedance = calcimpedance(
+                    outputportimpedances[i],
+                    typevector[outputportindices[i]],
+                    wmodes[j],symfreqvar)
 
                 # calculate the current flowing through the port
-                # portcurrent = sourcecurrent - portvoltage / portimpedance
-                portcurrent = - portvoltage / portimpedance
+                if nosource
+                    portcurrent = - portvoltage / portimpedance
+                else
+                    portcurrent = sourcecurrent - portvoltage / portimpedance
+                end
 
                 # calculate the scaling factor for the waves
                 kval = 1 / sqrt(Complex(real(portimpedance)))
@@ -410,9 +275,6 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
                 # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
                 # Micr. Theory and Tech. 13, 194–202 (1965) 
                 # doi: 10.1109/TMTT.1965.1125964
-                # inputwave[(i-1)*Nmodes+j,k] = 1/2*k * (portvoltage + portimpedance * portcurrent)
-                # we can simplify the above to:
-                # inputwave[(i-1)*Nmodes+j,k] = 1/2*k * portimpedance * sourcecurrent
                 outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
             end
         end
@@ -425,6 +287,37 @@ function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputport
     return nothing
 end
 
+
+function calcportvoltage(key1,key2,phin,wmodes,Nmodes,j,k)
+
+    # calculate the branch fluxes at the ports from the node flux array phin
+    if key1 == 1
+        portvoltage = -phin[(key2-2)*Nmodes+j,k]
+    elseif key2 == 1
+        portvoltage =  phin[(key1-2)*Nmodes+j,k]
+    else
+        portvoltage =  phin[(key1-2)*Nmodes+j,k] 
+        portvoltage -= phin[(key2-2)*Nmodes+j,k]
+    end
+
+    # scale the branch flux by frequency to get voltage
+    portvoltage *= im*wmodes[j]
+
+    return portvoltage
+end
+
+function calcsourcecurrent(key1,key2,bnm,Nmodes,j,k)
+
+    if key1 == 1
+        sourcecurrent = -bnm[(key2-2)*Nmodes+j,k]
+    elseif key2 == 1
+        sourcecurrent =  bnm[(key1-2)*Nmodes+j,k]
+    else
+        sourcecurrent =  bnm[(key1-2)*Nmodes+j,k] 
+        sourcecurrent -= bnm[(key2-2)*Nmodes+j,k]
+    end
+    return sourcecurrent
+end
 
 """
     calcimpedance(c::Union{Integer,T,Complex{T}},type,w,symfreqvar) where {T<:AbstractFloat}
