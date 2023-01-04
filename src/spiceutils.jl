@@ -87,26 +87,26 @@ function wrspice_calcS_paramp(out, wswrspice, Nnodes; stepsperperiod = 80,
         vsin = vsinpump .- vpump
         vcos = vcospump .- vpump
 
-        # the JJ phase is stored as a voltage node after the regular voltage
-        # nodes
-        phasepump = out[1][1].values["V"][Nnodes:end,end-stepsperperiod+1:end]
-        phasesinpump = out[1][2*i].values["V"][Nnodes:end,end-stepsperperiod+1:end]
-        phasecospump = out[1][2*i+1].values["V"][Nnodes:end,end-stepsperperiod+1:end]
-        phasesin = phasesinpump .- phasepump
-        phasecos = phasecospump .- phasepump
+        # # the JJ phase is stored as a voltage node after the regular voltage
+        # # nodes
+        # phasepump = out[1][1].values["V"][Nnodes:end,end-stepsperperiod+1:end]
+        # phasesinpump = out[1][2*i].values["V"][Nnodes:end,end-stepsperperiod+1:end]
+        # phasecospump = out[1][2*i+1].values["V"][Nnodes:end,end-stepsperperiod+1:end]
+        # phasesin = phasesinpump .- phasepump
+        # phasecos = phasecospump .- phasepump
 
         t = out[1][1].values["S"][end-stepsperperiod+1:end]
 
         vsincos = vcos .+ im*vsin
         # vsincos = vcos .- im*vsin
 
-        phasesincos = phasecos .+ im*phasesin
+        # phasesincos = phasecos .+ im*phasesin
 
-        for k = 1:(size(phasesincos)[1])
-            for j = 1:stepsperperiod
-                phasesincos[k,j] = phasesincos[k,j]*exp.(-im*wswrspice[i]*t[j])
-            end
-        end
+        # for k = 1:(size(phasesincos)[1])
+        #     for j = 1:stepsperperiod
+        #         phasesincos[k,j] = phasesincos[k,j]*exp.(-im*wswrspice[i]*t[j])
+        #     end
+        # end
 
         for k = 1:Nnodes-1
             for j = 1:stepsperperiod
@@ -116,7 +116,7 @@ function wrspice_calcS_paramp(out, wswrspice, Nnodes; stepsperperiod = 80,
         end
 
         ftvsincos = FFTW.fft(vsincos,[2])/stepsperperiod;
-        ftphasesincos = FFTW.fft(phasesincos,[2])/stepsperperiod;
+        # ftphasesincos = FFTW.fft(phasesincos,[2])/stepsperperiod;
 
         #calculate S11 and S21 from the wrspice simulation
         Vth=Is*50
