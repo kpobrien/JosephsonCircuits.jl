@@ -140,6 +140,28 @@ println(indexdict)
 Dict((:L, 1, 3) => 1, (:K, 4, 7) => 2, (:R, 1, 2) => 1, (:I, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:L, 1, 2) => 1)
 Dict((:C, 1, 3, 1) => 8, (:I, 1, 2, 1) => 2, (:R, 1, 2, 1) => 3, (:K, 4, 7, 1) => 5, (:K, 4, 7, 2) => 6, (:L, 1, 2, 1) => 4, (:L, 1, 3, 1) => 7, (:P, 1, 2, 1) => 1, (:C, 1, 3, 2) => 9)
 ```
+```jldoctest
+typevector = [:P, :I, :R, :L, :K, :K, :L, :C]
+nodeindexarraysorted = [2 2 2 2 0 0 3 3 3; 1 1 1 1 0 0 1 1 1]
+namedict = Dict("L1" => 4, "I1" => 2, "L2" => 7, "C2" => 8, "K2" => 6, "C3" => 9, "R1" => 3, "P1" => 1, "K1" => 5)
+mutualinductorvector = ["L1", "L2", "L1", "L2"]
+countdict, indexdict = JosephsonCircuits.componentdictionaries(
+    typevector,nodeindexarraysorted,namedict,mutualinductorvector)
+
+# output
+ERROR: DimensionMismatch: Input arrays must have the same length
+```
+```jldoctest
+typevector = [:P, :I, :R, :L, :K, :K, :L, :C, :C]
+nodeindexarraysorted = [2 2 2 2 0 0 3 3 3; 1 1 1 1 0 0 1 1 1; 1 1 1 1 0 0 1 1 1]
+namedict = Dict("L1" => 4, "I1" => 2, "L2" => 7, "C2" => 8, "K2" => 6, "C3" => 9, "R1" => 3, "P1" => 1, "K1" => 5)
+mutualinductorvector = ["L1", "L2", "L1", "L2"]
+countdict, indexdict = JosephsonCircuits.componentdictionaries(
+    typevector,nodeindexarraysorted,namedict,mutualinductorvector)
+
+# output
+ERROR: DimensionMismatch: The length of the first axis must be 2
+```
 """
 function componentdictionaries(typevector::Vector{Symbol},
     nodeindexarray::Matrix{Int}, namedict::Dict,
@@ -253,6 +275,20 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(typevector, nodeindexarray,
 
 # output
 (3.141466134545454e-13, 3.1414661345454545e-7)
+```
+```jldoctest
+typevector = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
+nodeindexarray = [2 2 2 3 3 3 4 4; 1 1 3 1 1 4 1 1]
+valuevector = Real[1, 50.0, 1.0e-13, 2.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, 1.2e-12]
+namedict = Dict("R1" => 2, "Cc2" => 6, "Cj2" => 8, "Cj1" => 5, "P1" => 1, "Cc1" => 3, "Lj2" => 7, "Lj1" => 4)
+mutualinductorvector = String[]
+countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:C, 1, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
+indexdict = Dict((:C, 2, 3, 1) => 3, (:Lj, 1, 3, 1) => 4, (:C, 1, 3, 1) => 5, (:R, 1, 2, 1) => 2, (:C, 3, 4, 1) => 6, (:P, 1, 2, 1) => 1, (:C, 1, 4, 1) => 8, (:Lj, 1, 4, 1) => 7)
+Cj, Icmean = JosephsonCircuits.calcCjIcmean(typevector, nodeindexarray,
+    valuevector, namedict,mutualinductorvector, countdict, indexdict)
+
+# output
+(2.3187011945454545e-13, 2.3187011945454544e-7)
 ```
 ```jldoctest
 typevector = [:P, :R, :C, :Lj, :C, :C, :Lj]
