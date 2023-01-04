@@ -648,6 +648,9 @@ julia> JosephsonCircuits.findgroundnodeindex(["1","0","2"])
 
 julia> JosephsonCircuits.findgroundnodeindex(["1","2"])
 0
+
+julia> JosephsonCircuits.findgroundnodeindex(String[])
+0
 ```
 """
 function findgroundnodeindex(uniquenodevector::Vector{String})
@@ -714,6 +717,9 @@ julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:test)
 ERROR: ArgumentError: Unknown sorting type.
 
 julia> JosephsonCircuits.calcnodesorting(["30","11","1","2"];sorting=:none)
+ERROR: ArgumentError: No ground node found in netlist.
+
+julia> JosephsonCircuits.calcnodesorting(String[];sorting=:none)
 ERROR: ArgumentError: No ground node found in netlist.
 ```
 """
