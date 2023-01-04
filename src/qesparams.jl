@@ -260,6 +260,32 @@ This is a bit of a hack but I ran into issues with complex capacitance when
 the capacitor was at the same branch as a current source. the calcS function
 would use that current source in calculating the output waves, which it should
 not do.
+
+# Examples
+```jldoctest
+Snoise = ComplexF64[0;;]
+inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
+noiseoutputwave = ComplexF64[0;;]
+phin = ComplexF64[-2.5000000000007394e-10 - 0.000795774715459398im; 1.983790476804266e-20 + 3.141592641138603e-16im;;]
+bnm = ComplexF64[1.0 + 0.0im; 0.0 + 0.0im;;]
+portimpedanceindices = [2]
+noiseportimpedanceindices = [6]
+portimpedances = [50]
+noiseportimpedances = [1]
+nodeindexarraysorted = [2 2 2 3 3 3; 1 1 3 1 1 1]
+typevector = [:P, :R, :C, :Lj, :C, :R]
+wmodes = [2*pi*5e9]
+symfreqvar = nothing
+JosephsonCircuits.calcSnoise!(Snoise,inputwave,noiseoutputwave,
+    phin,bnm,portimpedanceindices,noiseportimpedanceindices,
+    portimpedances,noiseportimpedances,nodeindexarraysorted,
+    typevector,wmodes,symfreqvar)
+Snoise
+
+# output
+1×1 Matrix{ComplexF64}:
+ -2.7915456687917157e-6 + 1.762749772454945e-10im
+```
 """
 function calcSnoise!(S,inputwave,outputwave,phin,bnm,inputportindices,outputportindices,
     inputportimpedances,outputportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
