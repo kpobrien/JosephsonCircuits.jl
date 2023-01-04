@@ -255,23 +255,23 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(typevector, nodeindexarray,
 (3.141466134545454e-13, 3.1414661345454545e-7)
 ```
 ```jldoctest
-typevector = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
-nodeindexarray = [2 2 2 3 3 3 4 4; 1 1 3 1 1 4 1 1]
-valuevector = Any[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, Cj2]
-namedict = Dict("R1" => 2, "Cc2" => 6, "Cj2" => 8, "Cj1" => 5, "P1" => 1, "Cc1" => 3, "Lj2" => 7, "Lj1" => 4)
+typevector = [:P, :R, :C, :Lj, :C, :C, :Lj]
+nodeindexarray = [2 2 2 3 3 3 4; 1 1 3 1 1 4 1]
+valuevector = Real[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12, 1.0e-13, 1.1e-9]
+namedict = Dict("R1" => 2, "Cc2" => 6, "Cj1" => 5, "P1" => 1, "Cc1" => 3, "Lj2" => 7, "Lj1" => 4)
 mutualinductorvector = String[]
-countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:C, 1, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
-indexdict = Dict((:C, 2, 3, 1) => 3, (:Lj, 1, 3, 1) => 4, (:C, 1, 3, 1) => 5, (:R, 1, 2, 1) => 2, (:C, 3, 4, 1) => 6, (:P, 1, 2, 1) => 1, (:C, 1, 4, 1) => 8, (:Lj, 1, 4, 1) => 7)
+countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
+indexdict = Dict((:C, 2, 3, 1) => 3, (:Lj, 1, 3, 1) => 4, (:C, 1, 3, 1) => 5, (:R, 1, 2, 1) => 2, (:C, 3, 4, 1) => 6, (:P, 1, 2, 1) => 1, (:Lj, 1, 4, 1) => 7)
 Cj, Icmean = JosephsonCircuits.calcCjIcmean(typevector, nodeindexarray,
     valuevector, namedict,mutualinductorvector, countdict, indexdict)
 
 # output
-Cj cannot be zero in the WRSPICE JJ model.
+ERROR: Cj cannot be zero in the WRSPICE JJ model.
 ```
 ```jldoctest
 typevector = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
 nodeindexarray = [2 2 2 3 3 3 4 4; 1 1 3 1 1 4 1 1]
-valuevector = Any[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, Cj2]
+valuevector = Real[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12, 1.0e-13, 100*1.1e-9, 1.2e-12]
 namedict = Dict("R1" => 2, "Cc2" => 6, "Cj2" => 8, "Cj1" => 5, "P1" => 1, "Cc1" => 3, "Lj2" => 7, "Lj1" => 4)
 mutualinductorvector = String[]
 countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:C, 1, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
@@ -280,7 +280,7 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(typevector, nodeindexarray,
     valuevector, namedict,mutualinductorvector, countdict, indexdict)
 
 # output
-Minimum junction too much smaller than average for WRSPICE.
+ERROR: Minimum junction too much smaller than average for WRSPICE.
 ```
 """
 function calcCjIcmean(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
