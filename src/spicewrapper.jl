@@ -328,7 +328,7 @@ function spice_run(input::String,spicecmd)
 
     #clean up the input and output files
     rm(inputfilename)
-    # rm(outputfilename)
+    rm(outputfilename)
 
     return output
 end
