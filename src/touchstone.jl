@@ -255,13 +255,14 @@ function touchstone_parse(io::IO)
 
     # check if the number of ports and frequencies inferred from reading the
     # data are consistent with information from the header, if available.
-    if version < 2.0 && iszero(numberofports)
+    if version < 2.0
         # version 1 files have no information on the number of ports in the
         # header and the information in the filename is unreliable so take the
         # number of ports form the network data.
         #  v1 files only have full matrices
+        @assert numberofports == 0
         numberofports = convert(Int,sqrt((nvals -1)/2))
-    elseif version == 2.0
+    else
         # compare the number of ports in the header with the number of ports
         # inferred from reading the network data. 
         if matrixformat == "Full"
@@ -273,22 +274,20 @@ function touchstone_parse(io::IO)
                 error("Number of ports not consistent between header and network data.")
             end
         end
-    else
-        error("Incorrect version number.")
     end
+
 
     # check if the number of frequencies inferred from reading the
     # data are consistent with information from the header, if available.
-    if version < 2.0 && iszero(numberoffrequencies)
+    if version < 2.0
         # version 1 files have no information on the number of frequencies
         # in the header so take that from the noise data.
+        @assert numberoffrequencies == 0
         numberoffrequencies = nfreq
-    elseif version == 2.0
+    else
         # compare the number of frequencies specified in the header
         # with the number of frequencies in the data file.
         @assert numberoffrequencies == nfreq
-    else
-        error("")
     end
 
     # parse the noise data
@@ -296,16 +295,15 @@ function touchstone_parse(io::IO)
 
     # check if the number of noise frequencies inferred from reading the
     # data are consistent with information from the header, if available.
-    if version < 2.0 && iszero(numberofnoisefrequencies)
+    if version < 2.0
         # version 1 files have no information on the number of noise frequencies
         # in the header so take that from the noise data.
+        @assert numberofnoisefrequencies == 0
         numberofnoisefrequencies = nnoisefreq
-    elseif version == 2.0
+    else
         # compare the number of noise frequencies specified in the header
         # with the number of noise frequencies in the data file.
         @assert numberofnoisefrequencies == nnoisefreq
-    else
-        error("")
     end
 
     # set the default matrix format if one is not already set. 
@@ -475,7 +473,8 @@ IOStream or IOBuffer `io`.
 """
 function touchstone_write(io::IO,ts::TouchstoneFile)
 
-    if ts.version == 1.0 || ts.version == 1.1
+    # write a verion 1.0 file
+    if ts.version < 2.0
         # write the comments
         for comment in ts.comments
             write(io,"!$(comment)\n")
@@ -556,14 +555,15 @@ function touchstone_write(io::IO,ts::TouchstoneFile)
             end
         end
 
-    elseif ts.version == 2.0
+    # write a version 2.0 file
+    else
         # write the comments
         for comment in ts.comments
             write(io,"!$(comment)\n")
         end
 
         # write the version keyword
-        write(io,"[Version] 2.0\n")
+        write(io,"[Version] $(ts.version)\n")
 
         # write the option line
         write(io,"# $(ts.frequencyunit) $(ts.parameter) $(ts.format) R $(ts.R)\n")
@@ -676,8 +676,6 @@ function touchstone_write(io::IO,ts::TouchstoneFile)
 
         write(io,"[End]")
 
-    else
-        error("unknown version.")
     end
 
     return nothing
