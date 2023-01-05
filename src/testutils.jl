@@ -68,7 +68,7 @@ true
 julia> JosephsonCircuits.comparestruct(nothing,nothing)
 true
 
-julia> JosephsonCircuits.compares(nothing,nothing)
+julia> JosephsonCircuits.compare(nothing,nothing)
 true
 
 julia> cg = JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), JosephsonCircuits.SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], JosephsonCircuits.Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2);JosephsonCircuits.compare(cg,cg)
