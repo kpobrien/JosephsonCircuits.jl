@@ -99,7 +99,7 @@ function spice_raw_load(filename)
         splitline = split(line,r"\s+")
 
         if length(splitline) > 3
-            println("Warning: Variable line has additional parameters which we are ignoring")
+            @warn "Variable line has additional parameters which we are ignoring"
         end 
         # variables[i-headerlength] = splitline[3]
         if !haskey(variables,splitline[3])
