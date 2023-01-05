@@ -135,6 +135,7 @@ function spice_raw_load(filename)
         error("This function only handles Binary files not ASCII")
     end
 
+    @show variables
     
     # sort the labels. voltages such as  "V(1)","V(10)","V(100)"."V(101)"
     sortperms = calcspicesortperms(variables)
@@ -150,41 +151,32 @@ function spice_raw_load(filename)
 
 end
 
+"""
+    calcspicesortperms(variabledict::Dict{String,Vector{String}})
 
-function calcspicesortperms(variabledict)
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcspicesortperms(Dict("V" => ["v(1)", "v(2)", "v(3)"], "Hz" => ["frequency"]))
+Dict{String, Vector{Int64}} with 2 entries:
+  "V"  => [1, 2, 3]
+  "Hz" => [1]
+```
+"""
+function calcspicesortperms(variabledict::Dict{String,Vector{String}})
 
-    sortperms = Dict()
+    sortperms = Dict{String,Vector{Int}}()
 
     for (label,variables) in variabledict
         sortvariables = Dict()
         for variable in variables
-            s = variable
-            m1 = match(r"^\w+",s)
-            m2 = match(r"\d+",s)
-            m3 = match(r"\d+",s[m1.offset+length(m1.match):end])
-
-            if m3 !== nothing
-                #if there is a separate number, use that
-                key = m1.match
-                val = parse(Int,m3.match)
-        #         push!(sortdict[m1.match],parse(Int,m3.match))
-            elseif m2 !== nothing
-                key = m1.match[1:m2.offset-1]
-                #otherwise if there is a symbol separated by a number 
-                val = parse(Int,m2.match)
-            else
-                key = m1.match
-                val = m1.match
-            end
-
+            key, val = parsespicevariable(variable)
             if !haskey(sortvariables,key)
-                sortvariables[key] = []
+                sortvariables[key] = typeof(val)[]
             end
-            
             push!(sortvariables[key],val)
         end
         #loop over the sorted outer arrays
-        sp = []
+        sp = Int[]
         for (key,val) in sort(collect(sortvariables), by=x->x)
             #sort the dictionary
             p = sortperm(val)
@@ -196,3 +188,44 @@ function calcspicesortperms(variabledict)
 
     return sortperms
 end
+
+"""
+    parsespicevariable(variable::String)
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.parsespicevariable("V1(5)")
+("V1", 5)
+
+julia> JosephsonCircuits.parsespicevariable("V1")
+("V", 1)
+
+julia> JosephsonCircuits.parsespicevariable("V-1")
+("V", 1)
+
+julia> JosephsonCircuits.parsespicevariable("frequency")
+("frequency", "frequency")
+```
+"""
+function parsespicevariable(variable::String)
+
+    s = variable
+    m1 = match(r"^\w+",s)
+    m2 = match(r"\d+",s)
+    m3 = match(r"\d+",s[m1.offset+length(m1.match):end])
+
+    if m3 !== nothing
+        #if there is a separate number, use that
+        key = m1.match
+        val = parse(Int,m3.match)
+    elseif m2 !== nothing
+        key = m1.match[1:m2.offset-1]
+        #otherwise if there is a symbol separated by a number 
+        val = parse(Int,m2.match)
+    else
+        key = m1.match
+        val = m1.match
+    end
+
+    return key,val
+  end
