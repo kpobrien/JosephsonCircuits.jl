@@ -1162,6 +1162,14 @@ JosephsonCircuits.freqsubst(A,wmodes,w)
 # output
 ERROR: The dimensions of A must be integer multiples of the length of wmodes.
 ```
+```jldoctest
+wmodes = [-1,2];
+A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,3],2,2),2);
+JosephsonCircuits.freqsubst(A,wmodes,1)
+
+# output
+ERROR: Error: symfreqvar must be a symbolic variable (or nothing if no symbolic variables)
+```
 """
 function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
 
