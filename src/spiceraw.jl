@@ -134,8 +134,6 @@ function spice_raw_load(filename)
     else
         error("This function only handles Binary files not ASCII")
     end
-
-    @show variables
     
     # sort the labels. voltages such as  "V(1)","V(10)","V(100)"."V(101)"
     sortperms = calcspicesortperms(variables)

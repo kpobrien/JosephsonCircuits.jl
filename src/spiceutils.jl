@@ -5,6 +5,42 @@
 Generate the WRSPICE input files for a time domain domain simulation in which
 the signal angular frequency is swept over `ws` with pump angular frequency
 `wp` and pump current `Ip`. 
+
+```
+using JosephsonCircuits
+using Plots
+circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("R1","1","0",:Rleft))
+push!(circuit,("C1","1","2",:Cc)) 
+push!(circuit,("Lj1","2","0",:Lj)) 
+push!(circuit,("C2","2","0",:Cj))
+circuitdefs = Dict(
+    :Lj =>1000e-12,
+    :Cc => 100.0e-15,
+    :Cj => 1000e-15,
+    :Rleft => 50,
+    :Rright => 50,
+    :Ipump => 1.0e-8,
+)
+ws=2*pi*(4.5:0.001:5.0)*1e9
+Npumpmodes = 11
+Nsignalmodes = 8
+wp=2*pi*4.75001*1e9
+Ip=0.00565e-6
+@time jpa = hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs);
+wswrspice=2*pi*(4.5:0.01:5.0)*1e9
+n = JosephsonCircuits.exportnetlist(circuit,circuitdefs);
+input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,wp,2*Ip);
+@time output = JosephsonCircuits.spice_run(input,JosephsonCircuits.wrspice_cmd());
+S11,S21=JosephsonCircuits.wrspice_calcS_paramp(output,wswrspice,n.Nnodes);
+plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(jpa.signal.S[jpa.signal.signalindex,jpa.signal.signalindex,:])),
+    label="harmonic balance",
+    xlabel="Frequency (GHz)",
+    ylabel="S11 (dB)")
+plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),label="wrspice",seriestype=:scatter)
+```
 """
 function wrspice_input_paramp(netlist, ws, wp, Ip; stepsperperiod = 80, Is = 1e-13,
     tstop = 200e-9, trise = 10e-9)
@@ -58,13 +94,13 @@ Vpump[1,:] .= sin.(2*pi*wp*t)
 Vsignalsin[1,:] .= sin.(2*pi*wp*t)+Is/50*sin.(2*pi*ws*t)
 Vsignalcos[1,:] .= sin.(2*pi*wp*t)+Is/50*cos.(2*pi*ws*t)
 
-out = [[(values=Dict("S"=>t,"V"=>Vpump),),
+out = [(values=Dict("S"=>t,"V"=>Vpump),),
         (values=Dict("S"=>t,"V"=>Vsignalsin),),
         (values=Dict("S"=>t,"V"=>Vsignalcos),),
-        ]];
-out[1][1].values["V"];
-out[1][2].values["V"];
-out[1][3].values["V"];
+        ];
+out[1].values["V"];
+out[2].values["V"];
+out[3].values["V"];
 JosephsonCircuits.wrspice_calcS_paramp(out, 2*pi, Nnodes;
     stepsperperiod = stepsperperiod, Is = Is)
 
@@ -81,9 +117,9 @@ function wrspice_calcS_paramp(out, wswrspice, Nnodes; stepsperperiod = 80,
 
     for i = 1:length(wswrspice)
 
-        vpump = out[1][1].values["V"][1:Nnodes-1,end-stepsperperiod+1:end]
-        vsinpump = out[1][2*i].values["V"][1:Nnodes-1,end-stepsperperiod+1:end]
-        vcospump = out[1][2*i+1].values["V"][1:Nnodes-1,end-stepsperperiod+1:end]
+        vpump = out[1].values["V"][1:Nnodes-1,end-stepsperperiod+1:end]
+        vsinpump = out[2*i].values["V"][1:Nnodes-1,end-stepsperperiod+1:end]
+        vcospump = out[2*i+1].values["V"][1:Nnodes-1,end-stepsperperiod+1:end]
         vsin = vsinpump .- vpump
         vcos = vcospump .- vpump
 
@@ -95,7 +131,7 @@ function wrspice_calcS_paramp(out, wswrspice, Nnodes; stepsperperiod = 80,
         # phasesin = phasesinpump .- phasepump
         # phasecos = phasecospump .- phasepump
 
-        t = out[1][1].values["S"][end-stepsperperiod+1:end]
+        t = out[1].values["S"][end-stepsperperiod+1:end]
 
         vsincos = vcos .+ im*vsin
         # vsincos = vcos .- im*vsin
