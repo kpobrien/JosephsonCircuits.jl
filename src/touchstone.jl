@@ -166,7 +166,7 @@ function touchstone_parse(io::IO)
         elseif isversion(line)
             # parse the [Version] line
             if !iszero(version)
-                error("Only one [Version] keyword allowed:\n$(line)")
+                error("Only one [Version] keyword allowed: $(line)")
             else
                 version=parseversion(line)
             end
@@ -188,12 +188,12 @@ function touchstone_parse(io::IO)
         elseif isoptionline(line) && !readoptionline
             # the spec says a second options line should be ignored, but the 
             # golden parser tsck2 throws an error. 
-            error("Error: Invalid secondary options line:\n$(line)")
+            error("Invalid secondary options line: $(line)")
         
         elseif isnumberofports(line)
             # parse the [Number of Ports] line
             if !iszero(numberofports)
-                error("Error: Only one [Number of Ports] keyword allowed:\n$(line)")
+                error("Only one [Number of Ports] keyword allowed: $(line)")
             else
                 numberofports = parsenumberofports(line)
             end
@@ -202,17 +202,17 @@ function touchstone_parse(io::IO)
             # parse the [Two-Port Data Order] line. required if number of ports is 2
             if numberofports == 2
                 if !isempty(twoportdataorder)
-                    error("Error: Only one [Two-Port Data Order] line allowed:\n$(line)")
+                    error("Only one [Two-Port Data Order] line allowed: $(line)")
                 else
                     twoportdataorder = parsetwoportdataorder(line)
                 end
             else
-                error("Error: [Two-Port Data Order] is only allowed if [Number of Ports] is 2:\n$(line)")
+                error("[Two-Port Data Order] is only allowed if [Number of Ports] is 2: $(line)")
             end
 
         elseif isbegininformation(line)
             if iszero(numberofports)
-                error("Error: [Number of Ports] must be before [Begin Information]")
+                error("[Number of Ports] must be before [Begin Information]")
             end
             parseinformation!(information, comments, io)
 
@@ -227,10 +227,10 @@ function touchstone_parse(io::IO)
         
         elseif isreference(line)
             if !isempty(reference)
-                error("Only one [Reference] keyword allowed:\n$(line)")
+                error("Only one [Reference] keyword allowed: $(line)")
             end
             if iszero(numberofports)
-                error("Error: [Number of Ports] must be before [Reference]")
+                error("[Number of Ports] must be before [Reference]")
             end
             parsereference!(reference, comments, line, numberofports, io)
         
@@ -241,13 +241,17 @@ function touchstone_parse(io::IO)
         elseif line == "[network data]"
             break
         else
-            error("Unknown line type:\n$(line)")
+            error("Unknown line type: $(line)")
         end
     end
 
 
     # parse the network data
     nfreq,nvals =  parsenetworkdata!(networkdata, comments, io)
+
+    if nvals == 0
+        error("No network data.")
+    end
 
     # check if the number of ports and frequencies inferred from reading the
     # data are consistent with information from the header, if available.
@@ -270,7 +274,7 @@ function touchstone_parse(io::IO)
             end
         end
     else
-        error("")
+        error("Incorrect version number.")
     end
 
     # check if the number of frequencies inferred from reading the
@@ -371,7 +375,7 @@ function touchstone_save(filename::String,frequencies::AbstractVector,
     if size(N)[1] == size(N)[2]
         numberofports = size(N)[1]
     else
-        error("Error: Network data arrays are not square.")
+        error("Network data arrays are not square.")
     end
 
     # check the filename. it the file doesn't have a .ts or .sNp extension,
@@ -510,7 +514,7 @@ function touchstone_write(io::IO,ts::TouchstoneFile)
         elseif p == "s"
             normalization = 1
         else
-            error("Error: Unknown parameter")
+            error("Unknown parameter")
         end
 
         # write the network data
@@ -725,39 +729,39 @@ numberoffrequencies = length(f)
 # determine the number of ports and number of frequencies from the network 
 # data `N`. check for consistency.
 if numberoffrequencies != size(N,3)
-    error("the size of the last axis of network data N must equal the number of frequecies")
+    error("The size of the last axis of network data N must equal the number of frequecies")
 end
 
 if size(N,1) != size(N,2)
-    error("network data matrix must be square")
+    error("Network data matrix must be square")
 end
 numberofports = size(N,1)
 
 # check the version
 # should be 1.0, 1.1, or 2.0.
 if !(version == 1.0 || version == 1.1 || version == 2.0)
-    error("version must be 1.0, 1.1, or 2.0")
+    error("Version must be 1.0, 1.1, or 2.0")
 end
 
 # check the frequencyunit
 # should be Hz, kHz, MHz, or GHz, not case sensitive.
 fu = lowercase(frequencyunit)
 if !(fu == "hz" || fu == "khz" || fu == "mhz" || fu == "ghz")
-    error("unknown frequency unit")
+    error("Unknown frequency unit")
 end
 
 # check the format
 # should be MA, RI, or DB, not case sensitive.
 fmt = lowercase(format)
 if !(fmt == "ma" || fmt == "ri" || fmt == "db")
-    error("unknown format")
+    error("Unknown format")
 end
 
 # check the parameter
 # should be MA, RI, or DB, not case sensitive.
 p = lowercase(parameter)
 if !(p == "s" || p == "y" || p == "z" || p == "h" || p == "g")
-    error("unknown parameter")
+    error("Unknown parameter")
 end
 
 # check the impedance `R` and per port impedance `reference`.
@@ -769,11 +773,11 @@ if isempty(reference)
 end
 
 if length(reference) != numberofports
-    error("number of per port impedances must equal number of ports")
+    error("Number of per port impedances must equal number of ports")
 end
 
 if version < 2.0 && !allequal(reference)
-    error("the port impedances are not equal, so we cannot generate a Touchstone file with version < 2.0.")
+    error("The port impedances are not equal, so we cannot generate a Touchstone file with version < 2.0.")
 end
 
 # check the matrixformat
@@ -807,7 +811,7 @@ else
     elseif twoportdataorder == "12_21" || twoportdataorder == "21_12"
         nothing
     else
-        error("unknown two-port data order.")
+        error("Unknown two-port data order.")
     end
 end
 
@@ -845,7 +849,7 @@ function arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies,
     elseif mf == "lower" || mf == "upper"
         nvals = ((2*numberofports+1)^2+3)÷4
     else
-        error("unknown matrixformat.")
+        error("Unknown matrixformat.")
     end
 
     indices = matrixindices(numberofports,matrixformat,twoportdataorder)
@@ -859,7 +863,7 @@ function arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies,
     elseif (p == "z" || p == "y" || p == "g" || p  == "h") && version == 2.0
         normalization = 1.0
     else
-        error("Error: Unknown format or version")
+        error("Unknown format or version")
     end
 
     networkdata = Vector{Float64}(undef,nvals*numberoffrequencies)
@@ -1271,7 +1275,7 @@ julia> JosephsonCircuits.parsetwoportdataorder("[two-port data order] 21_12")
 function parsetwoportdataorder(line::String)
     twoportdataorder = strip(line[22:end])
     if !(twoportdataorder == "12_21" || twoportdataorder == "21_12")
-        error("Error: Unknown [Two-Port Data Order] parameter:\n$(line)")
+        error("Unknown [Two-Port Data Order] parameter:\n$(line)")
     end
     return String(twoportdataorder)
 end
@@ -1520,7 +1524,7 @@ function parsereference!(reference::Vector{Float64}, comments::Vector{String},
                 if length(reference) == numberofports
                     break
                 elseif length(reference) > numberofports
-                    error("Too many values on [Reference] line:\n$(line)")
+                    error("Too many values on [Reference] line: $(line)")
                 end
             end
         end
