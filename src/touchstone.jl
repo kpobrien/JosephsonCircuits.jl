@@ -381,11 +381,11 @@ function touchstone_save(filename::String,frequencies::AbstractVector,
     if (m = match(r"\.ts$|\.s\dp$",lowercase(filename))) != nothing
         if version == 1.0 || version == 1.1
             if m.match != ".s$(numberofports)p"
-                println("Warning: Extension of $(m.match) is not the recommended extension of .s$(numberofports)p for a version 1.0 file with $(numberofports) ports.")
+                @warn "Warning: Extension of $(m.match) is not the recommended extension of .s$(numberofports)p for a version 1.0 file with $(numberofports) ports."
             end
         else
             if m.match != ".s$(numberofports)p" && m.match != ".ts"
-                println("Warning: Extension of $(m.match) is not the recommended extension of .ts or .s$(numberofports)p for a file with $(numberofports) ports.")
+                @warn "Warning: Extension of $(m.match) is not the recommended extension of .ts or .s$(numberofports)p for a file with $(numberofports) ports."
             end
         end
     else
@@ -1826,7 +1826,7 @@ function parsenetworkdata!(networkdata::Vector{Float64},
                         if nvalsold == 0
                             nvalsold = nvals
                         elseif nvalsold != nvals
-                            error("Number of ports are not consistent between lines:\n$(line)")
+                            error("Number of ports are not consistent between lines:$(line)")
                         end
                     end
 
