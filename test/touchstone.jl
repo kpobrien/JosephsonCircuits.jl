@@ -276,6 +276,39 @@ import UUIDs
         end
     end
 
+    @testset "touchstone_write errors" begin
+
+
+        message = "Number of mixed mode order descriptors must match the number of ports."
+        io = IOBuffer();
+        @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},1,1,1),mixedmodeorder = [('D',[1,2]),('C',[1,2])])
+
+        message = "Version 1.0 or 1.1 files do not support mixed-mode order (common and differential modes. Save as a Version 2.0 file or delete mixed-mode order data."
+        io = IOBuffer();
+        @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},2,2,1),mixedmodeorder = [('D',[1,2]),('C',[1,2])],version=1.0)
+
+        message = "Unknown format"
+        io = IOBuffer();
+        @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},2,2,1),format="DA")
+
+        message = "Unknown parameter"
+        io = IOBuffer();
+        @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},2,2,1),parameter="K")
+
+
+        # rm(filename)
+        # [Mixed-Mode Order] D2,3 D6,5 C2,3 C6,5 S4 S1\n
+        # "!Example 16 (Version 2.0):\n!6-port component shown; note that all five ports are used in some\n!relationship\n[Version] 2.0\n# MHz Y RI R 50\n[Number of Ports] 6\n[Number of Frequencies] 1\n[Reference] 50 75 75 50 0.01 0.01\n[Mixed-Mode Order] D2,3 D6,5 C2,3 C6,5 S4 S1\n[Network Data]\n5.00 8.0 9.0 2.0 -1.0 3.0 -2.0 1.0 3.0 1.0 0.1 0.2 -0.2\n2.0 -1.0 7.0 7.0 1.8 -2.0 -1.0 -1.0 -0.5 0.5 0.2 -0.1\n3.0 -2.0 1.8 -2.0 5.8 6.0 1.2 0.8 0.9 0.7 0.3 -0.5\n1.0 3.0 -1.0 -1.0 1.2 0.8 6.3 8.0 2.0 -0.5 1.5 0.6\n1.0 0.1 -0.5 0.5 0.9 0.7 2.0 -0.5 4.7 -6.0 -1.0 2.0\n0.2 -0.2 0.2 -0.1 0.3 -0.5 1.5 0.6 -1.0 2.0 5.5 -7.0\n[End]",
+
+        # mixed-mode order in v1 file
+        message = "Version 1.0 or 1.1 files do not support mixed-mode order (common and differential modes. Save as a Version 2.0 file or delete mixed-mode order data."
+        @test_throws message JosephsonCircuits.touchstone_save(filename, frequencies, N;
+            version = 2.0, R = R,format = format, frequencyunit = frequencyunit,
+            comments = comments, mixedmodeorder = [('D',[1,2]),('C',[1,2]),('C',[1,2])])
+
+    end
+
+
     @testset "touchstone_save RI" begin
 
         #find the temporary directory
@@ -435,17 +468,6 @@ import UUIDs
             version = version, R = R,format = format, frequencyunit = frequencyunit,
             comments = comments)
         rm(filename * ".s2p")
-
-
-        # mixed-mode order in v1 file
-        filename = joinpath(path,"JosephsonCircuits-"* string(UUIDs.uuid1()) * ".s2p")
-        message = "Version 1.0 or 1.1 files do not support mixed-mode order (common and differential modes. Save as a Version 2.0 file or delete mixed-mode order data."
-        @test_throws message JosephsonCircuits.touchstone_save(filename, frequencies, N;
-            version = 1.0, R = R,format = format, frequencyunit = frequencyunit,
-            comments = comments, mixedmodeorder = [('D',[1,2]),('C',[1,2])])
-        # rm(filename)
-        # [Mixed-Mode Order] D2,3 D6,5 C2,3 C6,5 S4 S1\n
-        # "!Example 16 (Version 2.0):\n!6-port component shown; note that all five ports are used in some\n!relationship\n[Version] 2.0\n# MHz Y RI R 50\n[Number of Ports] 6\n[Number of Frequencies] 1\n[Reference] 50 75 75 50 0.01 0.01\n[Mixed-Mode Order] D2,3 D6,5 C2,3 C6,5 S4 S1\n[Network Data]\n5.00 8.0 9.0 2.0 -1.0 3.0 -2.0 1.0 3.0 1.0 0.1 0.2 -0.2\n2.0 -1.0 7.0 7.0 1.8 -2.0 -1.0 -1.0 -0.5 0.5 0.2 -0.1\n3.0 -2.0 1.8 -2.0 5.8 6.0 1.2 0.8 0.9 0.7 0.3 -0.5\n1.0 3.0 -1.0 -1.0 1.2 0.8 6.3 8.0 2.0 -0.5 1.5 0.6\n1.0 0.1 -0.5 0.5 0.9 0.7 2.0 -0.5 4.7 -6.0 -1.0 2.0\n0.2 -0.2 0.2 -0.1 0.3 -0.5 1.5 0.6 -1.0 2.0 5.5 -7.0\n[End]",
 
     end
 
