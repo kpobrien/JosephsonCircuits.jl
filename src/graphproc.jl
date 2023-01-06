@@ -123,7 +123,7 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1},Nnodes::Int)
                 # println("Warning: Loop exists but max loop size too small to find vertices.")
                 push!(lvarray,[])
             else
-    #             println("closure branch: ",cj,", loop vertices:", first(ul))
+                # println("closure branch: ",cj,", loop vertices:", first(ul))
                 push!(lvarray,vmap[first(ul)])
             end
         end
@@ -158,7 +158,7 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1},Nnodes::Int)
     end
 
     gl2 = Graphs.SimpleDiGraphFromIterator(tuple2edge(glearray))
-    # if mode vertices were found when parsing all the compoments than there are in
+    # if more vertices were found when parsing all the compoments than there are in
     # the graph of inductive components (gl), then add vertices.this can happen if
     # there are only non-inductive components connected the last nodes in the graph. 
     if Graphs.nv(gl2) < Nnodes
@@ -203,11 +203,9 @@ Dict{Tuple{Int64, Int64}, Int64} with 6 entries:
 """
 function edge2index(graph::Graphs.SimpleDiGraph{Int})
     edge2indexdict = Dict{Tuple{Int, Int},Int}()
-    i = 1
-    for e in Graphs.edges(graph)
+    for (i,e) in enumerate(Graphs.edges(graph))
         edge2indexdict[(Graphs.src(e),Graphs.dst(e))] = i
         edge2indexdict[(Graphs.dst(e),Graphs.src(e))] = i
-        i+=1
     end
     return edge2indexdict
 end
@@ -230,7 +228,7 @@ julia> JosephsonCircuits.tuple2edge([(1,2),(3,4)])
 function tuple2edge(tuplevector::Vector{Tuple{Int, Int}})
     edgevector = Vector{Graphs.SimpleGraphs.SimpleEdge{Int}}(undef, 0)
 
-    for i = 1:length(tuplevector)
+    for i in 1:length(tuplevector)
         push!(edgevector,Graphs.Edge(tuplevector[i][1],tuplevector[i][2]))
     end
     return edgevector
@@ -258,7 +256,7 @@ function tuple2edge(tuplevector::Vector{Tuple{Int, Int, Int, Int}})
         }
     }(undef, 0)
 
-    for i = 1:length(tuplevector)
+    for i in 1:length(tuplevector)
         push!(
             edgevector,
             (
