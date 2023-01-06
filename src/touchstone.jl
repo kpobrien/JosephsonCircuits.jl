@@ -362,10 +362,12 @@ https://ibis.org/connector/touchstone_spec11.pdf
 and the 2.0 spec:
 https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf
 """
-function touchstone_save(filename::String,frequencies::AbstractVector,
-    N::AbstractArray;version=1.0,reference=[50.0,50.0],R = 50.0,format="RI",
-    parameter = "S", comments=[""],twoportdataorder="12_21",matrixformat="Full",
-    frequencyunit="Hz")
+function touchstone_save(filename::String, frequencies::AbstractVector,
+    N::AbstractArray; version=1.0, reference::Vector=[50.0,50.0], R = 50.0,
+    format::String="RI", parameter::String = "S", comments::Vector{String}=[""],
+    twoportdataorder::String="12_21", matrixformat::String="Full",
+    frequencyunit="Hz",
+    mixedmodeorder::Vector{Tuple{Char, Vector{Int}}} = Tuple{Char, Vector{Int}}[])
 
     # check that the network data doesn't have too many dimensions
     if size(N)[1] == size(N)[2]
@@ -398,7 +400,7 @@ function touchstone_save(filename::String,frequencies::AbstractVector,
     touchstone_write(io, frequencies, N; version = version, reference = reference,
         R = R, format = format, parameter = parameter, comments = comments,
         twoportdataorder = twoportdataorder, matrixformat = matrixformat,
-        frequencyunit = frequencyunit)
+        frequencyunit = frequencyunit, mixedmodeorder = mixedmodeorder)
 
     close(io)
 
@@ -494,14 +496,14 @@ function touchstone_write(io::IO,ts::TouchstoneFile)
             elseif fmt == "db"
                 write(io,"logmag$(ts.parameter)$(indices[j][1])$(indices[j][2]) ang$(ts.parameter)$(indices[j][1])$(indices[j][2]) ")
             else
-                error("Error: Unknown format")
+                error("Unknown format")
             end
         end
         write(io,"\n")
 
 
         if !isempty(ts.mixedmodeorder)
-            error("Version 1.0 or 1.1 files do not support mixed-mode order (common and differential modes. Save as a Version 2.0 file or delete mixe-mode order data.")
+            error("Version 1.0 or 1.1 files do not support mixed-mode order (common and differential modes. Save as a Version 2.0 file or delete mixed-mode order data.")
         end
 
         # normalize Z, Y, G, or H by the reference impedance per the spec.
@@ -754,7 +756,6 @@ if !(fmt == "ma" || fmt == "ri" || fmt == "db")
 end
 
 # check the parameter
-# should be MA, RI, or DB, not case sensitive.
 p = lowercase(parameter)
 if !(p == "s" || p == "y" || p == "z" || p == "h" || p == "g")
     error("Unknown parameter")
