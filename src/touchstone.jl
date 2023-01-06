@@ -381,15 +381,15 @@ function touchstone_save(filename::String,frequencies::AbstractVector,
     if (m = match(r"\.ts$|\.s\dp$",lowercase(filename))) != nothing
         if version == 1.0 || version == 1.1
             if m.match != ".s$(numberofports)p"
-                @warn "Warning: Extension of $(m.match) is not the recommended extension of .s$(numberofports)p for a version 1.0 file with $(numberofports) ports."
+                @warn "Extension of $(m.match) is not the recommended extension of .s$(numberofports)p for a version 1.0 file with $(numberofports) ports."
             end
         else
             if m.match != ".s$(numberofports)p" && m.match != ".ts"
-                @warn "Warning: Extension of $(m.match) is not the recommended extension of .ts or .s$(numberofports)p for a file with $(numberofports) ports."
+                @warn "Extension of $(m.match) is not the recommended extension of .ts or .s$(numberofports)p for a file with $(numberofports) ports."
             end
         end
     else
-        println("Warning: Adding extension of .s$(numberofports)p")
+        @warn "Adding extension of .s$(numberofports)p"
         filename = filename*".s$(numberofports)p"
     end
 
@@ -995,7 +995,7 @@ julia> JosephsonCircuits.matrixindices(2,"Full","12_21")
  CartesianIndex(2, 1)
  CartesianIndex(2, 2)
 
-julia> JosephsonCircuits.matrixindices(2,"Fake","21_12")
+julia> JosephsonCircuits.matrixindices(2,"Full","21_12")
 4-element Vector{CartesianIndex{2}}:
  CartesianIndex(1, 1)
  CartesianIndex(2, 1)

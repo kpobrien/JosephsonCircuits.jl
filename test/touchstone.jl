@@ -102,6 +102,7 @@ import UUIDs
 
     @testset "touchstone_save errors" begin
 
+        ## Network data arrays are not square.
         #find the temporary directory
         path = tempdir()
 
@@ -120,6 +121,70 @@ import UUIDs
         @test_throws message JosephsonCircuits.touchstone_save(filename, frequencies, N[1:end-1,:,:];
             version = version, R = R,format = format, frequencyunit = frequencyunit,
             comments = comments)
+
+
+        # incorrect file extension v2 file
+        #find the temporary directory
+        path = tempdir()
+
+        #generate unique filenames
+        filename = joinpath(path,"JosephsonCircuits-"* string(UUIDs.uuid1()) * ".s4p")
+
+        frequencies = [1.0e9, 2.0e9, 10.0e9]
+        N = [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im]
+        version = 2.0
+        R = 50.0
+        format = "RI"
+        frequencyunit = "Hz"
+        comments = ["Example 4:","2-port S-parameter file, three frequency points"]
+
+        message = "Extension of .s4p is not the recommended extension of .ts or .s2p for a file with 2 ports."
+        @test_warn message JosephsonCircuits.touchstone_save(filename, frequencies, N;
+            version = version, R = R,format = format, frequencyunit = frequencyunit,
+            comments = comments)
+
+        # incorrect file extension v1 file
+        #find the temporary directory
+        path = tempdir()
+
+        #generate unique filenames
+        filename = joinpath(path,"JosephsonCircuits-"* string(UUIDs.uuid1()) * ".s4p")
+
+        frequencies = [1.0e9, 2.0e9, 10.0e9]
+        N = [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im]
+        version = 1.0
+        R = 50.0
+        format = "RI"
+        frequencyunit = "Hz"
+        comments = ["Example 4:","2-port S-parameter file, three frequency points"]
+
+        message = "Extension of .s4p is not the recommended extension of .s2p for a version 1.0 file with 2 ports."
+        @test_warn message JosephsonCircuits.touchstone_save(filename, frequencies, N;
+            version = version, R = R,format = format, frequencyunit = frequencyunit,
+            comments = comments)
+
+
+
+        # no file extension
+        #find the temporary directory
+        path = tempdir()
+
+        #generate unique filenames
+        filename = joinpath(path,"JosephsonCircuits-"* string(UUIDs.uuid1()))
+
+        frequencies = [1.0e9, 2.0e9, 10.0e9]
+        N = [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im]
+        version = 2.0
+        R = 50.0
+        format = "RI"
+        frequencyunit = "Hz"
+        comments = ["Example 4:","2-port S-parameter file, three frequency points"]
+
+        message = "Adding extension of .s2p"
+        @test_warn message JosephsonCircuits.touchstone_save(filename, frequencies, N;
+            version = version, R = R,format = format, frequencyunit = frequencyunit,
+            comments = comments)
+
 
         # out=JosephsonCircuits.touchstone_load(filename)
 
@@ -299,8 +364,6 @@ import UUIDs
         example = "!Example 6 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by the [Reference] keyword arguments\n! Note that [Reference] arguments are split across two lines\n! Data cannot be represented using 1.0 syntax\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Number of Frequencies] 1\n[Reference] 50 75\n0.01 0.01\n[Matrix Format] Lower\n[Network Data]\n5.00000 0.60 !row 1\n0.40 -42.20 0.60 !row 2\n0.42 -66.58 0.53 -79.34 0.60 !row 3\n[End]"
         message = "Number of ports are not consistent between lines:0.42 -66.58 0.53 -79.34 0.60 "
         @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
-
-
 
     end
 
