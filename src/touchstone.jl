@@ -995,12 +995,21 @@ julia> JosephsonCircuits.matrixindices(2,"Full","12_21")
  CartesianIndex(2, 1)
  CartesianIndex(2, 2)
 
-julia> JosephsonCircuits.matrixindices(2,"Full","21_12")
+julia> JosephsonCircuits.matrixindices(2,"Fake","21_12")
 4-element Vector{CartesianIndex{2}}:
  CartesianIndex(1, 1)
  CartesianIndex(2, 1)
  CartesianIndex(1, 2)
  CartesianIndex(2, 2)
+
+julia> JosephsonCircuits.matrixindices(2,"Full","21_31")
+ERROR: Unknown two port data order string.
+
+julia> JosephsonCircuits.matrixindices(2,"Fake","21_12")
+ERROR: Unknown matrix format.
+
+julia> JosephsonCircuits.matrixindices(4,"Full","21_12")
+ERROR: Two port data order = 21_12 is only allowed if the number of ports is two
 ```
 """
 function matrixindices(nports,format,twoportdataorder;printflag = false)
@@ -1013,10 +1022,12 @@ function matrixindices(nports,format,twoportdataorder;printflag = false)
     elseif fmt == "upper"
         ncol = nports
         ntotal = nports*(1+nports) ÷ 2
-    else
+    elseif fmt == "full"
         ntotal = nports^2
         ncol = nports
-    end    
+    else
+        error("Unknown matrix format.")
+    end
 
     i = 1
     j = 1
@@ -1149,6 +1160,18 @@ function parseoptionline(line::String)
     return TouchstoneOptionLine(frequencyunit, parameter, format, R)
 end
 
+"""
+    frequencyscale(frequencyunit::String)
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.frequencyscale("MHz")
+1.0e6
+
+julia> JosephsonCircuits.frequencyscale("THz")
+ERROR: Unknown frequency unit THz
+```
+"""
 function frequencyscale(frequencyunit::String)
     fu = lowercase(frequencyunit)
     if fu == "hz"
@@ -1268,12 +1291,15 @@ julia> JosephsonCircuits.parsetwoportdataorder("[two-port data order] 12_21")
 
 julia> JosephsonCircuits.parsetwoportdataorder("[two-port data order] 21_12")
 "21_12"
+
+julia> JosephsonCircuits.parsetwoportdataorder("[two-port data order] 21_34")
+ERROR: Unknown [Two-Port Data Order] parameter: [two-port data order] 21_34
 ```
 """
 function parsetwoportdataorder(line::String)
     twoportdataorder = strip(line[22:end])
     if !(twoportdataorder == "12_21" || twoportdataorder == "21_12")
-        error("Unknown [Two-Port Data Order] parameter:\n$(line)")
+        error("Unknown [Two-Port Data Order] parameter: $(line)")
     end
     return String(twoportdataorder)
 end
@@ -1425,12 +1451,15 @@ frequencies] line of a Touchstone file.
 ```jldoctest
 julia> JosephsonCircuits.parsenumberofnoisefrequencies("[number of noise frequencies] 10")
 10
+
+julia> JosephsonCircuits.parsenumberofnoisefrequencies("[number of noise frequencies] 0")
+ERROR: Error: Number of noise frequencies must be an integer greater than zero: [number of noise frequencies] 0
 ```
 """
 function parsenumberofnoisefrequencies(line::String)
     numberofnoisefrequencies = parse(Int,line[30:end])
     if numberofnoisefrequencies < 1
-        error("Error: Number of noise frequencies must be an integer greater than zero:\n$(line)")
+        error("Error: Number of noise frequencies must be an integer greater than zero: $(line)")
     end
     return numberofnoisefrequencies
 end
@@ -1500,6 +1529,18 @@ println(reference)
 # output
 [50.0, 60.0, 75.0]
 ```
+```jldoctest
+io = IOBuffer("[Reference] 50.0 \n60.0 75.0 1.0\n[Number of Frequencies] 1")
+numberofports = 3
+comments = String[]
+reference = Float64[]
+line = JosephsonCircuits.stripcommentslowercase!(comments,readline(io))
+JosephsonCircuits.parsereference!(reference, comments, line, numberofports, io)
+println(reference)
+
+# output
+ERROR: Too many values on [Reference] line: 60.0 75.0 1.0
+```
 """
 function parsereference!(reference::Vector{Float64}, comments::Vector{String},
     line::String, numberofports::Int, io::IO)
@@ -1565,8 +1606,8 @@ julia> JosephsonCircuits.parsematrixformat("[matrix format] lower")
 julia> JosephsonCircuits.parsematrixformat("[matrix format] upper")
 "Upper"
 
-julia> JosephsonCircuits.parsematrixformat("[matrix format] full")
-"Full"
+julia> JosephsonCircuits.parsematrixformat("[matrix format] unknown")
+ERROR: Unknown format: unknown
 ```
 """
 function parsematrixformat(line::String)
@@ -1578,7 +1619,7 @@ function parsematrixformat(line::String)
     elseif matrixformat == "upper"
         return "Upper"
     else
-        error("Unknown format:\n$(matrixformat)")
+        error("Unknown format: $(matrixformat)")
     end
 end
 
@@ -1757,6 +1798,16 @@ println(networkdata)
 # output
 [2.0, 0.95, -26.0, 3.57, 157.0, 0.04, 76.0, 0.66, -14.0, 22.0, 0.6, -144.0, 1.3, 40.0, 0.14, 40.0, 0.56, -85.0]
 ```
+```jldoctest
+networkdata = Float64[]
+comments = String[]
+io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n# GHz S MA R 50\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n18 2.7 .46 -33 20\n[End]")
+JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+println(networkdata)
+
+# output
+ERROR: Second option line in network data.
+```
 """
 function parsenetworkdata!(networkdata::Vector{Float64},
         comments::Vector{String}, io::IO)
@@ -1786,8 +1837,10 @@ function parsenetworkdata!(networkdata::Vector{Float64},
             nothing
         elseif isoptionline(line)
             # skip any additional option lines. these could occur in v1 files
-            # after the first option line. 
-            nothing 
+            # after the first option line.
+            # this is allowed by the spec but not in the golden parser, so
+            # let's also throw an error here. 
+            error("Second option line in network data.")
         elseif isend(line)
             break
         elseif isnoisedata(line)
@@ -1900,6 +1953,54 @@ println(noisedata)
 # output
 [4.0, 0.7, 0.64, 69.0, 19.0, 18.0, 2.7, 0.46, -33.0, 20.0]
 ```
+```jldoctest
+networkdata = Float64[]
+noisedata = Float64[]
+comments = String[]
+io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19 1.2\n18 2.7 .46 -33 20\n[End]")
+JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+println(noisedata)
+
+# output
+ERROR: Noise data lines must have 5 entries.
+```
+```jldoctest
+networkdata = Float64[]
+noisedata = Float64[]
+comments = String[]
+io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n[Noise Data]\n18 2.7 .46 -33 20\n[End]")
+JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+println(noisedata)
+
+# output
+ERROR: Only one [Noise Data] keyword allowed.
+```
+```jldoctest
+networkdata = Float64[]
+noisedata = Float64[]
+comments = String[]
+io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n# GHz S MA R 50\n18 2.7 .46 -33 20\n[End]")
+JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+println(noisedata)
+
+# output
+ERROR: Second option line in noise data.
+```
+```jldoctest
+networkdata = Float64[]
+noisedata = Float64[]
+comments = String[]
+io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n18 2.7 .46 -33 20\n4 .7 .64 69 19\n[End]")
+JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+println(noisedata)
+
+# output
+ERROR: Frequencies descending in noise data
+```
 """
 function parsenoisedata!(noisedata, comments, io)
 
@@ -1924,7 +2025,9 @@ function parsenoisedata!(noisedata, comments, io)
         elseif isoptionline(line)
             # skip any additional option lines. these could occur in v1 files
             # after the first option line. 
-            nothing 
+            # this is allowed by the spec but not in the golden parser, so
+            # let's also throw an error here. 
+            error("Second option line in noise data.")
         elseif isend(line)
             break
         elseif isnoisedata(line)
