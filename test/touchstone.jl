@@ -102,7 +102,6 @@ import UUIDs
 
     @testset "touchstone_save errors" begin
 
-        ## Network data arrays are not square.
         #find the temporary directory
         path = tempdir()
 
@@ -117,86 +116,35 @@ import UUIDs
         frequencyunit = "Hz"
         comments = ["Example 4:","2-port S-parameter file, three frequency points"]
 
+        # error if network data arrays not square
         message = "Network data arrays are not square."
         @test_throws message JosephsonCircuits.touchstone_save(filename, frequencies, N[1:end-1,:,:];
             version = version, R = R,format = format, frequencyunit = frequencyunit,
             comments = comments)
 
-
-        # incorrect file extension v2 file
-        #find the temporary directory
-        path = tempdir()
-
-        #generate unique filenames
+        #file extensions
         filename = joinpath(path,"JosephsonCircuits-"* string(UUIDs.uuid1()) * ".s4p")
-
-        frequencies = [1.0e9, 2.0e9, 10.0e9]
-        N = [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im]
-        version = 2.0
-        R = 50.0
-        format = "RI"
-        frequencyunit = "Hz"
-        comments = ["Example 4:","2-port S-parameter file, three frequency points"]
-
         message = "Extension of .s4p is not the recommended extension of .ts or .s2p for a file with 2 ports."
         @test_warn message JosephsonCircuits.touchstone_save(filename, frequencies, N;
             version = version, R = R,format = format, frequencyunit = frequencyunit,
             comments = comments)
+        rm(filename)
 
         # incorrect file extension v1 file
-        #find the temporary directory
-        path = tempdir()
-
-        #generate unique filenames
         filename = joinpath(path,"JosephsonCircuits-"* string(UUIDs.uuid1()) * ".s4p")
-
-        frequencies = [1.0e9, 2.0e9, 10.0e9]
-        N = [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im]
-        version = 1.0
-        R = 50.0
-        format = "RI"
-        frequencyunit = "Hz"
-        comments = ["Example 4:","2-port S-parameter file, three frequency points"]
-
         message = "Extension of .s4p is not the recommended extension of .s2p for a version 1.0 file with 2 ports."
         @test_warn message JosephsonCircuits.touchstone_save(filename, frequencies, N;
-            version = version, R = R,format = format, frequencyunit = frequencyunit,
+            version = 1.0, R = R,format = format, frequencyunit = frequencyunit,
             comments = comments)
-
-
+        rm(filename)
 
         # no file extension
-        #find the temporary directory
-        path = tempdir()
-
-        #generate unique filenames
         filename = joinpath(path,"JosephsonCircuits-"* string(UUIDs.uuid1()))
-
-        frequencies = [1.0e9, 2.0e9, 10.0e9]
-        N = [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im]
-        version = 2.0
-        R = 50.0
-        format = "RI"
-        frequencyunit = "Hz"
-        comments = ["Example 4:","2-port S-parameter file, three frequency points"]
-
         message = "Adding extension of .s2p"
         @test_warn message JosephsonCircuits.touchstone_save(filename, frequencies, N;
             version = version, R = R,format = format, frequencyunit = frequencyunit,
             comments = comments)
-
-
-        # out=JosephsonCircuits.touchstone_load(filename)
-
-        # # clean up the temporary file
-        # rm(filename)
-
-        # @test out.f == frequencies
-        # @test out.N == N
-        # @test out.version == version
-        # @test out.R == R
-        # @test out.format == lowercase(format)
-        # @test out.frequencyunit == lowercase(frequencyunit)
+        rm(filename * ".s2p")
 
     end
 

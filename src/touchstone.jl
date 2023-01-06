@@ -306,10 +306,10 @@ function touchstone_parse(io::IO)
         @assert numberofnoisefrequencies == nnoisefreq
     end
 
-    # set the default matrix format if one is not already set. 
-    if isempty(matrixformat)
-        matrixformat = "Full"
-    end
+    # # set the default matrix format if one is not already set. 
+    # if isempty(matrixformat)
+    #     matrixformat = "Full"
+    # end
 
     # calculate the cartesian indices of each element of the network data
     # corresponding to the position in the scattering matrix. 
@@ -324,8 +324,6 @@ function touchstone_parse(io::IO)
     else
         if numberofports == 2 && isempty(twoportdataorder)
             error("two-port data order must be defined for a v2 file with two ports.")
-        elseif numberofports != 2 && !isempty(twoportdataorder)
-            error("two-port data order keyword is not allowed for a v2 file with more than two ports.")
         elseif isempty(twoportdataorder)
             twoportdataorder = "12_21"
         end
@@ -1411,12 +1409,15 @@ of a Touchstone file.
 ```jldoctest
 julia> JosephsonCircuits.parsenumberoffrequencies("[number of frequencies] 10")
 10
+
+julia> JosephsonCircuits.parsenumberoffrequencies("[number of frequencies] 0")
+ERROR: Number of frequencies must be an integer greater than zero: [number of frequencies] 0
 ```
 """
 function parsenumberoffrequencies(line::String)
     numberoffrequencies = parse(Int,line[24:end])
     if numberoffrequencies < 1
-        error("Error: Number of frequencies must be an integer greater than zero:\n$(line)")
+        error("Number of frequencies must be an integer greater than zero: $(line)")
     end
     return numberoffrequencies
 end
@@ -1453,13 +1454,13 @@ julia> JosephsonCircuits.parsenumberofnoisefrequencies("[number of noise frequen
 10
 
 julia> JosephsonCircuits.parsenumberofnoisefrequencies("[number of noise frequencies] 0")
-ERROR: Error: Number of noise frequencies must be an integer greater than zero: [number of noise frequencies] 0
+ERROR: Number of noise frequencies must be an integer greater than zero: [number of noise frequencies] 0
 ```
 """
 function parsenumberofnoisefrequencies(line::String)
     numberofnoisefrequencies = parse(Int,line[30:end])
     if numberofnoisefrequencies < 1
-        error("Error: Number of noise frequencies must be an integer greater than zero: $(line)")
+        error("Number of noise frequencies must be an integer greater than zero: $(line)")
     end
     return numberofnoisefrequencies
 end
