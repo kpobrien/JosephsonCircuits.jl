@@ -8,6 +8,7 @@ import UUIDs
 
         examples = [
             "!Example 1:\n!1-port S-parameter file, single frequency point\n# MHz S MA R 50\n!freq magS11 angS11\n2.000 0.894 -12.136",
+            "!Example 1a:\n!1-port S-parameter file, single frequency point\n# MHz S DB R 50\n!freq magS11 angS11\n2.000 -0.97 -12.136",
             "!Example 2:\n!1-port Z-parameter file, multiple frequency points\n# MHz Z MA R 75\n!freq magZ11 angZ11\n100 0.99 -4\n200 0.80 -22\n300 0.707 -45\n400 0.40 -62\n500 0.01 -89",
             "!Example 3:\n!2-port H-parameter file, single frequency point\n# KHz H MA R 1\n! freq magH11 angH11 magH21 angH21 magH12 angH12 magH22 angH22\n2 .95 -26 3.57 157 .04 76 .66 -1",
             "!Example 4:\n!2-port S-parameter file, three frequency points\n# GHZ S RI R 50.0\n!freq RelS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22\n1.0000 0.3926 -0.1211 -0.0003 -0.0021 -0.0003 -0.0021 0.3926 -0.1211\n2.0000 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054\n10.000 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336",
@@ -34,6 +35,7 @@ import UUIDs
 
         parsedexamples = Any[
             JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "s", "ma", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]), 
+            JosephsonCircuits.TouchstoneFile([2.0e6], [0.8743473504516138 - 0.18801852505875893im;;;], "mhz", "s", "db", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1a:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, -0.97, -12.136], Float64[]),
             JosephsonCircuits.TouchstoneFile([1.0e8, 2.0e8, 3.0e8, 4.0e8, 5.0e8], [74.06913073179194 - 5.179418175501303im;;; 55.63103127400724 - 22.47639560495472im;;; 37.494337072416684 - 37.49433707241668im;;; 14.084146883576725 - 26.488427785767808im;;; 0.013089304827962698 - 0.7498857713672935im], "mhz", "z", "ma", 75.0, 1.0, 1, "12_21", 5, 0, [75.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 2:", "1-port Z-parameter file, multiple frequency points", "freq magZ11 angZ11"], [100.0, 0.99, -4.0, 200.0, 0.8, -22.0, 300.0, 0.707, -45.0, 400.0, 0.4, -62.0, 500.0, 0.01, -89.0], Float64[]),
             JosephsonCircuits.TouchstoneFile([2000.0], [0.8538543439842087 - 0.4164525894496235im 0.009676875823986707 + 0.03881182905103986im; -3.286202326825212 + 1.3949101287067074im 0.6598994788032183 - 0.011518588248607119im;;;], "khz", "h", "ma", 1.0, 1.0, 2, "21_12", 1, 0, [1.0, 1.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 3:", "2-port H-parameter file, single frequency point", " freq magH11 angH11 magH21 angH21 magH12 angH12 magH22 angH22"], [2.0, 0.95, -26.0, 3.57, 157.0, 0.04, 76.0, 0.66, -1.0], Float64[]),
             JosephsonCircuits.TouchstoneFile([1.0e9, 2.0e9, 1.0e10], [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im], "ghz", "s", "ri", 50.0, 1.0, 2, "21_12", 3, 0, [50.0, 50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 4:", "2-port S-parameter file, three frequency points", "freq RelS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22"], [1.0, 0.3926, -0.1211, -0.0003, -0.0021, -0.0003, -0.0021, 0.3926, -0.1211, 2.0, 0.3517, -0.3054, -0.0096, -0.0298, -0.0096, -0.0298, 0.3517, -0.3054, 10.0, 0.3419, 0.3336, -0.0134, 0.0379, -0.0134, 0.0379, 0.3419, 0.3336], Float64[]),
@@ -219,6 +221,7 @@ import UUIDs
 
         parsedexamples = Any[
             JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "s", "ma", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]), 
+            JosephsonCircuits.TouchstoneFile([2.0e6], [0.8743473504516138 - 0.18801852505875893im;;;], "mhz", "s", "db", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1a:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, -0.97, -12.136], Float64[]),
             JosephsonCircuits.TouchstoneFile([1.0e8, 2.0e8, 3.0e8, 4.0e8, 5.0e8], [74.06913073179194 - 5.179418175501303im;;; 55.63103127400724 - 22.47639560495472im;;; 37.494337072416684 - 37.49433707241668im;;; 14.084146883576725 - 26.488427785767808im;;; 0.013089304827962698 - 0.7498857713672935im], "mhz", "z", "ma", 75.0, 1.0, 1, "12_21", 5, 0, [75.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 2:", "1-port Z-parameter file, multiple frequency points", "freq magZ11 angZ11"], [100.0, 0.99, -4.0, 200.0, 0.8, -22.0, 300.0, 0.707, -45.0, 400.0, 0.4, -62.0, 500.0, 0.01, -89.0], Float64[]),
             JosephsonCircuits.TouchstoneFile([2000.0], [0.8538543439842087 - 0.4164525894496235im 0.009676875823986707 + 0.03881182905103986im; -3.286202326825212 + 1.3949101287067074im 0.6598994788032183 - 0.011518588248607119im;;;], "khz", "h", "ma", 1.0, 1.0, 2, "21_12", 1, 0, [1.0, 1.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 3:", "2-port H-parameter file, single frequency point", " freq magH11 angH11 magH21 angH21 magH12 angH12 magH22 angH22"], [2.0, 0.95, -26.0, 3.57, 157.0, 0.04, 76.0, 0.66, -1.0], Float64[]),
             JosephsonCircuits.TouchstoneFile([1.0e9, 2.0e9, 1.0e10], [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im], "ghz", "s", "ri", 50.0, 1.0, 2, "21_12", 3, 0, [50.0, 50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 4:", "2-port S-parameter file, three frequency points", "freq RelS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22"], [1.0, 0.3926, -0.1211, -0.0003, -0.0021, -0.0003, -0.0021, 0.3926, -0.1211, 2.0, 0.3517, -0.3054, -0.0096, -0.0298, -0.0096, -0.0298, 0.3517, -0.3054, 10.0, 0.3419, 0.3336, -0.0134, 0.0379, -0.0134, 0.0379, 0.3419, 0.3336], Float64[]),
@@ -244,6 +247,7 @@ import UUIDs
 
         writtenexamples = String[
             "!Example 1:\n!1-port S-parameter file, single frequency point\n!freq magS11 angS11\n# mhz s ma R 50.0\n! freq mags11 angs11 \n2.0 0.894 -12.136\n",
+            "!Example 1a:\n!1-port S-parameter file, single frequency point\n!freq magS11 angS11\n# mhz s db R 50.0\n! freq logmags11 angs11 \n2.0 -0.97 -12.136\n",
             "!Example 2:\n!1-port Z-parameter file, multiple frequency points\n!freq magZ11 angZ11\n# mhz z ma R 75.0\n! freq magz11 angz11 \n100.0 0.99 -4.0\n200.0 0.8 -22.0\n300.0 0.707 -45.0\n400.0 0.4 -62.0\n500.0 0.01 -89.0\n",
             "!Example 3:\n!2-port H-parameter file, single frequency point\n! freq magH11 angH11 magH21 angH21 magH12 angH12 magH22 angH22\n# khz h ma R 1.0\n! freq magh11 angh11 magh21 angh21 magh12 angh12 magh22 angh22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -1.0\n",
             "!Example 4:\n!2-port S-parameter file, three frequency points\n!freq RelS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22\n# ghz s ri R 50.0\n! freq Res11 Ims11 Res21 Ims21 Res12 Ims12 Res22 Ims22 \n1.0 0.3926 -0.1211 -0.0003 -0.0021 -0.0003 -0.0021 0.3926 -0.1211\n2.0 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054\n10.0 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336\n",
@@ -292,7 +296,8 @@ import UUIDs
 
         message = "Unknown parameter"
         io = IOBuffer();
-        @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},2,2,1),parameter="K")
+        @test_throws message JosephsonCircuits.touchstone_write(io,JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "k", "ma", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]))
+
 
     end
 
