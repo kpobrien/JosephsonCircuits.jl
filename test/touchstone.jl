@@ -290,13 +290,23 @@ import UUIDs
         io = IOBuffer();
         @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},2,2,1),mixedmodeorder = [('D',[1,2]),('C',[1,2])],version=1.0)
 
-        message = "Unknown format"
-        io = IOBuffer();
-        @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},2,2,1),format="DA")
+        # message = "Unknown format"
+        # io = IOBuffer();
+        # @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},2,2,1),format="DA")
 
         message = "Unknown parameter"
         io = IOBuffer();
         @test_throws message JosephsonCircuits.touchstone_write(io,JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "k", "ma", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]))
+
+        # Unknown format v1
+        message = "Unknown format"
+        io = IOBuffer();
+        @test_throws message JosephsonCircuits.touchstone_write(io,JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "s", "da", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]))
+
+        # Unknown format v2
+        message = "Unknown format"
+        io = IOBuffer();
+        @test_throws message JosephsonCircuits.touchstone_write(io,JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "s", "da", 50.0, 2.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]))
 
 
     end

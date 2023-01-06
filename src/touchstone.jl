@@ -777,10 +777,10 @@ if version < 2.0 && !allequal(reference)
     error("The port impedances are not equal, so we cannot generate a Touchstone file with version < 2.0.")
 end
 
-# check the matrixformat
-if isempty(matrixformat)
-    matrixformat = "Full"
-end
+# # check the matrixformat
+# if isempty(matrixformat)
+#     matrixformat = "Full"
+# end
 
 if version < 2.0
     if lowercase(matrixformat) != "full"
