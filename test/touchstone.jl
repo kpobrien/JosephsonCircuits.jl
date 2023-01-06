@@ -242,7 +242,6 @@ import UUIDs
             JosephsonCircuits.TouchstoneFile([2.0e9, 2.2e10], [0.8538543439842087 - 0.4164525894496235im 0.009676875823986707 + 0.03881182905103986im; -3.286202326825212 + 1.3949101287067074im 0.6403951793421577 - 0.1596684510957807im;;; -0.48541019662496837 - 0.35267115137548394im 0.10724622203665693 + 0.0899902653561155im; 0.9958577760546714 + 0.835623892592501im 0.048807215938688565 - 0.5578690309313775im], "ghz", "s", "ma", 50.0, 2.0, 2, "21_12", 2, 2, [50.0, 25.0], String["This is information."], "Full", Tuple{Char, Vector{Int64}}[], ["Example 19 (Version 2.0):", "2-port network, S-parameter and noise data", "Default MA format, GHz frequencies, 50 ohm reference, S-parameters", " NETWORK PARAMETERS", " NOISE PARAMETERS"], [2.0, 0.95, -26.0, 3.57, 157.0, 0.04, 76.0, 0.66, -14.0, 22.0, 0.6, -144.0, 1.3, 40.0, 0.14, 40.0, 0.56, -85.0], [4.0, 0.7, 0.64, 69.0, 19.0, 18.0, 2.7, 0.46, -33.0, 20.0]),
         ]
 
-
         writtenexamples = String[
             "!Example 1:\n!1-port S-parameter file, single frequency point\n!freq magS11 angS11\n# mhz s ma R 50.0\n! freq mags11 angs11 \n2.0 0.894 -12.136\n",
             "!Example 2:\n!1-port Z-parameter file, multiple frequency points\n!freq magZ11 angZ11\n# mhz z ma R 75.0\n! freq magz11 angz11 \n100.0 0.99 -4.0\n200.0 0.8 -22.0\n300.0 0.707 -45.0\n400.0 0.4 -62.0\n500.0 0.01 -89.0\n",
@@ -261,6 +260,7 @@ import UUIDs
             "!Example 12 (Version 2.0):\n!2-port H-parameter file, single frequency point\n! freq magH11 angH11 magH21 angH21 magH12 angH12 magH22 angH22\n[Version] 2.0\n# khz h ma R 1.0\n[Number of Ports] 2\n[Two-Port Data Order] 21_12\n[Number of Frequencies] 1\n[Reference] 1.0 1.0\n[Network Data]\n! freq magh11 angh11 magh21 angh21 magh12 angh12 magh22 angh22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n[End]",
             "!Example 13 (Version 1.0):\n!2-port S-parameter file, three frequency points\n!freq ReS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22\n# ghz s ri R 50.0\n! freq Res11 Ims11 Res21 Ims21 Res12 Ims12 Res22 Ims22 \n1.0 0.3926 -0.1211 -0.0003 -0.0021 -0.0003 -0.0021 0.3926 -0.1211\n2.0 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054\n10.0 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336\n",
             "!Example 14 (Version 1.0):\n! 4-port S-parameter data, taken at three frequency points\n! note that data points need not be aligned\n!row 1\n!row 2\n!row 3\n!row 4\n!row 1\n!row 2\n!row 3\n!row 4\n!row 1\n!row 2\n!row 3\n!row 4\n# ghz s ma R 50.0\n! freq mags11 angs11 mags12 angs12 mags13 angs13 mags14 angs14 mags21 angs21 mags22 angs22 mags23 angs23 mags24 angs24 mags31 angs31 mags32 angs32 mags33 angs33 mags34 angs34 mags41 angs41 mags42 angs42 mags43 angs43 mags44 angs44 \n5.0 0.6 161.24 0.4 -42.2 0.42 -66.58 0.53 -79.34\n 0.4 -42.2 0.6 161.2 0.53 -79.34\n 0.42 -66.58\n 0.42 -66.58 0.53 -79.34 0.6 161.24 0.4 -42.2\n 0.53 -79.34 0.42 -66.58 0.4 -42.2\n 0.6 161.24\n6.0 0.57 150.37 0.4 -44.34 0.41 -81.24 0.57 -95.77\n 0.4 -44.34 0.57 150.37 0.57 -95.77\n 0.41 -81.24\n 0.41 -81.24 0.57 -95.77 0.57 150.37 0.4 -44.34\n 0.57 -95.77 0.41 -81.24 0.4 -44.34\n 0.57 150.37\n7.0 0.5 136.69 0.45 -46.41 0.37 -99.09 0.62 -114.19\n 0.45 -46.41 0.5 136.69 0.62 -114.19\n 0.37 -99.09\n 0.37 -99.09 0.62 -114.19 0.5 136.69 0.45 -46.41\n 0.62 -114.19 0.37 -99.09 0.45 -46.41\n 0.5 136.69\n",
+            # the file below doesn't have the mixed mode order data. need to support writing that.
             "!Example 16 (Version 2.0):\n!6-port component shown; note that all five ports are used in some\n!relationship\n[Version] 2.0\n# mhz y ri R 50.0\n[Number of Ports] 6\n[Number of Frequencies] 1\n[Reference] 50.0 75.0 75.0 50.0 0.01 0.01\n[Network Data]\n! freq Rey11 Imy11 Rey12 Imy12 Rey13 Imy13 Rey14 Imy14 Rey15 Imy15 Rey16 Imy16 Rey21 Imy21 Rey22 Imy22 Rey23 Imy23 Rey24 Imy24 Rey25 Imy25 Rey26 Imy26 Rey31 Imy31 Rey32 Imy32 Rey33 Imy33 Rey34 Imy34 Rey35 Imy35 Rey36 Imy36 Rey41 Imy41 Rey42 Imy42 Rey43 Imy43 Rey44 Imy44 Rey45 Imy45 Rey46 Imy46 Rey51 Imy51 Rey52 Imy52 Rey53 Imy53 Rey54 Imy54 Rey55 Imy55 Rey56 Imy56 Rey61 Imy61 Rey62 Imy62 Rey63 Imy63 Rey64 Imy64 Rey65 Imy65 Rey66 Imy66 \n5.0 8.0 9.0 2.0 -1.0 3.0 -2.0 1.0 3.0\n 1.0 0.1 0.2 -0.2\n 2.0 -1.0 7.0 7.0 1.8 -2.0 -1.0 -1.0\n -0.5 0.5 0.2 -0.1\n 3.0 -2.0 1.8 -2.0 5.8 6.0 1.2 0.8\n 0.9 0.7 0.3 -0.5\n 1.0 3.0 -1.0 -1.0 1.2 0.8 6.3 8.0\n 2.0 -0.5 1.5 0.6\n 1.0 0.1 -0.5 0.5 0.9 0.7 2.0 -0.5\n 4.7 -6.0 -1.0 2.0\n 0.2 -0.2 0.2 -0.1 0.3 -0.5 1.5 0.6\n -1.0 2.0 5.5 -7.0\n[End]",
             "!Example 17 (Version 2.0):\n!2-port network, S-parameter and noise data\n!Default MA format, GHz frequencies, 50 ohm reference, S-parameters\n[Version] 2.0\n# ghz s ma R 50.0\n[Number of Ports] 2\n[Two-Port Data Order] 21_12\n[Number of Frequencies] 2\n[Number of Noise Frequencies] 2\n[Reference] 50.0 25.0\n[Network Data]\n! freq mags11 angs11 mags21 angs21 mags12 angs12 mags22 angs22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n22.0 0.6 -144.0 1.3 40.0 0.14 40.0 0.56 -85.0\n[Noise Data]\n4.0 0.7 0.64 69.0 19.0\n18.0 2.7 0.46 -33.0 20.0\n[End]",
             "!Example 18 (Version 1.0):\n!2-port network, S-parameter and noise data\n!Default MA format, GHz frequencies, 50 ohm reference, S-parameters\n! NETWORK PARAMETERS\n! NOISE PARAMETERS\n# ghz s ma R 50.0\n! freq mags11 angs11 mags21 angs21 mags12 angs12 mags22 angs22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n22.0 0.6 -144.0 1.3 40.0 0.14 40.0 0.56 -85.0\n[Noise Data]\n4.0 0.7 0.64 69.0 0.38\n18.0 2.7 0.46 -33.0 0.4\n",
@@ -278,7 +278,6 @@ import UUIDs
 
     @testset "touchstone_write errors" begin
 
-
         message = "Number of mixed mode order descriptors must match the number of ports."
         io = IOBuffer();
         @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},1,1,1),mixedmodeorder = [('D',[1,2]),('C',[1,2])])
@@ -295,19 +294,7 @@ import UUIDs
         io = IOBuffer();
         @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},2,2,1),parameter="K")
 
-
-        # rm(filename)
-        # [Mixed-Mode Order] D2,3 D6,5 C2,3 C6,5 S4 S1\n
-        # "!Example 16 (Version 2.0):\n!6-port component shown; note that all five ports are used in some\n!relationship\n[Version] 2.0\n# MHz Y RI R 50\n[Number of Ports] 6\n[Number of Frequencies] 1\n[Reference] 50 75 75 50 0.01 0.01\n[Mixed-Mode Order] D2,3 D6,5 C2,3 C6,5 S4 S1\n[Network Data]\n5.00 8.0 9.0 2.0 -1.0 3.0 -2.0 1.0 3.0 1.0 0.1 0.2 -0.2\n2.0 -1.0 7.0 7.0 1.8 -2.0 -1.0 -1.0 -0.5 0.5 0.2 -0.1\n3.0 -2.0 1.8 -2.0 5.8 6.0 1.2 0.8 0.9 0.7 0.3 -0.5\n1.0 3.0 -1.0 -1.0 1.2 0.8 6.3 8.0 2.0 -0.5 1.5 0.6\n1.0 0.1 -0.5 0.5 0.9 0.7 2.0 -0.5 4.7 -6.0 -1.0 2.0\n0.2 -0.2 0.2 -0.1 0.3 -0.5 1.5 0.6 -1.0 2.0 5.5 -7.0\n[End]",
-
-        # mixed-mode order in v1 file
-        message = "Version 1.0 or 1.1 files do not support mixed-mode order (common and differential modes. Save as a Version 2.0 file or delete mixed-mode order data."
-        @test_throws message JosephsonCircuits.touchstone_save(filename, frequencies, N;
-            version = 2.0, R = R,format = format, frequencyunit = frequencyunit,
-            comments = comments, mixedmodeorder = [('D',[1,2]),('C',[1,2]),('C',[1,2])])
-
     end
-
 
     @testset "touchstone_save RI" begin
 
