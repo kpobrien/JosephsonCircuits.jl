@@ -42,6 +42,20 @@ cg = JosephsonCircuits.calccircuitgraph(psc)
 # output
 JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), sparse([1, 2], [1, 2], [1, 1], 2, 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2)
 ```
+```jldoctest
+@variables Ipump Rleft L Lj Cj
+circuit = Tuple{String,String,String,Num}[]
+push!(circuit,("P1","1","0",1))
+push!(circuit,("I1","1","0",Ipump))
+push!(circuit,("R1","1","0",Rleft))
+push!(circuit,("L1","1","2",L))
+push!(circuit,("Lj1","2","0",Lj))
+push!(circuit,("C2","2","0",Cj))
+psc = JosephsonCircuits.parsesortcircuit(circuit)
+cg = JosephsonCircuits.calccircuitgraph(psc)
+# output
+JosephsonCircuits.CircuitGraph(Dict((3, 2) => 3, (1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1, (2, 3) => 3), sparse([1, 3, 2, 3], [1, 1, 2, 2], [1, -1, 1, 1], 3, 2), [(1, 2), (1, 3)], [(3, 2)], [(1, 2), (1, 3), (2, 3)], [[1, 2, 3]], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(3, [[2, 3], [1, 3], [1, 2]]), 3)
+```
 """
 function calccircuitgraph(parsedsortedcircuit::ParsedSortedCircuit)
 
@@ -115,17 +129,7 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1},Nnodes::Int)
             #l = simplecycles_limited_length(stmp,nv(gl))
             l = Graphs.simplecycles_limited_length(stmp,10)
             ul = unique(x->sort(x),l[length.(l).>2])
-            if length(ul) > 1
-                error("There should only be one loop associated with 
-                     each closure branch.")
-            elseif length(ul) < 1
-                #error("No loops found.")
-                # println("Warning: Loop exists but max loop size too small to find vertices.")
-                push!(lvarray,[])
-            else
-                # println("closure branch: ",cj,", loop vertices:", first(ul))
-                push!(lvarray,vmap[first(ul)])
-            end
+            storeuniqueloops!(lvarray,vmap,ul)
         end
         
         #create a directed version of the superconducting spanning tree
@@ -179,6 +183,33 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1},Nnodes::Int)
         isolatednodes,gl,Nbranches)
 end
 
+
+"""
+    storeuniqueloops!(lvarray,vmap,ul)
+
+# Examples
+```jldoctest
+julia> lvarray = Vector{Int}[];JosephsonCircuits.storeuniqueloops!(lvarray,[1, 2, 3],[[1,2,3]]);lvarray
+1-element Vector{Vector{Int64}}:
+ [1, 2, 3]
+
+julia> lvarray = Vector{Int}[];JosephsonCircuits.storeuniqueloops!(lvarray,[1, 2, 3],[[1,2,3],[4,5,6]]);lvarray
+ERROR: There should only be one loop associated with each closure branch.
+```
+"""
+function storeuniqueloops!(lvarray,vmap,ul)
+
+    if length(ul) > 1
+        error("There should only be one loop associated with each closure branch.")
+    elseif length(ul) < 1
+        # println("Warning: Loop exists but max loop size too small to find vertices.")
+        push!(lvarray,Int[])
+    else
+        # println("closure branch: ",cj,", loop vertices:", first(ul))
+        push!(lvarray,vmap[first(ul)])
+    end
+    return nothing
+end
 
 """
     edge2index(graph::SimpleDiGraph{Int})
