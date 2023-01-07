@@ -47,17 +47,6 @@ Num[w1, w2, 3w2, -3w2, -w2]
 CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(3, 1), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3), CartesianIndex(2, 4), CartesianIndex(3, 4), CartesianIndex(2, 5), CartesianIndex(3, 5), CartesianIndex(1, 6), CartesianIndex(2, 6), CartesianIndex(3, 6), CartesianIndex(2, 7), CartesianIndex(3, 7)]
 Num[0, 2w1, w1 + w2, w2 + 2w1, 2w2, w1 + 2w2, 2w1 + 2w2, w1 + 3w2, 2w1 + 3w2, w1 - 3w2, 2w1 - 3w2, -2w2, w1 - 2w2, 2w1 - 2w2, w1 - w2, 2w1 - w2]
 ```
-```jldoctest
-@variables w1,w2
-w = (w1,w2)
-Nharmonics = (2,)
-maxintermodorder = 2
-Nw,coords,values,dropcoords,dropvalues = JosephsonCircuits.calcfrequencies(w,Nharmonics,
-    maxintermodorder=maxintermodorder,dc=false,even=false,odd=true);
-
-# output
-ERROR: Each frequency must have a number of harmonics.
-```
 """
 function calcfrequencies(w::Tuple, Nharmonics::Tuple; maxintermodorder::Number = Inf,
     dc::Bool = true, even::Bool = true, odd::Bool = true)
@@ -237,13 +226,6 @@ JosephsonCircuits.vectortodense(coords,values,Nharmonics)
   w1   w1 + w2   w1 + 2w2   w1 - 2w2   w1 - w2
  2w1  w2 + 2w1  2w1 + 2w2  2w1 - 2w2  2w1 - w2
  3w1  w2 + 3w1  2w2 + 3w1  3w1 - 2w2  3w1 - w2
-```
-```jldoctest
-julia> JosephsonCircuits.vectortodense([CartesianIndex(1,1)],[1],(1,))
-ERROR: Dimensions of coords elements and Nharmonics must be consistent.
-
-julia> JosephsonCircuits.vectortodense([CartesianIndex(1,1,1)],[1],(1,1,1))
-ERROR: Not designed to visualize higher dimensional arrays
 ```
 """
 function vectortodense(coords::Vector, values::Vector, Nharmonics)
@@ -748,26 +730,6 @@ phimatrix
  0.0+2.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im
  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im
 ```
-```jldoctest
-freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
-conjsourceindices = [16, 6]
-conjtargetindices = [21, 31]
-Nbranches = 1
-
-phivector = 1im.*Complex.(1:(Nbranches*length(freqindexmap)-1));
-phimatrix=zeros(Complex{Float64},5,7,1)
-
-JosephsonCircuits.phivectortomatrix!(phivector,
-    phimatrix,
-    freqindexmap,
-    conjsourceindices,
-    conjtargetindices,
-    Nbranches,
-)
-
-# output
-ERROR: Unexpected length for phivector
-```
 """
 function phivectortomatrix!(phivector::Vector, phimatrix::Array,
     indexmap::Vector{Int}, conjsourceindices::Vector{Int},
@@ -838,26 +800,6 @@ phivector
  0.0 + 6.0im
  0.0 + 7.0im
  0.0 + 8.0im
-```
-```jldoctest
-freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
-conjsourceindices = [16, 6]
-conjtargetindices = [21, 31]
-Nbranches = 1
-
-phivector = zeros(Complex{Float64}, Nbranches*length(freqindexmap)-1)
-phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
-
-JosephsonCircuits.phimatrixtovector!(phivector,
-    phimatrix,
-    freqindexmap,
-    conjsourceindices,
-    conjtargetindices,
-    Nbranches,
-)
-
-# output
-ERROR: Unexpected length for phivector
 ```
 """
 function phimatrixtovector!(phivector::Vector, phimatrix::Array,

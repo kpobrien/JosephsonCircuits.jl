@@ -285,21 +285,6 @@ parsecircuit(circuit)
 # output
 JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1", "0", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Union{Int64, Symbol, ComplexF64}[1, :Ipump, :Rleft, :L1, :K1, :L2, :C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
 ```
-```jldoctest
-circuit = Vector{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int}}}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("I1","1","0",:Ipump))
-push!(circuit,("R1","1","0",:Rleft))
-push!(circuit,("L1","1","0",:L1))
-push!(circuit,("L1","1","0",:L1))
-push!(circuit,("K1","L1","L2",:K1))
-push!(circuit,("L2","2","0",:L2))
-push!(circuit,("C2","2","0",:C2))
-parsecircuit(circuit)
-
-# output
-ERROR: ArgumentError: Name "L1" on line 5 is not unique.
-```
 """
 function parsecircuit(circuit)
 
@@ -513,12 +498,6 @@ julia> [JosephsonCircuits.parsecomponenttype(c,["Lj","L","C","K","I","R","P"]) f
 
 julia> JosephsonCircuits.parsecomponenttype("L10",["Lj","L","C","K","I","R","P"])
 2
-
-julia> JosephsonCircuits.parsecomponenttype("BAD1",["Lj","BAD","L","C","K","I","R","P"])
-ERROR: ArgumentError: parsecomponenttype() currently only works for two letter components
-
-julia> JosephsonCircuits.parsecomponenttype("B1",["Lj","L","C","K","I","R","P"])
-ERROR: ArgumentError: No matching component found in allowedcomponents.
 ```
 """
 function parsecomponenttype(name::String,allowedcomponents::Vector{String})
@@ -554,9 +533,6 @@ throw an error.
 ```jldoctest
 julia> JosephsonCircuits.checkcomponenttypes(["Lj","L","C","K","I","R","P"])
 true
-
-julia> JosephsonCircuits.checkcomponenttypes(["L","Lj","C","K","I","R","P"])
-ERROR: ArgumentError: Allowed components parsing check has failed for Lj. This can happen if a two letter long component comes after a one letter component. Please reorder allowedcomponents.
 ```
 """
 function checkcomponenttypes(allowedcomponents::Vector{String})
@@ -586,15 +562,6 @@ julia> JosephsonCircuits.extractbranches([:P,:I,:R,:C,:Lj,:C],[2 2 2 2 3 3; 1 1 
  (2, 1)
  (2, 1)
  (3, 1)
-
-julia> JosephsonCircuits.extractbranches([:P,:I,:R,:C,:Lj,:C],[2 2 2 2 3; 1 1 1 3 1])
-ERROR: DimensionMismatch: typevector must have the same length as the number of node indices
-
-julia> JosephsonCircuits.extractbranches([:P,:I,:R,:C,:Lj,:C],[2 2 2 2 3 3; 1 1 1 3 1 1; 0 0 0 0 0 0])
-ERROR: DimensionMismatch: the length of the first axis must be 2
-
-julia> JosephsonCircuits.extractbranches!([1],[:P,:I,:R,:C,:Lj,:C],[2 2 2 2 3 3; 1 1 1 3 1 1])
-ERROR: DimensionMismatch: branchvector should be length zero
 ```
 """
 function extractbranches(typevector::Vector{Symbol},nodeindexarray::Matrix{Int})
@@ -712,15 +679,6 @@ julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:none)
  1
  2
  4
-
-julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:test)
-ERROR: ArgumentError: Unknown sorting type.
-
-julia> JosephsonCircuits.calcnodesorting(["30","11","1","2"];sorting=:none)
-ERROR: ArgumentError: No ground node found in netlist.
-
-julia> JosephsonCircuits.calcnodesorting(String[];sorting=:none)
-ERROR: ArgumentError: No ground node found in netlist.
 ```
 """
 function calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
@@ -863,9 +821,6 @@ SymbolicUtils.Symbolic{Number}[]
 julia> uniquenodevectorsorted,nodeindexarray=JosephsonCircuits.sortnodes(["1", "0", "2"],[1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2],sorting=:number);println(uniquenodevectorsorted);println(nodeindexarray);
 ["0", "1", "2"]
 [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
-
-julia> JosephsonCircuits.calcvaluetype([:C,:R],[1,2,3],[:R])
-ERROR: DimensionMismatch: typevector and valuevector should have the same length
 ```
 """
 function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
@@ -968,13 +923,6 @@ JosephsonCircuits.calcnoiseportimpedanceindices(
  1
  3
 ```
-```jldoctest
-julia> JosephsonCircuits.calcnoiseportimpedanceindices([:R,:C,:Lj],[2 2 3 3; 1 3 1 1],[],[50,5e-15,1e-12,30e-15])
-ERROR: DimensionMismatch: Input arrays must have the same length
-
-julia> JosephsonCircuits.calcnoiseportimpedanceindices([:R,:C,:Lj,:C],[2 2 3 3; 1 3 1 1; 0 0 0 0],[],[50,5e-15,1e-12,30e-15])
-ERROR: DimensionMismatch: The length of the first axis must be 2
-```
 """
 function calcnoiseportimpedanceindices(typevector::Vector{Symbol},
     nodeindexarray::Matrix{Int},mutualinductorvector::Vector,
@@ -1052,46 +1000,6 @@ JosephsonCircuits.calcportindicesnumbers(
 # output
 (Int64[], Int64[])
 ```
-```jldoctest
-JosephsonCircuits.calcportindicesnumbers(
-    [:P,:R,:C,:Lj,:C],
-    [2 2 2 3 3; 1 1 3 1 1; 0 0 0 0 0],
-    [],
-    [1,50,5e-15,1e-12,30e-15])
-
-# output
-ERROR: DimensionMismatch: The length of the first axis must be 2
-```
-```jldoctest
-JosephsonCircuits.calcportindicesnumbers(
-    [:P,:R,:C,:Lj,:C],
-    [2 2 2 3; 1 1 3 1],
-    [],
-    [1,50,5e-15,1e-12,30e-15])
-
-# output
-ERROR: DimensionMismatch: Input arrays must have the same length
-```
-```jldoctest
-JosephsonCircuits.calcportindicesnumbers(
-    [:P,:P,:C,:Lj,:C],
-    [2 2 2 3 3; 1 1 3 1 1],
-    [],
-    [1,2,5e-15,1e-12,30e-15])
-
-# output
-ERROR: Only one port allowed per branch.
-```
-```jldoctest
-JosephsonCircuits.calcportindicesnumbers(
-    [:P,:R,:C,:Lj,:P],
-    [2 2 2 3 3; 1 1 3 1 1],
-    [],
-    [1,50,5e-15,1e-12,1])
-
-# output
-ERROR: Duplicate ports are not allowed.
-```
 """
 function calcportindicesnumbers(typevector::Vector{Symbol},
     nodeindexarray::Matrix{Int},mutualinductorvector::Vector,
@@ -1164,56 +1072,6 @@ JosephsonCircuits.calcportimpedanceindices(
 
 # output
 Int64[]
-```
-```jldoctest
-JosephsonCircuits.calcportimpedanceindices(
-    [:P,:R,:C,:Lj,:C],
-    [2 2 2 3 3; 1 1 3 1 1; 0 0 0 0 0],
-    [],
-    [1,50,5e-15,1e-12,30e-15])
-
-# output
-ERROR: DimensionMismatch: The length of the first axis must be 2
-```
-```jldoctest
-JosephsonCircuits.calcportimpedanceindices(
-    [:P,:R,:C,:Lj,:C],
-    [2 2 2 3; 1 1 3 1],
-    [],
-    [1,50,5e-15,1e-12,30e-15])
-
-# output
-ERROR: DimensionMismatch: Input arrays must have the same length
-```
-```jldoctest
-JosephsonCircuits.calcportimpedanceindices(
-    [:P,:P,:C,:Lj,:C],
-    [2 2 2 3 3; 1 1 3 1 1],
-    [],
-    [1,2,5e-15,1e-12,30e-15])
-
-# output
-ERROR: Only one port allowed per branch.
-```
-```jldoctest
-JosephsonCircuits.calcportimpedanceindices(
-    [:P,:R,:C,:Lj,:P],
-    [2 2 2 3 3; 1 1 3 1 1],
-    [],
-    [1,50,5e-15,1e-12,1])
-
-# output
-ERROR: Duplicate ports are not allowed.
-```
-```jldoctest
-JosephsonCircuits.calcportimpedanceindices(
-    [:P,:R,:R,:Lj,:C],
-    [2 2 2 2 3; 1 1 1 3 1],
-    [],
-    [1,50.0,50.0,1e-12,30e-15])
-
-# output
-ERROR: Only one resistor allowed per port.
 ```
 """
 function calcportimpedanceindices(typevector::Vector{Symbol},

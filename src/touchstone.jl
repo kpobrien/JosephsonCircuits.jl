@@ -390,7 +390,7 @@ function touchstone_save(filename::String, frequencies::AbstractVector,
         end
     else
         @warn "Adding extension of .s$(numberofports)p"
-        filename = filename*".s$(numberofports)p"
+        filename = "$(filename).s$(numberofports)p"
     end
 
     # open up a file and create an IOStream io
@@ -844,7 +844,8 @@ function arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies,
     if mf == "full"
         nvals = (2*numberofports^2+1)
     elseif mf == "lower" || mf == "upper"
-        nvals = ((2*numberofports+1)^2+3)÷4
+        # nvals = ((2*numberofports+1)^2+3)÷4
+        nvals = numberofports^2+numberofports+1
     else
         error("Unknown matrixformat.")
     end
@@ -1000,15 +1001,6 @@ julia> JosephsonCircuits.matrixindices(2,"Full","21_12")
  CartesianIndex(2, 1)
  CartesianIndex(1, 2)
  CartesianIndex(2, 2)
-
-julia> JosephsonCircuits.matrixindices(2,"Full","21_31")
-ERROR: Unknown two port data order string.
-
-julia> JosephsonCircuits.matrixindices(2,"Fake","21_12")
-ERROR: Unknown matrix format.
-
-julia> JosephsonCircuits.matrixindices(4,"Full","21_12")
-ERROR: Two port data order = 21_12 is only allowed if the number of ports is two
 ```
 """
 function matrixindices(nports,format,twoportdataorder;printflag = false)
@@ -1081,7 +1073,7 @@ function matrixindices(nports,format,twoportdataorder;printflag = false)
             end
         end
     elseif twoportdataorder == "21_12"
-        error("Two port data order = 21_12 is only allowed if the number of ports is two")
+        error("Two port data order = 21_12 is only allowed if the number of ports is two.")
     elseif twoportdataorder == "12_21"
         nothing
     else
@@ -1166,9 +1158,6 @@ end
 ```jldoctest
 julia> JosephsonCircuits.frequencyscale("MHz")
 1.0e6
-
-julia> JosephsonCircuits.frequencyscale("THz")
-ERROR: Unknown frequency unit THz
 ```
 """
 function frequencyscale(frequencyunit::String)
@@ -1290,9 +1279,6 @@ julia> JosephsonCircuits.parsetwoportdataorder("[two-port data order] 12_21")
 
 julia> JosephsonCircuits.parsetwoportdataorder("[two-port data order] 21_12")
 "21_12"
-
-julia> JosephsonCircuits.parsetwoportdataorder("[two-port data order] 21_34")
-ERROR: Unknown [Two-Port Data Order] parameter: [two-port data order] 21_34
 ```
 """
 function parsetwoportdataorder(line::String)
@@ -1410,9 +1396,6 @@ of a Touchstone file.
 ```jldoctest
 julia> JosephsonCircuits.parsenumberoffrequencies("[number of frequencies] 10")
 10
-
-julia> JosephsonCircuits.parsenumberoffrequencies("[number of frequencies] 0")
-ERROR: Number of frequencies must be an integer greater than zero: [number of frequencies] 0
 ```
 """
 function parsenumberoffrequencies(line::String)
@@ -1453,9 +1436,6 @@ frequencies] line of a Touchstone file.
 ```jldoctest
 julia> JosephsonCircuits.parsenumberofnoisefrequencies("[number of noise frequencies] 10")
 10
-
-julia> JosephsonCircuits.parsenumberofnoisefrequencies("[number of noise frequencies] 0")
-ERROR: Number of noise frequencies must be an integer greater than zero: [number of noise frequencies] 0
 ```
 """
 function parsenumberofnoisefrequencies(line::String)
@@ -1531,18 +1511,6 @@ println(reference)
 # output
 [50.0, 60.0, 75.0]
 ```
-```jldoctest
-io = IOBuffer("[Reference] 50.0 \n60.0 75.0 1.0\n[Number of Frequencies] 1")
-numberofports = 3
-comments = String[]
-reference = Float64[]
-line = JosephsonCircuits.stripcommentslowercase!(comments,readline(io))
-JosephsonCircuits.parsereference!(reference, comments, line, numberofports, io)
-println(reference)
-
-# output
-ERROR: Too many values on [Reference] line: 60.0 75.0 1.0
-```
 """
 function parsereference!(reference::Vector{Float64}, comments::Vector{String},
     line::String, numberofports::Int, io::IO)
@@ -1607,9 +1575,6 @@ julia> JosephsonCircuits.parsematrixformat("[matrix format] lower")
 
 julia> JosephsonCircuits.parsematrixformat("[matrix format] upper")
 "Upper"
-
-julia> JosephsonCircuits.parsematrixformat("[matrix format] unknown")
-ERROR: Unknown format: unknown
 ```
 """
 function parsematrixformat(line::String)
@@ -1800,16 +1765,6 @@ println(networkdata)
 # output
 [2.0, 0.95, -26.0, 3.57, 157.0, 0.04, 76.0, 0.66, -14.0, 22.0, 0.6, -144.0, 1.3, 40.0, 0.14, 40.0, 0.56, -85.0]
 ```
-```jldoctest
-networkdata = Float64[]
-comments = String[]
-io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n# GHz S MA R 50\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n18 2.7 .46 -33 20\n[End]")
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-println(networkdata)
-
-# output
-ERROR: Second option line in network data.
-```
 """
 function parsenetworkdata!(networkdata::Vector{Float64},
         comments::Vector{String}, io::IO)
@@ -1954,54 +1909,6 @@ println(noisedata)
 
 # output
 [4.0, 0.7, 0.64, 69.0, 19.0, 18.0, 2.7, 0.46, -33.0, 20.0]
-```
-```jldoctest
-networkdata = Float64[]
-noisedata = Float64[]
-comments = String[]
-io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19 1.2\n18 2.7 .46 -33 20\n[End]")
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
-println(noisedata)
-
-# output
-ERROR: Noise data lines must have 5 entries.
-```
-```jldoctest
-networkdata = Float64[]
-noisedata = Float64[]
-comments = String[]
-io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n[Noise Data]\n18 2.7 .46 -33 20\n[End]")
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
-println(noisedata)
-
-# output
-ERROR: Only one [Noise Data] keyword allowed.
-```
-```jldoctest
-networkdata = Float64[]
-noisedata = Float64[]
-comments = String[]
-io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n# GHz S MA R 50\n18 2.7 .46 -33 20\n[End]")
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
-println(noisedata)
-
-# output
-ERROR: Second option line in noise data.
-```
-```jldoctest
-networkdata = Float64[]
-noisedata = Float64[]
-comments = String[]
-io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n18 2.7 .46 -33 20\n4 .7 .64 69 19\n[End]")
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
-println(noisedata)
-
-# output
-ERROR: Frequencies descending in noise data
 ```
 """
 function parsenoisedata!(noisedata, comments, io)

@@ -787,9 +787,6 @@ julia> JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[10,4,5,1])
 
 julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L1, C1, Lj1])
 (1//2)*L1 + (1//2)*Lj1
-
-julia> JosephsonCircuits.calcLmean_inner([:L,:C,:Lj],[10,4,5,1],Float64[])
-ERROR: DimensionMismatch: typevector and valuevector should have the same length
 ```
 """
 function calcLmean(typevector::Vector{Symbol}, valuevector::Vector)
@@ -953,15 +950,6 @@ of component and invert. :C and false for capacitance and :R and true for
 conductance. The dimensions of the output are (Nnodes-1) times Nmodes by 
 (Nnodes-1) times Nmodes. Note that the  nodeindexarray is "one indexed" so 1
 is the ground node.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.calcnodematrix([:R,:R],[2 3;1 1;0 0],[1.0,2.0],Float64[],1,3,:R,false)
-ERROR: DimensionMismatch: nodeindexarray should have a first dimension size of 2.
-
-julia> JosephsonCircuits.calcnodematrix([:R],[2 3;1 1],[1.0,2.0],Float64[],1,3,:R,false)
-ERROR: DimensionMismatch: typevector, nodeindexarray, and valuevector should have the same length
-```
 """
 function calcnodematrix(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     valuevector::Vector, valuetypevector::Vector, Nmodes, Nnodes,

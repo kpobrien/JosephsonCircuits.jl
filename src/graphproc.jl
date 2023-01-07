@@ -199,9 +199,6 @@ julia> lvarray = Vector{Int}[];JosephsonCircuits.storeuniqueloops!(lvarray,[1, 2
 julia> lvarray = Vector{Int}[];JosephsonCircuits.storeuniqueloops!(lvarray,[1, 2, 3],Vector{Int64}[]);lvarray
 1-element Vector{Vector{Int64}}:
  []
-
-julia> lvarray = Vector{Int}[];JosephsonCircuits.storeuniqueloops!(lvarray,[1, 2, 3],[[1,2,3],[4,5,6]]);lvarray
-ERROR: There should only be one loop associated with each closure branch.
 ```
 """
 function storeuniqueloops!(lvarray,vmap,ul)

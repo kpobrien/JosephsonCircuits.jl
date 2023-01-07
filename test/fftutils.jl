@@ -4,6 +4,33 @@ using SpecialFunctions
 
 @testset verbose=true "fftutils" begin
 
+    @testset "calcfrequencies" begin
+
+        @variables w1,w2
+        w = (w1,w2)
+        Nharmonics = (2,)
+        maxintermodorder = 2
+        @test_throws(
+            "Each frequency must have a number of harmonics.",
+            JosephsonCircuits.calcfrequencies(w,Nharmonics,
+                maxintermodorder=maxintermodorder,dc=false,even=false,odd=true)
+        )
+    end
+
+    @testset "vectortodense" begin
+        @test_throws(
+            "Dimensions of coords elements and Nharmonics must be consistent.",
+            JosephsonCircuits.vectortodense([CartesianIndex(1,1)],[1],(1,))
+        )
+    end
+
+    @testset "vectortodense" begin
+        @test_throws(
+            "Not designed to visualize higher dimensional arrays",
+            JosephsonCircuits.vectortodense([CartesianIndex(1,1,1)],[1],(1,1,1))
+        )
+    end
+
     @testset "applynl: cos(z*cos(theta))" begin
         # test against Jacobi-Anger expansion for cos(z*cos(theta))
         z = 0.9
@@ -173,6 +200,29 @@ using SpecialFunctions
         conjtargetindices = [21, 31]
         Nbranches = 1
 
+        phivector = zeros(Complex{Float64}, Nbranches*length(freqindexmap)-1)
+        phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
+
+        @test_throws(
+            "Unexpected length for phivector",
+            JosephsonCircuits.phimatrixtovector!(phivector,
+                phimatrix,
+                freqindexmap,
+                conjsourceindices,
+                conjtargetindices,
+                Nbranches,
+            )
+        )
+
+    end
+
+    @testset "phimatrixtovector!"  begin
+
+        freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+        conjsourceindices = [16, 6]
+        conjtargetindices = [21, 31]
+        Nbranches = 1
+
         phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
         phivector = 1im.*Complex.(1:Nbranches*length(freqindexmap));
 
@@ -189,6 +239,8 @@ using SpecialFunctions
 
         @test all(phivector .== phivector1)
     end
+
+
 
     @testset "phivectortomatrix!"  begin
 
@@ -212,6 +264,29 @@ using SpecialFunctions
         )
 
         @test all(phimatrix .== phimatrix1)
+    end
+
+    @testset "phivectortomatrix!"  begin
+
+        freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+        conjsourceindices = [16, 6]
+        conjtargetindices = [21, 31]
+        Nbranches = 1
+
+        phivector = 1im.*Complex.(1:(Nbranches*length(freqindexmap)-1));
+        phimatrix=zeros(Complex{Float64},5,7,1)
+
+        @test_throws(
+            "Unexpected length for phivector",
+            JosephsonCircuits.phivectortomatrix!(phivector,
+                phimatrix,
+                freqindexmap,
+                conjsourceindices,
+                conjtargetindices,
+                Nbranches,
+            )
+        )
+
     end
 
 end

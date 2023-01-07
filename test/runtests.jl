@@ -20,7 +20,13 @@ end
 
 @testset verbose = true "JosephsonCircuits" begin
     # @info ""
+    include("capindmat.jl")
+
+    include("exportnetlist.jl")
+
     include("fftutils.jl")
+
+    include("graphproc.jl")
 
     include("hbsolve.jl")
 
@@ -28,11 +34,19 @@ end
 
     include("JosephsonCircuits.jl")
 
+    include("matutils.jl")
+
+    include("parseinput.jl")
+
+    # include("qesparams.jl")
+
     include("spiceraw.jl")
 
     include("spiceutils.jl")
 
     include("spicewrapper.jl")
+
+    include("testutils.jl")
 
     include("touchstone.jl")
 

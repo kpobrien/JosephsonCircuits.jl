@@ -473,4 +473,78 @@ import UUIDs
 
     end
 
+    @testset "matrixindices" begin
+        @test_throws "Unknown two port data order string." JosephsonCircuits.matrixindices(2,"Full","21_31")
+        @test_throws "Unknown matrix format." JosephsonCircuits.matrixindices(2,"Fake","21_12")
+        @test_throws "Two port data order = 21_12 is only allowed if the number of ports is two." JosephsonCircuits.matrixindices(4,"Full","21_12")
+    end
+
+    @testset "frequencyscale" begin
+        @test_throws "Unknown frequency unit THz" JosephsonCircuits.frequencyscale("THz")
+    end
+
+    @testset "parsetwoportdataorder" begin
+        @test_throws "Unknown [Two-Port Data Order] parameter: [two-port data order] 21_34" JosephsonCircuits.parsetwoportdataorder("[two-port data order] 21_34")
+    end
+
+    @testset "parsenumberoffrequencies" begin
+        @test_throws "Number of frequencies must be an integer greater than zero: [number of frequencies] 0" JosephsonCircuits.parsenumberoffrequencies("[number of frequencies] 0")
+    end
+
+    @testset "parsenumberofnoisefrequencies" begin
+        @test_throws "Number of noise frequencies must be an integer greater than zero: [number of noise frequencies] 0" JosephsonCircuits.parsenumberofnoisefrequencies("[number of noise frequencies] 0")
+    end
+
+    @testset "parsereference!" begin
+        io = IOBuffer("[Reference] 50.0 \n60.0 75.0 1.0\n[Number of Frequencies] 1")
+        numberofports = 3
+        comments = String[]
+        reference = Float64[]
+        line = JosephsonCircuits.stripcommentslowercase!(comments,readline(io))
+        @test_throws "Too many values on [Reference] line: 60.0 75.0 1.0" JosephsonCircuits.parsereference!(reference, comments, line, numberofports, io)
+    end
+
+    @testset "parsematrixformat" begin
+        @test_throws "Unknown format: unknown" JosephsonCircuits.parsematrixformat("[matrix format] unknown")
+    end
+
+    @testset "parsenetworkdata!" begin
+        networkdata = Float64[]
+        comments = String[]
+        io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n# GHz S MA R 50\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n18 2.7 .46 -33 20\n[End]")
+        @test_throws "Second option line in network data." JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+    end
+
+    @testset "parsenoisedata!"  begin
+
+    networkdata = Float64[]
+    noisedata = Float64[]
+    comments = String[]
+    io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19 1.2\n18 2.7 .46 -33 20\n[End]")
+    JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+    @test_throws "Noise data lines must have 5 entries." JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+
+    networkdata = Float64[]
+    noisedata = Float64[]
+    comments = String[]
+    io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n[Noise Data]\n18 2.7 .46 -33 20\n[End]")
+    JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+    @test_throws "Only one [Noise Data] keyword allowed." JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+
+    networkdata = Float64[]
+    noisedata = Float64[]
+    comments = String[]
+    io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n# GHz S MA R 50\n18 2.7 .46 -33 20\n[End]")
+    JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+    @test_throws "Second option line in noise data." JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+
+    networkdata = Float64[]
+    noisedata = Float64[]
+    comments = String[]
+    io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n18 2.7 .46 -33 20\n4 .7 .64 69 19\n[End]")
+    JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+    @test_throws "Frequencies descending in noise data" JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+
+    end
+
 end
