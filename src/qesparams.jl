@@ -863,9 +863,6 @@ julia> JosephsonCircuits.calcqeideal(Complex{Float64}[3/5 4/5;4/5 3/5])
 2×2 Matrix{Float64}:
  1.0  1.0
  1.0  1.0
-
-julia> @variables S11 S12 S21 S22;println(JosephsonCircuits.calcqeideal([S11 S12;S21 S22]))
-Num[ifelse(abs2(S11) <= 1, 1, 1 / (2 + -1 / abs2(S11))) ifelse(abs2(S12) <= 1, 1, 1 / (2 + -1 / abs2(S12))); ifelse(abs2(S21) <= 1, 1, 1 / (2 + -1 / abs2(S21))) ifelse(abs2(S22) <= 1, 1, 1 / (2 + -1 / abs2(S22)))]
 ```
 """
 function calcqeideal(S::AbstractArray{T}) where {T}
