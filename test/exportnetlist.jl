@@ -4,7 +4,7 @@ using Test
 @testset verbose=true "exportnetlist" begin
     @testset "sumvalues" begin
         @test_throws(
-            "unknown component type in sumvalues",
+            ErrorException("unknown component type in sumvalues"),
             JosephsonCircuits.sumvalues(:V, 1.0, 4.0)
         )
     end
@@ -15,7 +15,7 @@ using Test
         namedict = Dict("L1" => 4, "I1" => 2, "L2" => 7, "C2" => 8, "K2" => 6, "C3" => 9, "R1" => 3, "P1" => 1, "K1" => 5)
         mutualinductorvector = ["L1", "L2", "L1", "L2"]
         @test_throws(
-            "DimensionMismatch: Input arrays must have the same length",
+            DimensionMismatch("Input arrays must have the same length"),
             JosephsonCircuits.componentdictionaries(typevector,
                 nodeindexarraysorted,namedict,mutualinductorvector)
         )
@@ -26,7 +26,8 @@ using Test
         nodeindexarraysorted = [2 2 2 2 0 0 3 3 3; 1 1 1 1 0 0 1 1 1; 1 1 1 1 0 0 1 1 1]
         namedict = Dict("L1" => 4, "I1" => 2, "L2" => 7, "C2" => 8, "K2" => 6, "C3" => 9, "R1" => 3, "P1" => 1, "K1" => 5)
         mutualinductorvector = ["L1", "L2", "L1", "L2"]
-        @test_throws("DimensionMismatch: The length of the first axis must be 2",
+        @test_throws(
+            DimensionMismatch("The length of the first axis must be 2"),
             JosephsonCircuits.componentdictionaries(typevector,
                 nodeindexarraysorted,namedict,mutualinductorvector)
         )
@@ -37,7 +38,8 @@ using Test
         nodeindexarraysorted = [2 2 2 2 0 0 3 3 3; 1 1 1 1 0 0 1 1 1]
         namedict = Dict("L1" => 4, "I1" => 2, "L2" => 7, "C2" => 8, "K2" => 6, "C3" => 9, "R1" => 3, "P1" => 1, "K1" => 5)
         mutualinductorvector = ["L1", "L2", "L1", "L2"]
-        @test_throws("DimensionMismatch: Input arrays must have the same length",
+        @test_throws(
+            DimensionMismatch("Input arrays must have the same length"),
             JosephsonCircuits.componentdictionaries(typevector,
                 nodeindexarraysorted,namedict,mutualinductorvector)
         )
@@ -52,7 +54,7 @@ using Test
         countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:C, 1, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
         indexdict = Dict((:C, 2, 3, 1) => 3, (:Lj, 1, 3, 1) => 4, (:C, 1, 3, 1) => 5, (:R, 1, 2, 1) => 2, (:C, 3, 4, 1) => 6, (:P, 1, 2, 1) => 1, (:C, 1, 4, 1) => 8, (:Lj, 1, 4, 1) => 7)
         @test_throws(
-            "Minimum junction too much smaller than average for WRSPICE.",
+            ErrorException("Minimum junction too much smaller than average for WRSPICE."),
             JosephsonCircuits.calcCjIcmean(typevector, nodeindexarray,
                 valuevector, namedict,mutualinductorvector, countdict, indexdict)
         )
@@ -68,7 +70,7 @@ using Test
         indexdict = Dict((:C, 12, 13, 1) => 35, (:Lj, 35, 36, 1) => 103, (:Lj, 46, 47, 1) => 136, (:C, 55, 56, 1) => 164, (:Lj, 39, 40, 1) => 115, (:C, 1, 32, 1) => 93, (:Lj, 42, 43, 1) => 124, (:C, 27, 28, 1) => 80, (:C, 35, 36, 1) => 104, (:Lj, 25, 26, 1) => 73, (:C, 49, 50, 1) => 146, (:Lj, 21, 22, 1) => 61, (:C, 1, 22, 1) => 63, (:C, 4, 5, 1) => 11, (:Lj, 9, 10, 1) => 25, (:Lj, 37, 38, 1) => 109, (:Lj, 3, 4, 1) => 7, (:Lj, 26, 27, 1) => 76, (:C, 53, 54, 1) => 158, (:C, 1, 25, 1) => 72, (:C, 1, 5, 1) => 12, (:C, 7, 8, 1) => 20, (:C, 10, 11, 1) => 29, (:C, 1, 18, 1) => 51, (:Lj, 8, 9, 1) => 22, (:C, 1, 42, 1) => 123, (:C, 18, 19, 1) => 53, (:C, 17, 18, 1) => 50, (:C, 1, 35, 1) => 102, (:C, 50, 51, 1) => 149, (:Lj, 7, 8, 1) => 19, (:C, 38, 39, 1) => 113, (:Lj, 47, 48, 1) => 139, (:Lj, 32, 33, 1) => 94, (:C, 46, 47, 1) => 137, (:C, 1, 50, 1) => 147, (:C, 1, 16, 1) => 45, (:C, 40, 41, 1) => 119, (:Lj, 55, 56, 1) => 163, (:C, 1, 2, 1) => 3, (:C, 48, 49, 1) => 143, (:Lj, 15, 16, 1) => 43, (:Lj, 20, 21, 1) => 58, (:C, 26, 27, 1) => 77, (:C, 23, 24, 1) => 68, (:C, 22, 23, 1) => 65, (:Lj, 24, 25, 1) => 70, (:C, 1, 38, 1) => 111, (:Lj, 48, 49, 1) => 142, (:Lj, 4, 5, 1) => 10, (:C, 1, 31, 1) => 90, (:C, 1, 45, 1) => 132, (:Lj, 49, 50, 1) => 145, (:C, 1, 34, 1) => 99, (:C, 1, 51, 1) => 150, (:Lj, 54, 55, 1) => 160, (:Lj, 11, 12, 1) => 31, (:C, 33, 34, 1) => 98, (:C, 6, 7, 1) => 17, (:C, 1, 3, 1) => 6, (:C, 3, 4, 1) => 8, (:Lj, 14, 15, 1) => 40, (:Lj, 6, 7, 1) => 16, (:C, 25, 26, 1) => 74, (:C, 1, 53, 1) => 156, (:C, 44, 45, 1) => 131, (:C, 5, 6, 1) => 14, (:Lj, 18, 19, 1) => 52, (:C, 36, 37, 1) => 107, (:C, 1, 13, 1) => 36, (:Lj, 17, 18, 1) => 49, (:C, 16, 17, 1) => 47, (:Lj, 19, 20, 1) => 55, (:Lj, 27, 28, 1) => 79, (:C, 9, 10, 1) => 26, (:C, 37, 38, 1) => 110, (:C, 1, 12, 1) => 33, (:C, 32, 33, 1) => 95, (:R, 1, 2, 1) => 2, (:C, 1, 9, 1) => 24, (:C, 1, 33, 1) => 96, (:C, 1, 11, 1) => 30, (:C, 1, 27, 1) => 78, (:C, 21, 22, 1) => 62, (:Lj, 38, 39, 1) => 112, (:Lj, 44, 45, 1) => 130, (:C, 1, 46, 1) => 135, (:C, 1, 49, 1) => 144, (:Lj, 30, 31, 1) => 88, (:Lj, 28, 29, 1) => 82, (:C, 1, 44, 1) => 129, (:C, 1, 56, 1) => 165, (:C, 39, 40, 1) => 116, (:C, 2, 3, 1) => 5, (:C, 1, 8, 1) => 21, (:C, 47, 48, 1) => 140, (:C, 1, 28, 1) => 81, (:P, 1, 56, 1) => 167, (:C, 52, 53, 1) => 155, (:R, 1, 56, 1) => 166, (:Lj, 2, 3, 1) => 4, (:C, 1, 4, 1) => 9, (:C, 1, 6, 1) => 15, (:C, 1, 10, 1) => 27, (:C, 1, 19, 1) => 54, (:Lj, 16, 17, 1) => 46, (:Lj, 22, 23, 1) => 64, (:C, 31, 32, 1) => 92, (:C, 14, 15, 1) => 41, (:Lj, 40, 41, 1) => 118, (:C, 1, 29, 1) => 84, (:Lj, 50, 51, 1) => 148, (:C, 1, 23, 1) => 66, (:C, 1, 24, 1) => 69, (:Lj, 33, 34, 1) => 97, (:C, 1, 40, 1) => 117, (:C, 20, 21, 1) => 59, (:C, 1, 47, 1) => 138, (:Lj, 52, 53, 1) => 154, (:Lj, 36, 37, 1) => 106, (:C, 1, 21, 1) => 60, (:C, 8, 9, 1) => 23, (:C, 1, 7, 1) => 18, (:C, 19, 20, 1) => 56, (:Lj, 31, 32, 1) => 91, (:Lj, 45, 46, 1) => 133, (:C, 45, 46, 1) => 134, (:C, 43, 44, 1) => 128, (:P, 1, 2, 1) => 1, (:Lj, 10, 11, 1) => 28, (:C, 1, 14, 1) => 39, (:C, 1, 30, 1) => 87, (:Lj, 34, 35, 1) => 100, (:C, 1, 36, 1) => 105, (:C, 1, 37, 1) => 108, (:C, 15, 16, 1) => 44, (:C, 24, 25, 1) => 71, (:C, 13, 14, 1) => 38, (:C, 1, 39, 1) => 114, (:C, 42, 43, 1) => 125, (:C, 1, 26, 1) => 75, (:Lj, 41, 42, 1) => 121, (:C, 1, 48, 1) => 141, (:C, 51, 52, 1) => 152, (:C, 1, 54, 1) => 159, (:C, 54, 55, 1) => 161, (:C, 1, 52, 1) => 153, (:Lj, 5, 6, 1) => 13, (:Lj, 13, 14, 1) => 37, (:Lj, 29, 30, 1) => 85, (:Lj, 12, 13, 1) => 34, (:C, 1, 15, 1) => 42, (:C, 28, 29, 1) => 83, (:C, 1, 20, 1) => 57, (:C, 1, 17, 1) => 48, (:C, 1, 43, 1) => 126, (:Lj, 53, 54, 1) => 157, (:C, 1, 55, 1) => 162, (:Lj, 43, 44, 1) => 127, (:C, 30, 31, 1) => 89, (:Lj, 51, 52, 1) => 151, (:C, 41, 42, 1) => 122, (:C, 34, 35, 1) => 101, (:C, 29, 30, 1) => 86, (:C, 1, 41, 1) => 120, (:Lj, 23, 24, 1) => 67, (:C, 11, 12, 1) => 32)
 
         @test_throws(
-            "Maximum junction too much larger than average for WRSPICE.",
+            ErrorException("Maximum junction too much larger than average for WRSPICE."),
             JosephsonCircuits.calcCjIcmean(typevector, nodeindexarray,
                 vvn, namedict,mutualinductorvector, countdict, indexdict)
         )

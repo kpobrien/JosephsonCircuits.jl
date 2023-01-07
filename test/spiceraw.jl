@@ -31,7 +31,10 @@ using Test
 
         filepath = joinpath(dirname(Base.source_path()),"spiceraw","test03.raw")
 
-        @test_warn "Variable line has additional parameters which we are ignoring" JosephsonCircuits.spice_raw_load(filepath)
+        @test_warn(
+            "Variable line has additional parameters which we are ignoring",
+            JosephsonCircuits.spice_raw_load(filepath)
+        )
 
     end
 
@@ -39,7 +42,10 @@ using Test
 
         filepath = joinpath(dirname(Base.source_path()),"spiceraw","test04.raw")
 
-        @test_throws "This function only handles Binary files not ASCII" JosephsonCircuits.spice_raw_load(filepath)
+        @test_throws(
+            ErrorException("This function only handles Binary files not ASCII"),
+            JosephsonCircuits.spice_raw_load(filepath)
+        )
 
     end
 
@@ -47,7 +53,10 @@ using Test
 
         filepath = joinpath(dirname(Base.source_path()),"spiceraw","test05.raw")
 
-        @test_throws "Unknown flag" JosephsonCircuits.spice_raw_load(filepath)
+        @test_throws(
+            ErrorException("Unknown flag"),
+            JosephsonCircuits.spice_raw_load(filepath)
+        )
 
     end
 

@@ -38,7 +38,7 @@ end
 
     include("parseinput.jl")
 
-    # include("qesparams.jl")
+    include("qesparams.jl")
 
     include("spiceraw.jl")
 

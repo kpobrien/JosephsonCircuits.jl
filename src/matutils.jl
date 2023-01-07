@@ -47,7 +47,7 @@ julia> A = [1 2;3 4];out = zeros(eltype(A),4,4);JosephsonCircuits.diagrepeat!(ou
 function diagrepeat!(out,A,counts::Integer)
 
     if size(A).*counts != size(out)
-        error("Sizes not consistent")
+        throw(DimensionMismatch("Sizes not consistent"))
     end
 
     @inbounds for coord in CartesianIndices(A)
@@ -769,7 +769,7 @@ function conjnegfreq!(A::SparseMatrixCSC,wmodes::Vector)
 
     for i in size(A)
         if i % length(wmodes) != 0
-            error("The dimensions of A must be integer multiples of the length of wmodes.")
+            throw(DimensionMismatch("The dimensions of A must be integer multiples of the length of wmodes."))
         end
     end
 
@@ -907,12 +907,12 @@ function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
 
     for i in size(A)
         if i % length(wmodes) != 0
-            error("The dimensions of A must be integer multiples of the length of wmodes.")
+            throw(DimensionMismatch("The dimensions of A must be integer multiples of the length of wmodes."))
         end
     end
 
     if !(symfreqvar == nothing || checkissymbolic(symfreqvar))
-        error("Error: symfreqvar must be a symbolic variable (or nothing if no symbolic variables)")
+        error("symfreqvar must be a symbolic variable (or nothing if no symbolic variables)")
     end
 
     # set the output to be Complex{Float64} since the input type may be something
@@ -924,7 +924,7 @@ function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
             if checkissymbolic(A.nzval[j] )
 
                 if !checkissymbolic(symfreqvar)
-                    error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
+                    error("Set symfreqvar equal to the symbolic variable representing frequency.")
                 end
                 nzval[j] = valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
             else

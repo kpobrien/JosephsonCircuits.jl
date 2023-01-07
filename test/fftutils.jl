@@ -11,7 +11,7 @@ using SpecialFunctions
         Nharmonics = (2,)
         maxintermodorder = 2
         @test_throws(
-            "Each frequency must have a number of harmonics.",
+            ErrorException("Each frequency must have a number of harmonics."),
             JosephsonCircuits.calcfrequencies(w,Nharmonics,
                 maxintermodorder=maxintermodorder,dc=false,even=false,odd=true)
         )
@@ -19,14 +19,14 @@ using SpecialFunctions
 
     @testset "vectortodense" begin
         @test_throws(
-            "Dimensions of coords elements and Nharmonics must be consistent.",
+            DimensionMismatch("Dimensions of coords elements and Nharmonics must be consistent."),
             JosephsonCircuits.vectortodense([CartesianIndex(1,1)],[1],(1,))
         )
     end
 
     @testset "vectortodense" begin
         @test_throws(
-            "Not designed to visualize higher dimensional arrays",
+            DimensionMismatch("Not designed to visualize higher dimensional arrays"),
             JosephsonCircuits.vectortodense([CartesianIndex(1,1,1)],[1],(1,1,1))
         )
     end
@@ -204,7 +204,7 @@ using SpecialFunctions
         phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
 
         @test_throws(
-            "Unexpected length for phivector",
+            DimensionMismatch("Unexpected length for phivector"),
             JosephsonCircuits.phimatrixtovector!(phivector,
                 phimatrix,
                 freqindexmap,
@@ -277,7 +277,7 @@ using SpecialFunctions
         phimatrix=zeros(Complex{Float64},5,7,1)
 
         @test_throws(
-            "Unexpected length for phivector",
+            DimensionMismatch("Unexpected length for phivector"),
             JosephsonCircuits.phivectortomatrix!(phivector,
                 phimatrix,
                 freqindexmap,

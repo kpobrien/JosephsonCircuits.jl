@@ -630,7 +630,7 @@ function touchstone_write(io::IO,ts::TouchstoneFile)
             elseif fmt == "db"
                 write(io,"logmag$(ts.parameter)$(indices[j][1])$(indices[j][2]) ang$(ts.parameter)$(indices[j][1])$(indices[j][2]) ")
             else
-                error("Error: Unknown format")
+                error("Unknown format")
             end
         end
         write(io,"\n")

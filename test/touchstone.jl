@@ -73,75 +73,117 @@ import UUIDs
 
         # empty input
         message = "Input is empty and thus not a valid touchstone file."
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer())
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer())
+        )
 
         # two version lines
         example = "!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 2.0\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Reference]\n50 75 0.01 0.01\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4"
         message = "Only one [Version] keyword allowed: [version] 2.0"
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # second option line
         # the spec says a second options line should be ignored, but the 
         # golden parser tsck2 throws an error.
         example = "!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 2.0\n# GHz S MA R 50\n# GHz S MA R 50\n[Number of Ports] 4\n[Reference]\n50 75 0.01 0.01\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4"
         message = "Invalid secondary options line: # ghz s ma r 50"
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # two [Number of Ports] keywords
         example = "!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Number of Ports] 4\n[Reference]\n50 75 0.01 0.01\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4"
         message = "Only one [Number of Ports] keyword allowed: [number of ports] 4"
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # two [Two-Port Data Order] keywords
         example = "!Example 17 (Version 2.0):\n!2-port network, S-parameter and noise data\n!Default MA format, GHz frequencies, 50 ohm reference, S-parameters\n[Version] 2.0\n# ghz s ma R 50.0\n[Number of Ports] 2\n[Two-Port Data Order] 21_12\n[Two-Port Data Order] 21_12\n[Number of Frequencies] 2\n[Number of Noise Frequencies] 2\n[Reference] 50.0 25.0\n[Network Data]\n! freq mags11 angs11 mags21 angs21 mags12 angs12 mags22 angs22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n22.0 0.6 -144.0 1.3 40.0 0.14 40.0 0.56 -85.0\n[Noise Data]\n4.0 0.7 0.64 69.0 19.0\n18.0 2.7 0.46 -33.0 20.0\n[End]"
         message = "Only one [Two-Port Data Order] line allowed: [two-port data order] 21_12"
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # [Two-Port Data Order] line for 4-port file
         example = "!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Two-Port Data Order] 21_12\n[Reference]\n50 75 0.01 0.01\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4"
         message = "[Two-Port Data Order] is only allowed if [Number of Ports] is 2: [two-port data order] 21_12" 
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # [Begin Information] before [Number of Ports]
         example = "!Example 17 (Version 2.0):\n!2-port network, S-parameter and noise data\n!Default MA format, GHz frequencies, 50 ohm reference, S-parameters\n[Version] 2.0\n# ghz s ma R 50.0\n[Begin Information]\n[Number of Ports] 2\n[Two-Port Data Order] 21_12\n[Number of Frequencies] 2\n[Number of Noise Frequencies] 2\n[Reference] 50.0 25.0\n[Network Data]\n! freq mags11 angs11 mags21 angs21 mags12 angs12 mags22 angs22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n22.0 0.6 -144.0 1.3 40.0 0.14 40.0 0.56 -85.0\n[Noise Data]\n4.0 0.7 0.64 69.0 19.0\n18.0 2.7 0.46 -33.0 20.0\n[End]"
         message = "[Number of Ports] must be before [Begin Information]"
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # two [End Information] keywords
         example = "!Example 17 (Version 2.0):\n!2-port network, S-parameter and noise data\n!Default MA format, GHz frequencies, 50 ohm reference, S-parameters\n[Version] 2.0\n# ghz s ma R 50.0\n[Number of Ports] 2\n[Two-Port Data Order] 21_12\n[Begin Information]\ninformation\n[End Information]\n[End Information]\n[Number of Frequencies] 2\n[Number of Noise Frequencies] 2\n[Reference] 50.0 25.0\n[Network Data]\n! freq mags11 angs11 mags21 angs21 mags12 angs12 mags22 angs22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n22.0 0.6 -144.0 1.3 40.0 0.14 40.0 0.56 -85.0\n[Noise Data]\n4.0 0.7 0.64 69.0 19.0\n18.0 2.7 0.46 -33.0 20.0\n[End]"
         message = "The [End Information] line should have been parsed by the parseinformation() function."
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # two [Reference] keywords
         example = "!Example 17 (Version 2.0):\n!2-port network, S-parameter and noise data\n!Default MA format, GHz frequencies, 50 ohm reference, S-parameters\n[Version] 2.0\n# ghz s ma R 50.0\n[Number of Ports] 2\n[Two-Port Data Order] 21_12\n[Number of Frequencies] 2\n[Number of Noise Frequencies] 2\n[Reference] 50.0 25.0\n[Reference] 50.0 25.0\n[Network Data]\n! freq mags11 angs11 mags21 angs21 mags12 angs12 mags22 angs22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n22.0 0.6 -144.0 1.3 40.0 0.14 40.0 0.56 -85.0\n[Noise Data]\n4.0 0.7 0.64 69.0 19.0\n18.0 2.7 0.46 -33.0 20.0\n[End]"
         message = "Only one [Reference] keyword allowed: [reference] 50.0 25.0"
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # [Number of Ports] must be before [Reference]
         example = "!Example 17 (Version 2.0):\n!2-port network, S-parameter and noise data\n!Default MA format, GHz frequencies, 50 ohm reference, S-parameters\n[Version] 2.0\n# ghz s ma R 50.0\n[Reference] 50.0 25.0\n[Number of Ports] 2\n[Two-Port Data Order] 21_12\n[Number of Frequencies] 2\n[Number of Noise Frequencies] 2\n[Network Data]\n! freq mags11 angs11 mags21 angs21 mags12 angs12 mags22 angs22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n22.0 0.6 -144.0 1.3 40.0 0.14 40.0 0.56 -85.0\n[Noise Data]\n4.0 0.7 0.64 69.0 19.0\n18.0 2.7 0.46 -33.0 20.0\n[End]"
         message = "[Number of Ports] must be before [Reference]"
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # Unknown keyword
         example = "!Example 17 (Version 2.0):\n!2-port network, S-parameter and noise data\n!Default MA format, GHz frequencies, 50 ohm reference, S-parameters\n[Version] 2.0\n# ghz s ma R 50.0\n[Number of Ports] 2\n[Two-Port Data Order] 21_12\n[Number of Frequencies] 2\n[Number of Noise Frequencies] 2\n[Reference] 50.0 25.0\n[Unknown keyword example] unknown line example\n[Network Data]\n! freq mags11 angs11 mags21 angs21 mags12 angs12 mags22 angs22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n22.0 0.6 -144.0 1.3 40.0 0.14 40.0 0.56 -85.0\n[Noise Data]\n4.0 0.7 0.64 69.0 19.0\n18.0 2.7 0.46 -33.0 20.0\n[End]"
         message = "Unknown line type: [unknown keyword example] unknown line example"
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # Number of ports in data and header not consistent
         example = "!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 2\n[Reference]\n50 75\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4"
         message = "Number of ports not consistent between header and network data."
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # More impedance values on refernece line than number of ports
         example = "!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 2\n[Reference]\n50 75 0.01 0.01\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4"
         message = "Too many values on [Reference] line: 50 75 0.01 0.01"
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # Too few impedance values on reference line relative to number of ports. 
         # Can I make a better error for this?
         example = "!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Reference]\n50 75\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4"
-        message = """ArgumentError: cannot parse "[number" as Float64"""
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        message = """cannot parse "[number" as Float64"""
+        @test_throws(
+            ArgumentError(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # # Wrong version number
         # example = "!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 1.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Reference]\n50 75 0.01 0.01\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4"
@@ -151,69 +193,120 @@ import UUIDs
         # No network data.
         example = "!Example 13 (Version 1.0):\n!2-port S-parameter file, three frequency points\n!freq ReS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22\n# ghz s ri R 50.0\n"
         message = "No network data."
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # No [Two-Port Data Order] keyword in v2 file with 2 ports
         # example = "!Example 17 (Version 2.0):\n!2-port network, S-parameter and noise data\n!Default MA format, GHz frequencies, 50 ohm reference, S-parameters\n[Version] 2.0\n# ghz s ma R 50.0\n[Number of Ports] 2\n[Two-Port Data Order] 21_12\n[Number of Frequencies] 2\n[Number of Noise Frequencies] 2\n[Reference] 50.0 25.0\n[Network Data]\n! freq mags11 angs11 mags21 angs21 mags12 angs12 mags22 angs22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n22.0 0.6 -144.0 1.3 40.0 0.14 40.0 0.56 -85.0\n[Noise Data]\n4.0 0.7 0.64 69.0 19.0\n18.0 2.7 0.46 -33.0 20.0\n[End]"
         example = "!Example 17 (Version 2.0):\n!2-port network, S-parameter and noise data\n!Default MA format, GHz frequencies, 50 ohm reference, S-parameters\n[Version] 2.0\n# ghz s ma R 50.0\n[Number of Ports] 2\n[Number of Frequencies] 2\n[Number of Noise Frequencies] 2\n[Reference] 50.0 25.0\n[Network Data]\n! freq mags11 angs11 mags21 angs21 mags12 angs12 mags22 angs22 \n2.0 0.95 -26.0 3.57 157.0 0.04 76.0 0.66 -14.0\n22.0 0.6 -144.0 1.3 40.0 0.14 40.0 0.56 -85.0\n[Noise Data]\n4.0 0.7 0.64 69.0 19.0\n18.0 2.7 0.46 -33.0 20.0\n[End]"
         message = "two-port data order must be defined for a v2 file with two ports."
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # [Two-Port Data Order] keyword not allowed in v2 file with more than 2 ports
         example = "!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Two-Port Data Order] 21_12\n[Reference]\n50 75 0.1 0.1\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4"
         message = "[Two-Port Data Order] is only allowed if [Number of Ports] is 2: [two-port data order] 21_12"
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # For non-full matrix format, number of ports from data and number of ports from network data not consistent
         # example = "!Example 6 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by the [Reference] keyword arguments\n! Note that [Reference] arguments are split across two lines\n! Data cannot be represented using 1.0 syntax\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Number of Frequencies] 1\n[Reference] 50 75\n0.01 0.01\n[Matrix Format] Lower\n[Network Data]\n5.00000 0.60 161.24 !row 1\n0.40 -42.20 0.60 161.20 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4\n[End]"
         example = "!Example 6 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by the [Reference] keyword arguments\n! Note that [Reference] arguments are split across two lines\n! Data cannot be represented using 1.0 syntax\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Number of Frequencies] 1\n[Reference] 50 75\n0.01 0.01\n[Matrix Format] Lower\n[Network Data]\n5.00000 0.60 161.24 !row 1\n0.40 -42.20 0.60 161.20 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 !row 3\n[End]"
         message = "Number of ports not consistent between header and network data."
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
         # in network data, doesn't have expected number of entries based on previous lines.
         example = "!Example 6 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by the [Reference] keyword arguments\n! Note that [Reference] arguments are split across two lines\n! Data cannot be represented using 1.0 syntax\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Number of Frequencies] 1\n[Reference] 50 75\n0.01 0.01\n[Matrix Format] Lower\n[Network Data]\n5.00000 0.60 !row 1\n0.40 -42.20 0.60 !row 2\n0.42 -66.58 0.53 -79.34 0.60 !row 3\n[End]"
         message = "Number of ports are not consistent between lines:0.42 -66.58 0.53 -79.34 0.60 "
-        @test_throws message JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_parse(IOBuffer(example))
+        )
 
     end
 
     @testset "touchstone_file errors" begin
 
         message = "The size of the last axis of network data N must equal the number of frequecies"
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6,3.0e6], [0.874020294860635 - 0.18794819544685323im;;;])
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6,3.0e6], [0.874020294860635 - 0.18794819544685323im;;;])
+        )
 
         message = "Network data matrix must be square"
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,2,1))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,2,1))
+        )
 
         message = "Version must be 1.0, 1.1, or 2.0"
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,1,1),version=1.5)
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,1,1),version=1.5)
+        )
 
         message = "Unknown frequency unit"
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,1,1),frequencyunit="THz")
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,1,1),frequencyunit="THz")
+        )
 
         message = "Unknown format"
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,1,1),format="DA")
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,1,1),format="DA")
+        )
 
         message = "Unknown parameter"
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,1,1),parameter="K")
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,1,1),parameter="K")
+        )
 
         message = "Number of per port impedances must equal number of ports"
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,1,1),reference=[50.0,50.0])
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},1,1,1),reference=[50.0,50.0])
+        )
 
         message = "The port impedances are not equal, so we cannot generate a Touchstone file with version < 2.0."
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},2,2,1),reference=[50.0,40.0],version=1.0)
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},2,2,1),reference=[50.0,40.0],version=1.0)
+        )
 
         message = "For Touchstone files with version less than 2.0 only the Full matrix format is required."
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},2,2,1),version=1.0,matrixformat="Lower")
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},2,2,1),version=1.0,matrixformat="Lower")
+        )
 
         message = "For Touchstone files with version 2.0 the valid formats are Full, Lower, or Upper."
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},2,2,1),version=2.0,matrixformat="Triangular")
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},2,2,1),version=2.0,matrixformat="Triangular")
+        )
 
         message = "Unknown two-port data order."
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},2,2,1),version=2.0,twoportdataorder="23_32")
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},2,2,1),version=2.0,twoportdataorder="23_32")
+        )
 
         message = "Invalid number of elements in noise data."
-        @test_throws message JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},2,2,1),version=2.0,noisedata=[1.0,2.0,3.0,4.0,5.0,6.0])
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_file([2.0e6], zeros(Complex{Float64},2,2,1),version=2.0,noisedata=[1.0,2.0,3.0,4.0,5.0,6.0])
+        )
 
     end
 
@@ -284,11 +377,17 @@ import UUIDs
 
         message = "Number of mixed mode order descriptors must match the number of ports."
         io = IOBuffer();
-        @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},1,1,1),mixedmodeorder = [('D',[1,2]),('C',[1,2])])
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},1,1,1),mixedmodeorder = [('D',[1,2]),('C',[1,2])])
+        )
 
         message = "Version 1.0 or 1.1 files do not support mixed-mode order (common and differential modes. Save as a Version 2.0 file or delete mixed-mode order data."
         io = IOBuffer();
-        @test_throws message JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},2,2,1),mixedmodeorder = [('D',[1,2]),('C',[1,2])],version=1.0)
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_write(io,[2.0e6], zeros(Complex{Float64},2,2,1),mixedmodeorder = [('D',[1,2]),('C',[1,2])],version=1.0)
+        )
 
         # message = "Unknown format"
         # io = IOBuffer();
@@ -296,18 +395,26 @@ import UUIDs
 
         message = "Unknown parameter"
         io = IOBuffer();
-        @test_throws message JosephsonCircuits.touchstone_write(io,JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "k", "ma", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_write(io,JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "k", "ma", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]))
+        )
 
         # Unknown format v1
         message = "Unknown format"
         io = IOBuffer();
-        @test_throws message JosephsonCircuits.touchstone_write(io,JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "s", "da", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]))
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_write(io,JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "s", "da", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]))
+        )
 
         # Unknown format v2
         message = "Unknown format"
         io = IOBuffer();
-        @test_throws message JosephsonCircuits.touchstone_write(io,JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "s", "da", 50.0, 2.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]))
-
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_write(io,JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "s", "da", 50.0, 2.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[]))
+        )
 
     end
 
@@ -431,21 +538,30 @@ import UUIDs
 
         # error if network data arrays not square
         message = "Network data arrays are not square."
-        @test_throws message JosephsonCircuits.touchstone_save(filename, frequencies, N[1:end-1,:,:];
-            version = version, R = R,format = format, frequencyunit = frequencyunit,
-            comments = comments)
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_save(filename, frequencies,
+                N[1:end-1,:,:]; version = version, R = R,format = format,
+                frequencyunit = frequencyunit,comments = comments)
+        )
 
         # unknown format error
         message = "Unknown parameter"
-        @test_throws message JosephsonCircuits.touchstone_save(filename, frequencies, N;
-            version = version, R = R,format = format, parameter = "K", frequencyunit = frequencyunit,
-            comments = comments)
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_save(filename, frequencies, N;
+                version = version, R = R,format = format, parameter = "K",
+                frequencyunit = frequencyunit, comments = comments)
+        )
 
         # unknown format error
         message = "Unknown format"
-        @test_throws message JosephsonCircuits.touchstone_save(filename, frequencies, N;
-            version = version, R = R,format = "Unknown", frequencyunit = frequencyunit,
-            comments = comments)
+        @test_throws(
+            ErrorException(message),
+            JosephsonCircuits.touchstone_save(filename, frequencies, N;
+                version = version, R = R,format = "Unknown",
+                frequencyunit = frequencyunit, comments = comments)
+        )
 
         #file extensions
         filename = joinpath(path,"JosephsonCircuits-"* string(UUIDs.uuid1()) * ".s4p")
@@ -474,25 +590,46 @@ import UUIDs
     end
 
     @testset "matrixindices" begin
-        @test_throws "Unknown two port data order string." JosephsonCircuits.matrixindices(2,"Full","21_31")
-        @test_throws "Unknown matrix format." JosephsonCircuits.matrixindices(2,"Fake","21_12")
-        @test_throws "Two port data order = 21_12 is only allowed if the number of ports is two." JosephsonCircuits.matrixindices(4,"Full","21_12")
+        @test_throws(
+            ErrorException("Unknown two port data order string."),
+            JosephsonCircuits.matrixindices(2,"Full","21_31")
+        )
+        @test_throws(
+            ErrorException("Unknown matrix format."),
+            JosephsonCircuits.matrixindices(2,"Fake","21_12")
+        )
+        @test_throws(
+            ErrorException("Two port data order = 21_12 is only allowed if the number of ports is two."),
+            JosephsonCircuits.matrixindices(4,"Full","21_12")
+        )
     end
 
     @testset "frequencyscale" begin
-        @test_throws "Unknown frequency unit THz" JosephsonCircuits.frequencyscale("THz")
+        @test_throws(
+            ErrorException("Unknown frequency unit THz"),
+            JosephsonCircuits.frequencyscale("THz")
+        )
     end
 
     @testset "parsetwoportdataorder" begin
-        @test_throws "Unknown [Two-Port Data Order] parameter: [two-port data order] 21_34" JosephsonCircuits.parsetwoportdataorder("[two-port data order] 21_34")
+        @test_throws(
+            ErrorException("Unknown [Two-Port Data Order] parameter: [two-port data order] 21_34"),
+            JosephsonCircuits.parsetwoportdataorder("[two-port data order] 21_34")
+        )
     end
 
     @testset "parsenumberoffrequencies" begin
-        @test_throws "Number of frequencies must be an integer greater than zero: [number of frequencies] 0" JosephsonCircuits.parsenumberoffrequencies("[number of frequencies] 0")
+        @test_throws(
+            ErrorException("Number of frequencies must be an integer greater than zero: [number of frequencies] 0"),
+            JosephsonCircuits.parsenumberoffrequencies("[number of frequencies] 0")
+        )
     end
 
     @testset "parsenumberofnoisefrequencies" begin
-        @test_throws "Number of noise frequencies must be an integer greater than zero: [number of noise frequencies] 0" JosephsonCircuits.parsenumberofnoisefrequencies("[number of noise frequencies] 0")
+        @test_throws(
+            ErrorException("Number of noise frequencies must be an integer greater than zero: [number of noise frequencies] 0"),
+            JosephsonCircuits.parsenumberofnoisefrequencies("[number of noise frequencies] 0")
+        )
     end
 
     @testset "parsereference!" begin
@@ -501,18 +638,27 @@ import UUIDs
         comments = String[]
         reference = Float64[]
         line = JosephsonCircuits.stripcommentslowercase!(comments,readline(io))
-        @test_throws "Too many values on [Reference] line: 60.0 75.0 1.0" JosephsonCircuits.parsereference!(reference, comments, line, numberofports, io)
+        @test_throws(
+            ErrorException("Too many values on [Reference] line: 60.0 75.0 1.0"),
+            JosephsonCircuits.parsereference!(reference, comments, line, numberofports, io)
+        )
     end
 
     @testset "parsematrixformat" begin
-        @test_throws "Unknown format: unknown" JosephsonCircuits.parsematrixformat("[matrix format] unknown")
+        @test_throws(
+            ErrorException("Unknown format: unknown"),
+            JosephsonCircuits.parsematrixformat("[matrix format] unknown")
+        )
     end
 
     @testset "parsenetworkdata!" begin
         networkdata = Float64[]
         comments = String[]
         io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n# GHz S MA R 50\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n18 2.7 .46 -33 20\n[End]")
-        @test_throws "Second option line in network data." JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+        @test_throws(
+            ErrorException("Second option line in network data."),
+            JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
+        )
     end
 
     @testset "parsenoisedata!"  begin
@@ -522,28 +668,40 @@ import UUIDs
     comments = String[]
     io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19 1.2\n18 2.7 .46 -33 20\n[End]")
     JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-    @test_throws "Noise data lines must have 5 entries." JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+    @test_throws(
+        ErrorException("Noise data lines must have 5 entries."),
+        JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+    )
 
     networkdata = Float64[]
     noisedata = Float64[]
     comments = String[]
     io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n[Noise Data]\n18 2.7 .46 -33 20\n[End]")
     JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-    @test_throws "Only one [Noise Data] keyword allowed." JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+    @test_throws(
+        ErrorException("Only one [Noise Data] keyword allowed."),
+        JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+    )
 
     networkdata = Float64[]
     noisedata = Float64[]
     comments = String[]
     io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n4 .7 .64 69 19\n# GHz S MA R 50\n18 2.7 .46 -33 20\n[End]")
     JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-    @test_throws "Second option line in noise data." JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+    @test_throws(
+        ErrorException("Second option line in noise data."),
+        JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+    )
 
     networkdata = Float64[]
     noisedata = Float64[]
     comments = String[]
     io = IOBuffer("2 .95 -26 3.57 157 .04 76 .66 -14\n22 .60 -144 1.30 40 .14 40 .56 -85\n[Noise Data]\n18 2.7 .46 -33 20\n4 .7 .64 69 19\n[End]")
     JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-    @test_throws "Frequencies descending in noise data" JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+    @test_throws(
+        ErrorException("Frequencies descending in noise data"),
+        JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
+    )
 
     end
 

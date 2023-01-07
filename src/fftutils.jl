@@ -231,7 +231,7 @@ JosephsonCircuits.vectortodense(coords,values,Nharmonics)
 function vectortodense(coords::Vector, values::Vector, Nharmonics)
 
     if length(Nharmonics) != length(eltype(coords))
-        error("Dimensions of coords elements and Nharmonics must be consistent.")
+        throw(DimensionMismatch("Dimensions of coords elements and Nharmonics must be consistent."))
     end
 
     if length(eltype(coords)) == 1
@@ -246,7 +246,7 @@ function vectortodense(coords::Vector, values::Vector, Nharmonics)
         end
         
     else
-        error("Not designed to visualize higher dimensional arrays")
+        throw(DimensionMismatch("Not designed to visualize higher dimensional arrays"))
     end
     return s
 end
@@ -736,7 +736,7 @@ function phivectortomatrix!(phivector::Vector, phimatrix::Array,
     conjtargetindices::Vector{Int}, Nbranches::Int)
 
     if length(indexmap)*Nbranches != length(phivector)
-        error("Unexpected length for phivector")
+        throw(DimensionMismatch("Unexpected length for phivector"))
     end
 
     Nvector = length(phivector)÷ Nbranches
@@ -813,7 +813,7 @@ function phimatrixtovector!(phivector::Vector, phimatrix::Array,
     fill!(phivector,0)
 
     if length(indexmap)*Nbranches != length(phivector)
-        error("Unexpected length for phivector")
+        throw(DimensionMismatch("Unexpected length for phivector"))
     end
 
     for i in 1:Nbranches
