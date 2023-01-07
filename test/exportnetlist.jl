@@ -76,4 +76,30 @@ using Test
         )
     end
 
+    @testset "calcCjIcmean" begin
+
+        @variables R Cc Lj Cj
+        circuit = [
+            ("P1","1","0",1),
+            ("R1","1","0",R),
+            ("C1","1","2",Cc),
+            ("Lj1","2","0",Lj),
+        #    ("C2","2","0",Cj),
+            ]
+        circuitdefs = Dict(
+            Lj =>1000.0e-12,
+            Cc => 100.0e-15,
+            Cj => 1000.0e-15,
+            R => 50.0)
+        psc = parsesortcircuit(circuit)
+        vvn = JosephsonCircuits.valuevectortonumber(psc.valuevector,circuitdefs)
+        countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.typevector,psc.nodeindexarraysorted,psc.namedict,psc.mutualinductorvector)
+        @test_throws(
+            ErrorException("Cj cannot be zero in the WRSPICE JJ model."),
+            JosephsonCircuits.calcCjIcmean(psc.typevector, psc.nodeindexarraysorted,
+                vvn, psc.namedict,psc.mutualinductorvector, countdict, indexdict)
+            )
+
+    end
+
 end
