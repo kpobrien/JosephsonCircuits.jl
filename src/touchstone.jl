@@ -773,7 +773,7 @@ if length(reference) != numberofports
     error("Number of per port impedances must equal number of ports")
 end
 
-if version < 2.0 && !allequal(reference)
+if version < 2.0 && allunique(reference)
     error("The port impedances are not equal, so we cannot generate a Touchstone file with version < 2.0.")
 end
 
