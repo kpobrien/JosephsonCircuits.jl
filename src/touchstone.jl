@@ -25,7 +25,7 @@ with [`touchstone_parse`](@ref), or generate a TouchstoneFile struct with
 [`touchstone_file`](@ref).
 """
 struct TouchstoneFile
-    f::Vector{Float64}
+    f::AbstractVector{Float64}
     N::Array{Complex{Float64}}
     frequencyunit::String
     parameter::String
@@ -446,7 +446,7 @@ julia> io = IOBuffer();JosephsonCircuits.touchstone_write(io, [1.0e9, 2.0e9, 10.
 ```
 """
 function touchstone_write(io::IO,
-    f::Vector{Float64}, N::Array{Complex{Float64},3};
+    f::AbstractVector{Float64}, N::Array{Complex{Float64},3};
     frequencyunit::String = "GHz",
     parameter::String = "S",
     format::String = "MA",
@@ -702,7 +702,7 @@ Generate a TouchstoneFile struct from the frequency vector `f` in units of Hz
 and the complex network data array `N` where the frequency axis is the last
 dimension. All other arguments are optional.
 """
-function touchstone_file(f::Vector{Float64}, N::Array{Complex{Float64},3};
+function touchstone_file(f::AbstractVector{Float64}, N::Array{Complex{Float64},3};
     frequencyunit::String = "GHz",
     parameter::String = "S",
     format::String = "MA",
@@ -835,6 +835,113 @@ return TouchstoneFile(f, N, frequencyunit,
 end
 
 
+"""
+
+    arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
+        matrixformat, twoportdataorder, parameter, frequencyunit, format, R,
+        version)
+
+# Examples
+```jldoctest
+frequencies = 4.0e9:5.0e8:6.0e9
+N = [0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.046691189499470154im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
+numberofports = 1
+numberoffrequencies = 5
+matrixformat = "Full"
+twoportdataorder = "12_21"
+parameter = "S"
+frequencyunit = "GHz"
+format = "MA"
+R = 50.0
+version = 2.0
+JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
+    matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
+
+# output
+15-element Vector{Float64}:
+   4.0
+   0.9995813511383583
+ -17.248815971093425
+   4.5
+   0.9958480363660398
+ -26.451285931791276
+   5.0
+   0.9868361175866559
+   2.711906450972103
+   5.5
+   0.9985678550072272
+ -12.21545548845392
+   6.0
+   0.9993761539770525
+ -16.045248853866596
+```
+```jldoctest
+frequencies = 4.0e9:5.0e8:6.0e9
+N = [0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.046691189499470154im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
+numberofports = 1
+numberoffrequencies = 5
+matrixformat = "Lower"
+twoportdataorder = "12_21"
+parameter = "Z"
+frequencyunit = "GHz"
+format = "MA"
+R = 50.0
+version = 2.0
+JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
+    matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
+
+# output
+15-element Vector{Float64}:
+   4.0
+   0.9995813511383583
+ -17.248815971093425
+   4.5
+   0.9958480363660398
+ -26.451285931791276
+   5.0
+   0.9868361175866559
+   2.711906450972103
+   5.5
+   0.9985678550072272
+ -12.21545548845392
+   6.0
+   0.9993761539770525
+ -16.045248853866596
+```
+```jldoctest
+frequencies = 4.0e9:5.0e8:6.0e9
+N = [0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.046691189499470154im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
+numberofports = 1
+numberoffrequencies = 5
+matrixformat = "Lower"
+twoportdataorder = "12_21"
+parameter = "Z"
+frequencyunit = "GHz"
+format = "MA"
+R = 50.0
+version = 1.0
+JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
+    matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
+
+# output
+15-element Vector{Float64}:
+   4.0
+   0.019991627022767165
+ -17.248815971093425
+   4.5
+   0.019916960727320795
+ -26.451285931791276
+   5.0
+   0.01973672235173312
+   2.7119064509721027
+   5.5
+   0.019971357100144544
+ -12.215455488453918
+   6.0
+   0.019987523079541047
+ -16.0452488538666
+```
+"""
 function arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
     matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
 
@@ -888,6 +995,36 @@ function arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies,
 end
 
 
+
+"""
+
+    networkdatatoarray(networkdata, numberofports, numberoffrequencies, 
+        matrixformat, twoportdataorder, parameter, frequencyunit, format, R,
+        version)
+
+# Examples
+```jldoctest
+networkdata = [4.0, 0.9995813511383583, -17.248815971093425, 4.5, 0.9958480363660398, -26.451285931791276, 5.0, 0.9868361175866559, 2.711906450972103, 5.5, 0.9985678550072272, -12.21545548845392, 6.0, 0.9993761539770525, -16.045248853866596]
+numberofports = 1
+numberoffrequencies = 5
+matrixformat = "Full"
+twoportdataorder = "12_21"
+parameter = "s"
+frequencyunit = "ghz"
+format = "ma"
+R = 50.0
+version = 2.0
+frequencies, N = JosephsonCircuits.networkdatatoarray(networkdata, numberofports,
+    numberoffrequencies, matrixformat, twoportdataorder, parameter,
+    frequencyunit, format, R, version)
+println(frequencies)
+println(N)
+
+# output
+[4.0e9, 4.5e9, 5.0e9, 5.5e9, 6.0e9]
+[0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.04669118949947016im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
+```
+"""
 function networkdatatoarray(networkdata, numberofports, numberoffrequencies, 
     matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
 

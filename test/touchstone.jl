@@ -310,6 +310,69 @@ import UUIDs
 
     end
 
+    @testset "arraytonetworkdata" begin
+
+        frequencies = 4.0e9:5.0e8:6.0e9
+        N = [0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.046691189499470154im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
+        numberofports = 1
+        numberoffrequencies = 5
+        matrixformat = "Other"
+        twoportdataorder = "12_21"
+        parameter = "S"
+        frequencyunit = "GHz"
+        format = "MA"
+        R = 50.0
+        version = 2.0
+        @test_throws(
+            ErrorException("Unknown matrixformat."),
+            JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
+                matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
+        )
+
+    end
+
+    @testset "arraytonetworkdata" begin
+
+        frequencies = 4.0e9:5.0e8:6.0e9
+        N = [0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.046691189499470154im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
+        numberofports = 1
+        numberoffrequencies = 5
+        matrixformat = "Full"
+        twoportdataorder = "12_21"
+        parameter = "K"
+        frequencyunit = "GHz"
+        format = "MA"
+        R = 50.0
+        version = 2.0
+        @test_throws(
+            ErrorException("Unknown format or version"),
+            JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
+                matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
+        )
+
+    end
+
+    @testset "networkdatatoarray" begin
+
+        networkdata = [4.0, 0.9995813511383583, -17.248815971093425, 4.5, 0.9958480363660398, -26.451285931791276, 5.0, 0.9868361175866559, 2.711906450972103, 5.5, 0.9985678550072272, -12.21545548845392, 6.0, 0.9993761539770525, -16.045248853866596]
+        numberofports = 1
+        numberoffrequencies = 5
+        matrixformat = "Full"
+        twoportdataorder = "12_21"
+        parameter = "K"
+        frequencyunit = "ghz"
+        format = "ma"
+        R = 50.0
+        version = 2.0
+        @test_throws(
+            ErrorException("Error: Unknown parameter."),
+            JosephsonCircuits.networkdatatoarray(networkdata, numberofports,
+                numberoffrequencies, matrixformat, twoportdataorder, parameter,
+                frequencyunit, format, R, version)
+            )
+
+    end
+
     @testset "touchstone_write" begin
 
         parsedexamples = Any[
