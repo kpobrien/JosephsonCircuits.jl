@@ -466,13 +466,17 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
     AoLjnmconj = copy(AoLjnm)
     conj!(AoLjnmconj.nzval)
 
-    if solver ==:klu
-        # if using the KLU factorization and sparse solver then make a 
-        # factorization for the sparsity pattern.
-        F = KLU.klu(Asparsecopy)
-    else
-        error("Error: Unknown solver")
-    end
+    # if using the KLU factorization and sparse solver then make a 
+    # factorization for the sparsity pattern.
+    F = KLU.klu(Asparsecopy)
+
+    # if solver ==:klu
+    #     # if using the KLU factorization and sparse solver then make a 
+    #     # factorization for the sparsity pattern.
+    #     F = KLU.klu(Asparsecopy)
+    # else
+    #     error("Error: Unknown solver")
+    # end
 
     # if the scattering matrix is empty define a new working matrix
     if isempty(S)
@@ -721,7 +725,7 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     symfreqvar = nothing, verbosity = 1)
 
     if length(ports) != length(Ip)
-        error("Number of currents Ip must be equal to number of pump ports")
+        throw(DimensionMismatch("Number of currents Ip must be equal to number of pump ports"))
     end
 
     # calculate the numeric matrices
@@ -967,8 +971,10 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
         end
 
         if n == iterations
-            println("Warning: Solver did not converge with infinity norm of : ",norm(F,Inf)," after maximum iterations of ", n)
+            @warn string("Solver did not converge after maximum iterations of ", n,".")
             println("norm(F)/norm(x): ", norm(F)/norm(x))
+            println("Infinity norm: ", norm(F,Inf))
+
         end
     end
 
@@ -982,16 +988,16 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
 
-    # calculate the scattering parameters
-    if any(abs.(Ip) .> 0)
-        # portimpedances = [vvn[i] for i in portimpedanceindices]
-        # noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
+    # # calculate the scattering parameters
+    # if any(abs.(Ip) .> 0)
+    #     # portimpedances = [vvn[i] for i in portimpedanceindices]
+    #     # noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
 
-        # inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
-        # outputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-        # calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
-        #     portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
-    end
+    #     # inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
+    #     # outputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    #     # calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
+    #     #     portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+    # end
 
     return NonlinearHB(nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
     # return (samples=samples,fmin=fmin,alphas=alphas,
@@ -1209,15 +1215,15 @@ function updateAoLjbm!(AoLjbm::SparseMatrixCSC, Am, Ljb::SparseVector, Lmean,
     # check that the dimensions are consistent with Nmode and Nbranches.
 
     if nnz(Ljb)*Nmodes^2 != nnz(AoLjbm)
-        throw(DimensionError("The number of nonzero elements in AoLjbm are not consistent with nnz(Ljb) and Nmodes."))
+        throw(DimensionMismatch("The number of nonzero elements in AoLjbm are not consistent with nnz(Ljb) and Nmodes."))
     end
 
     if size(Am,2) != nnz(Ljb)
-        throw(DimensionError("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
+        throw(DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
     end
 
     if length(Ljb) > Nbranches
-        throw(DimensionError("The length of Ljb cannot be larger than the number of branches."))
+        throw(DimensionMismatch("The length of Ljb cannot be larger than the number of branches."))
     end
 
     # i want a vector length(Ljb) where the indices are the values Ljb.nzind
@@ -1285,8 +1291,7 @@ function sincosnloddtoboth(amodd::Array{Complex{Float64},1},
     Nbranches::Int, m::Int)
 
     if length(amodd) != Nbranches*m
-        error("Length of node flux vector not consistent with number of modes
-        number of frequencies")
+        throw(DimensionMismatch("Length of node flux vector not consistent with number of modes number of frequencies"))
     end
 
     am = zeros(Complex{Float64},2*length(amodd))
@@ -1307,6 +1312,11 @@ terms will also be odd harmonics the cosine terms will be even harmonics.
 
 # Examples
 ```
+julia> JosephsonCircuits.sincosnl([0 0.001+0im;0 0])
+2×2 Matrix{ComplexF64}:
+ 1.0+0.0im  1.001+0.0im
+ 0.0+0.0im    0.0+0.0im
+
 julia> JosephsonCircuits.sincosnl([0 0;0.001+0im 0;0 0;0 0; 0 0])
 5×2 Matrix{ComplexF64}:
      0.999999+0.0im  1.0+0.0im
