@@ -19,6 +19,25 @@ As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.
 
 **Warning:** this package is under heavy development and there will be breaking changes. We will keep the examples updated to ease the burden of any breaking changes.
 
+# Installation:
+
+To install the latest release of the package, [install Julia](https://julialang.org/downloads/), start Julia, and enter the following command:
+```
+using Pkg
+Pkg.add("JosephsonCircuits")
+```
+
+To install the development version, start Julia and enter the command:
+```
+using Pkg
+Pkg.add(name="JosephsonCircuits",rev="main")
+```
+
+To run the examples below, you will need to install Plots.jl using the command:
+```
+using Pkg
+Pkg.add("Plots")
+```
 
 # Examples:
 ## Josephson parametric amplifier
@@ -403,19 +422,6 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 
 ![Floquet JTWPA simulation with loss](https://qce.mit.edu/JosephsonCircuits.jl/floquetlossy.png)
 
-# Installation:
-
-To install the latest release of the package, [install Julia](https://julialang.org/downloads/), start Julia, and enter the following command:
-```
-using Pkg
-Pkg.add("JosephsonCircuits")
-```
-
-To install the development version, start Julia and enter the command:
-```
-using Pkg
-Pkg.add(name="JosephsonCircuits",rev="main")
-```
 
 # Performance tips:
 Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores.
