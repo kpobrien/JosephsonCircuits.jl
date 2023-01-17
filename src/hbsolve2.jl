@@ -98,82 +98,7 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     wmodes = values2[:]
     Nmodes = length(wmodes)
 
-    # # parse the circuit components
-    # c0 = parsecircuit(circuit)
 
-    # numbervector = valuevectortonumber(c0.valuevector,circuitdefs)
-
-    # # sort the nodes
-    # uniquenodevectorsorted,nodeindexarraysorted = sortnodes(c0.uniquenodevector,
-    #     c0.nodeindexvector,sorting=:number)
-
-    # branchvector = extractbranches(c0.typevector,nodeindexarraysorted)
-
-    # # calculate the graph of inductive components glelist, the
-    # # superconducting spanning tree selist, and the list of loop
-    # # indices celist. 
-    # g = calcgraphs(branchvector,length(uniquenodevectorsorted))
-
-    # portdict=componentdictionaryP(c0.typevector,nodeindexarraysorted,
-    #     c0.mutualinductorvector,numbervector)
-
-    # resistordict=componentdictionaryR(c0.typevector,nodeindexarraysorted,
-    #     c0.mutualinductorvector,numbervector)
-
-
-    # # # calculate the capacitance, inductance, and inverse inductances matrices
-    # # m = calcmatrices(c0.typevector,nodeindexarraysorted,numbervector,c0.namedict,
-    # #     c0.mutualinductorvector,g.edge2indexdict,g.Rbn,Nmodes,
-    # #     length(uniquenodevectorsorted),g.Nbranches)
-
-    # # Nnodes = length(uniquenodevectorsorted)
-    # # Nbranches = g.Nbranches
-    # # Lmean = m.Lmean
-    # # invLnm = m.invLnm*Lmean
-    # # Gnm = m.Gnm*Lmean
-    # # Cnm = m.Cnm*Lmean
-    # # Ljb = m.Ljb
-    # # Ljbm = m.Ljbm
-    # # Lb = m.Lb
-    # # Rbnm = m.Rbnm
-
-
-    # typevector = c0.typevector
-    # namedict = c0.namedict
-    # mutualinductorvector = c0.mutualinductorvector
-    # edge2indexdict = g.edge2indexdict
-    # Rbn = g.Rbn
-    # Nnodes = length(c0.uniquenodevector)
-    # Nbranches = g.Nbranches
-
-    # # calculate Lmean
-    # Lmean = calcLmean(typevector,numbervector)
-    # # Lmean = 1.0
-
-    # # capacitance matrix
-    # Cnm = calcCn(typevector,nodeindexarraysorted,numbervector,Nmodes,Nnodes)
-
-    # # conductance matrix
-    # Gnm = calcGn(typevector,nodeindexarraysorted,numbervector,Nmodes,Nnodes)
-
-    # # branch inductance vectors
-    # Lb = calcLb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,1,Nbranches)
-    # Lbm = calcLb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,Nmodes,Nbranches)
-
-    # # branch Josephson inductance vectors
-    # Ljb = calcLjb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,1,Nbranches)
-    # Ljbm = calcLjb(typevector,nodeindexarraysorted,numbervector,edge2indexdict,Nmodes,Nbranches)
-
-    # # mutual branch inductance matrix
-    # Mb = calcMb(typevector,nodeindexarraysorted,numbervector,namedict,
-    #     mutualinductorvector,edge2indexdict,1,Nbranches)
-
-    # # inverse nodal inductance matrix from branch inductance vector and branch
-    # # inductance matrix
-    # invLnm = calcinvLn(Lb,Mb,Rbn,Nmodes)
-
-    # # expand the size of the indicidence matrix
-    # Rbnm = diagrepeat(Rbn,Nmodes)
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit,sorting=sorting)
@@ -210,30 +135,9 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     # Lmean = 1.0
     Lb = nm.Lb
 
-
     # calculate the diagonal frequency matrices
     wmodesm = Diagonal(repeat(wmodes,outer=Nnodes-1))
     wmodes2m = Diagonal(repeat(wmodes.^2,outer=Nnodes-1))
-
-    # # calculate the source terms in the branch basis
-    # bbm = zeros(Complex{Float64},Nbranches*Nmodes)    
-
-    # for source in sources
-    #     for (key,val) in portdict
-    #         if val == source[:port]
-    #             # now i have to find the index.
-    #             # this will depend on the frequency index
-    #             # i should calculate that in the right way now. 
-    #             for i = 1:length(values)
-    #                 if values[i] == source[:w]
-    #                     bbm[(edge2indexdict[key]-1)*Nmodes+i] = Lmean*source[:current]/phi0
-    #                     break
-    #                 end
-    #             end
-    #             break
-    #         end
-    #     end
-    # end
 
     # calculate the source terms in the branch basis
     bbm = zeros(Complex{Float64},Nbranches*Nmodes)  
@@ -257,30 +161,6 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
             end
         end
     end
-
-
-    # # calculate the source terms in the branch basis
-    # bbm = zeros(Complex{Float64},Nbranches*Nmodes)    
-    # for (i,portindex) in enumerate(portindices)
-    #     portnumber = portnumbers[i]
-    #     key = (nodeindexarraysorted[1,portindex],nodeindexarraysorted[2,portindex])
-    #     # if portnumber in ports
-    #     #     # bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip/phi0
-    #     #     bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip[portindex]/phi0
-    #     # end
-    #     if portnumber == source[:port]
-    #         # now i have to find the index.
-    #         # this will depend on the frequency index
-    #         # i should calculate that in the right way now. 
-    #         for i = 1:length(values)
-    #             if values[i] == source[:w]
-    #                 bbm[(edge2indexdict[key]-1)*Nmodes+i] = Lmean*source[:current]/phi0
-    #                 break
-    #             end
-    #         end
-    #         break
-    #     end
-    # end
 
 
     # convert from the node basis to the branch basis
@@ -347,38 +227,6 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     Gnmindexmap = sparseaddmap(Jsparse,Gnm)
     Cnmindexmap = sparseaddmap(Jsparse,Cnm)
 
-
-    # function FJsparse2!(F,J,x)
-    #     calcfj2!(F,J,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-    #     Ljb,Ljbm,Nmodes,
-    #     Nbranches,Lmean,AoLjbm2,AoLjbm,
-    #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
-    #     freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
-    #     return F,J
-    # end
-
-    # if solver == :klu
-    #     # perform a factorization. this will be updated later for each 
-    #     # interation
-    #     FK = KLU.klu(Jsparse)
-
-    #     odsparse = NLsolve.OnceDifferentiable(NLsolve.only_fj!(FJsparse2!),x,F,Jsparse)
-
-    #     # if the sparsity structure doesn't change, we can cache the 
-    #     # factorization. this is a significant speed improvement.
-    #     # out=NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-    #     out=NLsolve.nlsolve(odsparse,method = :trust_region,autoscale=false,x,iterations=iterations,linsolve=(x, A, b) ->(KLU.klu!(FK,A);ldiv!(x,FK,b)) )
-
-    # else
-    #     error("Error: Unknown solver")
-    # end
-
-    # if out.f_converged == false
-    #     println("Nonlinear solver not converged. You may need to supply a better
-    #     guess at the solution vector, increase the number of pump harmonics, or
-    #     increase the number of iterations.")
-    # end
-    # phin = out.zero
 
     # perform a factorization. this will be updated later for each 
     # interation

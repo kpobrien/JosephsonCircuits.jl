@@ -1,3 +1,129 @@
+"""
+    calcfrequencies(Nharmonics::Tuple; maxintermodorder = Inf,
+        dc = true, even = true, odd = true)
+
+Given the number of harmonics for each frequency
+`Nharmonics`, return the dimensions of the frequency domain representation of
+the pumps with harmonics and intermodulation products up to `maxintermodorder`.
+
+# Arguments
+- `Nharmonics::Tuple`: is a tuple of the number of harmonics to calculate for
+    each frequency.
+
+# Keywords
+- `maxintermodorder::Number = Inf`: the maximum intermod order
+- `dc::Bool = true`: whether to include the DC term (zero frequency) (0*w)
+- `even::Bool = true`: whether to include even order terms (2*w, 4*w, 6*w, etc)
+- `odd::Bool = true`: whether to include odd order terms (w, 3*w, 5*w, etc)
+
+# Returns
+- `Nw`: tuple with dimensions of signal in frequency domain
+- `coords`: vector of Cartesian indices of harmonics and intermods we are keeping
+- `values`: vector of values of harmonics and intermods we are keeping (also
+    potentially including conjugate symmetric terms)
+- `dropcoords`: vector of Cartesian indices for intermods we have dropped
+- `dropvalues`: vector of intermod values we have dropped
+
+# Examples
+```jldoctest
+Nharmonics = (2,3)
+maxintermodorder = 2
+Nw,coords,values,dropcoords,dropvalues = JosephsonCircuits.calcfrequencies(Nharmonics,
+    maxintermodorder=maxintermodorder,dc=false,even=false,odd=true);
+println(Nw)
+println(coords)
+println(values)
+println(dropcoords)
+println(dropvalues)
+
+# output
+(3, 7)
+CartesianIndex{2}[CartesianIndex(2, 1), CartesianIndex(1, 2), CartesianIndex(1, 4), CartesianIndex(1, 5), CartesianIndex(1, 7)]
+[(1, 0), (0, 1), (0, 3), (0, -3), (0, -1)]
+CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(3, 1), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3), CartesianIndex(2, 4), CartesianIndex(3, 4), CartesianIndex(2, 5), CartesianIndex(3, 5), CartesianIndex(1, 6), CartesianIndex(2, 6), CartesianIndex(3, 6), CartesianIndex(2, 7), CartesianIndex(3, 7)]
+[(0, 0), (2, 0), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2), (1, 3), (2, 3), (1, -3), (2, -3), (0, -2), (1, -2), (2, -2), (1, -1), (2, -1)]
+```
+"""
+function calcfrequencies(Nharmonics::Tuple; maxintermodorder::Number = Inf,
+    dc::Bool = true, even::Bool = true, odd::Bool = true)
+
+    # if length(w) !== length(Nharmonics)
+    #     error("Each frequency must have a number of harmonics.")
+    # end
+    
+    n = Nharmonics .+ 1
+    
+    # double the size of all but the first n because 
+    # only the first axis of a multi-dimensional rfft has
+    # only positive frequencies.
+    Nw=NTuple{length(n),Int}(ifelse(i == 1, val, 2*val-1) for (i,val) in enumerate(n))
+    
+    # store the coordinates in an array of CartesianIndex structures
+    # not sure if i want to use an array of tuples or cartesianindices
+    coords = Array{CartesianIndex{length(n)},1}(undef,0)
+    dropcoords = Array{CartesianIndex{length(n)},1}(undef,0)
+
+    # store the values in an array of the same type as w
+    values = Vector{NTuple{length(n),Int}}(undef,0)
+    dropvalues = Vector{NTuple{length(n),Int}}(undef,0)
+    
+    nvals = zeros(eltype(n),length(n))
+
+    calcfrequencies!(coords, values, dropcoords, dropvalues, n, nvals, Nw, dc,
+        even, odd, maxintermodorder)
+
+    return Nw,coords,values,dropcoords,dropvalues
+end
+
+"""
+    calcfrequencies!(coords, values, dropcoords, dropvalues, n, nvals,
+        Nw, dc, even, odd, maxintermodorder)
+
+See the description for [`calcfrequencies`](@ref).
+"""
+function calcfrequencies!(coords, values, dropcoords, dropvalues, n, nvals,
+    Nw, dc, even, odd, maxintermodorder)
+
+    for i in CartesianIndices(Nw)
+        for (ni,nval) in enumerate(i.I)
+            if nval <= n[ni]
+                nvals[ni] = nval-1
+            else
+                nvals[ni] = -Nw[ni]+nval-1
+            end
+        end
+
+        # to be returned as a valid frequency, the point has to match the
+        # criteria of dc, even, or odd, and either only contain a single frequency
+        # or be less than the max intermod order if it contains multiple
+        # frequencies. 
+        if (
+                # test for DC
+                # (dc && all(nvals .== 0)) ||
+                (dc && all(==(0),nvals)) ||
+                # test for even (and not DC)
+                (even && mod(sum(abs,nvals),2) == 0 && sum(abs,nvals) > 0) ||
+                # test for odd
+                (odd && mod(sum(abs,nvals),2) == 1)
+            ) && # test for containing only one frequency or less than maxintermodorder
+                # (sum( nvals .!== 0) == 1 || sum(abs,nvals) <= maxintermodorder)
+                (count(!=(0), nvals) == 1 || sum(abs,nvals) <= maxintermodorder)
+
+            push!(coords,i)
+            # push!(values,dot(w,nvals))
+            push!(values,Tuple(nvals))
+        else
+            push!(dropcoords,i)
+            # push!(dropvalues,dot(w,nvals))
+            push!(dropvalues,Tuple(nvals))
+
+        end
+    end
+
+    return nothing
+end
+
+
 
 """
     calcfrequencies(w::Tuple, Nharmonics::Tuple; maxintermodorder = Inf,
@@ -881,4 +1007,87 @@ function applynl(am::Array{Complex{Float64}}, f::Function)
     ftnlift = FFTW.rfft(nlift,1:length(size(am))-1)/normalization
 
     return ftnlift
+end
+
+"""
+    hbmatind(Nharmonics::Tuple; maxintermodorder::Number = Inf,
+        dc::Bool = true, even::Bool = true, odd::Bool = true)
+
+Returns a matrix describing which indices of the frequency domain matrix
+(from the RFFT) to pull out and use in the harmonic balance matrix. A negative
+index means we take the complex conjugate of that element. A zero index means
+that term is not present, so skip it. The harmonic balance matrix describes
+the coupling between different frequency modes.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.hbmatind((3,);maxintermodorder=2,dc=true, even=true, odd=true)
+4×4 Matrix{Int64}:
+ 1  -2  -3  -4
+ 2   1  -2  -3
+ 3   2   1  -2
+ 4   3   2   1
+
+julia> JosephsonCircuits.hbmatind((2,2);maxintermodorder=2,dc=true, even=true, odd=true)
+7×7 Matrix{Int64}:
+ 1  -2  -3  8  -5  7  -9
+ 2   1  -2  9   8  0   4
+ 3   2   1  0   9  0   5
+ 4  -9   0  1  -2  8   0
+ 5   4  -9  2   1  9   6
+ 6   0   0  4  -9  1   0
+ 9   8  -5  0   7  0   1
+```
+"""
+function hbmatind(Nharmonics::Tuple; maxintermodorder::Number = Inf,
+    dc::Bool = true, even::Bool = true, odd::Bool = true)
+
+    Nw,coords,values,dropcoords,dropvalues = JosephsonCircuits.calcfrequencies(
+        Nharmonics,
+        maxintermodorder=maxintermodorder,
+        dc=dc,
+        even=even,
+        odd=odd,
+    )
+    Nt=NTuple{length(Nw),Int}(ifelse(i == 1, 2*val-1, val) for (i,val) in enumerate(Nw))
+
+    dropdict = Dict(dropcoords .=> dropvalues)
+
+    values2 = JosephsonCircuits.calcfrequencies2(Nt,coords,values);
+
+    freqindexmap,conjsourceindices,conjtargetindices = JosephsonCircuits.calcphiindices(Nt,dropdict)
+
+    indices = JosephsonCircuits.calcrdftsymmetries(Nt)
+
+    # assign the frequencies
+    wmodes = values2[:]
+    Nmodes = length(wmodes)
+
+    # this is calculating the frequency domain input output relations
+    Amatrixkeys = Matrix{eltype(wmodes)}(undef,length(wmodes),length(wmodes))
+    for i in 1:length(wmodes)
+        for j in 1:length(wmodes)
+            key = Tuple(wmodes[i][k]-wmodes[j][k] for k in 1:length(wmodes[i]))
+            Amatrixkeys[i,j] = key
+        end
+    end
+
+    # now i need to find the keys that are in the rfft matrix and their locations
+    valuesdict = Dict{eltype(values),Int}()
+    for (i,v) in enumerate(values)
+        valuesdict[v] = i
+    end
+
+    Amatrixindices = zeros(Int,length(wmodes),length(wmodes))
+    for i in 1:length(Amatrixkeys)
+        key = Amatrixkeys[i]
+        conjkey = Tuple(-k for k in key)
+        if haskey(valuesdict,key)
+            Amatrixindices[i] = valuesdict[key]
+        elseif haskey(valuesdict,conjkey)
+            Amatrixindices[i] = -valuesdict[conjkey]
+        end
+    end
+
+    return Amatrixindices
 end
