@@ -1055,9 +1055,9 @@ function hbmatind(Nharmonics::Tuple; maxintermodorder::Number = Inf,
 
     values2 = JosephsonCircuits.calcfrequencies2(Nt,coords,values);
 
-    freqindexmap,conjsourceindices,conjtargetindices = JosephsonCircuits.calcphiindices(Nt,dropdict)
+    # freqindexmap,conjsourceindices,conjtargetindices = JosephsonCircuits.calcphiindices(Nt,dropdict)
 
-    indices = JosephsonCircuits.calcrdftsymmetries(Nt)
+    # indices = JosephsonCircuits.calcrdftsymmetries(Nt)
 
     # assign the frequencies
     wmodes = values2[:]
