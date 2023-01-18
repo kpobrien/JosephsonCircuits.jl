@@ -606,6 +606,126 @@ end
 
 
 """
+    calcAoLjbmindices(Amatrixindices,Ljb::SparseVector,Nmodes,Nbranches,Nfreq)
+
+Return the sparse matrix containing the indices from the frequency domain
+RFFT data as well as the indices of the sparse matrix to conjugate.
+
+# Examples
+```jldoctest
+Amatrixindices = [1 -2 -3 -4; 2 1 -2 -3; 3 2 1 -2; 4 3 2 1]
+Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1.0,1.0])
+Nmodes = 4
+Nbranches = length(Ljb)
+Nfreq = 4
+s, conjindicessorted = JosephsonCircuits.calcAoLjbmindices(
+    Amatrixindices,
+    Ljb,
+    Nmodes,
+    Nbranches,
+    Nfreq);
+s
+
+# output
+8×8 SparseArrays.SparseMatrixCSC{Int64, Int64} with 32 stored entries:
+ 1  2  3  4  ⋅  ⋅  ⋅  ⋅
+ 2  1  2  3  ⋅  ⋅  ⋅  ⋅
+ 3  2  1  2  ⋅  ⋅  ⋅  ⋅
+ 4  3  2  1  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  ⋅  ⋅  5  6  7  8
+ ⋅  ⋅  ⋅  ⋅  6  5  6  7
+ ⋅  ⋅  ⋅  ⋅  7  6  5  6
+ ⋅  ⋅  ⋅  ⋅  8  7  6  5
+```
+```jldoctest
+Amatrixindices = [1 -2 -3 -4; 2 1 -2 -3; 3 2 1 -2; 4 3 2 1]
+Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1.0,1.0])
+Nmodes = 4
+Nbranches = length(Ljb)
+Nfreq = 4
+s, conjindicessorted = JosephsonCircuits.calcAoLjbmindices(
+    Amatrixindices,
+    Ljb,
+    Nmodes,
+    Nbranches,
+    Nfreq);
+for c in conjindicessorted;s.nzval[c] = -s.nzval[c];end;s
+
+# output
+8×8 SparseArrays.SparseMatrixCSC{Int64, Int64} with 32 stored entries:
+ 1  -2  -3  -4  ⋅   ⋅   ⋅   ⋅
+ 2   1  -2  -3  ⋅   ⋅   ⋅   ⋅
+ 3   2   1  -2  ⋅   ⋅   ⋅   ⋅
+ 4   3   2   1  ⋅   ⋅   ⋅   ⋅
+ ⋅   ⋅   ⋅   ⋅  5  -6  -7  -8
+ ⋅   ⋅   ⋅   ⋅  6   5  -6  -7
+ ⋅   ⋅   ⋅   ⋅  7   6   5  -6
+ ⋅   ⋅   ⋅   ⋅  8   7   6   5
+```
+"""
+function calcAoLjbmindices(Amatrixindices::Matrix,Ljb::SparseVector,Nmodes,Nbranches,Nfreq)
+
+
+    # evaluate Amatrixindices to find the number of entries of each type
+    nentries = 0
+    nconjentries = 0
+    nzeros = 0
+    for j in 1:Nmodes
+        for k in 1:Nmodes
+            if Amatrixindices[j,k] == 0
+                nzeros+=1
+            else
+                nentries+=1
+                if Amatrixindices[j,k] < 0
+                    nconjentries+=1
+                end
+            end
+        end
+    end
+
+    # make these into a sparse matrix. skip any zeros
+    conjindices = Vector{Int}(undef,nconjentries*Ljb.n)
+    I = Vector{Int}(undef,nentries*Ljb.n)
+    J = Vector{Int}(undef,nentries*Ljb.n)
+    V = Vector{Int}(undef,nentries*Ljb.n)
+    Vsort = Vector{Int}(undef,nentries*Ljb.n)
+
+    # generate the contents of the sparse matrix 
+    n=1
+    nconj=1
+    for i in 1:Ljb.n
+        for j in 1:Nmodes
+            for k in 1:Nmodes
+                if Amatrixindices[j,k] != 0
+                    I[n] = j+(Ljb.nzind[i]-1)*Nmodes
+                    J[n] = k+(Ljb.nzind[i]-1)*Nmodes
+                    Vsort[n] = n
+                    index = abs(Amatrixindices[j,k])+Nfreq*(i-1)
+                    V[n] = index
+                    if Amatrixindices[j,k] < 0
+                        conjindices[nconj] = n
+                        nconj+=1
+                    end
+                    n+=1
+                end
+            end
+        end
+    end
+
+    # create the sparse matrix
+    s = JosephsonCircuits.SparseArrays.sparse(I,J,Vsort,Nbranches*Nmodes,Nbranches*Nmodes)
+    
+    # find the sorting of nzvals in the sparse matrix and apply that same
+    # sorting to 
+    Vsort2 = copy(s.nzval)
+    conjindicessorted = Vsort2[conjindices]
+
+    s.nzval .= V[Vsort2]
+    return s, conjindicessorted
+
+end
+
+"""
 
 Update the values in the sparse AoLjbm matrix in place.
 
