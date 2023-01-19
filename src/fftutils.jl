@@ -99,8 +99,9 @@ function calcfrequencies!(coords, values, dropcoords, dropvalues, n, nvals,
         # frequencies. 
         if (
                 # test for DC
-                # (dc && all(nvals .== 0)) ||
                 (dc && all(==(0),nvals)) ||
+                # test for one of the fundamental frequencies
+                sum(abs,nvals) == 1 ||
                 # test for even (and not DC)
                 (even && mod(sum(abs,nvals),2) == 0 && sum(abs,nvals) > 0) ||
                 # test for odd
@@ -263,8 +264,9 @@ function calcfrequencies!(coords, values, dropcoords, dropvalues, w, n, nvals,
         # frequencies. 
         if (
                 # test for DC
-                # (dc && all(nvals .== 0)) ||
                 (dc && all(==(0),nvals)) ||
+                # test for one of the fundamental frequencies
+                sum(abs,nvals) == 1 ||
                 # test for even (and not DC)
                 (even && mod(sum(abs,nvals),2) == 0 && sum(abs,nvals) > 0) ||
                 # test for odd
@@ -1021,6 +1023,12 @@ the coupling between different frequency modes.
 
 # Examples
 ```jldoctest
+julia> JosephsonCircuits.hbmatind((5,);maxintermodorder=2,dc=false, even=false, odd=true)
+3×3 Matrix{Int64}:
+ 1  -3  -5
+ 3   1  -3
+ 5   3   1
+
 julia> JosephsonCircuits.hbmatind((3,);maxintermodorder=2,dc=true, even=true, odd=true)
 4×4 Matrix{Int64}:
  1  -2  -3  -4
@@ -1030,18 +1038,30 @@ julia> JosephsonCircuits.hbmatind((3,);maxintermodorder=2,dc=true, even=true, od
 
 julia> JosephsonCircuits.hbmatind((2,2);maxintermodorder=2,dc=true, even=true, odd=true)
 7×7 Matrix{Int64}:
- 1  -2  -3  8  -5  7  -9
- 2   1  -2  9   8  0   4
- 3   2   1  0   9  0   5
- 4  -9   0  1  -2  8   0
- 5   4  -9  2   1  9   6
- 6   0   0  4  -9  1   0
- 9   8  -5  0   7  0   1
+  1   -2   -3  13   -5  10  -14
+  2    1   -2  14   13  11    4
+  3    2    1  15   14  12    5
+  4  -14  -15   1   -2  13  -11
+  5    4  -14   2    1  14    7
+  7  -11  -12   4  -14   1    0
+ 14   13   -5  11   10   0    1
 ```
 """
 function hbmatind(Nharmonics::Tuple; maxintermodorder::Number = Inf,
     dc::Bool = true, even::Bool = true, odd::Bool = true)
 
+
+    # this code is ugly but the idea is that we need all of the possible values
+    # to make satisfy transitions between elements and to find the right indices
+    Nw,coords,valuesall,dropcoords,dropvalues = JosephsonCircuits.calcfrequencies(
+        Nharmonics,
+        maxintermodorder=Inf,
+        dc=true,
+        even=true,
+        odd=true,
+    )
+
+    # now we calculate the reduced set of frequency indices
     Nw,coords,values,dropcoords,dropvalues = JosephsonCircuits.calcfrequencies(
         Nharmonics,
         maxintermodorder=maxintermodorder,
@@ -1050,19 +1070,13 @@ function hbmatind(Nharmonics::Tuple; maxintermodorder::Number = Inf,
         odd=odd,
     )
     Nt=NTuple{length(Nw),Int}(ifelse(i == 1, 2*val-1, val) for (i,val) in enumerate(Nw))
-
-    dropdict = Dict(dropcoords .=> dropvalues)
-
-    values2 = JosephsonCircuits.calcfrequencies2(Nt,coords,values);
-
-    # freqindexmap,conjsourceindices,conjtargetindices = JosephsonCircuits.calcphiindices(Nt,dropdict)
-
-    # indices = JosephsonCircuits.calcrdftsymmetries(Nt)
+    values2 = JosephsonCircuits.calcfrequencies2(Nt,coords,values)
 
     # assign the frequencies
     wmodes = values2[:]
     Nmodes = length(wmodes)
 
+    # println(wmodes)
     # this is calculating the frequency domain input output relations
     Amatrixkeys = Matrix{eltype(wmodes)}(undef,length(wmodes),length(wmodes))
     for i in 1:length(wmodes)
@@ -1072,9 +1086,11 @@ function hbmatind(Nharmonics::Tuple; maxintermodorder::Number = Inf,
         end
     end
 
+    # println(Amatrixkeys)
+
     # now i need to find the keys that are in the rfft matrix and their locations
-    valuesdict = Dict{eltype(values),Int}()
-    for (i,v) in enumerate(values)
+    valuesdict = Dict{eltype(valuesall),Int}()
+    for (i,v) in enumerate(valuesall)
         valuesdict[v] = i
     end
 
