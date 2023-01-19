@@ -748,8 +748,8 @@ end
 
 Return the indices which map the elements of the frequency domain vector
 elements to the corresponding elements of the frequency domain array. Also
-return the indices `conjsourceindices` whose data should be copied and complex
-conjugated to `conjtargetindices`.
+return the indices `conjsourceindices` whose data should be copied from the
+vector to `conjtargetindices` in the array then complex conjugated
 
 # Arguments
 - `Nt`: tuple with dimensions of signal in time domain 
@@ -819,7 +819,7 @@ function calcphiindices(Nt, dropdict)
 end
 
 """
-    phivectortomatrix!(phivector::Vector,phimatrix::Array,
+    phivectortomatrix!(phivector::AbstractVector,phimatrix::AbstractArray,
         indexmap::Vector{Int},conjsourceindices::Vector{Int},
         conjtargetindices::Vector{Int},Nbranches::Int)
 
@@ -859,7 +859,7 @@ phimatrix
  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im  0.0+0.0im
 ```
 """
-function phivectortomatrix!(phivector::Vector, phimatrix::Array,
+function phivectortomatrix!(phivector::AbstractVector, phimatrix::AbstractArray,
     indexmap::Vector{Int}, conjsourceindices::Vector{Int},
     conjtargetindices::Vector{Int}, Nbranches::Int)
 
@@ -930,7 +930,7 @@ phivector
  0.0 + 8.0im
 ```
 """
-function phimatrixtovector!(phivector::Vector, phimatrix::Array,
+function phimatrixtovector!(phivector::AbstractVector, phimatrix::AbstractArray,
     indexmap::Vector{Int}, conjsourceindices::Vector{Int},
     conjtargetindices::Vector{Int}, Nbranches::Int)
 

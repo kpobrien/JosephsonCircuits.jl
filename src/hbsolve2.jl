@@ -331,7 +331,7 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
         end
 
         # switch to newton once the norm is small enough
-        switchofflinesearchtol = 1e-3
+        switchofflinesearchtol = 1e-5
         if fp <= switchofflinesearchtol && f <= switchofflinesearchtol && f1fit <= switchofflinesearchtol
             alpha1 = 1
         end
@@ -359,8 +359,6 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
 
 
     # calculate the scattering parameters for the pump
-    # Nports = length(cdict[:P])
-    # Nports = length(portdict)
     Nports = length(portindices)
 
     # input = zeros(Complex{Float64},Nports*Nmodes)
@@ -371,89 +369,9 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     inputval = zero(Complex{Float64})
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
-
     return NonlinearHB(phin,Rbnm,Ljb,Lb,Ljbm,Nmodes,Nbranches,S)
 
 end
-
-
-# """
-#     calcfj(F,J,phin,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
-#         Ljbindicesm,Nmodes,Lmean,AoLjbm)
-        
-# Calculate the residual and the Jacobian. These are calculated with one function
-# in order to reuse the time domain nonlinearity calculation.
-
-# Leave off the type signatures on F and J because the solver will pass a type of
-# Nothing if it only wants to calculate F or J. 
-
-# """
-# function calcfj2!(F,
-#         J,
-#         phin::AbstractVector,
-#         wmodesm::AbstractMatrix, 
-#         wmodes2m::AbstractMatrix, 
-#         Rbnm::AbstractArray{Int,2}, 
-#         Rbnmt::AbstractArray{Int,2}, 
-#         invLnm::AbstractMatrix, 
-#         Cnm::AbstractMatrix, 
-#         Gnm::AbstractMatrix, 
-#         bnm::AbstractVector, 
-#         Ljb::SparseVector, 
-#         Ljbm::SparseVector,
-#         Nmodes::Int, 
-#         Nbranches::Int,
-#         Lmean,
-#         AoLjbmvector::AbstractVector,
-#         AoLjbm,AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
-#         freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
-
-#     # convert from a node flux to a branch flux
-#     phib = Rbnm*phin
-
-#     # phib[Ljbm.nzind] are the branch fluxes for each of the JJ's
-#     phivectortomatrix!(phib[Ljbm.nzind],phimatrix,freqindexmap,conjsourceindices,
-#         conjtargetindices,length(Ljb.nzval))
-
-#     if !(F == nothing)
-
-#         Amsin = applynl(phimatrix,(x) -> sin(x))
-#         Nfreq = prod(size(Amsin)[1:end-1])
-
-#         # calculate the function. use the sine terms. Am[2:2:2*Nmodes,:]
-#         # calculate  AoLjbm, this is just a diagonal matrix.
-#         for i = 1:nnz(Ljb)
-#             for j = 1:Nmodes
-#                 AoLjbmvector[(Ljb.nzind[i]-1)*Nmodes + j] = Amsin[freqindexmap[j]+Nfreq*(i-1)]*(Lmean/Ljb.nzval[i])
-#             end
-#         end
-
-#         F .= Rbnmt*AoLjbmvector + (invLnm + im*Gnm*wmodesm - Cnm*wmodes2m)*phin - bnm
-#     end
-
-#     #calculate the Jacobian
-#     if !(J == nothing)
-
-#         # calculate  AoLjbm
-#         Amcos = applynl(phimatrix,(x) -> cos(x))
-#         # AoLjbm = calcAoLjbm2(Amcos,Ljb,Ljbindices,Lmean,Nmodes,Nbranches,II,JJ,KK,freqindexmap)
-#         updateAoLjbm2!(AoLjbm,Amcos,Ljb,Lmean,Nmodes,Nbranches,freqindexmap)
-
-#         # convert to a sparse node matrix
-#         AoLjnm = Rbnmt*AoLjbm*Rbnm
-
-#         # calculate the Jacobian. If J is sparse, keep it sparse. 
-#         # J .= AoLjnm + invLnm - im*Gnm*wmodesm - Cnm*wmodes2m
-#         # the code below adds the sparse matrices together with minimal
-#         # memory allocations and without changing the sparsity structure.
-#         fill!(J,zero(eltype(J)))
-#         sparseadd!(J,AoLjnm,AoLjnmindexmap)
-#         sparseadd!(J,invLnm,invLnmindexmap)
-#         sparseadd!(J,im,Gnm,wmodesm,Gnmindexmap)
-#         sparseadd!(J,-1,Cnm,wmodes2m,Cnmindexmap)
-#     end
-#     return nothing
-# end
 
 
 """
@@ -461,7 +379,7 @@ end
         Ljbindicesm,Nmodes,Lmean,AoLjbm)
         
 Calculate the residual and the Jacobian. These are calculated with one function
-in order to reuse the time domain nonlinearity calculation.
+in order to reuse as much as possible.
 
 Leave off the type signatures on F and J because the solver will pass a type of
 Nothing if it only wants to calculate F or J. 
@@ -469,7 +387,7 @@ Nothing if it only wants to calculate F or J.
 """
 function calcfj3!(F,
         J,
-        phin::AbstractVector,
+        nodeflux::AbstractVector,
         wmodesm::AbstractMatrix, 
         wmodes2m::AbstractMatrix, 
         Rbnm::AbstractArray{Int,2}, 
@@ -489,36 +407,51 @@ function calcfj3!(F,
         freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
 
     # convert from a node flux to a branch flux
-    phib = Rbnm*phin
+    phib = Rbnm*nodeflux
 
+    # convert the branch flux vector to a matrix with the terms arranged
+    # in the correct way for the inverse rfft including the appropriate
+    # complex conjugates. 
     # phib[Ljbm.nzind] are the branch fluxes for each of the JJ's
     phivectortomatrix!(phib[Ljbm.nzind],phimatrix,freqindexmap,conjsourceindices,
         conjtargetindices,length(Ljb.nzval))
 
     if !(F == nothing)
 
-        Amsin = applynl(phimatrix,(x) -> sin(x))
-        Nfreq = prod(size(Amsin)[1:end-1])
+        # apply the sinusoidal nonlinearity when evaluaing the function
+        sinphimatrix = applynl(phimatrix,(x) -> sin(x))
+        # Nfreq = prod(size(Amsin)[1:end-1])
 
-        # calculate the function. use the sine terms. Am[2:2:2*Nmodes,:]
-        # calculate  AoLjbm, this is just a diagonal matrix.
-        for i = 1:nnz(Ljb)
-            for j = 1:Nmodes
-                AoLjbmvector[(Ljb.nzind[i]-1)*Nmodes + j] = Amsin[freqindexmap[j]+Nfreq*(i-1)]*(Lmean/Ljb.nzval[i])
-            end
+        fill!(AoLjbmvector,0)
+        AoLjbmvectorview = view(AoLjbmvector,Ljbm.nzind)
+        phimatrixtovector!(AoLjbmvectorview,sinphimatrix,freqindexmap,conjsourceindices,
+            conjtargetindices,length(Ljb.nzval))
+
+        # # # calculate the function. use the sine terms. Am[2:2:2*Nmodes,:]
+        # # # calculate  AoLjbm, this is just a diagonal matrix.
+        # for i = 1:nnz(Ljb)
+        #     for j = 1:Nmodes
+        #         # AoLjbmvector[(Ljb.nzind[i]-1)*Nmodes + j] = Amsin[freqindexmap[j]+Nfreq*(i-1)]*(Lmean/Ljb.nzval[i])
+        #         phib[(Ljb.nzind[i]-1)*Nmodes + j] = phib[(Ljb.nzind[i]-1)*Nmodes + j]*(Lmean/Ljb.nzval[i])
+
+        #     end
+        # end
+
+        for i in eachindex(AoLjbmvectorview)
+            AoLjbmvectorview[i] = AoLjbmvectorview[i]*(Lmean/Ljbm.nzval[i])
         end
 
-        F .= Rbnmt*AoLjbmvector + (invLnm + im*Gnm*wmodesm - Cnm*wmodes2m)*phin - bnm
+        F .= Rbnmt*AoLjbmvector .+ invLnm*nodeflux .+ im*Gnm*wmodesm*nodeflux .- Cnm*wmodes2m*nodeflux .- bnm
+
     end
 
     #calculate the Jacobian
     if !(J == nothing)
 
         # calculate  AoLjbm
-        Amcos = applynl(phimatrix,(x) -> cos(x))
-        # AoLjbm = calcAoLjbm2(Amcos,Ljb,Ljbindices,Lmean,Nmodes,Nbranches,II,JJ,KK,freqindexmap)
-        # updateAoLjbm2!(AoLjbm,Amcos,Ljb,Lmean,Nmodes,Nbranches,freqindexmap)
-        updateAoLjbm3!(AoLjbm, Amcos, AoLjbmindices, conjindicessorted, Ljb, Lmean)
+        # apply a cosinusoidal nonlinearity when evaluating the Jacobian
+        cosphimatrix = applynl(phimatrix,(x) -> cos(x))
+        updateAoLjbm3!(AoLjbm, cosphimatrix, AoLjbmindices, conjindicessorted, Ljb, Lmean)
         # convert to a sparse node matrix
         AoLjnm = Rbnmt*AoLjbm*Rbnm
 
@@ -661,63 +594,6 @@ function calcAoLjbmindices(Amatrixindices::Matrix,Ljb::SparseVector,Nmodes,Nbran
 end
 
 
-function calcAoLjbm2(Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches,freqindexmap)
-
-    # define empty vectors for the rows, columns, and values
-    I = Vector{eltype(Ljb.nzind)}(undef,nnz(Ljb)*Nmodes^2)
-    J = Vector{eltype(Ljb.nzind)}(undef,nnz(Ljb)*Nmodes^2)
-
-    type = promote_type(eltype(Am),eltype(1 ./Ljb.nzval))
-
-    if type <: Symbolic
-        type = Any
-    end
-
-    V = Vector{type}(undef,nnz(Ljb)*Nmodes^2)
-
-    Nfreq = prod(size(Am)[1:end-1])
-
-    # calculate  AoLjbm
-    n = 1
-    for i = 1:nnz(Ljb)
-        for j = 1:Nmodes
-            for k = 1:Nmodes
-
-                # calculate the toeplitz matrices for each node 
-                I[n]=j+(Ljb.nzind[i]-1)*Nmodes
-                J[n]=k+(Ljb.nzind[i]-1)*Nmodes
-
-                # assume terms we don't have pump data for are zero.
-                # index = 2*abs(j-k)+1
-                index = abs(freqindexmap[j]-freqindexmap[k])+1
-                if index > size(Am,1)
-                    V[n] = 0
-                else
-                    # V[n]=Am[index,i]*(Lmean/Ljb.nzval[i])
-                    V[n]=Am[index+Nfreq*(i-1)]*(Lmean/Ljb.nzval[i])
-
-                end
-
-                #take the complex conjugate of the upper half (not the diagonal)
-                if j-k<0
-                    V[n] = conj(V[n])
-                end
-
-                ## for debugging. calculaet index, Ljb.nzind and i from I and J.
-                # println("index: ",index," ", 2*abs(I[n]-J[n])+1)
-                # println("Ljb.nzind: ",Ljb.nzind[i]," ", ((I[n]+J[n]-1) ÷ (2*Nmodes))+1)
-                # println("i: ",i," ", searchsortedfirst(Ljb.nzind,((I[n]+J[n]-1) ÷ (2*Nmodes))+1))
-                # println("j: ",j," ",I[n]-(Ljb.nzind[i]-1)*Nmodes," k: ",k," ",J[n]-(Ljb.nzind[i]-1)*Nmodes)
-
-                n+=1
-            end
-        end
-    end
-
-    # assemble the sparse branch AoLj matrix
-    return sparse(I,J,V,Nbranches*Nmodes,Nbranches*Nmodes)
-end
-
 """
     calcAoLjbm3(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector, Lmean,
         Nmodes, Nbranches, Nfreq)
@@ -839,64 +715,3 @@ function updateAoLjbm3!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices, conjin
     return nothing
 end
 
-
-
-"""
-
-Update the values in the sparse AoLjbm matrix in place.
-
-"""
-function updateAoLjbm2!(AoLjbm::SparseMatrixCSC,Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches,freqindexmap)
-
-    Nfreq = prod(size(Am)[1:end-1])
-
-
-    # check that there are the right number of nonzero values. 
-    # check that the dimensions are consistent with Nmode and Nbranches.
-
-    # if nnz(Ljb)*Nmodes^2 != nnz(AoLjbm)
-    #     throw(DimensionError("The number of nonzero elements in AoLjbm are not consistent with nnz(Ljb) and Nmodes."))
-    # end
-
-    # if size(Am,2) != nnz(Ljb)
-    #     throw(DimensionError("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
-    # end
-
-    # if length(Ljb) > Nbranches
-    #     throw(DimensionError("The length of Ljb cannot be larger than the number of branches."))
-    # end
-
-    # i want a vector length(Ljb) where the indices are the values Ljb.nzind
-    # and the values are the indices of Ljb.nzind
-    indexconvert = zeros(Int,length(Ljb))
-    for (i,j) in enumerate(Ljb.nzind)
-        indexconvert[j] = i
-    end
-
-    for l = 1:length(AoLjbm.colptr)-1
-        for m in AoLjbm.colptr[l]:(AoLjbm.colptr[l+1]-1)
-
-            i = indexconvert[((AoLjbm.rowval[m]+l-1) ÷ (2*Nmodes))+1]
-            j = AoLjbm.rowval[m]-(Ljb.nzind[i]-1)*Nmodes
-            k = l-(Ljb.nzind[i]-1)*Nmodes
-
-            index = abs(freqindexmap[j]-freqindexmap[k])+1
-
-            if index > size(Am,1)
-                AoLjbm.nzval[m] = 0
-            else
-                # AoLjbm.nzval[m]=Am[index,i]*(Lmean/Ljb.nzval[i])
-                AoLjbm.nzval[m]=Am[index+Nfreq*(i-1)]*(Lmean/Ljb.nzval[i])
-
-            end
-
-            #take the complex conjugate of the upper half (not the diagonal)
-            if AoLjbm.rowval[m]-l<0
-                AoLjbm.nzval[m] = conj(AoLjbm.nzval[m])
-            end
-
-        end
-    end
-
-    return nothing
-end
