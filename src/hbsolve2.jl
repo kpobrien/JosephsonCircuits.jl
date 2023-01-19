@@ -248,11 +248,6 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     for n = 1:iterations
 
         # update the residual function and the Jacobian
-        # calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        # Ljb,Ljbm,Nmodes,
-        # Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        # AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
-
         calcfj2!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
         Ljb,Ljbm,Nmodes,
         Nbranches,Lmean,AoLjbm2,AoLjbm,
@@ -289,24 +284,7 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
         # path between the old x and the new x. 
         # Note: the dot product takes the complex conjugate of the first vector
         f = real(0.5*dot(F,F))
-        # dfdalpha = real(dot(F,Jsparse*deltax))
         dfdalpha = real(dot(F,Jsparse,deltax))
-
-        # # evaluate the objective function at Nsample points
-        # for alpha in range(0,1,Nsamples)
-        #     calcfj!(F,nothing,x - alpha*x1,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        #     Ljb,Ljbm,Nmodes,
-        #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)    
-        #     push!(samples,real(0.5*dot(F,F)))
-        # end
-
-        # # evaluate the function at the trial point
-        # calcfj!(F,nothing,x+deltax,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        # Ljb,Ljbm,Nmodes,
-        # Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        # AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
-
 
         calcfj2!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
         Ljb,Ljbm,Nmodes,
@@ -345,14 +323,6 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
         # update x
         x .+= deltax*alpha1
 
-        # x .-= minusdeltax*alpha1
-
-        # push!(alphas,alphafit)
-        # push!(fmin,fminfit)
-        # push!(fvals,f)
-        # push!(fpvals,fp)
-        # push!(dfdalphavals,dfdalpha)
-
         if norm(F,Inf) <= ftol || ( norm(x) > 0 && norm(F)/norm(x) < ftol)
             # terminate iterations if infinity norm or relative norm are less
             # than ftol. check that norm(x) is greater than zero to avoid
@@ -384,70 +354,8 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     inputval = zero(Complex{Float64})
     S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
-    # phin = out.zero
 
-    # calculate the branch fluxes
-    # calcphibports!(phibports,phin,portdict,Nmodes)
-
-    # i don't think i need to do the scattering parameter analysis for the two
-    # tone harmonic balance.
-
-    # # calculate the input and output voltage waves at each port
-    # calcinput!(input,Ip,phibports,portdict,resistordict,wmodes)
-    # calcoutput!(output,phibports,portdict,resistordict,wmodes)
-
-    # calculate the scattering parameters
-    # calcS!(S,input,output,phibports,portdict,resistordict,wmodes)
-    # calcS!(S,input,output)
-
-    # return (
-    #     out = out,
-    #     wmodes = wmodes, 
-    #     wmodesm = wmodesm,
-    #     wmodes2m=wmodes2m,
-    #     bbm = bbm,
-    #     bnm = bnm,
-    #     portdict = portdict,
-    #     values = values,
-    #     # Avector = Avector,
-    #     # Amatrix = Amatrix,
-    #     freqindexmap = freqindexmap,
-    #     conjsourceindices = conjsourceindices,
-    #     conjtargetindices = conjtargetindices,
-    #     Nwtuple=Nwtuple,
-    #     Nt = Nt,
-    #     Nw = Nw,
-    #     dropcoords = dropcoords,
-    #     dropvalues = dropvalues,
-    #     AoLjnm = AoLjnm,
-    #     Rbnm = Rbnm,
-    #     Ljbm = Ljbm,
-    #     Ljb = Ljb,
-    #     )
     return NonlinearHB(phin,Rbnm,Ljb,Lb,Ljbm,Nmodes,Nbranches,S)
-
-    # return (out=out,
-    #     wmodesm = wmodesm,
-    #     wmodes2m = wmodes2m,
-    #     Rbnm = Rbnm,
-    #     invLnm = invLnm,
-    #     Cnm = Cnm,
-    #     Gnm = Gnm,
-    #     bnm = bnm,
-    #     Ljb = Ljb,
-    #     Lb = Lb,
-    #     Ljbm = Ljbm,
-    #     Nmodes = Nmodes,
-    #     Nbranches = Nbranches,
-    #     Lmean = Lmean,
-    #     AoLjbm = AoLjbm,
-    #     AoLjnm = AoLjnm,
-    #     II = II,
-    #     JJ = JJ,
-    #     KK = KK,
-    #     # J = J,
-    #     S=S,
-    #     )
 
 end
 
@@ -528,80 +436,6 @@ function calcfj2!(F,
         sparseadd!(J,-1,Cnm,wmodes2m,Cnmindexmap)
     end
     return nothing
-end
-
-
-
-function calcAoLjbm2(Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches,freqindexmap)
-
-    # define empty vectors for the rows, columns, and values
-    I = Vector{eltype(Ljb.nzind)}(undef,nnz(Ljb)*Nmodes^2)
-    J = Vector{eltype(Ljb.nzind)}(undef,nnz(Ljb)*Nmodes^2)
-
-    type = promote_type(eltype(Am),eltype(1 ./Ljb.nzval))
-
-    if type <: Symbolic
-        type = Any
-    end
-
-    V = Vector{type}(undef,nnz(Ljb)*Nmodes^2)
-
-    # println(size(Am))
-    # println(nnz(Ljb))
-    # println(Nbranches)
-    # println(length(Ljb))
-
-    # if size(Am,3) != nnz(Ljb)
-    #     throw(DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
-    # end
-
-    # if length(Ljb) != Nbranches
-    #     throw(DimensionMismatch("The length of Ljb should be the same as the number of branches."))
-    # end
-
-
-
-    Nfreq = prod(size(Am)[1:end-1])
-
-    # calculate  AoLjbm
-    n = 1
-    for i = 1:nnz(Ljb)
-        for j = 1:Nmodes
-            for k = 1:Nmodes
-
-                # calculate the toeplitz matrices for each node 
-                I[n]=j+(Ljb.nzind[i]-1)*Nmodes
-                J[n]=k+(Ljb.nzind[i]-1)*Nmodes
-
-                # assume terms we don't have pump data for are zero.
-                # index = 2*abs(j-k)+1
-                index = abs(freqindexmap[j]-freqindexmap[k])+1
-                if index > size(Am,1)
-                    V[n] = 0
-                else
-                    # V[n]=Am[index,i]*(Lmean/Ljb.nzval[i])
-                    V[n]=Am[index+Nfreq*(i-1)]*(Lmean/Ljb.nzval[i])
-
-                end
-
-                #take the complex conjugate of the upper half (not the diagonal)
-                if j-k<0
-                    V[n] = conj(V[n])
-                end
-
-                ## for debugging. calculaet index, Ljb.nzind and i from I and J.
-                # println("index: ",index," ", 2*abs(I[n]-J[n])+1)
-                # println("Ljb.nzind: ",Ljb.nzind[i]," ", ((I[n]+J[n]-1) ÷ (2*Nmodes))+1)
-                # println("i: ",i," ", searchsortedfirst(Ljb.nzind,((I[n]+J[n]-1) ÷ (2*Nmodes))+1))
-                # println("j: ",j," ",I[n]-(Ljb.nzind[i]-1)*Nmodes," k: ",k," ",J[n]-(Ljb.nzind[i]-1)*Nmodes)
-
-                n+=1
-            end
-        end
-    end
-
-    # assemble the sparse branch AoLj matrix
-    return sparse(I,J,V,Nbranches*Nmodes,Nbranches*Nmodes)
 end
 
 
@@ -728,6 +562,188 @@ function calcAoLjbmindices(Amatrixindices::Matrix,Ljb::SparseVector,Nmodes,Nbran
     return s, conjindicessorted
 
 end
+
+
+function calcAoLjbm2(Am,Ljb::SparseVector,Lmean,Nmodes,Nbranches,freqindexmap)
+
+    # define empty vectors for the rows, columns, and values
+    I = Vector{eltype(Ljb.nzind)}(undef,nnz(Ljb)*Nmodes^2)
+    J = Vector{eltype(Ljb.nzind)}(undef,nnz(Ljb)*Nmodes^2)
+
+    type = promote_type(eltype(Am),eltype(1 ./Ljb.nzval))
+
+    if type <: Symbolic
+        type = Any
+    end
+
+    V = Vector{type}(undef,nnz(Ljb)*Nmodes^2)
+
+    Nfreq = prod(size(Am)[1:end-1])
+
+    # calculate  AoLjbm
+    n = 1
+    for i = 1:nnz(Ljb)
+        for j = 1:Nmodes
+            for k = 1:Nmodes
+
+                # calculate the toeplitz matrices for each node 
+                I[n]=j+(Ljb.nzind[i]-1)*Nmodes
+                J[n]=k+(Ljb.nzind[i]-1)*Nmodes
+
+                # assume terms we don't have pump data for are zero.
+                # index = 2*abs(j-k)+1
+                index = abs(freqindexmap[j]-freqindexmap[k])+1
+                if index > size(Am,1)
+                    V[n] = 0
+                else
+                    # V[n]=Am[index,i]*(Lmean/Ljb.nzval[i])
+                    V[n]=Am[index+Nfreq*(i-1)]*(Lmean/Ljb.nzval[i])
+
+                end
+
+                #take the complex conjugate of the upper half (not the diagonal)
+                if j-k<0
+                    V[n] = conj(V[n])
+                end
+
+                ## for debugging. calculaet index, Ljb.nzind and i from I and J.
+                # println("index: ",index," ", 2*abs(I[n]-J[n])+1)
+                # println("Ljb.nzind: ",Ljb.nzind[i]," ", ((I[n]+J[n]-1) ÷ (2*Nmodes))+1)
+                # println("i: ",i," ", searchsortedfirst(Ljb.nzind,((I[n]+J[n]-1) ÷ (2*Nmodes))+1))
+                # println("j: ",j," ",I[n]-(Ljb.nzind[i]-1)*Nmodes," k: ",k," ",J[n]-(Ljb.nzind[i]-1)*Nmodes)
+
+                n+=1
+            end
+        end
+    end
+
+    # assemble the sparse branch AoLj matrix
+    return sparse(I,J,V,Nbranches*Nmodes,Nbranches*Nmodes)
+end
+
+"""
+    calcAoLjbm3(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector, Lmean,
+        Nmodes, Nbranches, Nfreq)
+
+Return the harmonic balance matrix divided by the Josephson inductance.
+
+# Examples
+```jldoctest
+Amatrix = ComplexF64[1.0 + 1.0im 1.0 + 1.0im; 1.0 + 1.0im 1.0 + 1.0im; 1.0 + 1.0im 1.0 + 1.0im]
+Amatrixindices = [1 -2 -3; 2 1 -2; 3 2 1]
+Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1.0,2.0])
+Lmean = 1
+Nmodes = 3
+Nbranches = 2
+Nfreq = 3
+JosephsonCircuits.calcAoLjbm3(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches, Nfreq)
+
+# output
+6×6 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 18 stored entries:
+ 1.0+1.0im  1.0-1.0im  1.0-1.0im      ⋅          ⋅          ⋅    
+ 1.0+1.0im  1.0+1.0im  1.0-1.0im      ⋅          ⋅          ⋅    
+ 1.0+1.0im  1.0+1.0im  1.0+1.0im      ⋅          ⋅          ⋅    
+     ⋅          ⋅          ⋅      0.5+0.5im  0.5-0.5im  0.5-0.5im
+     ⋅          ⋅          ⋅      0.5+0.5im  0.5+0.5im  0.5-0.5im
+     ⋅          ⋅          ⋅      0.5+0.5im  0.5+0.5im  0.5+0.5im
+```
+```jldoctest
+@variables A11 A12 A21 A22 A31 A32 Lj1 Lj2
+Amatrix = [A11 A12;A21 A22;A31 A32]
+Amatrixindices = [1 -2 -3; 2 1 -2; 3 2 1]
+Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2])
+Lmean = 1
+Nmodes = 3
+Nbranches = 2
+Nfreq = 3
+JosephsonCircuits.calcAoLjbm3(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches, Nfreq)
+
+# output
+6×6 SparseArrays.SparseMatrixCSC{Num, Int64} with 18 stored entries:
+ A11 / Lj1  A21 / Lj1  A31 / Lj1          ⋅          ⋅          ⋅
+ A21 / Lj1  A11 / Lj1  A21 / Lj1          ⋅          ⋅          ⋅
+ A31 / Lj1  A21 / Lj1  A11 / Lj1          ⋅          ⋅          ⋅
+         ⋅          ⋅          ⋅  A12 / Lj2  A22 / Lj2  A32 / Lj2
+         ⋅          ⋅          ⋅  A22 / Lj2  A12 / Lj2  A22 / Lj2
+         ⋅          ⋅          ⋅  A32 / Lj2  A22 / Lj2  A12 / Lj2
+```
+"""
+function calcAoLjbm3(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector, Lmean,
+    Nmodes, Nbranches, Nfreq)
+
+#     Nfreq = prod(size(Am)[1:end-1])
+
+
+    # calculate the sparse matrix filled with the indices of Am
+    AoLjbmindices, conjindicessorted = JosephsonCircuits.calcAoLjbmindices(
+        Amatrixindices,
+        Ljb,
+        Nmodes,
+        Nbranches,
+        Nfreq)
+
+    # determine the type to use for AoLjbm
+    type = promote_type(eltype(Am),eltype(1 ./Ljb.nzval))
+
+    if type <: Symbolic
+        type = Any
+    end
+
+    nzval = Vector{type}(undef,nnz(AoLjbmindices))
+
+    AoLjbm = SparseMatrixCSC(AoLjbmindices.m,AoLjbmindices.n,AoLjbmindices.colptr,AoLjbmindices.rowval,nzval)
+
+    updateAoLjbm3!(AoLjbm, Am, AoLjbmindices, conjindicessorted, Ljb, Lmean)
+
+    return AoLjbm
+
+end
+
+
+
+"""
+
+Update the values in the sparse AoLjbm matrix in place.
+
+"""
+function updateAoLjbm3!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices, conjindicessorted,
+    Ljb::SparseVector, Lmean)
+
+    nentries = nnz(AoLjbm)÷ nnz(Ljb)
+
+    # does this run into problems if the inductance vector isn't sorted?
+    # can i guarantee that Ljb is always sorted? look into this
+    # copy over the values and scale by the inductance
+    for i in eachindex(AoLjbm.nzval)
+        # j = indexconvert[i ÷ (Nfreq+1)+1]
+        j = i ÷ (nentries+1)+1
+        AoLjbm.nzval[i] = Am[AoLjbmindices.nzval[i]]*(Lmean/Ljb.nzval[j])
+    end
+
+
+    # # i think this will work even if they aren't sorted
+    # # copy over the values and scale by the inductance
+    # indexconvert = zeros(Int,length(Ljb))
+    # for (i,j) in enumerate(Ljb.nzind)
+    #     indexconvert[j] = i
+    # end
+
+    # for i = 1:length(AoLjbm.colptr)-1
+    #     for j in AoLjbm.colptr[i]:(AoLjbm.colptr[i+1]-1)
+    #         k = j ÷ (nentries+1)+1
+    #         AoLjbm.nzval[j] = Am[AoLjbmindices.nzval[j]]*(Lmean/Ljb.nzval[k])
+    #     end
+    # end
+
+    # take the complex conjugates
+    for i in conjindicessorted
+        AoLjbm.nzval[i] = conj(AoLjbm.nzval[i])
+    end
+
+    return nothing
+end
+
+
 
 """
 
