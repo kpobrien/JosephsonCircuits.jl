@@ -280,12 +280,24 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
         push!(normF,norm(F))
 
         # solve the linear system
-        # update the factorization. the sparsity structure does not change
-        # so we can reuse the factorization object.
-        KLU.klu!(factorization,Jsparse)
+        try
+            # update the factorization. the sparsity structure does 
+            # not change so we can reuse the factorization object.
+            KLU.klu!(factorization,Jsparse)
 
-        # solve the linear system
-        ldiv!(deltax,factorization,F)
+            # solve the linear system
+            ldiv!(deltax,factorization,F)
+        catch e
+            if isa(e, SingularException)
+                # reusing the symbolic factorization can sometimes
+                # lead to numerical problems. if the first linear
+                # solve fails try factoring and solving again
+                factorization = KLU.klu(Jsparse)
+                ldiv!(deltax,factorization,F)
+            else
+                throw(e)
+            end
+        end
 
         # multiply deltax by -1
         rmul!(deltax,-1)

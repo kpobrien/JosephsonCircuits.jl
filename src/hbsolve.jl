@@ -524,13 +524,6 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
         sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
             wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
 
-        # # update the factorization. the sparsity structure does 
-        # # not change so we can reuse the factorization object.
-        # KLU.klu!(F,Asparsecopy)
-
-        # # solve the linear system
-        # ldiv!(phin,F,bnm)
-
         # solve the linear system
         try
             # update the factorization. the sparsity structure does 
@@ -862,35 +855,25 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
         push!(normF,norm(F))
 
-        # Jsparse.nzval .*= invnormJ
-        # F .*= invnormJ
-
-        # update the factorization. the sparsity structure does not change
-        # so we can reuse the factorization object.
-        KLU.klu!(factorization,Jsparse)
-
         # solve the linear system
-        ldiv!(deltax,factorization,F)
+        try 
+            # update the factorization. the sparsity structure does not change
+            # so we can reuse the factorization object.
+            KLU.klu!(factorization,Jsparse)
 
-        # # solve the linear system
-        # try 
-        #     # update the factorization. the sparsity structure does not change
-        #     # so we can reuse the factorization object.
-        #     KLU.klu!(factorization,Jsparse)
-
-        #     # solve the linear system
-        #     ldiv!(deltax,factorization,F)
-        # catch e
-        #     if isa(e, SingularException)
-        #         # reusing the symbolic factorization can sometimes lead to
-        #         # numerical problems. if the first linear solve fails
-        #         # try factoring and solving again
-        #         factorization = KLU.klu(Jsparse)
-        #         ldiv!(deltax,factorization,F)
-        #     else
-        #         throw(e)
-        #     end
-        # end
+            # solve the linear system
+            ldiv!(deltax,factorization,F)
+        catch e
+            if isa(e, SingularException)
+                # reusing the symbolic factorization can sometimes lead to
+                # numerical problems. if the first linear solve fails
+                # try factoring and solving again
+                factorization = KLU.klu(Jsparse)
+                ldiv!(deltax,factorization,F)
+            else
+                throw(e)
+            end
+        end
 
         # multiply deltax by -1
         rmul!(deltax,-1)
