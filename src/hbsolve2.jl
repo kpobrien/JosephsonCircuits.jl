@@ -144,14 +144,14 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
             for i = 1:length(Nt) + 1
         )
     phimatrix = zeros(Complex{Float64}, Nwtuple)
-    Amatrix = rand(Complex{Float64}, Nwtuple)
+    Amatrix = zeros(Complex{Float64}, Nwtuple)
     Amatrixindices = hbmatind(Nharmonics; maxintermodorder = maxintermodorder,
         dc = dc, even = even, odd = odd)
 
     Nfreq = prod(size(Amatrix)[1:end-1])
     AoLjbmindices, conjindicessorted = calcAoLjbmindices(Amatrixindices,
         Ljb, Nmodes, Nbranches, Nfreq)
-    
+
     # right now i redo the calculation of AoLjbmindices, conjindicessorted in calcAoLjbm3
     AoLjbm = calcAoLjbm3(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
     AoLjbmcopy = calcAoLjbm3(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
@@ -182,31 +182,34 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     Gnm *= Lmean
     invLnm *= Lmean
 
-    # Calculate something with the same sparsity structure as the Jacobian.
-    # Don't bother multiplying by the diagonal frequency matrices since they
-    # won't change the sparsity structure. 
-    AoLjnm.nzval .= rand(Complex{Float64}, length(AoLjnm.nzval))
-    # perform the addition keeping any structural zeros
-    Jsparse = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), Gnm), Cnm)
+    # Calculate an initial Jacobian in order to create the factorization object.
+    # This need to have the same sparsity structure as the actual Jacobian. If
+    # the numerical values are vastly different from the actual Jacobian this
+    # can cause a singular value error in klu! when we attempt to reuse the
+    # symbolic factorization. We perform the sparse matrix addition keeping
+    # numerical zeros (the usual sparse matrix addition converts these to
+    # structural zeros which would change the sparsity structure).
+    # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
+    AoLjnm.nzval .= rand(Complex{Float64},length(AoLjnm.nzval))
+    J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm*wmodesm), - Cnm*wmodes2m)
+    Jcopy = copy(J)
+    # perform a factorization, which will be updated later for each 
+    # interation
+    factorization = KLU.klu(J)
 
     # make the arrays and datastructures we need for
     # the non-allocating sparse matrix multiplication.
     AoLjbmRbnm = AoLjbmcopy*Rbnm
     xbAoLjbmRbnm = fill(false, size(AoLjbmcopy, 1))
-
     AoLjnm = Rbnmt*AoLjbmRbnm
     xbAoLjnm = fill(false, size(Rbnmt, 1))
 
     # make the index maps so we can add the sparse matrices together without
     # memory allocations. 
-    AoLjnmindexmap = sparseaddmap(Jsparse, AoLjnm)
-    invLnmindexmap = sparseaddmap(Jsparse, invLnm)
-    Gnmindexmap = sparseaddmap(Jsparse, Gnm)
-    Cnmindexmap = sparseaddmap(Jsparse, Cnm)
-
-    # perform a factorization. this will be updated later for each 
-    # interation
-    factorization = KLU.klu(Jsparse)
+    AoLjnmindexmap = sparseaddmap(J, AoLjnm)
+    invLnmindexmap = sparseaddmap(J, invLnm)
+    Gnmindexmap = sparseaddmap(J, Gnm)
+    Cnmindexmap = sparseaddmap(J, Cnm)
 
     deltax = copy(x)
 
@@ -224,7 +227,7 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     for n = 1:iterations
 
         # update the residual function and the Jacobian
-        calcfj3!(F, Jsparse, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
+        calcfj3!(F, J, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
             Cnm, Gnm, bnm, Ljb, Ljbm, Nmodes,
             Nbranches, Lmean, AoLjbmvector, AoLjbm,
             AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap,
@@ -239,21 +242,20 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
         try
             # update the factorization. the sparsity structure does 
             # not change so we can reuse the factorization object.
-            KLU.klu!(factorization, Jsparse)
-
-            # solve the linear system
-            ldiv!(deltax, factorization, F)
+            KLU.klu!(factorization, J)
         catch e
             if isa(e, SingularException)
                 # reusing the symbolic factorization can sometimes
                 # lead to numerical problems. if the first linear
                 # solve fails try factoring and solving again
-                factorization = KLU.klu(Jsparse)
-                ldiv!(deltax, factorization, F)
+                factorization = KLU.klu(J)
             else
                 throw(e)
             end
         end
+
+        # solve the linear system
+        ldiv!(deltax, factorization, F)
 
         # multiply deltax by -1
         rmul!(deltax, -1)
@@ -263,7 +265,7 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
         # path between the old x and the new x. 
         # Note: the dot product takes the complex conjugate of the first vector
         f = real(0.5*dot(F, F))
-        dfdalpha = real(dot(F, Jsparse, deltax))
+        dfdalpha = real(dot(F, J, deltax))
 
         # evaluate the residual function but not the Jacobian
         calcfj3!(F, nothing, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,

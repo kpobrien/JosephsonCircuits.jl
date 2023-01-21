@@ -529,20 +529,19 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
             # update the factorization. the sparsity structure does 
             # not change so we can reuse the factorization object.
             KLU.klu!(F,Asparsecopy)
-
-            # solve the linear system
-            ldiv!(phin,F,bnm)
         catch e
             if isa(e, SingularException)
                 # reusing the symbolic factorization can sometimes
                 # lead to numerical problems. if the first linear
                 # solve fails try factoring and solving again
                 F = KLU.klu(Asparsecopy)
-                ldiv!(phin,F,bnm)
             else
                 throw(e)
             end
         end
+
+        # solve the linear system
+        ldiv!(phin,F,bnm)
 
         # convert to node voltages. node flux is defined as the time integral of
         # node voltage so node voltage is derivative of node flux which can be
@@ -579,36 +578,23 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
             sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
                 wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
 
-            # # update the factorization. the sparsity structure does 
-            # # not change so we can reuse the factorization object.
-            # KLU.klu!(F,Asparsecopy)
-
-            # # solve the linear system
-            # ldiv!(phin,F,bnm)
+            try 
+                # update the factorization. the sparsity structure does 
+                # not change so we can reuse the factorization object.
+                KLU.klu!(F,Asparsecopy)
+            catch e
+                if isa(e, SingularException)
+                    # reusing the symbolic factorization can sometimes
+                    # lead to numerical problems. if the first linear
+                    # solve fails try factoring and solving again
+                    F = KLU.klu(Asparsecopy)
+                else
+                    throw(e)
+                end
+            end
 
             # solve the linear system
-            if solver == :klu
-                try 
-                    # update the factorization. the sparsity structure does 
-                    # not change so we can reuse the factorization object.
-                    KLU.klu!(F,Asparsecopy)
-
-                    # solve the linear system
-                    ldiv!(phin,F,bnm)
-                catch e
-                    if isa(e, SingularException)
-                        # reusing the symbolic factorization can sometimes
-                        # lead to numerical problems. if the first linear
-                        # solve fails try factoring and solving again
-                        F = KLU.klu(Asparsecopy)
-                        ldiv!(phin,F,bnm)
-                    else
-                        throw(e)
-                    end
-                end
-            else
-                error("Error: Unknown solver")
-            end
+            ldiv!(phin,F,bnm)
 
             # calculate the noise scattering parameters
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
@@ -855,25 +841,23 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
         push!(normF,norm(F))
 
-        # solve the linear system
         try 
             # update the factorization. the sparsity structure does not change
             # so we can reuse the factorization object.
             KLU.klu!(factorization,Jsparse)
-
-            # solve the linear system
-            ldiv!(deltax,factorization,F)
         catch e
             if isa(e, SingularException)
                 # reusing the symbolic factorization can sometimes lead to
                 # numerical problems. if the first linear solve fails
                 # try factoring and solving again
                 factorization = KLU.klu(Jsparse)
-                ldiv!(deltax,factorization,F)
             else
                 throw(e)
             end
         end
+
+        # solve the linear system
+        ldiv!(deltax,factorization,F)
 
         # multiply deltax by -1
         rmul!(deltax,-1)
