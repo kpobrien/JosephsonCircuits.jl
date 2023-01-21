@@ -230,9 +230,16 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     # Don't bother multiplying by the diagonal frequency matrices since they
     # won't change the sparsity structure. 
     AoLjnm.nzval .= rand(Complex{Float64},length(AoLjnm.nzval))
-    Jsparse = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
-    # Jsparse = (AoLjnm + invLnm - im*Gnm - Cnm)
+    # Jsparse = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
+    Jsparse = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm,invLnm),Gnm),Cnm)
 
+
+
+    AoLjbmRbnm = AoLjbmcopy*Rbnm
+    xbAoLjbmRbnm = fill(false, size(AoLjbmcopy,1))
+
+    AoLjnm = Rbnmt*AoLjbmRbnm
+    xbAoLjnm = fill(false, size(Rbnmt,1))
 
     # return (Jsparse,AoLjnm)
 
@@ -264,17 +271,14 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
     for n = 1:iterations
 
         # update the residual function and the Jacobian
-        # calcfj2!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        # Ljb,Ljbm,Nmodes,
-        # Nbranches,Lmean,AoLjbm2,AoLjbm,
-        # AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
-        # freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
         calcfj3!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        Ljb,Ljbm,Nmodes,
-        Nbranches,Lmean,AoLjbm2,AoLjbm,
-        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
-        AoLjbmindices, conjindicessorted,
-        freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
+            Ljb,Ljbm,Nmodes,
+            Nbranches,Lmean,AoLjbm2,AoLjbm,
+            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
+            AoLjbmindices, conjindicessorted,
+            freqindexmap,conjsourceindices,conjtargetindices,phimatrix,
+            AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
+        )
 
 
         push!(normF,norm(F))
@@ -315,11 +319,13 @@ function hbnlsolve2(w::Tuple,Nharmonics::Tuple,sources::Tuple,circuit,circuitdef
         # AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
         # freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
         calcfj3!(F,nothing,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        Ljb,Ljbm,Nmodes,
-        Nbranches,Lmean,AoLjbm2,AoLjbm,
-        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
-        AoLjbmindices, conjindicessorted,
-        freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
+            Ljb,Ljbm,Nmodes,
+            Nbranches,Lmean,AoLjbm2,AoLjbm,
+            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
+            AoLjbmindices, conjindicessorted,
+            freqindexmap,conjsourceindices,conjtargetindices,phimatrix,
+            AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
+        )
 
         fp = real(0.5*dot(F,F))
 
@@ -416,7 +422,9 @@ function calcfj3!(F,
         AoLjbmvector::AbstractVector,
         AoLjbm,AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
         AoLjbmindices, conjindicessorted,
-        freqindexmap,conjsourceindices,conjtargetindices,phimatrix)
+        freqindexmap,conjsourceindices,conjtargetindices,phimatrix,
+        AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
+        )
 
     # convert from a node flux to a branch flux
     phib = Rbnm*nodeflux
@@ -464,14 +472,20 @@ function calcfj3!(F,
         # apply a cosinusoidal nonlinearity when evaluating the Jacobian
         cosphimatrix = applynl(phimatrix,(x) -> cos(x))
         updateAoLjbm3!(AoLjbm, cosphimatrix, AoLjbmindices, conjindicessorted, Ljb, Lmean)
+        
+
         # convert to a sparse node matrix
-        AoLjnm = Rbnmt*AoLjbm*Rbnm
+        # AoLjnm = Rbnmt*AoLjbm*Rbnm
+        # non allocating sparse matrix multiplication
+        spmatmul!(AoLjbmRbnm, AoLjbm, Rbnm, xbAoLjbmRbnm)
+        spmatmul!(AoLjnm, Rbnmt, AoLjbmRbnm, xbAoLjnm)
 
         # calculate the Jacobian. If J is sparse, keep it sparse. 
         # J .= AoLjnm + invLnm - im*Gnm*wmodesm - Cnm*wmodes2m
         # the code below adds the sparse matrices together with minimal
         # memory allocations and without changing the sparsity structure.
-        fill!(J,zero(eltype(J)))
+        # fill!(J,zero(eltype(J)))
+        fill!(J,0)
         sparseadd!(J,AoLjnm,AoLjnmindexmap)
         sparseadd!(J,invLnm,invLnmindexmap)
         sparseadd!(J,im,Gnm,wmodesm,Gnmindexmap)
