@@ -36,6 +36,38 @@ using Test
             atol = 1e-8)
     end
 
+
+    @testset verbose=true "hbnlsolve2 lossless error" begin
+
+        @variables Rleft Cc Lj Cj w L1
+        circuit = Tuple{String,String,String,Num}[]
+        push!(circuit,("P1","1","0",1))
+        push!(circuit,("R1","1","0",Rleft))
+        push!(circuit,("C1","1","2",Cc)) 
+        push!(circuit,("Lj1","2","0",Lj)) 
+        push!(circuit,("C2","2","0",Cj))
+        circuitdefs = Dict(
+            Lj =>1000.0e-12,
+            Cc => 100.0e-15,
+            Cj => 1000.0e-15,
+            Rleft => 50.0,
+        )
+        ws = 2*pi*(4.5:0.01:5.0)*1e9
+        wp = 2*pi*4.75001*1e9
+        Ip = 0.00565e-6
+        Nsignalmodes = 8
+        Npumpmodes = 8
+
+        w = (wp,)
+        Nharmonics = (2*Npumpmodes,)
+        sources = ((w=w[1],port=1,current=Ip),)
+
+        @test_warn(
+            "Solver did not converge after maximum iterations of 1.",
+            hbnlsolve2(w,Nharmonics,sources,circuit,circuitdefs,iterations=1)
+        )
+    end
+
     @testset "hbsolve2 hbsolve comparison" begin
 
         @variables Rleft Cc Lj Cj w L1

@@ -953,7 +953,6 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
             @warn string("Solver did not converge after maximum iterations of ", n,".")
             println("norm(F)/norm(x): ", norm(F)/norm(x))
             println("Infinity norm: ", norm(F,Inf))
-
         end
     end
 
