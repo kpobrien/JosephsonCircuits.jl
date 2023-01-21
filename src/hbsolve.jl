@@ -91,14 +91,14 @@ function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     # calculate the circuit graph
     cg = calccircuitgraph(psc)
 
-    # solve the nonlinear system    
+    # solve the nonlinear system
     pump=hbnlsolve(wp, Ip, Npumpmodes, psc, cg, circuitdefs, ports = pumpports,
         solver = solver, iterations = iterations, ftol = ftol,
         symfreqvar = symfreqvar, verbosity = verbosity)
 
     # the node flux
     # phin = pump.out.zero
-    nodeflux = pump.nodeflux    
+    nodeflux = pump.nodeflux
 
     # convert from node flux to branch flux
     phib = pump.Rbnm*nodeflux
@@ -263,7 +263,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     indices = calcindices(Nmodes)
     signalindex = findall(indices .== 0)[1]
 
-    # if Am is undefined, define it. 
+    # if Am is undefined, define it.
     if length(Am) == 0
         Am = zeros(Complex{Float64}, 2*Nmodes, length(Ljb.nzval))
 
@@ -357,8 +357,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     if returnvoltage
         voltage = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
     else
-        voltage = Vector{Complex{Float64}}(undef,0)    
-    end    
+        voltage = Vector{Complex{Float64}}(undef,0)
+    end
 
     # solve the linear system for the specified frequencies. the response for
     # each frequency is independent so it can be done in parallel; however
@@ -470,14 +470,6 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
     # factorization for the sparsity pattern.
     F = KLU.klu(Asparsecopy)
 
-    # if solver ==:klu
-    #     # if using the KLU factorization and sparse solver then make a 
-    #     # factorization for the sparsity pattern.
-    #     F = KLU.klu(Asparsecopy)
-    # else
-    #     error("Error: Unknown solver")
-    # end
-
     # if the scattering matrix is empty define a new working matrix
     if isempty(S)
         Sview = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
@@ -509,7 +501,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
 
         # perform the operation below in a way that doesn't allocate significant
         # memory, plus take the conjugates mentioned below.
-        # A = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
+        # Asparsecopy = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
 
         fill!(Asparsecopy.nzval,zero(eltype(Asparsecopy.nzval)))
         sparseadd!(Asparsecopy,1,AoLjnm,AoLjnmindexmap)
@@ -764,10 +756,8 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # convert to a sparse node matrix. Note: I was having problems with type 
     # instability when i used AoLjbm here instead of AoLjbmcopy. 
     # AoLjnm = transpose(Rbnm)*AoLjbmcopy*Rbnm;
-
     AoLjbmRbnm = AoLjbmcopy*Rbnm
     xbAoLjbmRbnm = fill(false, size(AoLjbmcopy,1))
-
     AoLjnm = Rbnmt*AoLjbmRbnm
     xbAoLjnm = fill(false, size(Rbnmt,1))
 
@@ -787,7 +777,7 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     invLnm *= Lmean
 
     # calculate the structure of the Jacobian
-    # Jsparse = (AoLjnm + invLnm - im*Gnm*wmodesm - Cnm*wmodes2m)
+    # Jsparse = AoLjnm + invLnm - im*Gnm*wmodesm - Cnm*wmodes2m
     Jsparse = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm,invLnm),Gnm),Cnm)
 
 
@@ -816,7 +806,7 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     alpha1 = 0.0
 
     # perform Newton's method with linesearch based on Nocedal and Wright
-    # chapter 3 section 5. 
+    # chapter 3 section 5.
     for n = 1:iterations
 
         if alpha1 == 1.0
@@ -1009,15 +999,15 @@ Nothing if it only wants to calculate F or J.
 function calcfj!(F,
         J,
         nodeflux::AbstractVector,
-        wmodesm::AbstractMatrix, 
-        wmodes2m::AbstractMatrix, 
-        Rbnm::AbstractArray{Int,2}, 
-        Rbnmt::AbstractArray{Int,2}, 
-        invLnm::AbstractMatrix, 
-        Cnm::AbstractMatrix, 
-        Gnm::AbstractMatrix, 
-        bnm::AbstractVector, 
-        Ljb::SparseVector, 
+        wmodesm::AbstractMatrix,
+        wmodes2m::AbstractMatrix,
+        Rbnm::AbstractArray{Int,2},
+        Rbnmt::AbstractArray{Int,2},
+        invLnm::AbstractMatrix,
+        Cnm::AbstractMatrix,
+        Gnm::AbstractMatrix,
+        bnm::AbstractVector,
+        Ljb::SparseVector,
         Ljbm::SparseVector,
         Nmodes::Int,
         Nbranches::Int,
@@ -1036,7 +1026,7 @@ function calcfj!(F,
     if !(F == nothing)
 
         # calculate the function. use the sine terms. Am[2:2:2*Nmodes,:]
-        # calculate  AoLjbm, this is just a diagonal matrix. 
+        # calculate  AoLjbm, this is just a diagonal matrix.
         # check if this is consistent with other calculations
         @inbounds for i in 1:nnz(Ljb)
             for j in 1:Nmodes

@@ -190,7 +190,6 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     # numerical zeros (the usual sparse matrix addition converts these to
     # structural zeros which would change the sparsity structure).
     # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
-    AoLjnm.nzval .= rand(Complex{Float64},length(AoLjnm.nzval))
     J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm*wmodesm), - Cnm*wmodes2m)
     Jcopy = copy(J)
     # perform a factorization, which will be updated later for each 
