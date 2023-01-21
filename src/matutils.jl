@@ -125,11 +125,12 @@ function diagrepeat!(colptr::Vector,rowval::Vector,nzval::Vector,
         # in between the original columns with the elements shifted
         # down.
         for k in 1:counts
-            colptr[(i-2)*counts+k+1] = colptr[(i-2)*counts+k]
+            idx = (i-2)*counts+k+1
+            colptr[idx] = colptr[(i-2)*counts+k]
             for j in A.colptr[i-1]:(A.colptr[i]-1)
-                rowval[colptr[(i-2)*counts+k+1]] = (A.rowval[j]-1)*counts+k
-                nzval[colptr[(i-2)*counts+k+1]] = A.nzval[j]
-                colptr[(i-2)*counts+k+1] += 1
+                rowval[colptr[idx]] = (A.rowval[j]-1)*counts+k
+                nzval[colptr[idx]] = A.nzval[j]
+                colptr[idx] += 1
             end
         end
     end
