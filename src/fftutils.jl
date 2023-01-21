@@ -983,7 +983,29 @@ julia> JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55 + 
  0.00788681+0.0im  -0.110947+0.0im  -0.110947+0.0im
 ```
 """
-function applynl(am::Array{Complex{Float64}}, f::Function)
+function applynl(fd::Array{Complex{Float64}}, f::Function)
+
+    #choose the number of time points based on the number of fourier
+    #coefficients
+    # changed to below because i wasn't using enough points when Nmodes=1.
+    # the results contained only real values. 
+    # if size(fd,1) == 2
+    #     stepsperperiod = 2*size(fd,1)-1
+    # else
+    #     stepsperperiod = 2*size(fd,1)-2
+    # end
+
+    # td = Array{Float64}(undef,(stepsperperiod,size(fd)[2:end]...))
+
+    td, irfftplan, rfftplan = plan_applynl(fd)
+    fdcopy = copy(fd)
+
+    applynl!(td, fdcopy, f, irfftplan, rfftplan)
+
+    return fdcopy
+end
+
+function applynl2(am::Array{Complex{Float64}}, f::Function)
 
     #choose the number of time points based on the number of fourier
     #coefficients
@@ -1009,6 +1031,59 @@ function applynl(am::Array{Complex{Float64}}, f::Function)
     ftnlift = FFTW.rfft(nlift,1:length(size(am))-1)/normalization
 
     return ftnlift
+end
+
+
+
+# function applynl!(td, fd::Array{Complex{Float64}}, f::Function, irfftplan,
+#     rfftplan)
+
+function applynl!(td, fd, f::Function, irfftplan,
+    rfftplan)
+    #transform to the time domain
+    mul!(td, irfftplan, fd)
+
+    # normalize the fft
+    normalization = prod(size(td)[1:end-1])
+    invnormalization = 1/normalization
+
+    #apply the nonlinear function
+    for i in eachindex(td)
+        td[i] = f(td[i]*normalization)
+    end
+
+    # transform to the frequency domain
+    mul!(fd, rfftplan, td)
+
+    # normalize
+    for i in eachindex(fd)
+        fd[i] = fd[i]*invnormalization
+    end
+
+    return irfftplan, rfftplan
+end
+
+function plan_applynl(fd)
+
+    #choose the number of time points based on the number of fourier
+    #coefficients
+    # changed to below because i wasn't using enough points when Nmodes=1.
+    # the results contained only real values. 
+    if size(fd,1) == 2
+        stepsperperiod = 2*size(fd,1)-1
+    else
+        stepsperperiod = 2*size(fd,1)-2
+    end
+
+    td = Array{Float64}(undef,(stepsperperiod,size(fd)[2:end]...))
+
+    # make the irfft plan
+    irfftplan = FFTW.plan_irfft(fd,stepsperperiod,1:length(size(fd))-1; flags=FFTW.ESTIMATE, timelimit=Inf)
+
+    # make the rfft plan
+    rfftplan = FFTW.plan_rfft(td,1:length(size(fd))-1; flags=FFTW.ESTIMATE, timelimit=Inf)
+
+    return td, irfftplan, rfftplan
 end
 
 """
