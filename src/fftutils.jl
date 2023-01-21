@@ -959,7 +959,8 @@ end
 Perform the inverse discrete Fourier transform on an array `am` of complex
 frequency domain data, apply the function `f` in the time domain, then perform
 the discrete Fourier transform to return to the frequency domain. Apply the
-Fourier transform on all but the last dimensions. 
+Fourier transform on all but the last dimensions. See also [`applynl!`](@ref)
+and [`plan_applynl`](@ref).
 
 # Examples
 ```jldoctest
@@ -985,61 +986,75 @@ julia> JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55 + 
 """
 function applynl(fd::Array{Complex{Float64}}, f::Function)
 
-    #choose the number of time points based on the number of fourier
-    #coefficients
-    # changed to below because i wasn't using enough points when Nmodes=1.
-    # the results contained only real values. 
-    # if size(fd,1) == 2
-    #     stepsperperiod = 2*size(fd,1)-1
-    # else
-    #     stepsperperiod = 2*size(fd,1)-2
-    # end
-
-    # td = Array{Float64}(undef,(stepsperperiod,size(fd)[2:end]...))
-
     td, irfftplan, rfftplan = plan_applynl(fd)
     fdcopy = copy(fd)
 
-    applynl!(td, fdcopy, f, irfftplan, rfftplan)
+    applynl!(fdcopy, td, f, irfftplan, rfftplan)
 
     return fdcopy
 end
 
-function applynl2(am::Array{Complex{Float64}}, f::Function)
+"""
+    plan_applynl(fd)
+
+Creates an empty time domain data array and the inverse and forward plans
+for the RFFT of an array of frequency domain data. See also [`applynl!`](@ref).
+
+"""
+function plan_applynl(fd::Array{Complex{T}}) where T
 
     #choose the number of time points based on the number of fourier
     #coefficients
     # changed to below because i wasn't using enough points when Nmodes=1.
     # the results contained only real values. 
-    if size(am,1) == 2
-        stepsperperiod = 2*size(am,1)-1
+    sizefd = size(fd)
+    if sizefd[1] == 2
+        stepsperperiod = 2*sizefd[1]-1
     else
-        stepsperperiod = 2*size(am,1)-2
+        stepsperperiod = 2*sizefd[1]-2
     end
 
-    #transform back to time domain
-    ift = FFTW.irfft(am,stepsperperiod,1:length(size(am))-1)
+    # generate the time domain array with the appropriate dimensions
+    td = Array{T}(
+        undef,
+        NTuple{length(sizefd),Int}(ifelse(i == 1, stepsperperiod, val) for (i,val) in enumerate(sizefd)),
+    )
 
-    # normalize the fft
-    normalization = prod(size(ift)[1:end-1])
-    ift .*= normalization
+    # make the irfft plan
+    irfftplan = FFTW.plan_irfft(fd,stepsperperiod,1:length(size(fd))-1; flags=FFTW.ESTIMATE, timelimit=Inf)
 
-    #apply the nonlinear function
-    nlift = f.(ift)
+    # make the rfft plan
+    rfftplan = FFTW.plan_rfft(td,1:length(size(fd))-1; flags=FFTW.ESTIMATE, timelimit=Inf)
 
-    #fourier transform back to the frequency domain
-    ftnlift = FFTW.rfft(nlift,1:length(size(am))-1)/normalization
-
-    return ftnlift
+    return td, irfftplan, rfftplan
 end
 
+"""
+    applynl!(fd::Array{Complex{T}}, td::Array{T}, f::Function, irfftplan,
+        rfftplan) where T
 
+Apply the nonlinear function f to the frequency domain data by transforming
+to the time domain, applying the function, then transforming back to the
+frequency domain, overwriting the contents of fd and td in the process. We
+use plans for the forward and reverse RFFT prepared by [`plan_applynl`](@ref).
 
-# function applynl!(td, fd::Array{Complex{Float64}}, f::Function, irfftplan,
-#     rfftplan)
+# Examples
+```jldoctest
+fd=ones(Complex{Float64},3,2)
+td, irfftplan, rfftplan = JosephsonCircuits.plan_applynl(fd)
+JosephsonCircuits.applynl!(fd, td, (x)->cos(x), irfftplan, rfftplan)
+fd
 
-function applynl!(td, fd, f::Function, irfftplan,
-    rfftplan)
+# output
+3×2 Matrix{ComplexF64}:
+  0.586589+0.0im   0.586589+0.0im
+ -0.413411+0.0im  -0.413411+0.0im
+ -0.413411+0.0im  -0.413411+0.0im
+```
+"""
+function applynl!(fd::Array{Complex{T}}, td::Array{T}, f::Function, irfftplan,
+    rfftplan) where T
+
     #transform to the time domain
     mul!(td, irfftplan, fd)
 
@@ -1060,31 +1075,9 @@ function applynl!(td, fd, f::Function, irfftplan,
         fd[i] = fd[i]*invnormalization
     end
 
-    return irfftplan, rfftplan
+    return nothing
 end
 
-function plan_applynl(fd)
-
-    #choose the number of time points based on the number of fourier
-    #coefficients
-    # changed to below because i wasn't using enough points when Nmodes=1.
-    # the results contained only real values. 
-    if size(fd,1) == 2
-        stepsperperiod = 2*size(fd,1)-1
-    else
-        stepsperperiod = 2*size(fd,1)-2
-    end
-
-    td = Array{Float64}(undef,(stepsperperiod,size(fd)[2:end]...))
-
-    # make the irfft plan
-    irfftplan = FFTW.plan_irfft(fd,stepsperperiod,1:length(size(fd))-1; flags=FFTW.ESTIMATE, timelimit=Inf)
-
-    # make the rfft plan
-    rfftplan = FFTW.plan_rfft(td,1:length(size(fd))-1; flags=FFTW.ESTIMATE, timelimit=Inf)
-
-    return td, irfftplan, rfftplan
-end
 
 """
     hbmatind(Nharmonics::Tuple; maxintermodorder::Number = Inf,

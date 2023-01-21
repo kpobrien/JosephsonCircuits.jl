@@ -380,21 +380,16 @@ function calcfj3!(F,
     # convert from a node flux to a branch flux
     phib = Rbnm*nodeflux
 
-    # convert the branch flux vector to a matrix with the terms arranged
-    # in the correct way for the inverse rfft including the appropriate
-    # complex conjugates. 
-    # phib[Ljbm.nzind] are the branch fluxes for each of the JJ's
-    # phivectortomatrix!(phib[Ljbm.nzind], phimatrix, freqindexmap,
-        # conjsourceindices, conjtargetindices, length(Ljb.nzval))
-
     if !(F == nothing)
 
+        # convert the branch flux vector to a matrix with the terms arranged
+        # in the correct way for the inverse rfft including the appropriate
+        # complex conjugates.
         phivectortomatrix!(phib[Ljbm.nzind], phimatrix, freqindexmap,
             conjsourceindices, conjtargetindices, length(Ljb.nzval))
 
         # apply the sinusoidal nonlinearity when evaluaing the function
-        # phimatrix = applynl(phimatrix,(x) -> sin(x))
-        applynl!(phimatrixtd, phimatrix, (x) -> sin(x), irfftplan, rfftplan)
+        applynl!(phimatrix, phimatrixtd, (x) -> sin(x), irfftplan, rfftplan)
 
         # convert the sinphimatrix to a vector
         fill!(AoLjbmvector, 0)
@@ -413,19 +408,17 @@ function calcfj3!(F,
     #calculate the Jacobian
     if !(J == nothing)
 
+        # turn the phivector into a matrix again because applynl! overwrites
+        # the frequency domain data
         phivectortomatrix!(phib[Ljbm.nzind], phimatrix, freqindexmap,
             conjsourceindices, conjtargetindices, length(Ljb.nzval))
 
-        applynl!(phimatrixtd, phimatrix, (x) -> cos(x), irfftplan, rfftplan)
+        # apply a cosinusoidal nonlinearity when evaluating the Jacobian
+        applynl!(phimatrix, phimatrixtd, (x) -> cos(x), irfftplan, rfftplan)
 
         # calculate  AoLjbm
-        # apply a cosinusoidal nonlinearity when evaluating the Jacobian
-        # phimatrix = applynl(phimatrix,(x) -> cos(x))
-
         updateAoLjbm3!(AoLjbm, phimatrix, AoLjbmindices, conjindicessorted,
             Ljb, Lmean)
-        # updateAoLjbm3!(AoLjbm, cosphimatrix, AoLjbmindices, conjindicessorted,
-        #     Ljb, Lmean)
 
         # convert to a sparse node matrix
         # AoLjnm = Rbnmt*AoLjbm*Rbnm
