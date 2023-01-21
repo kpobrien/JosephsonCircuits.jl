@@ -579,36 +579,36 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
             sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
                 wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
 
-            # update the factorization. the sparsity structure does 
-            # not change so we can reuse the factorization object.
-            KLU.klu!(F,Asparsecopy)
-
-            # solve the linear system
-            ldiv!(phin,F,bnm)
+            # # update the factorization. the sparsity structure does 
+            # # not change so we can reuse the factorization object.
+            # KLU.klu!(F,Asparsecopy)
 
             # # solve the linear system
-            # if solver == :klu
-            #     try 
-            #         # update the factorization. the sparsity structure does 
-            #         # not change so we can reuse the factorization object.
-            #         KLU.klu!(F,Asparsecopy)
+            # ldiv!(phin,F,bnm)
 
-            #         # solve the linear system
-            #         ldiv!(phin,F,bnm)
-            #     catch e
-            #         if isa(e, SingularException)
-            #             # reusing the symbolic factorization can sometimes
-            #             # lead to numerical problems. if the first linear
-            #             # solve fails try factoring and solving again
-            #             F = KLU.klu(Asparsecopy)
-            #             ldiv!(phin,F,bnm)
-            #         else
-            #             throw(e)
-            #         end
-            #     end
-            # else
-            #     error("Error: Unknown solver")
-            # end
+            # solve the linear system
+            if solver == :klu
+                try 
+                    # update the factorization. the sparsity structure does 
+                    # not change so we can reuse the factorization object.
+                    KLU.klu!(F,Asparsecopy)
+
+                    # solve the linear system
+                    ldiv!(phin,F,bnm)
+                catch e
+                    if isa(e, SingularException)
+                        # reusing the symbolic factorization can sometimes
+                        # lead to numerical problems. if the first linear
+                        # solve fails try factoring and solving again
+                        F = KLU.klu(Asparsecopy)
+                        ldiv!(phin,F,bnm)
+                    else
+                        throw(e)
+                    end
+                end
+            else
+                error("Error: Unknown solver")
+            end
 
             # calculate the noise scattering parameters
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
