@@ -147,8 +147,10 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
 
     phimatrixtd, irfftplan, rfftplan = plan_applynl(phimatrix)
 
-
-    Amatrix = zeros(Complex{Float64}, Nwtuple)
+    # initializing this with zeros seems to cause problems
+    # ideally i should initialize the vector of ones then convert to the
+    # matrix.
+    Amatrix = ones(Complex{Float64}, Nwtuple)
     Amatrixindices = hbmatind(Nharmonics; maxintermodorder = maxintermodorder,
         dc = dc, even = even, odd = odd)
 
