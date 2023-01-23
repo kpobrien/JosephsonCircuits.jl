@@ -160,7 +160,7 @@ using SpecialFunctions
         truncfreq = JosephsonCircuits.truncfreqsrdft(freq;dc=false,odd=true,even=false,maxintermodorder=maxintermodorder)
         noconjtruncfreq = JosephsonCircuits.removeconjfreqsrdft(truncfreq)
         conjsymdict = JosephsonCircuits.conjsymrdft(noconjtruncfreq.Nt)
-        freqindexmap, conjsourceindices, conjtargetindices = JosephsonCircuits.calcphiindices2(noconjtruncfreq,conjsymdict)
+        freqindexmap, conjsourceindices, conjtargetindices = JosephsonCircuits.calcphiindices(noconjtruncfreq,conjsymdict)
         modes = noconjtruncfreq.modes
         Nt = noconjtruncfreq.Nt
         Nw = noconjtruncfreq.Nw

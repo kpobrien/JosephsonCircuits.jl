@@ -70,7 +70,7 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     truncfreq = truncfreqsrdft(freq;dc=dc,odd=odd,even=even,maxintermodorder=maxintermodorder)
     noconjtruncfreq = removeconjfreqsrdft(truncfreq)
     conjsymdict = conjsymrdft(noconjtruncfreq.Nt)
-    freqindexmap, conjsourceindices, conjtargetindices = calcphiindices2(noconjtruncfreq,conjsymdict)
+    freqindexmap, conjsourceindices, conjtargetindices = calcphiindices(noconjtruncfreq,conjsymdict)
     modes = noconjtruncfreq.modes
     Nt = noconjtruncfreq.Nt
 
@@ -154,7 +154,7 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     # ideally i should initialize the vector of ones then convert to the
     # matrix.
     Amatrix = ones(Complex{Float64}, Nwtuple)
-    Amatrixindices = hbmatind2(freq,noconjtruncfreq)
+    Amatrixindices = hbmatind(freq,noconjtruncfreq)
 
     Nfreq = prod(size(Amatrix)[1:end-1])
     AoLjbmindices, conjindicessorted = calcAoLjbmindices(Amatrixindices,

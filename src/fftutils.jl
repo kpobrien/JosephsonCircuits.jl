@@ -855,58 +855,7 @@ end
 
 
 """
-    calcfrequencies2(Nt,coords,values)
-
-Return the vector of values with any conjugate symmetric terms removed. Requires
-the dimensions of the time domain signal, the vector of coordinates, and the
-vector of values.
-
-# Examples
-```jldoctest
-@variables w1, w2
-Nt = (7, 5)
-coords = [ CartesianIndex(2, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(3, 2), CartesianIndex(2, 3), CartesianIndex(4, 3), CartesianIndex(2, 4), CartesianIndex(4, 4), CartesianIndex(1, 5), CartesianIndex(3, 5)]
-values = [w1, 3w1, w2, w2 + 2w1, w1 + 2w2, 2w2 + 3w1, w1 - 2w2, 3w1 - 2w2, -w2, 2w1 - w2]
-JosephsonCircuits.calcfrequencies2(Nt,coords,values)
-
-# output
-9-element Vector{Num}:
-        w1
-       3w1
-        w2
-  w2 + 2w1
-  w1 + 2w2
- 2w2 + 3w1
-  w1 - 2w2
- 3w1 - 2w2
-  2w1 - w2
-```
-"""
-function calcfrequencies2(Nt, coords, values)
-
-    indexdict = conjsymrdft(Nt);
-    Nw=NTuple{length(Nt),Int}(ifelse(i == 1, (val÷2)+1, val) for (i,val) in enumerate(Nt))
-    reverseindexdict = Dict{CartesianIndex{length(Nt)},CartesianIndex{length(Nt)}}()
-    for (key,val) in indexdict
-        reverseindexdict[val] = key
-    end
-
-    values2 = Array{eltype(values),1}(undef,0)
-
-    carttoint = calcindexdict(Nw)
-    inttocart = CartesianIndices(Nw)
-
-    for (i,coord) in enumerate(coords)
-        if !haskey(reverseindexdict,coord)
-            push!(values2,values[i])
-        end
-    end
-
-    return values2
-end
-
-"""
-    calcphiindices2(Nt, dropdict)
+    calcphiindices(Nt, dropdict)
 
 Return the indices which map the elements of the frequency domain vector
 elements to the corresponding elements of the frequency domain array. Also
@@ -928,7 +877,7 @@ vector to `conjtargetindices` in the array then complex conjugated
 ```jldoctest
 freq = JosephsonCircuits.Frequencies{2}((5, 7), (8, 7), CartesianIndex{2}[CartesianIndex(2, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(3, 2), CartesianIndex(2, 3), CartesianIndex(1, 4), CartesianIndex(2, 6), CartesianIndex(3, 7)], [(1, 0), (3, 0), (0, 1), (2, 1), (1, 2), (0, 3), (1, -2), (2, -1)])
 conjsymdict = Dict{CartesianIndex{2}, CartesianIndex{2}}(CartesianIndex(5, 4) => CartesianIndex(5, 5), CartesianIndex(1, 3) => CartesianIndex(1, 6), CartesianIndex(5, 2) => CartesianIndex(5, 7), CartesianIndex(1, 4) => CartesianIndex(1, 5), CartesianIndex(1, 2) => CartesianIndex(1, 7), CartesianIndex(5, 3) => CartesianIndex(5, 6))
-JosephsonCircuits.calcphiindices2(freq, conjsymdict)
+JosephsonCircuits.calcphiindices(freq, conjsymdict)
 
 # output
 ([2, 4, 6, 8, 12, 16, 27, 33], [6, 16], [31, 21])
@@ -938,13 +887,13 @@ freq = JosephsonCircuits.calcfreqsrdft((4,3));
 truncfreq = JosephsonCircuits.truncfreqsrdft(freq;dc=false,odd=true,even=false,maxintermodorder=3)
 noconjtruncfreq = JosephsonCircuits.removeconjfreqsrdft(truncfreq)
 conjsymdict = JosephsonCircuits.conjsymrdft(noconjtruncfreq.Nt)
-JosephsonCircuits.calcphiindices2(noconjtruncfreq,conjsymdict)
+JosephsonCircuits.calcphiindices(noconjtruncfreq,conjsymdict)
 
 # output
 ([2, 4, 6, 8, 12, 16, 27, 33], [6, 16], [31, 21])
 ```
 """
-function calcphiindices2(frequencies::JosephsonCircuits.Frequencies{N},
+function calcphiindices(frequencies::JosephsonCircuits.Frequencies{N},
         conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}) where N
 
     modes = frequencies.modes
@@ -1247,7 +1196,7 @@ function applynl!(fd::Array{Complex{T}}, td::Array{T}, f::Function, irfftplan,
 end
 
 """
-    hbmatind2(frequencies::JosephsonCircuits.Frequencies{N},
+    hbmatind(frequencies::JosephsonCircuits.Frequencies{N},
         truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
 
 Returns a matrix describing which indices of the frequency domain matrix
@@ -1258,20 +1207,20 @@ the coupling between different frequency modes.
 
 # Examples
 ```jldoctest
-julia> freq = JosephsonCircuits.calcfreqsrdft((5,));JosephsonCircuits.hbmatind2(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=false,odd=true,even=false,maxintermodorder=2)))
+julia> freq = JosephsonCircuits.calcfreqsrdft((5,));JosephsonCircuits.hbmatind(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=false,odd=true,even=false,maxintermodorder=2)))
 3×3 Matrix{Int64}:
  1  -3  -5
  3   1  -3
  5   3   1
 
-julia> freq = JosephsonCircuits.calcfreqsrdft((3,));JosephsonCircuits.hbmatind2(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))
+julia> freq = JosephsonCircuits.calcfreqsrdft((3,));JosephsonCircuits.hbmatind(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))
 4×4 Matrix{Int64}:
  1  -2  -3  -4
  2   1  -2  -3
  3   2   1  -2
  4   3   2   1
 
-julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind2(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))
+julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))
 7×7 Matrix{Int64}:
   1   -2   -3  13   -5  10  -14
   2    1   -2  14   13  11    4
@@ -1282,7 +1231,7 @@ julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind2
  14   13   -5  11   10   0    1
 ```
 """
-function hbmatind2(frequencies::JosephsonCircuits.Frequencies{N},
+function hbmatind(frequencies::JosephsonCircuits.Frequencies{N},
     truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
 
     Nw = frequencies.Nw
