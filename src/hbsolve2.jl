@@ -65,7 +65,7 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     dc = false, odd = true, even = false, x0 = nothing, ftol = 1e-8,
     symfreqvar = nothing, sorting= :number)
 
-
+    # calculate the frequency struct
     freq = calcfreqsrdft(Nharmonics);
     truncfreq = truncfreqsrdft(freq;dc=dc,odd=odd,even=even,maxintermodorder=maxintermodorder)
     noconjtruncfreq = removeconjfreqsrdft(truncfreq)
@@ -74,26 +74,12 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     modes = noconjtruncfreq.modes
     Nt = noconjtruncfreq.Nt
 
-    # # calculate the frequencies
-    # Nw,coords,values,dropcoords,dropvalues = calcfrequencies(w,Nharmonics,
-    #     maxintermodorder = maxintermodorder, dc = dc, even = even, odd = odd)
-    # Nt=NTuple{length(Nw),Int}(ifelse(i == 1, 2*val-1, val) for (i,val) in enumerate(Nw))
-    # dropdict = Dict(dropcoords .=> dropvalues)
-    # values2 = calcfrequencies2(Nt, coords, values)
-    # # freqindexmap, conjsourceindices, conjtargetindices = calcphiindices(Nt, dropdict)
-    # indices = conjsymrdft(Nt)
-
-    # # assign the frequencies
-    # wmodes = values2[:]
-    # Nmodes = length(wmodes)
-
     # generate the frequencies of the modes
     Nmodes = length(modes)
     wmodes = Vector{eltype(w)}(undef, Nmodes)
     for (i,mode) in enumerate(modes)
         wmodes[i] = dot(w,mode)
     end
-
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -168,9 +154,6 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     # ideally i should initialize the vector of ones then convert to the
     # matrix.
     Amatrix = ones(Complex{Float64}, Nwtuple)
-    # Amatrixindices = hbmatind(Nharmonics; maxintermodorder = maxintermodorder,
-    #     dc = dc, even = even, odd = odd)
-
     Amatrixindices = hbmatind2(freq,noconjtruncfreq)
 
     Nfreq = prod(size(Amatrix)[1:end-1])

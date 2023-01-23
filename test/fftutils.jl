@@ -4,18 +4,18 @@ using SpecialFunctions
 
 @testset verbose=true "fftutils" begin
 
-    @testset "calcfrequencies" begin
+    # @testset "calcfrequencies" begin
 
-        @variables w1,w2
-        w = (w1,w2)
-        Nharmonics = (2,)
-        maxintermodorder = 2
-        @test_throws(
-            ErrorException("Each frequency must have a number of harmonics."),
-            JosephsonCircuits.calcfrequencies(w,Nharmonics,
-                maxintermodorder=maxintermodorder,dc=false,even=false,odd=true)
-        )
-    end
+    #     @variables w1,w2
+    #     w = (w1,w2)
+    #     Nharmonics = (2,)
+    #     maxintermodorder = 2
+    #     @test_throws(
+    #         ErrorException("Each frequency must have a number of harmonics."),
+    #         JosephsonCircuits.calcfrequencies(w,Nharmonics,
+    #             maxintermodorder=maxintermodorder,dc=false,even=false,odd=true)
+    #     )
+    # end
 
     @testset "vectortodense" begin
         @test_throws(
@@ -156,13 +156,14 @@ using SpecialFunctions
         Nharmonics = (4,3)
         maxintermodorder = 3
 
-        Nw,coords,values,dropcoords,dropvalues = JosephsonCircuits.calcfrequencies(w,Nharmonics,
-            maxintermodorder=maxintermodorder,dc=false,even=false,odd=true)
-        Nt=NTuple{length(Nw),Int64}(ifelse(i == 1, 2*val-1, val) for (i,val) in enumerate(Nw))
-
-        dropdict = Dict(dropcoords .=> dropvalues)
-
-        freqindexmap,conjsourceindices,conjtargetindices = JosephsonCircuits.calcphiindices(Nt,dropdict)
+        freq = JosephsonCircuits.calcfreqsrdft(Nharmonics);
+        truncfreq = JosephsonCircuits.truncfreqsrdft(freq;dc=false,odd=true,even=false,maxintermodorder=maxintermodorder)
+        noconjtruncfreq = JosephsonCircuits.removeconjfreqsrdft(truncfreq)
+        conjsymdict = JosephsonCircuits.conjsymrdft(noconjtruncfreq.Nt)
+        freqindexmap, conjsourceindices, conjtargetindices = JosephsonCircuits.calcphiindices2(noconjtruncfreq,conjsymdict)
+        modes = noconjtruncfreq.modes
+        Nt = noconjtruncfreq.Nt
+        Nw = noconjtruncfreq.Nw
 
         Nbranches = 2
         Nfrequencies = length(freqindexmap)
