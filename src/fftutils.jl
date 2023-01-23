@@ -1272,6 +1272,87 @@ function calcphiindices(Nt, dropdict)
 end
 
 """
+    calcphiindices2(Nt, dropdict)
+
+Return the indices which map the elements of the frequency domain vector
+elements to the corresponding elements of the frequency domain array. Also
+return the indices `conjsourceindices` whose data should be copied from the
+vector to `conjtargetindices` in the array then complex conjugated
+
+# Arguments
+- `Nt`: tuple with dimensions of signal in time domain 
+- `dropdict`: dictionary of elements of frequency domain signal to drop where
+    the key is the Cartesian index and the value is the value. 
+
+# Returns
+- `indexmap`: the indices which map the elements of the frequency domain
+    vector elements to the corresponding elements of the frequency domain array
+- `conjsourceindices`: data should be copied from here
+- `conjtargetindices`: data should be copied to here and conjugated
+
+# Examples
+```jldoctest
+freq = JosephsonCircuits.Frequencies{2}((5, 7), (8, 7), CartesianIndex{2}[CartesianIndex(2, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(3, 2), CartesianIndex(2, 3), CartesianIndex(1, 4), CartesianIndex(2, 6), CartesianIndex(3, 7)], [(1, 0), (3, 0), (0, 1), (2, 1), (1, 2), (0, 3), (1, -2), (2, -1)])
+conjsymdict = Dict{CartesianIndex{2}, CartesianIndex{2}}(CartesianIndex(5, 4) => CartesianIndex(5, 5), CartesianIndex(1, 3) => CartesianIndex(1, 6), CartesianIndex(5, 2) => CartesianIndex(5, 7), CartesianIndex(1, 4) => CartesianIndex(1, 5), CartesianIndex(1, 2) => CartesianIndex(1, 7), CartesianIndex(5, 3) => CartesianIndex(5, 6))
+JosephsonCircuits.calcphiindices2(freq, conjsymdict)
+
+# output
+([2, 4, 6, 8, 12, 16, 27, 33], [6, 16], [31, 21])
+```
+```jldoctest
+freq = JosephsonCircuits.calcfreqsrdft((4,3));
+truncfreq = JosephsonCircuits.truncfreqsrdft(freq;dc=false,odd=true,even=false,maxintermodorder=3)
+noconjtruncfreq = JosephsonCircuits.removeconjfreqsrdft(truncfreq)
+conjsymdict = JosephsonCircuits.conjsymrdft(noconjtruncfreq.Nt)
+JosephsonCircuits.calcphiindices2(noconjtruncfreq,conjsymdict)
+
+# output
+([2, 4, 6, 8, 12, 16, 27, 33], [6, 16], [31, 21])
+```
+"""
+function calcphiindices2(frequencies::JosephsonCircuits.Frequencies{N},
+        conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}) where N
+
+    modes = frequencies.modes
+    coords = frequencies.coords
+    Nw = frequencies.Nw
+    Nt = frequencies.Nt
+
+    coordsdict = Dict{CartesianIndex{N},Int}()
+    for (i,coord) in enumerate(coords)
+        coordsdict[coord] = i
+    end
+
+    # empty vector to hold the map between indices in the vector and the
+    # matrix
+    indexmap = Vector{Int}(undef,0)
+
+    # the index of the element of the N dimensional array in the frequency domain
+    # that i should copy to conjtargetindices and take the complex conjugate of. 
+    conjsourceindices = Array{Int}(undef,0)
+
+    # the index of the element of the N dimensional array in the frequency domain
+    # that i should take the complex conjugate of
+    conjtargetindices = Vector{Int}(undef,0)
+
+    # create a dictionary that maps between the CartesianIndex coordinates
+    # and the index in the array at which they occur. 
+    carttoint = calcindexdict(Nw)
+
+    # generate the index maps to convert between the vector
+    # and matrix. Loop over the modes and coords vectors to keep the order
+    # between.
+    for (i,coord) in enumerate(coords)
+        push!(indexmap,carttoint[coord])
+        if haskey(conjsymdict,coord)
+            push!(conjsourceindices,carttoint[coord])
+            push!(conjtargetindices,carttoint[conjsymdict[coord]])
+        end
+    end
+    return indexmap, conjsourceindices, conjtargetindices
+end
+
+"""
     phivectortomatrix!(phivector::AbstractVector,phimatrix::AbstractArray,
         indexmap::Vector{Int},conjsourceindices::Vector{Int},
         conjtargetindices::Vector{Int},Nbranches::Int)
@@ -1623,6 +1704,80 @@ function hbmatind(Nharmonics::Tuple; maxintermodorder::Number = Inf,
             Amatrixindices[i] = valuesdict[key]
         elseif haskey(valuesdict,conjkey)
             Amatrixindices[i] = -valuesdict[conjkey]
+        end
+    end
+
+    return Amatrixindices
+end
+
+
+"""
+    hbmatind2(frequencies::JosephsonCircuits.Frequencies{N},
+        truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+
+Returns a matrix describing which indices of the frequency domain matrix
+(from the RFFT) to pull out and use in the harmonic balance matrix. A negative
+index means we take the complex conjugate of that element. A zero index means
+that term is not present, so skip it. The harmonic balance matrix describes
+the coupling between different frequency modes.
+
+# Examples
+```jldoctest
+julia> freq = JosephsonCircuits.calcfreqsrdft((5,));JosephsonCircuits.hbmatind2(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=false,odd=true,even=false,maxintermodorder=2)))
+3×3 Matrix{Int64}:
+ 1  -3  -5
+ 3   1  -3
+ 5   3   1
+
+julia> freq = JosephsonCircuits.calcfreqsrdft((3,));JosephsonCircuits.hbmatind2(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))
+4×4 Matrix{Int64}:
+ 1  -2  -3  -4
+ 2   1  -2  -3
+ 3   2   1  -2
+ 4   3   2   1
+
+julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind2(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))
+7×7 Matrix{Int64}:
+  1   -2   -3  13   -5  10  -14
+  2    1   -2  14   13  11    4
+  3    2    1  15   14  12    5
+  4  -14  -15   1   -2  13  -11
+  5    4  -14   2    1  14    7
+  7  -11  -12   4  -14   1    0
+ 14   13   -5  11   10   0    1
+```
+"""
+function hbmatind2(frequencies::JosephsonCircuits.Frequencies{N},
+    truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+
+    Nw = frequencies.Nw
+    Nt = frequencies.Nt
+    modes = frequencies.modes
+    truncmodes = truncfrequencies.modes
+
+    # this is calculating the frequency domain input output relations
+    Amatrixkeys = Matrix{eltype(truncmodes)}(undef,length(truncmodes),length(truncmodes))
+    for i in 1:length(truncmodes)
+        for j in 1:length(truncmodes)
+            key = NTuple{N,Int}(truncmodes[i][k]-truncmodes[j][k] for k in 1:length(truncmodes[i]))
+            Amatrixkeys[i,j] = key
+        end
+    end
+
+    # now i need to find the keys that are in the rfft matrix and their locations
+    modesdict = Dict{eltype(modes),Int}()
+    for (i,mode) in enumerate(modes)
+        modesdict[mode] = i
+    end
+
+    Amatrixindices = zeros(Int,length(truncmodes),length(truncmodes))
+    for i in 1:length(Amatrixkeys)
+        key = Amatrixkeys[i]
+        conjkey = Tuple(-k for k in key)
+        if haskey(modesdict,key)
+            Amatrixindices[i] = modesdict[key]
+        elseif haskey(modesdict,conjkey)
+            Amatrixindices[i] = -modesdict[conjkey]
         end
     end
 

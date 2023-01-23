@@ -29,7 +29,7 @@ function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         symfreqvar = symfreqvar, sorting = sorting, ftol = ftol)
 
     # the node flux
-    nodeflux = pump.nodeflux    
+    nodeflux = pump.nodeflux
 
     # convert from node flux to branch flux
     phib = pump.Rbnm*nodeflux
@@ -227,7 +227,7 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     normF = Float64[]
 
     # perform Newton's method with linesearch based on Nocedal and Wright
-    # chapter 3 section 5. 
+    # chapter 3 section 5.
     for n = 1:iterations
 
         # update the residual function and the Jacobian
