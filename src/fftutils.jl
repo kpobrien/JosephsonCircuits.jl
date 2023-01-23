@@ -1755,6 +1755,10 @@ function hbmatind2(frequencies::JosephsonCircuits.Frequencies{N},
     modes = frequencies.modes
     truncmodes = truncfrequencies.modes
 
+    if length(truncmodes) > length(modes)
+        error("Number of truncated frequencies should be not greater than number of frequencies.")
+    end
+
     # this is calculating the frequency domain input output relations
     Amatrixkeys = Matrix{eltype(truncmodes)}(undef,length(truncmodes),length(truncmodes))
     for i in 1:length(truncmodes)
