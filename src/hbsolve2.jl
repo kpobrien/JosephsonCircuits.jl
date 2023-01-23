@@ -72,7 +72,7 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     dropdict = Dict(dropcoords .=> dropvalues)
     values2 = calcfrequencies2(Nt, coords, values);
     freqindexmap, conjsourceindices, conjtargetindices = calcphiindices(Nt, dropdict)
-    indices = calcrdftsymmetries(Nt)
+    indices = conjsymrdft(Nt)
 
     # assign the frequencies
     wmodes = values2[:]
