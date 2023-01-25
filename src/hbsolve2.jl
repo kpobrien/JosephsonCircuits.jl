@@ -48,6 +48,53 @@ end
 
 """
     hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs)
+
+
+# Examples
+```jldoctest
+circuit = Array{Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}},1}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("I1","1","0",:Ipump))
+push!(circuit,("R1","1","0",:Rleft))
+push!(circuit,("L1","1","0",:Lm)) 
+push!(circuit,("K1","L1","L2",:K1))
+push!(circuit,("C1","1","2",:Cc)) 
+push!(circuit,("L2","2","3",:Lm)) 
+push!(circuit,("Lj3","3","0",:Lj)) 
+push!(circuit,("Lj4","2","0",:Lj)) 
+push!(circuit,("C2","2","0",:Cj))
+circuitdefs = Dict{Symbol,Complex{Float64}}(
+    :Lj =>2000e-12,
+    :Lm =>10e-12,
+    :Cc => 200.0e-15,
+    :Cj => 900e-15,
+    :Rleft => 50.0,
+    :Rright => 50.0,
+    :Ipump => 1.0e-8,
+    :K1 => 0.9,
+)
+
+Idc = 50e-5
+Ip=0.0001e-6
+wp=2*pi*5e9
+Npumpmodes = 2
+out=hbnlsolve2(
+    (wp,),
+    (Npumpmodes,),
+    (
+        (w=0,port=1,current=Idc),
+        (w=wp,port=1,current=Ip),
+    ),
+    circuit,circuitdefs;dc=true,odd=false,even=false)
+
+# output
+JosephsonCircuits.NonlinearHB(ComplexF64[15.190314040027522 - 8.56492651167657e-24im, 2.991103820177504e-6 - 1.8501001011477133e-8im, -6.835392148510984 - 1.0356102442254259e-14im, 7.396422335315908e-6 - 4.5749403967992827e-8im, 6.835392148539885 - 1.0356102451770844e-14im, 1.008026285172782e-5 - 6.23498762664213e-8im], sparse([1, 2, 3, 7, 4, 8, 5, 7, 6, 8], [1, 2, 3, 3, 4, 4, 5, 5, 6, 6], [1, 1, 1, -1, 1, -1, 1, 1, 1, 1], 8, 6),   [2]  =  2.0e-9+0.0im
+  [3]  =  2.0e-9+0.0im,   [1]  =  1.0e-11+0.0im
+  [4]  =  1.0e-11+0.0im,   [3]  =  2.0e-9+0.0im
+  [4]  =  2.0e-9+0.0im
+  [5]  =  2.0e-9+0.0im
+  [6]  =  2.0e-9+0.0im, 2, 4, ComplexF64[0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im])
+```
 """
 function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::NamedTuple, circuit,
     circuitdefs; ports = [1], solver = :klu, iterations = 1000,
@@ -66,20 +113,16 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     symfreqvar = nothing, sorting= :number)
 
     # calculate the frequency struct
-    freq = calcfreqsrdft(Nharmonics);
-    truncfreq = truncfreqsrdft(freq;dc=dc,odd=odd,even=even,maxintermodorder=maxintermodorder)
-    noconjtruncfreq = removeconjfreqsrdft(truncfreq)
-    conjsymdict = conjsymrdft(noconjtruncfreq.Nt)
-    freqindexmap, conjsourceindices, conjtargetindices = calcphiindices(noconjtruncfreq,conjsymdict)
-    modes = noconjtruncfreq.modes
-    Nt = noconjtruncfreq.Nt
+    freq = removeconjfreqsrdft(
+        truncfreqsrdft(
+            calcfreqsrdft(Nharmonics),
+            dc=dc, odd=odd, even=even, maxintermodorder=maxintermodorder,
+        )
+    )
 
-    # generate the frequencies of the modes
-    Nmodes = length(modes)
-    wmodes = Vector{eltype(w)}(undef, Nmodes)
-    for (i,mode) in enumerate(modes)
-        wmodes[i] = dot(w,mode)
-    end
+    fourierindices = fourierindicesrdft(freq)
+
+    Nmodes = length(freq.modes)
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -89,6 +132,36 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
 
     # calculate the numeric matrices
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+
+    return hbnlsolve2(w, sources, freq, fourierindices, psc, cg, nm;
+        solver = solver, iterations = iterations, x0 = x0, ftol = ftol,
+        symfreqvar = symfreqvar)
+end
+
+function hbnlsolve2(w::Tuple, sources::Tuple, frequencies::Frequencies,
+    fourierindices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
+    nm::CircuitMatrices; solver = :klu, iterations = 1000, x0 = nothing,
+    ftol = ftol, symfreqvar = nothing)
+
+    Nharmonics = frequencies.Nharmonics
+    Nw = frequencies.Nw
+    Nt = frequencies.Nt
+    coords = frequencies.coords
+    modes = frequencies.modes
+
+    conjsymdict = fourierindices.conjsymdict
+    freqindexmap = fourierindices.vectomatmap
+    conjsourceindices = fourierindices.conjsourceindices
+    conjtargetindices = fourierindices.conjtargetindices
+    Amatrixmodes = fourierindices.hbmatmodes
+    Amatrixindices = fourierindices.hbmatindices
+
+    # generate the frequencies of the modes
+    Nmodes = length(modes)
+    wmodes = Vector{eltype(w)}(undef, Nmodes)
+    for (i,mode) in enumerate(modes)
+        wmodes[i] = dot(w,mode)
+    end
 
     # extract the elements we need
     Nnodes = psc.Nnodes
@@ -146,6 +219,7 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
             end 
             for i = 1:length(Nt) + 1
         )
+
     phimatrix = zeros(Complex{Float64}, Nwtuple)
 
     phimatrixtd, irfftplan, rfftplan = plan_applynl(phimatrix)
@@ -154,8 +228,6 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     # ideally i should initialize the vector of ones then convert to the
     # matrix.
     Amatrix = ones(Complex{Float64}, Nwtuple)
-    Amatrixindices = hbmatind(freq,noconjtruncfreq)
-
     Nfreq = prod(size(Amatrix)[1:end-1])
     AoLjbmindices, conjindicessorted = calcAoLjbmindices(Amatrixindices,
         Ljb, Nmodes, Nbranches, Nfreq)

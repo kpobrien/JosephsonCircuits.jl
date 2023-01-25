@@ -17,22 +17,52 @@ signals. See also [`calcfreqsrdft`](@ref).
 
 # Examples
 ```jldoctest
+Nharmonics = (2,1)
 Nw = (3, 3)
 Nt = (4, 3)
 coords = CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3)]
 modes = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, -1), (1, -1), (2, -1)]
-JosephsonCircuits.Frequencies(Nw,Nt,coords,modes)
+JosephsonCircuits.Frequencies(Nharmonics, Nw,Nt,coords,modes)
 
 # output
-JosephsonCircuits.Frequencies{2}((3, 3), (4, 3), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3)], [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, -1), (1, -1), (2, -1)])
+JosephsonCircuits.Frequencies{2}((2, 1), (3, 3), (4, 3), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3)], [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, -1), (1, -1), (2, -1)])
 ```
 """
 struct Frequencies{N}
-    Nw::NTuple{N,Int}
-    Nt::NTuple{N,Int}
+    Nharmonics::NTuple{N, Int}
+    Nw::NTuple{N, Int}
+    Nt::NTuple{N, Int}
     coords::Vector{CartesianIndex{N}}
-    modes::Vector{NTuple{N,Int}}
+    modes::Vector{NTuple{N, Int}}
 end
+
+struct FourierIndices{N}
+    conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}
+    vectomatmap::Vector{Int}
+    conjsourceindices::Vector{Int}
+    conjtargetindices::Vector{Int}
+    hbmatmodes::Matrix{NTuple{N, Int}}
+    hbmatindices::Matrix{Int}
+end
+
+function fourierindicesrdft(freq)
+
+    conjsymdict = conjsymrdft(freq.Nt)
+    freqindexmap, conjsourceindices, conjtargetindices = calcphiindices(freq,conjsymdict)
+    modes = freq.modes
+    Nt = freq.Nt
+    Amatrixmodes, Amatrixindices = hbmatind(freq)
+
+    return FourierIndices(
+        conjsymdict,
+        freqindexmap,
+        conjsourceindices,
+        conjtargetindices,
+        Amatrixmodes,
+        Amatrixindices,
+    )
+end
+
 
 """
     calcfreqsrdft(Nharmonics::NTuple{N,Int})
@@ -53,16 +83,16 @@ in the frequency domain RDFT array.
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.calcfreqsrdft((1,))
-JosephsonCircuits.Frequencies{1}((2,), (3,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)])
+JosephsonCircuits.Frequencies{1}((1,), (2,), (3,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)])
 
 julia> JosephsonCircuits.calcfreqsrdft((2,))
-JosephsonCircuits.Frequencies{1}((3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
+JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
 
 julia> JosephsonCircuits.calcfreqsrdft((3,))
-JosephsonCircuits.Frequencies{1}((4,), (6,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,), CartesianIndex(4,)], [(0,), (1,), (2,), (3,)])
+JosephsonCircuits.Frequencies{1}((3,), (4,), (6,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,), CartesianIndex(4,)], [(0,), (1,), (2,), (3,)])
 
 julia> JosephsonCircuits.calcfreqsrdft((3,3))
-JosephsonCircuits.Frequencies{2}((4, 7), (6, 7), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(4, 2), CartesianIndex(1, 3), CartesianIndex(2, 3)  …  CartesianIndex(3, 5), CartesianIndex(4, 5), CartesianIndex(1, 6), CartesianIndex(2, 6), CartesianIndex(3, 6), CartesianIndex(4, 6), CartesianIndex(1, 7), CartesianIndex(2, 7), CartesianIndex(3, 7), CartesianIndex(4, 7)], [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (2, 1), (3, 1), (0, 2), (1, 2)  …  (2, -3), (3, -3), (0, -2), (1, -2), (2, -2), (3, -2), (0, -1), (1, -1), (2, -1), (3, -1)])
+JosephsonCircuits.Frequencies{2}((3, 3), (4, 7), (6, 7), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(4, 2), CartesianIndex(1, 3), CartesianIndex(2, 3)  …  CartesianIndex(3, 5), CartesianIndex(4, 5), CartesianIndex(1, 6), CartesianIndex(2, 6), CartesianIndex(3, 6), CartesianIndex(4, 6), CartesianIndex(1, 7), CartesianIndex(2, 7), CartesianIndex(3, 7), CartesianIndex(4, 7)], [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (2, 1), (3, 1), (0, 2), (1, 2)  …  (2, -3), (3, -3), (0, -2), (1, -2), (2, -2), (3, -2), (0, -1), (1, -1), (2, -1), (3, -1)])
 ```
 """
 function calcfreqsrdft(Nharmonics::NTuple{N,Int}) where N
@@ -110,7 +140,7 @@ function calcfreqsrdft(Nharmonics::NTuple{N,Int}) where N
         index+=1
     end
 
-    return Frequencies(Nw,Nt,coords,modes)
+    return Frequencies(Nharmonics, Nw, Nt, coords, modes)
 end
 
 """
@@ -121,10 +151,10 @@ removed.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.Frequencies{1}((2,), (3,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)]))
-JosephsonCircuits.Frequencies{1}((2,), (3,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)])
+julia> JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.Frequencies{1}((1,), (2,), (3,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)]))
+JosephsonCircuits.Frequencies{1}((1,), (2,), (3,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)])
 
-julia> frequencies = JosephsonCircuits.Frequencies{2}((3, 5), (4, 5), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3), CartesianIndex(1, 4), CartesianIndex(2, 4), CartesianIndex(3, 4), CartesianIndex(1, 5), CartesianIndex(2, 5), CartesianIndex(3, 5)], [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2), (0, -2), (1, -2), (2, -2), (0, -1), (1, -1), (2, -1)]);JosephsonCircuits.removeconjfreqsrdft(frequencies).modes
+julia> frequencies = JosephsonCircuits.Frequencies{2}((2,2), (3, 5), (4, 5), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3), CartesianIndex(1, 4), CartesianIndex(2, 4), CartesianIndex(3, 4), CartesianIndex(1, 5), CartesianIndex(2, 5), CartesianIndex(3, 5)], [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2), (0, -2), (1, -2), (2, -2), (0, -1), (1, -1), (2, -1)]);JosephsonCircuits.removeconjfreqsrdft(frequencies).modes
 11-element Vector{Tuple{Int64, Int64}}:
  (0, 0)
  (1, 0)
@@ -168,10 +198,10 @@ in keepmodes removed.
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,2)),[(0,0),(1,0),(0,1),(1,1)])
-JosephsonCircuits.Frequencies{2}((3, 5), (4, 5), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(1, 2), CartesianIndex(2, 2)], [(0, 0), (1, 0), (0, 1), (1, 1)])
+JosephsonCircuits.Frequencies{2}((2, 2), (3, 5), (4, 5), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(1, 2), CartesianIndex(2, 2)], [(0, 0), (1, 0), (0, 1), (1, 1)])
 
 julia> JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,2)),Tuple{Int64,Int64}[])
-JosephsonCircuits.Frequencies{2}((3, 5), (4, 5), CartesianIndex{2}[], Tuple{Int64, Int64}[])
+JosephsonCircuits.Frequencies{2}((2, 2), (3, 5), (4, 5), CartesianIndex{2}[], Tuple{Int64, Int64}[])
 ```
 """
 function keepfreqs(frequencies::JosephsonCircuits.Frequencies{N},
@@ -201,7 +231,7 @@ function keepfreqs(frequencies::JosephsonCircuits.Frequencies{N},
         end
     end
 
-    return Frequencies(Nw,Nt,keepcoords,keepmodessorted)
+    return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoords,keepmodessorted)
 end
 
 
@@ -215,10 +245,10 @@ in keepmodes removed.
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[])
-JosephsonCircuits.Frequencies{1}((3,), (4,), CartesianIndex{1}[], Tuple{Int64}[])
+JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[], Tuple{Int64}[])
 
 julia> JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[CartesianIndex(1,)])
-JosephsonCircuits.Frequencies{1}((3,), (4,), CartesianIndex{1}[CartesianIndex(1,)], [(0,)])
+JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,)], [(0,)])
 ```
 """
 function keepfreqs(frequencies::JosephsonCircuits.Frequencies{N},
@@ -248,7 +278,7 @@ function keepfreqs(frequencies::JosephsonCircuits.Frequencies{N},
         end
     end
 
-    return Frequencies(Nw,Nt,keepcoordssorted,keepmodes)
+    return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoordssorted,keepmodes)
 end
 
 
@@ -262,10 +292,10 @@ removemodes removed.
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),Tuple{Int64}[(2,)])
-JosephsonCircuits.Frequencies{1}((3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)])
+JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)])
 
 julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),Tuple{Int64}[])
-JosephsonCircuits.Frequencies{1}((3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
+JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
 ```
 """
 function removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
@@ -302,7 +332,7 @@ function removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
         end
     end
 
-    return Frequencies(Nw,Nt,keepcoords,keepmodessorted)
+    return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoords,keepmodessorted)
 end
 
 """
@@ -315,10 +345,10 @@ removemodes removed.
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[])
-JosephsonCircuits.Frequencies{1}((3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
+JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
 
 julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[CartesianIndex(1,)])
-JosephsonCircuits.Frequencies{1}((3,), (4,), CartesianIndex{1}[CartesianIndex(2,), CartesianIndex(3,)], [(1,), (2,)])
+JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(2,), CartesianIndex(3,)], [(1,), (2,)])
 ```
 """
 function removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
@@ -355,7 +385,7 @@ function removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
         end
     end
 
-    return Frequencies(Nw,Nt,keepcoords,keepmodes)
+    return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoords,keepmodes)
 end
 
 """
@@ -396,7 +426,7 @@ julia> JosephsonCircuits.truncfreqsrdft(JosephsonCircuits.calcfreqsrdft((3,3));d
  (2, -1)
 
 julia> JosephsonCircuits.truncfreqsrdft(JosephsonCircuits.calcfreqsrdft((3,3));maxintermodorder=2)
-JosephsonCircuits.Frequencies{2}((4, 7), (6, 7), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(1, 3), CartesianIndex(1, 4), CartesianIndex(1, 5), CartesianIndex(1, 6), CartesianIndex(1, 7), CartesianIndex(2, 7)], [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (0, 2), (0, 3), (0, -3), (0, -2), (0, -1), (1, -1)])
+JosephsonCircuits.Frequencies{2}((3, 3), (4, 7), (6, 7), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(1, 3), CartesianIndex(1, 4), CartesianIndex(1, 5), CartesianIndex(1, 6), CartesianIndex(1, 7), CartesianIndex(2, 7)], [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (0, 2), (0, 3), (0, -3), (0, -2), (0, -1), (1, -1)])
 ```
 """
 function  truncfreqsrdft(frequencies::JosephsonCircuits.Frequencies;
@@ -438,7 +468,7 @@ function  truncfreqsrdft(frequencies::JosephsonCircuits.Frequencies;
         end
     end
 
-    return Frequencies(Nw,Nt,keepcoords,keepmodes)
+    return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoords,keepmodes)
 end
 
 """
@@ -875,7 +905,7 @@ vector to `conjtargetindices` in the array then complex conjugated
 
 # Examples
 ```jldoctest
-freq = JosephsonCircuits.Frequencies{2}((5, 7), (8, 7), CartesianIndex{2}[CartesianIndex(2, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(3, 2), CartesianIndex(2, 3), CartesianIndex(1, 4), CartesianIndex(2, 6), CartesianIndex(3, 7)], [(1, 0), (3, 0), (0, 1), (2, 1), (1, 2), (0, 3), (1, -2), (2, -1)])
+freq = JosephsonCircuits.Frequencies{2}((4, 3), (5, 7), (8, 7), CartesianIndex{2}[CartesianIndex(2, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(3, 2), CartesianIndex(2, 3), CartesianIndex(1, 4), CartesianIndex(2, 6), CartesianIndex(3, 7)], [(1, 0), (3, 0), (0, 1), (2, 1), (1, 2), (0, 3), (1, -2), (2, -1)])
 conjsymdict = Dict{CartesianIndex{2}, CartesianIndex{2}}(CartesianIndex(5, 4) => CartesianIndex(5, 5), CartesianIndex(1, 3) => CartesianIndex(1, 6), CartesianIndex(5, 2) => CartesianIndex(5, 7), CartesianIndex(1, 4) => CartesianIndex(1, 5), CartesianIndex(1, 2) => CartesianIndex(1, 7), CartesianIndex(5, 3) => CartesianIndex(5, 6))
 JosephsonCircuits.calcphiindices(freq, conjsymdict)
 
@@ -902,13 +932,14 @@ function calcphiindices(frequencies::JosephsonCircuits.Frequencies{N},
     Nt = frequencies.Nt
 
     coordsdict = Dict{CartesianIndex{N},Int}()
+    sizehint!(coordsdict,length(coords))
     for (i,coord) in enumerate(coords)
         coordsdict[coord] = i
     end
 
     # empty vector to hold the map between indices in the vector and the
     # matrix
-    indexmap = Vector{Int}(undef,0)
+    indexmap = Vector{Int}(undef,length(coords))
 
     # the index of the element of the N dimensional array in the frequency domain
     # that i should copy to conjtargetindices and take the complex conjugate of. 
@@ -926,7 +957,8 @@ function calcphiindices(frequencies::JosephsonCircuits.Frequencies{N},
     # and matrix. Loop over the modes and coords vectors to keep the order
     # between.
     for (i,coord) in enumerate(coords)
-        push!(indexmap,carttoint[coord])
+        # push!(indexmap,carttoint[coord])
+        indexmap[i] = carttoint[coord]
         if haskey(conjsymdict,coord)
             push!(conjsourceindices,carttoint[coord])
             push!(conjtargetindices,carttoint[conjsymdict[coord]])
@@ -1196,8 +1228,7 @@ function applynl!(fd::Array{Complex{T}}, td::Array{T}, f::Function, irfftplan,
 end
 
 """
-    hbmatind(frequencies::JosephsonCircuits.Frequencies{N},
-        truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+    hbmatind(truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
 
 Returns a matrix describing which indices of the frequency domain matrix
 (from the RFFT) to pull out and use in the harmonic balance matrix. A negative
@@ -1207,20 +1238,30 @@ the coupling between different frequency modes.
 
 # Examples
 ```jldoctest
-julia> freq = JosephsonCircuits.calcfreqsrdft((5,));JosephsonCircuits.hbmatind(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=false,odd=true,even=false,maxintermodorder=2)))
+julia> freq = JosephsonCircuits.calcfreqsrdft((5,));JosephsonCircuits.hbmatind(JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=false,odd=true,even=false,maxintermodorder=2)))[2]
 3×3 Matrix{Int64}:
  1  -3  -5
  3   1  -3
  5   3   1
 
-julia> freq = JosephsonCircuits.calcfreqsrdft((3,));JosephsonCircuits.hbmatind(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))
+julia> freq = JosephsonCircuits.calcfreqsrdft((3,));JosephsonCircuits.hbmatind(JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))[2]
 4×4 Matrix{Int64}:
  1  -2  -3  -4
  2   1  -2  -3
  3   2   1  -2
  4   3   2   1
 
-julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind(freq,JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))
+julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind(JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))[1]
+7×7 Matrix{Tuple{Int64, Int64}}:
+ (0, 0)   (-1, 0)  (-2, 0)   (0, -1)  (-1, -1)  (0, -2)  (-1, 1)
+ (1, 0)   (0, 0)   (-1, 0)   (1, -1)  (0, -1)   (1, -2)  (0, 1)
+ (2, 0)   (1, 0)   (0, 0)    (2, -1)  (1, -1)   (2, -2)  (1, 1)
+ (0, 1)   (-1, 1)  (-2, 1)   (0, 0)   (-1, 0)   (0, -1)  (-1, 2)
+ (1, 1)   (0, 1)   (-1, 1)   (1, 0)   (0, 0)    (1, -1)  (0, 2)
+ (0, 2)   (-1, 2)  (-2, 2)   (0, 1)   (-1, 1)   (0, 0)   (-1, 3)
+ (1, -1)  (0, -1)  (-1, -1)  (1, -2)  (0, -2)   (1, -3)  (0, 0)
+
+julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind(JosephsonCircuits.removeconjfreqsrdft(JosephsonCircuits.truncfreqsrdft(freq;dc=true,odd=true,even=true,maxintermodorder=2)))[2]
 7×7 Matrix{Int64}:
   1   -2   -3  13   -5  10  -14
   2    1   -2  14   13  11    4
@@ -1231,9 +1272,9 @@ julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind(
  14   13   -5  11   10   0    1
 ```
 """
-function hbmatind(frequencies::JosephsonCircuits.Frequencies{N},
-    truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+function hbmatind(truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
 
+    frequencies = calcfreqsrdft(truncfrequencies.Nharmonics)
     Nw = frequencies.Nw
     Nt = frequencies.Nt
     modes = frequencies.modes
@@ -1244,30 +1285,33 @@ function hbmatind(frequencies::JosephsonCircuits.Frequencies{N},
     end
 
     # this is calculating the frequency domain input output relations
-    Amatrixkeys = Matrix{eltype(truncmodes)}(undef,length(truncmodes),length(truncmodes))
+    # first calculate this in terms of the modes
+    Amatrixmodes = Matrix{NTuple{N,Int}}(undef,length(truncmodes),length(truncmodes))
     for i in 1:length(truncmodes)
         for j in 1:length(truncmodes)
-            key = NTuple{N,Int}(truncmodes[i][k]-truncmodes[j][k] for k in 1:length(truncmodes[i]))
-            Amatrixkeys[i,j] = key
+            mode = NTuple{N,Int}(truncmodes[i][k]-truncmodes[j][k] for k in 1:length(truncmodes[i]))
+            Amatrixmodes[i,j] = mode
         end
     end
 
-    # now i need to find the keys that are in the rfft matrix and their locations
+    # now i need to find the keys that are in the rfft matrix and their
+    # locations
     modesdict = Dict{eltype(modes),Int}()
     for (i,mode) in enumerate(modes)
         modesdict[mode] = i
     end
 
+    # now we want to know where in the dft matrix we should pull
+    # these modes. to do these, we use the un-truncated frequencies struct.
     Amatrixindices = zeros(Int,length(truncmodes),length(truncmodes))
-    for i in 1:length(Amatrixkeys)
-        key = Amatrixkeys[i]
-        conjkey = Tuple(-k for k in key)
-        if haskey(modesdict,key)
-            Amatrixindices[i] = modesdict[key]
-        elseif haskey(modesdict,conjkey)
-            Amatrixindices[i] = -modesdict[conjkey]
+    for (i,mode) in enumerate(Amatrixmodes)
+        conjmode = NTuple{N}(-m for m in mode)
+        if haskey(modesdict,mode)
+            Amatrixindices[i] = modesdict[mode]
+        elseif haskey(modesdict,conjmode)
+            Amatrixindices[i] = -modesdict[conjmode]
         end
     end
 
-    return Amatrixindices
+    return Amatrixmodes, Amatrixindices
 end
