@@ -1,7 +1,6 @@
 
 
 """
-
     hbsolve2()
 
 New version of the harmonic balance solver suitable for arbitrary numbers of 
@@ -13,20 +12,36 @@ function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, verbosity = 1)
 
+    # solve the nonlinear system using the old syntax externally and the new
+    # syntax internally
+    w = (wp,)
+    Nharmonics = (2*Npumpmodes,)
+    sources = ((w = w[1], port = pumpports[1], current = Ip),)
+
+    # calculate the frequency struct
+    freq = removeconjfreqsrdft(
+        truncfreqsrdft(
+            calcfreqsrdft(Nharmonics),
+            dc=false, odd=true, even=false, maxintermodorder=Inf,
+        )
+    )
+
+    fourierindices = fourierindicesrdft(freq)
+
+    Nmodes = length(freq.modes)
+
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
 
     # calculate the circuit graph
     cg = calccircuitgraph(psc)
 
-    # solve the nonlinear system using the old syntax externally and the new
-    # syntax internally
-    w = (wp,)
-    Nharmonics = (2*Npumpmodes,)
-    sources = ((w = w[1], port = pumpports[1], current = Ip),)
-    pump=hbnlsolve2(w, Nharmonics, sources, circuit, circuitdefs,
-        solver = solver, odd = true, dc = false, even = false,
-        symfreqvar = symfreqvar, sorting = sorting, ftol = ftol)
+    # calculate the numeric matrices
+    nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+
+    pump = hbnlsolve2(w, sources, freq, fourierindices, psc, cg, nm;
+        solver = solver, iterations = iterations, x0 = nothing, ftol = ftol,
+        symfreqvar = symfreqvar)
 
     # the node flux
     nodeflux = pump.nodeflux
@@ -47,7 +62,7 @@ function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
 end
 
 """
-    hbnlsolve(wp,Ip,Nmodes,circuit,circuitdefs)
+    hbnlsolve2(wp,Ip,Nmodes,circuit,circuitdefs)
 
 
 # Examples
