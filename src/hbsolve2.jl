@@ -156,7 +156,7 @@ end
 function hbnlsolve2(w::Tuple, sources::Tuple, frequencies::Frequencies,
     fourierindices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; solver = :klu, iterations = 1000, x0 = nothing,
-    ftol = ftol, symfreqvar = nothing)
+    ftol = 1e-8, symfreqvar = nothing)
 
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
