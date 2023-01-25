@@ -36,6 +36,14 @@ struct Frequencies{N}
     modes::Vector{NTuple{N, Int}}
 end
 
+"""
+    FourierIndices(conjsymdict, vectomatmap, conjsourceindices,
+        conjtargetindices, hbmatmodes, hbmatindices)
+
+A simple structure to hold time and frequency domain information for the
+signals, particularly the indices for converting between the node flux vectors
+and matrices. See also [`fourierindicesrdft`](@ref).
+"""
 struct FourierIndices{N}
     conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}
     vectomatmap::Vector{Int}
@@ -45,6 +53,13 @@ struct FourierIndices{N}
     hbmatindices::Matrix{Int}
 end
 
+
+"""
+    fourierindicesrdft(freq)
+
+Generate the indices used in the RDFT and inverse RDFT and converting between
+a node flux vector for solving system and the matrices for the Fourier analysis.
+"""
 function fourierindicesrdft(freq)
 
     conjsymdict = conjsymrdft(freq.Nt)
