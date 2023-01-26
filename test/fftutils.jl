@@ -4,33 +4,6 @@ using SpecialFunctions
 
 @testset verbose=true "fftutils" begin
 
-    # @testset "calcfrequencies" begin
-
-    #     @variables w1,w2
-    #     w = (w1,w2)
-    #     Nharmonics = (2,)
-    #     maxintermodorder = 2
-    #     @test_throws(
-    #         ErrorException("Each frequency must have a number of harmonics."),
-    #         JosephsonCircuits.calcfrequencies(w,Nharmonics,
-    #             maxintermodorder=maxintermodorder,dc=false,even=false,odd=true)
-    #     )
-    # end
-
-    # @testset "vectortodense" begin
-    #     @test_throws(
-    #         DimensionMismatch("Dimensions of coords elements and Nharmonics must be consistent."),
-    #         JosephsonCircuits.vectortodense([CartesianIndex(1,1)],[1],(1,))
-    #     )
-    # end
-
-    # @testset "vectortodense" begin
-    #     @test_throws(
-    #         DimensionMismatch("Not designed to visualize higher dimensional arrays"),
-    #         JosephsonCircuits.vectortodense([CartesianIndex(1,1,1)],[1],(1,1,1))
-    #     )
-    # end
-
     @testset "applynl: cos(z*cos(theta))" begin
         # test against Jacobi-Anger expansion for cos(z*cos(theta))
         z = 0.9
