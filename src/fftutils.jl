@@ -4,7 +4,7 @@
         coords::Vector{CartesianIndex{N}}, modes::Vector{NTuple{N,Int})
 
 A simple structure to hold time and frequency domain information for the
-signals. See also [`calcfreqsrdft`](@ref).
+signals. See also [`calcfreqsrdft`](@ref) and [`calcfreqsdft`](@ref).
 
 # Fields
 - `Nw::NTuple{N,Int}`: The dimensions of the frequency domain signal for a
@@ -533,98 +533,109 @@ function  truncfreqs(frequencies::JosephsonCircuits.Frequencies;
         keepcoords, keepmodes)
 end
 
-# """
-#     vectortodense(coords::Vector, values::Vector, Nharmonics)
 
-# Returns a dense array (vector or matrix) from a vector of coordinates, a
-# vector of values, and a tuple or single number giving the dimensions of the
-# array. The inputs can be generated with [`calcfrequencies`](@ref).
+"""
+    calcmodefreqs(w::NTuple{N},modes::Vector{NTuple{N,Int}})
 
-# # Examples
-# ```jldoctest
-# @variables w1
-# Nharmonics = (5);
-# coords = [CartesianIndex(2,), CartesianIndex(3,), CartesianIndex(4,), CartesianIndex(5,), CartesianIndex(6,)];
-# values = [w1, 2w1, 3w1, 4w1, 5w1];
-# JosephsonCircuits.vectortodense(coords,values,Nharmonics)
+Calculate the frequencies of the modes given a tuple of fundamental frequencies
+and a vector of tuples containing the mixing products and harmonics.
 
-# # output
-# 6-element Vector{Num}:
-#    0
-#   w1
-#  2w1
-#  3w1
-#  4w1
-#  5w1
-# ```
-# ```jldoctest
-# @variables w1
-# Nharmonics = (5);
-# coords = [CartesianIndex(2,), CartesianIndex(4,), CartesianIndex(6,)];
-# values = [w1, 3w1, 5w1];
-# JosephsonCircuits.vectortodense(coords,values,Nharmonics)
+# Examples
+```jldoctest
+julia> @variables wp1 wp2;JosephsonCircuits.calcmodefreqs((wp1, wp2),[(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)])
+6-element Vector{Num}:
+          0
+        wp1
+       2wp1
+        wp2
+  wp1 + wp2
+ wp2 + 2wp1
 
-# # output
-# 6-element Vector{Num}:
-#    0
-#   w1
-#    0
-#  3w1
-#    0
-#  5w1
-# ```
-# ```jldoctest
-# @variables w1, w2
-# Nharmonics = (3,2);
-# coords = [CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(1, 3), CartesianIndex(1, 4), CartesianIndex(1, 5), CartesianIndex(2, 5)]
-# values = [w1, 2w1, 3w1, w2, w1 + w2, 2w2, -2w2, -w2, w1 - w2]
-# JosephsonCircuits.vectortodense(coords,values,Nharmonics)
+julia> JosephsonCircuits.calcmodefreqs((1., 1.1),[(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)])
+6-element Vector{Float64}:
+ 0.0
+ 1.0
+ 2.0
+ 1.1
+ 2.1
+ 3.1
+```
+"""
+function calcmodefreqs(w::NTuple{N,Any},modes::Vector{NTuple{N,Int}}) where N
+    # generate the frequencies of the modes
+    wmodes = Vector{eltype(w)}(undef, length(modes))
+    for (i,mode) in enumerate(modes)
+        wmodes[i] = dot(w,mode)
+    end
+    return wmodes
+end
 
-# # output
-# 4×5 Matrix{Num}:
-#    0       w2  2w2  -2w2      -w2
-#   w1  w1 + w2    0     0  w1 - w2
-#  2w1        0    0     0        0
-#  3w1        0    0     0        0
-# ```
-# ```jldoctest
-# @variables w1, w2
-# Nharmonics = (3,2);
-# coords = [CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(4, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3), CartesianIndex(4, 3), CartesianIndex(1, 4), CartesianIndex(2, 4), CartesianIndex(3, 4), CartesianIndex(4, 4), CartesianIndex(1, 5), CartesianIndex(2, 5), CartesianIndex(3, 5), CartesianIndex(4, 5)];
-# values = [w1, 2w1, 3w1, w2, w1 + w2, w2 + 2w1, w2 + 3w1, 2w2, w1 + 2w2, 2w1 + 2w2, 2w2 + 3w1, -2w2, w1 - 2w2, 2w1 - 2w2, 3w1 - 2w2, -w2, w1 - w2, 2w1 - w2, 3w1 - w2];
-# JosephsonCircuits.vectortodense(coords,values,Nharmonics)
 
-# # output
-# 4×5 Matrix{Num}:
-#    0        w2        2w2       -2w2       -w2
-#   w1   w1 + w2   w1 + 2w2   w1 - 2w2   w1 - w2
-#  2w1  w2 + 2w1  2w1 + 2w2  2w1 - 2w2  2w1 - w2
-#  3w1  w2 + 3w1  2w2 + 3w1  3w1 - 2w2  3w1 - w2
-# ```
-# """
-# function vectortodense(coords::Vector, values::Vector, Nharmonics)
+"""
+    visualizefreqs(w::NTuple{N,Any}, freq::Frequencies{N})
 
-#     if length(Nharmonics) != length(eltype(coords))
-#         throw(DimensionMismatch("Dimensions of coords elements and Nharmonics must be consistent."))
-#     end
+Create a vector or array containing the mixing products for visualization 
+purposes.
 
-#     if length(eltype(coords)) == 1
-#         s = zeros(eltype(values),Nharmonics[1]+1)
-#         for (i,coord) in enumerate(coords)
-#             s[coord] = values[i]
-#         end
-#     elseif length(eltype(coords)) == 2
-#         s = zeros(eltype(values),Nharmonics[1]+1,2*(Nharmonics[2]+1)-1)
-#         for (i,coord) in enumerate(coords)
-#             s[coord] = values[i]
-#         end
-        
-#     else
-#         throw(DimensionMismatch("Not designed to visualize higher dimensional arrays"))
-#     end
-#     return s
-# end
+# Examples
+```jldoctest
+@variables wp1
+w = (wp1,)
+freq = JosephsonCircuits.truncfreqs(
+    JosephsonCircuits.calcfreqsrdft((3,)),
+        dc=true, odd=true, even=true, maxintermodorder=Inf,
+)
+JosephsonCircuits.visualizefreqs(w,freq)
 
+# output
+4-element Vector{Num}:
+    0
+  wp1
+ 2wp1
+ 3wp1
+```
+```jldoctest
+@variables wp1,wp2
+w = (wp1,wp2)
+freq = JosephsonCircuits.truncfreqs(
+    JosephsonCircuits.calcfreqsrdft((3,3)),
+        dc=true, odd=true, even=true, maxintermodorder=3,
+)
+JosephsonCircuits.visualizefreqs(w,freq)
+
+# output
+4×7 Matrix{Num}:
+    0         wp2        2wp2  3wp2  -3wp2       -2wp2        -wp2
+  wp1   wp1 + wp2  wp1 + 2wp2     0      0  wp1 - 2wp2   wp1 - wp2
+ 2wp1  wp2 + 2wp1           0     0      0           0  2wp1 - wp2
+ 3wp1           0           0     0      0           0           0
+```
+```jldoctest
+w = (1.1,1.2)
+freq = JosephsonCircuits.truncfreqs(
+    JosephsonCircuits.calcfreqsrdft((3,3)),
+        dc=true, odd=true, even=true, maxintermodorder=3,
+)
+JosephsonCircuits.visualizefreqs(w,freq)
+
+# output
+4×7 Matrix{Float64}:
+ 0.0  1.2  2.4  3.6  -3.6  -2.4  -1.2
+ 1.1  2.3  3.5  0.0   0.0  -1.3  -0.1
+ 2.2  3.4  0.0  0.0   0.0   0.0   1.0
+ 3.3  0.0  0.0  0.0   0.0   0.0   0.0
+```
+"""
+function visualizefreqs(w::NTuple{N,Any}, freq::Frequencies{N}) where N
+    wmodes = calcmodefreqs(w,freq.modes)
+
+    s = zeros(eltype(wmodes),freq.Nw)
+    for (i,coord) in enumerate(freq.coords)
+        s[coord] = wmodes[i]
+    end
+
+    return s
+end
 
 """
     conjsym(frequencies::JosephsonCircuits.Frequencies{N})
@@ -698,97 +709,45 @@ function conjsym(frequencies::JosephsonCircuits.Frequencies{N}) where N
     return conjsym(frequencies.Nw, frequencies.Nt)
 end
 
-"""
-    printdftsymmetries(N)
 
-Print the conjugate symmetries in the multi-dimensional DFT of a real
-signal from the dimensions of the signal in the time domain. Negative numbers
+"""
+    printsymmetries(N::Tuple)
+
+Print the conjugate symmetries in the multi-dimensional DFT or RDFT from the
+dimensions of the signal in the frequency domain and the time domain. Negative numbers
 indicate that element is the complex conjugate of the corresponding positive
 number. A zero indicates that element has no corresponding complex conjugate.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.printdftsymmetries((4,))
+julia> JosephsonCircuits.printsymmetries((3,),(4,))
+3-element Vector{Int64}:
+ 0
+ 0
+ 0
+
+julia> JosephsonCircuits.printsymmetries((4,),(4,))
 4-element Vector{Int64}:
   0
   1
   0
  -1
 
-julia> JosephsonCircuits.printdftsymmetries((3,3))
-3×3 Matrix{Int64}:
-  0   2  -2
-  1   3   4
- -1  -4  -3
-
-julia> JosephsonCircuits.printdftsymmetries((4,3))
-4×3 Matrix{Int64}:
-  0   2  -2
-  1   3   5
-  0   4  -4
- -1  -5  -3
-
-julia> JosephsonCircuits.printdftsymmetries((3,4))
-3×4 Matrix{Int64}:
-  0   2   0  -2
-  1   3   4   5
- -1  -5  -4  -3
-```
-"""
-function printdftsymmetries(Nt)
-
-    d=conjsym(Nt,Nt)
-
-    z=zeros(Int,Nt)
-    i = 1
-    for (key,val) in sort(OrderedDict(d))
-        z[key] = i
-        z[val] = -i
-        i+=1
-    end
-    return z
-end
-
-function printdftsymmetries(Nt::Int)
-    return printdftsymmetries(Tuple(Nt))
-end
-
-"""
-    printrdftsymmetries(N::Tuple)
-
-Print the conjugate symmetries in the multi-dimensional RDFT (DFT of a real
-signal) from the dimensions of the signal in the time domain. Negative numbers
-indicate that element is the complex conjugate of the corresponding positive
-number. A zero indicates that element has no corresponding complex conjugate.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.printrdftsymmetries(4)
-3-element Vector{Int64}:
- 0
- 0
- 0
-
-julia> JosephsonCircuits.printrdftsymmetries((3,3))
-2×3 Matrix{Int64}:
- 0  1  -1
- 0  0   0
-
-julia> JosephsonCircuits.printrdftsymmetries((4,3))
+julia> JosephsonCircuits.printsymmetries((3,3),(4,3))
 3×3 Matrix{Int64}:
  0  1  -1
  0  0   0
  0  2  -2
 
-julia> JosephsonCircuits.printrdftsymmetries((3,4))
-2×4 Matrix{Int64}:
- 0  1  0  -1
- 0  0  0   0
+julia> JosephsonCircuits.printsymmetries((4,3),(4,3))
+4×3 Matrix{Int64}:
+  0   2  -2
+  1   3   5
+  0   4  -4
+ -1  -5  -3
 ```
 """
-function printrdftsymmetries(Nt)
-
-    Nw=NTuple{length(Nt),Int}(ifelse(i == 1, (val÷2)+1, val) for (i,val) in enumerate(Nt))
+function printsymmetries(Nw::NTuple{N, Int}, Nt::NTuple{N, Int}) where N
 
     d=conjsym(Nw,Nt)
 
@@ -802,10 +761,37 @@ function printrdftsymmetries(Nt)
     return z
 end
 
-function printrdftsymmetries(Nt::Int)
-    return printrdftsymmetries(Tuple(Nt))
-end
+"""
+    printsymmetries(freq::Frequencies)
 
+See  [`printsymmetries`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.printsymmetries(JosephsonCircuits.calcfreqsrdft((2,)))
+3-element Vector{Int64}:
+ 0
+ 0
+ 0
+
+julia> JosephsonCircuits.printsymmetries(JosephsonCircuits.calcfreqsdft((2,)))
+5-element Vector{Int64}:
+  0
+  1
+  2
+ -2
+ -1
+
+julia> JosephsonCircuits.printsymmetries(JosephsonCircuits.calcfreqsrdft((2,2)))
+3×5 Matrix{Int64}:
+ 0  1  3  -3  -1
+ 0  0  0   0   0
+ 0  2  4  -4  -2
+```
+"""
+function printsymmetries(freq::Frequencies)
+    return printsymmetries(freq.Nw, freq.Nt)
+end
 
 """
     calcindexdict(N::Tuple)

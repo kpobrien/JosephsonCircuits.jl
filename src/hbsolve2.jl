@@ -173,10 +173,7 @@ function hbnlsolve2(w::Tuple, sources::Tuple, frequencies::Frequencies,
 
     # generate the frequencies of the modes
     Nmodes = length(modes)
-    wmodes = Vector{eltype(w)}(undef, Nmodes)
-    for (i,mode) in enumerate(modes)
-        wmodes[i] = dot(w,mode)
-    end
+    wmodes = calcmodefreqs(w,modes)
 
     # extract the elements we need
     Nnodes = psc.Nnodes
