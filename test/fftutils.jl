@@ -17,19 +17,19 @@ using SpecialFunctions
     #     )
     # end
 
-    @testset "vectortodense" begin
-        @test_throws(
-            DimensionMismatch("Dimensions of coords elements and Nharmonics must be consistent."),
-            JosephsonCircuits.vectortodense([CartesianIndex(1,1)],[1],(1,))
-        )
-    end
+    # @testset "vectortodense" begin
+    #     @test_throws(
+    #         DimensionMismatch("Dimensions of coords elements and Nharmonics must be consistent."),
+    #         JosephsonCircuits.vectortodense([CartesianIndex(1,1)],[1],(1,))
+    #     )
+    # end
 
-    @testset "vectortodense" begin
-        @test_throws(
-            DimensionMismatch("Not designed to visualize higher dimensional arrays"),
-            JosephsonCircuits.vectortodense([CartesianIndex(1,1,1)],[1],(1,1,1))
-        )
-    end
+    # @testset "vectortodense" begin
+    #     @test_throws(
+    #         DimensionMismatch("Not designed to visualize higher dimensional arrays"),
+    #         JosephsonCircuits.vectortodense([CartesianIndex(1,1,1)],[1],(1,1,1))
+    #     )
+    # end
 
     @testset "applynl: cos(z*cos(theta))" begin
         # test against Jacobi-Anger expansion for cos(z*cos(theta))
@@ -157,9 +157,9 @@ using SpecialFunctions
         maxintermodorder = 3
 
         freq = JosephsonCircuits.calcfreqsrdft(Nharmonics);
-        truncfreq = JosephsonCircuits.truncfreqsrdft(freq;dc=false,odd=true,even=false,maxintermodorder=maxintermodorder)
-        noconjtruncfreq = JosephsonCircuits.removeconjfreqsrdft(truncfreq)
-        conjsymdict = JosephsonCircuits.conjsymrdft(noconjtruncfreq.Nt)
+        truncfreq = JosephsonCircuits.truncfreqs(freq;dc=false,odd=true,even=false,maxintermodorder=maxintermodorder)
+        noconjtruncfreq = JosephsonCircuits.removeconjfreqs(truncfreq)
+        conjsymdict = JosephsonCircuits.conjsym(noconjtruncfreq)
         freqindexmap, conjsourceindices, conjtargetindices = JosephsonCircuits.calcphiindices(noconjtruncfreq,conjsymdict)
         modes = noconjtruncfreq.modes
         Nt = noconjtruncfreq.Nt

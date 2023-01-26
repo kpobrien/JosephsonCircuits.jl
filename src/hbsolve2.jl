@@ -19,14 +19,14 @@ function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     sources = ((w = w[1], port = pumpports[1], current = Ip),)
 
     # calculate the frequency struct
-    freq = removeconjfreqsrdft(
-        truncfreqsrdft(
+    freq = removeconjfreqs(
+        truncfreqs(
             calcfreqsrdft(Nharmonics),
             dc=false, odd=true, even=false, maxintermodorder=Inf,
         )
     )
 
-    fourierindices = fourierindicesrdft(freq)
+    indices = fourierindices(freq)
 
     Nmodes = length(freq.modes)
 
@@ -39,7 +39,7 @@ function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     # calculate the numeric matrices
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
-    pump = hbnlsolve2(w, sources, freq, fourierindices, psc, cg, nm;
+    pump = hbnlsolve2(w, sources, freq, indices, psc, cg, nm;
         solver = solver, iterations = iterations, x0 = nothing, ftol = ftol,
         symfreqvar = symfreqvar)
 
@@ -128,14 +128,14 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     symfreqvar = nothing, sorting= :number)
 
     # calculate the frequency struct
-    freq = removeconjfreqsrdft(
-        truncfreqsrdft(
+    freq = removeconjfreqs(
+        truncfreqs(
             calcfreqsrdft(Nharmonics),
             dc=dc, odd=odd, even=even, maxintermodorder=maxintermodorder,
         )
     )
 
-    fourierindices = fourierindicesrdft(freq)
+    indices = fourierindices(freq)
 
     Nmodes = length(freq.modes)
 
@@ -148,13 +148,13 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
     # calculate the numeric matrices
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
-    return hbnlsolve2(w, sources, freq, fourierindices, psc, cg, nm;
+    return hbnlsolve2(w, sources, freq, indices, psc, cg, nm;
         solver = solver, iterations = iterations, x0 = x0, ftol = ftol,
         symfreqvar = symfreqvar)
 end
 
 function hbnlsolve2(w::Tuple, sources::Tuple, frequencies::Frequencies,
-    fourierindices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
+    indices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; solver = :klu, iterations = 1000, x0 = nothing,
     ftol = 1e-8, symfreqvar = nothing)
 
@@ -164,12 +164,12 @@ function hbnlsolve2(w::Tuple, sources::Tuple, frequencies::Frequencies,
     coords = frequencies.coords
     modes = frequencies.modes
 
-    conjsymdict = fourierindices.conjsymdict
-    freqindexmap = fourierindices.vectomatmap
-    conjsourceindices = fourierindices.conjsourceindices
-    conjtargetindices = fourierindices.conjtargetindices
-    Amatrixmodes = fourierindices.hbmatmodes
-    Amatrixindices = fourierindices.hbmatindices
+    conjsymdict = indices.conjsymdict
+    freqindexmap = indices.vectomatmap
+    conjsourceindices = indices.conjsourceindices
+    conjtargetindices = indices.conjtargetindices
+    Amatrixmodes = indices.hbmatmodes
+    Amatrixindices = indices.hbmatindices
 
     # generate the frequencies of the modes
     Nmodes = length(modes)
