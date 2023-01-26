@@ -61,7 +61,7 @@ using Test
 
         w = (wp,)
         Nharmonics = (2*Npumpmodes,)
-        sources = ((w=w[1],port=1,current=Ip),)
+        sources = ((mode=(1,),port=1,current=Ip),)
 
         @test_warn(
             "Solver did not converge after maximum iterations of 1.",

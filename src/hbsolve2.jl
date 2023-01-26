@@ -16,7 +16,7 @@ function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     # syntax internally
     w = (wp,)
     Nharmonics = (2*Npumpmodes,)
-    sources = ((w = w[1], port = pumpports[1], current = Ip),)
+    sources = ((mode = (1,), port = pumpports[1], current = Ip),)
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -62,8 +62,14 @@ function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
 end
 
 """
-    hbnlsolve2(wp,Ip,Nmodes,circuit,circuitdefs)
+    hbnlsolve2(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources, circuit,
+        circuitdefs; solver = :klu, iterations = 1000, maxintermodorder = Inf,
+        dc = false, odd = true, even = false, x0 = nothing, ftol = 1e-8,
+        symfreqvar = nothing, sorting= :number)
 
+New version of the nonlinear harmonic balance solver suitable for arbitrary
+numbers of ports, sources, and drives including direct current (zero frequency)
+or flux pumping using a current source and a mutual inductor.
 
 # Examples
 ```jldoctest
@@ -96,10 +102,10 @@ Npumpmodes = 2
 out=hbnlsolve2(
     (wp,),
     (Npumpmodes,),
-    (
-        (w=0,port=1,current=Idc),
-        (w=wp,port=1,current=Ip),
-    ),
+    [
+        (mode=(0,),port=1,current=Idc),
+        (mode=(1,),port=1,current=Ip),
+    ],
     circuit,circuitdefs;dc=true,odd=false,even=false)
 
 # output
@@ -111,21 +117,13 @@ JosephsonCircuits.NonlinearHB(ComplexF64[15.190314040027522 - 8.56492651167657e-
   [6]  =  2.0e-9+0.0im, 2, 4, ComplexF64[0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im])
 ```
 """
-function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::NamedTuple, circuit,
-    circuitdefs; ports = [1], solver = :klu, iterations = 1000,
-    maxintermodorder = Inf, dc = false, odd = true, even = false, x0 = nothing,
-    ftol = 1e-8, symfreqvar = nothing,  sorting = :number)
-
-    return hbnlsolve2(w, Nharmonics, (sources,), circuit, circuitdefs;
-        solver = solver, iterations = iterations,
-        maxintermodorder = maxintermodorder, dc = dc, odd = odd, even = even,
-        x0 = x0, ftol = 1e-8, symfreqvar = symfreqvar, sorting = sorting)
-end
-
-function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
-    circuitdefs; solver = :klu, iterations = 1000, maxintermodorder = Inf,
+function hbnlsolve2(
+    w::NTuple{N,Any},
+    Nharmonics::NTuple{N,Int},
+    sources,
+    circuit, circuitdefs; solver = :klu, iterations = 1000, maxintermodorder = Inf,
     dc = false, odd = true, even = false, x0 = nothing, ftol = 1e-8,
-    symfreqvar = nothing, sorting= :number)
+    symfreqvar = nothing, sorting= :number) where N
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -153,10 +151,13 @@ function hbnlsolve2(w::Tuple, Nharmonics::Tuple, sources::Tuple, circuit,
         symfreqvar = symfreqvar)
 end
 
-function hbnlsolve2(w::Tuple, sources::Tuple, frequencies::Frequencies,
-    indices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
+function hbnlsolve2(
+    w::NTuple{N,Any},
+    sources,
+    frequencies::Frequencies{N},
+    indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; solver = :klu, iterations = 1000, x0 = nothing,
-    ftol = 1e-8, symfreqvar = nothing)
+    ftol = 1e-8, symfreqvar = nothing) where N
 
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
@@ -209,7 +210,7 @@ function hbnlsolve2(w::Tuple, sources::Tuple, frequencies::Frequencies,
                 # this will depend on the frequency index
                 # i should calculate that in the right way now. 
                 for i = 1:length(wmodes)
-                    if wmodes[i] == source[:w]
+                    if modes[i] == source[:mode]
                         bbm[(edge2indexdict[key]-1)*Nmodes+i] = Lmean*source[:current]/phi0
                         break
                     end
