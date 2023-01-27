@@ -106,7 +106,7 @@ out=hbnlsolve2(
         (mode=(0,),port=1,current=Idc),
         (mode=(1,),port=1,current=Ip),
     ],
-    circuit,circuitdefs;dc=true,odd=false,even=false)
+    circuit,circuitdefs;dc=true,odd=true,even=false)
 isapprox(out.nodeflux,
     ComplexF64[15.190314040027522 - 8.56492651167657e-24im, 2.991103820177504e-6 - 1.8501001011477133e-8im, -6.835392148510984 - 1.0356102442254259e-14im, 7.396422335315908e-6 - 4.5749403967992827e-8im, 6.835392148539885 - 1.0356102451770844e-14im, 1.008026285172782e-5 - 6.23498762664213e-8im],
     atol = 1e-6)

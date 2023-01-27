@@ -515,7 +515,7 @@ function  truncfreqs(frequencies::JosephsonCircuits.Frequencies;
                 # test for DC
                 (dc && all(==(0),nvals)) ||
                 # test for one of the fundamental frequencies
-                sum(abs,nvals) == 1 ||
+                # sum(abs,nvals) == 1 ||
                 # test for even (and not DC)
                 (even && mod(sum(abs,nvals),2) == 0 && sum(abs,nvals) > 0) ||
                 # test for odd
@@ -1232,16 +1232,44 @@ julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind(
 ```
 """
 function hbmatind(truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+    frequencies = calcfreqs(truncfrequencies.Nharmonics,
+        truncfrequencies.Nw, truncfrequencies.Nt)
+    return hbmatind(frequencies, truncfrequencies)
+end
 
-    frequencies = calcfreqsrdft(truncfrequencies.Nharmonics)
-    Nw = frequencies.Nw
-    Nt = frequencies.Nt
+"""
+    hbmatind(truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+
+Returns a matrix describing which indices of the frequency domain matrix
+(from the RFFT or FFT) to pull out and use in the harmonic balance matrix.
+A negative index means we take the complex conjugate of that element. A zero
+index means that term is not present, so skip it. The harmonic balance matrix
+describes the coupling between different frequency modes.
+
+# Examples
+```jldoctest
+pumpfreq = JosephsonCircuits.truncfreqs(
+    JosephsonCircuits.calcfreqsrdft((4,)))
+signalfreq = JosephsonCircuits.truncfreqs(
+    JosephsonCircuits.calcfreqsdft((4,));
+    dc=false,odd=true,even=false,maxintermodorder=2,
+)
+JosephsonCircuits.hbmatind(pumpfreq, signalfreq)[2]
+
+# output
+4×4 Matrix{Int64}:
+  1  -3  5   3
+  3   1  0   5
+ -5   0  1  -3
+ -3  -5  3   1
+```
+"""
+function hbmatind(
+    frequencies::JosephsonCircuits.Frequencies{N},
+    truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+
     modes = frequencies.modes
     truncmodes = truncfrequencies.modes
-
-    if length(truncmodes) > length(modes)
-        error("Number of truncated frequencies should be not greater than number of frequencies.")
-    end
 
     # this is calculating the frequency domain input output relations
     # first calculate this in terms of the modes
