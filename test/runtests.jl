@@ -14,8 +14,14 @@ end
         :DocTestSetup,
         :(using JosephsonCircuits);
         recursive=true)
-    #makedocs(sitename="My Documentation",modules=[QCE])
-    doctest(JosephsonCircuits, manual = false)
+    makedocs(
+        root = joinpath(dirname(pathof(JosephsonCircuits)), "..", "docs"),
+        modules=[JosephsonCircuits],
+        doctest = :only,
+        sitename="JosephsonCircuits",
+        format = Documenter.HTML(edit_link = nothing, disable_git = true),
+        )
+    # doctest(JosephsonCircuits, manual = false)
 end
 
 @testset verbose = true "JosephsonCircuits" begin
