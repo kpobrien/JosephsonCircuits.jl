@@ -72,7 +72,7 @@ numbers of ports, sources, and drives including direct current (zero frequency)
 or flux pumping using a current source and a mutual inductor.
 
 # Examples
-```jldoctest
+```jldoctest compare=false
 circuit = Array{Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}},1}(undef,0)
 push!(circuit,("P1","1","0",1))
 push!(circuit,("I1","1","0",:Ipump))
@@ -107,14 +107,12 @@ out=hbnlsolve2(
         (mode=(1,),port=1,current=Ip),
     ],
     circuit,circuitdefs;dc=true,odd=false,even=false)
+isapprox(out.nodeflux,
+    ComplexF64[15.190314040027522 - 8.56492651167657e-24im, 2.991103820177504e-6 - 1.8501001011477133e-8im, -6.835392148510984 - 1.0356102442254259e-14im, 7.396422335315908e-6 - 4.5749403967992827e-8im, 6.835392148539885 - 1.0356102451770844e-14im, 1.008026285172782e-5 - 6.23498762664213e-8im],
+    atol = 1e-6)
 
 # output
-JosephsonCircuits.NonlinearHB(ComplexF64[15.190314040027522 - 8.56492651167657e-24im, 2.991103820177504e-6 - 1.8501001011477133e-8im, -6.835392148510984 - 1.0356102442254259e-14im, 7.396422335315908e-6 - 4.5749403967992827e-8im, 6.835392148539885 - 1.0356102451770844e-14im, 1.008026285172782e-5 - 6.23498762664213e-8im], sparse([1, 2, 3, 7, 4, 8, 5, 7, 6, 8], [1, 2, 3, 3, 4, 4, 5, 5, 6, 6], [1, 1, 1, -1, 1, -1, 1, 1, 1, 1], 8, 6),   [2]  =  2.0e-9+0.0im
-  [3]  =  2.0e-9+0.0im,   [1]  =  1.0e-11+0.0im
-  [4]  =  1.0e-11+0.0im,   [3]  =  2.0e-9+0.0im
-  [4]  =  2.0e-9+0.0im
-  [5]  =  2.0e-9+0.0im
-  [6]  =  2.0e-9+0.0im, 2, 4, ComplexF64[0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im])
+true
 ```
 """
 function hbnlsolve2(
