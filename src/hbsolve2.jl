@@ -195,17 +195,6 @@ function hbnlsolve2(
     wmodesm = Diagonal(repeat(wmodes, outer = Nnodes-1))
     wmodes2m = Diagonal(repeat(wmodes.^2, outer = Nnodes-1))
 
-    @show modes
-    @show sources
-    @show portindices
-    @show portnumbers
-    @show nodeindexarraysorted
-    @show edge2indexdict
-    @show Lmean
-    @show Nnodes
-    @show Nbranches
-    @show Nmodes
-
     # calculate the source terms in the branch basis
     bbm = calcsources(modes, sources, portindices, portnumbers,
         nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
@@ -776,8 +765,8 @@ Lmean = 1.005e-9 + 0.0im
 Nnodes = 4
 Nbranches = 4
 Nmodes = 2
-calcsources(modes, sources, portindices, portnumbers, nodeindexarraysorted,
-    edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+JosephsonCircuits.calcsources(modes, sources, portindices, portnumbers,
+    nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
 # output
 8-element Vector{ComplexF64}:
