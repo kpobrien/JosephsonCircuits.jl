@@ -196,43 +196,23 @@ function hbnlsolve2(
     wmodes2m = Diagonal(repeat(wmodes.^2, outer = Nnodes-1))
 
     # calculate the source terms in the branch basis
-    bbm = zeros(Complex{Float64}, Nbranches*Nmodes)  
-    for source in sources
-        # for (key,val) in portdict
-        for (i,portindex) in enumerate(portindices)
-            portnumber = portnumbers[i]
-            key = (nodeindexarraysorted[1, portindex], nodeindexarraysorted[2, portindex])
-
-            if portnumber == source[:port]
-                # now i have to find the index.
-                # this will depend on the frequency index
-                # i should calculate that in the right way now. 
-                for i = 1:length(wmodes)
-                    if modes[i] == source[:mode]
-                        bbm[(edge2indexdict[key]-1)*Nmodes+i] = Lmean*source[:current]/phi0
-                        break
-                    end
-                end
-                break
-            end
-        end
-    end
+    bbm = zeros(Complex{Float64}, Nbranches*Nmodes)
+    calcsources!(bbm, modes, sources, portindices, portnumbers, nodeindexarraysorted,
+    edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
     # convert from the node basis to the branch basis
     bnm = transpose(Rbnm)*bbm
-    Nwtuple=NTuple{length(Nt)+1,Int}(
-            if i==1 
-                (Nt[i] ÷ 2) +1 
-            elseif i <= length(Nt)
-                Nt[i] 
-            else 
-                length(Ljb.nzval)
-            end 
-            for i = 1:length(Nt) + 1
-        )
 
+    # calculate the dimensions of the array which holds the frequency
+    # domain information for the fourier transform
+    Nwtuple = NTuple{length(Nw)+1,Int}((Nw...,length(Ljb.nzval)))
+
+    # create an array to hold the frequency domain data for the
+    # fourier transform
     phimatrix = zeros(Complex{Float64}, Nwtuple)
 
+    # create an array to hold the time domain data for the RFFT. also generate
+    # the plans.
     phimatrixtd, irfftplan, rfftplan = plan_applynl(phimatrix)
 
     # initializing this with zeros seems to cause problems
@@ -768,3 +748,30 @@ function updateAoLjbm3!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices,
     return nothing
 end
 
+
+function calcsources!(bbm, modes, sources, portindices, portnumbers, nodeindexarraysorted,
+    edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+
+    for source in sources
+        # for (key,val) in portdict
+        for (i,portindex) in enumerate(portindices)
+            portnumber = portnumbers[i]
+            key = (nodeindexarraysorted[1, portindex], nodeindexarraysorted[2, portindex])
+
+            if portnumber == source[:port]
+                # now i have to find the index.
+                # this will depend on the frequency index
+                # i should calculate that in the right way now. 
+                for i = 1:length(modes)
+                    if modes[i] == source[:mode]
+                        bbm[(edge2indexdict[key]-1)*Nmodes+i] = Lmean*source[:current]/phi0
+                        break
+                    end
+                end
+                break
+            end
+        end
+    end
+
+    return nothing
+end
