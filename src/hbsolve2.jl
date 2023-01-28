@@ -222,9 +222,9 @@ function hbnlsolve2(
     AoLjbmindices, conjindicessorted = calcAoLjbmindices(Amatrixindices,
         Ljb, Nmodes, Nbranches, Nfreq)
 
-    # right now i redo the calculation of AoLjbmindices, conjindicessorted in calcAoLjbm3
-    AoLjbm = calcAoLjbm3(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
-    AoLjbmcopy = calcAoLjbm3(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
+    # right now i redo the calculation of AoLjbmindices, conjindicessorted in calcAoLjbm2
+    AoLjbm = calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
+    AoLjbmcopy = calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
 
     # convert to a sparse node matrix. Note: I was having problems with type 
     # instability when i used AoLjbm here instead of AoLjbmcopy. 
@@ -261,9 +261,6 @@ function hbnlsolve2(
     # structural zeros which would change the sparsity structure).
     # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
     J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm*wmodesm), - Cnm*wmodes2m)
-    # perform a factorization, which will be updated later for each 
-    # interation
-    # factorization = KLU.klu(J)
 
     # make the arrays and datastructures we need for
     # the non-allocating sparse matrix multiplication.
@@ -279,8 +276,9 @@ function hbnlsolve2(
     Gnmindexmap = sparseaddmap(J, Gnm)
     Cnmindexmap = sparseaddmap(J, Cnm)
 
+    # build the function and Jacobian for solving the nonlinear system
     function fj!(F, J, x)
-        calcfj3!(F, J, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
+        calcfj2!(F, J, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
             Cnm, Gnm, bnm, Ljb, Ljbm, Nmodes,
             Nbranches, Lmean, AoLjbmvector, AoLjbm,
             AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap,
@@ -292,121 +290,9 @@ function hbnlsolve2(
         return nothing
     end
 
+    # solve the nonlinear system
     nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol)
 
-    # deltax = copy(x)
-
-    # Nsamples = 100
-    # samples = Float64[]
-    # fmin = Float64[]
-    # fvals = Float64[]
-    # fpvals = Float64[]
-    # dfdalphavals = Float64[]
-    # alphas = Float64[]
-    # normF = Float64[]
-
-    # # perform Newton's method with linesearch based on Nocedal and Wright
-    # # chapter 3 section 5.
-    # for n = 1:iterations
-
-    #     # update the residual function and the Jacobian
-    #     calcfj3!(F, J, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
-    #         Cnm, Gnm, bnm, Ljb, Ljbm, Nmodes,
-    #         Nbranches, Lmean, AoLjbmvector, AoLjbm,
-    #         AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap,
-    #         AoLjbmindices, conjindicessorted,
-    #         freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
-    #         AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
-    #         phimatrixtd, irfftplan, rfftplan,
-    #     )
-
-    #     push!(normF, norm(F))
-
-    #     # solve the linear system
-    #     try
-    #         # update the factorization. the sparsity structure does 
-    #         # not change so we can reuse the factorization object.
-    #         KLU.klu!(factorization, J)
-    #     catch e
-    #         if isa(e, SingularException)
-    #             # reusing the symbolic factorization can sometimes
-    #             # lead to numerical problems. if the first linear
-    #             # solve fails try factoring and solving again
-    #             factorization = KLU.klu(J)
-    #         else
-    #             throw(e)
-    #         end
-    #     end
-
-    #     # solve the linear system
-    #     ldiv!(deltax, factorization, F)
-
-    #     # multiply deltax by -1
-    #     rmul!(deltax, -1)
-
-    #     # calculate the objective function and the derivative of the objective
-    #     # with respect to the scalar variable alpha which parameterizes the
-    #     # path between the old x and the new x. 
-    #     # Note: the dot product takes the complex conjugate of the first vector
-    #     f = real(0.5*dot(F, F))
-    #     dfdalpha = real(dot(F, J, deltax))
-
-    #     # evaluate the residual function but not the Jacobian
-    #     calcfj3!(F, nothing, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
-    #         Cnm, Gnm, bnm, Ljb, Ljbm, Nmodes,
-    #         Nbranches, Lmean, AoLjbmvector, AoLjbm,
-    #         AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap,
-    #         AoLjbmindices, conjindicessorted,
-    #         freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
-    #         AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
-    #         phimatrixtd, irfftplan, rfftplan,
-    #     )
-
-    #     fp = real(0.5*dot(F,F))
-
-    #     # coefficients of the quadratic equation a*alpha^2+b*alpha+c to interpolate
-    #     # f vs alpha
-    #     a = -dfdalpha + fp - f
-    #     b = dfdalpha
-    #     c = f
-    #     alpha1 = -b/(2*a)
-    #     f1fit = -b*b/(4*a) + c
-
-    #     if f1fit > fp
-    #         f1fit = fp
-    #         alpha1 = 1
-    #     end
-    #     # if the fitted alpha overshoots the size of the interval (from 0 to 1),
-    #     # then set alpha to 1 and make a full length step. 
-    #     if alpha1 > 1 || alpha1 <= 0
-    #         alpha1 = 1
-    #         f1fit = fp
-    #     end
-
-    #     # switch to newton once the norm is small enough
-    #     switchofflinesearchtol = 1e-5
-    #     if fp <= switchofflinesearchtol && f <= switchofflinesearchtol && f1fit <= switchofflinesearchtol
-    #         alpha1 = 1
-    #     end
-
-    #     # update x
-    #     x .+= deltax*alpha1
-
-    #     if norm(F,Inf) <= ftol || ( norm(x) > 0 && norm(F)/norm(x) < ftol)
-    #         # terminate iterations if infinity norm or relative norm are less
-    #         # than ftol. check that norm(x) is greater than zero to avoid
-    #         # divide by zero errors. 
-    #         # println("converged to: infinity norm of : ",norm(F,Inf)," after ",n," iterations")
-    #         # println("norm(F)/norm(phi): ",norm(F)/norm(x))
-    #         break
-    #     end
-
-    #     if n == iterations
-    #         @warn string("Solver did not converge after maximum iterations of ", n,".")
-    #         println("norm(F)/norm(x): ", norm(F)/norm(x))
-    #         println("Infinity norm: ", norm(F,Inf))
-    #     end
-    # end
     nodeflux = x
 
     # calculate the scattering parameters for the pump
@@ -423,7 +309,7 @@ end
 
 
 """
-    calcfj3(F,J,phin,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
+    calcfj2(F,J,phin,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
         Ljbindicesm,Nmodes,Lmean,AoLjbm)
         
 Calculate the residual and the Jacobian. These are calculated with one function
@@ -433,7 +319,7 @@ Leave off the type signatures on F and J because the solver will pass a type of
 Nothing if it only wants to calculate F or J. 
 
 """
-function calcfj3!(F,
+function calcfj2!(F,
         J,
         nodeflux::AbstractVector,
         wmodesm::AbstractMatrix,
@@ -497,7 +383,7 @@ function calcfj3!(F,
         applynl!(phimatrix, phimatrixtd, (x) -> cos(x), irfftplan, rfftplan)
 
         # calculate  AoLjbm
-        updateAoLjbm3!(AoLjbm, phimatrix, AoLjbmindices, conjindicessorted,
+        updateAoLjbm2!(AoLjbm, phimatrix, AoLjbmindices, conjindicessorted,
             Ljb, Lmean)
 
         # convert to a sparse node matrix
@@ -646,7 +532,7 @@ end
 
 
 """
-    calcAoLjbm3(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector, Lmean,
+    calcAoLjbm2(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector, Lmean,
         Nmodes, Nbranches, Nfreq)
 
 Return the harmonic balance matrix divided by the Josephson inductance.
@@ -659,7 +545,7 @@ Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1.0,2.0])
 Lmean = 1
 Nmodes = 3
 Nbranches = 2
-JosephsonCircuits.calcAoLjbm3(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
+JosephsonCircuits.calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
 
 # output
 6×6 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 18 stored entries:
@@ -678,7 +564,7 @@ Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2])
 Lmean = 1
 Nmodes = 3
 Nbranches = 2
-JosephsonCircuits.calcAoLjbm3(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
+JosephsonCircuits.calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
 
 # output
 6×6 SparseArrays.SparseMatrixCSC{Num, Int64} with 18 stored entries:
@@ -690,7 +576,7 @@ JosephsonCircuits.calcAoLjbm3(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbran
          ⋅          ⋅          ⋅  A32 / Lj2  A22 / Lj2  A12 / Lj2
 ```
 """
-function calcAoLjbm3(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector,
+function calcAoLjbm2(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector,
     Lmean, Nmodes, Nbranches)
 
     Nfreq = prod(size(Am)[1:end-1])
@@ -712,7 +598,7 @@ function calcAoLjbm3(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector,
     AoLjbm = SparseMatrixCSC(AoLjbmindices.m, AoLjbmindices.n,
         AoLjbmindices.colptr, AoLjbmindices.rowval, nzval)
 
-    updateAoLjbm3!(AoLjbm, Am, AoLjbmindices, conjindicessorted, Ljb, Lmean)
+    updateAoLjbm2!(AoLjbm, Am, AoLjbmindices, conjindicessorted, Ljb, Lmean)
 
     return AoLjbm
 
@@ -725,7 +611,7 @@ end
 Update the values in the sparse AoLjbm matrix in place.
 
 """
-function updateAoLjbm3!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices,
+function updateAoLjbm2!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices,
     conjindicessorted, Ljb::SparseVector, Lmean)
 
     nentries = nnz(AoLjbm) ÷ nnz(Ljb)

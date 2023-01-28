@@ -788,151 +788,20 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     Gnmindexmap = sparseaddmap(Jsparse,Gnm)
     Cnmindexmap = sparseaddmap(Jsparse,Cnm)
 
-    # perform a factorization. this will be updated later for each 
-    # interation
-    factorization = KLU.klu(Jsparse)
-
-    deltax = copy(x)
-
-    Nsamples = 100
-    samples = Float64[]
-    fmin = Float64[]
-    fvals = Float64[]
-    fpvals = Float64[]
-    dfdalphavals = Float64[]
-    alphas = Float64[]
-    normF = Float64[]
-
-    alpha1 = 0.0
-
-    # perform Newton's method with linesearch based on Nocedal and Wright
-    # chapter 3 section 5.
-    for n = 1:iterations
-
-        if alpha1 == 1.0
-            # if alpha was 1, we don't need to update the function 
-            # because we have already calculated that in the last
-            # loop. just update the jacobian. since we set alpha1=0
-            # before the loop, this will never be called on the first
-            # iteration. 
-            calcfj!(nothing,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
+    # build the function and Jacobian for solving the nonlinear system
+    function fj!(F, Jsparse, x)
+        calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
             Ljb,Ljbm,Nmodes,
             Nbranches,Lmean,AoLjbmvector,AoLjbm,
             AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
             AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm)
-        else
-            # update the residual function and the Jacobian
-            calcfj!(F,Jsparse,x,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-            Ljb,Ljbm,Nmodes,
-            Nbranches,Lmean,AoLjbmvector,AoLjbm,
-            AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
-            AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm)
-        end
-
-        push!(normF,norm(F))
-
-        try 
-            # update the factorization. the sparsity structure does not change
-            # so we can reuse the factorization object.
-            KLU.klu!(factorization,Jsparse)
-        catch e
-            if isa(e, SingularException)
-                # reusing the symbolic factorization can sometimes lead to
-                # numerical problems. if the first linear solve fails
-                # try factoring and solving again
-                factorization = KLU.klu(Jsparse)
-            else
-                throw(e)
-            end
-        end
-
-        # solve the linear system
-        ldiv!(deltax,factorization,F)
-
-        # multiply deltax by -1
-        rmul!(deltax,-1)
-
-        # calculate the objective function and the derivative of the objective
-        # with respect to the scalar variable alpha which parameterizes the
-        # path between the old x and the new x. 
-        # Note: the dot product takes the complex conjugate of the first vector
-        f = real(0.5*dot(F,F))
-        # dfdalpha = real(dot(F,Jsparse*deltax))
-        dfdalpha = real(dot(F,Jsparse,deltax))
-
-        # # evaluate the objective function at Nsample points
-        # for alpha in range(0,1,Nsamples)
-        #     calcfj!(F,nothing,x - alpha*x1,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        #     Ljb,Ljbm,Nmodes,
-        #     Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        #     AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap)
-        #     push!(samples,real(0.5*dot(F,F)))
-        # end
-
-        # evaluate the function at the trial point
-        calcfj!(F,nothing,x+deltax,wmodesm,wmodes2m,Rbnm,Rbnmt,invLnm,Cnm,Gnm,bnm,
-        Ljb,Ljbm,Nmodes,
-        Nbranches,Lmean,AoLjbmvector,AoLjbm,
-        AoLjnmindexmap,invLnmindexmap,Gnmindexmap,Cnmindexmap,
-        AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm)
-
-        fp = real(0.5*dot(F,F))
-
-        # coefficients of the quadratic equation a*alpha^2+b*alpha+c to interpolate
-        # f vs alpha
-        a = -dfdalpha + fp - f
-        b = dfdalpha
-        c = f
-        alpha1 = -b/(2*a)
-        f1fit = -b*b/(4*a) + c
-
-        if f1fit > fp
-            f1fit = fp
-            alpha1 = 1.0
-        end
-        # if the fitted alpha overshoots the size of the interval (from 0 to 1),
-        # then set alpha to 1 and make a full length step. 
-        if alpha1 > 1 || alpha1 <= 0
-            alpha1 = 1.0
-            f1fit = fp
-        end
-
-        # if a is zero, alpha1 will be NaN
-        if abs2(a) == 0 
-            alpha1 = 1.0
-        end
-
-        # switch to newton once the norm is small enough
-        switchofflinesearchtol = 1e-5
-        # switchofflinesearchtol = 0
-        normx = norm(x)
-        if sqrt(fp)/normx <= switchofflinesearchtol && sqrt(f)/normx <= switchofflinesearchtol
-            alpha1 = 1.0
-            # println("norm(F)/norm(phi): ",sqrt(fp)/norm(x))
-        end
-
-        # update x
-        x .+= deltax*alpha1
-
-        if norm(F,Inf) <= ftol || ( norm(x) > 0 && norm(F)/norm(x) < ftol)
-            # terminate iterations if infinity norm or relative norm are less
-            # than ftol. check that norm(x) is greater than zero to avoid
-            # divide by zero errors. 
-            # println("converged to: infinity norm of : ",norm(F,Inf)," after ",n," iterations")
-            # println("norm(F)/norm(phi): ",norm(F)/norm(x))
-            break
-        end
-
-        if n == iterations
-            @warn string("Solver did not converge after maximum iterations of ", n,".")
-            println("norm(F)/norm(x): ", norm(F)/norm(x))
-            println("Infinity norm: ", norm(F,Inf))
-        end
+        return nothing
     end
 
+    # solve the nonlinear system
+    nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol)
 
     nodeflux = x
-
 
     # calculate the scattering parameters for the pump
     Nports = length(portindices)
