@@ -152,7 +152,7 @@ function warmupsyms2()
         Rleft => 50.0,
     )
 
-    return hbsolve(2*pi*(4.5:0.5:5.0)*1e9, 2*pi*4.75001*1e9, 0.00565e-6, 2, 2, circuit, circuitdefs, pumpports=[1]);
+    return hbsolve2(2*pi*(4.5:0.5:5.0)*1e9, 2*pi*4.75001*1e9, 0.00565e-6, 2, 2, circuit, circuitdefs, pumpports=[1]);
 
 end
 
@@ -312,6 +312,7 @@ export @syms, hbnlsolve, hblinsolve, hbsolve, hbsolve2, hbnlsolve2, parsecircuit
 @precompile_all_calls begin
     warmup()
     warmupsyms()
+    warmupsyms2()
 end
 
 #end module
