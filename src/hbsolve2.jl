@@ -195,10 +195,20 @@ function hbnlsolve2(
     wmodesm = Diagonal(repeat(wmodes, outer = Nnodes-1))
     wmodes2m = Diagonal(repeat(wmodes.^2, outer = Nnodes-1))
 
+    @show modes
+    @show sources
+    @show portindices
+    @show portnumbers
+    @show nodeindexarraysorted
+    @show edge2indexdict
+    @show Lmean
+    @show Nnodes
+    @show Nbranches
+    @show Nmodes
+
     # calculate the source terms in the branch basis
-    bbm = zeros(Complex{Float64}, Nbranches*Nmodes)
-    calcsources!(bbm, modes, sources, portindices, portnumbers, nodeindexarraysorted,
-    edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+    bbm = calcsources(modes, sources, portindices, portnumbers,
+        nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
     # convert from the node basis to the branch basis
     bnm = transpose(Rbnm)*bbm
@@ -748,23 +758,75 @@ function updateAoLjbm3!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices,
     return nothing
 end
 
+"""
+    calcsources(modes, sources, portindices, portnumbers, nodeindexarraysorted,
+        edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
-function calcsources!(bbm, modes, sources, portindices, portnumbers, nodeindexarraysorted,
+Calculate the source terms in the branch basis. See also [`calcsources`](@ref).
+
+# Examples
+```jldoctest
+modes = [(0,), (1,)]
+sources = NamedTuple{(:mode, :port, :current), Tuple{Tuple{Int64}, Int64, Float64}}[(mode = (0,), port = 1, current = 0.0005), (mode = (1,), port = 1, current = 1.0e-10)]
+portindices = [1]
+portnumbers = [1]
+nodeindexarraysorted = [2 2 2 2 0 2 3 4 3 3; 1 1 1 1 0 3 4 1 1 1]
+edge2indexdict = Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (4, 1) => 3, (2, 1) => 1, (1, 4) => 3, (3, 4) => 4, (4, 3) => 4)
+Lmean = 1.005e-9 + 0.0im
+Nnodes = 4
+Nbranches = 4
+Nmodes = 2
+calcsources(modes, sources, portindices, portnumbers, nodeindexarraysorted,
     edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+
+# output
+8-element Vector{ComplexF64}:
+     1526.863796602709 + 0.0im
+ 0.0003053727593205418 + 0.0im
+                   0.0 + 0.0im
+                   0.0 + 0.0im
+                   0.0 + 0.0im
+                   0.0 + 0.0im
+                   0.0 + 0.0im
+                   0.0 + 0.0im
+```
+"""
+function calcsources(modes, sources, portindices, portnumbers, nodeindexarraysorted,
+    edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+
+    bbm = zeros(Complex{Float64}, Nbranches*Nmodes)
+
+    calcsources!(bbm, modes, sources, portindices, portnumbers,
+        nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches,
+        Nmodes)
+
+    return bbm
+end
+
+"""
+    calcsources!(bbm, modes, sources, portindices, portnumbers,
+        nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+
+Calculate the source terms in the branch basis. Overwrite bbm with the output.
+See also [`calcsources`](@ref).
+"""
+function calcsources!(bbm, modes, sources, portindices, portnumbers,
+    nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
     for source in sources
         # for (key,val) in portdict
-        for (i,portindex) in enumerate(portindices)
+        for i in eachindex(portindices)
             portnumber = portnumbers[i]
+            portindex = portindices[i]
             key = (nodeindexarraysorted[1, portindex], nodeindexarraysorted[2, portindex])
 
             if portnumber == source[:port]
                 # now i have to find the index.
                 # this will depend on the frequency index
-                # i should calculate that in the right way now. 
-                for i = 1:length(modes)
-                    if modes[i] == source[:mode]
-                        bbm[(edge2indexdict[key]-1)*Nmodes+i] = Lmean*source[:current]/phi0
+                # i should calculate that in the right way now.
+                for j in eachindex(modes)
+                    if modes[j] == source[:mode]
+                        bbm[(edge2indexdict[key]-1)*Nmodes+j] = Lmean*source[:current]/phi0
                         break
                     end
                 end
