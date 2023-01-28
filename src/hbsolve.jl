@@ -799,7 +799,7 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     end
 
     # solve the nonlinear system
-    nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol)
+    nlsolve!(fj!, F, Jsparse, x; iterations = iterations, ftol = ftol)
 
     nodeflux = x
 

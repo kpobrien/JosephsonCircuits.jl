@@ -1,5 +1,44 @@
 
+"""
 
+    nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
+        switchofflinesearchtol = 1e-5)
+
+A simple nonlinear solver for sparse matrices using Newton's method with
+linesearch based on Nocedal and Wright, chapter 3 section 5. A few points to
+note:
+(1) It uses KLU factorization, so only works on sparse matrices.
+(2) The Jacobian J cannot change sparsity structure.
+(3) This function attempts to reuse the symbolic factorization which can
+    sometimes result in a SingularException, which we catch, then create a
+    new factorization object.
+
+# Examples
+```jldoctest
+function fj!(F, J, x)
+    if !(F == nothing)
+        F[1] = (x[1]+3)*(x[2]^3-7)+18
+        F[2] = sin(x[2]*exp(x[1])-1)
+    end
+    if !(J == nothing)
+        J[1, 1] = x[2]^3-7
+        J[1, 2] = 3*x[2]^2*(x[1]+3)
+        u = exp(x[1])*cos(x[2]*exp(x[1])-1)
+        J[2, 1] = x[2]*u
+        J[2, 2] = u    
+    end
+    return nothing
+end
+x = [ 0.1, 1.2]
+F = [0.0, 0.0]
+J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2])
+JosephsonCircuits.nlsolve!(fj!, F, J, x)
+isapprox([0.0,1.0],x)
+
+# output
+true
+```
+"""
 function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
     switchofflinesearchtol = 1e-5)
 
@@ -7,21 +46,34 @@ function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
 
     deltax = copy(x)
 
-    Nsamples = 100
-    samples = Float64[]
+    # Nsamples = 100
+    # samples = Float64[]
     fmin = Float64[]
     fvals = Float64[]
     fpvals = Float64[]
     dfdalphavals = Float64[]
     alphas = Float64[]
     normF = Float64[]
+    alpha1 = 0.0
 
     # perform Newton's method with linesearch based on Nocedal and Wright
     # chapter 3 section 5.
-    for n = 1:iterations
+    for n in 1:iterations
 
-        # update the residual function and the Jacobian
-        fj!(F, J, x)
+        # # update the residual function and the Jacobian
+        # fj!(F, J, x)
+
+        if alpha1 == 1.0
+            # if alpha was 1, we don't need to update the function 
+            # because we have already calculated that in the last
+            # loop. just update the jacobian. since we set alpha1=0
+            # before the loop, this will never be called on the first
+            # iteration.
+            fj!(nothing, J, x)
+        else
+            # update the residual function and the Jacobian
+            fj!(F, J, x)
+        end
 
         push!(normF, norm(F))
 
@@ -54,17 +106,8 @@ function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
         f = real(0.5*dot(F, F))
         dfdalpha = real(dot(F, J, deltax))
 
-        # evaluate the residual function but not the Jacobian
-        # calcfj3!(F, nothing, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
-        #     Cnm, Gnm, bnm, Ljb, Ljbm, Nmodes,
-        #     Nbranches, Lmean, AoLjbmvector, AoLjbm,
-        #     AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap,
-        #     AoLjbmindices, conjindicessorted,
-        #     freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
-        #     AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
-        #     phimatrixtd, irfftplan, rfftplan,
-        # )
-        fj!(F, nothing, x)
+        # evaluate the function at the trial point
+        fj!(F, nothing, x+deltax)
 
         fp = real(0.5*dot(F,F))
 
@@ -78,19 +121,31 @@ function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
 
         if f1fit > fp
             f1fit = fp
-            alpha1 = 1
+            alpha1 = 1.0
         end
+
         # if the fitted alpha overshoots the size of the interval (from 0 to 1),
         # then set alpha to 1 and make a full length step. 
-        if alpha1 > 1 || alpha1 <= 0
-            alpha1 = 1
+        if alpha1 > 1.0 || alpha1 <= 0
+            alpha1 = 1.0
             f1fit = fp
         end
 
+        # if a is zero, alpha1 will be NaN
+        if abs2(a) == 0 
+            alpha1 = 1.0
+        end
+
+        # # switch to newton once the norm is small enough
+        # if fp <= switchofflinesearchtol && f <= switchofflinesearchtol && f1fit <= switchofflinesearchtol
+        #     alpha1 = 1.0
+        # end
+
         # switch to newton once the norm is small enough
-        # switchofflinesearchtol = 1e-5
-        if fp <= switchofflinesearchtol && f <= switchofflinesearchtol && f1fit <= switchofflinesearchtol
-            alpha1 = 1
+        normx = norm(x)
+        if normx > 0 && sqrt(fp)/normx <= switchofflinesearchtol && sqrt(f)/normx <= switchofflinesearchtol
+            alpha1 = 1.0
+            # println("norm(F)/norm(phi): ",sqrt(fp)/norm(x))
         end
 
         # update x
