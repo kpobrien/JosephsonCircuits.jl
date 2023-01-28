@@ -1,6 +1,5 @@
 
 """
-
     nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
         switchofflinesearchtol = 1e-5)
 
