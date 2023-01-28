@@ -59,9 +59,6 @@ function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
     # chapter 3 section 5.
     for n in 1:iterations
 
-        # # update the residual function and the Jacobian
-        # fj!(F, J, x)
-
         if alpha1 == 1.0
             # if alpha was 1, we don't need to update the function 
             # because we have already calculated that in the last
@@ -165,6 +162,5 @@ function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
             println("Infinity norm: ", norm(F,Inf))
         end
     end
-
     return nothing
 end
