@@ -8,6 +8,7 @@ ports, sources, and pumps. Still under development.
 """
 function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+    switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, verbosity = 1)
@@ -41,6 +42,7 @@ function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
 
     pump = hbnlsolve2(w, sources, freq, indices, psc, cg, nm;
         solver = solver, iterations = iterations, x0 = nothing, ftol = ftol,
+        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar)
 
     # the node flux
@@ -121,6 +123,7 @@ function hbnlsolve2(
     sources,
     circuit, circuitdefs; solver = :klu, iterations = 1000, maxintermodorder = Inf,
     dc = false, odd = true, even = false, x0 = nothing, ftol = 1e-8,
+    switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, sorting= :number) where N
 
     # calculate the frequency struct
@@ -155,7 +158,8 @@ function hbnlsolve2(
     frequencies::Frequencies{N},
     indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; solver = :klu, iterations = 1000, x0 = nothing,
-    ftol = 1e-8, symfreqvar = nothing) where N
+    ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+    symfreqvar = nothing) where N
 
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
@@ -296,7 +300,8 @@ function hbnlsolve2(
     # return (F,J,x)
 
     # solve the nonlinear system
-    nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol)
+    nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
+        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin)
 
     nodeflux = x
 

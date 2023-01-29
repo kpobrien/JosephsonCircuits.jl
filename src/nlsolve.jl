@@ -39,7 +39,7 @@ true
 ```
 """
 function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
-    switchofflinesearchtol = 1e-5)
+    switchofflinesearchtol = 1e-5, alphamin = 1e-4)
 
     factorization = KLU.klu(J)
 
@@ -122,7 +122,14 @@ function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
 
         # if the fitted alpha overshoots the size of the interval (from 0 to 1),
         # then set alpha to 1 and make a full length step. 
-        if alpha1 > 1.0 || alpha1 <= 0
+        if alpha1 > 1.0 || alpha1 <= 0.0
+            alpha1 = 1.0
+            f1fit = fp
+        end
+
+        # if we aren't making sufficient progress, take a step
+        # switch to using Armijo rule
+        if alpha1 <= alphamin
             alpha1 = 1.0
             f1fit = fp
         end
@@ -146,6 +153,7 @@ function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
 
         # update x
         x .+= deltax*alpha1
+        # push!(alphas,alpha1)
 
         if norm(F,Inf) <= ftol || ( norm(x) > 0 && norm(F)/norm(x) < ftol)
             # terminate iterations if infinity norm or relative norm are less
@@ -160,6 +168,8 @@ function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
             @warn string("Solver did not converge after maximum iterations of ", n,".")
             println("norm(F)/norm(x): ", norm(F)/norm(x))
             println("Infinity norm: ", norm(F,Inf))
+            # error(" ")
+            # @show alphas
         end
     end
     return nothing

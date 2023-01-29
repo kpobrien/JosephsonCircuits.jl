@@ -672,7 +672,8 @@ hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs, ports=[1])
 ```
 """
 function hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
-    solver = :klu, iterations = 1000, ftol = 1e-8, symfreqvar = nothing,
+    solver = :klu, iterations = 1000, ftol = 1e-8,
+    switchofflinesearchtol = 1e-5, alphamin = 1e-4, symfreqvar = nothing,
     sorting = :number, verbosity = 1)
 
     # parse and sort the circuit
@@ -683,12 +684,14 @@ function hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
 
     return hbnlsolve(wp, Ip, Nmodes, psc, cg, circuitdefs; ports = ports,
         solver = solver, iterations = iterations, ftol = ftol,
+        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, verbosity = verbosity)
 
 end
 
 function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     circuitdefs; ports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+    switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, verbosity = 1)
 
     if length(ports) != length(Ip)
@@ -804,7 +807,8 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # return (F,Jsparse,x)
 
     # solve the nonlinear system
-    nlsolve!(fj!, F, Jsparse, x; iterations = iterations, ftol = ftol)
+    nlsolve!(fj!, F, Jsparse, x; iterations = iterations, ftol = ftol,
+        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin)
 
     nodeflux = x
 
