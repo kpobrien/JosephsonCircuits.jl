@@ -231,4 +231,32 @@ using Test
             atol = 1e-8)
     end
 
+    @testset "calcsources errors" begin
+
+        modes = [(0,), (1,)]
+        portindices = [1]
+        portnumbers = [1]
+        nodeindexarraysorted = [2 2 2 2 0 2 3 4 3 3; 1 1 1 1 0 3 4 1 1 1]
+        edge2indexdict = Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (4, 1) => 3, (2, 1) => 1, (1, 4) => 3, (3, 4) => 4, (4, 3) => 4)
+        Lmean = 1.005e-9 + 0.0im
+        Nnodes = 4
+        Nbranches = 4
+        Nmodes = 2
+
+        # current source for non-existent port
+        sources = [(mode = (0,), port = 1, current = 0.0005), (mode = (1,), port = 2, current = 1.0e-10)]
+        @test_throws(
+            ArgumentError("Source port 2 not found."),
+            JosephsonCircuits.calcsources(modes, sources, portindices, portnumbers,
+                nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes))
+
+        # current source for non-existent mode
+        sources = [(mode = (0,), port = 1, current = 0.0005), (mode = (2,), port = 1, current = 1.0e-10)]
+        @test_throws(
+            ArgumentError("Source mode (2,) not found."),
+            JosephsonCircuits.calcsources(modes, sources, portindices, portnumbers,
+                nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes))
+
+    end
+
 end

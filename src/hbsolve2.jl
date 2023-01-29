@@ -720,7 +720,7 @@ Calculate the source terms in the branch basis. See also [`calcsources`](@ref).
 # Examples
 ```jldoctest
 modes = [(0,), (1,)]
-sources = NamedTuple{(:mode, :port, :current), Tuple{Tuple{Int64}, Int64, Float64}}[(mode = (0,), port = 1, current = 0.0005), (mode = (1,), port = 1, current = 1.0e-10)]
+sources = [(mode = (0,), port = 1, current = 0.0005), (mode = (1,), port = 1, current = 1.0e-10)]
 portindices = [1]
 portnumbers = [1]
 nodeindexarraysorted = [2 2 2 2 0 2 3 4 3 3; 1 1 1 1 0 3 4 1 1 1]
@@ -766,27 +766,64 @@ See also [`calcsources`](@ref).
 function calcsources!(bbm, modes, sources, portindices, portnumbers,
     nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
-    for source in sources
-        # for (key,val) in portdict
-        for i in eachindex(portindices)
-            portnumber = portnumbers[i]
-            portindex = portindices[i]
-            key = (nodeindexarraysorted[1, portindex], nodeindexarraysorted[2, portindex])
+    # make a dictionary of ports
+    portdict = Dict{eltype(portnumbers),eltype(portindices)}()
+    for i in eachindex(portindices)
+        portdict[portnumbers[i]] = portindices[i]
+    end
 
-            if portnumber == source[:port]
-                # now i have to find the index.
-                # this will depend on the frequency index
-                # i should calculate that in the right way now.
-                for j in eachindex(modes)
-                    if modes[j] == source[:mode]
-                        bbm[(edge2indexdict[key]-1)*Nmodes+j] = Lmean*source[:current]/phi0
-                        break
-                    end
-                end
-                break
+    # make a dictionary of modes
+    modedict = Dict{eltype(modes),Int}()
+    for i in eachindex(modes)
+        modedict[modes[i]] = i
+    end
+
+    for source in sources
+        # pull out the necessary values from the named tuple
+        port = source[:port]
+        mode = source[:mode]
+        current = source[:current]
+
+        # check if the port is in the dictionary of ports
+        if haskey(portdict,port)
+            portindex = portdict[port]
+            # check if the mode is in the dictionary of modes
+            if haskey(modedict,mode)
+                # if we find the mode and the port, set that branch in bbm
+                # equal to the current scaled by the mean inductance and the
+                # flux quantum.
+                modeindex = modedict[mode]
+                key = (nodeindexarraysorted[1, portindex], nodeindexarraysorted[2, portindex])
+                bbm[(edge2indexdict[key]-1)*Nmodes+modeindex] = Lmean*current/phi0
+            else
+                throw(ArgumentError("Source mode $(mode) not found."))
             end
+        else
+            throw(ArgumentError("Source port $(port) not found."))
         end
     end
+
+    # for source in sources
+    #     # for (key,val) in portdict
+    #     for i in eachindex(portindices)
+    #         portnumber = portnumbers[i]
+    #         portindex = portindices[i]
+    #         key = (nodeindexarraysorted[1, portindex], nodeindexarraysorted[2, portindex])
+
+    #         if portnumber == source[:port]
+    #             # now i have to find the index.
+    #             # this will depend on the frequency index
+    #             # i should calculate that in the right way now.
+    #             for j in eachindex(modes)
+    #                 if modes[j] == source[:mode]
+    #                     bbm[(edge2indexdict[key]-1)*Nmodes+j] = Lmean*source[:current]/phi0
+    #                     break
+    #                 end
+    #             end
+    #             break
+    #         end
+    #     end
+    # end
 
     return nothing
 end
