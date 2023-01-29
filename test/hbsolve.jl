@@ -232,6 +232,19 @@ using Test
 
     end
 
+    @testset "calcAoLjbm error" begin
+        @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
+        @test_throws(
+            DimensionMismatch("The length of Ljb cannot be larger than the number of branches."),
+            JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,1))
+    end
+
+   @testset "calcAoLjbm error" begin
+        @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
+        @test_throws(
+            DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."),
+            JosephsonCircuits.calcAoLjbm([A11;A21;A31],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2))
+    end
 
     @testset "updateAoLjbm! error" begin
         @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;

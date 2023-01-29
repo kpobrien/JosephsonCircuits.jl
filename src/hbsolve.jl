@@ -951,12 +951,25 @@ julia> @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([
  A11 / Lj1  A31 / Lj1
  A31 / Lj1  A11 / Lj1
 
+julia> @syms Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11;A21;A31],JosephsonCircuits.SparseArrays.sparsevec([1],[Lj1]),1,2,1).nzval
+4-element Vector{Any}:
+ A11 / Lj1
+ A31 / Lj1
+ conj(A31 / Lj1)
+ A11 / Lj1
+
 julia> @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2)
 4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 8 stored entries:
  A11 / Lj1  A31 / Lj1          ⋅          ⋅
  A31 / Lj1  A11 / Lj1          ⋅          ⋅
          ⋅          ⋅  A12 / Lj2  A32 / Lj2
          ⋅          ⋅  A32 / Lj2  A12 / Lj2
+
+julia> @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11;A21;A31],JosephsonCircuits.SparseArrays.sparsevec([1],[Lj1]),1,3,1)
+3×3 SparseArrays.SparseMatrixCSC{Num, Int64} with 9 stored entries:
+ A11 / Lj1  A31 / Lj1          0
+ A31 / Lj1  A11 / Lj1  A31 / Lj1
+         0  A31 / Lj1  A11 / Lj1
 ```
 """
 function calcAoLjbm(Am, Ljb::SparseVector, Lmean, Nmodes, Nbranches)
@@ -975,11 +988,11 @@ function calcAoLjbm(Am, Ljb::SparseVector, Lmean, Nmodes, Nbranches)
 
 
     if size(Am,2) != nnz(Ljb)
-        throw(DimensionError("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
+        throw(DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
     end
 
     if length(Ljb) > Nbranches
-        throw(DimensionError("The length of Ljb cannot be larger than the number of branches."))
+        throw(DimensionMismatch("The length of Ljb cannot be larger than the number of branches."))
     end
 
     # calculate  AoLjbm
@@ -1032,6 +1045,17 @@ AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuit
 AoLjbmcopy = copy(AoLjbm);
 AoLjbmcopy.nzval .= 0;
 JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2)
+all(AoLjbmcopy.nzval .- AoLjbm.nzval .== 0)
+
+# output
+true
+```
+```jldoctest
+@variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
+AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,3,2);
+AoLjbmcopy = copy(AoLjbm);
+AoLjbmcopy.nzval .= 0;
+JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,3,2)
 all(AoLjbmcopy.nzval .- AoLjbm.nzval .== 0)
 
 # output
@@ -1097,24 +1121,12 @@ where m is the number of odd pump harmonics (1w, 3w, 5w, etc). The ordering is
 odd terms in a 2d array with dimensions 2*m by Nbranches. 
 
 # Examples
-```
-julia> JosephsonCircuits.sincosnloddtoboth([0.5+0.0im,0,0,0],1,4)
-8×1 Matrix{ComplexF64}:
-      0.765197686557965 + 0.0im
-    0.44005058574495276 + 0.0im
-   -0.11490348493140044 + 0.0im
-    -0.0195633539946485 + 0.0im
-  0.0024766387010484933 - 0.0im
-  0.0002497629794613717 + 0.0im
-  -2.084411456060309e-5 + 0.0im
- -3.0046516347986037e-6 + 0.0im
+```jldoctest
+julia> isapprox(JosephsonCircuits.sincosnloddtoboth([0.5+0.0im,0,0,0],1,4),ComplexF64[0.765197686557965 + 0.0im; 0.44005058574495276 + 0.0im; -0.11490348493140057 + 0.0im; -0.019563353994648498 + 0.0im; 0.0024766387010484486 + 0.0im; 0.0002497629794614272 + 0.0im; -2.084411456066653e-5 + 0.0im; -3.0046516347986037e-6 + 0.0im;;])
+true
 
-julia> JosephsonCircuits.sincosnloddtoboth([0.02+0.0im,0,0.01+0.0im,0],2,2)
-4×2 Matrix{ComplexF64}:
-       0.9996+0.0im       0.9999+0.0im
-     0.019996-0.0im    0.0099995-0.0im
- -0.000199967+0.0im  -4.99979e-5+0.0im
-   -2.6664e-6+0.0im  -3.33325e-7+0.0im
+julia> isapprox(JosephsonCircuits.sincosnloddtoboth([0.02+0.0im,0,0.01+0.0im,0],2,2),ComplexF64[0.9996000399980445 + 0.0im 0.9999000024999694 + 0.0im; 0.019996000293322436 + 0.0im 0.009999500009166587 + 0.0im; -0.00019996666853328016 + 0.0im -4.999791669583568e-5 + 0.0im; -2.6664000106757513e-6 + 0.0im -3.3332500006440685e-7 + 0.0im])
+true
 ```
 """
 function sincosnloddtoboth(amodd::Array{Complex{Float64},1},
@@ -1141,27 +1153,15 @@ cosine nonlinearities at the same time. If the input is odd harmonics, the sine
 terms will also be odd harmonics the cosine terms will be even harmonics.
 
 # Examples
-```
-julia> JosephsonCircuits.sincosnl([0 0.001+0im;0 0])
-2×2 Matrix{ComplexF64}:
- 1.0+0.0im  1.001+0.0im
- 0.0+0.0im    0.0+0.0im
+```jldoctest
+julia> isapprox(JosephsonCircuits.sincosnl([0 0.001+0im;0 0]),ComplexF64[1.0 + 0.0im 1.000999499833375 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im])
+true
 
-julia> JosephsonCircuits.sincosnl([0 0;0.001+0im 0;0 0;0 0; 0 0])
-5×2 Matrix{ComplexF64}:
-     0.999999+0.0im  1.0+0.0im
-        0.001-0.0im  0.0-0.0im
-      -5.0e-7+0.0im  0.0+0.0im
- -1.66667e-10+0.0im  0.0+0.0im
-  8.33777e-14+0.0im  0.0+0.0im
+julia> isapprox(JosephsonCircuits.sincosnl([0 0;0.001+0im 0;0 0;0 0; 0 0]), ComplexF64[0.99999900000025 + 0.0im 1.0 + 0.0im; 0.0009999995000000916 + 0.0im 0.0 + 0.0im; -4.999998333421463e-7 + 0.0im 0.0 + 0.0im; -1.6666664597909941e-10 + 0.0im 0.0 + 0.0im; 8.337774914934926e-14 + 0.0im 0.0 + 0.0im])
+true
 
-julia> JosephsonCircuits.sincosnl([0 0;0.001+0im 0.25+0im;0 0;0 0; 0 0])
-5×2 Matrix{ComplexF64}:
-     0.999999+0.0im      0.93847+0.0im
-        0.001-0.0im     0.242268-0.0im
-      -5.0e-7+0.0im   -0.0306044+0.0im
- -1.66667e-10+0.0im  -0.00255568+0.0im
-  8.33777e-14+0.0im  0.000321473+0.0im
+julia> isapprox(JosephsonCircuits.sincosnl([0 0;0.001+0im 0.25+0im;0 0;0 0; 0 0]),ComplexF64[0.99999900000025 + 0.0im 0.9384698079924576 + 0.0im; 0.0009999995000000916 + 0.0im 0.24226844566945333 + 0.0im; -4.999998333421463e-7 + 0.0im -0.03060435952740681 + 0.0im; -1.6666664597909941e-10 + 0.0im -0.0025556763673518224 + 0.0im; 8.337774914934926e-14 + 0.0im 0.0003214729527288296 + 0.0im])
+true
 ```
 """
 function sincosnl(am::Array{Complex{Float64},2})
@@ -1171,10 +1171,10 @@ function sincosnl(am::Array{Complex{Float64},2})
     #stepsperperiod = 2*size(am)[1]-2
     # changed to below because i wasn't using enough points when Nmodes=1.
     # the results contained only real values. 
-    if size(am)[1] == 2
-        stepsperperiod = 2*size(am)[1]-1
+    if size(am,1) == 2
+        stepsperperiod = 2*size(am,1)-1
     else
-        stepsperperiod = 2*size(am)[1]-2
+        stepsperperiod = 2*size(am,1)-2
     end
 
     #transform back to time domain

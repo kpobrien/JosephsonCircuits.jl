@@ -448,6 +448,31 @@ AoLjbmindices
  ⋅  ⋅  ⋅  ⋅  8  7  6  5
 ```
 ```jldoctest
+Amatrixindices = [1 -2 -3 0; 2 1 -2 -3; 3 2 1 -2; 0 3 2 1]
+Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1.0,1.0])
+Nmodes = 4
+Nbranches = length(Ljb)
+Nfreq = 4
+AoLjbmindices, conjindicessorted, nentries = JosephsonCircuits.calcAoLjbmindices(
+    Amatrixindices,
+    Ljb,
+    Nmodes,
+    Nbranches,
+    Nfreq);
+AoLjbmindices
+
+# output
+8×8 SparseArrays.SparseMatrixCSC{Int64, Int64} with 28 stored entries:
+ 1  2  3  ⋅  ⋅  ⋅  ⋅  ⋅
+ 2  1  2  3  ⋅  ⋅  ⋅  ⋅
+ 3  2  1  2  ⋅  ⋅  ⋅  ⋅
+ ⋅  3  2  1  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  ⋅  ⋅  5  6  7  ⋅
+ ⋅  ⋅  ⋅  ⋅  6  5  6  7
+ ⋅  ⋅  ⋅  ⋅  7  6  5  6
+ ⋅  ⋅  ⋅  ⋅  ⋅  7  6  5
+```
+```jldoctest
 Amatrixindices = [1 -2 -3 -4; 2 1 -2 -3; 3 2 1 -2; 4 3 2 1]
 Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,3],[1.0,1.0])
 Nmodes = 4
@@ -567,6 +592,24 @@ JosephsonCircuits.calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbran
      ⋅          ⋅          ⋅      0.5+0.5im  0.5+0.5im  0.5+0.5im
 ```
 ```jldoctest
+Amatrix = ComplexF64[1.0 + 1.0im 1.0 + 1.0im; 1.0 + 1.0im 1.0 + 1.0im; 1.0 + 1.0im 1.0 + 1.0im]
+Amatrixindices = [1 -2 0; 2 1 -2; 0 2 1]
+Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1.0,2.0])
+Lmean = 1
+Nmodes = 3
+Nbranches = 2
+JosephsonCircuits.calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
+
+# output
+6×6 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 14 stored entries:
+ 1.0+1.0im  1.0-1.0im      ⋅          ⋅          ⋅          ⋅    
+ 1.0+1.0im  1.0+1.0im  1.0-1.0im      ⋅          ⋅          ⋅    
+     ⋅      1.0+1.0im  1.0+1.0im      ⋅          ⋅          ⋅    
+     ⋅          ⋅          ⋅      0.5+0.5im  0.5-0.5im      ⋅    
+     ⋅          ⋅          ⋅      0.5+0.5im  0.5+0.5im  0.5-0.5im
+     ⋅          ⋅          ⋅          ⋅      0.5+0.5im  0.5+0.5im
+```
+```jldoctest
 @variables A11 A12 A21 A22 A31 A32 Lj1 Lj2
 Amatrix = [A11 A12;A21 A22;A31 A32]
 Amatrixindices = [1 -2 -3; 2 1 -2; 3 2 1]
@@ -584,6 +627,25 @@ JosephsonCircuits.calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbran
          ⋅          ⋅          ⋅  A12 / Lj2  A22 / Lj2  A32 / Lj2
          ⋅          ⋅          ⋅  A22 / Lj2  A12 / Lj2  A22 / Lj2
          ⋅          ⋅          ⋅  A32 / Lj2  A22 / Lj2  A12 / Lj2
+```
+```jldoctest
+@syms A11 A12 A21 A22 A31 A32 Lj1 Lj2
+Amatrix = [A11 A12;A21 A22;A31 A32]
+Amatrixindices = [1 0 0; 0 1 0; 0 0 1]
+Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2])
+Lmean = 1
+Nmodes = 3
+Nbranches = 2
+JosephsonCircuits.calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches).nzval
+
+# output
+6-element Vector{Any}:
+ A11 / Lj1
+ A11 / Lj1
+ A11 / Lj1
+ A12 / Lj2
+ A12 / Lj2
+ A12 / Lj2
 ```
 """
 function calcAoLjbm2(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector,
