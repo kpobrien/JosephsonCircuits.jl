@@ -355,6 +355,9 @@ removemodes removed.
 julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),Tuple{Int64}[(2,)])
 JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)])
 
+julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),Tuple{Int64}[(0,),(1,),(2,),(3,)])
+JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[], Tuple{Int64}[])
+
 julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),Tuple{Int64}[])
 JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
 ```
@@ -405,11 +408,14 @@ removemodes removed.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[])
-JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
-
 julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[CartesianIndex(1,)])
 JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(2,), CartesianIndex(3,)], [(1,), (2,)])
+
+julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[CartesianIndex(1,),CartesianIndex(2,),CartesianIndex(3,),CartesianIndex(4,)])
+JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[], Tuple{Int64}[])
+
+julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[])
+JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
 ```
 """
 function removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
