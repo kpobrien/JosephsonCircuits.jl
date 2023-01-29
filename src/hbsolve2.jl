@@ -290,6 +290,11 @@ function hbnlsolve2(
         return nothing
     end
 
+    # # use this for debugging purposes to return the function and the
+    # # Jacobian
+    # fj!(F,J,x)
+    # return (F,J,x)
+    
     # solve the nonlinear system
     nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol)
 
@@ -616,12 +621,12 @@ function updateAoLjbm2!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices,
 
     nentries = nnz(AoLjbm) ÷ nnz(Ljb)
 
-    # does this run into problems if the inductance vector isn't sorted?
-    # can i guarantee that Ljb is always sorted? look into this
-    # copy over the values and scale by the inductance
+    # # does this run into problems if the inductance vector isn't sorted?
+    # # can i guarantee that Ljb is always sorted? look into this
+    # # copy over the values and scale by the inductance
     for i in eachindex(AoLjbm.nzval)
         # j = indexconvert[i ÷ (Nfreq+1)+1]
-        j = i ÷ (nentries+1) + 1
+        j = (i-1) ÷ (nentries) + 1
         AoLjbm.nzval[i] = Am[AoLjbmindices.nzval[i]] * (Lmean / Ljb.nzval[j])
     end
 
@@ -633,9 +638,18 @@ function updateAoLjbm2!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices,
     #     indexconvert[j] = i
     # end
 
+    # println(indexconvert)
+
+    # # for l = 1:length(AoLjbm.colptr)-1
+    # #     for m in AoLjbm.colptr[l]:(AoLjbm.colptr[l+1]-1)
+
+    # #         i = indexconvert[((AoLjbm.rowval[m]+l-1) ÷ (2*Nmodes))+1]
+
     # for i = 1:length(AoLjbm.colptr)-1
     #     for j in AoLjbm.colptr[i]:(AoLjbm.colptr[i+1]-1)
+    #         # println(k)
     #         k = j ÷ (nentries+1)+1
+    #         # println(indexconvert[j+1])
     #         AoLjbm.nzval[j] = Am[AoLjbmindices.nzval[j]]*(Lmean/Ljb.nzval[k])
     #     end
     # end

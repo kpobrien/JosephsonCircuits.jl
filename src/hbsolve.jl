@@ -798,6 +798,11 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
         return nothing
     end
 
+    # # use this for debugging purposes to return the function and the
+    # # Jacobian
+    # fj!(F,Jsparse,x)
+    # return (F,Jsparse,x)
+
     # solve the nonlinear system
     nlsolve!(fj!, F, Jsparse, x; iterations = iterations, ftol = ftol)
 
