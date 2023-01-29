@@ -38,8 +38,21 @@ isapprox([0.0,1.0],x)
 true
 ```
 """
-function nlsolve!(fj!, F, J::SparseMatrixCSC, x; iterations=1000, ftol=1e-8,
-    switchofflinesearchtol = 1e-5, alphamin = 1e-4)
+function nlsolve!(fj!::Function, F::Vector{T}, J::SparseMatrixCSC{T, Int64},
+    x::Vector{T}; iterations=1000, ftol=1e-8, switchofflinesearchtol = 1e-5,
+    alphamin = 1e-4) where T
+
+    if size(J,1) != size(J,2)
+        throw(DimensionMismatch("The Jacobian `J` matrix must be square."))
+    end
+
+    if size(J,2) != length(x)
+        throw(DimensionMismatch("Second axis of Jacobian `J` must have the same length as the input `x`."))
+    end
+
+    if size(J,1) != length(F)
+        throw(DimensionMismatch("First axis of the Jacobian `J` must have the same length as the residual `F`."))
+    end
 
     factorization = KLU.klu(J)
 

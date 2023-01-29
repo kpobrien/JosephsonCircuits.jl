@@ -37,6 +37,53 @@ using Test
             atol = 1e-6)
     end
 
+    @testset "hbsolve2 initial nodeflux" begin
+
+        circuit = Array{Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}},1}(undef,0)
+        push!(circuit,("P1","1","0",1))
+        push!(circuit,("I1","1","0",:Ipump))
+        push!(circuit,("R1","1","0",:Rleft))
+        push!(circuit,("L1","1","0",:Lm)) 
+        push!(circuit,("K1","L1","L2",:K1))
+        push!(circuit,("C1","1","2",:Cc)) 
+        push!(circuit,("L2","2","3",:Lm)) 
+        push!(circuit,("Lj3","3","0",:Lj)) 
+        push!(circuit,("Lj4","2","0",:Lj)) 
+        push!(circuit,("C2","2","0",:Cj))
+        circuitdefs = Dict{Symbol,Complex{Float64}}(
+            :Lj =>2000e-12,
+            :Lm =>10e-12,
+            :Cc => 200.0e-15,
+            :Cj => 900e-15,
+            :Rleft => 50.0,
+            :Rright => 50.0,
+            :Ipump => 1.0e-8,
+            :K1 => 0.9,
+        )
+
+        Idc = 50e-5
+        Ip=0.0001e-6
+        wp=2*pi*5e9
+        Npumpmodes = 2
+        out1=hbnlsolve2(
+            (wp,),
+            (Npumpmodes,),
+            [
+                (mode=(0,),port=1,current=Idc),
+                (mode=(1,),port=1,current=Ip),
+            ],
+            circuit,circuitdefs;dc=true,odd=true,even=false)
+        out2=hbnlsolve2(
+            (wp,),
+            (Npumpmodes,),
+            [
+                (mode=(0,),port=1,current=Idc),
+                (mode=(1,),port=1,current=Ip),
+            ],
+            circuit,circuitdefs;dc=true,odd=true,even=false,
+            x0 = out1.nodeflux);
+        @test isapprox(out1.nodeflux,out2.nodeflux)
+    end
 
     @testset verbose=true "hbnlsolve2 lossless error" begin
 

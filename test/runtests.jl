@@ -42,6 +42,8 @@ end
 
     include("matutils.jl")
 
+    include("nlsolve.jl")
+
     include("parseinput.jl")
 
     include("qesparams.jl")
