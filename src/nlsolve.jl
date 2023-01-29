@@ -1,6 +1,6 @@
 
 """
-    nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
+    nlsolve!(fj!, F, J::SparseMatrixCSC, x; iterations=1000, ftol=1e-8,
         switchofflinesearchtol = 1e-5)
 
 A simple nonlinear solver for sparse matrices using Newton's method with
@@ -38,7 +38,7 @@ isapprox([0.0,1.0],x)
 true
 ```
 """
-function nlsolve!(fj!, F, J, x; iterations=1000, ftol=1e-8,
+function nlsolve!(fj!, F, J::SparseMatrixCSC, x; iterations=1000, ftol=1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4)
 
     factorization = KLU.klu(J)
