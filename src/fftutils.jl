@@ -64,8 +64,6 @@ function fourierindices(freq)
 
     conjsymdict = conjsym(freq)
     freqindexmap, conjsourceindices, conjtargetindices = calcphiindices(freq,conjsymdict)
-    modes = freq.modes
-    Nt = freq.Nt
     Amatrixmodes, Amatrixindices = hbmatind(freq)
 
     return FourierIndices(
