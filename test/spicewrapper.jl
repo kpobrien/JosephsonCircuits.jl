@@ -19,7 +19,7 @@ using Test
     end
 
 
-    if haskey(ENV,"GITLAB_CI")
+    if haskey(ENV,"GITHUB_ACTIONS")
         @testset "wrspice_cmd" begin
             @test_throws(
                 ErrorException("WRSPICE executable not found. Please install WRSPICE or supply a path manually if already installed."),
