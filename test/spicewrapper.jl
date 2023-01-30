@@ -19,11 +19,11 @@ using Test
     end
 
 
-    if haskey(ENV,"GITHUB_ACTIONS")
+    if haskey(ENV,"CI")
         @testset "wrspice_cmd" begin
             @test_throws(
                 ErrorException("WRSPICE executable not found. Please install WRSPICE or supply a path manually if already installed."),
-                wrspice_cmd())
+                JosephsonCircuits.wrspice_cmd())
         end
     end
 
