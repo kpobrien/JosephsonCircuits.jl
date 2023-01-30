@@ -162,35 +162,6 @@ write
 .endc
 
 ```
-```jldoctest
-julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",collect((4:0.01:5)*1e9),[1,2],1e-6))
-* SPICE Simulation
-* AC current source with magnitude 1 and phase 0
-isrc 1 0 ac 1.0e-6 0.0
-
-* Set up the AC small signal simulation
-.ac lin 99 4.0g 5.0g
-
-* The control block
-.control
-
-* Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
-* default 2.56e5. This has to come before the run command
-set maxdata = 10e6
-
-* Run the simulation
-run
-
-* Binary files are faster to save and load. 
-set filetype=binary
-
-* Leave filename empty so we can add that as a command line argument.
-* Don't specify any variables so it saves everything.    
-write
-
-.endc
-
-```
 """
 function wrspice_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
     portnodes,portcurrent)
