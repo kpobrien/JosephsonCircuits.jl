@@ -16,8 +16,16 @@ using Test
         @test all(out1.header .== out2.header)
         @test all(out1.index .== out2.index)
 
-
-
     end
+
+
+    if haskey(ENV,"GITLAB_CI")
+        @testset "wrspice_cmd" begin
+            @test_throws(
+                ErrorException("WRSPICE executable not found. Please install WRSPICE or supply a path manually if already installed."),
+                wrspice_cmd())
+        end
+    end
+
 
 end

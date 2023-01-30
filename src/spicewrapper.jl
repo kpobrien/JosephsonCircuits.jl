@@ -267,8 +267,7 @@ function wrspice_cmd()
 
     # Check if the wrspice executable exists
     if !islink(wrspicecmd) && !isfile(wrspicecmd)
-        error("WRSPICE executable not found at $(wrspicecmd). Please install WRSPICE or change
-        the location of the executable (or edit the wrspicecmd line in the code.")
+        error("WRSPICE executable not found. Please install WRSPICE or supply a path manually if already installed.")
     end
 
     return wrspicecmd
