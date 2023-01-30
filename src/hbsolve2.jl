@@ -149,6 +149,7 @@ function hbnlsolve2(
 
     return hbnlsolve2(w, sources, freq, indices, psc, cg, nm;
         solver = solver, iterations = iterations, x0 = x0, ftol = ftol,
+        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar)
 end
 
