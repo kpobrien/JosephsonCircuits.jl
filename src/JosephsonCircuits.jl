@@ -14,6 +14,7 @@ using LinearAlgebra
 using SparseArrays
 using Printf
 using SnoopPrecompile
+using AxisKeys
 
 # define the zero for symbolic numbers so that we can view the sparse arrays
 # Base.zero(::Type{Symbolic{Number}}) = 0
