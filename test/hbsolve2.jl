@@ -136,6 +136,20 @@ using Test
 
     end
 
+    @testset "hbnlsolve2 simple testcase error" begin
+
+        circuit = [("P1","1","0",1),("R1","1","0",50.0)]
+        circuitdefs = Dict()
+        Idc = 50e-5
+        Ip = 1.0e-6
+        wp=2*pi*5.0*1e9
+        Npumpmodes = 1
+        @test_throws(
+            ErrorException("NaN in nonlinear solver."),
+            hbnlsolve2((wp,),(Npumpmodes,),[(mode=(1,),port=1,current=Ip),],
+                circuit,circuitdefs;dc=true,odd=true,even=false))
+    end
+
     @testset "hbsolve2 hbsolve comparison" begin
 
         @variables Rleft Cc Lj Cj w L1
