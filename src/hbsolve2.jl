@@ -63,6 +63,271 @@ function hbsolve2(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     return HB(pump, Am, signal)
 end
 
+
+"""
+hblinsolve2(ws, wp, Npumpharmonics, Nmodulationharmonics, psc, cg,
+    circuitdefs, pump; symfreqvar=nothing, threewavemixing=false,
+    fourwavemixing=true)
+
+Experimental single frequency version of harmonic balance solver for linearized
+system.
+
+# Examples
+```jldoctest
+circuit = Array{Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}},1}(undef,0)
+push!(circuit,("P1","1","0",1))
+push!(circuit,("R1","1","0",:Rleft))
+push!(circuit,("L1","1","0",:Lm)) 
+push!(circuit,("K1","L1","L2",:K1))
+push!(circuit,("C1","1","2",:Cc)) 
+push!(circuit,("L2","2","3",:Lm)) 
+push!(circuit,("Lj3","3","0",:Lj)) 
+push!(circuit,("Lj4","2","0",:Lj)) 
+push!(circuit,("C2","2","0",:Cj))
+circuitdefs = Dict{Symbol,Complex{Float64}}(
+    :Lj =>2000e-12,
+    :Lm =>10e-12,
+    :Cc => 200.0e-15,
+    :Cj => 900e-15,
+    :Rleft => 50.0,
+    :Rright => 50.0,
+    :K1 => 0.9,
+)
+
+Idc = 1e-6*0
+Ip=5.0e-6
+wp=2*pi*5e9
+ws=2*pi*5.2e9
+symfreqvar = nothing
+
+# modulation settings
+Npumpharmonics = (16,)
+Nmodulationharmonics = (2,)
+threewavemixing=false
+fourwavemixing=true
+
+pump=hbnlsolve2(
+    (wp,),
+    Npumpharmonics,
+    [
+        (mode=(0,),port=1,current=Idc),
+        (mode=(1,),port=1,current=Ip),
+    ],
+    circuit,circuitdefs;dc=true,odd=fourwavemixing,even=threewavemixing)
+
+nodeflux = JosephsonCircuits.hblinsolve2(ws,
+    circuit, circuitdefs; Nmodulationharmonics = Nmodulationharmonics, pump = pump, symfreqvar=nothing,
+    threewavemixing=false, fourwavemixing=true)
+isapprox(nodeflux,
+    ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
+    atol = 1e-6)
+
+# output
+true
+```
+"""
+function hblinsolve2(ws, circuit,circuitdefs; Nmodulationharmonics = (0,),
+    pump=nothing, symfreqvar=nothing, threewavemixing=false,
+    fourwavemixing=true)
+
+    # parse and sort the circuit
+    psc = JosephsonCircuits.parsesortcircuit(circuit)
+
+    # calculate the circuit graph
+    cg = JosephsonCircuits.calccircuitgraph(psc)
+
+    pumpfreq = pump.frequencies
+
+    # pumpfreq = JosephsonCircuits.calcfreqsrdft((2*Npumpmodes,))
+    allpumpfreq = JosephsonCircuits.calcfreqsrdft(pumpfreq.Nharmonics)
+    pumpindices = JosephsonCircuits.fourierindices(pumpfreq)
+    Npumpmodes = length(pumpfreq.modes)
+
+
+    # # calculate the numeric matrices
+    pumpnm = JosephsonCircuits.numericmatrices(psc, cg, circuitdefs, Nmodes = Npumpmodes)
+
+
+    # i always want 
+    signalfreq = JosephsonCircuits.truncfreqs(
+        JosephsonCircuits.calcfreqsdft(Nmodulationharmonics);
+        dc=true,odd=threewavemixing,even=fourwavemixing,maxintermodorder=Inf,
+    )
+
+    # wmodes = calcw(ws,indices,wp);
+    wmodes = ws .+ JosephsonCircuits.calcmodefreqs(pump.w,signalfreq.modes)
+    wmodesm = Diagonal(repeat(wmodes,outer=psc.Nnodes-1));
+    wmodes2m = Diagonal(repeat(wmodes.^2,outer=psc.Nnodes-1));
+
+
+    Amatrixmodes, Amatrixindices = JosephsonCircuits.hbmatind(allpumpfreq, signalfreq)
+
+
+    # calculate the dimensions of the array which holds the frequency
+    # domain information for the fourier transform
+    Nwtuple = NTuple{length(pumpfreq.Nw)+1,Int}((pumpfreq.Nw...,length(pumpnm.Ljb.nzval)))
+
+    # create an array to hold the frequency domain data for the
+    # fourier transform
+    phimatrix = zeros(Complex{Float64}, Nwtuple)
+
+    # create an array to hold the time domain data for the RFFT. also generate
+    # the plans.
+    phimatrixtd, irfftplan, rfftplan = JosephsonCircuits.plan_applynl(phimatrix)
+
+    # convert the branch flux vector to a matrix with the terms arranged
+    # in the correct way for the inverse rfft including the appropriate
+    # complex conjugates.
+    JosephsonCircuits.phivectortomatrix!(
+        pump.nodeflux[pumpnm.Ljbm.nzind], phimatrix,
+        pumpindices.vectomatmap,
+        pumpindices.conjsourceindices,
+        pumpindices.conjtargetindices,
+        length(pumpnm.Ljb.nzval)
+    )
+
+    # apply the sinusoidal nonlinearity when evaluaing the function
+    JosephsonCircuits.applynl!(
+        phimatrix,
+        phimatrixtd,
+        (x) -> cos(x),
+        irfftplan,
+        rfftplan,
+    )
+
+
+    # now i need to make the Amatrix
+    # initializing this with zeros seems to cause problems
+    # ideally i should initialize the vector of ones then convert to the
+    # matrix.
+    Nsignalmodes = length(signalfreq.modes)
+    # calculate the numeric matrices
+    signalnm = JosephsonCircuits.numericmatrices(psc, cg, circuitdefs, Nmodes = Nsignalmodes)
+
+    # Nwtuple = NTuple{length(signalfreq.Nw)+1,Int}((signalfreq.Nw...,length(signalnm.Ljb.nzval)))
+    # Amatrix = ones(Complex{Float64}, Nwtuple)
+    # Nfreq = prod(size(Amatrix)[1:end-1])
+    # Nfreq = prod(Nwtuple[1:end-1])
+    Nfreq = prod(signalfreq.Nw)
+
+    AoLjbmindices, conjindicessorted = JosephsonCircuits.calcAoLjbmindices(
+        Amatrixindices, signalnm.Ljb, Nsignalmodes, cg.Nbranches, Nfreq
+    )
+
+    # right now i redo the calculation of AoLjbmindices, conjindicessorted in calcAoLjbm2
+    # AoLjbm = JosephsonCircuits.calcAoLjbm2(Amatrix, 
+    # Amatrixindices, nm.Ljb, nm.Lmean, Nmodes, cg.Nbranches)
+    # AoLjbm = JosephsonCircuits.calcAoLjbm2(phimatrix, 
+    #     Amatrixindices, signalnm.Ljb, signalnm.Lmean, Nsignalmodes, cg.Nbranches
+    # )
+
+    AoLjbm = JosephsonCircuits.calcAoLjbm2(phimatrix, 
+        Amatrixindices, signalnm.Ljb, 1, Nsignalmodes, cg.Nbranches
+    )
+
+
+    # # calculate  AoLjbm
+    # JosephsonCircuits.updateAoLjbm2!(AoLjbm, phimatrix, AoLjbmindices, conjindicessorted,
+    #     nm.Ljb, nm.Lmean)
+
+
+    AoLjnm = signalnm.Rbnm'*AoLjbm*signalnm.Rbnm
+
+    # @show signalfreq.modes;
+    # @show pumpfreq.modes;
+    # @show Amatrixmodes;
+    # @show Amatrixindices;
+
+    # extract the elements we need
+    Nnodes = psc.Nnodes
+    # typevector = psc.typevector
+    nodeindexarraysorted = psc.nodeindexarraysorted
+    Nbranches = cg.Nbranches
+    edge2indexdict = cg.edge2indexdict
+    Ljb = signalnm.Ljb
+    Rbnm = signalnm.Rbnm
+    Cnm = signalnm.Cnm
+    Gnm = signalnm.Gnm
+    invLnm = signalnm.invLnm
+    portindices = signalnm.portindices
+    portimpedanceindices = signalnm.portimpedanceindices
+    vvn = signalnm.vvn
+
+
+    # calculate the source currents
+    Nports = length(portindices)
+
+    # calculate the source terms in the branch basis
+    bbm = zeros(Complex{Float64},Nbranches*Nsignalmodes,Nsignalmodes*Nports)
+
+    # add a current source for each port and mode
+    for (i,val) in enumerate(portindices)
+        key = (nodeindexarraysorted[1,val],nodeindexarraysorted[2,val])
+        for j = 1:Nsignalmodes
+            bbm[(edge2indexdict[key]-1)*Nsignalmodes+j,(i-1)*Nsignalmodes+j] = 1
+            # bbm2[(i-1)*Nmodes+j,(i-1)*Nmodes+j] = Lmean*1/phi0
+        end
+    end
+
+    # calculate the source terms in the node basis
+    bnm = transpose(Rbnm)*bbm
+
+
+    # find the indices at which there are symbolic variables so we can
+    # perform a substitution on only those. 
+    Cnmfreqsubstindices  = JosephsonCircuits.symbolicindices(Cnm)
+    Gnmfreqsubstindices  = JosephsonCircuits.symbolicindices(Gnm)
+    invLnmfreqsubstindices  = JosephsonCircuits.symbolicindices(invLnm)
+
+
+    Cnmcopy = JosephsonCircuits.freqsubst(Cnm,wmodes,symfreqvar)
+    Gnmcopy = JosephsonCircuits.freqsubst(Gnm,wmodes,symfreqvar)
+    invLnmcopy = JosephsonCircuits.freqsubst(invLnm,wmodes,symfreqvar)
+    # Asparse = (AoLjnm + invLnmcopy + Gnmcopy + Cnmcopy)
+    Asparse = JosephsonCircuits.spaddkeepzeros(
+        JosephsonCircuits.spaddkeepzeros(
+            JosephsonCircuits.spaddkeepzeros(AoLjnm,invLnmcopy),Gnmcopy),Cnmcopy)
+
+    # make the index maps so we can efficiently add the sparse matrices
+    # together without allocations or changing the sparsity structure. 
+    Cnmindexmap = JosephsonCircuits.sparseaddmap(Asparse,Cnmcopy)
+    Gnmindexmap = JosephsonCircuits.sparseaddmap(Asparse,Gnmcopy)
+    invLnmindexmap = JosephsonCircuits.sparseaddmap(Asparse,invLnmcopy)
+    AoLjnmindexmap = JosephsonCircuits.sparseaddmap(Asparse,AoLjnm)
+
+
+    # portimpedances = [vvn[i] for i in portimpedanceindices]
+    # noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
+
+    # if using the KLU factorization and sparse solver then make a 
+    # factorization for the sparsity pattern.
+    F = JosephsonCircuits.KLU.klu(Asparse);
+
+    Asparsecopy = Asparse
+
+    fill!(Asparsecopy.nzval,zero(eltype(Asparsecopy.nzval)))
+    JosephsonCircuits.sparseadd!(Asparsecopy,1,AoLjnm,AoLjnmindexmap)
+
+    # take the complex conjugate of the negative frequency terms in
+    # the capacitance and conductance matrices. substitute in the symbolic
+    # frequency variable if present.
+    JosephsonCircuits.sparseaddconjsubst!(Asparsecopy,-1,Cnm,wmodes2m,Cnmindexmap,
+        wmodesm .< 0,wmodesm,Cnmfreqsubstindices,symfreqvar)
+    JosephsonCircuits.sparseaddconjsubst!(Asparsecopy,im,Gnm,wmodesm,Gnmindexmap,
+        wmodesm .< 0,wmodesm,Gnmfreqsubstindices,symfreqvar)
+    JosephsonCircuits.sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
+        wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
+
+    JosephsonCircuits.KLU.klu!(F,Asparsecopy)
+
+    nodeflux = zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),Nsignalmodes*Nports)
+
+    ldiv!(nodeflux,F,bnm)
+
+    return nodeflux
+end
+
+
 """
     hbnlsolve2(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources, circuit,
         circuitdefs; solver = :klu, iterations = 1000, maxintermodorder = Inf,
@@ -74,7 +339,7 @@ numbers of ports, sources, and drives including direct current (zero frequency)
 or flux pumping using a current source and a mutual inductor.
 
 # Examples
-```jldoctest compare=false
+```jldoctest
 circuit = Array{Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}},1}(undef,0)
 push!(circuit,("P1","1","0",1))
 push!(circuit,("I1","1","0",:Ipump))
@@ -194,6 +459,10 @@ function hbnlsolve2(
     portnumbers = nm.portnumbers
     portimpedanceindices = nm.portimpedanceindices
     Lmean = nm.Lmean
+    # if there are no inductors, then Lmean will be zero so set it to be one
+    if iszero(Lmean)
+        Lmean = one(eltype(Lmean))
+    end
     Lb = nm.Lb
 
     # calculate the diagonal frequency matrices
@@ -265,7 +534,8 @@ function hbnlsolve2(
     # numerical zeros (the usual sparse matrix addition converts these to
     # structural zeros which would change the sparsity structure).
     # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
-    J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm*wmodesm), - Cnm*wmodes2m)
+    # J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm*wmodesm), - Cnm*wmodes2m)
+    J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm), -Cnm)
 
     # make the arrays and datastructures we need for
     # the non-allocating sparse matrix multiplication.
@@ -314,7 +584,7 @@ function hbnlsolve2(
     # inputval = zero(Complex{Float64})
     S = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
 
-    return NonlinearHB(nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
+    return NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
 
 end
 
@@ -687,7 +957,11 @@ Update the values in the sparse AoLjbm matrix in place.
 function updateAoLjbm2!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices,
     conjindicessorted, Ljb::SparseVector, Lmean)
 
-    nentries = nnz(AoLjbm) ÷ nnz(Ljb)
+    if nnz(AoLjbm) == 0
+        nentries = 0
+    else
+        nentries = nnz(AoLjbm) ÷ nnz(Ljb)
+    end
 
     # # does this run into problems if the inductance vector isn't sorted?
     # # can i guarantee that Ljb is always sorted? look into this

@@ -976,7 +976,13 @@ function phivectortomatrix!(phivector::AbstractVector, phimatrix::AbstractArray,
         throw(DimensionMismatch("Unexpected length for phivector"))
     end
 
-    Nvector = length(phivector)÷ Nbranches
+    if length(phivector) == 0
+        Nvector = 0
+    else
+        Nvector = length(phivector)÷ Nbranches
+    end
+
+    # Nvector = length(phivector)÷ Nbranches
     Nmatrix = prod(size(phimatrix)[1:end-1])
 
     # fill the matrix with zeros
@@ -1046,7 +1052,14 @@ function phimatrixtovector!(phivector::AbstractVector, phimatrix::AbstractArray,
     indexmap::Vector{Int}, conjsourceindices::Vector{Int},
     conjtargetindices::Vector{Int}, Nbranches::Int)
 
-    Nvector = length(phivector)÷ Nbranches
+    # Nvector = length(phivector)÷ Nbranches
+
+    if length(phivector) == 0
+        Nvector = 0
+    else
+        Nvector = length(phivector)÷ Nbranches
+    end
+
     Nmatrix = prod(size(phimatrix)[1:end-1])
 
     # fill the vector with zeros

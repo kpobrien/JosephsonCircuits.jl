@@ -719,6 +719,10 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     noiseportimpedanceindices = nm.noiseportimpedanceindices
     vvn = nm.vvn
     Lmean = nm.Lmean
+    # if there are no inductors, then Lmean will be zero so set it to be one
+    if iszero(Lmean)
+        Lmean = one(eltype(Lmean))
+    end
     Lb = nm.Lb
 
     # make a sparse transpose (improves multiplication speed slightly)
@@ -806,7 +810,13 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # fj!(F,Jsparse,x)
     # return (F,Jsparse,x)
 
-    # solve the nonlinear system
+    # fj!(F,Jsparse,x)
+    # @show bnm
+    # @show Lmean
+    # @show Jsparse
+
+    # solve the nonlinear system. skip the nonlinear solve if the Jacobian
+    # has no nonzero terms
     nlsolve!(fj!, F, Jsparse, x; iterations = iterations, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin)
 
@@ -829,7 +839,15 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     #     #     portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
     # end
 
-    return NonlinearHB(nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
+    # calculate the frequency struct which we use in v2 of the solvers
+    freq = removeconjfreqs(
+        truncfreqs(
+            calcfreqsrdft((2*Nmodes,)),
+            dc=false, odd=true, even=false, maxintermodorder=Inf,
+        )
+    )
+
+    return NonlinearHB((wp,), freq, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
     # return (samples=samples,fmin=fmin,alphas=alphas,
     #     fvals=fvals,fpvals=fpvals,dfdalphavals=dfdalphavals)
     # return normF
@@ -842,6 +860,7 @@ end
 A simple structure to hold the nonlinear harmonic balance solutions.
 
 # Fields
+- `w`: a tuple containing the the angular frequency of the pump in radians/s.
 - `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
 - `Rbnm`: incidence matrix to convert between the node and branch basis.
 - `Ljb`: sparse vector of Josephson junction inductances.
@@ -854,6 +873,8 @@ A simple structure to hold the nonlinear harmonic balance solutions.
     of port and frequency (not currently functional).
 """
 struct NonlinearHB
+    w
+    frequencies
     nodeflux
     Rbnm
     Ljb
