@@ -116,6 +116,26 @@ using Test
         )
     end
 
+    @testset "hbnlsolve2 simple testcase" begin
+
+        circuit = [("P1","1","0",1),("R1","1","0",50.0)]
+        circuitdefs = Dict()
+        Idc = 50e-5
+        Ip = 1.0e-6
+        wp=2*pi*5.0*1e9
+        Npumpmodes = 1
+        out=hbnlsolve2(
+            (wp,),
+            (Npumpmodes,),
+            [
+        #         (mode=(0,),port=1,current=Idc),
+                (mode=(1,),port=1,current=Ip),
+            ],
+            circuit,circuitdefs;dc=false,odd=true,even=false)
+        @test isapprox(im*out.nodeflux[1]*wp*JosephsonCircuits.phi0/(50),Ip)
+
+    end
+
     @testset "hbsolve2 hbsolve comparison" begin
 
         @variables Rleft Cc Lj Cj w L1

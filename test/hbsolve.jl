@@ -232,6 +232,19 @@ using Test
 
     end
 
+    @testset verbose=true "hbnlsolve simple testcase" begin
+
+        circuit = [("P1","1","0",1),("R1","1","0",50.0)]
+        circuitdefs = Dict()
+        Idc = 50e-5
+        Ip = 1.0e-6
+        wp=2*pi*5.0*1e9
+        Npumpmodes = 1
+        out = hbnlsolve(wp,Ip,1,circuit,circuitdefs,ports=[1])
+        @test isapprox(im*out.nodeflux[1]*wp*JosephsonCircuits.phi0/(50),Ip)
+
+    end
+
     @testset "calcAoLjbm error" begin
         @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
         @test_throws(

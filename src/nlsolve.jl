@@ -152,6 +152,10 @@ function nlsolve!(fj!::Function, F::Vector{T}, J::SparseMatrixCSC{T, Int64},
             alpha1 = 1.0
         end
 
+        if isnan(alpha1)
+            error("NaN in nonlinear solver.")
+        end
+
         # # switch to newton once the norm is small enough
         # if fp <= switchofflinesearchtol && f <= switchofflinesearchtol && f1fit <= switchofflinesearchtol
         #     alpha1 = 1.0
