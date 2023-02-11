@@ -429,6 +429,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         voltage = Vector{Complex{Float64}}(undef,0)
     end
 
+    wpumpmodes = calcw(0.0,indices,wp);
+
     # solve the linear system for the specified frequencies. the response for
     # each frequency is independent so it can be done in parallel; however
     # we want to reuse the factorization object and other input arrays. 
@@ -442,7 +444,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
             portindices, portimpedanceindices, noiseportimpedanceindices,
             portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
-            w, indices, wp, Nmodes, Nnodes, solver, symfreqvar, batches[i])
+            w, wpumpmodes, Nmodes, Nnodes, solver, symfreqvar, batches[i])
     end
 
     if returnQE
@@ -476,7 +478,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
     Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
     portindices, portimpedanceindices, noiseportimpedanceindices,
     portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
-    w, indices, wp, Nmodes, Nnodes, solver, symfreqvar, wi)
+    w, wpumpmodes, Nmodes, Nnodes, solver, symfreqvar, wi)
 
     Nports = length(portindices)
     phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
@@ -523,7 +525,8 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
 
         # calculate the frequency matrices
         ws = w[i]
-        wmodes = calcw(ws,indices,wp);
+        # wmodes = calcw(ws,indices,wp);
+        wmodes = ws .+ wpumpmodes
         wmodesm = Diagonal(repeat(wmodes,outer=Nnodes-1));
         wmodes2m = Diagonal(repeat(wmodes.^2,outer=Nnodes-1));
 
