@@ -1,5 +1,92 @@
 
 """
+    NonlinearHB(nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
+
+A simple structure to hold the nonlinear harmonic balance solutions.
+
+# Fields
+- `w`: a tuple containing the the angular frequency of the pump in radians/s.
+- `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
+- `Rbnm`: incidence matrix to convert between the node and branch basis.
+- `Ljb`: sparse vector of Josephson junction inductances.
+- `Lb`: sparse vector of linear inductances.
+- `Ljbm`: sparse vector of linear inductances with each element duplicated Nmodes times.
+- `Nmodes`: the number of signal and idler frequencies.
+- `Nnodes`: the number of nodes in the circuit (including the ground node).
+- `Nbranches`: the number of branches in the circuit.
+- `S`: the scattering matrix relating inputs and outputs for each combination
+    of port and frequency (not currently functional).
+"""
+struct NonlinearHB
+    w
+    frequencies
+    nodeflux
+    Rbnm
+    Ljb
+    Lb
+    Ljbm
+    Nmodes
+    Nbranches
+    S
+end
+
+"""
+    LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, voltage, Nmodes, Nnodes,
+        Nbranches, signalindex, w)
+
+A simple structure to hold the linearized harmonic balance solutions.
+
+# Fields
+- `S`: the scattering matrix relating inputs and outputs for each combination
+    of port and frequency.
+- `Snoise`: the scattering matrix relating inputs at the noise ports 
+    (lossy devices) and outputs at the physical ports for each combination of
+    port and frequency.
+- `QE`: the quantum efficiency for each combination of port and frequency.
+- `QEideal`: the quantum efficiency for an ideal amplifier with the same level
+    of gain, for each combination of port and frequency. 
+- `CM`: the commutation relations (equal to ±1), for each combination of port
+    and frequency. 
+- `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
+- `voltage`: the node voltages resulting from inputs at each frequency and port.
+- `Nmodes`: the number of signal and idler frequencies.
+- `Nnodes`: the number of nodes in the circuit (including the ground node).
+- `Nbranches`: the number of branches in the circuit.
+- `signalindex`: the index of the signal mode.
+- `w`: the signal frequencies.
+"""
+struct LinearHB
+    S
+    Snoise
+    QE
+    QEideal
+    CM
+    nodeflux
+    voltage
+    Nmodes
+    Nnodes
+    Nbranches
+    signalindex
+    w
+end
+
+"""
+    HB(pump, Am, signal)
+
+A simple structure to hold the nonlinear and linearized harmonic balance solutions.
+
+# Fields
+- `pump`: nonlinear harmonic balance solution for pump and pump harmonics
+- `Am`: matrix encoding pump modulation
+- `signal`: linearized harmonic balance solution
+"""
+struct HB
+    pump
+    Am
+    signal
+end
+
+"""
     hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
         symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
@@ -114,24 +201,6 @@ function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         returnvoltage = returnvoltage, verbosity = verbosity)
     return HB(pump, Am, signal)
 end
-
-
-"""
-    HB(pump, Am, signal)
-
-A simple structure to hold the nonlinear and linearized harmonic balance solutions.
-
-# Fields
-- `pump`: nonlinear harmonic balance solution for pump and pump harmonics
-- `Am`: matrix encoding pump modulation
-- `signal`: linearized harmonic balance solution
-"""
-struct HB
-    pump
-    Am
-    signal
-end
-
 
 """
     hblinsolve(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
@@ -386,47 +455,6 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     return LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, voltage, Nmodes,
         Nnodes, Nbranches, signalindex,w)
-end
-
-
-"""
-    LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, voltage, Nmodes, Nnodes,
-        Nbranches, signalindex, w)
-
-A simple structure to hold the linearized harmonic balance solutions.
-
-# Fields
-- `S`: the scattering matrix relating inputs and outputs for each combination
-    of port and frequency.
-- `Snoise`: the scattering matrix relating inputs at the noise ports 
-    (lossy devices) and outputs at the physical ports for each combination of
-    port and frequency.
-- `QE`: the quantum efficiency for each combination of port and frequency.
-- `QEideal`: the quantum efficiency for an ideal amplifier with the same level
-    of gain, for each combination of port and frequency. 
-- `CM`: the commutation relations (equal to ±1), for each combination of port
-    and frequency. 
-- `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
-- `voltage`: the node voltages resulting from inputs at each frequency and port.
-- `Nmodes`: the number of signal and idler frequencies.
-- `Nnodes`: the number of nodes in the circuit (including the ground node).
-- `Nbranches`: the number of branches in the circuit.
-- `signalindex`: the index of the signal mode.
-- `w`: the signal frequencies.
-"""
-struct LinearHB
-    S
-    Snoise
-    QE
-    QEideal
-    CM
-    nodeflux
-    voltage
-    Nmodes
-    Nnodes
-    Nbranches
-    signalindex
-    w
 end
 
 """
@@ -852,37 +880,6 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     #     fvals=fvals,fpvals=fpvals,dfdalphavals=dfdalphavals)
     # return normF
 
-end
-
-"""
-    NonlinearHB(nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
-
-A simple structure to hold the nonlinear harmonic balance solutions.
-
-# Fields
-- `w`: a tuple containing the the angular frequency of the pump in radians/s.
-- `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
-- `Rbnm`: incidence matrix to convert between the node and branch basis.
-- `Ljb`: sparse vector of Josephson junction inductances.
-- `Lb`: sparse vector of linear inductances.
-- `Ljbm`: sparse vector of linear inductances with each element duplicated Nmodes times.
-- `Nmodes`: the number of signal and idler frequencies.
-- `Nnodes`: the number of nodes in the circuit (including the ground node).
-- `Nbranches`: the number of branches in the circuit.
-- `S`: the scattering matrix relating inputs and outputs for each combination
-    of port and frequency (not currently functional).
-"""
-struct NonlinearHB
-    w
-    frequencies
-    nodeflux
-    Rbnm
-    Ljb
-    Lb
-    Ljbm
-    Nmodes
-    Nbranches
-    S
 end
 
 """
