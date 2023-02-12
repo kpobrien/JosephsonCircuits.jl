@@ -606,7 +606,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
                 portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
         end
 
-        if Nnoiseports > 0 && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint))
+        if (Nnoiseports > 0 || !isempty(nodefluxadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint))
 
             # solve the nonlinear system with the complex conjugate of the pump
             # modulation matrix
