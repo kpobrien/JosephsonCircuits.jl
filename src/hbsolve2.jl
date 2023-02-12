@@ -458,9 +458,10 @@ function hblinsolve2(w, psc::ParsedSortedCircuit,
 
     # generate the mode indices and find the signal index
     # this should be removed
-    indices = calcindices(Nsignalmodes)
-    signalindex = findall(indices .== 0)[1]
-    wp = 0.0
+    # indices = calcindices(Nsignalmodes)
+    # signalindex = findall(indices .== 0)[1]
+    signalindex = 1
+    # wp = 0.0
     Nmodes = Nsignalmodes
     solver = :klu
 
