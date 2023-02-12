@@ -48,12 +48,14 @@ A simple structure to hold the linearized harmonic balance solutions.
 - `CM`: the commutation relations (equal to ±1), for each combination of port
     and frequency. 
 - `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
+- `nodefluxadjoint`: the node fluxes resulting from inputs at each frequency and port.
 - `voltage`: the node voltages resulting from inputs at each frequency and port.
 - `Nmodes`: the number of signal and idler frequencies.
 - `Nnodes`: the number of nodes in the circuit (including the ground node).
 - `Nbranches`: the number of branches in the circuit.
 - `signalindex`: the index of the signal mode.
 - `w`: the signal frequencies.
+- `modes`: tuple of the signal mode indices where (0,) is the signal
 """
 struct LinearHB
     S
@@ -62,12 +64,14 @@ struct LinearHB
     QEideal
     CM
     nodeflux
+    nodefluxadjoint
     voltage
     Nmodes
     Nnodes
     Nbranches
     signalindex
     w
+    modes
 end
 
 """
@@ -82,7 +86,6 @@ A simple structure to hold the nonlinear and linearized harmonic balance solutio
 """
 struct HB
     pump
-    Am
     signal
 end
 
@@ -103,16 +106,16 @@ fluxes or voltages.
 # Arguments
 - `ws`: signal frequency or vector of signal frequencies in radians/second.
 - `wp`: pump frequency in radians/second. This function only supports a single
-    pump frequency. 
+    pump frequency.
 - `Ip`: pump current or vector of pump currents in amps. Length of `Ip` must
     be equal to length of `pumpports`.
 - `Nsignalmodes`: number of signal and idler modes.
 - `Npumpmodes`: number of pump modes (pump harmonics).
-- `circuit`: vector of tuples containing component names, nodes, and values. 
+- `circuit`: vector of tuples containing component names, nodes, and values.
 - `circuitdefs`: dictionary defining the numerical values of circuit components.
 
 # Keywords
-- `pumpports = [1]`: vector of pump port numbers. Default is a single pump at port 1. 
+- `pumpports = [1]`: vector of pump port numbers. Default is a single pump at port 1.
 - `solver = :klu`: linear solver (actually the factorization method).
 - `iterations = 1000`: number of iterations at which the nonlinear solver stops
     even if convergence criteria not reached. 
@@ -137,10 +140,13 @@ fluxes or voltages.
 - `returnCM = true`: if `true`, return the commutation relations for each signal
     and idler at each combinaton of ports (should equal ±1).
 - `returnnodeflux = false`: if `true`, return the node fluxes for each signal
-    and idler at each node. Set to `false` by default to reduce memory usage. 
+    and idler at each node. Set to `false` by default to reduce memory usage.
+- `returnnodefluxadjoint = false`: if `true`, return the node fluxes adjoint
+    for each signal and idler at each node. Set to `false` by default to
+    reduce memory usage.
 - `returnvoltage = false`: if `true`, return the node voltages for each signal
-    and idler at each node. Set to `false` by default to reduce memory usage. 
-- `verbosity = 1`: Control how much info to print. Currently does nothing. 
+    and idler at each node. Set to `false` by default to reduce memory usage.
+- `verbosity = 1`: Control how much info to print. Currently does nothing.
 
 # Examples
 ```
@@ -170,7 +176,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-    returnnodeflux = false, returnvoltage = false, verbosity = 1)
+    returnnodeflux = false,returnnodefluxadjoint = false, returnvoltage = false,
+    verbosity = 1)
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting=sorting)
@@ -198,8 +205,9 @@ function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         Am = Am, solver = solver, symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
+        returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, verbosity = verbosity)
-    return HB(pump, Am, signal)
+    return HB(pump, signal)
 end
 
 """
@@ -246,7 +254,10 @@ fluxes or voltages.
 - `returnCM = true`: if `true`, return the commutation relations for each signal
     and idler at each combinaton of ports (should equal ±1).
 - `returnnodeflux = false`: if `true`, return the node fluxes for each signal
-    and idler at each node. Set to `false` by default to reduce memory usage. 
+    and idler at each node. Set to `false` by default to reduce memory usage.
+- `returnnodefluxadjoint = false`: if `true`, return the node fluxes adjoint
+    for each signal and idler at each node. Set to `false` by default to
+    reduce memory usage.
 - `returnvoltage = false`: if `true`, return the node voltages for each signal
     and idler at each node. Set to `false` by default to reduce memory usage. 
 - `verbosity = 1`: Control how much info to print. Currently does nothing. 
@@ -275,7 +286,8 @@ function hblinsolve(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
     Am = zeros(Complex{Float64},0,0), solver = :klu, symfreqvar = nothing,
     nbatches = Base.Threads.nthreads(), sorting = :number, returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
-    returnnodeflux = false, returnvoltage = false, verbosity = 1)
+    returnnodeflux = false, returnnodefluxadjoint = false,
+    returnvoltage = false, verbosity = 1)
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -287,6 +299,7 @@ function hblinsolve(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
         Am = Am, solver = solver, symfreqvar = symfreqvar, nbatches = nbatches, 
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
+        returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, verbosity = verbosity)
 end
 
@@ -294,7 +307,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     circuitdefs; wp = 0.0, Nmodes::Integer = 1, Am = zeros(Complex{Float64},0,0),
     solver = :klu, symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-    returnnodeflux = false, returnvoltage = false, verbosity = 1)
+    returnnodeflux = false, returnnodefluxadjoint = false,
+    returnvoltage = false, verbosity = 1)
 
     @assert nbatches >= 1
 
@@ -423,6 +437,12 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         nodeflux = Vector{Complex{Float64}}(undef,0)
     end
 
+    if returnnodefluxadjoint
+        nodefluxadjoint = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
+    else
+        nodefluxadjoint = Vector{Complex{Float64}}(undef,0)
+    end
+
     if returnvoltage
         voltage = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
     else
@@ -430,6 +450,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     end
 
     wpumpmodes = calcw(0.0,indices,wp);
+    modes = [(2*i,) for i in indices]
+
 
     # solve the linear system for the specified frequencies. the response for
     # each frequency is independent so it can be done in parallel; however
@@ -438,7 +460,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # parallelize using native threading
     batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
     Base.Threads.@threads for i in 1:length(batches)
-        hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
+        hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage, Asparse,
             AoLjnm, invLnm, Cnm, Gnm, bnm,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
@@ -455,8 +477,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         QEideal = zeros(Float64,0,0,0)
     end
 
-    return LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, voltage, Nmodes,
-        Nnodes, Nbranches, signalindex,w)
+    return LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, nodefluxadjoint,
+        voltage, Nmodes, Nnodes, Nbranches, signalindex, w, modes)
 end
 
 """
@@ -472,7 +494,7 @@ Solve the linearized harmonic balance problem for a subset of the frequencies
 given by `wi`. This function is thread safe in that different frequencies can
 be computed in parallel on separate threads.
 """
-function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
+function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage, Asparse,
     AoLjnm, invLnm, Cnm, Gnm, bnm,
     AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
     Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
@@ -584,7 +606,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
                 portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
         end
 
-        if Nnoiseports > 0 && (!isempty(Snoise) || !isempty(QE) || !isempty(CM))
+        if Nnoiseports > 0 && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint))
 
             # solve the nonlinear system with the complex conjugate of the pump
             # modulation matrix
@@ -618,6 +640,11 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
 
             # solve the linear system
             ldiv!(phin,F,bnm)
+
+            # copy the nodeflux adjoint for output
+            if !isempty(nodefluxadjoint)
+                copy!(view(nodefluxadjoint,:,:,i),phin)
+            end
 
             # calculate the noise scattering parameters
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
