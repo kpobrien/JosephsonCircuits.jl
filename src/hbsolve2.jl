@@ -201,8 +201,9 @@ function hblinsolve2(w, psc, cg, circuitdefs, signalfreq; pump=nothing,
         # convert the branch flux vector to a matrix with the terms arranged
         # in the correct way for the inverse rfft including the appropriate
         # complex conjugates.
+        branchflux = pump.Rbnm*pump.nodeflux
         phivectortomatrix!(
-            pump.nodeflux[pump.Ljbm.nzind], phimatrix,
+            branchflux[pump.Ljbm.nzind], phimatrix,
             pumpindices.vectomatmap,
             pumpindices.conjsourceindices,
             pumpindices.conjtargetindices,
