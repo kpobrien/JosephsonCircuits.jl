@@ -186,7 +186,7 @@ inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
 # outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
 
 """
-function calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
+function calcS_inner!(S, inputwave, outputwave, nodeflux, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
     nodeindexarraysorted, typevector, wmodes, symfreqvar, nosource)
     # check the size of S
@@ -200,7 +200,7 @@ function calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
     # loop over input branches and modes to define inputwaves
     Ninputports = length(inputportindices)
     Noutputports = length(outputportindices)
-    Nsolutions = size(phin,2)
+    Nsolutions = size(nodeflux,2)
     Nmodes = length(wmodes)
 
     for i in 1:Ninputports
@@ -221,8 +221,12 @@ function calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
                 # calculate the scaling factor for the waves
                 kval = 1 / sqrt(Complex(real(portimpedance)))
 
-                # convert from sqrt(power) to sqrt(photons/second)
-                kval *= 1 /sqrt(abs(wmodes[j]))
+                # this will give NaN for DC, so set kval=0 in that case
+                if wmodes[j] == 0
+                    kval = 0
+                else
+                    kval *= 1 /sqrt(abs(wmodes[j]))
+                end
 
                 # calculate the input and output power waves as defined in (except in
                 # units of sqrt(photons/second) instead of sqrt(power)
@@ -247,7 +251,7 @@ function calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
                 portvoltage = calcportvoltage(
                     nodeindexarraysorted[1,outputportindices[i]],
                     nodeindexarraysorted[2,outputportindices[i]],
-                    phin,
+                    nodeflux,
                     wmodes,
                     Nmodes,j,k)
 
@@ -268,7 +272,12 @@ function calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
                 kval = 1 / sqrt(Complex(real(portimpedance)))
 
                 # convert from sqrt(power) to sqrt(photons/second)
-                kval *= 1 /sqrt(abs(wmodes[j]))
+                # this will give NaN for DC, so set kval=0 in that case
+                if wmodes[j] == 0
+                    kval = 0
+                else
+                    kval *= 1 /sqrt(abs(wmodes[j]))
+                end
 
                 # calculate the input and output power waves as defined in (except in
                 # units of sqrt(photons/second) instead of sqrt(power)
@@ -281,8 +290,12 @@ function calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
     end
  
     # scattering matrix is defined as outputwave = S * inputwave
-    rdiv!(outputwave,inputwave)
-    copy!(S,outputwave)
+    if size(outputwave) == size(S)
+        rdiv!(outputwave,inputwave)
+        copy!(S,outputwave)
+    else
+        S .= outputwave / inputwave
+    end
 
     return nothing
 end

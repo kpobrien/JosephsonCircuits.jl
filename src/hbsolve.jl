@@ -882,20 +882,14 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     # calculate the scattering parameters for the pump
     Nports = length(portindices)
-
-    S = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-
-
-    # # calculate the scattering parameters
-    # if any(abs.(Ip) .> 0)
-    #     # portimpedances = [vvn[i] for i in portimpedanceindices]
-    #     # noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
-
-    #     # inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
-    #     # outputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-    #     # calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
-    #     #     portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
-    # end
+    S = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
+    inputwave = zeros(Complex{Float64}, Nports*Nmodes)
+    outputwave = zeros(Complex{Float64},Nports*Nmodes)
+    portimpedances = [vvn[i] for i in portimpedanceindices]
+    if !isempty(S)
+        calcS!(S,inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
+            portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+    end
 
     # calculate the frequency struct which we use in v2 of the solvers
     freq = removeconjfreqs(
@@ -906,10 +900,6 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     )
 
     return NonlinearHB((wp,), freq, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
-    # return (samples=samples,fmin=fmin,alphas=alphas,
-    #     fvals=fvals,fpvals=fpvals,dfdalphavals=dfdalphavals)
-    # return normF
-
 end
 
 """

@@ -457,11 +457,7 @@ function hblinsolve2(w, psc::ParsedSortedCircuit,
     end
 
     # generate the mode indices and find the signal index
-    # this should be removed
-    # indices = calcindices(Nsignalmodes)
-    # signalindex = findall(indices .== 0)[1]
     signalindex = 1
-    # wp = 0.0
     Nmodes = Nsignalmodes
     solver = :klu
 
@@ -668,6 +664,7 @@ function hbnlsolve2(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
 
     # extract the elements we need
     Nnodes = psc.Nnodes
+    typevector = psc.typevector
     nodeindexarraysorted = psc.nodeindexarraysorted
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
@@ -680,6 +677,7 @@ function hbnlsolve2(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     portindices = nm.portindices
     portnumbers = nm.portnumbers
     portimpedanceindices = nm.portimpedanceindices
+    vvn = nm.vvn
     Lmean = nm.Lmean
     # if there are no inductors, then Lmean will be zero so set it to be one
     if iszero(Lmean)
@@ -800,11 +798,14 @@ function hbnlsolve2(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
 
     # calculate the scattering parameters for the pump
     Nports = length(portindices)
-    # input = Diagonal(zeros(Complex{Float64}, Nports*Nmodes))
-    # output = zeros(Complex{Float64}, Nports*Nmodes)
-    # phibports = zeros(Complex{Float64}, Nports*Nmodes)
-    # inputval = zero(Complex{Float64})
     S = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
+    inputwave = zeros(Complex{Float64}, Nports*Nmodes)
+    outputwave = zeros(Complex{Float64},Nports*Nmodes)
+    portimpedances = [vvn[i] for i in portimpedanceindices]
+    if !isempty(S)
+        calcS!(S,inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
+            portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+    end
 
     return NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
 
