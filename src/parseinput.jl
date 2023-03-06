@@ -693,7 +693,12 @@ function calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
 
     elseif sorting == :number
         # convert the unique node strings to integers and sort those
-        sortperm!(uniquenodevectorsortindices,parse.(Int,uniquenodevector))
+        try
+            sortperm!(uniquenodevectorsortindices, parse.(Int,uniquenodevector))
+        catch e
+            println("Error: Failed to parse the nodes as integers. Try setting the keyword argument `sorting=:name`.")
+            throw(e)
+        end
 
     elseif sorting == :none
         # don't perform any sorting. keep the nodes in
