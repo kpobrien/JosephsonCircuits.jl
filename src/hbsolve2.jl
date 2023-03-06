@@ -352,6 +352,7 @@ function hblinsolve2(w, psc::ParsedSortedCircuit,
     Gnm = signalnm.Gnm
     invLnm = signalnm.invLnm
     portindices = signalnm.portindices
+    portnumbers = signalnm.portnumbers
     portimpedanceindices = signalnm.portimpedanceindices
     vvn = signalnm.vvn
 
@@ -486,7 +487,8 @@ function hblinsolve2(w, psc::ParsedSortedCircuit,
     end
 
     return LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, nodefluxadjoint,
-        voltage, Nmodes, Nnodes, Nbranches, signalindex,w,signalfreq.modes)
+        voltage, Nmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted,
+        portnumbers, signalindex, w, signalfreq.modes)
 end
 
 """
@@ -807,7 +809,8 @@ function hbnlsolve2(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
             portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
     end
 
-    return NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
+    return NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
+        Nbranches, psc.uniquenodevectorsorted, portnumbers, modes, S)
 
 end
 

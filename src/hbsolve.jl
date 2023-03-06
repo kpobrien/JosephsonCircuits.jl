@@ -14,6 +14,10 @@ A simple structure to hold the nonlinear harmonic balance solutions.
 - `Nmodes`: the number of signal and idler frequencies.
 - `Nnodes`: the number of nodes in the circuit (including the ground node).
 - `Nbranches`: the number of branches in the circuit.
+- `nodes`: the vector of unique node strings.
+- `ports`: vector of port numbers.
+- `modes`: tuple of the pump mode indices where (1,) is the pump in the single
+    pump case.
 - `S`: the scattering matrix relating inputs and outputs for each combination
     of port and frequency (not currently functional).
 """
@@ -27,6 +31,9 @@ struct NonlinearHB
     Ljbm
     Nmodes
     Nbranches
+    nodes
+    ports
+    modes
     S
 end
 
@@ -53,6 +60,8 @@ A simple structure to hold the linearized harmonic balance solutions.
 - `Nmodes`: the number of signal and idler frequencies.
 - `Nnodes`: the number of nodes in the circuit (including the ground node).
 - `Nbranches`: the number of branches in the circuit.
+- `nodes`: the vector of unique node strings.
+- `ports`: vector of port numbers.
 - `signalindex`: the index of the signal mode.
 - `w`: the signal frequencies.
 - `modes`: tuple of the signal mode indices where (0,) is the signal
@@ -69,6 +78,8 @@ struct LinearHB
     Nmodes
     Nnodes
     Nbranches
+    nodes
+    ports
     signalindex
     w
     modes
@@ -327,6 +338,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     Gnm = nm.Gnm
     invLnm = nm.invLnm
     portindices = nm.portindices
+    portnumbers = nm.portnumbers
     portimpedanceindices = nm.portimpedanceindices
     vvn = nm.vvn
 
@@ -478,7 +490,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     end
 
     return LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, nodefluxadjoint,
-        voltage, Nmodes, Nnodes, Nbranches, signalindex, w, modes)
+        voltage, Nmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted,
+        portnumbers, signalindex, w, modes)
 end
 
 """
@@ -898,8 +911,10 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
             dc=false, odd=true, even=false, maxintermodorder=Inf,
         )
     )
+    modes = freq.modes
 
-    return NonlinearHB((wp,), freq, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
+    return NonlinearHB((wp,), freq, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
+        Nbranches, psc.uniquenodevectorsorted, portnumbers, modes, S)
 end
 
 """
