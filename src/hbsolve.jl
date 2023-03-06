@@ -490,7 +490,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     end
 
     return LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, nodefluxadjoint,
-        voltage, Nmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted,
+        voltage, Nmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
         portnumbers, signalindex, w, modes)
 end
 
@@ -914,7 +914,7 @@ function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     modes = freq.modes
 
     return NonlinearHB((wp,), freq, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
-        Nbranches, psc.uniquenodevectorsorted, portnumbers, modes, S)
+        Nbranches, psc.uniquenodevectorsorted[2:end], portnumbers, modes, S)
 end
 
 """
