@@ -40,7 +40,17 @@ function hbsolve2(ws, wp, Ip, Nmodulationharmonics, Npumpmodes, circuit, circuit
     # syntax internally
     w = (wp,)
     Nharmonics = (2*Npumpmodes,)
-    sources = ((mode = (1,), port = pumpports[1], current = Ip),)
+
+    # create the sources vector
+    sources = [(mode = (1,), port = pumpports[1], current = Ip[1])]
+    # if there are multiple currents and pumpports then add them as sources
+    # they all have to have the same frequency when using the old interface
+    @assert length(pumpports) == length(Ip)
+    if length(pumpports) > 1
+        for i in 2:length(pumpports)
+            push!(sources,(mode = (1,), port = pumpports[i], current = Ip[i]))
+        end
+    end
 
     # calculate the frequency struct
     freq = removeconjfreqs(
