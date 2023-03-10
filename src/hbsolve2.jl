@@ -34,7 +34,7 @@ function hbsolve2(ws, wp, Ip, Nmodulationharmonics, Npumpmodes, circuit, circuit
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-    verbosity = 1)
+    keyedarrays::Val{K} = Val(false), verbosity = 1) where K
 
     # solve the nonlinear system using the old syntax externally and the new
     # syntax internally
@@ -67,7 +67,7 @@ function hbsolve2(ws, wp, Ip, Nmodulationharmonics, Npumpmodes, circuit, circuit
     pump = hbnlsolve2(w, sources, freq, indices, psc, cg, nm;
         solver = solver, iterations = iterations, x0 = nothing, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        symfreqvar = symfreqvar)
+        symfreqvar = symfreqvar, keyedarrays = keyedarrays)
 
     # generate the signal modes
     signalfreq =truncfreqs(
@@ -82,7 +82,7 @@ function hbsolve2(ws, wp, Ip, Nmodulationharmonics, Npumpmodes, circuit, circuit
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage)
+        returnvoltage = returnvoltage, keyedarrays = keyedarrays)
 
     return HB(pump, signal)
 end
@@ -161,7 +161,7 @@ function hblinsolve2(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     nbatches::Integer = Base.Threads.nthreads(), returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    verbosity = 1)
+    keyedarrays::Val{K} = Val(false), verbosity = 1) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit)
@@ -180,7 +180,7 @@ return hblinsolve2(w, psc, cg, circuitdefs, signalfreq; pump = pump,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage)
+        returnvoltage = returnvoltage, keyedarrays = keyedarrays)
 end
 
 """
@@ -262,7 +262,7 @@ function hblinsolve2(w, psc::ParsedSortedCircuit,
     symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    verbosity = 1) where N
+    keyedarrays::Val{K} = Val(false), verbosity = 1) where {N,K}
 
     Nsignalmodes = length(signalfreq.modes)
     # calculate the numeric matrices
@@ -548,7 +548,7 @@ function hbnlsolve2(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
     circuit, circuitdefs; solver = :klu, iterations = 1000,
     maxintermodorder = Inf, dc = false, odd = true, even = false, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, sorting= :number) where N
+    symfreqvar = nothing, sorting= :number, keyedarrays::Val{K} = Val(false)) where {N,K}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -574,7 +574,7 @@ function hbnlsolve2(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
     return hbnlsolve2(w, sources, freq, indices, psc, cg, nm;
         solver = solver, iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        symfreqvar = symfreqvar)
+        symfreqvar = symfreqvar, keyedarrays = keyedarrays)
 end
 
 """
@@ -645,7 +645,7 @@ function hbnlsolve2(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; solver = :klu, iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing) where N
+    symfreqvar = nothing, keyedarrays::Val{K} = Val(false)) where {N,K}
 
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw

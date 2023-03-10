@@ -188,7 +188,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false,returnnodefluxadjoint = false, returnvoltage = false,
-    verbosity = 1)
+    keyedarrays::Val{K} = Val(false), verbosity = 1) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting=sorting)
@@ -217,7 +217,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, verbosity = verbosity)
+        returnvoltage = returnvoltage, keyedarrays = keyedarrays,
+        verbosity = verbosity)
     return HB(pump, signal)
 end
 
@@ -298,7 +299,7 @@ function hblinsolve(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
     nbatches = Base.Threads.nthreads(), sorting = :number, returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
-    returnvoltage = false, verbosity = 1)
+    returnvoltage = false, keyedarrays::Val{K} = Val(false), verbosity = 1) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -311,7 +312,8 @@ function hblinsolve(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, verbosity = verbosity)
+        returnvoltage = returnvoltage, keyedarrays = keyedarrays,
+        verbosity = verbosity)
 end
 
 function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
@@ -319,7 +321,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     solver = :klu, symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
-    returnvoltage = false, verbosity = 1)
+    returnvoltage = false, keyedarrays::Val{K} = Val(false), verbosity = 1) where K
 
     @assert nbatches >= 1
 
@@ -745,7 +747,7 @@ hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs, ports=[1])
 function hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
     solver = :klu, iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4, symfreqvar = nothing,
-    sorting = :number, verbosity = 1)
+    sorting = :number, keyedarrays::Val{K} = Val(false), verbosity = 1) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -756,14 +758,14 @@ function hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
     return hbnlsolve(wp, Ip, Nmodes, psc, cg, circuitdefs; ports = ports,
         solver = solver, iterations = iterations, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        symfreqvar = symfreqvar, verbosity = verbosity)
+        symfreqvar = symfreqvar, verbosity = verbosity, keyedarrays = keyedarrays)
 
 end
 
 function hbnlsolve(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     circuitdefs; ports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, verbosity = 1)
+    symfreqvar = nothing, keyedarrays::Val{K} = Val(false), verbosity = 1) where K
 
     if length(ports) != length(Ip)
         throw(DimensionMismatch("Number of currents Ip must be equal to number of pump ports"))
