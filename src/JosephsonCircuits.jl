@@ -39,12 +39,14 @@ include("graphproc.jl")
 include("capindmat.jl")
 include("matutils.jl")
 include("nlsolve.jl")
-include("hbsolve.jl")
 include("fftutils.jl")
 include("qesparams.jl")
 
-# Experimental multi-tone harmonic balance code.
-include("hbsolve2.jl")
+# old single tone harmonic balance solver code
+include("hbsolveold.jl")
+
+# new mult-tone harmonic balance solver code
+include("hbsolve.jl")
 
 # These are for exporting SPICE netlists and running simulations in
 # WRSPICE or Xyce. 
@@ -140,7 +142,7 @@ function warmupsyms()
 
 end
 
-function warmupsyms2()
+function warmupsymsold()
 
     @variables Rleft Cc Lj Cj w L1
     circuit = Tuple{String,String,String,Num}[]
@@ -156,7 +158,7 @@ function warmupsyms2()
         Rleft => 50.0,
     )
 
-    return hbsolve2(2*pi*(4.5:0.5:5.0)*1e9, 2*pi*4.75001*1e9, 0.00565e-6, 2, 2, circuit, circuitdefs, pumpports=[1]);
+    return hbsolveold(2*pi*(4.5:0.5:5.0)*1e9, 2*pi*4.75001*1e9, 0.00565e-6, 2, 2, circuit, circuitdefs, pumpports=[1]);
 
 end
 
@@ -265,7 +267,7 @@ function warmuphblinsolve()
         Ipump => 1.0e-8,
     )
 
-    return hblinsolve(2*pi*(4.5:0.1:5.0)*1e9,circuit,circuitdefs,Nmodes=1)
+    return hblinsolve(2*pi*(4.5:0.1:5.0)*1e9,circuit,circuitdefs)
 end
 
 function warmupvvn()
@@ -294,14 +296,14 @@ function warmupvvn()
 
     psc = parsesortcircuit(circuit,sorting=:number)
 
-
     return valuevectortonumber(psc.valuevector,circuitdefs)
 end
 
 
-export @syms, hbnlsolve, hblinsolve, hbsolve, hbsolve2, hbnlsolve2, parsecircuit,
-    parsesortcircuit, calccircuitgraph, symbolicmatrices, numericmatrices,
-    LjtoIc, IctoLj, @variables, @register_symbolic, Num, Symbolics
+export @syms, hbsolve, hbnlsolve, hblinsolve, hbsolveold, hbnlsolveold,
+    hblinsolveold, parsecircuit, parsesortcircuit, calccircuitgraph,
+    symbolicmatrices, numericmatrices, LjtoIc, IctoLj, @variables,
+    @register_symbolic, Num, Symbolics
 
 
 # the below precompile directives are to help the compiler perform type inference
@@ -316,7 +318,7 @@ export @syms, hbnlsolve, hblinsolve, hbsolve, hbsolve2, hbnlsolve2, parsecircuit
 @precompile_all_calls begin
     warmup()
     warmupsyms()
-    warmupsyms2()
+    warmupsymsold()
 end
 
 #end module

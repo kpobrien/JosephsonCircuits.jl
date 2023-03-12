@@ -36,7 +36,7 @@ end
 
     include("hbsolve.jl")
 
-    include("hbsolve2.jl")
+    include("hbsolveold.jl")
 
     include("JosephsonCircuits.jl")
 
