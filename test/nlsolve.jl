@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using LinearAlgebra
 using Test
 
 @testset verbose=true "nlsolve" begin
@@ -53,5 +54,32 @@ using Test
             JosephsonCircuits.nlsolve!(fj!, F, J, x)
         )
     end
+
+
+    @testset verbose=true "nlsolve klu error" begin
+
+        function fj!(F, J, x)
+            if !(F == nothing)
+                F[1] = (x[1]+3)*(x[2]^3-7)+18
+                F[2] = sin(x[2]*exp(x[1])-1)
+            end
+            if !(J == nothing)
+                J[1, 1] = 0
+                J[1, 2] = 0
+                J[2, 1] = 0
+                J[2, 2] = 0
+            end
+            return nothing
+        end
+
+        x = [ 0.1, 1.2]
+        F = [0.0, 0.0]
+        J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,2)
+        @test_throws(
+            LinearAlgebra.SingularException(0),
+            JosephsonCircuits.nlsolve!(fj!, F, J, x)
+        )
+    end
+
 
 end

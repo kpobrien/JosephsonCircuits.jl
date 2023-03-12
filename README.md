@@ -11,7 +11,7 @@ Frequency dependent circuit parameters are supported to model realistic impedanc
 
 [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) supports the following:
 * Nonlinear simulations in which the user defines a circuit, the drive current, frequency, and number of harmonics and the code calculates the node flux or node voltage at each harmonic.
-* Linearized simulations about the nonlinear operating point calculated above. This simulates the small signal response of a periodically time varying linear circuit and is useful for simulating parametric amplification and frequency conversion in the undepleted (strong) pump limit. Calculation of node fluxes (or node voltages) and X parameters, which are a nonlinear generalization of scattering parameters [4-5]. 
+* Linearized simulations about the nonlinear operating point calculated above. This simulates the small signal response of a periodically time varying linear circuit and is useful for simulating parametric amplification and frequency conversion in the undepleted (strong) pump limit. Calculation of node fluxes (or node voltages) and scattering parameters of the linearized circuit [4-5].
 * Linear simulations of linear circuits. Calculation of node fluxes (or node voltages) and scattering parameters.
 * Calculation of symbolic capacitance and inverse inductance matrices.
 
