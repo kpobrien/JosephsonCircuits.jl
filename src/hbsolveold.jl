@@ -1,10 +1,10 @@
 
 """
     hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
-        pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+        pumpports = [1], iterations = 1000, ftol = 1e-8,
         symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
         returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-        returnnodeflux = false, returnvoltage = false, verbosity = 1)
+        returnnodeflux = false, returnvoltage = false)
 
 Harmonic balance solver for single-pump four wave mixing processes in circuits
 containing Josephson junctions, capacitors, inductors, and resistors. Dissipation
@@ -26,7 +26,6 @@ fluxes or voltages.
 
 # Keywords
 - `pumpports = [1]`: vector of pump port numbers. Default is a single pump at port 1.
-- `solver = :klu`: linear solver (actually the factorization method).
 - `iterations = 1000`: number of iterations at which the nonlinear solver stops
     even if convergence criteria not reached. 
 - `ftol = 1e-8`: relative or absolute tolerance at which nonlinear solver stops
@@ -56,7 +55,6 @@ fluxes or voltages.
     reduce memory usage.
 - `returnvoltage = false`: if `true`, return the node voltages for each signal
     and idler at each node. Set to `false` by default to reduce memory usage.
-- `verbosity = 1`: Control how much info to print. Currently does nothing.
 
 # Examples
 ```
@@ -83,11 +81,11 @@ using Plots;plot(ws/(2*pi*1e9),10*log10.(abs2.(result.signal.S[result.signal.sig
 ```
 """
 function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
-    pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+    pumpports = [1], iterations = 1000, ftol = 1e-8,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false,returnnodefluxadjoint = false, returnvoltage = false,
-    keyedarrays::Val{K} = Val(false), verbosity = 1) where K
+    keyedarrays::Val{K} = Val(false)) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting=sorting)
@@ -97,8 +95,8 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
 
     # solve the nonlinear system
     pump=hbnlsolveold(wp, Ip, Npumpmodes, psc, cg, circuitdefs, ports = pumpports,
-        solver = solver, iterations = iterations, ftol = ftol,
-        symfreqvar = symfreqvar, verbosity = verbosity)
+        iterations = iterations, ftol = ftol,
+        symfreqvar = symfreqvar)
 
     # the node flux
     # phin = pump.out.zero
@@ -112,21 +110,20 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
 
     # solve the linear system
     signal=hblinsolveold(ws, psc, cg, circuitdefs, wp = wp, Nmodes = Nsignalmodes,
-        Am = Am, solver = solver, symfreqvar = symfreqvar, nbatches = nbatches,
+        Am = Am, symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, keyedarrays = keyedarrays,
-        verbosity = verbosity)
+        returnvoltage = returnvoltage, keyedarrays = keyedarrays)
     return HB(pump, signal)
 end
 
 """
     hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
-        Am = zeros(Complex{Float64},0,0), solver = :klu, symfreqvar = nothing,
+        Am = zeros(Complex{Float64},0,0), symfreqvar = nothing,
         nbatches = Base.Threads.nthreads(), sorting = :number, returnS = true,
         returnSnoise = false, returnQE = true, returnCM = true,
-        returnnodeflux = false, returnvoltage = false, verbosity = 1)
+        returnnodeflux = false, returnvoltage = false)
 
 Linearized harmonic balance solver for single-pump four wave mixing processes in circuits
 containing Josephson junctions, capacitors, inductors, and resistors. Dissipation
@@ -145,7 +142,6 @@ fluxes or voltages.
     pump frequency.
 - `Nmodes = 1`: number of signal and idler modes.
 - `Am = zeros(Complex{Float64},0,0)`: 
-- `solver = :klu`: linear solver (actually the factorization method).
 - `symfreqvar = nothing`: symbolic frequency variable which is set to `nothing`
     by default but should be set equal to the frequency variable like `w` if 
     there is frequency dependence.
@@ -171,7 +167,6 @@ fluxes or voltages.
     reduce memory usage.
 - `returnvoltage = false`: if `true`, return the node voltages for each signal
     and idler at each node. Set to `false` by default to reduce memory usage. 
-- `verbosity = 1`: Control how much info to print. Currently does nothing. 
 
 # Examples
 ```
@@ -194,11 +189,11 @@ using Plots;plot(w/(2*pi*1e9),angle.(result.S[:]))
 ```
 """
 function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
-    Am = zeros(Complex{Float64},0,0), solver = :klu, symfreqvar = nothing,
+    Am = zeros(Complex{Float64},0,0), symfreqvar = nothing,
     nbatches = Base.Threads.nthreads(), sorting = :number, returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
-    returnvoltage = false, keyedarrays::Val{K} = Val(false), verbosity = 1) where K
+    returnvoltage = false, keyedarrays::Val{K} = Val(false)) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -207,20 +202,19 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
     cg = calccircuitgraph(psc)
 
     return hblinsolveold(w, psc, cg, circuitdefs; wp = wp, Nmodes = Nmodes,
-        Am = Am, solver = solver, symfreqvar = symfreqvar, nbatches = nbatches, 
+        Am = Am, symfreqvar = symfreqvar, nbatches = nbatches, 
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, keyedarrays = keyedarrays,
-        verbosity = verbosity)
+        returnvoltage = returnvoltage, keyedarrays = keyedarrays)
 end
 
 function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     circuitdefs; wp = 0.0, Nmodes::Integer = 1, Am = zeros(Complex{Float64},0,0),
-    solver = :klu, symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
+    symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
-    returnvoltage = false, keyedarrays::Val{K} = Val(false), verbosity = 1) where K
+    returnvoltage = false, keyedarrays::Val{K} = Val(false)) where K
 
     @assert nbatches >= 1
 
@@ -379,7 +373,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
             portindices, portimpedanceindices, noiseportimpedanceindices,
             portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
-            w, wpumpmodes, Nmodes, Nnodes, solver, symfreqvar, batches[i])
+            w, wpumpmodes, Nmodes, Nnodes, symfreqvar, batches[i])
     end
 
     if returnQE
@@ -417,8 +411,8 @@ end
 
 """
     hbnlsolveold(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
-        solver = :klu, iterations = 1000, ftol = 1e-8, symfreqvar = nothing,
-        sorting = :number, verbosity = 1)
+        iterations = 1000, ftol = 1e-8, symfreqvar = nothing,
+        sorting = :number)
 
 Nonlinear harmonic balance solver for single-pump four wave mixing processes in circuits
 containing Josephson junctions, capacitors, inductors, and resistors. Dissipation
@@ -435,7 +429,6 @@ can be included through frequency dependent resistors or complex capacitance.
 
 # Keywords
 - `ports = [1]`: vector of drive port numbers. Default is a single drive at port 1.
-- `solver = :klu`: linear solver (actually the factorization method).
 - `iterations = 1000`: number of iterations at which the nonlinear solver stops
     even if convergence criteria not reached.
 - `ftol = 1e-8`: relative or absolute tolerance at which nonlinear solver stops
@@ -445,7 +438,6 @@ can be included through frequency dependent resistors or complex capacitance.
     there is frequency dependence.
 - `sorting = :number`: sort the ports by turning them into integers and sorting
     those integers. See [`sortnodes`](@ref) for other options if this fails.
-- `verbosity = 1`: Control how much info to print. Currently does nothing.
 
 # Examples
 ```
@@ -469,9 +461,9 @@ hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs, ports=[1])
 ```
 """
 function hbnlsolveold(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
-    solver = :klu, iterations = 1000, ftol = 1e-8,
+    iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4, symfreqvar = nothing,
-    sorting = :number, keyedarrays::Val{K} = Val(false), verbosity = 1) where K
+    sorting = :number, keyedarrays::Val{K} = Val(false)) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -480,16 +472,16 @@ function hbnlsolveold(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
     cg = calccircuitgraph(psc)
 
     return hbnlsolveold(wp, Ip, Nmodes, psc, cg, circuitdefs; ports = ports,
-        solver = solver, iterations = iterations, ftol = ftol,
+        iterations = iterations, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        symfreqvar = symfreqvar, verbosity = verbosity, keyedarrays = keyedarrays)
+        symfreqvar = symfreqvar, keyedarrays = keyedarrays)
 
 end
 
 function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
-    circuitdefs; ports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+    circuitdefs; ports = [1], iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, keyedarrays::Val{K} = Val(false), verbosity = 1) where K
+    symfreqvar = nothing, keyedarrays::Val{K} = Val(false)) where K
 
     if length(ports) != length(Ip)
         throw(DimensionMismatch("Number of currents Ip must be equal to number of pump ports"))

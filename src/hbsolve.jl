@@ -103,12 +103,12 @@ end
 
 """
     hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
-        pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+        pumpports = [1], iterations = 1000, ftol = 1e-8,
         switchofflinesearchtol = 1e-5, alphamin = 1e-4,
         symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
         returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
         returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-        verbosity = 1)
+        )
 
 Calls the new harmonic balance solvers (which work for an arbitrary number of
 modes and ports) `hbnlsolve` and `hblinsolve` using an identical syntax to
@@ -130,12 +130,12 @@ This function attempts to mimic `hbsolveold`, but has a few important difference
     can be found by inspecting the contents of `modes`.
 """
 function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
-    pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
+    pumpports = [1], iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-    keyedarrays::Val{K} = Val(false), verbosity = 1) where K
+    keyedarrays::Val{K} = Val(false)) where K
 
     # solve the nonlinear system using the old syntax externally and the new
     # syntax internally
@@ -176,7 +176,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
 
     # solve the nonlinear problem
     pump = hbnlsolve(w, sources, freq, indices, psc, cg, nm;
-        solver = solver, iterations = iterations, x0 = nothing, ftol = ftol,
+        iterations = iterations, x0 = nothing, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays)
 
@@ -212,7 +212,7 @@ end
         nbatches::Integer = Base.Threads.nthreads(), returnS = true,
         returnSnoise = false, returnQE = true, returnCM = true,
         returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-        verbosity = 1)
+        )
 
 Harmonic balance solver supporting an arbitrary number of small signals (weak
 tones) linearized around `pump`, the solution of the nonlinear system consisting
@@ -278,7 +278,7 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     nbatches::Integer = Base.Threads.nthreads(), returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    keyedarrays::Val{K} = Val(false), verbosity = 1) where K
+    keyedarrays::Val{K} = Val(false)) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit)
@@ -306,7 +306,7 @@ end
         symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
         returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
         returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-        verbosity = 1)
+        )
 
 Harmonic balance solver supporting an arbitrary number of small signals (weak
 tones) linearized around `pump`, the solution of the nonlinear system consisting
@@ -379,7 +379,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    keyedarrays::Val{K} = Val(false), verbosity = 1) where {N,K}
+    keyedarrays::Val{K} = Val(false)) where {N,K}
 
     Nsignalmodes = length(signalfreq.modes)
     # calculate the numeric matrices
@@ -577,7 +577,6 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # generate the mode indices and find the signal index
     signalindex = 1
     Nmodes = Nsignalmodes
-    solver = :klu
 
     # solve the linear system for the specified frequencies. the response for
     # each frequency is independent so it can be done in parallel; however
@@ -592,7 +591,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
             portindices, portimpedanceindices, noiseportimpedanceindices,
             portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
-            w, wpumpmodes, Nmodes, Nnodes, solver, symfreqvar, batches[i])
+            w, wpumpmodes, Nmodes, Nnodes, symfreqvar, batches[i])
     end
 
     if returnQE
@@ -634,7 +633,7 @@ end
         Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
         portindices, portimpedanceindices, noiseportimpedanceindices,
         portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
-        w, indices, wp, Nmodes, Nnodes, solver, symfreqvar, wi)
+        w, indices, wp, Nmodes, Nnodes, symfreqvar, wi)
 
 Solve the linearized harmonic balance problem for a subset of the frequencies
 given by `wi`. This function is thread safe in that different frequencies can
@@ -646,7 +645,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
     Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
     portindices, portimpedanceindices, noiseportimpedanceindices,
     portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
-    w, wpumpmodes, Nmodes, Nnodes, solver, symfreqvar, wi)
+    w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi)
 
     Nports = length(portindices)
     phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
@@ -825,7 +824,7 @@ end
 
 """
     hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
-        circuit, circuitdefs; solver = :klu, iterations = 1000,
+        circuit, circuitdefs; iterations = 1000,
         maxintermodorder = Inf, dc = false, odd = true, even = false, x0 = nothing,
         ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
         symfreqvar = nothing, sorting= :number)
@@ -877,7 +876,7 @@ true
 ```
 """
 function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
-    circuit, circuitdefs; solver = :klu, iterations = 1000,
+    circuit, circuitdefs; iterations = 1000,
     maxintermodorder = Inf, dc = false, odd = true, even = false, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, sorting= :number, keyedarrays::Val{K} = Val(false)) where {N,K}
@@ -904,7 +903,7 @@ function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
-        solver = solver, iterations = iterations, x0 = x0, ftol = ftol,
+        iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays)
 end
@@ -912,7 +911,7 @@ end
 """
     hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
         indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
-        nm::CircuitMatrices; solver = :klu, iterations = 1000, x0 = nothing,
+        nm::CircuitMatrices; iterations = 1000, x0 = nothing,
         ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
         symfreqvar = nothing)
 
@@ -975,7 +974,7 @@ true
 """
 function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
-    nm::CircuitMatrices; solver = :klu, iterations = 1000, x0 = nothing,
+    nm::CircuitMatrices; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, keyedarrays::Val{K} = Val(false)) where {N,K}
 
