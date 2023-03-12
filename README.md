@@ -1,7 +1,7 @@
 
 # JosephsonCircuits.jl
 
-[![Code coverage](https://codecov.io/github/kpobrien/JosephsonCircuits.jl/branch/main/graphs/badge.svg?branch=main)](https://codecov.io/github/kpobrien/JosephsonCircuits.jl?branch=main)
+[![Code coverage](https://codecov.io/gh/kpobrien/JosephsonCircuits.jl/branch/main/graphs/badge.svg)](https://codecov.io/gh/kpobrien/JosephsonCircuits.jl)
 [![Build Status](https://github.com/kpobrien/JosephsonCircuits.jl/actions/workflows/CI.yml/badge.svg
 )](https://github.com/kpobrien/JosephsonCircuits.jl/actions?query=workflow)
 
