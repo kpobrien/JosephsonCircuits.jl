@@ -102,7 +102,7 @@ end
 
 
 """
-    hbsolve(ws, wp, Ip, Nmodulationharmonics, Npumpmodes, circuit, circuitdefs;
+    hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
         switchofflinesearchtol = 1e-5, alphamin = 1e-4,
         symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
@@ -129,7 +129,7 @@ This function attempts to mimic `hbsolveold`, but has a few important difference
     the signal mode is always at index 1 and the location of the other modes
     can be found by inspecting the contents of `modes`.
 """
-function hbsolve(ws, wp, Ip, Nmodulationharmonics, Npumpmodes, circuit, circuitdefs;
+function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     pumpports = [1], solver = :klu, iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
@@ -182,9 +182,15 @@ function hbsolve(ws, wp, Ip, Nmodulationharmonics, Npumpmodes, circuit, circuitd
 
     # generate the signal modes
     signalfreq =truncfreqs(
-        calcfreqsdft((Nmodulationharmonics,)),
+        calcfreqsdft((Nsignalmodes,)),
         dc=true,odd=false,even=true,maxintermodorder=Inf,
     )
+
+    # remove one of the signal modes if Nsignalmodes is even for compatibility
+    # with old harmonic balance solver
+    if mod(Nsignalmodes,2) == 0 && Nsignalmodes > 0
+        signalfreq = JosephsonCircuits.removefreqs(signalfreq, [(Nsignalmodes,)])
+    end
 
     # solve the linearized problem
     # i should make this a tuple
