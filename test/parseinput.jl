@@ -94,6 +94,13 @@ using Test
         )
     end
 
+    @testset "calcnodesorting" begin
+        @test_throws(
+            ArgumentError("invalid base 10 digit 'a' in \"a\""),
+            JosephsonCircuits.calcnodesorting(["30","11","0","a"];sorting=:number)
+        )
+    end
+
     @testset "calcvaluetype" begin
         @test_throws(
             DimensionMismatch("typevector and valuevector should have the same length"),

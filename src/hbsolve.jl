@@ -1666,6 +1666,9 @@ See also [`calcsources`](@ref).
 function calcsources!(bbm, modes, sources, portindices, portnumbers,
     nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
+    # fill the vector with zeros
+    fill!(bbm,0)
+
     # make a dictionary of ports
     portdict = Dict{eltype(portnumbers),eltype(portindices)}()
     for i in eachindex(portindices)
@@ -1694,7 +1697,7 @@ function calcsources!(bbm, modes, sources, portindices, portnumbers,
                 # flux quantum.
                 modeindex = modedict[mode]
                 key = (nodeindexarraysorted[1, portindex], nodeindexarraysorted[2, portindex])
-                bbm[(edge2indexdict[key]-1)*Nmodes+modeindex] = Lmean*current/phi0
+                bbm[(edge2indexdict[key]-1)*Nmodes+modeindex] += Lmean*current/phi0
             else
                 throw(ArgumentError("Source mode $(mode) not found."))
             end
