@@ -111,19 +111,19 @@ end
         verbosity = 1)
 
 Calls the new harmonic balance solvers (which work for an arbitrary number of
-modes and ports) `hbnlsolve2` and `hblinsolve2` using an identical syntax to
-`hbsolve`, which only supports four wave mixing processes involving single
+modes and ports) `hbnlsolve` and `hblinsolve` using an identical syntax to
+`hbsolveold`, which only supports four wave mixing processes involving single
 strong tone and an arbitrary number of tone in the linearized solver. This
 function is primarily for testing the new solvers and will eventually be
 deprecated. 
 
-This function attempts to mimic `hbsolve`, but has a few important differences:
+This function attempts to mimic `hbsolveold`, but has a few important differences:
 1. `Nmodulationharmonics` is no longer the number of signal modes but the number
     of modulation harmonics meaning `0` would give the signal only, `1` would
     three wave mixing processes, which this function does not enable. `2` would
     create idlers on either side of the signal mode at ws+2*wp and ws-2*wp.
     For other sets of idlers or three wave mixing processes, please use the new
-    interface to `hbsolve2`.
+    interface to `hbsolve`.
 2. The outputs of the linearized harmonic balance solver `hblinsolve2` may not
     have the same ordering of signal modes as in `hblinsolve`. In `hblinsolve2`
     the signal mode is always at index 1 and the location of the other modes

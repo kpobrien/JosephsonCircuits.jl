@@ -159,7 +159,7 @@ Ip=1.85e-6
     circuit,circuitdefs,pumpports=[1]);
 
 p1=plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S[end-Nsignalmodes+rpm.signal.signalindex,rpm.signal.signalindex,:])),
+    10*log10.(abs2.(rpm.signal.S[end-rpm.signal.Nmodes+rpm.signal.signalindex,rpm.signal.signalindex,:])),
     ylim=(-40,30),label="S21",
     xlabel="Signal Frequency (GHz)",
     legend=:bottomright,
@@ -167,7 +167,7 @@ p1=plot(ws/(2*pi*1e9),
     ylabel="dB")
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S[rpm.signal.signalindex,end-Nsignalmodes+rpm.signal.signalindex,:])),
+    10*log10.(abs2.(rpm.signal.S[rpm.signal.signalindex,end-rpm.signal.Nmodes+rpm.signal.signalindex,:])),
     label="S12",
     )
 
@@ -177,12 +177,12 @@ plot!(ws/(2*pi*1e9),
     )
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S[end-Nsignalmodes+rpm.signal.signalindex,end-Nsignalmodes+rpm.signal.signalindex,:])),
+    10*log10.(abs2.(rpm.signal.S[end-rpm.signal.Nmodes+rpm.signal.signalindex,end-rpm.signal.Nmodes+rpm.signal.signalindex,:])),
     label="S22",
     )
 
 p2=plot(ws/(2*pi*1e9),
-    rpm.signal.QE[end-Nsignalmodes+rpm.signal.signalindex,rpm.signal.signalindex,:]./rpm.signal.QEideal[end-Nsignalmodes+rpm.signal.signalindex,rpm.signal.signalindex,:],    
+    rpm.signal.QE[end-rpm.signal.Nmodes+rpm.signal.signalindex,rpm.signal.signalindex,:]./rpm.signal.QEideal[end-rpm.signal.Nmodes+rpm.signal.signalindex,rpm.signal.signalindex,:],    
     ylim=(0,1.05),
     title="Quantum efficiency",legend=false,
     ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)");
@@ -197,7 +197,7 @@ p3=plot(ws/(2*pi*1e9),
 
 
 p4=plot(ws/(2*pi*1e9),
-    1 .- rpm.signal.CM[end-Nsignalmodes+rpm.signal.signalindex,:],    
+    1 .- rpm.signal.CM[end-rpm.signal.Nmodes+rpm.signal.signalindex,:],    
     legend=false,title="Commutation \n relation error",
     ylabel="Commutation \n relation error",xlabel="Signal Frequency (GHz)");
 
@@ -295,7 +295,7 @@ Ip=1.1e-6
     pumpports=[1]);
 
 p1=plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S[end-Nsignalmodes+floquet.signal.signalindex,floquet.signal.signalindex,:])),
+    10*log10.(abs2.(floquet.signal.S[end-floquet.signal.Nmodes+floquet.signal.signalindex,floquet.signal.signalindex,:])),
     ylim=(-40,30),label="S21",
     xlabel="Signal Frequency (GHz)",
     legend=:bottomright,
@@ -303,7 +303,7 @@ p1=plot(ws/(2*pi*1e9),
     ylabel="dB")
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S[floquet.signal.signalindex,end-Nsignalmodes+floquet.signal.signalindex,:])),
+    10*log10.(abs2.(floquet.signal.S[floquet.signal.signalindex,end-floquet.signal.Nmodes+floquet.signal.signalindex,:])),
     label="S12",
     )
 
@@ -313,12 +313,12 @@ plot!(ws/(2*pi*1e9),
     )
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S[end-Nsignalmodes+floquet.signal.signalindex,end-Nsignalmodes+floquet.signal.signalindex,:])),
+    10*log10.(abs2.(floquet.signal.S[end-floquet.signal.Nmodes+floquet.signal.signalindex,end-floquet.signal.Nmodes+floquet.signal.signalindex,:])),
     label="S22",
     )
 
 p2=plot(ws/(2*pi*1e9),
-    floquet.signal.QE[end-Nsignalmodes+floquet.signal.signalindex,floquet.signal.signalindex,:]./floquet.signal.QEideal[end-Nsignalmodes+floquet.signal.signalindex,floquet.signal.signalindex,:],    
+    floquet.signal.QE[end-floquet.signal.Nmodes+floquet.signal.signalindex,floquet.signal.signalindex,:]./floquet.signal.QEideal[end-floquet.signal.Nmodes+floquet.signal.signalindex,floquet.signal.signalindex,:],    
     ylim=(0.99,1.001),
     title="Quantum efficiency",legend=false,
     ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)");
@@ -333,7 +333,7 @@ p3=plot(ws/(2*pi*1e9),
 
 
 p4=plot(ws/(2*pi*1e9),
-    1 .- floquet.signal.CM[end-Nsignalmodes+floquet.signal.signalindex,:],    
+    1 .- floquet.signal.CM[end-floquet.signal.Nmodes+floquet.signal.signalindex,:],    
     legend=false,title="Commutation \n relation error",
     ylabel="Commutation \n relation error",xlabel="Signal Frequency (GHz)");
 
@@ -379,7 +379,7 @@ end
 p1 = plot(title="Gain (S21)")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-        10*log10.(abs2.(results[i].signal.S[end-Nsignalmodes+results[i].signal.signalindex,results[i].signal.signalindex,:])),
+        10*log10.(abs2.(results[i].signal.S[end-results[i].signal.Nmodes+results[i].signal.signalindex,results[i].signal.signalindex,:])),
             ylim=(-60,30),label="tanδ=$(tandeltas[i])",
             legend=:bottomleft,
             xlabel="Signal Frequency (GHz)",ylabel="dB")
@@ -388,7 +388,7 @@ end
 p2 = plot(title="Quantum Efficiency")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-            results[i].signal.QE[end-Nsignalmodes+results[i].signal.signalindex,results[i].signal.signalindex,:]./results[i].signal.QEideal[end-Nsignalmodes+results[i].signal.signalindex,results[i].signal.signalindex,:],    
+            results[i].signal.QE[end-results[i].signal.Nmodes+results[i].signal.signalindex,results[i].signal.signalindex,:]./results[i].signal.QEideal[end-results[i].signal.Nmodes+results[i].signal.signalindex,results[i].signal.signalindex,:],    
             ylim=(0.6,1.05),legend=false,
             title="Quantum efficiency",
             ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)")
@@ -397,7 +397,7 @@ end
 p3 = plot(title="Reverse Gain (S12)")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-        10*log10.(abs2.(results[i].signal.S[results[i].signal.signalindex,end-Nsignalmodes+results[i].signal.signalindex,:])),
+        10*log10.(abs2.(results[i].signal.S[results[i].signal.signalindex,end-results[i].signal.Nmodes+results[i].signal.signalindex,:])),
             ylim=(-10,1),legend=false,
             xlabel="Signal Frequency (GHz)",ylabel="dB")
 end
@@ -405,7 +405,7 @@ end
 p4 = plot(title="Commutation \n relation error")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-            1 .- results[i].signal.CM[end-Nsignalmodes+results[i].signal.signalindex,:],    
+            1 .- results[i].signal.CM[end-results[i].signal.Nmodes+results[i].signal.signalindex,:],    
             legend=false,
             ylabel="Commutation\n relation error",xlabel="Signal Frequency (GHz)")
 end
