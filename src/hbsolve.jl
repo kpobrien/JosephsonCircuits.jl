@@ -491,7 +491,25 @@ function hblinsolve(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         QEideal = zeros(Float64,0,0,0)
     end
 
-    return LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, nodefluxadjoint,
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnS && K
+        Sout = Stokeyed(S, modes, portnumbers, modes,
+            portnumbers, w)
+    else
+        Sout = S
+    end
+
+    if returnQE && K
+        QEout = Stokeyed(QE, modes, portnumbers, modes,
+            portnumbers, w)
+        QEidealout = Stokeyed(QEideal, modes, portnumbers, modes,
+            portnumbers, w)
+    else
+        QEout = QE
+        QEidealout = QEideal
+    end
+
+    return LinearHB(Sout, Snoise, QEout, QEidealout, CM, nodeflux, nodefluxadjoint,
         voltage, Nmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
         portnumbers, signalindex, w, modes)
 end

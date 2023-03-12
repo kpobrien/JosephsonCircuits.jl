@@ -66,9 +66,9 @@ circuitdefs = Dict(
     pumpports=[1]);
 
 plot(jpa.signal.w/(2*pi*1e9),
-	10*log10.(abs2.(jpa.signal.S[
-	jpa.signal.signalindex,
-	jpa.signal.signalindex,:])),
+    10*log10.(abs2.(jpa.signal.S[
+    jpa.signal.signalindex,
+    jpa.signal.signalindex,:])),
     xlabel="Frequency (GHz)",ylabel="Gain (dB)")
 ```
 

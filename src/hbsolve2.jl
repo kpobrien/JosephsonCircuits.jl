@@ -496,7 +496,25 @@ function hblinsolve2(w, psc::ParsedSortedCircuit,
         QEideal = zeros(Float64,0,0,0)
     end
 
-    return LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, nodefluxadjoint,
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnS && K
+        Sout = Stokeyed(S, signalfreq.modes, portnumbers, signalfreq.modes,
+            portnumbers, w)
+    else
+        Sout = S
+    end
+
+    if returnQE && K
+        QEout = Stokeyed(QE, signalfreq.modes, portnumbers, signalfreq.modes,
+            portnumbers, w)
+        QEidealout = Stokeyed(QEideal, signalfreq.modes, portnumbers, signalfreq.modes,
+            portnumbers, w)
+    else
+        QEout = QE
+        QEidealout = QEideal
+    end
+
+    return LinearHB(Sout, Snoise, QEout, QEidealout, CM, nodeflux, nodefluxadjoint,
         voltage, Nmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
         portnumbers, signalindex, w, signalfreq.modes)
 end
@@ -819,8 +837,15 @@ function hbnlsolve2(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
             portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
     end
 
+    #
+    if !isempty(S) && K
+        Sout = Stokeyed(S, modes, portnumbers, modes, portnumbers)
+    else
+        Sout = S
+    end
+
     return NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
-        Nbranches, psc.uniquenodevectorsorted[2:end], portnumbers, modes, S)
+        Nbranches, psc.uniquenodevectorsorted[2:end], portnumbers, modes, Sout)
 
 end
 
@@ -1341,3 +1366,87 @@ function calcsources!(bbm, modes, sources, portindices, portnumbers,
 
     return nothing
 end
+
+
+"""
+    Stokeyed(S, outputmodes, outputportnumbers, inputmodes, inputportnumbers, w)
+
+Convert a scattering parameter array to a keyed array. 
+
+"""
+function Stokeyed(S, outputmodes, outputportnumbers, inputmodes,
+    inputportnumbers, w)
+    Nfrequencies = length(w)
+    
+    return KeyedArray(
+        reshape(S, length(outputmodes), length(outputportnumbers),
+            length(inputmodes), length(inputportnumbers), Nfrequencies),
+        outputmode = outputmodes,
+        outputport = outputportnumbers,
+        inputmode = inputmodes,
+        inputport = inputportnumbers,
+        freqindex=1:Nfrequencies,
+    )
+end
+
+function Stokeyed(S, outputmodes, outputportnumbers, inputmodes,
+    inputportnumbers)
+    
+    return KeyedArray(
+        reshape(S, length(outputmodes), length(outputportnumbers),
+            length(inputmodes), length(inputportnumbers)),
+        outputmode = outputmodes,
+        outputport = outputportnumbers,
+        inputmode = inputmodes,
+        inputport = inputportnumbers,
+    )
+end
+
+
+# function scatteringparamstoarray(S,modes,portnumbers,w)
+#     Nmodes = length(modes)
+#     Nports = length(portnumbers)
+#     Nfrequencies = length(w)
+    
+#     return KeyedArray(
+#         reshape(S, Nmodes, Nports, Nmodes, Nports, Nfrequencies),
+#         outputmode = modes,
+#         outputport = portnumbers,
+#         inputmode = modes,
+#         inputport = portnumbers,
+#         freqindex=1:Nfrequencies,
+#     )
+    
+# end
+
+
+# function fieldstokeyed(nodeflux, inputmodes, outputmodes,
+#     inputportnumbers, outputportnumbers)
+
+# nodeflux = KeyedArray(
+#     reshape(
+#         result.signal.nodeflux,
+#         result.signal.Nmodes,
+#         result.signal.Nnodes-1,
+#         result.signal.Nmodes,
+#         2,
+#         length(result.signal.w),
+#     ),
+#     outputmode = result.signal.modes,
+#     # i need to replace this with the node strings
+#     # i also need to return the node strings, i think that's
+#     # a good idea.
+#     node=result.signal.nodes[2:end],
+#     inputmode = result.signal.modes,
+#     inputport = result.signal.ports,
+#     freqindex=1:length(result.signal.w),
+# )
+
+
+# end
+
+# function fieldstoarray(nodeflux, inputmodes, outputmodes,
+#     inputportnumbers, outputportnumbers)
+
+
+# end
