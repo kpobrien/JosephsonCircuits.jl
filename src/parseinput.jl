@@ -1169,9 +1169,9 @@ Zfun(w,R) = ifelse(w>10,R,100*R);
 out=JosephsonCircuits.valuevectortonumber([R,Zfun(w,R)],Dict(R=>50));
 println(out)
 # evaluate with w = 2
-println(JosephsonCircuits.substitute.(out,(Dict(w=>2),)))
+println(JosephsonCircuits.Symbolics.substitute.(out,(Dict(w=>2),)))
 # evaluate with w = 11
-println(JosephsonCircuits.substitute.(out,(Dict(w=>11),)))
+println(JosephsonCircuits.Symbolics.substitute.(out,(Dict(w=>11),)))
 
 # output
 Any[50, Zfun(w, 50)]

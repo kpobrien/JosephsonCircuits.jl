@@ -1,5 +1,9 @@
 using JosephsonCircuits
 using SparseArrays
+import AxisKeys
+import AxisKeys.NamedDims
+import AxisKeys.NamedDims: NamedDimsArray
+
 using Test
 
 @testset verbose=true "JosephsonCircuits" begin
@@ -47,7 +51,8 @@ using Test
     end
 
     @testset verbose=true "warmuphblinsolve" begin
-        out1 = JosephsonCircuits.LinearHB([0.8952708641229391 - 0.44552225517090227im;;; 0.8415115570832487 - 0.5402391130743189im;;; 0.6457820691998714 - 0.7635217869189669im;;; -0.9968560060568034 + 0.07923448231975308im;;; 0.9316787544566122 + 0.36328322077158454im;;; 0.9988570509555925 + 0.04779740323801577im], Array{ComplexF64, 3}(undef, 0, 0, 0), [1.0;;; 1.0;;; 1.0;;; 1.0;;; 1.0;;; 1.0], [0.9999999999999993;;; 0.9999999999999996;;; 1.0;;; 0.9999999999999991;;; 1.0;;; 0.9999999999999993], [1.0000000000000007 1.0000000000000004 0.9999999999999997 1.0000000000000009 1.0 1.0000000000000007], ComplexF64[], ComplexF64[], ComplexF64[], 1, 3, 2, ["1", "2"], [1], 1, 2.827433388230814e10:6.283185307179586e8:3.141592653589793e10, [(0,)])
+        # out1 = JosephsonCircuits.LinearHB([0.8952708641229391 - 0.44552225517090227im;;; 0.8415115570832487 - 0.5402391130743189im;;; 0.6457820691998714 - 0.7635217869189669im;;; -0.9968560060568034 + 0.07923448231975308im;;; 0.9316787544566122 + 0.36328322077158454im;;; 0.9988570509555925 + 0.04779740323801577im], Array{ComplexF64, 3}(undef, 0, 0, 0), [1.0;;; 1.0;;; 1.0;;; 1.0;;; 1.0;;; 1.0], [0.9999999999999993;;; 0.9999999999999996;;; 1.0;;; 0.9999999999999991;;; 1.0;;; 0.9999999999999993], [1.0000000000000007 1.0000000000000004 0.9999999999999997 1.0000000000000009 1.0 1.0000000000000007], ComplexF64[], ComplexF64[], ComplexF64[], 1, 3, 2, ["1", "2"], [1], 1, 2.827433388230814e10:6.283185307179586e8:3.141592653589793e10, [(0,)])
+        out1 = JosephsonCircuits.LinearHB(AxisKeys.KeyedArray{ComplexF64, 5, NamedDims.NamedDimsArray{(:outputmode, :outputport, :inputmode, :inputport, :freqindex), ComplexF64, 5, Array{ComplexF64, 5}}, Tuple{Vector{Tuple{Int64}}, Vector{Int64}, Vector{Tuple{Int64}}, Vector{Int64}, UnitRange{Int64}}}(NamedDimsArray([0.8952708641229391 - 0.44552225517090227im;;;;; 0.8415115570832487 - 0.5402391130743189im;;;;; 0.6457820691998714 - 0.7635217869189669im;;;;; -0.9968560060568034 + 0.07923448231975308im;;;;; 0.9316787544566122 + 0.36328322077158454im;;;;; 0.9988570509555925 + 0.04779740323801577im], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), Array{ComplexF64, 3}(undef, 0, 0, 0), AxisKeys.KeyedArray{Float64, 5, NamedDims.NamedDimsArray{(:outputmode, :outputport, :inputmode, :inputport, :freqindex), Float64, 5, Array{Float64, 5}}, Tuple{Vector{Tuple{Int64}}, Vector{Int64}, Vector{Tuple{Int64}}, Vector{Int64}, UnitRange{Int64}}}(NamedDimsArray([1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), AxisKeys.KeyedArray{Float64, 5, NamedDims.NamedDimsArray{(:outputmode, :outputport, :inputmode, :inputport, :freqindex), Float64, 5, Array{Float64, 5}}, Tuple{Vector{Tuple{Int64}}, Vector{Int64}, Vector{Tuple{Int64}}, Vector{Int64}, UnitRange{Int64}}}(NamedDimsArray([0.9999999999999993;;;;; 0.9999999999999996;;;;; 1.0;;;;; 0.9999999999999991;;;;; 1.0;;;;; 0.9999999999999993], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), [1.0000000000000007 1.0000000000000004 0.9999999999999997 1.0000000000000009 1.0 1.0000000000000007], ComplexF64[], ComplexF64[], ComplexF64[], 1, 3, 2, ["1", "2"], [1], 1, 2.827433388230814e10:6.283185307179586e8:3.141592653589793e10, [(0,)])
         out2 = JosephsonCircuits.warmuphblinsolve()
         @test JosephsonCircuits.compare(out1,out2)
     end

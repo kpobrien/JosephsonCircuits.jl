@@ -49,6 +49,7 @@ testshow(io::IO,S::JosephsonCircuits.HB) = showstruct(io,S)
 testshow(io::IO,S::JosephsonCircuits.NonlinearHB) = showstruct(io,S)
 testshow(io::IO,S::JosephsonCircuits.LinearHB) = showstruct(io,S)
 testshow(io::IO,S::JosephsonCircuits.CircuitMatrices) = showstruct(io,S)
+testshow(io::IO,S::JosephsonCircuits.AxisKeys.KeyedArray) = showstruct(io,S)
 # show(io::IO,S::StepRangeLen) = 
 
 """

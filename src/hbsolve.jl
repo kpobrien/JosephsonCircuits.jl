@@ -129,8 +129,8 @@ This function attempts to mimic `hbsolveold`, but has a few important difference
     the signal mode is always at index 1 and the location of the other modes
     can be found by inspecting the contents of `modes`.
 """
-function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
-    pumpports = [1], iterations = 1000, ftol = 1e-8,
+function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
+    circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
@@ -191,6 +191,64 @@ function hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     if mod(Nsignalmodes,2) == 0 && Nsignalmodes > 0
         signalfreq = JosephsonCircuits.removefreqs(signalfreq, [(Nsignalmodes,)])
     end
+
+    # solve the linearized problem
+    # i should make this a tuple
+    signal = hblinsolve(ws, psc, cg, circuitdefs, signalfreq; pump = pump,
+        symfreqvar = symfreqvar, nbatches = nbatches,
+        returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
+        returnCM = returnCM, returnnodeflux = returnnodeflux,
+        returnnodefluxadjoint = returnnodefluxadjoint,
+        returnvoltage = returnvoltage, keyedarrays = keyedarrays)
+
+    return HB(pump, signal)
+end
+
+
+function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
+    Nmodulationharmonics::NTuple{M,Any}, Npumpharmonics::NTuple{N,Any},
+    circuit, circuitdefs;dc = false, threewavemixing = false,
+    fourwavemixing = true, maxintermodorder=Inf, iterations = 1000, ftol = 1e-8,
+    switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+    symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
+    returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
+    returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
+    keyedarrays::Val{K} = Val(true)) where {N,M,K}
+
+    # calculate the frequency struct
+    freq = removeconjfreqs(
+        truncfreqs(
+            calcfreqsrdft(Npumpharmonics),
+            dc=dc, odd=fourwavemixing, even=threewavemixing,
+            maxintermodorder=maxintermodorder,
+        )
+    )
+
+    indices = fourierindices(freq)
+
+    Nmodes = length(freq.modes)
+
+    # parse and sort the circuit
+    psc = parsesortcircuit(circuit, sorting = sorting)
+
+    # calculate the circuit graph
+    cg = calccircuitgraph(psc)
+
+    # calculate the numeric matrices
+    nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+
+    # solve the nonlinear problem
+    pump = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
+        iterations = iterations, x0 = nothing, ftol = ftol,
+        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
+        symfreqvar = symfreqvar, keyedarrays = keyedarrays)
+
+    # generate the signal modes
+    signalfreq =truncfreqs(
+        calcfreqsdft(Nmodulationharmonics),
+        dc=true, odd=threewavemixing, even=fourwavemixing,
+        maxintermodorder=maxintermodorder,
+    )
 
     # solve the linearized problem
     # i should make this a tuple
@@ -278,7 +336,7 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     nbatches::Integer = Base.Threads.nthreads(), returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    keyedarrays::Val{K} = Val(false)) where K
+    keyedarrays::Val{K} = Val(true)) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit)
@@ -1681,7 +1739,7 @@ function Stokeyed(S, outputmodes, outputportnumbers, inputmodes,
     inputportnumbers, w)
     Nfrequencies = length(w)
     
-    return KeyedArray(
+    return AxisKeys.KeyedArray(
         reshape(S, length(outputmodes), length(outputportnumbers),
             length(inputmodes), length(inputportnumbers), Nfrequencies),
         outputmode = outputmodes,
@@ -1695,7 +1753,7 @@ end
 function Stokeyed(S, outputmodes, outputportnumbers, inputmodes,
     inputportnumbers)
     
-    return KeyedArray(
+    return AxisKeys.KeyedArray(
         reshape(S, length(outputmodes), length(outputportnumbers),
             length(inputmodes), length(inputportnumbers)),
         outputmode = outputmodes,

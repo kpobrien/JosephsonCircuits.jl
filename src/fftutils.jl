@@ -757,7 +757,7 @@ function printsymmetries(Nw::NTuple{N, Int}, Nt::NTuple{N, Int}) where N
 
     z=zeros(Int,Nw)
     i = 1
-    for (key,val) in sort(OrderedDict(d))
+    for (key,val) in sort(OrderedCollections.OrderedDict(d))
         z[key] = i
         z[val] = -i
         i+=1

@@ -6,18 +6,15 @@ import Graphs
 import FFTW
 import KLU
 import UUIDs
-import Symbolics: Symbolic, Sym
+import Symbolics: Symbolic, Sym, Num, @variables, @syms, @register_symbolic
+import Symbolics
+import AxisKeys
+import SnoopPrecompile
+import OrderedCollections
 
-using Symbolics
-using OrderedCollections
 using LinearAlgebra
 using SparseArrays
 using Printf
-using SnoopPrecompile
-using AxisKeys
-
-
-Symbolics.SciMLBase.TruncatedStacktraces.VERBOSE[] = true
 
 # define the zero for symbolic numbers so that we can view the sparse arrays
 # Base.zero(::Type{Symbolic{Number}}) = 0
@@ -315,7 +312,7 @@ export @syms, hbsolve, hbnlsolve, hblinsolve, hbsolveold, hbnlsolveold,
 # julia> tinf = @snoopi_deep JosephsonCircuits.warmupsyms();
 # julia> itrigs = inference_triggers(tinf)
 
-@precompile_all_calls begin
+SnoopPrecompile.@precompile_all_calls begin
     warmup()
     warmupsyms()
     warmupsymsold()
