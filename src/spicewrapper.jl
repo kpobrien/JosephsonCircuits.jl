@@ -328,28 +328,25 @@ Load a Xyce harmonic balance simulation.
 """
 function spice_hb_load(filename)
 
-    #open a file handle
-    io = open(filename)
-
     data = Array{Float64}(undef,0)
     header = []
-
-    #loop over the contents of the header
     i=0
-    while !eof(io)
 
-        i+=1
-
-        line = readline(io)
-
-        if line[1:5] == "Index"
-            header = split(strip(line),r"\s+")
-        elseif line == "End of Xyce(TM) Simulation"
-            break
-        else
-            vals = parse.(Float64,split(strip(line),r"\s+"))
-            for val in vals
-                push!(data,val)
+    #open a file handle
+    open(filename, "r") do io
+        #loop over the contents of the header and data
+        while !eof(io)
+            i+=1
+            line = readline(io)
+            if line[1:5] == "Index"
+                header = split(strip(line),r"\s+")
+            elseif line == "End of Xyce(TM) Simulation"
+                break
+            else
+                vals = parse.(Float64,split(strip(line),r"\s+"))
+                for val in vals
+                    push!(data,val)
+                end
             end
         end
     end
