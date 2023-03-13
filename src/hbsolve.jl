@@ -1615,7 +1615,7 @@ end
     calcsources(modes, sources, portindices, portnumbers, nodeindexarraysorted,
         edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
-Calculate the source terms in the branch basis. See also [`calcsources`](@ref).
+Calculate the source terms in the branch basis. See also [`addsources!`](@ref).
 
 # Examples
 ```jldoctest
@@ -1649,7 +1649,7 @@ function calcsources(modes, sources, portindices, portnumbers, nodeindexarraysor
 
     bbm = zeros(Complex{Float64}, Nbranches*Nmodes)
 
-    calcsources!(bbm, modes, sources, portindices, portnumbers,
+    addsources!(bbm, modes, sources, portindices, portnumbers,
         nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches,
         Nmodes)
 
@@ -1657,13 +1657,13 @@ function calcsources(modes, sources, portindices, portnumbers, nodeindexarraysor
 end
 
 """
-    calcsources!(bbm, modes, sources, portindices, portnumbers,
+    addsources!(bbm, modes, sources, portindices, portnumbers,
         nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
 Calculate the source terms in the branch basis. Overwrite bbm with the output.
 See also [`calcsources`](@ref).
 """
-function calcsources!(bbm, modes, sources, portindices, portnumbers,
+function addsources!(bbm, modes, sources, portindices, portnumbers,
     nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
     # fill the vector with zeros
@@ -1705,28 +1705,6 @@ function calcsources!(bbm, modes, sources, portindices, portnumbers,
             throw(ArgumentError("Source port $(port) not found."))
         end
     end
-
-    # for source in sources
-    #     # for (key,val) in portdict
-    #     for i in eachindex(portindices)
-    #         portnumber = portnumbers[i]
-    #         portindex = portindices[i]
-    #         key = (nodeindexarraysorted[1, portindex], nodeindexarraysorted[2, portindex])
-
-    #         if portnumber == source[:port]
-    #             # now i have to find the index.
-    #             # this will depend on the frequency index
-    #             # i should calculate that in the right way now.
-    #             for j in eachindex(modes)
-    #                 if modes[j] == source[:mode]
-    #                     bbm[(edge2indexdict[key]-1)*Nmodes+j] = Lmean*source[:current]/phi0
-    #                     break
-    #                 end
-    #             end
-    #             break
-    #         end
-    #     end
-    # end
 
     return nothing
 end

@@ -111,13 +111,14 @@ using Test
         result = hbsolve(ws, wp, sources, Nmodulationharmonics,
             Npumpharmonics, circuit, circuitdefs, ftol=1e-12,
             returnS=false, returnSnoise=true, returnQE=false,
-            returnnodefluxadjoint=true,
-            returnvoltage=true)
+            returnnodefluxadjoint=true, returnCM=false,
+            returnvoltage=true, nbatches=4)
 
         @test result.signal.QE == Array{Float64, 3}(undef, 0, 0, 0)
         @test result.signal.S == Array{Float64, 3}(undef, 0, 0, 0)
         @test result.signal.nodeflux == ComplexF64[]
         @test result.signal.Snoise == Array{ComplexF64, 3}(undef, 0, 9, 51)
+        @test result.signal.CM == Matrix{Float64}(undef, 0, 0)
 
     end
 

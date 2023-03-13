@@ -59,7 +59,8 @@ using Test
         Npumpmodes = 8
         result=hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs,
             pumpports=[1],returnnodeflux=true,returnS = false, returnQE=false,returnCM=false,
-            returnvoltage=true,returnSnoise=true)
+            returnvoltage=true,returnSnoise=true, returnnodefluxadjoint=true,
+            nbatches = 4)
 
         @test isapprox(
             result.pump.nodeflux,
