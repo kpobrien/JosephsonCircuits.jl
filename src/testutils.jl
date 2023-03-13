@@ -10,6 +10,8 @@ sparsevec([1], [2], 3)
 
 julia> JosephsonCircuits.testshow(stdout,JosephsonCircuits.SparseArrays.sparsevec([],Nothing[],3))
 sparsevec(Int64[], Nothing[], 3)
+
+julia> JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.AxisKeys.KeyedArray(rand(Int8, 2,10), ([:a, :b], 10:10:100)))
 ```
 """
 function testshow(io::IO,S::JosephsonCircuits.AbstractSparseVector)

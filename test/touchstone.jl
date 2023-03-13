@@ -625,6 +625,7 @@ import UUIDs
                 version = version, R = R,format = "Unknown",
                 frequencyunit = frequencyunit, comments = comments)
         )
+        rm(filename)
 
         #file extensions
         filename = joinpath(path,"JosephsonCircuits-"* string(UUIDs.uuid1()) * ".s4p")
