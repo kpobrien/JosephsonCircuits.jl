@@ -67,15 +67,10 @@ enforce any particular file extension or try to infer the number of ports from
 the extension.
 """
 function touchstone_load(filename)
-
-    #open a file handle
-    io = open(filename)
-
-    out = touchstone_parse(io)
-
-    close(io)
-
-    return out
+    # open a file handle and parse the file
+    open(filename, "r") do io
+        return touchstone_parse(io)
+    end
 end
 
 """
@@ -393,21 +388,14 @@ function touchstone_save(filename::String, frequencies::AbstractVector,
         filename = "$(filename).s$(numberofports)p"
     end
 
-    # open up a file and create an IOStream io
-    io = open(filename,"w")
-
-    try
+    # open a file handle and save the file
+    open(filename, "w") do io
         # write the touchstone file to io.
         touchstone_write(io, frequencies, N; version = version, reference = reference,
             R = R, format = format, parameter = parameter, comments = comments,
             twoportdataorder = twoportdataorder, matrixformat = matrixformat,
             frequencyunit = frequencyunit, mixedmodeorder = mixedmodeorder)
-    catch e
-        close(io)
-        throw(e)
     end
-
-    close(io)
 
     return nothing
 end
