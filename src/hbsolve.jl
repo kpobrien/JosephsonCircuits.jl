@@ -723,7 +723,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
 
     # if using the KLU factorization and sparse solver then make a 
     # factorization for the sparsity pattern.
-    F = KLU.klu(Asparsecopy)
+    cache = FactorizationCache(KLU.klu(Asparsecopy))
 
     # if the scattering matrix is empty define a new working matrix
     if isempty(S)
@@ -772,24 +772,11 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
         sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
             wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
 
-        # solve the linear system
-        try
-            # update the factorization. the sparsity structure does 
-            # not change so we can reuse the factorization object.
-            KLU.klu!(F,Asparsecopy)
-        catch e
-            if isa(e, SingularException)
-                # reusing the symbolic factorization can sometimes
-                # lead to numerical problems. if the first linear
-                # solve fails try factoring and solving again
-                F = KLU.klu(Asparsecopy)
-            else
-                throw(e)
-            end
-        end
+        # factor the sparse matrix
+        factorklu!(cache, Asparsecopy)
 
         # solve the linear system
-        ldiv!(phin,F,bnm)
+        ldiv!(phin,cache.factorization,bnm)
 
         # convert to node voltages. node flux is defined as the time integral of
         # node voltage so node voltage is derivative of node flux which can be
@@ -826,23 +813,11 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
             sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
                 wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
 
-            try 
-                # update the factorization. the sparsity structure does 
-                # not change so we can reuse the factorization object.
-                KLU.klu!(F,Asparsecopy)
-            catch e
-                if isa(e, SingularException)
-                    # reusing the symbolic factorization can sometimes
-                    # lead to numerical problems. if the first linear
-                    # solve fails try factoring and solving again
-                    F = KLU.klu(Asparsecopy)
-                else
-                    throw(e)
-                end
-            end
+            # factor the sparse matrix
+            factorklu!(cache, Asparsecopy)
 
             # solve the linear system
-            ldiv!(phin,F,bnm)
+            ldiv!(phin,cache.factorization,bnm)
 
             # copy the nodeflux adjoint for output
             if !isempty(nodefluxadjoint)

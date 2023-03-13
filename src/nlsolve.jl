@@ -1,5 +1,48 @@
 
 """
+    FactorizationCache(factorization)
+
+A cache for the factorization object.
+
+```jldoctest
+julia> JosephsonCircuits.FactorizationCache(JosephsonCircuits.KLU.klu(JosephsonCircuits.sparse([1, 2], [1, 2], [1/2, 1/2], 2, 2)));
+
+```
+"""
+mutable struct FactorizationCache
+factorization
+end
+
+
+"""
+    factorklu!(cache::FactorizationCache, A::SparseMatrixCSC)
+
+Factor a sparse matrix using KLU and place the result in `cache`. Attempt to
+reuse the symbolic factorization. Redo the symbolic factorization if we get
+a SingularException.
+
+"""
+function factorklu!(cache::FactorizationCache, A::SparseMatrixCSC)
+    # solve the linear system
+    try
+        # update the factorization. the sparsity structure does 
+        # not change so we can reuse the factorization object.
+        KLU.klu!(cache.factorization, A)
+    catch e
+        if isa(e, SingularException)
+            # reusing the symbolic factorization can sometimes
+            # lead to numerical problems. if the first linear
+            # solve fails try factoring and solving again
+            cache.factorization = KLU.klu(A)
+        else
+            throw(e)
+        end
+    end
+    return nothing
+end
+
+
+"""
     nlsolve!(fj!, F, J::SparseMatrixCSC, x; iterations=1000, ftol=1e-8,
         switchofflinesearchtol = 1e-5)
 
@@ -54,7 +97,9 @@ function nlsolve!(fj!::Function, F::Vector{T}, J::SparseMatrixCSC{T, Int64},
         throw(DimensionMismatch("First axis of the Jacobian `J` must have the same length as the residual `F`."))
     end
 
-    factorization = KLU.klu(J)
+    # factorization = KLU.klu(J)
+    cache = FactorizationCache(KLU.klu(J))
+
 
     deltax = copy(x)
 
@@ -86,24 +131,11 @@ function nlsolve!(fj!::Function, F::Vector{T}, J::SparseMatrixCSC{T, Int64},
 
         push!(normF, norm(F))
 
-        # solve the linear system
-        try
-            # update the factorization. the sparsity structure does 
-            # not change so we can reuse the factorization object.
-            KLU.klu!(factorization, J)
-        catch e
-            if isa(e, SingularException)
-                # reusing the symbolic factorization can sometimes
-                # lead to numerical problems. if the first linear
-                # solve fails try factoring and solving again
-                factorization = KLU.klu(J)
-            else
-                throw(e)
-            end
-        end
+        # factor the Jacobian
+        factorklu!(cache, J)
 
         # solve the linear system
-        ldiv!(deltax, factorization, F)
+        ldiv!(deltax, cache.factorization, F)
 
         # multiply deltax by -1
         rmul!(deltax, -1)

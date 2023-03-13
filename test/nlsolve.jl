@@ -81,5 +81,16 @@ using Test
         )
     end
 
+    @testset verbose=true "factorklu! error" begin
+
+        J1 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,2)
+        cache = JosephsonCircuits.FactorizationCache(JosephsonCircuits.KLU.klu(J1))
+        J2 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[0.0, 0.0, 0.0, 0.0],2,2)
+        
+        @test_throws(
+            LinearAlgebra.SingularException(0),
+            JosephsonCircuits.factorklu!(cache,J2)
+        )
+    end
 
 end
