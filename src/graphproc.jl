@@ -131,7 +131,8 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1},Nnodes::Int)
             Graphs.add_edge!(stmp, Graphs.src(cj), Graphs.dst(cj))
             #l = simplecycles_limited_length(stmp,nv(gl))
             l = Graphs.simplecycles_limited_length(stmp,10)
-            ul = unique(x->sort(x),l[length.(l).>2])
+            # ul = unique(x->sort(x),l[length.(l).>2])
+            ul = unique(sort,l[length.(l).>2])
             storeuniqueloops!(lvarray,vmap,ul)
         end
         

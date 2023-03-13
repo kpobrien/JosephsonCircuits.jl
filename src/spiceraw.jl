@@ -175,7 +175,8 @@ function calcspicesortperms(variabledict::Dict{String,Vector{String}})
         end
         #loop over the sorted outer arrays
         sp = Int[]
-        for (key,val) in sort(collect(sortvariables), by=x->x)
+        # for (key,val) in sort(collect(sortvariables), by=x->x)
+        for (key,val) in sort(collect(sortvariables), by=identity)
             #sort the dictionary
             p = sortperm(val)
             sp = vcat(sp,p .+ length(sp))

@@ -1089,19 +1089,19 @@ and [`plan_applynl`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.applynl([[0, 0.2+0.0im, 0, 0];;],(x)->cos(x))
+julia> JosephsonCircuits.applynl([[0, 0.2+0.0im, 0, 0];;],cos)
 4×1 Matrix{ComplexF64}:
    0.9603980498951228 + 0.0im
                   0.0 + 0.0im
  -0.01966852794611884 + 0.0im
                   0.0 + 0.0im
 
-julia> JosephsonCircuits.applynl([[0, 0.2+0.0im];;],(x)->cos(x))
+julia> JosephsonCircuits.applynl([[0, 0.2+0.0im];;],cos)
 2×1 Matrix{ComplexF64}:
    0.9603980498951228 + 0.0im
  -0.01966852794611884 + 0.0im
 
-julia> JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;],(x)->sin(x))
+julia> JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;],sin)
 3×3×1 Array{ComplexF64, 3}:
 [:, :, 1] =
  -0.0209812+0.0im   0.295151+0.0im   0.295151+0.0im
@@ -1109,7 +1109,7 @@ julia> JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55 + 
  0.00788681+0.0im  -0.110947+0.0im  -0.110947+0.0im
 ```
 """
-function applynl(fd::Array{Complex{Float64}}, f::Function)
+function applynl(fd::Array{Complex{Float64}}, f)
 
     td, irfftplan, rfftplan = plan_applynl(fd)
     fdcopy = copy(fd)
@@ -1167,7 +1167,7 @@ use plans for the forward and reverse RFFT prepared by [`plan_applynl`](@ref).
 ```jldoctest
 fd=ones(Complex{Float64},3,2)
 td, irfftplan, rfftplan = JosephsonCircuits.plan_applynl(fd)
-JosephsonCircuits.applynl!(fd, td, (x)->cos(x), irfftplan, rfftplan)
+JosephsonCircuits.applynl!(fd, td, cos, irfftplan, rfftplan)
 fd
 
 # output
@@ -1177,7 +1177,7 @@ fd
  -0.413411+0.0im  -0.413411+0.0im
 ```
 """
-function applynl!(fd::Array{Complex{T}}, td::Array{T}, f::Function, irfftplan,
+function applynl!(fd::Array{Complex{T}}, td::Array{T}, f, irfftplan,
     rfftplan) where T
 
     #transform to the time domain

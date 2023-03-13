@@ -490,7 +490,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         applynl!(
             phimatrix,
             phimatrixtd,
-            (x) -> cos(x),
+            cos,
             irfftplan,
             rfftplan,
         )
@@ -1233,7 +1233,7 @@ function calcfj2!(F,
             conjsourceindices, conjtargetindices, length(Ljb.nzval))
 
         # apply the sinusoidal nonlinearity when evaluaing the function
-        applynl!(phimatrix, phimatrixtd, (x) -> sin(x), irfftplan, rfftplan)
+        applynl!(phimatrix, phimatrixtd, sin, irfftplan, rfftplan)
 
         # convert the sinphimatrix to a vector
         fill!(AoLjbmvector, 0)
@@ -1259,7 +1259,7 @@ function calcfj2!(F,
             conjsourceindices, conjtargetindices, length(Ljb.nzval))
 
         # apply a cosinusoidal nonlinearity when evaluating the Jacobian
-        applynl!(phimatrix, phimatrixtd, (x) -> cos(x), irfftplan, rfftplan)
+        applynl!(phimatrix, phimatrixtd, cos, irfftplan, rfftplan)
 
         # calculate  AoLjbm
         updateAoLjbm2!(AoLjbm, phimatrix, AoLjbmindices, conjindicessorted,
