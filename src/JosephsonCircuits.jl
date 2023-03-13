@@ -139,6 +139,34 @@ function warmupsyms()
 
 end
 
+function warmupsymsnew()
+
+    @variables R Cc Lj Cj
+    circuit = [
+        ("P1","1","0",1),
+        ("R1","1","0",R),
+        ("C1","1","2",Cc),
+        ("Lj1","2","0",Lj),
+        ("C2","2","0",Cj)]
+
+    circuitdefs = Dict(
+        Lj =>1000.0e-12,
+        Cc => 100.0e-15,
+        Cj => 1000.0e-15,
+        R => 50.0)
+
+    ws = 2*pi*(4.5:0.5:5.0)*1e9
+    wp = (2*pi*4.75001*1e9,)
+    sources = [(mode=(1,),port=1,current=0.00565e-6)]
+    Nmodulationharmonics = (2,)
+    Npumpharmonics = (4,)
+
+    return hbsolve(ws, wp, sources, Nmodulationharmonics,
+        Npumpharmonics, circuit, circuitdefs)
+end
+
+
+
 function warmupsymsold()
 
     @variables Rleft Cc Lj Cj w L1
@@ -316,6 +344,7 @@ SnoopPrecompile.@precompile_all_calls begin
     warmup()
     warmupsyms()
     warmupsymsold()
+    warmupsymsnew()
 end
 
 #end module
