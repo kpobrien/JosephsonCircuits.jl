@@ -396,11 +396,16 @@ function touchstone_save(filename::String, frequencies::AbstractVector,
     # open up a file and create an IOStream io
     io = open(filename,"w")
 
-    # write the touchstone file to io.
-    touchstone_write(io, frequencies, N; version = version, reference = reference,
-        R = R, format = format, parameter = parameter, comments = comments,
-        twoportdataorder = twoportdataorder, matrixformat = matrixformat,
-        frequencyunit = frequencyunit, mixedmodeorder = mixedmodeorder)
+    try
+        # write the touchstone file to io.
+        touchstone_write(io, frequencies, N; version = version, reference = reference,
+            R = R, format = format, parameter = parameter, comments = comments,
+            twoportdataorder = twoportdataorder, matrixformat = matrixformat,
+            frequencyunit = frequencyunit, mixedmodeorder = mixedmodeorder)
+    catch e
+        close(io)
+        throw(e)
+    end
 
     close(io)
 
