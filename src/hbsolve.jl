@@ -908,11 +908,11 @@ isapprox(out.nodeflux,
 true
 ```
 """
-function hbnlsolve(w::NTuple{N,T}, Nharmonics::NTuple{N,Int}, sources,
+function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
     circuit, circuitdefs; iterations = 1000,
     maxintermodorder = Inf, dc = false, odd = true, even = false, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, sorting= :number, keyedarrays::Val{K} = Val(false)) where {N,K,T}
+    symfreqvar = nothing, sorting= :number, keyedarrays::Val{K} = Val(false)) where {N,K}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
