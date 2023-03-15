@@ -4,6 +4,23 @@ using Test
 @testset verbose=true "qesparams" begin
 
     @testset "calcimpedance" begin
+
+        inputwave=[1.0, 0.0]
+        outputwave=[im/sqrt(2), 1/sqrt(2), 0]
+        S = zeros(Complex{Float64},2,2)
+        @test_throws(
+            DimensionMismatch("First dimension of scattering matrix not consistent with first dimensions of outputwave."),
+            JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave))
+
+        inputwave=[1.0, 0.0, 0.0]
+        outputwave=[im/sqrt(2), 1/sqrt(2)]
+        S = zeros(Complex{Float64},2,2)
+        @test_throws(
+            DimensionMismatch("Second dimension of scattering matrix not consistent with first dimension of input wave."),
+            JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave))
+    end
+
+    @testset "calcimpedance" begin
         @test_throws(
             ErrorException("Unknown component type"),
             JosephsonCircuits.calcimpedance(30.0,:D,-1.0,nothing))

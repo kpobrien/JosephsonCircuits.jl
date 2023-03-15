@@ -341,10 +341,10 @@ julia> inputwave=[1.0,0.0];outputwave=[im/sqrt(2), 1/sqrt(2)];S = zeros(Complex{
 """
 function calcscatteringmatrix!(S,inputwave::Vector,outputwave::Vector)
     if size(S,1) != length(outputwave)
-        error("First dimension of scattering matrix not consistent with first dimensions of outputwave.")
+        throw(DimensionMismatch("First dimension of scattering matrix not consistent with first dimensions of outputwave."))
     end
     if size(S,2) != length(inputwave)
-        error("Second dimension of scattering matrix not consistent with first dimension of input wave.")
+        throw(DimensionMismatch("Second dimension of scattering matrix not consistent with first dimension of input wave."))
     end
 
     fill!(S,0)
