@@ -1,10 +1,10 @@
 
 """
-    calcS!(S, inputwave, outputwave, phin, bnm, inputportindices,
+    calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
         nodeindexarraysorted, typevector, wmodes, symfreqvar)
 
-Return the scattering parameters for the system linearized around the strong pump.
+Return the input and output waves for the system linearized around the strong pump.
 
 # Examples
 ```jldoctest
@@ -126,7 +126,7 @@ end
         outputportindices, inputportimpedances, outputportimpedances,
         nodeindexarraysorted, typevector, wmodes, symfreqvar)
 
-Return the scattering parameters for the system linearized around the strong pump. 
+Return the input and output waves for the system linearized around the strong pump. 
 
 This is a bit of a hack but I ran into issues with complex capacitance when
 the capacitor was at the same branch as a current source. the calcS function
@@ -169,21 +169,19 @@ end
 
 
 """
-
     calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
         nodeindexarraysorted, typevector, wmodes, symfreqvar, nosource)
 
-
-# calculate the input and output power waves as defined in (except in
-# units of sqrt(photons/second) instead of sqrt(power)
-# K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
-# Micr. Theory and Tech. 13, 194–202 (1965) 
-# doi: 10.1109/TMTT.1965.1125964
-# inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage + portimpedance * portcurrent)
-# we can simplify the above to:
+Calculate the input and output power waves as defined in (except in
+units of sqrt(photons/second) instead of sqrt(power)
+K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
+Micr. Theory and Tech. 13, 194–202 (1965) 
+doi: 10.1109/TMTT.1965.1125964
+inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage + portimpedance * portcurrent)
+we can simplify the above to:
 inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
-# outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
+outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
 
 """
 function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputportindices,
@@ -288,28 +286,59 @@ function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputporti
         end
     end
  
-    # # scattering matrix is defined as outputwave = S * inputwave
-    # if size(outputwave) == size(S)
-    #     rdiv!(outputwave,inputwave)
-    #     copy!(S,outputwave)
-    # else
-    #     S .= outputwave / inputwave
-    # end
-
     return nothing
 end
 
+"""
+    calcscatteringmatrix!(S,inputwave::Diagonal,outputwave)
+
+The scattering matrix is defined as outputwave = S * inputwave .
+
+# Examples
+```jldoctest
+julia> inputwave=JosephsonCircuits.LinearAlgebra.Diagonal([1.0,1.0]);outputwave=[im/sqrt(2) 1/sqrt(2);1/sqrt(2) im/sqrt(2)];S = zeros(Complex{Float64},2,2);JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave);S
+2×2 Matrix{ComplexF64}:
+      0.0+0.707107im  0.707107+0.0im
+ 0.707107+0.0im            0.0+0.707107im
+```
+"""
 function calcscatteringmatrix!(S,inputwave::Diagonal,outputwave)
     copy!(S,outputwave)
     rdiv!(S,inputwave)
     return nothing
 end
 
+"""
+    calcscatteringmatrix!(S,inputwave,outputwave)
+
+The scattering matrix is defined as outputwave = S * inputwave .
+
+# Examples
+```jldoctest
+julia> inputwave=[1.0 0.0;0.0 1.0];outputwave=[im/sqrt(2) 1/sqrt(2);1/sqrt(2) im/sqrt(2)];S = zeros(Complex{Float64},2,2);JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave);S
+2×2 Matrix{ComplexF64}:
+      0.0+0.707107im  0.707107+0.0im
+ 0.707107+0.0im            0.0+0.707107im
+```
+"""
 function calcscatteringmatrix!(S,inputwave,outputwave)
     S .= outputwave / inputwave
     return nothing
 end
 
+"""
+    calcscatteringmatrix!(S,inputwave::Vector,outputwave::Vector)
+
+The scattering matrix is defined as outputwave = S * inputwave .
+
+# Examples
+```jldoctest
+julia> inputwave=[1.0,0.0];outputwave=[im/sqrt(2), 1/sqrt(2)];S = zeros(Complex{Float64},2,2);JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave);S
+2×2 Matrix{ComplexF64}:
+      0.0+0.707107im  0.0+0.0im
+ 0.707107+0.0im       0.0+0.0im
+```
+"""
 function calcscatteringmatrix!(S,inputwave::Vector,outputwave::Vector)
     if size(S,1) != length(outputwave)
         error("First dimension of scattering matrix not consistent with first dimensions of outputwave.")
