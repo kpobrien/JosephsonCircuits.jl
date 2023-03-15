@@ -618,8 +618,9 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
     outputwave = zeros(Complex{Float64},Nports*Nmodes)
     portimpedances = [vvn[i] for i in portimpedanceindices]
     if !isempty(S)
-        calcS!(S,inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
+        calcinputoutput!(inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
             portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+        calcscatteringmatrix!(S,inputwave,outputwave)
     end
 
     # calculate the frequency struct which we use in v2 of the solvers

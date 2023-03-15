@@ -792,8 +792,9 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
 
         # calculate the scattering parameters
         if !isempty(S) || !isempty(QE) || !isempty(CM)
-            calcS!(Sview,inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
+            calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
                 portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+            calcscatteringmatrix!(Sview,inputwave,outputwave)
         end
 
         if (Nnoiseports > 0 || !isempty(nodefluxadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint))
@@ -826,8 +827,9 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
 
             # calculate the noise scattering parameters
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
-                calcSnoise!(Snoiseview,inputwave,noiseoutputwave,phin,bnm,portimpedanceindices,noiseportimpedanceindices,
+                calcinputoutputnoise!(inputwave,noiseoutputwave,phin,bnm,portimpedanceindices,noiseportimpedanceindices,
                     portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+                calcscatteringmatrix!(Snoiseview,inputwave,outputwave)
             end
 
             # calculate the quantum efficiency
@@ -1169,8 +1171,10 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     outputwave = zeros(Complex{Float64},Nports*Nmodes)
     portimpedances = [vvn[i] for i in portimpedanceindices]
     if !isempty(S)
-        calcS!(S,inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
+        calcinputoutput!(inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
             portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+        calcscatteringmatrix!(S, inputwave, outputwave)
+
     end
 
     #

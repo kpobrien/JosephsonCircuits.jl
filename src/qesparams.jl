@@ -8,7 +8,6 @@ Return the scattering parameters for the system linearized around the strong pum
 
 # Examples
 ```jldoctest
-S = ComplexF64[0;;]
 inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
 bnm = ComplexF64[1; 0;;]
@@ -19,17 +18,17 @@ typevector = [:P, :I, :R, :L, :K, :L, :C]
 wmodes = [1]
 phin = ComplexF64[0;0;;]
 symfreqvar = nothing
-JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
+JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
     wmodes,symfreqvar)
-S
+println(inputwave)
+println(outputwave)
 
 # output
-1×1 Matrix{ComplexF64}:
- -1.0 + 0.0im
+ComplexF64[3.5355339059327378 + 0.0im;;]
+ComplexF64[-3.5355339059327378 + 0.0im;;]
 ```
 ```jldoctest
-S = ComplexF64[0;;]
 inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
 bnm = ComplexF64[1; 0;;]
@@ -40,17 +39,17 @@ typevector = [:P, :I, :R, :L, :K, :L, :C]
 wmodes = [1]
 phin = ComplexF64[50/(im*wmodes[1]);0;;]
 symfreqvar = nothing
-JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
+JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
     wmodes,symfreqvar)
-S
+println(inputwave)
+println(outputwave)
 
 # output
-1×1 Matrix{ComplexF64}:
- 1.0 + 0.0im
+ComplexF64[3.5355339059327378 + 0.0im;;]
+ComplexF64[3.5355339059327378 + 0.0im;;]
 ```
 ```jldoctest
-S = ComplexF64[0;;]
 inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
 bnm = ComplexF64[1; 0;;]
@@ -61,17 +60,17 @@ typevector = [:P, :I, :R, :L, :K, :L, :C]
 wmodes = [1]
 phin = ComplexF64[50/(im*wmodes[1]);0;;]
 symfreqvar = nothing
-JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
+JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
     wmodes,symfreqvar)
-S
+println(inputwave)
+println(outputwave)
 
 # output
-1×1 Matrix{ComplexF64}:
- 1.0 - 0.0im
+ComplexF64[-3.5355339059327378 - 0.0im;;]
+ComplexF64[-3.5355339059327378 + 0.0im;;]
 ```
 ```jldoctest
-S = ComplexF64[0;;]
 inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
 bnm = ComplexF64[-1; 1;;]
@@ -82,17 +81,17 @@ typevector = [:P, :R, :L, :C, :C]
 wmodes = [1]
 phin = ComplexF64[0;0;;]
 symfreqvar = nothing
-JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
+JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
     wmodes,symfreqvar)
-S
+println(inputwave)
+println(outputwave)
 
 # output
-1×1 Matrix{ComplexF64}:
- -1.0 - 0.0im
+ComplexF64[-7.0710678118654755 + 0.0im;;]
+ComplexF64[7.0710678118654755 + 0.0im;;]
 ```
 ```jldoctest
-S = ComplexF64[0;;]
 inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
 bnm = ComplexF64[-1; 1;;]
@@ -103,26 +102,27 @@ typevector = [:P, :R, :L, :C, :C]
 wmodes = [1]
 phin = ComplexF64[-50/(im*wmodes[1]);50/(im*wmodes[1]);;]
 symfreqvar = nothing
-JosephsonCircuits.calcS!(S,inputwave,outputwave,phin,bnm,portimpedanceindices,
+JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
     wmodes,symfreqvar)
-S
+println(inputwave)
+println(outputwave)
 
 # output
-1×1 Matrix{ComplexF64}:
- 1.0 - 0.0im
+ComplexF64[-7.0710678118654755 + 0.0im;;]
+ComplexF64[-7.0710678118654755 + 0.0im;;]
 ```
 """
-function calcS!(S, inputwave, outputwave, phin, bnm, inputportindices,
+function calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
     nodeindexarraysorted, typevector, wmodes, symfreqvar)
-    return calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
+    return calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
         nodeindexarraysorted, typevector, wmodes, symfreqvar, false)
 end
 
 """
-    calcSnoise!(S, inputwave, outputwave, phin, bnm, inputportindices,
+    calcinputoutputnoise!(S, inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
         nodeindexarraysorted, typevector, wmodes, symfreqvar)
 
@@ -135,7 +135,6 @@ not do.
 
 # Examples
 ```jldoctest
-Snoise = ComplexF64[0;;]
 inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 noiseoutputwave = ComplexF64[0;;]
 phin = ComplexF64[-2.5000000000007394e-10 - 0.000795774715459398im; 1.983790476804266e-20 + 3.141592641138603e-16im;;]
@@ -148,21 +147,22 @@ nodeindexarraysorted = [2 2 2 3 3 3; 1 1 3 1 1 1]
 typevector = [:P, :R, :C, :Lj, :C, :R]
 wmodes = [2*pi*5e9]
 symfreqvar = nothing
-JosephsonCircuits.calcSnoise!(Snoise,inputwave,noiseoutputwave,
+JosephsonCircuits.calcinputoutputnoise!(inputwave,noiseoutputwave,
     phin,bnm,portimpedanceindices,noiseportimpedanceindices,
     portimpedances,noiseportimpedances,nodeindexarraysorted,
     typevector,wmodes,symfreqvar)
-Snoise
+println(inputwave)
+println(noiseoutputwave)
 
 # output
-1×1 Matrix{ComplexF64}:
- -2.7915456687917157e-6 + 1.762749772454945e-10im
+ComplexF64[1.994711402007163e-5 + 0.0im;;]
+ComplexF64[-5.568327974762547e-11 + 3.516177070001411e-15im;;]
 ```
 """
-function calcSnoise!(S, inputwave, outputwave, phin, bnm, inputportindices,
+function calcinputoutputnoise!(inputwave, outputwave, phin, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
     nodeindexarraysorted, typevector, wmodes, symfreqvar)
-    return calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
+    return calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
         nodeindexarraysorted, typevector, wmodes, symfreqvar, true)
 end
@@ -170,7 +170,7 @@ end
 
 """
 
-    calcS_inner!(S, inputwave, outputwave, phin, bnm, inputportindices,
+    calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
         nodeindexarraysorted, typevector, wmodes, symfreqvar, nosource)
 
@@ -186,10 +186,9 @@ inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
 # outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
 
 """
-function calcS_inner!(S, inputwave, outputwave, nodeflux, bnm, inputportindices,
+function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
     nodeindexarraysorted, typevector, wmodes, symfreqvar, nosource)
-    # check the size of S
 
     # check the size of inputwave
 
@@ -289,17 +288,46 @@ function calcS_inner!(S, inputwave, outputwave, nodeflux, bnm, inputportindices,
         end
     end
  
-    # scattering matrix is defined as outputwave = S * inputwave
-    if size(outputwave) == size(S)
-        rdiv!(outputwave,inputwave)
-        copy!(S,outputwave)
-    else
-        S .= outputwave / inputwave
-    end
+    # # scattering matrix is defined as outputwave = S * inputwave
+    # if size(outputwave) == size(S)
+    #     rdiv!(outputwave,inputwave)
+    #     copy!(S,outputwave)
+    # else
+    #     S .= outputwave / inputwave
+    # end
 
     return nothing
 end
 
+function calcscatteringmatrix!(S,inputwave::Diagonal,outputwave)
+    copy!(S,outputwave)
+    rdiv!(S,inputwave)
+    return nothing
+end
+
+function calcscatteringmatrix!(S,inputwave,outputwave)
+    S .= outputwave / inputwave
+    return nothing
+end
+
+function calcscatteringmatrix!(S,inputwave::Vector,outputwave::Vector)
+    if size(S,1) != length(outputwave)
+        error("First dimension of scattering matrix not consistent with first dimensions of outputwave.")
+    end
+    if size(S,2) != length(inputwave)
+        error("Second dimension of scattering matrix not consistent with first dimension of input wave.")
+    end
+
+    fill!(S,0)
+    for j in eachindex(inputwave)
+        if !iszero(inputwave[j])
+            for i in eachindex(outputwave)
+                S[i,j] = outputwave[i]/inputwave[j]
+            end
+        end
+    end
+    return nothing
+end
 
 function calcportvoltage(key1,key2,phin,wmodes,Nmodes,j,k)
 
