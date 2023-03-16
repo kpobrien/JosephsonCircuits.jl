@@ -41,6 +41,76 @@ function factorklu!(cache::FactorizationCache, A::SparseMatrixCSC)
     return nothing
 end
 
+"""
+    linesearch(f,fp,dfdalpha,alphamin)
+
+Quadratic linesearch based on Nocedal and Wright, chapter 3 section 5. `f` is
+the value at the first point alpha=0.0, `fp` is the value at the second point,
+alpha=1.0, `dfdalpha` is the derivative at the first point, and `alphamin` is
+the minimum value of `dfdalpha` below which we will take a full step. The
+linesearch will return the fitted minimum of the function with respect to
+alpha as (alpha at which minimum occurs, minimum value of function).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.linesearch(0.1,0.1,0.0,0.0)
+(1.0, 0.1)
+
+julia> JosephsonCircuits.linesearch(0.0,0.2,0.0,0.0)
+(1.0, 0.2)
+
+julia> JosephsonCircuits.linesearch(0.0,0.0,-0.2,0.0)
+(0.5, -0.05000000000000001)
+
+julia> JosephsonCircuits.linesearch(0.0,0.18000000000000002,-0.02,0.1)
+(1.0, 0.18000000000000002)
+```
+"""
+function linesearch(f,fp,dfdalpha,alphamin)
+
+    alpha1 = 0.0
+    # coefficients of the quadratic equation a*alpha^2+b*alpha+c to interpolate
+    # f vs alpha
+    a = -dfdalpha + fp - f
+    b = dfdalpha
+    c = f
+    alpha1 = -b/(2*a)
+    f1fit = -b*b/(4*a) + c
+
+    if f1fit > fp
+        f1fit = fp
+        alpha1 = 1.0
+    end
+
+    # if the fitted alpha overshoots the size of the interval (from 0 to 1),
+    # then set alpha to 1 and make a full length step. 
+    if alpha1 > 1.0 || alpha1 <= 0.0
+        alpha1 = 1.0
+        f1fit = fp
+    end
+
+    # if we aren't making sufficient progress, take a step
+    # switch to using Armijo rule
+    if alpha1 <= alphamin
+        alpha1 = 1.0
+        f1fit = fp
+    end
+
+    # if a is zero, alpha1 will be NaN
+    # take a full step
+    if abs2(a) == 0 
+        alpha1 = 1.0
+        f1fit = fp
+    end
+
+    if isnan(alpha1)
+        error("NaN in nonlinear solver.")
+    end
+
+    return alpha1,f1fit
+
+end
+
 
 """
     nlsolve!(fj!, F, J::SparseMatrixCSC, x; iterations=1000, ftol=1e-8,
@@ -152,46 +222,9 @@ function nlsolve!(fj!::Function, F::Vector{T}, J::SparseMatrixCSC{T, Int64},
 
         fp = real(0.5*dot(F,F))
 
-        # coefficients of the quadratic equation a*alpha^2+b*alpha+c to interpolate
-        # f vs alpha
-        a = -dfdalpha + fp - f
-        b = dfdalpha
-        c = f
-        alpha1 = -b/(2*a)
-        f1fit = -b*b/(4*a) + c
-
-        if f1fit > fp
-            f1fit = fp
-            alpha1 = 1.0
-        end
-
-        # if the fitted alpha overshoots the size of the interval (from 0 to 1),
-        # then set alpha to 1 and make a full length step. 
-        if alpha1 > 1.0 || alpha1 <= 0.0
-            alpha1 = 1.0
-            f1fit = fp
-        end
-
-        # if we aren't making sufficient progress, take a step
-        # switch to using Armijo rule
-        if alpha1 <= alphamin
-            alpha1 = 1.0
-            f1fit = fp
-        end
-
-        # if a is zero, alpha1 will be NaN
-        if abs2(a) == 0 
-            alpha1 = 1.0
-        end
-
-        if isnan(alpha1)
-            error("NaN in nonlinear solver.")
-        end
-
-        # # switch to newton once the norm is small enough
-        # if fp <= switchofflinesearchtol && f <= switchofflinesearchtol && f1fit <= switchofflinesearchtol
-        #     alpha1 = 1.0
-        # end
+        # calculate the step size based on the last point, the trial point, and
+        # derivative at the first point.
+        alpha1, f1fit = linesearch(f,fp,dfdalpha,alphamin)
 
         # switch to newton once the norm is small enough
         normx = norm(x)
