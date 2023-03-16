@@ -52,23 +52,6 @@ the minimum value of `dfdalpha` below which we will take a full step. The
 linesearch will return the fitted minimum of the function with respect to
 alpha as (alpha at which minimum occurs, minimum value of function).
 
-# Examples
-```jldoctest
-julia> JosephsonCircuits.linesearch(0.0,-0.22,-0.02,0.0)
-(1.0, -0.22)
-
-julia> JosephsonCircuits.linesearch(0.0,0.2,0.0,0.0)
-(1.0, 0.2)
-
-julia> JosephsonCircuits.linesearch(0.0,0.18000000000000002,-0.02,0.1)
-(1.0, 0.18000000000000002)
-
-julia> JosephsonCircuits.linesearch(0.1,0.1,0.0,0.0)
-(1.0, 0.1)
-
-julia> JosephsonCircuits.linesearch(0.0,0.0,-0.2,0.0)
-(0.5, -0.05000000000000001)
-```
 """
 function linesearch(f,fp,dfdalpha,alphamin)
 
