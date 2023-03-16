@@ -75,10 +75,10 @@ function linesearch(f,fp,dfdalpha,alphamin)
     # coefficients of the quadratic equation a*alpha^2+b*alpha+c to interpolate
     # f vs alpha
     a = -dfdalpha + fp - f
-    b = dfdalpha
-    c = f
-    alpha1 = -b/(2*a)
-    f1fit = -b*b/(4*a) + c
+    # b = dfdalpha
+    # c = f
+    alpha1 = -dfdalpha/(2*a)
+    f1fit = -dfdalpha*dfdalpha/(4*a) + f
 
     if isnan(f) || isnan(fp)
         error("NaN in nonlinear solver.")
