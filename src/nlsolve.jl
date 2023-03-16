@@ -80,38 +80,27 @@ function linesearch(f,fp,dfdalpha,alphamin)
     alpha1 = -b/(2*a)
     f1fit = -b*b/(4*a) + c
 
-    if f1fit > fp
-        f1fit = fp
-        alpha1 = 1.0
-    end
-
-    # if the fitted alpha overshoots the size of the interval (from 0 to 1),
-    # then set alpha to 1 and make a full length step. 
-    if alpha1 > 1.0 || alpha1 <= 0.0
-        alpha1 = 1.0
-        f1fit = fp
-    end
-
-    # if we aren't making sufficient progress, take a step
-    # switch to using Armijo rule
-    if alpha1 <= alphamin
-        alpha1 = 1.0
-        f1fit = fp
-    end
-
-    # if a is zero, alpha1 will be NaN
-    # take a full step
-    if abs2(a) == 0 
-        alpha1 = 1.0
-        f1fit = fp
-    end
-
-    if isnan(alpha1)
+    if isnan(f) || isnan(fp)
         error("NaN in nonlinear solver.")
     end
 
-    return alpha1,f1fit
-
+    if f1fit > fp
+        return 1.0, fp
+    # if the fitted alpha overshoots the size of the interval (from 0 to 1),
+    # then set alpha to 1 and make a full length step.
+    elseif alpha1 > 1.0 || alpha1 <= 0.0
+        return 1.0, fp
+    # if we aren't making sufficient progress, take a step
+    # switch to using Armijo rule
+    elseif alpha1 <= alphamin
+        return 1.0, fp
+    # if a is zero, alpha1 will be NaN
+    # take a full step
+    elseif abs2(a) == 0 
+        return 1.0, fp
+    else
+        return alpha1, f1fit
+    end
 end
 
 
