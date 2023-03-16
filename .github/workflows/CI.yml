@@ -1,6 +1,5 @@
 name: 'CI'
-env:
-  JULIA_NUM_THREADS: 2
+
 on:
   push:
     branches:
