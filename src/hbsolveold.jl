@@ -240,7 +240,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # if there is a symbolic frequency variable, then we need to redo the noise
     # port calculation because calcnoiseportimpedanceindices() can't tell if a
     # symbolic expression is complex. 
-    if symfreqvar == nothing
+    if isnothing(symfreqvar)
         noiseportimpedanceindices = nm.noiseportimpedanceindices
     else
         noiseportimpedanceindices = calcnoiseportimpedanceindices(
@@ -673,7 +673,7 @@ function calcfj!(F,
     Am = sincosnloddtoboth(phib[Ljbm.nzind],nnz(Ljb),Nmodes)
 
     # calculate the residual
-    if !(F == nothing)
+    if !isnothing(F)
 
         # calculate the function. use the sine terms. Am[2:2:2*Nmodes,:]
         # calculate  AoLjbm, this is just a diagonal matrix.
@@ -688,7 +688,7 @@ function calcfj!(F,
     end
 
     # calculate the Jacobian
-    if !(J == nothing)
+    if !isnothing(J)
 
         # calculate  AoLjbm
         updateAoLjbm!(AoLjbm,Am,Ljb,Lmean,Nmodes,Nbranches)

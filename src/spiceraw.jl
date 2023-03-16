@@ -222,18 +222,18 @@ function parsespicevariable(variable::String)
 
     s = variable
     m1 = match(r"^\w+",s)
-    if m1 == nothing
+    if isnothing(m1)
         error("No match found.")
     end
 
     m2 = match(r"\d+",s)
     m3 = match(r"\d+",s[m1.offset+length(m1.match):end])
 
-    if m3 !== nothing
+    if !isnothing(m3)
         #if there is a separate number, use that
         key = m1.match
         val = parse(Int,m3.match)
-    elseif m2 !== nothing
+    elseif !isnothing(m2)
         key = m1.match[1:m2.offset-1]
         #otherwise if there is a symbol separated by a number 
         val = parse(Int,m2.match)

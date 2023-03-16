@@ -1251,28 +1251,28 @@ function parseoptionline(line::String)
     # default. an empty option line is perfectly acceptable. 
 
     indices = findfirst(r"(?i)(hz|khz|mhz|ghz)",line)
-    if indices == nothing
+    if isnothing(indices)
         frequencyunit = "ghz"
     else
         frequencyunit = line[indices]
     end
 
     indices = findfirst(r"(?i)( s | y | z | g | h )",line)
-    if indices == nothing
+    if isnothing(indices)
         parameter = "s"
     else
         parameter = strip(line[indices])
     end
 
     indices = findfirst(r"(?i)(db|ma|ri)",line)
-    if indices == nothing
+    if isnothing(indices)
         format = "ma"
     else
         format = line[indices]
     end
 
     indices = findfirst(r"(?i)( r )",line)
-    if indices == nothing
+    if isnothing(indices)
         R = 50.0
     else
         R = parse.(Float64,line[last(indices)+1:end])

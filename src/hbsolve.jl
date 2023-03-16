@@ -443,7 +443,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # calculate the numeric matrices
     signalnm = numericmatrices(psc, cg, circuitdefs, Nmodes = Nsignalmodes)
 
-    if pump == nothing
+    if isnothing(pump)
 
         allpumpfreq = calcfreqsrdft((0,))
         Amatrixmodes, Amatrixindices = hbmatind(allpumpfreq, signalfreq)
@@ -552,7 +552,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # if there is a symbolic frequency variable, then we need to redo the noise
     # port calculation because calcnoiseportimpedanceindices() can't tell if a
     # symbolic expression is complex. 
-    if symfreqvar == nothing
+    if isnothing(symfreqvar)
         noiseportimpedanceindices = signalnm.noiseportimpedanceindices
     else
         noiseportimpedanceindices = calcnoiseportimpedanceindices(
@@ -1092,7 +1092,7 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     # instability when i used AoLjbm here instead of AoLjbmcopy. 
     AoLjnm = transpose(Rbnm)*AoLjbmcopy*Rbnm;
 
-    if x0 == nothing
+    if isnothing(x0)
         x = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
     else
         x = x0
@@ -1228,7 +1228,7 @@ function calcfj2!(F,
     # convert from a node flux to a branch flux
     phib = Rbnm*nodeflux
 
-    if !(F == nothing)
+    if !isnothing(F)
 
         # convert the branch flux vector to a matrix with the terms arranged
         # in the correct way for the inverse rfft including the appropriate
@@ -1255,7 +1255,7 @@ function calcfj2!(F,
     end
 
     #calculate the Jacobian
-    if !(J == nothing)
+    if !isnothing(J)
 
         # turn the phivector into a matrix again because applynl! overwrites
         # the frequency domain data

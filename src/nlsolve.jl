@@ -103,11 +103,11 @@ note:
 # Examples
 ```jldoctest
 function fj!(F, J, x)
-    if !(F == nothing)
+    if !isnothing(F)
         F[1] = (x[1]+3)*(x[2]^3-7)+18
         F[2] = sin(x[2]*exp(x[1])-1)
     end
-    if !(J == nothing)
+    if !isnothing(J)
         J[1, 1] = x[2]^3-7
         J[1, 2] = 3*x[2]^2*(x[1]+3)
         u = exp(x[1])*cos(x[2]*exp(x[1])-1)

@@ -912,7 +912,7 @@ function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
         end
     end
 
-    if !(symfreqvar == nothing || checkissymbolic(symfreqvar))
+    if !(isnothing(symfreqvar) || checkissymbolic(symfreqvar))
         error("symfreqvar must be a symbolic variable (or nothing if no symbolic variables)")
     end
 
