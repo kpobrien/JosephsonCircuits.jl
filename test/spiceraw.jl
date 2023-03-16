@@ -32,7 +32,7 @@ using Test
         filepath = joinpath(dirname(Base.source_path()),"spiceraw","test03.raw")
 
         @test_warn(
-            "Variable line has additional parameters which we are ignoring",
+            "Variable line has additional parameters which we are ignoring.",
             JosephsonCircuits.spice_raw_load(filepath)
         )
 
@@ -43,7 +43,7 @@ using Test
         filepath = joinpath(dirname(Base.source_path()),"spiceraw","test04.raw")
 
         @test_throws(
-            ErrorException("This function only handles Binary files not ASCII"),
+            ArgumentError("This function only handles Binary files not ASCII."),
             JosephsonCircuits.spice_raw_load(filepath)
         )
 
@@ -54,7 +54,18 @@ using Test
         filepath = joinpath(dirname(Base.source_path()),"spiceraw","test05.raw")
 
         @test_throws(
-            ErrorException("Unknown flag"),
+            ArgumentError("Unknown flag."),
+            JosephsonCircuits.spice_raw_load(filepath)
+        )
+
+    end
+
+    @testset "spice_raw_load incorrect format" begin
+
+        filepath = joinpath(dirname(Base.source_path()),"spiceraw","test06.raw")
+
+        @test_throws(
+            ArgumentError("Line doesn't have the correct format."),
             JosephsonCircuits.spice_raw_load(filepath)
         )
 
@@ -73,5 +84,13 @@ using Test
 
     end
 
+    @testset "parsespicevariable no match" begin
+
+        @test_throws(
+            ArgumentError("No match found."),
+            JosephsonCircuits.parsespicevariable("")
+        )
+
+    end
 
 end

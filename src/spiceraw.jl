@@ -54,7 +54,7 @@ function spice_raw_load(filename)
             linename = linesplit[1]
             linevalue = strip(linesplit[2])
         else
-            error("Line doesn't have the correct format.")
+            throw(ArgumentError("Line doesn't have the correct format."))
         end
 
         if linename == "Title"
@@ -112,7 +112,7 @@ function spice_raw_load(filename)
         splitline = split(line,r"\s+")
 
         if length(splitline) > 3
-            @warn "Variable line has additional parameters which we are ignoring"
+            @warn "Variable line has additional parameters which we are ignoring."
         end 
         # variables[i-headerlength] = splitline[3]
         if !haskey(variables,splitline[3])
@@ -136,7 +136,7 @@ function spice_raw_load(filename)
         elseif flags =="complex"
             sf = Array{Complex{Float64}}(undef,nvariables,npoints)
         else
-            error("Unknown flag")
+            throw(ArgumentError("Unknown flag."))
         end
 
         # read the binary data
@@ -145,7 +145,7 @@ function spice_raw_load(filename)
         #close the file
         close(io)
     else
-        error("This function only handles Binary files not ASCII")
+        throw(ArgumentError("This function only handles Binary files not ASCII."))
     end
     
     # sort the labels. voltages such as  "V(1)","V(10)","V(100)"."V(101)"
@@ -223,7 +223,7 @@ function parsespicevariable(variable::String)
     s = variable
     m1 = match(r"^\w+",s)
     if isnothing(m1)
-        error("No match found.")
+        throw(ArgumentError("No match found."))
     end
 
     m2 = match(r"\d+",s)
