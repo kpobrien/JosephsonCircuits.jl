@@ -772,7 +772,7 @@ function sortnodes(uniquenodevector::Vector{String},nodeindexvector::Vector{Int}
 
     uniquenodevectorsortindices=calcnodesorting(uniquenodevector;sorting=sorting)
 
-    nodevectorsortindices = indexin(1:length(uniquenodevectorsortindices),uniquenodevectorsortindices)
+    nodevectorsortindices = sortperm(uniquenodevectorsortindices)
 
     # for (i,j) in enumerate(eachindex(nodeindexvector))
     for (i,j) in enumerate(nodeindexvector)
@@ -796,7 +796,8 @@ end
 
 Returns a zero length vector with the (computer science) type which will hold
 a set of circuit components of the (electrical engineering) types given in
-`components`.
+`components`. This function is not type stable by design, but exists to make
+the later function calls type stable.
 
 # Arguments
 - `typevector::Vector{Symbol}`: the component (electrical engineering) types.
@@ -837,18 +838,23 @@ function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
 
     # use this to store the types we have seen so we don't call promote_type
     # or take the inverse for the same type more than once.
-    typestore = Vector{DataType}(undef,0)
+    typestoredict = Dict{DataType,Nothing}()
 
     valuetype = Nothing
+
+    componentsdict = Dict{Symbol,Nothing}()
+    sizehint!(componentsdict,length(components))
+    for component in components
+        componentsdict[component] = nothing
+    end
 
     # find the first one then break the loop so we have to execute the first
     # element logic only once. 
     for (i,type) in enumerate(typevector)
-        if type in components
-
+        if haskey(componentsdict,type)
             valuetype = typeof(valuevector[i])
             # add the original type to the typestore
-            push!(typestore,valuetype)
+            typestoredict[valuetype] = nothing
             if checkinverse
                 valuetype = promote_type(typeof(1/valuevector[i]),valuetype)
             end
@@ -857,14 +863,13 @@ function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
     end
 
     for (i,type) in enumerate(typevector)
-        if type in components
-
+        if haskey(componentsdict,type)
             # if a different type is found, promote valuetype
             if typeof(valuevector[i]) != valuetype
                 # if it is a type we have seen before, do nothing
                 valuetype = promote_type(typeof(valuevector[i]),valuetype)
-                if !(valuetype in typestore)
-                    push!(typestore,valuetype)
+                if !haskey(typestoredict,valuetype)
+                    typestoredict[valuetype] = nothing
                     if checkinverse
                         valuetype = promote_type(typeof(1/valuevector[i]),valuetype)
                     end
@@ -1018,9 +1023,9 @@ function calcportindicesnumbers(typevector::Vector{Symbol},
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
-
-    portarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
-    # portnumbers = Vector{eltype(valuevector)}(undef,0)
+    # define dictionaries to check if things are unique
+    portnumbersdict = Dict{Int,Nothing}()
+    portbranchdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},Nothing}()
     portnumbers = Vector{Int}(undef,0)
     portindices = Int[]
 
@@ -1029,15 +1034,17 @@ function calcportindicesnumbers(typevector::Vector{Symbol},
         type=typevector[i]
         if type == :P
             key= (nodeindexarray[1,i],nodeindexarray[2,i])
+            keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
 
-            if valuevector[i] in portnumbers
+            if haskey(portnumbersdict,valuevector[i])
                 error("Duplicate ports are not allowed.")
-            elseif key in portarray
+            elseif haskey(portbranchdict,key) || haskey(portbranchdict,keyreversed)
                 error("Only one port allowed per branch.")
             else
                 push!(portindices,i)
                 push!(portnumbers,valuevector[i])
-                push!(portarray,key)
+                portnumbersdict[valuevector[i]] = nothing
+                portbranchdict[key] = nothing
             end
         end
     end
@@ -1091,30 +1098,37 @@ function calcportimpedanceindices(typevector::Vector{Symbol},
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
-    portarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
-    # portnumbers = Vector{eltype(valuevector)}(undef,0)
+    # portarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
     portnumbers = Vector{Int}(undef,0)
     portindices = Int[]
+
+    # define dictionaries to check if things are unique
+    portnumbersdict = Dict{Int,Nothing}()
+    portbranchdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},Nothing}()
 
     # find the ports
     for i in eachindex(typevector)
         type=typevector[i]
         if type == :P
             key= (nodeindexarray[1,i],nodeindexarray[2,i])
+            keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
 
-            if valuevector[i] in portnumbers
+            if haskey(portnumbersdict,valuevector[i])
                 error("Duplicate ports are not allowed.")
-            elseif key in portarray
+            elseif haskey(portbranchdict,key) || haskey(portbranchdict,keyreversed)
                 error("Only one port allowed per branch.")
             else
                 push!(portindices,i)
                 push!(portnumbers,valuevector[i])
-                push!(portarray,key)
+                portbranchdict[key] = nothing
+                portnumbersdict[valuevector[i]] = nothing
             end
         end
     end
 
-    resistorarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
+
+    # resistorarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
+    resistorbranchdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},Nothing}()
     resistorindices = Int[]
 
     # find the resistor associated with that port
@@ -1122,12 +1136,14 @@ function calcportimpedanceindices(typevector::Vector{Symbol},
         type=typevector[i]
         if type == :R
             key= (nodeindexarray[1,i],nodeindexarray[2,i])
-            if key in portarray
-                if key in resistorarray
+            keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
+
+            if haskey(portbranchdict,key) || haskey(portbranchdict,keyreversed)
+                if haskey(resistorbranchdict,key) || haskey(resistorbranchdict,keyreversed)
                     error("Only one resistor allowed per port.")
                 else
                     push!(resistorindices,i)
-                    push!(resistorarray,key)
+                    resistorbranchdict[key] = nothing
                 end
             end
         end

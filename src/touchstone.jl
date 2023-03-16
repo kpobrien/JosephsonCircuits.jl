@@ -1275,7 +1275,8 @@ function parseoptionline(line::String)
     if indices == nothing
         R = 50.0
     else
-        R = parse.(Float64,line[last(findfirst(r"(?i)( r )",line))+1:end])
+        R = parse.(Float64,line[last(indices)+1:end])
+
     end
 
     return TouchstoneOptionLine(frequencyunit, parameter, format, R)

@@ -22,16 +22,15 @@ function spice_raw_load(filename)
     #open a file handle
     io = open(filename)
 
-    # define a dictionary for the contents of the header
-    header = Dict(
-        "title" => "",
-        "date" => "",
-        "plotname" => "",
-        "flags" => "",
-        "nvariables" => 0,
-        "npoints" => 0,
-        "command" => "",
-        "option" => "")
+    # the contents of the header
+    title = ""
+    date = ""
+    plotname = ""
+    flags = ""
+    nvariables = 0
+    npoints = 0
+    command = ""
+    option = ""
 
     #other variables
     headerlength = 0
@@ -49,25 +48,39 @@ function spice_raw_load(filename)
         i+=1
         
         line = readline(io)
+        linesplit = split(line,":",limit=2)
 
-        linename = split(line,":",limit=2)[1]
+        if length(linesplit) == 2
+            linename = linesplit[1]
+            linevalue = strip(linesplit[2])
+        else
+            error("Line doesn't have the correct format.")
+        end
 
         if linename == "Title"
-            header["title"] = split(line,": ",limit=2)[2]
+            # header["title"] = linevalue
+            title = linevalue
         elseif linename == "Date"
-            header["date"] = split(line,": ",limit=2)[2]
+            # header["date"] = linevalue
+            date = linevalue
         elseif linename == "Plotname"
-            header["plotname"] = split(line,": ",limit=2)[2]
+            # header["plotname"] = linevalue
+            plotname = linevalue
         elseif linename == "Flags"
-            header["flags"] = split(line,": ",limit=2)[2]
+            # header["flags"] = linevalue
+            flags = linevalue
         elseif linename == "No. Variables"
-            header["nvariables"] = parse(Int,split(line,": ",limit=2)[2])
+            # header["nvariables"] = parse(Int,linevalue)
+            nvariables =  parse(Int,linevalue)
         elseif linename == "No. Points"
-            header["npoints"] = parse(Int,split(line,": ",limit=2)[2])
+            # header["npoints"] = parse(Int,linevalue)
+            npoints = parse(Int,linevalue)
         elseif linename == "Command"
-            header["command"] = split(line,": ",limit=2)[2]
+            # header["command"] = linevalue
+            command = linevalue
         elseif linename == "Option"
-            header["option"] = split(line,": ",limit=2)[2]
+            # header["option"] = linevalue
+            option = linevalue
         elseif linename == "Variables"
             headerlength = i
             break
@@ -118,10 +131,10 @@ function spice_raw_load(filename)
     if filetype == "Binary:"
 
         # make an empty array for the binary data
-        if header["flags"] == "real"
-            sf = Array{Float64}(undef,header["nvariables"],header["npoints"])
-        elseif header["flags"] =="complex"
-            sf = Array{Complex{Float64}}(undef,header["nvariables"],header["npoints"])
+        if flags == "real"
+            sf = Array{Float64}(undef,nvariables,npoints)
+        elseif flags =="complex"
+            sf = Array{Complex{Float64}}(undef,nvariables,npoints)
         else
             error("Unknown flag")
         end
@@ -146,7 +159,6 @@ function spice_raw_load(filename)
     end
 
     return (variables=variables,values=values)
-
 end
 
 """
@@ -210,6 +222,10 @@ function parsespicevariable(variable::String)
 
     s = variable
     m1 = match(r"^\w+",s)
+    if m1 == nothing
+        error("No match found.")
+    end
+
     m2 = match(r"\d+",s)
     m3 = match(r"\d+",s[m1.offset+length(m1.match):end])
 
