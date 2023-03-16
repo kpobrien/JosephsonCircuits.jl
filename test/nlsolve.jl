@@ -4,6 +4,14 @@ using Test
 
 @testset verbose=true "nlsolve" begin
 
+    @testset verbose=true "linesearch error" begin
+
+        @test_throws(
+            ErrorException("NaN in nonlinear solver."),
+            JosephsonCircuits.linesearch(0.0,NaN,-0.02,0.0)
+        )
+
+    end
 
     @testset verbose=true "nlsolve errors" begin
 
