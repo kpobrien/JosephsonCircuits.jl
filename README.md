@@ -61,15 +61,30 @@ circuitdefs = Dict(
     Cj => 1000.0e-15,
     R => 50.0)
 
-@time jpa = hbsolve(2*pi*(4.5:0.001:5.0)*1e9,
-    2*pi*4.75001*1e9,0.00565e-6,8,8,circuit,circuitdefs,
-    pumpports=[1]);
+ws = 2*pi*(4.5:0.001:5.0)*1e9
+wp = (2*pi*4.75001*1e9,)
+Ip = 0.00565e-6
+sources = [(mode=(1,),port=1,current=Ip)]
+Npumpharmonics = (16,)
+Nmodulationharmonics = (8,)
 
-plot(jpa.signal.w/(2*pi*1e9),
-    10*log10.(abs2.(jpa.signal.S[
-    jpa.signal.signalindex,
-    jpa.signal.signalindex,:])),
-    xlabel="Frequency (GHz)",ylabel="Gain (dB)")
+@time jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs)
+
+plot(
+    jpa.signal.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        jpa.signal.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+)
 ```
 
 ```
@@ -147,19 +162,24 @@ circuitdefs = Dict(
     Rright => 50.0,
 )
 
-wp=2*pi*7.12*1e9
 ws=2*pi*(1.0:0.1:14)*1e9
-
-Npumpmodes = 10
-Nsignalmodes = 10
-
+wp=(2*pi*7.12*1e9,)
 Ip=1.85e-6
+sources = [(mode=(1,),port=1,current=Ip)]
+Npumpharmonics = (20,)
+Nmodulationharmonics = (10,)
 
-@time rpm = hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,
-    circuit,circuitdefs,pumpports=[1]);
+@time rpm = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs)
 
 p1=plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S[end-rpm.signal.Nmodes+rpm.signal.signalindex,rpm.signal.signalindex,:])),
+    10*log10.(abs2.(rpm.signal.S(
+            outputmode=(0,),
+            outputport=2,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:),
+    )),
     ylim=(-40,30),label="S21",
     xlabel="Signal Frequency (GHz)",
     legend=:bottomright,
@@ -167,41 +187,40 @@ p1=plot(ws/(2*pi*1e9),
     ylabel="dB")
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S[rpm.signal.signalindex,end-rpm.signal.Nmodes+rpm.signal.signalindex,:])),
+    10*log10.(abs2.(rpm.signal.S((0,),1,(0,),2,:))),
     label="S12",
     )
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S[rpm.signal.signalindex,rpm.signal.signalindex,:])),
+    10*log10.(abs2.(rpm.signal.S((0,),1,(0,),1,:))),
     label="S11",
     )
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S[end-rpm.signal.Nmodes+rpm.signal.signalindex,end-rpm.signal.Nmodes+rpm.signal.signalindex,:])),
+    10*log10.(abs2.(rpm.signal.S((0,),2,(0,),2,:))),
     label="S22",
     )
 
 p2=plot(ws/(2*pi*1e9),
-    rpm.signal.QE[end-rpm.signal.Nmodes+rpm.signal.signalindex,rpm.signal.signalindex,:]./rpm.signal.QEideal[end-rpm.signal.Nmodes+rpm.signal.signalindex,rpm.signal.signalindex,:],    
+    rpm.signal.QE((0,),2,(0,),1,:)./rpm.signal.QEideal((0,),2,(0,),1,:),    
     ylim=(0,1.05),
     title="Quantum efficiency",legend=false,
     ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)");
 
 p3=plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S[:,rpm.signal.signalindex,:]')),
-    ylim=(-40,30),label="S21",
+    10*log10.(abs2.(rpm.signal.S(:,2,(0,),1,:)')),
+    ylim=(-40,30),
     xlabel="Signal Frequency (GHz)",
     legend=false,
     title="All idlers",
     ylabel="dB")
 
-
 p4=plot(ws/(2*pi*1e9),
-    1 .- rpm.signal.CM[end-rpm.signal.Nmodes+rpm.signal.signalindex,:],    
+    1 .- rpm.signal.CM((0,),2,:),    
     legend=false,title="Commutation \n relation error",
     ylabel="Commutation \n relation error",xlabel="Signal Frequency (GHz)");
 
-plot(p1, p2, p3,p4,layout = (2, 2))
+plot(p1, p2, p3, p4, layout = (2, 2))
 ```
 
 ```
@@ -283,19 +302,18 @@ circuitdefs = Dict(
     Cj => 40e-15,
 )  
 
-wp=2*pi*7.9*1e9
 ws=2*pi*(1.0:0.1:14)*1e9
-
-Npumpmodes = 10
-Nsignalmodes = 10
-
+wp=(2*pi*7.9*1e9,)
 Ip=1.1e-6
+sources = [(mode=(1,),port=1,current=Ip)]
+Npumpharmonics = (20,)
+Nmodulationharmonics = (10,)
 
-@time floquet = hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs,
-    pumpports=[1]);
+@time floquet = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs)
 
 p1=plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S[end-floquet.signal.Nmodes+floquet.signal.signalindex,floquet.signal.signalindex,:])),
+    10*log10.(abs2.(floquet.signal.S((0,),2,(0,),1,:))),
     ylim=(-40,30),label="S21",
     xlabel="Signal Frequency (GHz)",
     legend=:bottomright,
@@ -303,28 +321,28 @@ p1=plot(ws/(2*pi*1e9),
     ylabel="dB")
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S[floquet.signal.signalindex,end-floquet.signal.Nmodes+floquet.signal.signalindex,:])),
+    10*log10.(abs2.(floquet.signal.S((0,),1,(0,),2,:))),
     label="S12",
     )
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S[floquet.signal.signalindex,floquet.signal.signalindex,:])),
+    10*log10.(abs2.(floquet.signal.S((0,),1,(0,),1,:))),
     label="S11",
     )
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S[end-floquet.signal.Nmodes+floquet.signal.signalindex,end-floquet.signal.Nmodes+floquet.signal.signalindex,:])),
+    10*log10.(abs2.(floquet.signal.S((0,),2,(0,),2,:))),
     label="S22",
     )
 
 p2=plot(ws/(2*pi*1e9),
-    floquet.signal.QE[end-floquet.signal.Nmodes+floquet.signal.signalindex,floquet.signal.signalindex,:]./floquet.signal.QEideal[end-floquet.signal.Nmodes+floquet.signal.signalindex,floquet.signal.signalindex,:],    
+    floquet.signal.QE((0,),2,(0,),1,:)./floquet.signal.QEideal((0,),2,(0,),1,:),    
     ylim=(0.99,1.001),
     title="Quantum efficiency",legend=false,
     ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)");
 
 p3=plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S[:,floquet.signal.signalindex,:]')),
+    10*log10.(abs2.(floquet.signal.S(:,2,(0,),1,:)')),
     ylim=(-40,30),label="S21",
     xlabel="Signal Frequency (GHz)",
     legend=false,
@@ -333,7 +351,7 @@ p3=plot(ws/(2*pi*1e9),
 
 
 p4=plot(ws/(2*pi*1e9),
-    1 .- floquet.signal.CM[end-floquet.signal.Nmodes+floquet.signal.signalindex,:],    
+    1 .- floquet.signal.CM((0,),2,:),
     legend=false,title="Commutation \n relation error",
     ylabel="Commutation \n relation error",xlabel="Signal Frequency (GHz)");
 
@@ -364,22 +382,21 @@ for tandelta in tandeltas
         Lr => 2.47e-10,
         Cj => 40e-15,
     )  
-    wp=2*pi*7.9*1e9
+    wp=(2*pi*7.9*1e9,)
     ws=2*pi*(1.0:0.1:14)*1e9
-
-    Npumpmodes = 10
-    Nsignalmodes = 10
-    
     Ip=1.1e-6*(1+125*tandelta)
-    @time floquet = hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs,pumpports=[1]);
+    sources = [(mode=(1,),port=1,current=Ip)]
+    Npumpharmonics = (20,)
+    Nmodulationharmonics = (10,)
+    @time floquet = hbsolve(ws, wp, sources, Nmodulationharmonics,
+        Npumpharmonics, circuit, circuitdefs)
     push!(results,floquet)
-    
 end
 
 p1 = plot(title="Gain (S21)")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-        10*log10.(abs2.(results[i].signal.S[end-results[i].signal.Nmodes+results[i].signal.signalindex,results[i].signal.signalindex,:])),
+            10*log10.(abs2.(results[i].signal.S((0,),2,(0,),1,:))),
             ylim=(-60,30),label="tanδ=$(tandeltas[i])",
             legend=:bottomleft,
             xlabel="Signal Frequency (GHz)",ylabel="dB")
@@ -388,7 +405,7 @@ end
 p2 = plot(title="Quantum Efficiency")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-            results[i].signal.QE[end-results[i].signal.Nmodes+results[i].signal.signalindex,results[i].signal.signalindex,:]./results[i].signal.QEideal[end-results[i].signal.Nmodes+results[i].signal.signalindex,results[i].signal.signalindex,:],    
+            results[i].signal.QE((0,),2,(0,),1,:)./results[i].signal.QEideal((0,),2,(0,),1,:),
             ylim=(0.6,1.05),legend=false,
             title="Quantum efficiency",
             ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)")
@@ -397,7 +414,7 @@ end
 p3 = plot(title="Reverse Gain (S12)")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-        10*log10.(abs2.(results[i].signal.S[results[i].signal.signalindex,end-results[i].signal.Nmodes+results[i].signal.signalindex,:])),
+            10*log10.(abs2.(results[i].signal.S((0,),1,(0,),2,:))),
             ylim=(-10,1),legend=false,
             xlabel="Signal Frequency (GHz)",ylabel="dB")
 end
@@ -405,7 +422,7 @@ end
 p4 = plot(title="Commutation \n relation error")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-            1 .- results[i].signal.CM[end-results[i].signal.Nmodes+results[i].signal.signalindex,:],    
+            1 .- results[i].signal.CM((0,),2,:),
             legend=false,
             ylabel="Commutation\n relation error",xlabel="Signal Frequency (GHz)")
 end
