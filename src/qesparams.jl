@@ -303,8 +303,11 @@ julia> inputwave=JosephsonCircuits.LinearAlgebra.Diagonal([1.0,1.0]);outputwave=
 ```
 """
 function calcscatteringmatrix!(S,inputwave::Diagonal,outputwave)
+    # copy!(S,outputwave)
+    # rdiv!(S,inputwave)
+    rdiv!(outputwave,inputwave)
     copy!(S,outputwave)
-    rdiv!(S,inputwave)
+    
     return nothing
 end
 

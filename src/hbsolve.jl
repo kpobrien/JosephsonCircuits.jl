@@ -634,7 +634,6 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # generate the mode indices and find the signal index
     signalindex = 1
-    Nmodes = Nsignalmodes
 
     # solve the linear system for the specified frequencies. the response for
     # each frequency is independent so it can be done in parallel; however
@@ -649,7 +648,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
             portindices, portimpedanceindices, noiseportimpedanceindices,
             portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
-            w, wpumpmodes, Nmodes, Nnodes, symfreqvar, batches[i])
+            w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batches[i])
     end
 
     if returnQE
@@ -678,8 +677,14 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         QEidealout = QEideal
     end
 
-    return LinearHB(Sout, Snoise, QEout, QEidealout, CM, nodeflux, nodefluxadjoint,
-        voltage, Nmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
+    if returnCM && K
+        CMout = CMtokeyed(CM, signalfreq.modes, portnumbers, w)
+    else
+        CMout = CM
+    end
+
+    return LinearHB(Sout, Snoise, QEout, QEidealout, CMout, nodeflux, nodefluxadjoint,
+        voltage, Nsignalmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
         portnumbers, signalindex, w, signalfreq.modes)
 end
 
@@ -829,7 +834,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
                 calcinputoutputnoise!(inputwave,noiseoutputwave,phin,bnm,portimpedanceindices,noiseportimpedanceindices,
                     portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
-                calcscatteringmatrix!(Snoiseview,inputwave,outputwave)
+                calcscatteringmatrix!(Snoiseview,inputwave,noiseoutputwave)
             end
 
             # calculate the quantum efficiency
@@ -1723,6 +1728,17 @@ function Stokeyed(S, outputmodes, outputportnumbers, inputmodes,
     )
 end
 
+function CMtokeyed(CM, outputmodes, outputportnumbers, w)
+    Nfrequencies = length(w)
+    
+    return AxisKeys.KeyedArray(
+        reshape(CM, length(outputmodes), length(outputportnumbers),
+            Nfrequencies),
+        outputmode = outputmodes,
+        outputport = outputportnumbers,
+        freqindex=1:Nfrequencies,
+    )
+end
 
 # function scatteringparamstoarray(S,modes,portnumbers,w)
 #     Nmodes = length(modes)
@@ -1740,30 +1756,30 @@ end
     
 # end
 
+# # this is for the linearized simulations
+# function nodefluxtokeyed(nodeflux, outputmodes, outputportnumbers, inputmodes,
+#     inputportnumbers, w)
 
-# function fieldstokeyed(nodeflux, inputmodes, outputmodes,
-#     inputportnumbers, outputportnumbers)
+#     Nfrequencies = length(w)
 
-# nodeflux = KeyedArray(
-#     reshape(
-#         result.signal.nodeflux,
-#         result.signal.Nmodes,
-#         result.signal.Nnodes-1,
-#         result.signal.Nmodes,
-#         2,
-#         length(result.signal.w),
-#     ),
-#     outputmode = result.signal.modes,
-#     # i need to replace this with the node strings
-#     # i also need to return the node strings, i think that's
-#     # a good idea.
-#     node=result.signal.nodes[2:end],
-#     inputmode = result.signal.modes,
-#     inputport = result.signal.ports,
-#     freqindex=1:length(result.signal.w),
-# )
-
-
+#     return KeyedArray(
+#         reshape(
+#             nodeflux,
+#             result.signal.Nmodes,
+#             result.signal.Nnodes-1,
+#             result.signal.Nmodes,
+#             2,
+#             length(result.signal.w),
+#         ),
+#         outputmode = result.signal.modes,
+#         # i need to replace this with the node strings
+#         # i also need to return the node strings, i think that's
+#         # a good idea.
+#         node=result.signal.nodes[2:end],
+#         inputmode = result.signal.modes,
+#         inputport = result.signal.ports,
+#         freqindex=1:length(result.signal.w),
+#     )
 # end
 
 # function fieldstoarray(nodeflux, inputmodes, outputmodes,

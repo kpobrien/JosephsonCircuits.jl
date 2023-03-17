@@ -402,7 +402,13 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         QEidealout = QEideal
     end
 
-    return LinearHB(Sout, Snoise, QEout, QEidealout, CM, nodeflux, nodefluxadjoint,
+    if returnCM && K
+        CMout = CMtokeyed(CM, modes, portnumbers, w)
+    else
+        CMout = CM
+    end
+
+    return LinearHB(Sout, Snoise, QEout, QEidealout, CMout, nodeflux, nodefluxadjoint,
         voltage, Nmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
         portnumbers, signalindex, w, modes)
 end
