@@ -461,7 +461,6 @@ We prioritize speed (including compile time and time to first use), simplicity, 
 
 # Future developments:
 
-* Currently only four-wave mixing interactions with a single pump tone are supported. We will next add support for three wave mixing interactions along with flux pumping, DC biasing, fluxoid offsets, and multi-tone harmonic balance (multiple pumps).
 * Design optimization.
 * More nonlinear components such as kinetic inductors.
 * Time domain simulations.
