@@ -88,7 +88,7 @@ plot(
 ```
 
 ```
-  0.005982 seconds (65.01 k allocations: 6.878 MiB)
+  0.003080 seconds (57.81 k allocations: 6.391 MiB)
 ```
 
 ![JPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/jpa.png)
@@ -224,7 +224,7 @@ plot(p1, p2, p3, p4, layout = (2, 2))
 ```
 
 ```
-4.178419 seconds (302.46 k allocations: 5.586 GiB, 8.89% gc time)
+  2.959010 seconds (257.75 k allocations: 2.392 GiB, 0.21% gc time)
 ```
 
 ![JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/uniform.png)
@@ -359,7 +359,7 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
 ```
-  2.406175 seconds (557.12 k allocations: 2.969 GiB, 1.52% gc time)
+  2.079267 seconds (456.63 k allocations: 1.997 GiB, 0.48% gc time)
 ```
 
 ![Floquet JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/floquet.png)
@@ -431,10 +431,10 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
 ```
-  4.188929 seconds (543.15 k allocations: 3.229 GiB, 8.97% gc time)
-  4.228156 seconds (543.63 k allocations: 3.278 GiB, 8.39% gc time)
-  4.222535 seconds (544.01 k allocations: 3.327 GiB, 8.52% gc time)
-  4.242313 seconds (543.99 k allocations: 3.327 GiB, 8.49% gc time)
+  3.815835 seconds (470.00 k allocations: 2.303 GiB, 0.22% gc time)
+  3.800166 seconds (470.59 k allocations: 2.310 GiB, 0.29% gc time)
+  3.824690 seconds (470.75 k allocations: 2.317 GiB, 0.19% gc time)
+  3.838721 seconds (470.75 k allocations: 2.317 GiB, 0.18% gc time)
 ```
 
 ![Floquet JTWPA simulation with loss](https://qce.mit.edu/JosephsonCircuits.jl/floquetlossy.png)
