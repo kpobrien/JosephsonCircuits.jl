@@ -548,7 +548,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # calculate the source terms in the node basis
     bnm = transpose(Rbnm)*bbm
-
+    # return bnm
     # if there is a symbolic frequency variable, then we need to redo the noise
     # port calculation because calcnoiseportimpedanceindices() can't tell if a
     # symbolic expression is complex. 
@@ -712,7 +712,8 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
 
     Nports = length(portindices)
     phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
-    inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
+    # inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
+    inputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
     outputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
 
     Nnoiseports = length(noiseportimpedanceindices)

@@ -1005,6 +1005,16 @@ JosephsonCircuits.calcportindicesnumbers(
 ```
 ```jldoctest
 JosephsonCircuits.calcportindicesnumbers(
+    [:P,:R,:C,:Lj,:P],
+    [2 2 2 3 3; 1 1 3 1 1],
+    [],
+    [2,50,5e-15,1e-12,1])
+
+# output
+([5, 1], [1, 2])
+```
+```jldoctest
+JosephsonCircuits.calcportindicesnumbers(
     [:R,:C,:Lj,:C],
     [2 2 3 3; 1 3 1 1],
     [],
