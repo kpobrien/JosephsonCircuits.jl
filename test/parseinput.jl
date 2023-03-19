@@ -96,7 +96,7 @@ using Test
 
     @testset "calcnodesorting" begin
         @test_throws(
-            ArgumentError("invalid base 10 digit 'a' in \"a\""),
+            ArgumentError("Failed to parse the nodes as integers. Try setting the keyword argument `sorting=:name` or `sorting=:none`."),
             JosephsonCircuits.calcnodesorting(["30","11","0","a"];sorting=:number)
         )
     end

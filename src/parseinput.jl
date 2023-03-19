@@ -683,29 +683,37 @@ julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:none)
 """
 function calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
 
-    # vector of indices for the sortperm
-    uniquenodevectorsortindices = ones(Int,length(uniquenodevector))
+    # vector of indices for the sortperm. if sorting is nothing, use this
+    # uniquenodevectorsortindices = ones(Int,length(uniquenodevector))
+    uniquenodevectorsortindices = Vector{Int}(undef,length(uniquenodevector))
+    # uniquenodevectorsortindices .= 1:length(uniquenodevector)
+    for i in eachindex(uniquenodevectorsortindices)
+        uniquenodevectorsortindices[i] = i
+    end
 
     # sort according to the desired scheme
     if sorting == :name
         # sort the vector of unique node strings
-        sortperm!(uniquenodevectorsortindices,uniquenodevector)
+        sortperm!(uniquenodevectorsortindices,uniquenodevector,initialized=true)
 
     elseif sorting == :number
         # convert the unique node strings to integers and sort those
-        try
-            sortperm!(uniquenodevectorsortindices, parse.(Int,uniquenodevector))
-        catch e
-            println("Error: Failed to parse the nodes as integers. Try setting the keyword argument `sorting=:name`.")
-            throw(e)
+        uniquenodevectorints = Vector{Int}(undef,length(uniquenodevector))
+        for i in eachindex(uniquenodevectorints)
+            parsednode = tryparse(Int,uniquenodevector[i])
+            if !isnothing(parsednode)
+                uniquenodevectorints[i] = parsednode
+            else
+                throw(ArgumentError("Failed to parse the nodes as integers. Try setting the keyword argument `sorting=:name` or `sorting=:none`."))
+            end
         end
+        sortperm!(uniquenodevectorsortindices, uniquenodevectorints, initialized=true)
 
     elseif sorting == :none
         # don't perform any sorting. keep the nodes in
         # order of first appearance, except move the
         # ground node first later as always
-        uniquenodevectorsortindices .= 1:length(uniquenodevectorsortindices)
-
+        nothing
     else
         throw(ArgumentError("Unknown sorting type."))
     end
