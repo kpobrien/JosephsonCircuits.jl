@@ -162,7 +162,7 @@ using Test
 
     @testset "calcportindicesnumbers" begin
         @test_throws(
-            ErrorException("Only one port allowed per branch."),
+            ArgumentError("Only one port allowed per branch."),
             JosephsonCircuits.calcportindicesnumbers(
                 [:P,:P,:C,:Lj,:C],
                 [2 2 2 3 3; 1 1 3 1 1],
@@ -174,7 +174,7 @@ using Test
 
     @testset "calcportindicesnumbers" begin
         @test_throws(
-            ErrorException("Duplicate ports are not allowed."),
+            ArgumentError("Duplicate ports are not allowed."),
             JosephsonCircuits.calcportindicesnumbers(
                 [:P,:R,:C,:Lj,:P],
                 [2 2 2 3 3; 1 1 3 1 1],
@@ -210,7 +210,7 @@ using Test
 
     @testset "calcportimpedanceindices" begin
         @test_throws(
-            ErrorException("Only one port allowed per branch."),
+            ArgumentError("Only one port allowed per branch."),
             JosephsonCircuits.calcportimpedanceindices(
                 [:P,:P,:C,:Lj,:C],
                 [2 2 2 3 3; 1 1 3 1 1],
@@ -222,7 +222,7 @@ using Test
 
     @testset "calcportimpedanceindices" begin
         @test_throws(
-            ErrorException("Duplicate ports are not allowed."),
+            ArgumentError("Duplicate ports are not allowed."),
             JosephsonCircuits.calcportimpedanceindices(
                 [:P,:R,:C,:Lj,:P],
                 [2 2 2 3 3; 1 1 3 1 1],
@@ -234,7 +234,7 @@ using Test
 
     @testset "calcportimpedanceindices" begin
         @test_throws(
-            ErrorException("Only one resistor allowed per port."),
+            ArgumentError("Only one resistor allowed per port."),
             JosephsonCircuits.calcportimpedanceindices(
                 [:P,:R,:R,:Lj,:C],
                 [2 2 2 2 3; 1 1 1 3 1],

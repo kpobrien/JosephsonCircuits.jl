@@ -950,7 +950,7 @@ function calcnoiseportimpedanceindices(typevector::Vector{Symbol},
     end
 
     portimpedanceindices = calcportimpedanceindices(typevector,nodeindexarray,mutualinductorvector,valuevector)
-    out = Int[]
+    noiseportimpedanceindices = Int[]
     portindices = Int[]
 
     for i in eachindex(typevector)
@@ -959,20 +959,20 @@ function calcnoiseportimpedanceindices(typevector::Vector{Symbol},
             if i in portimpedanceindices
                 nothing
             else
-                push!(out,i)
+                push!(noiseportimpedanceindices,i)
             end
         elseif type == :C && valuevector[i] isa Complex
             if !iszero(valuevector[i].im)
-                push!(out,i)
+                push!(noiseportimpedanceindices,i)
             end
         elseif type == :L && valuevector[i] isa Complex
             if !iszero(valuevector[i].im)
-                push!(out,i)
+                push!(noiseportimpedanceindices,i)
             end
         end
     end
 
-    return out
+    return noiseportimpedanceindices
 end
 
 """
@@ -1026,30 +1026,42 @@ function calcportindicesnumbers(typevector::Vector{Symbol},
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
-    # define dictionaries to check if things are unique
-    portnumbersdict = Dict{Int,Nothing}()
-    portbranchdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},Nothing}()
-    portnumbers = Vector{Int}(undef,0)
+    # define vectors to hold the numbers of the ports, the indices in the
+    # typevector, valuevector, and nodeindexarray, and the branches.
+    # portnumbers = Int[]
     portindices = Int[]
+    portbranches = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
 
-    # find the ports
+    # find the port indices
     for i in eachindex(typevector)
         type=typevector[i]
         if type == :P
-            key= (nodeindexarray[1,i],nodeindexarray[2,i])
+            key = (nodeindexarray[1,i],nodeindexarray[2,i])
             keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
-
-            if haskey(portnumbersdict,valuevector[i])
-                error("Duplicate ports are not allowed.")
-            elseif haskey(portbranchdict,key) || haskey(portbranchdict,keyreversed)
-                error("Only one port allowed per branch.")
-            else
-                push!(portindices,i)
-                push!(portnumbers,valuevector[i])
-                portnumbersdict[valuevector[i]] = nothing
-                portbranchdict[key] = nothing
-            end
+            push!(portindices,i)
+            # push!(portnumbers,valuevector[i])
+            push!(portbranches,key)
+            push!(portbranches,keyreversed)
         end
+    end
+
+    # extract the port numbers. this causes runtime dispatch if the type of
+    # valuevector is any
+    portnumbers = zeros(Int,length(portindices))
+    for (i,index) in enumerate(portindices)
+        portnumbers[i] = valuevector[index]
+    end
+
+    # check that all of the port numbers are unique (two ports should not
+    # have the same port number)
+    if !allunique(portnumbers)
+        throw(ArgumentError("Duplicate ports are not allowed."))
+    end
+
+    # check that the port branches are unique (two ports should not be defined
+    # on the same branch)
+    if !allunique(portbranches)
+        throw(ArgumentError("Only one port allowed per branch."))
     end
 
     # sort by the portnumber
@@ -1088,6 +1100,30 @@ JosephsonCircuits.calcportimpedanceindices(
 # output
 Int64[]
 ```
+```jldoctest
+JosephsonCircuits.calcportimpedanceindices(
+    [:P,:R,:C,:Lj,:C,:P,:R],
+    [2 3 2 3 3 3 2; 1 1 3 1 1 1 1],
+    [],
+    [1,50,5e-15,1e-12,30e-15,2,50.0])
+
+# output
+2-element Vector{Int64}:
+ 7
+ 2
+```
+```jldoctest
+JosephsonCircuits.calcportimpedanceindices(
+    [:P,:R,:C,:Lj,:C,:P,:R],
+    [2 2 2 3 3 3 3; 1 1 3 1 1 1 1],
+    [],
+    [1,50,5e-15,1e-12,30e-15,2,50.0])
+
+# output
+2-element Vector{Int64}:
+ 2
+ 7
+```
 """
 function calcportimpedanceindices(typevector::Vector{Symbol},
     nodeindexarray::Matrix{Int},mutualinductorvector::Vector,
@@ -1101,59 +1137,50 @@ function calcportimpedanceindices(typevector::Vector{Symbol},
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
-    # portarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
-    portnumbers = Vector{Int}(undef,0)
-    portindices = Int[]
+    # calculate the indices and numbers of the ports
+    portindices,portnumbers = calcportindicesnumbers(typevector, nodeindexarray,
+        mutualinductorvector, valuevector)
 
-    # define dictionaries to check if things are unique
-    portnumbersdict = Dict{Int,Nothing}()
-    portbranchdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},Nothing}()
-
-    # find the ports
-    for i in eachindex(typevector)
-        type=typevector[i]
-        if type == :P
-            key= (nodeindexarray[1,i],nodeindexarray[2,i])
-            keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
-
-            if haskey(portnumbersdict,valuevector[i])
-                error("Duplicate ports are not allowed.")
-            elseif haskey(portbranchdict,key) || haskey(portbranchdict,keyreversed)
-                error("Only one port allowed per branch.")
-            else
-                push!(portindices,i)
-                push!(portnumbers,valuevector[i])
-                portbranchdict[key] = nothing
-                portnumbersdict[valuevector[i]] = nothing
-            end
-        end
+    # make a dictionary so we can easily lookup the port number from the branch
+    portbranchdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},Int}()
+    sizehint!(portbranchdict,2*length(portindices))
+    for portindex in portindices
+        key= (nodeindexarray[1,portindex],nodeindexarray[2,portindex])
+        keyreversed = (nodeindexarray[2,portindex],nodeindexarray[1,portindex])
+        portbranchdict[key] = portindex
+        portbranchdict[keyreversed] = portindex
     end
 
-
-    # resistorarray = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
     resistorbranchdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},Nothing}()
     resistorindices = Int[]
+    resistornumbers = Int[]
 
     # find the resistor associated with that port
     for i in eachindex(typevector)
         type=typevector[i]
         if type == :R
-            key= (nodeindexarray[1,i],nodeindexarray[2,i])
+            key = (nodeindexarray[1,i],nodeindexarray[2,i])
             keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
 
-            if haskey(portbranchdict,key) || haskey(portbranchdict,keyreversed)
+            if haskey(portbranchdict,key)
                 if haskey(resistorbranchdict,key) || haskey(resistorbranchdict,keyreversed)
-                    error("Only one resistor allowed per port.")
+                    throw(ArgumentError("Only one resistor allowed per port."))
                 else
                     push!(resistorindices,i)
+                    push!(resistornumbers,portbranchdict[key])
                     resistorbranchdict[key] = nothing
                 end
             end
         end
     end
 
+    # throw an error if we haven't found a resistor for every port
+    if length(resistorindices) != length(portindices)
+        throw(ArgumentError("Ports without resistors detected. Each port must have a resistor to define the impedance."))
+    end
+
     # sort by the portnumber
-    sp = sortperm(portnumbers)
+    sp = sortperm(resistornumbers)
 
     return resistorindices[sp]
 end
