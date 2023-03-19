@@ -831,14 +831,10 @@ Num[]
 
 julia> @syms R1 C1 R2;JosephsonCircuits.calcvaluetype([:R,:C,:R],[R1,C1,R2],[:R])
 SymbolicUtils.BasicSymbolic{Number}[]
-
-julia> uniquenodevectorsorted,nodeindexarray=JosephsonCircuits.sortnodes(["1", "0", "2"],[1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2],sorting=:number);println(uniquenodevectorsorted);println(nodeindexarray);
-["0", "1", "2"]
-[2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
 ```
 """
 function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
-    components::Vector{Symbol};checkinverse=true)
+    components::Vector{Symbol};checkinverse::Bool=true)
 
     if length(typevector) !== length(valuevector)
          throw(DimensionMismatch("typevector and valuevector should have the same length"))
@@ -848,8 +844,6 @@ function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
     # or take the inverse for the same type more than once.
     typestoredict = Dict{DataType,Nothing}()
 
-    valuetype = Nothing
-
     componentsdict = Dict{Symbol,Nothing}()
     sizehint!(componentsdict,length(components))
     for component in components
@@ -858,6 +852,7 @@ function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
 
     # find the first one then break the loop so we have to execute the first
     # element logic only once. 
+    valuetype = Nothing
     for (i,type) in enumerate(typevector)
         if haskey(componentsdict,type)
             valuetype = typeof(valuevector[i])
