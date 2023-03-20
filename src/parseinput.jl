@@ -1134,6 +1134,18 @@ JosephsonCircuits.calcportimpedanceindices(
  2
  7
 ```
+```jldoctest
+JosephsonCircuits.calcportimpedanceindices(
+    [:P,:R,:C,:Lj,:C,:P,:R],
+    [2 2 2 3 3 3 3; 1 1 3 1 1 1 1],
+    [],
+    [2,50,5e-15,1e-12,30e-15,1,50.0])
+
+# output
+2-element Vector{Int64}:
+ 7
+ 2
+```
 """
 function calcportimpedanceindices(typevector::Vector{Symbol},
     nodeindexarray::Matrix{Int},mutualinductorvector::Vector,
@@ -1154,11 +1166,11 @@ function calcportimpedanceindices(typevector::Vector{Symbol},
     # make a dictionary so we can easily lookup the port number from the branch
     portbranchdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},Int}()
     sizehint!(portbranchdict,2*length(portindices))
-    for portindex in portindices
+    for (i,portindex) in enumerate(portindices)
         key= (nodeindexarray[1,portindex],nodeindexarray[2,portindex])
         keyreversed = (nodeindexarray[2,portindex],nodeindexarray[1,portindex])
-        portbranchdict[key] = portindex
-        portbranchdict[keyreversed] = portindex
+        portbranchdict[key] = portnumbers[i]
+        portbranchdict[keyreversed] = portnumbers[i]
     end
 
     resistorbranchdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},Nothing}()
