@@ -55,8 +55,11 @@ A simple structure to hold the linearized harmonic balance solutions.
 - `CM`: the commutation relations (equal to ±1), for each combination of port
     and frequency. 
 - `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
-- `nodefluxadjoint`: the node fluxes resulting from inputs at each frequency and port.
+- `nodefluxadjoint`: the node fluxes resulting from inputs at each frequency and port
+    with a time reversed modulation.
 - `voltage`: the node voltages resulting from inputs at each frequency and port.
+- `voltageadjoint`: the node fluxes resulting from inputs at each frequency and port
+    with a time reversed modulation.
 - `Nmodes`: the number of signal and idler frequencies.
 - `Nnodes`: the number of nodes in the circuit (including the ground node).
 - `Nbranches`: the number of branches in the circuit.
@@ -75,6 +78,7 @@ struct LinearHB
     nodeflux
     nodefluxadjoint
     voltage
+    voltageadjoint
     Nmodes
     Nnodes
     Nbranches
@@ -135,7 +139,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-    keyedarrays::Val{K} = Val(false)) where K
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false)) where K
 
     # solve the nonlinear system using the old syntax externally and the new
     # syntax internally
@@ -199,7 +203,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, keyedarrays = keyedarrays)
+        returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
+        keyedarrays = keyedarrays)
 
     return HB(pump, signal)
 end
@@ -213,7 +218,7 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-    keyedarrays::Val{K} = Val(true)) where {N,M,K}
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true)) where {N,M,K}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -257,7 +262,9 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, keyedarrays = keyedarrays)
+        returnvoltage = returnvoltage,
+        returnvoltageadjoint = returnvoltageadjoint,
+        keyedarrays = keyedarrays)
 
     return HB(pump, signal)
 end
@@ -336,7 +343,7 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     nbatches::Integer = Base.Threads.nthreads(), returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    keyedarrays::Val{K} = Val(true)) where K
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true)) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit)
@@ -355,7 +362,8 @@ return hblinsolve(w, psc, cg, circuitdefs, signalfreq; pump = pump,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, keyedarrays = keyedarrays)
+        returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
+        keyedarrays = keyedarrays)
 end
 
 """
@@ -437,7 +445,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    keyedarrays::Val{K} = Val(false)) where {N,K}
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false)) where {N,K}
 
     Nsignalmodes = length(signalfreq.modes)
     # calculate the numeric matrices
@@ -632,6 +640,12 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         voltage = Vector{Complex{Float64}}(undef,0)
     end
 
+    if returnvoltageadjoint
+        voltageadjoint = zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),Nsignalmodes*Nports,length(w))
+    else
+        voltageadjoint = Vector{Complex{Float64}}(undef,0)
+    end
+
     # generate the mode indices and find the signal index
     signalindex = 1
 
@@ -642,7 +656,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # parallelize using native threading
     batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
     Base.Threads.@threads for i in 1:length(batches)
-        hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage, Asparse,
+        hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage,
+            voltageadjoint, Asparse,
             AoLjnm, invLnm, Cnm, Gnm, bnm,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
@@ -684,7 +699,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     end
 
     return LinearHB(Sout, Snoise, QEout, QEidealout, CMout, nodeflux, nodefluxadjoint,
-        voltage, Nsignalmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
+        voltage, voltageadjoint, Nsignalmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
         portnumbers, signalindex, w, signalfreq.modes)
 end
 
@@ -702,7 +717,8 @@ Solve the linearized harmonic balance problem for a subset of the frequencies
 given by `wi`. This function is thread safe in that different frequencies can
 be computed in parallel on separate threads.
 """
-function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage, Asparse,
+function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage,
+    voltageadjoint, Asparse,
     AoLjnm, invLnm, Cnm, Gnm, bnm,
     AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
     Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
@@ -803,7 +819,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
             calcscatteringmatrix!(Sview,inputwave,outputwave)
         end
 
-        if (Nnoiseports > 0 || !isempty(nodefluxadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint))
+        if (Nnoiseports > 0 || !isempty(nodefluxadjoint) || !isempty(voltageadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint) || !isempty(voltageadjoint))
 
             # solve the nonlinear system with the complex conjugate of the pump
             # modulation matrix
@@ -829,6 +845,10 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
             # copy the nodeflux adjoint for output
             if !isempty(nodefluxadjoint)
                 copy!(view(nodefluxadjoint,:,:,i),phin)
+            end
+
+            if !isempty(voltageadjoint)
+                copy!(view(voltageadjoint,:,:,i),im*wmodesm*phin)
             end
 
             # calculate the noise scattering parameters

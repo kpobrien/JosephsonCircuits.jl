@@ -85,7 +85,7 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false,returnnodefluxadjoint = false, returnvoltage = false,
-    keyedarrays::Val{K} = Val(false)) where K
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false)) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting=sorting)
@@ -114,7 +114,8 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, keyedarrays = keyedarrays)
+        returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
+        keyedarrays = keyedarrays)
     return HB(pump, signal)
 end
 
@@ -193,7 +194,8 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
     nbatches = Base.Threads.nthreads(), sorting = :number, returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
-    returnvoltage = false, keyedarrays::Val{K} = Val(false)) where K
+    returnvoltage = false, returnvoltageadjoint = false,
+    keyedarrays::Val{K} = Val(false)) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -206,7 +208,8 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, keyedarrays = keyedarrays)
+        returnvoltage = returnvoltage, returnvoltageadjoint = false,
+        keyedarrays = keyedarrays)
 end
 
 function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
@@ -214,7 +217,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
-    returnvoltage = false, keyedarrays::Val{K} = Val(false)) where K
+    returnvoltage = false, returnvoltageadjoint = false,
+    keyedarrays::Val{K} = Val(false)) where K
 
     @assert nbatches >= 1
 
@@ -356,6 +360,12 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         voltage = Vector{Complex{Float64}}(undef,0)
     end
 
+    if returnvoltageadjoint
+        voltageadjoint = zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),Nsignalmodes*Nports,length(w))
+    else
+        voltageadjoint = Vector{Complex{Float64}}(undef,0)
+    end
+
     wpumpmodes = calcw(0.0,indices,wp);
     modes = [(2*i,) for i in indices]
 
@@ -367,7 +377,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # parallelize using native threading
     batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
     Base.Threads.@threads for i in 1:length(batches)
-        hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage, Asparse,
+        hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage,
+            voltageadjoint, Asparse, 
             AoLjnm, invLnm, Cnm, Gnm, bnm,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
@@ -409,8 +420,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     end
 
     return LinearHB(Sout, Snoise, QEout, QEidealout, CMout, nodeflux, nodefluxadjoint,
-        voltage, Nmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
-        portnumbers, signalindex, w, modes)
+        voltage, voltageadjoint, Nmodes, Nnodes, Nbranches,
+        psc.uniquenodevectorsorted[2:end], portnumbers, signalindex, w, modes)
 end
 
 
