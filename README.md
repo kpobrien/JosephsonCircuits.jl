@@ -35,8 +35,17 @@ Pkg.add(name="JosephsonCircuits",rev="main")
 
 To run the examples below, you will need to install Plots.jl using the command:
 ```
-using Pkg
 Pkg.add("Plots")
+```
+
+If you get errors when running the examples, please try installing the latest version of Julia and updating to the latest version of JosephsonCircuits.jl by running:
+```
+Pkg.update()
+```
+
+Then check that you are running the latest version of the package with:
+```
+Pkg.status()
 ```
 
 # Examples:
