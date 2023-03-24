@@ -98,7 +98,7 @@ using Test
             Npumpharmonics, circuit, circuitdefs, ftol=1e-12)
 
         @test isapprox(
-            result.pump.nodeflux,
+            result.pump.nodeflux[:],
             ComplexF64[-0.013189575486618105 - 0.00865077163136891im, 2.6396823809835998e-5 - 5.667772212498911e-6im, -2.3501629748681806e-8 - 2.2306559257777402e-8im, -7.987057959121183e-12 + 3.750064665528795e-11im, 4.337129743740559e-14 - 1.3397330127340191e-14im, -3.812185723603184e-17 - 3.8456119951452504e-17im, -4.278102807441037e-20 + 3.974761087481868e-20im, -8.24749227891514e-25 + 3.0560138516751506e-24im, 0.12157593753208869 + 0.07973582696437984im, 1.3736443951855489e-5 - 6.463164795537436e-5im, -5.3397980865816756e-8 + 9.191484285021433e-9im, 2.7913096743299775e-11 + 4.514682457284182e-11im, 3.3395873694437265e-14 - 4.569085921919452e-14im, -6.154948861291708e-17 - 1.523212283849711e-17im, -2.2291909276375226e-20 + 6.18003971235134e-20im, 5.405242786243393e-25 + 3.424470385254823e-24im],
             atol = 1e-8)
 
@@ -168,8 +168,8 @@ using Test
                 (mode=(1,),port=1,current=Ip),
             ],
             circuit,circuitdefs;dc=true,odd=true,even=false,
-            x0 = out1.nodeflux);
-        @test isapprox(out1.nodeflux,out2.nodeflux)
+            x0 = out1.nodeflux[:]);
+        @test isapprox(out1.nodeflux[:],out2.nodeflux[:])
     end
 
     @testset verbose=true "hbnlsolve lossless error" begin

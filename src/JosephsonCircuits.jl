@@ -11,6 +11,7 @@ import Symbolics
 import AxisKeys
 import SnoopPrecompile
 import OrderedCollections
+import Statistics
 
 using LinearAlgebra
 using SparseArrays

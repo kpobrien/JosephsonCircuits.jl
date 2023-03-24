@@ -785,7 +785,7 @@ julia> JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[10,4,5,1])
 2.5
 
 julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L1, C1, Lj1])
-L1 + (1//2)*(Lj1 - L1)
+(1//2)*(L1 + Lj1)
 ```
 """
 function calcLmean(typevector::Vector{Symbol}, valuevector::Vector)
@@ -809,15 +809,29 @@ function calcLmean_inner(typevector::Vector, valuevector::Vector,
         end
     end
 
-    # take the mean
+    # # take the mean
     # Lmean = zero(eltype(valuetypevector))
-    Lmean = 0
-    ninductors = 0
-    for v in Vn
-        ninductors+=1
-        Lmean = Lmean + (v-Lmean)/ninductors
+    # # Lmean = 0
+    # ninductors = 0
+    # for v in Vn
+    #     ninductors+=1
+    #     Lmean = Lmean + (v-Lmean)/ninductors
+    # end
+    # return Lmean
+
+    if isempty(Vn)
+        return 0
+    else
+        return Statistics.mean(Vn)
     end
-    return Lmean
+
+    # Lmean = Statistics.mean(Vn)
+    # if isnothing(Lmean)
+    #     return 0
+    # else
+    #     return Lmean
+    # end
+    # return Statistics.mean(Vn)
 end
 
 

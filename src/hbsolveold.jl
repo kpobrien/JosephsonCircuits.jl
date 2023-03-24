@@ -361,7 +361,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     end
 
     if returnvoltageadjoint
-        voltageadjoint = zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),Nsignalmodes*Nports,length(w))
+        voltageadjoint = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
     else
         voltageadjoint = Vector{Complex{Float64}}(undef,0)
     end

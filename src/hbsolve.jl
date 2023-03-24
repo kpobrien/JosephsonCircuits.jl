@@ -328,7 +328,7 @@ pump=hbnlsolve(
 
 signal = JosephsonCircuits.hblinsolve(ws,
     circuit, circuitdefs; Nmodulationharmonics = Nmodulationharmonics, pump = pump, symfreqvar=nothing,
-    threewavemixing=false, fourwavemixing=true, returnnodeflux=true)
+    threewavemixing=false, fourwavemixing=true, returnnodeflux=true, keyedarrays = Val(false))
 isapprox(signal.nodeflux,
     ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
     atol = 1e-6)
@@ -431,7 +431,8 @@ signalfreq =JosephsonCircuits.truncfreqs(
     JosephsonCircuits.calcfreqsdft(Nmodulationharmonics),
     dc=true,odd=threewavemixing,even=fourwavemixing,maxintermodorder=Inf,
 )
-signal = JosephsonCircuits.hblinsolve(ws, psc, cg, circuitdefs, signalfreq;pump=pump,returnnodeflux=true)
+signal = JosephsonCircuits.hblinsolve(ws, psc, cg, circuitdefs,
+    signalfreq;pump=pump,returnnodeflux=true, keyedarrays = Val(false))
 isapprox(signal.nodeflux,
     ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
     atol = 1e-6)
@@ -445,7 +446,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false)) where {N,K}
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true)) where {N,K}
 
     Nsignalmodes = length(signalfreq.modes)
     # calculate the numeric matrices
@@ -485,7 +486,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         # convert the branch flux vector to a matrix with the terms arranged
         # in the correct way for the inverse rfft including the appropriate
         # complex conjugates.
-        branchflux = pump.Rbnm*pump.nodeflux
+        branchflux = pump.Rbnm*pump.nodeflux[:]
         phivectortomatrix!(
             branchflux[pump.Ljbm.nzind], phimatrix,
             pumpindices.vectomatmap,
@@ -682,6 +683,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         Sout = S
     end
 
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # for the quantum efficiency
     if returnQE && K
         QEout = Stokeyed(QE, signalfreq.modes, portnumbers, signalfreq.modes,
             portnumbers, w)
@@ -692,14 +695,48 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         QEidealout = QEideal
     end
 
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # for the commutation relations
     if returnCM && K
         CMout = CMtokeyed(CM, signalfreq.modes, portnumbers, w)
     else
         CMout = CM
     end
 
-    return LinearHB(Sout, Snoise, QEout, QEidealout, CMout, nodeflux, nodefluxadjoint,
-        voltage, voltageadjoint, Nsignalmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnnodeflux && K
+        nodefluxout = nodevariabletokeyed(nodeflux, signalfreq.modes,
+            psc.uniquenodevectorsorted[2:end], signalfreq.modes, portnumbers, w)
+    else
+        nodefluxout = nodeflux
+    end
+
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnnodefluxadjoint && K
+        nodefluxadjointout = nodevariabletokeyed(nodefluxadjoint, signalfreq.modes,
+            psc.uniquenodevectorsorted[2:end], signalfreq.modes, portnumbers, w)
+    else
+        nodefluxadjointout = nodefluxadjoint
+    end
+
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnvoltage && K
+        voltageout = nodevariabletokeyed(voltage, signalfreq.modes,
+            psc.uniquenodevectorsorted[2:end], signalfreq.modes, portnumbers, w)
+    else
+        voltageout = voltage
+    end
+
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnvoltageadjoint && K
+        voltageadjointout = nodevariabletokeyed(voltageadjoint, signalfreq.modes,
+            psc.uniquenodevectorsorted[2:end], signalfreq.modes, portnumbers, w)
+    else
+        voltageadjointout = voltageadjoint
+    end
+
+    return LinearHB(Sout, Snoise, QEout, QEidealout, CMout, nodefluxout, nodefluxadjointout,
+        voltageout, voltageadjointout, Nsignalmodes, Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end],
         portnumbers, signalindex, w, signalfreq.modes)
 end
 
@@ -928,7 +965,7 @@ out=hbnlsolve(
         (mode=(1,),port=1,current=Ip),
     ],
     circuit,circuitdefs;dc=true,odd=true,even=false)
-isapprox(out.nodeflux,
+isapprox(out.nodeflux[:],
     ComplexF64[15.190314040027522 - 8.56492651167657e-24im, 2.991103820177504e-6 - 1.8501001011477133e-8im, -6.835392148510984 - 1.0356102442254259e-14im, 7.396422335315908e-6 - 4.5749403967992827e-8im, 6.835392148539885 - 1.0356102451770844e-14im, 1.008026285172782e-5 - 6.23498762664213e-8im],
     atol = 1e-6)
 
@@ -940,7 +977,8 @@ function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
     circuit, circuitdefs; iterations = 1000,
     maxintermodorder = Inf, dc = false, odd = true, even = false, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, sorting= :number, keyedarrays::Val{K} = Val(false)) where {N,K}
+    symfreqvar = nothing, sorting= :number,
+    keyedarrays::Val{K} = Val(true)) where {N,K}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -1025,7 +1063,7 @@ out=hbnlsolve(
         (mode=(1,),port=1,current=Ip),
     ],
     frequencies, fi, psc, cg, nm)
-isapprox(out.nodeflux,
+isapprox(out.nodeflux[:],
     ComplexF64[15.190314040027522 - 8.56492651167657e-24im, 2.991103820177504e-6 - 1.8501001011477133e-8im, -6.835392148510984 - 1.0356102442254259e-14im, 7.396422335315908e-6 - 4.5749403967992827e-8im, 6.835392148539885 - 1.0356102451770844e-14im, 1.008026285172782e-5 - 6.23498762664213e-8im],
     atol = 1e-6)
 
@@ -1037,7 +1075,7 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, keyedarrays::Val{K} = Val(false)) where {N,K}
+    symfreqvar = nothing, keyedarrays::Val{K} = Val(true)) where {N,K}
 
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
@@ -1060,6 +1098,7 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     Nnodes = psc.Nnodes
     typevector = psc.typevector
     nodeindexarraysorted = psc.nodeindexarraysorted
+    nodes = psc.uniquenodevectorsorted[2:end]
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = nm.Ljb
@@ -1203,6 +1242,12 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
 
     end
 
+    if K
+        nodefluxout = nodevariabletokeyed(nodeflux, modes, nodes)
+    else
+        nodefluxout = nodeflux
+    end
+
     #
     if !isempty(S) && K
         Sout = Stokeyed(S, modes, portnumbers, modes, portnumbers)
@@ -1210,8 +1255,10 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
         Sout = S
     end
 
-    return NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
-        Nbranches, psc.uniquenodevectorsorted[2:end], portnumbers, modes, Sout)
+
+
+    return NonlinearHB(w, frequencies, nodefluxout, Rbnm, Ljb, Lb, Ljbm, Nmodes,
+        Nbranches, nodes, portnumbers, modes, Sout)
 
 end
 
@@ -1761,20 +1808,67 @@ function CMtokeyed(CM, outputmodes, outputportnumbers, w)
     )
 end
 
-# function scatteringparamstoarray(S,modes,portnumbers,w)
-#     Nmodes = length(modes)
-#     Nports = length(portnumbers)
+function nodevariabletokeyed(nodevariable, outputmodes, nodes)
+    return  AxisKeys.KeyedArray(
+        reshape(nodevariable, length(outputmodes), length(nodes)),
+        outputmode = outputmodes,
+        node=nodes)
+end
+
+
+function nodevariabletokeyed(nodevariable, outputmodes, nodes, inputmodes,
+    inputportnumbers, w)
+
+    return AxisKeys.KeyedArray(
+        reshape(
+            nodevariable,
+            length(outputmodes),
+            length(nodes),
+            length(inputmodes),
+            length(inputportnumbers),
+            length(w),
+        ),
+        outputmode = outputmodes,
+        node = nodes,
+        inputmode = inputmodes,
+        inputport = inputportnumbers,
+        freqindex=1:length(w),
+    )
+end
+
+
+# # oh, this needs all of the ports too
+# function nodevariabletokeyed(nodevariable, outputmodes, inputmodes, nodes, w)
+#     return  AxisKeys.KeyedArray(
+#         reshape(nodevariable, length(outputmodes), length(nodes)),
+#         outputmode = outputmodes,
+#         node=nodes)
+# end
+
+
+# function nodevariabletokeyed(nodeflux, inputmodes,
+#     inputportnumbers)
+
 #     Nfrequencies = length(w)
-    
+
 #     return KeyedArray(
-#         reshape(S, Nmodes, Nports, Nmodes, Nports, Nfrequencies),
-#         outputmode = modes,
-#         outputport = portnumbers,
-#         inputmode = modes,
-#         inputport = portnumbers,
-#         freqindex=1:Nfrequencies,
+#         reshape(
+#             nodeflux,
+#             result.signal.Nmodes,
+#             result.signal.Nnodes-1,
+#             result.signal.Nmodes,
+#             2,
+#             length(result.signal.w),
+#         ),
+#         outputmode = result.signal.modes,
+#         # i need to replace this with the node strings
+#         # i also need to return the node strings, i think that's
+#         # a good idea.
+#         node=result.signal.nodes[2:end],
+#         inputmode = result.signal.modes,
+#         inputport = result.signal.ports,
+#         # freqindex=1:length(result.signal.w),
 #     )
-    
 # end
 
 # # this is for the linearized simulations
