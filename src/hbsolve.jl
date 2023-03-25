@@ -535,7 +535,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # extract the elements we need
     Nnodes = psc.Nnodes
-    typevector = psc.typevector
+    componenttypes = psc.componenttypes
     nodeindices = psc.nodeindices
     componentnames = psc.componentnames
     Nbranches = cg.Nbranches
@@ -575,8 +575,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         noiseportimpedanceindices = signalnm.noiseportimpedanceindices
     else
         noiseportimpedanceindices = calcnoiseportimpedanceindices(
-            psc.typevector, psc.nodeindices,
-            psc.mutualinductorvector,
+            psc.componenttypes, psc.nodeindices,
+            psc.mutualinductorbranchnames,
             Symbolics.substitute.(signalnm.vvn, symfreqvar => wmodes[1]))
     end
 
@@ -673,7 +673,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
             portindices, portimpedanceindices, noiseportimpedanceindices,
-            portimpedances, noiseportimpedances, nodeindices, typevector,
+            portimpedances, noiseportimpedances, nodeindices, componenttypes,
             w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batches[i])
     end
 
@@ -767,7 +767,7 @@ end
         AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
         Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
         portindices, portimpedanceindices, noiseportimpedanceindices,
-        portimpedances, noiseportimpedances, nodeindices, typevector,
+        portimpedances, noiseportimpedances, nodeindices, componenttypes,
         w, indices, wp, Nmodes, Nnodes, symfreqvar, wi)
 
 Solve the linearized harmonic balance problem for a subset of the frequencies
@@ -780,7 +780,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
     AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
     Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
     portindices, portimpedanceindices, noiseportimpedanceindices,
-    portimpedances, noiseportimpedances, nodeindices, typevector,
+    portimpedances, noiseportimpedances, nodeindices, componenttypes,
     w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi)
 
     Nports = length(portindices)
@@ -872,7 +872,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
         # calculate the scattering parameters
         if !isempty(S) || !isempty(QE) || !isempty(CM)
             calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
-                portimpedances,portimpedances,nodeindices,typevector,wmodes,symfreqvar)
+                portimpedances,portimpedances,nodeindices,componenttypes,wmodes,symfreqvar)
             calcscatteringmatrix!(Sview,inputwave,outputwave)
         end
 
@@ -911,7 +911,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
             # calculate the noise scattering parameters
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
                 calcinputoutputnoise!(inputwave,noiseoutputwave,phin,bnm,portimpedanceindices,noiseportimpedanceindices,
-                    portimpedances,noiseportimpedances,nodeindices,typevector,wmodes,symfreqvar)
+                    portimpedances,noiseportimpedances,nodeindices,componenttypes,wmodes,symfreqvar)
                 calcscatteringmatrix!(Snoiseview,inputwave,noiseoutputwave)
             end
 
@@ -1116,7 +1116,7 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
 
     # extract the elements we need
     Nnodes = psc.Nnodes
-    typevector = psc.typevector
+    componenttypes = psc.componenttypes
     nodeindices = psc.nodeindices
     nodes = psc.nodenames[2:end]
     Nbranches = cg.Nbranches
@@ -1257,7 +1257,7 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     portimpedances = [vvn[i] for i in portimpedanceindices]
     if !isempty(S)
         calcinputoutput!(inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
-            portimpedances,portimpedances,nodeindices,typevector,wmodes,symfreqvar)
+            portimpedances,portimpedances,nodeindices,componenttypes,wmodes,symfreqvar)
         calcscatteringmatrix!(S, inputwave, outputwave)
 
     end

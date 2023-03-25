@@ -44,7 +44,7 @@ using Test
 
     @testset "extractbranches" begin
         @test_throws(
-            DimensionMismatch("typevector must have the same length as the number of node indices"),
+            DimensionMismatch("componenttypes must have the same length as the number of node indices"),
             JosephsonCircuits.extractbranches(
                 [:P,:I,:R,:C,:Lj,:C],
                 [2 2 2 2 3; 1 1 1 3 1]
@@ -103,7 +103,7 @@ using Test
 
     @testset "calcvaluetype" begin
         @test_throws(
-            DimensionMismatch("typevector and componentvalues should have the same length"),
+            DimensionMismatch("componenttypes and componentvalues should have the same length"),
             JosephsonCircuits.calcvaluetype(
                 [:C,:R],
                 [1,2,3],

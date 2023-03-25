@@ -2,7 +2,7 @@
 """
     calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, typevector, wmodes, symfreqvar)
+        nodeindices, componenttypes, wmodes, symfreqvar)
 
 Return the input and output waves for the system linearized around the strong pump.
 
@@ -14,12 +14,12 @@ bnm = ComplexF64[1; 0;;]
 portimpedanceindices = [3]
 portimpedances = ComplexF64[50]
 nodeindices = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
-typevector = [:P, :I, :R, :L, :K, :L, :C]
+componenttypes = [:P, :I, :R, :L, :K, :L, :C]
 wmodes = [1]
 phin = ComplexF64[0;0;;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindices,typevector,
+    portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
 println(inputwave)
 println(outputwave)
@@ -35,12 +35,12 @@ bnm = ComplexF64[1; 0;;]
 portimpedanceindices = [3]
 portimpedances = ComplexF64[50]
 nodeindices = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
-typevector = [:P, :I, :R, :L, :K, :L, :C]
+componenttypes = [:P, :I, :R, :L, :K, :L, :C]
 wmodes = [1]
 phin = ComplexF64[50/(im*wmodes[1]);0;;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindices,typevector,
+    portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
 println(inputwave)
 println(outputwave)
@@ -56,12 +56,12 @@ bnm = ComplexF64[1; 0;;]
 portimpedanceindices = [3]
 portimpedances = ComplexF64[50]
 nodeindices = [1 1 1 1 0 1 1; 2 2 2 2 0 3 3;]
-typevector = [:P, :I, :R, :L, :K, :L, :C]
+componenttypes = [:P, :I, :R, :L, :K, :L, :C]
 wmodes = [1]
 phin = ComplexF64[50/(im*wmodes[1]);0;;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindices,typevector,
+    portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
 println(inputwave)
 println(outputwave)
@@ -77,12 +77,12 @@ bnm = ComplexF64[-1; 1;;]
 portimpedanceindices = [2]
 portimpedances = ComplexF64[50.0 + 0.0im]
 nodeindices = [2 2 2 2 3; 3 3 1 1 1]
-typevector = [:P, :R, :L, :C, :C]
+componenttypes = [:P, :R, :L, :C, :C]
 wmodes = [1]
 phin = ComplexF64[0;0;;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindices,typevector,
+    portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
 println(inputwave)
 println(outputwave)
@@ -98,12 +98,12 @@ bnm = ComplexF64[-1; 1;;]
 portimpedanceindices = [2]
 portimpedances = ComplexF64[50.0 + 0.0im]
 nodeindices = [2 2 2 2 3; 3 3 1 1 1]
-typevector = [:P, :R, :L, :C, :C]
+componenttypes = [:P, :R, :L, :C, :C]
 wmodes = [1]
 phin = ComplexF64[-50/(im*wmodes[1]);50/(im*wmodes[1]);;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindices,typevector,
+    portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
 println(inputwave)
 println(outputwave)
@@ -115,16 +115,16 @@ ComplexF64[-7.0710678118654755 + 0.0im;;]
 """
 function calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
-    nodeindices, typevector, wmodes, symfreqvar)
+    nodeindices, componenttypes, wmodes, symfreqvar)
     return calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, typevector, wmodes, symfreqvar, false)
+        nodeindices, componenttypes, wmodes, symfreqvar, false)
 end
 
 """
     calcinputoutputnoise!(S, inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, typevector, wmodes, symfreqvar)
+        nodeindices, componenttypes, wmodes, symfreqvar)
 
 Return the input and output waves for the system linearized around the strong pump. 
 
@@ -144,13 +144,13 @@ noiseportimpedanceindices = [6]
 portimpedances = [50]
 noiseportimpedances = [1]
 nodeindices = [2 2 2 3 3 3; 1 1 3 1 1 1]
-typevector = [:P, :R, :C, :Lj, :C, :R]
+componenttypes = [:P, :R, :C, :Lj, :C, :R]
 wmodes = [2*pi*5e9]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutputnoise!(inputwave,noiseoutputwave,
     phin,bnm,portimpedanceindices,noiseportimpedanceindices,
     portimpedances,noiseportimpedances,nodeindices,
-    typevector,wmodes,symfreqvar)
+    componenttypes,wmodes,symfreqvar)
 println(inputwave)
 println(noiseoutputwave)
 
@@ -161,17 +161,17 @@ ComplexF64[-5.568327974762547e-11 + 3.516177070001411e-15im;;]
 """
 function calcinputoutputnoise!(inputwave, outputwave, phin, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
-    nodeindices, typevector, wmodes, symfreqvar)
+    nodeindices, componenttypes, wmodes, symfreqvar)
     return calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, typevector, wmodes, symfreqvar, true)
+        nodeindices, componenttypes, wmodes, symfreqvar, true)
 end
 
 
 """
     calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, typevector, wmodes, symfreqvar, nosource)
+        nodeindices, componenttypes, wmodes, symfreqvar, nosource)
 
 Calculate the input and output power waves as defined in (except in
 units of sqrt(photons/second) instead of sqrt(power)
@@ -186,7 +186,7 @@ outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * p
 """
 function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
-    nodeindices, typevector, wmodes, symfreqvar, nosource)
+    nodeindices, componenttypes, wmodes, symfreqvar, nosource)
 
     # check the size of inputwave
 
@@ -212,7 +212,7 @@ function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputporti
                 # calculate the port impedance
                 portimpedance = calcimpedance(
                     inputportimpedances[i],
-                    typevector[inputportindices[i]],
+                    componenttypes[inputportindices[i]],
                     wmodes[j],symfreqvar)
 
                 # calculate the scaling factor for the waves
@@ -255,7 +255,7 @@ function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputporti
                 # calculate the port impedance
                 portimpedance = calcimpedance(
                     outputportimpedances[i],
-                    typevector[outputportindices[i]],
+                    componenttypes[outputportindices[i]],
                     wmodes[j],symfreqvar)
 
                 # calculate the current flowing through the port

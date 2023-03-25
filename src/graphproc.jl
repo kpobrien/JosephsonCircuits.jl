@@ -59,7 +59,7 @@ JosephsonCircuits.CircuitGraph(Dict((3, 2) => 3, (1, 2) => 1, (3, 1) => 2, (1, 3
 """
 function calccircuitgraph(parsedsortedcircuit::ParsedSortedCircuit)
 
-    branchvector = extractbranches(parsedsortedcircuit.typevector,
+    branchvector = extractbranches(parsedsortedcircuit.componenttypes,
                                 parsedsortedcircuit.nodeindices)
 
     # calculate the graph of inductive components glelist, the

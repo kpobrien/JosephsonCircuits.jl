@@ -227,7 +227,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     # extract the elements we need
     Nnodes = psc.Nnodes
-    typevector = psc.typevector
+    componenttypes = psc.componenttypes
     nodeindices = psc.nodeindices
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
@@ -248,8 +248,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         noiseportimpedanceindices = nm.noiseportimpedanceindices
     else
         noiseportimpedanceindices = calcnoiseportimpedanceindices(
-            psc.typevector, psc.nodeindices,
-            psc.mutualinductorvector,
+            psc.componenttypes, psc.nodeindices,
+            psc.mutualinductorbranchnames,
             Symbolics.substitute.(nm.vvn, symfreqvar => w[1]))
     end
 
@@ -383,7 +383,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
             portindices, portimpedanceindices, noiseportimpedanceindices,
-            portimpedances, noiseportimpedances, nodeindices, typevector,
+            portimpedances, noiseportimpedances, nodeindices, componenttypes,
             w, wpumpmodes, Nmodes, Nnodes, symfreqvar, batches[i])
     end
 
@@ -509,7 +509,7 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
 
     # extract the elements we need
     Nnodes = psc.Nnodes
-    typevector = psc.typevector
+    componenttypes = psc.componenttypes
     nodeindices = psc.nodeindices
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
@@ -636,7 +636,7 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
     portimpedances = [vvn[i] for i in portimpedanceindices]
     if !isempty(S)
         calcinputoutput!(inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
-            portimpedances,portimpedances,nodeindices,typevector,wmodes,symfreqvar)
+            portimpedances,portimpedances,nodeindices,componenttypes,wmodes,symfreqvar)
         calcscatteringmatrix!(S,inputwave,outputwave)
     end
 
