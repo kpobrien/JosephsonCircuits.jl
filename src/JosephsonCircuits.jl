@@ -39,6 +39,7 @@ include("matutils.jl")
 include("nlsolve.jl")
 include("fftutils.jl")
 include("qesparams.jl")
+include("keyedarrayutils.jl")
 
 # old single tone harmonic balance solver code
 include("hbsolveold.jl")
