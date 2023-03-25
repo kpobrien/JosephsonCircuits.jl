@@ -14,8 +14,10 @@ A simple structure to hold the nonlinear harmonic balance solutions.
 - `Nmodes`: the number of signal and idler frequencies.
 - `Nnodes`: the number of nodes in the circuit (including the ground node).
 - `Nbranches`: the number of branches in the circuit.
-- `nodes`: the vector of unique node strings.
-- `ports`: vector of port numbers.
+- `nodenames`: the vector of unique node name strings.
+- `componentnames`: the vector of component name strings
+- `portnumbers`: vector of port numbers.
+- `portindices`: 
 - `modes`: tuple of the pump mode indices where (1,) is the pump in the single
     pump case.
 - `S`: the scattering matrix relating inputs and outputs for each combination
@@ -25,6 +27,7 @@ struct NonlinearHB
     w
     frequencies
     nodeflux
+    # voltage
     Rbnm
     Ljb
     Lb
@@ -32,6 +35,12 @@ struct NonlinearHB
     Nmodes
     Nbranches
     nodes
+    # nodenames
+    # nodeindices
+    # componentnames
+    # portnumbers
+    # portindices
+    # noiseportindices
     ports
     modes
     S
@@ -528,6 +537,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     Nnodes = psc.Nnodes
     typevector = psc.typevector
     nodeindexarraysorted = psc.nodeindexarraysorted
+    namevector = psc.namevector
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = signalnm.Ljb
@@ -684,6 +694,15 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnSnoise && K
+        Snoiseout =  Snoisetokeyed(Snoise, signalfreq.modes,
+            namevector[noiseportimpedanceindices], signalfreq.modes,
+            portnumbers, w)
+    else
+        Snoiseout = Snoise
+    end
+
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     # for the quantum efficiency
     if returnQE && K
         QEout = Stokeyed(QE, signalfreq.modes, portnumbers, signalfreq.modes,
@@ -735,7 +754,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         voltageadjointout = voltageadjoint
     end
 
-    return LinearHB(Sout, Snoise, QEout, QEidealout, CMout, nodefluxout,
+    return LinearHB(Sout, Snoiseout, QEout, QEidealout, CMout, nodefluxout,
         nodefluxadjointout, voltageout, voltageadjointout, Nsignalmodes,
         Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end], portnumbers,
         signalindex, w, signalfreq.modes)

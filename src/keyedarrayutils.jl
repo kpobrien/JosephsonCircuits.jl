@@ -74,21 +74,21 @@ function nodevariabletokeyed(nodevariable, outputmodes, nodes, inputmodes,
     )
 end
 
-function sensitivitytokeyed(sensitivity, inputmodes, components, outputmodes,
+function Snoisetokeyed(Snoise, inputmodes, components, outputmodes,
     outputportnumbers, w)
 
     return AxisKeys.KeyedArray(
         reshape(
-            sensitivity,
+            Snoise,
             length(inputmodes),
             length(components),
             length(outputmodes),
             length(outputportnumbers),
             length(w),
         ),
-        inputmodes = inputmodes,
-        components = components,
-        outputmodes = outputmodes,
+        inputmode = inputmodes,
+        component = components,
+        outputmode = outputmodes,
         outputport = outputportnumbers,
         freqindex=1:length(w),
     )

@@ -117,7 +117,7 @@ using Test
         @test result.signal.QE == Array{Float64, 3}(undef, 0, 0, 0)
         @test result.signal.S == Array{Float64, 3}(undef, 0, 0, 0)
         @test result.signal.nodeflux == ComplexF64[]
-        @test result.signal.Snoise == Array{ComplexF64, 3}(undef, 0, 9, 51)
+        @test result.signal.Snoise[:] == ComplexF64[]
         @test result.signal.CM == Matrix{Float64}(undef, 0, 0)
 
     end
