@@ -49,7 +49,7 @@ end
 testshow(io::IO,S) = show(io,S)
 testshow(io::IO,S::JosephsonCircuits.HB) = showstruct(io,S)
 testshow(io::IO,S::JosephsonCircuits.NonlinearHB) = showstruct(io,S)
-testshow(io::IO,S::JosephsonCircuits.LinearHB) = showstruct(io,S)
+testshow(io::IO,S::JosephsonCircuits.LinearizedHB) = showstruct(io,S)
 testshow(io::IO,S::JosephsonCircuits.CircuitMatrices) = showstruct(io,S)
 testshow(io::IO,S::JosephsonCircuits.AxisKeys.KeyedArray) = showstruct(io,S)
 # show(io::IO,S::StepRangeLen) = 
@@ -99,7 +99,7 @@ compare(x::JosephsonCircuits.AbstractSparseVector,y::JosephsonCircuits.AbstractS
 compare(x::JosephsonCircuits.SparseMatrixCSC{Nothing, Int64},y::JosephsonCircuits.SparseMatrixCSC{Nothing, Int64}) = true
 compare(x::JosephsonCircuits.HB,y::JosephsonCircuits.HB) = comparestruct(x,y)
 compare(x::JosephsonCircuits.NonlinearHB,y::JosephsonCircuits.NonlinearHB) = comparestruct(x,y)
-compare(x::JosephsonCircuits.LinearHB,y::JosephsonCircuits.LinearHB) = comparestruct(x,y)
+compare(x::JosephsonCircuits.LinearizedHB,y::JosephsonCircuits.LinearizedHB) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CircuitMatrices,y::JosephsonCircuits.CircuitMatrices) = comparestruct(x,y)
 compare(x::JosephsonCircuits.ParsedSortedCircuit,y::JosephsonCircuits.ParsedSortedCircuit) = comparestruct(x,y)
 compare(x::JosephsonCircuits.ParsedCircuit,y::JosephsonCircuits.ParsedCircuit) = comparestruct(x,y)

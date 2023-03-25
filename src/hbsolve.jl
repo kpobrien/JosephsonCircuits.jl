@@ -47,7 +47,7 @@ struct NonlinearHB
 end
 
 """
-    LinearHB(S, Snoise, QE, QEideal, CM, nodeflux, voltage, Nmodes, Nnodes,
+    LinearizedHB(S, Snoise, QE, QEideal, CM, nodeflux, voltage, Nmodes, Nnodes,
         Nbranches, signalindex, w)
 
 A simple structure to hold the linearized harmonic balance solutions.
@@ -78,7 +78,7 @@ A simple structure to hold the linearized harmonic balance solutions.
 - `w`: the signal frequencies.
 - `modes`: tuple of the signal mode indices where (0,) is the signal
 """
-struct LinearHB
+struct LinearizedHB
     S
     Snoise
     QE
@@ -99,18 +99,17 @@ struct LinearHB
 end
 
 """
-    HB(pump, Am, signal)
+    HB(nonlinear, linear)
 
 A simple structure to hold the nonlinear and linearized harmonic balance solutions.
 
 # Fields
-- `pump`: nonlinear harmonic balance solution for pump and pump harmonics
-- `Am`: matrix encoding pump modulation
-- `signal`: linearized harmonic balance solution
+- `nonlinear`: nonlinear harmonic balance solution for pump and pump harmonics
+- `linear`: linearized harmonic balance solution
 """
 struct HB
-    pump
-    signal
+    nonlinear
+    linearized
 end
 
 
@@ -762,7 +761,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         voltageadjointout = voltageadjoint
     end
 
-    return LinearHB(Sout, Snoiseout, QEout, QEidealout, CMout, nodefluxout,
+    return LinearizedHB(Sout, Snoiseout, QEout, QEidealout, CMout, nodefluxout,
         nodefluxadjointout, voltageout, voltageadjointout, Nsignalmodes,
         Nnodes, Nbranches, nodenames, portnumbers,
         signalindex, w, modes)

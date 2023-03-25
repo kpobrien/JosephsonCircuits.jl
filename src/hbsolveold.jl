@@ -420,7 +420,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         CMout = CM
     end
 
-    return LinearHB(Sout, Snoise, QEout, QEidealout, CMout, nodeflux, nodefluxadjoint,
+    return LinearizedHB(Sout, Snoise, QEout, QEidealout, CMout, nodeflux, nodefluxadjoint,
         voltage, voltageadjoint, Nmodes, Nnodes, Nbranches,
         nodenames, portnumbers, signalindex, w, modes)
 end
