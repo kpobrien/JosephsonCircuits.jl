@@ -228,6 +228,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # extract the elements we need
     Nnodes = psc.Nnodes
     componenttypes = psc.componenttypes
+    nodenames = psc.nodenames
     nodeindices = psc.nodeindices
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
@@ -421,7 +422,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     return LinearHB(Sout, Snoise, QEout, QEidealout, CMout, nodeflux, nodefluxadjoint,
         voltage, voltageadjoint, Nmodes, Nnodes, Nbranches,
-        psc.nodenames[2:end], portnumbers, signalindex, w, modes)
+        nodenames, portnumbers, signalindex, w, modes)
 end
 
 

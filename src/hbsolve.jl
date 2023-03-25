@@ -363,7 +363,8 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     # generate the signal modes
     signalfreq =truncfreqs(
         calcfreqsdft(Nmodulationharmonics),
-        dc=true,odd=threewavemixing,even=fourwavemixing,maxintermodorder=maxintermodorder,
+        dc=true, odd=threewavemixing, even=fourwavemixing, 
+            maxintermodorder=maxintermodorder,
     )
 
 return hblinsolve(w, psc, cg, circuitdefs, signalfreq; pump = pump,
@@ -465,7 +466,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
         allpumpfreq = calcfreqsrdft((0,))
         Amatrixmodes, Amatrixindices = hbmatind(allpumpfreq, signalfreq)
-        Nwtuple = NTuple{length(allpumpfreq.Nw)+1,Int}((allpumpfreq.Nw...,length(signalnm.Ljb.nzval)))
+        Nwtuple = NTuple{length(allpumpfreq.Nw)+1,Int}((allpumpfreq.Nw..., length(signalnm.Ljb.nzval)))
         phimatrix = ones(Complex{Float64}, Nwtuple)
         wpumpmodes = calcmodefreqs((0.0,),signalfreq.modes)
 
@@ -482,7 +483,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
         # calculate the dimensions of the array which holds the frequency
         # domain information for the fourier transform
-        Nwtuple = NTuple{length(pumpfreq.Nw)+1,Int}((pumpfreq.Nw...,length(pump.Ljb.nzval)))
+        Nwtuple = NTuple{length(pumpfreq.Nw)+1,Int}((pumpfreq.Nw..., length(pump.Ljb.nzval)))
 
         # create an array to hold the frequency domain data for the
         # fourier transform
@@ -536,8 +537,11 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # extract the elements we need
     Nnodes = psc.Nnodes
     componenttypes = psc.componenttypes
+    nodenames = psc.nodenames
     nodeindices = psc.nodeindices
     componentnames = psc.componentnames
+    componenttypes = psc.componenttypes
+    mutualinductorbranchnames = psc.mutualinductorbranchnames
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = signalnm.Ljb
@@ -549,6 +553,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     portnumbers = signalnm.portnumbers
     portimpedanceindices = signalnm.portimpedanceindices
     vvn = signalnm.vvn
+    modes = signalfreq.modes
 
     # calculate the source currents
     Nports = length(portindices)
@@ -575,9 +580,9 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         noiseportimpedanceindices = signalnm.noiseportimpedanceindices
     else
         noiseportimpedanceindices = calcnoiseportimpedanceindices(
-            psc.componenttypes, psc.nodeindices,
-            psc.mutualinductorbranchnames,
-            Symbolics.substitute.(signalnm.vvn, symfreqvar => wmodes[1]))
+            componenttypes, nodeindices,
+            mutualinductorbranchnames,
+            Symbolics.substitute.(vvn, symfreqvar => wmodes[1]))
     end
 
     # find the indices at which there are symbolic variables so we can
@@ -610,13 +615,16 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # quantum efficiency, and commutatio relations. if we aren't returning a
     # matrix, set it to be an empty array.
     if returnS
-        S = zeros(Complex{Float64},Nports*Nsignalmodes,Nports*Nsignalmodes,length(w))
+        S = zeros(Complex{Float64}, Nports*Nsignalmodes, Nports*Nsignalmodes,
+            length(w))
     else
         S = zeros(Complex{Float64},0,0,0)
     end
 
     if returnSnoise
-        Snoise = zeros(Complex{Float64},length(noiseportimpedanceindices)*Nsignalmodes,Nports*Nsignalmodes,length(w))
+        Snoise = zeros(Complex{Float64},
+            length(noiseportimpedanceindices)*Nsignalmodes,
+            Nports*Nsignalmodes, length(w))
     else
         Snoise = zeros(Complex{Float64},0,0,0)
     end
@@ -634,25 +642,29 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     end
 
     if returnnodeflux
-        nodeflux = zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),Nsignalmodes*Nports,length(w))
+        nodeflux = zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),
+            Nsignalmodes*Nports, length(w))
     else
         nodeflux = Vector{Complex{Float64}}(undef,0)
     end
 
     if returnnodefluxadjoint
-        nodefluxadjoint = zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),Nsignalmodes*Nports,length(w))
+        nodefluxadjoint = zeros(Complex{Float64}, Nsignalmodes*(Nnodes-1),
+            Nsignalmodes*Nports, length(w))
     else
         nodefluxadjoint = Vector{Complex{Float64}}(undef,0)
     end
 
     if returnvoltage
-        voltage = zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),Nsignalmodes*Nports,length(w))
+        voltage = zeros(Complex{Float64}, Nsignalmodes*(Nnodes-1),
+            Nsignalmodes*Nports, length(w))
     else
         voltage = Vector{Complex{Float64}}(undef,0)
     end
 
     if returnvoltageadjoint
-        voltageadjoint = zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),Nsignalmodes*Nports,length(w))
+        voltageadjoint = zeros(Complex{Float64}, Nsignalmodes*(Nnodes-1),
+            Nsignalmodes*Nports, length(w))
     else
         voltageadjoint = Vector{Complex{Float64}}(undef,0)
     end
@@ -687,17 +699,15 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnS && K
-        Sout = Stokeyed(S, signalfreq.modes, portnumbers, signalfreq.modes,
-            portnumbers, w)
+        Sout = Stokeyed(S, modes, portnumbers, modes, portnumbers, w)
     else
         Sout = S
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnSnoise && K
-        Snoiseout =  Snoisetokeyed(Snoise, signalfreq.modes,
-            componentnames[noiseportimpedanceindices], signalfreq.modes,
-            portnumbers, w)
+        Snoiseout =  Snoisetokeyed(Snoise, modes,
+            componentnames[noiseportimpedanceindices], modes, portnumbers, w)
     else
         Snoiseout = Snoise
     end
@@ -705,10 +715,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     # for the quantum efficiency
     if returnQE && K
-        QEout = Stokeyed(QE, signalfreq.modes, portnumbers, signalfreq.modes,
-            portnumbers, w)
-        QEidealout = Stokeyed(QEideal, signalfreq.modes, portnumbers, signalfreq.modes,
-            portnumbers, w)
+        QEout = Stokeyed(QE, modes, portnumbers, modes, portnumbers, w)
+        QEidealout = Stokeyed(QEideal, modes, portnumbers, modes, portnumbers, w)
     else
         QEout = QE
         QEidealout = QEideal
@@ -717,47 +725,47 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     # for the commutation relations
     if returnCM && K
-        CMout = CMtokeyed(CM, signalfreq.modes, portnumbers, w)
+        CMout = CMtokeyed(CM, modes, portnumbers, w)
     else
         CMout = CM
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnnodeflux && K
-        nodefluxout = nodevariabletokeyed(nodeflux, signalfreq.modes,
-            psc.nodenames[2:end], signalfreq.modes, portnumbers, w)
+        nodefluxout = nodevariabletokeyed(nodeflux, modes, nodenames, modes,
+            portnumbers, w)
     else
         nodefluxout = nodeflux
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnnodefluxadjoint && K
-        nodefluxadjointout = nodevariabletokeyed(nodefluxadjoint, signalfreq.modes,
-            psc.nodenames[2:end], signalfreq.modes, portnumbers, w)
+        nodefluxadjointout = nodevariabletokeyed(nodefluxadjoint, modes,
+            nodenames, modes, portnumbers, w)
     else
         nodefluxadjointout = nodefluxadjoint
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnvoltage && K
-        voltageout = nodevariabletokeyed(voltage, signalfreq.modes,
-            psc.nodenames[2:end], signalfreq.modes, portnumbers, w)
+        voltageout = nodevariabletokeyed(voltage, modes,
+            nodenames, modes, portnumbers, w)
     else
         voltageout = voltage
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnvoltageadjoint && K
-        voltageadjointout = nodevariabletokeyed(voltageadjoint, signalfreq.modes,
-            psc.nodenames[2:end], signalfreq.modes, portnumbers, w)
+        voltageadjointout = nodevariabletokeyed(voltageadjoint, modes,
+            nodenames, modes, portnumbers, w)
     else
         voltageadjointout = voltageadjoint
     end
 
     return LinearHB(Sout, Snoiseout, QEout, QEidealout, CMout, nodefluxout,
         nodefluxadjointout, voltageout, voltageadjointout, Nsignalmodes,
-        Nnodes, Nbranches, psc.nodenames[2:end], portnumbers,
-        signalindex, w, signalfreq.modes)
+        Nnodes, Nbranches, nodenames, portnumbers,
+        signalindex, w, modes)
 end
 
 
@@ -784,13 +792,13 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
     w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi)
 
     Nports = length(portindices)
-    phin = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports)
-    # inputwave = Diagonal(zeros(Complex{Float64},Nports*Nmodes))
-    inputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
-    outputwave = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+    phin = zeros(Complex{Float64}, Nmodes*(Nnodes-1), Nmodes*Nports)
+    # inputwave = Diagonal(zeros(Complex{Float64}, Nports*Nmodes))
+    inputwave = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
+    outputwave = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
 
     Nnoiseports = length(noiseportimpedanceindices)
-    noiseoutputwave = zeros(Complex{Float64},Nnoiseports*Nmodes,Nports*Nmodes)
+    noiseoutputwave = zeros(Complex{Float64}, Nnoiseports*Nmodes, Nports*Nmodes)
 
     # operate on a copy of Asparse because it may be modified by multiple threads
     # at the same time.
@@ -806,12 +814,12 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
 
     # if the scattering matrix is empty define a new working matrix
     if isempty(S)
-        Sview = zeros(Complex{Float64},Nports*Nmodes,Nports*Nmodes)
+        Sview = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
     end
 
     # if the noise scattering matrix is empty define a new working matrix
     if isempty(Snoise)
-        Snoiseview = zeros(Complex{Float64},Nnoiseports*Nmodes,Nports*Nmodes)
+        Snoiseview = zeros(Complex{Float64}, Nnoiseports*Nmodes, Nports*Nmodes)
     end
 
     # loop over the frequencies
@@ -819,43 +827,44 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
 
         # if the scattering matrix is not empty define a view
         if !isempty(S)
-            Sview = view(S,:,:,i)
+            Sview = view(S, :, :, i)
         end
 
         # if the noise scattering matrix is not empty define a view
         if !isempty(Snoise)
-            Snoiseview = view(Snoise,:,:,i)
+            Snoiseview = view(Snoise, :, :, i)
         end
 
         # calculate the frequency matrices
         ws = w[i]
         # wmodes = calcw(ws,indices,wp);
         wmodes = ws .+ wpumpmodes
-        wmodesm = Diagonal(repeat(wmodes,outer=Nnodes-1));
-        wmodes2m = Diagonal(repeat(wmodes.^2,outer=Nnodes-1));
+        wmodesm = Diagonal(repeat(wmodes, outer = Nnodes-1));
+        wmodes2m = Diagonal(repeat(wmodes.^2, outer = Nnodes-1));
 
         # perform the operation below in a way that doesn't allocate significant
         # memory, plus take the conjugates mentioned below.
         # Asparsecopy = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
 
-        fill!(Asparsecopy.nzval,zero(eltype(Asparsecopy.nzval)))
-        sparseadd!(Asparsecopy,1,AoLjnm,AoLjnmindexmap)
+        fill!(Asparsecopy.nzval, zero(eltype(Asparsecopy.nzval)))
+        sparseadd!(Asparsecopy, 1, AoLjnm, AoLjnmindexmap)
 
         # take the complex conjugate of the negative frequency terms in
         # the capacitance and conductance matrices. substitute in the symbolic
         # frequency variable if present.
-        sparseaddconjsubst!(Asparsecopy,-1,Cnm,wmodes2m,Cnmindexmap,
-            wmodesm .< 0,wmodesm,Cnmfreqsubstindices,symfreqvar)
-        sparseaddconjsubst!(Asparsecopy,im,Gnm,wmodesm,Gnmindexmap,
-            wmodesm .< 0,wmodesm,Gnmfreqsubstindices,symfreqvar)
-        sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
-            wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
+        sparseaddconjsubst!(Asparsecopy, -1, Cnm, wmodes2m, Cnmindexmap,
+            wmodesm .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
+        sparseaddconjsubst!(Asparsecopy, im, Gnm, wmodesm, Gnmindexmap,
+            wmodesm .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
+        sparseaddconjsubst!(Asparsecopy, 1, invLnm,
+            Diagonal(ones(size(invLnm,1))), invLnmindexmap, wmodesm .< 0,
+            wmodesm, invLnmfreqsubstindices, symfreqvar)
 
         # factor the sparse matrix
         factorklu!(cache, Asparsecopy)
 
         # solve the linear system
-        ldiv!(phin,cache.factorization,bnm)
+        ldiv!(phin, cache.factorization, bnm)
 
         # convert to node voltages. node flux is defined as the time integral of
         # node voltage so node voltage is derivative of node flux which can be
@@ -871,68 +880,72 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
 
         # calculate the scattering parameters
         if !isempty(S) || !isempty(QE) || !isempty(CM)
-            calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
-                portimpedances,portimpedances,nodeindices,componenttypes,wmodes,symfreqvar)
-            calcscatteringmatrix!(Sview,inputwave,outputwave)
+            calcinputoutput!(inputwave, outputwave, phin, bnm,
+                portimpedanceindices, portimpedanceindices, portimpedances,
+                portimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
+            calcscatteringmatrix!(Sview, inputwave, outputwave)
         end
 
         if (Nnoiseports > 0 || !isempty(nodefluxadjoint) || !isempty(voltageadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint) || !isempty(voltageadjoint))
 
             # solve the nonlinear system with the complex conjugate of the pump
             # modulation matrix
-            fill!(Asparsecopy.nzval,zero(eltype(Asparsecopy.nzval)))
-            sparseadd!(Asparsecopy,1,AoLjnmconj,AoLjnmindexmap)
+            fill!(Asparsecopy.nzval, zero(eltype(Asparsecopy.nzval)))
+            sparseadd!(Asparsecopy, 1, AoLjnmconj, AoLjnmindexmap)
 
             # take the complex conjugate of the negative frequency terms in
             # the capacitance and conductance matrices. substitute in the symbolic
             # frequency variable if present. 
-            sparseaddconjsubst!(Asparsecopy,-1,Cnm,wmodes2m,Cnmindexmap,
-                wmodesm .< 0,wmodesm,Cnmfreqsubstindices,symfreqvar)
-            sparseaddconjsubst!(Asparsecopy,im,Gnm,wmodesm,Gnmindexmap,
-                wmodesm .< 0,wmodesm,Gnmfreqsubstindices,symfreqvar)
-            sparseaddconjsubst!(Asparsecopy,1,invLnm,Diagonal(ones(size(invLnm,1))),invLnmindexmap,
-                wmodesm .< 0,wmodesm,invLnmfreqsubstindices,symfreqvar)
+            sparseaddconjsubst!(Asparsecopy, -1, Cnm, wmodes2m, Cnmindexmap,
+                wmodesm .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
+            sparseaddconjsubst!(Asparsecopy, im, Gnm, wmodesm, Gnmindexmap,
+                wmodesm .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
+            sparseaddconjsubst!(Asparsecopy, 1, invLnm,
+                Diagonal(ones(size(invLnm,1))),invLnmindexmap, wmodesm .< 0,
+                wmodesm, invLnmfreqsubstindices, symfreqvar)
 
             # factor the sparse matrix
             factorklu!(cache, Asparsecopy)
 
             # solve the linear system
-            ldiv!(phin,cache.factorization,bnm)
+            ldiv!(phin, cache.factorization, bnm)
 
             # copy the nodeflux adjoint for output
             if !isempty(nodefluxadjoint)
-                copy!(view(nodefluxadjoint,:,:,i),phin)
+                copy!(view(nodefluxadjoint,:,:,i), phin)
             end
 
             if !isempty(voltageadjoint)
-                copy!(view(voltageadjoint,:,:,i),im*wmodesm*phin)
+                copy!(view(voltageadjoint,:,:,i), im*wmodesm*phin)
             end
 
             # calculate the noise scattering parameters
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
-                calcinputoutputnoise!(inputwave,noiseoutputwave,phin,bnm,portimpedanceindices,noiseportimpedanceindices,
-                    portimpedances,noiseportimpedances,nodeindices,componenttypes,wmodes,symfreqvar)
-                calcscatteringmatrix!(Snoiseview,inputwave,noiseoutputwave)
+                calcinputoutputnoise!(inputwave, noiseoutputwave, phin, bnm,
+                    portimpedanceindices, noiseportimpedanceindices,
+                    portimpedances, noiseportimpedances, nodeindices,
+                    componenttypes, wmodes, symfreqvar)
+                calcscatteringmatrix!(Snoiseview, inputwave, noiseoutputwave)
             end
 
             # calculate the quantum efficiency
             if !isempty(QE)
-                calcqe!(view(QE,:,:,i),Sview,transpose(Snoiseview))
+                calcqe!(view(QE,:,:,i), Sview, transpose(Snoiseview))
             end
 
             # calculate the commutation relations (Manley-Rowe relations)
             if !isempty(CM)
-                calccm!(view(CM,:,i),Sview,transpose(Snoiseview), wmodes)
+                calccm!(view(CM,:,i), Sview, transpose(Snoiseview), wmodes)
             end
         else
             # calculate the quantum efficiency
             if !isempty(QE)
-                calcqe!(view(QE,:,:,i),Sview)
+                calcqe!(view(QE,:,:,i), Sview)
             end
 
             # calculate the commutation relations (Manley-Rowe relations)
             if !isempty(CM)
-                calccm!(view(CM,:,i),Sview, wmodes)
+                calccm!(view(CM,:,i), Sview, wmodes)
             end
         end
     end
@@ -1117,8 +1130,8 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     # extract the elements we need
     Nnodes = psc.Nnodes
     componenttypes = psc.componenttypes
+    nodenames = psc.nodenames
     nodeindices = psc.nodeindices
-    nodes = psc.nodenames[2:end]
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = nm.Ljb
@@ -1151,7 +1164,7 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
 
     # calculate the dimensions of the array which holds the frequency
     # domain information for the fourier transform
-    Nwtuple = NTuple{length(Nw)+1,Int}((Nw...,length(Ljb.nzval)))
+    Nwtuple = NTuple{length(Nw)+1,Int}((Nw..., length(Ljb.nzval)))
 
     # create an array to hold the frequency domain data for the
     # fourier transform
@@ -1253,17 +1266,18 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     Nports = length(portindices)
     S = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
     inputwave = zeros(Complex{Float64}, Nports*Nmodes)
-    outputwave = zeros(Complex{Float64},Nports*Nmodes)
+    outputwave = zeros(Complex{Float64}, Nports*Nmodes)
     portimpedances = [vvn[i] for i in portimpedanceindices]
     if !isempty(S)
-        calcinputoutput!(inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
-            portimpedances,portimpedances,nodeindices,componenttypes,wmodes,symfreqvar)
+        calcinputoutput!(inputwave, outputwave, nodeflux, bnm/Lmean,
+            portimpedanceindices, portimpedanceindices, portimpedances,
+            portimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
         calcscatteringmatrix!(S, inputwave, outputwave)
 
     end
 
     if K
-        nodefluxout = nodevariabletokeyed(nodeflux, modes, nodes)
+        nodefluxout = nodevariabletokeyed(nodeflux, modes, nodenames)
     else
         nodefluxout = nodeflux
     end
@@ -1276,9 +1290,8 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     end
 
 
-
     return NonlinearHB(w, frequencies, nodefluxout, Rbnm, Ljb, Lb, Ljbm, Nmodes,
-        Nbranches, nodes, portnumbers, modes, Sout)
+        Nbranches, nodenames, portnumbers, modes, Sout)
 
 end
 
@@ -1384,7 +1397,7 @@ function calcfj2!(F,
 end
 
 """
-    calcAoLjbmindices(Amatrixindices,Ljb::SparseVector,Nmodes,Nbranches,Nfreq)
+    calcAoLjbmindices(Amatrixindices, Ljb::SparseVector, Nmodes, Nbranches, Nfreq)
 
 Return the sparse matrix containing the indices from the frequency domain
 RFFT data as well as the indices of the sparse matrix to conjugate.
@@ -1651,7 +1664,7 @@ end
 Update the values in the sparse AoLjbm matrix in place.
 
 """
-function updateAoLjbm2!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices,
+function updateAoLjbm2!(AoLjbm::SparseMatrixCSC, Am::Array, AoLjbmindices,
     conjindicessorted, Ljb::SparseVector, Lmean)
 
     if nnz(AoLjbm) == 0
@@ -1742,13 +1755,13 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
     fill!(bbm,0)
 
     # make a dictionary of ports
-    portdict = Dict{eltype(portnumbers),eltype(portindices)}()
+    portdict = Dict{eltype(portnumbers), eltype(portindices)}()
     for i in eachindex(portindices)
         portdict[portnumbers[i]] = portindices[i]
     end
 
     # make a dictionary of modes
-    modedict = Dict{eltype(modes),Int}()
+    modedict = Dict{eltype(modes), Int}()
     for i in eachindex(modes)
         modedict[modes[i]] = i
     end
@@ -1760,10 +1773,10 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
         current = source[:current]
 
         # check if the port is in the dictionary of ports
-        if haskey(portdict,port)
+        if haskey(portdict, port)
             portindex = portdict[port]
             # check if the mode is in the dictionary of modes
-            if haskey(modedict,mode)
+            if haskey(modedict, mode)
                 # if we find the mode and the port, set that branch in bbm
                 # equal to the current scaled by the mean inductance and the
                 # flux quantum.

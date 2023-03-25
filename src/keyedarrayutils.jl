@@ -46,28 +46,28 @@ function CMtokeyed(CM, outputmodes, outputportnumbers, w)
     )
 end
 
-function nodevariabletokeyed(nodevariable, outputmodes, nodes)
+function nodevariabletokeyed(nodevariable, outputmodes, nodenames)
     return  AxisKeys.KeyedArray(
-        reshape(nodevariable, length(outputmodes), length(nodes)),
+        reshape(nodevariable, length(outputmodes), length(nodenames)-1),
         outputmode = outputmodes,
-        node=nodes)
+        node=nodenames[2:end])
 end
 
 
-function nodevariabletokeyed(nodevariable, outputmodes, nodes, inputmodes,
+function nodevariabletokeyed(nodevariable, outputmodes, nodenames, inputmodes,
     inputportnumbers, w)
 
     return AxisKeys.KeyedArray(
         reshape(
             nodevariable,
             length(outputmodes),
-            length(nodes),
+            length(nodenames)-1,
             length(inputmodes),
             length(inputportnumbers),
             length(w),
         ),
         outputmode = outputmodes,
-        node = nodes,
+        node = nodenames[2:end],
         inputmode = inputmodes,
         inputport = inputportnumbers,
         freqindex=1:length(w),
