@@ -137,32 +137,32 @@ function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     # convert as many values as we can to numerical values using definitions
     # from circuitdefs
-    vvn = valuevectortonumber(psc.valuevector, circuitdefs)
+    vvn = componentvaluestonumber(psc.componentvalues, circuitdefs)
     
     # capacitance matrix
-    Cnm = calcCn(psc.typevector, psc.nodeindexarraysorted, vvn, Nmodes, psc.Nnodes)
+    Cnm = calcCn(psc.typevector, psc.nodeindices, vvn, Nmodes, psc.Nnodes)
 
     # conductance matrix
-    Gnm = calcGn(psc.typevector, psc.nodeindexarraysorted, vvn, Nmodes, psc.Nnodes)
+    Gnm = calcGn(psc.typevector, psc.nodeindices, vvn, Nmodes, psc.Nnodes)
 
     # branch inductance vector with Nmodes = 1
-    Lb = calcLb(psc.typevector, psc.nodeindexarraysorted, vvn, cg.edge2indexdict,
+    Lb = calcLb(psc.typevector, psc.nodeindices, vvn, cg.edge2indexdict,
         1, cg.Nbranches)
 
     # branch inductance vector with Nmodes = Nmodes
-    Lbm = calcLb(psc.typevector, psc.nodeindexarraysorted, vvn, cg.edge2indexdict,
+    Lbm = calcLb(psc.typevector, psc.nodeindices, vvn, cg.edge2indexdict,
         Nmodes, cg.Nbranches)
 
     # branch Josephson inductance vector with Nmodes = 1
-    Ljb = calcLjb(psc.typevector, psc.nodeindexarraysorted, vvn, cg.edge2indexdict,
+    Ljb = calcLjb(psc.typevector, psc.nodeindices, vvn, cg.edge2indexdict,
         1, cg.Nbranches)
 
     # branch Josephson inductance vector with Nmodes = Nmodes
-    Ljbm = calcLjb(psc.typevector, psc.nodeindexarraysorted, vvn, cg.edge2indexdict,
+    Ljbm = calcLjb(psc.typevector, psc.nodeindices, vvn, cg.edge2indexdict,
         Nmodes, cg.Nbranches)
 
     # mutual branch inductance matrix
-    Mb = calcMb(psc.typevector, psc.nodeindexarraysorted, vvn, psc.namedict,
+    Mb = calcMb(psc.typevector, psc.nodeindices, vvn, psc.componentnamedict,
         psc.mutualinductorvector, cg.edge2indexdict, 1, cg.Nbranches)
 
     # inverse nodal inductance matrix from branch inductance vector and branch
@@ -176,13 +176,13 @@ function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
     Lmean = calcLmean(psc.typevector, vvn)
 
     portindices, portnumbers = calcportindicesnumbers(psc.typevector,
-        psc.nodeindexarraysorted, psc.mutualinductorvector, vvn)
+        psc.nodeindices, psc.mutualinductorvector, vvn)
 
     portimpedanceindices = calcportimpedanceindices(psc.typevector,
-        psc.nodeindexarraysorted, psc.mutualinductorvector, vvn)
+        psc.nodeindices, psc.mutualinductorvector, vvn)
 
     noiseportimpedanceindices = calcnoiseportimpedanceindices(psc.typevector,
-        psc.nodeindexarraysorted, psc.mutualinductorvector, vvn)
+        psc.nodeindices, psc.mutualinductorvector, vvn)
 
     return CircuitMatrices(Cnm, Gnm, Lb, Lbm, Ljb, Ljbm, Mb, invLnm, Rbnm,
         portindices, portnumbers, portimpedanceindices,
@@ -191,7 +191,7 @@ end
 
 
 """
-    calcIb(typevector, nodeindexarray, valuevector, edge2indexdict, Nmodes, Nbranches)
+    calcIb(typevector, nodeindexarray, componentvalues, edge2indexdict, Nmodes, Nbranches)
 
 Calculate the sparse branch current source vector whose length is Nbranches*Nmodes.
 Note that the nodeindexarray is "one indexed" so 1 is the ground node. 
@@ -202,10 +202,10 @@ Nmodes = 1
 Nbranches = 2
 typevector = [:I,:C,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
-valuevector = [1e-9, 0.2, 4e-9, 1e-12]
-namedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
+componentvalues = [1e-9, 0.2, 4e-9, 1e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
-Ib = JosephsonCircuits.calcIb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
+Ib = JosephsonCircuits.calcIb(typevector,nodeindexarray,componentvalues,edge2indexdict,Nmodes,Nbranches)
 
 # output
 2-element SparseArrays.SparseVector{Float64, Int64} with 1 stored entry:
@@ -217,10 +217,10 @@ Nmodes = 1
 Nbranches = 2
 typevector = [:I,:C,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
-valuevector = [I1, C1, L1, C2]
-namedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
+componentvalues = [I1, C1, L1, C2]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
-Ib = JosephsonCircuits.calcIb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
+Ib = JosephsonCircuits.calcIb(typevector,nodeindexarray,componentvalues,edge2indexdict,Nmodes,Nbranches)
 
 # output
 2-element SparseArrays.SparseVector{Num, Int64} with 1 stored entry:
@@ -228,15 +228,15 @@ Ib = JosephsonCircuits.calcIb(typevector,nodeindexarray,valuevector,edge2indexdi
 ```
 """
 function calcIb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
-    return calcbranchvector(typevector, nodeindexarray, valuevector,
-        calcvaluetype(typevector, valuevector, [:I]), edge2indexdict, Nmodes,
+    componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+    return calcbranchvector(typevector, nodeindexarray, componentvalues,
+        calcvaluetype(typevector, componentvalues, [:I]), edge2indexdict, Nmodes,
         Nbranches, :I)
 end
 
 
 """
-    calcVb(typevector, nodeindexarray, valuevector, edge2indexdict, Nmodes, Nbranches)
+    calcVb(typevector, nodeindexarray, componentvalues, edge2indexdict, Nmodes, Nbranches)
 
 Calculate the sparse branch voltage source vector whose length is Nbranches*Nmodes.
 Note that the nodeindexarray is "one indexed" so 1 is the ground node. 
@@ -247,10 +247,10 @@ Nmodes = 1
 Nbranches = 2
 typevector = [:V,:C,:L1,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
-valuevector = [1e-9, 0.2, 4e-9, 1e-12]
-namedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
+componentvalues = [1e-9, 0.2, 4e-9, 1e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
-Vb = JosephsonCircuits.calcVb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
+Vb = JosephsonCircuits.calcVb(typevector,nodeindexarray,componentvalues,edge2indexdict,Nmodes,Nbranches)
 
 # output
 2-element SparseArrays.SparseVector{Float64, Int64} with 1 stored entry:
@@ -262,10 +262,10 @@ Nmodes = 1
 Nbranches = 2
 typevector = [:V,:C,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
-valuevector = [V1, C1, L1, C2]
-namedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
+componentvalues = [V1, C1, L1, C2]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
-Vb = JosephsonCircuits.calcVb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
+Vb = JosephsonCircuits.calcVb(typevector,nodeindexarray,componentvalues,edge2indexdict,Nmodes,Nbranches)
 
 # output
 2-element SparseArrays.SparseVector{Num, Int64} with 1 stored entry:
@@ -273,14 +273,14 @@ Vb = JosephsonCircuits.calcVb(typevector,nodeindexarray,valuevector,edge2indexdi
 ```
 """
 function calcVb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
-    return calcbranchvector(typevector, nodeindexarray, valuevector,
-        calcvaluetype(typevector, valuevector, [:V]), edge2indexdict, Nmodes,
+    componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+    return calcbranchvector(typevector, nodeindexarray, componentvalues,
+        calcvaluetype(typevector, componentvalues, [:V]), edge2indexdict, Nmodes,
         Nbranches, :V)
 end
 
 """
-    calcLb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
+    calcLb(typevector,nodeindexarray,componentvalues,edge2indexdict,Nmodes,Nbranches)
 
 Calculate the sparse branch inductance vector whose length is Nbranches*Nmodes.
 Note that the nodeindexarray is "one indexed" so 1 is the ground node. 
@@ -291,10 +291,10 @@ Nmodes = 1
 Nbranches = 2
 typevector = [:L,:K,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
-valuevector = [1e-9, 0.2, 4e-9, 1e-12]
-namedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+componentvalues = [1e-9, 0.2, 4e-9, 1e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
-Lb = JosephsonCircuits.calcLb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
+Lb = JosephsonCircuits.calcLb(typevector,nodeindexarray,componentvalues,edge2indexdict,Nmodes,Nbranches)
 
 # output
 2-element SparseArrays.SparseVector{Float64, Int64} with 2 stored entries:
@@ -307,10 +307,10 @@ Nmodes = 1
 Nbranches = 2
 typevector = [:L,:K,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
-valuevector = [L1, K1, L2, C1]
-namedict = Dict{Symbol, Int}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+componentvalues = [L1, K1, L2, C1]
+componentnamedict = Dict{Symbol, Int}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
-Lb = JosephsonCircuits.calcLb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
+Lb = JosephsonCircuits.calcLb(typevector,nodeindexarray,componentvalues,edge2indexdict,Nmodes,Nbranches)
 
 # output
 2-element SparseArrays.SparseVector{Num, Int64} with 2 stored entries:
@@ -319,14 +319,14 @@ Lb = JosephsonCircuits.calcLb(typevector,nodeindexarray,valuevector,edge2indexdi
 ```
 """
 function calcLb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
-    return calcbranchvector(typevector, nodeindexarray, valuevector,
-        calcvaluetype(typevector, valuevector, [:L,:K]), edge2indexdict,
+    componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+    return calcbranchvector(typevector, nodeindexarray, componentvalues,
+        calcvaluetype(typevector, componentvalues, [:L,:K]), edge2indexdict,
         Nmodes, Nbranches, :L)
 end
 
 """
-    calcLjb(typevector, nodeindexarray, valuevector, edge2indexdict, Nmodes, Nbranches)
+    calcLjb(typevector, nodeindexarray, componentvalues, edge2indexdict, Nmodes, Nbranches)
 
 Calculate the sparse branch Josephson inductance vector whose length is
 Nbranches*Nmodes. Note that the nodeindexarray is "one indexed" so 1 is the
@@ -338,10 +338,10 @@ Nmodes = 1
 Nbranches = 2
 typevector = [:Lj,:C,:Lj,:C]
 nodeindexarray = [2 3 3 3; 1 2 1 1]
-valuevector = [1e-9, 1e-12, 4e-9, 1e-12]
-namedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:Cc => 2)
+componentvalues = [1e-9, 1e-12, 4e-9, 1e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:Cc => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
-Ljb = JosephsonCircuits.calcLjb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
+Ljb = JosephsonCircuits.calcLjb(typevector,nodeindexarray,componentvalues,edge2indexdict,Nmodes,Nbranches)
 
 # output
 2-element SparseArrays.SparseVector{Float64, Int64} with 2 stored entries:
@@ -354,10 +354,10 @@ Nmodes = 1
 Nbranches = 2
 typevector = [:Lj,:K,:Lj,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
-valuevector = [Lj1, K1, Lj2, C1]
-namedict = Dict{Symbol, Int}(:C1 => 4,:Lj2 => 3,:Lj1 => 1,:K1 => 2)
+componentvalues = [Lj1, K1, Lj2, C1]
+componentnamedict = Dict{Symbol, Int}(:C1 => 4,:Lj2 => 3,:Lj1 => 1,:K1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
-Ljb = JosephsonCircuits.calcLjb(typevector,nodeindexarray,valuevector,edge2indexdict,Nmodes,Nbranches)
+Ljb = JosephsonCircuits.calcLjb(typevector,nodeindexarray,componentvalues,edge2indexdict,Nmodes,Nbranches)
 
 # output
 2-element SparseArrays.SparseVector{Num, Int64} with 2 stored entries:
@@ -366,14 +366,14 @@ Ljb = JosephsonCircuits.calcLjb(typevector,nodeindexarray,valuevector,edge2index
 ```
 """
 function calcLjb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
-    return calcbranchvector(typevector, nodeindexarray, valuevector,
-        calcvaluetype(typevector, valuevector, [:Lj]), edge2indexdict, Nmodes,
+    componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+    return calcbranchvector(typevector, nodeindexarray, componentvalues,
+        calcvaluetype(typevector, componentvalues, [:Lj]), edge2indexdict, Nmodes,
         Nbranches, :Lj)
 end
 
 """
-    calcbranchvector(typevector, nodeindexarray, valuevector, edge2indexdict,
+    calcbranchvector(typevector, nodeindexarray, componentvalues, edge2indexdict,
         Nmodes, Nbranches)
 
 Calculate the sparse branch vector whose length is Nbranches*Nmodes for the 
@@ -381,7 +381,7 @@ given component symbol. Note that the nodeindexarray is "one indexed" so 1 is
 the ground node. 
 """
 function calcbranchvector(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, valuetypevector::Vector, edge2indexdict::Dict,
+    componentvalues::Vector, valuetypevector::Vector, edge2indexdict::Dict,
     Nmodes, Nbranches, component::Symbol)
 
     # define empty vectors of zero length for the indices and values
@@ -391,7 +391,7 @@ function calcbranchvector(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int
     @inbounds for (i,type) in enumerate(typevector)
         if type == component
             push!(Ib,edge2indexdict[(nodeindexarray[1,i],nodeindexarray[2,i])])
-            push!(Vb,valuevector[i])
+            push!(Vb,componentvalues[i])
         end
     end
 
@@ -405,7 +405,7 @@ end
 
 
 """
-    calcMb(typevector, nodeindexarray, valuevector, namedict,
+    calcMb(typevector, nodeindexarray, componentvalues, componentnamedict,
         mutualinductorvector, edge2indexdict, Nmodes, Nbranches)
 
 Returns the branch mutual inductance matrix. Note that the
@@ -417,11 +417,11 @@ Nmodes = 1
 Nbranches = 2
 typevector = [:L,:K,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
-valuevector = [1e-9, 0.2, 2e-9, 1e-12]
-namedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+componentvalues = [1e-9, 0.2, 2e-9, 1e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 mutualinductorvector = [ :L1, :L2]
-Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
+Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,componentvalues,componentnamedict,mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
 
 # output
 2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
@@ -434,11 +434,11 @@ Nmodes = 2
 Nbranches = 2
 typevector = [:L,:K,:L,:C]
 nodeindexarray = [2 0 3 3; 1 0 1 1]
-valuevector = [L1, K1, L2, C1]
-namedict = Dict{Symbol, Int}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+componentvalues = [L1, K1, L2, C1]
+componentnamedict = Dict{Symbol, Int}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 mutualinductorvector = [ :L1, :L2]
-Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
+Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,componentvalues,componentnamedict,mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
 
 # output
 4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
@@ -449,15 +449,15 @@ Mb = JosephsonCircuits.calcMb(typevector,nodeindexarray,valuevector,namedict,mut
 ```
 """
 function calcMb(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, namedict::Dict, mutualinductorvector::Vector,
+    componentvalues::Vector, componentnamedict::Dict, mutualinductorvector::Vector,
     edge2indexdict::Dict, Nmodes, Nbranches)
-    return calcMb_inner(typevector,nodeindexarray,valuevector,
-        calcvaluetype(typevector,valuevector,[:L,:K]),namedict,
+    return calcMb_inner(typevector,nodeindexarray,componentvalues,
+        calcvaluetype(typevector,componentvalues,[:L,:K]),componentnamedict,
         mutualinductorvector,edge2indexdict,Nmodes,Nbranches)
 end
 
 function calcMb_inner(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, valuetypevector::Vector, namedict::Dict,
+    componentvalues::Vector, valuetypevector::Vector, componentnamedict::Dict,
     mutualinductorvector::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
 
     # define empty vectors of zero length for the row indices, column indices,
@@ -470,11 +470,11 @@ function calcMb_inner(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
     #loop through typevector for mutual inductors
     @inbounds for (i,type) in enumerate(typevector)
         # when we find a mutual inductor:
-        #  find the value of the mutual inductor in valuevector[i]
+        #  find the value of the mutual inductor in componentvalues[i]
         #  find the names of the two inductors it couples together from mutualinductorvector[n]
-        #  look up the index of the inductors in index=namedict[inductorsymbol] for each inductor symbol
+        #  look up the index of the inductors in index=componentnamedict[inductorsymbol] for each inductor symbol
         #  given the index of the inductor, look of the value of the inductor from
-        #     valuevector
+        #     componentvalues
         # then compute the value of the mutual inductance from the two inductor values and K
 
         # then use the index of the inductors to get the nodes from nodeindexarray
@@ -484,18 +484,18 @@ function calcMb_inner(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
 
         if type == :K
             # value of K
-            K = valuevector[i]
+            K = componentvalues[i]
             # names of inductors
             inductor1name = mutualinductorvector[2*n-1]
             inductor2name = mutualinductorvector[2*n]
 
             # indices of inductors
-            inductor1index = namedict[inductor1name]
-            inductor2index = namedict[inductor2name]
+            inductor1index = componentnamedict[inductor1name]
+            inductor2index = componentnamedict[inductor2name]
 
             # values of inductors
-            inductor1value = valuevector[inductor1index]
-            inductor2value = valuevector[inductor2index]
+            inductor1value = componentvalues[inductor1index]
+            inductor2value = componentvalues[inductor2index]
 
             # values of mutual inductance Lm
             Lm = K*sqrt(inductor1value*inductor2value)
@@ -775,7 +775,7 @@ end
 
 
 """
-    calcLmean(typevector,valuevector)
+    calcLmean(typevector,componentvalues)
 
 Return the mean of the linear and Josephson inductors. 
 
@@ -788,24 +788,24 @@ julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L
 (1//2)*(L1 + Lj1)
 ```
 """
-function calcLmean(typevector::Vector{Symbol}, valuevector::Vector)
-    return calcLmean_inner(typevector, valuevector,
-        calcvaluetype(typevector, valuevector, [:Lj, :L]))
+function calcLmean(typevector::Vector{Symbol}, componentvalues::Vector)
+    return calcLmean_inner(typevector, componentvalues,
+        calcvaluetype(typevector, componentvalues, [:Lj, :L]))
 end
-function calcLmean_inner(typevector::Vector, valuevector::Vector,
+function calcLmean_inner(typevector::Vector, componentvalues::Vector,
     valuetypevector::Vector)
 
-    if length(typevector) != length(valuevector)
-        throw(DimensionMismatch("typevector and valuevector should have the same length"))
+    if length(typevector) != length(componentvalues)
+        throw(DimensionMismatch("typevector and componentvalues should have the same length"))
     end
 
     # it's a litle absurd but we have to copy the inductance values into
     # a new array to perform a type stable mean over some elements of
-    # valuevector
+    # componentvalues
     Vn = Array{eltype(valuetypevector), 1}(undef, 0)
     @inbounds for (i,type) in enumerate(typevector)
         if type == :L || type == :Lj
-            push!(Vn,valuevector[i])
+            push!(Vn,componentvalues[i])
         end
     end
 
@@ -836,9 +836,9 @@ end
 
 
 """
-    calcCn(typevector, nodeindexarray, valuevector, Nmodes, Nnodes)
+    calcCn(typevector, nodeindexarray, componentvalues, Nmodes, Nnodes)
 
-Returns the node capacitance matrix from the capacitance values in valuevector
+Returns the node capacitance matrix from the capacitance values in componentvalues
 when typevector has the symbol :C with node indices from nodeindexarray.  Other symbols are 
 ignored. Capacitances to ground become diagonal elements. Capacitance between
 elements is an off-diagonal element with a minus sign and is added to the
@@ -885,15 +885,15 @@ julia> @variables Cg1 Cc Cg2;JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[
 ```
 """
 function calcCn(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, Nmodes, Nnodes)
-    return calcnodematrix(typevector, nodeindexarray, valuevector,
-        calcvaluetype(typevector, valuevector, [:C]), Nmodes, Nnodes, :C, false)
+    componentvalues::Vector, Nmodes, Nnodes)
+    return calcnodematrix(typevector, nodeindexarray, componentvalues,
+        calcvaluetype(typevector, componentvalues, [:C]), Nmodes, Nnodes, :C, false)
 end
 
 """
-    calcGn(typevector, nodeindexarray, valuevector, Nmodes, Nnodes)
+    calcGn(typevector, nodeindexarray, componentvalues, Nmodes, Nnodes)
 
-Returns the node conductance matrix from the resistance values in valuevector
+Returns the node conductance matrix from the resistance values in componentvalues
 when typevector has the symbol :R. The node indices are taken from nodeindexarray.
 Conductances to ground are diagonal elements. Conductance between elements is
 an off-diagonal element with a minus sign and is added to the diagonal with a
@@ -947,15 +947,15 @@ julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[
 ```
 """
 function calcGn(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, Nmodes, Nnodes)
+    componentvalues::Vector, Nmodes, Nnodes)
 
-    return calcnodematrix(typevector, nodeindexarray, valuevector,
-        calcvaluetype(typevector, valuevector, [:R]), Nmodes, Nnodes, :R, true)
+    return calcnodematrix(typevector, nodeindexarray, componentvalues,
+        calcvaluetype(typevector, componentvalues, [:R]), Nmodes, Nnodes, :R, true)
 end
 
 
 """
-    calcnodematrix(typevector, nodeindexarray, valuevector, Nmodes, Nnodes,
+    calcnodematrix(typevector, nodeindexarray, componentvalues, Nmodes, Nnodes,
         component, invert)
 
 Returns either the capacitance or conductance matrix depending on the values
@@ -965,11 +965,11 @@ conductance. The dimensions of the output are (Nnodes-1) times Nmodes by
 is the ground node.
 """
 function calcnodematrix(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, valuetypevector::Vector, Nmodes, Nnodes,
+    componentvalues::Vector, valuetypevector::Vector, Nmodes, Nnodes,
     component::Symbol, invert::Bool)
 
-    if length(typevector) !== size(nodeindexarray,2) || length(typevector) !== length(valuevector)
-        throw(DimensionMismatch("typevector, nodeindexarray, and valuevector should have the same length"))
+    if length(typevector) !== size(nodeindexarray,2) || length(typevector) !== length(componentvalues)
+        throw(DimensionMismatch("typevector, nodeindexarray, and componentvalues should have the same length"))
     end
 
     if size(nodeindexarray,1) !== 2
@@ -1008,32 +1008,32 @@ function calcnodematrix(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
                 # capacitance to ground, add to diagonal
                 push!(In,nodeindexarray[2,i]-1)
                 push!(Jn,nodeindexarray[2,i]-1)
-                pushval!(Vn,valuevector[i],1,invert)
+                pushval!(Vn,componentvalues[i],1,invert)
 
             elseif nodeindexarray[2,i] == 1
                 # capacitance to ground, add to diagonal
                 push!(In,nodeindexarray[1,i]-1)
                 push!(Jn,nodeindexarray[1,i]-1)
-                pushval!(Vn,valuevector[i],1,invert)
+                pushval!(Vn,componentvalues[i],1,invert)
 
             else
                 # diagonal elements
                 push!(In,nodeindexarray[1,i]-1)
                 push!(Jn,nodeindexarray[1,i]-1)
-                pushval!(Vn,valuevector[i],1,invert)
+                pushval!(Vn,componentvalues[i],1,invert)
 
                 push!(In,nodeindexarray[2,i]-1)
                 push!(Jn,nodeindexarray[2,i]-1)
-                pushval!(Vn,valuevector[i],1,invert)
+                pushval!(Vn,componentvalues[i],1,invert)
 
                 # off diagonal elements
                 push!(In,nodeindexarray[1,i]-1)
                 push!(Jn,nodeindexarray[2,i]-1)
-                pushval!(Vn,valuevector[i],-1,invert)
+                pushval!(Vn,componentvalues[i],-1,invert)
 
                 push!(In,nodeindexarray[2,i]-1)
                 push!(Jn,nodeindexarray[1,i]-1)
-                pushval!(Vn,valuevector[i],-1,invert)
+                pushval!(Vn,componentvalues[i],-1,invert)
             end
         end
     end

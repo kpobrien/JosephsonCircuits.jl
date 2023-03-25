@@ -323,7 +323,7 @@ function warmupvvn()
 
     psc = parsesortcircuit(circuit,sorting=:number)
 
-    return valuevectortonumber(psc.valuevector,circuitdefs)
+    return componentvaluestonumber(psc.componentvalues,circuitdefs)
 end
 
 

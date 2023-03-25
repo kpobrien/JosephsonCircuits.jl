@@ -4,7 +4,7 @@ using Test
 @testset verbose=true "capindmat" begin
     @testset "calcLmean_inner" begin
         @test_throws(
-            DimensionMismatch("typevector and valuevector should have the same length"),
+            DimensionMismatch("typevector and componentvalues should have the same length"),
             JosephsonCircuits.calcLmean_inner([:L,:C,:Lj],[10,4,5,1],Float64[])
         )
     end
@@ -16,7 +16,7 @@ using Test
                 [:R,:R],[2 3;1 1;0 0],[1.0,2.0],Float64[],1,3,:R,false)
         )
         @test_throws(
-            DimensionMismatch("typevector, nodeindexarray, and valuevector should have the same length"),
+            DimensionMismatch("typevector, nodeindexarray, and componentvalues should have the same length"),
             JosephsonCircuits.calcnodematrix([:R],[2 3;1 1],[1.0,2.0],
                 Float64[],1,3,:R,false)
         )

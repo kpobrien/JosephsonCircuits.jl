@@ -60,7 +60,7 @@ JosephsonCircuits.CircuitGraph(Dict((3, 2) => 3, (1, 2) => 1, (3, 1) => 2, (1, 3
 function calccircuitgraph(parsedsortedcircuit::ParsedSortedCircuit)
 
     branchvector = extractbranches(parsedsortedcircuit.typevector,
-                                parsedsortedcircuit.nodeindexarraysorted)
+                                parsedsortedcircuit.nodeindices)
 
     # calculate the graph of inductive components glelist, the
     # superconducting spanning tree selist, and the list of loop

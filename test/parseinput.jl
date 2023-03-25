@@ -103,7 +103,7 @@ using Test
 
     @testset "calcvaluetype" begin
         @test_throws(
-            DimensionMismatch("typevector and valuevector should have the same length"),
+            DimensionMismatch("typevector and componentvalues should have the same length"),
             JosephsonCircuits.calcvaluetype(
                 [:C,:R],
                 [1,2,3],

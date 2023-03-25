@@ -2,7 +2,7 @@
 """
     calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
-        nodeindexarraysorted, typevector, wmodes, symfreqvar)
+        nodeindices, typevector, wmodes, symfreqvar)
 
 Return the input and output waves for the system linearized around the strong pump.
 
@@ -13,13 +13,13 @@ outputwave = ComplexF64[0;;]
 bnm = ComplexF64[1; 0;;]
 portimpedanceindices = [3]
 portimpedances = ComplexF64[50]
-nodeindexarraysorted = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
+nodeindices = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
 typevector = [:P, :I, :R, :L, :K, :L, :C]
 wmodes = [1]
 phin = ComplexF64[0;0;;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
+    portimpedanceindices,portimpedances,portimpedances,nodeindices,typevector,
     wmodes,symfreqvar)
 println(inputwave)
 println(outputwave)
@@ -34,13 +34,13 @@ outputwave = ComplexF64[0;;]
 bnm = ComplexF64[1; 0;;]
 portimpedanceindices = [3]
 portimpedances = ComplexF64[50]
-nodeindexarraysorted = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
+nodeindices = [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
 typevector = [:P, :I, :R, :L, :K, :L, :C]
 wmodes = [1]
 phin = ComplexF64[50/(im*wmodes[1]);0;;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
+    portimpedanceindices,portimpedances,portimpedances,nodeindices,typevector,
     wmodes,symfreqvar)
 println(inputwave)
 println(outputwave)
@@ -55,13 +55,13 @@ outputwave = ComplexF64[0;;]
 bnm = ComplexF64[1; 0;;]
 portimpedanceindices = [3]
 portimpedances = ComplexF64[50]
-nodeindexarraysorted = [1 1 1 1 0 1 1; 2 2 2 2 0 3 3;]
+nodeindices = [1 1 1 1 0 1 1; 2 2 2 2 0 3 3;]
 typevector = [:P, :I, :R, :L, :K, :L, :C]
 wmodes = [1]
 phin = ComplexF64[50/(im*wmodes[1]);0;;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
+    portimpedanceindices,portimpedances,portimpedances,nodeindices,typevector,
     wmodes,symfreqvar)
 println(inputwave)
 println(outputwave)
@@ -76,13 +76,13 @@ outputwave = ComplexF64[0;;]
 bnm = ComplexF64[-1; 1;;]
 portimpedanceindices = [2]
 portimpedances = ComplexF64[50.0 + 0.0im]
-nodeindexarraysorted = [2 2 2 2 3; 3 3 1 1 1]
+nodeindices = [2 2 2 2 3; 3 3 1 1 1]
 typevector = [:P, :R, :L, :C, :C]
 wmodes = [1]
 phin = ComplexF64[0;0;;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
+    portimpedanceindices,portimpedances,portimpedances,nodeindices,typevector,
     wmodes,symfreqvar)
 println(inputwave)
 println(outputwave)
@@ -97,13 +97,13 @@ outputwave = ComplexF64[0;;]
 bnm = ComplexF64[-1; 1;;]
 portimpedanceindices = [2]
 portimpedances = ComplexF64[50.0 + 0.0im]
-nodeindexarraysorted = [2 2 2 2 3; 3 3 1 1 1]
+nodeindices = [2 2 2 2 3; 3 3 1 1 1]
 typevector = [:P, :R, :L, :C, :C]
 wmodes = [1]
 phin = ComplexF64[-50/(im*wmodes[1]);50/(im*wmodes[1]);;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,portimpedances,portimpedances,nodeindexarraysorted,typevector,
+    portimpedanceindices,portimpedances,portimpedances,nodeindices,typevector,
     wmodes,symfreqvar)
 println(inputwave)
 println(outputwave)
@@ -115,16 +115,16 @@ ComplexF64[-7.0710678118654755 + 0.0im;;]
 """
 function calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
-    nodeindexarraysorted, typevector, wmodes, symfreqvar)
+    nodeindices, typevector, wmodes, symfreqvar)
     return calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
-        nodeindexarraysorted, typevector, wmodes, symfreqvar, false)
+        nodeindices, typevector, wmodes, symfreqvar, false)
 end
 
 """
     calcinputoutputnoise!(S, inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
-        nodeindexarraysorted, typevector, wmodes, symfreqvar)
+        nodeindices, typevector, wmodes, symfreqvar)
 
 Return the input and output waves for the system linearized around the strong pump. 
 
@@ -143,13 +143,13 @@ portimpedanceindices = [2]
 noiseportimpedanceindices = [6]
 portimpedances = [50]
 noiseportimpedances = [1]
-nodeindexarraysorted = [2 2 2 3 3 3; 1 1 3 1 1 1]
+nodeindices = [2 2 2 3 3 3; 1 1 3 1 1 1]
 typevector = [:P, :R, :C, :Lj, :C, :R]
 wmodes = [2*pi*5e9]
 symfreqvar = nothing
 JosephsonCircuits.calcinputoutputnoise!(inputwave,noiseoutputwave,
     phin,bnm,portimpedanceindices,noiseportimpedanceindices,
-    portimpedances,noiseportimpedances,nodeindexarraysorted,
+    portimpedances,noiseportimpedances,nodeindices,
     typevector,wmodes,symfreqvar)
 println(inputwave)
 println(noiseoutputwave)
@@ -161,17 +161,17 @@ ComplexF64[-5.568327974762547e-11 + 3.516177070001411e-15im;;]
 """
 function calcinputoutputnoise!(inputwave, outputwave, phin, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
-    nodeindexarraysorted, typevector, wmodes, symfreqvar)
+    nodeindices, typevector, wmodes, symfreqvar)
     return calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
-        nodeindexarraysorted, typevector, wmodes, symfreqvar, true)
+        nodeindices, typevector, wmodes, symfreqvar, true)
 end
 
 
 """
     calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
-        nodeindexarraysorted, typevector, wmodes, symfreqvar, nosource)
+        nodeindices, typevector, wmodes, symfreqvar, nosource)
 
 Calculate the input and output power waves as defined in (except in
 units of sqrt(photons/second) instead of sqrt(power)
@@ -186,7 +186,7 @@ outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * p
 """
 function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
-    nodeindexarraysorted, typevector, wmodes, symfreqvar, nosource)
+    nodeindices, typevector, wmodes, symfreqvar, nosource)
 
     # check the size of inputwave
 
@@ -205,8 +205,8 @@ function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputporti
             for k in 1:Nsolutions
 
                 sourcecurrent = calcsourcecurrent(
-                    nodeindexarraysorted[1,inputportindices[i]],
-                    nodeindexarraysorted[2,inputportindices[i]],
+                    nodeindices[1,inputportindices[i]],
+                    nodeindices[2,inputportindices[i]],
                     bnm,Nmodes,j,k)
 
                 # calculate the port impedance
@@ -241,13 +241,13 @@ function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputporti
             for k in 1:Nsolutions
 
                 sourcecurrent = calcsourcecurrent(
-                    nodeindexarraysorted[1,outputportindices[i]],
-                    nodeindexarraysorted[2,outputportindices[i]],
+                    nodeindices[1,outputportindices[i]],
+                    nodeindices[2,outputportindices[i]],
                     bnm,Nmodes,j,k)
 
                 portvoltage = calcportvoltage(
-                    nodeindexarraysorted[1,outputportindices[i]],
-                    nodeindexarraysorted[2,outputportindices[i]],
+                    nodeindices[1,outputportindices[i]],
+                    nodeindices[2,outputportindices[i]],
                     nodeflux,
                     wmodes,
                     Nmodes,j,k)

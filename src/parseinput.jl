@@ -1,25 +1,25 @@
 
 """
-    ParsedSortedCircuit(nodeindexarraysorted::Matrix{Int},
-        uniquenodevectorsorted::Vector{String},
-        mutualinductorvector::Vector{String},namevector::Vector{String},
-        typevector::Vector{Symbol},valuevector::Vector,
-        namedict::Dict{String, Int},Nnodes::Int)
+    ParsedSortedCircuit(nodeindices::Matrix{Int},
+        nodenames::Vector{String},
+        mutualinductorvector::Vector{String},componentnames::Vector{String},
+        typevector::Vector{Symbol},componentvalues::Vector,
+        componentnamedict::Dict{String, Int},Nnodes::Int)
 
 A simple structure to hold the parsed and sorted circuit. See also 
 [`parsesortcircuit`](@ref), [`parsecircuit`](@ref), and [`sortnodes`](@ref) 
 for more explanation.
 
 # Fields
-- `nodeindexarraysorted::Matrix{Int}`: sorted array of node indices (where
+- `nodeindices::Matrix{Int}`: sorted array of node indices (where
     the length of the first axis is 2).
-- `uniquenodevectorsorted::Vector{String}`: the sorted unique node names.
+- `nodenames::Vector{String}`: the sorted unique node names.
 - `mutualinductorvector::Vector{String}`: the inductors coupled by the mutual
     inductors.
-- `namevector::Vector{String}`: component names.
+- `componentnames::Vector{String}`: component names.
 - `typevector::Vector{Symbol}`: the component (electrical engineering) types 
-- `valuevector::Vector`: the component values
-- `namedict::Dict{String, Int}`: names of the components as keys and the
+- `componentvalues::Vector`: the component values
+- `componentnamedict::Dict{String, Int}`: names of the components as keys and the
     index at which the component occurs as the value.
 - `Nnodes::Int`: number of nodes including the ground node.
 
@@ -41,13 +41,13 @@ JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 0 3 3; 1 1 1 1 0 1 1], ["0", "1",
 ```
 """
 struct ParsedSortedCircuit
-    nodeindexarraysorted::Matrix{Int}
-    uniquenodevectorsorted::Vector{String}
+    nodeindices::Matrix{Int}
+    nodenames::Vector{String}
     mutualinductorvector::Vector{String}
-    namevector::Vector{String}
+    componentnames::Vector{String}
     typevector::Vector{Symbol}
-    valuevector::Vector
-    namedict::Dict{String, Int}
+    componentvalues::Vector
+    componentnamedict::Dict{String, Int}
     Nnodes::Int
 end
 
@@ -109,19 +109,19 @@ function parsesortcircuit(circuit;sorting=:number)
     parsedcircuit = parsecircuit(circuit)
 
     # sort the nodes
-    uniquenodevectorsorted,nodeindexarraysorted = sortnodes(
+    nodenames,nodeindices = sortnodes(
         parsedcircuit.uniquenodevector,
         parsedcircuit.nodeindexvector,
         sorting=sorting)
 
     return ParsedSortedCircuit(
-        nodeindexarraysorted,
-        uniquenodevectorsorted,
+        nodeindices,
+        nodenames,
         parsedcircuit.mutualinductorvector,
-        parsedcircuit.namevector,
+        parsedcircuit.componentnames,
         parsedcircuit.typevector,
-        parsedcircuit.valuevector,
-        parsedcircuit.namedict,
+        parsedcircuit.componentvalues,
+        parsedcircuit.componentnamedict,
         parsedcircuit.Nnodes)
 end
 
@@ -129,8 +129,8 @@ end
 """
     ParsedCircuit(nodeindexvector::Vector{Int},
         uniquenodevector::Vector{String},mutualinductorvector::Vector{String},
-        namevector::Vector{String},typevector::Vector{Symbol},
-        valuevector::Vector,namedict::Dict{String, Int},Nnodes::Int)
+        componentnames::Vector{String},typevector::Vector{Symbol},
+        componentvalues::Vector,componentnamedict::Dict{String, Int},Nnodes::Int)
 
 A simple structure to hold the parsed circuit including a vector of node indices,
 the unique node names, the inductors coupled by the mutual inductors, the
@@ -147,10 +147,10 @@ See also [`parsecircuit`](@ref).
 - `uniquenodevector::Vector{String}`: the unique node names.
 - `mutualinductorvector::Vector{String}`: the inductors coupled by the mutual
     inductors.
-- `namevector::Vector{String}`: component names.
+- `componentnames::Vector{String}`: component names.
 - `typevector::Vector{Symbol}`: the component (electrical engineering) types
-- `valuevector::Vector`: the component values
-- `namedict::Dict{String, Int}`: names of the components as keys and the
+- `componentvalues::Vector`: the component values
+- `componentnamedict::Dict{String, Int}`: names of the components as keys and the
     index at which the component occurs as the value.
 - `Nnodes::Int`: number of nodes including the ground node.
 
@@ -174,10 +174,10 @@ struct ParsedCircuit
     nodeindexvector::Vector{Int}
     uniquenodevector::Vector{String}
     mutualinductorvector::Vector{String} 
-    namevector::Vector{String}
+    componentnames::Vector{String}
     typevector::Vector{Symbol}
-    valuevector::Vector
-    namedict::Dict{String, Int}
+    componentvalues::Vector
+    componentnamedict::Dict{String, Int}
     Nnodes::Int
 end
 
@@ -305,17 +305,17 @@ function parsecircuit(circuit)
 
     # empty dictionary for all of the component names. to check if they
     # are unique.
-    namedict = Dict{String,Int}()
-    sizehint!(namedict,length(circuit))
+    componentnamedict = Dict{String,Int}()
+    sizehint!(componentnamedict,length(circuit))
 
     # vector to hold the component names
-    namevector = Vector{String}(undef,length(circuit))
+    componentnames = Vector{String}(undef,length(circuit))
 
     # vector to hold the component type symbols, eg :L, :Lj, etc. 
     typevector = Vector{Symbol}(undef,length(circuit))
 
     # vector to hold the component values. take the type from the circuit array.
-    valuevector = try
+    componentvalues = try
         Vector{fieldtype(eltype(circuit),4)}(undef,length(circuit))
     catch
         Vector{Any}(undef,length(circuit))
@@ -347,17 +347,17 @@ function parsecircuit(circuit)
         componenttypeindex = parsecomponenttype(name,allowedcomponents)
         componenttype=allowedsymbols[componenttypeindex]
 
-        if haskey(namedict,name)
+        if haskey(componentnamedict,name)
            throw(ArgumentError("Name \"$(name)\" on line $(i) is not unique."))
         end
 
         # add the name to the dictionary
-        namedict[name] = i
+        componentnamedict[name] = i
 
         # store the component name, type, and value
-        namevector[i] = name
+        componentnames[i] = name
         typevector[i] = componenttype
-        valuevector[i] = value
+        componentvalues[i] = value
 
         # mutual inductors are treated differently because their "nodes"
         # refer to inductors rather than actual nodes. add zeros to
@@ -377,7 +377,7 @@ function parsecircuit(circuit)
     end
 
     return ParsedCircuit(nodeindexvector,uniquenodevector,mutualinductorvector,
-        namevector, typevector, valuevector, namedict,length(uniquenodevector))
+        componentnames, typevector, componentvalues, componentnamedict,length(uniquenodevector))
 end
 
 
@@ -592,10 +592,10 @@ function extractbranches!(branchvector::Vector,typevector::Vector{Symbol},nodein
         throw(DimensionMismatch("branchvector should be length zero"))
     end
 
-    componenttypes = [:Lj,:L,:I,:P,:V]
+    allowedcomponenttypes = [:Lj,:L,:I,:P,:V]
     for i in eachindex(typevector)
         type = typevector[i]
-        if type in componenttypes
+        if type in allowedcomponenttypes
             push!(branchvector,(nodeindexarray[1,i],nodeindexarray[2,i]))
         end
     end
@@ -757,26 +757,26 @@ from a vector of length 2*Nnodes into a matrix with dimensions 2 by Nnodes).
 
 # Examples
 ```jldoctest
-julia> uniquenodevectorsorted,nodeindexarray=JosephsonCircuits.sortnodes(["101","0","111","11"],[1,2,1,2,1,2,1,3,3,2,3,2,4,1],sorting=:none);println(uniquenodevectorsorted);println(nodeindexarray);
+julia> nodenames,nodeindexarray=JosephsonCircuits.sortnodes(["101","0","111","11"],[1,2,1,2,1,2,1,3,3,2,3,2,4,1],sorting=:none);println(nodenames);println(nodeindexarray);
 ["0", "101", "111", "11"]
 [2 2 2 2 3 3 4; 1 1 1 3 1 1 2]
 
-julia> uniquenodevectorsorted,nodeindexarray=JosephsonCircuits.sortnodes(["101","0","111","11"],[1,2,1,2,1,2,1,3,3,2,3,2,4,1],sorting=:name);println(uniquenodevectorsorted);println(nodeindexarray);
+julia> nodenames,nodeindexarray=JosephsonCircuits.sortnodes(["101","0","111","11"],[1,2,1,2,1,2,1,3,3,2,3,2,4,1],sorting=:name);println(nodenames);println(nodeindexarray);
 ["0", "101", "11", "111"]
 [2 2 2 2 4 4 3; 1 1 1 4 1 1 2]
 
-julia> uniquenodevectorsorted,nodeindexarray=JosephsonCircuits.sortnodes(["101","0","111","11"],[1,2,1,2,1,2,1,3,3,2,3,2,4,1],sorting=:number);println(uniquenodevectorsorted);println(nodeindexarray);
+julia> nodenames,nodeindexarray=JosephsonCircuits.sortnodes(["101","0","111","11"],[1,2,1,2,1,2,1,3,3,2,3,2,4,1],sorting=:number);println(nodenames);println(nodeindexarray);
 ["0", "11", "101", "111"]
 [3 3 3 3 4 4 2; 1 1 1 4 1 1 3]
 
-julia> uniquenodevectorsorted,nodeindexarray=JosephsonCircuits.sortnodes(["1", "0", "2"],[1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2],sorting=:number);println(uniquenodevectorsorted);println(nodeindexarray);
+julia> nodenames,nodeindexarray=JosephsonCircuits.sortnodes(["1", "0", "2"],[1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2],sorting=:number);println(nodenames);println(nodeindexarray);
 ["0", "1", "2"]
 [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
 ```
 """
 function sortnodes(uniquenodevector::Vector{String},nodeindexvector::Vector{Int};sorting=:name)
 
-    nodeindexarraysorted = zeros(eltype(nodeindexvector),2,length(nodeindexvector)÷2)
+    nodeindices = zeros(eltype(nodeindexvector),2,length(nodeindexvector)÷2)
 
     uniquenodevectorsortindices=calcnodesorting(uniquenodevector;sorting=sorting)
 
@@ -790,16 +790,16 @@ function sortnodes(uniquenodevector::Vector{String},nodeindexvector::Vector{Int}
         if j == 0
             nothing
         else
-            nodeindexarraysorted[i] = nodevectorsortindices[j]
+            nodeindices[i] = nodevectorsortindices[j]
         end
     end
 
-    return uniquenodevector[uniquenodevectorsortindices],nodeindexarraysorted
+    return uniquenodevector[uniquenodevectorsortindices],nodeindices
 end
 
 
 """
-    calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
+    calcvaluetype(typevector::Vector{Symbol},componentvalues::Vector,
         components::Vector{Symbol};checkinverse=true)
 
 Returns a zero length vector with the (computer science) type which will hold
@@ -809,7 +809,7 @@ the later function calls type stable.
 
 # Arguments
 - `typevector::Vector{Symbol}`: the component (electrical engineering) types.
-- `valuevector::Vector`: the component values.
+- `componentvalues::Vector`: the component values.
 - `components::Vector{Symbol}`: find a (computer science) type which will
     hold the component (electrical engineering) types in this vector.
 
@@ -833,11 +833,11 @@ julia> @syms R1 C1 R2;JosephsonCircuits.calcvaluetype([:R,:C,:R],[R1,C1,R2],[:R]
 SymbolicUtils.BasicSymbolic{Number}[]
 ```
 """
-function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
+function calcvaluetype(typevector::Vector{Symbol},componentvalues::Vector,
     components::Vector{Symbol};checkinverse::Bool=true)
 
-    if length(typevector) !== length(valuevector)
-         throw(DimensionMismatch("typevector and valuevector should have the same length"))
+    if length(typevector) !== length(componentvalues)
+         throw(DimensionMismatch("typevector and componentvalues should have the same length"))
     end
 
     # use this to store the types we have seen so we don't call promote_type
@@ -855,11 +855,11 @@ function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
     valuetype = Nothing
     for (i,type) in enumerate(typevector)
         if haskey(componentsdict,type)
-            valuetype = typeof(valuevector[i])
+            valuetype = typeof(componentvalues[i])
             # add the original type to the typestore
             typestoredict[valuetype] = nothing
             if checkinverse
-                valuetype = promote_type(typeof(1/valuevector[i]),valuetype)
+                valuetype = promote_type(typeof(1/componentvalues[i]),valuetype)
             end
             break
         end
@@ -868,13 +868,13 @@ function calcvaluetype(typevector::Vector{Symbol},valuevector::Vector,
     for (i,type) in enumerate(typevector)
         if haskey(componentsdict,type)
             # if a different type is found, promote valuetype
-            if typeof(valuevector[i]) != valuetype
+            if typeof(componentvalues[i]) != valuetype
                 # if it is a type we have seen before, do nothing
-                valuetype = promote_type(typeof(valuevector[i]),valuetype)
+                valuetype = promote_type(typeof(componentvalues[i]),valuetype)
                 if !haskey(typestoredict,valuetype)
                     typestoredict[valuetype] = nothing
                     if checkinverse
-                        valuetype = promote_type(typeof(1/valuevector[i]),valuetype)
+                        valuetype = promote_type(typeof(1/componentvalues[i]),valuetype)
                     end
                 end
             end
@@ -885,7 +885,7 @@ end
 
 """
     calcnoiseportimpedanceindices(typevector::Vector{Symbol},nodeindexarray::Matrix{Int},
-        mutualinductorvector::Vector,valuevector::Vector)
+        mutualinductorvector::Vector,componentvalues::Vector)
 
 Find the resistors (not located at a port) or lossy capacitors or lossy inductors 
 and return their indices. 
@@ -939,9 +939,9 @@ JosephsonCircuits.calcnoiseportimpedanceindices(
 """
 function calcnoiseportimpedanceindices(typevector::Vector{Symbol},
     nodeindexarray::Matrix{Int},mutualinductorvector::Vector,
-    valuevector::Vector)
+    componentvalues::Vector)
 
-    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(componentvalues)
         throw(DimensionMismatch("Input arrays must have the same length"))
     end
 
@@ -949,7 +949,7 @@ function calcnoiseportimpedanceindices(typevector::Vector{Symbol},
         throw(DimensionMismatch("The length of the first axis must be 2"))
     end
 
-    portimpedanceindices = calcportimpedanceindices(typevector,nodeindexarray,mutualinductorvector,valuevector)
+    portimpedanceindices = calcportimpedanceindices(typevector,nodeindexarray,mutualinductorvector,componentvalues)
     noiseportimpedanceindices = Int[]
     portindices = Int[]
 
@@ -961,12 +961,12 @@ function calcnoiseportimpedanceindices(typevector::Vector{Symbol},
             else
                 push!(noiseportimpedanceindices,i)
             end
-        elseif type == :C && valuevector[i] isa Complex
-            if !iszero(valuevector[i].im)
+        elseif type == :C && componentvalues[i] isa Complex
+            if !iszero(componentvalues[i].im)
                 push!(noiseportimpedanceindices,i)
             end
-        elseif type == :L && valuevector[i] isa Complex
-            if !iszero(valuevector[i].im)
+        elseif type == :L && componentvalues[i] isa Complex
+            if !iszero(componentvalues[i].im)
                 push!(noiseportimpedanceindices,i)
             end
         end
@@ -978,7 +978,7 @@ end
 """
     calcportindicesnumbers(typevector::Vector{Symbol},
         nodeindexarray::Matrix{Int},mutualinductorvector::Vector,
-        valuevector::Vector)
+        componentvalues::Vector)
 
 Return vectors containing the indices of the ports and their numbers.
 
@@ -1026,9 +1026,9 @@ JosephsonCircuits.calcportindicesnumbers(
 """
 function calcportindicesnumbers(typevector::Vector{Symbol},
     nodeindexarray::Matrix{Int},mutualinductorvector::Vector,
-    valuevector::Vector)
+    componentvalues::Vector)
 
-    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(componentvalues)
         throw(DimensionMismatch("Input arrays must have the same length"))
     end
 
@@ -1037,7 +1037,7 @@ function calcportindicesnumbers(typevector::Vector{Symbol},
     end
 
     # define vectors to hold the numbers of the ports, the indices in the
-    # typevector, valuevector, and nodeindexarray, and the branches.
+    # typevector, componentvalues, and nodeindexarray, and the branches.
     # portnumbers = Int[]
     portindices = Int[]
     portbranches = Vector{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)}}(undef,0)
@@ -1049,17 +1049,17 @@ function calcportindicesnumbers(typevector::Vector{Symbol},
             key = (nodeindexarray[1,i],nodeindexarray[2,i])
             keyreversed = (nodeindexarray[2,i],nodeindexarray[1,i])
             push!(portindices,i)
-            # push!(portnumbers,valuevector[i])
+            # push!(portnumbers,componentvalues[i])
             push!(portbranches,key)
             push!(portbranches,keyreversed)
         end
     end
 
     # extract the port numbers. this causes runtime dispatch if the type of
-    # valuevector is any
+    # componentvalues is any
     portnumbers = zeros(Int,length(portindices))
     for (i,index) in enumerate(portindices)
-        portnumbers[i] = valuevector[index]
+        portnumbers[i] = componentvalues[index]
     end
 
     # check that all of the port numbers are unique (two ports should not
@@ -1084,7 +1084,7 @@ end
 """
     calcportimpedanceindices(typevector::Vector{Symbol},
         nodeindexarray::Matrix{Int},mutualinductorvector::Vector,
-        valuevector::Vector)
+        componentvalues::Vector)
 
 Find the resistors located at a port and return their indices.
 
@@ -1149,9 +1149,9 @@ JosephsonCircuits.calcportimpedanceindices(
 """
 function calcportimpedanceindices(typevector::Vector{Symbol},
     nodeindexarray::Matrix{Int},mutualinductorvector::Vector,
-    valuevector::Vector)
+    componentvalues::Vector)
 
-    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(valuevector)
+    if  length(typevector) != size(nodeindexarray,2) || length(typevector) != length(componentvalues)
         throw(DimensionMismatch("Input arrays must have the same length"))
     end
 
@@ -1161,7 +1161,7 @@ function calcportimpedanceindices(typevector::Vector{Symbol},
 
     # calculate the indices and numbers of the ports
     portindices,portnumbers = calcportindicesnumbers(typevector, nodeindexarray,
-        mutualinductorvector, valuevector)
+        mutualinductorvector, componentvalues)
 
     # make a dictionary so we can easily lookup the port number from the branch
     portbranchdict = Dict{Tuple{eltype(nodeindexarray),eltype(nodeindexarray)},Int}()
@@ -1209,7 +1209,7 @@ end
 
 
 """
-    valuevectortonumber(valuevector,circuitdefs)
+    componentvaluestonumber(componentvalues,circuitdefs)
 
 Convert the array of component values to numbers, if defined in `circuitdefs`. 
 This function is not type stable by design because we want the output array 
@@ -1217,12 +1217,12 @@ to use a concrete type if all of the values are evaluated to numbers.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.valuevectortonumber([:Lj1,:Lj2],Dict(:Lj1=>1e-12,:Lj2=>2e-12))
+julia> JosephsonCircuits.componentvaluestonumber([:Lj1,:Lj2],Dict(:Lj1=>1e-12,:Lj2=>2e-12))
 2-element Vector{Float64}:
  1.0e-12
  2.0e-12
 
-julia> @variables Lj1 Lj2;JosephsonCircuits.valuevectortonumber([Lj1,Lj1+Lj2],Dict(Lj1=>1e-12,Lj2=>2e-12))
+julia> @variables Lj1 Lj2;JosephsonCircuits.componentvaluestonumber([Lj1,Lj1+Lj2],Dict(Lj1=>1e-12,Lj2=>2e-12))
 2-element Vector{Float64}:
  1.0e-12
  3.0e-12
@@ -1234,7 +1234,7 @@ Zfun(w,R) = ifelse(w>10,R,100*R);
 @variables w R
 @register_symbolic Zfun(w,R)
 # substitute in numerical values and functions for everything but w
-out=JosephsonCircuits.valuevectortonumber([R,Zfun(w,R)],Dict(R=>50));
+out=JosephsonCircuits.componentvaluestonumber([R,Zfun(w,R)],Dict(R=>50));
 println(out)
 # evaluate with w = 2
 println(JosephsonCircuits.Symbolics.substitute.(out,(Dict(w=>2),)))
@@ -1247,9 +1247,9 @@ Any[50, Zfun(w, 50)]
 [50, 50]
 ```
 """
-function valuevectortonumber(valuevector::Vector,circuitdefs::Dict)
-    return [valuetonumber(v,circuitdefs) for v in valuevector]
-    # return map(valuetonumber,valuevector,Base.Iterators.repeated(circuitdefs,length(valuevector)))
+function componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
+    return [valuetonumber(v,circuitdefs) for v in componentvalues]
+    # return map(valuetonumber,componentvalues,Base.Iterators.repeated(circuitdefs,length(componentvalues)))
 end
 
 """

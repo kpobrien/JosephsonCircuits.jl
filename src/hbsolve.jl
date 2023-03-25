@@ -536,8 +536,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # extract the elements we need
     Nnodes = psc.Nnodes
     typevector = psc.typevector
-    nodeindexarraysorted = psc.nodeindexarraysorted
-    namevector = psc.namevector
+    nodeindices = psc.nodeindices
+    componentnames = psc.componentnames
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = signalnm.Ljb
@@ -558,7 +558,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # add a current source for each port and mode
     for (i,val) in enumerate(portindices)
-        key = (nodeindexarraysorted[1,val],nodeindexarraysorted[2,val])
+        key = (nodeindices[1,val],nodeindices[2,val])
         for j = 1:Nsignalmodes
             bbm[(edge2indexdict[key]-1)*Nsignalmodes+j,(i-1)*Nsignalmodes+j] = 1
             # bbm2[(i-1)*Nmodes+j,(i-1)*Nmodes+j] = Lmean*1/phi0
@@ -575,7 +575,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         noiseportimpedanceindices = signalnm.noiseportimpedanceindices
     else
         noiseportimpedanceindices = calcnoiseportimpedanceindices(
-            psc.typevector, psc.nodeindexarraysorted,
+            psc.typevector, psc.nodeindices,
             psc.mutualinductorvector,
             Symbolics.substitute.(signalnm.vvn, symfreqvar => wmodes[1]))
     end
@@ -673,7 +673,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
             portindices, portimpedanceindices, noiseportimpedanceindices,
-            portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
+            portimpedances, noiseportimpedances, nodeindices, typevector,
             w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batches[i])
     end
 
@@ -696,7 +696,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnSnoise && K
         Snoiseout =  Snoisetokeyed(Snoise, signalfreq.modes,
-            namevector[noiseportimpedanceindices], signalfreq.modes,
+            componentnames[noiseportimpedanceindices], signalfreq.modes,
             portnumbers, w)
     else
         Snoiseout = Snoise
@@ -725,7 +725,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnnodeflux && K
         nodefluxout = nodevariabletokeyed(nodeflux, signalfreq.modes,
-            psc.uniquenodevectorsorted[2:end], signalfreq.modes, portnumbers, w)
+            psc.nodenames[2:end], signalfreq.modes, portnumbers, w)
     else
         nodefluxout = nodeflux
     end
@@ -733,7 +733,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnnodefluxadjoint && K
         nodefluxadjointout = nodevariabletokeyed(nodefluxadjoint, signalfreq.modes,
-            psc.uniquenodevectorsorted[2:end], signalfreq.modes, portnumbers, w)
+            psc.nodenames[2:end], signalfreq.modes, portnumbers, w)
     else
         nodefluxadjointout = nodefluxadjoint
     end
@@ -741,7 +741,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnvoltage && K
         voltageout = nodevariabletokeyed(voltage, signalfreq.modes,
-            psc.uniquenodevectorsorted[2:end], signalfreq.modes, portnumbers, w)
+            psc.nodenames[2:end], signalfreq.modes, portnumbers, w)
     else
         voltageout = voltage
     end
@@ -749,14 +749,14 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     if returnvoltageadjoint && K
         voltageadjointout = nodevariabletokeyed(voltageadjoint, signalfreq.modes,
-            psc.uniquenodevectorsorted[2:end], signalfreq.modes, portnumbers, w)
+            psc.nodenames[2:end], signalfreq.modes, portnumbers, w)
     else
         voltageadjointout = voltageadjoint
     end
 
     return LinearHB(Sout, Snoiseout, QEout, QEidealout, CMout, nodefluxout,
         nodefluxadjointout, voltageout, voltageadjointout, Nsignalmodes,
-        Nnodes, Nbranches, psc.uniquenodevectorsorted[2:end], portnumbers,
+        Nnodes, Nbranches, psc.nodenames[2:end], portnumbers,
         signalindex, w, signalfreq.modes)
 end
 
@@ -767,7 +767,7 @@ end
         AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
         Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
         portindices, portimpedanceindices, noiseportimpedanceindices,
-        portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
+        portimpedances, noiseportimpedances, nodeindices, typevector,
         w, indices, wp, Nmodes, Nnodes, symfreqvar, wi)
 
 Solve the linearized harmonic balance problem for a subset of the frequencies
@@ -780,7 +780,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
     AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
     Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
     portindices, portimpedanceindices, noiseportimpedanceindices,
-    portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
+    portimpedances, noiseportimpedances, nodeindices, typevector,
     w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi)
 
     Nports = length(portindices)
@@ -872,7 +872,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
         # calculate the scattering parameters
         if !isempty(S) || !isempty(QE) || !isempty(CM)
             calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,portimpedanceindices,
-                portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+                portimpedances,portimpedances,nodeindices,typevector,wmodes,symfreqvar)
             calcscatteringmatrix!(Sview,inputwave,outputwave)
         end
 
@@ -911,7 +911,7 @@ function hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage
             # calculate the noise scattering parameters
             if !isempty(Snoise)  || !isempty(QE) || !isempty(CM)
                 calcinputoutputnoise!(inputwave,noiseoutputwave,phin,bnm,portimpedanceindices,noiseportimpedanceindices,
-                    portimpedances,noiseportimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+                    portimpedances,noiseportimpedances,nodeindices,typevector,wmodes,symfreqvar)
                 calcscatteringmatrix!(Snoiseview,inputwave,noiseoutputwave)
             end
 
@@ -1117,8 +1117,8 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     # extract the elements we need
     Nnodes = psc.Nnodes
     typevector = psc.typevector
-    nodeindexarraysorted = psc.nodeindexarraysorted
-    nodes = psc.uniquenodevectorsorted[2:end]
+    nodeindices = psc.nodeindices
+    nodes = psc.nodenames[2:end]
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = nm.Ljb
@@ -1144,7 +1144,7 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
 
     # calculate the source terms in the branch basis
     bbm = calcsources(modes, sources, portindices, portnumbers,
-        nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+        nodeindices, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
     # convert from the node basis to the branch basis
     bnm = transpose(Rbnm)*bbm
@@ -1257,7 +1257,7 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     portimpedances = [vvn[i] for i in portimpedanceindices]
     if !isempty(S)
         calcinputoutput!(inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
-            portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+            portimpedances,portimpedances,nodeindices,typevector,wmodes,symfreqvar)
         calcscatteringmatrix!(S, inputwave, outputwave)
 
     end
@@ -1684,7 +1684,7 @@ function updateAoLjbm2!(AoLjbm::SparseMatrixCSC,Am::Array, AoLjbmindices,
 end
 
 """
-    calcsources(modes, sources, portindices, portnumbers, nodeindexarraysorted,
+    calcsources(modes, sources, portindices, portnumbers, nodeindices,
         edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
 Calculate the source terms in the branch basis. See also [`addsources!`](@ref).
@@ -1695,14 +1695,14 @@ modes = [(0,), (1,)]
 sources = [(mode = (0,), port = 1, current = 0.0005), (mode = (1,), port = 1, current = 1.0e-10)]
 portindices = [1]
 portnumbers = [1]
-nodeindexarraysorted = [2 2 2 2 0 2 3 4 3 3; 1 1 1 1 0 3 4 1 1 1]
+nodeindices = [2 2 2 2 0 2 3 4 3 3; 1 1 1 1 0 3 4 1 1 1]
 edge2indexdict = Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (4, 1) => 3, (2, 1) => 1, (1, 4) => 3, (3, 4) => 4, (4, 3) => 4)
 Lmean = 1.005e-9 + 0.0im
 Nnodes = 4
 Nbranches = 4
 Nmodes = 2
 JosephsonCircuits.calcsources(modes, sources, portindices, portnumbers,
-    nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+    nodeindices, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
 # output
 8-element Vector{ComplexF64}:
@@ -1716,13 +1716,13 @@ JosephsonCircuits.calcsources(modes, sources, portindices, portnumbers,
                    0.0 + 0.0im
 ```
 """
-function calcsources(modes, sources, portindices, portnumbers, nodeindexarraysorted,
+function calcsources(modes, sources, portindices, portnumbers, nodeindices,
     edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
     bbm = zeros(Complex{Float64}, Nbranches*Nmodes)
 
     addsources!(bbm, modes, sources, portindices, portnumbers,
-        nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches,
+        nodeindices, edge2indexdict, Lmean, Nnodes, Nbranches,
         Nmodes)
 
     return bbm
@@ -1730,13 +1730,13 @@ end
 
 """
     addsources!(bbm, modes, sources, portindices, portnumbers,
-        nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+        nodeindices, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
 Calculate the source terms in the branch basis. Overwrite bbm with the output.
 See also [`calcsources`](@ref).
 """
 function addsources!(bbm, modes, sources, portindices, portnumbers,
-    nodeindexarraysorted, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+    nodeindices, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
 
     # fill the vector with zeros
     fill!(bbm,0)
@@ -1768,7 +1768,7 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
                 # equal to the current scaled by the mean inductance and the
                 # flux quantum.
                 modeindex = modedict[mode]
-                key = (nodeindexarraysorted[1, portindex], nodeindexarraysorted[2, portindex])
+                key = (nodeindices[1, portindex], nodeindices[2, portindex])
                 bbm[(edge2indexdict[key]-1)*Nmodes+modeindex] += Lmean*current/phi0
             else
                 throw(ArgumentError("Source mode $(mode) not found."))

@@ -33,7 +33,7 @@ end
 
 """
     calcnodes(nodeindex::Int, mutualinductorindex::Int, typevector::Vector{Symbol},
-        nodeindexarray::Matrix, namedict::Dict, mutualinductorvector::Vector{String})
+        nodeindexarray::Matrix, componentnamedict::Dict, mutualinductorvector::Vector{String})
 
 Calculate the two nodes (or mutual inductor indices) given the index in the
 typvector and the component type. For component types where order matters,
@@ -55,8 +55,8 @@ push!(circuit,("L2","2","0",L2))
 push!(circuit,("C2","2","0",C2))
 push!(circuit,("C3","2","0",C3))
 psc = JosephsonCircuits.parsesortcircuit(circuit)
-println(JosephsonCircuits.calcnodes(1,1,psc.typevector,psc.nodeindexarraysorted, psc.namedict,psc.mutualinductorvector))
-println(JosephsonCircuits.calcnodes(5,1,psc.typevector,psc.nodeindexarraysorted, psc.namedict,psc.mutualinductorvector))
+println(JosephsonCircuits.calcnodes(1,1,psc.typevector,psc.nodeindices, psc.componentnamedict,psc.mutualinductorvector))
+println(JosephsonCircuits.calcnodes(5,1,psc.typevector,psc.nodeindices, psc.componentnamedict,psc.mutualinductorvector))
 
 # output
 (1, 2)
@@ -64,7 +64,7 @@ println(JosephsonCircuits.calcnodes(5,1,psc.typevector,psc.nodeindexarraysorted,
 ```
 """
 function calcnodes(nodeindex::Int, mutualinductorindex::Int, typevector::Vector{Symbol},
-    nodeindexarray::Matrix, namedict::Dict, mutualinductorvector::Vector{String})
+    nodeindexarray::Matrix, componentnamedict::Dict, mutualinductorvector::Vector{String})
 
     # calculate the nodes
     if typevector[nodeindex] == :K
@@ -77,7 +77,7 @@ function calcnodes(nodeindex::Int, mutualinductorindex::Int, typevector::Vector{
         inductor2name = mutualinductorvector[2*mutualinductorindex]
 
         # indices of inductors
-        return namedict[inductor1name], namedict[inductor2name]
+        return componentnamedict[inductor1name], componentnamedict[inductor2name]
 
     else
         if nodeindexarray[1,nodeindex] < nodeindexarray[2,nodeindex]
@@ -91,7 +91,7 @@ end
 
 """
     componentdictionaries(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-        namedict::Dict, mutualinductorvector::Vector)
+        componentnamedict::Dict, mutualinductorvector::Vector)
 
 # Examples
 ```jldoctest
@@ -106,7 +106,7 @@ push!(circuit,("L2","2","0",L2))
 push!(circuit,("C2","2","0",C2))
 push!(circuit,("C3","2","0",C3))
 psc = parsesortcircuit(circuit)
-countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.typevector,psc.nodeindexarraysorted,psc.namedict,psc.mutualinductorvector)
+countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.typevector,psc.nodeindices,psc.componentnamedict,psc.mutualinductorvector)
 
 println(countdict)
 println(indexdict)
@@ -128,7 +128,7 @@ push!(circuit,("L2","2","0",L2))
 push!(circuit,("C2","2","0",C2))
 push!(circuit,("C3","2","0",C3))
 psc = parsesortcircuit(circuit)
-countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.typevector,psc.nodeindexarraysorted,psc.namedict,psc.mutualinductorvector)
+countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.typevector,psc.nodeindices,psc.componentnamedict,psc.mutualinductorvector)
 
 println(countdict)
 println(indexdict)
@@ -139,7 +139,7 @@ Dict((:C, 1, 3, 1) => 8, (:I, 1, 2, 1) => 2, (:R, 1, 2, 1) => 3, (:K, 4, 7, 1) =
 ```
 """
 function componentdictionaries(typevector::Vector{Symbol},
-    nodeindexarray::Matrix{Int}, namedict::Dict,
+    nodeindexarray::Matrix{Int}, componentnamedict::Dict,
     mutualinductorvector::Vector{String})
 
     if  length(typevector) != size(nodeindexarray,2)
@@ -167,7 +167,7 @@ function componentdictionaries(typevector::Vector{Symbol},
         end
 
         node1, node2 = calcnodes(i, mutualinductorindex, typevector,
-            nodeindexarray, namedict, mutualinductorvector)
+            nodeindexarray, componentnamedict, mutualinductorvector)
 
         countkey = (typevector[i], node1, node2)
         if haskey(countdict,countkey)
@@ -184,7 +184,7 @@ function componentdictionaries(typevector::Vector{Symbol},
 end
 
 """
-    sumbranchvalues!(type::Symbol, node1::Int, node2::Int,valuevector::Vector,
+    sumbranchvalues!(type::Symbol, node1::Int, node2::Int,componentvalues::Vector,
         countdict, indexdict)
 
 Given a branch and a type, return the sum of all of the values of the same
@@ -202,10 +202,10 @@ println(JosephsonCircuits.sumbranchvalues!(:C, 1, 3, vvn, countdict, indexdict))
 ```
 """
 function sumbranchvalues!(type::Symbol, node1::Int, node2::Int,
-    valuevector::Vector, countdict::Dict, indexdict::Dict)
+    componentvalues::Vector, countdict::Dict, indexdict::Dict)
     countkey = (type, node1, node2)
     countflag = false
-    value = zero(eltype(valuevector))
+    value = zero(eltype(componentvalues))
     index = 0
 
     if haskey(countdict,countkey)
@@ -213,11 +213,11 @@ function sumbranchvalues!(type::Symbol, node1::Int, node2::Int,
         if counts > 0
             countflag = true
             index = indexdict[(type, node1, node2, 1)]
-            value = valuevector[index]
+            value = componentvalues[index]
 
             for count in 2:counts
                 index1 = indexdict[(type, node1, node2, count)]
-                value = sumvalues(type, value, valuevector[index1])
+                value = sumvalues(type, value, componentvalues[index1])
             end
             countdict[countkey] = 0
         end
@@ -229,7 +229,7 @@ end
 
 """
     calcCjIcmean(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-        valuevector::Vector, namedict::Dict, mutualinductorvector::Vector{String},
+        componentvalues::Vector, componentnamedict::Dict, mutualinductorvector::Vector{String},
         countdict::Dict, indexdict::Dict)
 
 Calculate the junction properties including the max and min critical currents
@@ -240,13 +240,13 @@ order to set the junction properties of the JJ model in WRSPICE.
 ```jldoctest
 typevector = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
 nodeindexarray = [2 2 2 3 3 3 4 4; 1 1 3 1 1 4 1 1]
-valuevector = Real[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, 1.2e-12]
-namedict = Dict("R1" => 2, "Cc2" => 6, "Cj2" => 8, "Cj1" => 5, "P1" => 1, "Cc1" => 3, "Lj2" => 7, "Lj1" => 4)
+componentvalues = Real[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, 1.2e-12]
+componentnamedict = Dict("R1" => 2, "Cc2" => 6, "Cj2" => 8, "Cj1" => 5, "P1" => 1, "Cc1" => 3, "Lj2" => 7, "Lj1" => 4)
 mutualinductorvector = String[]
 countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:C, 1, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
 indexdict = Dict((:C, 2, 3, 1) => 3, (:Lj, 1, 3, 1) => 4, (:C, 1, 3, 1) => 5, (:R, 1, 2, 1) => 2, (:C, 3, 4, 1) => 6, (:P, 1, 2, 1) => 1, (:C, 1, 4, 1) => 8, (:Lj, 1, 4, 1) => 7)
 Cj, Icmean = JosephsonCircuits.calcCjIcmean(typevector, nodeindexarray,
-    valuevector, namedict,mutualinductorvector, countdict, indexdict)
+    componentvalues, componentnamedict,mutualinductorvector, countdict, indexdict)
 
 # output
 (3.141466134545454e-13, 3.1414661345454545e-7)
@@ -254,20 +254,20 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(typevector, nodeindexarray,
 ```jldoctest
 typevector = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
 nodeindexarray = [2 2 2 3 3 3 4 4; 1 1 3 1 1 4 1 1]
-valuevector = Real[1, 50.0, 1.0e-13, 2.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, 1.2e-12]
-namedict = Dict("R1" => 2, "Cc2" => 6, "Cj2" => 8, "Cj1" => 5, "P1" => 1, "Cc1" => 3, "Lj2" => 7, "Lj1" => 4)
+componentvalues = Real[1, 50.0, 1.0e-13, 2.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, 1.2e-12]
+componentnamedict = Dict("R1" => 2, "Cc2" => 6, "Cj2" => 8, "Cj1" => 5, "P1" => 1, "Cc1" => 3, "Lj2" => 7, "Lj1" => 4)
 mutualinductorvector = String[]
 countdict = Dict((:Lj, 1, 4) => 1, (:C, 3, 4) => 1, (:C, 1, 4) => 1, (:Lj, 1, 3) => 1, (:R, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 1, (:C, 2, 3) => 1)
 indexdict = Dict((:C, 2, 3, 1) => 3, (:Lj, 1, 3, 1) => 4, (:C, 1, 3, 1) => 5, (:R, 1, 2, 1) => 2, (:C, 3, 4, 1) => 6, (:P, 1, 2, 1) => 1, (:C, 1, 4, 1) => 8, (:Lj, 1, 4, 1) => 7)
 Cj, Icmean = JosephsonCircuits.calcCjIcmean(typevector, nodeindexarray,
-    valuevector, namedict,mutualinductorvector, countdict, indexdict)
+    componentvalues, componentnamedict,mutualinductorvector, countdict, indexdict)
 
 # output
 (2.3187011945454545e-13, 2.3187011945454544e-7)
 ```
 """
 function calcCjIcmean(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    valuevector::Vector, namedict::Dict, mutualinductorvector::Vector{String},
+    componentvalues::Vector, componentnamedict::Dict, mutualinductorvector::Vector{String},
     countdict::Dict, indexdict::Dict)
 
     # make a copy of these dictionaries so that i don't modify them
@@ -291,16 +291,16 @@ function calcCjIcmean(typevector::Vector{Symbol}, nodeindexarray::Matrix{Int},
         end
 
         node1, node2 = calcnodes(i, mutualinductorindex, typevector,
-            nodeindexarray, namedict, mutualinductorvector)
+            nodeindexarray, componentnamedict, mutualinductorvector)
 
         # sum up the values on the branch
-        flag, value, index = sumbranchvalues!(typevector[i], node1, node2, valuevector, countdictcopy, indexdictcopy)
+        flag, value, index = sumbranchvalues!(typevector[i], node1, node2, componentvalues, countdictcopy, indexdictcopy)
         # println(typevector[i]," ",flag," ",value)
 
         if flag == true && typevector[i] == :Lj
             nJJ += 1
 
-            capflag, capvalue, capindex = sumbranchvalues!(:C, node1, node2, valuevector, countdictcopy, indexdictcopy)
+            capflag, capvalue, capindex = sumbranchvalues!(:C, node1, node2, componentvalues, countdictcopy, indexdictcopy)
             # println(:C," ",capflag," ", capvalue)
 
             # if !capflag
@@ -537,25 +537,25 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
     
     # convert as many values as we can to numerical values using definitions
     # from circuitdefs
-    valuevector = valuevectortonumber(psc.valuevector,circuitdefs)
+    componentvalues = componentvaluestonumber(psc.componentvalues,circuitdefs)
 
     countdict, indexdict = componentdictionaries(
         psc.typevector,
-        psc.nodeindexarraysorted,
-        psc.namedict,
+        psc.nodeindices,
+        psc.componentnamedict,
         psc.mutualinductorvector,
         )
 
-    Nnodes = length(psc.uniquenodevectorsorted)
+    Nnodes = length(psc.nodenames)
     typevector = psc.typevector
-    namevector = psc.namevector
-    nodeindexarray = psc.nodeindexarraysorted
-    uniquenodevector = psc.uniquenodevectorsorted
+    componentnames = psc.componentnames
+    nodeindexarray = psc.nodeindices
+    uniquenodevector = psc.nodenames
     mutualinductorvector = psc.mutualinductorvector
-    namedict = psc.namedict
+    componentnamedict = psc.componentnamedict
 
     # calculate the junction properties
-    Cj, Icmean = calcCjIcmean(typevector, nodeindexarray, valuevector, namedict,
+    Cj, Icmean = calcCjIcmean(typevector, nodeindexarray, componentvalues, componentnamedict,
         mutualinductorvector, countdict, indexdict)
 
     CjoIc = Cj/Icmean
@@ -593,10 +593,10 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
         end
 
         node1, node2 = calcnodes(i, mutualinductorindex, typevector,
-            nodeindexarray, namedict, mutualinductorvector)
+            nodeindexarray, componentnamedict, mutualinductorvector)
 
         # sum up the values on the branch
-        flag, value, index = sumbranchvalues!(typevector[i], node1, node2, valuevector, countdictcopy, indexdictcopy)
+        flag, value, index = sumbranchvalues!(typevector[i], node1, node2, componentvalues, countdictcopy, indexdictcopy)
 
         if flag == true && typevector[i] == :Lj
 
@@ -606,24 +606,24 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
             if jj == true
                 nJJ += 1
                 # push!(netlist,"B$(nJJ) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
-                push!(netlist,"B$(namevector[i][3:end]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
-                capflag, capvalue, capindex = sumbranchvalues!(:C, node1, node2, valuevector, countdictcopy, indexdictcopy)
+                push!(netlist,"B$(componentnames[i][3:end]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
+                capflag, capvalue, capindex = sumbranchvalues!(:C, node1, node2, componentvalues, countdictcopy, indexdictcopy)
 
                 # add any additional capacitance
                 if real(capvalue) > Ictmp*CjoIc
-                    push!(netlist,"$(namevector[capindex]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(femto*real(capvalue-Ictmp*CjoIc))f")
+                    push!(netlist,"$(componentnames[capindex]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(femto*real(capvalue-Ictmp*CjoIc))f")
                 end
             else
-                push!(netlist,"$(namevector[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*pico))p")
+                push!(netlist,"$(componentnames[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*pico))p")
             end
         elseif flag == true && typevector[i] == :L
-            push!(netlist,"$(namevector[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*pico))p")
+            push!(netlist,"$(componentnames[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*pico))p")
         elseif flag == true && typevector[i] == :C
-            push!(netlist,"$(namevector[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*femto))f")
+            push!(netlist,"$(componentnames[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*femto))f")
         elseif flag == true && typevector[i] == :K
-            push!(netlist,"$(namevector[i]) $(mutualinductorvector[2*mutualinductorindex-1]) $(mutualinductorvector[2*mutualinductorindex]) $(real(value))")
+            push!(netlist,"$(componentnames[i]) $(mutualinductorvector[2*mutualinductorindex-1]) $(mutualinductorvector[2*mutualinductorindex]) $(real(value))")
         elseif flag == true && typevector[i] == :R
-            push!(netlist,"$(namevector[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value))")
+            push!(netlist,"$(componentnames[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value))")
         end
     end
 

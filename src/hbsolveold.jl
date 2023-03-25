@@ -228,7 +228,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # extract the elements we need
     Nnodes = psc.Nnodes
     typevector = psc.typevector
-    nodeindexarraysorted = psc.nodeindexarraysorted
+    nodeindices = psc.nodeindices
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = nm.Ljb
@@ -248,7 +248,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         noiseportimpedanceindices = nm.noiseportimpedanceindices
     else
         noiseportimpedanceindices = calcnoiseportimpedanceindices(
-            psc.typevector, psc.nodeindexarraysorted,
+            psc.typevector, psc.nodeindices,
             psc.mutualinductorvector,
             Symbolics.substitute.(nm.vvn, symfreqvar => w[1]))
     end
@@ -278,7 +278,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     # add a current source for each port and mode
     for (i,val) in enumerate(portindices)
-        key = (nodeindexarraysorted[1,val],nodeindexarraysorted[2,val])
+        key = (nodeindices[1,val],nodeindices[2,val])
         for j = 1:Nmodes
             bbm[(edge2indexdict[key]-1)*Nmodes+j,(i-1)*Nmodes+j] = 1
             # bbm2[(i-1)*Nmodes+j,(i-1)*Nmodes+j] = Lmean*1/phi0
@@ -383,7 +383,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
             portindices, portimpedanceindices, noiseportimpedanceindices,
-            portimpedances, noiseportimpedances, nodeindexarraysorted, typevector,
+            portimpedances, noiseportimpedances, nodeindices, typevector,
             w, wpumpmodes, Nmodes, Nnodes, symfreqvar, batches[i])
     end
 
@@ -421,7 +421,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     return LinearHB(Sout, Snoise, QEout, QEidealout, CMout, nodeflux, nodefluxadjoint,
         voltage, voltageadjoint, Nmodes, Nnodes, Nbranches,
-        psc.uniquenodevectorsorted[2:end], portnumbers, signalindex, w, modes)
+        psc.nodenames[2:end], portnumbers, signalindex, w, modes)
 end
 
 
@@ -510,7 +510,7 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
     # extract the elements we need
     Nnodes = psc.Nnodes
     typevector = psc.typevector
-    nodeindexarraysorted = psc.nodeindexarraysorted
+    nodeindices = psc.nodeindices
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = nm.Ljb
@@ -549,7 +549,7 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
         for (j,portnumber) in enumerate(portnumbers)
             if portnumber == port
                 portindex = portindices[j]
-                key = (nodeindexarraysorted[1,portindex],nodeindexarraysorted[2,portindex])
+                key = (nodeindices[1,portindex],nodeindices[2,portindex])
                 bbm[(edge2indexdict[key]-1)*Nmodes+1] = Lmean*Ip[i]/phi0
             end
         end
@@ -636,7 +636,7 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
     portimpedances = [vvn[i] for i in portimpedanceindices]
     if !isempty(S)
         calcinputoutput!(inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
-            portimpedances,portimpedances,nodeindexarraysorted,typevector,wmodes,symfreqvar)
+            portimpedances,portimpedances,nodeindices,typevector,wmodes,symfreqvar)
         calcscatteringmatrix!(S,inputwave,outputwave)
     end
 
@@ -650,7 +650,7 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
     modes = freq.modes
 
     return NonlinearHB((wp,), freq, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
-        Nbranches, psc.uniquenodevectorsorted[2:end], portnumbers, modes, S)
+        Nbranches, psc.nodenames[2:end], portnumbers, modes, S)
 end
 
 """
