@@ -94,29 +94,29 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     cg = calccircuitgraph(psc)
 
     # solve the nonlinear system
-    pump=hbnlsolveold(wp, Ip, Npumpmodes, psc, cg, circuitdefs, ports = pumpports,
+    nonlinear = hbnlsolveold(wp, Ip, Npumpmodes, psc, cg, circuitdefs, ports = pumpports,
         iterations = iterations, ftol = ftol,
         symfreqvar = symfreqvar)
 
     # the node flux
     # phin = pump.out.zero
-    nodeflux = pump.nodeflux
+    nodeflux = nonlinear.nodeflux
 
     # convert from node flux to branch flux
-    phib = pump.Rbnm*nodeflux
+    phib = nonlinear.Rbnm*nodeflux
 
     # calculate the sine and cosine nonlinearities from the pump flux
-    Am = sincosnloddtoboth(phib[pump.Ljbm.nzind], length(pump.Ljb.nzind), pump.Nmodes)
+    Am = sincosnloddtoboth(phib[nonlinear.Ljbm.nzind], length(nonlinear.Ljb.nzind), nonlinear.Nmodes)
 
     # solve the linear system
-    signal=hblinsolveold(ws, psc, cg, circuitdefs, wp = wp, Nmodes = Nsignalmodes,
+    linearized = hblinsolveold(ws, psc, cg, circuitdefs, wp = wp, Nmodes = Nsignalmodes,
         Am = Am, symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
         keyedarrays = keyedarrays)
-    return HB(pump, signal)
+    return HB(nonlinear, linearized)
 end
 
 """
@@ -227,9 +227,11 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     # extract the elements we need
     Nnodes = psc.Nnodes
-    componenttypes = psc.componenttypes
     nodenames = psc.nodenames
     nodeindices = psc.nodeindices
+    componentnames = psc.componentnames
+    componenttypes = psc.componenttypes
+    mutualinductorbranchnames = psc.mutualinductorbranchnames
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
     Ljb = nm.Ljb

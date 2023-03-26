@@ -147,7 +147,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false)) where K
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
+    sensitivitynames = String[], returnSsensitivity = false) where K
 
     # solve the nonlinear system using the old syntax externally and the new
     # syntax internally
@@ -187,7 +188,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
     # solve the nonlinear problem
-    pump = hbnlsolve(w, sources, freq, indices, psc, cg, nm;
+    nonlinear = hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = nothing, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays)
@@ -206,15 +207,16 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
 
     # solve the linearized problem
     # i should make this a tuple
-    signal = hblinsolve(ws, psc, cg, circuitdefs, signalfreq; pump = pump,
-        symfreqvar = symfreqvar, nbatches = nbatches,
+    linearized = hblinsolve(ws, psc, cg, circuitdefs, signalfreq;
+        nonlinear = nonlinear, symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
-        keyedarrays = keyedarrays)
+        keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
+        returnSsensitivity = returnSsensitivity)
 
-    return HB(pump, signal)
+    return HB(nonlinear, linearized)
 end
 
 
@@ -226,7 +228,8 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true)) where {N,M,K}
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
+    sensitivitynames = String[], returnSsensitivity = false) where {N,M,K}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -251,7 +254,7 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
     # solve the nonlinear problem
-    pump = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
+    nonlinear = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = nothing, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays)
@@ -265,22 +268,23 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
 
     # solve the linearized problem
     # i should make this a tuple
-    signal = hblinsolve(ws, psc, cg, circuitdefs, signalfreq; pump = pump,
-        symfreqvar = symfreqvar, nbatches = nbatches,
+    linearized = hblinsolve(ws, psc, cg, circuitdefs, signalfreq;
+        nonlinear = nonlinear, symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage,
-        returnvoltageadjoint = returnvoltageadjoint,
-        keyedarrays = keyedarrays)
+        returnvoltageadjoint = returnvoltageadjoint, 
+        keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
+        returnSsensitivity = returnSsensitivity)
 
-    return HB(pump, signal)
+    return HB(nonlinear, linearized)
 end
 
 
 """
     hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
-        pump=nothing, symfreqvar=nothing, threewavemixing=false,
+        nonlinear=nothing, symfreqvar=nothing, threewavemixing=false,
         fourwavemixing=true, maxintermodorder=Inf,
         nbatches::Integer = Base.Threads.nthreads(), returnS = true,
         returnSnoise = false, returnQE = true, returnCM = true,
@@ -325,7 +329,7 @@ Nmodulationharmonics = (2,)
 threewavemixing=false
 fourwavemixing=true
 
-pump=hbnlsolve(
+nonlinear=hbnlsolve(
     (wp,),
     Npumpharmonics,
     [
@@ -334,10 +338,10 @@ pump=hbnlsolve(
     ],
     circuit,circuitdefs;dc=true,odd=fourwavemixing,even=threewavemixing)
 
-signal = JosephsonCircuits.hblinsolve(ws,
-    circuit, circuitdefs; Nmodulationharmonics = Nmodulationharmonics, pump = pump, symfreqvar=nothing,
+linearized = JosephsonCircuits.hblinsolve(ws,
+    circuit, circuitdefs; Nmodulationharmonics = Nmodulationharmonics, nonlinear = nonlinear, symfreqvar=nothing,
     threewavemixing=false, fourwavemixing=true, returnnodeflux=true, keyedarrays = Val(false))
-isapprox(signal.nodeflux,
+isapprox(linearized.nodeflux,
     ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
     atol = 1e-6)
 
@@ -346,12 +350,13 @@ true
 ```
 """
 function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
-    pump=nothing, symfreqvar=nothing, threewavemixing=false,
+    nonlinear=nothing, symfreqvar=nothing, threewavemixing=false,
     fourwavemixing=true, maxintermodorder=Inf,
     nbatches::Integer = Base.Threads.nthreads(), returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true)) where K
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
+    sensitivitynames = String[], returnSsensitivity = false) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit)
@@ -366,19 +371,20 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
             maxintermodorder=maxintermodorder,
     )
 
-return hblinsolve(w, psc, cg, circuitdefs, signalfreq; pump = pump,
+return hblinsolve(w, psc, cg, circuitdefs, signalfreq; nonlinear = nonlinear,
         symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
-        keyedarrays = keyedarrays)
+        keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
+        returnSsensitivity = returnSsensitivity)
 end
 
 """
     hblinsolve(w, psc::ParsedSortedCircuit,
-        cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N}; pump=nothing,
-        symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
+        cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N};
+        nonlinear=nothing, symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
         returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
         returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
         )
@@ -410,18 +416,18 @@ circuitdefs = Dict{Symbol,Complex{Float64}}(
 )
 
 Idc = 1e-6*0
-Ip=5.0e-6
-wp=2*pi*5e9
-ws=2*pi*5.2e9
+Ip = 5.0e-6
+wp = 2*pi*5e9
+ws = 2*pi*5.2e9
 Npumpharmonics = (2,)
 Nmodulationharmonics = (2,)
-threewavemixing=false
-fourwavemixing=true
+threewavemixing = false
+fourwavemixing = true
 
 frequencies = JosephsonCircuits.removeconjfreqs(
     JosephsonCircuits.truncfreqs(
         JosephsonCircuits.calcfreqsrdft(Npumpharmonics),
-        dc=true, odd=true, even=false, maxintermodorder=Inf,
+        dc = true, odd = true, even = false, maxintermodorder = Inf,
     )
 )
 fi = JosephsonCircuits.fourierindices(frequencies)
@@ -429,7 +435,7 @@ Nmodes = length(frequencies.modes)
 psc = JosephsonCircuits.parsesortcircuit(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
 nm = JosephsonCircuits.numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
-pump=hbnlsolve(
+nonlinear = hbnlsolve(
     (wp,),
     [
         (mode=(0,),port=1,current=Idc),
@@ -438,11 +444,11 @@ pump=hbnlsolve(
     frequencies, fi, psc, cg, nm)
 signalfreq =JosephsonCircuits.truncfreqs(
     JosephsonCircuits.calcfreqsdft(Nmodulationharmonics),
-    dc=true,odd=threewavemixing,even=fourwavemixing,maxintermodorder=Inf,
+    dc = true, odd = threewavemixing, even = fourwavemixing, maxintermodorder = Inf,
 )
-signal = JosephsonCircuits.hblinsolve(ws, psc, cg, circuitdefs,
-    signalfreq;pump=pump,returnnodeflux=true, keyedarrays = Val(false))
-isapprox(signal.nodeflux,
+linearized = JosephsonCircuits.hblinsolve(ws, psc, cg, circuitdefs,
+    signalfreq;nonlinear = nonlinear, returnnodeflux=true, keyedarrays = Val(false))
+isapprox(linearized.nodeflux,
     ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
     atol = 1e-6)
 
@@ -451,17 +457,18 @@ true
 ```
 """
 function hblinsolve(w, psc::ParsedSortedCircuit,
-    cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N}; pump=nothing,
-    symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
+    cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N}; nonlinear = nothing,
+    symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true)) where {N,K}
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
+    sensitivitynames = String[], returnSsensitivity = false) where {N,K}
 
     Nsignalmodes = length(signalfreq.modes)
     # calculate the numeric matrices
     signalnm = numericmatrices(psc, cg, circuitdefs, Nmodes = Nsignalmodes)
 
-    if isnothing(pump)
+    if isnothing(nonlinear)
 
         allpumpfreq = calcfreqsrdft((0,))
         Amatrixmodes, Amatrixindices = hbmatind(allpumpfreq, signalfreq)
@@ -471,7 +478,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     else
 
-        pumpfreq = pump.frequencies
+        pumpfreq = nonlinear.frequencies
 
         # pumpfreq = JosephsonCircuits.calcfreqsrdft((2*Npumpmodes,))
         allpumpfreq = calcfreqsrdft(pumpfreq.Nharmonics)
@@ -482,7 +489,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
         # calculate the dimensions of the array which holds the frequency
         # domain information for the fourier transform
-        Nwtuple = NTuple{length(pumpfreq.Nw)+1,Int}((pumpfreq.Nw..., length(pump.Ljb.nzval)))
+        Nwtuple = NTuple{length(pumpfreq.Nw)+1,Int}((pumpfreq.Nw..., length(nonlinear.Ljb.nzval)))
 
         # create an array to hold the frequency domain data for the
         # fourier transform
@@ -495,13 +502,13 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         # convert the branch flux vector to a matrix with the terms arranged
         # in the correct way for the inverse rfft including the appropriate
         # complex conjugates.
-        branchflux = pump.Rbnm*pump.nodeflux[:]
+        branchflux = nonlinear.Rbnm*nonlinear.nodeflux[:]
         phivectortomatrix!(
-            branchflux[pump.Ljbm.nzind], phimatrix,
+            branchflux[nonlinear.Ljbm.nzind], phimatrix,
             pumpindices.vectomatmap,
             pumpindices.conjsourceindices,
             pumpindices.conjtargetindices,
-            length(pump.Ljb.nzval)
+            length(nonlinear.Ljb.nzval)
         )
 
         # apply the sinusoidal nonlinearity when evaluaing the function
@@ -513,7 +520,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             rfftplan,
         )
 
-        wpumpmodes = calcmodefreqs(pump.w,signalfreq.modes)
+        wpumpmodes = calcmodefreqs(nonlinear.w,signalfreq.modes)
     end
 
     # this is the first signal frequency. we will use it for various setup tasks
@@ -535,7 +542,6 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # extract the elements we need
     Nnodes = psc.Nnodes
-    componenttypes = psc.componenttypes
     nodenames = psc.nodenames
     nodeindices = psc.nodeindices
     componentnames = psc.componentnames
@@ -1272,7 +1278,6 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
             portimpedanceindices, portimpedanceindices, portimpedances,
             portimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
         calcscatteringmatrix!(S, inputwave, outputwave)
-
     end
 
     if K
@@ -1287,7 +1292,6 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     else
         Sout = S
     end
-
 
     return NonlinearHB(w, frequencies, nodefluxout, Rbnm, Ljb, Lb, Ljbm, Nmodes,
         Nbranches, nodenames, portnumbers, modes, Sout)
