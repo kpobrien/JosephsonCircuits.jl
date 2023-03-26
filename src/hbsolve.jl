@@ -99,13 +99,13 @@ struct LinearizedHB
 end
 
 """
-    HB(nonlinear, linear)
+    HB(nonlinear, linearized)
 
 A simple structure to hold the nonlinear and linearized harmonic balance solutions.
 
 # Fields
 - `nonlinear`: nonlinear harmonic balance solution for pump and pump harmonics
-- `linear`: linearized harmonic balance solution
+- `linearized`: linearized harmonic balance solution
 """
 struct HB
     nonlinear
