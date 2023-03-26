@@ -102,9 +102,7 @@ function warmup()
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
-    push!(circuit,("I1","1","0",:Ipump))
     push!(circuit,("R1","1","0",:Rleft))
-
     push!(circuit,("C1","1","2",:Cc)) 
     push!(circuit,("Lj1","2","0",:Lj)) 
     push!(circuit,("C2","2","0",:Cj))
@@ -114,7 +112,6 @@ function warmup()
         :Cc => 100.0e-15,
         :Cj => 1000.0e-15,
         :Rleft => 50.0,
-        :Ipump => 1.0e-8,
     )
 
     return hbsolve(2*pi*(4.5:0.5:5.0)*1e9,2*pi*4.75001*1e9,0.00565e-6,2,2,circuit,circuitdefs,pumpports=[1]);
@@ -191,13 +188,12 @@ end
 
 function warmupparse()
 
-    @variables Ipump Rleft Cc Lj Cj w L1
+    @variables Rleft Cc Lj Cj w L1
     # define the circuit components
     circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
-    push!(circuit,("I1","1","0",Ipump))
     # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
     push!(circuit,("R1","1","0",Rleft))
 
@@ -210,7 +206,6 @@ function warmupparse()
         Cc => 100.0e-15,
         Cj => 1000.0e-15,
         Rleft => 50.0,
-        Ipump => 1.0e-8,
     )
 
     return parsecircuit(circuit)
@@ -218,13 +213,12 @@ end
 
 function warmupparsesort()
 
-    @variables Ipump Rleft Cc Lj Cj w L1
+    @variables Rleft Cc Lj Cj w L1
     # define the circuit components
     circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
-    push!(circuit,("I1","1","0",Ipump))
     # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
     push!(circuit,("R1","1","0",Rleft))
 
@@ -237,7 +231,6 @@ function warmupparsesort()
         Cc => 100.0e-15,
         Cj => 1000.0e-15,
         Rleft => 50.0,
-        Ipump => 1.0e-8,
     )
 
     return parsesortcircuit(circuit)
@@ -245,13 +238,12 @@ end
 
 function warmupnumericmatrices()
 
-    @variables Ipump Rleft Cc Lj Cj w L1
+    @variables Rleft Cc Lj Cj w L1
     # define the circuit components
     circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
-    push!(circuit,("I1","1","0",Ipump))
     # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
     push!(circuit,("R1","1","0",Rleft))
 
@@ -264,7 +256,6 @@ function warmupnumericmatrices()
         Cc => 100.0e-15,
         Cj => 1000.0e-15,
         Rleft => 50.0,
-        Ipump => 1.0e-8,
     )
 
     return numericmatrices(circuit,circuitdefs)
@@ -272,13 +263,12 @@ end
 
 function warmuphblinsolve()
 
-    @variables Ipump Rleft Cc Lj Cj w L1
+    @variables Rleft Cc Lj Cj w L1
     # define the circuit components
     circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
-    push!(circuit,("I1","1","0",Ipump))
     # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
     push!(circuit,("R1","1","0",Rleft))
 
@@ -291,7 +281,6 @@ function warmuphblinsolve()
         Cc => 100.0e-15,
         Cj => 1000.0e-15,
         Rleft => 50.0,
-        Ipump => 1.0e-8,
     )
 
     return hblinsolve(2*pi*(4.5:0.1:5.0)*1e9,circuit,circuitdefs)
@@ -299,13 +288,12 @@ end
 
 function warmupvvn()
 
-    @variables Ipump Rleft Cc Lj Cj w L1
+    @variables Rleft Cc Lj Cj w L1
     # define the circuit components
     circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
-    push!(circuit,("I1","1","0",Ipump))
     # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
     push!(circuit,("R1","1","0",Rleft))
 
@@ -318,7 +306,6 @@ function warmupvvn()
         Cc => 100.0e-15,
         Cj => 1000.0e-15,
         Rleft => 50.0,
-        Ipump => 1.0e-8,
     )
 
     psc = parsesortcircuit(circuit,sorting=:number)

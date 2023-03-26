@@ -244,4 +244,16 @@ using Test
         )
     end
 
+    @testset "calcportimpedanceindices" begin
+        @test_throws(
+            ArgumentError("Ports without resistors detected. Each port must have a resistor to define the impedance."),
+            JosephsonCircuits.calcportimpedanceindices(
+                [:P,:R,:C,:Lj,:C,:P,:C],
+                [2 2 2 3 3 3 3; 1 1 3 1 1 1 1],
+                [],
+                [2,50,5e-15,1e-12,30e-15,1,50.0]
+            )
+        )
+    end
+
 end

@@ -38,20 +38,20 @@ using Test
 
     @testset verbose=true "warmupparse" begin
         @variables Ipump Rleft Cc Lj Cj w L1
-        out1 = JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["1", "0", "2"], String[], ["P1", "I1", "R1", "C1", "Lj1", "C2"], [:P, :I, :R, :C, :Lj, :C], Num[1, Ipump, Rleft, Cc, Lj, Cj], Dict("I1" => 2, "C1" => 4, "C2" => 6, "R1" => 3, "P1" => 1, "Lj1" => 5), 3)
+        out1 = JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["1", "0", "2"], String[], ["P1", "R1", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Num[1, Rleft, Cc, Lj, Cj], Dict("C1" => 3, "C2" => 5, "R1" => 2, "P1" => 1, "Lj1" => 4), 3)
         out2 = JosephsonCircuits.warmupparse()
         @test JosephsonCircuits.compare(out1,out2)
     end
 
     @testset verbose=true "warmupparsesort" begin
         @variables Ipump Rleft Cc Lj Cj w L1
-        out1 = JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 3 3; 1 1 1 3 1 1], ["0", "1", "2"], String[], ["P1", "I1", "R1", "C1", "Lj1", "C2"], [:P, :I, :R, :C, :Lj, :C], Num[1, Ipump, Rleft, Cc, Lj, Cj], Dict("I1" => 2, "C1" => 4, "C2" => 6, "R1" => 3, "P1" => 1, "Lj1" => 5), 3)
+        out1 = JosephsonCircuits.ParsedSortedCircuit([2 2 2 3 3; 1 1 3 1 1], ["0", "1", "2"], String[], ["P1", "R1", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Num[1, Rleft, Cc, Lj, Cj], Dict("C1" => 3, "C2" => 5, "R1" => 2, "P1" => 1, "Lj1" => 4), 3)
         out2 = JosephsonCircuits.warmupparsesort()
         @test JosephsonCircuits.compare(out1,out2)
     end
 
     @testset verbose=true "warmupnumericmatrices" begin
-        out1 = JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
+        out1 = JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], 1.0e-9, Real[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
         out2 = JosephsonCircuits.warmupnumericmatrices()
         @test JosephsonCircuits.compare(out1,out2)
 
@@ -64,7 +64,7 @@ using Test
     # end
 
     @testset verbose=true "warmupvvn" begin
-        out1 = Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12]
+        out1 = Real[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12]
         out2 = JosephsonCircuits.warmupvvn()
         @test JosephsonCircuits.compare(out1,out2)
     end
