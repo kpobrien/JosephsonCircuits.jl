@@ -4,7 +4,7 @@
     Stokeyed(S, outputmodes, outputportnumbers, inputmodes, 
         inputportnumbers, w)
 
-Convert a scattering parameter array to a keyed array. 
+Convert a scattering parameter array vs frequency to a keyed array. 
 
 # Examples
 ```jldoctest
@@ -79,7 +79,7 @@ end
 """
     CMtokeyed(CM, outputmodes, outputportnumbers, w)
 
-Convert a commutation relations array to a keyed array.
+Convert a commutation relations array vs frequency to a keyed array.
 
 # Examples
 ```jldoctest
@@ -113,6 +113,8 @@ end
 """
     nodevariabletokeyed(nodevariable, outputmodes, nodenames)
 
+Convert a node variable array (such as node flux or node voltage) to a keyed
+array.
 
 # Examples
 ```jldoctest
@@ -136,6 +138,9 @@ end
 """
     nodevariabletokeyed(nodevariable, outputmodes, nodenames, inputmodes,
         inputportnumbers, w)
+
+Convert a node variable array (such as node flux or node voltage) vs frequency
+to a keyed array.
 
 # Examples
 ```jldoctest
@@ -180,7 +185,9 @@ end
 
 """
     Snoisetokeyed(Snoise, inputmodes, components, outputmodes,
-        outputportnumbers, w
+        outputportnumbers, w)
+
+Convert a noise scattering parameter array vs frequency to a keyed array. 
 
 # Examples
 ```jldoctest
