@@ -79,8 +79,11 @@ A simple structure to hold the linearized harmonic balance solutions.
 - `modes`: tuple of the signal mode indices where (0,) is the signal
 """
 struct LinearizedHB
+    w
+    modes
     S
     Snoise
+    Ssensitivity
     QE
     QEideal
     CM
@@ -88,14 +91,23 @@ struct LinearizedHB
     nodefluxadjoint
     voltage
     voltageadjoint
+    nodenames
+    nodeindices
+    componentnames
+    componenttypes
+    componentnamedict
+    mutualinductorbranchnames
+    portnumbers
+    portindices
+    portimpedanceindices
+    noiseportimpedanceindices
+    sensitivitynames
+    sensitivityindices
     Nmodes
     Nnodes
     Nbranches
-    nodes
-    ports
+    Nports
     signalindex
-    w
-    modes
 end
 
 """
@@ -545,6 +557,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     nodenames = psc.nodenames
     nodeindices = psc.nodeindices
     componentnames = psc.componentnames
+    componentnamedict = psc.componentnamedict
     componenttypes = psc.componenttypes
     mutualinductorbranchnames = psc.mutualinductorbranchnames
     Nbranches = cg.Nbranches
@@ -559,6 +572,9 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     portimpedanceindices = signalnm.portimpedanceindices
     vvn = signalnm.vvn
     modes = signalfreq.modes
+
+    # actually compute this
+    sensitivityindices = Int[]
 
     # calculate the source currents
     Nports = length(portindices)
@@ -634,6 +650,14 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         Snoise = zeros(Complex{Float64},0,0,0)
     end
 
+    if returnSsensitivity
+        Ssensitivity = zeros(Complex{Float64},
+            length(sensitivitynames)*Nsignalmodes,
+            Nports*Nsignalmodes, length(w))
+    else
+        Ssensitivity = zeros(Complex{Float64},0,0,0)
+    end
+
     if returnQE
         QE = zeros(Float64,Nports*Nsignalmodes,Nports*Nsignalmodes,length(w))
     else
@@ -694,6 +718,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batches[i])
     end
 
+    # calculate the `ideal` quantum efficiency based on the gain assuming an
+    # ideal two mode amplifier
     if returnQE
         # calculate the ideal quantum efficiency.
         QEideal = zeros(Float64,size(S))
@@ -702,7 +728,10 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         QEideal = zeros(Float64,0,0,0)
     end
 
+    # turn all of the array outputs into keyed arrays if the keyedarrays = Val(true)
+
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # for the scattering parameters
     if returnS && K
         Sout = Stokeyed(S, modes, portnumbers, modes, portnumbers, w)
     else
@@ -710,6 +739,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # for the noise scattering parameters
     if returnSnoise && K
         Snoiseout =  Snoisetokeyed(Snoise, modes,
             componentnames[noiseportimpedanceindices], modes, portnumbers, w)
@@ -767,12 +797,14 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         voltageadjointout = voltageadjoint
     end
 
-    return LinearizedHB(Sout, Snoiseout, QEout, QEidealout, CMout, nodefluxout,
-        nodefluxadjointout, voltageout, voltageadjointout, Nsignalmodes,
-        Nnodes, Nbranches, nodenames, portnumbers,
-        signalindex, w, modes)
+    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivity, QEout,
+        QEidealout, CMout, nodefluxout, nodefluxadjointout, voltageout,
+        voltageadjointout, nodenames, nodeindices, componentnames,
+        componenttypes, componentnamedict, mutualinductorbranchnames,
+        portnumbers, portindices, portimpedanceindices,
+        noiseportimpedanceindices, sensitivitynames, sensitivityindices,
+        Nsignalmodes, Nnodes, Nbranches, Nports, signalindex)
 end
-
 
 """
     hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,

@@ -85,7 +85,8 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false,returnnodefluxadjoint = false, returnvoltage = false,
-    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false)) where K
+    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
+    sensitivitynames = String[], returnSsensitivity = false) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting=sorting)
@@ -115,7 +116,8 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
-        keyedarrays = keyedarrays)
+        keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
+        returnSsensitivity = returnSsensitivity)
     return HB(nonlinear, linearized)
 end
 
@@ -195,7 +197,8 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
     returnvoltage = false, returnvoltageadjoint = false,
-    keyedarrays::Val{K} = Val(false)) where K
+    keyedarrays::Val{K} = Val(false),sensitivitynames = String[],
+    returnSsensitivity = false) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -209,7 +212,8 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, returnvoltageadjoint = false,
-        keyedarrays = keyedarrays)
+        keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
+        returnSsensitivity = returnSsensitivity)
 end
 
 function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
@@ -218,7 +222,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
     returnvoltage = false, returnvoltageadjoint = false,
-    keyedarrays::Val{K} = Val(false)) where K
+    keyedarrays::Val{K} = Val(false), sensitivitynames = String[],
+    returnSsensitivity = false) where K
 
     @assert nbatches >= 1
 
@@ -230,6 +235,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nodenames = psc.nodenames
     nodeindices = psc.nodeindices
     componentnames = psc.componentnames
+    componentnamedict = psc.componentnamedict
     componenttypes = psc.componenttypes
     mutualinductorbranchnames = psc.mutualinductorbranchnames
     Nbranches = cg.Nbranches
@@ -243,6 +249,9 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     portnumbers = nm.portnumbers
     portimpedanceindices = nm.portimpedanceindices
     vvn = nm.vvn
+
+    # make real versions of these
+    sensitivityindices = Int[]
 
     # if there is a symbolic frequency variable, then we need to redo the noise
     # port calculation because calcnoiseportimpedanceindices() can't tell if a
@@ -333,6 +342,14 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         Snoise = zeros(Complex{Float64},0,0,0)
     end
 
+    if returnSsensitivity
+        Ssensitivity = zeros(Complex{Float64},
+            length(sensitivitynames)*Nsignalmodes,
+            Nports*Nsignalmodes, length(w))
+    else
+        Ssensitivity = zeros(Complex{Float64},0,0,0)
+    end
+
     if returnQE
         QE = zeros(Float64,Nports*Nmodes,Nports*Nmodes,length(w))
     else
@@ -390,6 +407,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
             w, wpumpmodes, Nmodes, Nnodes, symfreqvar, batches[i])
     end
 
+    # calculate the `ideal` quantum efficiency based on the gain assuming an
+    # ideal two mode amplifier
     if returnQE
         # calculate the ideal quantum efficiency.
         QEideal = zeros(Float64,size(S))
@@ -398,33 +417,83 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         QEideal = zeros(Float64,0,0,0)
     end
 
+    # turn all of the array outputs into keyed arrays if the keyedarrays = Val(true)
+
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # for the scattering parameters
     if returnS && K
-        Sout = Stokeyed(S, modes, portnumbers, modes,
-            portnumbers, w)
+        Sout = Stokeyed(S, modes, portnumbers, modes, portnumbers, w)
     else
         Sout = S
     end
 
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # for the noise scattering parameters
+    if returnSnoise && K
+        Snoiseout =  Snoisetokeyed(Snoise, modes,
+            componentnames[noiseportimpedanceindices], modes, portnumbers, w)
+    else
+        Snoiseout = Snoise
+    end
+
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # for the quantum efficiency
     if returnQE && K
-        QEout = Stokeyed(QE, modes, portnumbers, modes,
-            portnumbers, w)
-        QEidealout = Stokeyed(QEideal, modes, portnumbers, modes,
-            portnumbers, w)
+        QEout = Stokeyed(QE, modes, portnumbers, modes, portnumbers, w)
+        QEidealout = Stokeyed(QEideal, modes, portnumbers, modes, portnumbers, w)
     else
         QEout = QE
         QEidealout = QEideal
     end
 
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # for the commutation relations
     if returnCM && K
         CMout = CMtokeyed(CM, modes, portnumbers, w)
     else
         CMout = CM
     end
 
-    return LinearizedHB(Sout, Snoise, QEout, QEidealout, CMout, nodeflux, nodefluxadjoint,
-        voltage, voltageadjoint, Nmodes, Nnodes, Nbranches,
-        nodenames, portnumbers, signalindex, w, modes)
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnnodeflux && K
+        nodefluxout = nodevariabletokeyed(nodeflux, modes, nodenames, modes,
+            portnumbers, w)
+    else
+        nodefluxout = nodeflux
+    end
+
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnnodefluxadjoint && K
+        nodefluxadjointout = nodevariabletokeyed(nodefluxadjoint, modes,
+            nodenames, modes, portnumbers, w)
+    else
+        nodefluxadjointout = nodefluxadjoint
+    end
+
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnvoltage && K
+        voltageout = nodevariabletokeyed(voltage, modes,
+            nodenames, modes, portnumbers, w)
+    else
+        voltageout = voltage
+    end
+
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    if returnvoltageadjoint && K
+        voltageadjointout = nodevariabletokeyed(voltageadjoint, modes,
+            nodenames, modes, portnumbers, w)
+    else
+        voltageadjointout = voltageadjoint
+    end
+
+    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivity, QEout,
+        QEidealout, CMout, nodefluxout, nodefluxadjointout, voltageout,
+        voltageadjointout, nodenames, nodeindices, componentnames,
+        componenttypes, componentnamedict, mutualinductorbranchnames,
+        portnumbers, portindices, portimpedanceindices,
+        noiseportimpedanceindices, sensitivitynames, sensitivityindices,
+        Nmodes, Nnodes, Nbranches, Nports, signalindex)
+
 end
 
 
