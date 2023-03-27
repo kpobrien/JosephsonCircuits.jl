@@ -397,8 +397,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # parallelize using native threading
     batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
     Base.Threads.@threads for i in 1:length(batches)
-        hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, nodefluxadjoint, voltage,
-            voltageadjoint, Asparse, 
+        hblinsolve_inner!(S, Snoise, Ssensitivity, QE, CM, nodeflux,
+            nodefluxadjoint, voltage, voltageadjoint, Asparse, 
             AoLjnm, invLnm, Cnm, Gnm, bnm,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
@@ -434,6 +434,15 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
             componentnames[noiseportimpedanceindices], modes, portnumbers, w)
     else
         Snoiseout = Snoise
+    end
+
+    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # for Ssensitivity
+    if returnSsensitivity && K
+        Ssensitivityout =  Snoisetokeyed(Ssensitivity, modes,
+            sensitivitynames, modes, portnumbers, w)
+    else
+        Ssensitivityout = Ssensitivity
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
