@@ -110,7 +110,10 @@ using Test
             Npumpharmonics, circuit, circuitdefs, ftol=1e-12,
             returnS=false, returnSnoise=true, returnQE=false,
             returnnodefluxadjoint=true, returnCM=false,
-            returnvoltage=true, nbatches=4)
+            returnvoltage=true, returnvoltageadjoint=true,
+            returnSsensitivity = true,
+            returnZsensitivity=true, returnZsensitivityadjoint=true,
+            nbatches=4)
 
         @test result.linearized.QE == Array{Float64, 3}(undef, 0, 0, 0)
         @test result.linearized.S == Array{Float64, 3}(undef, 0, 0, 0)
