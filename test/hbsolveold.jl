@@ -70,10 +70,11 @@ using Test
         Ip = 0.00565e-6
         Nsignalmodes = 8
         Npumpmodes = 8
+        # try some uncommon options
         result=hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs,
             pumpports=[1],returnnodeflux=true,returnS = false, returnQE=false,returnCM=false,
-            returnvoltage=true,returnSnoise=true, returnnodefluxadjoint=true,
-            returnSsensitivity = true,
+            returnvoltage=true,returnvoltageadjoint=true,returnSnoise=true,
+            returnnodefluxadjoint=true,returnSsensitivity = true,
             returnZsensitivity=true, returnZsensitivityadjoint=true,
             sensitivitynames=["C1"],
             nbatches = 4)
@@ -83,6 +84,19 @@ using Test
             ComplexF64[-0.013189736218636441 - 0.008651273221683266im, 2.6395682539011797e-5 - 5.6661514233313726e-6im, -2.3497663047131403e-8 - 2.2306503448330988e-8im, -7.990410788185173e-12 + 3.749499317166309e-11im, 4.336610521409153e-14 - 1.3388741572794773e-14im, -3.8059160268943944e-17 - 3.852723364098488e-17im, 6.07942296115915e-20 + 6.60227155809359e-21im, 5.977496795928632e-20 + 2.938144480595029e-20im, 0.12157241551965468 + 0.07973640247896553im, 1.3738923117026488e-5 - 6.46274778537762e-5im, -5.3393939365693146e-8 + 9.186223725369537e-9im, 2.790433171591809e-11 + 4.514438082272354e-11im, 3.3397076362502e-14 - 4.567840462363693e-14im, -6.153011440710407e-17 - 1.534143178629367e-17im, 6.419757193364206e-20 - 2.4735969038803813e-20im, 7.29011218720814e-20 + 2.6769912044348367e-21im],
             atol = 1e-8)
 
+        # keyed array output
+        result=hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs,
+            pumpports=[1],returnnodeflux=true,returnS = false, returnQE=false,returnCM=false,
+            returnvoltage=true,returnvoltageadjoint=true,returnSnoise=true,
+            returnnodefluxadjoint=true,returnSsensitivity = true,
+            returnZsensitivity=true, returnZsensitivityadjoint=true,
+            sensitivitynames=["C1"],
+            nbatches = 4, keyedarrays = Val(true))
+
+        @test isapprox(
+            result.nonlinear.nodeflux[:],
+            ComplexF64[-0.013189736218636441 - 0.008651273221683266im, 2.6395682539011797e-5 - 5.6661514233313726e-6im, -2.3497663047131403e-8 - 2.2306503448330988e-8im, -7.990410788185173e-12 + 3.749499317166309e-11im, 4.336610521409153e-14 - 1.3388741572794773e-14im, -3.8059160268943944e-17 - 3.852723364098488e-17im, 6.07942296115915e-20 + 6.60227155809359e-21im, 5.977496795928632e-20 + 2.938144480595029e-20im, 0.12157241551965468 + 0.07973640247896553im, 1.3738923117026488e-5 - 6.46274778537762e-5im, -5.3393939365693146e-8 + 9.186223725369537e-9im, 2.790433171591809e-11 + 4.514438082272354e-11im, 3.3397076362502e-14 - 4.567840462363693e-14im, -6.153011440710407e-17 - 1.534143178629367e-17im, 6.419757193364206e-20 - 2.4735969038803813e-20im, 7.29011218720814e-20 + 2.6769912044348367e-21im],
+            atol = 1e-8)
 
     end
 

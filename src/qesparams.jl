@@ -1026,11 +1026,11 @@ function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
                     bnm,Nmodes,j,k)
 
                 # this will give NaN for DC, so set kval=0 in that case
-                if wmodes[j] == 0
-                    inputcurrent[(i-1)*Nmodes+j,k] = 0
-                else
-                    inputcurrent[(i-1)*Nmodes+j,k] = sourcecurrent/sqrt(abs(wmodes[j]))
-                end
+                # if wmodes[j] == 0
+                    # inputcurrent[(i-1)*Nmodes+j,k] = 0
+                # else
+                inputcurrent[(i-1)*Nmodes+j,k] = sourcecurrent/sqrt(abs(wmodes[j]))
+                # end
             end
         end
     end
@@ -1049,11 +1049,11 @@ function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
 
                 # convert from sqrt(power) to sqrt(photons/second)
                 # this will give NaN for DC, so set kval=0 in that case
-                if wmodes[j] == 0
-                    outputvoltage[(i-1)*Nmodes+j,k] = 0
-                else
-                    outputvoltage[(i-1)*Nmodes+j,k] = portvoltage/sqrt(abs(wmodes[j]))
-                end
+                # if wmodes[j] == 0
+                    # outputvoltage[(i-1)*Nmodes+j,k] = 0
+                # else
+                outputvoltage[(i-1)*Nmodes+j,k] = portvoltage/sqrt(abs(wmodes[j]))
+                # end
             end
         end
     end
