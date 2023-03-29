@@ -1007,8 +1007,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Zsensitivity, Zsensitivityad
             calcscatteringmatrix!(Zsensitivityview, inputwave, sensitivityoutputvoltage)
         end
 
-        # if (Nnoiseports > 0 || !isempty(nodefluxadjoint) || !isempty(voltageadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint) || !isempty(voltageadjoint))
-        if (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint) || !isempty(voltageadjoint) || !isempty(Zsensitivity) || !isempty(Zsensitivityadjoint))
+        if (Nnoiseports > 0 || !isempty(nodefluxadjoint) || !isempty(voltageadjoint) || !isempty(Zsensitivityadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint) || !isempty(voltageadjoint) || !isempty(Zsensitivityadjoint))
 
             # solve the nonlinear system with the complex conjugate of the pump
             # modulation matrix
