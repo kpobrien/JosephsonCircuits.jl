@@ -73,6 +73,9 @@ using Test
         result=hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs,
             pumpports=[1],returnnodeflux=true,returnS = false, returnQE=false,returnCM=false,
             returnvoltage=true,returnSnoise=true, returnnodefluxadjoint=true,
+            returnSsensitivity = true,
+            returnZsensitivity=true, returnZsensitivityadjoint=true,
+            sensitivitynames=["C1"],
             nbatches = 4)
 
         @test isapprox(

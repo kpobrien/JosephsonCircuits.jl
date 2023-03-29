@@ -109,15 +109,17 @@ using Test
         result = hbsolve(ws, wp, sources, Nmodulationharmonics,
             Npumpharmonics, circuit, circuitdefs, ftol=1e-12,
             returnS=false, returnSnoise=true, returnQE=false,
+            returnnodeflux=true,
             returnnodefluxadjoint=true, returnCM=false,
             returnvoltage=true, returnvoltageadjoint=true,
             returnSsensitivity = true,
             returnZsensitivity=true, returnZsensitivityadjoint=true,
+            sensitivitynames=["C1"],
             nbatches=4)
 
         @test result.linearized.QE == Array{Float64, 3}(undef, 0, 0, 0)
         @test result.linearized.S == Array{Float64, 3}(undef, 0, 0, 0)
-        @test result.linearized.nodeflux == ComplexF64[]
+        # @test result.linearized.nodeflux == ComplexF64[]
         @test result.linearized.Snoise[:] == ComplexF64[]
         @test result.linearized.CM == Matrix{Float64}(undef, 0, 0)
 

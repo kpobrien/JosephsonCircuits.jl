@@ -355,24 +355,24 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     if returnSsensitivity
         Ssensitivity = zeros(Complex{Float64},
-            length(sensitivitynames)*Nsignalmodes,
-            Nports*Nsignalmodes, length(w))
+            length(sensitivitynames)*Nmodes,
+            Nports*Nmodes, length(w))
     else
         Ssensitivity = zeros(Complex{Float64},0,0,0)
     end
 
     if returnZsensitivity
         Zsensitivity = zeros(Complex{Float64},
-            length(sensitivitynames)*Nsignalmodes,
-            Nports*Nsignalmodes, length(w))
+            length(sensitivitynames)*Nmodes,
+            Nports*Nmodes, length(w))
     else
         Zsensitivity = zeros(Complex{Float64},0,0,0)
     end
 
     if returnZsensitivityadjoint
         Zsensitivityadjoint = zeros(Complex{Float64},
-            length(sensitivitynames)*Nsignalmodes,
-            Nports*Nsignalmodes, length(w))
+            length(sensitivitynames)*Nmodes,
+            Nports*Nmodes, length(w))
     else
         Zsensitivityadjoint = zeros(Complex{Float64},0,0,0)
     end
