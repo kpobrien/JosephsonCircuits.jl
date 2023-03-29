@@ -974,16 +974,33 @@ function calcqeideal!(qeideal,S)
 end
 
 """
-    calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux, bnm, inputportindices,
-        outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, componenttypes, wmodes, symfreqvar)
+    calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
+        bnm, inputportindices, outputportindices, nodeindices, wmodes)
 
 Calculate the elements of the Z matrix.
 
+# Examples
+```jldoctest
+inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
+outputwave = ComplexF64[0;;]
+bnm = ComplexF64[-1; 1;;]
+portimpedanceindices = [2]
+portimpedances = ComplexF64[50.0 + 0.0im]
+nodeindices = [2 2 2 2 3; 3 3 1 1 1]
+componenttypes = [:P, :R, :L, :C, :C]
+wmodes = [1]
+phin = ComplexF64[-50/(im*wmodes[1]);50/(im*wmodes[1]);;]
+symfreqvar = nothing
+JosephsonCircuits.calcinputcurrentoutputvoltage!(inputwave,outputwave,phin,bnm,portimpedanceindices,
+    portimpedanceindices,nodeindices,wmodes)
+println(inputwave)
+println(outputwave)
+
+# output
+ComplexF64[-2.0 + 0.0im;;]
+ComplexF64[-100.0 + 0.0im;;]
+```
 """
-# function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux, bnm, inputportindices,
-#     outputportindices, inputportimpedances, outputportimpedances,
-#     nodeindices, componenttypes, wmodes, symfreqvar)
 function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
     bnm, inputportindices, outputportindices, nodeindices, wmodes)
 
