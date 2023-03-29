@@ -322,6 +322,9 @@ julia> inputwave=[1.0 0.0;0.0 1.0];outputwave=[im/sqrt(2) 1/sqrt(2);1/sqrt(2) im
 2×2 Matrix{ComplexF64}:
       0.0+0.707107im  0.707107+0.0im
  0.707107+0.0im            0.0+0.707107im
+
+julia> inputwave = rand(Complex{Float64},2,2);outputwave = rand(Complex{Float64},2,2);S=zeros(Complex{Float64},2,2);JosephsonCircuits.calcscatteringmatrix!(S,inputwave,outputwave);isapprox(S*inputwave,outputwave)
+true
 ```
 """
 function calcscatteringmatrix!(S,inputwave,outputwave)
@@ -967,5 +970,76 @@ function calcqeideal!(qeideal,S)
         abs2S = abs2(S[i])
         qeideal[i] = ifelse(abs2S <= 1,one(eltype(qeideal)),1 /(2 - 1 /abs2S))
     end
+    return nothing
+end
+
+"""
+    calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux, bnm, inputportindices,
+        outputportindices, inputportimpedances, outputportimpedances,
+        nodeindices, componenttypes, wmodes, symfreqvar)
+
+Calculate the elements of the Z matrix.
+
+"""
+# function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux, bnm, inputportindices,
+#     outputportindices, inputportimpedances, outputportimpedances,
+#     nodeindices, componenttypes, wmodes, symfreqvar)
+function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
+    bnm, inputportindices, outputportindices, nodeindices, wmodes)
+
+    # check the size of inputwave
+
+    # check the size of outputwave
+
+    # check the sizes of all of the inputs
+
+    # loop over input branches and modes to define inputwaves
+    Ninputports = length(inputportindices)
+    Noutputports = length(outputportindices)
+    Nsolutions = size(nodeflux,2)
+    Nmodes = length(wmodes)
+
+    for i in 1:Ninputports
+        for j in 1:Nmodes
+            for k in 1:Nsolutions
+
+                sourcecurrent = calcsourcecurrent(
+                    nodeindices[1,inputportindices[i]],
+                    nodeindices[2,inputportindices[i]],
+                    bnm,Nmodes,j,k)
+
+                # this will give NaN for DC, so set kval=0 in that case
+                if wmodes[j] == 0
+                    inputcurrent[(i-1)*Nmodes+j,k] = 0
+                else
+                    inputcurrent[(i-1)*Nmodes+j,k] = sourcecurrent/sqrt(abs(wmodes[j]))
+                end
+            end
+        end
+    end
+
+    # loop over output branches and modes to define outputwaves
+    for i in 1:Noutputports
+        for j in 1:Nmodes
+            for k in 1:Nsolutions
+
+                portvoltage = calcportvoltage(
+                    nodeindices[1,outputportindices[i]],
+                    nodeindices[2,outputportindices[i]],
+                    nodeflux,
+                    wmodes,
+                    Nmodes,j,k)
+
+                # convert from sqrt(power) to sqrt(photons/second)
+                # this will give NaN for DC, so set kval=0 in that case
+                if wmodes[j] == 0
+                    outputvoltage[(i-1)*Nmodes+j,k] = 0
+                else
+                    outputvoltage[(i-1)*Nmodes+j,k] = portvoltage/sqrt(abs(wmodes[j]))
+                end
+            end
+        end
+    end
+ 
     return nothing
 end

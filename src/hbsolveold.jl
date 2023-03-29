@@ -86,7 +86,8 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false,returnnodefluxadjoint = false, returnvoltage = false,
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
-    sensitivitynames = String[], returnSsensitivity = false) where K
+    sensitivitynames = String[], returnSsensitivity = false,
+    returnZsensitivity = false, returnZsensitivityadjoint = false) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting=sorting)
@@ -117,7 +118,9 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
-        returnSsensitivity = returnSsensitivity)
+        returnSsensitivity = returnSsensitivity,
+        returnZsensitivity = returnZsensitivity,
+        returnZsensitivityadjoint = returnZsensitivityadjoint)
     return HB(nonlinear, linearized)
 end
 
@@ -198,7 +201,8 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
     returnnodeflux = false, returnnodefluxadjoint = false,
     returnvoltage = false, returnvoltageadjoint = false,
     keyedarrays::Val{K} = Val(false),sensitivitynames = String[],
-    returnSsensitivity = false) where K
+    returnSsensitivity = false, returnZsensitivity = false,
+    returnZsensitivityadjoint = false) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -213,7 +217,9 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
         returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, returnvoltageadjoint = false,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
-        returnSsensitivity = returnSsensitivity)
+        returnSsensitivity = returnSsensitivity,
+        returnZsensitivity = returnZsensitivity,
+        returnZsensitivityadjoint = returnZsensitivityadjoint)
 end
 
 function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
@@ -223,7 +229,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     returnnodeflux = false, returnnodefluxadjoint = false,
     returnvoltage = false, returnvoltageadjoint = false,
     keyedarrays::Val{K} = Val(false), sensitivitynames = String[],
-    returnSsensitivity = false) where K
+    returnSsensitivity = false, returnZsensitivity = false,
+    returnZsensitivityadjoint = false) where K
 
     @assert nbatches >= 1
 
@@ -251,7 +258,11 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     vvn = nm.vvn
 
     # make real versions of these
-    sensitivityindices = Int[]
+    # sensitivityindices = Int[]
+    sensitivityindices = zeros(Int,length(sensitivitynames))
+    for i in eachindex(sensitivitynames)
+        sensitivityindices[i] = componentnamedict[sensitivitynames[i]]
+    end
 
     # if there is a symbolic frequency variable, then we need to redo the noise
     # port calculation because calcnoiseportimpedanceindices() can't tell if a
@@ -350,6 +361,22 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         Ssensitivity = zeros(Complex{Float64},0,0,0)
     end
 
+    if returnZsensitivity
+        Zsensitivity = zeros(Complex{Float64},
+            length(sensitivitynames)*Nsignalmodes,
+            Nports*Nsignalmodes, length(w))
+    else
+        Zsensitivity = zeros(Complex{Float64},0,0,0)
+    end
+
+    if returnZsensitivityadjoint
+        Zsensitivityadjoint = zeros(Complex{Float64},
+            length(sensitivitynames)*Nsignalmodes,
+            Nports*Nsignalmodes, length(w))
+    else
+        Zsensitivityadjoint = zeros(Complex{Float64},0,0,0)
+    end
+
     if returnQE
         QE = zeros(Float64,Nports*Nmodes,Nports*Nmodes,length(w))
     else
@@ -397,12 +424,12 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # parallelize using native threading
     batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
     Base.Threads.@threads for i in 1:length(batches)
-        hblinsolve_inner!(S, Snoise, Ssensitivity, QE, CM, nodeflux,
-            nodefluxadjoint, voltage, voltageadjoint, Asparse, 
+        hblinsolve_inner!(S, Snoise, Ssensitivity, Zsensitivity, Zsensitivityadjoint,
+            QE, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, Asparse, 
             AoLjnm, invLnm, Cnm, Gnm, bnm,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
-            portindices, portimpedanceindices, noiseportimpedanceindices,
+            portindices, portimpedanceindices, noiseportimpedanceindices, sensitivityindices,
             portimpedances, noiseportimpedances, nodeindices, componenttypes,
             w, wpumpmodes, Nmodes, Nnodes, symfreqvar, batches[i])
     end
@@ -443,6 +470,20 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
             sensitivitynames, modes, portnumbers, w)
     else
         Ssensitivityout = Ssensitivity
+    end
+
+    if returnZsensitivity && K
+        Zsensitivityout =  Snoisetokeyed(Zsensitivity, modes,
+            sensitivitynames, modes, portnumbers, w)
+    else
+        Zsensitivityout = Zsensitivity
+    end
+
+    if returnZsensitivityadjoint && K
+        Zsensitivityadjointout =  Snoisetokeyed(Zsensitivityadjoint, modes,
+            sensitivitynames, modes, portnumbers, w)
+    else
+        Zsensitivityadjointout = Zsensitivityadjoint
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
@@ -495,7 +536,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         voltageadjointout = voltageadjoint
     end
 
-    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivity, QEout,
+    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivityout,
+        Zsensitivityout, Zsensitivityadjointout, QEout,
         QEidealout, CMout, nodefluxout, nodefluxadjointout, voltageout,
         voltageadjointout, nodenames, nodeindices, componentnames,
         componenttypes, componentnamedict, mutualinductorbranchnames,

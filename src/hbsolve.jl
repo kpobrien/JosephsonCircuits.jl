@@ -84,6 +84,8 @@ struct LinearizedHB
     S
     Snoise
     Ssensitivity
+    Zsensitivity
+    Zsensitivityadjoint
     QE
     QEideal
     CM
@@ -160,7 +162,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
-    sensitivitynames = String[], returnSsensitivity = false) where K
+    sensitivitynames = String[], returnSsensitivity = false,
+    returnZsensitivity = false, returnZsensitivityadjoint = false) where K
 
     # solve the nonlinear system using the old syntax externally and the new
     # syntax internally
@@ -226,7 +229,9 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
-        returnSsensitivity = returnSsensitivity)
+        returnSsensitivity = returnSsensitivity,
+        returnZsensitivity = returnZsensitivity,
+        returnZsensitivityadjoint = returnZsensitivityadjoint)
 
     return HB(nonlinear, linearized)
 end
@@ -241,7 +246,8 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
-    sensitivitynames = String[], returnSsensitivity = false) where {N,M,K}
+    sensitivitynames = String[], returnSsensitivity = false,
+    returnZsensitivity = false, returnZsensitivityadjoint = false) where {N,M,K}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -288,7 +294,9 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
         returnvoltage = returnvoltage,
         returnvoltageadjoint = returnvoltageadjoint, 
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
-        returnSsensitivity = returnSsensitivity)
+        returnSsensitivity = returnSsensitivity,
+        returnZsensitivity = returnZsensitivity,
+        returnZsensitivityadjoint = returnZsensitivityadjoint)
 
     return HB(nonlinear, linearized)
 end
@@ -368,7 +376,8 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
-    sensitivitynames = String[], returnSsensitivity = false) where K
+    sensitivitynames = String[], returnSsensitivity = false,
+    returnZsensitivity = false, returnZsensitivityadjoint = false) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit)
@@ -390,7 +399,9 @@ return hblinsolve(w, psc, cg, circuitdefs, signalfreq; nonlinear = nonlinear,
         returnnodefluxadjoint = returnnodefluxadjoint,
         returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
-        returnSsensitivity = returnSsensitivity)
+        returnSsensitivity = returnSsensitivity,
+        returnZsensitivity = returnZsensitivity,
+        returnZsensitivityadjoint = returnZsensitivityadjoint)
 end
 
 """
@@ -474,7 +485,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
-    sensitivitynames = String[], returnSsensitivity = false) where {N,K}
+    sensitivitynames = String[], returnSsensitivity = false,
+    returnZsensitivity = false, returnZsensitivityadjoint = false) where {N,K}
 
     Nsignalmodes = length(signalfreq.modes)
     # calculate the numeric matrices
@@ -574,7 +586,11 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     modes = signalfreq.modes
 
     # actually compute this
-    sensitivityindices = Int[]
+    # sensitivityindices = Int[]
+    sensitivityindices = zeros(Int,length(sensitivitynames))
+    for i in eachindex(sensitivitynames)
+        sensitivityindices[i] = componentnamedict[sensitivitynames[i]]
+    end
 
     # calculate the source currents
     Nports = length(portindices)
@@ -658,6 +674,22 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         Ssensitivity = zeros(Complex{Float64},0,0,0)
     end
 
+    if returnZsensitivity
+        Zsensitivity = zeros(Complex{Float64},
+            length(sensitivitynames)*Nsignalmodes,
+            Nports*Nsignalmodes, length(w))
+    else
+        Zsensitivity = zeros(Complex{Float64},0,0,0)
+    end
+
+    if returnZsensitivityadjoint
+        Zsensitivityadjoint = zeros(Complex{Float64},
+            length(sensitivitynames)*Nsignalmodes,
+            Nports*Nsignalmodes, length(w))
+    else
+        Zsensitivityadjoint = zeros(Complex{Float64},0,0,0)
+    end
+
     if returnQE
         QE = zeros(Float64,Nports*Nsignalmodes,Nports*Nsignalmodes,length(w))
     else
@@ -708,12 +740,12 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # parallelize using native threading
     batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
     Base.Threads.@threads for i in 1:length(batches)
-        hblinsolve_inner!(S, Snoise, Ssensitivity, QE, CM, nodeflux,
-            nodefluxadjoint, voltage, voltageadjoint, Asparse,
+        hblinsolve_inner!(S, Snoise, Ssensitivity, Zsensitivity, Zsensitivityadjoint,
+            QE, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, Asparse,
             AoLjnm, invLnm, Cnm, Gnm, bnm,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
-            portindices, portimpedanceindices, noiseportimpedanceindices,
+            portindices, portimpedanceindices, noiseportimpedanceindices, sensitivityindices,
             portimpedances, noiseportimpedances, nodeindices, componenttypes,
             w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batches[i])
     end
@@ -754,6 +786,20 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             sensitivitynames, modes, portnumbers, w)
     else
         Ssensitivityout = Ssensitivity
+    end
+
+    if returnZsensitivity && K
+        Zsensitivityout =  Snoisetokeyed(Zsensitivity, modes,
+            sensitivitynames, modes, portnumbers, w)
+    else
+        Zsensitivityout = Zsensitivity
+    end
+
+    if returnZsensitivityadjoint && K
+        Zsensitivityadjointout =  Snoisetokeyed(Zsensitivityadjoint, modes,
+            sensitivitynames, modes, portnumbers, w)
+    else
+        Zsensitivityadjointout = Zsensitivityadjoint
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
@@ -806,7 +852,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         voltageadjointout = voltageadjoint
     end
 
-    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivity, QEout,
+    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivityout, Zsensitivityout,
+        Zsensitivityadjointout, QEout,
         QEidealout, CMout, nodefluxout, nodefluxadjointout, voltageout,
         voltageadjointout, nodenames, nodeindices, componentnames,
         componenttypes, componentnamedict, mutualinductorbranchnames,
@@ -828,12 +875,12 @@ Solve the linearized harmonic balance problem for a subset of the frequencies
 given by `wi`. This function is thread safe in that different frequencies can
 be computed in parallel on separate threads.
 """
-function hblinsolve_inner!(S, Snoise, Ssensitivity, QE, CM, nodeflux,
-    nodefluxadjoint, voltage, voltageadjoint, Asparse,
+function hblinsolve_inner!(S, Snoise, Ssensitivity, Zsensitivity, Zsensitivityadjoint,
+    QE, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, Asparse,
     AoLjnm, invLnm, Cnm, Gnm, bnm,
     AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
     Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
-    portindices, portimpedanceindices, noiseportimpedanceindices,
+    portindices, portimpedanceindices, noiseportimpedanceindices, sensitivityindices,
     portimpedances, noiseportimpedances, nodeindices, componenttypes,
     w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi)
 
@@ -845,6 +892,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, QE, CM, nodeflux,
 
     Nnoiseports = length(noiseportimpedanceindices)
     noiseoutputwave = zeros(Complex{Float64}, Nnoiseports*Nmodes, Nports*Nmodes)
+    sensitivityoutputvoltage = zeros(Complex{Float64}, length(sensitivityindices)*Nmodes, Nports*Nmodes)
 
     # operate on a copy of Asparse because it may be modified by multiple threads
     # at the same time.
@@ -868,6 +916,16 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, QE, CM, nodeflux,
         Snoiseview = zeros(Complex{Float64}, Nnoiseports*Nmodes, Nports*Nmodes)
     end
 
+    # if the noise scattering matrix is empty define a new working matrix
+    if isempty(Zsensitivity)
+        Zsensitivityview = zeros(Complex{Float64}, length(sensitivityindices)*Nmodes, Nports*Nmodes)
+    end
+
+    # if the noise scattering matrix is empty define a new working matrix
+    if isempty(Zsensitivityadjoint)
+        Zsensitivityadjointview = zeros(Complex{Float64}, length(sensitivityindices)*Nmodes, Nports*Nmodes)
+    end
+
     # loop over the frequencies
     for i in wi
 
@@ -879,6 +937,16 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, QE, CM, nodeflux,
         # if the noise scattering matrix is not empty define a view
         if !isempty(Snoise)
             Snoiseview = view(Snoise, :, :, i)
+        end
+
+        # if the noise scattering matrix is not empty define a view
+        if !isempty(Zsensitivity)
+            Zsensitivityview = view(Zsensitivity, :, :, i)
+        end
+
+        # if the noise scattering matrix is not empty define a view
+        if !isempty(Zsensitivityadjoint)
+            Zsensitivityadjointview = view(Zsensitivityadjoint, :, :, i)
         end
 
         # calculate the frequency matrices
@@ -932,7 +1000,15 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, QE, CM, nodeflux,
             calcscatteringmatrix!(Sview, inputwave, outputwave)
         end
 
-        if (Nnoiseports > 0 || !isempty(nodefluxadjoint) || !isempty(voltageadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint) || !isempty(voltageadjoint))
+        # calculate the scattering parameters
+        if !isempty(Zsensitivity)
+            calcinputcurrentoutputvoltage!(inputwave, sensitivityoutputvoltage, phin, bnm,
+                portimpedanceindices, sensitivityindices, nodeindices, wmodes)
+            calcscatteringmatrix!(Zsensitivityview, inputwave, sensitivityoutputvoltage)
+        end
+
+        # if (Nnoiseports > 0 || !isempty(nodefluxadjoint) || !isempty(voltageadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint) || !isempty(voltageadjoint))
+        if (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint) || !isempty(voltageadjoint) || !isempty(Zsensitivity) || !isempty(Zsensitivityadjoint))
 
             # solve the nonlinear system with the complex conjugate of the pump
             # modulation matrix
@@ -972,6 +1048,13 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, QE, CM, nodeflux,
                     portimpedances, noiseportimpedances, nodeindices,
                     componenttypes, wmodes, symfreqvar)
                 calcscatteringmatrix!(Snoiseview, inputwave, noiseoutputwave)
+            end
+
+            if !isempty(Zsensitivityadjoint)
+                calcinputcurrentoutputvoltage!(inputwave, sensitivityoutputvoltage,
+                    phin, bnm, portimpedanceindices, sensitivityindices,
+                    nodeindices, wmodes)
+                calcscatteringmatrix!(Zsensitivityadjointview, inputwave, sensitivityoutputvoltage)
             end
 
             # calculate the quantum efficiency
