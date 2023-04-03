@@ -87,6 +87,7 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     returnnodeflux = false,returnnodefluxadjoint = false, returnvoltage = false,
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
     sensitivitynames = String[], returnSsensitivity = false,
+    returnZ = false, returnZadjoint = false,
     returnZsensitivity = false, returnZsensitivityadjoint = false) where K
 
     # parse and sort the circuit
@@ -119,6 +120,7 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
         returnSsensitivity = returnSsensitivity,
+        returnZ = returnZ, returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
         returnZsensitivityadjoint = returnZsensitivityadjoint)
     return HB(nonlinear, linearized)
@@ -201,6 +203,7 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
     returnnodeflux = false, returnnodefluxadjoint = false,
     returnvoltage = false, returnvoltageadjoint = false,
     keyedarrays::Val{K} = Val(false),sensitivitynames = String[],
+    returnZ = false, returnZadjoint = false,
     returnSsensitivity = false, returnZsensitivity = false,
     returnZsensitivityadjoint = false) where K
 
@@ -218,6 +221,7 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
         returnvoltage = returnvoltage, returnvoltageadjoint = false,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
         returnSsensitivity = returnSsensitivity,
+        returnZ = returnZ, returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
         returnZsensitivityadjoint = returnZsensitivityadjoint)
 end
@@ -229,7 +233,9 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     returnnodeflux = false, returnnodefluxadjoint = false,
     returnvoltage = false, returnvoltageadjoint = false,
     keyedarrays::Val{K} = Val(false), sensitivitynames = String[],
-    returnSsensitivity = false, returnZsensitivity = false,
+    returnSsensitivity = false, 
+    returnZ = false, returnZadjoint = false,
+    returnZsensitivity = false,
     returnZsensitivityadjoint = false) where K
 
     @assert nbatches >= 1
@@ -347,6 +353,20 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         S = zeros(Complex{Float64},0,0,0)
     end
 
+    if returnZ
+        Z = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes,
+            length(w))
+    else
+        Z = zeros(Complex{Float64},0,0,0)
+    end
+
+    if returnZadjoint
+        Zadjoint = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes,
+            length(w))
+    else
+        Zadjoint = zeros(Complex{Float64},0,0,0)
+    end
+
     if returnSnoise
         Snoise = zeros(Complex{Float64},length(noiseportimpedanceindices)*Nmodes,Nports*Nmodes,length(w))
     else
@@ -424,7 +444,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # parallelize using native threading
     batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
     Base.Threads.@threads for i in 1:length(batches)
-        hblinsolve_inner!(S, Snoise, Ssensitivity, Zsensitivity, Zsensitivityadjoint,
+        hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Zsensitivityadjoint,
             QE, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, Asparse, 
             AoLjnm, invLnm, Cnm, Gnm, bnm,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
@@ -452,6 +472,18 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         Sout = Stokeyed(S, modes, portnumbers, modes, portnumbers, w)
     else
         Sout = S
+    end
+
+    if returnZ && K
+        Zout = Stokeyed(Z, modes, portnumbers, modes, portnumbers, w)
+    else
+        Zout = Z
+    end
+
+    if returnZadjoint && K
+        Zadjointout = Stokeyed(Zadjoint, modes, portnumbers, modes, portnumbers, w)
+    else
+        Zadjointout = Zadjoint
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
@@ -536,7 +568,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         voltageadjointout = voltageadjoint
     end
 
-    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivityout,
+    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivityout, Zout, Zadjointout,
         Zsensitivityout, Zsensitivityadjointout, QEout,
         QEidealout, CMout, nodefluxout, nodefluxadjointout, voltageout,
         voltageadjointout, nodenames, nodeindices, componentnames,

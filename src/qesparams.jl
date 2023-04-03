@@ -377,6 +377,7 @@ function calcportvoltage(key1,key2,phin,wmodes,Nmodes,j,k)
     end
 
     # scale the branch flux by frequency to get voltage
+    # portvoltage *= im*abs(wmodes[j])
     portvoltage *= im*wmodes[j]
 
     return portvoltage
@@ -1029,6 +1030,8 @@ function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
                 # if wmodes[j] == 0
                     # inputcurrent[(i-1)*Nmodes+j,k] = 0
                 # else
+                # inputcurrent[(i-1)*Nmodes+j,k] = sign(wmodes[j])*sourcecurrent/sqrt(abs(wmodes[j]))
+                # inputcurrent[(i-1)*Nmodes+j,k] = sourcecurrent
                 inputcurrent[(i-1)*Nmodes+j,k] = sourcecurrent/sqrt(abs(wmodes[j]))
                 # end
             end
@@ -1052,11 +1055,57 @@ function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
                 # if wmodes[j] == 0
                     # outputvoltage[(i-1)*Nmodes+j,k] = 0
                 # else
-                outputvoltage[(i-1)*Nmodes+j,k] = portvoltage/sqrt(abs(wmodes[j]))
+                # outputvoltage[(i-1)*Nmodes+j,k] =  portvoltage
+                outputvoltage[(i-1)*Nmodes+j,k] =  portvoltage/sqrt(abs(wmodes[j]))
+                # outputvoltage[(i-1)*Nmodes+j,k] =  sign(wmodes[j])*portvoltage/sqrt(abs(wmodes[j]))
                 # end
             end
         end
     end
  
     return nothing
+end
+
+
+
+
+function calcdZdroZ2(sensitivityindices,componenttypes, componentvalues, wmodes, symfreqvar)
+
+    # make a vector of zeros with length of 
+    # length(sensitivityindices)*length(wmodes)
+    dZdroZ2 = zeros(Complex{Float64},length(sensitivityindices)*length(wmodes))
+
+    Nmodes = length(wmodes)
+
+    # inside of the loop, loop over frequencies
+    for i in eachindex(sensitivityindices)
+        index = sensitivityindices[i]
+        type = componenttypes[index]
+        if type == :C
+            # Zc = 1/(im*w*Cg*r)
+            # D[Zc,{r,1}]/Zc^2
+            # = -im*Cg*w
+            for j in eachindex(wmodes)
+                dZdroZ2[(i-1)*Nmodes+j] = -im*wmodes[j]*componentvalues[index]
+            end
+
+        elseif type == :L || type == :Lj
+            # Zl = im*w*Lj*r
+            # D[Zl,{r,1}]/Zl^2
+            # =1/(im*Lj*r^2*w) -> set r=>1, 1/(im*Lj*w)
+            for j in eachindex(wmodes)
+                dZdroZ2[(i-1)*Nmodes+j] = 1/(im*wmodes[j]*componentvalues[index])
+            end
+
+        elseif type == :R
+            # Zr = R*r
+            # D[Zr,{r,1}]/Zr^2 = 1/(r^2*R) -> 1/R
+            for j in eachindex(wmodes)
+                dZdroZ2[(i-1)*Nmodes+j] = 1/componentvalues[index]
+            end
+        else
+            error("Unknown component.")
+        end
+    end
+    return dZdroZ2
 end
