@@ -1,7 +1,7 @@
 
 """
-    CircuitGraph(edge2indexdict,Rbn,searray,cearray,glearray,lvarray,
-        isolatednodes,gl,Nbranches)
+    CircuitGraph(edge2indexdict, Rbn, searray, cearray, glearray, lvarray,
+        isolatednodes, gl, Nbranches)
 
 A simple structure to hold the circuit graph information.
 """
@@ -71,7 +71,7 @@ end
 
 
 """
-    calcgraphs(gl,Nnodes)
+    calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1},Nnodes::Int)
 
 Calculate the superconducting spanning tree, closure branches, and loops.
 Accepts the graph of linear inductors and Josephson junctions. Outputs lists
@@ -183,13 +183,13 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1},Nnodes::Int)
 
     Nbranches = Graphs.ne(gl2)
 
-    return CircuitGraph(edge2indexdict,Rbn,searray,cearray,glearray,lvarray,
-        isolatednodes,gl,Nbranches)
+    return CircuitGraph(edge2indexdict, Rbn, searray, cearray, glearray,
+        lvarray, isolatednodes, gl, Nbranches)
 end
 
 
 """
-    storeuniqueloops!(lvarray,vmap,ul)
+    storeuniqueloops!(lvarray, vmap, ul)
 
 # Examples
 ```jldoctest
@@ -202,7 +202,7 @@ julia> lvarray = Vector{Int}[];JosephsonCircuits.storeuniqueloops!(lvarray,[1, 2
  []
 ```
 """
-function storeuniqueloops!(lvarray,vmap,ul)
+function storeuniqueloops!(lvarray, vmap, ul)
 
     if length(ul) > 1
         error("There should only be one loop associated with each closure branch.")
@@ -217,7 +217,7 @@ function storeuniqueloops!(lvarray,vmap,ul)
 end
 
 """
-    edge2index(graph::SimpleDiGraph{Int})
+    edge2index(graph::Graphs.SimpleDiGraph{Int})
 
 Generate a dictionary where the tuple of nodes defining an edge of a graph
 is the key and the value is an index. The index gives the order the edge
@@ -306,7 +306,7 @@ function tuple2edge(tuplevector::Vector{Tuple{Int, Int, Int, Int}})
 end
 
 """
-    tuple2edge(tupledict)
+    tuple2edge(tupledict::Dict{Tuple{Int, Int},T})
 
 Converts a dictionary whose keys are edges specified by tuples of integers to
 a dictionary whose keys are Graphs edges. The values associated with each key
@@ -351,7 +351,7 @@ end
 
 
 """
-    tuple2edge(tupledict)
+    tuple2edge(tupledict::Dict{Tuple{Int, Int, Int, Int},T})
 
 Converts a dictionary whose keys are edges specified by tuples of integers to
 a dictionary whose keys are Graphs edges. The values associated with each key

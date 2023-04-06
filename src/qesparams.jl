@@ -924,7 +924,7 @@ end
 
 
 """
-    calcqeideal(S)
+    calcqeideal(S::AbstractArray)
 
 Calculate the ideal (best possible) quantum efficiency for each element of a
 scattering matrix. See also [`calcqeideal!`](@ref). 
@@ -1066,10 +1066,38 @@ function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
     return nothing
 end
 
+"""
+    calcdZdroZ2(sensitivityindices,componenttypes, componentvalues, wmodes,
+        symfreqvar)
 
+Calculate 1/Z^2 times the derivative of Z with respect to parameter scaling the
+value of the circuit component. For example:
+Zc = 1/(im*w*Cg*r)
+1/Zc^2*dZc/dr|_{r=1} = -im*Cg*w
 
+Zl = im*w*Lj*r
+1/Zl^2*dZl/dr =1/(im*Lj*r^2*w)|_{r=1} = 1/(im*Lj*w)
 
-function calcdZdroZ2(sensitivityindices,componenttypes, componentvalues, wmodes, symfreqvar)
+Zr = R*r
+1/Zr^2*dZr/dr|_{r=1} = 1/(r^2*R) = 1/R
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcdZdroZ2([1],[:R], [50.0], [1.0],nothing)
+1-element Vector{ComplexF64}:
+ 0.02 + 0.0im
+
+julia> JosephsonCircuits.calcdZdroZ2([1],[:C], [2.0], [1.0],nothing)
+1-element Vector{ComplexF64}:
+ 0.0 - 2.0im
+
+julia> JosephsonCircuits.calcdZdroZ2([1],[:L], [2.0], [1.0],nothing)
+1-element Vector{ComplexF64}:
+ 0.0 - 0.5im
+```
+"""
+function calcdZdroZ2(sensitivityindices,componenttypes, componentvalues, wmodes,
+    symfreqvar)
 
     # make a vector of zeros with length of 
     # length(sensitivityindices)*length(wmodes)
@@ -1082,24 +1110,16 @@ function calcdZdroZ2(sensitivityindices,componenttypes, componentvalues, wmodes,
         index = sensitivityindices[i]
         type = componenttypes[index]
         if type == :C
-            # Zc = 1/(im*w*Cg*r)
-            # D[Zc,{r,1}]/Zc^2
-            # = -im*Cg*w
             for j in eachindex(wmodes)
                 dZdroZ2[(i-1)*Nmodes+j] = -im*wmodes[j]*componentvalues[index]
             end
 
         elseif type == :L || type == :Lj
-            # Zl = im*w*Lj*r
-            # D[Zl,{r,1}]/Zl^2
-            # =1/(im*Lj*r^2*w) -> set r=>1, 1/(im*Lj*w)
             for j in eachindex(wmodes)
                 dZdroZ2[(i-1)*Nmodes+j] = 1/(im*wmodes[j]*componentvalues[index])
             end
 
         elseif type == :R
-            # Zr = R*r
-            # D[Zr,{r,1}]/Zr^2 = 1/(r^2*R) -> 1/R
             for j in eachindex(wmodes)
                 dZdroZ2[(i-1)*Nmodes+j] = 1/componentvalues[index]
             end

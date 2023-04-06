@@ -32,8 +32,9 @@ end
 
 
 """
-    calcnodes(nodeindex::Int, mutualinductorindex::Int, componenttypes::Vector{Symbol},
-        nodeindexarray::Matrix, componentnamedict::Dict, mutualinductorbranchnames::Vector{String})
+    calcnodes(nodeindex::Int, mutualinductorindex::Int,
+        componenttypes::Vector{Symbol}, nodeindexarray::Matrix,
+        componentnamedict::Dict, mutualinductorbranchnames::Vector{String})
 
 Calculate the two nodes (or mutual inductor indices) given the index in the
 typvector and the component type. For component types where order matters,
@@ -63,8 +64,9 @@ println(JosephsonCircuits.calcnodes(5,1,psc.componenttypes,psc.nodeindices, psc.
 (4, 7)
 ```
 """
-function calcnodes(nodeindex::Int, mutualinductorindex::Int, componenttypes::Vector{Symbol},
-    nodeindexarray::Matrix, componentnamedict::Dict, mutualinductorbranchnames::Vector{String})
+function calcnodes(nodeindex::Int, mutualinductorindex::Int,
+    componenttypes::Vector{Symbol}, nodeindexarray::Matrix,
+    componentnamedict::Dict, mutualinductorbranchnames::Vector{String})
 
     # calculate the nodes
     if componenttypes[nodeindex] == :K
@@ -90,8 +92,9 @@ end
 
 
 """
-    componentdictionaries(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
-        componentnamedict::Dict, mutualinductorbranchnames::Vector)
+    componentdictionaries(componenttypes::Vector{Symbol},
+        nodeindexarray::Matrix{Int}, componentnamedict::Dict,
+        mutualinductorbranchnames::Vector)
 
 # Examples
 ```jldoctest
@@ -145,7 +148,6 @@ function componentdictionaries(componenttypes::Vector{Symbol},
     if  length(componenttypes) != size(nodeindexarray,2)
         throw(DimensionMismatch("Input arrays must have the same length"))
     end
-
 
     if size(nodeindexarray,1) != 2
         throw(DimensionMismatch("The length of the first axis must be 2"))
@@ -229,8 +231,9 @@ end
 
 """
     calcCjIcmean(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
-        componentvalues::Vector, componentnamedict::Dict, mutualinductorbranchnames::Vector{String},
-        countdict::Dict, indexdict::Dict)
+        componentvalues::Vector, componentnamedict::Dict,
+        mutualinductorbranchnames::Vector{String}, countdict::Dict,
+        indexdict::Dict)
 
 Calculate the junction properties including the max and min critical currents
 and ratios of critical current to junction capacitance. This is necessary in
@@ -266,8 +269,9 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
 (2.3187011945454545e-13, 2.3187011945454544e-7)
 ```
 """
-function calcCjIcmean(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    componentvalues::Vector, componentnamedict::Dict, mutualinductorbranchnames::Vector{String},
+function calcCjIcmean(componenttypes::Vector{Symbol},
+    nodeindexarray::Matrix{Int}, componentvalues::Vector,
+    componentnamedict::Dict, mutualinductorbranchnames::Vector{String},
     countdict::Dict, indexdict::Dict)
 
     # make a copy of these dictionaries so that i don't modify them

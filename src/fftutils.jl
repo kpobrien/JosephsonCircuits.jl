@@ -1,12 +1,13 @@
 
 """
-    Frequencies(Nw::NTuple{N,Int}, Nt::NTuple{N,Int},
+    Frequencies(Nharmonics::NTuple{N, Int}, Nw::NTuple{N,Int}, Nt::NTuple{N,Int},
         coords::Vector{CartesianIndex{N}}, modes::Vector{NTuple{N,Int})
 
 A simple structure to hold time and frequency domain information for the
 signals. See also [`calcfreqsrdft`](@ref) and [`calcfreqsdft`](@ref).
 
 # Fields
+- `Nharmonics::NTuple{N, Int}`: The number of harmonics for each frequency.
 - `Nw::NTuple{N,Int}`: The dimensions of the frequency domain signal for a
     single node.
 - `Nt::NTuple{N,Int}`: The dimensions of the time domain signal for a single
@@ -37,12 +38,14 @@ struct Frequencies{N}
 end
 
 """
-    FourierIndices(conjsymdict, vectomatmap, conjsourceindices,
-        conjtargetindices, hbmatmodes, hbmatindices)
+    FourierIndices(conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}},
+        vectomatmap::Vector{Int}, conjsourceindices::Vector{Int},
+        conjtargetindices::Vector{Int}, hbmatmodes::Matrix{NTuple{N, Int}},
+        hbmatindices::Matrix{Int})
 
 A simple structure to hold time and frequency domain information for the
 signals, particularly the indices for converting between the node flux vectors
-and matrices. See also [`fourierindicesrdft`](@ref).
+and matrices. See also [`fourierindices`](@ref).
 """
 struct FourierIndices{N}
     conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}
@@ -55,12 +58,15 @@ end
 
 
 """
-    fourierindices(freq)
+    fourierindices(freq::Frequencies)
 
-Generate the indices used in the RDFT or DFT and inverse RDFT or DFT and converting between
-a node flux vector for solving system and the matrices for the Fourier analysis.
+Generate the indices used in the RDFT or DFT and inverse RDFT or DFT and
+converting between a node flux vector for solving system and the matrices for
+the Fourier analysis. See also [`FourierIndices`](@ref), [`Frequencies`](@ref),
+[`calcfreqsrdft`](@ref) and [`calcfreqsdft`](@ref).
+
 """
-function fourierindices(freq)
+function fourierindices(freq::Frequencies)
 
     conjsymdict = conjsym(freq)
     freqindexmap, conjsourceindices, conjtargetindices = calcphiindices(freq,conjsymdict)
@@ -172,7 +178,8 @@ end
 Calculate the dimensions of the DFT or RFDT in the frequency domain
 and the time domain given a tuple of the number of harmonics. Eg. 0,w,2w,3w
 would be 3 harmonics. Also calculate the possible modes and their coordinates
-in the frequency domain RDFT array.
+in the frequency domain RDFT array. See also [`calcfreqsrdft`](@ref)
+and [`calcfreqsdft`](@ref).
 """
 function calcfreqs(Nharmonics::NTuple{N,Int}, Nw::NTuple{N,Int},
     Nt::NTuple{N,Int}) where N
@@ -205,9 +212,9 @@ function calcfreqs(Nharmonics::NTuple{N,Int}, Nw::NTuple{N,Int},
 end
 
 """
-    removeconjfreqs(frequencies::JosephsonCircuits.Frequencies{N}) where N
+    removeconjfreqs(frequencies::Frequencies{N})
 
-Return a new Frequency struct with the conjugate symmetric terms in the DFT or
+Return a new Frequencies struct with the conjugate symmetric terms in the DFT or
 RDFT removed.
 
 # Examples
@@ -244,16 +251,16 @@ julia> JosephsonCircuits.removeconjfreqs(JosephsonCircuits.calcfreqsrdft((2,2)))
  (1, -1)
 ```
 """
-function removeconjfreqs(frequencies::JosephsonCircuits.Frequencies)
+function removeconjfreqs(frequencies::Frequencies)
     conjsymdict = conjsym(frequencies)
     return removefreqs(frequencies,collect(values(conjsymdict)))
 end
 
 """
-    keepfreqs(frequencies::JosephsonCircuits.Frequencies{N},
-        keepmodes::AbstractVector{NTuple{N,Int}}) where N
+    keepfreqs(frequencies::Frequencies{N},
+        keepmodes::AbstractVector{NTuple{N,Int}})
 
-Return a new Frequency struct with all coordinates and modes except the ones
+Return a new Frequencies struct with all coordinates and modes except the ones
 in keepmodes removed.
 
 # Examples
@@ -265,7 +272,7 @@ julia> JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,2)),Tuple{
 JosephsonCircuits.Frequencies{2}((2, 2), (3, 5), (4, 5), CartesianIndex{2}[], Tuple{Int64, Int64}[])
 ```
 """
-function keepfreqs(frequencies::JosephsonCircuits.Frequencies{N},
+function keepfreqs(frequencies::Frequencies{N},
     keepmodes::AbstractVector{NTuple{N,Int}}) where N
     Nt = frequencies.Nt
     Nw = frequencies.Nw
@@ -297,10 +304,10 @@ end
 
 
 """
-    keepfreqs(frequencies::JosephsonCircuits.Frequencies{N},
-        keepcoords::AbstractVector{CartesianIndex{N}}) where N
+    keepfreqs(frequencies::Frequencies{N},
+        keepcoords::AbstractVector{CartesianIndex{N}})
 
-Return a new Frequency struct with all coordinates and modes except the ones
+Return a new Frequencies struct with all coordinates and modes except the ones
 in keepmodes removed.
 
 # Examples
@@ -312,7 +319,7 @@ julia> JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,)),Cartesi
 JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,)], [(0,)])
 ```
 """
-function keepfreqs(frequencies::JosephsonCircuits.Frequencies{N},
+function keepfreqs(frequencies::Frequencies{N},
     keepcoords::AbstractVector{CartesianIndex{N}}) where N
     Nt = frequencies.Nt
     Nw = frequencies.Nw
@@ -344,8 +351,8 @@ end
 
 
 """
-    removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
-        removemodes::AbstractVector{NTuple{N,Int}}) where N
+    removefreqs(frequencies::Frequencies{N},
+        removemodes::AbstractVector{NTuple{N,Int}})
 
 Return a new Frequency struct with the coordinates and modes for the modes in
 removemodes removed.
@@ -362,7 +369,7 @@ julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),Tuple
 JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
 ```
 """
-function removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
+function removefreqs(frequencies::Frequencies{N},
     removemodes::AbstractVector{NTuple{N,Int}}) where N
     Nt = frequencies.Nt
     Nw = frequencies.Nw
@@ -400,8 +407,8 @@ function removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
 end
 
 """
-    removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
-        removecoords::AbstractVector{CartesianIndex{N}}) where N
+    removefreqs(frequencies::Frequencies{N},
+        removecoords::AbstractVector{CartesianIndex{N}})
 
 Return a new Frequency struct with the coordinates and modes for the modes in
 removemodes removed.
@@ -418,7 +425,7 @@ julia> JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),Carte
 JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)])
 ```
 """
-function removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
+function removefreqs(frequencies::Frequencies{N},
     removecoords::AbstractVector{CartesianIndex{N}}) where N
     Nt = frequencies.Nt
     Nw = frequencies.Nw
@@ -456,10 +463,10 @@ function removefreqs(frequencies::JosephsonCircuits.Frequencies{N},
 end
 
 """
-    truncfreqs(frequencies::JosephsonCircuits.Frequencies;
+    truncfreqs(frequencies::Frequencies;
         dc = false, odd = true, even = false, maxintermodorder = Inf)
 
-Return a new Frequency struct with the coordinates and modes truncated
+Return a new Frequencies struct with the coordinates and modes truncated
 according to the user specified criteria.
 
 # Examples
@@ -496,7 +503,7 @@ julia> JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsrdft((3,3));maxin
 JosephsonCircuits.Frequencies{2}((3, 3), (4, 7), (6, 7), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(1, 3), CartesianIndex(1, 4), CartesianIndex(1, 5), CartesianIndex(1, 6), CartesianIndex(1, 7), CartesianIndex(2, 7)], [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (0, 2), (0, 3), (0, -3), (0, -2), (0, -1), (1, -1)])
 ```
 """
-function  truncfreqs(frequencies::JosephsonCircuits.Frequencies;
+function  truncfreqs(frequencies::Frequencies;
     dc = true, odd = true, even = true, maxintermodorder = Inf)
 
     coords = frequencies.coords
@@ -642,7 +649,7 @@ function visualizefreqs(w::NTuple{N,Any}, freq::Frequencies{N}) where N
 end
 
 """
-    conjsym(frequencies::JosephsonCircuits.Frequencies{N})
+    conjsym(Nw::NTuple{N, Int}, Nt::NTuple{N, Int})
 
 Calculate the conjugate symmetries in the multi-dimensional frequency domain
 data.
@@ -709,13 +716,13 @@ function conjsym(Nw::NTuple{N, Int}, Nt::NTuple{N, Int}) where N
     return conjsymdict
 end
 
-function conjsym(frequencies::JosephsonCircuits.Frequencies{N}) where N
+function conjsym(frequencies::Frequencies{N}) where N
     return conjsym(frequencies.Nw, frequencies.Nt)
 end
 
 
 """
-    printsymmetries(N::Tuple)
+    printsymmetries(Nw::NTuple{N, Int}, Nt::NTuple{N, Int})
 
 Print the conjugate symmetries in the multi-dimensional DFT or RDFT from the
 dimensions of the signal in the frequency domain and the time domain. Negative numbers
@@ -845,10 +852,11 @@ end
 
 
 """
-    calcphiindices(Nt, dropdict)
+    calcphiindicescalcphiindices(frequencies::Frequencies{N},
+        conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}})
 
 Return the indices which map the elements of the frequency domain vector
-elements to the corresponding elements of the frequency domain array. Also
+to the corresponding elements of the frequency domain array. Also
 return the indices `conjsourceindices` whose data should be copied from the
 vector to `conjtargetindices` in the array then complex conjugated
 
@@ -883,8 +891,8 @@ JosephsonCircuits.calcphiindices(noconjtruncfreq,conjsymdict)
 ([2, 4, 6, 8, 12, 16, 27, 33], [6, 16], [31, 21])
 ```
 """
-function calcphiindices(frequencies::JosephsonCircuits.Frequencies{N},
-        conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}) where N
+function calcphiindices(frequencies::Frequencies{N},
+    conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}) where N
 
     modes = frequencies.modes
     coords = frequencies.coords
@@ -1006,9 +1014,9 @@ function phivectortomatrix!(phivector::AbstractVector, phimatrix::AbstractArray,
 end
 
 """
-    phimatrixtovector!(phivector::Vector,phimatrix::Array,
-        indexmap::Vector{Int},conjsourceindices::Vector{Int},
-        conjtargetindices::Vector{Int},Nbranches::Int)
+    phimatrixtovector!(phivector::Vector, phimatrix::Array,
+        indexmap::Vector{Int}, conjsourceindices::Vector{Int},
+        conjtargetindices::Vector{Int}, Nbranches::Int)
 
 The harmonic balance method requires a vector with all of the conjugate symmetric
 terms removed and potentially other terms dropped if specified by the user (
@@ -1120,7 +1128,7 @@ function applynl(fd::Array{Complex{Float64}}, f)
 end
 
 """
-    plan_applynl(fd)
+    plan_applynl(fd::Array{Complex{T}})
 
 Creates an empty time domain data array and the inverse and forward plans
 for the RFFT of an array of frequency domain data. See also [`applynl!`](@ref).
@@ -1156,7 +1164,7 @@ end
 
 """
     applynl!(fd::Array{Complex{T}}, td::Array{T}, f::Function, irfftplan,
-        rfftplan) where T
+        rfftplan)
 
 Apply the nonlinear function f to the frequency domain data by transforming
 to the time domain, applying the function, then transforming back to the
@@ -1204,7 +1212,7 @@ function applynl!(fd::Array{Complex{T}}, td::Array{T}, f, irfftplan,
 end
 
 """
-    hbmatind(truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+    hbmatind(truncfrequencies::Frequencies{N})
 
 Returns a matrix describing which indices of the frequency domain matrix
 (from the RFFT) to pull out and use in the harmonic balance matrix. A negative
@@ -1248,14 +1256,15 @@ julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind(
  14   13   -5  11   10   0    1
 ```
 """
-function hbmatind(truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+function hbmatind(truncfrequencies::Frequencies{N}) where N
     frequencies = calcfreqs(truncfrequencies.Nharmonics,
         truncfrequencies.Nw, truncfrequencies.Nt)
     return hbmatind(frequencies, truncfrequencies)
 end
 
 """
-    hbmatind(truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+    hbmatind(frequencies::Frequencies{N},
+        truncfrequencies::Frequencies{N})
 
 Returns a matrix describing which indices of the frequency domain matrix
 (from the RFFT or FFT) to pull out and use in the harmonic balance matrix.
@@ -1281,9 +1290,8 @@ JosephsonCircuits.hbmatind(pumpfreq, signalfreq)[2]
  -3  -5  3   1
 ```
 """
-function hbmatind(
-    frequencies::JosephsonCircuits.Frequencies{N},
-    truncfrequencies::JosephsonCircuits.Frequencies{N}) where N
+function hbmatind(frequencies::Frequencies{N},
+    truncfrequencies::Frequencies{N}) where N
 
     modes = frequencies.modes
     truncmodes = truncfrequencies.modes

@@ -382,7 +382,8 @@ end
 
 
 """
-    processnode(uniquenodedict,uniquenodevector,node::String)
+    processnode(uniquenodedict::Dict{String, Int},
+        uniquenodevector::Vector{String},node::String)
 
 Return the node index when given a node. Add the node string
 to the vector `uniquenodevector` and the dictionary `uniquenodedict` with the
@@ -430,7 +431,8 @@ function processnode(uniquenodedict::Dict{String, Int},
 end
 
 """
-    processnode(uniquenodedict,uniquenodevector,node)
+    processnode(uniquenodedict::Dict{String, Int},
+        uniquenodevector::Vector{String},node)
 
 Return the node index when given a node. Add the node string
 to the vector `uniquenodevector` and the dictionary `uniquenodedict` with the
@@ -521,7 +523,7 @@ function parsecomponenttype(name::String,allowedcomponents::Vector{String})
 end
 
 """
-    checkcomponenttypes(allowedcomponents)
+    checkcomponenttypes(allowedcomponents::Vector{String})
 
 Check that each element in allowedcomponents is found at the correct place.
 This will detect the case where a two letter component appears in 
@@ -573,7 +575,8 @@ function extractbranches(componenttypes::Vector{Symbol},nodeindexarray::Matrix{I
 end
 
 """
-    extractbranches!(branchvector,componenttypes,nodeindexarray)
+    extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},
+        nodeindexarray::Matrix{Int})
 
 Append tuples consisting of a pair of node indices (branches) which we will
 use to calculate the incidence matrix.  Appends the tuples to branchvector.
@@ -739,7 +742,8 @@ function calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
 end
 
 """
-    sortnodes(uniquenodevector,nodeindexvector;sorting=:name)
+    sortnodes(uniquenodevector::Vector{String},
+        nodeindexvector::Vector{Int};sorting=:name)
 
 Sort the unique node names in `uniquenodevector` according to the specified
 sorting scheme, always placing the ground node at the beginning.
@@ -774,7 +778,8 @@ julia> nodenames,nodeindexarray=JosephsonCircuits.sortnodes(["1", "0", "2"],[1, 
 [2 2 2 2 0 3 3; 1 1 1 1 0 1 1]
 ```
 """
-function sortnodes(uniquenodevector::Vector{String},nodeindexvector::Vector{Int};sorting=:name)
+function sortnodes(uniquenodevector::Vector{String},
+        nodeindexvector::Vector{Int};sorting=:name)
 
     nodeindices = zeros(eltype(nodeindexvector),2,length(nodeindexvector)÷2)
 
@@ -800,7 +805,7 @@ end
 
 """
     calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,
-        components::Vector{Symbol};checkinverse=true)
+        components::Vector{Symbol};checkinverse::Bool=true)
 
 Returns a zero length vector with the (computer science) type which will hold
 a set of circuit components of the (electrical engineering) types given in
@@ -884,8 +889,9 @@ function calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,
 end
 
 """
-    calcnoiseportimpedanceindices(componenttypes::Vector{Symbol},nodeindexarray::Matrix{Int},
-        mutualinductorbranchnames::Vector,componentvalues::Vector)
+    calcnoiseportimpedanceindices(componenttypes::Vector{Symbol},
+        nodeindexarray::Matrix{Int}, mutualinductorbranchnames::Vector,
+        componentvalues::Vector)
 
 Find the resistors (not located at a port) or lossy capacitors or lossy inductors 
 and return their indices. 
@@ -1209,7 +1215,7 @@ end
 
 
 """
-    componentvaluestonumber(componentvalues,circuitdefs)
+    componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
 
 Convert the array of component values to numbers, if defined in `circuitdefs`. 
 This function is not type stable by design because we want the output array 
@@ -1281,6 +1287,7 @@ julia> JosephsonCircuits.valuetonumber("Lj1",Dict("Lj1"=>1e-12,"Lj2"=>2e-12))
 function valuetonumber(value::String,circuitdefs)
     return circuitdefs[value]
 end
+
 
 """
     valuetonumber(value::Symbolics.Num,circuitdefs)

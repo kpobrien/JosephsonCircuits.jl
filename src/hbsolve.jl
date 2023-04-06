@@ -21,7 +21,7 @@ A simple structure to hold the nonlinear harmonic balance solutions.
 - `modes`: tuple of the pump mode indices where (1,) is the pump in the single
     pump case.
 - `S`: the scattering matrix relating inputs and outputs for each combination
-    of port and frequency (not currently functional).
+    of port and frequency.
 """
 struct NonlinearHB
     w
