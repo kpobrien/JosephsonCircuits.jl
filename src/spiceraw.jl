@@ -1,6 +1,49 @@
 
 """
-    h,t,i,v = spice_raw_load(filename)
+    SpiceRawHeader(title::String, date::String, plotname::String,
+        flags::String, nvariables::Int, npoints::Int, command::String,
+        option::String)
+
+A simple structure to hold the SPICE raw file header.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.SpiceRawHeader("CKT1", "Thu Dec 29 01:29:27 2022", "A.C. Small signal analysis", "complex", 4, 3, "version 4.3.14", "")
+JosephsonCircuits.SpiceRawHeader("CKT1", "Thu Dec 29 01:29:27 2022", "A.C. Small signal analysis", "complex", 4, 3, "version 4.3.14", "")
+```
+"""
+struct SpiceRawHeader
+    title::String
+    date::String
+    plotname::String
+    flags::String
+    nvariables::Int
+    npoints::Int
+    command::String
+    option::String
+end
+
+"""
+    SpiceRaw(header::SpiceRawHeader, variables::Dict{String, Vector{String}},
+        values::Dict{String,T})
+
+A simple structure to hold the SPICE raw file contents including the header,
+variables, and values.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.SpiceRaw{Matrix{ComplexF64}}(JosephsonCircuits.SpiceRawHeader("CKT1", "Thu Dec 29 01:29:27 2022", "A.C. Small signal analysis", "complex", 4, 3, "version 4.3.14", ""), Dict("V" => ["v(1)", "v(2)", "v(3)"], "Hz" => ["frequency"]), Dict{String, Matrix{ComplexF64}}("V" => [48.87562301047733 - 7.413126995337487im 49.97131616467212 + 1.1949290155299537im 49.02611690128596 - 6.90980805243651im; -10.116167243319213 + 1.534380793728424im 57.578470543293086 + 1.3775359827006193im 12.368446655904192 - 1.743197747303436im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im], "Hz" => [4.0e9 + 0.0im 5.0e9 + 0.0im 6.0e9 + 0.0im]))
+JosephsonCircuits.SpiceRaw{Matrix{ComplexF64}}(JosephsonCircuits.SpiceRawHeader("CKT1", "Thu Dec 29 01:29:27 2022", "A.C. Small signal analysis", "complex", 4, 3, "version 4.3.14", ""), Dict("V" => ["v(1)", "v(2)", "v(3)"], "Hz" => ["frequency"]), Dict{String, Matrix{ComplexF64}}("V" => [48.87562301047733 - 7.413126995337487im 49.97131616467212 + 1.1949290155299537im 49.02611690128596 - 6.90980805243651im; -10.116167243319213 + 1.534380793728424im 57.578470543293086 + 1.3775359827006193im 12.368446655904192 - 1.743197747303436im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im], "Hz" => [4.0e9 + 0.0im 5.0e9 + 0.0im 6.0e9 + 0.0im]))
+```
+"""
+struct SpiceRaw{T}
+    header::SpiceRawHeader
+    variables::Dict{String, Vector{String}}
+    values::Dict{String,T}
+end
+
+"""
+    spice_raw_load(filename)
 
 Parse the binary raw output file from WRSPICE or Xyce. 
 Tested for transient analysis and frequency domain analysis.
@@ -14,7 +57,7 @@ https://xyce.sandia.gov/files/xyce/Reference_Guide.pdf#section.8.2
 The function outputs a header, the times/frequencies,
 the currents, and the voltages. The voltage and current
 arrays have dimensions nVoltages by nPoints and nCurrents by
-nPoints. 
+nPoints.
 
 """
 function spice_raw_load(filename)
@@ -58,34 +101,29 @@ function spice_raw_load(filename)
         end
 
         if linename == "Title"
-            # header["title"] = linevalue
             title = linevalue
         elseif linename == "Date"
-            # header["date"] = linevalue
             date = linevalue
         elseif linename == "Plotname"
-            # header["plotname"] = linevalue
             plotname = linevalue
         elseif linename == "Flags"
-            # header["flags"] = linevalue
             flags = linevalue
         elseif linename == "No. Variables"
-            # header["nvariables"] = parse(Int,linevalue)
             nvariables =  parse(Int,linevalue)
         elseif linename == "No. Points"
-            # header["npoints"] = parse(Int,linevalue)
             npoints = parse(Int,linevalue)
         elseif linename == "Command"
-            # header["command"] = linevalue
             command = linevalue
         elseif linename == "Option"
-            # header["option"] = linevalue
             option = linevalue
         elseif linename == "Variables"
             headerlength = i
             break
         end
     end
+
+    header = SpiceRawHeader(title, date, plotname, flags, nvariables, npoints,
+        command, option)
 
     #array of strings to contain all of the variable names
     variables =  Dict{String,Vector{String}}()
@@ -133,8 +171,10 @@ function spice_raw_load(filename)
         # make an empty array for the binary data
         if flags == "real"
             sf = Array{Float64}(undef,nvariables,npoints)
+            values = Dict{String,Matrix{Float64}}()
         elseif flags =="complex"
             sf = Array{Complex{Float64}}(undef,nvariables,npoints)
+            values = Dict{String,Matrix{Complex{Float64}}}()
         else
             throw(ArgumentError("Unknown flag."))
         end
@@ -152,17 +192,19 @@ function spice_raw_load(filename)
     sortperms = calcspicesortperms(variables)
 
     # use the sort permutation to sort the rest of the data
-    values = Dict()
+    # values = Dict()
     for (label,sp) in sortperms
         values[label] = sf[indices[label][sp],:]
         variables[label] = variables[label][sp]
     end
 
-    return (variables=variables,values=values)
+    return SpiceRaw(header, variables, values)
 end
 
 """
     calcspicesortperms(variabledict::Dict{String,Vector{String}})
+
+Calculate the sortperms which will sort the variable and node names.
 
 # Examples
 ```jldoctest
@@ -202,6 +244,9 @@ end
 
 """
     parsespicevariable(variable::String)
+
+Parse a variable name string into the variable name and node number.
+Will this work with arbitrary node strings?
 
 # Examples
 ```jldoctest

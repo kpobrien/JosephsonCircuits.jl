@@ -1,35 +1,37 @@
 
 """
-    wrspice_input_transient(netlist,idrive,fdrive,tstep,tstop)
+    wrspice_input_transient(netlist, idrive, fdrive, thetadrive, idrive2,
+        fdrive2, thetadrive2, tstep, tstop, trise; maxdata = 10e6, jjaccel = 1,
+        dphimax = 0.01, filetype = "binary")
 
 Generate the WRSPICE input file for a transient simulation using circuit 
 parameters from the given netlist, the source current and frequency, and the 
-time step and stop time. Example usage:
+time step and stop time. Leave filename empty so we can add that as a command
+line argument. Don't specify any variables so it saves everything.
 
-* Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
-* default 2.56e5. This has to come before the run command
-set maxdata = 10e6
+# Arguments
+- `netlist`: 
+- `idrive`: 
+- `fdrive`: 
+- `thetadrive`: 
+- `idrive2`: 
+- `fdrive2`: 
+- `thetadrive2`: 
+- `tstep`: 
+- `tstop`: 
+- `trise`: 
 
-* jjaccel : Causes a faster convergence testing and iteration control algorithm 
-* to be used, rather than the standard more comprehensive algorithm suitable 
-* for all devices
-set jjaccel=1
-
-* dphimax : The maximum allowed phase change per time step. 
-* decreasing dphimax from the default of pi/5 to a smaller value is critical
-* for matching the accuracy of the harmonic balance method simulations. this
-* increases simulation time by pi/5/(dphimax)
-set dphimax=0.01
-
-* Run the simulation
-run
-
-* Binary files are faster to save and load. 
-set filetype=binary
-
-* Leave filename empty so we can add that as a command line argument.
-* Don't specify any variables so it saves everything.    
-write
+# Keywords
+- `maxdata = 10e6`: Maximum size of data to export in kilobytes from 1e3 to
+    2e9 with  default 2.56e5. This has to come before the run command.
+- `jjaccel = 1`: Causes a faster convergence testing and iteration control
+    algorithm to be used, rather than the standard more comprehensive
+    algorithm suitable for all devices.
+- `dphimax = 0.01`: The maximum allowed phase change per time step. Decreasing
+    dphimax from the default of pi/5 to a smaller value is critical for
+    matching the accuracy of the harmonic balance method simulations. This
+    increases simulation time by pi/5/(dphimax).
+- `filetype = "binary"`: Binary files are faster to save and load.
 
 # Examples
 ```jldoctest
@@ -59,8 +61,9 @@ write
 
 ```
 """
-function wrspice_input_transient(netlist,idrive,fdrive,thetadrive,idrive2,
-    fdrive2,thetadrive2,tstep,tstop,trise;maxdata=10e6,jjaccel=1,dphimax=0.01)
+function wrspice_input_transient(netlist, idrive, fdrive, thetadrive, idrive2,
+    fdrive2, thetadrive2, tstep, tstop, trise; maxdata = 10e6, jjaccel = 1,
+    dphimax = 0.01, filetype = "binary")
 
     control="""
 
@@ -82,7 +85,7 @@ function wrspice_input_transient(netlist,idrive,fdrive,thetadrive,idrive2,
     set jjaccel=$(jjaccel)
     set dphimax=$(dphimax)
     run
-    set filetype=binary
+    set filetype=$(filetype)
     write
     .endc
 

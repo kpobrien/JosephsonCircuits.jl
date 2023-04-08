@@ -9,41 +9,42 @@ the signal angular frequency is swept over `ws` with pump angular frequency
 ```
 using JosephsonCircuits
 using Plots
-circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("R1","1","0",:Rleft))
-push!(circuit,("C1","1","2",:Cc)) 
-push!(circuit,("Lj1","2","0",:Lj)) 
-push!(circuit,("C2","2","0",:Cj))
+circuit = [
+    ("P1","1","0",1),
+    ("R1","1","0",:R),
+    ("C1","1","2",:Cc),
+    ("Lj1","2","0",:Lj),
+    ("C2","2","0",:Cj)]
 circuitdefs = Dict(
-    :Lj =>1000e-12,
+    :Lj =>1000.0e-12,
     :Cc => 100.0e-15,
-    :Cj => 1000e-15,
-    :Rleft => 50,
-    :Rright => 50,
-    :Ipump => 1.0e-8,
-)
-ws=2*pi*(4.5:0.001:5.0)*1e9
-Npumpmodes = 11
-Nsignalmodes = 8
-wp=2*pi*4.75001*1e9
-Ip=0.00565e-6
-@time jpa = hbsolve(ws,wp,Ip,Nsignalmodes,Npumpmodes,circuit,circuitdefs);
+    :Cj => 1000.0e-15,
+    :R => 50.0)
+ws = 2*pi*(4.5:0.001:5.0)*1e9
+wp = (2*pi*4.75001*1e9,)
+Ip = 0.00565e-6
+sources = [(mode=(1,),port=1,current=Ip)]
+Npumpharmonics = (16,)
+Nmodulationharmonics = (8,)
+@time jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs)
 wswrspice=2*pi*(4.5:0.01:5.0)*1e9
 n = JosephsonCircuits.exportnetlist(circuit,circuitdefs);
-input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,wp,2*Ip);
+input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,wp[1],2*Ip);
 @time output = JosephsonCircuits.spice_run(input,JosephsonCircuits.wrspice_cmd());
 S11,S21=JosephsonCircuits.wrspice_calcS_paramp(output,wswrspice,n.Nnodes);
 plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(jpa.signal.S[jpa.signal.signalindex,jpa.signal.signalindex,:])),
-    label="harmonic balance",
+    10*log10.(abs2.(jpa.linearized.S((0,),1,(0,),1,:))),
+    label="JosephsonCircuits.jl",
     xlabel="Frequency (GHz)",
     ylabel="S11 (dB)")
-plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),label="wrspice",seriestype=:scatter)
+plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
+    label="WRSPICE",
+    seriestype=:scatter)
 ```
 """
 function wrspice_input_paramp(netlist, ws, wp, Ip; stepsperperiod = 80, Is = 1e-13,
-    tstop = 200e-9, trise = 10e-9)
+    tstop = 200e-9, trise = 10e-9, dphimax = 0.01)
 
     #convert from angular frequency
     fp = wp/(2*pi)
@@ -55,16 +56,19 @@ function wrspice_input_paramp(netlist, ws, wp, Ip; stepsperperiod = 80, Is = 1e-
     tstep = 1/(fp*stepsperperiod)
 
     # pump only simulation
-    inputpump = wrspice_input_transient(netlist,Ip,fp,0.0,0*Is,0.0,0.0,tstep,tstop,trise);
+    inputpump = wrspice_input_transient(netlist, Ip, fp, 0.0, 0*Is, 0.0,
+        0.0, tstep, tstop, trise; dphimax = dphimax);
     input = [inputpump]
 
     for i = 1:length(ws)
         fs = ws[i]/(2*pi)
 
-        inputsin = wrspice_input_transient(netlist,Ip,fp,0.0,Is,fs,0.0,tstep,tstop,trise);
+        inputsin = wrspice_input_transient(netlist, Ip, fp, 0.0, Is, fs, 0.0,
+            tstep, tstop, trise; dphimax = dphimax);
         push!(input,inputsin)
 
-        inputcos = wrspice_input_transient(netlist,Ip,fp,0.0,Is,fs,pi/2,tstep,tstop,trise);
+        inputcos = wrspice_input_transient(netlist, Ip, fp, 0.0, Is, fs, pi/2,
+            tstep, tstop, trise; dphimax = dphimax);
         push!(input,inputcos)
     end
 
