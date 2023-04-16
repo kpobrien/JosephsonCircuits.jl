@@ -1,9 +1,9 @@
 
 """
-    diagrepeat(A::Matrix,counts::Integer)
+    diagrepeat(A::Matrix, counts::Integer)
 
-Return a matrix with each element of A duplicated along the diagonal "counts"
-times.
+Return a matrix with each element of `A` duplicated along the diagonal
+`counts` times.
 
 # Examples
 ```jldoctest
@@ -22,16 +22,16 @@ julia> JosephsonCircuits.diagrepeat([1,2],2)
  2
 ```
 """
-function diagrepeat(A::AbstractArray,counts::Integer)
+function diagrepeat(A::AbstractArray, counts::Integer)
     out = zeros(eltype(A),size(A).*counts)
     diagrepeat!(out,A,counts)
     return out
 end
 
 """
-    diagrepeat!(out,A,counts::Integer)
+    diagrepeat!(out, A, counts::Integer)
 
-Overwrite "out" with the elements of A duplicated "counts" times along
+Overwrite `out` with the elements of `A` duplicated `counts` times along
 the diagonal.
 
 # Examples
@@ -44,7 +44,7 @@ julia> A = [1 2;3 4];out = zeros(eltype(A),4,4);JosephsonCircuits.diagrepeat!(ou
  0  3  0  4
 ```
 """
-function diagrepeat!(out,A,counts::Integer)
+function diagrepeat!(out, A, counts::Integer)
 
     if size(A).*counts != size(out)
         throw(DimensionMismatch("Sizes not consistent"))
@@ -62,10 +62,10 @@ function diagrepeat!(out,A,counts::Integer)
 end
 
 """
-    diagrepeat(A::Diagonal,counts::Integer)
+    diagrepeat(A::Diagonal, counts::Integer)
 
-Return a diagonal matrix with each element of A duplicated along the diagonal 
-counts times.
+Return a diagonal matrix with each element of `A` duplicated along the
+diagonal `counts` times.
 
 # Examples
 ```jldoctest
@@ -77,17 +77,17 @@ julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.LinearAlgebra.Diagonal([1,
  ⋅  ⋅  ⋅  2
 ```
 """
-function diagrepeat(A::Diagonal,counts::Integer)
+function diagrepeat(A::Diagonal, counts::Integer)
     out = zeros(eltype(A),length(A.diag)*counts)
     diagrepeat!(out,A.diag,counts)
     return Diagonal(out)
 end
 
 """
-    diagrepeat(A::SparseMatrixCSC,counts::Integer)
+    diagrepeat(A::SparseMatrixCSC, counts::Integer)
 
-Return a sparse matrix with each element of A duplicated along the diagonal 
-counts times.
+Return a sparse matrix with each element of `A` duplicated along the diagonal 
+`counts` times.
 
 # Examples
 ```jldoctest
@@ -99,7 +99,7 @@ julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,1,2
  ⋅  3  ⋅  4
 ```
 """
-function diagrepeat(A::SparseMatrixCSC,counts::Integer)
+function diagrepeat(A::SparseMatrixCSC, counts::Integer)
 
     # column pointer has length number of columns + 1
     colptr = Vector{Int}(undef,counts*A.n+1)
@@ -115,8 +115,8 @@ function diagrepeat(A::SparseMatrixCSC,counts::Integer)
     return SparseMatrixCSC(A.m*counts,A.n*counts,colptr,rowval,nzval)
 end
 
-function diagrepeat!(colptr::Vector,rowval::Vector,nzval::Vector,
-    A::SparseMatrixCSC,counts::Integer)
+function diagrepeat!(colptr::Vector, rowval::Vector, nzval::Vector,
+    A::SparseMatrixCSC, counts::Integer)
 
     colptr[1] = 1
     # loop over the columns
@@ -138,10 +138,10 @@ function diagrepeat!(colptr::Vector,rowval::Vector,nzval::Vector,
 end
 
 """
-    diagrepeat(A::SparseVector,counts::Integer)
+    diagrepeat(A::SparseVector, counts::Integer)
 
-Return a sparse vector with each element of A duplicated along the diagonal 
-counts times.
+Return a sparse vector with each element of `A` duplicated along the diagonal 
+`counts` times.
 
 # Examples
 ```jldoctest
@@ -153,7 +153,7 @@ julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparsevec([1,
   [4]  =  2
 ```
 """
-function diagrepeat(A::SparseVector,counts::Integer)
+function diagrepeat(A::SparseVector, counts::Integer)
 
     # define empty vectors for the rows, columns, and values
     nzind = Vector{eltype(A.nzind)}(undef,nnz(A)*counts)
@@ -169,9 +169,8 @@ function diagrepeat(A::SparseVector,counts::Integer)
     return SparseVector(A.n*counts,nzind,nzval)
 end
 
-
 """
-    spaddkeepzeros(A::SparseMatrixCSC,B::SparseMatrixCSC)
+    spaddkeepzeros(A::SparseMatrixCSC, B::SparseMatrixCSC)
 
 Add sparse matrices `A` and `B` and return the result, keeping any structural
 zeros, unlike the default Julia sparse matrix addition functions. 
@@ -192,7 +191,7 @@ JosephsonCircuits.spaddkeepzeros(A,B)
  ⋅  3
 ```
 """
-function spaddkeepzeros(A::SparseMatrixCSC,B::SparseMatrixCSC)
+function spaddkeepzeros(A::SparseMatrixCSC, B::SparseMatrixCSC)
 
     if !(A.m == B.m && A.n == B.n)
         throw(DimensionMismatch("argument shapes must match"))
@@ -247,17 +246,15 @@ function spaddkeepzeros(A::SparseMatrixCSC,B::SparseMatrixCSC)
 end
 
 """
-    sprandsubset(A::SparseMatrixCSC,p::AbstractFloat)
+    sprandsubset(A::SparseMatrixCSC, p::AbstractFloat, dropzeros = true)
 
-Given a sparse matrix A, return a sparse matrix with random values in some
-fraction of the non-zero elements with probability p. If dropzeros is set to
-false, then the zeros will be retained as structural zeros otherwise they
-are dropped.
+Given a sparse matrix `A`, return a sparse matrix with random values in some
+fraction of the non-zero elements with probability p. If `dropzeros = false`,
+then the zeros will be retained as structural zeros otherwise they are dropped.
 
 This is used for testing non-allocating sparse matrix addition.
 
 # Examples
-
 ```jldoctest
 A = JosephsonCircuits.SparseArrays.sprand(2,2,0.5)
 B = JosephsonCircuits.sprandsubset(A, 0.1)
@@ -275,7 +272,7 @@ length(A.nzval) >= length(B.nzval)
 true
 ```
 """
-function sprandsubset(A::SparseMatrixCSC,p::AbstractFloat,dropzeros=true)
+function sprandsubset(A::SparseMatrixCSC, p::AbstractFloat, dropzeros = true)
     B = copy(A)
     for i in 1:nnz(A)
         if rand(1)[1] <= p
@@ -291,12 +288,12 @@ function sprandsubset(A::SparseMatrixCSC,p::AbstractFloat,dropzeros=true)
 end
 
 """
-  sparseadd!(A::SparseMatrixCSC,As::SparseMatrixCSC,indexmap)
+  sparseadd!(A::SparseMatrixCSC, As::SparseMatrixCSC, indexmap)
 
-Add sparse matrices A and As and return the result in A without performing any
-allocations. This is only possible if the positions of elements in As are a
-subset of the positions of elements in A. The indexmap can be generated with
-[`sparseaddmap`](@ref).
+Add sparse matrices `A` and `As` and return the result in `A` without
+performing any allocations. This is only possible if the positions of elements
+in `As` are a subset of the positions of elements in `A`. The `indexmap` can
+be generated with [`sparseaddmap`](@ref).
 
 # Examples
 ```jldoctest
@@ -332,11 +329,11 @@ function sparseadd!(A::SparseMatrixCSC,As::SparseMatrixCSC,indexmap)
 end
 
 """
-  sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,indexmap)
+  sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC, indexmap)
 
-Add sparse matrices A and c*As and return the result in A. The sparse matrix 
-As must have nonzero entries only in a subset of the positions in A which have 
-nonzero (structural zeros are ok) entries.
+Add sparse matrices `A` and `c*As` and return the result in `A`. The sparse
+matrix `As` must have nonzero entries only in a subset of the positions in `A`
+which have nonzero (structural zeros are ok) entries.
 
 # Examples
 ```jldoctest
@@ -373,11 +370,12 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,indexmap::V
 end
 
 """
-  sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,Ad::Diagonal,indexmap)
+  sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC, Ad::Diagonal,
+    indexmap)
 
-Add sparse matrices A and c*As*Ad and return the result in A. The sparse matrix 
-As must have nonzero entries only in a subset of the positions in A which have 
-nonzero (structural zeros are ok) entries.
+Add sparse matrices `A` and `c*As*Ad` and return the result in `A`. The sparse
+matrix `As` must have nonzero entries only in a subset of the positions in `A`
+which have nonzero (structural zeros are ok) entries.
 
 # Examples
 ```jldoctest
@@ -394,7 +392,8 @@ A
  ⋅    2
 ```
 """
-function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,Ad::Diagonal,indexmap::Vector)
+function sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
+    Ad::Diagonal, indexmap::Vector)
 
     if nnz(A) < nnz(As)
         throw(DimensionMismatch("As cannot have more nonzero elements than A"))
@@ -421,11 +420,12 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,Ad::Diagona
 end
 
 """
-  sparseadd!(A::SparseMatrixCSC,c::Number,Ad::Diagonal,As::SparseMatrixCSC,indexmap::Vector)
+  sparseadd!(A::SparseMatrixCSC, c::Number, Ad::Diagonal, As::SparseMatrixCSC,
+    indexmap::Vector)
 
-Add sparse matrices A and c*Ad*As and return the result in A. The sparse matrix 
-As must have nonzero entries only in a subset of the positions in A which have 
-nonzero (structural zeros are ok) entries.
+Add sparse matrices `A` and `c*Ad*As` and return the result in `A`. The sparse
+matrix `As` must have nonzero entries only in a subset of the positions in `A`
+which have nonzero (structural zeros are ok) entries.
 
 # Examples
 ```jldoctest
@@ -442,7 +442,8 @@ A
  ⋅  2
 ```
 """
-function sparseadd!(A::SparseMatrixCSC,c::Number,Ad::Diagonal,As::SparseMatrixCSC,indexmap::Vector)
+function sparseadd!(A::SparseMatrixCSC, c::Number, Ad::Diagonal,
+    As::SparseMatrixCSC, indexmap::Vector)
 
     if nnz(A) < nnz(As)
         throw(DimensionMismatch("As cannot have more nonzero elements than A"))
@@ -530,17 +531,16 @@ end
 #     return nothing
 # end
 
-
 """
-  sparseaddconjsubst!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
-    Ad::Diagonal,indexmap,conjflag::Diagonal,wmodesm::Diagonal,
-    freqsubstindices::Vector,symfreqvar)
+  sparseaddconjsubst!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
+    Ad::Diagonal, indexmap, conjflag::Diagonal, wmodesm::Diagonal,
+    freqsubstindices::Vector, symfreqvar)
 
-Perform the operation A+c*As*Ad and return the result in A. Take the complex
-conjugate of As for any column where conjflag is true. 
+Perform the operation `A+c*As*Ad` and return the result in `A`. Take the
+complex conjugate of `As` for any column where `conjflag = true`.
 
-The sparse matrix As must have nonzero elements only in a subset of the 
-positions in A which has nonzero lements.
+The sparse matrix `As` must have nonzero elements only in a subset of the 
+positions in `A` which has nonzero lements.
 
 # Examples
 ```jldoctest
@@ -559,8 +559,9 @@ A
      ⋅        2.0+1.0im
 ```
 """
-function sparseaddconjsubst!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
-    Ad::Diagonal,indexmap,conjflag::Diagonal,wmodesm::Diagonal,freqsubstindices::Vector,symfreqvar)
+function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
+    As::SparseMatrixCSC, Ad::Diagonal, indexmap, conjflag::Diagonal,
+    wmodesm::Diagonal, freqsubstindices::Vector, symfreqvar)
 
     if nnz(A) < nnz(As)
         throw(DimensionMismatch("As cannot have more nonzero elements than A"))
@@ -631,12 +632,12 @@ function sparseaddconjsubst!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
 end
 
 """
-  sparseaddmap(A::SparseMatrixCSC,B::SparseMatrixCSC)
+  sparseaddmap(A::SparseMatrixCSC, B::SparseMatrixCSC)
 
-Return a vector of length nnz(B) which maps the indices of elements of B in
-B.nzval to the corresponding indices in A.nzval. The sparse matrix B must have
-elements in a subset of the positions in A which have nonzero entries
-(structural zeros are elements).
+Return a vector of length `nnz(B)` which maps the indices of elements of `B`
+in `B.nzval` to the corresponding indices in `A.nzval`. The sparse matrix `B`
+must have elements in a subset of the positions in `A` which have nonzero
+entries (structural zeros are elements).
 
 # Examples
 ```jldoctest
@@ -659,7 +660,7 @@ JosephsonCircuits.sparseaddmap(A,As)
  3
 ```
 """
-function sparseaddmap(A::SparseMatrixCSC,B::SparseMatrixCSC)
+function sparseaddmap(A::SparseMatrixCSC, B::SparseMatrixCSC)
 
     if size(A) != size(B)
         throw(DimensionMismatch("A and B must be the same size."))
@@ -683,8 +684,8 @@ function sparseaddmap(A::SparseMatrixCSC,B::SparseMatrixCSC)
     return indexmap
 end
 
-function sparseaddmap_innerloop(A::SparseMatrixCSC,B::SparseMatrixCSC,
-    rowindexB::Int,colindexB::Int,kstart::Int,lstart::Int)
+function sparseaddmap_innerloop(A::SparseMatrixCSC, B::SparseMatrixCSC,
+    rowindexB::Int, colindexB::Int, kstart::Int, lstart::Int)
     @inbounds for k in kstart:length(A.colptr) -1
         # println("k: ",k, " kstart: ",kstart, " length(A.colptr) -1): ",(length(A.colptr) -1))
         tmp = A.colptr[k]:(A.colptr[k+1]-1)
@@ -698,7 +699,6 @@ function sparseaddmap_innerloop(A::SparseMatrixCSC,B::SparseMatrixCSC,
             if l == length(tmp)
                 lstart = 1
             end
-
 
             if rowindexA == rowindexB && colindexA == colindexB
                 # println("match found:     ",rowindexA," ",colindexA," ",indexA," ",abs(valA))
@@ -724,13 +724,13 @@ function sparseaddmap_innerloop(A::SparseMatrixCSC,B::SparseMatrixCSC,
 end
 
 """
-  conjnegfreq(A,wmodes)
+  conjnegfreq(A, wmodes)
 
-Take the complex conjugate of any element of A which would be negative when
-multipled from the right by a diagonal matrix consisting of wmodes replicated
-along the diagonal.
+Take the complex conjugate of any element of `A` which would be negative when
+multipled from the right by a diagonal matrix consisting of `wmodes`
+replicated along the diagonal.
 
-Each axis of A should be an integer multiple of the length of wmodes.
+Each axis of `A` should be an integer multiple of the length of `wmodes`.
 
 # Examples
 ```jldoctest
@@ -743,20 +743,20 @@ julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1,2], [1,1,2,2], [1im,1im,
 true
 ```
 """
-function conjnegfreq(A::SparseMatrixCSC,wmodes::Vector)
+function conjnegfreq(A::SparseMatrixCSC, wmodes::Vector)
     B = copy(A)
     conjnegfreq!(B,wmodes)
     return B
 end
 
 """
-  conjnegfreq!(A,wmodes)
+  conjnegfreq!(A, wmodes)
 
-Take the complex conjugate of any element of A which would be negative when
-multipled from the right by a diagonal matrix consisting of wmodes replicated
-along the diagonal. Overwrite A with the output. 
+Take the complex conjugate of any element of `A` which would be negative when
+multipled from the right by a diagonal matrix consisting of `wmodes`
+replicated along the diagonal. Overwrite `A` with the output. 
 
-Each axis of A should be an integer multiple of the length of wmodes.
+Each axis of `A` should be an integer multiple of the length of `wmodes`.
 
 # Examples
 ```jldoctest
@@ -766,7 +766,7 @@ julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1,2], [1,1,2,2], [1+1im,1+
  1-1im  1+1im
 ```
 """
-function conjnegfreq!(A::SparseMatrixCSC,wmodes::Vector)
+function conjnegfreq!(A::SparseMatrixCSC, wmodes::Vector)
 
     for i in size(A)
         if i % length(wmodes) != 0
@@ -784,12 +784,11 @@ function conjnegfreq!(A::SparseMatrixCSC,wmodes::Vector)
     return nothing
 end
 
-
 """
     symbolicindices(A)
 
-Return the indices in A.nzval where the elements of the matrix A are symbolic
-variables.
+Return the indices in `A.nzval` where the elements of the matrix `A` are
+symbolic variables.
 
 # Examples
 ```jldoctest
@@ -838,8 +837,8 @@ end
 """
     checkissymbolic(a)
 
-Check if a is a symbolic variable. Define a function to do this because a
-different function call is required for @syms vs @variables.
+Check if `a` is a symbolic variable. Define a function to do this because a
+different function call is required for `@syms` vs `@variables`.
 
 # Examples
 ```jldoctest
@@ -854,11 +853,10 @@ function checkissymbolic(a)
     return a isa Symbolic
 end
 
-
 """
     checkissymbolic(a::Num)
 
-Check if a is a symbolic variable.
+Check if `a` is a symbolic variable.
 
 # Examples
 ```jldoctest
@@ -871,11 +869,11 @@ function checkissymbolic(a::Symbolics.Num)
 end
 
 """
-    freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
+    freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
 
-Substitute the frequency dependent elements of A using the vector of mode
-frequencies wmodes and the symbolic frequency variable symfreqvar. Returns a
-sparse matrix with type Complex{Float64}.
+Substitute the frequency dependent elements of `A` using the vector of mode
+frequencies `wmodes` and the symbolic frequency variable `symfreqvar`. Returns
+a sparse matrix with type `Complex{Float64}`.
 
 # Examples
 ```jldoctest
@@ -904,7 +902,7 @@ JosephsonCircuits.freqsubst(A,wmodes,nothing)
      ⋅          ⋅          ⋅      2.0+0.0im
 ```
 """
-function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
+function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
 
     for i in size(A)
         if i % length(wmodes) != 0
@@ -939,18 +937,21 @@ function freqsubst(A::SparseMatrixCSC,wmodes::Vector,symfreqvar)
 end
 
 """
-    spmatmul!(C::SparseMatrixCSC,A::SparseMatrixCSC, B::SparseMatrixCSC,xb::Vector{Bool})
+    spmatmul!(C::SparseMatrixCSC, A::SparseMatrixCSC, B::SparseMatrixCSC,
+        xb::Vector{Bool})
 
 Non-allocating sparse matrix multiplication of `A` and `B` when sparsity pattern
 of product `C` is known. Based on spmatmul from SparseArrays.jl
 https://github.com/JuliaSparse/SparseArrays.jl/blob/main/src/linalg.jl
 
+# Examples
 ```jldoctest
 julia> a = JosephsonCircuits.sprand(100,100,0.1);b = JosephsonCircuits.sprand(100,100,0.1);c = a*b; d = copy(c);xb = fill(false, size(a,1));JosephsonCircuits.spmatmul!(c,a,b,xb);c == d
 true
 ```
 """
-function spmatmul!(C::SparseMatrixCSC,A::SparseMatrixCSC, B::SparseMatrixCSC,xb::Vector{Bool})
+function spmatmul!(C::SparseMatrixCSC, A::SparseMatrixCSC, B::SparseMatrixCSC,
+    xb::Vector{Bool})
 
     if size(A,2) != size(B,1)
         throw(DimensionMismatch("Number of columns in A must equal number of rows in B."))

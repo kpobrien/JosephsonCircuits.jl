@@ -45,19 +45,17 @@ end
 """
     spice_raw_load(filename)
 
-Parse the binary raw output file from WRSPICE or Xyce. 
-Tested for transient analysis and frequency domain analysis.
-The file format is documented in the WRSPICE manual in 
-Appendix 1, File Formats, A.1 Rawfile Format
+Parse the binary raw output file from WRSPICE or Xyce. Tested for transient
+analysis and frequency domain analysis. The file format is documented in the
+WRSPICE manual in Appendix 1, File Formats, A.1 Rawfile Format
 http://www.srware.com/xictools/docs/wrsmanual-4.3.13.pdf
 
 The Xyce rawfile format is very similar and described in:
 https://xyce.sandia.gov/files/xyce/Reference_Guide.pdf#section.8.2
 
-The function outputs a header, the times/frequencies,
-the currents, and the voltages. The voltage and current
-arrays have dimensions nVoltages by nPoints and nCurrents by
-nPoints.
+The function outputs a header, the times/frequencies, the currents, and the
+voltages. The voltage and current arrays have dimensions nVoltages by nPoints
+and nCurrents by nPoints.
 
 """
 function spice_raw_load(filename)
@@ -245,8 +243,8 @@ end
 """
     parsespicevariable(variable::String)
 
-Parse a variable name string into the variable name and node number.
-Will this work with arbitrary node strings?
+Parse a variable name string into the variable name and node number. Will this
+work with arbitrary node strings?
 
 # Examples
 ```jldoctest

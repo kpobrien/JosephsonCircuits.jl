@@ -56,7 +56,6 @@ struct FourierIndices{N}
     hbmatindices::Matrix{Int}
 end
 
-
 """
     fourierindices(freq::Frequencies)
 
@@ -81,7 +80,6 @@ function fourierindices(freq::Frequencies)
         Amatrixindices,
     )
 end
-
 
 """
     calcfreqsrdft(Nharmonics::NTuple{N,Int})
@@ -302,7 +300,6 @@ function keepfreqs(frequencies::Frequencies{N},
     return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoords,keepmodessorted)
 end
 
-
 """
     keepfreqs(frequencies::Frequencies{N},
         keepcoords::AbstractVector{CartesianIndex{N}})
@@ -348,7 +345,6 @@ function keepfreqs(frequencies::Frequencies{N},
 
     return Frequencies(frequencies.Nharmonics,Nw,Nt,keepcoordssorted,keepmodes)
 end
-
 
 """
     removefreqs(frequencies::Frequencies{N},
@@ -544,7 +540,6 @@ function  truncfreqs(frequencies::Frequencies;
         keepcoords, keepmodes)
 end
 
-
 """
     calcmodefreqs(w::NTuple{N},modes::Vector{NTuple{N,Int}})
 
@@ -580,7 +575,6 @@ function calcmodefreqs(w::NTuple{N,Any},modes::Vector{NTuple{N,Int}}) where N
     end
     return wmodes
 end
-
 
 """
     visualizefreqs(w::NTuple{N,Any}, freq::Frequencies{N})
@@ -720,7 +714,6 @@ function conjsym(frequencies::Frequencies{N}) where N
     return conjsym(frequencies.Nw, frequencies.Nt)
 end
 
-
 """
     printsymmetries(Nw::NTuple{N, Int}, Nt::NTuple{N, Int})
 
@@ -849,7 +842,6 @@ Dict{CartesianIndex{1}, Int64} with 3 entries:
 function calcindexdict(N)
     return calcindexdict(Tuple(N))
 end
-
 
 """
     calcphiindicescalcphiindices(frequencies::Frequencies{N},
@@ -1084,7 +1076,6 @@ function phimatrixtovector!(phivector::AbstractVector, phimatrix::AbstractArray,
     end
     return nothing
 end
-
 
 """
     applynl(am::Array{Complex{Float64}}, f::Function)

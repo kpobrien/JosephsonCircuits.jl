@@ -14,13 +14,12 @@ mutable struct FactorizationCache
 factorization
 end
 
-
 """
     factorklu!(cache::FactorizationCache, A::SparseMatrixCSC)
 
-Factor a sparse matrix using KLU and place the result in `cache`. Attempt to
-reuse the symbolic factorization. Redo the symbolic factorization if we get
-a SingularException.
+Factor the sparse matrix `A` using KLU and place the result in `cache`.
+Attempt to reuse the symbolic factorization. Redo the symbolic factorization
+if we get a SingularException.
 
 """
 function factorklu!(cache::FactorizationCache, A::SparseMatrixCSC)
@@ -43,7 +42,7 @@ function factorklu!(cache::FactorizationCache, A::SparseMatrixCSC)
 end
 
 """
-    linesearch(f,fp,dfdalpha,alphamin)
+    linesearch(f, fp, dfdalpha, alphamin)
 
 Quadratic linesearch based on Nocedal and Wright, chapter 3 section 5. `f` is
 the value at the first point alpha=0.0, `fp` is the value at the second point,
@@ -53,7 +52,7 @@ linesearch will return the fitted minimum of the function with respect to
 alpha as (alpha at which minimum occurs, minimum value of function).
 
 """
-function linesearch(f,fp,dfdalpha,alphamin)
+function linesearch(f, fp, dfdalpha, alphamin)
 
     # coefficients of the quadratic equation a*alpha^2+b*alpha+c to interpolate
     # f vs alpha
@@ -86,7 +85,6 @@ function linesearch(f,fp,dfdalpha,alphamin)
     end
 end
 
-
 """
     nlsolve!(fj!, F, J::SparseMatrixCSC, x; iterations=1000, ftol=1e-8,
         switchofflinesearchtol = 1e-5)
@@ -112,7 +110,7 @@ function fj!(F, J, x)
         J[1, 2] = 3*x[2]^2*(x[1]+3)
         u = exp(x[1])*cos(x[2]*exp(x[1])-1)
         J[2, 1] = x[2]*u
-        J[2, 2] = u    
+        J[2, 2] = u
     end
     return nothing
 end

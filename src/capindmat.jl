@@ -8,11 +8,39 @@
         noiseportimpedanceindices::Vector{Int}, Lmean, vvn)
 
 A simple structure to hold the circuit matrices including the capacitance
-matrix, the conductance matrix, the inductance vectors, the Josephson inductance
-vectors, the mutual inductance matrix, the inverse inductance matrix,
-the incidence matrix, the dictionary of port and resistor values where the nodes
-are the keys and the values are the values, and the mean of the inductances.
-See also [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
+matrix, the conductance matrix, the inductance vectors, the Josephson
+inductance vectors, the mutual inductance matrix, the inverse inductance
+matrix, the incidence matrix, the dictionary of port and resistor values where
+the nodes are the keys and the values are the values, and the mean of the
+inductances. See also [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
+
+# Fields
+- `Cnm::SparseMatrixCSC`: the capacitance matrix in the node basis with each
+    element duplicated along the diagonal Nmodes times.
+- `Gnm::SparseMatrixCSC`: the conductance matrix in the node basis with each
+    element duplicated along the diagonal Nmodes times.
+- `Lb::SparseVector`: vector of branch linear inductances.
+- `Lbm::SparseVector`: vector of branch linear inductances with each element
+    duplicated Nmodes times.
+- `Ljb::SparseVector`: vector of branch Josephson junction inductances.
+- `Ljbm::SparseVector`: vector of branch Josephson junction inductances with
+    each element duplicated Nmodes times.
+- `Mb::SparseMatrixCSC`: the mutual inductance matrix in the branch basis with
+    each element duplicated along the diagonal Nmodes times.
+- `invLnm::SparseMatrixCSC`: the inverse inductance matrix in the node basis
+    with each element duplicated along the diagonal Nmodes times.
+- `Rbnm::SparseMatrixCSC{Int, Int}`: incidence matrix to convert between the
+    node and branch bases.
+- `portindices::Vector{Int}`: vector of indices at which ports occur.
+- `portnumbers::Vector{Int}`: vector of port numbers.
+- `portimpedanceindices::Vector{Int}`: vector of indices at which port
+    impedances occur.
+- `noiseportimpedanceindices::Vector{Int}`: vector of indices at which
+    resistive elements other than port impedances occur, for noise
+    calculations.
+- `Lmean`: the mean of all of the geometric and Josephson inductances.
+- `vvn`: the vector of component values with numbers substituted in.
+
 """
 struct CircuitMatrices
     Cnm::SparseMatrixCSC
@@ -35,9 +63,9 @@ end
 """
     symbolicmatrices(circuit; Nmodes = 1, sorting = :number)
 
-Return the symbolic matrices describing the circuit properties. 
+Return the symbolic matrices describing the circuit properties.
 
-See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref), 
+See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref),
 [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
 [`calcinvLn`](@ref), [`calcLmean`](@ref), [`calcportindicesnumbers`](@ref),
 [`calcportimpedanceindices`](@ref), and [`calcnoiseportimpedanceindices`](@ref).
@@ -85,12 +113,13 @@ end
 """
     numericmatrices(circuit, circuitdefs; Nmodes = 1, sorting = :number)
 
-Return the numeric matrices describing the circuit properties. 
+Return the numeric matrices describing the circuit properties.
 
-See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref), 
-[`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
-[`calcinvLn`](@ref), [`calcLmean`](@ref), [`calcportindicesnumbers`](@ref),
-[`calcportimpedanceindices`](@ref), and [`calcnoiseportimpedanceindices`](@ref).
+See also [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
+[`calcCn`](@ref), [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref),
+[`calcMb`](@ref), [`calcinvLn`](@ref), [`calcLmean`](@ref),
+[`calcportindicesnumbers`](@ref), [`calcportimpedanceindices`](@ref), and
+[`calcnoiseportimpedanceindices`](@ref).
 
 # Examples
 ```jldoctest
@@ -194,13 +223,13 @@ function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
         noiseportimpedanceindices, Lmean, vvn)
 end
 
-
 """
     calcIb(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
         componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
 
-Calculate the sparse branch current source vector whose length is Nbranches*Nmodes.
-Note that the nodeindexarray is "one indexed" so 1 is the ground node. 
+Calculate the sparse branch current source vector whose length is
+`Nbranches*Nmodes`. Note that `nodeindexarray` is "one indexed" so 1 is the
+ground node.
 
 # Examples
 ```jldoctest
@@ -236,17 +265,17 @@ Ib = JosephsonCircuits.calcIb(componenttypes,nodeindexarray,componentvalues,edge
 function calcIb(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(componenttypes, nodeindexarray, componentvalues,
-        calcvaluetype(componenttypes, componentvalues, [:I]), edge2indexdict, Nmodes,
-        Nbranches, :I)
+        calcvaluetype(componenttypes, componentvalues, [:I]), edge2indexdict,
+        Nmodes, Nbranches, :I)
 end
-
 
 """
     calcVb(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
         componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
 
-Calculate the sparse branch voltage source vector whose length is Nbranches*Nmodes.
-Note that the nodeindexarray is "one indexed" so 1 is the ground node. 
+Calculate the sparse branch voltage source vector whose length is
+`Nbranches*Nmodes`. Note that `nodeindexarray` is "one indexed" so 1 is the
+ground node.
 
 # Examples
 ```jldoctest
@@ -282,16 +311,17 @@ Vb = JosephsonCircuits.calcVb(componenttypes,nodeindexarray,componentvalues,edge
 function calcVb(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(componenttypes, nodeindexarray, componentvalues,
-        calcvaluetype(componenttypes, componentvalues, [:V]), edge2indexdict, Nmodes,
-        Nbranches, :V)
+        calcvaluetype(componenttypes, componentvalues, [:V]), edge2indexdict,
+        Nmodes, Nbranches, :V)
 end
 
 """
     calcLb(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
         componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
 
-Calculate the sparse branch inductance vector whose length is Nbranches*Nmodes.
-Note that the nodeindexarray is "one indexed" so 1 is the ground node. 
+Calculate the sparse branch inductance vector whose length is
+`Nbranches*Nmodes`. Note that `nodeindexarray` is "one indexed" so 1 is the
+ground node.
 
 # Examples
 ```jldoctest
@@ -329,15 +359,16 @@ Lb = JosephsonCircuits.calcLb(componenttypes,nodeindexarray,componentvalues,edge
 function calcLb(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(componenttypes, nodeindexarray, componentvalues,
-        calcvaluetype(componenttypes, componentvalues, [:L,:K]), edge2indexdict,
-        Nmodes, Nbranches, :L)
+        calcvaluetype(componenttypes, componentvalues, [:L,:K]),
+        edge2indexdict, Nmodes, Nbranches, :L)
 end
 
 """
-    calcLjb(componenttypes, nodeindexarray, componentvalues, edge2indexdict, Nmodes, Nbranches)
+    calcLjb(componenttypes, nodeindexarray, componentvalues, edge2indexdict,
+        Nmodes, Nbranches)
 
 Calculate the sparse branch Josephson inductance vector whose length is
-Nbranches*Nmodes. Note that the nodeindexarray is "one indexed" so 1 is the
+`Nbranches*Nmodes`. Note that `nodeindexarray` is "one indexed" so 1 is the
 ground node.
 
 # Examples
@@ -376,22 +407,24 @@ Ljb = JosephsonCircuits.calcLjb(componenttypes,nodeindexarray,componentvalues,ed
 function calcLjb(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(componenttypes, nodeindexarray, componentvalues,
-        calcvaluetype(componenttypes, componentvalues, [:Lj]), edge2indexdict, Nmodes,
-        Nbranches, :Lj)
+        calcvaluetype(componenttypes, componentvalues, [:Lj]), edge2indexdict,
+        Nmodes, Nbranches, :Lj)
 end
 
 """
-    calcbranchvector(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
-        componentvalues::Vector, valuecomponenttypes::Vector, edge2indexdict::Dict,
-        Nmodes, Nbranches, component::Symbol)
+    calcbranchvector(componenttypes::Vector{Symbol},
+        nodeindexarray::Matrix{Int}, componentvalues::Vector,
+        valuecomponenttypes::Vector, edge2indexdict::Dict, Nmodes, Nbranches,
+        component::Symbol)
 
-Calculate the sparse branch vector whose length is Nbranches*Nmodes for the 
-given component symbol. Note that the nodeindexarray is "one indexed" so 1 is
-the ground node. 
+Calculate the sparse branch vector whose length is `Nbranches*Nmodes` for the
+given component symbol. Note that `nodeindexarray` is "one indexed" so 1 is
+the ground node.
 """
-function calcbranchvector(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    componentvalues::Vector, valuecomponenttypes::Vector, edge2indexdict::Dict,
-    Nmodes, Nbranches, component::Symbol)
+function calcbranchvector(componenttypes::Vector{Symbol},
+    nodeindexarray::Matrix{Int}, componentvalues::Vector,
+    valuecomponenttypes::Vector, edge2indexdict::Dict, Nmodes, Nbranches,
+    component::Symbol)
 
     # define empty vectors of zero length for the indices and values
     Ib = Vector{Int}(undef, 0)
@@ -412,15 +445,14 @@ function calcbranchvector(componenttypes::Vector{Symbol}, nodeindexarray::Matrix
     end
 end
 
-
 """
     calcMb(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
         componentvalues::Vector, componentnamedict::Dict,
         mutualinductorbranchnames::Vector, edge2indexdict::Dict, Nmodes,
         Nbranches)
 
-Returns the branch mutual inductance matrix. Note that the
-nodeindexarray is "one indexed" so 1 is the ground node.
+Returns the branch mutual inductance matrix. Note that `nodeindexarray` is
+"one indexed" so 1 is the ground node.
 
 # Examples
 ```jldoctest
@@ -460,16 +492,20 @@ Mb = JosephsonCircuits.calcMb(componenttypes,nodeindexarray,componentvalues,comp
 ```
 """
 function calcMb(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    componentvalues::Vector, componentnamedict::Dict, mutualinductorbranchnames::Vector,
-    edge2indexdict::Dict, Nmodes, Nbranches)
-    return calcMb_inner(componenttypes,nodeindexarray,componentvalues,
-        calcvaluetype(componenttypes,componentvalues,[:L,:K]),componentnamedict,
-        mutualinductorbranchnames,edge2indexdict,Nmodes,Nbranches)
+    componentvalues::Vector, componentnamedict::Dict,
+    mutualinductorbranchnames::Vector, edge2indexdict::Dict, Nmodes,
+    Nbranches)
+    return calcMb_inner(componenttypes, nodeindexarray, componentvalues,
+        calcvaluetype(componenttypes, componentvalues, [:L,:K]),
+        componentnamedict, mutualinductorbranchnames, edge2indexdict, Nmodes,
+        Nbranches)
 end
 
-function calcMb_inner(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    componentvalues::Vector, valuecomponenttypes::Vector, componentnamedict::Dict,
-    mutualinductorbranchnames::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+function calcMb_inner(componenttypes::Vector{Symbol},
+    nodeindexarray::Matrix{Int}, componentvalues::Vector,
+    valuecomponenttypes::Vector, componentnamedict::Dict,
+    mutualinductorbranchnames::Vector, edge2indexdict::Dict, Nmodes,
+    Nbranches)
 
     # define empty vectors of zero length for the row indices, column indices,
     # and values
@@ -481,17 +517,21 @@ function calcMb_inner(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int
     #loop through componenttypes for mutual inductors
     @inbounds for (i,type) in enumerate(componenttypes)
         # when we find a mutual inductor:
-        #  find the value of the mutual inductor in componentvalues[i]
-        #  find the names of the two inductors it couples together from mutualinductorbranchnames[n]
-        #  look up the index of the inductors in index=componentnamedict[inductorsymbol] for each inductor symbol
-        #  given the index of the inductor, look of the value of the inductor from
-        #     componentvalues
-        # then compute the value of the mutual inductance from the two inductor values and K
+        # -find the value of the mutual inductor in componentvalues[i]
+        # -find the names of the two inductors it couples together from
+        #   mutualinductorbranchnames[n]
+        #  -look up the index of the inductors in
+        #     index=componentnamedict[inductorsymbol] for each inductor symbol
+        #  -given the index of the inductor, look of the value of the inductor
+        #     from componentvalues
+        #  -then compute the value of the mutual inductance from the two
+        #     inductor values and K
 
-        # then use the index of the inductors to get the nodes from nodeindexarray
-        # use that as a key in edge2indexdict to look up the branch index
-        # then assign those to I, J, V for the sparse array. 
-        # then do the usual step of expanding that to Nmodes after finishing this loop
+        # then use the index of the inductors to get the nodes from
+        # nodeindexarray. use that as a key in edge2indexdict to look up the
+        # branch index then assign those to I, J, V for the sparse array.
+        # then do the usual step of expanding that to Nmodes after finishing
+        # this loop.
 
         if type == :K
             # value of K
@@ -538,12 +578,11 @@ function calcMb_inner(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int
     end
 end
 
-
 """
     calcinvLn(Lb::SparseVector, Rbn::SparseMatrixCSC, Nmodes)
 
 Returns the nodal inverse inductance matrix. Accepts the vector of branch
-inductances Lb and the incidence matrix Rbn.
+inductances `Lb` and the incidence matrix `Rbn`.
 
 # Examples
 ```jldoctest
@@ -623,8 +662,8 @@ end
         Rbn::SparseMatrixCSC, Nmodes)
 
 Returns the nodal inverse inductance matrix. Accepts the vector of branch
-inductances Lb, the branch mutual inductance matrix Mb, and the incidence
-matrix Rbn.
+inductances `Lb`, the branch mutual inductance matrix `Mb`, and the incidence
+matrix `Rbn`.
 
 Using ldiv instead of an inverse: (where the extra div is an escape sequence)
 Can solve A x = B with: x = A \\ B or x = invA * B, so we can perform the
@@ -783,11 +822,10 @@ function calcsymbolicinvLn(L,Lb,Rbn)
     # return SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,Symbolics.value.(s.nzval))
 end
 
-
 """
     calcLmean(componenttypes::Vector{Symbol}, componentvalues::Vector)
 
-Return the mean of the linear and Josephson inductors. 
+Return the mean of the linear and Josephson inductors.
 
 # Examples
 ```jldoctest
@@ -845,19 +883,19 @@ function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
     # return Statistics.mean(Vn)
 end
 
-
 """
     calcCn(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
         componentvalues::Vector, Nmodes, Nnodes)
 
-Returns the node capacitance matrix from the capacitance values in componentvalues
-when componenttypes has the symbol :C with node indices from nodeindexarray.  Other symbols are 
-ignored. Capacitances to ground become diagonal elements. Capacitance between
-elements is an off-diagonal element with a minus sign and is added to the
-diagonal with a  plus sign. The dimensions of the output are (Nnodes-1)*Nmodes
-by (Nnodes-1) times Nmodes where Nnodes is the number of nodes including 
-ground and Nmodes is the number of different frequencies. Note that the 
-nodeindexarray is "one indexed" so 1 is the ground node. 
+Returns the node capacitance matrix from the capacitance values in
+`componentvalues` when `componenttypes` has the symbol `:C` with node indices
+from `nodeindexarray`. Other symbols are ignored. Capacitances to ground
+become diagonal elements. Capacitance between elements is an off-diagonal
+element with a minus sign and is added to the diagonal with a plus sign. The
+dimensions of the output are `(Nnodes-1)*Nmodes` by `(Nnodes-1)` times
+`Nmodes` where `Nnodes` is the number of nodes including ground and `Nmodes`
+is the number of different frequencies. Note that `nodeindexarray` is
+"one indexed" so 1 is the ground node.
 
 # Examples
 ```jldoctest
@@ -906,13 +944,13 @@ end
     calcGn(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
         componentvalues::Vector, Nmodes, Nnodes)
 
-Returns the node conductance matrix from the resistance values in componentvalues
-when componenttypes has the symbol :R. The node indices are taken from nodeindexarray.
-Conductances to ground are diagonal elements. Conductance between elements is
-an off-diagonal element with a minus sign and is added to the diagonal with a
-plus sign. The dimensions of the output are (Nnodes-1) times Nmodes by
-(Nnodes-1) times Nmodes. Note that the  nodeindexarray is "one indexed" so 1
-is the ground node.
+Returns the node conductance matrix from the resistance values in
+`componentvalues` when `componenttypes` has the symbol `:R`. The node indices
+are taken from `nodeindexarray`. Conductances to ground are diagonal elements.
+Conductance between elements is an off-diagonal element with a minus sign and
+is added to the diagonal with a plus sign. The dimensions of the output are
+`(Nnodes-1)` times `Nmodes` by `(Nnodes-1)` times `Nmodes`. Note that
+`nodeindexarray` is "one indexed" so 1 is the ground node.
 
 We have to calculate the inverse of the individual components so select a type
 that allows that.
@@ -963,9 +1001,9 @@ function calcGn(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
     componentvalues::Vector, Nmodes, Nnodes)
 
     return calcnodematrix(componenttypes, nodeindexarray, componentvalues,
-        calcvaluetype(componenttypes, componentvalues, [:R]), Nmodes, Nnodes, :R, true)
+        calcvaluetype(componenttypes, componentvalues, [:R]), Nmodes, Nnodes,
+        :R, true)
 end
-
 
 """
     calcnodematrix(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
@@ -973,14 +1011,15 @@ end
         component::Symbol, invert::Bool)
 
 Returns either the capacitance or conductance matrix depending on the values
-of component and invert. :C and false for capacitance and :R and true for
-conductance. The dimensions of the output are (Nnodes-1) times Nmodes by 
-(Nnodes-1) times Nmodes. Note that the  nodeindexarray is "one indexed" so 1
-is the ground node.
+of `component` and `invert`. `:C` and `false` for capacitance and `:R` and
+`true` for conductance. The dimensions of the output are `(Nnodes-1)` times
+`Nmodes` by `(Nnodes-1)` times `Nmodes`. Note that `nodeindexarray` is
+"one indexed" so 1 is the ground node.
 """
-function calcnodematrix(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{Int},
-    componentvalues::Vector, valuecomponenttypes::Vector, Nmodes, Nnodes,
-    component::Symbol, invert::Bool)
+function calcnodematrix(componenttypes::Vector{Symbol},
+    nodeindexarray::Matrix{Int}, componentvalues::Vector,
+    valuecomponenttypes::Vector, Nmodes, Nnodes, component::Symbol,
+    invert::Bool)
 
     if length(componenttypes) !== size(nodeindexarray,2) || length(componenttypes) !== length(componentvalues)
         throw(DimensionMismatch("componenttypes, nodeindexarray, and componentvalues should have the same length"))
@@ -1062,12 +1101,11 @@ function calcnodematrix(componenttypes::Vector{Symbol}, nodeindexarray::Matrix{I
     end
 end
 
-
 """
     pushval!(V::Vector, val, c, invert::Bool)
 
-Append the value val of capacitance or conductance to the vector V. Scale the
-value by c. If invert is true, append c/val otherwise append c*val.
+Append the value `val` of capacitance or conductance to the vector `V`. Scale
+the value by `c`. If `invert = true`, append `c/val` otherwise append `c*val`.
 
 # Examples
 ```jldoctest

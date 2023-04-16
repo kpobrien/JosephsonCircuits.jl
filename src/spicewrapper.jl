@@ -94,10 +94,7 @@ function wrspice_input_transient(netlist, idrive, fdrive, thetadrive, idrive2,
     input = netlist*control
 
     return input
-
-
 end
-
 
 """
     wrspice_input_ac(netlist,nsteps,fstart,fstop)
@@ -223,7 +220,6 @@ function wrspice_input_ac(netlist,nsteps,fstart,fstop,portnodes,portcurrent)
     return input
 end
 
-
 """
     wrspice_cmd()
 
@@ -248,16 +244,15 @@ function wrspice_cmd()
 
 end
 
-
 """
-    spice_run(input::String,spicecmd::String)
+    spice_run(input::String, spicecmd::String)
 
-Argument is a string containing the input commands for wrspice.  This function 
-saves the string to disk, runs spice, parses the results with wrsplice_load(), 
+Argument is a string containing the input commands for wrspice.  This function
+saves the string to disk, runs spice, parses the results with wrsplice_load(),
 then returns those parsed results.
 
-The input should not should have a file name listed after the write command 
-in the .control block so that we can specify the raw output file with a command 
+The input should not should have a file name listed after the write command in
+the .control block so that we can specify the raw output file with a command
 line argument.
 """
 function spice_run(input::String,spicecmd)
@@ -311,7 +306,7 @@ end
 
 If the input to wrspice_run() is an array of strings, then call multiple
 processes in parallel. The number of parallel processes is decided from
-Threads.nthreads(). It can be changed manually. 
+Threads.nthreads(). It can be changed manually.
 
 """
 function spice_run(input::AbstractArray{String,1},spicecmd;

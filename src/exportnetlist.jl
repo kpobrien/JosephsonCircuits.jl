@@ -30,7 +30,6 @@ function sumvalues(type::Symbol, value1, value2)
     end
 end
 
-
 """
     calcnodes(nodeindex::Int, mutualinductorindex::Int,
         componenttypes::Vector{Symbol}, nodeindexarray::Matrix,
@@ -89,7 +88,6 @@ function calcnodes(nodeindex::Int, mutualinductorindex::Int,
         end
     end
 end
-
 
 """
     componentdictionaries(componenttypes::Vector{Symbol},
@@ -362,7 +360,6 @@ function calcCjIcmean(componenttypes::Vector{Symbol},
 
     return CjoIc*Icmean, Icmean
 end
-
 
 """
     exportnetlist(circuit::Vector,circuitdefs::Dict,port::Int = true,

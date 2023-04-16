@@ -69,9 +69,8 @@ function calccircuitgraph(parsedsortedcircuit::ParsedSortedCircuit)
 
 end
 
-
 """
-    calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1},Nnodes::Int)
+    calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int)
 
 Calculate the superconducting spanning tree, closure branches, and loops.
 Accepts the graph of linear inductors and Josephson junctions. Outputs lists
@@ -89,7 +88,7 @@ julia> JosephsonCircuits.calcgraphs([(2, 1), (2, 1), (3, 1)],4)
 JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), sparse([1, 2], [1, 2], [1, 1], 2, 3), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2)
 ```
 """
-function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1},Nnodes::Int)
+function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int)
 
     gl = Graphs.SimpleGraphFromIterator(tuple2edge(Ledgearray))
 
@@ -187,7 +186,6 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1},Nnodes::Int)
         lvarray, isolatednodes, gl, Nbranches)
 end
 
-
 """
     storeuniqueloops!(lvarray, vmap, ul)
 
@@ -245,7 +243,6 @@ function edge2index(graph::Graphs.SimpleDiGraph{Int})
     end
     return edge2indexdict
 end
-
 
 """
     tuple2edge(tuplevector::Vector{Tuple{Int, Int}})
@@ -348,7 +345,6 @@ function tuple2edge(tupledict::Dict{Tuple{Int, Int},T}) where T
 
     return edgedict
 end
-
 
 """
     tuple2edge(tupledict::Dict{Tuple{Int, Int, Int, Int},T})

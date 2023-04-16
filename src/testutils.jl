@@ -1,7 +1,11 @@
 
-
 """
-  testshow(io::IO,S::JosephsonCircuits.AbstractSparseVector)
+  testshow(io::IO,S)
+
+Print `S` to the IOStream or IOBuffer `io`. This is used to generate the
+inputs for testing purposes. The default `show` function doesn't always
+produce an output which can be evaluated as the input. For example, for sparse
+vectors.
 
 # Examples
 ```jldoctest
@@ -20,6 +24,14 @@ function testshow(io::IO,S::JosephsonCircuits.AbstractSparseVector)
     n = S.n
     print(io,"sparsevec(", I, ", ", V, ", ", n, ")")
 end
+
+testshow(io::IO,S) = show(io,S)
+testshow(io::IO,S::JosephsonCircuits.HB) = showstruct(io,S)
+testshow(io::IO,S::JosephsonCircuits.NonlinearHB) = showstruct(io,S)
+testshow(io::IO,S::JosephsonCircuits.LinearizedHB) = showstruct(io,S)
+testshow(io::IO,S::JosephsonCircuits.CircuitMatrices) = showstruct(io,S)
+testshow(io::IO,S::JosephsonCircuits.AxisKeys.KeyedArray) = showstruct(io,S)
+# show(io::IO,S::StepRangeLen) = 
 
 """
   showstruct(io::IO,out)
@@ -46,16 +58,10 @@ function showstruct(io::IO,out)
   print(io,")")
 end
 
-testshow(io::IO,S) = show(io,S)
-testshow(io::IO,S::JosephsonCircuits.HB) = showstruct(io,S)
-testshow(io::IO,S::JosephsonCircuits.NonlinearHB) = showstruct(io,S)
-testshow(io::IO,S::JosephsonCircuits.LinearizedHB) = showstruct(io,S)
-testshow(io::IO,S::JosephsonCircuits.CircuitMatrices) = showstruct(io,S)
-testshow(io::IO,S::JosephsonCircuits.AxisKeys.KeyedArray) = showstruct(io,S)
-# show(io::IO,S::StepRangeLen) = 
-
 """
   comparestruct(x,y)
+
+Compare two structures for testing purposes.
 
 # Examples
 ```jldoctest

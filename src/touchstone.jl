@@ -1,3 +1,4 @@
+
 """
     TouchstoneFile(f::Vector{Float64},
         N::Array{Complex{Float64}},
@@ -18,8 +19,8 @@
         networkdata::Vector{Float64},
         noisedata::Vector{Float64})
 
-A structure to hold the data contained in a Touchstone file. In most cases, 
-the user will not generate the struct directly. Instead, they will load a 
+A structure to hold the data contained in a Touchstone file. In most cases,
+the user will not generate the struct directly. Instead, they will load a
 Touchstone file with [`touchstone_load`](@ref), parse an IOStream or IOBuffer
 with [`touchstone_parse`](@ref), or generate a TouchstoneFile struct with
 [`touchstone_file`](@ref).
@@ -342,8 +343,6 @@ function touchstone_parse(io::IO)
         mixedmodeorder, comments, networkdata, noisedata)
 end
 
-
-
 """
     touchstone_save(filename::String,frequencies::AbstractArray,
         N::AbstractArray;version=1.0,reference=[50.0,50.0],R = 50.0,format="RI",
@@ -400,11 +399,11 @@ function touchstone_save(filename::String, frequencies::AbstractVector,
     return nothing
 end
 
-
 """
-    touchstone_write(io::IO,frequencies::AbstractVector,N::AbstractArray;
-        version=1.0,reference=[50.0,50.0],R = 50.0,format="RI",parameter = "S",
-        comments=[""],twoportdataorder="12_21",matrixformat="Full",frequencyunit="Hz")
+    touchstone_write(io::IO, frequencies::AbstractVector, N::AbstractArray;
+        version=1.0, reference=[50.0,50.0], R = 50.0, format="RI",
+        parameter = "S", comments=[""], twoportdataorder="12_21",
+        matrixformat="Full", frequencyunit="Hz")
 
 Write a Touchstone file to the IOStream or IOBuffer `io`.
 
@@ -461,10 +460,10 @@ end
 """
     touchstone_write(io::IO, ts::TouchstoneFile)
 
-Write a Touchstone file specified by the TouchstoneFile object `ts` to the 
+Write a Touchstone file specified by the TouchstoneFile object `ts` to the
 IOStream or IOBuffer `io`.
 """
-function touchstone_write(io::IO,ts::TouchstoneFile)
+function touchstone_write(io::IO, ts::TouchstoneFile)
 
     # write a verion 1.0 file
     if ts.version < 2.0
@@ -674,7 +673,6 @@ function touchstone_write(io::IO,ts::TouchstoneFile)
     return nothing
 end
 
-
 """
     touchstone_file(f::Vector{Float64}, N::Array{Complex{Float64}};
         frequencyunit::String = "GHz",
@@ -816,21 +814,20 @@ else
 end
 
 # generate the networkdata
-networkdata = arraytonetworkdata(f, N, numberofports, numberoffrequencies, 
-    matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
+networkdata = arraytonetworkdata(f, N, numberofports, numberoffrequencies,
+    matrixformat, twoportdataorder, parameter, frequencyunit, format, R,
+    version)
 
 # return the TouchstoneFile structure
-return TouchstoneFile(f, N, frequencyunit,
-    parameter, format, R, version,
+return TouchstoneFile(f, N, frequencyunit, parameter, format, R, version,
     numberofports, twoportdataorder, numberoffrequencies,
     numberofnoisefrequencies, reference, information, matrixformat,
     mixedmodeorder, comments, networkdata, noisedata)
 end
 
-
 """
 
-    arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
+    arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies,
         matrixformat, twoportdataorder, parameter, frequencyunit, format, R,
         version)
 
@@ -880,8 +877,9 @@ frequencyunit = "GHz"
 format = "MA"
 R = 50.0
 version = 2.0
-JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
-    matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
+JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports,
+    numberoffrequencies, matrixformat, twoportdataorder, parameter,
+    frequencyunit, format, R, version)
 
 # output
 15-element Vector{Float64}:
@@ -913,8 +911,9 @@ frequencyunit = "GHz"
 format = "MA"
 R = 50.0
 version = 1.0
-JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
-    matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
+JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports,
+    numberoffrequencies, matrixformat, twoportdataorder, parameter,
+    frequencyunit, format, R, version)
 
 # output
 15-element Vector{Float64}:
@@ -935,8 +934,9 @@ JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports, numberoffrequ
  -16.0452488538666
 ```
 """
-function arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
-    matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
+function arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies,
+    matrixformat, twoportdataorder, parameter, frequencyunit, format, R,
+    version)
 
     nvals = 0
     # the number of values per frequency
@@ -987,11 +987,8 @@ function arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies,
   return networkdata
 end
 
-
-
 """
-
-    networkdatatoarray(networkdata, numberofports, numberoffrequencies, 
+    networkdatatoarray(networkdata, numberofports, numberoffrequencies,
         matrixformat, twoportdataorder, parameter, frequencyunit, format, R,
         version)
 
@@ -1007,9 +1004,9 @@ frequencyunit = "ghz"
 format = "ma"
 R = 50.0
 version = 2.0
-frequencies, N = JosephsonCircuits.networkdatatoarray(networkdata, numberofports,
-    numberoffrequencies, matrixformat, twoportdataorder, parameter,
-    frequencyunit, format, R, version)
+frequencies, N = JosephsonCircuits.networkdatatoarray(networkdata,
+    numberofports, numberoffrequencies, matrixformat, twoportdataorder,
+    parameter, frequencyunit, format, R, version)
 println(frequencies)
 println(N)
 
@@ -1018,7 +1015,7 @@ println(N)
 [0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.04669118949947016im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
 ```
 """
-function networkdatatoarray(networkdata, numberofports, numberoffrequencies, 
+function networkdatatoarray(networkdata, numberofports, numberoffrequencies,
     matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
 
     # #make an empty array for the network data
@@ -1027,7 +1024,7 @@ function networkdatatoarray(networkdata, numberofports, numberoffrequencies,
 
     indices = matrixindices(numberofports,matrixformat,twoportdataorder)
 
-    # scale the parameters if it's a v1 file and not a scattering parameter. 
+    # scale the parameters if it's a v1 file and not a scattering parameter.
     p = lowercase(parameter)
     if p == "s"
         normalization = 1.0
@@ -1068,9 +1065,8 @@ function networkdatatoarray(networkdata, numberofports, numberoffrequencies,
   return frequencies, N
 end
 
-
 """
-    matrixindices(nports,format)
+    matrixindices(nports, format)
 
 Return the cartesian indices of the elements of a scattering matrix given the
 number of ports `nports` and the format `format` which can be "Full", "Upper",
@@ -1104,17 +1100,17 @@ julia> JosephsonCircuits.matrixindices(2,"Lower",printflag=true)
  CartesianIndex(2, 2)
 ```
 """
-function matrixindices(nports,format; printflag = false)
-    return matrixindices(nports,format,"12_21", printflag = printflag)
+function matrixindices(nports, format; printflag = false)
+    return matrixindices(nports, format, "12_21", printflag = printflag)
 end
 
 """
-    matrixindices(nports,format,twoportdataorder)
+    matrixindices(nports, format, twoportdataorder)
 
 Return the cartesian indices of the elements of a scattering matrix given the
 number of ports `nports` and the format `format` which can be "Full", "Upper",
-or "Lower". The two port data order `twoportdataorder` can be "`12_21`" or "`21_12`"
-for 2 ports but must be "`12_21`" for other numbers of ports.
+or "Lower". The two port data order `twoportdataorder` can be "`12_21`" or
+"`21_12`" for 2 ports but must be "`12_21`" for other numbers of ports.
 
 # Examples
 ```jldoctest
@@ -1133,7 +1129,7 @@ julia> JosephsonCircuits.matrixindices(2,"Full","21_12")
  CartesianIndex(2, 2)
 ```
 """
-function matrixindices(nports,format,twoportdataorder;printflag = false)
+function matrixindices(nports, format, twoportdataorder; printflag = false)
     indices = CartesianIndex{2}[]
     
     fmt = lowercase(format)
@@ -1211,7 +1207,6 @@ function matrixindices(nports,format,twoportdataorder;printflag = false)
     end
     return indices
 end
-
 
 """
     isoptionline(line::String)
@@ -1306,11 +1301,10 @@ function frequencyscale(frequencyunit::String)
     end
 end
 
-
 """
     isversion(line::String)
 
-Return `true` if the string `line` is the [version] line of a Touchstone file. 
+Return `true` if the string `line` is the [version] line of a Touchstone file.
 
 # Examples
 ```jldoctest
@@ -1848,7 +1842,7 @@ this is a
 ["comment"]
 ```
 """
-function stripcommentslowercase!(comments::Vector{String},line::String)
+function stripcommentslowercase!(comments::Vector{String}, line::String)
     index = findfirst('!',line)
     if index != nothing
         push!(comments,line[index+1:end])
@@ -1857,7 +1851,6 @@ function stripcommentslowercase!(comments::Vector{String},line::String)
         return lowercase(line)
     end
 end
-
 
 """
     parsenetworkdata!(networkdata::Vector{Float64}, comments::Vector{String}, io::IO)
@@ -1999,7 +1992,8 @@ function parsenetworkdata!(networkdata::Vector{Float64},
 end
 
 """
-    parsenoisedata!(noisedata::Vector{Float64}, comments::Vector{String}, io::IO)
+    parsenoisedata!(noisedata::Vector{Float64}, comments::Vector{String},
+        io::IO)
 
 Append the contents of the networkdata section of a Touchstone file from the
 IOBuffer or IOStream `io` to the vector `networkdata`.
@@ -2099,5 +2093,3 @@ function parsenoisedata!(noisedata, comments, io)
     end
     return nnoisefreq
 end
-
-

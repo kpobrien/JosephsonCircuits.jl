@@ -1,3 +1,4 @@
+
 """
     wrspice_input_paramp(netlist, ws, wp, Ip; stepsperperiod = 80, Is = 1e-13,
         tstop = 200e-9, trise = 10e-9)
@@ -6,6 +7,7 @@ Generate the WRSPICE input files for a time domain domain simulation in which
 the signal angular frequency is swept over `ws` with pump angular frequency
 `wp` and pump current `Ip`. 
 
+# Examples
 ```
 using JosephsonCircuits
 using Plots

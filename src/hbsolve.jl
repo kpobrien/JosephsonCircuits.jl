@@ -6,13 +6,15 @@ A simple structure to hold the nonlinear harmonic balance solutions.
 
 # Fields
 - `w`: a tuple containing the the angular frequency of the pump in radians/s.
-- `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
+- `frequencies`:
+- `nodeflux`: the node fluxes resulting from inputs at each frequency and
+    port.
 - `Rbnm`: incidence matrix to convert between the node and branch basis.
 - `Ljb`: sparse vector of Josephson junction inductances.
 - `Lb`: sparse vector of linear inductances.
-- `Ljbm`: sparse vector of linear inductances with each element duplicated Nmodes times.
+- `Ljbm`: sparse vector of linear inductances with each element duplicated
+    Nmodes times.
 - `Nmodes`: the number of signal and idler frequencies.
-- `Nnodes`: the number of nodes in the circuit (including the ground node).
 - `Nbranches`: the number of branches in the circuit.
 - `nodenames`: the vector of unique node name strings.
 - `componentnames`: the vector of component name strings
@@ -27,7 +29,6 @@ struct NonlinearHB
     w
     frequencies
     nodeflux
-    # voltage
     Rbnm
     Ljb
     Lb
@@ -35,12 +36,6 @@ struct NonlinearHB
     Nmodes
     Nbranches
     nodes
-    # nodenames
-    # nodeindices
-    # componentnames
-    # portnumbers
-    # portindices
-    # noiseportindices
     ports
     modes
     S
@@ -53,30 +48,46 @@ end
 A simple structure to hold the linearized harmonic balance solutions.
 
 # Fields
+- `w`: the signal frequencies.
+- `modes`: tuple of the signal mode indices where (0,) is the signal.
 - `S`: the scattering matrix relating inputs and outputs for each combination
     of port and frequency.
-- `Snoise`: the scattering matrix relating inputs at the noise ports 
+- `Snoise`: the scattering matrix relating inputs at the noise ports.
     (lossy devices) and outputs at the physical ports for each combination of
     port and frequency.
+- `Ssensitivity`:
+- `Z`:
+- `Zadjoint`: 
+- `Zsensitivity`: 
+- `Zsensitivityadjoint`: 
 - `QE`: the quantum efficiency for each combination of port and frequency.
 - `QEideal`: the quantum efficiency for an ideal amplifier with the same level
-    of gain, for each combination of port and frequency. 
+    of gain, for each combination of port and frequency.
 - `CM`: the commutation relations (equal to ±1), for each combination of port
-    and frequency. 
+    and frequency.
 - `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
-- `nodefluxadjoint`: the node fluxes resulting from inputs at each frequency and port
-    with a time reversed modulation.
+- `nodefluxadjoint`: the node fluxes resulting from inputs at each frequency
+    and port with a time reversed modulation.
 - `voltage`: the node voltages resulting from inputs at each frequency and port.
-- `voltageadjoint`: the node fluxes resulting from inputs at each frequency and port
-    with a time reversed modulation.
+- `voltageadjoint`: the node fluxes resulting from inputs at each frequency
+    and port with a time reversed modulation.
+- `nodenames`: the vector of unique node strings.
+- `nodeindices`:
+- `componentnames`:
+- `componenttypes`:
+- `componentnamedict`:
+- `mutualinductorbranchnames`:
+- `portnumbers`: vector of port numbers.
+- `portindices`:
+- `portimpedanceindices`:
+- `noiseportimpedanceindices`:
+- `sensitivitynames`:
+- `sensitivityindices`:
 - `Nmodes`: the number of signal and idler frequencies.
 - `Nnodes`: the number of nodes in the circuit (including the ground node).
 - `Nbranches`: the number of branches in the circuit.
-- `nodes`: the vector of unique node strings.
-- `ports`: vector of port numbers.
+- `Nports`: the number of ports.
 - `signalindex`: the index of the signal mode.
-- `w`: the signal frequencies.
-- `modes`: tuple of the signal mode indices where (0,) is the signal
 """
 struct LinearizedHB
     w
@@ -117,45 +128,42 @@ end
 """
     HB(nonlinear, linearized)
 
-A simple structure to hold the nonlinear and linearized harmonic balance solutions.
+A simple structure to hold the nonlinear and linearized harmonic balance
+solutions.
 
 # Fields
-- `nonlinear`: nonlinear harmonic balance solution for pump and pump harmonics
-- `linearized`: linearized harmonic balance solution
+- `nonlinear`: nonlinear harmonic balance solution for pump and pump
+    harmonics. See [`NonlinearHB`](@ref).
+- `linearized`: linearized harmonic balance solution.
+    See [`LinearizedHB`](@ref).
 """
 struct HB
     nonlinear
     linearized
 end
 
-
 """
     hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         pumpports = [1], iterations = 1000, ftol = 1e-8,
         switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-        symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
-        returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-        returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
+        symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
+        sorting = :number, returnS = true, returnSnoise = false,
+        returnQE = true, returnCM = true, returnnodeflux = false,
+        returnvoltage = false, returnnodefluxadjoint = false,
         )
 
-Calls the new harmonic balance solvers (which work for an arbitrary number of
-modes and ports) `hbnlsolve` and `hblinsolve` using an identical syntax to
-`hbsolveold`, which only supports four wave mixing processes involving single
-strong tone and an arbitrary number of tone in the linearized solver. This
-function is primarily for testing the new solvers and will eventually be
-deprecated. 
+Calls the new harmonic balance solvers, [`hbnlsolve`](@ref) and
+[`hblinsolve`](@ref), which work for an arbitrary number of modes and ports),
+using an identical syntax to [`hbsolveold`](@ref), which only supports four
+wave mixing processes involving single strong tone and an arbitrary number of
+tone in the linearized solver. This function is primarily for testing the new
+solvers and will eventually be deprecated.
 
-This function attempts to mimic `hbsolveold`, but has a few important differences:
-1. `Nmodulationharmonics` is no longer the number of signal modes but the number
-    of modulation harmonics meaning `0` would give the signal only, `1` would
-    three wave mixing processes, which this function does not enable. `2` would
-    create idlers on either side of the signal mode at ws+2*wp and ws-2*wp.
-    For other sets of idlers or three wave mixing processes, please use the new
-    interface to `hbsolve`.
-2. The outputs of the linearized harmonic balance solver `hblinsolve2` may not
-    have the same ordering of signal modes as in `hblinsolve`. In `hblinsolve2`
-    the signal mode is always at index 1 and the location of the other modes
-    can be found by inspecting the contents of `modes`.
+This function attempts to mimic [`hbsolveold`](@ref), but with the difference:
+The outputs of the linearized harmonic balance solver [`hblinsolve`](@ref) may
+not have the same ordering of signal modes as in [`hblinsolveold`](@ref). In
+[`hblinsolve`](@ref) the signal mode is always at index 1 and the location of
+the other modes can be found by inspecting the contents of `modes`.
 """
 function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
@@ -220,7 +228,10 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     # remove one of the signal modes if Nsignalmodes is even for compatibility
     # with old harmonic balance solver
     if mod(Nsignalmodes,2) == 0 && Nsignalmodes > 0
-        signalfreq = JosephsonCircuits.removefreqs(signalfreq, [(Nsignalmodes,)])
+        signalfreq = JosephsonCircuits.removefreqs(
+            signalfreq,
+            [(Nsignalmodes,)],
+        )
     end
 
     # solve the linearized problem
@@ -230,7 +241,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
+        returnvoltage = returnvoltage,
+        returnvoltageadjoint = returnvoltageadjoint,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
         returnSsensitivity = returnSsensitivity,
         returnZ = returnZ, returnZadjoint = returnZadjoint,
@@ -240,21 +252,78 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     return HB(nonlinear, linearized)
 end
 
+"""
+    hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
+        Nmodulationharmonics::NTuple{M,Any}, Npumpharmonics::NTuple{N,Any},
+        circuit, circuitdefs; dc = false, threewavemixing = false,
+        fourwavemixing = true, maxintermodorder=Inf, iterations = 1000,
+        ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+        symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
+        sorting = :number, returnS = true, returnSnoise = false,
+        returnQE = true, returnCM = true, returnnodeflux = false,
+        returnvoltage = false, returnnodefluxadjoint = false,
+        returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
+        sensitivitynames = String[], returnSsensitivity = false,
+        returnZ = false, returnZadjoint = false,
+        returnZsensitivity = false, returnZsensitivityadjoint = false)
 
+# Arguments
+- `ws`:
+- `wp::NTuple{N,Any}`:
+- `sources::Vector`:
+- `Nmodulationharmonics::NTuple{M,Any}`:
+- `Npumpharmonics::NTuple{N,Any}`:
+- `circuit`:
+- `circuitdefs`:
+
+# Keywords
+- `dc = false`:
+- `threewavemixing = false`:
+- `fourwavemixing = true`:
+- `maxintermodorder=Inf`:
+- `iterations = 1000`:
+- `ftol = 1e-8`:
+- `switchofflinesearchtol = 1e-5`:
+- `alphamin = 1e-4`:
+- `symfreqvar = nothing`:
+- `nbatches = Base.Threads.nthreads()`:
+- `sorting = :number`:
+- `returnS = true`:
+- `returnSnoise = false`:
+- `returnQE = true`:
+- `returnCM = true`:
+- `returnnodeflux = false`:
+- `returnvoltage = false`:
+- `returnnodefluxadjoint = false`:
+- `returnvoltageadjoint = false`:
+- `keyedarrays::Val{K} = Val(true)`:
+- `sensitivitynames = String[]`:
+- `returnSsensitivity = false`:
+- `returnZ = false`:
+- `returnZadjoint = false`:
+- `returnZsensitivity = false`:
+- `returnZsensitivityadjoint = false`:
+
+# Returns
+- `HB`: A simple structure to hold the harmonic balance solutions. See
+    [`HB`](@ref).
+
+"""
 function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
     Nmodulationharmonics::NTuple{M,Any}, Npumpharmonics::NTuple{N,Any},
     circuit, circuitdefs;dc = false, threewavemixing = false,
-    fourwavemixing = true, maxintermodorder=Inf, iterations = 1000, ftol = 1e-8,
-    switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
-    returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-    returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
-    sensitivitynames = String[], returnSsensitivity = false,
-    returnZ = false, returnZadjoint = false,
-    returnZsensitivity = false, returnZsensitivityadjoint = false) where {N,M,K}
+    fourwavemixing = true, maxintermodorder=Inf, iterations = 1000,
+    ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+    symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
+    sorting = :number, returnS = true, returnSnoise = false, returnQE = true,
+    returnCM = true, returnnodeflux = false, returnvoltage = false,
+    returnnodefluxadjoint = false, returnvoltageadjoint = false,
+    keyedarrays::Val{K} = Val(true), sensitivitynames = String[],
+    returnSsensitivity = false, returnZ = false, returnZadjoint = false,
+    returnZsensitivity = false, returnZsensitivityadjoint = false,
+    ) where {N,M,K}
 
-    # calculate the frequency struct
+    # calculate the Frequencies struct
     freq = removeconjfreqs(
         truncfreqs(
             calcfreqsrdft(Npumpharmonics),
@@ -290,7 +359,6 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
     )
 
     # solve the linearized problem
-    # i should make this a tuple
     linearized = hblinsolve(ws, psc, cg, circuitdefs, signalfreq;
         nonlinear = nonlinear, symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
@@ -307,23 +375,48 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
     return HB(nonlinear, linearized)
 end
 
-
 """
     hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
         nonlinear=nothing, symfreqvar=nothing, threewavemixing=false,
         fourwavemixing=true, maxintermodorder=Inf,
         nbatches::Integer = Base.Threads.nthreads(), returnS = true,
         returnSnoise = false, returnQE = true, returnCM = true,
-        returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
+        returnnodeflux = false, returnnodefluxadjoint = false,
+        returnvoltage = false,
         )
 
 Harmonic balance solver supporting an arbitrary number of small signals (weak
-tones) linearized around `pump`, the solution of the nonlinear system consisting
-of an arbitrary number of large signals (strong tones).
+tones) linearized around `pump`, the solution of the nonlinear system
+consisting of an arbitrary number of large signals (strong tones).
+
+# Arguments
+- `w`:
+- `circuit`:
+- `circuitdefs`:
+
+# Keywords
+- `Nmodulationharmonics = (0,)`:
+- `nonlinear=nothing`:
+- `symfreqvar=nothing`:
+- `threewavemixing=false`:
+- `fourwavemixing=true`:
+- `maxintermodorder=Inf`:
+- `nbatches::Integer = Base.Threads.nthreads()`:
+- `returnS = true`:
+- `returnSnoise = false`:
+- `returnQE = true`:
+- `returnCM = true`:
+- `returnnodeflux = false`:
+- `returnnodefluxadjoint = false`:
+- `returnvoltage = false`:
+
+# Returns
+- `LinearizedHB`: A simple structure to hold the harmonic balance solutions.
+    See [`LinearizedHB`](@ref).
 
 # Examples
 ```jldoctest
-circuit = Array{Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}},1}(undef,0)
+circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
 push!(circuit,("P1","1","0",1))
 push!(circuit,("R1","1","0",:Rleft))
 push!(circuit,("L1","1","0",:Lm)) 
@@ -365,8 +458,9 @@ nonlinear=hbnlsolve(
     circuit,circuitdefs;dc=true,odd=fourwavemixing,even=threewavemixing)
 
 linearized = JosephsonCircuits.hblinsolve(ws,
-    circuit, circuitdefs; Nmodulationharmonics = Nmodulationharmonics, nonlinear = nonlinear, symfreqvar=nothing,
-    threewavemixing=false, fourwavemixing=true, returnnodeflux=true, keyedarrays = Val(false))
+    circuit, circuitdefs; Nmodulationharmonics = Nmodulationharmonics,
+    nonlinear = nonlinear, symfreqvar=nothing, threewavemixing=false,
+    fourwavemixing=true, returnnodeflux=true, keyedarrays = Val(false))
 isapprox(linearized.nodeflux,
     ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
     atol = 1e-6)
@@ -380,10 +474,10 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     fourwavemixing=true, maxintermodorder=Inf,
     nbatches::Integer = Base.Threads.nthreads(), returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
-    returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
-    sensitivitynames = String[], returnSsensitivity = false,
-    returnZ = false, returnZadjoint = false,
+    returnnodeflux = false, returnnodefluxadjoint = false,
+    returnvoltage = false, returnvoltageadjoint = false,
+    keyedarrays::Val{K} = Val(true), sensitivitynames = String[],
+    returnSsensitivity = false, returnZ = false, returnZadjoint = false,
     returnZsensitivity = false, returnZsensitivityadjoint = false) where K
 
     # parse and sort the circuit
@@ -404,7 +498,8 @@ return hblinsolve(w, psc, cg, circuitdefs, signalfreq; nonlinear = nonlinear,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
+        returnvoltage = returnvoltage,
+        returnvoltageadjoint = returnvoltageadjoint,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
         returnSsensitivity = returnSsensitivity,
         returnZ = returnZ, returnZadjoint = returnZadjoint,
@@ -415,9 +510,11 @@ end
 """
     hblinsolve(w, psc::ParsedSortedCircuit,
         cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N};
-        nonlinear=nothing, symfreqvar=nothing, nbatches::Integer = Base.Threads.nthreads(),
-        returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-        returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
+        nonlinear=nothing, symfreqvar=nothing,
+        nbatches::Integer = Base.Threads.nthreads(), returnS = true,
+        returnSnoise = false, returnQE = true, returnCM = true,
+        returnnodeflux = false, returnnodefluxadjoint = false,
+        returnvoltage = false,
         )
 
 Harmonic balance solver supporting an arbitrary number of small signals (weak
@@ -426,7 +523,7 @@ of an arbitrary number of large signals (strong tones).
 
 # Examples
 ```jldoctest
-circuit = Array{Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}},1}(undef,0)
+circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
 push!(circuit,("P1","1","0",1))
 push!(circuit,("R1","1","0",:Rleft))
 push!(circuit,("L1","1","0",:Lm)) 
@@ -475,7 +572,8 @@ nonlinear = hbnlsolve(
     frequencies, fi, psc, cg, nm)
 signalfreq =JosephsonCircuits.truncfreqs(
     JosephsonCircuits.calcfreqsdft(Nmodulationharmonics),
-    dc = true, odd = threewavemixing, even = fourwavemixing, maxintermodorder = Inf,
+    dc = true, odd = threewavemixing, even = fourwavemixing,
+    maxintermodorder = Inf,
 )
 linearized = JosephsonCircuits.hblinsolve(ws, psc, cg, circuitdefs,
     signalfreq;nonlinear = nonlinear, returnnodeflux=true, keyedarrays = Val(false))
@@ -675,8 +773,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     end
 
     if returnZadjoint
-        Zadjoint = zeros(Complex{Float64}, Nports*Nsignalmodes, Nports*Nsignalmodes,
-            length(w))
+        Zadjoint = zeros(Complex{Float64}, Nports*Nsignalmodes,
+            Nports*Nsignalmodes, length(w))
     else
         Zadjoint = zeros(Complex{Float64},0,0,0)
     end
@@ -783,7 +881,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         QEideal = zeros(Float64,0,0,0)
     end
 
-    # turn all of the array outputs into keyed arrays if the keyedarrays = Val(true)
+    # turn all of the array outputs into keyed arrays if the
+    # keyedarrays = Val(true)
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     # for the scattering parameters
@@ -887,8 +986,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         voltageadjointout = voltageadjoint
     end
 
-    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivityout, Zout, Zadjointout,
-        Zsensitivityout, Zsensitivityadjointout, QEout,
+    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivityout, Zout,
+        Zadjointout, Zsensitivityout, Zsensitivityadjointout, QEout,
         QEidealout, CMout, nodefluxout, nodefluxadjointout, voltageout,
         voltageadjointout, nodenames, nodeindices, componentnames,
         componenttypes, componentnamedict, mutualinductorbranchnames,
@@ -910,14 +1009,14 @@ Solve the linearized harmonic balance problem for a subset of the frequencies
 given by `wi`. This function is thread safe in that different frequencies can
 be computed in parallel on separate threads.
 """
-function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Zsensitivityadjoint,
-    QE, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, Asparse,
-    AoLjnm, invLnm, Cnm, Gnm, bnm,
+function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
+    Zsensitivityadjoint, QE, CM, nodeflux, nodefluxadjoint, voltage,
+    voltageadjoint, Asparse, AoLjnm, invLnm, Cnm, Gnm, bnm,
     AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
     Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
-    portindices, portimpedanceindices, noiseportimpedanceindices, sensitivityindices,
-    portimpedances, noiseportimpedances, nodeindices, componenttypes,
-    w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi)
+    portindices, portimpedanceindices, noiseportimpedanceindices,
+    sensitivityindices, portimpedances, noiseportimpedances, nodeindices,
+    componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi)
 
     Nports = length(portindices)
     phin = zeros(Complex{Float64}, Nmodes*(Nnodes-1), Nmodes*Nports)
@@ -926,11 +1025,13 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Z
     outputwave = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
 
     Nnoiseports = length(noiseportimpedanceindices)
-    noiseoutputwave = zeros(Complex{Float64}, Nnoiseports*Nmodes, Nports*Nmodes)
-    sensitivityoutputvoltage = zeros(Complex{Float64}, length(sensitivityindices)*Nmodes, Nports*Nmodes)
+    noiseoutputwave = zeros(Complex{Float64}, Nnoiseports*Nmodes,
+        Nports*Nmodes)
+    sensitivityoutputvoltage = zeros(Complex{Float64},
+        length(sensitivityindices)*Nmodes, Nports*Nmodes)
 
-    # operate on a copy of Asparse because it may be modified by multiple threads
-    # at the same time.
+    # operate on a copy of Asparse because it may be modified by multiple
+    # threads at the same time.
     Asparsecopy = copy(Asparse)
 
     # calculate the conjugate of AoLjnm
@@ -961,12 +1062,14 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Z
 
     # if the noise scattering matrix is empty define a new working matrix
     if isempty(Zsensitivity)
-        Zsensitivityview = zeros(Complex{Float64}, length(sensitivityindices)*Nmodes, Nports*Nmodes)
+        Zsensitivityview = zeros(Complex{Float64},
+            length(sensitivityindices)*Nmodes, Nports*Nmodes)
     end
 
     # if the noise scattering matrix is empty define a new working matrix
     if isempty(Zsensitivityadjoint)
-        Zsensitivityadjointview = zeros(Complex{Float64}, length(sensitivityindices)*Nmodes, Nports*Nmodes)
+        Zsensitivityadjointview = zeros(Complex{Float64},
+            length(sensitivityindices)*Nmodes, Nports*Nmodes)
     end
 
     # loop over the frequencies
@@ -1007,8 +1110,8 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Z
         wmodesm = Diagonal(repeat(wmodes, outer = Nnodes-1));
         wmodes2m = Diagonal(repeat(wmodes.^2, outer = Nnodes-1));
 
-        # perform the operation below in a way that doesn't allocate significant
-        # memory, plus take the conjugates mentioned below.
+        # perform the operation below in a way that doesn't allocate
+        # significant memory, plus take the conjugates mentioned below.
         # Asparsecopy = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
 
         fill!(Asparsecopy.nzval, zero(eltype(Asparsecopy.nzval)))
@@ -1031,9 +1134,9 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Z
         # solve the linear system
         ldiv!(phin, cache.factorization, bnm)
 
-        # convert to node voltages. node flux is defined as the time integral of
-        # node voltage so node voltage is derivative of node flux which can be
-        # accomplished in the frequency domain by multiplying by j*w.
+        # convert to node voltages. node flux is defined as the time integral
+        # of node voltage so node voltage is derivative of node flux which can
+        # be accomplished in the frequency domain by multiplying by j*w.
         if !isempty(voltage)
             voltage[:,:,i] .= im*wmodesm*phin
         end
@@ -1058,9 +1161,11 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Z
         end
 
         if !isempty(Zsensitivity)
-            calcinputcurrentoutputvoltage!(inputwave, sensitivityoutputvoltage, phin, bnm,
-                portimpedanceindices, sensitivityindices, nodeindices, wmodes)
-            calcscatteringmatrix!(Zsensitivityview, inputwave, sensitivityoutputvoltage)
+            calcinputcurrentoutputvoltage!(inputwave, sensitivityoutputvoltage,
+                phin, bnm, portimpedanceindices, sensitivityindices,
+                nodeindices, wmodes)
+            calcscatteringmatrix!(Zsensitivityview, inputwave,
+                sensitivityoutputvoltage)
         end
 
         if (Nnoiseports > 0 || !isempty(nodefluxadjoint) || !isempty(voltageadjoint) || !isempty(Zsensitivityadjoint) || !isempty(Zadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint) || !isempty(voltageadjoint) || !isempty(Zsensitivityadjoint) || !isempty(Zadjoint))
@@ -1113,10 +1218,11 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Z
             end
 
             if !isempty(Zsensitivityadjoint)
-                calcinputcurrentoutputvoltage!(inputwave, sensitivityoutputvoltage,
-                    phin, bnm, portimpedanceindices, sensitivityindices,
-                    nodeindices, wmodes)
-                calcscatteringmatrix!(Zsensitivityadjointview, inputwave, sensitivityoutputvoltage)
+                calcinputcurrentoutputvoltage!(inputwave,
+                    sensitivityoutputvoltage, phin, bnm, portimpedanceindices,
+                    sensitivityindices, nodeindices, wmodes)
+                calcscatteringmatrix!(Zsensitivityadjointview, inputwave,
+                    sensitivityoutputvoltage)
             end
 
             # calculate the quantum efficiency
@@ -1143,21 +1249,44 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Z
     return nothing
 end
 
-
 """
     hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
         circuit, circuitdefs; iterations = 1000,
-        maxintermodorder = Inf, dc = false, odd = true, even = false, x0 = nothing,
-        ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-        symfreqvar = nothing, sorting= :number)
+        maxintermodorder = Inf, dc = false, odd = true, even = false,
+        x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5,
+        alphamin = 1e-4, symfreqvar = nothing, sorting= :number)
 
 New version of the nonlinear harmonic balance solver suitable for arbitrary
-numbers of ports, sources, and drives including direct current (zero frequency)
-or flux pumping using a current source and a mutual inductor.
+numbers of ports, sources, and drives including direct current (zero
+frequency) or flux pumping using a current source and a mutual inductor.
+
+# Arguments
+- `w::NTuple{N,Any}`:
+- `Nharmonics::NTuple{N,Int}`:
+- `sources`:
+- `circuit`:
+- `circuitdefs`:
+
+# Keywords
+- `iterations = 1000`:
+- `maxintermodorder = Inf`:
+- `dc = false`:
+- `odd = true`:
+- `even = false`:
+- `x0 = nothing`:
+- `ftol = 1e-8`:
+- `switchofflinesearchtol = 1e-5`:
+- `alphamin = 1e-4`:
+- `symfreqvar = nothing`:
+- `sorting= :number`:
+
+# Returns
+- `NonlinearHB`: A simple structure to hold the harmonic balance solutions.
+    See [`NonlinearHB`](@ref).
 
 # Examples
 ```jldoctest
-circuit = Array{Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}},1}(undef,0)
+circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
 push!(circuit,("P1","1","0",1))
 push!(circuit,("R1","1","0",:Rleft))
 push!(circuit,("L1","1","0",:Lm)) 
@@ -1199,10 +1328,10 @@ true
 """
 function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
     circuit, circuitdefs; iterations = 1000,
-    maxintermodorder = Inf, dc = false, odd = true, even = false, x0 = nothing,
-    ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, sorting= :number,
-    keyedarrays::Val{K} = Val(true)) where {N,K}
+    maxintermodorder = Inf, dc = false, odd = true, even = false,
+    x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+    symfreqvar = nothing, sorting= :number, keyedarrays::Val{K} = Val(true),
+    ) where {N,K}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -1244,7 +1373,7 @@ or flux pumping using a current source and a mutual inductor.
 
 # Examples
 ```jldoctest
-circuit = Array{Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}},1}(undef,0)
+circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
 push!(circuit,("P1","1","0",1))
 push!(circuit,("R1","1","0",:Rleft))
 push!(circuit,("L1","1","0",:Lm)) 
@@ -1373,9 +1502,12 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     AoLjbmindices, conjindicessorted = calcAoLjbmindices(Amatrixindices,
         Ljb, Nmodes, Nbranches, Nfreq)
 
-    # right now i redo the calculation of AoLjbmindices, conjindicessorted in calcAoLjbm2
-    AoLjbm = calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
-    AoLjbmcopy = calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
+    # right now i redo the calculation of AoLjbmindices, conjindicessorted in
+    # calcAoLjbm2
+    AoLjbm = calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes,
+        Nbranches)
+    AoLjbmcopy = calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes,
+        Nbranches)
 
     # convert to a sparse node matrix. Note: I was having problems with type 
     # instability when i used AoLjbm here instead of AoLjbmcopy. 
@@ -1479,21 +1611,20 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
         Sout = S
     end
 
-    return NonlinearHB(w, frequencies, nodefluxout, Rbnm, Ljb, Lb, Ljbm, Nmodes,
-        Nbranches, nodenames, portnumbers, modes, Sout)
+    return NonlinearHB(w, frequencies, nodefluxout, Rbnm, Ljb, Lb, Ljbm,
+        Nmodes, Nbranches, nodenames, portnumbers, modes, Sout)
 
 end
-
 
 """
     calcfj2(F,J,phin,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
         Ljbindicesm,Nmodes,Lmean,AoLjbm)
         
-Calculate the residual and the Jacobian. These are calculated with one function
-in order to reuse as much as possible.
+Calculate the residual and the Jacobian. These are calculated with one
+function in order to reuse as much as possible.
 
-Leave off the type signatures on F and J because the solver will pass a type of
-Nothing if it only wants to calculate F or J. 
+Leave off the type signatures on F and J because the solver will pass
+`nothing` if it only wants to calculate F or J.
 
 """
 function calcfj2!(F,
@@ -1586,7 +1717,8 @@ function calcfj2!(F,
 end
 
 """
-    calcAoLjbmindices(Amatrixindices, Ljb::SparseVector, Nmodes, Nbranches, Nfreq)
+    calcAoLjbmindices(Amatrixindices, Ljb::SparseVector, Nmodes, Nbranches,
+        Nfreq)
 
 Return the sparse matrix containing the indices from the frequency domain
 RFFT data as well as the indices of the sparse matrix to conjugate.
@@ -1735,7 +1867,6 @@ function calcAoLjbmindices(Amatrixindices::Matrix, Ljb::SparseVector, Nmodes,
 
 end
 
-
 """
     calcAoLjbm2(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector, Lmean,
         Nmodes, Nbranches, Nfreq)
@@ -1846,9 +1977,9 @@ function calcAoLjbm2(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector,
 
 end
 
-
-
 """
+    updateAoLjbm2!(AoLjbm::SparseMatrixCSC, Am::Array, AoLjbmindices,
+        conjindicessorted, Ljb::SparseVector, Lmean)
 
 Update the values in the sparse AoLjbm matrix in place.
 

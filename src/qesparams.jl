@@ -4,7 +4,8 @@
         outputportindices, inputportimpedances, outputportimpedances,
         nodeindices, componenttypes, wmodes, symfreqvar)
 
-Return the input and output waves for the system linearized around the strong pump.
+Return the input and output waves for the system linearized around the strong
+pump.
 
 # Examples
 ```jldoctest
@@ -116,17 +117,19 @@ ComplexF64[-7.0710678118654755 + 0.0im;;]
 function calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
     nodeindices, componenttypes, wmodes, symfreqvar)
-    return calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
-        outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, componenttypes, wmodes, symfreqvar, false)
+    return calcinputoutput_inner!(inputwave, outputwave, phin, bnm,
+        inputportindices, outputportindices, inputportimpedances,
+        outputportimpedances, nodeindices, componenttypes, wmodes, symfreqvar,
+        false)
 end
 
 """
-    calcinputoutputnoise!(S, inputwave, outputwave, phin, bnm, inputportindices,
-        outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, componenttypes, wmodes, symfreqvar)
+    calcinputoutputnoise!(S, inputwave, outputwave, phin, bnm,
+        inputportindices, outputportindices, inputportimpedances,
+        outputportimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
 
-Return the input and output waves for the system linearized around the strong pump. 
+Return the input and output waves for the system linearized around the strong
+pump.
 
 This is a bit of a hack but I ran into issues with complex capacitance when
 the capacitor was at the same branch as a current source. the calcS function
@@ -159,14 +162,14 @@ ComplexF64[1.994711402007163e-5 + 0.0im;;]
 ComplexF64[-5.568327974762547e-11 + 3.516177070001411e-15im;;]
 ```
 """
-function calcinputoutputnoise!(inputwave, outputwave, phin, bnm, inputportindices,
-    outputportindices, inputportimpedances, outputportimpedances,
-    nodeindices, componenttypes, wmodes, symfreqvar)
-    return calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
-        outputportindices, inputportimpedances, outputportimpedances,
-        nodeindices, componenttypes, wmodes, symfreqvar, true)
+function calcinputoutputnoise!(inputwave, outputwave, phin, bnm,
+    inputportindices, outputportindices, inputportimpedances,
+    outputportimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
+    return calcinputoutput_inner!(inputwave, outputwave, phin, bnm,
+        inputportindices, outputportindices, inputportimpedances,
+        outputportimpedances, nodeindices, componenttypes, wmodes, symfreqvar,
+        true)
 end
-
 
 """
     calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
@@ -276,10 +279,11 @@ function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputporti
                     kval *= 1 /sqrt(abs(wmodes[j]))
                 end
 
-                # calculate the input and output power waves as defined in (except in
-                # units of sqrt(photons/second) instead of sqrt(power)
-                # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE Trans.
-                # Micr. Theory and Tech. 13, 194–202 (1965) 
+                # calculate the input and output power waves as defined in
+                # (except in units of sqrt(photons/second) instead of
+                # sqrt(power)
+                # K. Kurokawa, "Power Waves and the Scattering Matrix", IEEE
+                # Trans. Micr. Theory and Tech. 13, 194–202 (1965) 
                 # doi: 10.1109/TMTT.1965.1125964
                 outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
             end
@@ -290,9 +294,9 @@ function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputporti
 end
 
 """
-    calcscatteringmatrix!(S,inputwave::Diagonal,outputwave)
+    calcscatteringmatrix!(S, inputwave::Diagonal, outputwave)
 
-The scattering matrix is defined as outputwave = S * inputwave .
+The scattering matrix is defined as `outputwave = S * inputwave`.
 
 # Examples
 ```jldoctest
@@ -302,7 +306,7 @@ julia> inputwave=JosephsonCircuits.LinearAlgebra.Diagonal([1.0,1.0]);outputwave=
  0.707107+0.0im            0.0+0.707107im
 ```
 """
-function calcscatteringmatrix!(S,inputwave::Diagonal,outputwave)
+function calcscatteringmatrix!(S, inputwave::Diagonal, outputwave)
     # copy!(S,outputwave)
     # rdiv!(S,inputwave)
     rdiv!(outputwave,inputwave)
@@ -312,9 +316,9 @@ function calcscatteringmatrix!(S,inputwave::Diagonal,outputwave)
 end
 
 """
-    calcscatteringmatrix!(S,inputwave,outputwave)
+    calcscatteringmatrix!(S, inputwave, outputwave)
 
-The scattering matrix is defined as outputwave = S * inputwave .
+The scattering matrix is defined as `outputwave = S * inputwave`.
 
 # Examples
 ```jldoctest
@@ -327,15 +331,15 @@ julia> inputwave = rand(Complex{Float64},2,2);outputwave = rand(Complex{Float64}
 true
 ```
 """
-function calcscatteringmatrix!(S,inputwave,outputwave)
+function calcscatteringmatrix!(S, inputwave, outputwave)
     S .= outputwave / inputwave
     return nothing
 end
 
 """
-    calcscatteringmatrix!(S,inputwave::Vector,outputwave::Vector)
+    calcscatteringmatrix!(S, inputwave::Vector, outputwave::Vector)
 
-The scattering matrix is defined as outputwave = S * inputwave .
+The scattering matrix is defined as `outputwave = S * inputwave`.
 
 # Examples
 ```jldoctest
@@ -345,7 +349,7 @@ julia> inputwave=[1.0,0.0];outputwave=[im/sqrt(2), 1/sqrt(2)];S = zeros(Complex{
  0.707107+0.0im       0.0+0.0im
 ```
 """
-function calcscatteringmatrix!(S,inputwave::Vector,outputwave::Vector)
+function calcscatteringmatrix!(S, inputwave::Vector, outputwave::Vector)
     if size(S,1) != length(outputwave)
         throw(DimensionMismatch("First dimension of scattering matrix not consistent with first dimensions of outputwave."))
     end
@@ -364,7 +368,7 @@ function calcscatteringmatrix!(S,inputwave::Vector,outputwave::Vector)
     return nothing
 end
 
-function calcportvoltage(key1,key2,phin,wmodes,Nmodes,j,k)
+function calcportvoltage(key1, key2, phin, wmodes, Nmodes, j, k)
 
     # calculate the branch fluxes at the ports from the node flux array phin
     if key1 == 1
@@ -383,7 +387,7 @@ function calcportvoltage(key1,key2,phin,wmodes,Nmodes,j,k)
     return portvoltage
 end
 
-function calcsourcecurrent(key1,key2,bnm,Nmodes,j,k)
+function calcsourcecurrent(key1, key2, bnm, Nmodes, j, k)
 
     if key1 == 1
         sourcecurrent = -bnm[(key2-2)*Nmodes+j,k]
@@ -397,7 +401,8 @@ function calcsourcecurrent(key1,key2,bnm,Nmodes,j,k)
 end
 
 """
-    calcimpedance(c::Union{Integer,T,Complex{T}},type,w,symfreqvar) where {T<:AbstractFloat}
+    calcimpedance(c::Union{Integer,T,Complex{T}}, type, w, symfreqvar,
+        ) where {T<:AbstractFloat}
 
 # Examples
 ```jldoctest
@@ -414,7 +419,8 @@ julia> JosephsonCircuits.calcimpedance(30.0,:R,-1.0,nothing)
 30.0 + 0.0im
 ```
 """
-function calcimpedance(c::Union{T,Complex{T}},type,w,symfreqvar) where {T<:Union{AbstractFloat,Integer}}
+function calcimpedance(c::Union{T,Complex{T}}, type, w, symfreqvar,
+    ) where {T<:Union{AbstractFloat,Integer}}
 
     if type == :R
         if w >= 0
@@ -435,7 +441,7 @@ end
 
 
 """
-    calcimpedance(c,type,w,symfreqvar)
+    calcimpedance(c, type, w, symfreqvar)
 
 # Examples
 ```jldoctest
@@ -452,7 +458,7 @@ julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:C,-2.0,w)
 0.0 - 0.008333333333333333im
 ```
 """
-function calcimpedance(c,type,w,symfreqvar)
+function calcimpedance(c, type, w, symfreqvar)
     if type == :R
         if w >= 0
             return valuetonumber(c,symfreqvar => w)+0.0im
@@ -472,12 +478,12 @@ end
 
 
 """
-    calccm(S,w)
+    calccm(S, w)
 
 Calculate the bosonic commutation relations for a scattering matrix S in the 
 field ladder operator basis. Sum the abs2 of each element along the horizontal
-axis, applying a minus sign if the corresponding frequency is negative. Represents
-energy conservation. 
+axis, applying a minus sign if the corresponding frequency is negative.
+Represents energy conservation.
 
 # Examples
 ```jldoctest
@@ -512,7 +518,7 @@ function calccm(S::AbstractArray{Complex{T}}, w) where {T}
 end
 
 """
-    calccm!(cm,S,w)
+    calccm!(cm, S, w)
 
 Calculate the bosonic commutation relations for a scattering matrix S in the 
 field ladder operator basis. Overwrites cm with output. Use a compensated sum
@@ -526,7 +532,7 @@ julia> cm=Float64[0,0];JosephsonCircuits.calccm!(cm,[3/5 4/5;4/5 3/5],[-1,1]);cm
  -0.28000000000000014
 ```
 """
-function calccm!(cm::AbstractArray{T},S,w) where {T<:AbstractFloat}
+function calccm!(cm::AbstractArray{T}, S, w) where {T<:AbstractFloat}
 
     m = length(w)
 
@@ -540,7 +546,8 @@ function calccm!(cm::AbstractArray{T},S,w) where {T<:AbstractFloat}
         throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
     end
 
-    # use a Kahan, Babushka, Neumaier compensated sum. more cache efficient version
+    # use a Kahan, Babushka, Neumaier compensated sum. more cache efficient
+    # version
     fill!(cm,zero(T))
     c = zeros(eltype(cm),size(cm))
     @inbounds for j in 1:size(S,2)
@@ -563,9 +570,9 @@ function calccm!(cm::AbstractArray{T},S,w) where {T<:AbstractFloat}
 end
 
 """
-    calccm!(cm,S,w)
+    calccm!(cm, S, w)
 
-Calculate the bosonic commutation relations for a scattering matrix S in the 
+Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Overwrites cm with output. 
 
 # Examples
@@ -576,7 +583,7 @@ julia> @variables a b;cm=Num[0,0];JosephsonCircuits.calccm!(cm,[a b; b a],[-1,1]
  abs2(a) - abs2(b)
 ```
 """
-function calccm!(cm,S,w)
+function calccm!(cm, S, w)
 
     m = length(w)
 
@@ -602,12 +609,12 @@ function calccm!(cm,S,w)
 end
 
 """
-    calccm(S,Snoise,w)
+    calccm(S, Snoise, w)
 
 Calculate the bosonic commutation relations for a scattering matrix S in the 
 field ladder operator basis. Sum the abs2 of each element along the horizontal
-axis, applying a minus sign if the corresponding frequency is negative. Represents
-energy conservation. 
+axis, applying a minus sign if the corresponding frequency is negative.
+Represents energy conservation. 
 
 # Examples
 ```jldoctest
@@ -627,13 +634,14 @@ julia> @variables a b c d an bn cn dn;JosephsonCircuits.calccm([a b; c d],[an bn
  abs2(c) + abs2(cn) - abs2(d) - abs2(dn)
 ```
 """
-function calccm(S::AbstractArray{T},Snoise::AbstractArray{T},w) where {T}
+function calccm(S::AbstractArray{T}, Snoise::AbstractArray{T}, w) where {T}
     cm = zeros(T,size(S,1))
     calccm!(cm,S,Snoise,w)
     return cm
 end
 
-function calccm(S::AbstractArray{Complex{T}},Snoise::AbstractArray{Complex{T}},w) where {T}
+function calccm(S::AbstractArray{Complex{T}}, Snoise::AbstractArray{Complex{T}},
+    w) where {T}
     # commutation relations are real so if the type of complex, use this
     # parametric method to define a real matrix.
     cm = zeros(T,size(S,1))
@@ -643,7 +651,7 @@ end
 
 
 """
-    calccm!(cm,S,Snoise,w)
+    calccm!(cm, S, Snoise, w)
 
 Calculate the bosonic commutation relations for a scattering matrix S in the 
 field ladder operator basis. Overwrites cm with output.  Use a compensated sum
@@ -657,7 +665,7 @@ julia> cm=Float64[0, 0];JosephsonCircuits.calccm!(cm,[1 2;3 4],[1 2 3 4;5 6 7 8]
  33.0
 ```
 """
-function calccm!(cm::AbstractArray{T},S,Snoise,w) where {T<:AbstractFloat}
+function calccm!(cm::AbstractArray{T}, S, Snoise, w) where {T<:AbstractFloat}
 
     m = length(w)
 
@@ -681,7 +689,8 @@ function calccm!(cm::AbstractArray{T},S,Snoise,w) where {T<:AbstractFloat}
         throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
 
-    # use a Kahan, Babushka, Neumaier compensated sum. more cache efficient version
+    # use a Kahan, Babushka, Neumaier compensated sum. more cache efficient
+    # version
     fill!(cm,zero(T))
     c = zeros(eltype(cm),size(cm))
     @inbounds for j in 1:size(S,2)
@@ -715,7 +724,7 @@ end
 
 
 """
-    calccm!(cm,S,Snoise,w)
+    calccm!(cm, S, Snoise, w)
 
 Calculate the bosonic commutation relations for a scattering matrix S in the 
 field ladder operator basis. Overwrites cm with output.
@@ -728,7 +737,7 @@ julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(c
  abs2(c) + abs2(cn) - abs2(d) - abs2(dn)
 ```
 """
-function calccm!(cm,S,Snoise,w)
+function calccm!(cm, S, Snoise, w)
 
     m = length(w)
 
@@ -809,12 +818,12 @@ function calcqe(S::AbstractArray{Complex{T}}) where {T}
 end
 
 """
-    calcqe!(qe,S)
+    calcqe!(qe, S)
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
 ladder operator basis. Overwrites qe with output.
 """
-function calcqe!(qe,S)
+function calcqe!(qe, S)
 
     if size(qe) != size(S)
         throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
@@ -838,7 +847,7 @@ function calcqe!(qe,S)
 end
 
 """
-    calcqe(S,Snoise)
+    calcqe(S, Snoise)
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
 ladder operator basis. 
@@ -861,13 +870,14 @@ julia> @variables a b c d an bn cn dn;JosephsonCircuits.calcqe([a b; c d],[an bn
  abs2(c) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))     abs2(d) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))
 ```
 """
-function calcqe(S::AbstractArray{T},Snoise::AbstractArray{T}) where {T}
+function calcqe(S::AbstractArray{T}, Snoise::AbstractArray{T}) where {T}
     qe = zeros(T,size(S))
     calcqe!(qe,S,Snoise)
     return qe
 end
 
-function calcqe(S::AbstractArray{Complex{T}},Snoise::AbstractArray{Complex{T}}) where {T}
+function calcqe(S::AbstractArray{Complex{T}},
+    Snoise::AbstractArray{Complex{T}}) where {T}
     # commutation relations are real so if the type of complex, use this
     # parametric method to define a real matrix.
     qe = zeros(T,size(S))
@@ -876,7 +886,7 @@ function calcqe(S::AbstractArray{Complex{T}},Snoise::AbstractArray{Complex{T}}) 
 end
 
 """
-    calcqe!(qe,S,Snoise)
+    calcqe!(qe, S, Snoise)
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
 ladder operator basis. Overwrites qe with output. 
@@ -889,7 +899,7 @@ julia> qe=Float64[1 2;3 4];JosephsonCircuits.calcqe!(qe,[1 2;3 4],[1 2 3;4 5 6])
  0.0882353  0.156863
 ```
 """
-function calcqe!(qe,S,Snoise)
+function calcqe!(qe, S, Snoise)
 
     if size(qe) != size(S)
         throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
@@ -1067,11 +1077,11 @@ function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
 end
 
 """
-    calcdZdroZ2(sensitivityindices,componenttypes, componentvalues, wmodes,
+    calcdZdroZ2(sensitivityindices, componenttypes, componentvalues, wmodes,
         symfreqvar)
 
-Calculate 1/Z^2 times the derivative of Z with respect to parameter scaling the
-value of the circuit component. For example:
+Calculate 1/Z^2 times the derivative of Z with respect to parameter scaling
+the value of the circuit component. For example:
 Zc = 1/(im*w*Cg*r)
 1/Zc^2*dZc/dr|_{r=1} = -im*Cg*w
 
@@ -1096,8 +1106,8 @@ julia> JosephsonCircuits.calcdZdroZ2([1],[:L], [2.0], [1.0],nothing)
  0.0 - 0.5im
 ```
 """
-function calcdZdroZ2(sensitivityindices,componenttypes, componentvalues, wmodes,
-    symfreqvar)
+function calcdZdroZ2(sensitivityindices, componenttypes, componentvalues,
+    wmodes, symfreqvar)
 
     # make a vector of zeros with length of 
     # length(sensitivityindices)*length(wmodes)

@@ -2,13 +2,15 @@
 """
     hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         pumpports = [1], iterations = 1000, ftol = 1e-8,
-        symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
-        returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-        returnnodeflux = false, returnvoltage = false)
+        symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
+        sorting = :number, returnS = true, returnSnoise = false,
+        returnQE = true, returnCM = true, returnnodeflux = false,
+        returnvoltage = false)
 
 Harmonic balance solver for single-pump four wave mixing processes in circuits
-containing Josephson junctions, capacitors, inductors, and resistors. Dissipation
-can be included through frequency dependent resistors or complex capacitance.
+containing Josephson junctions, capacitors, inductors, and resistors.
+Dissipation can be included through frequency dependent resistors or complex
+capacitance.
 
 Returns user specified scattering parameters, quantum efficiency, and node
 fluxes or voltages.
@@ -25,29 +27,31 @@ fluxes or voltages.
 - `circuitdefs`: dictionary defining the numerical values of circuit components.
 
 # Keywords
-- `pumpports = [1]`: vector of pump port numbers. Default is a single pump at port 1.
-- `iterations = 1000`: number of iterations at which the nonlinear solver stops
-    even if convergence criteria not reached. 
-- `ftol = 1e-8`: relative or absolute tolerance at which nonlinear solver stops
-    (whichever is reached first).
-- `symfreqvar = nothing`: symbolic frequency variable which is set to `nothing`
-    by default but should be set equal to the frequency variable like `w` if 
-    there is frequency dependence.
-- `nbatches = Base.Threads.nthreads()`: for the linearized harmonic balance solution,
-    split the solutions for different frequencies into this many batches. Set
-    equalt to the number of threads. Recommend configuring Julia to use 
-    Sys.CPU_THREADS/2 threads. 
-- `sorting = :number`: sort the ports by turning them into integers and sorting
-    those integers. See [`sortnodes`](@ref) for other options if this fails.
+- `pumpports = [1]`: vector of pump port numbers. Default is a single pump at
+    port 1.
+- `iterations = 1000`: number of iterations at which the nonlinear solver
+    stops even if convergence criteria not reached. 
+- `ftol = 1e-8`: relative or absolute tolerance at which nonlinear solver
+    stops (whichever is reached first).
+- `symfreqvar = nothing`: symbolic frequency variable which is set to
+    `nothing` by default but should be set equal to the frequency variable
+    like `w` if there is frequency dependence.
+- `nbatches = Base.Threads.nthreads()`: for the linearized harmonic balance
+    solution,split the solutions for different frequencies into this many
+    batches. Set equalt to the number of threads. Recommend configuring Julia
+    to use Sys.CPU_THREADS/2 threads. 
+- `sorting = :number`: sort the ports by turning them into integers and
+    sorting those integers. See [`sortnodes`](@ref) for other options if this
+    fails.
 - `returnS = true`: if `true`, return the scattering parameters for each set
     of ports and signal and idler frequencies.
-- `returnSnoise = false`: if `true`, return the scattering parameters corresponding
-    to inputs at the noise ports (lossy components) and outputs at the physical
-    ports for the signal and idler frequencies. 
+- `returnSnoise = false`: if `true`, return the scattering parameters
+    corresponding to inputs at the noise ports (lossy components) and outputs
+    at the physical ports for the signal and idler frequencies. 
 - `returnQE = true`: if `true`, return the quantum efficiency for each signal
     and idler at each combinaton of ports.
-- `returnCM = true`: if `true`, return the commutation relations for each signal
-    and idler at each combinaton of ports (should equal ±1).
+- `returnCM = true`: if `true`, return the commutation relations for each
+    signal and idler at each combinaton of ports (should equal ±1).
 - `returnnodeflux = false`: if `true`, return the node fluxes for each signal
     and idler at each node. Set to `false` by default to reduce memory usage.
 - `returnnodefluxadjoint = false`: if `true`, return the node fluxes adjoint
@@ -97,8 +101,8 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     cg = calccircuitgraph(psc)
 
     # solve the nonlinear system
-    nonlinear = hbnlsolveold(wp, Ip, Npumpmodes, psc, cg, circuitdefs, ports = pumpports,
-        iterations = iterations, ftol = ftol,
+    nonlinear = hbnlsolveold(wp, Ip, Npumpmodes, psc, cg, circuitdefs,
+        ports = pumpports, iterations = iterations, ftol = ftol,
         symfreqvar = symfreqvar)
 
     # the node flux
@@ -109,15 +113,18 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     phib = nonlinear.Rbnm*nodeflux
 
     # calculate the sine and cosine nonlinearities from the pump flux
-    Am = sincosnloddtoboth(phib[nonlinear.Ljbm.nzind], length(nonlinear.Ljb.nzind), nonlinear.Nmodes)
+    Am = sincosnloddtoboth(phib[nonlinear.Ljbm.nzind],
+        length(nonlinear.Ljb.nzind), nonlinear.Nmodes)
 
     # solve the linear system
-    linearized = hblinsolveold(ws, psc, cg, circuitdefs, wp = wp, Nmodes = Nsignalmodes,
-        Am = Am, symfreqvar = symfreqvar, nbatches = nbatches,
-        returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
-        returnCM = returnCM, returnnodeflux = returnnodeflux,
+    linearized = hblinsolveold(ws, psc, cg, circuitdefs, wp = wp,
+        Nmodes = Nsignalmodes, Am = Am, symfreqvar = symfreqvar,
+        nbatches = nbatches, returnS = returnS, returnSnoise = returnSnoise,
+        returnQE = returnQE, returnCM = returnCM,
+        returnnodeflux = returnnodeflux,
         returnnodefluxadjoint = returnnodefluxadjoint,
-        returnvoltage = returnvoltage, returnvoltageadjoint = returnvoltageadjoint,
+        returnvoltage = returnvoltage,
+        returnvoltageadjoint = returnvoltageadjoint,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
         returnSsensitivity = returnSsensitivity,
         returnZ = returnZ, returnZadjoint = returnZadjoint,
@@ -133,9 +140,10 @@ end
         returnSnoise = false, returnQE = true, returnCM = true,
         returnnodeflux = false, returnvoltage = false)
 
-Linearized harmonic balance solver for single-pump four wave mixing processes in circuits
-containing Josephson junctions, capacitors, inductors, and resistors. Dissipation
-can be included through frequency dependent resistors or complex capacitance.
+Linearized harmonic balance solver for single-pump four wave mixing processes
+in circuits containing Josephson junctions, capacitors, inductors, and
+resistors. Dissipation can be included through frequency dependent resistors
+or complex capacitance.
 
 Returns user specified scattering parameters, quantum efficiency, and node
 fluxes or voltages.
@@ -146,28 +154,29 @@ fluxes or voltages.
 - `circuitdefs`: dictionary defining the numerical values of circuit components.
 
 # Keywords
-- `wp = 0.0`: pump frequency in radians/second. This function only supports a single
-    pump frequency.
+- `wp = 0.0`: pump frequency in radians/second. This function only supports a
+    single pump frequency.
 - `Nmodes = 1`: number of signal and idler modes.
 - `Am = zeros(Complex{Float64},0,0)`: 
 - `symfreqvar = nothing`: symbolic frequency variable which is set to `nothing`
     by default but should be set equal to the frequency variable like `w` if 
     there is frequency dependence.
-- `nbatches = Base.Threads.nthreads()`: for the linearized harmonic balance solution,
-    split the solutions for different frequencies into this many batches. Set
-    equalt to the number of threads. Recommend configuring Julia to use 
-    Sys.CPU_THREADS/2 threads. 
-- `sorting = :number`: sort the ports by turning them into integers and sorting
-    those integers. See [`sortnodes`](@ref) for other options if this fails.
+- `nbatches = Base.Threads.nthreads()`: for the linearized harmonic balance
+    solution, split the solutions for different frequencies into this many
+    batches. Set equal to the number of threads. Recommend configuring Julia
+    to use Sys.CPU_THREADS/2 threads. 
+- `sorting = :number`: sort the ports by turning them into integers and
+    sorting those integers. See [`sortnodes`](@ref) for other options if this
+    fails.
 - `returnS = true`: if `true`, return the scattering parameters for each set
     of ports and signal and idler frequencies.
-- `returnSnoise = false`: if `true`, return the scattering parameters corresponding
-    to inputs at the noise ports (lossy components) and outputs at the physical
-    ports for the signal and idler frequencies. 
+- `returnSnoise = false`: if `true`, return the scattering parameters
+    corresponding to inputs at the noise ports (lossy components) and outputs
+    at the physical ports for the signal and idler frequencies. 
 - `returnQE = true`: if `true`, return the quantum efficiency for each signal
     and idler at each combinaton of ports.
-- `returnCM = true`: if `true`, return the commutation relations for each signal
-    and idler at each combinaton of ports (should equal ±1).
+- `returnCM = true`: if `true`, return the commutation relations for each
+    signal and idler at each combinaton of ports (should equal ±1).
 - `returnnodeflux = false`: if `true`, return the node fluxes for each signal
     and idler at each node. Set to `false` by default to reduce memory usage.
 - `returnnodefluxadjoint = false`: if `true`, return the node fluxes adjoint
@@ -227,9 +236,10 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
 end
 
 function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
-    circuitdefs; wp = 0.0, Nmodes::Integer = 1, Am = zeros(Complex{Float64},0,0),
-    symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
-    returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
+    circuitdefs; wp = 0.0, Nmodes::Integer = 1,
+    Am = zeros(Complex{Float64},0,0), symfreqvar = nothing,
+    nbatches::Integer = Base.Threads.nthreads(), returnS = true,
+    returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
     returnvoltage = false, returnvoltageadjoint = false,
     keyedarrays::Val{K} = Val(false), sensitivitynames = String[],
@@ -332,7 +342,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     Gnmcopy = freqsubst(Gnm,wmodes,symfreqvar)
     invLnmcopy = freqsubst(invLnm,wmodes,symfreqvar)
     # Asparse = (AoLjnm + invLnmcopy + Gnmcopy + Cnmcopy)
-    Asparse = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm,invLnmcopy),Gnmcopy),Cnmcopy)
+    Asparse = spaddkeepzeros(spaddkeepzeros(
+        spaddkeepzeros(AoLjnm,invLnmcopy),Gnmcopy),Cnmcopy)
 
     # make the index maps so we can efficiently add the sparse matrices
     # together without allocations or changing the sparsity structure. 
@@ -368,7 +379,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     end
 
     if returnSnoise
-        Snoise = zeros(Complex{Float64},length(noiseportimpedanceindices)*Nmodes,Nports*Nmodes,length(w))
+        Snoise = zeros(Complex{Float64},
+            length(noiseportimpedanceindices)*Nmodes,Nports*Nmodes,length(w))
     else
         Snoise = zeros(Complex{Float64},0,0,0)
     end
@@ -410,25 +422,29 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     end
 
     if returnnodeflux
-        nodeflux = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
+        nodeflux = zeros(Complex{Float64}, Nmodes*(Nnodes-1), Nmodes*Nports,
+            length(w))
     else
         nodeflux = Vector{Complex{Float64}}(undef,0)
     end
 
     if returnnodefluxadjoint
-        nodefluxadjoint = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
+        nodefluxadjoint = zeros(Complex{Float64}, Nmodes*(Nnodes-1),
+            Nmodes*Nports, length(w))
     else
         nodefluxadjoint = Vector{Complex{Float64}}(undef,0)
     end
 
     if returnvoltage
-        voltage = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
+        voltage = zeros(Complex{Float64}, Nmodes*(Nnodes-1), Nmodes*Nports,
+            length(w))
     else
         voltage = Vector{Complex{Float64}}(undef,0)
     end
 
     if returnvoltageadjoint
-        voltageadjoint = zeros(Complex{Float64},Nmodes*(Nnodes-1),Nmodes*Nports,length(w))
+        voltageadjoint = zeros(Complex{Float64}, Nmodes*(Nnodes-1),
+            Nmodes*Nports, length(w))
     else
         voltageadjoint = Vector{Complex{Float64}}(undef,0)
     end
@@ -444,14 +460,15 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     # parallelize using native threading
     batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
     Base.Threads.@threads for i in 1:length(batches)
-        hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Zsensitivityadjoint,
-            QE, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, Asparse, 
-            AoLjnm, invLnm, Cnm, Gnm, bnm,
+        hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
+            Zsensitivityadjoint, QE, CM, nodeflux, nodefluxadjoint, voltage,
+            voltageadjoint, Asparse, AoLjnm, invLnm, Cnm, Gnm, bnm,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
-            portindices, portimpedanceindices, noiseportimpedanceindices, sensitivityindices,
-            portimpedances, noiseportimpedances, nodeindices, componenttypes,
-            w, wpumpmodes, Nmodes, Nnodes, symfreqvar, batches[i])
+            portindices, portimpedanceindices, noiseportimpedanceindices,
+            sensitivityindices, portimpedances, noiseportimpedances,
+            nodeindices, componenttypes, w, wpumpmodes, Nmodes, Nnodes,
+            symfreqvar, batches[i])
     end
 
     # calculate the `ideal` quantum efficiency based on the gain assuming an
@@ -481,7 +498,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     end
 
     if returnZadjoint && K
-        Zadjointout = Stokeyed(Zadjoint, modes, portnumbers, modes, portnumbers, w)
+        Zadjointout = Stokeyed(Zadjoint, modes, portnumbers, modes,
+            portnumbers, w)
     else
         Zadjointout = Zadjoint
     end
@@ -568,27 +586,25 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
         voltageadjointout = voltageadjoint
     end
 
-    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivityout, Zout, Zadjointout,
-        Zsensitivityout, Zsensitivityadjointout, QEout,
+    return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivityout, Zout,
+        Zadjointout, Zsensitivityout, Zsensitivityadjointout, QEout,
         QEidealout, CMout, nodefluxout, nodefluxadjointout, voltageout,
         voltageadjointout, nodenames, nodeindices, componentnames,
         componenttypes, componentnamedict, mutualinductorbranchnames,
         portnumbers, portindices, portimpedanceindices,
         noiseportimpedanceindices, sensitivitynames, sensitivityindices,
         Nmodes, Nnodes, Nbranches, Nports, signalindex)
-
 end
-
-
 
 """
     hbnlsolveold(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
         iterations = 1000, ftol = 1e-8, symfreqvar = nothing,
         sorting = :number)
 
-Nonlinear harmonic balance solver for single-pump four wave mixing processes in circuits
-containing Josephson junctions, capacitors, inductors, and resistors. Dissipation
-can be included through frequency dependent resistors or complex capacitance.
+Nonlinear harmonic balance solver for single-pump four wave mixing processes
+in circuits containing Josephson junctions, capacitors, inductors, and
+resistors. Dissipation can be included through frequency dependent resistors
+or complex capacitance.
 
 # Arguments
 - `wp`: pump frequency in radians/second. This function only supports a single
@@ -787,12 +803,13 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
     Nports = length(portindices)
     S = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
     inputwave = zeros(Complex{Float64}, Nports*Nmodes)
-    outputwave = zeros(Complex{Float64},Nports*Nmodes)
+    outputwave = zeros(Complex{Float64}, Nports*Nmodes)
     portimpedances = [vvn[i] for i in portimpedanceindices]
     if !isempty(S)
-        calcinputoutput!(inputwave,outputwave,nodeflux,bnm/Lmean,portimpedanceindices,portimpedanceindices,
-            portimpedances,portimpedances,nodeindices,componenttypes,wmodes,symfreqvar)
-        calcscatteringmatrix!(S,inputwave,outputwave)
+        calcinputoutput!(inputwave, outputwave, nodeflux, bnm/Lmean,
+            portimpedanceindices, portimpedanceindices, portimpedances,
+            portimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
+        calcscatteringmatrix!(S, inputwave, outputwave)
     end
 
     # calculate the frequency struct which we use in v2 of the solvers
@@ -1059,10 +1076,10 @@ end
 """
     sincosnloddtoboth(amodd::Array{Complex{Float64},1},Nbranches::Int,m::Int)
 
-Applies the junction nonlinearity to a vector of branch fluxes of length Nbranches*m
-where m is the number of odd pump harmonics (1w, 3w, 5w, etc). The ordering is
-(mode 1, node 1), (mode 2, node 1) ... (mode 1, node 2) ... Returns even AND
-odd terms in a 2d array with dimensions 2*m by Nbranches. 
+Applies the junction nonlinearity to a vector of branch fluxes of length
+`Nbranches*m` where `m` is the number of odd pump harmonics (1w, 3w, 5w, etc).
+The ordering is (mode 1, node 1), (mode 2, node 1) ... (mode 1, node 2) ...
+Returns even AND odd terms in a 2d array with dimensions 2*m by Nbranches.
 
 # Examples
 ```jldoctest
@@ -1091,10 +1108,11 @@ end
     sincosnl(am::Array{Complex{Float64},2})
 
 Applies the junction nonlinearity to a vector of Fourier coefficients of the
-phases across the junction of size 2*m by (Nnodes-1) where m is the number of pump
-harmonics (0w, 1w, 2w, 3w, etc). To save time, this calculates both the sine and
-cosine nonlinearities at the same time. If the input is odd harmonics, the sine
-terms will also be odd harmonics the cosine terms will be even harmonics.
+phases across the junction of size 2*m by (Nnodes-1) where m is the number of
+pump harmonics (0w, 1w, 2w, 3w, etc). To save time, this calculates both the
+sine and cosine nonlinearities at the same time. If the input is odd
+harmonics, the sine terms will also be odd harmonics the cosine terms will be
+even harmonics.
 
 # Examples
 ```jldoctest
@@ -1139,7 +1157,8 @@ end
     calcindices(m::Integer)
 
 The indices over which to calculate the idlers using the formula ws+2*i*wp 
-where i is an index. This could be defined differently without causing any issues. 
+where i is an index. This could be defined differently without causing any
+issues.
 
 # Examples
 ```jldoctest

@@ -2,25 +2,26 @@
 """
     ParsedSortedCircuit(nodeindices::Matrix{Int},
         nodenames::Vector{String},
-        mutualinductorbranchnames::Vector{String},componentnames::Vector{String},
-        componenttypes::Vector{Symbol},componentvalues::Vector,
-        componentnamedict::Dict{String, Int},Nnodes::Int)
+        mutualinductorbranchnames::Vector{String},
+        componentnames::Vector{String},
+        componenttypes::Vector{Symbol}, componentvalues::Vector,
+        componentnamedict::Dict{String, Int}, Nnodes::Int)
 
-A simple structure to hold the parsed and sorted circuit. See also 
-[`parsesortcircuit`](@ref), [`parsecircuit`](@ref), and [`sortnodes`](@ref) 
+A simple structure to hold the parsed and sorted circuit. See also
+[`parsesortcircuit`](@ref), [`parsecircuit`](@ref), and [`sortnodes`](@ref)
 for more explanation.
 
 # Fields
-- `nodeindices::Matrix{Int}`: sorted array of node indices (where
-    the length of the first axis is 2).
+- `nodeindices::Matrix{Int}`: sorted array of node indices (where the length
+    of the first axis is 2).
 - `nodenames::Vector{String}`: the sorted unique node names.
-- `mutualinductorbranchnames::Vector{String}`: the inductors coupled by the mutual
-    inductors.
+- `mutualinductorbranchnames::Vector{String}`: the inductors coupled by the
+    mutual inductors.
 - `componentnames::Vector{String}`: component names.
-- `componenttypes::Vector{Symbol}`: the component (electrical engineering) types 
-- `componentvalues::Vector`: the component values
-- `componentnamedict::Dict{String, Int}`: names of the components as keys and the
-    index at which the component occurs as the value.
+- `componenttypes::Vector{Symbol}`: the component (electrical engineering) types.
+- `componentvalues::Vector`: the component values.
+- `componentnamedict::Dict{String, Int}`: names of the components as keys and
+    the index at which the component occurs as the value.
 - `Nnodes::Int`: number of nodes including the ground node.
 
 # Examples
@@ -52,7 +53,7 @@ struct ParsedSortedCircuit
 end
 
 """
-    parsesortcircuit(circuit;sorting=:name)
+    parsesortcircuit(circuit; sorting = :name)
 
 Parse and sort the circuit. See [`parsecircuit`](@ref), [`sortnodes`](@ref)
 for more explanation.
@@ -103,7 +104,7 @@ println(parsesortcircuit(circuit))
 JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 0 3 3; 1 1 1 1 0 1 1], ["0", "1", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Num[1, Ipump, Rleft, L1, Kfun(L1), L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
 ```
 """
-function parsesortcircuit(circuit;sorting=:number)
+function parsesortcircuit(circuit; sorting = :number)
 
     # parse the circuit components
     parsedcircuit = parsecircuit(circuit)
@@ -125,16 +126,17 @@ function parsesortcircuit(circuit;sorting=:number)
         parsedcircuit.Nnodes)
 end
 
-
 """
     ParsedCircuit(nodeindexvector::Vector{Int},
-        uniquenodevector::Vector{String},mutualinductorbranchnames::Vector{String},
-        componentnames::Vector{String},componenttypes::Vector{Symbol},
-        componentvalues::Vector,componentnamedict::Dict{String, Int},Nnodes::Int)
+        uniquenodevector::Vector{String},
+        mutualinductorbranchnames::Vector{String},
+        componentnames::Vector{String}, componenttypes::Vector{Symbol},
+        componentvalues::Vector, componentnamedict::Dict{String, Int},
+        Nnodes::Int)
 
-A simple structure to hold the parsed circuit including a vector of node indices,
-the unique node names, the inductors coupled by the mutual inductors, the
-component names, the component types, the values of the components, a
+A simple structure to hold the parsed circuit including a vector of node
+indices, the unique node names, the inductors coupled by the mutual inductors,
+the component names, the component types, the values of the components, a
 dictionary of the names of the components as keys and the index at which the
 component occurs as the value, and dictionaries for the ports and resistors
 where the pair of nodes is the key and value is the component value.
@@ -145,13 +147,14 @@ See also [`parsecircuit`](@ref).
 - `nodeindexvector::Vector{Int}`: sorted vector of node indices where the
     two nodes for each component occur as consecutive elements (pairs).
 - `uniquenodevector::Vector{String}`: the unique node names.
-- `mutualinductorbranchnames::Vector{String}`: the inductors coupled by the mutual
-    inductors.
+- `mutualinductorbranchnames::Vector{String}`: the inductors coupled by the
+    mutual inductors.
 - `componentnames::Vector{String}`: component names.
-- `componenttypes::Vector{Symbol}`: the component (electrical engineering) types
-- `componentvalues::Vector`: the component values
-- `componentnamedict::Dict{String, Int}`: names of the components as keys and the
-    index at which the component occurs as the value.
+- `componenttypes::Vector{Symbol}`: the component (electrical engineering)
+    types.
+- `componentvalues::Vector`: the component values.
+- `componentnamedict::Dict{String, Int}`: names of the components as keys and
+    the index at which the component occurs as the value.
 - `Nnodes::Int`: number of nodes including the ground node.
 
 # Examples
@@ -173,7 +176,7 @@ JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 3, 2, 3, 2], ["1"
 struct ParsedCircuit
     nodeindexvector::Vector{Int}
     uniquenodevector::Vector{String}
-    mutualinductorbranchnames::Vector{String} 
+    mutualinductorbranchnames::Vector{String}
     componentnames::Vector{String}
     componenttypes::Vector{Symbol}
     componentvalues::Vector
@@ -181,15 +184,13 @@ struct ParsedCircuit
     Nnodes::Int
 end
 
-
 """
     parsecircuit(circuit)
 
 Parse `circuit` which is a vector where each element contains a tuple with the
 component name, the first node, the second node, and the component value.
 Component values can be numbers, symbols, or symbolic variables (including
-symbolic functions). Definitions for component values are stored in
-`circuitdefs`.
+symbolic functions).
 
 The nodes can be arbitrary strings for SPICE compatibility. Integers are also
 supported but are converted internally to strings. The ground node is "0" and
@@ -380,7 +381,6 @@ function parsecircuit(circuit)
         componentnames, componenttypes, componentvalues, componentnamedict,length(uniquenodevector))
 end
 
-
 """
     processnode(uniquenodedict::Dict{String, Int},
         uniquenodevector::Vector{String},node::String)
@@ -470,7 +470,6 @@ function processnode(uniquenodedict::Dict{String, Int},
     # if the node isn't a string, turn it into a string
     return processnode(uniquenodedict,uniquenodevector,string(node))
 end
-
 
 """
     parsecomponenttype(name::String,allowedcomponents::Vector{String})
@@ -643,7 +642,6 @@ function findgroundnodeindex(uniquenodevector::Vector{String})
     return 0
 end
 
-
 """
     calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
 
@@ -801,7 +799,6 @@ function sortnodes(uniquenodevector::Vector{String},
 
     return uniquenodevector[uniquenodevectorsortindices],nodeindices
 end
-
 
 """
     calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,
@@ -1086,7 +1083,6 @@ function calcportindicesnumbers(componenttypes::Vector{Symbol},
     return portindices[sp],portnumbers[sp]
 end
 
-
 """
     calcportimpedanceindices(componenttypes::Vector{Symbol},
         nodeindexarray::Matrix{Int},mutualinductorbranchnames::Vector,
@@ -1213,7 +1209,6 @@ function calcportimpedanceindices(componenttypes::Vector{Symbol},
     return resistorindices[sp]
 end
 
-
 """
     componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
 
@@ -1288,7 +1283,6 @@ function valuetonumber(value::String,circuitdefs)
     return circuitdefs[value]
 end
 
-
 """
     valuetonumber(value::Symbolics.Num,circuitdefs)
 
@@ -1309,7 +1303,6 @@ function valuetonumber(value::Symbolics.Num,circuitdefs)
     # their evaluation and evalutes to a number. 
     return Symbolics.substitute(Symbolics.unwrap(value),circuitdefs)
 end
-
 
 """
     valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
@@ -1332,12 +1325,11 @@ function valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
     return Symbolics.unwrap(Symbolics.substitute(value,circuitdefs))
 end
 
-
 """
-    valuetonumber(value::Symbolics.Symbol,circuitdefs)
+    valuetonumber(value::Symbolics.Symbol, circuitdefs)
 
-If the component value is Complex{Symbolics.Num}, then try substituting in the
-definition from `circuitdefs`. 
+If the component value `value` has a type Complex{Symbolics.Num}, then try
+substituting in the definition from `circuitdefs`. 
 
 # Examples
 ```jldoctest
@@ -1348,16 +1340,15 @@ julia> @syms Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,L
 4.0e-12
 ```
 """
-function valuetonumber(value::Symbolics.Symbolic,circuitdefs)
-    return Symbolics.substitute(value,circuitdefs)
+function valuetonumber(value::Symbolics.Symbolic, circuitdefs)
+    return Symbolics.substitute(value, circuitdefs)
 end
 
-
 """
-    valuetonumber(value,circuitdefs)
+    valuetonumber(value, circuitdefs)
 
-If the component value is a number (or a type we haven't considered, return it
-as is. 
+If the component value `value` is a number (or a type we haven't considered,
+return it as is.
 
 # Examples
 ```jldoctest
@@ -1365,6 +1356,6 @@ julia> JosephsonCircuits.valuetonumber(1.0,Dict(:Lj1=>1e-12,:Lj2=>2e-12))
 1.0
 ```
 """
-function valuetonumber(value,circuitdefs)
+function valuetonumber(value, circuitdefs)
     return value
 end
