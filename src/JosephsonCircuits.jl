@@ -9,7 +9,7 @@ import UUIDs
 import Symbolics: Symbolic, Sym, Num, @variables, @syms, @register_symbolic
 import Symbolics
 import AxisKeys
-import SnoopPrecompile
+import PrecompileTools
 import OrderedCollections
 import Statistics
 
@@ -329,7 +329,7 @@ export @syms, hbsolve, hbnlsolve, hblinsolve, hbsolveold, hbnlsolveold,
 # julia> tinf = @snoopi_deep JosephsonCircuits.warmupsyms();
 # julia> itrigs = inference_triggers(tinf)
 
-SnoopPrecompile.@precompile_all_calls begin
+PrecompileTools.@compile_workload begin
     warmup()
     warmupsyms()
     warmupsymsold()
