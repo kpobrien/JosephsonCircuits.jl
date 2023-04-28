@@ -1057,8 +1057,8 @@ function calcnodematrix(componenttypes::Vector{Symbol},
                 # capacitance to ground, add to diagonal
                 In[j] = nodeindices[2,i]-1
                 Jn[j] = nodeindices[2,i]-1
-                # @inline is necessary here to avoid allocations (Julia 1.9-rc2)
-                @inline Vn[j] = componentvalues[i]
+                # convert is necessary here to avoid allocations
+                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
                 if invert
                     Vn[j] = 1/Vn[j]
                 end
@@ -1068,8 +1068,8 @@ function calcnodematrix(componenttypes::Vector{Symbol},
                 # capacitance to ground, add to diagonal
                 In[j] = nodeindices[1,i]-1
                 Jn[j] = nodeindices[1,i]-1
-                # @inline is necessary here to avoid allocations (Julia 1.9-rc2)
-                @inline Vn[j] = componentvalues[i]
+                # convert is necessary here to avoid allocations
+                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
                 if invert
                     Vn[j] = 1/Vn[j]
                 end
@@ -1079,8 +1079,8 @@ function calcnodematrix(componenttypes::Vector{Symbol},
                 # diagonal elements
                 In[j] = nodeindices[1,i]-1
                 Jn[j] = nodeindices[1,i]-1
-                # @inline is necessary here to avoid allocations (Julia 1.9-rc2)
-                @inline Vn[j] = componentvalues[i]
+                # convert is necessary here to avoid allocations
+                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
                 if invert
                     Vn[j] = 1/Vn[j]
                 end
@@ -1088,8 +1088,8 @@ function calcnodematrix(componenttypes::Vector{Symbol},
 
                 In[j] = nodeindices[2,i]-1
                 Jn[j] = nodeindices[2,i]-1
-                # @inline is necessary here to avoid allocations (Julia 1.9-rc2)
-                @inline Vn[j] = componentvalues[i]
+                # convert is necessary here to avoid allocations
+                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
                 if invert
                     Vn[j] = 1/Vn[j]
                 end
@@ -1098,8 +1098,8 @@ function calcnodematrix(componenttypes::Vector{Symbol},
                 # off diagonal elements
                 In[j] = nodeindices[1,i]-1
                 Jn[j] = nodeindices[2,i]-1
-                # @inline is necessary here to avoid allocations (Julia 1.9-rc2)
-                @inline Vn[j] = componentvalues[i]
+                # convert is necessary here to avoid allocations
+                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
                 Vn[j] = -Vn[j]
                 if invert
                     Vn[j] = 1/Vn[j]
@@ -1108,8 +1108,8 @@ function calcnodematrix(componenttypes::Vector{Symbol},
 
                 In[j] = nodeindices[2,i]-1
                 Jn[j] = nodeindices[1,i]-1
-                # @inline is necessary here to avoid allocations (Julia 1.9-rc2)
-                @inline Vn[j] = componentvalues[i]
+                # convert is necessary here to avoid allocations
+                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
                 Vn[j] = -Vn[j]
                 if invert
                     Vn[j] = 1/Vn[j]
