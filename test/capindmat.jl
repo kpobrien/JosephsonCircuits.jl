@@ -11,12 +11,12 @@ using Test
 
     @testset "calcnodematrix" begin
         @test_throws(
-            DimensionMismatch("nodeindexarray should have a first dimension size of 2."),
+            DimensionMismatch("nodeindices should have a first dimension size of 2."),
             JosephsonCircuits.calcnodematrix(
                 [:R,:R],[2 3;1 1;0 0],[1.0,2.0],Float64[],1,3,:R,false)
         )
         @test_throws(
-            DimensionMismatch("componenttypes, nodeindexarray, and componentvalues should have the same length"),
+            DimensionMismatch("componenttypes, nodeindices, and componentvalues should have the same length"),
             JosephsonCircuits.calcnodematrix([:R],[2 3;1 1],[1.0,2.0],
                 Float64[],1,3,:R,false)
         )
