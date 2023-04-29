@@ -885,6 +885,9 @@ Return the mean of the linear and Josephson inductors.
 julia> JosephsonCircuits.calcLmean_inner([:R,:L,:C,:Lj],[10,4,5,1],Float64[])
 2.5
 
+julia> JosephsonCircuits.calcLmean_inner([:R,:C,:C,:C],[10,4,5,1],Float64[])
+0.0
+
 julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean_inner([:R,:L,:C,:Lj],[R1, L1, C1, Lj1], Num[])
 (1//2)*(L1 + Lj1)
 ```
@@ -916,7 +919,8 @@ function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
         end
     end
 
-    # take the mean
+    # take the mean. mean will return NaN if there are no elements so return
+    # zero manually if Vn is empty.
     if isempty(Vn)
         return zero(eltype(valuecomponenttypes))
     else
