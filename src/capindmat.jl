@@ -426,17 +426,29 @@ function calcbranchvector(componenttypes::Vector{Symbol},
     valuecomponenttypes::Vector, edge2indexdict::Dict, Nmodes, Nbranches,
     component::Symbol)
 
-    # define empty vectors of zero length for the indices and values
-    Ib = Vector{Int}(undef, 0)
-    Vb = Vector{eltype(valuecomponenttypes)}(undef, 0)
-
-    @inbounds for (i,type) in enumerate(componenttypes)
+    # calculate the expected number of elements
+    Nelements = 0
+    for (i,type) in enumerate(componenttypes)
         if type == component
-            push!(Ib,edge2indexdict[(nodeindices[1,i],nodeindices[2,i])])
-            push!(Vb,componentvalues[i])
+            Nelements += 1
         end
     end
 
+    # define empty vectors for the indices and values
+    Ib = Vector{Int}(undef, Nelements)
+    Vb = Vector{eltype(valuecomponenttypes)}(undef, Nelements)
+
+    # copy the components over
+    j = 1
+    for (i,type) in enumerate(componenttypes)
+        if type == component
+            Ib[j] = edge2indexdict[(nodeindices[1,i],nodeindices[2,i])]
+            Vb[j] = convert(eltype(valuecomponenttypes), componentvalues[i])
+            j += 1
+        end
+    end
+
+    # return a sparse vector
     branchvector = sparsevec(Ib,Vb,Nbranches)
     if Nmodes == 1
         return branchvector
@@ -841,6 +853,42 @@ function calcLmean(componenttypes::Vector{Symbol}, componentvalues::Vector)
         calcvaluetype(componenttypes, componentvalues, [:Lj, :L]))
 end
 
+"""
+    calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
+        valuecomponenttypes::Vector{Nothing})
+
+Return the mean of the linear and Josephson inductors. Return 0 if the expected
+return type is Nothing.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcLmean_inner([:R,:C,:C,:P],[10,4,5,1],Nothing[])
+0
+
+julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean_inner([:R,:C,:C,:C],[R1, L1, C1, Lj1],Nothing[])
+0
+```
+"""
+function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
+    valuecomponenttypes::Vector{Nothing})
+    return 0
+end
+
+"""
+    calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
+        valuecomponenttypes::Vector)
+
+Return the mean of the linear and Josephson inductors.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcLmean_inner([:R,:L,:C,:Lj],[10,4,5,1],Float64[])
+2.5
+
+julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean_inner([:R,:L,:C,:Lj],[R1, L1, C1, Lj1], Num[])
+(1//2)*(L1 + Lj1)
+```
+"""
 function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
     valuecomponenttypes::Vector)
 
@@ -848,39 +896,32 @@ function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
         throw(DimensionMismatch("componenttypes and componentvalues should have the same length"))
     end
 
-    # it's a litle absurd but we have to copy the inductance values into
-    # a new array to perform a type stable mean over some elements of
-    # componentvalues
-    Vn = Array{eltype(valuecomponenttypes), 1}(undef, 0)
-    @inbounds for (i,type) in enumerate(componenttypes)
+    # count the number of inductors
+    ninductors = 0
+    for (i,type) in enumerate(componenttypes)
         if type == :L || type == :Lj
-            push!(Vn,componentvalues[i])
+            ninductors += 1
         end
     end
 
-    # # take the mean
-    # Lmean = zero(eltype(valuecomponenttypes))
-    # # Lmean = 0
-    # ninductors = 0
-    # for v in Vn
-    #     ninductors+=1
-    #     Lmean = Lmean + (v-Lmean)/ninductors
-    # end
-    # return Lmean
+    # it's a litle absurd but we have to copy the inductance values into
+    # a new array to perform a type stable mean over some elements of
+    # componentvalues
+    Vn = Array{eltype(valuecomponenttypes), 1}(undef, ninductors)
+    j = 1
+    for (i,type) in enumerate(componenttypes)
+        if type == :L || type == :Lj
+            Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
+            j += 1
+        end
+    end
 
+    # take the mean
     if isempty(Vn)
-        return 0
+        return zero(eltype(valuecomponenttypes))
     else
         return Statistics.mean(Vn)
     end
-
-    # Lmean = Statistics.mean(Vn)
-    # if isnothing(Lmean)
-    #     return 0
-    # else
-    #     return Lmean
-    # end
-    # return Statistics.mean(Vn)
 end
 
 """
