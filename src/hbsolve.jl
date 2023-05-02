@@ -172,7 +172,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
-    sensitivitynames = String[], returnSsensitivity = false,
+    sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
     returnZ = false, returnZadjoint = false,
     returnZsensitivity = false, returnZsensitivityadjoint = false) where K
 
@@ -318,7 +318,7 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
     sorting = :number, returnS = true, returnSnoise = false, returnQE = true,
     returnCM = true, returnnodeflux = false, returnvoltage = false,
     returnnodefluxadjoint = false, returnvoltageadjoint = false,
-    keyedarrays::Val{K} = Val(true), sensitivitynames = String[],
+    keyedarrays::Val{K} = Val(true), sensitivitynames::Vector{String} = String[],
     returnSsensitivity = false, returnZ = false, returnZadjoint = false,
     returnZsensitivity = false, returnZsensitivityadjoint = false,
     ) where {N,M,K}
@@ -476,7 +476,7 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
     returnvoltage = false, returnvoltageadjoint = false,
-    keyedarrays::Val{K} = Val(true), sensitivitynames = String[],
+    keyedarrays::Val{K} = Val(true), sensitivitynames::Vector{String} = String[],
     returnSsensitivity = false, returnZ = false, returnZadjoint = false,
     returnZsensitivity = false, returnZsensitivityadjoint = false) where K
 
@@ -591,7 +591,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
-    sensitivitynames = String[], returnSsensitivity = false,
+    sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
     returnZ = false, returnZadjoint = false,
     returnZsensitivity = false, returnZsensitivityadjoint = false) where {N,K}
 
@@ -692,8 +692,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     vvn = signalnm.vvn
     modes = signalfreq.modes
 
-    # actually compute this
-    # sensitivityindices = Int[]
+    # find the indices associated with the components for which we will
+    # calculate sensitivities
     sensitivityindices = zeros(Int,length(sensitivitynames))
     for i in eachindex(sensitivitynames)
         sensitivityindices[i] = componentnamedict[sensitivitynames[i]]
@@ -753,6 +753,22 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     portimpedances = [vvn[i] for i in portimpedanceindices]
     noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
+
+    # solve for Asparse once so we have something reasonable to
+    # factorize.
+    fill!(Asparse.nzval, zero(eltype(Asparse.nzval)))
+    sparseadd!(Asparse, 1, AoLjnm, AoLjnmindexmap)
+
+    # take the complex conjugate of the negative frequency terms in
+    # the capacitance and conductance matrices. substitute in the symbolic
+    # frequency variable if present.
+    sparseaddconjsubst!(Asparse, -1, Cnm, wmodes2m, Cnmindexmap,
+        wmodesm .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
+    sparseaddconjsubst!(Asparse, im, Gnm, wmodesm, Gnmindexmap,
+        wmodesm .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
+    sparseaddconjsubst!(Asparse, 1, invLnm,
+        Diagonal(ones(size(invLnm,1))), invLnmindexmap, wmodesm .< 0,
+        wmodesm, invLnmfreqsubstindices, symfreqvar)
 
 
     # make arrays for the voltages, node fluxes, scattering parameters,
@@ -1331,7 +1347,7 @@ function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
     maxintermodorder = Inf, dc = false, odd = true, even = false,
     x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, sorting= :number, keyedarrays::Val{K} = Val(true),
-    ) where {N,K}
+    sensitivitynames::Vector{String} = String[]) where {N,K}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -1357,7 +1373,8 @@ function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        symfreqvar = symfreqvar, keyedarrays = keyedarrays)
+        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+        sensitivitynames = sensitivitynames)
 end
 
 """
@@ -1428,7 +1445,8 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, keyedarrays::Val{K} = Val(true)) where {N,K}
+    symfreqvar = nothing, keyedarrays::Val{K} = Val(true),
+    sensitivitynames::Vector{String} = String[]) where {N,K}
 
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
@@ -1449,6 +1467,8 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
 
     # extract the elements we need
     Nnodes = psc.Nnodes
+    componentnames = psc.componentnames
+    componentnamedict = psc.componentnamedict
     componenttypes = psc.componenttypes
     nodenames = psc.nodenames
     nodeindices = psc.nodeindices
@@ -1470,6 +1490,13 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
         Lmean = one(eltype(Lmean))
     end
     Lb = nm.Lb
+
+    # find the indices associated with the components for which we will
+    # calculate sensitivities
+    sensitivityindices = zeros(Int,length(sensitivitynames))
+    for i in eachindex(sensitivitynames)
+        sensitivityindices[i] = componentnamedict[sensitivitynames[i]]
+    end
 
     # calculate the diagonal frequency matrices
     wmodesm = Diagonal(repeat(wmodes, outer = Nnodes-1))
