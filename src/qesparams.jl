@@ -89,8 +89,8 @@ println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-7.0710678118654755 + 0.0im;;]
-ComplexF64[7.0710678118654755 + 0.0im;;]
+ComplexF64[-3.5355339059327378 + 0.0im;;]
+ComplexF64[3.5355339059327378 + 0.0im;;]
 ```
 ```jldoctest
 inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
@@ -110,8 +110,8 @@ println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-7.0710678118654755 + 0.0im;;]
-ComplexF64[-7.0710678118654755 + 0.0im;;]
+ComplexF64[-3.5355339059327378 + 0.0im;;]
+ComplexF64[-10.606601717798213 + 0.0im;;]
 ```
 """
 function calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
@@ -396,6 +396,7 @@ function calcsourcecurrent(key1, key2, bnm, Nmodes, j, k)
     else
         sourcecurrent =  bnm[(key1-2)*Nmodes+j,k] 
         sourcecurrent -= bnm[(key2-2)*Nmodes+j,k]
+        sourcecurrent /= 2
     end
     return sourcecurrent
 end
@@ -1008,7 +1009,7 @@ println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-2.0 + 0.0im;;]
+ComplexF64[-1.0 + 0.0im;;]
 ComplexF64[-100.0 + 0.0im;;]
 ```
 """
