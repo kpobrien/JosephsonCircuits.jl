@@ -81,9 +81,9 @@ Nmodulationharmonics = (8,)
     Npumpharmonics, circuit, circuitdefs)
 
 plot(
-    jpa.signal.w/(2*pi*1e9),
+    jpa.linearized.w/(2*pi*1e9),
     10*log10.(abs2.(
-        jpa.signal.S(
+        jpa.linearized.S(
             outputmode=(0,),
             outputport=1,
             inputmode=(0,),
@@ -182,7 +182,7 @@ Nmodulationharmonics = (10,)
     Npumpharmonics, circuit, circuitdefs)
 
 p1=plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S(
+    10*log10.(abs2.(rpm.linearized.S(
             outputmode=(0,),
             outputport=2,
             inputmode=(0,),
@@ -196,28 +196,28 @@ p1=plot(ws/(2*pi*1e9),
     ylabel="dB")
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S((0,),1,(0,),2,:))),
+    10*log10.(abs2.(rpm.linearized.S((0,),1,(0,),2,:))),
     label="S12",
     )
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S((0,),1,(0,),1,:))),
+    10*log10.(abs2.(rpm.linearized.S((0,),1,(0,),1,:))),
     label="S11",
     )
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S((0,),2,(0,),2,:))),
+    10*log10.(abs2.(rpm.linearized.S((0,),2,(0,),2,:))),
     label="S22",
     )
 
 p2=plot(ws/(2*pi*1e9),
-    rpm.signal.QE((0,),2,(0,),1,:)./rpm.signal.QEideal((0,),2,(0,),1,:),    
+    rpm.linearized.QE((0,),2,(0,),1,:)./rpm.linearized.QEideal((0,),2,(0,),1,:),    
     ylim=(0,1.05),
     title="Quantum efficiency",legend=false,
     ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)");
 
 p3=plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(rpm.signal.S(:,2,(0,),1,:)')),
+    10*log10.(abs2.(rpm.linearized.S(:,2,(0,),1,:)')),
     ylim=(-40,30),
     xlabel="Signal Frequency (GHz)",
     legend=false,
@@ -225,7 +225,7 @@ p3=plot(ws/(2*pi*1e9),
     ylabel="dB")
 
 p4=plot(ws/(2*pi*1e9),
-    1 .- rpm.signal.CM((0,),2,:),    
+    1 .- rpm.linearized.CM((0,),2,:),    
     legend=false,title="Commutation \n relation error",
     ylabel="Commutation \n relation error",xlabel="Signal Frequency (GHz)");
 
@@ -322,7 +322,7 @@ Nmodulationharmonics = (10,)
     Npumpharmonics, circuit, circuitdefs)
 
 p1=plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S((0,),2,(0,),1,:))),
+    10*log10.(abs2.(floquet.linearized.S((0,),2,(0,),1,:))),
     ylim=(-40,30),label="S21",
     xlabel="Signal Frequency (GHz)",
     legend=:bottomright,
@@ -330,28 +330,28 @@ p1=plot(ws/(2*pi*1e9),
     ylabel="dB")
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S((0,),1,(0,),2,:))),
+    10*log10.(abs2.(floquet.linearized.S((0,),1,(0,),2,:))),
     label="S12",
     )
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S((0,),1,(0,),1,:))),
+    10*log10.(abs2.(floquet.linearized.S((0,),1,(0,),1,:))),
     label="S11",
     )
 
 plot!(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S((0,),2,(0,),2,:))),
+    10*log10.(abs2.(floquet.linearized.S((0,),2,(0,),2,:))),
     label="S22",
     )
 
 p2=plot(ws/(2*pi*1e9),
-    floquet.signal.QE((0,),2,(0,),1,:)./floquet.signal.QEideal((0,),2,(0,),1,:),    
+    floquet.linearized.QE((0,),2,(0,),1,:)./floquet.linearized.QEideal((0,),2,(0,),1,:),    
     ylim=(0.99,1.001),
     title="Quantum efficiency",legend=false,
     ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)");
 
 p3=plot(ws/(2*pi*1e9),
-    10*log10.(abs2.(floquet.signal.S(:,2,(0,),1,:)')),
+    10*log10.(abs2.(floquet.linearized.S(:,2,(0,),1,:)')),
     ylim=(-40,30),label="S21",
     xlabel="Signal Frequency (GHz)",
     legend=false,
@@ -360,7 +360,7 @@ p3=plot(ws/(2*pi*1e9),
 
 
 p4=plot(ws/(2*pi*1e9),
-    1 .- floquet.signal.CM((0,),2,:),
+    1 .- floquet.linearized.CM((0,),2,:),
     legend=false,title="Commutation \n relation error",
     ylabel="Commutation \n relation error",xlabel="Signal Frequency (GHz)");
 
@@ -405,7 +405,7 @@ end
 p1 = plot(title="Gain (S21)")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-            10*log10.(abs2.(results[i].signal.S((0,),2,(0,),1,:))),
+            10*log10.(abs2.(results[i].linearized.S((0,),2,(0,),1,:))),
             ylim=(-60,30),label="tanδ=$(tandeltas[i])",
             legend=:bottomleft,
             xlabel="Signal Frequency (GHz)",ylabel="dB")
@@ -414,7 +414,7 @@ end
 p2 = plot(title="Quantum Efficiency")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-            results[i].signal.QE((0,),2,(0,),1,:)./results[i].signal.QEideal((0,),2,(0,),1,:),
+            results[i].linearized.QE((0,),2,(0,),1,:)./results[i].linearized.QEideal((0,),2,(0,),1,:),
             ylim=(0.6,1.05),legend=false,
             title="Quantum efficiency",
             ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)")
@@ -423,7 +423,7 @@ end
 p3 = plot(title="Reverse Gain (S12)")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-            10*log10.(abs2.(results[i].signal.S((0,),1,(0,),2,:))),
+            10*log10.(abs2.(results[i].linearized.S((0,),1,(0,),2,:))),
             ylim=(-10,1),legend=false,
             xlabel="Signal Frequency (GHz)",ylabel="dB")
 end
@@ -431,7 +431,7 @@ end
 p4 = plot(title="Commutation \n relation error")
 for i = 1:length(results)
         plot!(ws/(2*pi*1e9),
-            1 .- results[i].signal.CM((0,),2,:),
+            1 .- results[i].linearized.CM((0,),2,:),
             legend=false,
             ylabel="Commutation\n relation error",xlabel="Signal Frequency (GHz)")
 end
