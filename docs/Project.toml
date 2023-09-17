@@ -1,0 +1,8 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+JosephsonCircuits = "23a5dba6-321f-4fcf-be1e-689e290df087"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+Documenter = "0.27,1"
+JosephsonCircuits = "0.3"
