@@ -91,10 +91,13 @@ using Test
         x = [ 0.1, 1.2]
         F = [0.0, 0.0]
         J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,2)
+        # as of 2023-09-17 1.9.3 and older throws the first error and
+        # 1.10.0-beta2 throws the second error
         @test_throws(
-            LinearAlgebra.SingularException(0),
+            str -> isequal("SingularException(0)",str) || isequal("Unknown KLU error code: 2",str),
             JosephsonCircuits.nlsolve!(fj!, F, J, x)
         )
+
     end
 
     @testset verbose=true "factorklu! error" begin
@@ -102,11 +105,14 @@ using Test
         J1 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,2)
         cache = JosephsonCircuits.FactorizationCache(JosephsonCircuits.KLU.klu(J1))
         J2 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[0.0, 0.0, 0.0, 0.0],2,2)
-        
+        # as of 2023-09-17 1.9.3 and older throws the first error and
+        # 1.10.0-beta2 throws the second error
         @test_throws(
-            LinearAlgebra.SingularException(0),
+            str -> isequal("SingularException(0)",str) || isequal("Unknown KLU error code: 2",str),
             JosephsonCircuits.factorklu!(cache,J2)
         )
+
+
     end
 
 end

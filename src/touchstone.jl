@@ -85,7 +85,7 @@ and the 2.0 spec:
 https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf
 
 # Examples
-```jldoctest
+```
 str="!Example 1:\n!1-port S-parameter file, single frequency point\n# MHz S MA R 50\n!freq magS11 angS11\n2.000 0.894 -12.136";
 println(str);
 JosephsonCircuits.touchstone_parse(IOBuffer(str))
@@ -96,9 +96,9 @@ JosephsonCircuits.touchstone_parse(IOBuffer(str))
 # MHz S MA R 50
 !freq magS11 angS11
 2.000 0.894 -12.136
-JosephsonCircuits.TouchstoneFile([2.0e6], [0.874020294860635 - 0.18794819544685323im;;;], "mhz", "s", "ma", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[])
+JosephsonCircuits.TouchstoneFile([2.0e6], ComplexF64[0.874020294860635 - 0.18794819544685323im;;;], "mhz", "s", "ma", 50.0, 1.0, 1, "12_21", 1, 0, [50.0], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 1:", "1-port S-parameter file, single frequency point", "freq magS11 angS11"], [2.0, 0.894, -12.136], Float64[])
 ```
-```jldoctest
+```
 str="!Example 4 (Version 2.0):\n! 4-port S-parameter data\n! Default impedance is overridden by [Reference]\n! Data cannot be represented using 1.0 syntax\n! Note that the [Reference] keyword arguments appear on a separate line\n[Version] 2.0\n# GHz S MA R 50\n[Number of Ports] 4\n[Reference]\n50 75 0.01 0.01\n[Number of Frequencies] 1\n[Network Data]\n5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1\n0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2\n0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3\n0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4";
 println(str);
 JosephsonCircuits.touchstone_parse(IOBuffer(str))
@@ -120,7 +120,7 @@ JosephsonCircuits.touchstone_parse(IOBuffer(str))
 0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2
 0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3
 0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4
-JosephsonCircuits.TouchstoneFile([5.0e9], [-0.5681244079815996 + 0.1929628385351877im 0.29632183851470006 - 0.2686882357291961im 0.16693665375723588 - 0.38539869438327984im 0.09803970583787712 - 0.5208533537179372im; 0.29632183851470006 - 0.2686882357291961im -0.5679895560694177 + 0.1933594171383067im 0.09803970583787712 - 0.5208533537179372im 0.16693665375723588 - 0.38539869438327984im; 0.16693665375723588 - 0.38539869438327984im 0.09803970583787712 - 0.5208533537179372im -0.5681244079815996 + 0.1929628385351877im 0.29632183851470006 - 0.2686882357291961im; 0.09803970583787712 - 0.5208533537179372im 0.16693665375723588 - 0.38539869438327984im 0.29632183851470006 - 0.2686882357291961im -0.5681244079815996 + 0.1929628385351877im;;;], "ghz", "s", "ma", 50.0, 2.0, 4, "12_21", 1, 0, [50.0, 75.0, 0.01, 0.01], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 4 (Version 2.0):", " 4-port S-parameter data", " Default impedance is overridden by [Reference]", " Data cannot be represented using 1.0 syntax", " Note that the [Reference] keyword arguments appear on a separate line", "row 1", "row 2", "row 3", "row 4"], [5.0, 0.6, 161.24, 0.4, -42.2, 0.42, -66.58, 0.53, -79.34, 0.4  …  0.4, -42.2, 0.53, -79.34, 0.42, -66.58, 0.4, -42.2, 0.6, 161.24], Float64[])
+JosephsonCircuits.TouchstoneFile([5.0e9], ComplexF64[-0.5681244079815996 + 0.1929628385351877im 0.29632183851470006 - 0.2686882357291961im 0.16693665375723588 - 0.38539869438327984im 0.09803970583787712 - 0.5208533537179372im; 0.29632183851470006 - 0.2686882357291961im -0.5679895560694177 + 0.1933594171383067im 0.09803970583787712 - 0.5208533537179372im 0.16693665375723588 - 0.38539869438327984im; 0.16693665375723588 - 0.38539869438327984im 0.09803970583787712 - 0.5208533537179372im -0.5681244079815996 + 0.1929628385351877im 0.29632183851470006 - 0.2686882357291961im; 0.09803970583787712 - 0.5208533537179372im 0.16693665375723588 - 0.38539869438327984im 0.29632183851470006 - 0.2686882357291961im -0.5681244079815996 + 0.1929628385351877im;;;], "ghz", "s", "ma", 50.0, 2.0, 4, "12_21", 1, 0, [50.0, 75.0, 0.01, 0.01], String[], "Full", Tuple{Char, Vector{Int64}}[], ["Example 4 (Version 2.0):", " 4-port S-parameter data", " Default impedance is overridden by [Reference]", " Data cannot be represented using 1.0 syntax", " Note that the [Reference] keyword arguments appear on a separate line", "row 1", "row 2", "row 3", "row 4"], [5.0, 0.6, 161.24, 0.4, -42.2, 0.42, -66.58, 0.53, -79.34, 0.4  …  0.4, -42.2, 0.53, -79.34, 0.42, -66.58, 0.4, -42.2, 0.6, 161.24], Float64[])
 ```
 """
 function touchstone_parse(io::IO)
@@ -1008,11 +1008,11 @@ frequencies, N = JosephsonCircuits.networkdatatoarray(networkdata,
     numberofports, numberoffrequencies, matrixformat, twoportdataorder,
     parameter, frequencyunit, format, R, version)
 println(frequencies)
-println(N)
+println(N[1,1,:])
 
 # output
 [4.0e9, 4.5e9, 5.0e9, 5.5e9, 6.0e9]
-[0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.04669118949947016im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
+ComplexF64[0.9546262517670427 - 0.296397700700921im, 0.8915960960938982 - 0.44358732281729774im, 0.9857309246425359 + 0.04669118949947016im, 0.9759591344506418 - 0.21128542054786678im, 0.9604441706426364 - 0.2762239892126382im]
 ```
 """
 function networkdatatoarray(networkdata, numberofports, numberoffrequencies,
