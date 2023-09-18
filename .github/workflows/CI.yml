@@ -39,9 +39,10 @@ jobs:
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v1
         with:
+          cache-name: ci-${{ matrix.arch }}-${{ matrix.version }}
           cache-registries: "true"
           cache-compiled: "true"
-      #- uses: actions/cache@v3
+      ##- uses: actions/cache@v3
       #  env:
       #    cache-name: cache-artifacts
       #  with:
