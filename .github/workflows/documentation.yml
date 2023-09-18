@@ -24,6 +24,9 @@ jobs:
         with:
           version: '1'
       - uses: julia-actions/cache@v1
+        with:
+          cache-registries: "true"
+          cache-compiled: "true"
       - uses: julia-actions/julia-buildpkg@v1
       - name: Install dependencies
         run: julia --project=docs/ -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
