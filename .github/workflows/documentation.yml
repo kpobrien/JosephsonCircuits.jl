@@ -1,6 +1,5 @@
 name: Documentation
 
-
 on:
   push:
     branches:
@@ -30,8 +29,6 @@ jobs:
           cache-registries: "true"
           cache-compiled: "true"
       - uses: julia-actions/julia-buildpkg@v1
-        with:
-          precompile: "yes"
       - name: Install dependencies
         run: julia --project=docs/ -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
       - name: Build and deploy
