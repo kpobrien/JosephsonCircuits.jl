@@ -1,7 +1,7 @@
 name = "JosephsonCircuits"
 uuid = "23a5dba6-321f-4fcf-be1e-689e290df087"
 authors = ["Kevin P. O'Brien <kpobrien@mit.edu>"]
-version = "0.3.1"
+version = "0.3.2"
 
 [deps]
 AxisKeys = "94b1ba4f-4ee9-5380-92f1-94cde586c3c5"
