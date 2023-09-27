@@ -354,8 +354,8 @@ function calcCjIcmean(componenttypes::Vector{Symbol},
     end
 
     # check if the ratio of Cj / Ic is within the range allowed by WRSPICE
-    if CjoIc > 1e-6
-        CjoIc = 1e-6
+    if CjoIc > 0.9e-6
+        CjoIc = 0.9e-6
     end
 
     return CjoIc*Icmean, Icmean
