@@ -424,7 +424,7 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
     componentvalues, componentnamedict,mutualinductorbranchnames, countdict, indexdict)
 
 # output
-(3.141466134545454e-13, 3.1414661345454545e-7)</code></pre><pre><code class="language-julia hljs">componenttypes = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
+(3.1100514732000003e-13, 3.1414661345454545e-7)</code></pre><pre><code class="language-julia hljs">componenttypes = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
 nodeindexarray = [2 2 2 3 3 3 4 4; 1 1 3 1 1 4 1 1]
 componentvalues = Real[1, 50.0, 1.0e-13, 2.0e-9, 1.0e-12, 1.0e-13, 1.1e-9, 1.2e-12]
 componentnamedict = Dict(&quot;R1&quot; =&gt; 2, &quot;Cc2&quot; =&gt; 6, &quot;Cj2&quot; =&gt; 8, &quot;Cj1&quot; =&gt; 5, &quot;P1&quot; =&gt; 1, &quot;Cc1&quot; =&gt; 3, &quot;Lj2&quot; =&gt; 7, &quot;Lj1&quot; =&gt; 4)
@@ -435,7 +435,7 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
     componentvalues, componentnamedict,mutualinductorbranchnames, countdict, indexdict)
 
 # output
-(2.3187011945454545e-13, 2.3187011945454544e-7)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcCn-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Any, Any}" href="#JosephsonCircuits.calcCn-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Any, Any}"><code>JosephsonCircuits.calcCn</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcCn(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+(2.2955141825999997e-13, 2.3187011945454544e-7)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcCn-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Any, Any}" href="#JosephsonCircuits.calcCn-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Any, Any}"><code>JosephsonCircuits.calcCn</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcCn(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
     componentvalues::Vector, Nmodes, Nnodes)</code></pre><p>Returns the node capacitance matrix from the capacitance values in <code>componentvalues</code> when <code>componenttypes</code> has the symbol <code>:C</code> with node indices from <code>nodeindices</code>. Other symbols are ignored. Capacitances to ground become diagonal elements. Capacitance between elements is an off-diagonal element with a minus sign and is added to the diagonal with a plus sign. The dimensions of the output are <code>(Nnodes-1)*Nmodes</code> by <code>(Nnodes-1)</code> times <code>Nmodes</code> where <code>Nnodes</code> is the number of nodes including ground and <code>Nmodes</code> is the number of different frequencies. Note that <code>nodeindices</code> is &quot;one indexed&quot; so 1 is the ground node.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.calcCn([:C,:C],[2 3;1 1],[1.0,2.0],1,3)
 2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
  1.0   ⋅ 
@@ -498,15 +498,15 @@ julia&gt; @variables Rg1 Rg2;JosephsonCircuits.calcGn([:R,:R],[2 3;1 1],[Rg1,Rg2
 
 julia&gt; @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],1,3)
 2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
- 1 / Rc + 1 / Rg1           -1 / Rc
-          -1 / Rc  1 / Rc + 1 / Rg2
+ 1 / Rg1 + 1 / Rc           -1 / Rc
+          -1 / Rc  1 / Rg2 + 1 / Rc
 
 julia&gt; @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],2,3)
 4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 8 stored entries:
- 1 / Rc + 1 / Rg1                 ⋅           -1 / Rc                 ⋅
-                ⋅  1 / Rc + 1 / Rg1                 ⋅           -1 / Rc
-          -1 / Rc                 ⋅  1 / Rc + 1 / Rg2                 ⋅
-                ⋅           -1 / Rc                 ⋅  1 / Rc + 1 / Rg2</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcIb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}" href="#JosephsonCircuits.calcIb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}"><code>JosephsonCircuits.calcIb</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcIb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+ 1 / Rg1 + 1 / Rc                 ⋅           -1 / Rc                 ⋅
+                ⋅  1 / Rg1 + 1 / Rc                 ⋅           -1 / Rc
+          -1 / Rc                 ⋅  1 / Rg2 + 1 / Rc                 ⋅
+                ⋅           -1 / Rc                 ⋅  1 / Rg2 + 1 / Rc</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcIb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}" href="#JosephsonCircuits.calcIb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}"><code>JosephsonCircuits.calcIb</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcIb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)</code></pre><p>Calculate the sparse branch current source vector whose length is <code>Nbranches*Nmodes</code>. Note that <code>nodeindices</code> is &quot;one indexed&quot; so 1 is the ground node.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">Nmodes = 1
 Nbranches = 2
 componenttypes = [:I,:C,:L,:C]
@@ -683,11 +683,11 @@ cg = JosephsonCircuits.calccircuitgraph(psc)
 # output
 JosephsonCircuits.CircuitGraph(Dict((3, 2) =&gt; 3, (1, 2) =&gt; 1, (3, 1) =&gt; 2, (1, 3) =&gt; 2, (2, 1) =&gt; 1, (2, 3) =&gt; 3), sparse([1, 3, 2, 3], [1, 1, 2, 2], [1, -1, 1, 1], 3, 2), [(1, 2), (1, 3)], [(3, 2)], [(1, 2), (1, 3), (2, 3)], [[1, 2, 3]], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(3, [[2, 3], [1, 3], [1, 2]]), 3)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calccm!-NTuple{4, Any}" href="#JosephsonCircuits.calccm!-NTuple{4, Any}"><code>JosephsonCircuits.calccm!</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calccm!(cm, S, Snoise, w)</code></pre><p>Calculate the bosonic commutation relations for a scattering matrix S in the  field ladder operator basis. Overwrites cm with output.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn],[1, -1]);cm
 2-element Vector{Num}:
- abs2(a) + abs2(an) - abs2(b) - abs2(bn)
+ abs2(an) + abs2(a) - abs2(b) - abs2(bn)
  abs2(c) + abs2(cn) - abs2(d) - abs2(dn)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calccm!-Tuple{Any, Any, Any}" href="#JosephsonCircuits.calccm!-Tuple{Any, Any, Any}"><code>JosephsonCircuits.calccm!</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calccm!(cm, S, w)</code></pre><p>Calculate the bosonic commutation relations for a scattering matrix S in the field ladder operator basis. Overwrites cm with output. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; @variables a b;cm=Num[0,0];JosephsonCircuits.calccm!(cm,[a b; b a],[-1,1]);cm
 2-element Vector{Num}:
- abs2(b) - abs2(a)
- abs2(a) - abs2(b)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calccm!-Union{Tuple{T}, Tuple{AbstractArray{T}, Any, Any, Any}} where T&lt;:AbstractFloat" href="#JosephsonCircuits.calccm!-Union{Tuple{T}, Tuple{AbstractArray{T}, Any, Any, Any}} where T&lt;:AbstractFloat"><code>JosephsonCircuits.calccm!</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calccm!(cm, S, Snoise, w)</code></pre><p>Calculate the bosonic commutation relations for a scattering matrix S in the  field ladder operator basis. Overwrites cm with output.  Use a compensated sum to reduce floating point errors.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; cm=Float64[0, 0];JosephsonCircuits.calccm!(cm,[1 2;3 4],[1 2 3 4;5 6 7 8],[-1,1]);cm
+ -abs2(a) + abs2(b)
+  abs2(a) - abs2(b)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calccm!-Union{Tuple{T}, Tuple{AbstractArray{T}, Any, Any, Any}} where T&lt;:AbstractFloat" href="#JosephsonCircuits.calccm!-Union{Tuple{T}, Tuple{AbstractArray{T}, Any, Any, Any}} where T&lt;:AbstractFloat"><code>JosephsonCircuits.calccm!</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calccm!(cm, S, Snoise, w)</code></pre><p>Calculate the bosonic commutation relations for a scattering matrix S in the  field ladder operator basis. Overwrites cm with output.  Use a compensated sum to reduce floating point errors.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; cm=Float64[0, 0];JosephsonCircuits.calccm!(cm,[1 2;3 4],[1 2 3 4;5 6 7 8],[-1,1]);cm
 2-element Vector{Float64}:
  13.0
  33.0</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calccm!-Union{Tuple{T}, Tuple{AbstractArray{T}, Any, Any}} where T&lt;:AbstractFloat" href="#JosephsonCircuits.calccm!-Union{Tuple{T}, Tuple{AbstractArray{T}, Any, Any}} where T&lt;:AbstractFloat"><code>JosephsonCircuits.calccm!</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calccm!(cm, S, w)</code></pre><p>Calculate the bosonic commutation relations for a scattering matrix S in the  field ladder operator basis. Overwrites cm with output. Use a compensated sum to reduce floating point errors.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; cm=Float64[0,0];JosephsonCircuits.calccm!(cm,[3/5 4/5;4/5 3/5],[-1,1]);cm
@@ -705,7 +705,7 @@ julia&gt; JosephsonCircuits.calccm(Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],C
 
 julia&gt; @variables a b c d an bn cn dn;JosephsonCircuits.calccm([a b; c d],[an bn; cn dn],[1, -1])
 2-element Vector{Num}:
- abs2(a) + abs2(an) - abs2(b) - abs2(bn)
+ abs2(an) + abs2(a) - abs2(b) - abs2(bn)
  abs2(c) + abs2(cn) - abs2(d) - abs2(dn)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calccm-Union{Tuple{T}, Tuple{AbstractArray{T}, Any}} where T" href="#JosephsonCircuits.calccm-Union{Tuple{T}, Tuple{AbstractArray{T}, Any}} where T"><code>JosephsonCircuits.calccm</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calccm(S, w)</code></pre><p>Calculate the bosonic commutation relations for a scattering matrix S in the  field ladder operator basis. Sum the abs2 of each element along the horizontal axis, applying a minus sign if the corresponding frequency is negative. Represents energy conservation.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.calccm(Complex{Float64}[3/5 4/5;4/5 3/5],[1])
 2-element Vector{Float64}:
  1.0
@@ -718,8 +718,8 @@ julia&gt; JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 0 0 1],[1, -1])
 
 julia&gt; @variables a b;JosephsonCircuits.calccm([a b; b a],[1, -1])
 2-element Vector{Num}:
- abs2(a) - abs2(b)
- abs2(b) - abs2(a)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcdZdroZ2-NTuple{5, Any}" href="#JosephsonCircuits.calcdZdroZ2-NTuple{5, Any}"><code>JosephsonCircuits.calcdZdroZ2</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcdZdroZ2(sensitivityindices, componenttypes, componentvalues, wmodes,
+  abs2(a) - abs2(b)
+ -abs2(a) + abs2(b)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcdZdroZ2-NTuple{5, Any}" href="#JosephsonCircuits.calcdZdroZ2-NTuple{5, Any}"><code>JosephsonCircuits.calcdZdroZ2</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcdZdroZ2(sensitivityindices, componenttypes, componentvalues, wmodes,
     symfreqvar)</code></pre><p>Calculate 1/Z^2 times the derivative of Z with respect to parameter scaling the value of the circuit component. For example: Zc = 1/(im<em>w</em>Cg<em>r) 1/Zc^2</em>dZc/dr|_{r=1} = -im<em>Cg</em>w</p><p>Zl = im<em>w</em>Lj<em>r 1/Zl^2</em>dZl/dr =1/(im<em>Lj</em>r^2<em>w)|_{r=1} = 1/(im</em>Lj*w)</p><p>Zr = R<em>r 1/Zr^2</em>dZr/dr|_{r=1} = 1/(r^2*R) = 1/R</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.calcdZdroZ2([1],[:R], [50.0], [1.0],nothing)
 1-element Vector{ComplexF64}:
  0.02 + 0.0im
@@ -1016,7 +1016,7 @@ sparse([1, 2], [1, 2], Num[1 / L1, 1 / L2], 2, 2)</code></pre></div></section></
        2wp1
         wp2
   wp1 + wp2
- wp2 + 2wp1
+ 2wp1 + wp2
 
 julia&gt; JosephsonCircuits.calcmodefreqs((1., 1.1),[(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)])
 6-element Vector{Float64}:
@@ -1216,7 +1216,7 @@ julia&gt; JosephsonCircuits.calcqe(Complex{Float64}[3/5 4/5;4/5 3/5],Complex{Flo
 
 julia&gt; @variables a b c d an bn cn dn;JosephsonCircuits.calcqe([a b; c d],[an bn; cn dn])
 2×2 Matrix{Num}:
- abs2(a) / (abs2(a) + abs2(an) + abs2(b) + abs2(bn))  …  abs2(b) / (abs2(a) + abs2(an) + abs2(b) + abs2(bn))
+ abs2(a) / (abs2(an) + abs2(a) + abs2(b) + abs2(bn))  …  abs2(b) / (abs2(an) + abs2(a) + abs2(b) + abs2(bn))
  abs2(c) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))     abs2(d) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcqeideal!-Tuple{Any, Any}" href="#JosephsonCircuits.calcqeideal!-Tuple{Any, Any}"><code>JosephsonCircuits.calcqeideal!</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcqeideal!(qeideal,S)</code></pre><p>See <a href="#JosephsonCircuits.calcqeideal-Union{Tuple{AbstractArray{T}}, Tuple{T}} where T"><code>calcqeideal</code></a>. </p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcqeideal-Union{Tuple{AbstractArray{T}}, Tuple{T}} where T" href="#JosephsonCircuits.calcqeideal-Union{Tuple{AbstractArray{T}}, Tuple{T}} where T"><code>JosephsonCircuits.calcqeideal</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcqeideal(S::AbstractArray)</code></pre><p>Calculate the ideal (best possible) quantum efficiency for each element of a scattering matrix. See also <a href="#JosephsonCircuits.calcqeideal!-Tuple{Any, Any}"><code>calcqeideal!</code></a>. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.calcqeideal([3/5 4/5;4/5 3/5])
 2×2 Matrix{Float64}:
  1.0  1.0
@@ -1472,8 +1472,8 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 R1 1 0 50.0
 C1 1 2 100.0f
 B1 2 0 3 jjk ics=0.32910597599999997u
-C2 2 0 670.8940240000001f
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=329.105976f,force=1,vm=9.9
+C2 2 0 674.18508376f
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
 
 * SPICE Simulation
 R1 1 0 50.0
@@ -1542,10 +1542,10 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 R1 1 0 50.0
 L1 1 0 1000.0000000000001p
 B1 2 0 3 jjk ics=0.32910597599999997u
-C2 2 0 1670.894024f
+C2 2 0 1674.18508376f
 K1 L1 L2 0.1
 L2 2 0 1000.0000000000001p
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=329.105976f,force=1,vm=9.9
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
 
 * SPICE Simulation
 R1 1 0 50.0
@@ -1581,10 +1581,10 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 R1 1 0 50.0
 L1 1 0 1000.0000000000001p
 B1 2 0 3 jjk ics=0.32910597599999997u
-C2 2 0 1670.894024f
+C2 2 0 1674.18508376f
 K1 L2 L1 0.1
 L2 2 0 1000.0000000000001p
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=329.105976f,force=1,vm=9.9
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
 
 * SPICE Simulation
 R1 1 0 50.0
@@ -3006,7 +3006,7 @@ JosephsonCircuits.visualizefreqs(w,freq)
 4×7 Matrix{Num}:
     0         wp2        2wp2  3wp2  -3wp2       -2wp2        -wp2
   wp1   wp1 + wp2  wp1 + 2wp2     0      0  wp1 - 2wp2   wp1 - wp2
- 2wp1  wp2 + 2wp1           0     0      0           0  2wp1 - wp2
+ 2wp1  2wp1 + wp2           0     0      0           0  2wp1 - wp2
  3wp1           0           0     0      0           0           0</code></pre><pre><code class="language-julia hljs">w = (1.1,1.2)
 freq = JosephsonCircuits.truncfreqs(
     JosephsonCircuits.calcfreqsrdft((3,3)),
@@ -3155,4 +3155,4 @@ run
 set filetype=binary
 write
 .endc
-</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="auto">Automatic (OS)</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.0.1 on <span class="colophon-date" title="Wednesday 27 September 2023 21:26">Wednesday 27 September 2023</span>. Using Julia version 1.9.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="auto">Automatic (OS)</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.0.1 on <span class="colophon-date" title="Wednesday 27 September 2023 23:21">Wednesday 27 September 2023</span>. Using Julia version 1.9.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
