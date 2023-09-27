@@ -1031,15 +1031,15 @@ julia> @variables Rg1 Rg2;JosephsonCircuits.calcGn([:R,:R],[2 3;1 1],[Rg1,Rg2],1
 
 julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],1,3)
 2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
- 1 / Rc + 1 / Rg1           -1 / Rc
-          -1 / Rc  1 / Rc + 1 / Rg2
+ 1 / Rg1 + 1 / Rc           -1 / Rc
+          -1 / Rc  1 / Rg2 + 1 / Rc
 
 julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],2,3)
 4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 8 stored entries:
- 1 / Rc + 1 / Rg1                 ⋅           -1 / Rc                 ⋅
-                ⋅  1 / Rc + 1 / Rg1                 ⋅           -1 / Rc
-          -1 / Rc                 ⋅  1 / Rc + 1 / Rg2                 ⋅
-                ⋅           -1 / Rc                 ⋅  1 / Rc + 1 / Rg2
+ 1 / Rg1 + 1 / Rc                 ⋅           -1 / Rc                 ⋅
+                ⋅  1 / Rg1 + 1 / Rc                 ⋅           -1 / Rc
+          -1 / Rc                 ⋅  1 / Rg2 + 1 / Rc                 ⋅
+                ⋅           -1 / Rc                 ⋅  1 / Rg2 + 1 / Rc
 ```
 """
 function calcGn(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},

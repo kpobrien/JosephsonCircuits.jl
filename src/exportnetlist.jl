@@ -250,7 +250,7 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
     componentvalues, componentnamedict,mutualinductorbranchnames, countdict, indexdict)
 
 # output
-(3.141466134545454e-13, 3.1414661345454545e-7)
+(3.1100514732000003e-13, 3.1414661345454545e-7)
 ```
 ```jldoctest
 componenttypes = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
@@ -264,7 +264,7 @@ Cj, Icmean = JosephsonCircuits.calcCjIcmean(componenttypes, nodeindexarray,
     componentvalues, componentnamedict,mutualinductorbranchnames, countdict, indexdict)
 
 # output
-(2.3187011945454545e-13, 2.3187011945454544e-7)
+(2.2955141825999997e-13, 2.3187011945454544e-7)
 ```
 """
 function calcCjIcmean(componenttypes::Vector{Symbol},
@@ -354,8 +354,8 @@ function calcCjIcmean(componenttypes::Vector{Symbol},
     end
 
     # check if the ratio of Cj / Ic is within the range allowed by WRSPICE
-    if CjoIc > 0.9e-6
-        CjoIc = 0.9e-6
+    if CjoIc > 0.99e-6
+        CjoIc = 0.99e-6
     end
 
     return CjoIc*Icmean, Icmean
@@ -390,8 +390,8 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 R1 1 0 50.0
 C1 1 2 100.0f
 B1 2 0 3 jjk ics=0.32910597599999997u
-C2 2 0 670.8940240000001f
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=329.105976f,force=1,vm=9.9
+C2 2 0 674.18508376f
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
 
 * SPICE Simulation
 R1 1 0 50.0
@@ -466,10 +466,10 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 R1 1 0 50.0
 L1 1 0 1000.0000000000001p
 B1 2 0 3 jjk ics=0.32910597599999997u
-C2 2 0 1670.894024f
+C2 2 0 1674.18508376f
 K1 L1 L2 0.1
 L2 2 0 1000.0000000000001p
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=329.105976f,force=1,vm=9.9
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
 
 * SPICE Simulation
 R1 1 0 50.0
@@ -508,10 +508,10 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 R1 1 0 50.0
 L1 1 0 1000.0000000000001p
 B1 2 0 3 jjk ics=0.32910597599999997u
-C2 2 0 1670.894024f
+C2 2 0 1674.18508376f
 K1 L2 L1 0.1
 L2 2 0 1000.0000000000001p
-.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=329.105976f,force=1,vm=9.9
+.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
 
 * SPICE Simulation
 R1 1 0 50.0

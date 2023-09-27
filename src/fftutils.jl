@@ -555,7 +555,7 @@ julia> @variables wp1 wp2;JosephsonCircuits.calcmodefreqs((wp1, wp2),[(0, 0), (1
        2wp1
         wp2
   wp1 + wp2
- wp2 + 2wp1
+ 2wp1 + wp2
 
 julia> JosephsonCircuits.calcmodefreqs((1., 1.1),[(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)])
 6-element Vector{Float64}:
@@ -612,7 +612,7 @@ JosephsonCircuits.visualizefreqs(w,freq)
 4×7 Matrix{Num}:
     0         wp2        2wp2  3wp2  -3wp2       -2wp2        -wp2
   wp1   wp1 + wp2  wp1 + 2wp2     0      0  wp1 - 2wp2   wp1 - wp2
- 2wp1  wp2 + 2wp1           0     0      0           0  2wp1 - wp2
+ 2wp1  2wp1 + wp2           0     0      0           0  2wp1 - wp2
  3wp1           0           0     0      0           0           0
 ```
 ```jldoctest

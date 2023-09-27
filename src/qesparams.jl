@@ -500,8 +500,8 @@ julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 0 0 1],[1, -1])
 
 julia> @variables a b;JosephsonCircuits.calccm([a b; b a],[1, -1])
 2-element Vector{Num}:
- abs2(a) - abs2(b)
- abs2(b) - abs2(a)
+  abs2(a) - abs2(b)
+ -abs2(a) + abs2(b)
 ```
 """
 function calccm(S::AbstractArray{T}, w) where {T}
@@ -580,8 +580,8 @@ field ladder operator basis. Overwrites cm with output.
 ```jldoctest
 julia> @variables a b;cm=Num[0,0];JosephsonCircuits.calccm!(cm,[a b; b a],[-1,1]);cm
 2-element Vector{Num}:
- abs2(b) - abs2(a)
- abs2(a) - abs2(b)
+ -abs2(a) + abs2(b)
+  abs2(a) - abs2(b)
 ```
 """
 function calccm!(cm, S, w)
@@ -631,7 +631,7 @@ julia> JosephsonCircuits.calccm(Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],Comp
 
 julia> @variables a b c d an bn cn dn;JosephsonCircuits.calccm([a b; c d],[an bn; cn dn],[1, -1])
 2-element Vector{Num}:
- abs2(a) + abs2(an) - abs2(b) - abs2(bn)
+ abs2(an) + abs2(a) - abs2(b) - abs2(bn)
  abs2(c) + abs2(cn) - abs2(d) - abs2(dn)
 ```
 """
@@ -734,7 +734,7 @@ field ladder operator basis. Overwrites cm with output.
 ```jldoctest
 julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn],[1, -1]);cm
 2-element Vector{Num}:
- abs2(a) + abs2(an) - abs2(b) - abs2(bn)
+ abs2(an) + abs2(a) - abs2(b) - abs2(bn)
  abs2(c) + abs2(cn) - abs2(d) - abs2(dn)
 ```
 """
@@ -867,7 +867,7 @@ julia> JosephsonCircuits.calcqe(Complex{Float64}[3/5 4/5;4/5 3/5],Complex{Float6
 
 julia> @variables a b c d an bn cn dn;JosephsonCircuits.calcqe([a b; c d],[an bn; cn dn])
 2×2 Matrix{Num}:
- abs2(a) / (abs2(a) + abs2(an) + abs2(b) + abs2(bn))  …  abs2(b) / (abs2(a) + abs2(an) + abs2(b) + abs2(bn))
+ abs2(a) / (abs2(an) + abs2(a) + abs2(b) + abs2(bn))  …  abs2(b) / (abs2(an) + abs2(a) + abs2(b) + abs2(bn))
  abs2(c) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))     abs2(d) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))
 ```
 """
@@ -1140,3 +1140,4 @@ function calcdZdroZ2(sensitivityindices, componenttypes, componentvalues,
     end
     return dZdroZ2
 end
+
