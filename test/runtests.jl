@@ -40,6 +40,8 @@ end
 
     include("JosephsonCircuits.jl")
 
+    include("network.jl")
+
     include("matutils.jl")
 
     include("nlsolve.jl")
