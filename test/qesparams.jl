@@ -145,4 +145,11 @@ using Test
             DimensionMismatch("Sizes of QE and S matrices must be equal."),
             JosephsonCircuits.calcqeideal!([1 2;3 4],[1 2 3;4 5 6]))
     end
+
+    @testset "calcdZdroZ2" begin
+        @test_throws(
+            ArgumentError("Unknown component."),
+            JosephsonCircuits.calcdZdroZ2([1],[:K], [2.0], [1.0],nothing))
+    end
+
 end

@@ -1135,7 +1135,7 @@ function calcdZdroZ2(sensitivityindices, componenttypes, componentvalues,
                 dZdroZ2[(i-1)*Nmodes+j] = 1/componentvalues[index]
             end
         else
-            error("Unknown component.")
+            throw(ArgumentError("Unknown component."))
         end
     end
     return dZdroZ2
