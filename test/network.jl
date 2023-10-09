@@ -191,7 +191,6 @@ using Test
         )
     end
 
-
     # check for consistency between the one and two network functions
     @testset "connectS consistency" begin
         Sx = rand(Complex{Float64},3,3,3)
@@ -210,8 +209,8 @@ using Test
         Sboth = zeros(Complex{Float64},6,6)
         Sboth[1:size(Sx,1),1:size(Sx,1),:,:] .= Sx
         Sboth[size(Sx,1)+1:end,size(Sx,1)+1:end,:,:] .= Sy
-        Sout1 = JosephsonCircuits.connectS(Sboth,1,1+size(Sx,1))
-        Sout2 = JosephsonCircuits.connectS(Sx,Sy,1,1)
+        Sout1 = JosephsonCircuits.connectS(Sboth,2,1+size(Sx,1))
+        Sout2 = JosephsonCircuits.connectS(Sx,Sy,2,1)
         @test isapprox(Sout1,Sout2)
     end
 
