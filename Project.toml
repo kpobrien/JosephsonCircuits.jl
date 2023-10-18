@@ -32,6 +32,7 @@ SparseArrays = "1.7"
 SpecialFunctions = "2"
 Statistics = "1.7"
 Symbolics = "4, 5"
+Test = "1.7"
 UUIDs = "1.7"
 julia = "1.7"
 
