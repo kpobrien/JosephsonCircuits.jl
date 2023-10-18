@@ -408,3 +408,178 @@ function connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices)
     end
     return nothing
 end
+
+
+"""
+    StoZ(S;portimpedances=50.0)
+
+Convert the scattering parameter matrix `S` to an impedance parameter matrix
+`Z` and return the result. 
+
+``Z=\\sqrt{z}(1_{\\!N}-S)^{-1}(1_{\\!N}+S)\\sqrt{z}``
+
+``\\sqrt{z}^{-1}Z=(1_{\\!N}-S)^{-1}(1_{\\!N}+S)\\sqrt{z}``
+
+``\\sqrt{z}^{-1}Z=(1_{\\!N}-S) \\div (1_{\\!N}+S)\\sqrt{z}``
+
+``Z= \\sqrt{z}((1_{\\!N}-S) \\div (1_{\\!N}+S)\\sqrt{z})``
+
+# Examples
+```jldoctest
+julia> S = [0.0 0.0;0.0 0.0];JosephsonCircuits.StoZ(S)
+2×2 Matrix{Float64}:
+ 50.0   0.0
+  0.0  50.0
+
+julia> S = [0.0 0.999;0.999 0.0];JosephsonCircuits.StoZ(S)
+2×2 Matrix{Float64}:
+ 49975.0  49975.0
+ 49975.0  49975.0
+```
+"""
+function StoZ(S;portimpedances=50.0)
+
+    Z = similar(S)
+    # make a view of Z,S and loop
+    # make a temporary array 
+    tmp = zeros(eltype(S),size(S,1),size(S,2))
+    
+    sqrtportimpedances = sqrt.(portimpedances)
+
+    if ndims(portimpedances) == 0
+        # assume the port impedances are all the same for all ports and
+        # frequencies. loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(S)[3:end])
+            StoZ!(view(Z,:,:,i),view(S,:,:,i),tmp,sqrtportimpedances)
+        end
+    else
+        # assume the port impedances are given for each port and frequency
+        # loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(S)[3:end])
+            StoZ!(view(Z,:,:,i),view(S,:,:,i),tmp,Diagonal(view(sqrtportimpedances,:,i)))
+        end
+    end
+    return Z
+end
+
+
+"""
+    StoZ!(Z::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
+
+
+"""
+function StoZ!(Z::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
+    
+    # compute (I + S)*sqrt(portimpedances)
+    copy!(Z,S)
+    for d in 1:size(Z,1)
+        Z[d,d] += 1
+    end
+    rmul!(Z,sqrtportimpedances)
+
+    # compute (I - S)
+    copy!(tmp,S)
+    rmul!(tmp,-1)
+    for d in 1:size(tmp,1)
+        tmp[d,d] += 1
+    end
+
+    # factorize the matrix
+    A = lu!(tmp)
+
+    # perform the left division
+    # compute (I - S) \ ((I + S)*sqrt(portimpedances))
+    ldiv!(A,Z)
+
+    # left multiply by sqrt(z)
+    # compute sqrt(portimpedances)*((I - S) \ ((I + S)*sqrt(portimpedances)))
+    lmul!(sqrtportimpedances,Z)
+    return nothing
+end
+
+
+"""
+    ZtoS(Z;portimpedances=50.0)
+
+Convert the impedance parameter matrix `Z` to a scattering parameter matrix
+`S` and return the result. `portimpedances` is a scalar, vector, or matrix of
+port impedances.
+
+``S=(\\sqrt{y}Z\\sqrt{y}-1_{\\!N})(\\sqrt{y}Z\\sqrt{y}+1_{\\!N})^{-1}``
+``S =(\\sqrt{y}Z\\sqrt{y}+1_{\\!N})^{-1}(\\sqrt{y}Z\\sqrt{y}-1_{\\!N})``
+``S =(\\sqrt{y}Z\\sqrt{y}+1_{\\!N}) \\div (\\sqrt{y}Z\\sqrt{y}-1_{\\!N})``
+
+where ```\\sqrt{y}=(\\sqrt{z})^{-1}`` where `z` is a diagonal matrix of port impedances. 
+
+First compute ``\tilde{Z} = \\sqrt{y}Z\\sqrt{y}``, then:
+
+``S =(\\tilde{Z}+1_{\\!N}) \\div (\\tilde{Z}-1_{\\!N})``
+
+# Examples
+```jldoctest
+julia> Z = [50.0 0.0;0.0 50.0];JosephsonCircuits.ZtoS(Z)
+2×2 Matrix{Float64}:
+ 0.0  0.0
+ 0.0  0.0
+
+julia> Z = [0.0 0.0;0.0 0.0];JosephsonCircuits.ZtoS(Z)
+2×2 Matrix{Float64}:
+ -1.0   0.0
+  0.0  -1.0
+```
+"""
+function ZtoS(Z;portimpedances=50.0)
+
+    S = similar(Z)
+    # make a view of Z,S and loop
+    # make a temporary array 
+    tmp = zeros(eltype(Z),size(Z,1),size(Z,2))
+    
+    oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
+
+    # assume the port impedances are all the same for all ports and frequencies
+    if ndims(portimpedances) == 0
+        # # loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(Z)[3:end])
+            ZtoS!(view(S,:,:,i),view(Z,:,:,i),tmp,oneoversqrtportimpedances)
+        end
+    else
+        for i in CartesianIndices(axes(Z)[3:end])
+            ZtoS!(view(S,:,:,i),view(Z,:,:,i),tmp,Diagonal(view(oneoversqrtportimpedances,:,i)))
+        end
+    end
+    return S
+end
+
+
+"""
+    ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
+
+"""
+function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversqrtportimpedances)
+    
+    # compute \tilde{Z} = oneoversqrtportimpedances*Z*oneoversqrtportimpedances in S and tmp
+    copy!(S,Z)
+    rmul!(S,oneoversqrtportimpedances)
+    lmul!(oneoversqrtportimpedances,S)
+    copy!(tmp,S)
+
+    # compute (\tilde{Z} - I)
+    for d in 1:size(S,1)
+        S[d,d] -= 1
+    end
+
+    # compute (\tilde{Z} + I)
+    for d in 1:size(tmp,1)
+        tmp[d,d] += 1
+    end
+
+    # factorize the matrix
+    A = lu!(tmp)
+
+    # perform the left division
+    # compute (\tilde{Z} + I) \ (\tilde{Z} - I)
+    ldiv!(A,S)
+
+    return nothing
+end
