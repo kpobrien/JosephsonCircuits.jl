@@ -8,6 +8,7 @@ import KLU
 import UUIDs
 import Symbolics: Symbolic, Sym, Num, @variables, @syms, @register_symbolic, @wrapped
 import Symbolics
+import SymbolicUtils
 import AxisKeys
 import PrecompileTools
 import OrderedCollections
@@ -318,7 +319,7 @@ end
 export @syms, hbsolve, hbnlsolve, hblinsolve, hbsolveold, hbnlsolveold,
     hblinsolveold, parsecircuit, parsesortcircuit, calccircuitgraph,
     symbolicmatrices, numericmatrices, LjtoIc, IctoLj, @variables,
-    @register_symbolic, Num, Symbolics
+    @register_symbolic, @wrapped, Num, Symbolics, SymbolicUtils
 
 
 # the below precompile directives are to help the compiler perform type inference
