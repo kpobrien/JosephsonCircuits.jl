@@ -6,7 +6,7 @@ import Graphs
 import FFTW
 import KLU
 import UUIDs
-import Symbolics: Symbolic, Sym, Num, @variables, @syms, @register_symbolic
+import Symbolics: Symbolic, Sym, Num, @variables, @syms, @register_symbolic, @wrapped
 import Symbolics
 import AxisKeys
 import PrecompileTools
