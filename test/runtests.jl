@@ -15,17 +15,16 @@ end
         :(using JosephsonCircuits);
         recursive=true)
     makedocs(
+        remotes = nothing,
         root = joinpath(dirname(pathof(JosephsonCircuits)), "..", "docs"),
         modules=[JosephsonCircuits],
         doctest = :only,
         sitename="JosephsonCircuits",
         format = Documenter.HTML(edit_link = nothing, disable_git = true),
         )
-    # doctest(JosephsonCircuits, manual = false)
 end
 
 @testset verbose = true "JosephsonCircuits" begin
-    # @info ""
     include("capindmat.jl")
 
     include("exportnetlist.jl")
