@@ -26,11 +26,9 @@ jobs:
       - uses: julia-actions/setup-julia@v1
         with:
           version: '1'
-      - uses: julia-actions/cache@v1
+      - uses: julia-actions/cache@v3
         with:
           cache-name: docs
-          cache-registries: "true"
-          cache-compiled: "true"
       - uses: julia-actions/julia-buildpkg@v1
         with:
           precompile: "yes"
