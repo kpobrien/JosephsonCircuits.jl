@@ -531,10 +531,10 @@ componentvalues = [1e-9, 0.2, 4e-9, 1e-12]
 componentnamedict = Dict{Symbol, Int}(:C2 =&gt; 4,:L1 =&gt; 3,:I1 =&gt; 1,:C1 =&gt; 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) =&gt; 1,(3, 1) =&gt; 2,(1, 3) =&gt; 2,(2, 1) =&gt; 1)
 Ib = JosephsonCircuits.calcIb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Ib)
 
 # output
-2-element SparseArrays.SparseVector{Float64, Int64} with 1 stored entry:
-  [1]  =  1.0e-9</code></pre><pre><code class="language-julia hljs">@variables I1 C1 L1 C2
+sparsevec([1], [1.0e-9], 2)</code></pre><pre><code class="language-julia hljs">@variables I1 C1 L1 C2
 Nmodes = 1
 Nbranches = 2
 componenttypes = [:I,:C,:L,:C]
@@ -543,10 +543,10 @@ componentvalues = [I1, C1, L1, C2]
 componentnamedict = Dict{Symbol, Int}(:C2 =&gt; 4,:L1 =&gt; 3,:I1 =&gt; 1,:C1 =&gt; 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) =&gt; 1,(3, 1) =&gt; 2,(1, 3) =&gt; 2,(2, 1) =&gt; 1)
 Ib = JosephsonCircuits.calcIb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Ib)
 
 # output
-2-element SparseArrays.SparseVector{Num, Int64} with 1 stored entry:
-  [1]  =  I1</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcLb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}" href="#JosephsonCircuits.calcLb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}"><code>JosephsonCircuits.calcLb</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcLb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+sparsevec([1], Num[I1], 2)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcLb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}" href="#JosephsonCircuits.calcLb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}"><code>JosephsonCircuits.calcLb</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcLb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)</code></pre><p>Calculate the sparse branch inductance vector whose length is <code>Nbranches*Nmodes</code>. Note that <code>nodeindices</code> is &quot;one indexed&quot; so 1 is the ground node.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">Nmodes = 1
 Nbranches = 2
 componenttypes = [:L,:K,:L,:C]
@@ -555,11 +555,10 @@ componentvalues = [1e-9, 0.2, 4e-9, 1e-12]
 componentnamedict = Dict{Symbol, Int}(:C2 =&gt; 4,:L2 =&gt; 3,:L1 =&gt; 1,:K1 =&gt; 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) =&gt; 1,(3, 1) =&gt; 2,(1, 3) =&gt; 2,(2, 1) =&gt; 1)
 Lb = JosephsonCircuits.calcLb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Lb)
 
 # output
-2-element SparseArrays.SparseVector{Float64, Int64} with 2 stored entries:
-  [1]  =  1.0e-9
-  [2]  =  4.0e-9</code></pre><pre><code class="language-julia hljs">@variables L1 K1 L2 C1
+sparsevec([1, 2], [1.0e-9, 4.0e-9], 2)</code></pre><pre><code class="language-julia hljs">@variables L1 K1 L2 C1
 Nmodes = 1
 Nbranches = 2
 componenttypes = [:L,:K,:L,:C]
@@ -568,11 +567,10 @@ componentvalues = [L1, K1, L2, C1]
 componentnamedict = Dict{Symbol, Int}(:C1 =&gt; 4,:L2 =&gt; 3,:L1 =&gt; 1,:K1 =&gt; 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) =&gt; 1,(3, 1) =&gt; 2,(1, 3) =&gt; 2,(2, 1) =&gt; 1)
 Lb = JosephsonCircuits.calcLb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Lb)
 
 # output
-2-element SparseArrays.SparseVector{Num, Int64} with 2 stored entries:
-  [1]  =  L1
-  [2]  =  L2</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcLjb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}" href="#JosephsonCircuits.calcLjb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}"><code>JosephsonCircuits.calcLjb</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcLjb(componenttypes, nodeindices, componentvalues, edge2indexdict,
+sparsevec([1, 2], Num[L1, L2], 2)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcLjb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}" href="#JosephsonCircuits.calcLjb-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Dict, Any, Any}"><code>JosephsonCircuits.calcLjb</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcLjb(componenttypes, nodeindices, componentvalues, edge2indexdict,
     Nmodes, Nbranches)</code></pre><p>Calculate the sparse branch Josephson inductance vector whose length is <code>Nbranches*Nmodes</code>. Note that <code>nodeindices</code> is &quot;one indexed&quot; so 1 is the ground node.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">Nmodes = 1
 Nbranches = 2
 componenttypes = [:Lj,:C,:Lj,:C]
@@ -581,11 +579,10 @@ componentvalues = [1e-9, 1e-12, 4e-9, 1e-12]
 componentnamedict = Dict{Symbol, Int}(:C2 =&gt; 4,:L2 =&gt; 3,:L1 =&gt; 1,:Cc =&gt; 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) =&gt; 1,(3, 1) =&gt; 2,(1, 3) =&gt; 2,(2, 1) =&gt; 1)
 Ljb = JosephsonCircuits.calcLjb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Ljb)
 
 # output
-2-element SparseArrays.SparseVector{Float64, Int64} with 2 stored entries:
-  [1]  =  1.0e-9
-  [2]  =  4.0e-9</code></pre><pre><code class="language-julia hljs">@variables Lj1 K1 Lj2 C1
+sparsevec([1, 2], [1.0e-9, 4.0e-9], 2)</code></pre><pre><code class="language-julia hljs">@variables Lj1 K1 Lj2 C1
 Nmodes = 1
 Nbranches = 2
 componenttypes = [:Lj,:K,:Lj,:C]
@@ -594,11 +591,10 @@ componentvalues = [Lj1, K1, Lj2, C1]
 componentnamedict = Dict{Symbol, Int}(:C1 =&gt; 4,:Lj2 =&gt; 3,:Lj1 =&gt; 1,:K1 =&gt; 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) =&gt; 1,(3, 1) =&gt; 2,(1, 3) =&gt; 2,(2, 1) =&gt; 1)
 Ljb = JosephsonCircuits.calcLjb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Ljb)
 
 # output
-2-element SparseArrays.SparseVector{Num, Int64} with 2 stored entries:
-  [1]  =  Lj1
-  [2]  =  Lj2</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcLmean-Tuple{Vector{Symbol}, Vector}" href="#JosephsonCircuits.calcLmean-Tuple{Vector{Symbol}, Vector}"><code>JosephsonCircuits.calcLmean</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcLmean(componenttypes::Vector{Symbol}, componentvalues::Vector)</code></pre><p>Return the mean of the linear and Josephson inductors.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[10,4,5,1])
+sparsevec([1, 2], Num[Lj1, Lj2], 2)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcLmean-Tuple{Vector{Symbol}, Vector}" href="#JosephsonCircuits.calcLmean-Tuple{Vector{Symbol}, Vector}"><code>JosephsonCircuits.calcLmean</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcLmean(componenttypes::Vector{Symbol}, componentvalues::Vector)</code></pre><p>Return the mean of the linear and Josephson inductors.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[10,4,5,1])
 2.5
 
 julia&gt; @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L1, C1, Lj1])
@@ -656,10 +652,10 @@ componentvalues = [1e-9, 0.2, 4e-9, 1e-12]
 componentnamedict = Dict{Symbol, Int}(:C2 =&gt; 4,:L1 =&gt; 3,:V1 =&gt; 1,:C1 =&gt; 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) =&gt; 1,(3, 1) =&gt; 2,(1, 3) =&gt; 2,(2, 1) =&gt; 1)
 Vb = JosephsonCircuits.calcVb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Vb)
 
 # output
-2-element SparseArrays.SparseVector{Float64, Int64} with 1 stored entry:
-  [1]  =  1.0e-9</code></pre><pre><code class="language-julia hljs">@variables V1 C1 L1 C2
+sparsevec([1], [1.0e-9], 2)</code></pre><pre><code class="language-julia hljs">@variables V1 C1 L1 C2
 Nmodes = 1
 Nbranches = 2
 componenttypes = [:V,:C,:L,:C]
@@ -668,10 +664,10 @@ componentvalues = [V1, C1, L1, C2]
 componentnamedict = Dict{Symbol, Int}(:C2 =&gt; 4,:L1 =&gt; 3,:V1 =&gt; 1,:C1 =&gt; 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) =&gt; 1,(3, 1) =&gt; 2,(1, 3) =&gt; 2,(2, 1) =&gt; 1)
 Vb = JosephsonCircuits.calcVb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Vb)
 
 # output
-2-element SparseArrays.SparseVector{Num, Int64} with 1 stored entry:
-  [1]  =  V1</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcbranchvector-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Vector, Dict, Any, Any, Symbol}" href="#JosephsonCircuits.calcbranchvector-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Vector, Dict, Any, Any, Symbol}"><code>JosephsonCircuits.calcbranchvector</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcbranchvector(componenttypes::Vector{Symbol},
+sparsevec([1], Num[V1], 2)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcbranchvector-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Vector, Dict, Any, Any, Symbol}" href="#JosephsonCircuits.calcbranchvector-Tuple{Vector{Symbol}, Matrix{Int64}, Vector, Vector, Dict, Any, Any, Symbol}"><code>JosephsonCircuits.calcbranchvector</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcbranchvector(componenttypes::Vector{Symbol},
     nodeindices::Matrix{Int}, componentvalues::Vector,
     valuecomponenttypes::Vector, edge2indexdict::Dict, Nmodes, Nbranches,
     component::Symbol)</code></pre><p>Calculate the sparse branch vector whose length is <code>Nbranches*Nmodes</code> for the given component symbol. Note that <code>nodeindices</code> is &quot;one indexed&quot; so 1 is the ground node.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calccircuitgraph-Tuple{JosephsonCircuits.ParsedSortedCircuit}" href="#JosephsonCircuits.calccircuitgraph-Tuple{JosephsonCircuits.ParsedSortedCircuit}"><code>JosephsonCircuits.calccircuitgraph</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calccircuitgraph(parsedsortedcircuit::ParsedSortedCircuit)</code></pre><p>Calculate the superconducting spanning tree, incidence matrix, closure branches, and loops from the parsed and sorted circuit.</p><p>See also <a href="#JosephsonCircuits.CircuitGraph"><code>CircuitGraph</code></a>, <a href="#JosephsonCircuits.calcgraphs-Tuple{Vector{Tuple{Int64, Int64}}, Int64}"><code>calcgraphs</code></a>, and <a href="#JosephsonCircuits.extractbranches-Tuple{Vector{Symbol}, Matrix{Int64}}"><code>extractbranches</code></a>  for more explanation.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables Ipump Rleft L1 K1 L2 C2
@@ -2206,10 +2202,10 @@ push!(circuit,(&quot;C1&quot;,&quot;1&quot;,&quot;2&quot;,Cc))
 push!(circuit,(&quot;Lj1&quot;,&quot;2&quot;,&quot;0&quot;,Lj)) 
 push!(circuit,(&quot;C2&quot;,&quot;2&quot;,&quot;0&quot;,Cj))
 circuitdefs = Dict(Lj =&gt;1000.0e-12,Cc =&gt; 100.0e-15,Cj =&gt; 1000.0e-15,Rleft =&gt; 50.0,Ipump =&gt; 1.0e-8)
-println(numericmatrices(circuit,circuitdefs))
+JosephsonCircuits.testshow(stdout,numericmatrices(circuit,circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  1.0e-9,   [2]  =  1.0e-9, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])</code></pre><pre><code class="language-julia hljs">@variables Ipump Rleft Cc Lj Cj
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])</code></pre><pre><code class="language-julia hljs">@variables Ipump Rleft Cc Lj Cj
 circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
 push!(circuit,(&quot;P1&quot;,&quot;1&quot;,&quot;0&quot;,1))
 push!(circuit,(&quot;I1&quot;,&quot;1&quot;,&quot;0&quot;,Ipump))
@@ -2220,10 +2216,10 @@ push!(circuit,(&quot;C2&quot;,&quot;2&quot;,&quot;0&quot;,Cj))
 circuitdefs = Dict(Lj =&gt;1000.0e-12,Cc =&gt; 100.0e-15,Cj =&gt; 1000.0e-15,Rleft =&gt; 50.0,Ipump =&gt; 1.0e-8)
 psc = JosephsonCircuits.parsesortcircuit(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
-println(numericmatrices(psc, cg, circuitdefs))
+JosephsonCircuits.testshow(stdout,numericmatrices(psc, cg, circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  1.0e-9,   [2]  =  1.0e-9, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsecircuit-Tuple{Any}" href="#JosephsonCircuits.parsecircuit-Tuple{Any}"><code>JosephsonCircuits.parsecircuit</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">parsecircuit(circuit)</code></pre><p>Parse <code>circuit</code> which is a vector where each element contains a tuple with the component name, the first node, the second node, and the component value. Component values can be numbers, symbols, or symbolic variables (including symbolic functions).</p><p>The nodes can be arbitrary strings for SPICE compatibility. Integers are also supported but are converted internally to strings. The ground node is &quot;0&quot; and is required. Specifying the type of the vector <code>circuit</code> is optional; although, typically a vector with a type union is preferable to an array of type Any.</p><p><strong>Arguments</strong></p><ul><li><code>circuit</code>: vector of tuples each of which contain the component name, the   first node, the second node, and the component value.</li></ul><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables Ipump Rleft L1 K1 L2 C2
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsecircuit-Tuple{Any}" href="#JosephsonCircuits.parsecircuit-Tuple{Any}"><code>JosephsonCircuits.parsecircuit</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">parsecircuit(circuit)</code></pre><p>Parse <code>circuit</code> which is a vector where each element contains a tuple with the component name, the first node, the second node, and the component value. Component values can be numbers, symbols, or symbolic variables (including symbolic functions).</p><p>The nodes can be arbitrary strings for SPICE compatibility. Integers are also supported but are converted internally to strings. The ground node is &quot;0&quot; and is required. Specifying the type of the vector <code>circuit</code> is optional; although, typically a vector with a type union is preferable to an array of type Any.</p><p><strong>Arguments</strong></p><ul><li><code>circuit</code>: vector of tuples each of which contain the component name, the   first node, the second node, and the component value.</li></ul><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables Ipump Rleft L1 K1 L2 C2
 circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
 push!(circuit,(&quot;P1&quot;,&quot;1&quot;,&quot;0&quot;,1))
 push!(circuit,(&quot;I1&quot;,&quot;1&quot;,&quot;0&quot;,Ipump))
@@ -2819,10 +2815,10 @@ push!(circuit,(&quot;R1&quot;,&quot;1&quot;,&quot;0&quot;,Rleft))
 push!(circuit,(&quot;C1&quot;,&quot;1&quot;,&quot;2&quot;,Cc)) 
 push!(circuit,(&quot;Lj1&quot;,&quot;2&quot;,&quot;0&quot;,Lj)) 
 push!(circuit,(&quot;C2&quot;,&quot;2&quot;,&quot;0&quot;,Cj))
-println(symbolicmatrices(circuit))
+JosephsonCircuits.testshow(stdout,symbolicmatrices(circuit))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolic{Real}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolic{Real}[1 / Rleft], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  Lj,   [2]  =  Lj, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])</code></pre><pre><code class="language-julia hljs">@variables Ipump Rleft Cc Lj Cj
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolic{Real}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolic{Real}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolic{Real}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolic{Real}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])</code></pre><pre><code class="language-julia hljs">@variables Ipump Rleft Cc Lj Cj
 circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
 push!(circuit,(&quot;P1&quot;,&quot;1&quot;,&quot;0&quot;,1))
 push!(circuit,(&quot;I1&quot;,&quot;1&quot;,&quot;0&quot;,Ipump))
@@ -2832,10 +2828,10 @@ push!(circuit,(&quot;Lj1&quot;,&quot;2&quot;,&quot;0&quot;,Lj))
 push!(circuit,(&quot;C2&quot;,&quot;2&quot;,&quot;0&quot;,Cj))
 psc = JosephsonCircuits.parsesortcircuit(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
-println(symbolicmatrices(psc, cg))
+JosephsonCircuits.testshow(stdout,symbolicmatrices(psc, cg))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolic{Real}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolic{Real}[1 / Rleft], 2, 2), 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries, 2-element SparseArrays.SparseVector{Nothing, Int64} with 0 stored entries,   [2]  =  Lj,   [2]  =  Lj, sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.testshow-Tuple{IO, SparseArrays.AbstractSparseVector}" href="#JosephsonCircuits.testshow-Tuple{IO, SparseArrays.AbstractSparseVector}"><code>JosephsonCircuits.testshow</code></a> — <span class="docstring-category">Method</span></header><section><div><p>testshow(io::IO,S)</p><p>Print <code>S</code> to the IOStream or IOBuffer <code>io</code>. This is used to generate the inputs for testing purposes. The default <code>show</code> function doesn&#39;t always produce an output which can be evaluated as the input. For example, for sparse vectors.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.testshow(stdout,JosephsonCircuits.SparseArrays.sparsevec([1],[2],3))
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolic{Real}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolic{Real}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolic{Real}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolic{Real}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.testshow-Tuple{IO, SparseArrays.AbstractSparseVector}" href="#JosephsonCircuits.testshow-Tuple{IO, SparseArrays.AbstractSparseVector}"><code>JosephsonCircuits.testshow</code></a> — <span class="docstring-category">Method</span></header><section><div><p>testshow(io::IO,S)</p><p>Print <code>S</code> to the IOStream or IOBuffer <code>io</code>. This is used to generate the inputs for testing purposes. The default <code>show</code> function doesn&#39;t always produce an output which can be evaluated as the input. For example, for sparse vectors.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.testshow(stdout,JosephsonCircuits.SparseArrays.sparsevec([1],[2],3))
 sparsevec([1], [2], 3)
 
 julia&gt; JosephsonCircuits.testshow(stdout,JosephsonCircuits.SparseArrays.sparsevec([],Nothing[],3))
@@ -3214,4 +3210,4 @@ run
 set filetype=binary
 write
 .endc
-</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="auto">Automatic (OS)</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.2.1 on <span class="colophon-date" title="Sunday 11 February 2024 15:20">Sunday 11 February 2024</span>. Using Julia version 1.10.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="auto">Automatic (OS)</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.2.1 on <span class="colophon-date" title="Sunday 11 February 2024 20:28">Sunday 11 February 2024</span>. Using Julia version 1.10.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
