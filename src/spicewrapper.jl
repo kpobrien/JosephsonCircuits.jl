@@ -245,9 +245,9 @@ function wrspice_cmd()
 end
 
 """
-    spice_run(input::String, spicecmd::String)
+    spice_run(input, spicecmd::String)
 
-Argument is a string containing the input commands for wrspice.  This function
+Argument is a string or command containing the input commands for wrspice.  This function
 saves the string to disk, runs spice, parses the results with wrsplice_load(),
 then returns those parsed results.
 
@@ -255,14 +255,7 @@ The input should not should have a file name listed after the write command in
 the .control block so that we can specify the raw output file with a command
 line argument.
 """
-function spice_run(input::String,spicecmd)
-
-    # #save a circuit file manually
-    # write("julia.cir",input)
-    #
-    # #load a file as input
-    # input = read("julia.cir", String)
-
+function spice_run(input,spicecmd)
 
     #find the temporary directory
     path = tempdir()
@@ -270,11 +263,6 @@ function spice_run(input::String,spicecmd)
     #generate unique filenames
     inputfilename = joinpath(path,"spice-"* string(UUIDs.uuid1()) * ".cir")
     outputfilename = joinpath(path,"spice-"* string(UUIDs.uuid1()) * ".raw")
-
-    # ##manually load these files for testing
-    # inputfilename = "julia.cir"
-    # outputfilename = "julia.raw"
-
 
     #save the input file
     open(inputfilename, "w") do f
@@ -309,7 +297,7 @@ processes in parallel. The number of parallel processes is decided from
 Threads.nthreads(). It can be changed manually.
 
 """
-function spice_run(input::AbstractArray{String,1},spicecmd;
+function spice_run(input::AbstractVector,spicecmd;
     ntasks = Threads.nthreads())
     # Set the number of simultaneous parallel simulations equal to 
     # the number of threads. ntasks can be manually changed here 
