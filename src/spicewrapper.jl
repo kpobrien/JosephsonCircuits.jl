@@ -65,13 +65,12 @@ function wrspice_input_transient(netlist::String, current,
     dphimax = 0.01, filetype = "binary")
 
     if length(current) == 1
-        if eltype(sourcenodes) <: String || eltype(sourcenodes) <: Int
-            sourcenodes = [sourcenodes]
-        else
-            throw(ArgumentError("Source nodes not strings or integers."))
-        end
-        if length(sourcenodes) != 2
-            throw(ArgumentError("Source node size not correct."))
+        if length(sourcenodes) == 2 
+            if (eltype(sourcenodes) <: String || eltype(sourcenodes) <: Int)
+                sourcenodes = [sourcenodes]
+            else
+                throw(ArgumentError("Source nodes not strings or integers."))
+            end
         end
     end
 

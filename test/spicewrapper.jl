@@ -27,7 +27,7 @@ using XicTools_jll
                 JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,(1.1,0),1e-9,100e-9,10e-9))
 
             @test_throws(
-                ArgumentError("Source node size not correct."),
+                ArgumentError("Input vector lengths not equal."),
                 JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,(1,0,0),1e-9,100e-9,10e-9))
 
             @test_throws(
@@ -41,6 +41,10 @@ using XicTools_jll
             @test_throws(
                 ArgumentError("Nodes are not an integer or string."),
                 JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0),(1.1,0)],1e-9,100e-9,10e-9))
+
+            # test various combinations of vctor and scalar inputs
+            @test(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,(1,0),1e-9,100e-9,10e-9) == JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6],[5e9],[3.14],(1,0),1e-9,100e-9,10e-9))
+            @test(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,(1,0),1e-9,100e-9,10e-9) == JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6],[5e9],[3.14],[(1,0)],1e-9,100e-9,10e-9))
 
         end
 
