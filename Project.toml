@@ -36,6 +36,7 @@ SymbolicUtils = "1"
 Symbolics = "4, 5"
 Test = "1.7"
 UUIDs = "1.7"
+XicTools_jll = "4"
 julia = "1.7"
 
 [extras]
@@ -43,6 +44,7 @@ Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+XicTools_jll = "05e36573-c726-5118-99be-97aa17437f28"
 
 [targets]
-test = ["Aqua", "Documenter", "SpecialFunctions", "Test"]
+test = ["Aqua", "Documenter", "SpecialFunctions", "Test", "XicTools_jll"]
