@@ -1,25 +1,27 @@
 
 """
-    wrspice_input_transient(netlist, idrive, fdrive, thetadrive, idrive2,
-        fdrive2, thetadrive2, tstep, tstop, trise; maxdata = 10e6, jjaccel = 1,
-        dphimax = 0.01, filetype = "binary")
+    wrspice_input_transient(netlist::String, current, frequency, phase, tstep,
+        tstop, trise; maxdata = 10e6, jjaccel = 1, dphimax = 0.01,
+        filetype = "binary")
 
 Generate the WRSPICE input file for a transient simulation using circuit 
-parameters from the given netlist, the source current and frequency, and the 
-time step and stop time. Leave filename empty so we can add that as a command
-line argument. Don't specify any variables so it saves everything.
+parameters from the given netlist, the source current, frequency phase, and
+nodes for the sources, and the time step and stop time. Leave filename empty
+so we can add that as a command line argument. Don't specify any variables
+so it saves everything.
 
 # Arguments
-- `netlist`: 
-- `idrive`: 
-- `fdrive`: 
-- `thetadrive`: 
-- `idrive2`: 
-- `fdrive2`: 
-- `thetadrive2`: 
-- `tstep`: 
-- `tstop`: 
-- `trise`: 
+- `netlist`: String containing the circuit netlist, excluding sources.
+- `current`: Vector of current source amplitudes in Ampere.
+- `frequency`: Vector of current source frequencies in Hz.
+- `phase`: Vector of current source phases in radians.
+- `sourcenodes`: Vector of tuples of nodes (src,dst) at which to place the current
+    source(s).
+- `tstep`: Time step in seconds.
+- `tstop`: Time for which to run the simulation in seconds.
+- `trise`: The simulation ramps up the current source amplitude with a
+    1-sech(t/trise) envelope which reaches 35 percent of the peak in one
+    `trise`.
 
 # Keywords
 - `maxdata = 10e6`: Maximum size of data to export in kilobytes from 1e3 to
@@ -31,20 +33,16 @@ line argument. Don't specify any variables so it saves everything.
     dphimax from the default of pi/5 to a smaller value is critical for
     matching the accuracy of the harmonic balance method simulations. This
     increases simulation time by pi/5/(dphimax).
-- `filetype = "binary"`: Binary files are faster to save and load.
+- `filetype = "binary" or "ascii"`: Binary files are faster to save and load.
 
 # Examples
 ```jldoctest
-julia> println(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,1e-3,6e9,6.28,1e-9,100e-9,10e-9))
+julia> println(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0),(1,0)],1e-9,100e-9,10e-9))
 * SPICE Simulation
 * Current source
 * 1-hyperbolic secant rise
-isrc 0 1 1.0u*sin(31.41592653589793g*x+3.14)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))
-isrc2 0 1 1000.0u*sin(37.69911184307752g*x+6.28)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))
-
-* isrc 1 0 sin(0 1.0u 5.0g 0.0 179.90874767107852)
-* isrc2 1 0 sin(0 1000.0u 6.0g 0.0 359.81749534215703)
-
+isrc1 1 0 1.0u*sin(31.41592653589793g*x+3.14)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))
+isrc2 1 0 1000.0u*sin(37.69911184307752g*x+6.28)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))
 * Set up the transient simulation
 * .tran 5p 10n
 .tran 1000.0000000000001p 100.0n uic
@@ -61,20 +59,31 @@ write
 
 ```
 """
-function wrspice_input_transient(netlist, idrive, fdrive, thetadrive, idrive2,
-    fdrive2, thetadrive2, tstep, tstop, trise; maxdata = 10e6, jjaccel = 1,
+function wrspice_input_transient(netlist::String, current,
+    frequency, phase,
+    sourcenodes, tstep, tstop, trise; maxdata = 10e6, jjaccel = 1,
     dphimax = 0.01, filetype = "binary")
 
-    control="""
+    if length(current) != length(frequency) != length(phase)
+        error("Input vectors not equal.")
+    end
+
+    if length(current) == 1 && length(sourcenodes) == 2
+        sourcenodes = [sourcenodes]
+    end
+
+    control = ""
+    control *="""
 
     * Current source
     * 1-hyperbolic secant rise
-    isrc 0 1 $(idrive*1e6)u*sin($(2*pi*fdrive*1e-9)g*x+$thetadrive)*(1-2/(exp(x/$trise)+exp(-x/$trise)))
-    isrc2 0 1 $(idrive2*1e6)u*sin($(2*pi*fdrive2*1e-9)g*x+$thetadrive2)*(1-2/(exp(x/$trise)+exp(-x/$trise)))
+    """
 
-    * isrc 1 0 sin(0 $(idrive*1e6)u $(fdrive*1e-9)g 0.0 $(thetadrive*180/pi))
-    * isrc2 1 0 sin(0 $(idrive2*1e6)u $(fdrive2*1e-9)g 0.0 $(thetadrive2*180/pi))
+    for i in 1:length(current)
+        control*="""isrc$(i) $(sourcenodes[i][1]) $(sourcenodes[i][2]) $(current[i]*1e6)u*sin($(2*pi*frequency[i]*1e-9)g*x+$(phase[i]))*(1-2/(exp(x/$trise)+exp(-x/$trise)))\n"""
+    end
 
+    control *="""
     * Set up the transient simulation
     * .tran 5p 10n
     .tran $(tstep*1e12)p $(tstop*1e9)n uic
@@ -95,6 +104,15 @@ function wrspice_input_transient(netlist, idrive, fdrive, thetadrive, idrive2,
 
     return input
 end
+
+
+# function wrspice_input_transient(netlist::String, current,
+#     frequency, phase, sourcenodes::Tuple, tstep, tstop, trise; maxdata = 10e6, jjaccel = 1,
+#     dphimax = 0.01, filetype = "binary")
+
+#     return wrspice_input_transient(netlist, [current], [frequency], [phase], [sourcenodes], tstep, tstop, trise; maxdata = maxdata, jjaccel = jjaccel,
+#     dphimax = dphimax, filetype = filetype)
+# end
 
 """
     wrspice_input_ac(netlist,nsteps,fstart,fstop)
