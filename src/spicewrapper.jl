@@ -64,12 +64,28 @@ function wrspice_input_transient(netlist::String, current,
     sourcenodes, tstep, tstop, trise; maxdata = 10e6, jjaccel = 1,
     dphimax = 0.01, filetype = "binary")
 
-    if length(current) != length(frequency) != length(phase)
-        error("Input vectors not equal.")
+    if length(current) == 1
+        if eltype(sourcenodes) <: String || eltype(sourcenodes) <: Int
+            sourcenodes = [sourcenodes]
+        else
+            throw(ArgumentError("Source nodes not strings or integers."))
+        end
+        if length(sourcenodes) != 2
+            throw(ArgumentError("Source node size not correct."))
+        end
     end
 
-    if length(current) == 1 && length(sourcenodes) == 2
-        sourcenodes = [sourcenodes]
+    if length(current) != length(frequency) || length(current) != length(phase) || length(current) != length(sourcenodes)
+        throw(ArgumentError("Input vector lengths not equal."))
+    end
+
+    for s in sourcenodes
+        if length(s) != 2
+            throw(ArgumentError("Two nodes are required per source."))
+        end
+        if !(eltype(s) <: String || eltype(s) <: Int)
+            throw(ArgumentError("Nodes are not an integer or string."))
+        end
     end
 
     control = ""

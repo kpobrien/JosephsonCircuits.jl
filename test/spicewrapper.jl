@@ -19,6 +19,34 @@ using XicTools_jll
 
     end
 
+    @testset "wrspice_input_transient" begin
+        @testset "wrspice_input_transient errors" begin
+
+            @test_throws(
+                ArgumentError("Source nodes not strings or integers."),
+                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,(1.1,0),1e-9,100e-9,10e-9))
+
+            @test_throws(
+                ArgumentError("Source node size not correct."),
+                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",1e-6,5e9,3.14,(1,0,0),1e-9,100e-9,10e-9))
+
+            @test_throws(
+                ArgumentError("Input vector lengths not equal."),
+                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0)],1e-9,100e-9,10e-9))
+
+            @test_throws(
+                ArgumentError("Two nodes are required per source."),
+                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0),(1,0,2)],1e-9,100e-9,10e-9))
+
+            @test_throws(
+                ArgumentError("Nodes are not an integer or string."),
+                JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0),(1.1,0)],1e-9,100e-9,10e-9))
+
+        end
+
+
+    end
+
     @testset "wrspice_input_ac array" begin
         out1 = JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",collect((4:0.01:5)*1e9),[1,2],1e-6)
         out2 = "* SPICE Simulation\n* AC current source with magnitude 1 and phase 0\nisrc 1 0 ac 1.0e-6 0.0\n\n* Set up the AC small signal simulation\n.ac lin 99 4.0g 5.0g\n\n* The control block\n.control\n\n* Maximum size of data to export in kilobytes from 1e3 to 2e9 with \n* default 2.56e5. This has to come before the run command\nset maxdata = 10e6\n\n* Run the simulation\nrun\n\n* Binary files are faster to save and load. \nset filetype=binary\n\n* Leave filename empty so we can add that as a command line argument.\n* Don't specify any variables so it saves everything.    \nwrite\n\n.endc\n\n"
