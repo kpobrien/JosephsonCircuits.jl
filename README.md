@@ -49,6 +49,9 @@ Then check that you are running the latest version of the package with:
 Pkg.status()
 ```
 
+# Usage:
+Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions quantified by the Josephson inductance `Lj`, mutual inductances `K`, and resistances `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format) and examples below for usage. Then run the harmonic balance solver using `hbnlsolve` to solve a nonlinear system at one operating point, `hblinsolve` to solve a linear (or linearized) system, or `hbsolve` to run both analyses. Add a question mark `?` in front of a function to access the docstring.
+
 # Examples:
 ## Josephson parametric amplifier
 A driven nonlinear LC resonator.
