@@ -22,7 +22,7 @@ As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.
 
 # Installation:
 
-To install the latest release of the package, [install Julia](https://julialang.org/downloads/), start Julia, and enter the following command:
+To install the latest release of the package, [install Julia using Juliaup](https://github.com/JuliaLang/juliaup), start Julia, and enter the following command:
 ```
 using Pkg
 Pkg.add("JosephsonCircuits")
@@ -50,7 +50,7 @@ Pkg.status()
 ```
 
 # Usage:
-Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions quantified by the Josephson inductance `Lj`, mutual inductances `K`, and resistances `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format) and examples below for usage. Then run the harmonic balance solver using `hbnlsolve` to solve a nonlinear system at one operating point, `hblinsolve` to solve a linear (or linearized) system, or `hbsolve` to run both analyses. Add a question mark `?` in front of a function to access the docstring.
+Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions described by the Josephson inductance `Lj`, mutual inductors described by the mutual coupling coefficient `K`, and resistors `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format), docstrings, and examples below for usage. Run the harmonic balance analysis using `hbnlsolve` to solve a nonlinear system at one operating point, `hblinsolve` to solve a linear (or linearized) system at one or more frequencies, or `hbsolve` to run both analyses. Add a question mark `?` in front of a function to access the docstring.
 
 # Examples:
 ## Josephson parametric amplifier
@@ -454,7 +454,7 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 
 
 # Performance tips:
-Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores. See the [Julia documentation](https://docs.julialang.org/en/v1/manual/multi-threading) for the procedure.
+Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores. See the [Julia documentation](https://docs.julialang.org/en/v1/manual/multi-threading) for the procedure. Check how many threads you are using by calling `Threads.nthreads()`.
 
 # References:
 
