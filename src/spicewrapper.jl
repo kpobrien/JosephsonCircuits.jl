@@ -41,8 +41,8 @@ julia> println(JosephsonCircuits.wrspice_input_transient("* SPICE Simulation",[1
 * SPICE Simulation
 * Current source
 * 1-hyperbolic secant rise
-isrc1 1 0 1.0u*sin(31.41592653589793g*x+3.14)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))
-isrc2 1 0 1000.0u*sin(37.69911184307752g*x+6.28)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))
+isrc1 1 0 1.0u*cos(31.41592653589793g*x+3.14)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))
+isrc2 1 0 1000.0u*cos(37.69911184307752g*x+6.28)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))
 * Set up the transient simulation
 * .tran 5p 10n
 .tran 1000.0000000000001p 100.0n uic
