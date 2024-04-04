@@ -95,7 +95,7 @@ function wrspice_input_transient(netlist::String, current,
     """
 
     for i in 1:length(current)
-        control*="""isrc$(i) $(sourcenodes[i][1]) $(sourcenodes[i][2]) $(current[i]*1e6)u*sin($(2*pi*frequency[i]*1e-9)g*x+$(phase[i]))*(1-2/(exp(x/$trise)+exp(-x/$trise)))\n"""
+        control*="""isrc$(i) $(sourcenodes[i][1]) $(sourcenodes[i][2]) $(current[i]*1e6)u*cos($(2*pi*frequency[i]*1e-9)g*x+$(phase[i]))*(1-2/(exp(x/$trise)+exp(-x/$trise)))\n"""
     end
 
     control *="""

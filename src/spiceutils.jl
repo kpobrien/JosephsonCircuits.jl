@@ -56,7 +56,7 @@ function wrspice_input_paramp(netlist, ws, wp, Ip, sourcenodes,sourcenodep;
     # Is = 1e-13
 
     # define the time step
-    tstep = 1/(fp*stepsperperiod)
+    tstep = 1/(maximum(fp)*stepsperperiod)
 
     # combine the source nodes into a vector
     sourcenode = vcat(sourcenodep,sourcenodes)
@@ -64,7 +64,7 @@ function wrspice_input_paramp(netlist, ws, wp, Ip, sourcenodes,sourcenodep;
     # pump only simulation
     # inputpump = wrspice_input_transient(netlist, Ip, fp, zeros(length(Ip)),
         # sourcenodes, tstep, tstop, trise; dphimax = dphimax);
-    inputpump = wrspice_input_transient(netlist, Ip, fp, 0.0, sourcenodep,
+    inputpump = wrspice_input_transient(netlist, Ip, fp, zeros(length(Ip)), sourcenodep,
             tstep, tstop, trise; dphimax = dphimax);
     input = [inputpump]
 
@@ -72,12 +72,12 @@ function wrspice_input_paramp(netlist, ws, wp, Ip, sourcenodes,sourcenodep;
         fs = ws[i]/(2*pi)
 
         inputsin = wrspice_input_transient(netlist, vcat(Ip,Is), vcat(fp,fs),
-            vcat(zeros(length(Ip)), 0.0), sourcenode,
+            vcat(zeros(length(Ip)), -pi/2), sourcenode,
             tstep, tstop, trise; dphimax = dphimax);
         push!(input,inputsin)
 
         inputcos = wrspice_input_transient(netlist, vcat(Ip,Is), vcat(fp,fs),
-            vcat(zeros(length(Ip)), pi/2), sourcenode,
+            vcat(zeros(length(Ip)), 0.0), sourcenode,
             tstep, tstop, trise; dphimax = dphimax);
         push!(input,inputcos)
     end
