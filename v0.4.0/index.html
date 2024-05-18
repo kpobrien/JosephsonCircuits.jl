@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>JosephsonCircuits.jl · JosephsonCircuits</title><meta name="title" content="JosephsonCircuits.jl · JosephsonCircuits"/><meta property="og:title" content="JosephsonCircuits.jl · JosephsonCircuits"/><meta property="twitter:title" content="JosephsonCircuits.jl · JosephsonCircuits"/><meta name="description" content="Documentation for JosephsonCircuits."/><meta property="og:description" content="Documentation for JosephsonCircuits."/><meta property="twitter:description" content="Documentation for JosephsonCircuits."/><script data-outdated-warner src="assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="assets/documenter.js"></script><script src="search_index.js"></script><script src="siteinfo.js"></script><script src="../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href>JosephsonCircuits</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li class="is-active"><a class="tocitem" href>JosephsonCircuits.jl</a><ul class="internal"><li class="toplevel"><a class="tocitem" href="#Installation:"><span>Installation:</span></a></li><li class="toplevel"><a class="tocitem" href="#Examples:"><span>Examples:</span></a></li><li><a class="tocitem" href="#Josephson-parametric-amplifier"><span>Josephson parametric amplifier</span></a></li><li><a class="tocitem" href="#Josephson-traveling-wave-parametric-amplifier-(JTWPA)"><span>Josephson traveling wave parametric amplifier (JTWPA)</span></a></li><li><a class="tocitem" href="#Floquet-JTWPA"><span>Floquet JTWPA</span></a></li><li><a class="tocitem" href="#Floquet-JTWPA-with-dissipation"><span>Floquet JTWPA with dissipation</span></a></li><li class="toplevel"><a class="tocitem" href="#Performance-tips:"><span>Performance tips:</span></a></li><li class="toplevel"><a class="tocitem" href="#References:"><span>References:</span></a></li><li class="toplevel"><a class="tocitem" href="#Philosophy:"><span>Philosophy:</span></a></li><li class="toplevel"><a class="tocitem" href="#Future-developments:"><span>Future developments:</span></a></li><li class="toplevel"><a class="tocitem" href="#Related-packages-and-software:"><span>Related packages and software:</span></a></li><li class="toplevel"><a class="tocitem" href="#Funding"><span>Funding</span></a></li></ul></li><li><a class="tocitem" href="reference/">Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>JosephsonCircuits.jl</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>JosephsonCircuits.jl</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/kpobrien/JosephsonCircuits.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="JosephsonCircuits.jl"><a class="docs-heading-anchor" href="#JosephsonCircuits.jl">JosephsonCircuits.jl</a><a id="JosephsonCircuits.jl-1"></a><a class="docs-heading-anchor-permalink" href="#JosephsonCircuits.jl" title="Permalink"></a></h1><p><a href="https://codecov.io/gh/kpobrien/JosephsonCircuits.jl"><img src="https://codecov.io/gh/kpobrien/JosephsonCircuits.jl/branch/main/graphs/badge.svg" alt="Code coverage"/></a> <a href="https://github.com/kpobrien/JosephsonCircuits.jl/actions?query=workflow"><img src="https://github.com/kpobrien/JosephsonCircuits.jl/actions/workflows/CI.yml/badge.svg " alt="Build Status"/></a> <a href="https://josephsoncircuits.org/stable"><img src="https://img.shields.io/badge/docs-stable-blue.svg" alt="Stable docs"/></a>  <a href="https://josephsoncircuits.org/dev"><img src="https://img.shields.io/badge/docs-dev-blue.svg" alt="Dev docs"/></a></p><p><a href="https://github.com/kpobrien/JosephsonCircuits.jl">JosephsonCircuits.jl</a> is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. <a href="https://github.com/kpobrien/JosephsonCircuits.jl">JosephsonCircuits.jl</a> simulates the frequency domain behavior using a variant [1] of nodal analysis [2] and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.</p><p>Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by capacitors with an imaginary capacitance or frequency dependent resistors. </p><p><a href="https://github.com/kpobrien/JosephsonCircuits.jl">JosephsonCircuits.jl</a> supports the following:</p><ul><li>Nonlinear simulations in which the user defines a circuit, the drive current, frequency, and number of harmonics and the code calculates the node flux or node voltage at each harmonic.</li><li>Linearized simulations about the nonlinear operating point calculated above. This simulates the small signal response of a periodically time varying linear circuit and is useful for simulating parametric amplification and frequency conversion in the undepleted (strong) pump limit. Calculation of node fluxes (or node voltages) and scattering parameters of the linearized circuit [4-5].</li><li>Linear simulations of linear circuits. Calculation of node fluxes (or node voltages) and scattering parameters.</li><li>Calculation of symbolic capacitance and inverse inductance matrices.</li></ul><p>As detailed in [6], we find excellent agreement with <a href="https://www.keysight.com/us/en/products/software/pathwave-design-software/pathwave-advanced-design-system.html">Keysight ADS</a> simulations and Fourier analysis of time domain simulation performed by <a href="http://wrcad.com/wrspice.html">WRSPICE</a>.</p><p><strong>Warning:</strong> this package is under heavy development and there will be breaking changes. We will keep the examples updated to ease the burden of any breaking changes.</p><h1 id="Installation:"><a class="docs-heading-anchor" href="#Installation:">Installation:</a><a id="Installation:-1"></a><a class="docs-heading-anchor-permalink" href="#Installation:" title="Permalink"></a></h1><p>To install the latest release of the package, <a href="https://julialang.org/downloads/">install Julia</a>, start Julia, and enter the following command:</p><pre><code class="nohighlight hljs">using Pkg
+Pkg.add(&quot;JosephsonCircuits&quot;)</code></pre><p>To install the development version, start Julia and enter the command:</p><pre><code class="nohighlight hljs">using Pkg
+Pkg.add(name=&quot;JosephsonCircuits&quot;,rev=&quot;main&quot;)</code></pre><p>To run the examples below, you will need to install Plots.jl using the command:</p><pre><code class="nohighlight hljs">Pkg.add(&quot;Plots&quot;)</code></pre><p>If you get errors when running the examples, please try installing the latest version of Julia and updating to the latest version of JosephsonCircuits.jl by running:</p><pre><code class="nohighlight hljs">Pkg.update()</code></pre><p>Then check that you are running the latest version of the package with:</p><pre><code class="nohighlight hljs">Pkg.status()</code></pre><h1 id="Examples:"><a class="docs-heading-anchor" href="#Examples:">Examples:</a><a id="Examples:-1"></a><a class="docs-heading-anchor-permalink" href="#Examples:" title="Permalink"></a></h1><h2 id="Josephson-parametric-amplifier"><a class="docs-heading-anchor" href="#Josephson-parametric-amplifier">Josephson parametric amplifier</a><a id="Josephson-parametric-amplifier-1"></a><a class="docs-heading-anchor-permalink" href="#Josephson-parametric-amplifier" title="Permalink"></a></h2><p>A driven nonlinear LC resonator.</p><pre><code class="language-julia hljs">using JosephsonCircuits
+using Plots
+
+@variables R Cc Lj Cj
+circuit = [
+    (&quot;P1&quot;,&quot;1&quot;,&quot;0&quot;,1),
+    (&quot;R1&quot;,&quot;1&quot;,&quot;0&quot;,R),
+    (&quot;C1&quot;,&quot;1&quot;,&quot;2&quot;,Cc),
+    (&quot;Lj1&quot;,&quot;2&quot;,&quot;0&quot;,Lj),
+    (&quot;C2&quot;,&quot;2&quot;,&quot;0&quot;,Cj)]
+
+circuitdefs = Dict(
+    Lj =&gt;1000.0e-12,
+    Cc =&gt; 100.0e-15,
+    Cj =&gt; 1000.0e-15,
+    R =&gt; 50.0)
+
+ws = 2*pi*(4.5:0.001:5.0)*1e9
+wp = (2*pi*4.75001*1e9,)
+Ip = 0.00565e-6
+sources = [(mode=(1,),port=1,current=Ip)]
+Npumpharmonics = (16,)
+Nmodulationharmonics = (8,)
+
+@time jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs)
+
+plot(
+    jpa.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        jpa.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    xlabel=&quot;Frequency (GHz)&quot;,
+    ylabel=&quot;Gain (dB)&quot;,
+)</code></pre><pre><code class="nohighlight hljs">  0.003080 seconds (57.81 k allocations: 6.391 MiB)</code></pre><p><img src="https://qce.mit.edu/JosephsonCircuits.jl/jpa.png" alt="JPA simulation"/></p><h2 id="Josephson-traveling-wave-parametric-amplifier-(JTWPA)"><a class="docs-heading-anchor" href="#Josephson-traveling-wave-parametric-amplifier-(JTWPA)">Josephson traveling wave parametric amplifier (JTWPA)</a><a id="Josephson-traveling-wave-parametric-amplifier-(JTWPA)-1"></a><a class="docs-heading-anchor-permalink" href="#Josephson-traveling-wave-parametric-amplifier-(JTWPA)" title="Permalink"></a></h2><p>Circuit parameters from <a href="https://www.science.org/doi/10.1126/science.aaa8525">here</a>.</p><pre><code class="language-julia hljs">using JosephsonCircuits
+using Plots
+
+@variables Rleft Rright Cg Lj Cj Cc Cr Lr
+circuit = Tuple{String,String,String,Num}[]
+
+# port on the input side
+push!(circuit,(&quot;P$(1)_$(0)&quot;,&quot;1&quot;,&quot;0&quot;,1))
+push!(circuit,(&quot;R$(1)_$(0)&quot;,&quot;1&quot;,&quot;0&quot;,Rleft))
+Nj=2048
+pmrpitch = 4
+#first half cap to ground
+push!(circuit,(&quot;C$(1)_$(0)&quot;,&quot;1&quot;,&quot;0&quot;,Cg/2))
+#middle caps and jj&#39;s
+push!(circuit,(&quot;Lj$(1)_$(2)&quot;,&quot;1&quot;,&quot;2&quot;,Lj)) 
+push!(circuit,(&quot;C$(1)_$(2)&quot;,&quot;1&quot;,&quot;2&quot;,Cj)) 
+
+j=2
+for i = 2:Nj-1
+    
+    if mod(i,pmrpitch) == pmrpitch÷2
+
+        # make the jj cell with modified capacitance to ground
+        push!(circuit,(&quot;C$(j)_$(0)&quot;,&quot;$(j)&quot;,&quot;$(0)&quot;,Cg-Cc))
+        push!(circuit,(&quot;Lj$(j)_$(j+2)&quot;,&quot;$(j)&quot;,&quot;$(j+2)&quot;,Lj))
+
+        push!(circuit,(&quot;C$(j)_$(j+2)&quot;,&quot;$(j)&quot;,&quot;$(j+2)&quot;,Cj))
+        
+        #make the pmr
+        push!(circuit,(&quot;C$(j)_$(j+1)&quot;,&quot;$(j)&quot;,&quot;$(j+1)&quot;,Cc))
+        push!(circuit,(&quot;C$(j+1)_$(0)&quot;,&quot;$(j+1)&quot;,&quot;$(0)&quot;,Cr))
+        push!(circuit,(&quot;L$(j+1)_$(0)&quot;,&quot;$(j+1)&quot;,&quot;$(0)&quot;,Lr))
+        
+        # increment the index
+        j+=1
+    else
+        push!(circuit,(&quot;C$(j)_$(0)&quot;,&quot;$(j)&quot;,&quot;$(0)&quot;,Cg))
+        push!(circuit,(&quot;Lj$(j)_$(j+1)&quot;,&quot;$(j)&quot;,&quot;$(j+1)&quot;,Lj))
+        push!(circuit,(&quot;C$(j)_$(j+1)&quot;,&quot;$(j)&quot;,&quot;$(j+1)&quot;,Cj))
+    end
+    
+    # increment the index
+    j+=1
+
+end
+
+#last jj
+push!(circuit,(&quot;C$(j)_$(0)&quot;,&quot;$(j)&quot;,&quot;$(0)&quot;,Cg/2))
+push!(circuit,(&quot;R$(j)_$(0)&quot;,&quot;$(j)&quot;,&quot;$(0)&quot;,Rright))
+# port on the output side
+push!(circuit,(&quot;P$(j)_$(0)&quot;,&quot;$(j)&quot;,&quot;$(0)&quot;,2))
+
+circuitdefs = Dict(
+    Lj =&gt; IctoLj(3.4e-6),
+    Cg =&gt; 45.0e-15,
+    Cc =&gt; 30.0e-15,
+    Cr =&gt;  2.8153e-12,
+    Lr =&gt; 1.70e-10,
+    Cj =&gt; 55e-15,
+    Rleft =&gt; 50.0,
+    Rright =&gt; 50.0,
+)
+
+ws=2*pi*(1.0:0.1:14)*1e9
+wp=(2*pi*7.12*1e9,)
+Ip=1.85e-6
+sources = [(mode=(1,),port=1,current=Ip)]
+Npumpharmonics = (20,)
+Nmodulationharmonics = (10,)
+
+@time rpm = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs)
+
+p1=plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.linearized.S(
+            outputmode=(0,),
+            outputport=2,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:),
+    )),
+    ylim=(-40,30),label=&quot;S21&quot;,
+    xlabel=&quot;Signal Frequency (GHz)&quot;,
+    legend=:bottomright,
+    title=&quot;Scattering Parameters&quot;,
+    ylabel=&quot;dB&quot;)
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.linearized.S((0,),1,(0,),2,:))),
+    label=&quot;S12&quot;,
+    )
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.linearized.S((0,),1,(0,),1,:))),
+    label=&quot;S11&quot;,
+    )
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.linearized.S((0,),2,(0,),2,:))),
+    label=&quot;S22&quot;,
+    )
+
+p2=plot(ws/(2*pi*1e9),
+    rpm.linearized.QE((0,),2,(0,),1,:)./rpm.linearized.QEideal((0,),2,(0,),1,:),    
+    ylim=(0,1.05),
+    title=&quot;Quantum efficiency&quot;,legend=false,
+    ylabel=&quot;QE/QE_ideal&quot;,xlabel=&quot;Signal Frequency (GHz)&quot;);
+
+p3=plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.linearized.S(:,2,(0,),1,:)&#39;)),
+    ylim=(-40,30),
+    xlabel=&quot;Signal Frequency (GHz)&quot;,
+    legend=false,
+    title=&quot;All idlers&quot;,
+    ylabel=&quot;dB&quot;)
+
+p4=plot(ws/(2*pi*1e9),
+    1 .- rpm.linearized.CM((0,),2,:),    
+    legend=false,title=&quot;Commutation \n relation error&quot;,
+    ylabel=&quot;Commutation \n relation error&quot;,xlabel=&quot;Signal Frequency (GHz)&quot;);
+
+plot(p1, p2, p3, p4, layout = (2, 2))</code></pre><pre><code class="nohighlight hljs">  2.959010 seconds (257.75 k allocations: 2.392 GiB, 0.21% gc time)</code></pre><p><img src="https://qce.mit.edu/JosephsonCircuits.jl/uniform.png" alt="JTWPA simulation"/></p><h2 id="Floquet-JTWPA"><a class="docs-heading-anchor" href="#Floquet-JTWPA">Floquet JTWPA</a><a id="Floquet-JTWPA-1"></a><a class="docs-heading-anchor-permalink" href="#Floquet-JTWPA" title="Permalink"></a></h2><p>Circuit parameters from <a href="https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306">here</a>.</p><pre><code class="language-julia hljs">using JosephsonCircuits
+using Plots
+
+@variables Rleft Rright Lj Cg Cc Cr Lr Cj
+
+weightwidth = 745
+weight = (n,Nnodes,weightwidth) -&gt; exp(-(n - Nnodes/2)^2/(weightwidth)^2)
+Nj=2000
+pmrpitch = 8
+
+# define the circuit components
+circuit = Tuple{String,String,String,Num}[]
+
+# port on the left side
+push!(circuit,(&quot;P$(1)_$(0)&quot;,&quot;1&quot;,&quot;0&quot;,1))
+push!(circuit,(&quot;R$(1)_$(0)&quot;,&quot;1&quot;,&quot;0&quot;,Rleft))
+
+#first half cap to ground
+push!(circuit,(&quot;C$(1)_$(0)&quot;,&quot;1&quot;,&quot;0&quot;,Cg/2*weight(1-0.5,Nj,weightwidth)))
+#middle caps and jj&#39;s
+push!(circuit,(&quot;Lj$(1)_$(2)&quot;,&quot;1&quot;,&quot;2&quot;,Lj*weight(1,Nj,weightwidth))) 
+push!(circuit,(&quot;C$(1)_$(2)&quot;,&quot;1&quot;,&quot;2&quot;,Cj/weight(1,Nj,weightwidth))) 
+    
+j=2
+for i = 2:Nj-1
+    
+    if mod(i,pmrpitch) == pmrpitch÷2
+
+        # make the jj cell with modified capacitance to ground
+        push!(circuit,(&quot;C$(j)_$(0)&quot;,&quot;$(j)&quot;,&quot;$(0)&quot;,(Cg-Cc)*weight(i-0.5,Nj,weightwidth)))
+        push!(circuit,(&quot;Lj$(j)_$(j+2)&quot;,&quot;$(j)&quot;,&quot;$(j+2)&quot;,Lj*weight(i,Nj,weightwidth)))
+
+        push!(circuit,(&quot;C$(j)_$(j+2)&quot;,&quot;$(j)&quot;,&quot;$(j+2)&quot;,Cj/weight(i,Nj,weightwidth)))
+        
+        #make the pmr
+        push!(circuit,(&quot;C$(j)_$(j+1)&quot;,&quot;$(j)&quot;,&quot;$(j+1)&quot;,Cc*weight(i-0.5,Nj,weightwidth)))
+        push!(circuit,(&quot;C$(j+1)_$(0)&quot;,&quot;$(j+1)&quot;,&quot;$(0)&quot;,Cr))
+        push!(circuit,(&quot;L$(j+1)_$(0)&quot;,&quot;$(j+1)&quot;,&quot;$(0)&quot;,Lr))
+        
+        # increment the index
+        j+=1
+    else
+        push!(circuit,(&quot;C$(j)_$(0)&quot;,&quot;$(j)&quot;,&quot;$(0)&quot;,Cg*weight(i-0.5,Nj,weightwidth)))
+        push!(circuit,(&quot;Lj$(j)_$(j+1)&quot;,&quot;$(j)&quot;,&quot;$(j+1)&quot;,Lj*weight(i,Nj,weightwidth)))
+        push!(circuit,(&quot;C$(j)_$(j+1)&quot;,&quot;$(j)&quot;,&quot;$(j+1)&quot;,Cj/weight(i,Nj,weightwidth)))
+    end
+    
+    # increment the index
+    j+=1
+
+end
+
+#last jj
+push!(circuit,(&quot;C$(j)_$(0)&quot;,&quot;$(j)&quot;,&quot;$(0)&quot;,Cg/2*weight(Nj-0.5,Nj,weightwidth)))
+push!(circuit,(&quot;R$(j)_$(0)&quot;,&quot;$(j)&quot;,&quot;$(0)&quot;,Rright))
+push!(circuit,(&quot;P$(j)_$(0)&quot;,&quot;$(j)&quot;,&quot;$(0)&quot;,2))
+
+circuitdefs = Dict(
+    Rleft =&gt; 50.0,
+    Rright =&gt; 50.0,
+    Lj =&gt; IctoLj(1.75e-6),
+    Cg =&gt; 76.6e-15,
+    Cc =&gt; 40.0e-15,
+    Cr =&gt;  1.533e-12,
+    Lr =&gt; 2.47e-10,
+    Cj =&gt; 40e-15,
+)  
+
+ws=2*pi*(1.0:0.1:14)*1e9
+wp=(2*pi*7.9*1e9,)
+Ip=1.1e-6
+sources = [(mode=(1,),port=1,current=Ip)]
+Npumpharmonics = (20,)
+Nmodulationharmonics = (10,)
+
+@time floquet = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs)
+
+p1=plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(floquet.linearized.S((0,),2,(0,),1,:))),
+    ylim=(-40,30),label=&quot;S21&quot;,
+    xlabel=&quot;Signal Frequency (GHz)&quot;,
+    legend=:bottomright,
+    title=&quot;Scattering Parameters&quot;,
+    ylabel=&quot;dB&quot;)
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(floquet.linearized.S((0,),1,(0,),2,:))),
+    label=&quot;S12&quot;,
+    )
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(floquet.linearized.S((0,),1,(0,),1,:))),
+    label=&quot;S11&quot;,
+    )
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(floquet.linearized.S((0,),2,(0,),2,:))),
+    label=&quot;S22&quot;,
+    )
+
+p2=plot(ws/(2*pi*1e9),
+    floquet.linearized.QE((0,),2,(0,),1,:)./floquet.linearized.QEideal((0,),2,(0,),1,:),    
+    ylim=(0.99,1.001),
+    title=&quot;Quantum efficiency&quot;,legend=false,
+    ylabel=&quot;QE/QE_ideal&quot;,xlabel=&quot;Signal Frequency (GHz)&quot;);
+
+p3=plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(floquet.linearized.S(:,2,(0,),1,:)&#39;)),
+    ylim=(-40,30),label=&quot;S21&quot;,
+    xlabel=&quot;Signal Frequency (GHz)&quot;,
+    legend=false,
+    title=&quot;All idlers&quot;,
+    ylabel=&quot;dB&quot;)
+
+
+p4=plot(ws/(2*pi*1e9),
+    1 .- floquet.linearized.CM((0,),2,:),
+    legend=false,title=&quot;Commutation \n relation error&quot;,
+    ylabel=&quot;Commutation \n relation error&quot;,xlabel=&quot;Signal Frequency (GHz)&quot;);
+
+plot(p1, p2, p3,p4,layout = (2, 2))</code></pre><pre><code class="nohighlight hljs">  2.079267 seconds (456.63 k allocations: 1.997 GiB, 0.48% gc time)</code></pre><p><img src="https://qce.mit.edu/JosephsonCircuits.jl/floquet.png" alt="Floquet JTWPA simulation"/></p><h2 id="Floquet-JTWPA-with-dissipation"><a class="docs-heading-anchor" href="#Floquet-JTWPA-with-dissipation">Floquet JTWPA with dissipation</a><a id="Floquet-JTWPA-with-dissipation-1"></a><a class="docs-heading-anchor-permalink" href="#Floquet-JTWPA-with-dissipation" title="Permalink"></a></h2><p>Dissipation due to capacitors with dielectric loss, parameterized by a loss tangent. Run the above code block to define the circuit then run the following:</p><pre><code class="language-julia hljs">results = []
+tandeltas = [1.0e-6,1.0e-3, 2.0e-3, 3.0e-3]
+for tandelta in tandeltas
+    circuitdefs = Dict(
+        Rleft =&gt; 50,
+        Rright =&gt; 50,
+        Lj =&gt; IctoLj(1.75e-6),
+        Cg =&gt; 76.6e-15/(1+im*tandelta),
+        Cc =&gt; 40.0e-15/(1+im*tandelta),
+        Cr =&gt; 1.533e-12/(1+im*tandelta),
+        Lr =&gt; 2.47e-10,
+        Cj =&gt; 40e-15,
+    )  
+    wp=(2*pi*7.9*1e9,)
+    ws=2*pi*(1.0:0.1:14)*1e9
+    Ip=1.1e-6*(1+125*tandelta)
+    sources = [(mode=(1,),port=1,current=Ip)]
+    Npumpharmonics = (20,)
+    Nmodulationharmonics = (10,)
+    @time floquet = hbsolve(ws, wp, sources, Nmodulationharmonics,
+        Npumpharmonics, circuit, circuitdefs)
+    push!(results,floquet)
+end
+
+p1 = plot(title=&quot;Gain (S21)&quot;)
+for i = 1:length(results)
+        plot!(ws/(2*pi*1e9),
+            10*log10.(abs2.(results[i].linearized.S((0,),2,(0,),1,:))),
+            ylim=(-60,30),label=&quot;tanδ=$(tandeltas[i])&quot;,
+            legend=:bottomleft,
+            xlabel=&quot;Signal Frequency (GHz)&quot;,ylabel=&quot;dB&quot;)
+end
+
+p2 = plot(title=&quot;Quantum Efficiency&quot;)
+for i = 1:length(results)
+        plot!(ws/(2*pi*1e9),
+            results[i].linearized.QE((0,),2,(0,),1,:)./results[i].linearized.QEideal((0,),2,(0,),1,:),
+            ylim=(0.6,1.05),legend=false,
+            title=&quot;Quantum efficiency&quot;,
+            ylabel=&quot;QE/QE_ideal&quot;,xlabel=&quot;Signal Frequency (GHz)&quot;)
+end
+
+p3 = plot(title=&quot;Reverse Gain (S12)&quot;)
+for i = 1:length(results)
+        plot!(ws/(2*pi*1e9),
+            10*log10.(abs2.(results[i].linearized.S((0,),1,(0,),2,:))),
+            ylim=(-10,1),legend=false,
+            xlabel=&quot;Signal Frequency (GHz)&quot;,ylabel=&quot;dB&quot;)
+end
+
+p4 = plot(title=&quot;Commutation \n relation error&quot;)
+for i = 1:length(results)
+        plot!(ws/(2*pi*1e9),
+            1 .- results[i].linearized.CM((0,),2,:),
+            legend=false,
+            ylabel=&quot;Commutation\n relation error&quot;,xlabel=&quot;Signal Frequency (GHz)&quot;)
+end
+
+plot(p1, p2, p3,p4,layout = (2, 2))</code></pre><pre><code class="nohighlight hljs">  3.815835 seconds (470.00 k allocations: 2.303 GiB, 0.22% gc time)
+  3.800166 seconds (470.59 k allocations: 2.310 GiB, 0.29% gc time)
+  3.824690 seconds (470.75 k allocations: 2.317 GiB, 0.19% gc time)
+  3.838721 seconds (470.75 k allocations: 2.317 GiB, 0.18% gc time)</code></pre><p><img src="https://qce.mit.edu/JosephsonCircuits.jl/floquetlossy.png" alt="Floquet JTWPA simulation with loss"/></p><h1 id="Performance-tips:"><a class="docs-heading-anchor" href="#Performance-tips:">Performance tips:</a><a id="Performance-tips:-1"></a><a class="docs-heading-anchor-permalink" href="#Performance-tips:" title="Permalink"></a></h1><p>Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores. See the <a href="https://docs.julialang.org/en/v1/manual/multi-threading">Julia documentation</a> for the procedure.</p><h1 id="References:"><a class="docs-heading-anchor" href="#References:">References:</a><a id="References:-1"></a><a class="docs-heading-anchor-permalink" href="#References:" title="Permalink"></a></h1><ol><li>Andrew J. Kerman &quot;Efficient numerical simulation of complex Josephson quantum circuits&quot; <a href="https://doi.org/10.48550/arXiv.2010.14929">arXiv:2010.14929 (2020)</a> </li><li>Ji&amp;#345;&amp;#237; Vlach and Kishore Singhal &quot;Computer Methods for Circuit Analysis and Design&quot; 2nd edition, <a href="https://link.springer.com/book/9780442011949">Springer New York, NY (1993)</a></li><li>Stephen A. Maas &quot;Nonlinear Microwave and RF Circuits&quot; 2nd edition, <a href="https://us.artechhouse.com/Nonlinear-Microwave-and-RF-Circuits-Second-Edition-P1097.aspx">Artech House (1997)</a></li><li>Jos&amp;#233; Carlos Pedro, David E. Root, Jianjun Xu, and Lu&amp;#237;s C&amp;#243;timos Nunes. &quot;Nonlinear Circuit Simulation and Modeling: Fundamentals for Microwave Design&quot; The Cambridge RF and Microwave Engineering Series, <a href="https://www.cambridge.org/core/books/nonlinear-circuit-simulation-and-modeling/1705F3B449B4313A2BE890599DAC0E38">Cambridge University Press (2018)</a></li><li>David E. Root, Jan Verspecht, Jason Horn, and Mihai Marcu. &quot;X-Parameters: Characterization, Modeling, and Design of Nonlinear RF and Microwave Components&quot; The Cambridge RF and microwave engineering series, <a href="https://www.cambridge.org/sb/academic/subjects/engineering/rf-and-microwave-engineering/x-parameters-characterization-modeling-and-design-nonlinear-rf-and-microwave-components">Cambridge University Press (2013)</a></li><li>Kaidong Peng, Rick Poore, Philip Krantz, David E. Root, and Kevin P. O&#39;Brien &quot;X-parameter based design and simulation of Josephson traveling-wave parametric amplifiers for quantum computing applications&quot; <a href="http://arxiv.org/abs/2211.05328">IEEE International Conference on Quantum Computing &amp; Engineering (QCE22) (2022)</a></li></ol><h1 id="Philosophy:"><a class="docs-heading-anchor" href="#Philosophy:">Philosophy:</a><a id="Philosophy:-1"></a><a class="docs-heading-anchor-permalink" href="#Philosophy:" title="Permalink"></a></h1><p>The motivation for developing this package is to simulate the gain and noise performance of ultra low noise amplifiers for quantum computing applications such as the <a href="https://www.science.org/doi/10.1126/science.aaa8525">Josephson traveling-wave parametric amplifier</a>, which have thousands of linear and nonlinear circuit elements. </p><p>We prioritize speed (including compile time and time to first use), simplicity, and scalability.</p><h1 id="Future-developments:"><a class="docs-heading-anchor" href="#Future-developments:">Future developments:</a><a id="Future-developments:-1"></a><a class="docs-heading-anchor-permalink" href="#Future-developments:" title="Permalink"></a></h1><ul><li>Design optimization.</li><li>More nonlinear components such as kinetic inductors.</li><li>Time domain simulations.</li></ul><h1 id="Related-packages-and-software:"><a class="docs-heading-anchor" href="#Related-packages-and-software:">Related packages and software:</a><a id="Related-packages-and-software:-1"></a><a class="docs-heading-anchor-permalink" href="#Related-packages-and-software:" title="Permalink"></a></h1><ul><li><a href="https://github.com/JuliaComputing/Xyce.jl">Xyce.jl</a> provides a wrapper for <a href="https://xyce.sandia.gov/">Xyce</a>, the open source parallel circuit simulator from Sandia National Laboratories which can perform time domain and harmonic balance method simulations.</li><li><a href="https://github.com/JuliaComputing/Ngspice.jl">NgSpice.jl</a> and <a href="https://github.com/cstook/LTspice.jl">LTspice.jl</a> provide wrappers for <a href="http://ngspice.sourceforge.net/">NgSpice</a> and <a href="https://www.analog.com/en/design-center/design-tools-and-calculators/ltspice-simulator.html">LTspice</a>, respectively.  </li><li><a href="https://github.com/SciML/ModelingToolkit.jl">ModelingToolkit.jl</a> supports time domain circuit simulations from <a href="https://mtk.sciml.ai/stable/tutorials/acausal_components">scratch</a> and using their <a href="https://docs.sciml.ai/ModelingToolkitStandardLibrary/stable/tutorials/rc_circuit/">standard library</a></li><li><a href="https://github.com/HSU-ANT/ACME.jl">ACME.jl</a> simulates electrical circuits in the time domain with an emphasis on audio effect circuits.</li><li><a href="https://cedar-eda.com">Cedar EDA</a> is a Julia-based commercial cloud service for circuit simulations.</li><li><a href="https://www.keysight.com/us/en/products/software/pathwave-design-software/pathwave-advanced-design-system.html">Keysight ADS</a>, <a href="https://www.awr.com/">Cadence AWR</a>, <a href="https://www.cadence.com/en_US/home/tools/custom-ic-analog-rf-design/circuit-simulation/spectre-rf-option.html">Cadence Spectre RF</a>, and <a href="http://qucs.sourceforge.net/">Qucs</a> are capable of time and frequency domain analysis of nonlinear circuits. <a href="http://wrcad.com/wrspice.html">WRSPICE</a> performs time domain simulations of Josephson junction containing circuits and frequency domain simulations of linear circuits. </li></ul><h1 id="Funding"><a class="docs-heading-anchor" href="#Funding">Funding</a><a id="Funding-1"></a><a class="docs-heading-anchor-permalink" href="#Funding" title="Permalink"></a></h1><p>We gratefully acknowledge funding from the <a href="https://aws.amazon.com/blogs/quantum-computing/announcing-the-opening-of-the-aws-center-for-quantum-computing/">AWS Center for Quantum Computing</a> and the <a href="https://cqe.mit.edu/">MIT Center for Quantum Engineering (CQE)</a>.</p></article><nav class="docs-footer"><a class="docs-footer-nextpage" href="reference/">Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.4.1 on <span class="colophon-date" title="Saturday 18 May 2024 10:23">Saturday 18 May 2024</span>. Using Julia version 1.10.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
