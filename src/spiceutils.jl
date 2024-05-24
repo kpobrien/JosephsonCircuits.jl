@@ -47,7 +47,7 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 """
 function wrspice_input_paramp(netlist, ws, wp, Ip, sourcenodes,sourcenodep;
     stepsperperiod = 80, Is = 1e-13, tstop = 200e-9, trise = 10e-9,
-    dphimax = 0.01)
+    dphimax = 0.01, maxdata = 10e9)
 
     #convert from angular frequency
     fp = wp/(2*pi)
@@ -65,7 +65,7 @@ function wrspice_input_paramp(netlist, ws, wp, Ip, sourcenodes,sourcenodep;
     # inputpump = wrspice_input_transient(netlist, Ip, fp, zeros(length(Ip)),
         # sourcenodes, tstep, tstop, trise; dphimax = dphimax);
     inputpump = wrspice_input_transient(netlist, Ip, fp, zeros(length(Ip)), sourcenodep,
-            tstep, tstop, trise; dphimax = dphimax);
+            tstep, tstop, trise; dphimax = dphimax, maxdata = maxdata);
     input = [inputpump]
 
     for i = 1:length(ws)
@@ -73,12 +73,12 @@ function wrspice_input_paramp(netlist, ws, wp, Ip, sourcenodes,sourcenodep;
 
         inputsin = wrspice_input_transient(netlist, vcat(Ip,Is), vcat(fp,fs),
             vcat(zeros(length(Ip)), -pi/2), sourcenode,
-            tstep, tstop, trise; dphimax = dphimax);
+            tstep, tstop, trise; dphimax = dphimax, maxdata = maxdata);
         push!(input,inputsin)
 
         inputcos = wrspice_input_transient(netlist, vcat(Ip,Is), vcat(fp,fs),
             vcat(zeros(length(Ip)), 0.0), sourcenode,
-            tstep, tstop, trise; dphimax = dphimax);
+            tstep, tstop, trise; dphimax = dphimax, maxdata = maxdata);
         push!(input,inputcos)
     end
 

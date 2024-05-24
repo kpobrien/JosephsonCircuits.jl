@@ -49,7 +49,7 @@ isrc2 1 0 1000.0u*cos(37.69911184307752g*x+6.28)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e
 
 * The control block
 .control
-set maxdata=1.0e7
+set maxdata=1.0e10
 set jjaccel=1
 set dphimax=0.01
 run
@@ -61,7 +61,7 @@ write
 """
 function wrspice_input_transient(netlist::String, current,
     frequency, phase,
-    sourcenodes, tstep, tstop, trise; maxdata = 10e6, jjaccel = 1,
+    sourcenodes, tstep, tstop, trise; maxdata = 10e9, jjaccel = 1,
     dphimax = 0.01, filetype = "binary")
 
     if length(current) == 1
