@@ -1,7 +1,7 @@
 
 """
     wrspice_input_transient(netlist::String, current, frequency, phase, tstep,
-        tstop, trise; maxdata = 10e6, jjaccel = 1, dphimax = 0.01,
+        tstop, trise; maxdata = 2e9, jjaccel = 1, dphimax = 0.01,
         filetype = "binary")
 
 Generate the WRSPICE input file for a transient simulation using circuit 
@@ -24,8 +24,8 @@ so it saves everything.
     `trise`.
 
 # Keywords
-- `maxdata = 10e6`: Maximum size of data to export in kilobytes from 1e3 to
-    2e9 with  default 2.56e5. This has to come before the run command.
+- `maxdata = 2e9`: Maximum size of data to export in kilobytes from 1e3 to
+    2e9 with WRspice default 2.56e5. This has to come before the run command.
 - `jjaccel = 1`: Causes a faster convergence testing and iteration control
     algorithm to be used, rather than the standard more comprehensive
     algorithm suitable for all devices.
@@ -49,7 +49,7 @@ isrc2 1 0 1000.0u*cos(37.69911184307752g*x+6.28)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e
 
 * The control block
 .control
-set maxdata=1.0e10
+set maxdata=2.0e9
 set jjaccel=1
 set dphimax=0.01
 run
@@ -61,7 +61,7 @@ write
 """
 function wrspice_input_transient(netlist::String, current,
     frequency, phase,
-    sourcenodes, tstep, tstop, trise; maxdata = 10e9, jjaccel = 1,
+    sourcenodes, tstep, tstop, trise; maxdata = 2e9, jjaccel = 1,
     dphimax = 0.01, filetype = "binary")
 
     if length(current) == 1
@@ -122,7 +122,7 @@ end
 
 
 # function wrspice_input_transient(netlist::String, current,
-#     frequency, phase, sourcenodes::Tuple, tstep, tstop, trise; maxdata = 10e6, jjaccel = 1,
+#     frequency, phase, sourcenodes::Tuple, tstep, tstop, trise; maxdata = 2e9, jjaccel = 1,
 #     dphimax = 0.01, filetype = "binary")
 
 #     return wrspice_input_transient(netlist, [current], [frequency], [phase], [sourcenodes], tstep, tstop, trise; maxdata = maxdata, jjaccel = jjaccel,
@@ -151,7 +151,7 @@ isrc 1 0 ac 1.0e-6 0.0
 
 * Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
 * default 2.56e5. This has to come before the run command
-set maxdata = 10e6
+set maxdata=2.0e9
 
 * Run the simulation
 run
@@ -180,7 +180,7 @@ isrc 1 0 ac 1.0e-6 0.0
 
 * Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
 * default 2.56e5. This has to come before the run command
-set maxdata = 10e6
+set maxdata=2.0e9
 
 * Run the simulation
 run
@@ -197,27 +197,27 @@ write
 ```
 """
 function wrspice_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
-    portnodes,portcurrent)
+    portnodes,portcurrent; maxdata = 2e9)
     if length(freqs) == 1
-        return wrspice_input_ac(netlist,1,freqs[1],freqs[1],portnodes,portcurrent)
+        return wrspice_input_ac(netlist,1,freqs[1],freqs[1],portnodes,portcurrent; maxdata = maxdata)
     else
-        return wrspice_input_ac(netlist,length(freqs)-2,freqs[1],freqs[end],portnodes,portcurrent)
+        return wrspice_input_ac(netlist,length(freqs)-2,freqs[1],freqs[end],portnodes,portcurrent; maxdata = maxdata)
     end
 end
 
 function wrspice_input_ac(netlist::String,freqs::AbstractRange{Float64},
-    portnodes,portcurrent)
+    portnodes,portcurrent; maxdata = 2e9)
 
-    return wrspice_input_ac(netlist,length(freqs)-2,freqs[1],freqs[end],portnodes,portcurrent)
+    return wrspice_input_ac(netlist,length(freqs)-2,freqs[1],freqs[end],portnodes,portcurrent; maxdata = maxdata)
 end
 
 function wrspice_input_ac(netlist::String,freqs::Float64,
-    portnodes,portcurrent)
+    portnodes,portcurrent; maxdata = 2e9)
 
-    return wrspice_input_ac(netlist,1,freqs,freqs,portnodes,portcurrent)
+    return wrspice_input_ac(netlist,1,freqs,freqs,portnodes,portcurrent; maxdata = maxdata)
 end
 
-function wrspice_input_ac(netlist,nsteps,fstart,fstop,portnodes,portcurrent)
+function wrspice_input_ac(netlist,nsteps,fstart,fstop,portnodes,portcurrent; maxdata = 2e9)
 
     control="""
 
@@ -232,7 +232,7 @@ function wrspice_input_ac(netlist,nsteps,fstart,fstop,portnodes,portcurrent)
 
     * Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
     * default 2.56e5. This has to come before the run command
-    set maxdata = 10e6
+    set maxdata=$(maxdata)
 
     * Run the simulation
     run

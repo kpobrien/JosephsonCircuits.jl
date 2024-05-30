@@ -47,7 +47,7 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 """
 function wrspice_input_paramp(netlist, ws, wp, Ip, sourcenodes,sourcenodep;
     stepsperperiod = 80, Is = 1e-13, tstop = 200e-9, trise = 10e-9,
-    dphimax = 0.01, maxdata = 10e9)
+    dphimax = 0.01, maxdata = 2e9)
 
     #convert from angular frequency
     fp = wp/(2*pi)
