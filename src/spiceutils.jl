@@ -125,6 +125,10 @@ JosephsonCircuits.wrspice_calcS_paramp(out, 2*pi, Nnodes;
 function wrspice_calcS_paramp(out, wswrspice, Nnodes; stepsperperiod = 80,
     Is = 1e-13)
 
+    if length(out) != length(wswrspice)*2+1
+        error("Number of WRspice simulations not consistent with number of frequencies.")
+    end
+
     # empty arrays for the scattering parameters
     S11 = zeros(Complex{Float64},length(wswrspice))
     S21 = zeros(Complex{Float64},length(wswrspice))

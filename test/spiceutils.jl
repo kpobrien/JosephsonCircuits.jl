@@ -19,4 +19,33 @@ using Test
         @test input1 == input2
     end
 
+    @testset "wrspice_calcS_paramp" begin
+
+        Nnodes = 2
+        ws = 2*pi*5e9
+        wp = 2*pi*6e9
+        stepsperperiod = 80
+        t = LinRange(0,2*pi/wp,stepsperperiod)
+        Is = 1e-13
+        Vpump = zeros(1,length(t))
+        Vsignalsin = zeros(1,length(t))
+        Vsignalcos = zeros(1,length(t))
+        Vpump[1,:] .= sin.(2*pi*wp*t)
+        Vsignalsin[1,:] .= sin.(2*pi*wp*t)+Is/50*sin.(2*pi*ws*t)
+        Vsignalcos[1,:] .= sin.(2*pi*wp*t)+Is/50*cos.(2*pi*ws*t)
+
+        out = [(values=Dict("S"=>t,"V"=>Vpump),),
+                (values=Dict("S"=>t,"V"=>Vsignalsin),),
+                (values=Dict("S"=>t,"V"=>Vsignalcos),),
+                ];
+        out[1].values["V"];
+        out[2].values["V"];
+        out[3].values["V"];
+
+        @test_throws(
+            ErrorException("Number of WRspice simulations not consistent with number of frequencies."),
+            JosephsonCircuits.wrspice_calcS_paramp(out, [2*pi,2*pi*2], Nnodes;stepsperperiod = stepsperperiod, Is = Is),
+            )
+
+    end
 end
