@@ -104,7 +104,10 @@ plot(
   0.001817 seconds (12.99 k allocations: 4.361 MiB)
 ```
 
-and compare with WRspice. Please note that on Linux you can install the [XicTools_jll](https://github.com/JuliaBinaryWrappers/XicTools_jll.jl/) package which provides WRspice for x86_64. For other operating systems and platforms, you can install WRspice yourself and substitute `XicTools_jll.wrspice()` with `JosephsonCircuits.wrspice_cmd()` which will attempt to provide the path to your WRspice executable. 
+![JPA simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/jpa.png)
+
+
+Compare with WRspice. Please note that on Linux you can install the [XicTools_jll](https://github.com/JuliaBinaryWrappers/XicTools_jll.jl/) package which provides WRspice for x86_64. For other operating systems and platforms, you can install WRspice yourself and substitute `XicTools_jll.wrspice()` with `JosephsonCircuits.wrspice_cmd()` which will attempt to provide the path to your WRspice executable. 
 
 ```
 using XicTools_jll
@@ -126,7 +129,7 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
  12.743245 seconds (32.66 k allocations: 499.263 MiB, 0.41% gc time)
 ```
 
-![Josephson Parametric Amplifier JPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/jpa_WRspice.png)
+![JPA simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/jpa_WRspice.png)
 
 
 ## Josephson traveling wave parametric amplifier (JTWPA)
