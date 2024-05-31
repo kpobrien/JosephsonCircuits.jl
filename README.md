@@ -109,7 +109,7 @@ plot(
 
 Compare with WRspice. Please note that on Linux you can install the [XicTools_jll](https://github.com/JuliaBinaryWrappers/XicTools_jll.jl/) package which provides WRspice for x86_64. For other operating systems and platforms, you can install WRspice yourself and substitute `XicTools_jll.wrspice()` with `JosephsonCircuits.wrspice_cmd()` which will attempt to provide the path to your WRspice executable. 
 
-```
+```julia
 using XicTools_jll
 
 wswrspice=2*pi*(4.5:0.01:5.0)*1e9
@@ -130,6 +130,81 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 ```
 
 ![JPA simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/jpa_WRspice.png)
+
+
+## Double-pumped Josephson parametric amplifier
+```julia
+using JosephsonCircuits
+using Plots
+
+@variables R Cc Lj Cj
+circuit = [
+    ("P1","1","0",1),
+    ("R1","1","0",R),
+    ("C1","1","2",Cc),
+    ("Lj1","2","0",Lj),
+    ("C2","2","0",Cj)]
+
+circuitdefs = Dict(
+    Lj =>1000.0e-12,
+    Cc => 100.0e-15,
+    Cj => 1000.0e-15,
+    R => 50.0)
+
+ws = 2*pi*(4.5:0.001:5.0)*1e9
+wp = (2*pi*4.65001*1e9,2*pi*4.85001*1e9)
+
+Ip = 0.00565e-6*1.7
+sources = [(mode=(1,0),port=1,current=Ip),(mode=(0,1),port=1,current=Ip)]
+Npumpharmonics = (8,8)
+Nmodulationharmonics = (8,8)
+
+@time jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs);
+
+plot(
+    jpa.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        jpa.linearized.S(
+            outputmode=(0,0),
+            outputport=1,
+            inputmode=(0,0),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    label="JosephsonCircuits.jl",
+    xlabel="Frequency (GHz)",
+    ylabel="S11 (dB)",
+)
+```
+```
+  0.182720 seconds (12.70 k allocations: 713.087 MiB)
+```
+
+and compare with WRspice
+
+```julia
+using XicTools_jll
+
+wswrspice=2*pi*(4.5:0.01:5.0)*1e9
+n = JosephsonCircuits.exportnetlist(circuit,circuitdefs);
+input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,[wp[1],wp[2]],[2*Ip,2*Ip],(0,1),[(0,1),(0,1)]);
+
+@time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
+S11,S21=JosephsonCircuits.wrspice_calcS_paramp(output,wswrspice,n.Nnodes,stepsperperiod = 50000);
+
+plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
+    label="WRspice",
+    seriestype=:scatter)
+```
+
+```
+ 15.782862 seconds (32.80 k allocations: 509.192 MiB, 0.39% gc time)
+```
+
+![Double pumped JPA simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/jpa_double_pumped_WRspice.png)
+
 
 
 ## Josephson traveling wave parametric amplifier (JTWPA)
