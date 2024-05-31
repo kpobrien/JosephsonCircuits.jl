@@ -3112,7 +3112,7 @@ isrc 1 0 ac 1.0e-6 0.0
 
 * Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
 * default 2.56e5. This has to come before the run command
-set maxdata = 10e6
+set maxdata=2.0e9
 
 * Run the simulation
 run
@@ -3138,7 +3138,7 @@ isrc 1 0 ac 1.0e-6 0.0
 
 * Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
 * default 2.56e5. This has to come before the run command
-set maxdata = 10e6
+set maxdata=2.0e9
 
 * Run the simulation
 run
@@ -3186,8 +3186,8 @@ plot(ws/(2*pi*1e9),
 plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     label=&quot;WRSPICE&quot;,
     seriestype=:scatter)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.wrspice_input_transient-Tuple{String, Vararg{Any, 7}}" href="#JosephsonCircuits.wrspice_input_transient-Tuple{String, Vararg{Any, 7}}"><code>JosephsonCircuits.wrspice_input_transient</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">wrspice_input_transient(netlist::String, current, frequency, phase, tstep,
-    tstop, trise; maxdata = 10e6, jjaccel = 1, dphimax = 0.01,
-    filetype = &quot;binary&quot;)</code></pre><p>Generate the WRSPICE input file for a transient simulation using circuit  parameters from the given netlist, the source current, frequency phase, and nodes for the sources, and the time step and stop time. Leave filename empty so we can add that as a command line argument. Don&#39;t specify any variables so it saves everything.</p><p><strong>Arguments</strong></p><ul><li><code>netlist</code>: String containing the circuit netlist, excluding sources.</li><li><code>current</code>: Vector of current source amplitudes in Ampere.</li><li><code>frequency</code>: Vector of current source frequencies in Hz.</li><li><code>phase</code>: Vector of current source phases in radians.</li><li><code>sourcenodes</code>: Vector of tuples of nodes (src,dst) at which to place the current   source(s).</li><li><code>tstep</code>: Time step in seconds.</li><li><code>tstop</code>: Time for which to run the simulation in seconds.</li><li><code>trise</code>: The simulation ramps up the current source amplitude with a   1-sech(t/trise) envelope which reaches 35 percent of the peak in one   <code>trise</code>.</li></ul><p><strong>Keywords</strong></p><ul><li><code>maxdata = 10e6</code>: Maximum size of data to export in kilobytes from 1e3 to   2e9 with  default 2.56e5. This has to come before the run command.</li><li><code>jjaccel = 1</code>: Causes a faster convergence testing and iteration control   algorithm to be used, rather than the standard more comprehensive   algorithm suitable for all devices.</li><li><code>dphimax = 0.01</code>: The maximum allowed phase change per time step. Decreasing   dphimax from the default of pi/5 to a smaller value is critical for   matching the accuracy of the harmonic balance method simulations. This   increases simulation time by pi/5/(dphimax).</li><li><code>filetype = &quot;binary&quot; or &quot;ascii&quot;</code>: Binary files are faster to save and load.</li></ul><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; println(JosephsonCircuits.wrspice_input_transient(&quot;* SPICE Simulation&quot;,[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0),(1,0)],1e-9,100e-9,10e-9))
+    tstop, trise; maxdata = 2e9, jjaccel = 1, dphimax = 0.01,
+    filetype = &quot;binary&quot;)</code></pre><p>Generate the WRSPICE input file for a transient simulation using circuit  parameters from the given netlist, the source current, frequency phase, and nodes for the sources, and the time step and stop time. Leave filename empty so we can add that as a command line argument. Don&#39;t specify any variables so it saves everything.</p><p><strong>Arguments</strong></p><ul><li><code>netlist</code>: String containing the circuit netlist, excluding sources.</li><li><code>current</code>: Vector of current source amplitudes in Ampere.</li><li><code>frequency</code>: Vector of current source frequencies in Hz.</li><li><code>phase</code>: Vector of current source phases in radians.</li><li><code>sourcenodes</code>: Vector of tuples of nodes (src,dst) at which to place the current   source(s).</li><li><code>tstep</code>: Time step in seconds.</li><li><code>tstop</code>: Time for which to run the simulation in seconds.</li><li><code>trise</code>: The simulation ramps up the current source amplitude with a   1-sech(t/trise) envelope which reaches 35 percent of the peak in one   <code>trise</code>.</li></ul><p><strong>Keywords</strong></p><ul><li><code>maxdata = 2e9</code>: Maximum size of data to export in kilobytes from 1e3 to   2e9 with WRspice default 2.56e5. This has to come before the run command.</li><li><code>jjaccel = 1</code>: Causes a faster convergence testing and iteration control   algorithm to be used, rather than the standard more comprehensive   algorithm suitable for all devices.</li><li><code>dphimax = 0.01</code>: The maximum allowed phase change per time step. Decreasing   dphimax from the default of pi/5 to a smaller value is critical for   matching the accuracy of the harmonic balance method simulations. This   increases simulation time by pi/5/(dphimax).</li><li><code>filetype = &quot;binary&quot; or &quot;ascii&quot;</code>: Binary files are faster to save and load.</li></ul><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; println(JosephsonCircuits.wrspice_input_transient(&quot;* SPICE Simulation&quot;,[1e-6,1e-3],[5e9,6e9],[3.14,6.28],[(1,0),(1,0)],1e-9,100e-9,10e-9))
 * SPICE Simulation
 * Current source
 * 1-hyperbolic secant rise
@@ -3199,11 +3199,11 @@ isrc2 1 0 1000.0u*cos(37.69911184307752g*x+6.28)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e
 
 * The control block
 .control
-set maxdata=1.0e10
+set maxdata=2.0e9
 set jjaccel=1
 set dphimax=0.01
 run
 set filetype=binary
 write
 .endc
-</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.4.1 on <span class="colophon-date" title="Thursday 30 May 2024 12:41">Thursday 30 May 2024</span>. Using Julia version 1.10.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.4.1 on <span class="colophon-date" title="Friday 31 May 2024 11:56">Friday 31 May 2024</span>. Using Julia version 1.10.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
