@@ -583,3 +583,193 @@ function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversq
 
     return nothing
 end
+
+
+"""
+    StoY(S;portimpedances=50.0)
+
+Convert the scattering parameter matrix `S` to an admittance parameter matrix
+`Y` and return the result. 
+
+``Y=\\sqrt{y}}(I_{N}-S)(I_{N}+S)^{-1}{\\sqrt{y}}``
+``={\\sqrt {y}}(I_{N}+S)^{-1}(I_{N}-S){\\sqrt {y}}``
+
+# Examples
+```jldoctest
+julia> S = [0.0 0.0;0.0 0.0];JosephsonCircuits.StoY(S)
+2×2 Matrix{Float64}:
+  0.02  -0.0
+ -0.0    0.02
+
+julia> S = [0.0 0.999;0.999 0.0];JosephsonCircuits.StoY(S)
+2×2 Matrix{Float64}:
+  19.99  -19.99
+ -19.99   19.99
+```
+"""
+function StoY(S;portimpedances=50.0)
+
+    Y = similar(S)
+    # make a view of Z,S and loop
+    # make a temporary array 
+    tmp = zeros(eltype(S),size(S,1),size(S,2))
+    
+    oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
+
+    if ndims(portimpedances) == 0
+        # assume the port impedances are all the same for all ports and
+        # frequencies. loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(S)[3:end])
+            StoY!(view(Y,:,:,i),view(S,:,:,i),tmp,oneoversqrtportimpedances)
+        end
+    else
+        # assume the port impedances are given for each port and frequency
+        # loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(S)[3:end])
+            StoY!(view(Y,:,:,i),view(S,:,:,i),tmp,Diagonal(view(oneoversqrtportimpedances,:,i)))
+        end
+    end
+    return Y
+end
+
+
+"""
+    StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportadmittances)
+
+
+"""
+function StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,oneoversqrtportimpedances)
+    
+    # compute (I - S)*oneoversqrtportimpedances
+    copy!(Y,S)
+    rmul!(Y,-1)
+    for d in 1:size(Y,1)
+        Y[d,d] += 1
+    end
+    rmul!(Y,oneoversqrtportimpedances)
+
+    # compute (I + S)
+    copy!(tmp,S)
+    for d in 1:size(tmp,1)
+        tmp[d,d] += 1
+    end
+
+    # factorize the matrix
+    A = lu!(tmp)
+
+    # perform the left division
+    # compute (I + S) \ ((I - S)*oneoversqrtportimpedances)
+    ldiv!(A,Y)
+
+    # left multiply by sqrt(z)
+    # compute oneoversqrtportimpedances*((I - S) \ ((I + S)*oneoversqrtportimpedances))
+    lmul!(oneoversqrtportimpedances,Y)
+    return nothing
+end
+
+
+"""
+    YtoS(Y;portimpedances=50.0)
+
+Convert the admittance parameter matrix `Y` to a scattering parameter matrix
+`S` and return the result. `portimpedances` is a scalar, vector, or matrix of
+port impedances.
+
+``S=(I_{N}-{\\sqrt {z}}Y{\\sqrt {z}})(I_{N}+{\\sqrt {z}}Y{\\sqrt {z}})^{-1}``
+``   =(I_{N}+{\\sqrt {z}}Y{\\sqrt {z}})^{-1}(I_{N}-{\\sqrt {z}}Y{\\sqrt{z}}``
+
+where ```\\sqrt{y}=(\\sqrt{z})^{-1}`` where `z` is a diagonal matrix of port impedances. 
+
+First compute ``\tilde{Y} = \\sqrt{z}Y\\sqrt{z}``, then:
+
+``S =(1_{\\!N}+\\tilde{Y}) \\div (1_{\\!N}-\\tilde{Y})``
+
+# Examples
+```jldoctest
+julia> Y = [1/50.0 0.0;0.0 1/50.0];JosephsonCircuits.YtoS(Y)
+2×2 Matrix{Float64}:
+  0.0  -0.0
+ -0.0   0.0
+
+julia> Y = [0.0 0.0;0.0 0.0];JosephsonCircuits.YtoS(Y)
+2×2 Matrix{Float64}:
+  1.0  -0.0
+ -0.0   1.0
+```
+"""
+function YtoS(Y;portimpedances=50.0)
+
+    S = similar(Y)
+    # make a view of Z,S and loop
+    # make a temporary array 
+    tmp = zeros(eltype(Y),size(Y,1),size(Y,2))
+    
+    sqrtportimpedances = sqrt.(portimpedances)
+
+    # assume the port impedances are all the same for all ports and frequencies
+    if ndims(portimpedances) == 0
+        # # loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(Y)[3:end])
+            YtoS!(view(S,:,:,i),view(Y,:,:,i),tmp,sqrtportimpedances)
+        end
+    else
+        for i in CartesianIndices(axes(Y)[3:end])
+            YtoS!(view(S,:,:,i),view(Y,:,:,i),tmp,Diagonal(view(sqrtportimpedances,:,i)))
+        end
+    end
+    return S
+end
+
+
+"""
+    YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
+
+"""
+function YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
+    
+    # compute \tilde{Y} = sqrtportimpedances*Y*sqrtportimpedances in S and tmp
+    copy!(S,Y)
+    rmul!(S,sqrtportimpedances)
+    lmul!(sqrtportimpedances,S)
+    copy!(tmp,S)
+    rmul!(S,-1)
+
+    # compute (-\tilde{Y} + I)
+    for d in 1:size(S,1)
+        S[d,d] += 1
+    end
+
+    # compute (\tilde{Y} + I)
+    for d in 1:size(tmp,1)
+        tmp[d,d] += 1
+    end
+
+    # factorize the matrix
+    A = lu!(tmp)
+
+    # perform the left division
+    # compute (I + \tilde{Y}) \ (I - \tilde{Y})
+    ldiv!(A,S)
+
+    return nothing
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
