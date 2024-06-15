@@ -1,7 +1,7 @@
 name = "JosephsonCircuits"
 uuid = "23a5dba6-321f-4fcf-be1e-689e290df087"
 authors = ["Kevin P. O'Brien <kpobrien@mit.edu>"]
-version = "0.4.2"
+version = "0.4.3"
 
 [deps]
 AxisKeys = "94b1ba4f-4ee9-5380-92f1-94cde586c3c5"
@@ -32,7 +32,7 @@ Printf = "1.7"
 SparseArrays = "1.7"
 SpecialFunctions = "2"
 Statistics = "1.7"
-SymbolicUtils = "1.4 - 1.5.1"
+SymbolicUtils = "1, 2"
 Symbolics = "4, 5"
 Test = "1.7"
 UUIDs = "1.7"
