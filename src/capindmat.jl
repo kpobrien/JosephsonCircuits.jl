@@ -556,6 +556,14 @@ function calcMb_inner(componenttypes::Vector{Symbol},
             inductor1value = componentvalues[inductor1index]
             inductor2value = componentvalues[inductor2index]
 
+            # check the two components coupled are actually inductors
+            if componenttypes[inductor1index] != :L
+               throw(ArgumentError("Mutual coupling coefficient K must couple two inductors. $(inductor1name) is not an inductor."))
+            end
+            if componenttypes[inductor2index] != :L
+               throw(ArgumentError("Mutual coupling coefficient K must couple two inductors. $(inductor2name) is not an inductor."))
+            end
+
             # values of mutual inductance Lm
             Lm = K*sqrt(inductor1value*inductor2value)
 
