@@ -6,7 +6,7 @@ using JosephsonCircuits
 
 
 @testset verbose = true "Code quality (Aqua.jl)" begin
-    Aqua.test_all(JosephsonCircuits; ambiguities = false)
+    Aqua.test_all(JosephsonCircuits; ambiguities = false, persistent_tasks=false)
 end
 
 @testset verbose = true "Doctests (Documenter.jl)" begin
