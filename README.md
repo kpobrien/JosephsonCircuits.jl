@@ -861,6 +861,9 @@ plot(p1, p2, p3, p4, layout = (2, 2))
  28.342059 seconds (1.59 M allocations: 1.637 GiB, 0.35% gc time)
 ```
 
+![Flux driven TWPA simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/twpa_flux_driven.png)
+
+
 # Performance tips:
 
 Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores. See the [Julia documentation](https://docs.julialang.org/en/v1/manual/multi-threading) for the procedure. Check how many threads you are using by calling `Threads.nthreads()`. For context, the simulation times reported for the examples above use 16 threads on an AMD Ryzen 9 7950X system running Linux.
