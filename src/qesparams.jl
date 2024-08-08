@@ -22,11 +22,9 @@ symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[3.5355339059327378 + 0.0im;;]
 ComplexF64[-3.5355339059327378 + 0.0im;;]
 ```
 ```jldoctest
@@ -43,11 +41,9 @@ symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[3.5355339059327378 + 0.0im;;]
 ComplexF64[3.5355339059327378 + 0.0im;;]
 ```
 ```jldoctest
@@ -64,11 +60,9 @@ symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-3.5355339059327378 - 0.0im;;]
 ComplexF64[-3.5355339059327378 + 0.0im;;]
 ```
 ```jldoctest
@@ -85,11 +79,9 @@ symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-3.5355339059327378 + 0.0im;;]
 ComplexF64[3.5355339059327378 + 0.0im;;]
 ```
 ```jldoctest
@@ -106,11 +98,9 @@ symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-3.5355339059327378 + 0.0im;;]
 ComplexF64[-10.606601717798213 + 0.0im;;]
 ```
 """
@@ -154,11 +144,9 @@ JosephsonCircuits.calcinputoutputnoise!(inputwave,noiseoutputwave,
     phin,bnm,portimpedanceindices,noiseportimpedanceindices,
     portimpedances,noiseportimpedances,nodeindices,
     componenttypes,wmodes,symfreqvar)
-println(inputwave)
 println(noiseoutputwave)
 
 # output
-ComplexF64[1.994711402007163e-5 + 0.0im;;]
 ComplexF64[-5.568327974762547e-11 + 3.516177070001411e-15im;;]
 ```
 """
@@ -1017,11 +1005,9 @@ phin = ComplexF64[-50/(im*wmodes[1]);50/(im*wmodes[1]);;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputcurrentoutputvoltage!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,nodeindices,wmodes)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-1.0 + 0.0im;;]
 ComplexF64[-100.0 + 0.0im;;]
 ```
 """
