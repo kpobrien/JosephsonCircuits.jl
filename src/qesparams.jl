@@ -435,6 +435,12 @@ function calcimpedance(c::Union{T,Complex{T}}, type, w, symfreqvar,
         else
             return 1/(im*w*conj(c))
         end
+    elseif type == :L
+        if w >= 0
+            return (im*w*c)
+        else
+            return (im*w*conj(c))
+        end
     else
         error("Unknown component type")
     end
@@ -471,6 +477,12 @@ function calcimpedance(c, type, w, symfreqvar)
             return 1/(im*w*valuetonumber(c,symfreqvar => w))
         else
             return 1/(im*w*conj(valuetonumber(c,symfreqvar => w)))
+        end
+    elseif type == :L
+        if w >= 0
+            return (im*w*valuetonumber(c,symfreqvar => w))
+        else
+            return (im*w*conj(valuetonumber(c,symfreqvar => w)))
         end
     else
         error("Unknown component type")
