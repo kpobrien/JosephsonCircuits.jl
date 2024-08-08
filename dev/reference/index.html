@@ -836,11 +836,9 @@ phin = ComplexF64[-50/(im*wmodes[1]);50/(im*wmodes[1]);;]
 symfreqvar = nothing
 JosephsonCircuits.calcinputcurrentoutputvoltage!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,nodeindices,wmodes)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-1.0 + 0.0im;;]
 ComplexF64[-100.0 + 0.0im;;]</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcinputoutput!-NTuple{12, Any}" href="#JosephsonCircuits.calcinputoutput!-NTuple{12, Any}"><code>JosephsonCircuits.calcinputoutput!</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
     nodeindices, componenttypes, wmodes, symfreqvar)</code></pre><p>Return the input and output waves for the system linearized around the strong pump.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
@@ -856,11 +854,9 @@ symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[3.5355339059327378 + 0.0im;;]
 ComplexF64[-3.5355339059327378 + 0.0im;;]</code></pre><pre><code class="language-julia hljs">inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
 bnm = ComplexF64[1; 0;;]
@@ -874,11 +870,9 @@ symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[3.5355339059327378 + 0.0im;;]
 ComplexF64[3.5355339059327378 + 0.0im;;]</code></pre><pre><code class="language-julia hljs">inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
 bnm = ComplexF64[1; 0;;]
@@ -892,11 +886,9 @@ symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-3.5355339059327378 - 0.0im;;]
 ComplexF64[-3.5355339059327378 + 0.0im;;]</code></pre><pre><code class="language-julia hljs">inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
 bnm = ComplexF64[-1; 1;;]
@@ -910,11 +902,9 @@ symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-3.5355339059327378 + 0.0im;;]
 ComplexF64[3.5355339059327378 + 0.0im;;]</code></pre><pre><code class="language-julia hljs">inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
 outputwave = ComplexF64[0;;]
 bnm = ComplexF64[-1; 1;;]
@@ -928,11 +918,9 @@ symfreqvar = nothing
 JosephsonCircuits.calcinputoutput!(inputwave,outputwave,phin,bnm,portimpedanceindices,
     portimpedanceindices,portimpedances,portimpedances,nodeindices,componenttypes,
     wmodes,symfreqvar)
-println(inputwave)
 println(outputwave)
 
 # output
-ComplexF64[-3.5355339059327378 + 0.0im;;]
 ComplexF64[-10.606601717798213 + 0.0im;;]</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcinputoutput_inner!-NTuple{13, Any}" href="#JosephsonCircuits.calcinputoutput_inner!-NTuple{13, Any}"><code>JosephsonCircuits.calcinputoutput_inner!</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
     nodeindices, componenttypes, wmodes, symfreqvar, nosource)</code></pre><p>Calculate the input and output power waves as defined in (except in units of sqrt(photons/second) instead of sqrt(power) K. Kurokawa, &quot;Power Waves and the Scattering Matrix&quot;, IEEE Trans. Micr. Theory and Tech. 13, 194–202 (1965)  doi: 10.1109/TMTT.1965.1125964 inputwave[(i-1)<em>Nmodes+j,k] = 1/2</em>kval * (portvoltage + portimpedance * portcurrent) we can simplify the above to: inputwave[(i-1)<em>Nmodes+j,k] = 1/2</em>kval * portimpedance * sourcecurrent outputwave[(i-1)<em>Nmodes+j,k] = 1/2</em>kval * (portvoltage - conj(portimpedance) * portcurrent)</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcinputoutputnoise!-NTuple{12, Any}" href="#JosephsonCircuits.calcinputoutputnoise!-NTuple{12, Any}"><code>JosephsonCircuits.calcinputoutputnoise!</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcinputoutputnoise!(S, inputwave, outputwave, phin, bnm,
@@ -953,11 +941,9 @@ JosephsonCircuits.calcinputoutputnoise!(inputwave,noiseoutputwave,
     phin,bnm,portimpedanceindices,noiseportimpedanceindices,
     portimpedances,noiseportimpedances,nodeindices,
     componenttypes,wmodes,symfreqvar)
-println(inputwave)
 println(noiseoutputwave)
 
 # output
-ComplexF64[1.994711402007163e-5 + 0.0im;;]
 ComplexF64[-5.568327974762547e-11 + 3.516177070001411e-15im;;]</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcinvLn-Tuple{SparseArrays.SparseVector, SparseArrays.SparseMatrixCSC, Any}" href="#JosephsonCircuits.calcinvLn-Tuple{SparseArrays.SparseVector, SparseArrays.SparseMatrixCSC, Any}"><code>JosephsonCircuits.calcinvLn</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia hljs">calcinvLn(Lb::SparseVector, Rbn::SparseMatrixCSC, Nmodes)</code></pre><p>Returns the nodal inverse inductance matrix. Accepts the vector of branch inductances <code>Lb</code> and the incidence matrix <code>Rbn</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">Nmodes = 1
 Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1e-9,4e-9])
 Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
@@ -3222,4 +3208,4 @@ run
 set filetype=binary
 write
 .endc
-</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.5.0 on <span class="colophon-date" title="Wednesday 26 June 2024 15:27">Wednesday 26 June 2024</span>. Using Julia version 1.10.4.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.5.0 on <span class="colophon-date" title="Thursday 8 August 2024 17:45">Thursday 8 August 2024</span>. Using Julia version 1.10.4.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
