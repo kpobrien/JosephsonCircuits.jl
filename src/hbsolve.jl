@@ -472,7 +472,7 @@ true
 function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     nonlinear=nothing, symfreqvar=nothing, threewavemixing=false,
     fourwavemixing=true, maxintermodorder=Inf,
-    nbatches::Integer = Base.Threads.nthreads(), returnS = true,
+    nbatches::Integer = Base.Threads.nthreads(), sorting = :number, returnS = true,
     returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnnodefluxadjoint = false,
     returnvoltage = false, returnvoltageadjoint = false,
@@ -481,7 +481,7 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     returnZsensitivity = false, returnZsensitivityadjoint = false) where K
 
     # parse and sort the circuit
-    psc = parsesortcircuit(circuit)
+    psc = parsesortcircuit(circuit, sorting = sorting)
 
     # calculate the circuit graph
     cg = calccircuitgraph(psc)
@@ -511,8 +511,8 @@ end
     hblinsolve(w, psc::ParsedSortedCircuit,
         cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N};
         nonlinear=nothing, symfreqvar=nothing,
-        nbatches::Integer = Base.Threads.nthreads(), returnS = true,
-        returnSnoise = false, returnQE = true, returnCM = true,
+        nbatches::Integer = Base.Threads.nthreads(), sorting = :number,
+        returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
         returnnodeflux = false, returnnodefluxadjoint = false,
         returnvoltage = false,
         )
