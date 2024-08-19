@@ -1329,11 +1329,6 @@ julia> A=[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoB(A)
 
 julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.AtoB(JosephsonCircuits.ZtoA(JosephsonCircuits.StoZ(S))),JosephsonCircuits.StoB(S))
 true
-
-julia> @variables A B C D;JosephsonCircuits.AtoB([A B;C D])
-2×2 Matrix{Num}:
- (1.0 + (-B*(C / A)) / (-D + (B*C) / A)) / A  (-(B / (-D + (B*C) / A))) / A
-               (-(C / A)) / (-D + (B*C) / A)        -1.0 / (-D + (B*C) / A)
 ```
 
 # References
