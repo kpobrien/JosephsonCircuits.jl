@@ -928,129 +928,6 @@ end
 
 
 """
-    AtoZ(A)
-
-Convert the ABCD matrix `A` to the impedance matrix `Z` and return the result.
-
-# Examples
-```jldoctest
-julia> A=[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoZ(A)
-2×2 Matrix{Float64}:
- 50.0  50.0
- 50.0  50.0
-
-julia> @variables A B C D;JosephsonCircuits.AtoZ([A B;C D])
-2×2 Matrix{Num}:
- A / C  -B + (A*D) / C
- 1 / C           D / C
-```
-
-# References
-Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
-"""
-function AtoZ(A)
-
-    Z = similar(A)
-
-    # make a view of Z,A and loop
-    # make a temporary array 
-    tmp = zeros(eltype(A),size(A,1),size(A,2))
-    
-    # assume the port impedances are all the same for all ports and
-    # frequencies. loop over the dimensions of the array greater than 2
-    for i in CartesianIndices(axes(A)[3:end])
-        AtoZ!(view(Z,:,:,i),view(A,:,:,i),tmp)
-    end
-
-    return Z
-end
-
-"""
-    AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
-
-"""
-function AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
-    
-    range1 = 1:size(A,1)÷2
-    range2 = size(A,1)÷2+1:size(A,1)
-
-    # compute [0 A12; I A22]
-    fill!(Z,zero(eltype(A)))
-    for d in range1
-        Z[d+size(A,1)÷2,d] = 1
-    end
-
-    Z[range1,range2] .= A[range1, range2]
-    Z[range2,range2] .= A[range2, range2]
-
-    # compute [-I A11; 0 A21]
-    fill!(tmp,zero(eltype(tmp)))
-    for d in range1
-        tmp[d,d] = -1
-    end
-    tmp[range1,range2] .= A[range1, range1]
-    tmp[range2,range2] .= A[range2, range1]
-
-    # perform the left division
-    # compute [-I A11; 0 A21] \ [0 A12; I A22]
-    Z .= tmp \ Z
-
-    return nothing
-
-end
-
-"""
-    ZtoA(Z)
-
-Convert the impedance matrix `Z` to the ABCD matrix `A` and return the result.
-
-# Examples
-```jldoctest
-julia> Z=[50.0 50.0;50.0 50.0];JosephsonCircuits.ZtoA(Z)
-2×2 Matrix{Float64}:
- 1.0   -0.0
- 0.02   1.0
-
-julia> @variables Z11 Z12 Z21 Z22;JosephsonCircuits.AtoZ([Z11 Z12;Z21 Z22])
-2×2 Matrix{Num}:
- Z11 / Z21  -Z12 + (Z11*Z22) / Z21
-   1 / Z21               Z22 / Z21
-```
-
-# References
-Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
-"""
-function ZtoA(Z)
-    return AtoZ(Z)
-end
-
-# """
-#     ZtoA!(A::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
-
-# """
-# function ZtoA!(A::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
-#     return AtoZ!(A::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
-# end
-
-
-# function TtoZ(T)
-
-#     Z = similar(T)
-
-
-#     return Z
-# end
-
-# function ZtoT(Z)
-
-#     T = similar(Z)
-
-#     return T
-# end
-
-"""
     ZtoS(Z;portimpedances=50.0)
 
 Convert the impedance parameter matrix `Z` to a scattering parameter matrix
@@ -1144,7 +1021,31 @@ function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversq
     return nothing
 end
 
+"""
+    ZtoA(Z)
 
+Convert the impedance matrix `Z` to the ABCD matrix `A` and return the result.
+
+# Examples
+```jldoctest
+julia> Z=[50.0 50.0;50.0 50.0];JosephsonCircuits.ZtoA(Z)
+2×2 Matrix{Float64}:
+ 1.0   -0.0
+ 0.02   1.0
+
+julia> @variables Z11 Z12 Z21 Z22;JosephsonCircuits.AtoZ([Z11 Z12;Z21 Z22])
+2×2 Matrix{Num}:
+ Z11 / Z21  -Z12 + (Z11*Z22) / Z21
+   1 / Z21               Z22 / Z21
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+"""
+function ZtoA(Z)
+    return AtoZ(Z)
+end
 
 
 """
@@ -1240,6 +1141,277 @@ function YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtporti
 
     return nothing
 end
+
+
+"""
+    AtoS(A)
+
+Convert the chain (ABCD) matrix `A` to the scattering parameter matrix `S` and
+return the result.
+
+# Examples
+```jldoctest
+julia> S = rand(Complex{Float64},2,2);isapprox(S,JosephsonCircuits.AtoS(JosephsonCircuits.StoA(S)))
+true
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+"""
+function AtoS(A;portimpedances=50.0)
+
+    S = similar(A)
+    # make a view of Z,S and loop
+    # make a temporary array 
+    tmp = zeros(eltype(A),size(A,1),size(A,2))
+    
+    sqrtportimpedances = sqrt.(portimpedances)
+
+    if ndims(portimpedances) == 0
+        # assume the port impedances are all the same for all ports and
+        # frequencies. loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(A)[3:end])
+            AtoS!(view(S,:,:,i),view(A,:,:,i),tmp,sqrtportimpedances, sqrtportimpedances)
+        end
+    else
+        # assume the port impedances are given for each port and frequency
+        # loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(A)[3:end])
+            AtoS!(view(S,:,:,i),view(A,:,:,i),tmp,
+                Diagonal(view(sqrtportimpedances,1:size(sqrtportimpedances,1)÷2,i)),
+                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2:size(sqrtportimpedances,1),i)))
+        end
+    end
+    return S
+end
+
+
+"""
+    AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
+        sqrtportimpedances1, sqrtportimpedances2)
+
+"""
+function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
+    sqrtportimpedances1, sqrtportimpedances2)
+
+    range1 = 1:size(A,1)÷2
+    range2 = size(A,1)÷2+1:size(A,1)
+
+    # compute 
+    fill!(S,zero(eltype(S)))
+
+    for d in range1
+        S[d,d] = 1
+    end
+
+    for d in range1
+        S[d+size(A,1)÷2,d] = 1
+    end
+
+    # i could make views
+    # then i can use rdiv. 
+    S[range1,range1] .*= sqrtportimpedances1
+    S[range1,range2] .= -A[range1, range1]*sqrtportimpedances2+A[range1, range2]/sqrtportimpedances2
+    S[range2,range1] ./= sqrtportimpedances1
+    S[range2,range2] .= -A[range2, range1]*sqrtportimpedances2+A[range2, range2]/sqrtportimpedances2
+
+    fill!(tmp,zero(eltype(tmp)))
+
+    for d in range1
+        tmp[d,d] = 1
+    end
+
+    for d in range1
+        tmp[d+size(A,1)÷2,d] = 1
+    end
+
+    tmp[range1,range1] .*= sqrtportimpedances1
+    tmp[range1,range2] .= -A[range1, range1]*sqrtportimpedances2-A[range1, range2]/sqrtportimpedances2
+    tmp[range2,range1] ./= -sqrtportimpedances1
+    tmp[range2,range2] .= -A[range2, range1]*sqrtportimpedances2-A[range2, range2]/sqrtportimpedances2
+
+    # println(tmp)
+    # println(S)
+
+    S .= -tmp \ S
+
+    return nothing
+end
+
+"""
+    AtoZ(A)
+
+Convert the ABCD matrix `A` to the impedance matrix `Z` and return the result.
+
+# Examples
+```jldoctest
+julia> A=[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoZ(A)
+2×2 Matrix{Float64}:
+ 50.0  50.0
+ 50.0  50.0
+
+julia> @variables A B C D;JosephsonCircuits.AtoZ([A B;C D])
+2×2 Matrix{Num}:
+ A / C  -B + (A*D) / C
+ 1 / C           D / C
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+"""
+function AtoZ(A)
+
+    Z = similar(A)
+
+    # make a view of Z,A and loop
+    # make a temporary array 
+    tmp = zeros(eltype(A),size(A,1),size(A,2))
+    
+    # assume the port impedances are all the same for all ports and
+    # frequencies. loop over the dimensions of the array greater than 2
+    for i in CartesianIndices(axes(A)[3:end])
+        AtoZ!(view(Z,:,:,i),view(A,:,:,i),tmp)
+    end
+
+    return Z
+end
+
+"""
+    AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
+
+"""
+function AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
+    
+    range1 = 1:size(A,1)÷2
+    range2 = size(A,1)÷2+1:size(A,1)
+
+    # compute [0 A12; I A22]
+    fill!(Z,zero(eltype(A)))
+    for d in range1
+        Z[d+size(A,1)÷2,d] = 1
+    end
+
+    Z[range1,range2] .= A[range1, range2]
+    Z[range2,range2] .= A[range2, range2]
+
+    # compute [-I A11; 0 A21]
+    fill!(tmp,zero(eltype(tmp)))
+    for d in range1
+        tmp[d,d] = -1
+    end
+    tmp[range1,range2] .= A[range1, range1]
+    tmp[range2,range2] .= A[range2, range1]
+
+    # perform the left division
+    # compute [-I A11; 0 A21] \ [0 A12; I A22]
+    Z .= tmp \ Z
+
+    return nothing
+
+end
+
+
+"""
+    AtoB(A)
+
+Convert the chain (ABCD) matrix `A` to the inverse chain matrix `B` and return
+the result. Note that despite the name, the inverse of the chain
+matrix is not equal to the inverse chain matrix, inv(A) ≠ B.
+
+# Examples
+```jldoctest
+julia> A=[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoB(A)
+2×2 Matrix{Float64}:
+ 1.0   0.0
+ 0.02  1.0
+
+julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.AtoB(JosephsonCircuits.ZtoA(JosephsonCircuits.StoZ(S))),JosephsonCircuits.StoB(S))
+true
+
+julia> @variables A B C D;JosephsonCircuits.AtoB([A B;C D])
+2×2 Matrix{Num}:
+ (1.0 + (-B*(C / A)) / (-D + (B*C) / A)) / A  (-(B / (-D + (B*C) / A))) / A
+               (-(C / A)) / (-D + (B*C) / A)        -1.0 / (-D + (B*C) / A)
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+"""
+function AtoB(A)
+
+    B = similar(A)
+
+    # make a view of Z,A and loop
+    # make a temporary array 
+    tmp = zeros(eltype(A),size(A,1),size(A,2))
+    
+    # assume the port impedances are all the same for all ports and
+    # frequencies. loop over the dimensions of the array greater than 2
+    for i in CartesianIndices(axes(A)[3:end])
+        AtoB!(view(B,:,:,i),view(A,:,:,i),tmp)
+    end
+
+    return B
+end
+
+"""
+    AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
+
+"""
+function AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
+    
+    range1 = 1:size(A,1)÷2
+    range2 = size(A,1)÷2+1:size(A,1)
+
+    # compute [I 0; 0 I]
+    fill!(B,zero(eltype(A)))
+    for d in range1
+        B[d,d] = 1
+    end
+    for d in range2
+        B[d,d] = -1
+    end
+
+    # compute [A11 -A12; A21 -A22]
+    copy!(tmp,A)
+    tmp[range1,range2] .*= -1
+    tmp[range2,range2] .*= -1
+
+    # perform the left division
+    # compute [A11 -A12; A21 -A22] \ [I 0; 0 I]
+    B .= tmp \ B
+
+    return nothing
+
+end
+
+
+"""
+    BtoA(B)
+
+Convert the inverse chain matrix `B` to the chain (ABCD) matrix `A` and return
+the result. Note that despite the name, the inverse of the chain
+matrix is not equal to the inverse chain matrix, inv(A) ≠ B.
+
+# Examples
+```jldoctest
+julia> B=[1.0 0.0;1/50 1.0];JosephsonCircuits.BtoA(B)
+2×2 Matrix{Float64}:
+ 1.0   0.0
+ 0.02  1.0
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+"""
+function BtoA(B)
+    return AtoB(B)
+end
+
 
 function ABCDtos11(A,B,C,D,RS,RL)
     return (A*RL+B-C*RS*RL-D*RS)/(A*RL+B+C*RS*RL+D*RS)
