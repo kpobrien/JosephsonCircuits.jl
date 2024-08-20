@@ -340,4 +340,29 @@ using Test
         @test isapprox(S0,S1)
     end
 
+
+    @testset "StoABCD ABCDtoS consistency" begin
+        S0 = rand(Complex{Float64},2,2);
+        portimpedances = rand(Complex{Float64})
+        ABCD0 = JosephsonCircuits.StoABCD(S0,portimpedances=portimpedances)
+        S1 = JosephsonCircuits.ABCDtoS(ABCD0,portimpedances=portimpedances)
+        @test isapprox(S0,S1)
+    end
+
+    @testset "StoABCD ABCDtoS consistency" begin
+        S0 = rand(Complex{Float64},2,2,10);
+        portimpedances = rand(Complex{Float64},2,10)
+        ABCD0 = JosephsonCircuits.StoABCD(S0,portimpedances=portimpedances)
+        S1 = JosephsonCircuits.ABCDtoS(ABCD0,portimpedances=portimpedances)
+        @test isapprox(S0,S1)
+    end
+
+    @testset "StoABCD ABCDtoS consistency" begin
+        S0 = rand(Complex{Float64},2,2,10);
+        portimpedances = rand(Complex{Float64})
+        ABCD0 = JosephsonCircuits.StoABCD(S0,portimpedances=portimpedances)
+        S1 = JosephsonCircuits.ABCDtoS(ABCD0,portimpedances=portimpedances)
+        @test isapprox(S0,S1)
+    end
+
 end
