@@ -460,7 +460,15 @@ function StoT!(T::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix)
     range1 = 1:size(T,1)÷2
     range2 = size(T,1)÷2+1:size(T,1)
 
-    # compute [-S12 0; -S22 I]
+    # tmp = [-I S11; 0 S21]
+    fill!(tmp,zero(eltype(tmp)))
+    for d in range1
+        tmp[d,d] = -1
+    end
+    tmp[range1,range2] .= S[range1, range1]
+    tmp[range2,range2] .= S[range2, range1]
+
+    # T = [-S12 0; -S22 I]
     fill!(T,zero(eltype(T)))
     for d in range2
         T[d,d] = 1
@@ -469,16 +477,8 @@ function StoT!(T::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix)
     T[range1,range1] .= -S[range1, range2]
     T[range2,range1] .= -S[range2, range2]
 
-    # compute [-I S11; 0 S21]
-    fill!(tmp,zero(eltype(tmp)))
-    for d in range1
-        tmp[d,d] = -1
-    end
-    tmp[range1,range2] .= S[range1, range1]
-    tmp[range2,range2] .= S[range2, range1]
-
     # perform the left division
-    # compute [-I S11; 0 S21] \ [-S12 0; -S22 I]
+    # T = inv(tmp)*T = [-I S11; 0 S21] \ [-S12 0; -S22 I]
     T .= tmp \ T
 
     return nothing
@@ -548,23 +548,23 @@ end
 
 """
 function StoZ!(Z::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
+
+    # tmp = (I - S)
+    copy!(tmp,S)
+    rmul!(tmp,-1)
+    for d in 1:size(tmp,1)
+        tmp[d,d] += 1
+    end
     
-    # compute (I + S)*sqrt(portimpedances)
+    # Z = (I + S)*sqrt(portimpedances)
     copy!(Z,S)
     for d in 1:size(Z,1)
         Z[d,d] += 1
     end
     rmul!(Z,sqrtportimpedances)
 
-    # compute (I - S)
-    copy!(tmp,S)
-    rmul!(tmp,-1)
-    for d in 1:size(tmp,1)
-        tmp[d,d] += 1
-    end
-
     # perform the left division
-    # compute (I - S) \ ((I + S)*sqrt(portimpedances))
+    # Z = inv(tmp)*Z = (I - S) \ ((I + S)*sqrt(portimpedances))
     Z .= tmp \ Z
 
     # left multiply by sqrt(z)
@@ -631,7 +631,14 @@ end
 """
 function StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,oneoversqrtportimpedances)
     
-    # compute (I - S)*oneoversqrtportimpedances
+
+    # tmp = (I + S)
+    copy!(tmp,S)
+    for d in 1:size(tmp,1)
+        tmp[d,d] += 1
+    end
+
+    # Y = (I - S)*oneoversqrtportimpedances
     copy!(Y,S)
     rmul!(Y,-1)
     for d in 1:size(Y,1)
@@ -639,14 +646,9 @@ function StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,oneoversq
     end
     rmul!(Y,oneoversqrtportimpedances)
 
-    # compute (I + S)
-    copy!(tmp,S)
-    for d in 1:size(tmp,1)
-        tmp[d,d] += 1
-    end
 
     # perform the left division
-    # compute (I + S) \ ((I - S)*oneoversqrtportimpedances)
+    # Y = inv(tmp)*Y = (I + S) \ ((I - S)*oneoversqrtportimpedances)
     Y .= tmp \ Y
 
     # left multiply by sqrt(z)
@@ -728,17 +730,24 @@ function StoA!(A::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
     tmp22 = view(tmp,range2,range2)
 
     # define the matrices
+
+    # tmp = -[(I-S11)/g1 -(I+S11)*g1; -S21*g1 -S21*g1]
+    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
     tmp11 .= -(I - S11)/sqrtportimpedances1
     tmp12 .= (I + S11)*sqrtportimpedances1
     tmp21 .= S21/sqrtportimpedances1
     tmp22 .= S21*sqrtportimpedances1
 
+    # A = [-S12/g2 S12*g2; (I-S22)/g2 (I+S22)*g2]
+    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
     A11 .= -S12/sqrtportimpedances2
     A12 .= S12*sqrtportimpedances2
     A21 .= (I-S22)/sqrtportimpedances2
     A22 .= (I+S22)*sqrtportimpedances2
 
     # perform the left division
+
+    # A = inv(tmp)*A
     A .= tmp \ A
 
     return nothing
@@ -753,9 +762,11 @@ Convert the scattering parameter matrix `S` to the inverse chain (ABCD) matrix
 matrix is not equal to the inverse chain matrix, inv(A) ≠ B.
 
 # Examples
-```
-# below won't work yet
-julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.ZtoB(JosephsonCircuits.StoZ(S)),JosephsonCircuits.StoB(S))
+```jldoctest
+julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.BtoS(JosephsonCircuits.StoB(S)),S)
+true
+
+julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.AtoS(JosephsonCircuits.BtoA(JosephsonCircuits.StoB(S))),S)
 true
 ```
 
@@ -819,17 +830,24 @@ function StoB!(B::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
     tmp22 = view(tmp,range2,range2)
 
     # define the matrices
+
+    # tmp = [S12/g2 S12*g2; -(I-S22)/g2 (I+S22)*g2]
+    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
     tmp11 .= S12/sqrtportimpedances2
     tmp12 .= S12*sqrtportimpedances2
     tmp21 .= -(I-S22)/sqrtportimpedances2
     tmp22 .= (I+S22)*sqrtportimpedances2
 
+    # B = [(I-S11)/g1 (I+S11)*g1; -S21/g1 S21*g1]
+    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
     B11 .= (I-S11)/sqrtportimpedances1
     B12 .= (I+S11)*sqrtportimpedances1
     B21 .= -S21/sqrtportimpedances1
     B22 .= S21*sqrtportimpedances1
 
     # perform the left division
+
+    # B = inv(tmp)*B
     B .= tmp \ B
 
     return nothing
@@ -885,7 +903,15 @@ function TtoS!(S::AbstractMatrix,T::AbstractMatrix,tmp::AbstractMatrix)
     range1 = 1:size(T,1)÷2
     range2 = size(T,1)÷2+1:size(T,1)
 
-    # compute [0 T11; I T21]
+    # tmp = [-I T12; 0 T22]
+    fill!(tmp,zero(eltype(tmp)))
+    for d in range1
+        tmp[d,d] = -1
+    end
+    tmp[range1,range2] .= T[range1, range2]
+    tmp[range2,range2] .= T[range2, range2]
+
+    # S = [0 T11; I T21]
     fill!(S,zero(eltype(S)))
     for d in range1
         S[d+size(T,1)÷2,d] = 1
@@ -894,16 +920,8 @@ function TtoS!(S::AbstractMatrix,T::AbstractMatrix,tmp::AbstractMatrix)
     S[range1,range2] .= -T[range1, range1]
     S[range2,range2] .= -T[range2, range1]
 
-    # compute [-I T12; 0 T22]
-    fill!(tmp,zero(eltype(tmp)))
-    for d in range1
-        tmp[d,d] = -1
-    end
-    tmp[range1,range2] .= T[range1, range2]
-    tmp[range2,range2] .= T[range2, range2]
-
     # perform the left division
-    # compute [-I T12; 0 T22] \ [0 T11; I T21]
+    # S = inv(tmp)*S
     S .= tmp \ S
 
     return nothing
@@ -980,18 +998,18 @@ function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversq
     lmul!(oneoversqrtportimpedances,S)
     copy!(tmp,S)
 
-    # compute (\tilde{Z} - I)
-    for d in 1:size(S,1)
-        S[d,d] -= 1
-    end
-
-    # compute (\tilde{Z} + I)
+    # tmp = (\tilde{Z} + I)
     for d in 1:size(tmp,1)
         tmp[d,d] += 1
     end
 
+    # S = (\tilde{Z} - I)
+    for d in 1:size(S,1)
+        S[d,d] -= 1
+    end
+
     # perform the left division
-    # compute (\tilde{Z} + I) \ (\tilde{Z} - I)
+    # S = inv(tmp)*S = (\tilde{Z} + I) \ (\tilde{Z} - I)
     S .= tmp \ S
 
     return nothing
@@ -1094,18 +1112,18 @@ function YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtporti
     copy!(tmp,S)
     rmul!(S,-1)
 
-    # compute (-\tilde{Y} + I)
-    for d in 1:size(S,1)
-        S[d,d] += 1
-    end
-
-    # compute (\tilde{Y} + I)
+    # tmp = (\tilde{Y} + I)
     for d in 1:size(tmp,1)
         tmp[d,d] += 1
     end
 
+    # S = (-\tilde{Y} + I)
+    for d in 1:size(S,1)
+        S[d,d] += 1
+    end
+
     # perform the left division
-    # compute (I + \tilde{Y}) \ (I - \tilde{Y})
+    # S = inv(tmp)*S = (I + \tilde{Y}) \ (I - \tilde{Y})
     S .= tmp \ S
 
     return nothing
@@ -1167,7 +1185,27 @@ function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
     range1 = 1:size(A,1)÷2
     range2 = size(A,1)÷2+1:size(A,1)
 
-    # compute 
+
+    # tmp = [-g1 A11*g2+A12/g2; 1/g1 A21*g2+A22/g2]
+    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
+    fill!(tmp,zero(eltype(tmp)))
+
+    for d in range1
+        tmp[d,d] = 1
+    end
+
+    for d in range1
+        tmp[d+size(A,1)÷2,d] = 1
+    end
+
+    tmp[range1,range1] .= -tmp[range1,range1]*sqrtportimpedances1
+    tmp[range1,range2] .= A[range1, range1]*sqrtportimpedances2+A[range1, range2]/sqrtportimpedances2
+    tmp[range2,range1] .= tmp[range2,range1]/sqrtportimpedances1
+    tmp[range2,range2] .= A[range2, range1]*sqrtportimpedances2+A[range2, range2]/sqrtportimpedances2
+
+
+    # S = [g1 -A11*g2+A12/g2; 1/g1 -A21*g2+A22/g2]
+    # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
     fill!(S,zero(eltype(S)))
 
     for d in range1
@@ -1183,23 +1221,9 @@ function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
     S[range2,range1] .=  S[range2,range1]/sqrtportimpedances1
     S[range2,range2] .= -A[range2, range1]*sqrtportimpedances2+A[range2, range2]/sqrtportimpedances2
 
-
-    fill!(tmp,zero(eltype(tmp)))
-
-    for d in range1
-        tmp[d,d] = 1
-    end
-
-    for d in range1
-        tmp[d+size(A,1)÷2,d] = 1
-    end
-
-    tmp[range1,range1] .= tmp[range1,range1]*sqrtportimpedances1
-    tmp[range1,range2] .= -A[range1, range1]*sqrtportimpedances2-A[range1, range2]/sqrtportimpedances2
-    tmp[range2,range1] .= -tmp[range2,range1]/sqrtportimpedances1
-    tmp[range2,range2] .= -A[range2, range1]*sqrtportimpedances2-A[range2, range2]/sqrtportimpedances2
-
-    S .= -tmp \ S
+    # perform the left division
+    # S = inv(tmp)*S
+    S .= tmp \ S
 
     return nothing
 end
@@ -1252,7 +1276,15 @@ function AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
     range1 = 1:size(A,1)÷2
     range2 = size(A,1)÷2+1:size(A,1)
 
-    # compute [0 A12; I A22]
+    # tmp = [-I A11; 0 A21]
+    fill!(tmp,zero(eltype(tmp)))
+    for d in range1
+        tmp[d,d] = -1
+    end
+    tmp[range1,range2] .= A[range1, range1]
+    tmp[range2,range2] .= A[range2, range1]
+
+    # Z = [0 A12; I A22]
     fill!(Z,zero(eltype(A)))
     for d in range1
         Z[d+size(A,1)÷2,d] = 1
@@ -1261,16 +1293,8 @@ function AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
     Z[range1,range2] .= A[range1, range2]
     Z[range2,range2] .= A[range2, range2]
 
-    # compute [-I A11; 0 A21]
-    fill!(tmp,zero(eltype(tmp)))
-    for d in range1
-        tmp[d,d] = -1
-    end
-    tmp[range1,range2] .= A[range1, range1]
-    tmp[range2,range2] .= A[range2, range1]
-
     # perform the left division
-    # compute [-I A11; 0 A21] \ [0 A12; I A22]
+    # Z = inv(tmp)*Z = [-I A11; 0 A21] \ [0 A12; I A22]
     Z .= tmp \ Z
 
     return nothing
@@ -1326,7 +1350,12 @@ function AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
     range1 = 1:size(A,1)÷2
     range2 = size(A,1)÷2+1:size(A,1)
 
-    # compute [I 0; 0 I]
+    # tmp = [A11 -A12; A21 -A22]
+    copy!(tmp,A)
+    tmp[range1,range2] .*= -1
+    tmp[range2,range2] .*= -1
+
+    # B = [I 0; 0 I]
     fill!(B,zero(eltype(A)))
     for d in range1
         B[d,d] = 1
@@ -1335,13 +1364,8 @@ function AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
         B[d,d] = -1
     end
 
-    # compute [A11 -A12; A21 -A22]
-    copy!(tmp,A)
-    tmp[range1,range2] .*= -1
-    tmp[range2,range2] .*= -1
-
     # perform the left division
-    # compute [A11 -A12; A21 -A22] \ [I 0; 0 I]
+    # B = inv(tmp)*B = [A11 -A12; A21 -A22] \ [I 0; 0 I]
     B .= tmp \ B
 
     return nothing
@@ -1363,6 +1387,7 @@ true
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
+with change of overall sign (suspected typo).
 """
 function BtoS(B;portimpedances=50.0)
 
@@ -1403,7 +1428,7 @@ function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
     range1 = 1:size(B,1)÷2
     range2 = size(B,1)÷2+1:size(B,1)
 
-
+    # tmp = [B11*g1+B12/g1 -g2; B21*g1+B22/g1 1/g2]
     fill!(tmp,zero(eltype(tmp)))
 
     for d in range1
@@ -1414,12 +1439,12 @@ function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
         tmp[d,d] = 1
     end
 
-    tmp[range1,range1] .= -B[range1, range1]*sqrtportimpedances1-B[range1, range2]/sqrtportimpedances1
-    tmp[range1,range2] .= tmp[range1,range2]*sqrtportimpedances2
-    tmp[range2,range1] .= -B[range2, range1]*sqrtportimpedances1-B[range2, range2]/sqrtportimpedances1
-    tmp[range2,range2] .= -tmp[range2,range2]/sqrtportimpedances2
+    tmp[range1,range1] .= B[range1, range1]*sqrtportimpedances1+B[range1, range2]/sqrtportimpedances1
+    tmp[range1,range2] .= -tmp[range1,range2]*sqrtportimpedances2
+    tmp[range2,range1] .= B[range2, range1]*sqrtportimpedances1+B[range2, range2]/sqrtportimpedances1
+    tmp[range2,range2] .= tmp[range2,range2]/sqrtportimpedances2
 
-    # compute 
+    # S = [-B11*g1+B12/g1 g2; -B21*g1+B22/g1 1/g2]
     fill!(S,zero(eltype(S)))
 
     for d in range1
@@ -1435,7 +1460,9 @@ function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
     S[range2,range1] .= -B[range2, range1]*sqrtportimpedances1+B[range2, range2]/sqrtportimpedances1
     S[range2,range2] .= S[range2,range2]/sqrtportimpedances2
 
-    S .= -tmp \ S
+    # perform the left division
+    # S = inv(tmp)*S
+    S .= tmp \ S
 
     return nothing
 end
