@@ -439,7 +439,7 @@ function StoT(S)
     T = similar(S)
     # make a view of T,S and loop
     # make a temporary array 
-    tmp = zeros(eltype(S),size(S,1),size(S,2))
+    tmp = similar(S,axes(S)[1:2])
     
     # assume the port impedances are all the same for all ports and
     # frequencies. loop over the dimensions of the array greater than 2
@@ -521,7 +521,7 @@ function StoZ(S;portimpedances=50.0)
     Z = similar(S)
     # make a view of Z,S and loop
     # make a temporary array 
-    tmp = zeros(eltype(S),size(S,1),size(S,2))
+    tmp = similar(S,axes(S)[1:2])
     
     sqrtportimpedances = sqrt.(portimpedances)
 
@@ -562,13 +562,6 @@ function StoZ!(Z::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtporti
     for d in 1:size(tmp,1)
         tmp[d,d] += 1
     end
-
-    # # factorize the matrix
-    # A = lu!(tmp)
-
-    # perform the left division
-    # compute (I - S) \ ((I + S)*sqrt(portimpedances))
-    # ldiv!(A,Z)
 
     # perform the left division
     # compute (I - S) \ ((I + S)*sqrt(portimpedances))
@@ -611,7 +604,7 @@ function StoY(S;portimpedances=50.0)
     Y = similar(S)
     # make a view of Z,S and loop
     # make a temporary array 
-    tmp = zeros(eltype(S),size(S,1),size(S,2))
+    tmp = similar(S,axes(S)[1:2])
     
     oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
 
@@ -652,13 +645,6 @@ function StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,oneoversq
         tmp[d,d] += 1
     end
 
-    # # factorize the matrix
-    # A = lu!(tmp)
-
-    # # perform the left division
-    # # compute (I + S) \ ((I - S)*oneoversqrtportimpedances)
-    # ldiv!(A,Y)
-
     # perform the left division
     # compute (I + S) \ ((I - S)*oneoversqrtportimpedances)
     Y .= tmp \ Y
@@ -691,7 +677,7 @@ function StoA(S;portimpedances=50.0)
     A = similar(S)
     # make a view of Z,S and loop
     # make a temporary array 
-    tmp = zeros(eltype(S),size(S,1),size(S,2))
+    tmp = similar(S,axes(S)[1:2])
     
     sqrtportimpedances = sqrt.(portimpedances)
 
@@ -725,26 +711,35 @@ function StoA!(A::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
     range1 = 1:size(A,1)÷2
     range2 = size(A,1)÷2+1:size(A,1)
 
-    # compute 
-    fill!(A,zero(eltype(A)))
+    # make views of the block matrices
+    S11 = view(S,range1,range1)
+    S12 = view(S,range1,range2)
+    S21 = view(S,range2,range1)
+    S22 = view(S,range2,range2)
 
-    # i could make views
-    # then i can use rdiv. 
-    A[range1,range1] .= -S[range1, range2]/sqrtportimpedances2
-    A[range1,range2] .= S[range1, range2]*sqrtportimpedances2
-    A[range2,range1] .= (1*I-S[range2, range2])/sqrtportimpedances2
-    A[range2,range2] .= (1*I+S[range2, range2])*sqrtportimpedances2
+    A11 = view(A,range1,range1)
+    A12 = view(A,range1,range2)
+    A21 = view(A,range2,range1)
+    A22 = view(A,range2,range2)
 
-    fill!(tmp,zero(eltype(tmp)))
-    tmp[range1,range1] .= (1*I-S[range1, range1])/sqrtportimpedances1
-    tmp[range1,range2] .= -(1*I+S[range1, range1])*sqrtportimpedances1
-    tmp[range2,range1] .= -S[range2, range1]/sqrtportimpedances1
-    tmp[range2,range2] .= -S[range2, range1]*sqrtportimpedances1
+    tmp11 = view(tmp,range1,range1)
+    tmp12 = view(tmp,range1,range2)
+    tmp21 = view(tmp,range2,range1)
+    tmp22 = view(tmp,range2,range2)
 
-    # println(tmp)
-    # println(A)
+    # define the matrices
+    tmp11 .= -(I - S11)./sqrtportimpedances1
+    tmp12 .= (I + S11).*sqrtportimpedances1
+    tmp21 .= S21./sqrtportimpedances1
+    tmp22 .= S21.*sqrtportimpedances1
 
-    A .= -tmp \ A
+    A11 .= -S12./sqrtportimpedances2
+    A12 .= S12.*sqrtportimpedances2
+    A21 .= (I-S22)./sqrtportimpedances2
+    A22 .= (I+S22).*sqrtportimpedances2
+
+    # perform the left division
+    A .= tmp \ A
 
     return nothing
 end
@@ -773,7 +768,7 @@ function StoB(S;portimpedances=50.0)
     B = similar(S)
     # make a view of Z,S and loop
     # make a temporary array 
-    tmp = zeros(eltype(S),size(S,1),size(S,2))
+    tmp = similar(S,axes(S)[1:2])
     
     sqrtportimpedances = sqrt.(portimpedances)
 
@@ -807,47 +802,35 @@ function StoB!(B::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
     range1 = 1:size(B,1)÷2
     range2 = size(B,1)÷2+1:size(B,1)
 
-    # compute 
-    fill!(B,zero(eltype(B)))
+    # make views of the block matrices
+    S11 = view(S,range1,range1)
+    S12 = view(S,range1,range2)
+    S21 = view(S,range2,range1)
+    S22 = view(S,range2,range2)
 
-    # [1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0]
-    # [-1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0]
-    # [1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0]
-    # [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0]
-    # [1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0]
-    # [-1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0]
-    # [1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0]
-    # [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0]
+    B11 = view(B,range1,range1)
+    B12 = view(B,range1,range2)
+    B21 = view(B,range2,range1)
+    B22 = view(B,range2,range2)
 
-    # i could make views
-    # then i can use rdiv. 
-    B[range1,range1] .= (1*I-S[range1, range1])/sqrtportimpedances1
-    B[range1,range2] .= (1*I+S[range1, range1])*sqrtportimpedances1
-    B[range2,range1] .= -S[range2, range1]/sqrtportimpedances1
-    B[range2,range2] .= S[range2, range1]*sqrtportimpedances1
+    tmp11 = view(tmp,range1,range1)
+    tmp12 = view(tmp,range1,range2)
+    tmp21 = view(tmp,range2,range1)
+    tmp22 = view(tmp,range2,range2)
 
-    # B[range1,range1] .= (1*I-S[range1, range1])/sqrtportimpedances1
-    # B[range1,range2] .= -(1*I+S[range1, range1])*sqrtportimpedances1
-    # B[range2,range1] .= -S[range2, range1]/sqrtportimpedances1
-    # B[range2,range2] .= -S[range2, range1]*sqrtportimpedances1
+    # define the matrices
+    tmp11 .= S12./sqrtportimpedances2
+    tmp12 .= S12.*sqrtportimpedances2
+    tmp21 .= -(I-S22)./sqrtportimpedances2
+    tmp22 .= (I+S22).*sqrtportimpedances2
 
+    B11 .= (I-S11)./sqrtportimpedances1
+    B12 .= (I+S11).*sqrtportimpedances1
+    B21 .= -S21./sqrtportimpedances1
+    B22 .= S21.*sqrtportimpedances1
 
-    fill!(tmp,zero(eltype(tmp)))
-    tmp[range1,range1] .= -S[range1, range2]/sqrtportimpedances2
-    tmp[range1,range2] .= -S[range1, range2]*sqrtportimpedances2
-    tmp[range2,range1] .= (1*I-S[range2, range2])/sqrtportimpedances2
-    tmp[range2,range2] .= -(1*I+S[range2, range2])*sqrtportimpedances2
-
-    # tmp[range1,range1] .= -S[range1, range2]/sqrtportimpedances2
-    # tmp[range1,range2] .= S[range1, range2]*sqrtportimpedances2
-    # tmp[range2,range1] .= (1*I-S[range2, range2])/sqrtportimpedances2
-    # tmp[range2,range2] .= (1*I+S[range2, range2])*sqrtportimpedances2
-
-
-    # println(tmp)
-    # println(B)
-
-    B .= -tmp \ B
+    # perform the left division
+    B .= tmp \ B
 
     return nothing
 end
@@ -881,7 +864,7 @@ function TtoS(T)
     S = similar(T)
     # make a view of T,S and loop
     # make a temporary array 
-    tmp = zeros(eltype(T),size(T,1),size(T,2))
+    tmp = similar(T,axes(T)[1:2])
     
     # assume the port impedances are all the same for all ports and
     # frequencies. loop over the dimensions of the array greater than 2
@@ -966,7 +949,7 @@ function ZtoS(Z;portimpedances=50.0)
     S = similar(Z)
     # make a view of Z,S and loop
     # make a temporary array 
-    tmp = zeros(eltype(Z),size(Z,1),size(Z,2))
+    tmp = similar(Z,axes(Z)[1:2])
     
     oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
 
@@ -1006,13 +989,6 @@ function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversq
     for d in 1:size(tmp,1)
         tmp[d,d] += 1
     end
-
-    # # factorize the matrix
-    # A = lu!(tmp)
-
-    # # perform the left division
-    # # compute (\tilde{Z} + I) \ (\tilde{Z} - I)
-    # ldiv!(A,S)
 
     # perform the left division
     # compute (\tilde{Z} + I) \ (\tilde{Z} - I)
@@ -1086,7 +1062,7 @@ function YtoS(Y;portimpedances=50.0)
     S = similar(Y)
     # make a view of Z,S and loop
     # make a temporary array 
-    tmp = zeros(eltype(Y),size(Y,1),size(Y,2))
+    tmp = similar(Y,axes(Y)[1:2])
     
     sqrtportimpedances = sqrt.(portimpedances)
 
@@ -1128,13 +1104,6 @@ function YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtporti
         tmp[d,d] += 1
     end
 
-    # # factorize the matrix
-    # A = lu!(tmp)
-
-    # # perform the left division
-    # # compute (I + \tilde{Y}) \ (I - \tilde{Y})
-    # ldiv!(A,S)
-
     # perform the left division
     # compute (I + \tilde{Y}) \ (I - \tilde{Y})
     S .= tmp \ S
@@ -1164,7 +1133,7 @@ function AtoS(A;portimpedances=50.0)
     S = similar(A)
     # make a view of Z,S and loop
     # make a temporary array 
-    tmp = zeros(eltype(A),size(A,1),size(A,2))
+    tmp = similar(A,axes(A)[1:2])
     
     sqrtportimpedances = sqrt.(portimpedances)
 
@@ -1209,8 +1178,6 @@ function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
         S[d+size(A,1)÷2,d] = 1
     end
 
-    # i could make views
-    # then i can use rdiv. 
     S[range1,range1] .*= sqrtportimpedances1
     S[range1,range2] .= -A[range1, range1]*sqrtportimpedances2+A[range1, range2]/sqrtportimpedances2
     S[range2,range1] ./= sqrtportimpedances1
@@ -1230,9 +1197,6 @@ function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
     tmp[range1,range2] .= -A[range1, range1]*sqrtportimpedances2-A[range1, range2]/sqrtportimpedances2
     tmp[range2,range1] ./= -sqrtportimpedances1
     tmp[range2,range2] .= -A[range2, range1]*sqrtportimpedances2-A[range2, range2]/sqrtportimpedances2
-
-    # println(tmp)
-    # println(S)
 
     S .= -tmp \ S
 
@@ -1267,7 +1231,7 @@ function AtoZ(A)
 
     # make a view of Z,A and loop
     # make a temporary array 
-    tmp = zeros(eltype(A),size(A,1),size(A,2))
+    tmp = similar(A,axes(A)[1:2])
     
     # assume the port impedances are all the same for all ports and
     # frequencies. loop over the dimensions of the array greater than 2
@@ -1341,7 +1305,7 @@ function AtoB(A)
 
     # make a view of Z,A and loop
     # make a temporary array 
-    tmp = zeros(eltype(A),size(A,1),size(A,2))
+    tmp = similar(A,axes(A)[1:2])
     
     # assume the port impedances are all the same for all ports and
     # frequencies. loop over the dimensions of the array greater than 2
@@ -1408,6 +1372,92 @@ function BtoA(B)
 end
 
 
+"""
+    ABCDtoS(ABCD;portimpedances=50.0)
+
+Convert the 2 port chain (ABCD) matrix `ABCD` to the scattering parameter
+matrix `S` and return the result.
+
+# Examples
+```jldoctest
+julia> A = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.AtoS(A),JosephsonCircuits.ABCDtoS(A))
+true
+
+julia> A = rand(Complex{Float64},2,2,10);isapprox(JosephsonCircuits.AtoS(A),JosephsonCircuits.ABCDtoS(A))
+true
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+"""
+function ABCDtoS(ABCD;portimpedances=50.0)
+
+    S = similar(ABCD)
+    # make a view of ABCD and loop
+    
+    # assume the port impedances are all the same for all ports and frequencies
+    if ndims(portimpedances) == 0
+        # # loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(ABCD)[3:end])
+            ABCDtoS!(view(S,:,:,i),view(ABCD,:,:,i),portimpedances)
+        end
+    else
+        for i in CartesianIndices(axes(ABCD)[3:end])
+            ABCDtoS!(view(S,:,:,i),view(ABCD,:,:,i),view(portimpedances,:,i))
+        end
+    end
+    return S
+end
+
+# function ABCDtoS(ABCD;portimpedances=50.0)
+#     return ABCDtoS(ABCD,first(portimpedances),last(portimpedances))
+# end
+
+
+"""
+    StoABCD(S;portimpedances=50.0))
+
+Convert the scattering parameter matrix `S` to the 2 port chain (ABCD) matrix and
+return the result.
+
+# Examples
+```jldoctest
+julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.StoA(S),JosephsonCircuits.StoABCD(S))
+true
+
+julia> S = rand(Complex{Float64},2,2,10);isapprox(JosephsonCircuits.StoA(S),JosephsonCircuits.StoABCD(S))
+true
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+"""
+function StoABCD(S;portimpedances=50.0)
+
+    ABCD = similar(S)
+    # make a view of ABCD and loop
+    
+    # assume the port impedances are all the same for all ports and frequencies
+    if ndims(portimpedances) == 0
+        # # loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(ABCD)[3:end])
+            StoABCD!(view(ABCD,:,:,i),view(S,:,:,i),portimpedances)
+        end
+    else
+        for i in CartesianIndices(axes(ABCD)[3:end])
+            StoABCD!(view(ABCD,:,:,i),view(S,:,:,i),view(portimpedances,:,i))
+        end
+    end
+    return ABCD
+end
+
+# function StoABCD(S;portimpedances=50.0)
+#     return StoABCD(S,first(portimpedances),last(portimpedances))
+# end
+
+
 function ABCDtos11(A,B,C,D,RS,RL)
     return (A*RL+B-C*RS*RL-D*RS)/(A*RL+B+C*RS*RL+D*RS)
 end
@@ -1440,17 +1490,6 @@ function StoD(S11,S12,S21,S22,RS,RL)
     return sqrt(RL/RS)*((1-S11)*(1+S22)+S21*S12)/(2*S21)
 end
 
-
-
-"""
-
-s1 = [rand() rand();rand() rand()]
-ZL = rand()
-ZG = rand()
-abcd = JosephsonCircuits.StoABCD2(s1,ZL,ZG)
-s2 = JosephsonCircuits.ABCDtoS2(abcd,ZL,ZG)
-isapprox(s1,s2)
-"""
 function StoABCD!(ABCD,S,RS,RL)
     ABCD[1,1] = StoA(S[1,1],S[1,2],S[2,1],S[2,2],RS,RL)
     ABCD[1,2] = StoB(S[1,1],S[1,2],S[2,1],S[2,2],RS,RL)
@@ -1459,10 +1498,25 @@ function StoABCD!(ABCD,S,RS,RL)
     return nothing
 end
 
+function StoABCD!(ABCD,S,portimpedances)
+    return StoABCD!(ABCD,S,first(portimpedances),last(portimpedances))
+end
+
 function StoABCD(S,RS,RL)
     ABCD = similar(S)
     StoABCD!(ABCD,S,RS,RL)
     return ABCD
+end
+
+
+# function ABCDtoS(ABCD,RS,RL)
+#     S = similar(ABCD)
+#     ABCDtoS!(S,ABCD,RS,RL)
+#     return S
+# end
+
+function ABCDtoS!(S,ABCD,portimpedances)
+    return ABCDtoS!(S,ABCD,first(portimpedances),last(portimpedances))
 end
 
 function ABCDtoS!(S,ABCD,RS,RL)
@@ -1473,46 +1527,7 @@ function ABCDtoS!(S,ABCD,RS,RL)
     return nothing
 end
 
-function ABCDtoS(ABCD,RS,RL)
-    S = similar(ABCD)
-    ABCDtoS!(S,ABCD,RS,RL)
-    return S
-end
 
-function ABCDtoS(ABCD;portimpedances=50.0)
-    return ABCDtoS(ABCD,first(portimpedances),last(portimpedances))
-end
-
-function StoABCD(S;portimpedances=50.0)
-    return StoABCD(S,first(portimpedances),last(portimpedances))
-end
-
-# function StoABCD!(S;portimpedances=50.0)
-
-#     StoABCD(S,RS,RL)
-#     return [StoA(S[1,1],S[1,2],S[2,1],S[2,2],RS,RL) StoB(S[1,1],S[1,2],S[2,1],S[2,2],RS,RL);StoC(S[1,1],S[1,2],S[2,1],S[2,2],RS,RL) StoD(S[1,1],S[1,2],S[2,1],S[2,2],RS,RL)]
-# end
-
-# function StoABCD(S;portimpedances=50.0)
-
-#     ABCD = similar(S)
-#     # make a view of Z,S and loop
-#     # make a temporary array 
-#     tmp = zeros(eltype(S),size(S,1),size(S,2))
-    
-#     # assume the port impedances are all the same for all ports and frequencies
-#     if ndims(portimpedances) == 0
-#         # # loop over the dimensions of the array greater than 2
-#         for i in CartesianIndices(axes(ABCD)[3:end])
-#             StoABCD!(view(ABCD,:,:,i),view(S,:,:,i),tmp,portimpedances)
-#         end
-#     else
-#         for i in CartesianIndices(axes(ABCD)[3:end])
-#             StoABCD!(view(ABCD,:,:,i),view(S,:,:,i),tmp,view(portimpedances,:,i))
-#         end
-#     end
-#     return S
-# end
 
 
 """
