@@ -693,7 +693,7 @@ function StoA(S;portimpedances=50.0)
         for i in CartesianIndices(axes(S)[3:end])
             StoA!(view(A,:,:,i),view(S,:,:,i),tmp,
                 Diagonal(view(sqrtportimpedances,1:size(sqrtportimpedances,1)÷2,i)),
-                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2:size(sqrtportimpedances,1),i)))
+                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1),i)))
         end
     end
     return A
@@ -728,15 +728,15 @@ function StoA!(A::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
     tmp22 = view(tmp,range2,range2)
 
     # define the matrices
-    tmp11 .= -(I - S11)./sqrtportimpedances1
-    tmp12 .= (I + S11).*sqrtportimpedances1
-    tmp21 .= S21./sqrtportimpedances1
-    tmp22 .= S21.*sqrtportimpedances1
+    tmp11 .= -(I - S11)/sqrtportimpedances1
+    tmp12 .= (I + S11)*sqrtportimpedances1
+    tmp21 .= S21/sqrtportimpedances1
+    tmp22 .= S21*sqrtportimpedances1
 
-    A11 .= -S12./sqrtportimpedances2
-    A12 .= S12.*sqrtportimpedances2
-    A21 .= (I-S22)./sqrtportimpedances2
-    A22 .= (I+S22).*sqrtportimpedances2
+    A11 .= -S12/sqrtportimpedances2
+    A12 .= S12*sqrtportimpedances2
+    A21 .= (I-S22)/sqrtportimpedances2
+    A22 .= (I+S22)*sqrtportimpedances2
 
     # perform the left division
     A .= tmp \ A
@@ -1149,7 +1149,7 @@ function AtoS(A;portimpedances=50.0)
         for i in CartesianIndices(axes(A)[3:end])
             AtoS!(view(S,:,:,i),view(A,:,:,i),tmp,
                 Diagonal(view(sqrtportimpedances,1:size(sqrtportimpedances,1)÷2,i)),
-                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2:size(sqrtportimpedances,1),i)))
+                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1),i)))
         end
     end
     return S
@@ -1178,10 +1178,11 @@ function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
         S[d+size(A,1)÷2,d] = 1
     end
 
-    S[range1,range1] .*= sqrtportimpedances1
+    S[range1,range1] .= S[range1,range1]*sqrtportimpedances1
     S[range1,range2] .= -A[range1, range1]*sqrtportimpedances2+A[range1, range2]/sqrtportimpedances2
-    S[range2,range1] ./= sqrtportimpedances1
+    S[range2,range1] .=  S[range2,range1]/sqrtportimpedances1
     S[range2,range2] .= -A[range2, range1]*sqrtportimpedances2+A[range2, range2]/sqrtportimpedances2
+
 
     fill!(tmp,zero(eltype(tmp)))
 
@@ -1193,9 +1194,9 @@ function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
         tmp[d+size(A,1)÷2,d] = 1
     end
 
-    tmp[range1,range1] .*= sqrtportimpedances1
+    tmp[range1,range1] .= tmp[range1,range1]*sqrtportimpedances1
     tmp[range1,range2] .= -A[range1, range1]*sqrtportimpedances2-A[range1, range2]/sqrtportimpedances2
-    tmp[range2,range1] ./= -sqrtportimpedances1
+    tmp[range2,range1] .= -tmp[range2,range1]/sqrtportimpedances1
     tmp[range2,range2] .= -A[range2, range1]*sqrtportimpedances2-A[range2, range2]/sqrtportimpedances2
 
     S .= -tmp \ S
@@ -1347,6 +1348,111 @@ function AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
 
 end
 
+"""
+    BtoS(B)
+
+Convert the inverse chain (ABCD) matrix `B` to the scattering parameter matrix
+`S` and return the result.
+
+# Examples
+```jldoctest
+julia> S = rand(Complex{Float64},2,2);isapprox(S,JosephsonCircuits.BtoS(JosephsonCircuits.StoB(S)))
+true
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+"""
+function BtoS(B;portimpedances=50.0)
+
+    S = similar(B)
+    # make a view of Z,S and loop
+    # make a temporary array 
+    tmp = similar(B,axes(B)[1:2])
+    
+    sqrtportimpedances = sqrt.(portimpedances)
+
+    if ndims(portimpedances) == 0
+        # assume the port impedances are all the same for all ports and
+        # frequencies. loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(B)[3:end])
+            BtoS!(view(S,:,:,i),view(B,:,:,i),tmp,sqrtportimpedances, sqrtportimpedances)
+        end
+    else
+        # assume the port impedances are given for each port and frequency
+        # loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(B)[3:end])
+            BtoS!(view(S,:,:,i),view(B,:,:,i),tmp,
+                Diagonal(view(sqrtportimpedances,1:size(sqrtportimpedances,1)÷2,i)),
+                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1),i)))
+        end
+    end
+    return S
+end
+
+
+"""
+    BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
+        sqrtportimpedances1, sqrtportimpedances2)
+
+"""
+function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
+    sqrtportimpedances1, sqrtportimpedances2)
+
+    range1 = 1:size(B,1)÷2
+    range2 = size(B,1)÷2+1:size(B,1)
+
+
+    fill!(tmp,zero(eltype(tmp)))
+
+    for d in range1
+        tmp[d,d+size(B,1)÷2] = 1
+    end
+
+    for d in range2
+        tmp[d,d] = 1
+    end
+
+    # tmp[range1,range1] .= tmp[range1,range1]*sqrtportimpedances1
+    # tmp[range1,range2] .= -B[range1, range1]*sqrtportimpedances2-B[range1, range2]/sqrtportimpedances2
+    # tmp[range2,range1] .= -tmp[range2,range1]/sqrtportimpedances1
+    # tmp[range2,range2] .= -B[range2, range1]*sqrtportimpedances2-B[range2, range2]/sqrtportimpedances2
+
+    tmp[range1,range1] .= -B[range1, range1]*sqrtportimpedances1-B[range1, range2]/sqrtportimpedances1
+    tmp[range1,range2] .= tmp[range1,range2]*sqrtportimpedances2
+    tmp[range2,range1] .= -B[range2, range1]*sqrtportimpedances1-B[range2, range2]/sqrtportimpedances2
+    tmp[range2,range2] .= -tmp[range2,range2]/sqrtportimpedances2
+
+
+    # compute 
+    fill!(S,zero(eltype(S)))
+
+    for d in range1
+        S[d,d+size(B,1)÷2] = 1
+    end
+
+    for d in range2
+        S[d,d] = 1
+    end
+
+    # S[range1,range1] .= S[range1,range1]*sqrtportimpedances1
+    # S[range1,range2] .= -B[range1, range1]*sqrtportimpedances2+B[range1, range2]/sqrtportimpedances2
+    # S[range2,range1] .=  S[range2,range1]/sqrtportimpedances1
+    # S[range2,range2] .= -B[range2, range1]*sqrtportimpedances2+B[range2, range2]/sqrtportimpedances2
+
+    S[range1,range1] .= -B[range1, range1]*sqrtportimpedances1+B[range1, range2]/sqrtportimpedances1
+    S[range1,range2] .= S[range1,range2]*sqrtportimpedances2
+    S[range2,range1] .= -B[range2, range1]*sqrtportimpedances1+B[range2, range2]/sqrtportimpedances1
+    S[range2,range2] .= S[range2,range2]/sqrtportimpedances2
+
+    # println(tmp)
+    # println(S)
+
+    S .= -tmp \ S
+
+    return nothing
+end
 
 """
     BtoA(B)
@@ -1502,11 +1608,11 @@ function StoABCD!(ABCD,S,portimpedances)
     return StoABCD!(ABCD,S,first(portimpedances),last(portimpedances))
 end
 
-function StoABCD(S,RS,RL)
-    ABCD = similar(S)
-    StoABCD!(ABCD,S,RS,RL)
-    return ABCD
-end
+# function StoABCD(S,RS,RL)
+#     ABCD = similar(S)
+#     StoABCD!(ABCD,S,RS,RL)
+#     return ABCD
+# end
 
 
 # function ABCDtoS(ABCD,RS,RL)
@@ -1545,6 +1651,15 @@ V1, I1 -->  ======== <-- I2, V2
 
 [V1, V2, V3, V4] = Z_coupled_tline * [I1, I2, I3, I4]
 
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Z_coupled_tline(1,1,50,50,pi/4)
+4×4 Matrix{ComplexF64}:
+ 0.0-50.0im     0.0-70.7107im  0.0-0.0im      0.0-0.0im
+ 0.0-70.7107im  0.0-50.0im     0.0-0.0im      0.0-0.0im
+ 0.0-0.0im      0.0-0.0im      0.0-50.0im     0.0-70.7107im
+ 0.0-0.0im      0.0-0.0im      0.0-70.7107im  0.0-50.0im
+ ```
 """
 function Z_coupled_tline(betae,betao,Z0e,Z0o,l)
     Z11 = Z22 = Z33 = Z44 = -im/2*(Z0e*cot(betae*l) + Z0o*cot(betao*l))
@@ -1557,24 +1672,40 @@ end
 """
     ABCD_tline(beta,Z0,l)
 
--========-
- beta, Z0
-__________
-<----l--->
+   <--l--->
+o--========--o
+   beta, Z0   
+              
+o------------o
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_tline(1,1,pi/4)
+2×2 Matrix{ComplexF64}:
+ 0.707107+0.0im            0.0+0.707107im
+      0.0+0.707107im  0.707107+0.0im
+ ```
 """
 function ABCD_tline(beta,Z0,l)
     return [cos(beta*l) im*Z0*sin(beta*l);im/Z0*sin(beta*l) cos(beta*l)]
 end
 
 
-
 """
     ABCD_seriesZ(Z)
 
-----Z1---
+o---Z1---o
+          
+          
+o--------o
 
-
----------
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_seriesZ(2)
+2×2 Matrix{Int64}:
+ 1  2
+ 0  1
+ ```
 """
 function ABCD_seriesZ(Z)
     return [1 Z;0 1]
@@ -1588,6 +1719,14 @@ end
     Y1
     |
 ---------
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_shuntY(2)
+2×2 Matrix{Int64}:
+ 1  0
+ 2  1
+ ```
 """
 function ABCD_shuntY(Y)
     return [1 0;Y 1]
@@ -1596,11 +1735,19 @@ end
 """
     ABCD_PiY(Y1,Y2,Y3)
 
------Y3----
-  |     |
-  Y1    Y2
-  |     |
------------
+o----Y3-----o
+   |     |   
+   Y1    Y2  
+   |     |   
+o-----------o
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_PiY(1,2,4)
+2×2 Matrix{Float64}:
+ 1.5  0.25
+ 3.5  1.25
+ ```
 """
 function ABCD_PiY(Y1,Y2,Y3)
     return [1+Y2/Y3 1/Y3;Y1+Y2+Y1*Y2/Y3 1+Y1/Y3]
@@ -1610,11 +1757,19 @@ end
 """
     ABCD_TZ(Z1,Z2,Z3)
 
---Z1-----Z2---
-      |  
-     Z3  
-      |
--------------
+o--Z1-----Z2--o
+       |       
+      Z3       
+       |       
+o-------------o
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_TZ(1,2,4)
+2×2 Matrix{Float64}:
+ 1.25  3.5
+ 0.25  1.5
+ ```
 """
 function ABCD_TZ(Z1,Z2,Z3)
     return [1+Z1/Z3 Z1+Z2+Z1*Z2/Z3;1/Z3 1+Z2/Z3]

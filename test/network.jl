@@ -214,7 +214,13 @@ using Test
         @test isapprox(Sout1,Sout2)
     end
 
-    @testset "ZtoS StoZ consistency" begin
+    @testset "StoT TtoS consistency" begin
+        S0 = rand(Complex{Float64},4,4,1);
+        S1 = JosephsonCircuits.TtoS(JosephsonCircuits.StoT(S0))
+        @test isapprox(S0,S1)
+    end
+
+    @testset "StoZ ZtoS consistency" begin
         Z0 = rand(Complex{Float64},4,4,1);
         portimpedances = rand(Complex{Float64},4,1)
         S0 = JosephsonCircuits.ZtoS(Z0,portimpedances=portimpedances)
@@ -222,7 +228,15 @@ using Test
         @test isapprox(Z0,Z1)
     end
 
-    @testset "ZtoS StoZ consistency" begin
+    @testset "StoZ ZtoS consistency" begin
+        Z0 = rand(Complex{Float64},4,4,1);
+        portimpedances = rand(Complex{Float64},4,1)
+        S0 = JosephsonCircuits.ZtoS(Z0,portimpedances=portimpedances)
+        Z1 = JosephsonCircuits.StoZ(S0,portimpedances=portimpedances)
+        @test isapprox(Z0,Z1)
+    end
+
+    @testset "StoZ ZtoS consistency" begin
         Z0 = rand(Complex{Float64},4,4);
         portimpedances = rand(Complex{Float64},4)
         S0 = JosephsonCircuits.ZtoS(Z0,portimpedances=portimpedances)
@@ -230,7 +244,7 @@ using Test
         @test isapprox(Z0,Z1)
     end
 
-    @testset "ZtoS StoZ consistency" begin
+    @testset "StoZ ZtoS consistency" begin
         Z0 = rand(Complex{Float64},2,2,100);
         portimpedances = rand(Complex{Float64},2,100)
         S0 = JosephsonCircuits.ZtoS(Z0,portimpedances=portimpedances)
@@ -238,7 +252,7 @@ using Test
         @test isapprox(Z0,Z1)
     end
 
-    @testset "ZtoS StoZ consistency" begin
+    @testset "StoZ ZtoS consistency" begin
         Z0 = rand(Complex{Float64},2,2,100);
         portimpedances = 50.0
         S0 = JosephsonCircuits.ZtoS(Z0,portimpedances=portimpedances)
@@ -246,7 +260,7 @@ using Test
         @test isapprox(Z0,Z1)
     end
 
-    @testset "YtoS StoY consistency" begin
+    @testset "StoY YtoS consistency" begin
         Y0 = rand(Complex{Float64},4,4,1);
         portimpedances = rand(Complex{Float64},4,1)
         S0 = JosephsonCircuits.YtoS(Y0,portimpedances=portimpedances)
@@ -254,7 +268,7 @@ using Test
         @test isapprox(Y0,Y1)
     end
 
-    @testset "YtoS StoY consistency" begin
+    @testset "StoY YtoS consistency" begin
         Y0 = rand(Complex{Float64},4,4);
         portimpedances = rand(Complex{Float64},4)
         S0 = JosephsonCircuits.YtoS(Y0,portimpedances=portimpedances)
@@ -262,7 +276,7 @@ using Test
         @test isapprox(Y0,Y1)
     end
 
-    @testset "YtoS StoY consistency" begin
+    @testset "StoY YtoS consistency" begin
         Y0 = rand(Complex{Float64},2,2,100);
         portimpedances = rand(Complex{Float64},2,100)
         S0 = JosephsonCircuits.YtoS(Y0,portimpedances=portimpedances)
@@ -270,12 +284,60 @@ using Test
         @test isapprox(Y0,Y1)
     end
 
-    @testset "YtoS StoY consistency" begin
+    @testset "StoY YtoS consistency" begin
         Y0 = rand(Complex{Float64},2,2,100);
         portimpedances = 50.0
         S0 = JosephsonCircuits.YtoS(Y0,portimpedances=portimpedances)
         Y1 = JosephsonCircuits.StoY(S0,portimpedances=portimpedances)
         @test isapprox(Y0,Y1)
+    end
+
+    @testset "StoA AtoS consistency" begin
+        S0 = rand(Complex{Float64},4,4);
+        portimpedances = rand(Complex{Float64})
+        A0 = JosephsonCircuits.StoA(S0,portimpedances=portimpedances)
+        S1 = JosephsonCircuits.AtoS(A0,portimpedances=portimpedances)
+        @test isapprox(S0,S1)
+    end
+
+    @testset "StoA AtoS consistency" begin
+        S0 = rand(Complex{Float64},4,4,10);
+        portimpedances = rand(Complex{Float64},4,10)
+        A0 = JosephsonCircuits.StoA(S0,portimpedances=portimpedances)
+        S1 = JosephsonCircuits.AtoS(A0,portimpedances=portimpedances)
+        @test isapprox(S0,S1)
+    end
+
+    @testset "StoA AtoS consistency" begin
+        S0 = rand(Complex{Float64},4,4,10);
+        portimpedances = rand(Complex{Float64})
+        A0 = JosephsonCircuits.StoA(S0,portimpedances=portimpedances)
+        S1 = JosephsonCircuits.AtoS(A0,portimpedances=portimpedances)
+        @test isapprox(S0,S1)
+    end
+
+    @testset "StoB BtoS consistency" begin
+        S0 = rand(Complex{Float64},4,4);
+        portimpedances = rand(Complex{Float64})
+        B0 = JosephsonCircuits.StoA(S0,portimpedances=portimpedances)
+        S1 = JosephsonCircuits.AtoS(B0,portimpedances=portimpedances)
+        @test isapprox(S0,S1)
+    end
+
+    @testset "StoB BtoS consistency" begin
+        S0 = rand(Complex{Float64},4,4,10);
+        portimpedances = rand(Complex{Float64},4,10)
+        B0 = JosephsonCircuits.StoA(S0,portimpedances=portimpedances)
+        S1 = JosephsonCircuits.AtoS(B0,portimpedances=portimpedances)
+        @test isapprox(S0,S1)
+    end
+
+    @testset "StoB BtoS consistency" begin
+        S0 = rand(Complex{Float64},4,4,10);
+        portimpedances = rand(Complex{Float64})
+        B0 = JosephsonCircuits.StoA(S0,portimpedances=portimpedances)
+        S1 = JosephsonCircuits.AtoS(B0,portimpedances=portimpedances)
+        @test isapprox(S0,S1)
     end
 
 end
