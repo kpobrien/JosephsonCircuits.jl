@@ -398,14 +398,21 @@ end
 julia> JosephsonCircuits.calcimpedance(30.0,:C,1.0,nothing)
 0.0 - 0.03333333333333333im
 
+julia> JosephsonCircuits.calcimpedance(30.0,:L,1.0,nothing)
+0.0 + 30.0im
+
 julia> JosephsonCircuits.calcimpedance(30.0,:R,1.0,nothing)
 30.0 + 0.0im
 
 julia> JosephsonCircuits.calcimpedance(30.0,:C,-1.0,nothing)
 -0.0 + 0.03333333333333333im
 
+julia> JosephsonCircuits.calcimpedance(30.0,:L,-1.0,nothing)
+-0.0 - 30.0im
+
 julia> JosephsonCircuits.calcimpedance(30.0,:R,-1.0,nothing)
 30.0 + 0.0im
+
 ```
 """
 function calcimpedance(c::Union{T,Complex{T}}, type, w, symfreqvar,
@@ -446,11 +453,17 @@ julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:R,2.0,w)
 julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:C,2.0,w)
 0.0 - 0.008333333333333333im
 
+julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:L,2.0,w)
+0.0 + 120.0im
+
 julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:R,-2.0,w)
 -60.0 + 0.0im
 
 julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:C,-2.0,w)
 0.0 - 0.008333333333333333im
+
+julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:L,-2.0,w)
+0.0 + 120.0im
 ```
 """
 function calcimpedance(c, type, w, symfreqvar)
