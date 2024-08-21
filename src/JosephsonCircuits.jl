@@ -315,6 +315,28 @@ function warmupvvn()
     return componentvaluestonumber(psc.componentvalues,circuitdefs)
 end
 
+function warmupnetwork()
+
+    for arg in [rand(Complex{Float64},2,2),rand(Complex{Float64},2,2,3)]
+        JosephsonCircuits.StoT(arg)
+        JosephsonCircuits.StoZ(arg)
+        JosephsonCircuits.StoY(arg)
+        JosephsonCircuits.StoA(arg)
+        JosephsonCircuits.StoB(arg)
+        JosephsonCircuits.TtoS(arg)
+        JosephsonCircuits.ZtoS(arg)
+        JosephsonCircuits.ZtoA(arg)
+        JosephsonCircuits.YtoS(arg)
+        JosephsonCircuits.AtoS(arg)
+        JosephsonCircuits.AtoZ(arg)
+        JosephsonCircuits.AtoB(arg)
+        JosephsonCircuits.BtoS(arg)
+        JosephsonCircuits.BtoA(arg)
+
+    end
+
+    return true
+end
 
 export @syms, hbsolve, hbnlsolve, hblinsolve, hbsolveold, hbnlsolveold,
     hblinsolveold, parsecircuit, parsesortcircuit, calccircuitgraph,
@@ -336,6 +358,7 @@ PrecompileTools.@compile_workload begin
     warmupsyms()
     warmupsymsold()
     warmupsymsnew()
+    warmupnetwork()
 end
 
 #end module

@@ -69,4 +69,8 @@ using Test
         @test JosephsonCircuits.compare(out1,out2)
     end
 
+    @testset verbose=true "warmupnetwork" begin
+        @test JosephsonCircuits.warmupnetwork()
+    end
+
 end
