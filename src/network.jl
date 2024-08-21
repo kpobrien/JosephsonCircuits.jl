@@ -903,13 +903,29 @@ function TtoS!(S::AbstractMatrix,T::AbstractMatrix,tmp::AbstractMatrix)
     range1 = 1:size(T,1)÷2
     range2 = size(T,1)÷2+1:size(T,1)
 
+    # make views of the block matrices
+    # S11 = view(S,range1,range1)
+    S12 = view(S,range1,range2)
+    # S21 = view(S,range2,range1)
+    S22 = view(S,range2,range2)
+
+    T11 = view(T,range1,range1)
+    T12 = view(T,range1,range2)
+    T21 = view(T,range2,range1)
+    T22 = view(T,range2,range2)
+
+    # tmp11 = view(tmp,range1,range1)
+    tmp12 = view(tmp,range1,range2)
+    # tmp21 = view(tmp,range2,range1)
+    tmp22 = view(tmp,range2,range2)
+
     # tmp = [-I T12; 0 T22]
     fill!(tmp,zero(eltype(tmp)))
     for d in range1
         tmp[d,d] = -1
     end
-    tmp[range1,range2] .= T[range1, range2]
-    tmp[range2,range2] .= T[range2, range2]
+    tmp12 .= T12
+    tmp22 .= T22
 
     # S = [0 T11; I T21]
     fill!(S,zero(eltype(S)))
@@ -917,8 +933,8 @@ function TtoS!(S::AbstractMatrix,T::AbstractMatrix,tmp::AbstractMatrix)
         S[d+size(T,1)÷2,d] = 1
     end
 
-    S[range1,range2] .= -T[range1, range1]
-    S[range2,range2] .= -T[range2, range1]
+    S12 .= -T11
+    S22 .= -T21
 
     # perform the left division
     # S = inv(tmp)*S
@@ -1185,6 +1201,21 @@ function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
     range1 = 1:size(A,1)÷2
     range2 = size(A,1)÷2+1:size(A,1)
 
+    # make views of the block matrices
+    S11 = view(S,range1,range1)
+    S12 = view(S,range1,range2)
+    S21 = view(S,range2,range1)
+    S22 = view(S,range2,range2)
+
+    A11 = view(A,range1,range1)
+    A12 = view(A,range1,range2)
+    A21 = view(A,range2,range1)
+    A22 = view(A,range2,range2)
+
+    tmp11 = view(tmp,range1,range1)
+    tmp12 = view(tmp,range1,range2)
+    tmp21 = view(tmp,range2,range1)
+    tmp22 = view(tmp,range2,range2)
 
     # tmp = [-g1 A11*g2+A12/g2; 1/g1 A21*g2+A22/g2]
     # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
@@ -1198,11 +1229,10 @@ function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
         tmp[d+size(A,1)÷2,d] = 1
     end
 
-    tmp[range1,range1] .= -tmp[range1,range1]*sqrtportimpedances1
-    tmp[range1,range2] .= A[range1, range1]*sqrtportimpedances2+A[range1, range2]/sqrtportimpedances2
-    tmp[range2,range1] .= tmp[range2,range1]/sqrtportimpedances1
-    tmp[range2,range2] .= A[range2, range1]*sqrtportimpedances2+A[range2, range2]/sqrtportimpedances2
-
+    tmp11 .= -tmp11*sqrtportimpedances1
+    tmp12 .= A11*sqrtportimpedances2+A12/sqrtportimpedances2
+    tmp21 .= tmp21/sqrtportimpedances1
+    tmp22 .= A21*sqrtportimpedances2+A22/sqrtportimpedances2
 
     # S = [g1 -A11*g2+A12/g2; 1/g1 -A21*g2+A22/g2]
     # where g1 = sqrtportimpedances1 and g2 = sqrtportimpedances2
@@ -1216,10 +1246,10 @@ function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
         S[d+size(A,1)÷2,d] = 1
     end
 
-    S[range1,range1] .= S[range1,range1]*sqrtportimpedances1
-    S[range1,range2] .= -A[range1, range1]*sqrtportimpedances2+A[range1, range2]/sqrtportimpedances2
-    S[range2,range1] .=  S[range2,range1]/sqrtportimpedances1
-    S[range2,range2] .= -A[range2, range1]*sqrtportimpedances2+A[range2, range2]/sqrtportimpedances2
+    S11 .= S11*sqrtportimpedances1
+    S12 .= -A11*sqrtportimpedances2+A12/sqrtportimpedances2
+    S21 .=  S21/sqrtportimpedances1
+    S22 .= -A21*sqrtportimpedances2+A22/sqrtportimpedances2
 
     # perform the left division
     # S = inv(tmp)*S
@@ -1428,6 +1458,22 @@ function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
     range1 = 1:size(B,1)÷2
     range2 = size(B,1)÷2+1:size(B,1)
 
+    # make views of the block matrices
+    S11 = view(S,range1,range1)
+    S12 = view(S,range1,range2)
+    S21 = view(S,range2,range1)
+    S22 = view(S,range2,range2)
+
+    B11 = view(B,range1,range1)
+    B12 = view(B,range1,range2)
+    B21 = view(B,range2,range1)
+    B22 = view(B,range2,range2)
+
+    tmp11 = view(tmp,range1,range1)
+    tmp12 = view(tmp,range1,range2)
+    tmp21 = view(tmp,range2,range1)
+    tmp22 = view(tmp,range2,range2)
+
     # tmp = [B11*g1+B12/g1 -g2; B21*g1+B22/g1 1/g2]
     fill!(tmp,zero(eltype(tmp)))
 
@@ -1439,10 +1485,10 @@ function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
         tmp[d,d] = 1
     end
 
-    tmp[range1,range1] .= B[range1, range1]*sqrtportimpedances1+B[range1, range2]/sqrtportimpedances1
-    tmp[range1,range2] .= -tmp[range1,range2]*sqrtportimpedances2
-    tmp[range2,range1] .= B[range2, range1]*sqrtportimpedances1+B[range2, range2]/sqrtportimpedances1
-    tmp[range2,range2] .= tmp[range2,range2]/sqrtportimpedances2
+    tmp11 .= B11*sqrtportimpedances1+B12/sqrtportimpedances1
+    tmp12 .= -tmp12*sqrtportimpedances2
+    tmp21 .= B21*sqrtportimpedances1+B22/sqrtportimpedances1
+    tmp22 .= tmp22/sqrtportimpedances2
 
     # S = [-B11*g1+B12/g1 g2; -B21*g1+B22/g1 1/g2]
     fill!(S,zero(eltype(S)))
@@ -1455,10 +1501,10 @@ function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
         S[d,d] = 1
     end
 
-    S[range1,range1] .= -B[range1, range1]*sqrtportimpedances1+B[range1, range2]/sqrtportimpedances1
-    S[range1,range2] .= S[range1,range2]*sqrtportimpedances2
-    S[range2,range1] .= -B[range2, range1]*sqrtportimpedances1+B[range2, range2]/sqrtportimpedances1
-    S[range2,range2] .= S[range2,range2]/sqrtportimpedances2
+    S11 .= -B11*sqrtportimpedances1+B12/sqrtportimpedances1
+    S12 .= S12*sqrtportimpedances2
+    S21 .= -B21*sqrtportimpedances1+B22/sqrtportimpedances1
+    S22 .= S22/sqrtportimpedances2
 
     # perform the left division
     # S = inv(tmp)*S
