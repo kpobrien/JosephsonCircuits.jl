@@ -409,6 +409,81 @@ function connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices)
     return nothing
 end
 
+"""
+    cascadeS(Sa,Sb)
+
+Cascade the scattering parameter matrix `Sa` with the scattering matrix `Sb`
+and return the combined scattering matrix.
+
+# Examples
+```jldoctest
+julia> Sa = [0.0 0.5;0.5 0.0];Sb = [0.0 0.1;0.1 0.0];JosephsonCircuits.cascadeS(Sa,Sb)
+2×2 Matrix{Float64}:
+ 0.0   0.05
+ 0.05  0.0
+
+julia> Sa=rand(Complex{Float64},2,2);Sb=rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.cascadeS(Sa,Sb),JosephsonCircuits.AtoS(JosephsonCircuits.StoA(Sa)*JosephsonCircuits.StoA(Sb)))
+true
+
+julia> Sa=[rand(Complex{Float64},2,2) for i in 1:10];Sb=[rand(Complex{Float64},2,2) for i in 1:10];isapprox(JosephsonCircuits.cascadeS.(Sa,Sb),JosephsonCircuits.AtoS.(JosephsonCircuits.StoA.(Sa).*JosephsonCircuits.StoA.(Sb)))
+true
+```
+
+# References
+D. J. R. Stock and L. J. Kaplan, "A Comment on the Scattering Matrix of 
+Cascaded 2n-Ports (Correspondence)," in IRE Transactions on Microwave 
+Theory and Techniques, vol. 9, no. 5, pp. 454-454, September 1961, doi:
+10.1109/TMTT.1961.1125369
+"""
+function cascadeS(Sa,Sb)
+
+    S = similar(Sa)
+    # make a view of T,S and loop
+    # make a temporary array 
+
+    # assume the port impedances are all the same for all ports and
+    # frequencies. loop over the dimensions of the array greater than 2
+    for i in CartesianIndices(axes(S)[3:end])
+        cascadeS!(view(S,:,:,i),view(Sa,:,:,i),view(Sb,:,:,i))
+    end
+
+    return S
+
+end
+
+"""
+    cascadeS!(S, Sa, Sb)
+
+"""
+function cascadeS!(S::AbstractMatrix, Sa::AbstractMatrix, Sb::AbstractMatrix)
+    range1 = 1:size(Sa,1)÷2
+    range2 = size(Sa,1)÷2+1:size(Sa,1)
+
+    # make views of the block matrices
+    S11a = view(Sa,range1,range1)
+    S12a = view(Sa,range1,range2)
+    S21a = view(Sa,range2,range1)
+    S22a = view(Sa,range2,range2)
+
+    S11b = view(Sb,range1,range1)
+    S12b = view(Sb,range1,range2)
+    S21b = view(Sb,range2,range1)
+    S22b = view(Sb,range2,range2)
+
+    S11 = view(S,range1,range1)
+    S12 = view(S,range1,range2)
+    S21 = view(S,range2,range1)
+    S22 = view(S,range2,range2)
+
+    tmp1 = (I-S22a*S11b)\S21a
+    tmp2 = (I-S11b*S22a)\S12b
+    S11 .= S11a + S12a*S11b*tmp1 # typo in ref: S21 should be S21a
+    S12 .= S12a*tmp2 # typo in ref: S11a should be S11a
+    S21 .= S21b*tmp1
+    S22 .= S22b + S21b*S22a*tmp2
+
+    return nothing
+end
 
 
 """
