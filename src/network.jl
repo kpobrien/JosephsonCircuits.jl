@@ -485,8 +485,220 @@ function cascadeS!(S::AbstractMatrix, Sa::AbstractMatrix, Sb::AbstractMatrix)
     return nothing
 end
 
+# generate the non in-place versions of the network parameter conversion
+# functions. 
 
-"""
+# functions without an impedance argument
+for f in [:StoT, :TtoS, :AtoB, :BtoA, :AtoZ, :ZtoA]
+    @eval function ($f)(x::AbstractMatrix)
+        # define the output matrix
+        y = similar(x)
+        # define a temporary storage array
+        tmp = similar(x)
+        # evaluate the in place version of the function
+        ($(Symbol(String(f)*"!")))(y,x,tmp)
+        return y
+    end
+    
+    @eval function ($f)(x::AbstractArray)
+        # define the output matrix
+        y = similar(x)
+        # define a temporary storage array
+        tmp = similar(x,axes(x)[1:2])
+        # evaluate the in place version of the function
+        for i in CartesianIndices(axes(x)[3:end])
+            ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp)
+        end
+        return y
+    end
+end
+
+# functions using portimpedances
+for f in [:ABCDtoS, :StoABCD]
+    @eval function ($f)(x::AbstractMatrix;portimpedances=50.0)
+        # define the output matrix
+        y = similar(x)
+        # evaluate the in place version of the function
+        ($(Symbol(String(f)*"!")))(y,x,portimpedances)
+        return y
+    end
+    
+    @eval function ($f)(x::AbstractArray;portimpedances=50.0)
+        # define the output matrix
+        y = similar(x)
+        # if portimpedances is a scalar, pass that, otherwise pass as a
+        # diagonal matrix
+        if ndims(portimpedances) == 0
+            # assume the port impedances are all the same for all ports and
+            # frequencies. loop over the dimensions of the array greater than 2
+            for i in CartesianIndices(axes(x)[3:end])
+                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),portimpedances)
+            end
+        else
+            # assume the port impedances are given for each port and frequency
+            # loop over the dimensions of the array greater than 2
+            for i in CartesianIndices(axes(x)[3:end])
+                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),view(portimpedances,:,i))
+            end
+        end
+
+        return y
+    end
+end
+
+# functions using sqrtportimpedances
+for f in [:StoZ, :YtoS]
+    @eval function ($f)(x::AbstractMatrix;portimpedances=50.0)
+        # define the output matrix
+        y = similar(x)
+        # define a temporary storage array
+        tmp = similar(x)
+        # calculate the square root of the port impedances
+        sqrtportimpedances = sqrt.(portimpedances)
+        # if portimpedances is a scalar, pass that, otherwise pass as a
+        # diagonal matrix
+        if iszero(ndims(portimpedances))
+            # evaluate the in place version of the function
+            ($(Symbol(String(f)*"!")))(y,x,tmp,sqrtportimpedances)
+        else
+            # evaluate the in place version of the function
+            ($(Symbol(String(f)*"!")))(y,x,tmp,Diagonal(sqrtportimpedances))
+        end
+        return y
+    end
+    
+    @eval function ($f)(x::AbstractArray;portimpedances=50.0)
+        # define the output matrix
+        y = similar(x)
+        # define a temporary storage array
+        tmp = similar(x,axes(x)[1:2])
+        # calculate the square root of the port impedances
+        sqrtportimpedances = sqrt.(portimpedances)
+        # if portimpedances is a scalar, pass that, otherwise pass as a
+        # diagonal matrix
+        if ndims(portimpedances) == 0
+            # assume the port impedances are all the same for all ports and
+            # frequencies. loop over the dimensions of the array greater than 2
+            for i in CartesianIndices(axes(x)[3:end])
+                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,sqrtportimpedances)
+            end
+        else
+            # assume the port impedances are given for each port and frequency
+            # loop over the dimensions of the array greater than 2
+            for i in CartesianIndices(axes(x)[3:end])
+                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,Diagonal(view(sqrtportimpedances,:,i)))
+            end
+        end
+
+        return y
+    end
+end
+
+
+# functions using oneoversqrtportimpedances
+for f in [:StoY, :ZtoS]
+    @eval function ($f)(x::AbstractMatrix;portimpedances=50.0)
+        # define the output matrix
+        y = similar(x)
+        # define a temporary storage array
+        tmp = similar(x)
+        # calculate the inverse of the square root of the port impedances
+        oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
+        # if portimpedances is a scalar, pass that, otherwise pass as a
+        # diagonal matrix
+        if iszero(ndims(portimpedances))
+            # evaluate the in place version of the function
+            ($(Symbol(String(f)*"!")))(y,x,tmp,oneoversqrtportimpedances)
+        else
+            # evaluate the in place version of the function
+            ($(Symbol(String(f)*"!")))(y,x,tmp,Diagonal(oneoversqrtportimpedances))
+        end
+        return y
+    end
+    
+    @eval function ($f)(x::AbstractArray;portimpedances=50.0)
+        # define the output matrix
+        y = similar(x)
+        # define a temporary storage array
+        tmp = similar(x,axes(x)[1:2])
+        # calculate the inverse of the square root of the port impedances
+        oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
+        # if portimpedances is a scalar, pass that, otherwise pass as a
+        # diagonal matrix
+        if ndims(portimpedances) == 0
+            # assume the port impedances are all the same for all ports and
+            # frequencies. loop over the dimensions of the array greater than 2
+            for i in CartesianIndices(axes(x)[3:end])
+                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,oneoversqrtportimpedances)
+            end
+        else
+            # assume the port impedances are given for each port and frequency
+            # loop over the dimensions of the array greater than 2
+            for i in CartesianIndices(axes(x)[3:end])
+                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,Diagonal(view(oneoversqrtportimpedances,:,i)))
+            end
+        end
+
+        return y
+    end
+end
+
+# functions using sqrtportimpedances split into two
+for f in [:StoA, :AtoS, :StoB, :BtoS]
+    @eval function ($f)(x::AbstractMatrix;portimpedances=50.0)
+        # define the output matrix
+        y = similar(x)
+        # define a temporary storage array
+        tmp = similar(x)
+        # calculate the square root of the port impedances
+        sqrtportimpedances = sqrt.(portimpedances)
+        # if portimpedances is a scalar, pass that, otherwise pass as a
+        # diagonal matrix
+        if iszero(ndims(portimpedances))
+            # evaluate the in place version of the function
+            ($(Symbol(String(f)*"!")))(y,x,tmp,sqrtportimpedances,
+                sqrtportimpedances)
+        else
+            # evaluate the in place version of the function
+            ($(Symbol(String(f)*"!")))(y,x,tmp,
+                Diagonal(sqrtportimpedances[1:size(sqrtportimpedances,1)÷2]),
+                Diagonal(sqrtportimpedances[size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1)]))
+        end
+        return y
+    end
+    
+    @eval function ($f)(x::AbstractArray;portimpedances=50.0)
+        # define the output matrix
+        y = similar(x)
+        # define a temporary storage array
+        tmp = similar(x,axes(x)[1:2])
+        # calculate the square root of the port impedances
+        sqrtportimpedances = sqrt.(portimpedances)
+        # if portimpedances is a scalar, pass that, otherwise pass as a
+        # diagonal matrix
+        if ndims(portimpedances) == 0
+            # assume the port impedances are all the same for all ports and
+            # frequencies. loop over the dimensions of the array greater than 2
+            for i in CartesianIndices(axes(x)[3:end])
+                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,
+                    sqrtportimpedances, sqrtportimpedances)
+            end
+        else
+            # assume the port impedances are given for each port and frequency
+            # loop over the dimensions of the array greater than 2
+            for i in CartesianIndices(axes(x)[3:end])
+                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,
+                Diagonal(view(sqrtportimpedances,1:size(sqrtportimpedances,1)÷2,i)),
+                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1),i)))
+            end
+        end
+
+        return y
+    end
+end
+
+
+@doc """
     StoT(S)
 
 Convert the scattering parameter matrix `S` to a transmission matrix
@@ -508,23 +720,8 @@ julia> @variables S11 S12 S21 S22 Z0;S = [S11 S12;S21 S22];JosephsonCircuits.Sto
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function StoT(S)
+""" StoT
 
-    T = similar(S)
-    # make a view of T,S and loop
-    # make a temporary array 
-    tmp = similar(S,axes(S)[1:2])
-    
-    # assume the port impedances are all the same for all ports and
-    # frequencies. loop over the dimensions of the array greater than 2
-    for i in CartesianIndices(axes(S)[3:end])
-        StoT!(view(T,:,:,i),view(S,:,:,i),tmp)
-    end
-
-    return T
-
-end
 
 """
     StoT!(T::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix)
@@ -560,7 +757,7 @@ function StoT!(T::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix)
 end
 
 
-"""
+@doc """
     StoZ(S;portimpedances=50.0)
 
 Convert the scattering parameter matrix `S` to an impedance parameter matrix
@@ -590,36 +787,10 @@ julia> S = [0.0 0.999;0.999 0.0];JosephsonCircuits.StoZ(S)
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function StoZ(S;portimpedances=50.0)
-
-    Z = similar(S)
-    # make a view of Z,S and loop
-    # make a temporary array 
-    tmp = similar(S,axes(S)[1:2])
-    
-    sqrtportimpedances = sqrt.(portimpedances)
-
-    if ndims(portimpedances) == 0
-        # assume the port impedances are all the same for all ports and
-        # frequencies. loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(S)[3:end])
-            StoZ!(view(Z,:,:,i),view(S,:,:,i),tmp,sqrtportimpedances)
-        end
-    else
-        # assume the port impedances are given for each port and frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(S)[3:end])
-            StoZ!(view(Z,:,:,i),view(S,:,:,i),tmp,Diagonal(view(sqrtportimpedances,:,i)))
-        end
-    end
-    return Z
-end
-
+""" StoZ
 
 """
     StoZ!(Z::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
-
 
 """
 function StoZ!(Z::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
@@ -648,7 +819,7 @@ function StoZ!(Z::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtporti
     return nothing
 end
 
-"""
+@doc """
     StoY(S;portimpedances=50.0)
 
 Convert the scattering parameter matrix `S` to an admittance parameter matrix
@@ -673,32 +844,7 @@ julia> S = [0.0 0.999;0.999 0.0];JosephsonCircuits.StoY(S)
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function StoY(S;portimpedances=50.0)
-
-    Y = similar(S)
-    # make a view of Z,S and loop
-    # make a temporary array 
-    tmp = similar(S,axes(S)[1:2])
-    
-    oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
-
-    if ndims(portimpedances) == 0
-        # assume the port impedances are all the same for all ports and
-        # frequencies. loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(S)[3:end])
-            StoY!(view(Y,:,:,i),view(S,:,:,i),tmp,oneoversqrtportimpedances)
-        end
-    else
-        # assume the port impedances are given for each port and frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(S)[3:end])
-            StoY!(view(Y,:,:,i),view(S,:,:,i),tmp,Diagonal(view(oneoversqrtportimpedances,:,i)))
-        end
-    end
-    return Y
-end
-
+""" StoY
 
 """
     StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportadmittances)
@@ -733,7 +879,7 @@ function StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,oneoversq
 end
 
 
-"""
+@doc """
     StoA(S)
 
 Convert the scattering parameter matrix `S` to the chain (ABCD) matrix `A` and
@@ -748,34 +894,7 @@ true
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function StoA(S;portimpedances=50.0)
-
-    A = similar(S)
-    # make a view of Z,S and loop
-    # make a temporary array 
-    tmp = similar(S,axes(S)[1:2])
-    
-    sqrtportimpedances = sqrt.(portimpedances)
-
-    if ndims(portimpedances) == 0
-        # assume the port impedances are all the same for all ports and
-        # frequencies. loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(S)[3:end])
-            StoA!(view(A,:,:,i),view(S,:,:,i),tmp,sqrtportimpedances, sqrtportimpedances)
-        end
-    else
-        # assume the port impedances are given for each port and frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(S)[3:end])
-            StoA!(view(A,:,:,i),view(S,:,:,i),tmp,
-                Diagonal(view(sqrtportimpedances,1:size(sqrtportimpedances,1)÷2,i)),
-                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1),i)))
-        end
-    end
-    return A
-end
-
+""" StoA
 
 """
     StoA!(A::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
@@ -829,7 +948,7 @@ function StoA!(A::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
 end
 
 
-"""
+@doc """
     StoB(S)
 
 Convert the scattering parameter matrix `S` to the inverse chain (ABCD) matrix
@@ -848,34 +967,7 @@ true
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function StoB(S;portimpedances=50.0)
-
-    B = similar(S)
-    # make a view of Z,S and loop
-    # make a temporary array 
-    tmp = similar(S,axes(S)[1:2])
-    
-    sqrtportimpedances = sqrt.(portimpedances)
-
-    if ndims(portimpedances) == 0
-        # assume the port impedances are all the same for all ports and
-        # frequencies. loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(S)[3:end])
-            StoB!(view(B,:,:,i),view(S,:,:,i),tmp,sqrtportimpedances, sqrtportimpedances)
-        end
-    else
-        # assume the port impedances are given for each port and frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(S)[3:end])
-            StoB!(view(B,:,:,i),view(S,:,:,i),tmp,
-                Diagonal(view(sqrtportimpedances,1:size(sqrtportimpedances,1)÷2,i)),
-                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1),i)))
-        end
-    end
-    return B
-end
-
+""" StoB
 
 """
     StoB!(B::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
@@ -929,7 +1021,7 @@ function StoB!(B::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
 end
 
 
-"""
+@doc """
     TtoS(T)
 
 Convert the transmission matrix `T` to a scattering parameter matrix `S` and return the result.
@@ -951,23 +1043,7 @@ julia> @variables T11 T12 T21 T22;T = [T11 T12;T21 T22];JosephsonCircuits.TtoS(T
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
 with change of sign on T11 and T21 terms (suspected typo).
-"""
-function TtoS(T)
-
-    S = similar(T)
-    # make a view of T,S and loop
-    # make a temporary array 
-    tmp = similar(T,axes(T)[1:2])
-    
-    # assume the port impedances are all the same for all ports and
-    # frequencies. loop over the dimensions of the array greater than 2
-    for i in CartesianIndices(axes(T)[3:end])
-        TtoS!(view(S,:,:,i),view(T,:,:,i),tmp)
-    end
-
-    return S
-
-end
+""" TtoS
 
 """
     TtoS!(S::AbstractMatrix,T::AbstractMatrix,tmp::AbstractMatrix)
@@ -1019,7 +1095,7 @@ function TtoS!(S::AbstractMatrix,T::AbstractMatrix,tmp::AbstractMatrix)
 end
 
 
-"""
+@doc """
     ZtoS(Z;portimpedances=50.0)
 
 Convert the impedance parameter matrix `Z` to a scattering parameter matrix
@@ -1052,30 +1128,7 @@ julia> Z = [0.0 0.0;0.0 0.0];JosephsonCircuits.ZtoS(Z)
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function ZtoS(Z;portimpedances=50.0)
-
-    S = similar(Z)
-    # make a view of Z,S and loop
-    # make a temporary array 
-    tmp = similar(Z,axes(Z)[1:2])
-    
-    oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
-
-    # assume the port impedances are all the same for all ports and frequencies
-    if ndims(portimpedances) == 0
-        # # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(Z)[3:end])
-            ZtoS!(view(S,:,:,i),view(Z,:,:,i),tmp,oneoversqrtportimpedances)
-        end
-    else
-        for i in CartesianIndices(axes(Z)[3:end])
-            ZtoS!(view(S,:,:,i),view(Z,:,:,i),tmp,Diagonal(view(oneoversqrtportimpedances,:,i)))
-        end
-    end
-    return S
-end
-
+""" ZtoS
 
 """
     ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
@@ -1106,7 +1159,7 @@ function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversq
     return nothing
 end
 
-"""
+@doc """
     ZtoA(Z)
 
 Convert the impedance matrix `Z` to the ABCD matrix `A` and return the result.
@@ -1127,13 +1180,17 @@ julia> @variables Z11 Z12 Z21 Z22;JosephsonCircuits.AtoZ([Z11 Z12;Z21 Z22])
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
+""" ZtoA
+
 """
-function ZtoA(Z)
-    return AtoZ(Z)
+    ZtoA!(A::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
+
+"""
+function ZtoA!(A::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
+    return AtoZ!(A,Z,tmp)
 end
 
-
-"""
+@doc """
     YtoS(Y;portimpedances=50.0)
 
 Convert the admittance parameter matrix `Y` to a scattering parameter matrix
@@ -1165,30 +1222,7 @@ julia> Y = [0.0 0.0;0.0 0.0];JosephsonCircuits.YtoS(Y)
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function YtoS(Y;portimpedances=50.0)
-
-    S = similar(Y)
-    # make a view of Z,S and loop
-    # make a temporary array 
-    tmp = similar(Y,axes(Y)[1:2])
-    
-    sqrtportimpedances = sqrt.(portimpedances)
-
-    # assume the port impedances are all the same for all ports and frequencies
-    if ndims(portimpedances) == 0
-        # # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(Y)[3:end])
-            YtoS!(view(S,:,:,i),view(Y,:,:,i),tmp,sqrtportimpedances)
-        end
-    else
-        for i in CartesianIndices(axes(Y)[3:end])
-            YtoS!(view(S,:,:,i),view(Y,:,:,i),tmp,Diagonal(view(sqrtportimpedances,:,i)))
-        end
-    end
-    return S
-end
-
+""" YtoS
 
 """
     YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
@@ -1221,7 +1255,7 @@ function YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtporti
 end
 
 
-"""
+@doc """
     AtoS(A)
 
 Convert the chain (ABCD) matrix `A` to the scattering parameter matrix `S` and
@@ -1236,34 +1270,7 @@ true
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function AtoS(A;portimpedances=50.0)
-
-    S = similar(A)
-    # make a view of Z,S and loop
-    # make a temporary array 
-    tmp = similar(A,axes(A)[1:2])
-    
-    sqrtportimpedances = sqrt.(portimpedances)
-
-    if ndims(portimpedances) == 0
-        # assume the port impedances are all the same for all ports and
-        # frequencies. loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(A)[3:end])
-            AtoS!(view(S,:,:,i),view(A,:,:,i),tmp,sqrtportimpedances, sqrtportimpedances)
-        end
-    else
-        # assume the port impedances are given for each port and frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(A)[3:end])
-            AtoS!(view(S,:,:,i),view(A,:,:,i),tmp,
-                Diagonal(view(sqrtportimpedances,1:size(sqrtportimpedances,1)÷2,i)),
-                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1),i)))
-        end
-    end
-    return S
-end
-
+""" AtoS
 
 """
     AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
@@ -1333,7 +1340,7 @@ function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
     return nothing
 end
 
-"""
+@doc """
     AtoZ(A)
 
 Convert the ABCD matrix `A` to the impedance matrix `Z` and return the result.
@@ -1354,23 +1361,7 @@ julia> @variables A B C D;JosephsonCircuits.AtoZ([A B;C D])
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function AtoZ(A)
-
-    Z = similar(A)
-
-    # make a view of Z,A and loop
-    # make a temporary array 
-    tmp = similar(A,axes(A)[1:2])
-    
-    # assume the port impedances are all the same for all ports and
-    # frequencies. loop over the dimensions of the array greater than 2
-    for i in CartesianIndices(axes(A)[3:end])
-        AtoZ!(view(Z,:,:,i),view(A,:,:,i),tmp)
-    end
-
-    return Z
-end
+""" AtoZ
 
 """
     AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
@@ -1407,7 +1398,7 @@ function AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
 end
 
 
-"""
+@doc """
     AtoB(A)
 
 Convert the chain (ABCD) matrix `A` to the inverse chain matrix `B` and return
@@ -1428,23 +1419,7 @@ true
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function AtoB(A)
-
-    B = similar(A)
-
-    # make a view of Z,A and loop
-    # make a temporary array 
-    tmp = similar(A,axes(A)[1:2])
-    
-    # assume the port impedances are all the same for all ports and
-    # frequencies. loop over the dimensions of the array greater than 2
-    for i in CartesianIndices(axes(A)[3:end])
-        AtoB!(view(B,:,:,i),view(A,:,:,i),tmp)
-    end
-
-    return B
-end
+""" AtoB
 
 """
     AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
@@ -1477,7 +1452,7 @@ function AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
 
 end
 
-"""
+@doc """
     BtoS(B)
 
 Convert the inverse chain (ABCD) matrix `B` to the scattering parameter matrix
@@ -1493,34 +1468,7 @@ true
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
 with change of overall sign (suspected typo).
-"""
-function BtoS(B;portimpedances=50.0)
-
-    S = similar(B)
-    # make a view of Z,S and loop
-    # make a temporary array 
-    tmp = similar(B,axes(B)[1:2])
-    
-    sqrtportimpedances = sqrt.(portimpedances)
-
-    if ndims(portimpedances) == 0
-        # assume the port impedances are all the same for all ports and
-        # frequencies. loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(B)[3:end])
-            BtoS!(view(S,:,:,i),view(B,:,:,i),tmp,sqrtportimpedances, sqrtportimpedances)
-        end
-    else
-        # assume the port impedances are given for each port and frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(B)[3:end])
-            BtoS!(view(S,:,:,i),view(B,:,:,i),tmp,
-                Diagonal(view(sqrtportimpedances,1:size(sqrtportimpedances,1)÷2,i)),
-                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1),i)))
-        end
-    end
-    return S
-end
-
+""" BtoS
 
 """
     BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
@@ -1588,7 +1536,7 @@ function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
     return nothing
 end
 
-"""
+@doc """
     BtoA(B)
 
 Convert the inverse chain matrix `B` to the chain (ABCD) matrix `A` and return
@@ -1606,13 +1554,18 @@ julia> B=[1.0 0.0;1/50 1.0];JosephsonCircuits.BtoA(B)
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
+""" BtoA
+
+
 """
-function BtoA(B)
-    return AtoB(B)
+    BtoA!(A::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
+
+"""
+function BtoA!(A::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
+    return AtoB!(A,B,tmp)
 end
 
-
-"""
+@doc """
     ABCDtoS(ABCD;portimpedances=50.0)
 
 Convert the 2 port chain (ABCD) matrix `ABCD` to the scattering parameter
@@ -1630,32 +1583,21 @@ true
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function ABCDtoS(ABCD;portimpedances=50.0)
+""" ABCDtoS
 
-    S = similar(ABCD)
-    # make a view of ABCD and loop
-    
-    # assume the port impedances are all the same for all ports and frequencies
-    if ndims(portimpedances) == 0
-        # # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(ABCD)[3:end])
-            ABCDtoS!(view(S,:,:,i),view(ABCD,:,:,i),portimpedances)
-        end
-    else
-        for i in CartesianIndices(axes(ABCD)[3:end])
-            ABCDtoS!(view(S,:,:,i),view(ABCD,:,:,i),view(portimpedances,:,i))
-        end
-    end
-    return S
+function ABCDtoS!(S,ABCD,portimpedances)
+    return ABCDtoS!(S,ABCD,first(portimpedances),last(portimpedances))
 end
 
-# function ABCDtoS(ABCD;portimpedances=50.0)
-#     return ABCDtoS(ABCD,first(portimpedances),last(portimpedances))
-# end
+function ABCDtoS!(S,A,RS,RL)
+    S[1,1] = (A[1,1]*RL+A[1,2]-A[2,1]*RS*RL-A[2,2]*RS)/(A[1,1]*RL+A[1,2]+A[2,1]*RS*RL+A[2,2]*RS)
+    S[1,2] = 2*sqrt(RS*RL)*(A[1,1]*A[2,2]-A[1,2]*A[2,1])/(A[1,1]*RL+A[1,2]+A[2,1]*RS*RL+A[2,2]*RS)
+    S[2,1] = 2*sqrt(RS*RL)/(A[1,1]*RL+A[1,2]+A[2,1]*RS*RL+A[2,2]*RS)
+    S[2,2] = (-A[1,1]*RL+A[1,2]-A[2,1]*RS*RL+A[2,2]*RS)/(A[1,1]*RL+A[1,2]+A[2,1]*RS*RL+A[2,2]*RS)
+    return nothing
+end
 
-
-"""
+@doc """
     StoABCD(S;portimpedances=50.0))
 
 Convert the scattering parameter matrix `S` to the 2 port chain (ABCD) matrix and
@@ -1673,101 +1615,18 @@ true
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006
-"""
-function StoABCD(S;portimpedances=50.0)
-
-    ABCD = similar(S)
-    # make a view of ABCD and loop
-    
-    # assume the port impedances are all the same for all ports and frequencies
-    if ndims(portimpedances) == 0
-        # # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(ABCD)[3:end])
-            StoABCD!(view(ABCD,:,:,i),view(S,:,:,i),portimpedances)
-        end
-    else
-        for i in CartesianIndices(axes(ABCD)[3:end])
-            StoABCD!(view(ABCD,:,:,i),view(S,:,:,i),view(portimpedances,:,i))
-        end
-    end
-    return ABCD
-end
-
-# function StoABCD(S;portimpedances=50.0)
-#     return StoABCD(S,first(portimpedances),last(portimpedances))
-# end
-
-
-function ABCDtos11(A,B,C,D,RS,RL)
-    return (A*RL+B-C*RS*RL-D*RS)/(A*RL+B+C*RS*RL+D*RS)
-end
-
-function ABCDtos12(A,B,C,D,RS,RL)
-    return 2*sqrt(RS*RL)*(A*D-B*C)/(A*RL+B+C*RS*RL+D*RS)
-end
-
-function ABCDtos21(A,B,C,D,RS,RL)
-    return 2*sqrt(RS*RL)/(A*RL+B+C*RS*RL+D*RS)
-end
-
-function ABCDtos22(A,B,C,D,RS,RL)
-    return (-A*RL+B-C*RS*RL+D*RS)/(A*RL+B+C*RS*RL+D*RS)
-end
-
-function StoA(S11,S12,S21,S22,RS,RL)
-    return sqrt(RS/RL)*((1+S11)*(1-S22)+S21*S12)/(2*S21)
-end
-
-function StoB(S11,S12,S21,S22,RS,RL)
-    return sqrt(RS*RL)*((1+S11)*(1+S22)-S21*S12)/(2*S21)
-end
-
-function StoC(S11,S12,S21,S22,RS,RL)
-    return 1/sqrt(RS*RL)*((1-S11)*(1-S22)-S21*S12)/(2*S21)
-end
-
-function StoD(S11,S12,S21,S22,RS,RL)
-    return sqrt(RL/RS)*((1-S11)*(1+S22)+S21*S12)/(2*S21)
-end
-
-function StoABCD!(ABCD,S,RS,RL)
-    ABCD[1,1] = StoA(S[1,1],S[1,2],S[2,1],S[2,2],RS,RL)
-    ABCD[1,2] = StoB(S[1,1],S[1,2],S[2,1],S[2,2],RS,RL)
-    ABCD[2,1] = StoC(S[1,1],S[1,2],S[2,1],S[2,2],RS,RL)
-    ABCD[2,2] = StoD(S[1,1],S[1,2],S[2,1],S[2,2],RS,RL)
-    return nothing
-end
+""" StoABCD
 
 function StoABCD!(ABCD,S,portimpedances)
     return StoABCD!(ABCD,S,first(portimpedances),last(portimpedances))
 end
-
-# function StoABCD(S,RS,RL)
-#     ABCD = similar(S)
-#     StoABCD!(ABCD,S,RS,RL)
-#     return ABCD
-# end
-
-
-# function ABCDtoS(ABCD,RS,RL)
-#     S = similar(ABCD)
-#     ABCDtoS!(S,ABCD,RS,RL)
-#     return S
-# end
-
-function ABCDtoS!(S,ABCD,portimpedances)
-    return ABCDtoS!(S,ABCD,first(portimpedances),last(portimpedances))
-end
-
-function ABCDtoS!(S,ABCD,RS,RL)
-    S[1,1] = ABCDtos11(ABCD[1,1],ABCD[1,2],ABCD[2,1],ABCD[2,2],RS,RL) 
-    S[1,2] = ABCDtos12(ABCD[1,1],ABCD[1,2],ABCD[2,1],ABCD[2,2],RS,RL)
-    S[2,1] = ABCDtos21(ABCD[1,1],ABCD[1,2],ABCD[2,1],ABCD[2,2],RS,RL)
-    S[2,2] = ABCDtos22(ABCD[1,1],ABCD[1,2],ABCD[2,1],ABCD[2,2],RS,RL)
+function StoABCD!(ABCD,S,RS,RL)
+    ABCD[1,1] = sqrt(RS/RL)*((1+S[1,1])*(1-S[2,2])+S[2,1]*S[1,2])/(2*S[2,1])
+    ABCD[1,2] = sqrt(RS*RL)*((1+S[1,1])*(1+S[2,2])-S[2,1]*S[1,2])/(2*S[2,1])
+    ABCD[2,1] = 1/sqrt(RS*RL)*((1-S[1,1])*(1-S[2,2])-S[2,1]*S[1,2])/(2*S[2,1])
+    ABCD[2,2] = sqrt(RL/RS)*((1-S[1,1])*(1+S[2,2])+S[2,1]*S[1,2])/(2*S[2,1])
     return nothing
 end
-
-
 
 
 """
