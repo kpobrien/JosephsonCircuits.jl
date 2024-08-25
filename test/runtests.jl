@@ -2,7 +2,7 @@ using Aqua
 using Documenter
 using Test
 using JosephsonCircuits
-
+import StaticArrays
 
 
 @testset verbose = true "Code quality (Aqua.jl)" begin

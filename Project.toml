@@ -32,6 +32,7 @@ Printf = "1.9"
 SparseArrays = "1.9"
 SpecialFunctions = "2"
 Statistics = "1.9"
+StaticArrays = "1"
 SymbolicUtils = "1, 2, 3"
 Symbolics = "4, 5, 6"
 Test = "1.9"
@@ -43,8 +44,9 @@ julia = "1.9"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 XicTools_jll = "05e36573-c726-5118-99be-97aa17437f28"
 
 [targets]
-test = ["Aqua", "Documenter", "SpecialFunctions", "Test", "XicTools_jll"]
+test = ["Aqua", "Documenter", "SpecialFunctions", "StaticArrays", "Test", "XicTools_jll"]

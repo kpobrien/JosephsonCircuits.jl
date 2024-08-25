@@ -1,5 +1,6 @@
 using JosephsonCircuits
 using Test
+import StaticArrays
 
 @testset verbose=true "network" begin
 
@@ -214,155 +215,107 @@ using Test
         @test isapprox(Sout1,Sout2)
     end
 
-    @testset "StoT TtoS consistency" begin
-        S0 = rand(Complex{Float64},4,4,1);
-        S1 = JosephsonCircuits.TtoS(JosephsonCircuits.StoT(S0))
-        @test isapprox(S0,S1)
+    @testset "connectS consistency StaticArrays" begin
+        Sx = rand(Complex{Float64},3,3,3)
+        Sy = rand(Complex{Float64},3,3,3)
+        Sboth = zeros(Complex{Float64},6,6,3)
+        Sboth[1:size(Sx,1),1:size(Sx,1),:,:] .= Sx
+        Sboth[size(Sx,1)+1:end,size(Sx,1)+1:end,:,:] .= Sy
+        Sboth = [StaticArrays.MMatrix{size(Sboth,1),size(Sboth,2)}(Sboth[:,:,i]) for i=1:size(Sboth,3)]
+        Sx = [StaticArrays.MMatrix{size(Sx,1),size(Sx,2)}(Sx[:,:,i]) for i=1:size(Sx,3)]
+        Sy = [StaticArrays.MMatrix{size(Sy,1),size(Sy,2)}(Sy[:,:,i]) for i=1:size(Sy,3)]
+        Sout1 = JosephsonCircuits.connectS.(Sboth,1,2+size(Sx,1))
+        Sout2 = JosephsonCircuits.connectS.(Sx,Sy,1,2)
+        @test isapprox(Sout1,Sout2)
     end
 
-    @testset "StoZ ZtoS consistency" begin
-        Z0 = rand(Complex{Float64},4,4,1);
-        portimpedances = rand(Complex{Float64},4,1)
-        S0 = JosephsonCircuits.ZtoS(Z0,portimpedances=portimpedances)
-        Z1 = JosephsonCircuits.StoZ(S0,portimpedances=portimpedances)
-        @test isapprox(Z0,Z1)
-    end
-
-    @testset "StoZ ZtoS consistency" begin
-        Z0 = rand(Complex{Float64},4,4,1);
-        portimpedances = rand(Complex{Float64},4,1)
-        S0 = JosephsonCircuits.ZtoS(Z0,portimpedances=portimpedances)
-        Z1 = JosephsonCircuits.StoZ(S0,portimpedances=portimpedances)
-        @test isapprox(Z0,Z1)
-    end
-
-    @testset "StoZ ZtoS consistency" begin
-        Z0 = rand(Complex{Float64},4,4);
-        portimpedances = rand(Complex{Float64},4)
-        S0 = JosephsonCircuits.ZtoS(Z0,portimpedances=portimpedances)
-        Z1 = JosephsonCircuits.StoZ(S0,portimpedances=portimpedances)
-        @test isapprox(Z0,Z1)
-    end
-
-    @testset "StoZ ZtoS consistency" begin
-        Z0 = rand(Complex{Float64},2,2,100);
-        portimpedances = rand(Complex{Float64},2,100)
-        S0 = JosephsonCircuits.ZtoS(Z0,portimpedances=portimpedances)
-        Z1 = JosephsonCircuits.StoZ(S0,portimpedances=portimpedances)
-        @test isapprox(Z0,Z1)
-    end
-
-    @testset "StoZ ZtoS consistency" begin
-        Z0 = rand(Complex{Float64},2,2,100);
-        portimpedances = 50.0
-        S0 = JosephsonCircuits.ZtoS(Z0,portimpedances=portimpedances)
-        Z1 = JosephsonCircuits.StoZ(S0,portimpedances=portimpedances)
-        @test isapprox(Z0,Z1)
-    end
-
-    @testset "StoY YtoS consistency" begin
-        Y0 = rand(Complex{Float64},4,4,1);
-        portimpedances = rand(Complex{Float64},4,1)
-        S0 = JosephsonCircuits.YtoS(Y0,portimpedances=portimpedances)
-        Y1 = JosephsonCircuits.StoY(S0,portimpedances=portimpedances)
-        @test isapprox(Y0,Y1)
-    end
-
-    @testset "StoY YtoS consistency" begin
-        Y0 = rand(Complex{Float64},4,4);
-        portimpedances = rand(Complex{Float64},4)
-        S0 = JosephsonCircuits.YtoS(Y0,portimpedances=portimpedances)
-        Y1 = JosephsonCircuits.StoY(S0,portimpedances=portimpedances)
-        @test isapprox(Y0,Y1)
-    end
-
-    @testset "StoY YtoS consistency" begin
-        Y0 = rand(Complex{Float64},2,2,100);
-        portimpedances = rand(Complex{Float64},2,100)
-        S0 = JosephsonCircuits.YtoS(Y0,portimpedances=portimpedances)
-        Y1 = JosephsonCircuits.StoY(S0,portimpedances=portimpedances)
-        @test isapprox(Y0,Y1)
-    end
-
-    @testset "StoY YtoS consistency" begin
-        Y0 = rand(Complex{Float64},2,2,100);
-        portimpedances = 50.0
-        S0 = JosephsonCircuits.YtoS(Y0,portimpedances=portimpedances)
-        Y1 = JosephsonCircuits.StoY(S0,portimpedances=portimpedances)
-        @test isapprox(Y0,Y1)
-    end
-
-    @testset "StoA AtoS consistency" begin
-        S0 = rand(Complex{Float64},4,4);
-        portimpedances = rand(Complex{Float64})
-        A0 = JosephsonCircuits.StoA(S0,portimpedances=portimpedances)
-        S1 = JosephsonCircuits.AtoS(A0,portimpedances=portimpedances)
-        @test isapprox(S0,S1)
-    end
-
-    @testset "StoA AtoS consistency" begin
-        S0 = rand(Complex{Float64},4,4,10);
-        portimpedances = rand(Complex{Float64},4,10)
-        A0 = JosephsonCircuits.StoA(S0,portimpedances=portimpedances)
-        S1 = JosephsonCircuits.AtoS(A0,portimpedances=portimpedances)
-        @test isapprox(S0,S1)
-    end
-
-    @testset "StoA AtoS consistency" begin
-        S0 = rand(Complex{Float64},4,4,10);
-        portimpedances = rand(Complex{Float64})
-        A0 = JosephsonCircuits.StoA(S0,portimpedances=portimpedances)
-        S1 = JosephsonCircuits.AtoS(A0,portimpedances=portimpedances)
-        @test isapprox(S0,S1)
-    end
-
-    @testset "StoB BtoS consistency" begin
-        S0 = rand(Complex{Float64},4,4);
-        portimpedances = rand(Complex{Float64})
-        B0 = JosephsonCircuits.StoB(S0,portimpedances=portimpedances)
-        S1 = JosephsonCircuits.BtoS(B0,portimpedances=portimpedances)
-        @test isapprox(S0,S1)
-    end
-
-    @testset "StoB BtoS consistency" begin
-        S0 = rand(Complex{Float64},4,4,10);
-        portimpedances = rand(Complex{Float64},4,10)
-        B0 = JosephsonCircuits.StoB(S0,portimpedances=portimpedances)
-        S1 = JosephsonCircuits.BtoS(B0,portimpedances=portimpedances)
-        @test isapprox(S0,S1)
-    end
-
-    @testset "StoB BtoS consistency" begin
-        S0 = rand(Complex{Float64},4,4,10);
-        portimpedances = rand(Complex{Float64})
-        B0 = JosephsonCircuits.StoB(S0,portimpedances=portimpedances)
-        S1 = JosephsonCircuits.BtoS(B0,portimpedances=portimpedances)
-        @test isapprox(S0,S1)
+    @testset "connectS consistency StaticArrays" begin
+        Sx = rand(Complex{Float64},3,3)
+        Sy = rand(Complex{Float64},3,3)
+        Sboth = zeros(Complex{Float64},6,6)
+        Sboth[1:size(Sx,1),1:size(Sx,1),:,:] .= Sx
+        Sboth[size(Sx,1)+1:end,size(Sx,1)+1:end,:,:] .= Sy
+        # convert to MMatrix
+        Sboth = StaticArrays.MMatrix{size(Sboth,1),size(Sboth,2)}(Sboth)
+        Sx = StaticArrays.MMatrix{size(Sx,1),size(Sx,2)}(Sx)
+        Sy = StaticArrays.MMatrix{size(Sy,1),size(Sy,2)}(Sy)
+        Sout1 = JosephsonCircuits.connectS(Sboth,2,1+size(Sx,1))
+        Sout2 = JosephsonCircuits.connectS(Sx,Sy,2,1)
+        @test isapprox(Sout1,Sout2)
     end
 
 
-    @testset "StoABCD ABCDtoS consistency" begin
-        S0 = rand(Complex{Float64},2,2);
-        portimpedances = rand(Complex{Float64})
-        ABCD0 = JosephsonCircuits.StoABCD(S0,portimpedances=portimpedances)
-        S1 = JosephsonCircuits.ABCDtoS(ABCD0,portimpedances=portimpedances)
-        @test isapprox(S0,S1)
+    @testset "StoZ, StoY, StoA, StoB, StoABCD consistency" begin
+        # the different functions we want to test
+        for f in [
+                (JosephsonCircuits.ZtoS,JosephsonCircuits.StoZ),
+                (JosephsonCircuits.YtoS,JosephsonCircuits.StoY),
+                (JosephsonCircuits.AtoS,JosephsonCircuits.StoA),
+                (JosephsonCircuits.BtoS,JosephsonCircuits.StoB),
+                (JosephsonCircuits.ABCDtoS,JosephsonCircuits.StoABCD),
+            ]
+            # single matrix input
+            for portimpedances in [
+                    rand(Complex{Float64}), rand(Complex{Float64},2),
+                    (StaticArrays.@MVector rand(Complex{Float64},2))
+                ]
+                for arg1 in [rand(Complex{Float64},2,2), (StaticArrays.@MMatrix rand(Complex{Float64},2,2))]
+                    arg2 = f[1](arg1,portimpedances=portimpedances)
+                    arg3 = f[2](arg2,portimpedances=portimpedances)
+                    @test isapprox(arg1,arg3)
+                end
+            end
+            # array input
+            for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2,100)]
+                for arg1 in [rand(Complex{Float64},2,2,100)]
+                    arg2 = f[1](arg1,portimpedances=portimpedances)
+                    arg3 = f[2](arg2,portimpedances=portimpedances)
+                    @test isapprox(arg1,arg3)
+                end
+            end
+            # vector of matrices
+            for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2), (StaticArrays.@MVector rand(Complex{Float64},2))]
+                for arg1 in [
+                        [rand(Complex{Float64},2,2) for i in 1:100],
+                        [(StaticArrays.@MMatrix rand(Complex{Float64},2,2)) for i in 1:100],
+                    ]
+                    arg2 = [f[1](arg1[i],portimpedances=portimpedances) for i in 1:100]
+                    arg3 = [f[2](arg2[i],portimpedances=portimpedances) for i in 1:100]
+                    @test isapprox(arg1,arg3)
+                end
+            end
+        end
     end
 
-    @testset "StoABCD ABCDtoS consistency" begin
-        S0 = rand(Complex{Float64},2,2,10);
-        portimpedances = rand(Complex{Float64},2,10)
-        ABCD0 = JosephsonCircuits.StoABCD(S0,portimpedances=portimpedances)
-        S1 = JosephsonCircuits.ABCDtoS(ABCD0,portimpedances=portimpedances)
-        @test isapprox(S0,S1)
-    end
-
-    @testset "StoABCD ABCDtoS consistency" begin
-        S0 = rand(Complex{Float64},2,2,10);
-        portimpedances = rand(Complex{Float64})
-        ABCD0 = JosephsonCircuits.StoABCD(S0,portimpedances=portimpedances)
-        S1 = JosephsonCircuits.ABCDtoS(ABCD0,portimpedances=portimpedances)
-        @test isapprox(S0,S1)
+    @testset "StoT, AtoB, ZtoA consistency" begin
+        # the different functions we want to test
+        for f in [
+                (JosephsonCircuits.StoT,JosephsonCircuits.TtoS),
+                (JosephsonCircuits.AtoB,JosephsonCircuits.BtoA),
+                (JosephsonCircuits.ZtoA,JosephsonCircuits.ZtoA),
+            ]
+            # single matrix input
+            for arg1 in [rand(Complex{Float64},2,2), (StaticArrays.@MMatrix rand(Complex{Float64},2,2))]
+                arg2 = f[1](arg1)
+                arg3 = f[2](arg2)
+                @test isapprox(arg1,arg3)
+            end
+            # array input
+            for arg1 in [rand(Complex{Float64},2,2,100)]
+                arg2 = f[1](arg1)
+                arg3 = f[2](arg2)
+                @test isapprox(arg1,arg3)
+            end
+            # vector of matrices
+            for arg1 in [
+                    [rand(Complex{Float64},2,2) for i in 1:100],
+                    [(StaticArrays.@MMatrix rand(Complex{Float64},2,2)) for i in 1:100],
+                ]
+                arg2 = [f[1](arg1[i]) for i in 1:100]
+                arg3 = [f[2](arg2[i]) for i in 1:100]
+                @test isapprox(arg1,arg3)
+            end
+        end
     end
 
 end

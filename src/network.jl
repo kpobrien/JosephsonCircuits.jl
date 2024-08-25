@@ -56,14 +56,14 @@ Interconnected Multiports," 1981 11th European Microwave Conference,
 Amsterdam, Netherlands, 1981, pp. 700-704, doi: 10.1109/EUMA.1981.332972.
 
 """
-function connectS(Sx::Array{T,N},k::Int,l::Int) where {T,N}
+function connectS(Sx::AbstractArray{T,N},k::Int,l::Int) where {T,N}
 
     # make a tuple with the size of the array
     # the first two dimensions are two smaller
     sizeS = NTuple{N}(ifelse(i<=2,size(Sx,i)-2,size(Sx,i)) for i in 1:ndims(Sx))
 
     # allocate an array of zeros of the same type as Sx
-    Sout = zeros(T,sizeS)
+    Sout = similar(Sx,sizeS)
 
     # remove the self loop
     connectS!(Sout,Sx,k,l)
@@ -242,7 +242,7 @@ Interconnected Multiports," 1981 11th European Microwave Conference,
 Amsterdam, Netherlands, 1981, pp. 700-704, doi: 10.1109/EUMA.1981.332972.
 
 """
-function connectS(Sx::Array{T,N},Sy::Array{T,N},k::Int,l::Int) where {T,N}
+function connectS(Sx::AbstractArray{T,N},Sy::AbstractArray{T,N},k::Int,l::Int) where {T,N}
 
     # make a tuple with the size of the array
     # the first two dimensions are two smaller
@@ -251,7 +251,7 @@ function connectS(Sx::Array{T,N},Sy::Array{T,N},k::Int,l::Int) where {T,N}
     sizeS = NTuple{N}(ifelse(i<=2,sizeSx[i]+sizeSy[i]-2,sizeSx[i]) for i in 1:length(sizeSx))
 
     # allocate an array of zeros of the same type as Sx
-    Sout = zeros(T,sizeS)
+    Sout = similar(Sx,sizeS)
 
     # connect the networks
     connectS!(Sout,Sx,Sy,k,l)
