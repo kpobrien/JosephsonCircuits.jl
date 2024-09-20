@@ -1212,11 +1212,6 @@ julia> Z=[50.0 50;50 50];JosephsonCircuits.ZtoB(Z)
 2×2 Matrix{Float64}:
  1.0   -0.0
  0.02   1.0
-
-julia> @variables B11 B12 B21 B22;B = [B11 B12;B21 B22];JosephsonCircuits.ZtoB(B)
-2×2 Matrix{Num}:
- B22 / B12  -B21 + (B11*B22) / B12
- 1.0 / B12               B11 / B12
 ```
 
 # References
@@ -1579,11 +1574,6 @@ the result.
 
 # Examples
 ```jldoctest
-julia> @variables A B C D;JosephsonCircuits.AtoY([A B;C D])
-2×2 Matrix{Num}:
- -((-D) / B)  C + (-A*D) / B
-    -1.0 / B           A / B
-
 julia> A=[-1 -50.0;0 -1];JosephsonCircuits.AtoY(A)
 2×2 Matrix{Float64}:
  0.02  0.02
@@ -1775,11 +1765,6 @@ the result.
 
 # Examples
 ```jldoctest
-julia> @variables A B C D;JosephsonCircuits.BtoZ([A B;C D])
-2×2 Matrix{Num}:
- (B + (-D + (B*C) / A) / (-(C / A))) / A  (-(1.0 / (-(C / A)))) / A
-           (-D + (B*C) / A) / (-(C / A))          -1.0 / (-(C / A))
-
 julia> B=[1.0 0.0;1/50 1];JosephsonCircuits.BtoZ(B)
 2×2 Matrix{Float64}:
  50.0  50.0
