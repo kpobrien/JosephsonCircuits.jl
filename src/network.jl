@@ -489,7 +489,7 @@ end
 # functions. 
 
 # functions without an impedance argument
-for f in [:StoT, :TtoS, :AtoB, :BtoA, :AtoZ, :ZtoA]
+for f in [:StoT, :TtoS, :AtoB, :BtoA, :AtoZ, :ZtoA, :AtoY, :YtoA, :BtoY, :YtoB, :BtoZ, :ZtoB, :ZtoY, :YtoZ]
     @eval function ($f)(x::AbstractMatrix)
         # define the output matrix
         y = similar(x)
@@ -1159,6 +1159,16 @@ function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversq
     return nothing
 end
 
+function ZtoY!(Y, Z, tmp)
+    Y .= inv(Z)
+    return nothing
+end
+
+function YtoZ!(Z, Y, tmp)
+    Z .= inv(Y)
+    return nothing
+end
+
 @doc """
     ZtoA(Z)
 
@@ -1188,6 +1198,65 @@ Communications Engineering, Second Edition. Artech House, 2006
 """
 function ZtoA!(A::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
     return AtoZ!(A,Z,tmp)
+end
+
+@doc """
+    ZtoB(Z)
+
+Convert the impedance matrix `Z` to the inverse chain matrix `B` and return
+the result.
+
+# Examples
+```jldoctest
+julia> Z=[50.0 50;50 50];JosephsonCircuits.ZtoB(Z)
+2×2 Matrix{Float64}:
+ 1.0   -0.0
+ 0.02   1.0
+
+julia> @variables B11 B12 B21 B22;B = [B11 B12;B21 B22];JosephsonCircuits.ZtoB(B)
+2×2 Matrix{Num}:
+ B22 / B12  -B21 + (B11*B22) / B12
+ 1.0 / B12               B11 / B12
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+""" ZtoB
+
+"""
+    ZtoB!(B::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
+
+"""
+function ZtoB!(B::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
+    
+    range1 = 1:size(Z,1)÷2
+    range2 = size(Z,1)÷2+1:size(Z,1)
+
+    # tmp = [0 Z12; -I Z22]
+    fill!(tmp,zero(eltype(tmp)))
+    for d in range1
+        tmp[d+size(Z,1)÷2,d] = -1
+    end
+    tmp[range1,range2] .= Z[range1, range2]
+    tmp[range2,range2] .= Z[range2, range2]
+
+    # B = [I Z11; 0 Z21]
+    fill!(B,zero(eltype(B)))
+    for d in range1
+        B[d,d] = 1
+    end
+
+    B[range1,range2] .= Z[range1, range1]
+    B[range2,range2] .= Z[range2, range1]
+
+    # println(tmp)
+    # println(B)
+    # perform the left division
+    # B = inv(tmp)*B = [0 Z12; -I Z22] \ [I Z11; 0 Z21]
+    B .= tmp \ B
+
+    return nothing
 end
 
 @doc """
@@ -1250,6 +1319,111 @@ function YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtporti
     # perform the left division
     # S = inv(tmp)*S = (I + \tilde{Y}) \ (I - \tilde{Y})
     S .= tmp \ S
+
+    return nothing
+end
+
+@doc """
+    YtoA(Y)
+
+Convert the admittance matrix `Y` to the chain (ABCD) matrix `A` and return
+the result.
+
+# Examples
+```jldoctest
+julia> Y=[1/50 1/50;1/50 1/50];JosephsonCircuits.YtoA(Y)
+2×2 Matrix{Float64}:
+ -1.0  -50.0
+  0.0   -1.0
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+with change of overall sign on (suspected typo).
+""" YtoA
+
+"""
+    YtoA!(A::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
+
+"""
+function YtoA!(A::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
+    
+    range1 = 1:size(A,1)÷2
+    range2 = size(A,1)÷2+1:size(A,1)
+
+    # tmp = [-Y11 I; Y21 0]
+    fill!(tmp,zero(eltype(tmp)))
+    for d in range1
+        tmp[d,d+size(A,1)÷2] = 1
+    end
+    tmp[range1,range1] .= -Y[range1, range1]
+    tmp[range2,range1] .= Y[range2, range1]
+
+    # A = [Y12 0; -Y22 -I]
+    fill!(A,zero(eltype(A)))
+    for d in range2
+        A[d,d] = -1
+    end
+
+    A[range1,range1] .= Y[range1, range2]
+    A[range2,range1] .= -Y[range2, range2]
+
+    # perform the left division
+    # A = inv(tmp)*A = [-Y11 I; Y21 0] \ [Y12 0; -Y22 -I]
+    A .= tmp \ A
+
+    return nothing
+end
+
+@doc """
+    YtoB(Y)
+
+Convert the admittance matrix `Y` to the inverse chain matrix `B` and return
+the result.
+
+# Examples
+```jldoctest
+julia> Y=[1/50 1/50;1/50 1/50];JosephsonCircuits.YtoB(Y)
+2×2 Matrix{Float64}:
+ -1.0  -50.0
+  0.0   -1.0
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+""" YtoB
+
+"""
+    YtoB!(B::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
+
+"""
+function YtoB!(B::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
+    
+    range1 = 1:size(Y,1)÷2
+    range2 = size(Y,1)÷2+1:size(Y,1)
+
+    # tmp = [-Y12 0; -Y22 I]
+    fill!(tmp,zero(eltype(tmp)))
+    for d in range2
+        tmp[d,d] = 1
+    end
+    tmp[range1,range1] .= -Y[range1, range2]
+    tmp[range2,range1] .= -Y[range2, range2]
+
+    # B = [Y11 I; Y21 0]
+    fill!(B,zero(eltype(B)))
+    for d in range1
+        B[d,d+size(B,1)÷2] = 1
+    end
+
+    B[range1,range1] .= Y[range1, range1]
+    B[range2,range1] .= Y[range2, range1]
+
+    # perform the left division
+    # B = inv(tmp)*B = [-Y12 0; -Y22 I] \ [Y11 I; Y21 0]
+    B .= tmp \ B
 
     return nothing
 end
@@ -1397,6 +1571,63 @@ function AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
 
 end
 
+@doc """
+    AtoY(A)
+
+Convert the chain (ABCD) matrix `A` to the admittance matrix `Y` and return
+the result.
+
+# Examples
+```jldoctest
+julia> @variables A B C D;JosephsonCircuits.AtoY([A B;C D])
+2×2 Matrix{Num}:
+ -((-D) / B)  C + (-A*D) / B
+    -1.0 / B           A / B
+
+julia> A=[-1 -50.0;0 -1];JosephsonCircuits.AtoY(A)
+2×2 Matrix{Float64}:
+ 0.02  0.02
+ 0.02  0.02
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+""" AtoY
+
+"""
+    AtoY!(Y::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
+
+"""
+function AtoY!(Y::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
+    
+    range1 = 1:size(A,1)÷2
+    range2 = size(A,1)÷2+1:size(A,1)
+
+    # tmp = [0 A12; I A22]
+    fill!(tmp,zero(eltype(tmp)))
+    for d in range1
+        tmp[d+size(A,1)÷2,d] = 1
+    end
+    tmp[range1,range2] .= A[range1, range2]
+    tmp[range2,range2] .= A[range2, range2]
+
+    # Y = [-I A11; 0 A21]
+    fill!(Y,zero(eltype(A)))
+    for d in range1
+        Y[d,d] = -1
+    end
+
+    Y[range1,range2] .= A[range1, range1]
+    Y[range2,range2] .= A[range2, range1]
+
+    # perform the left division
+    # Y = inv(tmp)*Z = [0 A12; I A22] \ [-I A11; 0 A21]
+    Y .= tmp \ Y
+
+    return nothing
+
+end
 
 @doc """
     AtoB(A)
@@ -1532,6 +1763,122 @@ function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
     # perform the left division
     # S = inv(tmp)*S
     S .= tmp \ S
+
+    return nothing
+end
+
+@doc """
+    BtoZ(A)
+
+Convert the inverse chain matrix `B` to the impedance matrix `Z` and return
+the result.
+
+# Examples
+```jldoctest
+julia> @variables A B C D;JosephsonCircuits.BtoZ([A B;C D])
+2×2 Matrix{Num}:
+ (B + (-D + (B*C) / A) / (-(C / A))) / A  (-(1.0 / (-(C / A)))) / A
+           (-D + (B*C) / A) / (-(C / A))          -1.0 / (-(C / A))
+
+julia> B=[1.0 0.0;1/50 1];JosephsonCircuits.BtoZ(B)
+2×2 Matrix{Float64}:
+ 50.0  50.0
+ 50.0  50.0
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+with change of sign on B21 and B22 terms (suspected typo).
+""" BtoZ
+
+"""
+    BtoZ!(Z::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
+
+"""
+function BtoZ!(Z::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
+    
+    range1 = 1:size(B,1)÷2
+    range2 = size(B,1)÷2+1:size(B,1)
+
+    # tmp = [B11 -I; B21 0]
+    fill!(tmp,zero(eltype(tmp)))
+    for d in range1
+        tmp[d,d+size(B,1)÷2] = -1
+    end
+    tmp[range1,range1] .= B[range1, range1]
+    tmp[range2,range1] .= -B[range2, range1]
+
+    # Z = [B12 0; B22 -I]
+    fill!(Z,zero(eltype(B)))
+    for d in range2
+        Z[d,d] = -1
+    end
+
+    Z[range1,range1] .= B[range1, range2]
+    Z[range2,range1] .= -B[range2, range2]
+
+    # perform the left division
+    # Y = inv(tmp)*Y = [B12 0; B22 I] \ [B11 -I; B21 0]
+    # Z = inv(tmp)*Z = [B11 -I; B21 0] \ [B12 0; B22 -I]
+    Z .= tmp \ Z
+
+    return nothing
+end
+
+@doc """
+    BtoY(A)
+
+Convert the inverse chain matrix `B` to the admittance matrix `Y` and return
+the result.
+
+# Examples
+```jldoctest
+julia> @variables A B C D;JosephsonCircuits.BtoY([A B;C D])
+2×2 Matrix{Num}:
+          A / B       -1 / B
+ C + (-A*D) / B  -((-D) / B)
+
+julia> B=[-1 -50.0;0 -1];JosephsonCircuits.BtoY(B)
+2×2 Matrix{Float64}:
+ 0.02  0.02
+ 0.02  0.02
+```
+
+# References
+Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
+Communications Engineering, Second Edition. Artech House, 2006
+""" BtoY
+
+"""
+    BtoY!(Y::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
+
+"""
+function BtoY!(Y::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
+    
+    range1 = 1:size(B,1)÷2
+    range2 = size(B,1)÷2+1:size(B,1)
+
+    # tmp = [B12 0; B22 I]
+    fill!(tmp,zero(eltype(tmp)))
+    for d in range2
+        tmp[d,d] = 1
+    end
+    tmp[range1,range1] .= B[range1, range2]
+    tmp[range2,range1] .= B[range2, range2]
+
+    # Y = [B11 -I; B21 0]
+    fill!(Y,zero(eltype(B)))
+    for d in range1
+        Y[d,d+size(B,1)÷2] = -1
+    end
+
+    Y[range1,range1] .= B[range1, range1]
+    Y[range2,range1] .= B[range2, range1]
+
+    # perform the left division
+    # Y = inv(tmp)*Y = [B12 0; B22 I] \ [B11 -I; B21 0]
+    Y .= tmp \ Y
 
     return nothing
 end

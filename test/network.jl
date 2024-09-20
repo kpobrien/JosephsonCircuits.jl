@@ -287,12 +287,16 @@ import StaticArrays
         end
     end
 
-    @testset "StoT, AtoB, ZtoA consistency" begin
+    @testset "StoT, AtoB, ZtoA, YtoA, YtoB, ZtoB, ZtoY consistency" begin
         # the different functions we want to test
         for f in [
                 (JosephsonCircuits.StoT,JosephsonCircuits.TtoS),
                 (JosephsonCircuits.AtoB,JosephsonCircuits.BtoA),
-                (JosephsonCircuits.ZtoA,JosephsonCircuits.ZtoA),
+                (JosephsonCircuits.ZtoA,JosephsonCircuits.AtoZ),
+                (JosephsonCircuits.YtoA,JosephsonCircuits.AtoY),
+                (JosephsonCircuits.YtoB,JosephsonCircuits.BtoY),
+                (JosephsonCircuits.ZtoB,JosephsonCircuits.BtoZ),
+                (JosephsonCircuits.ZtoY,JosephsonCircuits.YtoZ),
             ]
             # single matrix input
             for arg1 in [rand(Complex{Float64},2,2), (StaticArrays.@MMatrix rand(Complex{Float64},2,2))]
