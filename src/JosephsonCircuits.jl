@@ -24,9 +24,21 @@ using Printf
 # Base.zero(::Type{Nothing}) = 0
 
 
-# define the reduced flux quantum in Weber, H*A
-# hbar/(2*charge of electron)
+"""
+    const phi0
+
+A constant for phi0, the reduced magnetic flux quantum in Weber, H*A:
+phi0 = hbar/(2*charge of electron)
+"""
 const phi0 = 3.29105976e-16
+
+"""
+    const Phi0
+
+A constant for Phi0, the magnetic flux quantum in Weber, H*A:
+Phi0 = h/(2*charge of electron)
+"""
+const Phi0 = 2.067833848e-15
 
 # The file structure below mimics the typical analysis flow. An input file
 # is first parsed, then the incidence matrix is calculated, then the 
