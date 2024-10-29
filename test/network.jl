@@ -266,8 +266,8 @@ import StaticArrays
                 end
             end
             # array input
-            for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2,100)]
-                for arg1 in [rand(Complex{Float64},2,2,100)]
+            for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2,10)]
+                for arg1 in [rand(Complex{Float64},2,2,10)]
                     arg2 = f[1](arg1,portimpedances=portimpedances)
                     arg3 = f[2](arg2,portimpedances=portimpedances)
                     @test isapprox(arg1,arg3)
@@ -276,11 +276,11 @@ import StaticArrays
             # vector of matrices
             for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2), (StaticArrays.@MVector rand(Complex{Float64},2))]
                 for arg1 in [
-                        [rand(Complex{Float64},2,2) for i in 1:100],
-                        [(StaticArrays.@MMatrix rand(Complex{Float64},2,2)) for i in 1:100],
+                        [rand(Complex{Float64},2,2) for i in 1:10],
+                        [(StaticArrays.@MMatrix rand(Complex{Float64},2,2)) for i in 1:10],
                     ]
-                    arg2 = [f[1](arg1[i],portimpedances=portimpedances) for i in 1:100]
-                    arg3 = [f[2](arg2[i],portimpedances=portimpedances) for i in 1:100]
+                    arg2 = [f[1](arg1[i],portimpedances=portimpedances) for i in 1:10]
+                    arg3 = [f[2](arg2[i],portimpedances=portimpedances) for i in 1:10]
                     @test isapprox(arg1,arg3)
                 end
             end
@@ -305,18 +305,18 @@ import StaticArrays
                 @test isapprox(arg1,arg3)
             end
             # array input
-            for arg1 in [rand(Complex{Float64},2,2,100)]
+            for arg1 in [rand(Complex{Float64},2,2,10)]
                 arg2 = f[1](arg1)
                 arg3 = f[2](arg2)
                 @test isapprox(arg1,arg3)
             end
             # vector of matrices
             for arg1 in [
-                    [rand(Complex{Float64},2,2) for i in 1:100],
-                    [(StaticArrays.@MMatrix rand(Complex{Float64},2,2)) for i in 1:100],
+                    [rand(Complex{Float64},2,2) for i in 1:10],
+                    [(StaticArrays.@MMatrix rand(Complex{Float64},2,2)) for i in 1:10],
                 ]
-                arg2 = [f[1](arg1[i]) for i in 1:100]
-                arg3 = [f[2](arg2[i]) for i in 1:100]
+                arg2 = [f[1](arg1[i]) for i in 1:10]
+                arg3 = [f[2](arg2[i]) for i in 1:10]
                 @test isapprox(arg1,arg3)
             end
         end

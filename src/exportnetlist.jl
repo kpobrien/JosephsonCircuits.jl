@@ -1,4 +1,111 @@
 
+
+"""
+    export_netlist(filename, circuit, circuitdefs)
+
+Export the netlist in `circuit` to the file with name and path `filename`.
+"""
+function export_netlist(filename, circuit, circuitdefs)
+    open(filename, "w") do io
+        export_netlist!(io, circuit, circuitdefs)
+    end
+    return nothing
+end
+
+"""
+    export_netlist(filename, circuit)
+
+Export the netlist in `circuit` to the file with name and path `filename`.
+"""
+function export_netlist(filename, circuit)
+    return export_netlist(filename, circuit, Dict())
+end
+
+"""
+    export_netlist!(io::IO, circuit, circuitdefs)
+
+Export the netlist in `circuit` to the IOBuffer or IOStream `io`.
+
+# Examples
+```jldoctest
+julia> io = IOBuffer();JosephsonCircuits.export_netlist!(io, [("P","1","0",1),("R","1","0",50.0)],Dict());println(String(take!(io)))
+P 1 0 1
+R 1 0 50.0
+```
+"""
+function export_netlist!(io::IO, circuit, circuitdefs)
+    for c in circuit
+        for (i,ci) in enumerate(c)
+            if i > 1
+                write(io," ")
+            end
+            write(io,string(JosephsonCircuits.Symbolics.substitute(ci,circuitdefs)))
+        end
+        write(io,"\n")
+    end
+end
+
+"""
+    import_netlist(filename)
+
+Import the netlist from the IOBuffer or IOStream `io` and return a vector of
+tuples representing the circuit.
+"""
+function import_netlist(filename)
+    circuit = Tuple{String,String,String,Num}[]
+    open(filename, "r") do io
+        import_netlist!(io, circuit)
+    end
+    return circuit
+end
+
+"""
+    import_netlist!(io::IO, circuit)
+
+Import the netlist from the IOBuffer or IOStream `io` to the vector of tuples
+`circuit`.
+
+# Examples
+```jldoctest
+julia> io = IOBuffer();circuit1=[("P","1","0",1),("R","1","0",50.0)];JosephsonCircuits.export_netlist!(io,circuit1,Dict());circuit2 = Tuple{String,String,String,Num}[];JosephsonCircuits.import_netlist!(io,circuit2);circuit2
+2-element Vector{Tuple{String, String, String, Num}}:
+ ("P", "1", "0", 1.0)
+ ("R", "1", "0", 50.0)
+
+julia> io = IOBuffer("P 1 0 1\\n R 1 0 50.0");circuit2 = Tuple{String,String,String,Num}[];JosephsonCircuits.import_netlist!(io,circuit2);circuit2
+2-element Vector{Tuple{String, String, String, Num}}:
+ ("P", "1", "0", 1.0)
+ ("R", "1", "0", 50.0)
+```
+"""
+function import_netlist!(io::IO, circuit)
+    seekstart(io)
+    for line in eachline(io)
+        split_line = split(strip(line),r"\s+")
+        if length(split_line) != 4
+            error("each line should have component name, node1, node2, component value")
+        end
+        value = try
+            parse(Float64,split_line[4])
+        catch
+            # https://docs.sciml.ai/Symbolics/stable/manual/parsing/
+            # JosephsonCircuits.Symbolics.parse_expr_to_symbolic(Meta.parse(split_line[4]),Main)
+            JosephsonCircuits.Symbolics.parse_expr_to_symbolic(Meta.parse(split_line[4]),@__MODULE__)
+        end
+        push!(circuit,(split_line[1],split_line[2],split_line[3],value))
+    end
+    return nothing
+end
+
+
+
+# export_netlist("test1.net", circuit,circuitdefs)
+# export_netlist("test2.net", circuit,Dict())
+
+# circuit = import_netlist("test2.net")
+
+
+
 """
     sumvalues(type::Symbol, value1, value2)
 

@@ -58,10 +58,8 @@ end
 
 Read a file in the Touchstone format. Standard compliant.
 
-This is the 1.1 spec:
-https://ibis.org/connector/touchstone_spec11.pdf
-and the 2.0 spec:
-https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf
+References to the [1.1 spec](https://ibis.org/connector/touchstone_spec11.pdf)
+and the [2.0 spec](https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf).
 
 Outputs un-normalized network parameters with frequency units of Hz. Don't
 enforce any particular file extension or try to infer the number of ports from
@@ -79,10 +77,8 @@ end
 
 Parse the Touchstone file described by the IOBuffer or IOStream `io`.
 
-This is the 1.1 spec:
-https://ibis.org/connector/touchstone_spec11.pdf
-and the 2.0 spec:
-https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf
+References to the [1.1 spec](https://ibis.org/connector/touchstone_spec11.pdf)
+and the [2.0 spec](https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf).
 
 # Examples
 ```
@@ -351,10 +347,8 @@ end
 Write a file in the Touchstone format. Standards compliant except does not
 support writing noise data.
 
-This is the 1.1 spec:
-https://ibis.org/connector/touchstone_spec11.pdf
-and the 2.0 spec:
-https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf
+References to the [1.1 spec](https://ibis.org/connector/touchstone_spec11.pdf)
+and the [2.0 spec](https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf).
 """
 function touchstone_save(filename::String, frequencies::AbstractVector,
     N::AbstractArray; version=1.0, reference::Vector=[50.0,50.0], R = 50.0,
@@ -418,7 +412,6 @@ julia> io = IOBuffer();JosephsonCircuits.touchstone_write(io, [1.0e9, 2.0e9, 10.
 2.0e9 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054
 1.0e10 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336
 
-
 julia> io = IOBuffer();JosephsonCircuits.touchstone_write(io, [1.0e9, 2.0e9, 10.0e9], [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im];version=2.0,R=50.0,format="RI",frequencyunit="Hz",comments=["Example 4:","2-port S-parameter file, three frequency points"]);println(String(take!(io)))
 !Example 4:
 !2-port S-parameter file, three frequency points
@@ -434,7 +427,6 @@ julia> io = IOBuffer();JosephsonCircuits.touchstone_write(io, [1.0e9, 2.0e9, 10.
 2.0e9 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054
 1.0e10 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336
 [End]
-
 ```
 """
 function touchstone_write(io::IO,
@@ -678,7 +670,7 @@ end
         frequencyunit::String = "GHz",
         parameter::String = "S",
         format::String = "MA",
-        R::Float64 = 50.0, 
+        R::Float64 = 50.0,
         version::Float64 = 2.0,
         twoportdataorder::String = "",
         numberofnoisefrequencies::Int = 0,
@@ -830,6 +822,9 @@ end
     arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies,
         matrixformat, twoportdataorder, parameter, frequencyunit, format, R,
         version)
+
+Return a vector with a frequency followed by the network data parameters for
+that frequency.
 
 # Examples
 ```jldoctest
@@ -1070,7 +1065,7 @@ end
 
 Return the cartesian indices of the elements of a scattering matrix given the
 number of ports `nports` and the format `format` which can be "Full", "Upper",
-or "Lower". 
+or "Lower".
 
 # Examples
 ```jldoctest
@@ -1279,6 +1274,9 @@ end
 
 """
     frequencyscale(frequencyunit::String)
+
+Convert the SI prefix in the string `frequencyunit` to the corresponding
+numerical value.
 
 # Examples
 ```jldoctest
@@ -1597,7 +1595,7 @@ end
 
 Append the contents of the [reference] section of a Touchstone file from the
 IOBuffer or IOStream `io` to the vector `reference`. The reference impedance
-values can be spread across multiple lines. 
+values can be spread across multiple lines.
 
 # Examples
 ```jldoctest
@@ -1736,7 +1734,8 @@ function ismixedmodeorder(line::String)
 end
 
 """
-    parsemixedmodeorder!(mixedmodeorder::Vector{Tuple{Char, Vector{Int}}}, line::String)
+    parsemixedmodeorder!(mixedmodeorder::Vector{Tuple{Char, Vector{Int}}},
+        line::String)
 
 Append the contents of the [mixed-mode order] line of a Touchstone file
 from the to the vector `mixedmodeorder`.
@@ -1769,7 +1768,7 @@ end
     isnetworkdata(line::String)
 
 Return `true` if the string `line` is the [network data] line of a
-Touchstone file. 
+Touchstone file.
 
 # Examples
 ```jldoctest
@@ -1789,7 +1788,7 @@ end
     isend(line::String)
 
 Return `true` if the string `line` is the [end] line of a
-Touchstone file. 
+Touchstone file.
 
 # Examples
 ```jldoctest
@@ -1809,7 +1808,7 @@ end
     isnoisedata(line::String)
 
 Return `true` if the string `line` is the [noise data] line of a
-Touchstone file. 
+Touchstone file.
 
 # Examples
 ```jldoctest
@@ -1829,7 +1828,7 @@ end
     stripcommentslowercase!(comments::Vector{String},line::String)
 
 Append the comment portion of a line `line` of a Touchstone file to the vector
-`comments`. Return the line with the comments removed and made lowercase. 
+`comments`. Return the line with the comments removed and made lowercase.
 
 # Examples
 ```jldoctest

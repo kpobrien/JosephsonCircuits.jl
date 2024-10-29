@@ -1,6 +1,6 @@
 
 """
-  testshow(io::IO,S)
+    testshow(io::IO,S)
 
 Print `S` to the IOStream or IOBuffer `io`. This is used to generate the
 inputs for testing purposes. The default `show` function doesn't always
@@ -31,10 +31,11 @@ testshow(io::IO,S::JosephsonCircuits.NonlinearHB) = showstruct(io,S)
 testshow(io::IO,S::JosephsonCircuits.LinearizedHB) = showstruct(io,S)
 testshow(io::IO,S::JosephsonCircuits.CircuitMatrices) = showstruct(io,S)
 testshow(io::IO,S::JosephsonCircuits.AxisKeys.KeyedArray) = showstruct(io,S)
-# show(io::IO,S::StepRangeLen) = 
 
 """
-  showstruct(io::IO,out)
+    showstruct(io::IO,out)
+
+Recursively print the struct `out` to the IOStream or IOBuffer `io`.
 
 # Examples
 ```jldoctest
@@ -59,7 +60,7 @@ function showstruct(io::IO,out)
 end
 
 """
-  comparestruct(x,y)
+    comparestruct(x,y)
 
 Compare two structures for testing purposes.
 

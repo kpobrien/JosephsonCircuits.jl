@@ -288,7 +288,7 @@ function sprandsubset(A::SparseMatrixCSC, p::AbstractFloat, dropzeros = true)
 end
 
 """
-  sparseadd!(A::SparseMatrixCSC, As::SparseMatrixCSC, indexmap)
+    sparseadd!(A::SparseMatrixCSC, As::SparseMatrixCSC, indexmap)
 
 Add sparse matrices `A` and `As` and return the result in `A` without
 performing any allocations. This is only possible if the positions of elements
@@ -329,7 +329,7 @@ function sparseadd!(A::SparseMatrixCSC,As::SparseMatrixCSC,indexmap)
 end
 
 """
-  sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC, indexmap)
+    sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC, indexmap)
 
 Add sparse matrices `A` and `c*As` and return the result in `A`. The sparse
 matrix `As` must have nonzero entries only in a subset of the positions in `A`
@@ -370,8 +370,8 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,indexmap::V
 end
 
 """
-  sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC, Ad::Diagonal,
-    indexmap)
+    sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
+        Ad::Diagonal, indexmap)
 
 Add sparse matrices `A` and `c*As*Ad` and return the result in `A`. The sparse
 matrix `As` must have nonzero entries only in a subset of the positions in `A`
@@ -420,8 +420,8 @@ function sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
 end
 
 """
-  sparseadd!(A::SparseMatrixCSC, c::Number, Ad::Diagonal, As::SparseMatrixCSC,
-    indexmap::Vector)
+    sparseadd!(A::SparseMatrixCSC, c::Number, Ad::Diagonal,
+        As::SparseMatrixCSC, indexmap::Vector)
 
 Add sparse matrices `A` and `c*Ad*As` and return the result in `A`. The sparse
 matrix `As` must have nonzero entries only in a subset of the positions in `A`
@@ -532,9 +532,9 @@ end
 # end
 
 """
-  sparseaddconjsubst!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
-    Ad::Diagonal, indexmap, conjflag::Diagonal, wmodesm::Diagonal,
-    freqsubstindices::Vector, symfreqvar)
+    sparseaddconjsubst!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
+        Ad::Diagonal, indexmap, conjflag::Diagonal, wmodesm::Diagonal,
+        freqsubstindices::Vector, symfreqvar)
 
 Perform the operation `A+c*As*Ad` and return the result in `A`. Take the
 complex conjugate of `As` for any column where `conjflag = true`.
@@ -632,7 +632,7 @@ function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
 end
 
 """
-  sparseaddmap(A::SparseMatrixCSC, B::SparseMatrixCSC)
+    sparseaddmap(A::SparseMatrixCSC, B::SparseMatrixCSC)
 
 Return a vector of length `nnz(B)` which maps the indices of elements of `B`
 in `B.nzval` to the corresponding indices in `A.nzval`. The sparse matrix `B`
@@ -724,7 +724,7 @@ function sparseaddmap_innerloop(A::SparseMatrixCSC, B::SparseMatrixCSC,
 end
 
 """
-  conjnegfreq(A, wmodes)
+    conjnegfreq(A, wmodes)
 
 Take the complex conjugate of any element of `A` which would be negative when
 multipled from the right by a diagonal matrix consisting of `wmodes`
@@ -750,11 +750,11 @@ function conjnegfreq(A::SparseMatrixCSC, wmodes::Vector)
 end
 
 """
-  conjnegfreq!(A, wmodes)
+    conjnegfreq!(A, wmodes)
 
 Take the complex conjugate of any element of `A` which would be negative when
 multipled from the right by a diagonal matrix consisting of `wmodes`
-replicated along the diagonal. Overwrite `A` with the output. 
+replicated along the diagonal. Overwrite `A` with the output.
 
 Each axis of `A` should be an integer multiple of the length of `wmodes`.
 
@@ -941,8 +941,8 @@ end
         xb::Vector{Bool})
 
 Non-allocating sparse matrix multiplication of `A` and `B` when sparsity pattern
-of product `C` is known. Based on spmatmul from SparseArrays.jl
-https://github.com/JuliaSparse/SparseArrays.jl/blob/main/src/linalg.jl
+of product `C` is known. Based on spmatmul from
+[SparseArrays.jl](https://github.com/JuliaSparse/SparseArrays.jl/blob/main/src/linalg.jl).
 
 # Examples
 ```jldoctest

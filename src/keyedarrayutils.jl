@@ -1,6 +1,6 @@
 
 """
-    Stokeyed(S, outputmodes, outputportnumbers, inputmodes, 
+    Stokeyed(S, outputmodes, outputportnumbers, inputmodes,
         inputportnumbers, w)
 
 Convert a scattering parameter array `S` vs frequency `w` to a keyed array.

@@ -579,7 +579,7 @@ end
 """
     visualizefreqs(w::NTuple{N,Any}, freq::Frequencies{N})
 
-Create a vector or array containing the mixing products for visualization 
+Create a vector or array containing the mixing products for visualization
 purposes.
 
 # Examples
@@ -844,13 +844,13 @@ function calcindexdict(N)
 end
 
 """
-    calcphiindicescalcphiindices(frequencies::Frequencies{N},
+    calcphiindices(frequencies::Frequencies{N},
         conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}})
 
 Return the indices which map the elements of the frequency domain vector
 to the corresponding elements of the frequency domain array. Also
 return the indices `conjsourceindices` whose data should be copied from the
-vector to `conjtargetindices` in the array then complex conjugated
+vector to `conjtargetindices` in the array then complex conjugated.
 
 # Arguments
 - `Nt`: tuple with dimensions of signal in time domain 

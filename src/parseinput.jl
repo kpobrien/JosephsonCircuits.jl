@@ -524,11 +524,11 @@ end
 """
     checkcomponenttypes(allowedcomponents::Vector{String})
 
-Check that each element in allowedcomponents is found at the correct place.
+Check that each element in `allowedcomponents` is found at the correct place.
 This will detect the case where a two letter component appears in 
-allowedcomponents after a one letter component with the same starting letter.
-parsecomponenttype() will match on the first value and this function will
-throw an error.
+`allowedcomponents` after a one letter component with the same starting letter.
+The function parsecomponenttype() will match on the first value and this
+function will throw an error.
 
 # Examples
 ```jldoctest
@@ -549,7 +549,7 @@ end
     extractbranches(componenttypes::Vector{Symbol},nodeindexarray::Matrix{Int})
 
 Return an array of tuples of pairs of node indices (branches) which we will
-use to calculate the incidence matrix.  
+use to calculate the incidence matrix.
 
 This will contain duplicates if multiple components are on the same branch. All
 checking for duplicate branches will occur in the graph procesing code.
@@ -578,7 +578,7 @@ end
         nodeindexarray::Matrix{Int})
 
 Append tuples consisting of a pair of node indices (branches) which we will
-use to calculate the incidence matrix.  Appends the tuples to branchvector.
+use to calculate the incidence matrix. Appends the tuples to branchvector.
 """
 function extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},nodeindexarray::Matrix{Int})
 
@@ -746,8 +746,9 @@ end
 Sort the unique node names in `uniquenodevector` according to the specified
 sorting scheme, always placing the ground node at the beginning.
 
-Return the sorted `uniquenodevector` and `nodeindexvector` (with the vector reshaped
-from a vector of length 2*Nnodes into a matrix with dimensions 2 by Nnodes).
+Return the sorted `uniquenodevector` and `nodeindexvector` (with the vector
+reshaped from a vector of length 2*Nnodes into a matrix with dimensions 2 by
+Nnodes).
 
 # Keywords
 - `sorting = :name`: Sort the vector of strings. This always works but leads
@@ -890,8 +891,8 @@ end
         nodeindexarray::Matrix{Int}, mutualinductorbranchnames::Vector,
         componentvalues::Vector)
 
-Find the resistors (not located at a port) or lossy capacitors or lossy inductors 
-and return their indices. 
+Find the resistors (not located at a port) or lossy capacitors or lossy
+inductors and return their indices.
 
 # Examples
 ```jldoctest
@@ -1287,7 +1288,7 @@ end
     valuetonumber(value::Symbolics.Num,circuitdefs)
 
 If the component value is Symbolics.Num, then try substituting in the definition
-from `circuitdefs`. 
+from `circuitdefs`.
 
 # Examples
 ```jldoctest
@@ -1307,18 +1308,16 @@ end
 """
     valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
 
-If the component value is Complex{Symbolics.Num}, then try substituting in the
-definition from `circuitdefs`. 
-
-NOTE: Below fails because Symbolics.jl doesn't have good support for complex 
-numbers. 
-@variables Lj1::Complex Lj2::Complex;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
-4.0e-12
+If the component value `value` is Complex{Symbolics.Num}, then try substituting in the
+definition from `circuitdefs`.
 
 # Examples
 ```jldoctest
 julia> @variables Lj1::Complex;JosephsonCircuits.valuetonumber(Lj1,Dict(Lj1=>3.0e-12))
 3.0e-12
+
+julia> @variables Lj1::Complex Lj2::Complex;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
+ComplexTerm(real(Lj2) + real(Lj1) + im*(imag(Lj2) + imag(Lj1)))
 ```
 """
 function valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
@@ -1329,7 +1328,7 @@ end
     valuetonumber(value::Symbolics.Symbol, circuitdefs)
 
 If the component value `value` has a type Complex{Symbolics.Num}, then try
-substituting in the definition from `circuitdefs`. 
+substituting in the definition from `circuitdefs`.
 
 # Examples
 ```jldoctest

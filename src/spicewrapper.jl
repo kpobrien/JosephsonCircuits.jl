@@ -15,8 +15,8 @@ so it saves everything.
 - `current`: Vector of current source amplitudes in Ampere.
 - `frequency`: Vector of current source frequencies in Hz.
 - `phase`: Vector of current source phases in radians.
-- `sourcenodes`: Vector of tuples of nodes (src,dst) at which to place the current
-    source(s).
+- `sourcenodes`: Vector of tuples of nodes (src,dst) at which to place the
+    current source(s).
 - `tstep`: Time step in seconds.
 - `tstop`: Time for which to run the simulation in seconds.
 - `trise`: The simulation ramps up the current source amplitude with a
@@ -56,11 +56,9 @@ run
 set filetype=binary
 write
 .endc
-
 ```
 """
-function wrspice_input_transient(netlist::String, current,
-    frequency, phase,
+function wrspice_input_transient(netlist::String, current, frequency, phase,
     sourcenodes, tstep, tstop, trise; maxdata = 2e9, jjaccel = 1,
     dphimax = 0.01, filetype = "binary")
 
@@ -120,15 +118,6 @@ function wrspice_input_transient(netlist::String, current,
     return input
 end
 
-
-# function wrspice_input_transient(netlist::String, current,
-#     frequency, phase, sourcenodes::Tuple, tstep, tstop, trise; maxdata = 2e9, jjaccel = 1,
-#     dphimax = 0.01, filetype = "binary")
-
-#     return wrspice_input_transient(netlist, [current], [frequency], [phase], [sourcenodes], tstep, tstop, trise; maxdata = maxdata, jjaccel = jjaccel,
-#     dphimax = dphimax, filetype = filetype)
-# end
-
 """
     wrspice_input_ac(netlist,nsteps,fstart,fstop)
 
@@ -149,22 +138,21 @@ isrc 1 0 ac 1.0e-6 0.0
 * The control block
 .control
 
-* Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
+* Maximum size of data to export in kilobytes from 1e3 to 2e9 with
 * default 2.56e5. This has to come before the run command
 set maxdata=2.0e9
 
 * Run the simulation
 run
 
-* Binary files are faster to save and load. 
+* Binary files are faster to save and load.
 set filetype=binary
 
 * Leave filename empty so we can add that as a command line argument.
-* Don't specify any variables so it saves everything.    
+* Don't specify any variables so it saves everything.
 write
 
 .endc
-
 ```
 ```jldoctest
 julia> println(JosephsonCircuits.wrspice_input_ac("* SPICE Simulation",(4:0.01:5)*1e9,[1,2],1e-6))
@@ -178,22 +166,21 @@ isrc 1 0 ac 1.0e-6 0.0
 * The control block
 .control
 
-* Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
+* Maximum size of data to export in kilobytes from 1e3 to 2e9 with
 * default 2.56e5. This has to come before the run command
 set maxdata=2.0e9
 
 * Run the simulation
 run
 
-* Binary files are faster to save and load. 
+* Binary files are faster to save and load.
 set filetype=binary
 
 * Leave filename empty so we can add that as a command line argument.
-* Don't specify any variables so it saves everything.    
+* Don't specify any variables so it saves everything.
 write
 
 .endc
-
 ```
 """
 function wrspice_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
@@ -230,18 +217,18 @@ function wrspice_input_ac(netlist,nsteps,fstart,fstop,portnodes,portcurrent; max
     * The control block
     .control
 
-    * Maximum size of data to export in kilobytes from 1e3 to 2e9 with 
+    * Maximum size of data to export in kilobytes from 1e3 to 2e9 with
     * default 2.56e5. This has to come before the run command
     set maxdata=$(maxdata)
 
     * Run the simulation
     run
 
-    * Binary files are faster to save and load. 
+    * Binary files are faster to save and load.
     set filetype=binary
 
     * Leave filename empty so we can add that as a command line argument.
-    * Don't specify any variables so it saves everything.    
+    * Don't specify any variables so it saves everything.
     write
 
     .endc
@@ -257,6 +244,7 @@ end
     wrspice_cmd()
 
 This returns the path of the WRSPICE executable.
+
 """
 function wrspice_cmd()
     # Note: This code has been tested on Linux but not macOS or Windows. 
@@ -280,13 +268,14 @@ end
 """
     spice_run(input, spicecmd::String)
 
-Argument is a string or command containing the input commands for wrspice.  This function
-saves the string to disk, runs spice, parses the results with wrsplice_load(),
-then returns those parsed results.
+Argument is a string or command containing the input commands for wrspice. 
+This function saves the string to disk, runs spice, parses the results with
+wrsplice_load(), then returns those parsed results.
 
 The input should not should have a file name listed after the write command in
 the .control block so that we can specify the raw output file with a command
 line argument.
+
 """
 function spice_run(input,spicecmd)
 
@@ -323,20 +312,18 @@ function spice_run(input,spicecmd)
 end
 
 """
-    spice_run(input::AbstractArray{String,1})
+    spice_run(input::AbstractVector,spicecmd; ntasks = Threads.nthreads())
 
 If the input to wrspice_run() is an array of strings, then call multiple
 processes in parallel. The number of parallel processes is decided from
 Threads.nthreads(). It can be changed manually.
 
 """
-function spice_run(input::AbstractVector,spicecmd;
-    ntasks = Threads.nthreads())
-    # Set the number of simultaneous parallel simulations equal to 
-    # the number of threads. ntasks can be manually changed here 
+function spice_run(input::AbstractVector,spicecmd;ntasks = Threads.nthreads())
+    # Set the number of simultaneous parallel simulations equal to
+    # the number of threads. ntasks can be manually changed here
     # or by changing the number of threads. Note this is only faster because
-    # we are calling an external program which launches a new processes. 
-
+    # we are calling an external program which launches a new processes.
     return asyncmap((input) -> spice_run(input,spicecmd),input;ntasks=ntasks);
 end
 

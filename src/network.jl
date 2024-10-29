@@ -1,13 +1,12 @@
 
 """
-  connectS(Sx::Array{T,N},k::Int,l::Int)
+    connectS(Sx::AbstractArray,k::Int,l::Int)
 
-Connect ports `k' and `l` on the same `m` port microwave network represented by
-the scattering parameter matrix `Sx`, resulting in an `(m-2)` port scattering
-parameter matrix, as illustrated below:
+Connect ports `k` and `l` on the same `m` port microwave network represented by
+the scattering parameter matrix `Sx`, resulting in an `(m-2)` port network, as illustrated below:
 
 Input network:
-
+```
       m |         | l+1    
         |   ...   |         l
         |_________|__________ 
@@ -18,9 +17,9 @@ Input network:
     1   |   ...   |          |
         |         | k        |
       2 |         |__________|
-
+```
 Output network:
-
+```
     m-2 |         | l-1     
         |         |         
         |   ...   |         
@@ -33,7 +32,7 @@ Output network:
         |                   
         |                   
       2 |                   
-
+```
 # Arguments
 - `Sx::Array`: Array of scattering parameters representing the network
     with ports along first two dimensions, followed by an arbitrary number
@@ -54,7 +53,6 @@ Champaign, IL, USA, 1989, pp. 716-718 vol.2, doi: 10.1109/MWSCAS.1989.101955.
 G. Filipsson, "A New General Computer Algorithm for S-Matrix Calculation of
 Interconnected Multiports," 1981 11th European Microwave Conference,
 Amsterdam, Netherlands, 1981, pp. 700-704, doi: 10.1109/EUMA.1981.332972.
-
 """
 function connectS(Sx::AbstractArray{T,N},k::Int,l::Int) where {T,N}
 
@@ -149,6 +147,12 @@ function connectS!(Sout,Sx,k::Int,l::Int)
     return nothing
 end
 
+"""
+    connectS_inner!(Sout,Sx,k,l,m,xindices)
+
+See [`connectS`](@ref) for description.
+
+"""
 function connectS_inner!(Sout,Sx,k,l,m,xindices)
 
     # Eq. 16.3
@@ -179,15 +183,15 @@ end
 
 
 """
-  connectS(Sx::Array{T,N},Sy::Array{T,N},k::Int,l::Int)
+    connectS(Sx::AbstractArray,Sy::AbstractArray,k::Int,l::Int)
 
-Connect port `k' on an `m` port network, represented by the scattering
+Connect port `k` on an `m` port network, represented by the scattering
 parameter matrix `Sx`, to port `l` on an `n` port network, represented by the
-scattering parameter matrix `Sy`, resulting in a single `(m-2)` port
+scattering parameter matrix `Sy`, resulting in a single `(m+n-2)` port
 network, as illustrated below:
 
 Input network:
-
+```
       m |        | k+1                       | 2
         |        |                           |
         |   ...  |                     ...   |
@@ -200,9 +204,9 @@ Input network:
         |                           |        |
         |                           |        |
       2 |                       l+1 |        | n
-
+```
 Output network:
-
+```
     m-1 |        | k      | m+1    
         |        |        |        
         |   ...  |   ...  |        
@@ -216,7 +220,7 @@ Output network:
         |        |        |        
       2 |        |        |  m+n-2 
                 m-1+l              
-
+```
 # Arguments
 - `Sx::Array`: Array of scattering parameters representing the first network
     with ports along first two dimensions, followed by an arbitrary number
@@ -351,6 +355,12 @@ function connectS!(Sout,Sx,Sy,k::Int,l::Int)
     return nothing
 end
 
+"""
+    connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices)
+
+See [`connectS`](@ref) for description.
+
+"""
 function connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices)
 
     # use a separate loop for each
@@ -433,7 +443,7 @@ true
 D. J. R. Stock and L. J. Kaplan, "A Comment on the Scattering Matrix of 
 Cascaded 2n-Ports (Correspondence)," in IRE Transactions on Microwave 
 Theory and Techniques, vol. 9, no. 5, pp. 454-454, September 1961, doi:
-10.1109/TMTT.1961.1125369
+10.1109/TMTT.1961.1125369 .
 """
 function cascadeS(Sa,Sb)
 
@@ -453,6 +463,8 @@ end
 
 """
     cascadeS!(S, Sa, Sb)
+
+See [`cascadeS`](@ref) for description.
 
 """
 function cascadeS!(S::AbstractMatrix, Sa::AbstractMatrix, Sb::AbstractMatrix)
@@ -486,7 +498,7 @@ function cascadeS!(S::AbstractMatrix, Sa::AbstractMatrix, Sb::AbstractMatrix)
 end
 
 # generate the non in-place versions of the network parameter conversion
-# functions. 
+# functions.
 
 # functions without an impedance argument
 for f in [:StoT, :TtoS, :AtoB, :BtoA, :AtoZ, :ZtoA, :AtoY, :YtoA, :BtoY, :YtoB, :BtoZ, :ZtoB, :ZtoY, :YtoZ]
@@ -719,12 +731,14 @@ julia> @variables S11 S12 S21 S22 Z0;S = [S11 S12;S21 S22];JosephsonCircuits.Sto
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ StoT
 
 
 """
     StoT!(T::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix)
+
+See [`StoT`](@ref) for description.
 
 """
 function StoT!(T::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix)
@@ -761,15 +775,8 @@ end
     StoZ(S;portimpedances=50.0)
 
 Convert the scattering parameter matrix `S` to an impedance parameter matrix
-`Z` and return the result. 
-
-``Z=\\sqrt{z}(1_{\\!N}-S)^{-1}(1_{\\!N}+S)\\sqrt{z}``
-
-``\\sqrt{z}^{-1}Z=(1_{\\!N}-S)^{-1}(1_{\\!N}+S)\\sqrt{z}``
-
-``\\sqrt{z}^{-1}Z=(1_{\\!N}-S) \\div (1_{\\!N}+S)\\sqrt{z}``
-
-``Z= \\sqrt{z}((1_{\\!N}-S) \\div (1_{\\!N}+S)\\sqrt{z})``
+`Z` and return the result. Assumes a port impedance of 50 Ohms unless
+specified with the `portimpedances` keyword argument.
 
 # Examples
 ```jldoctest
@@ -786,11 +793,13 @@ julia> S = [0.0 0.999;0.999 0.0];JosephsonCircuits.StoZ(S)
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ StoZ
 
 """
     StoZ!(Z::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
+
+See [`StoZ`](@ref) for description.
 
 """
 function StoZ!(Z::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
@@ -823,10 +832,8 @@ end
     StoY(S;portimpedances=50.0)
 
 Convert the scattering parameter matrix `S` to an admittance parameter matrix
-`Y` and return the result. 
-
-``Y=\\sqrt{y}}(I_{N}-S)(I_{N}+S)^{-1}{\\sqrt{y}}``
-``={\\sqrt {y}}(I_{N}+S)^{-1}(I_{N}-S){\\sqrt {y}}``
+`Y` and return the result. Assumes a port impedance of 50 Ohms unless
+specified with the `portimpedances` keyword argument.
 
 # Examples
 ```jldoctest
@@ -843,11 +850,13 @@ julia> S = [0.0 0.999;0.999 0.0];JosephsonCircuits.StoY(S)
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ StoY
 
 """
     StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportadmittances)
+
+See [`StoY`](@ref) for description.
 
 """
 function StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,oneoversqrtportimpedances)
@@ -893,12 +902,14 @@ true
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ StoA
 
 """
     StoA!(A::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
         sqrtportimpedances1, sqrtportimpedances2)
+
+See [`StoA`](@ref) for description.
 
 """
 function StoA!(A::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
@@ -966,12 +977,14 @@ true
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ StoB
 
 """
     StoB!(B::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
         sqrtportimpedances1, sqrtportimpedances2)
+
+See [`StoB`](@ref) for description.
 
 """
 function StoB!(B::AbstractMatrix, S::AbstractMatrix, tmp::AbstractMatrix,
@@ -1048,6 +1061,8 @@ with change of sign on T11 and T21 terms (suspected typo).
 """
     TtoS!(S::AbstractMatrix,T::AbstractMatrix,tmp::AbstractMatrix)
 
+See [`TtoS`](@ref) for description.
+
 """
 function TtoS!(S::AbstractMatrix,T::AbstractMatrix,tmp::AbstractMatrix)
     
@@ -1100,17 +1115,8 @@ end
 
 Convert the impedance parameter matrix `Z` to a scattering parameter matrix
 `S` and return the result. `portimpedances` is a scalar, vector, or matrix of
-port impedances.
-
-``S=(\\sqrt{y}Z\\sqrt{y}-1_{\\!N})(\\sqrt{y}Z\\sqrt{y}+1_{\\!N})^{-1}``
-``S =(\\sqrt{y}Z\\sqrt{y}+1_{\\!N})^{-1}(\\sqrt{y}Z\\sqrt{y}-1_{\\!N})``
-``S =(\\sqrt{y}Z\\sqrt{y}+1_{\\!N}) \\div (\\sqrt{y}Z\\sqrt{y}-1_{\\!N})``
-
-where ```\\sqrt{y}=(\\sqrt{z})^{-1}`` where `z` is a diagonal matrix of port impedances. 
-
-First compute ``\tilde{Z} = \\sqrt{y}Z\\sqrt{y}``, then:
-
-``S =(\\tilde{Z}+1_{\\!N}) \\div (\\tilde{Z}-1_{\\!N})``
+port impedances. Assumes a port impedance of 50 Ohms unless specified with
+the `portimpedances` keyword argument.
 
 # Examples
 ```jldoctest
@@ -1127,11 +1133,13 @@ julia> Z = [0.0 0.0;0.0 0.0];JosephsonCircuits.ZtoS(Z)
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ ZtoS
 
 """
     ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
+
+See [`ZtoS`](@ref) for description.
 
 """
 function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversqrtportimpedances)
@@ -1189,11 +1197,13 @@ julia> @variables Z11 Z12 Z21 Z22;JosephsonCircuits.AtoZ([Z11 Z12;Z21 Z22])
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ ZtoA
 
 """
     ZtoA!(A::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
+
+See [`ZtoA`](@ref) for description.
 
 """
 function ZtoA!(A::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
@@ -1216,11 +1226,13 @@ julia> Z=[50.0 50;50 50];JosephsonCircuits.ZtoB(Z)
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ ZtoB
 
 """
     ZtoB!(B::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
+
+See [`ZtoB`](@ref) for description.
 
 """
 function ZtoB!(B::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix)
@@ -1261,15 +1273,6 @@ Convert the admittance parameter matrix `Y` to a scattering parameter matrix
 `S` and return the result. `portimpedances` is a scalar, vector, or matrix of
 port impedances.
 
-``S=(I_{N}-{\\sqrt {z}}Y{\\sqrt {z}})(I_{N}+{\\sqrt {z}}Y{\\sqrt {z}})^{-1}``
-``   =(I_{N}+{\\sqrt {z}}Y{\\sqrt {z}})^{-1}(I_{N}-{\\sqrt {z}}Y{\\sqrt{z}}``
-
-where ```\\sqrt{y}=(\\sqrt{z})^{-1}`` where `z` is a diagonal matrix of port impedances. 
-
-First compute ``\tilde{Y} = \\sqrt{z}Y\\sqrt{z}``, then:
-
-``S =(1_{\\!N}+\\tilde{Y}) \\div (1_{\\!N}-\\tilde{Y})``
-
 # Examples
 ```jldoctest
 julia> Y = [1/50.0 0.0;0.0 1/50.0];JosephsonCircuits.YtoS(Y)
@@ -1285,11 +1288,13 @@ julia> Y = [0.0 0.0;0.0 0.0];JosephsonCircuits.YtoS(Y)
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ YtoS
 
 """
     YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
+
+See [`YtoS`](@ref) for description.
 
 """
 function YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
@@ -1341,6 +1346,8 @@ with change of overall sign on (suspected typo).
 """
     YtoA!(A::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
 
+See [`YtoA`](@ref) for description.
+
 """
 function YtoA!(A::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
     
@@ -1387,11 +1394,13 @@ julia> Y=[1/50 1/50;1/50 1/50];JosephsonCircuits.YtoB(Y)
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ YtoB
 
 """
     YtoB!(B::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
+
+See [`YtoB`](@ref) for description.
 
 """
 function YtoB!(B::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix)
@@ -1438,12 +1447,14 @@ true
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ AtoS
 
 """
     AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
         sqrtportimpedances1, sqrtportimpedances2)
+
+See [`AtoS`](@ref) for description.
 
 """
 function AtoS!(S::AbstractMatrix, A::AbstractMatrix, tmp::AbstractMatrix,
@@ -1529,11 +1540,13 @@ julia> @variables A B C D;JosephsonCircuits.AtoZ([A B;C D])
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ AtoZ
 
 """
     AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
+
+See [`AtoZ`](@ref) for description.
 
 """
 function AtoZ!(Z::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
@@ -1582,11 +1595,13 @@ julia> A=[-1 -50.0;0 -1];JosephsonCircuits.AtoY(A)
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ AtoY
 
 """
     AtoY!(Y::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
+
+See [`AtoY`](@ref) for description.
 
 """
 function AtoY!(Y::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
@@ -1639,11 +1654,13 @@ true
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ AtoB
 
 """
     AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
+
+See [`AtoB`](@ref) for description.
 
 """
 function AtoB!(B::AbstractMatrix,A::AbstractMatrix,tmp::AbstractMatrix)
@@ -1694,6 +1711,8 @@ with change of overall sign (suspected typo).
 """
     BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
         sqrtportimpedances1, sqrtportimpedances2)
+
+See [`BtoS`](@ref) for description.
 
 """
 function BtoS!(S::AbstractMatrix, B::AbstractMatrix, tmp::AbstractMatrix,
@@ -1780,6 +1799,8 @@ with change of sign on B21 and B22 terms (suspected typo).
 """
     BtoZ!(Z::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
 
+See [`BtoZ`](@ref) for description.
+
 """
 function BtoZ!(Z::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
     
@@ -1832,11 +1853,13 @@ julia> B=[-1 -50.0;0 -1];JosephsonCircuits.BtoY(B)
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ BtoY
 
 """
     BtoY!(Y::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
+
+See [`BtoY`](@ref) for description.
 
 """
 function BtoY!(Y::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
@@ -1885,12 +1908,14 @@ julia> B=[1.0 0.0;1/50 1.0];JosephsonCircuits.BtoA(B)
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ BtoA
 
 
 """
     BtoA!(A::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
+
+See [`BtoA`](@ref) for description.
 
 """
 function BtoA!(A::AbstractMatrix,B::AbstractMatrix,tmp::AbstractMatrix)
@@ -1901,7 +1926,8 @@ end
     ABCDtoS(ABCD;portimpedances=50.0)
 
 Convert the 2 port chain (ABCD) matrix `ABCD` to the scattering parameter
-matrix `S` and return the result.
+matrix `S` and return the result. Assumes a port impedance of 50 Ohms unless
+specified with the `portimpedances` keyword argument.
 
 # Examples
 ```jldoctest
@@ -1914,7 +1940,7 @@ true
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ ABCDtoS
 
 function ABCDtoS!(S,ABCD,portimpedances)
@@ -1933,7 +1959,8 @@ end
     StoABCD(S;portimpedances=50.0))
 
 Convert the scattering parameter matrix `S` to the 2 port chain (ABCD) matrix and
-return the result.
+return the result. Assumes a port impedance of 50 Ohms unless specified with the
+`portimpedances` keyword argument.
 
 # Examples
 ```jldoctest
@@ -1946,7 +1973,7 @@ true
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
+Communications Engineering, Second Edition. Artech House, 2006.
 """ StoABCD
 
 function StoABCD!(ABCD,S,portimpedances)
@@ -1964,6 +1991,10 @@ end
 """
     Z_coupled_tline(betae,betao,Z0e,Z0o,l)
 
+Return the impedance matrix for coupled transmission lines described by
+even and odd mode wavevectors `betae` and `betao`, and even and odd mode
+impedances `Z0e` and `Z0o`, and length `l`.
+```
 betae, Z0e
 betao, Z0o
 
@@ -1975,7 +2006,7 @@ V1, I1 -->  ======== <-- I2, V2
 [(V1-V3)/2, (I1-I3)/2] = ABCDo * [(V2-V4)/2, -(I2-I4)/2]
 
 [V1, V2, V3, V4] = Z_coupled_tline * [I1, I2, I3, I4]
-
+```
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.Z_coupled_tline(1,1,50,50,pi/4)
@@ -1997,12 +2028,15 @@ end
 """
     ABCD_tline(beta,Z0,l)
 
+Return the ABCD matrix for a transmission line described by wavevector `beta`,
+characteristic impedance `Z0`, and length `l`.
+```
    <--l--->
 o--========--o
    beta, Z0   
               
 o------------o
-
+```
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.ABCD_tline(1,1,pi/4)
@@ -2019,11 +2053,13 @@ end
 """
     ABCD_seriesZ(Z)
 
+Return the ABCD matrix for a series impedance `Z`.
+```
 o---Z1---o
           
           
 o--------o
-
+```
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.ABCD_seriesZ(2)
@@ -2039,12 +2075,14 @@ end
 """
     ABCD_shuntY(Y)
 
----------
-    |
-    Y1
-    |
----------
-
+Return the ABCD matrix for a shunt admittance `Y`.
+```
+o---------o
+     |
+     Y
+     |
+o---------o
+```
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.ABCD_shuntY(2)
@@ -2060,12 +2098,14 @@ end
 """
     ABCD_PiY(Y1,Y2,Y3)
 
+Return the ABCD matrix for a Pi network of admittances `Y1`, `Y2`, and `Y3`.
+```
 o----Y3-----o
    |     |   
    Y1    Y2  
    |     |   
 o-----------o
-
+```
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.ABCD_PiY(1,2,4)
@@ -2078,16 +2118,17 @@ function ABCD_PiY(Y1,Y2,Y3)
     return [1+Y2/Y3 1/Y3;Y1+Y2+Y1*Y2/Y3 1+Y1/Y3]
 end
 
-
 """
     ABCD_TZ(Z1,Z2,Z3)
 
+Return the ABCD matrix for a T network of impedances `Z1`, `Z2`, and `Z3`.
+```
 o--Z1-----Z2--o
        |       
       Z3       
        |       
 o-------------o
-
+```
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.ABCD_TZ(1,2,4)

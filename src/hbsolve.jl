@@ -1644,7 +1644,7 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
 end
 
 """
-    calcfj2(F,J,phin,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
+    calcfj2!(F,J,phin,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
         Ljbindicesm,Nmodes,Lmean,AoLjbm)
         
 Calculate the residual and the Jacobian. These are calculated with one
@@ -1652,7 +1652,6 @@ function in order to reuse as much as possible.
 
 Leave off the type signatures on F and J because the solver will pass
 `nothing` if it only wants to calculate F or J.
-
 """
 function calcfj2!(F,
         J,

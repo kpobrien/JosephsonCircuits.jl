@@ -122,7 +122,7 @@ Return the input and output waves for the system linearized around the strong
 pump.
 
 This is a bit of a hack but I ran into issues with complex capacitance when
-the capacitor was at the same branch as a current source. the calcS function
+the capacitor was at the same branch as a current source. The calcS function
 would use that current source in calculating the output waves, which it should
 not do.
 
@@ -173,6 +173,7 @@ inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage + portimpedance * portcurr
 we can simplify the above to:
 inputwave[(i-1)*Nmodes+j,k] = 1/2*kval * portimpedance * sourcecurrent
 outputwave[(i-1)*Nmodes+j,k] = 1/2*kval * (portvoltage - conj(portimpedance) * portcurrent)
+.
 
 """
 function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputportindices,
@@ -587,7 +588,7 @@ end
     calccm!(cm, S, w)
 
 Calculate the bosonic commutation relations for a scattering matrix S in the
-field ladder operator basis. Overwrites cm with output. 
+field ladder operator basis. Overwrites cm with output.
 
 # Examples
 ```jldoctest
@@ -628,7 +629,7 @@ end
 Calculate the bosonic commutation relations for a scattering matrix S in the 
 field ladder operator basis. Sum the abs2 of each element along the horizontal
 axis, applying a minus sign if the corresponding frequency is negative.
-Represents energy conservation. 
+Represents energy conservation.
 
 # Examples
 ```jldoctest
@@ -740,7 +741,7 @@ end
 """
     calccm!(cm, S, Snoise, w)
 
-Calculate the bosonic commutation relations for a scattering matrix S in the 
+Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Overwrites cm with output.
 
 # Examples
@@ -797,7 +798,7 @@ end
     calcqe(S)
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
-ladder operator basis. 
+ladder operator basis.
 
 # Examples
 ```jldoctest
@@ -864,7 +865,7 @@ end
     calcqe(S, Snoise)
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
-ladder operator basis. 
+ladder operator basis.
 
 # Examples
 ```jldoctest
@@ -903,7 +904,7 @@ end
     calcqe!(qe, S, Snoise)
 
 Calculate the quantum efficiency matrix for a scattering matrix in the field
-ladder operator basis. Overwrites qe with output. 
+ladder operator basis. Overwrites qe with output.
 
 # Examples
 ```jldoctest
@@ -951,7 +952,7 @@ end
     calcqeideal(S::AbstractArray)
 
 Calculate the ideal (best possible) quantum efficiency for each element of a
-scattering matrix. See also [`calcqeideal!`](@ref). 
+scattering matrix. See also [`calcqeideal!`](@ref).
 
 # Examples
 ```jldoctest
@@ -984,7 +985,7 @@ end
 """
     calcqeideal!(qeideal,S)
 
-See [`calcqeideal`](@ref). 
+See [`calcqeideal`](@ref).
 
 """
 function calcqeideal!(qeideal,S)
@@ -1094,6 +1095,7 @@ end
 
 Calculate 1/Z^2 times the derivative of Z with respect to parameter scaling
 the value of the circuit component. For example:
+```
 Zc = 1/(im*w*Cg*r)
 1/Zc^2*dZc/dr|_{r=1} = -im*Cg*w
 
@@ -1102,6 +1104,7 @@ Zl = im*w*Lj*r
 
 Zr = R*r
 1/Zr^2*dZr/dr|_{r=1} = 1/(r^2*R) = 1/R
+```
 
 # Examples
 ```jldoctest

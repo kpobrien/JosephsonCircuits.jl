@@ -28,7 +28,7 @@ using Printf
     const phi0
 
 A constant for phi0, the reduced magnetic flux quantum in Weber, H*A:
-phi0 = hbar/(2*charge of electron)
+phi0 = hbar/(2*charge of electron).
 """
 const phi0 = 3.29105976e-16
 
@@ -36,7 +36,7 @@ const phi0 = 3.29105976e-16
     const Phi0
 
 A constant for Phi0, the magnetic flux quantum in Weber, H*A:
-Phi0 = h/(2*charge of electron)
+Phi0 = h/(2*charge of electron).
 """
 const Phi0 = 2.067833848e-15
 
@@ -78,7 +78,7 @@ include("testutils.jl")
 """
     LjtoIc(Lj)
 
-Convert the junction inductance to critical current in SI base units. 
+Convert the junction inductance to critical current in SI base units.
 
 # Examples
 ```jldoctest
@@ -96,7 +96,7 @@ end
 """
     IctoLj(Ic)
 
-Convert the junction critical current to inductance in SI base units. 
+Convert the junction critical current to inductance in SI base units.
 
 # Examples
 ```jldoctest

@@ -826,7 +826,7 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
 end
 
 """
-    calcfj(F,J,nodeflux,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
+    calcfj!(F,J,nodeflux,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
         Ljbindicesm,Nmodes,Lmean,AoLjbm)
 
 Calculate the residual and the Jacobian. These are calculated with one function
@@ -1176,7 +1176,7 @@ end
 """
     calcw(ws::Number, i::Integer, wp::Number)
 
-Generate the signal and idler frequencies using the formula ws + 2*i*wp
+Generate the signal and idler frequencies using the formula ws + 2*i*wp.
 
 Should I switch this to ws+i*wp so it can handle three wave mixing then 
 always double i for four wave mixing?
@@ -1219,7 +1219,7 @@ end
     calcw!(ws, i, wp, w)
 
 Generate the signal and idler frequencies using the formula ws + 2*i*wp.
-Overwrites w with output. 
+Overwrites w with output.
 """
 function calcw!(ws, i::AbstractVector, wp, w::AbstractVector)
 
