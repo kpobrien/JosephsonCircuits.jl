@@ -88,7 +88,25 @@ o-----------o</code></pre><p><strong>Examples</strong></p><pre><code class="lang
 o-------------o</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.ABCD_TZ(1,2,4)
 2×2 Matrix{Float64}:
  1.25  3.5
- 0.25  1.5</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ABCD_seriesZ-Tuple{Any}" href="#JosephsonCircuits.ABCD_seriesZ-Tuple{Any}"><code>JosephsonCircuits.ABCD_seriesZ</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ABCD_seriesZ(Z)</code></pre><p>Return the ABCD matrix for a series impedance <code>Z</code>.</p><pre><code class="nohighlight hljs">o---Z1---o
+ 0.25  1.5</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ABCD_coupled_tline-NTuple{5, Any}" href="#JosephsonCircuits.ABCD_coupled_tline-NTuple{5, Any}"><code>JosephsonCircuits.ABCD_coupled_tline</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ABCD_coupled_tline(betae,betao,Z0e,Z0o,l)</code></pre><p>Return the ABCD matrix for two coupled transmission lines described by even and odd mode wavevectors <code>betae</code> and <code>betao</code>, and even and odd mode impedances <code>Z0e</code> and <code>Z0o</code>, and length <code>l</code>.</p><pre><code class="nohighlight hljs">betae, Z0e
+betao, Z0o
+
+V1, I1 --&gt;  ======== &lt;-- I3, V3
+V2, I2 --&gt;  ======== &lt;-- I4, V4
+            &lt;---l--&gt;
+
+[(V1+V2)/2, (I1+I2)/2] = ABCDe * [(V3+V4)/2, -(I3+I4)/2]
+[(V1-V2)/2, (I1-I2)/2] = ABCDo * [(V3-V4)/2, -(I3-I4)/2]
+
+[V1, V2, I1, I2] = ABCD_coupled_tline * [V3, V4, -I3, -I4]</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.ABCD_coupled_tline(1,1,50,50,pi/4)
+4×4 Matrix{ComplexF64}:
+ 0.707107+0.0im             0.0+0.0im        …       0.0+0.0im
+      0.0+0.0im        0.707107+0.0im                0.0+35.3553im
+      0.0+0.0141421im       0.0+0.0im                0.0+0.0im
+      0.0+0.0im             0.0+0.0141421im     0.707107+0.0im
+
+julia&gt; isapprox(JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_coupled_tline(1,1,55,50,pi/4)),JosephsonCircuits.Z_coupled_tline(1,1,55,50,pi/4))
+true</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ABCD_seriesZ-Tuple{Any}" href="#JosephsonCircuits.ABCD_seriesZ-Tuple{Any}"><code>JosephsonCircuits.ABCD_seriesZ</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ABCD_seriesZ(Z)</code></pre><p>Return the ABCD matrix for a series impedance <code>Z</code>.</p><pre><code class="nohighlight hljs">o---Z1---o
           
           
 o--------o</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.ABCD_seriesZ(2)
@@ -112,7 +130,31 @@ o------------o</code></pre><p><strong>Examples</strong></p><pre><code class="lan
 true
 
 julia&gt; A = rand(Complex{Float64},2,2,10);isapprox(JosephsonCircuits.AtoS(A),JosephsonCircuits.ABCDtoS(A))
-true</code></pre><p><strong>References</strong></p><p>Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for Communications Engineering, Second Edition. Artech House, 2006.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.AtoB" href="#JosephsonCircuits.AtoB"><code>JosephsonCircuits.AtoB</code></a> — <span class="docstring-category">Function</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">AtoB(A)</code></pre><p>Convert the chain (ABCD) matrix <code>A</code> to the inverse chain matrix <code>B</code> and return the result. Note that despite the name, the inverse of the chain matrix is not equal to the inverse chain matrix, inv(A) ≠ B.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; A=[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoB(A)
+true</code></pre><p><strong>References</strong></p><p>Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for Communications Engineering, Second Edition. Artech House, 2006.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.A_coupled_lines-NTuple{4, Any}" href="#JosephsonCircuits.A_coupled_lines-NTuple{4, Any}"><code>JosephsonCircuits.A_coupled_lines</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">A_coupled_tline(L,Cmaxwell,omega,l)</code></pre><p>Returns the 2mx2m chain (ABCD) matrix for a port number symmetric multi-port network of m coupled transmission lines described by a symmetric mxm Maxwell inductance (per unit length) matrix <code>L</code>, a symmetric mxm Maxwell capacitance matrix (per unit length) <code>Cmaxwell</code>, an angular frequency <code>omega</code>, and a physical length <code>l</code>.</p><pre><code class="nohighlight hljs">V_1, I_1 --&gt;  ======== &lt;-- I_{m+1}, V_{m+1}
+V_2, I_2 --&gt;  ======== &lt;-- I_{m+2}, V_{m+2}
+          .
+          .
+          .
+V_m, I_m --&gt;  ======== &lt;-- I_n, V_n
+              &lt;---l--&gt;
+
+where n=2*m.
+
+[V_1, ...V_m, I_1, ...I_m] = A_coupled_tline * [V_{m+1}, ...V_n, I_{m+1}, ...I_n]</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">Zeven = 51.0
+Zodd = 49.0
+neven = 1.1
+nodd = 1.08
+l = 3.5e-3
+c = 2.998e8
+omega = 2*pi*5e9
+
+L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
+A1 = JosephsonCircuits.A_coupled_lines(L,C,omega,l)
+A2 = JosephsonCircuits.ABCD_coupled_tline(neven*omega/c,nodd*omega/c,Zeven,Zodd,l)
+println(isapprox(A1,A2))
+
+# output
+true</code></pre><p><strong>References</strong></p><p>Paul, Clayton R. Analysis of Multiconductor Transmission Lines, Second Edition. Wiley, 2008.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.AtoB" href="#JosephsonCircuits.AtoB"><code>JosephsonCircuits.AtoB</code></a> — <span class="docstring-category">Function</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">AtoB(A)</code></pre><p>Convert the chain (ABCD) matrix <code>A</code> to the inverse chain matrix <code>B</code> and return the result. Note that despite the name, the inverse of the chain matrix is not equal to the inverse chain matrix, inv(A) ≠ B.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; A=[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoB(A)
 2×2 Matrix{Float64}:
  1.0   0.0
  0.02  1.0
@@ -261,22 +303,56 @@ julia&gt; @variables T11 T12 T21 T22;T = [T11 T12;T21 T22];JosephsonCircuits.Tto
 julia&gt; Y = [0.0 0.0;0.0 0.0];JosephsonCircuits.YtoS(Y)
 2×2 Matrix{Float64}:
   1.0  -0.0
- -0.0   1.0</code></pre><p><strong>References</strong></p><p>Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for Communications Engineering, Second Edition. Artech House, 2006.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.YtoS!-Tuple{AbstractMatrix, AbstractMatrix, AbstractMatrix, Any}" href="#JosephsonCircuits.YtoS!-Tuple{AbstractMatrix, AbstractMatrix, AbstractMatrix, Any}"><code>JosephsonCircuits.YtoS!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)</code></pre><p>See <a href="#JosephsonCircuits.YtoS"><code>YtoS</code></a> for description.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.Z_coupled_tline-NTuple{5, Any}" href="#JosephsonCircuits.Z_coupled_tline-NTuple{5, Any}"><code>JosephsonCircuits.Z_coupled_tline</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">Z_coupled_tline(betae,betao,Z0e,Z0o,l)</code></pre><p>Return the impedance matrix for coupled transmission lines described by even and odd mode wavevectors <code>betae</code> and <code>betao</code>, and even and odd mode impedances <code>Z0e</code> and <code>Z0o</code>, and length <code>l</code>.</p><pre><code class="nohighlight hljs">betae, Z0e
+ -0.0   1.0</code></pre><p><strong>References</strong></p><p>Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for Communications Engineering, Second Edition. Artech House, 2006.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.YtoS!-Tuple{AbstractMatrix, AbstractMatrix, AbstractMatrix, Any}" href="#JosephsonCircuits.YtoS!-Tuple{AbstractMatrix, AbstractMatrix, AbstractMatrix, Any}"><code>JosephsonCircuits.YtoS!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">YtoS!(S::AbstractMatrix,Y::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)</code></pre><p>See <a href="#JosephsonCircuits.YtoS"><code>YtoS</code></a> for description.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ZC_basis_coupled_lines-Tuple{Any, Any}" href="#JosephsonCircuits.ZC_basis_coupled_lines-Tuple{Any, Any}"><code>JosephsonCircuits.ZC_basis_coupled_lines</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ZC_basis_coupled_lines(L, Cmaxwell)
+
+Returns the characteristic impedance matrix `ZC` and eigenbasis for
+current `TI` and voltage `TV` from the inductance per unit length matrix
+`L` and Maxwell capacitance per unit length matrix `Cmaxwell`.</code></pre><p><strong>Arguments</strong></p><ul><li><code>L</code>: inductance per unit length matrix.</li><li><code>C</code>: Maxwell capacitance per unit length matrix.</li></ul><p><strong>Returns</strong></p><ul><li><code>ZC</code>: characteristic impedance matrix.</li><li><code>TI</code>: matrix which transforms mode currents to currents, I = TI<em>Im. Computed       from TI = U</em>theta*S.</li><li><code>TV</code>: matrix which transforms mode voltages to voltages, V = TV<em>Vm. Computed       from TV = U</em>inv(theta)*S.</li><li><code>theta</code>: Diagonal matrix with the square of the eigenvalues of Cmaxwell       along the diagonals.</li><li><code>U</code>: eigenvectors of Cmaxwell.</li><li><code>lambda</code>: Diagonal matrix with the square of the eigenvalues of       theta<em>Ut</em>L<em>U</em>theta along the diagonals. <code>lambda</code> is related       to the propagation constant, gamma, as gamma^2 = -omega^2*lambda^2.</li><li><code>S</code>: eigenvectors of theta<em>Ut</em>L<em>U</em>theta.</li></ul><p><strong>Examples</strong></p><pre><code class="language-julia hljs">Zeven = 51.0
+Zodd = 49.0
+neven = 1.1
+nodd = 1.08
+
+L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
+ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_lines(L,C)
+@show ZC
+@show TI
+@show TV
+@show theta
+@show U
+@show lambda
+@show S
+println(isapprox(Zeven,ZC[1,1]+ZC[1,2]))
+println(isapprox(Zodd,ZC[1,1]-ZC[1,2]))
+println(isapprox(neven,lambda[2,2]*2.998e8))
+println(isapprox(nodd,lambda[1,1]*2.998e8))
+
+# output
+ZC = [49.999999999999986 1.000000000000007; 1.000000000000007 49.999999999999986]
+TI = [-6.062936583116437e-6 -5.997640665072575e-6; 6.062936583116437e-6 -5.997640665072575e-6]
+TV = [-82468.28795675654 -83366.11476438788; 82468.28795675654 -83366.11476438788]
+theta = [8.481944770786026e-6 0.0; 0.0 8.574287143651258e-6]
+U = [-0.7071067811865475 -0.7071067811865475; -0.7071067811865475 0.7071067811865475]
+lambda = [3.602401601067378e-9 0.0; 0.0 3.669112741827885e-9]
+S = [0.0 1.0; 1.0 0.0]
+true
+true
+true
+true</code></pre><p><strong>References</strong></p><p>Paul, Clayton R. Analysis of Multiconductor Transmission Lines, Second Edition. Wiley, 2008.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.Z_coupled_tline-NTuple{5, Any}" href="#JosephsonCircuits.Z_coupled_tline-NTuple{5, Any}"><code>JosephsonCircuits.Z_coupled_tline</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">Z_coupled_tline(betae,betao,Z0e,Z0o,l)</code></pre><p>Return the impedance matrix for two coupled transmission lines described by even and odd mode wavevectors <code>betae</code> and <code>betao</code>, and even and odd mode impedances <code>Z0e</code> and <code>Z0o</code>, and length <code>l</code>.</p><pre><code class="nohighlight hljs">betae, Z0e
 betao, Z0o
 
-V3, I3 --&gt;  ======== &lt;-- I4, V4
-V1, I1 --&gt;  ======== &lt;-- I2, V2
+V1, I1 --&gt;  ======== &lt;-- I3, V3
+V2, I2 --&gt;  ======== &lt;-- I4, V4
             &lt;---l--&gt;
 
-[(V1+V3)/2, (I1+I3)/2] = ABCDe * [(V2+V4)/2, -(I2+I4)/2]
-[(V1-V3)/2, (I1-I3)/2] = ABCDo * [(V2-V4)/2, -(I2-I4)/2]
+[(V1+V2)/2, (I1+I2)/2] = ABCDe * [(V3+V4)/2, -(I3+I4)/2]
+[(V1-V2)/2, (I1-I2)/2] = ABCDo * [(V3-V4)/2, -(I3-I4)/2]
 
 [V1, V2, V3, V4] = Z_coupled_tline * [I1, I2, I3, I4]</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.Z_coupled_tline(1,1,50,50,pi/4)
 4×4 Matrix{ComplexF64}:
- 0.0-50.0im     0.0-70.7107im  0.0-0.0im      0.0-0.0im
- 0.0-70.7107im  0.0-50.0im     0.0-0.0im      0.0-0.0im
- 0.0-0.0im      0.0-0.0im      0.0-50.0im     0.0-70.7107im
- 0.0-0.0im      0.0-0.0im      0.0-70.7107im  0.0-50.0im</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ZtoA" href="#JosephsonCircuits.ZtoA"><code>JosephsonCircuits.ZtoA</code></a> — <span class="docstring-category">Function</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ZtoA(Z)</code></pre><p>Convert the impedance matrix <code>Z</code> to the ABCD matrix <code>A</code> and return the result.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; Z=[50.0 50.0;50.0 50.0];JosephsonCircuits.ZtoA(Z)
+ 0.0-50.0im     0.0-0.0im      0.0-70.7107im  0.0-0.0im
+ 0.0-0.0im      0.0-50.0im     0.0-0.0im      0.0-70.7107im
+ 0.0-70.7107im  0.0-0.0im      0.0-50.0im     0.0-0.0im
+ 0.0-0.0im      0.0-70.7107im  0.0-0.0im      0.0-50.0im</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ZtoA" href="#JosephsonCircuits.ZtoA"><code>JosephsonCircuits.ZtoA</code></a> — <span class="docstring-category">Function</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ZtoA(Z)</code></pre><p>Convert the impedance matrix <code>Z</code> to the ABCD matrix <code>A</code> and return the result.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; Z=[50.0 50.0;50.0 50.0];JosephsonCircuits.ZtoA(Z)
 2×2 Matrix{Float64}:
  1.0   -0.0
  0.02   1.0
@@ -1666,7 +1742,19 @@ Dict{Tuple{Int64, Int64}, Int64} with 6 entries:
   (2, 1) =&gt; 1
   (3, 4) =&gt; 3
   (4, 3) =&gt; 3
-  (2, 3) =&gt; 2</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.export_netlist!-Tuple{IO, Any, Any}" href="#JosephsonCircuits.export_netlist!-Tuple{IO, Any, Any}"><code>JosephsonCircuits.export_netlist!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">export_netlist!(io::IO, circuit, circuitdefs)</code></pre><p>Export the netlist in <code>circuit</code> to the IOBuffer or IOStream <code>io</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; io = IOBuffer();JosephsonCircuits.export_netlist!(io, [(&quot;P&quot;,&quot;1&quot;,&quot;0&quot;,1),(&quot;R&quot;,&quot;1&quot;,&quot;0&quot;,50.0)],Dict());println(String(take!(io)))
+  (2, 3) =&gt; 2</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.even_odd_to_maxwell-NTuple{4, Any}" href="#JosephsonCircuits.even_odd_to_maxwell-NTuple{4, Any}"><code>JosephsonCircuits.even_odd_to_maxwell</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">even_odd_to_maxwell(Zeven, Zodd, neven, nodd)</code></pre><p>Return the inductance matrix and Maxwell capacitance matrix for two coupled transmission lines with even and odd mode impedances <code>Zeven</code>, <code>Zodd</code> and even and odd mode indices <code>neven</code>, <code>nodd</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">L1 = [1.1 0.1;0.1 1.1]
+C1 = [2.0 -0.4;-0.4 2.0]
+L2, C2 = JosephsonCircuits.even_odd_to_maxwell(JosephsonCircuits.maxwell_to_even_odd(L1,C1)...)
+isapprox(L1,L2) &amp;&amp; isapprox(C1,C2)
+
+# output
+true</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.even_odd_to_mutual-NTuple{4, Any}" href="#JosephsonCircuits.even_odd_to_mutual-NTuple{4, Any}"><code>JosephsonCircuits.even_odd_to_mutual</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">even_odd_to_mutual(Zeven, Zodd, neven, nodd)</code></pre><p>Return the inductance matrix and mutual capacitance matrix for two coupled transmission lines with even and odd mode impedances <code>Zeven</code>, <code>Zodd</code> and even and odd mode indices <code>neven</code>, <code>nodd</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">L1 = [1.1 0.1;0.1 1.1]
+C1 = [1.6 0.4;0.4 1.6]
+L2, C2 = JosephsonCircuits.even_odd_to_mutual(JosephsonCircuits.mutual_to_even_odd(L1,C1)...)
+isapprox(L1,L2) &amp;&amp; isapprox(C1,C2)
+
+# output
+true</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.export_netlist!-Tuple{IO, Any, Any}" href="#JosephsonCircuits.export_netlist!-Tuple{IO, Any, Any}"><code>JosephsonCircuits.export_netlist!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">export_netlist!(io::IO, circuit, circuitdefs)</code></pre><p>Export the netlist in <code>circuit</code> to the IOBuffer or IOStream <code>io</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; io = IOBuffer();JosephsonCircuits.export_netlist!(io, [(&quot;P&quot;,&quot;1&quot;,&quot;0&quot;,1),(&quot;R&quot;,&quot;1&quot;,&quot;0&quot;,50.0)],Dict());println(String(take!(io)))
 P 1 0 1
 R 1 0 50.0</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.export_netlist-Tuple{Any, Any, Any}" href="#JosephsonCircuits.export_netlist-Tuple{Any, Any, Any}"><code>JosephsonCircuits.export_netlist</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">export_netlist(filename, circuit, circuitdefs)</code></pre><p>Export the netlist in <code>circuit</code> to the file with name and path <code>filename</code>.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.export_netlist-Tuple{Any, Any}" href="#JosephsonCircuits.export_netlist-Tuple{Any, Any}"><code>JosephsonCircuits.export_netlist</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">export_netlist(filename, circuit)</code></pre><p>Export the netlist in <code>circuit</code> to the file with name and path <code>filename</code>.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.exportnetlist-Tuple{Vector, Dict}" href="#JosephsonCircuits.exportnetlist-Tuple{Vector, Dict}"><code>JosephsonCircuits.exportnetlist</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">exportnetlist(circuit::Vector,circuitdefs::Dict,port::Int = true,
     jj::Bool = true)</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables R Cc Lj Cj I
@@ -2300,7 +2388,51 @@ julia&gt; JosephsonCircuits.matrixindices(2,&quot;Lower&quot;,printflag=true)
 3-element Vector{CartesianIndex{2}}:
  CartesianIndex(1, 1)
  CartesianIndex(2, 1)
- CartesianIndex(2, 2)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.networkdatatoarray-NTuple{10, Any}" href="#JosephsonCircuits.networkdatatoarray-NTuple{10, Any}"><code>JosephsonCircuits.networkdatatoarray</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">networkdatatoarray(networkdata, numberofports, numberoffrequencies,
+ CartesianIndex(2, 2)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.maxwell_to_even_odd-Tuple{Any, Any}" href="#JosephsonCircuits.maxwell_to_even_odd-Tuple{Any, Any}"><code>JosephsonCircuits.maxwell_to_even_odd</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">maxwell_to_even_odd(L, Cmaxwell)</code></pre><p>Return the even and odd mode impedances and the even and odd mode indices from the inductance matrix <code>L</code> and the Maxwell capacitance matrix <code>Cmaxwell</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables C11, C12, L11, L12
+C = [C11 C12;C12 C11]
+L = [L11 L12;L12 L11]
+Zeven, Zodd, neven, nodd = JosephsonCircuits.maxwell_to_even_odd(L,C)
+@show Zeven
+@show Zodd
+@show neven
+@show nodd
+;
+
+# output
+Zeven = sqrt((L11 + L12) / (C11 + C12))
+Zodd = sqrt((L11 - L12) / (C11 - C12))
+neven = 2.998e8sqrt((C11 + C12)*(L11 + L12))
+nodd = 2.998e8sqrt((C11 - C12)*(L11 - L12))</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.maxwell_to_mutual-Tuple{AbstractMatrix}" href="#JosephsonCircuits.maxwell_to_mutual-Tuple{AbstractMatrix}"><code>JosephsonCircuits.maxwell_to_mutual</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">maxwell_to_mutual(Cmaxwell::AbstractMatrix)</code></pre><p>Return the mutual capacitance matrix from the Maxwell capacitance matrix <code>Cmaxwell</code>.</p><p>The Maxwell capacitance <code>Cmaxwell</code> is the relationship between charge and voltage on each node, Q = C V or dQi/dVj = C_ij where <code>C</code> is the Maxwell capacitance matrix.</p><p>Each element of the mutual capacitance matrix <code>Cmutual</code> is the value of a physical capacitor placed between two nodes in a circuit or between a node and ground.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; @variables C11, C12, C21, C22;C = [C11 C12;C21 C22];JosephsonCircuits.maxwell_to_mutual(C)
+2×2 Matrix{Num}:
+ C11 + C12       -C12
+      -C21  C21 + C22
+
+julia&gt; C = [1.0 -0.1;-0.1 2.0];JosephsonCircuits.maxwell_to_mutual(C)
+2×2 Matrix{Float64}:
+ 0.9  0.1
+ 0.1  1.9</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.mutual_to_even_odd-Tuple{Any, Any}" href="#JosephsonCircuits.mutual_to_even_odd-Tuple{Any, Any}"><code>JosephsonCircuits.mutual_to_even_odd</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">mutual_to_even_odd(L, Cmutual)</code></pre><p>Return the even and odd mode impedances and the even and odd mode indices from the inductance matrix <code>L</code> and the mutual capacitance matrix <code>Cmutual</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables Cg, Cm, Ls, Lm
+C = [Cg Cm; Cm Cg]
+L = [Ls Lm; Lm Ls]
+Zeven, Zodd, neven, nodd = JosephsonCircuits.mutual_to_even_odd(L,C)
+@show Zeven
+@show Zodd
+@show neven
+@show nodd
+;
+
+# output
+Zeven = sqrt((Lm + Ls) / Cg)
+Zodd = sqrt((-Lm + Ls) / (Cg + 2Cm))
+neven = 2.998e8sqrt(Cg*(Lm + Ls))
+nodd = 2.998e8sqrt((Cg + 2Cm)*(-Lm + Ls))</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.mutual_to_maxwell-Tuple{AbstractMatrix}" href="#JosephsonCircuits.mutual_to_maxwell-Tuple{AbstractMatrix}"><code>JosephsonCircuits.mutual_to_maxwell</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">maxwell_to_mutual(Cmutual::AbstractMatrix)</code></pre><p>Return the Maxwell capacitance matrix from the mutual capacitance matrix <code>Cmutual</code>.</p><p>The Maxwell capacitance <code>Cmaxwell</code> is the relationship between charge and voltage on each node, Q = C V or dQi/dVj = C_ij where <code>C</code> is the Maxwell capacitance matrix.</p><p>Each element of the mutual capacitance matrix <code>Cmutual</code> is the value of a physical capacitor placed between two nodes in a circuit or between a node and ground.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; @variables Cg, Cm;C = [Cg Cm;Cm Cg];JosephsonCircuits.mutual_to_maxwell(C)
+2×2 Matrix{Num}:
+ Cg + Cm      -Cm
+     -Cm  Cg + Cm
+
+julia&gt; C = [0.9 0.1;0.1 1.9];JosephsonCircuits.mutual_to_maxwell(C)
+2×2 Matrix{Float64}:
+  1.0  -0.1
+ -0.1   2.0</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.networkdatatoarray-NTuple{10, Any}" href="#JosephsonCircuits.networkdatatoarray-NTuple{10, Any}"><code>JosephsonCircuits.networkdatatoarray</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">networkdatatoarray(networkdata, numberofports, numberoffrequencies,
     matrixformat, twoportdataorder, parameter, frequencyunit, format, R,
     version)</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">networkdata = [4.0, 0.9995813511383583, -17.248815971093425, 4.5, 0.9958480363660398, -26.451285931791276, 5.0, 0.9868361175866559, 2.711906450972103, 5.5, 0.9985678550072272, -12.21545548845392, 6.0, 0.9993761539770525, -16.045248853866596]
 numberofports = 1
@@ -3382,4 +3514,4 @@ set dphimax=0.01
 run
 set filetype=binary
 write
-.endc</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.7.0 on <span class="colophon-date" title="Tuesday 29 October 2024 00:32">Tuesday 29 October 2024</span>. Using Julia version 1.11.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+.endc</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.7.0 on <span class="colophon-date" title="Thursday 31 October 2024 05:02">Thursday 31 October 2024</span>. Using Julia version 1.11.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
