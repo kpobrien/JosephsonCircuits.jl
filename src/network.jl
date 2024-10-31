@@ -1991,19 +1991,19 @@ end
 """
     Z_coupled_tline(betae,betao,Z0e,Z0o,l)
 
-Return the impedance matrix for coupled transmission lines described by
+Return the impedance matrix for two coupled transmission lines described by
 even and odd mode wavevectors `betae` and `betao`, and even and odd mode
 impedances `Z0e` and `Z0o`, and length `l`.
 ```
 betae, Z0e
 betao, Z0o
 
-V3, I3 -->  ======== <-- I4, V4
-V1, I1 -->  ======== <-- I2, V2
+V1, I1 -->  ======== <-- I3, V3
+V2, I2 -->  ======== <-- I4, V4
             <---l-->
 
-[(V1+V3)/2, (I1+I3)/2] = ABCDe * [(V2+V4)/2, -(I2+I4)/2]
-[(V1-V3)/2, (I1-I3)/2] = ABCDo * [(V2-V4)/2, -(I2-I4)/2]
+[(V1+V2)/2, (I1+I2)/2] = ABCDe * [(V3+V4)/2, -(I3+I4)/2]
+[(V1-V2)/2, (I1-I2)/2] = ABCDo * [(V3-V4)/2, -(I3-I4)/2]
 
 [V1, V2, V3, V4] = Z_coupled_tline * [I1, I2, I3, I4]
 ```
@@ -2011,18 +2011,60 @@ V1, I1 -->  ======== <-- I2, V2
 ```jldoctest
 julia> JosephsonCircuits.Z_coupled_tline(1,1,50,50,pi/4)
 4×4 Matrix{ComplexF64}:
- 0.0-50.0im     0.0-70.7107im  0.0-0.0im      0.0-0.0im
- 0.0-70.7107im  0.0-50.0im     0.0-0.0im      0.0-0.0im
- 0.0-0.0im      0.0-0.0im      0.0-50.0im     0.0-70.7107im
- 0.0-0.0im      0.0-0.0im      0.0-70.7107im  0.0-50.0im
+ 0.0-50.0im     0.0-0.0im      0.0-70.7107im  0.0-0.0im
+ 0.0-0.0im      0.0-50.0im     0.0-0.0im      0.0-70.7107im
+ 0.0-70.7107im  0.0-0.0im      0.0-50.0im     0.0-0.0im
+ 0.0-0.0im      0.0-70.7107im  0.0-0.0im      0.0-50.0im
 ```
 """
 function Z_coupled_tline(betae,betao,Z0e,Z0o,l)
     Z11 = Z22 = Z33 = Z44 = -im/2*(Z0e*cot(betae*l) + Z0o*cot(betao*l))
-    Z12 = Z21 = Z34 = Z43 = -im/2*(Z0e*csc(betae*l) + Z0o*csc(betao*l))
-    Z13 = Z31 = Z42 = Z24 = -im/2*(Z0e*cot(betae*l) - Z0o*cot(betao*l))
+    Z12 = Z21 = Z34 = Z43 = -im/2*(Z0e*cot(betae*l) - Z0o*cot(betao*l)) 
+    Z13 = Z31 = Z42 = Z24 = -im/2*(Z0e*csc(betae*l) + Z0o*csc(betao*l))
     Z14 = Z41 = Z32 = Z23 = -im/2*(Z0e*csc(betae*l) - Z0o*csc(betao*l))
     return [Z11 Z12 Z13 Z14; Z21 Z22 Z23 Z24; Z31 Z32 Z33 Z34; Z41 Z42 Z43 Z44]
+end
+
+"""
+    ABCD_coupled_tline(betae,betao,Z0e,Z0o,l)
+
+Return the ABCD matrix for two coupled transmission lines described by
+even and odd mode wavevectors `betae` and `betao`, and even and odd mode
+impedances `Z0e` and `Z0o`, and length `l`.
+```
+betae, Z0e
+betao, Z0o
+
+V1, I1 -->  ======== <-- I3, V3
+V2, I2 -->  ======== <-- I4, V4
+            <---l-->
+
+[(V1+V2)/2, (I1+I2)/2] = ABCDe * [(V3+V4)/2, -(I3+I4)/2]
+[(V1-V2)/2, (I1-I2)/2] = ABCDo * [(V3-V4)/2, -(I3-I4)/2]
+
+[V1, V2, I1, I2] = ABCD_coupled_tline * [V3, V4, -I3, -I4]
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_coupled_tline(1,1,50,50,pi/4)
+4×4 Matrix{ComplexF64}:
+ 0.707107+0.0im             0.0+0.0im        …       0.0+0.0im
+      0.0+0.0im        0.707107+0.0im                0.0+35.3553im
+      0.0+0.0141421im       0.0+0.0im                0.0+0.0im
+      0.0+0.0im             0.0+0.0141421im     0.707107+0.0im
+
+julia> isapprox(JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_coupled_tline(1,1,55,50,pi/4)),JosephsonCircuits.Z_coupled_tline(1,1,55,50,pi/4))
+true
+```
+"""
+function ABCD_coupled_tline(betae,betao,Z0e,Z0o,l)
+    A11 = A22 = A33 = A44 = 1/2*(cos(betae*l) + cos(betao*l))
+    A12 = A21 = A34 = A43 = 1/2*(cos(betae*l) - cos(betao*l))
+    A13 = A24 = im/2*(Z0e*sin(betae*l) + Z0o*sin(betao*l))
+    A31 = A42 = im/2*(sin(betae*l)/Z0e + sin(betao*l)/Z0o)
+    A14 = A23 = im/2*(Z0e*sin(betae*l) - Z0o*sin(betao*l))
+    A41 = A32 = im/2*(sin(betae*l)/Z0e - sin(betao*l)/Z0o)
+    return [A11 A12 A13 A14; A21 A22 A23 A24; A31 A32 A33 A34; A41 A42 A43 A44]
 end
 
 """
@@ -2141,3 +2183,346 @@ function ABCD_TZ(Z1,Z2,Z3)
     return [1+Z1/Z3 Z1+Z2+Z1*Z2/Z3;1/Z3 1+Z2/Z3]
 end
 
+"""
+    A_coupled_tline(L,Cmaxwell,omega,l)
+
+Returns the 2mx2m chain (ABCD) matrix for a port number symmetric multi-port
+network of m coupled transmission lines described by a symmetric mxm
+Maxwell inductance (per unit length) matrix `L`, a symmetric mxm Maxwell
+capacitance matrix (per unit length) `Cmaxwell`, an angular frequency `omega`,
+and a physical length `l`.
+```
+V_1, I_1 -->  ======== <-- I_{m+1}, V_{m+1}
+V_2, I_2 -->  ======== <-- I_{m+2}, V_{m+2}
+          .
+          .
+          .
+V_m, I_m -->  ======== <-- I_n, V_n
+              <---l-->
+
+where n=2*m.
+
+[V_1, ...V_m, I_1, ...I_m] = A_coupled_tline * [V_{m+1}, ...V_n, I_{m+1}, ...I_n]
+```
+
+# Examples
+```jldoctest
+Zeven = 51.0
+Zodd = 49.0
+neven = 1.1
+nodd = 1.08
+l = 3.5e-3
+c = 2.998e8
+omega = 2*pi*5e9
+
+L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
+A1 = JosephsonCircuits.A_coupled_lines(L,C,omega,l)
+A2 = JosephsonCircuits.ABCD_coupled_tline(neven*omega/c,nodd*omega/c,Zeven,Zodd,l)
+println(isapprox(A1,A2))
+
+# output
+true
+```
+
+# References
+Paul, Clayton R. Analysis of Multiconductor Transmission Lines, Second
+Edition. Wiley, 2008.
+"""
+function A_coupled_lines(L,Cmaxwell,omega,l)
+
+    ZC, TI, TV, theta, U, lambda, S = ZC_basis_coupled_lines(L,Cmaxwell)
+    TIinv = inv(TI)
+    TVinv = inv(TV)
+    YC = inv(ZC)
+
+    gamma = im*lambda*omega
+
+    phi11 = 1/2*ZC*TI*(exp(gamma*l)+exp(-gamma*l))*TIinv*YC
+    phi12 = -1/2*ZC*TI*(exp(-gamma*l)-exp(gamma*l))*TIinv
+    phi21 = -1/2*TI*(exp(-gamma*l)-exp(gamma*l))*TIinv*YC
+    phi22 = 1/2*TI*(exp(gamma*l)+exp(-gamma*l))*TIinv
+
+    # phi11 = 1/2*TV*(exp(gamma*l)+exp(-gamma*l))*TVinv
+    # phi12 = -1/2*TV*(exp(gamma*l)-exp(-gamma*l))*TVinv*ZC
+    # phi21 = -1/2*YC*TV*(exp(gamma*l)-exp(-gamma*l))*TVinv
+    # phi22 = 1/2*YC*TV*(exp(gamma*l)+exp(-gamma*l))*TVinv*ZC
+
+    A = zeros(Complex{Float64},4,4)
+    A[1:2,1:2] .= phi11
+    A[1:2,3:end] .= phi12
+    A[3:end,1:2] .= phi21
+    A[3:end,3:end] .= phi22
+    return A
+end
+
+"""
+    ZC_basis_coupled_lines(L, Cmaxwell)
+
+    Returns the characteristic impedance matrix `ZC` and eigenbasis for
+    current `TI` and voltage `TV` from the inductance per unit length matrix
+    `L` and Maxwell capacitance per unit length matrix `Cmaxwell`.
+
+# Arguments
+- `L`: inductance per unit length matrix.
+- `C`: Maxwell capacitance per unit length matrix.
+
+# Returns
+- `ZC`: characteristic impedance matrix.
+- `TI`: matrix which transforms mode currents to currents, I = TI*Im. Computed
+        from TI = U*theta*S.
+- `TV`: matrix which transforms mode voltages to voltages, V = TV*Vm. Computed
+        from TV = U*inv(theta)*S.
+- `theta`: Diagonal matrix with the square of the eigenvalues of Cmaxwell
+        along the diagonals.
+- `U`: eigenvectors of Cmaxwell.
+- `lambda`: Diagonal matrix with the square of the eigenvalues of
+        theta*Ut*L*U*theta along the diagonals. `lambda` is related
+        to the propagation constant, gamma, as gamma^2 = -omega^2*lambda^2.
+- `S`: eigenvectors of theta*Ut*L*U*theta.
+
+# Examples
+```jldoctest
+Zeven = 51.0
+Zodd = 49.0
+neven = 1.1
+nodd = 1.08
+
+L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
+ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_lines(L,C)
+@show ZC
+@show TI
+@show TV
+@show theta
+@show U
+@show lambda
+@show S
+println(isapprox(Zeven,ZC[1,1]+ZC[1,2]))
+println(isapprox(Zodd,ZC[1,1]-ZC[1,2]))
+println(isapprox(neven,lambda[2,2]*2.998e8))
+println(isapprox(nodd,lambda[1,1]*2.998e8))
+
+# output
+ZC = [49.999999999999986 1.000000000000007; 1.000000000000007 49.999999999999986]
+TI = [-6.062936583116437e-6 -5.997640665072575e-6; 6.062936583116437e-6 -5.997640665072575e-6]
+TV = [-82468.28795675654 -83366.11476438788; 82468.28795675654 -83366.11476438788]
+theta = [8.481944770786026e-6 0.0; 0.0 8.574287143651258e-6]
+U = [-0.7071067811865475 -0.7071067811865475; -0.7071067811865475 0.7071067811865475]
+lambda = [3.602401601067378e-9 0.0; 0.0 3.669112741827885e-9]
+S = [0.0 1.0; 1.0 0.0]
+true
+true
+true
+true
+```
+
+# References
+Paul, Clayton R. Analysis of Multiconductor Transmission Lines, Second
+Edition. Wiley, 2008.
+"""
+function ZC_basis_coupled_lines(L,Cmaxwell)
+
+    # compute U and theta
+    vals, vecs = eigen(Cmaxwell)
+    U = vecs
+    theta = Diagonal(sqrt.(vals))
+
+    # compute S and lambda
+    vals, vecs = eigen(theta*U'*L*U*theta)
+    lambda = Diagonal(sqrt.(vals))
+    S = vecs
+
+    # compute TI and TV
+    TI = U*theta*S
+    TV = U*inv(theta)*S
+
+    # compute ZC and YC
+    ZC = U*inv(theta)*S*lambda*S'*inv(theta)*U'
+
+    return (ZC = ZC, TI = TI, TV = TV, theta = theta, U = U, lambda = lambda,
+        S = S)
+end
+
+
+"""
+    maxwell_to_mutual(Cmaxwell::AbstractMatrix)
+
+Return the mutual capacitance matrix from the Maxwell capacitance matrix
+`Cmaxwell`.
+
+The Maxwell capacitance `Cmaxwell` is the relationship between charge and
+voltage on each node, Q = C V or dQi/dVj = C_ij where `C` is the
+Maxwell capacitance matrix.
+
+Each element of the mutual capacitance matrix `Cmutual` is the value of a
+physical capacitor placed between two nodes in a circuit or between a node
+and ground.
+
+# Examples
+```jldoctest
+julia> @variables C11, C12, C21, C22;C = [C11 C12;C21 C22];JosephsonCircuits.maxwell_to_mutual(C)
+2×2 Matrix{Num}:
+ C11 + C12       -C12
+      -C21  C21 + C22
+
+julia> C = [1.0 -0.1;-0.1 2.0];JosephsonCircuits.maxwell_to_mutual(C)
+2×2 Matrix{Float64}:
+ 0.9  0.1
+ 0.1  1.9
+```
+"""
+function maxwell_to_mutual(Cmaxwell::AbstractMatrix)
+  return Diagonal(Cmaxwell)-Cmaxwell + Diagonal(sum(Cmaxwell,dims=2)[:])
+end
+
+"""
+    maxwell_to_mutual(Cmutual::AbstractMatrix)
+
+Return the Maxwell capacitance matrix from the mutual capacitance matrix
+`Cmutual`.
+
+The Maxwell capacitance `Cmaxwell` is the relationship between charge and
+voltage on each node, Q = C V or dQi/dVj = C_ij where `C` is the
+Maxwell capacitance matrix.
+
+Each element of the mutual capacitance matrix `Cmutual` is the value of a
+physical capacitor placed between two nodes in a circuit or between a node
+and ground.
+
+# Examples
+```jldoctest
+julia> @variables Cg, Cm;C = [Cg Cm;Cm Cg];JosephsonCircuits.mutual_to_maxwell(C)
+2×2 Matrix{Num}:
+ Cg + Cm      -Cm
+     -Cm  Cg + Cm
+
+julia> C = [0.9 0.1;0.1 1.9];JosephsonCircuits.mutual_to_maxwell(C)
+2×2 Matrix{Float64}:
+  1.0  -0.1
+ -0.1   2.0
+```
+"""
+function mutual_to_maxwell(C::AbstractMatrix)
+  return maxwell_to_mutual(C)
+end
+
+"""
+    maxwell_to_even_odd(L, Cmaxwell)
+
+Return the even and odd mode impedances and the even and odd mode indices from
+the inductance matrix `L` and the Maxwell capacitance matrix `Cmaxwell`.
+
+# Examples
+```jldoctest
+@variables C11, C12, L11, L12
+C = [C11 C12;C12 C11]
+L = [L11 L12;L12 L11]
+Zeven, Zodd, neven, nodd = JosephsonCircuits.maxwell_to_even_odd(L,C)
+@show Zeven
+@show Zodd
+@show neven
+@show nodd
+;
+
+# output
+Zeven = sqrt((L11 + L12) / (C11 + C12))
+Zodd = sqrt((L11 - L12) / (C11 - C12))
+neven = 2.998e8sqrt((C11 + C12)*(L11 + L12))
+nodd = 2.998e8sqrt((C11 - C12)*(L11 - L12))
+```
+"""
+function maxwell_to_even_odd(L, Cmaxwell)
+
+    # consider erroring if not 2x2 matrices with capacitance and inductance
+    # to ground equal for both transmission lines.
+    # also error if not symmetric
+    # (Cmaxwell[1,1] != Cmaxwell[2,2]) || (Cmaxwell[1,2] != Cmaxwell[2,1])
+    # size(Cmaxwell) != (2,2)
+    # same for inductance matrix
+
+    c = 2.998e8
+    Zeven = sqrt((L[1,1]+L[1,2])/(Cmaxwell[1,1]+Cmaxwell[1,2]))
+    Zodd = sqrt((L[1,1]-L[1,2])/(Cmaxwell[1,1]-Cmaxwell[1,2]))
+    neven = c*sqrt((L[1,1]+L[1,2])*(Cmaxwell[1,1]+Cmaxwell[1,2]))
+    nodd = c*sqrt((L[1,1]-L[1,2])*(Cmaxwell[1,1]-Cmaxwell[1,2]))
+    return (Zeven = Zeven, Zodd = Zodd, neven = neven, nodd = nodd)
+end
+
+"""
+    mutual_to_even_odd(L, Cmutual)
+
+Return the even and odd mode impedances and the even and odd mode indices from
+the inductance matrix `L` and the mutual capacitance matrix `Cmutual`.
+
+# Examples
+```jldoctest
+@variables Cg, Cm, Ls, Lm
+C = [Cg Cm; Cm Cg]
+L = [Ls Lm; Lm Ls]
+Zeven, Zodd, neven, nodd = JosephsonCircuits.mutual_to_even_odd(L,C)
+@show Zeven
+@show Zodd
+@show neven
+@show nodd
+;
+
+# output
+Zeven = sqrt((Lm + Ls) / Cg)
+Zodd = sqrt((-Lm + Ls) / (Cg + 2Cm))
+neven = 2.998e8sqrt(Cg*(Lm + Ls))
+nodd = 2.998e8sqrt((Cg + 2Cm)*(-Lm + Ls))
+```
+"""
+function mutual_to_even_odd(L, Cmutual)
+    return maxwell_to_even_odd(L, maxwell_to_mutual(Cmutual))
+end
+
+
+"""
+    even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
+
+Return the inductance matrix and Maxwell capacitance matrix for two coupled
+transmission lines with even and odd mode impedances `Zeven`, `Zodd` and
+even and odd mode indices `neven`, `nodd`.
+
+# Examples
+```jldoctest
+L1 = [1.1 0.1;0.1 1.1]
+C1 = [2.0 -0.4;-0.4 2.0]
+L2, C2 = JosephsonCircuits.even_odd_to_maxwell(JosephsonCircuits.maxwell_to_even_odd(L1,C1)...)
+isapprox(L1,L2) && isapprox(C1,C2)
+
+# output
+true
+```
+"""
+function even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
+    c = 2.998e8
+    L11 = (neven*Zeven+nodd*Zodd)/(2*c)
+    L12 = (neven*Zeven-nodd*Zodd)/(2*c)
+    C11 = (neven*Zodd+nodd*Zeven)/(2*c*Zeven*Zodd)
+    C12 = (neven*Zodd-nodd*Zeven)/(2*c*Zodd*Zeven)
+    return (L = [L11 L12;L12 L11], C = [C11 C12;C12 C11])
+end
+
+"""
+    even_odd_to_mutual(Zeven, Zodd, neven, nodd)
+
+Return the inductance matrix and mutual capacitance matrix for two coupled
+transmission lines with even and odd mode impedances `Zeven`, `Zodd` and
+even and odd mode indices `neven`, `nodd`.
+
+# Examples
+```jldoctest
+L1 = [1.1 0.1;0.1 1.1]
+C1 = [1.6 0.4;0.4 1.6]
+L2, C2 = JosephsonCircuits.even_odd_to_mutual(JosephsonCircuits.mutual_to_even_odd(L1,C1)...)
+isapprox(L1,L2) && isapprox(C1,C2)
+
+# output
+true
+```
+"""
+function even_odd_to_mutual(Zeven, Zodd, neven, nodd)
+    L, Cmaxwell = even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
+    return (L = L, C = maxwell_to_mutual(Cmaxwell))
+end

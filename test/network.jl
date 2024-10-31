@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using LinearAlgebra
 using Test
 import StaticArrays
 
@@ -320,6 +321,21 @@ import StaticArrays
                 @test isapprox(arg1,arg3)
             end
         end
+    end
+
+    @testset "ZC_basis_coupled_lines" begin
+        Cg = 1.6670474181399462e-10
+        Cm = 9.320861870486729e-12
+        Ls = 4.167618545349866e-7
+        Lm = 2.330215467621682e-8
+        C = JosephsonCircuits.LinearAlgebra.Symmetric([Cg -Cm;-Cm Cg])
+        L = JosephsonCircuits.LinearAlgebra.Symmetric([Ls Lm;Lm Ls])
+        ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_lines(L,C)
+
+        @test isapprox(U'*C*U,theta^2)
+        @test isapprox(S'*(theta*U'*L*U*theta)*S,lambda^2)
+        @test isapprox(inv(TI)*C*L*TI,lambda^2)
+        @test isapprox(TV'*TI,I)
     end
 
 end
