@@ -317,9 +317,9 @@ ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_lines(L,C)
 @show ZC
 @show TI
 @show TV
-@show theta
+@show Matrix(theta)
 @show U
-@show lambda
+@show Matrix(lambda)
 @show S
 println(isapprox(Zeven,ZC[1,1]+ZC[1,2]))
 println(isapprox(Zodd,ZC[1,1]-ZC[1,2]))
@@ -330,9 +330,9 @@ println(isapprox(nodd,lambda[1,1]*2.998e8))
 ZC = [49.999999999999986 1.000000000000007; 1.000000000000007 49.999999999999986]
 TI = [-6.062936583116437e-6 -5.997640665072575e-6; 6.062936583116437e-6 -5.997640665072575e-6]
 TV = [-82468.28795675654 -83366.11476438788; 82468.28795675654 -83366.11476438788]
-theta = [8.481944770786026e-6 0.0; 0.0 8.574287143651258e-6]
+Matrix(theta) = [8.481944770786026e-6 0.0; 0.0 8.574287143651258e-6]
 U = [-0.7071067811865475 -0.7071067811865475; -0.7071067811865475 0.7071067811865475]
-lambda = [3.602401601067378e-9 0.0; 0.0 3.669112741827885e-9]
+Matrix(lambda) = [3.602401601067378e-9 0.0; 0.0 3.669112741827885e-9]
 S = [0.0 1.0; 1.0 0.0]
 true
 true
@@ -3514,4 +3514,4 @@ set dphimax=0.01
 run
 set filetype=binary
 write
-.endc</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.7.0 on <span class="colophon-date" title="Thursday 31 October 2024 05:02">Thursday 31 October 2024</span>. Using Julia version 1.11.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+.endc</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.7.0 on <span class="colophon-date" title="Thursday 31 October 2024 05:38">Thursday 31 October 2024</span>. Using Julia version 1.11.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
