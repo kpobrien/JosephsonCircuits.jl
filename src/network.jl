@@ -1989,110 +1989,6 @@ end
 
 
 """
-    Z_coupled_tline(betae,betao,Z0e,Z0o,l)
-
-Return the impedance matrix for two coupled transmission lines described by
-even and odd mode wavevectors `betae` and `betao`, and even and odd mode
-impedances `Z0e` and `Z0o`, and length `l`.
-```
-betae, Z0e
-betao, Z0o
-
-V1, I1 -->  ======== <-- I3, V3
-V2, I2 -->  ======== <-- I4, V4
-            <---l-->
-
-[(V1+V2)/2, (I1+I2)/2] = ABCDe * [(V3+V4)/2, -(I3+I4)/2]
-[(V1-V2)/2, (I1-I2)/2] = ABCDo * [(V3-V4)/2, -(I3-I4)/2]
-
-[V1, V2, V3, V4] = Z_coupled_tline * [I1, I2, I3, I4]
-```
-# Examples
-```jldoctest
-julia> JosephsonCircuits.Z_coupled_tline(1,1,50,50,pi/4)
-4×4 Matrix{ComplexF64}:
- 0.0-50.0im     0.0-0.0im      0.0-70.7107im  0.0-0.0im
- 0.0-0.0im      0.0-50.0im     0.0-0.0im      0.0-70.7107im
- 0.0-70.7107im  0.0-0.0im      0.0-50.0im     0.0-0.0im
- 0.0-0.0im      0.0-70.7107im  0.0-0.0im      0.0-50.0im
-```
-"""
-function Z_coupled_tline(betae,betao,Z0e,Z0o,l)
-    Z11 = Z22 = Z33 = Z44 = -im/2*(Z0e*cot(betae*l) + Z0o*cot(betao*l))
-    Z12 = Z21 = Z34 = Z43 = -im/2*(Z0e*cot(betae*l) - Z0o*cot(betao*l)) 
-    Z13 = Z31 = Z42 = Z24 = -im/2*(Z0e*csc(betae*l) + Z0o*csc(betao*l))
-    Z14 = Z41 = Z32 = Z23 = -im/2*(Z0e*csc(betae*l) - Z0o*csc(betao*l))
-    return [Z11 Z12 Z13 Z14; Z21 Z22 Z23 Z24; Z31 Z32 Z33 Z34; Z41 Z42 Z43 Z44]
-end
-
-"""
-    ABCD_coupled_tline(betae,betao,Z0e,Z0o,l)
-
-Return the ABCD matrix for two coupled transmission lines described by
-even and odd mode wavevectors `betae` and `betao`, and even and odd mode
-impedances `Z0e` and `Z0o`, and length `l`.
-```
-betae, Z0e
-betao, Z0o
-
-V1, I1 -->  ======== <-- I3, V3
-V2, I2 -->  ======== <-- I4, V4
-            <---l-->
-
-[(V1+V2)/2, (I1+I2)/2] = ABCDe * [(V3+V4)/2, -(I3+I4)/2]
-[(V1-V2)/2, (I1-I2)/2] = ABCDo * [(V3-V4)/2, -(I3-I4)/2]
-
-[V1, V2, I1, I2] = ABCD_coupled_tline * [V3, V4, -I3, -I4]
-```
-# Examples
-```jldoctest
-julia> JosephsonCircuits.ABCD_coupled_tline(1,1,50,50,pi/4)
-4×4 Matrix{ComplexF64}:
- 0.707107+0.0im             0.0+0.0im        …       0.0+0.0im
-      0.0+0.0im        0.707107+0.0im                0.0+35.3553im
-      0.0+0.0141421im       0.0+0.0im                0.0+0.0im
-      0.0+0.0im             0.0+0.0141421im     0.707107+0.0im
-
-julia> isapprox(JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_coupled_tline(1,1,55,50,pi/4)),JosephsonCircuits.Z_coupled_tline(1,1,55,50,pi/4))
-true
-```
-"""
-function ABCD_coupled_tline(betae,betao,Z0e,Z0o,l)
-    A11 = A22 = A33 = A44 = 1/2*(cos(betae*l) + cos(betao*l))
-    A12 = A21 = A34 = A43 = 1/2*(cos(betae*l) - cos(betao*l))
-    A13 = A24 = im/2*(Z0e*sin(betae*l) + Z0o*sin(betao*l))
-    A31 = A42 = im/2*(sin(betae*l)/Z0e + sin(betao*l)/Z0o)
-    A14 = A23 = im/2*(Z0e*sin(betae*l) - Z0o*sin(betao*l))
-    A41 = A32 = im/2*(sin(betae*l)/Z0e - sin(betao*l)/Z0o)
-    return [A11 A12 A13 A14; A21 A22 A23 A24; A31 A32 A33 A34; A41 A42 A43 A44]
-end
-
-"""
-    ABCD_tline(beta,Z0,l)
-
-Return the ABCD matrix for a transmission line described by wavevector `beta`,
-characteristic impedance `Z0`, and length `l`.
-```
-   <--l--->
-o--========--o
-   beta, Z0   
-              
-o------------o
-```
-# Examples
-```jldoctest
-julia> JosephsonCircuits.ABCD_tline(1,1,pi/4)
-2×2 Matrix{ComplexF64}:
- 0.707107+0.0im            0.0+0.707107im
-      0.0+0.707107im  0.707107+0.0im
-```
-"""
-function ABCD_tline(beta,Z0,l)
-    return [cos(beta*l) im*Z0*sin(beta*l);im/Z0*sin(beta*l) cos(beta*l)]
-end
-
-
-"""
     ABCD_seriesZ(Z)
 
 Return the ABCD matrix for a series impedance `Z`.
@@ -2104,10 +2000,10 @@ o--------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_seriesZ(2)
+julia> JosephsonCircuits.ABCD_seriesZ(50)
 2×2 Matrix{Int64}:
- 1  2
- 0  1
+ 1  50
+ 0   1
 ```
 """
 function ABCD_seriesZ(Z)
@@ -2127,10 +2023,10 @@ o---------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_shuntY(2)
-2×2 Matrix{Int64}:
- 1  0
- 2  1
+julia> JosephsonCircuits.ABCD_shuntY(1/50)
+2×2 Matrix{Float64}:
+ 1.0   0.0
+ 0.02  1.0
 ```
 """
 function ABCD_shuntY(Y)
@@ -2183,8 +2079,110 @@ function ABCD_TZ(Z1,Z2,Z3)
     return [1+Z1/Z3 Z1+Z2+Z1*Z2/Z3;1/Z3 1+Z2/Z3]
 end
 
+
 """
-    A_coupled_tline(L,Cmaxwell,omega,l)
+    ABCD_tline(theta,Z0)
+
+Return the ABCD matrix for a transmission line described by phase delay
+`theta` in radians and characteristic impedance `Z0` in Ohms.
+```
+   theta, Z0  
+o--========--o
+              
+              
+o------------o
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_tline(pi/4,1)
+2×2 Matrix{ComplexF64}:
+ 0.707107+0.0im            0.0+0.707107im
+      0.0+0.707107im  0.707107+0.0im
+```
+"""
+function ABCD_tline(theta,Z0)
+    return [cos(theta) im*Z0*sin(theta);im/Z0*sin(theta) cos(theta)]
+end
+
+"""
+    ABCD_coupled_tline(thetae, thetao, Z0e, Z0o)
+
+Return the ABCD matrix for two coupled transmission lines described by
+even and odd mode phase delays `thetae` and `thetao`, and even and odd mode
+impedances `Z0e` and `Z0o`.
+```
+thetae, Z0e
+thetao, Z0o
+
+V1, I1 -->  ======== <-- I3, V3
+V2, I2 -->  ======== <-- I4, V4
+
+[(V1+V2)/2, (I1+I2)/2] = ABCDe * [(V3+V4)/2, -(I3+I4)/2]
+[(V1-V2)/2, (I1-I2)/2] = ABCDo * [(V3-V4)/2, -(I3-I4)/2]
+
+[V1, V2, I1, I2] = ABCD_coupled_tline * [V3, V4, -I3, -I4]
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_coupled_tline(pi/4,pi/4,50,50)
+4×4 Matrix{ComplexF64}:
+ 0.707107+0.0im             0.0+0.0im        …       0.0+0.0im
+      0.0+0.0im        0.707107+0.0im                0.0+35.3553im
+      0.0+0.0141421im       0.0+0.0im                0.0+0.0im
+      0.0+0.0im             0.0+0.0141421im     0.707107+0.0im
+
+julia> isapprox(JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_coupled_tline(pi/4,pi/4,55,50)),JosephsonCircuits.Z_coupled_tline(pi/4,pi/4,55,50))
+true
+```
+"""
+function ABCD_coupled_tline(thetae, thetao, Z0e, Z0o)
+    A11 = A22 = A33 = A44 = 1/2*(cos(thetae) + cos(thetao))
+    A12 = A21 = A34 = A43 = 1/2*(cos(thetae) - cos(thetao))
+    A13 = A24 = im/2*(Z0e*sin(thetae) + Z0o*sin(thetao))
+    A31 = A42 = im/2*(sin(thetae)/Z0e + sin(thetao)/Z0o)
+    A14 = A23 = im/2*(Z0e*sin(thetae) - Z0o*sin(thetao))
+    A41 = A32 = im/2*(sin(thetae)/Z0e - sin(thetao)/Z0o)
+    return [A11 A12 A13 A14; A21 A22 A23 A24; A31 A32 A33 A34; A41 A42 A43 A44]
+end
+
+"""
+    Z_coupled_tline(thetae, thetao, Z0e, Z0o)
+
+Return the impedance matrix for two coupled transmission lines described by
+even and odd mode phase delays `thetae` and `thetao`, and even and odd mode
+impedances `Z0e` and `Z0o`.
+```
+thetae, Z0e
+thetao, Z0o
+
+V1, I1 -->  ======== <-- I3, V3
+V2, I2 -->  ======== <-- I4, V4
+
+[(V1+V2)/2, (I1+I2)/2] = ABCDe * [(V3+V4)/2, -(I3+I4)/2]
+[(V1-V2)/2, (I1-I2)/2] = ABCDo * [(V3-V4)/2, -(I3-I4)/2]
+
+[V1, V2, V3, V4] = Z_coupled_tline * [I1, I2, I3, I4]
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Z_coupled_tline(pi/4,pi/4,50,50)
+4×4 Matrix{ComplexF64}:
+ 0.0-50.0im     0.0-0.0im      0.0-70.7107im  0.0-0.0im
+ 0.0-0.0im      0.0-50.0im     0.0-0.0im      0.0-70.7107im
+ 0.0-70.7107im  0.0-0.0im      0.0-50.0im     0.0-0.0im
+ 0.0-0.0im      0.0-70.7107im  0.0-0.0im      0.0-50.0im
+```
+"""
+function Z_coupled_tline(thetae,thetao,Z0e,Z0o)
+    Z11 = Z22 = Z33 = Z44 = -im/2*(Z0e*cot(thetae) + Z0o*cot(thetao))
+    Z12 = Z21 = Z34 = Z43 = -im/2*(Z0e*cot(thetae) - Z0o*cot(thetao)) 
+    Z13 = Z31 = Z42 = Z24 = -im/2*(Z0e*csc(thetae) + Z0o*csc(thetao))
+    Z14 = Z41 = Z32 = Z23 = -im/2*(Z0e*csc(thetae) - Z0o*csc(thetao))
+    return [Z11 Z12 Z13 Z14; Z21 Z22 Z23 Z24; Z31 Z32 Z33 Z34; Z41 Z42 Z43 Z44]
+end
+
+"""
+    A_coupled_tlines(L,Cmaxwell,omega,l)
 
 Returns the 2mx2m chain (ABCD) matrix for a port number symmetric multi-port
 network of m coupled transmission lines described by a symmetric mxm
@@ -2216,8 +2214,8 @@ c = 2.998e8
 omega = 2*pi*5e9
 
 L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
-A1 = JosephsonCircuits.A_coupled_lines(L,C,omega,l)
-A2 = JosephsonCircuits.ABCD_coupled_tline(neven*omega/c,nodd*omega/c,Zeven,Zodd,l)
+A1 = JosephsonCircuits.A_coupled_tlines(L,C,omega,l)
+A2 = JosephsonCircuits.ABCD_coupled_tline(neven*omega/c*l,nodd*omega/c*l,Zeven,Zodd)
 println(isapprox(A1,A2))
 
 # output
@@ -2228,9 +2226,9 @@ true
 Paul, Clayton R. Analysis of Multiconductor Transmission Lines, Second
 Edition. Wiley, 2008.
 """
-function A_coupled_lines(L,Cmaxwell,omega,l)
+function A_coupled_tlines(L,Cmaxwell,omega,l)
 
-    ZC, TI, TV, theta, U, lambda, S = ZC_basis_coupled_lines(L,Cmaxwell)
+    ZC, TI, TV, theta, U, lambda, S = ZC_basis_coupled_tlines(L,Cmaxwell)
     TIinv = inv(TI)
     TVinv = inv(TV)
     YC = inv(ZC)
@@ -2256,7 +2254,7 @@ function A_coupled_lines(L,Cmaxwell,omega,l)
 end
 
 """
-    ZC_basis_coupled_lines(L, Cmaxwell)
+    ZC_basis_coupled_tlines(L, Cmaxwell)
 
     Returns the characteristic impedance matrix `ZC` and eigenbasis for
     current `TI` and voltage `TV` from the inductance per unit length matrix
@@ -2288,7 +2286,7 @@ neven = 1.1
 nodd = 1.08
 
 L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
-ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_lines(L,C)
+ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_tlines(L,C)
 @show ZC
 @show TI
 @show TV
@@ -2319,7 +2317,7 @@ true
 Paul, Clayton R. Analysis of Multiconductor Transmission Lines, Second
 Edition. Wiley, 2008.
 """
-function ZC_basis_coupled_lines(L,Cmaxwell)
+function ZC_basis_coupled_tlines(L,Cmaxwell)
 
     # compute U and theta
     vals, vecs = eigen(Cmaxwell)
@@ -2525,4 +2523,119 @@ true
 function even_odd_to_mutual(Zeven, Zodd, neven, nodd)
     L, Cmaxwell = even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
     return (L = L, C = maxwell_to_mutual(Cmaxwell))
+end
+
+
+"""
+    Z_canonical_coupled_line_circuit(i::Int, thetae, thetao, Z0e, Z0o)
+
+Return the impedance matrix for the `i`'th canonical coupled line circuit, as
+a function of the even mode phase delay `thetae` in radians, the odd mode
+phase delay `thetao` in radians, the even mode characteristic impedance `Z0e`
+in Ohms, and the odd mode characteristic impedance `Z0o` in Ohms.
+1) low pass
+```
+   gnd--==========
+1--> o--==========--o <--2
+```
+2) band pass
+```
+   gnd--==========--o <--2
+1--> o--==========--gnd
+```
+3) band pass
+```
+        ==========--o <--2
+1--> o--==========
+```
+4) band pass
+```
+1--> o--==========--gnd
+2--> o--==========
+```
+5) all pass
+```
+        ==========
+1--> o--==========--o  <--2
+```
+6) all pass
+```
+   gnd--==========--gnd
+1--> o--==========--o  <--2
+```
+7) all pass
+```
+1--> o--==========--|
+2--> o--==========--|
+```
+8) all stop
+```
+   gnd--==========--o  <--2
+1--> o--==========
+```
+9) all stop
+```
+1--> o--==========--gnd
+2--> o--==========--gnd
+```
+10) all stop
+```
+1--> o--==========
+2--> o--==========
+```
+# Examples
+```jldoctest
+julia> @variables θe, θo, Ze, Zo;JosephsonCircuits.Z_canonical_coupled_line_circuits(3,θe,θo,Ze,Zo)
+2×2 Matrix{Complex{Num}}:
+ -0.5(Ze*cot(θe) + Zo*cot(θo))*im  -0.5(Ze*csc(θe) - Zo*csc(θo))*im
+ -0.5(Ze*csc(θe) - Zo*csc(θo))*im  -0.5(Ze*cot(θe) + Zo*cot(θo))*im
+```
+# References
+E. M. T. Jones, "Coupled-Strip-Transmission-Line Filters and Directional
+Couplers," in IRE Transactions on Microwave Theory and Techniques, vol. 4,
+no. 2, pp. 75-81, April 1956, doi: 10.1109/TMTT.1956.1125022.
+
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function Z_canonical_coupled_line_circuits(i::Int, thetae, thetao, Z0e, Z0o)
+
+    if i == 1
+        Z11 = -2*im*Z0e*Z0o*cos(thetae)*cos(thetao)/(Z0o*cos(thetao)*sin(thetae)+Z0e*cos(thetae)*sin(thetao))
+        Z22 = im*(-2*Z0e*Z0o*(1+cos(thetae)*cos(thetao))+(Z0e^2+Z0o^2)*sin(thetae)*sin(thetao))/(2*(Z0o*cos(thetao)*sin(thetae)+Z0e*cos(thetae)*sin(thetao)))
+        Z12 = Z21 = -im*Z0e*Z0o*(cos(thetae)+cos(thetao))/(Z0o*cos(thetao)*sin(thetae)+Z0e*cos(thetae)*sin(thetao))
+    elseif i == 2
+        Z11 = Z22 = -2*im*Z0e*Z0o*(Z0e*cos(thetao)*sin(thetae)+Z0o*cos(thetae)*sin(thetao))/(-2*Z0e*Z0o*(1+cos(thetae)*cos(thetao))+(Z0e^2+Z0o^2)*sin(thetae)*sin(thetao))
+        Z12 = Z21 = 2*im*Z0e*Z0o*(Z0e*sin(thetae)-Z0o*sin(thetao))/(-2*Z0e*Z0o*(1+cos(thetae)*cos(thetao))+(Z0e^2+Z0o^2)*sin(thetae)*sin(thetao))
+    elseif i == 3
+        Z11 = Z22 = -im/2*(Z0e*cot(thetae) + Z0o*cot(thetao))
+        Z12 = Z21 = -im/2*(Z0e*csc(thetae) - Z0o*csc(thetao))
+    elseif i == 4
+        Z11 = im*(2*Z0e*Z0o-2*Z0e*Z0o*cos(thetae)*cos(thetao)+(Z0e^2+Z0o^2)*sin(thetae)*sin(thetao))/(2*(Z0o*cos(thetao)*sin(thetae)+Z0e*cos(thetae)*sin(thetao)))
+        Z22 = im*(-2*Z0e*Z0o*(1+cos(thetae)*cos(thetao))+(Z0e^2+Z0o^2)*sin(thetae)*sin(thetao))/(2*(Z0o*cos(thetao)*sin(thetae)+Z0e*cos(thetae)*sin(thetao)))
+        Z12 = Z21 = im*(Z0e-Z0o)*(Z0e+Z0o)/(2*(Z0e*cot(thetae)+Z0o*cot(thetao)))
+    elseif i == 5
+        Z11 = Z22 = -im/2*(Z0e*cot(thetae) + Z0o*cot(thetao))
+        Z12 = Z21 = -im/2*(Z0e*csc(thetae) + Z0o*csc(thetao))
+    elseif i == 6
+        Z11 = Z22 = -2*im*Z0e*Z0o*(Z0e*cos(thetao)*sin(thetae)+Z0o*cos(thetae)*sin(thetao))/(2*Z0e*Z0o-2*Z0e*Z0o*cos(thetae)*cos(thetao)+(Z0e^2+Z0o^2)*sin(thetae)*sin(thetao))
+        Z12 = Z21 = -2*im*Z0e*Z0o*(Z0e*sin(thetae)+Z0o*sin(thetao))/(2*Z0e*Z0o-2*Z0e*Z0o*cos(thetae)*cos(thetao)+(Z0e^2+Z0o^2)*sin(thetae)*sin(thetao))
+    elseif i == 7
+        Z11 = Z22 = -im/2*(Z0e*cot(thetae)-Z0o*tan(thetao))
+        Z21 = Z12 = -im/2*(Z0e*cot(thetae)+Z0o*tan(thetao))
+    elseif i == 8
+        Z11 = -2*im*Z0e*Z0o*cot(thetae)*cot(thetao)/(Z0e*cot(thetae)+Z0o*cot(thetao))
+        Z22 = -im*(Z0e*cot(thetae) + Z0o*cot(thetao) - Z0e*csc(thetae)-Z0o*csc(thetao))*(Z0e*cot(thetae)+Z0e*csc(thetae)+Z0o*cot(thetao)+Z0o*csc(thetao))/(2*(Z0e*cot(thetae)+Z0o*cot(thetao)))
+        Z12 = Z21 = im*Z0e*Z0o*(cos(thetae)-cos(thetao))*csc(thetae)*csc(thetao)/(Z0e*cot(thetae)+Z0o*cot(thetao))
+    elseif i == 9
+        Z11 = Z22 = im/2*(Z0e*tan(thetae)+Z0o*tan(thetao))
+        Z12 = Z21 = im/2*(Z0e*tan(thetae)-Z0o*tan(thetao))
+    elseif i == 10
+        Z11 = Z22 = -im/2*(Z0e*cot(thetae) + Z0o*cot(thetao))
+        Z12 = Z21 = -im/2*(Z0e*cot(thetae) - Z0o*cot(thetao))
+    else
+        throw(ArgumentError("Canonical coupled line circuit number must be 1-10."))
+    end
+
+    return [Z11 Z12; Z21 Z22]
 end

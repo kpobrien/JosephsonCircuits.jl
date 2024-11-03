@@ -330,12 +330,76 @@ import StaticArrays
         Lm = 2.330215467621682e-8
         C = JosephsonCircuits.LinearAlgebra.Symmetric([Cg -Cm;-Cm Cg])
         L = JosephsonCircuits.LinearAlgebra.Symmetric([Ls Lm;Lm Ls])
-        ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_lines(L,C)
+        ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_tlines(L,C)
 
         @test isapprox(U'*C*U,theta^2)
         @test isapprox(S'*(theta*U'*L*U*theta)*S,lambda^2)
         @test isapprox(inv(TI)*C*L*TI,lambda^2)
         @test isapprox(TV'*TI,I)
+    end
+
+    @testset "Z_canonical_coupled_line_circuits" begin
+        Zeven = 52.0
+        Zodd = 48.0
+        neven = 2.2
+        nodd = 2.1
+        l = 2*3.0e-3
+        c = 2.998e8
+        omega = 2*pi*5e9
+
+        function S_canonical_coupled_line_circuits(i::Int, thetae, thetao, Ze, Zo)
+
+            # define an open
+            Sopen = ones(Complex{Float64},1,1)
+
+            # and a short
+            Sshort = -ones(Complex{Float64},1,1)
+            
+            # and a coupled transmission line
+            S = JosephsonCircuits.ZtoS(JosephsonCircuits.Z_coupled_tline(thetae,thetao,Zeven,Zodd));
+
+            if i == 1
+                S = JosephsonCircuits.connectS(S,Sopen,3,1)
+                S = JosephsonCircuits.connectS(S,Sshort,1,1)
+            elseif i == 2
+                S = JosephsonCircuits.connectS(S,Sshort,4,1)
+                S = JosephsonCircuits.connectS(S,Sshort,1,1)
+            elseif i == 3
+                S = JosephsonCircuits.connectS(S,Sopen,4,1)
+                S = JosephsonCircuits.connectS(S,Sopen,1,1)
+            elseif i == 4
+                S = JosephsonCircuits.connectS(S,Sopen,4,1)
+                S = JosephsonCircuits.connectS(S,Sshort,3,1)
+            elseif i == 5
+                S = JosephsonCircuits.connectS(S,Sopen,3,1)
+                S = JosephsonCircuits.connectS(S,Sopen,1,1)
+            elseif i == 6
+                S = JosephsonCircuits.connectS(S,Sshort,3,1)
+                S = JosephsonCircuits.connectS(S,Sshort,1,1)
+            elseif i == 7
+                S = JosephsonCircuits.connectS(S,4,3)
+            elseif i == 8
+                S = JosephsonCircuits.connectS(S,Sopen,4,1)
+                S = JosephsonCircuits.connectS(S,Sshort,1,1)
+            elseif i == 9
+                S = JosephsonCircuits.connectS(S,Sshort,4,1)
+                S = JosephsonCircuits.connectS(S,Sshort,3,1)
+            elseif i == 10
+                S = JosephsonCircuits.connectS(S,Sopen,4,1)
+                S = JosephsonCircuits.connectS(S,Sopen,3,1)        
+            else
+                throw(ArgumentError("Canonical coupled line circuit number must be 1-10."))
+            end
+                
+            return S
+        end
+
+        for i in 1:10
+            S1 = S_canonical_coupled_line_circuits(i, neven*omega/c*l,nodd*omega/c*l,Zeven,Zodd)
+            S2 = JosephsonCircuits.ZtoS(JosephsonCircuits.Z_canonical_coupled_line_circuits(i, neven*omega/c*l, nodd*omega/c*l, Zeven, Zodd));
+            @test isapprox(S1,S2)
+        end
+
     end
 
 end
