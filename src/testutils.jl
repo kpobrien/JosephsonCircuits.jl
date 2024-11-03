@@ -42,8 +42,6 @@ Recursively print the struct `out` to the IOStream or IOBuffer `io`.
 julia> JosephsonCircuits.testshow(stdout,JosephsonCircuits.warmupnumericmatrices())
 JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], 1.0e-9, Real[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
 
-julia> JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.warmupsymsold())
-
 julia> JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.warmupsyms())
 ```
 """

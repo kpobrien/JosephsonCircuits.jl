@@ -262,7 +262,7 @@ using Test
         Npumpmodes = 8
 
         # reduce the tolerance in order to get consistent results between different solvers
-        result1=hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1], ftol=1e-14)
+        result1=JosephsonCircuits.hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1], ftol=1e-14)
         result2=hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1], ftol=1e-14)
 
         @test isapprox(
@@ -341,7 +341,7 @@ using Test
         Npumpmodes = 8
         
         # reduce the tolerance in order to get consistent results between different solvers
-        result1=hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1], ftol=1e-14)
+        result1=JosephsonCircuits.hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1], ftol=1e-14)
         result2=hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1], ftol=1e-14)
 
         @test isapprox(

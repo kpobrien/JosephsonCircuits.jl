@@ -178,8 +178,6 @@ function warmupsymsnew()
         Npumpharmonics, circuit, circuitdefs)
 end
 
-
-
 function warmupsymsold()
 
     @variables Rleft Cc Lj Cj w L1
@@ -328,32 +326,78 @@ function warmupvvn()
 end
 
 function warmupnetwork()
+    # StoZ, StoY, StoA, StoB, StoABCD
+    # the different functions we want to test
+    for f in [
+            (JosephsonCircuits.ZtoS,JosephsonCircuits.StoZ),
+            (JosephsonCircuits.YtoS,JosephsonCircuits.StoY),
+            (JosephsonCircuits.AtoS,JosephsonCircuits.StoA),
+            (JosephsonCircuits.BtoS,JosephsonCircuits.StoB),
+            (JosephsonCircuits.ABCDtoS,JosephsonCircuits.StoABCD),
+        ]
+        # single matrix input
+        for portimpedances in [
+                rand(Complex{Float64}), rand(Complex{Float64},2),
+            ]
+            for arg1 in [rand(Complex{Float64},2,2)]
+                arg2 = f[1](arg1,portimpedances=portimpedances)
+                arg3 = f[2](arg2,portimpedances=portimpedances)
+            end
+        end
+        # array input
+        for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2,10)]
+            for arg1 in [rand(Complex{Float64},2,2,10)]
+                arg2 = f[1](arg1,portimpedances=portimpedances)
+                arg3 = f[2](arg2,portimpedances=portimpedances)
+            end
+        end
+        # vector of matrices
+        for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2) ]
+            for arg1 in [
+                    [rand(Complex{Float64},2,2) for i in 1:10],
+                ]
+                arg2 = [f[1](arg1[i],portimpedances=portimpedances) for i in 1:10]
+                arg3 = [f[2](arg2[i],portimpedances=portimpedances) for i in 1:10]
+            end
+        end
+    end
 
-    for arg in [rand(Complex{Float64},2,2),rand(Complex{Float64},2,2,3)]
-        JosephsonCircuits.StoT(arg)
-        JosephsonCircuits.StoZ(arg)
-        JosephsonCircuits.StoY(arg)
-        JosephsonCircuits.StoA(arg)
-        JosephsonCircuits.StoB(arg)
-        JosephsonCircuits.TtoS(arg)
-        JosephsonCircuits.ZtoS(arg)
-        JosephsonCircuits.ZtoA(arg)
-        JosephsonCircuits.YtoS(arg)
-        JosephsonCircuits.AtoS(arg)
-        JosephsonCircuits.AtoZ(arg)
-        JosephsonCircuits.AtoB(arg)
-        JosephsonCircuits.BtoS(arg)
-        JosephsonCircuits.BtoA(arg)
-
+    # StoT, AtoB, ZtoA, YtoA, YtoB, ZtoB, ZtoY
+    # the different functions we want to test
+    for f in [
+            (JosephsonCircuits.StoT,JosephsonCircuits.TtoS),
+            (JosephsonCircuits.AtoB,JosephsonCircuits.BtoA),
+            (JosephsonCircuits.ZtoA,JosephsonCircuits.AtoZ),
+            (JosephsonCircuits.YtoA,JosephsonCircuits.AtoY),
+            (JosephsonCircuits.YtoB,JosephsonCircuits.BtoY),
+            (JosephsonCircuits.ZtoB,JosephsonCircuits.BtoZ),
+            (JosephsonCircuits.ZtoY,JosephsonCircuits.YtoZ),
+        ]
+        # single matrix input
+        for arg1 in [rand(Complex{Float64},2,2)]
+            arg2 = f[1](arg1)
+            arg3 = f[2](arg2)
+        end
+        # array input
+        for arg1 in [rand(Complex{Float64},2,2,10)]
+            arg2 = f[1](arg1)
+            arg3 = f[2](arg2)
+        end
+        # vector of matrices
+        for arg1 in [
+                [rand(Complex{Float64},2,2) for i in 1:10],
+            ]
+            arg2 = [f[1](arg1[i]) for i in 1:10]
+            arg3 = [f[2](arg2[i]) for i in 1:10]
+        end
     end
 
     return true
 end
 
-export @syms, hbsolve, hbnlsolve, hblinsolve, hbsolveold, hbnlsolveold,
-    hblinsolveold, parsecircuit, parsesortcircuit, calccircuitgraph,
-    symbolicmatrices, numericmatrices, LjtoIc, IctoLj, @variables,
-    @register_symbolic, Num, Symbolics
+export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
+    calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
+    @variables, @register_symbolic, Num, Symbolics
 
 
 # the below precompile directives are to help the compiler perform type inference
