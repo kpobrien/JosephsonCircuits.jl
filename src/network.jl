@@ -2057,6 +2057,33 @@ function ABCD_PiY(Y1,Y2,Y3)
 end
 
 """
+    Y_PiY(Y1,Y2,Y3)
+
+Return the admittance matrix for a Pi network of admittances `Y1`, `Y2`, and
+`Y3`.
+```
+o----Y3-----o
+   |     |   
+   Y1    Y2  
+   |     |   
+o-----------o
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Y_PiY(1.0,2.0,4.0)
+2×2 Matrix{Float64}:
+  5.0  -4.0
+ -4.0   6.0
+
+julia> Y1=1.0;Y2=2.0;Y3=4.0;isapprox(JosephsonCircuits.YtoA(JosephsonCircuits.Y_PiY(Y1,Y2,Y3)),JosephsonCircuits.ABCD_PiY(Y1,Y2,Y3))
+true
+```
+"""
+function Y_PiY(Y1,Y2,Y3)
+    return [Y1+Y3 -Y3;-Y3 Y2+Y3]
+end
+
+"""
     ABCD_TZ(Z1,Z2,Z3)
 
 Return the ABCD matrix for a T network of impedances `Z1`, `Z2`, and `Z3`.
@@ -2079,6 +2106,31 @@ function ABCD_TZ(Z1,Z2,Z3)
     return [1+Z1/Z3 Z1+Z2+Z1*Z2/Z3;1/Z3 1+Z2/Z3]
 end
 
+"""
+    Z_TZ(Z1,Z2,Z3)
+
+Return the ABCD matrix for a T network of impedances `Z1`, `Z2`, and `Z3`.
+```
+o--Z1-----Z2--o
+       |       
+      Z3       
+       |       
+o-------------o
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_TZ(1,2,4)
+2×2 Matrix{Float64}:
+ 1.25  3.5
+ 0.25  1.5
+
+julia> Z1=1.0;Z2=2.0;Z3=4.0;isapprox(JosephsonCircuits.ZtoA(JosephsonCircuits.Z_TZ(Z1,Z2,Z3)),JosephsonCircuits.ABCD_TZ(Z1,Z2,Z3))
+true
+```
+"""
+function Z_TZ(Z1,Z2,Z3)
+    return [Z1+Z3 Z3;Z3 Z2+Z3]
+end
 
 """
     ABCD_tline(theta,Z0)
@@ -2102,6 +2154,33 @@ julia> JosephsonCircuits.ABCD_tline(pi/4,1)
 """
 function ABCD_tline(theta,Z0)
     return [cos(theta) im*Z0*sin(theta);im/Z0*sin(theta) cos(theta)]
+end
+
+"""
+    Z_tline(theta, Z0)
+
+Return the impedance matrix for a transmission line described by phase delay
+`theta` in radians and characteristic impedance `Z0` in Ohms.
+```
+   theta, Z0  
+o--========--o
+              
+              
+o------------o
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Z_tline(pi/4,1)
+2×2 Matrix{ComplexF64}:
+ 0.0-1.0im      0.0-1.41421im
+ 0.0-1.41421im  0.0-1.0im
+
+julia> isapprox(JosephsonCircuits.Z_tline(pi/4,1),JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_tline(pi/4,1)))
+true
+```
+"""
+function Z_tline(theta, Z0)
+    return [-im*Z0*cot(theta) -im*Z0*csc(theta);-im*Z0*csc(theta) -im*Z0*cot(theta)]
 end
 
 """
@@ -2638,4 +2717,32 @@ function Z_canonical_coupled_line_circuits(i::Int, thetae, thetao, Z0e, Z0o)
     end
 
     return [Z11 Z12; Z21 Z22]
+end
+
+function canonical_coupled_line_circuits(i::Int, thetae, thetao, Z0e, Z0o)
+    c = 2.998e8
+
+    if i == 3
+        L1 = L2 = (ne*Z0e+no*Z0o)/(6*c)
+        M = -(ne*Z0e-no*Z0o)/(6*c)
+        C1 = C2 = ne/(c*Z0e)
+        Cm = (no*Z0e-ne*Z0o)/(2*c*Z0e*Z0o)
+        return (L1 = L1, L2 = L2, M = M, C1 = C1, C2 = C2, Cm = Cm)
+    elseif i == 8
+        L1 = 2*Z0e*Z0o*(no^3*Z0e+ne^3*Z0o)/(3*c*(Z0e*no+Z0o*ne)^2)
+        L2 = (ne*Z0e+no*Z0o)/(2*c)
+        # should there be a minus sign here?
+        M = Z0e*Z0o*(ne^2-no^2)/(2*c*(no*Z0e+ne*Z0o))
+        C1 = (no*Z0e+ne*Z0o)/(2*c*Z0e*Z0o)
+        return (L1 = L1, L2 = L2, M = M, C1 = C1)
+
+    elseif i == 10
+        L1 = L2 = (ne*Z0e+no*Z0o)/(6*c)
+        M = (ne*Z0e-no*Z0o)/(6*c)
+        C1 = C2 = ne/(c*Z0e)
+        Cm = (no*Z0e-ne*Z0o)/(2*c*Z0e*Z0o)
+        return (L1 = L1, L2 = L2, M = M, C1 = C1, C2 = C2, Cm = Cm)
+    else
+        throw(ArgumentError("Canonical coupled line circuit number must be 1-10."))
+    end
 end
