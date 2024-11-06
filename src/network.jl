@@ -2289,7 +2289,7 @@ Zodd = 49.0
 neven = 1.1
 nodd = 1.08
 l = 3.5e-3
-c = 2.998e8
+c = JosephsonCircuits.speed_of_light
 omega = 2*pi*5e9
 
 L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
@@ -2363,6 +2363,7 @@ Zeven = 51.0
 Zodd = 49.0
 neven = 1.1
 nodd = 1.08
+c = JosephsonCircuits.speed_of_light
 
 L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
 ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_tlines(L,C)
@@ -2375,16 +2376,16 @@ ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_tlines(L,C)
 @show S
 println(isapprox(Zeven,ZC[1,1]+ZC[1,2]))
 println(isapprox(Zodd,ZC[1,1]-ZC[1,2]))
-println(isapprox(neven,lambda[2,2]*2.998e8))
-println(isapprox(nodd,lambda[1,1]*2.998e8))
+println(isapprox(neven,lambda[2,2]*c))
+println(isapprox(nodd,lambda[1,1]*c))
 
 # output
-ZC = [49.999999999999986 1.000000000000007; 1.000000000000007 49.999999999999986]
-TI = [-6.062936583116437e-6 -5.997640665072575e-6; 6.062936583116437e-6 -5.997640665072575e-6]
-TV = [-82468.28795675654 -83366.11476438788; 82468.28795675654 -83366.11476438788]
-Matrix(theta) = [8.481944770786026e-6 0.0; 0.0 8.574287143651258e-6]
+ZC = [49.999999999999986 0.9999999999999929; 0.9999999999999929 49.999999999999986]
+TI = [-6.063012846509498e-6 -5.997716107132906e-6; 6.063012846509498e-6 -5.997716107132906e-6]
+TV = [-82467.25063230767 -83365.06614665617; 82467.25063230767 -83365.06614665617]
+Matrix(theta) = [8.48205146197092e-6 0.0; 0.0 8.574394996376037e-6]
 U = [-0.7071067811865475 -0.7071067811865475; -0.7071067811865475 0.7071067811865475]
-Matrix(lambda) = [3.602401601067378e-9 0.0; 0.0 3.669112741827885e-9]
+Matrix(lambda) = [3.6024922281400425e-9 0.0; 0.0 3.669205047179673e-9]
 S = [0.0 1.0; 1.0 0.0]
 true
 true
@@ -2503,8 +2504,8 @@ Zeven, Zodd, neven, nodd = JosephsonCircuits.maxwell_to_even_odd(L,C)
 # output
 Zeven = sqrt((L11 + L12) / (C11 + C12))
 Zodd = sqrt((L11 - L12) / (C11 - C12))
-neven = 2.998e8sqrt((C11 + C12)*(L11 + L12))
-nodd = 2.998e8sqrt((C11 - C12)*(L11 - L12))
+neven = 2.99792458e8sqrt((C11 + C12)*(L11 + L12))
+nodd = 2.99792458e8sqrt((C11 - C12)*(L11 - L12))
 ```
 """
 function maxwell_to_even_odd(L, Cmaxwell)
@@ -2516,7 +2517,7 @@ function maxwell_to_even_odd(L, Cmaxwell)
     # size(Cmaxwell) != (2,2)
     # same for inductance matrix
 
-    c = 2.998e8
+    c = JosephsonCircuits.speed_of_light
     Zeven = sqrt((L[1,1]+L[1,2])/(Cmaxwell[1,1]+Cmaxwell[1,2]))
     Zodd = sqrt((L[1,1]-L[1,2])/(Cmaxwell[1,1]-Cmaxwell[1,2]))
     neven = c*sqrt((L[1,1]+L[1,2])*(Cmaxwell[1,1]+Cmaxwell[1,2]))
@@ -2545,8 +2546,8 @@ Zeven, Zodd, neven, nodd = JosephsonCircuits.mutual_to_even_odd(L,C)
 # output
 Zeven = sqrt((Lm + Ls) / Cg)
 Zodd = sqrt((-Lm + Ls) / (Cg + 2Cm))
-neven = 2.998e8sqrt(Cg*(Lm + Ls))
-nodd = 2.998e8sqrt((Cg + 2Cm)*(-Lm + Ls))
+neven = 2.99792458e8sqrt(Cg*(Lm + Ls))
+nodd = 2.99792458e8sqrt((Cg + 2Cm)*(-Lm + Ls))
 ```
 """
 function mutual_to_even_odd(L, Cmutual)
@@ -2573,7 +2574,7 @@ true
 ```
 """
 function even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
-    c = 2.998e8
+    c = JosephsonCircuits.speed_of_light
     L11 = (neven*Zeven+nodd*Zodd)/(2*c)
     L12 = (neven*Zeven-nodd*Zodd)/(2*c)
     C11 = (neven*Zodd+nodd*Zeven)/(2*c*Zeven*Zodd)
@@ -2720,7 +2721,7 @@ function Z_canonical_coupled_line_circuits(i::Int, thetae, thetao, Z0e, Z0o)
 end
 
 function canonical_coupled_line_circuits(i::Int, thetae, thetao, Z0e, Z0o)
-    c = 2.998e8
+    c = JosephsonCircuits.speed_of_light
 
     if i == 3
         L1 = L2 = (ne*Z0e+no*Z0o)/(6*c)

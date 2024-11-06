@@ -40,6 +40,13 @@ Phi0 = h/(2*charge of electron).
 """
 const Phi0 = 2.067833848e-15
 
+"""
+    const speed_of_light
+
+A constant for the speed of light which is 2.99792458e8 m/s
+"""
+const speed_of_light = 2.99792458e8
+
 # The file structure below mimics the typical analysis flow. An input file
 # is first parsed, then the incidence matrix is calculated, then the 
 # capacitance, inverse inductance, and other matrices are calculated, then
