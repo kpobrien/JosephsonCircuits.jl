@@ -2720,23 +2720,25 @@ function Z_canonical_coupled_line_circuits(i::Int, thetae, thetao, Z0e, Z0o)
     return [Z11 Z12; Z21 Z22]
 end
 
-function canonical_coupled_line_circuits(i::Int, thetae, thetao, Z0e, Z0o)
+function canonical_coupled_line_circuits(i::Int, ne, no, Z0e, Z0o)
     c = JosephsonCircuits.speed_of_light
 
     if i == 3
         L1 = L2 = (ne*Z0e+no*Z0o)/(6*c)
-        M = -(ne*Z0e-no*Z0o)/(6*c)
+        M = -(ne*Z0e-no*Z0o)/(12*c)
         C1 = C2 = ne/(c*Z0e)
         Cm = (no*Z0e-ne*Z0o)/(2*c*Z0e*Z0o)
         return (L1 = L1, L2 = L2, M = M, C1 = C1, C2 = C2, Cm = Cm)
     elseif i == 8
         L1 = 2*Z0e*Z0o*(no^3*Z0e+ne^3*Z0o)/(3*c*(Z0e*no+Z0o*ne)^2)
         L2 = (ne*Z0e+no*Z0o)/(2*c)
-        # should there be a minus sign here?
-        M = Z0e*Z0o*(ne^2-no^2)/(2*c*(no*Z0e+ne*Z0o))
+        M = -Z0e*Z0o*(ne^2-no^2)/(2*c*(no*Z0e+ne*Z0o))
         C1 = (no*Z0e+ne*Z0o)/(2*c*Z0e*Z0o)
         return (L1 = L1, L2 = L2, M = M, C1 = C1)
-
+    elseif i == 9
+        L1 = L2 = (ne*Z0e+no*Z0o)/(2*c)
+        M = (ne*Z0e-no*Z0o)/(2*c)
+        return (L1 = L1, L2 = L2, M = M)
     elseif i == 10
         L1 = L2 = (ne*Z0e+no*Z0o)/(6*c)
         M = (ne*Z0e-no*Z0o)/(6*c)
