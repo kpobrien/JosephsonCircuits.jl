@@ -2751,28 +2751,34 @@ function canonical_coupled_line_circuits(i::Int, ne, no, Z0e, Z0o)
 end
 
 """
-  maxwell_from_pairs(n::Int, d::Dict{Tuple{Int, Int}, T}) where T <:AbstractMatrix
+    maxwell_combine(n::Int, d::Dict{NTuple{N, Int}, T}) where {N,T<:AbstractMatrix}
 
 Return the Maxwell capacitance matrix for an `n` terminal system from the
-Maxwell capacitance matrices for pairs of terminals stored in the dictionary
-`d`.
+Maxwell capacitance matrices for sets of terminals stored in the dictionary
+`d`. The dictionary keys are tuples of the terminal numbers for the
+capacitance matrices and the values are the capacitance matrices.
 
 # Examples
 ```jldoctest
-julia> @variables C11, C12, C13, C21, C22, C23, C31, C32, C33;JosephsonCircuits.maxwell_from_pairs(3, Dict((1,2)=>[C11 C12;C21 C22],(1,3)=>[C11 C13;C31 C33],(2,3)=>[C22 C23;C32 C33]))
+julia> @variables C11, C12, C13, C21, C22, C23, C31, C32, C33;JosephsonCircuits.maxwell_combine(3, Dict((1,2)=>[C11 C12;C21 C22],(1,3)=>[C11 C13;C31 C33],(2,3)=>[C22 C23;C32 C33]))
+3×3 Matrix{Num}:
+ C11  C12  C13
+ C21  C22  C23
+ C31  C32  C33
+
+julia> @variables C11, C12, C13, C21, C22, C23, C31, C32, C33;JosephsonCircuits.maxwell_combine(3, Dict((1,2,3)=>[C11 C12 C13;C21 C22 C23; C31 C32 C33]))
 3×3 Matrix{Num}:
  C11  C12  C13
  C21  C22  C23
  C31  C32  C33
 ```
 """
-function maxwell_from_pairs(n::Int, d::Dict{Tuple{Int, Int}, T}) where T<:AbstractMatrix
+function maxwell_combine(n::Int, d::Dict{NTuple{N, Int}, T}) where {N,T<:AbstractMatrix}
 
     C = zeros(eltype(T), n, n)
     for (key,val) in d
-        # add a check to see if val is a 2x2 matrix
-        for i in 1:2
-            for j in 1:2
+        for i in 1:N
+            for j in 1:N
                 if iszero(C[key[i],key[j]])
                     C[key[i],key[j]] = val[i,j]
                 else
