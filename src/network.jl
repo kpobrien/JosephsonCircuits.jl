@@ -2307,6 +2307,8 @@ Edition. Wiley, 2008.
 """
 function A_coupled_tlines(L,Cmaxwell,omega,l)
 
+    N = size(L,1)
+
     ZC, TI, TV, theta, U, lambda, S = ZC_basis_coupled_tlines(L,Cmaxwell)
     TIinv = inv(TI)
     TVinv = inv(TV)
@@ -2324,11 +2326,11 @@ function A_coupled_tlines(L,Cmaxwell,omega,l)
     # phi21 = -1/2*YC*TV*(exp(gamma*l)-exp(-gamma*l))*TVinv
     # phi22 = 1/2*YC*TV*(exp(gamma*l)+exp(-gamma*l))*TVinv*ZC
 
-    A = zeros(Complex{Float64},4,4)
-    A[1:2,1:2] .= phi11
-    A[1:2,3:end] .= phi12
-    A[3:end,1:2] .= phi21
-    A[3:end,3:end] .= phi22
+    A = zeros(Complex{Float64},2*N,2*N)
+    A[1:N,1:N] .= phi11
+    A[1:N,N+1:end] .= phi12
+    A[N+1:end,1:N] .= phi21
+    A[N+1:end,N+1:end] .= phi22
     return A
 end
 
