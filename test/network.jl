@@ -454,6 +454,46 @@ import StaticArrays
             @test isapprox(S1,S2)
         end
 
+        @test_throws(
+            ArgumentError("Canonical coupled line circuit number must be 1-10."),
+            JosephsonCircuits.Z_canonical_coupled_line_circuits(11, neven*omega/c*l, nodd*omega/c*l, Zeven, Zodd),
+        )
+
+    end
+
+    @testset "canonical_coupled_line_circuits" begin
+
+        Zeven = 52.0
+        Zodd = 48.0
+        neven = 2.2
+        nodd = 2.1
+
+        # 3
+        outa = (L1 = 1.1963832214440388e-7, L2 = 1.1963832214440388e-7, M = -3.780393078912389e-9, C1 = 1.4112327104537203e-10, C2 = 1.4112327104537203e-10, Cm = 2.4055103019097465e-12)
+        outb = JosephsonCircuits.canonical_coupled_line_circuits(3, neven, nodd, Zeven, Zodd)
+        @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
+
+        # 8
+        outa = (L1 = 1.1941849319292907e-7, L2 = 3.5891496643321166e-7, M = -8.333511920257754e-9, C1 = 1.4352878134728178e-10)
+        outb = JosephsonCircuits.canonical_coupled_line_circuits(8, neven, nodd, Zeven, Zodd)
+        @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
+
+        # 9
+        outa = (L1 = 3.5891496643321166e-7, L2 = 3.5891496643321166e-7, M = 2.268235847347433e-8)
+        outb = JosephsonCircuits.canonical_coupled_line_circuits(9, neven, nodd, Zeven, Zodd)
+        @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
+
+        # 10
+        outa = (L1 = 1.1963832214440388e-7, L2 = 1.1963832214440388e-7, M = 7.560786157824777e-9, C1 = 1.4112327104537203e-10, C2 = 1.4112327104537203e-10, Cm = 2.4055103019097465e-12)
+        outb = JosephsonCircuits.canonical_coupled_line_circuits(10, neven, nodd, Zeven, Zodd)
+        @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
+
+
+        @test_throws(
+            ArgumentError("Canonical coupled line circuit number must be 1-10."),
+            JosephsonCircuits.canonical_coupled_line_circuits(11, neven, nodd, Zeven, Zodd),
+        )
+
     end
 
 end
