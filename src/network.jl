@@ -1,6 +1,6 @@
 
 """
-    connectS(Sx::AbstractArray,k::Int,l::Int)
+    connectS(Sx::AbstractArray, k::Int, l::Int)
 
 Connect ports `k` and `l` on the same `m` port microwave network represented by
 the scattering parameter matrix `Sx`, resulting in an `(m-2)` port network, as illustrated below:
@@ -418,6 +418,141 @@ function connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices)
     end
     return nothing
 end
+
+"""
+    connectSports(portsa::AbstractVector{Tuple{T,Int}},k::Int,l::Int) where T
+
+Return a vector of tuples of (networkname, portindex) from `portsa` after
+ports `k` and `l` have been connected. See [`connectS`](@ref) for more
+information.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.connectSports([(:S1,1),(:S1,2),(:S1,3),(:S1,4),(:S1,5)],3,4)
+3-element Vector{Tuple{Symbol, Int64}}:
+ (:S1, 1)
+ (:S1, 2)
+ (:S1, 5)
+```
+"""
+function connectSports(portsa::AbstractVector{Tuple{T,Int}},k::Int,l::Int) where T
+
+
+    if k > length(portsa)
+        throw(ArgumentError("Port `k` is larger than number of ports."))
+    end
+
+    if l > length(portsa)
+        throw(ArgumentError("Port `l` is larger than number of ports."))
+    end
+
+    if l < 1
+        throw(ArgumentError("Port `l` is smaller than one."))
+    end
+
+    if k < 1
+        throw(ArgumentError("Port `k` is smaller than one."))
+    end
+
+    if l == k
+        throw(ArgumentError("`k` and `l` cannot be equal because a port cannot be merged with itself."))
+    end
+
+    # the ports of the network after the connections
+    ports = similar(portsa,length(portsa)-2)
+
+    # loop over the ports
+    j = 0
+    for i in eachindex(ports)
+        j += 1
+        # skip over the ports that are connected together
+        if j == k || j == l
+            j += 1
+        end
+
+        if j == k || j == l
+            j += 1
+        end
+
+        ports[i] = portsa[j]
+    end
+
+    return ports
+end
+
+"""
+    connectSports(portsa::AbstractVector{Tuple{T,Int}},
+        portsb::AbstractVector{Tuple{T,Int}}, k::Int, l::Int) where T
+
+Return a vector of tuples of (networkname, portindex) with `portsa` from the
+first network and `portsb` from the second network after ports `k` and `l`
+from the first and second networks have been connected. If the first network
+has `n` ports and the second network has `m` ports, then the combined network
+has `(m+n-2)` ports. See [`connectS`](@ref) for more information.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.connectSports([(:S1,1),(:S1,2),(:S1,3),(:S1,4),(:S1,5)],[(:S2,1),(:S2,2),(:S2,3),(:S2,4),(:S2,5)],3,4)
+8-element Vector{Tuple{Symbol, Int64}}:
+ (:S1, 1)
+ (:S1, 2)
+ (:S1, 4)
+ (:S1, 5)
+ (:S2, 1)
+ (:S2, 2)
+ (:S2, 3)
+ (:S2, 5)
+```
+"""
+function connectSports(portsa::AbstractVector{Tuple{T,Int}},
+        portsb::AbstractVector{Tuple{T,Int}}, k::Int, l::Int) where T
+
+
+    if k > length(portsa)
+        throw(ArgumentError("Port `k` is larger than number of ports in `portsa`."))
+    end
+
+    if l > length(portsb)
+        throw(ArgumentError("Port `l` is larger than number of ports in `portsb`."))
+    end
+
+    if l < 1
+        throw(ArgumentError("Port `l` is smaller than one."))
+    end
+
+    if k < 1
+        throw(ArgumentError("Port `k` is smaller than one."))
+    end
+
+    # the ports of the network after the connections
+    ports = similar(portsa,length(portsa)+length(portsb)-2)
+
+
+    # loop over the first network ports, skipping k
+    j = 0
+    for i in 1:length(portsa)-1
+        j += 1
+        # skip over the ports that are connected together
+        if j == k
+            j += 1
+        end
+        ports[i] = portsa[j]
+    end
+
+    # loop over the second network ports, skipping l
+    j = 0
+    for i in length(portsa):length(portsa)+length(portsb)-2
+        j += 1
+        # skip over the ports that are connected together
+        if j == l
+            j += 1
+        end
+        ports[i] = portsb[j]
+    end
+
+    return ports
+end
+
 
 """
     cascadeS(Sa,Sb)

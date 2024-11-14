@@ -245,6 +245,60 @@ import StaticArrays
         @test isapprox(Sout1,Sout2)
     end
 
+    # one network
+    @testset "connectSports" begin
+        portsa = [(:S1,1),(:S1,2)]
+        @test_throws(
+            ArgumentError("Port `k` is smaller than one."),
+            JosephsonCircuits.connectSports(portsa,0,1)
+        )
+
+        @test_throws(
+            ArgumentError("Port `l` is smaller than one."),
+            JosephsonCircuits.connectSports(portsa,1,0)
+        )
+
+        @test_throws(
+            ArgumentError("Port `k` is larger than number of ports."),
+            JosephsonCircuits.connectSports(portsa,3,1)
+        )
+
+        @test_throws(
+            ArgumentError("Port `l` is larger than number of ports."),
+            JosephsonCircuits.connectSports(portsa,1,3)
+        )
+
+        @test_throws(
+            ArgumentError("`k` and `l` cannot be equal because a port cannot be merged with itself."),
+            JosephsonCircuits.connectSports(portsa,1,1)
+        )
+    end
+
+    # two networks
+    @testset "connectSports" begin
+        portsa = [(:S1,1),(:S1,2)]
+        portsb = [(:S2,1),(:S2,2)]
+        @test_throws(
+            ArgumentError("Port `k` is smaller than one."),
+            JosephsonCircuits.connectSports(portsa,portsb,0,1)
+        )
+
+        @test_throws(
+            ArgumentError("Port `l` is smaller than one."),
+            JosephsonCircuits.connectSports(portsa,portsb,1,0)
+        )
+
+        @test_throws(
+            ArgumentError("Port `k` is larger than number of ports in `portsa`."),
+            JosephsonCircuits.connectSports(portsa,portsb,3,1)
+        )
+
+        @test_throws(
+            ArgumentError("Port `l` is larger than number of ports in `portsb`."),
+            JosephsonCircuits.connectSports(portsa,portsb,1,3)
+        )
+    end
+
 
     @testset "StoZ, StoY, StoA, StoB, StoABCD consistency" begin
         # the different functions we want to test
