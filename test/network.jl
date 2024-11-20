@@ -299,6 +299,69 @@ import StaticArrays
         )
     end
 
+    @testset "connectS with list of connections" begin
+        # define an open
+        Sopen = ones(Complex{Float64},1,1)
+
+        # and a short
+        Sshort = -ones(Complex{Float64},1,1)
+
+        # and a match
+        Smatch = zeros(Complex{Float64},1,1)
+
+        # a splitter
+        Ssplitter = Complex{Float64}[-1/3 2/3 2/3;2/3 -1/3 2/3;2/3 2/3 -1/3]
+
+        S1 = rand(Complex{Float64},3,3)
+        S2 = rand(Complex{Float64},2,2)
+
+        networks = [(:S1,S1),(:S2,S2),(:S3,Ssplitter),(:S4,Sopen)]
+        connections = [(:S1,:S1,1,2),(:S1,:S2,3,1),(:S3,:S2,2,2),(:S3,:S4,3,1)]
+        networkdata, ports = JosephsonCircuits.connectS(networks,connections)
+        Sout1 = networkdata[1]
+
+        Sout2 = begin
+            S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
+            S = JosephsonCircuits.connectS(S,S2,2,2)
+            S = JosephsonCircuits.connectS(S1,S,3,2)
+            S = JosephsonCircuits.connectS(S,1,2)
+        end
+
+        @test isapprox(Sout1,Sout2)
+
+    end
+
+    @testset "connectS with list of connections, errors" begin
+        # define an open
+        Sopen = ones(Complex{Float64},1,1)
+
+        # and a short
+        Sshort = -ones(Complex{Float64},1,1)
+
+        # and a match
+        Smatch = zeros(Complex{Float64},1,1)
+
+        # a splitter
+        Ssplitter = Complex{Float64}[-1/3 2/3 2/3;2/3 -1/3 2/3;2/3 2/3 -1/3]
+
+        S1 = rand(Complex{Float64},3,3)
+        S2 = rand(Complex{Float64},2,2)
+
+        networks = [(:S1,S1),(:S2,S2),(:S3,Ssplitter),(:S4,Sopen)]
+        connections = [(:S1,:S1,1,2),(:S1,:S2,3,2),(:S3,:S2,2,2),(:S3,:S4,3,1)]
+        @test_throws(
+            ArgumentError("Port (:S2, 2) is listed twice in the netlist."),
+            JosephsonCircuits.connectS(networks,connections)
+        )
+
+        networks = [(:S1,S1),(:S1,S2),(:S3,Ssplitter),(:S4,Sopen)]
+        connections = [(:S3,:S1,2,2),(:S3,:S4,3,1)]
+        @test_throws(
+            ArgumentError("Duplicate network name detected."),
+            JosephsonCircuits.connectS(networks,connections)
+        )
+    end
+
 
     @testset "StoZ, StoY, StoA, StoB, StoABCD consistency" begin
         # the different functions we want to test

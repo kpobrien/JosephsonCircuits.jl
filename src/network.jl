@@ -632,6 +632,334 @@ function cascadeS!(S::AbstractMatrix, Sa::AbstractMatrix, Sb::AbstractMatrix)
     return nothing
 end
 
+
+
+
+"""
+    parse_connections(networks,connections)
+
+Return a directed graph of connections between the networks.
+"""
+function parse_connections(networks,connections)
+
+    # portnames are associated with each node, so store those
+    # as a vector where the index is the node index
+    ports = [[(network[1],i) for i in 1:size(network[2],1)] for network in networks]
+
+    # network data is associated with each node, so also store
+    # those as a vector of matrices where the index is the node
+    # index.
+    networkdata = [network[2] for network in networks]
+
+    # make a dictionary where the keys are the network names and
+    # the values are the node indices.
+    networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
+    
+    if length(networkindices) != length(networkdata)
+        throw(ArgumentError("Duplicate network name detected."))
+    end
+    
+    # make the adjacency lists for the connections
+    fadjlist = Vector{Vector{Int}}(undef,length(networks))
+    badjlist = Vector{Vector{Int}}(undef,length(networks))
+    fconnectionlist = Vector{Vector{Tuple{Symbol, Symbol, Int64, Int64}}}(undef,length(networks))
+    fweightlist = Vector{Vector{Int}}(undef,length(networks))
+
+    
+    # fill them with empty vectors
+    for i in eachindex(fadjlist)
+        fadjlist[i] = []
+    end
+    for i in eachindex(badjlist)
+        badjlist[i] = []
+    end
+    for i in eachindex(fconnectionlist)
+        fconnectionlist[i] = []
+    end
+    for i in eachindex(fweightlist)
+        fweightlist[i] = []
+    end
+    
+    # loop through the connections and populate the adjacency lists
+    for (src_name, dst_name, src_port, dst_port) in connections
+        src_index = networkindices[src_name]
+        dst_index = networkindices[dst_name]
+
+        # the source node entry points to the destination node 
+        push!(fadjlist[src_index],dst_index)
+
+        # the destination node entry points to the source node
+        push!(badjlist[dst_index],src_index)
+
+        # only store the source connections
+        push!(fconnectionlist[src_index],(src_name, dst_name, src_port, dst_port))                
+
+        src_weight = size(networkdata[src_index],1)-1
+        dst_weight = size(networkdata[dst_index],1)-1
+        connection_weight = src_weight*dst_weight
+        if src_index == dst_index
+            connection_weight = 0
+        end
+        push!(fweightlist[src_index],connection_weight)
+
+    end
+
+    # turn the adjacency lists into a graph
+    g = Graphs.SimpleGraphs.SimpleDiGraph(length(networkdata), fadjlist,badjlist)
+
+    return (networkdata,ports,networkindices,g,fconnectionlist,fweightlist)
+end
+
+
+function remove_edge!(g,src_node,edge_index)
+
+    # remove the source
+    dst_node = popat!(g.fadjlist[src_node], edge_index)
+    # and the destination
+    for k in eachindex(g.badjlist[dst_node])
+        if g.badjlist[dst_node][k] == src_node
+            deleteat!(g.badjlist[dst_node],k)
+            break
+        end
+    end
+    return dst_node
+end
+
+function move_fedge!(g,src_node,src_node_new,edge_index,fadjlist1,fadjlist2)
+
+    # remove the source
+    dst_node = popat!(g.fadjlist[src_node], edge_index)
+    # add the new source
+    push!(g.fadjlist[src_node_new], dst_node)
+    
+    if !isempty(fadjlist1)
+        push!(fadjlist1[src_node_new], popat!(fadjlist1[src_node], edge_index))
+    end
+    
+    if !isempty(fadjlist2)
+        push!(fadjlist2[src_node_new], popat!(fadjlist2[src_node], edge_index))
+    end
+
+    # and update the destination
+    for k in eachindex(g.badjlist[dst_node])
+        if g.badjlist[dst_node][k] == src_node
+            deleteat!(g.badjlist[dst_node],k)
+            push!(g.badjlist[dst_node],src_node_new)
+            break
+        end
+    end
+    return dst_node
+end
+
+
+function move_bedge!(g,dst_node,dst_node_new,edge_index,fadjlist1,fadjlist2)
+
+    # remove the destination
+    src_node = popat!(g.badjlist[dst_node], edge_index)
+    # add the new destination
+    push!(g.badjlist[dst_node_new],src_node)
+
+    # and update the source
+    for k in eachindex(g.fadjlist[src_node])
+        if g.fadjlist[src_node][k] == dst_node
+            deleteat!(g.fadjlist[src_node],k)
+            push!(g.fadjlist[src_node], dst_node_new)
+                
+            if !isempty(fadjlist1)
+                push!(fadjlist1[src_node], popat!(fadjlist1[src_node], k))
+            end
+               
+            if !isempty(fadjlist2)
+                push!(fadjlist2[src_node], popat!(fadjlist2[src_node], k))
+            end            
+            
+            break
+        end
+    end
+    return src_node
+end
+
+function move_fedges!(g,src_node,src_node_new,fadjlist1,fadjlist2)
+
+    for edge_index in reverse(1:length(g.fadjlist[src_node]))
+        move_fedge!(g,src_node,src_node_new,edge_index,fadjlist1,fadjlist2)
+    end
+    return g
+end
+
+function move_bedges!(g,dst_node,dst_node_new,fadjlist1,fadjlist2)
+
+    for edge_index in reverse(1:length(g.badjlist[dst_node]))
+        move_bedge!(g,dst_node,dst_node_new,edge_index,fadjlist1,fadjlist2)
+    end
+    return g
+end
+
+function move_edges!(g,node,node_new,fadjlist1,fadjlist2)
+    move_fedges!(g,node,node_new,fadjlist1,fadjlist2)
+    move_bedges!(g,node,node_new,fadjlist1,fadjlist2)
+    return g
+end
+
+"""
+    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,connection_index)
+
+"""
+function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,connection_index)
+
+    if src_node > length(g.fadjlist)
+        throw(ArgumentError("`src_node` is larger than the number of elements in the forward adjacency list `g.fadjlist`."))
+    end
+
+    if connection_index > length(g.fadjlist[src_node])
+        throw(ArgumentError("`connection_index` is larger than the number of connections for this node."))
+    end
+
+    # remove the edge from the graph
+    dst_node = remove_edge!(g,src_node,connection_index)
+    
+    # remove and store the connection associated with that edge
+    connection = popat!(fconnectionlist[src_node], connection_index)
+
+    # remove the weight for that connection          
+    weight = popat!(fweightlist[src_node], connection_index)
+
+    # the source and destination ports eg. (:S1,1) and (:S2,1)
+    src_port = (connection[1],connection[3])
+    dst_port = (connection[2],connection[4])
+
+    # the indices at which these ports are located in the source
+    # destination scattering parameter matrix
+    src_port_index = findfirst(isequal(src_port),ports[src_node])
+    dst_port_index = findfirst(isequal(dst_port),ports[dst_node])
+                            
+    if isnothing(src_port_index)
+        throw(ArgumentError("Port $(src_port) is listed twice in the netlist."))
+    end
+
+    if isnothing(dst_port_index)
+        throw(ArgumentError("Port $(dst_port) is listed twice in the netlist."))
+    end
+                                    
+    # println("src_node => dst_node: ",src_node," => ",dst_node)
+    # println("src_port => dst_port: ",src_port," => ",dst_port)
+    # println("src_port_index => dst_port_index: ",src_port_index," => ",dst_port_index)
+
+    # if src_node == dst_node, then make a self connection
+    if src_node == dst_node
+        # connect the networks and find the ports of the connected network
+        connected_network = JosephsonCircuits.connectS(networkdata[src_node],src_port_index,dst_port_index)
+        connected_ports = JosephsonCircuits.connectSports(ports[src_node],src_port_index,dst_port_index)
+    
+        # delete the ports for the dst. update the ports for the src.
+        ports[src_node] = connected_ports
+
+        # update the networkdata for the src and replace the src with an empty array.
+        networkdata[src_node] = connected_network
+    else
+        # connect the networks and find the ports of the connected network
+        connected_network = JosephsonCircuits.connectS(networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index)
+        connected_ports = JosephsonCircuits.connectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
+
+        # delete the ports for the dst. update the ports for the src.
+        ports[src_node] = connected_ports
+        ports[dst_node] = []
+
+        # update the networkdata for the src and replace the src with an empty array.
+        networkdata[src_node] = connected_network
+        networkdata[dst_node] = [;;]
+
+        # move the edges away from the dst node
+        move_edges!(g,dst_node,src_node,fconnectionlist,fweightlist)
+    end
+
+    # update the weights for the src_node
+    for k in eachindex(g.fadjlist[src_node])
+        # update the weights of fweightlist[src_node][k]
+        if src_node == g.fadjlist[src_node][k]
+            # self connections always reduce the size so give them zero weight
+            fweightlist[src_node][k] = 0
+        else
+            src_weight = size(networkdata[src_node],1)-1
+            dst_weight = size(networkdata[g.fadjlist[src_node][k]],1)-1
+            connection_weight = src_weight*dst_weight
+            fweightlist[src_node][k] = connection_weight
+        end
+    end
+    for k in eachindex(g.badjlist[src_node])
+        for l in eachindex(g.fadjlist[k])
+            if g.fadjlist[k][l] == src_node
+                 # update the weights of fweightlist[k][l]
+                if src_node == g.badjlist[src_node][k]
+                    # self connections always reduce the size so give them zero weight
+                    fweightlist[k][l] = 0
+                else
+                    src_weight = size(networkdata[src_node],1)-1
+                    dst_weight = size(networkdata[g.badjlist[src_node][k]],1)-1
+                    connection_weight = src_weight*dst_weight
+                    fweightlist[k][l] = connection_weight
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+
+function make_connections!(g,fconnectionlist,fweightlist,ports,networkdata)
+    # find the minimum weight and the second to minimum weight
+    minweight = Inf
+    secondtominweight = Inf
+    for i in eachindex(fweightlist)
+        for j in eachindex(fweightlist[i])
+            weight = fweightlist[i][j]
+            if weight <= minweight
+                minweight = weight
+            elseif weight <= secondtominweight
+                secondtominweight = weight
+            else
+                nothing
+            end
+        end
+    end
+    while !all(isempty.(fweightlist))
+        for i in eachindex(fweightlist)
+            j = 1
+            N = length(fweightlist[i]) 
+            while j <= N
+                weight = fweightlist[i][j]
+                if weight <= minweight
+                    # perform the connection
+                    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j)
+                    # set j = 1
+                    j = 1
+                    N = length(fweightlist[i]) 
+                    minweight = weight
+                elseif weight <= secondtominweight
+                    secondtominweight = weight
+                    j+=1
+                else
+                    j+=1
+                end
+            end
+        end
+        minweight = secondtominweight
+        secondtominweight = Inf
+    end
+    return networkdata[map(!isempty,networkdata)],ports[map(!isempty,networkdata)]
+end
+
+"""
+    connectS(networks::AbstractVector{Tuple{T,N}},connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
+
+"""
+function connectS(networks::AbstractVector{Tuple{T,N}},connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
+    networkdata, ports, networkindices,g1,fconnectionlist,fweightlist = parse_connections(networks,connections);
+    return make_connections!(g1,fconnectionlist,fweightlist,ports,networkdata)
+end
+
+
+
 # generate the non in-place versions of the network parameter conversion
 # functions.
 
