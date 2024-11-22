@@ -633,14 +633,34 @@ function cascadeS!(S::AbstractMatrix, Sa::AbstractMatrix, Sb::AbstractMatrix)
 end
 
 
-
-
 """
     parse_connections(networks,connections)
 
 Return a directed graph of connections between the networks.
+
+# Arguments
+- `networks`: 
+- `connections`: 
+
+# Returns
+- `networkdata`: 
+- `ports`: 
+- `networkindices`: 
+- `g`: 
+- `fconnectionlist`: 
+- `fweightlist`: 
+
+# Examples
+```jldoctest
+networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
+connections = [(:S1,:S2,1,2)];
+JosephsonCircuits.parse_connections(networks,connections)
+
+# output
+(Matrix[[0 1; 1 0], [0.5 0.5; 0.5 0.5]], [[(:S1, 1), (:S1, 2)], [(:S2, 1), (:S2, 2)]], Dict(:S2 => 2, :S1 => 1), Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[(:S1, :S2, 1, 2)], Tuple{Symbol, Symbol, Int64, Int64}[]], [[1], Int64[]])
+```
 """
-function parse_connections(networks,connections)
+function parse_connections(networks::AbstractVector{Tuple{T,N}},connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
     # portnames are associated with each node, so store those
     # as a vector where the index is the node index
@@ -662,7 +682,7 @@ function parse_connections(networks,connections)
     # make the adjacency lists for the connections
     fadjlist = Vector{Vector{Int}}(undef,length(networks))
     badjlist = Vector{Vector{Int}}(undef,length(networks))
-    fconnectionlist = Vector{Vector{Tuple{Symbol, Symbol, Int64, Int64}}}(undef,length(networks))
+    fconnectionlist = Vector{Vector{Tuple{T, T, Int64, Int64}}}(undef,length(networks))
     fweightlist = Vector{Vector{Int}}(undef,length(networks))
 
     
@@ -710,7 +730,18 @@ function parse_connections(networks,connections)
     return (networkdata,ports,networkindices,g,fconnectionlist,fweightlist)
 end
 
+"""
+    remove_edge!(g,src_node,edge_index)
 
+Remove an edge from graph `g` specified by the source node `src_node`
+and the edge index `edge_index` in the forward adjacency list.
+
+# Examples
+```jldoctest
+julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.remove_edge!(g,1,1)
+1
+```
+"""
 function remove_edge!(g,src_node,edge_index)
 
     # remove the source
@@ -725,6 +756,23 @@ function remove_edge!(g,src_node,edge_index)
     return dst_node
 end
 
+"""
+    move_fedge!(g,src_node,src_node_new,edge_index,fadjlist1,fadjlist2)
+
+Move an edge from graph `g` at source node `src_node` to the new source node
+`src_node_new` with the edge index `edge_index` in the forward adjacency list.
+Also perform the same operations on the forward adjacency lists
+`fadjlist1` and `fadjlist2`.
+
+# Examples
+```jldoctest
+julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.move_fedge!(g,1,2,1,deepcopy(g.fadjlist),deepcopy(g.fadjlist));g.fadjlist
+3-element Vector{Vector{Int64}}:
+ []
+ [1, 3, 1]
+ []
+```
+"""
 function move_fedge!(g,src_node,src_node_new,edge_index,fadjlist1,fadjlist2)
 
     # remove the source
@@ -751,7 +799,23 @@ function move_fedge!(g,src_node,src_node_new,edge_index,fadjlist1,fadjlist2)
     return dst_node
 end
 
+"""
+    move_bedge!(g,dst_node,dst_node_new,edge_index,fadjlist1,fadjlist2)
 
+Move an edge from graph `g` at destination node `dst_node` to the new
+destination node `dst_node_new` with the edge index `edge_index` in the
+backwards adjacency list. Also perform the same operations on the forward
+adjacency lists `fadjlist1` and `fadjlist2`.
+
+# Examples
+```jldoctest
+julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.move_bedge!(g,1,2,1,deepcopy(g.fadjlist),deepcopy(g.fadjlist));g.badjlist
+3-element Vector{Vector{Int64}}:
+ [2]
+ [1]
+ [2]
+```
+"""
 function move_bedge!(g,dst_node,dst_node_new,edge_index,fadjlist1,fadjlist2)
 
     # remove the destination
@@ -779,6 +843,22 @@ function move_bedge!(g,dst_node,dst_node_new,edge_index,fadjlist1,fadjlist2)
     return src_node
 end
 
+"""
+    move_fedges!(g,src_node,src_node_new,fadjlist1,fadjlist2)
+
+Move the edges from graph `g` at source node `src_node` to the new source node
+`src_node_new` in the forward adjacency list. Also perform the same operations
+on the forward adjacency lists `fadjlist1` and `fadjlist2`.
+
+# Examples
+```jldoctest
+julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.move_fedges!(g,1,2,deepcopy(g.fadjlist),deepcopy(g.fadjlist));g.fadjlist
+3-element Vector{Vector{Int64}}:
+ []
+ [1, 3, 1]
+ []
+```
+"""
 function move_fedges!(g,src_node,src_node_new,fadjlist1,fadjlist2)
 
     for edge_index in reverse(1:length(g.fadjlist[src_node]))
@@ -787,6 +867,22 @@ function move_fedges!(g,src_node,src_node_new,fadjlist1,fadjlist2)
     return g
 end
 
+"""
+    move_bedges!(g,dst_node,dst_node_new,fadjlist1,fadjlist2)
+
+Move the edges from graph `g` at destination node `dst_node` to the new
+destination node `dst_node_new` in the backwards adjacency list. Also perform
+the same operations on the forward adjacency lists `fadjlist1` and `fadjlist2`.
+
+# Examples
+```jldoctest
+julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.move_bedges!(g,1,2,deepcopy(g.fadjlist),deepcopy(g.fadjlist));g.badjlist
+3-element Vector{Vector{Int64}}:
+ []
+ [2, 1]
+ [2]
+```
+"""
 function move_bedges!(g,dst_node,dst_node_new,fadjlist1,fadjlist2)
 
     for edge_index in reverse(1:length(g.badjlist[dst_node]))
@@ -795,6 +891,22 @@ function move_bedges!(g,dst_node,dst_node_new,fadjlist1,fadjlist2)
     return g
 end
 
+"""
+    move_edges!(g,node,node_new,fadjlist1,fadjlist2)
+
+Move the edges from graph `g` at node `node` to the new node `node_new`. Also
+perform the same operations on the forward adjacency lists `fadjlist1` and
+`fadjlist2`.
+
+# Examples
+```jldoctest
+julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tuple2edge([(1,1),(2,1),(2,3)]));JosephsonCircuits.move_edges!(g,1,2,deepcopy(g.fadjlist),deepcopy(g.fadjlist));g.fadjlist
+3-element Vector{Vector{Int64}}:
+ []
+ [3, 2, 2]
+ []
+```
+"""
 function move_edges!(g,node,node_new,fadjlist1,fadjlist2)
     move_fedges!(g,node,node_new,fadjlist1,fadjlist2)
     move_bedges!(g,node,node_new,fadjlist1,fadjlist2)
@@ -867,8 +979,7 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
 
         # update the networkdata for the src and replace the src with an empty array.
         networkdata[src_node] = connected_network
-        networkdata[dst_node] = [;;]
-
+        networkdata[dst_node] = Array{eltype(connected_network)}(undef,ntuple(zero,ndims(connected_network)))
         # move the edges away from the dst node
         move_edges!(g,dst_node,src_node,fconnectionlist,fweightlist)
     end
@@ -905,7 +1016,11 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
     return nothing
 end
 
+"""
+    make_connections!(g,fconnectionlist,fweightlist,ports,networkdata)
 
+
+"""
 function make_connections!(g,fconnectionlist,fweightlist,ports,networkdata)
     # find the minimum weight and the second to minimum weight
     minweight = Inf
@@ -952,6 +1067,16 @@ end
 """
     connectS(networks::AbstractVector{Tuple{T,N}},connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
+
+# Examples
+```jldoctest
+networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+connections = [(:S1,:S2,1,2)];
+JosephsonCircuits.connectS(networks,connections)
+
+# output
+([[0.5 0.5; 0.5 0.5]], [[(:S1, 2), (:S2, 1)]])
+```
 """
 function connectS(networks::AbstractVector{Tuple{T,N}},connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
     networkdata, ports, networkindices,g1,fconnectionlist,fweightlist = parse_connections(networks,connections);

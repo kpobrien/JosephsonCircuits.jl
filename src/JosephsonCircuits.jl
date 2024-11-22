@@ -162,7 +162,7 @@ end
 function warmupsymsnew()
 
     @variables R Cc Lj Cj
-    circuit = [
+    circuit = Tuple{String,String,String,Num}[
         ("P1","1","0",1),
         ("R1","1","0",R),
         ("C1","1","2",Cc),
@@ -402,6 +402,71 @@ function warmupnetwork()
     return true
 end
 
+function warmupconnect()
+    # define an open
+    Sopen = ones(Complex{Float64},1,1)
+
+    # and a short
+    Sshort = -ones(Complex{Float64},1,1)
+
+    # and a match
+    Smatch = zeros(Complex{Float64},1,1)
+
+    # a splitter
+    Ssplitter = Complex{Float64}[-1/3 2/3 2/3;2/3 -1/3 2/3;2/3 2/3 -1/3]
+
+    S1 = rand(Complex{Float64},3,3)
+    S2 = rand(Complex{Float64},2,2)
+
+    # with symbols
+    networks = [(:S1,S1),(:S2,S2),(:S3,Ssplitter),(:S4,Sopen)]
+    connections = [(:S1,:S1,1,2),(:S1,:S2,3,1),(:S3,:S2,2,2),(:S3,:S4,3,1)]
+    networkdata, ports = JosephsonCircuits.connectS(networks,connections)
+    Sout1 = networkdata[1]
+
+    Sout2 = begin
+        S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
+        S = JosephsonCircuits.connectS(S,S2,2,2)
+        S = JosephsonCircuits.connectS(S1,S,3,2)
+        S = JosephsonCircuits.connectS(S,1,2)
+    end
+
+    # many frequencies
+    N = 100
+
+    # define an open
+    Sopen = ones(Complex{Float64},1,1,N)
+
+    # and a short
+    Sshort = -ones(Complex{Float64},1,1,N)
+
+    # and a match
+    Smatch = zeros(Complex{Float64},1,1,N)
+
+    # a splitter
+    Ssplitter = zeros(Complex{Float64},3,3,N)
+    for i in 1:N
+        Ssplitter[:,:,i] .= Complex{Float64}[-1/3 2/3 2/3;2/3 -1/3 2/3;2/3 2/3 -1/3]
+    end
+
+    S1 = rand(Complex{Float64},3,3,N)
+    S2 = rand(Complex{Float64},2,2,N)
+
+    networks = [("S1",S1),("S2",S2),("S3",Ssplitter),("S4",Sopen)]
+    connections = [("S1","S1",1,2),("S1","S2",3,1),("S3","S2",2,2),("S3","S4",3,1)]
+    networkdata, ports = JosephsonCircuits.connectS(networks,connections)
+    Sout1 = networkdata[1]
+
+    Sout2 = begin
+        S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
+        S = JosephsonCircuits.connectS(S,S2,2,2)
+        S = JosephsonCircuits.connectS(S1,S,3,2)
+        S = JosephsonCircuits.connectS(S,1,2)
+    end
+
+    return true
+end
+
 export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
     @variables, @register_symbolic, Num, Symbolics
@@ -422,6 +487,7 @@ PrecompileTools.@compile_workload begin
     warmupsymsold()
     warmupsymsnew()
     warmupnetwork()
+    warmupconnect()
 end
 
 #end module

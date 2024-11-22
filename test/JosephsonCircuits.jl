@@ -73,4 +73,8 @@ using Test
         @test JosephsonCircuits.warmupnetwork()
     end
 
+    @testset verbose=true "warmupconnect" begin
+        @test JosephsonCircuits.warmupconnect()
+    end
+
 end
