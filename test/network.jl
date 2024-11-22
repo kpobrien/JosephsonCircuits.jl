@@ -373,11 +373,8 @@ import StaticArrays
         Smatch = zeros(Complex{Float64},1,1,N)
 
         # a splitter
-        Ssplitter = zeros(Complex{Float64},3,3,N)
-        for i in 1:N
-            Ssplitter[:,:,i] .= Complex{Float64}[-1/3 2/3 2/3;2/3 -1/3 2/3;2/3 2/3 -1/3]
-        end
-
+        Ssplitter = stack([Complex{Float64}[-1/3 2/3 2/3;2/3 -1/3 2/3;2/3 2/3 -1/3] for i in 1:N])
+        
         S1 = rand(Complex{Float64},3,3,N)
         S2 = rand(Complex{Float64},2,2,N)
 
