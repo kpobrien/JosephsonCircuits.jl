@@ -712,7 +712,7 @@ function parse_connections(networks::AbstractVector{Tuple{T,N}},connections::Abs
         push!(badjlist[dst_index],src_index)
 
         # only store the source connections
-        push!(fconnectionlist[src_index],(src_name, dst_name, src_port, dst_port))                
+        push!(fconnectionlist[src_index],(src_name, dst_name, src_port, dst_port))
 
         src_weight = size(networkdata[src_index],1)-1
         dst_weight = size(networkdata[dst_index],1)-1
@@ -1065,8 +1065,132 @@ function make_connections!(g,fconnectionlist,fweightlist,ports,networkdata)
 end
 
 """
-    connectS(networks::AbstractVector{Tuple{T,N}},connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
+    S_splitter!(S::AbstractArray)
 
+Return the scattering parameters for a N port ideal lossless symmetrical
+reciprocal network. Overwrite `S` with the output.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.S_splitter!(ones(2,2))
+2×2 Matrix{Float64}:
+ 0.0  1.0
+ 1.0  0.0
+
+julia> JosephsonCircuits.S_splitter!(ones(3,3))
+3×3 Matrix{Float64}:
+ -0.333333   0.666667   0.666667
+  0.666667  -0.333333   0.666667
+  0.666667   0.666667  -0.333333
+```
+"""
+function S_splitter!(S::AbstractArray)
+
+    # scattering matrices should be square.
+    if size(S,1) != size(S,2)
+        throw(ArgumentError("First two dimensions of the scattering matrix must be the same."))
+    end
+
+    # fill with 2/N where N is the size of the scattering matrix.
+    fill!(S,2/size(S,1))
+  
+    # loop over the dimensions of the array greater than 2 and subtract one
+    # from the diagonals.
+    for k in CartesianIndices(axes(S)[3:end])
+        for i in 1:size(S,1)
+            S[i,i,k] -= 1
+        end
+    end
+
+    return S
+end
+
+"""
+    add_splitters(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
+        splitter_name_length = 20) where {T,N}
+
+Return the `networks` and `connections` with splitters (ideal lossless
+symmetrical reciprocal networks) and connections to the splitters added when
+more than two ports intersect. `connections` is also converted from a vector
+of vectors of tuples where the tuple contains the network and the port such as
+[[(:S1,1),(:S2,1)]] to a vector of tuples where the tuple contains the two
+networks and ports being connected [(S1,:S2,1,1)].
+
+# References
+S. F. Cao, Y. C. Jiao, and Z. Zhang. "Applications of Generalized Cascade
+Scattering Matrix on the Microwave Circuits and Antenna Arrays". International
+Journal of Antennas and Propagation Vol. 2015, 759439,
+doi:10.1155/2015/759439.
+"""
+function add_splitters(networks::AbstractVector{Tuple{T,N}},
+    connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
+    splitter_name_length = 20) where {T,N}
+
+    # copy the networks vector. don't deepcopy so we don't duplicate all of
+    # the arrays contained in the vector.
+    netflat = copy(networks)
+
+    # define a new vector to store the connections with splitters added.
+    conflat = Tuple{T,T,Int,Int}[]
+
+    # Store the scattering parameter matrices of the splitters, so we can
+    # reuse the matrices if the same splitter is used twice. The key is the
+    # size the scattering matrix and the value is the matrix itself.
+    splitters = Dict{Int,N}()
+
+    # loop over the connections, converting to the flattened format and adding
+    # splitters where more than two ports are connected.
+    for c in connections
+        # if less than two tuples, not a valid connection
+        if length(c) < 2
+            throw(ArgumentError("Invalid connection."))
+        # if two tuples, this is a single connection
+        elseif length(c) == 2
+            push!(conflat,(c[1][1],c[2][1],c[1][2],c[2][2]))
+        # if more than two tuples, add a splitter
+        # and make all of the connections
+        else
+            # make a new name
+            id = T(string(UUIDs.uuid1()))
+
+            # compute the size of the splitter
+            sizeS = NTuple{ndims(netflat[1][2])}(ifelse(j<=2,length(c),size(netflat[1][2],j)) for j in 1:ndims(netflat[1][2]))
+            
+            # check if we have already made this splitter and make a new one
+            # if not.
+            if !haskey(splitters,length(c))
+                splitters[length(c)] = S_splitter!(similar(N,sizeS))
+            end
+
+            # add the splitter to the vector of networks
+            push!(netflat,(id,splitters[length(c)]))
+    
+            # add the connections to the splitter
+            for j in eachindex(c)
+                push!(conflat,(id,c[j][1],j,c[j][2]))
+            end
+        end
+    end
+
+    return netflat, conflat
+end
+
+
+"""
+    connectS(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
+
+Return the network and ports resulting from connecting the networks in
+`networks` according to the connections in `connections`. `networks` is a
+vector of tuples of the network name and scattering parameter matrix such as
+[("network1name",rand(Complex{Float64},2,2),
+("network2name",rand(Complex{Float64},2,2)]. `connections` is a vector of
+tuples of networks names and ports such as [("network1name", "network2name",
+1,2)] where network1 and network2 are the two networks being connected and 1
+and 2 are integers describing the ports to connect.
+
+See [`connectS`](@ref) for other connection methods.
 
 # Examples
 ```jldoctest
@@ -1078,11 +1202,56 @@ JosephsonCircuits.connectS(networks,connections)
 ([[0.5 0.5; 0.5 0.5]], [[(:S1, 2), (:S2, 1)]])
 ```
 """
-function connectS(networks::AbstractVector{Tuple{T,N}},connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
+function connectS(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
     networkdata, ports, networkindices,g1,fconnectionlist,fweightlist = parse_connections(networks,connections);
     return make_connections!(g1,fconnectionlist,fweightlist,ports,networkdata)
 end
 
+
+"""
+    connectS(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}}) where {T,N}
+
+Return the network and ports resulting from connecting the networks in
+`networks` according to the connections in `connections`. `networks` is a
+vector of tuples of the network name and scattering parameter matrix such as
+[("network1name",rand(Complex{Float64},2,2),
+("network2name",rand(Complex{Float64},2,2)]. `connections` is a vector of
+vectors of tuples of networks names and ports such as [[("network1name",1),
+("network2name",2)]] where network1 and network2 are the two networks being
+connected and 1 and 2 are integers describing the ports to connect.
+
+This function supports connections between more than two ports by
+automatically adding splitters.
+
+See [`connectS`](@ref) for other connection methods.
+
+# Examples
+```jldoctest
+networks1 =[("S1",rand(Complex{Float64},4,4)),("S2",rand(Complex{Float64},3,3))];
+connections1 = [[("S1",1),("S1",2),("S1",3)],[("S1",4),("S2",2)]];
+out1 = JosephsonCircuits.connectS(networks1,connections1);
+
+networks2 = copy(networks1)
+push!(networks2,("S3",JosephsonCircuits.S_splitter!(ones(Complex{Float64},3,3))))
+connections2 = [("S1","S3",1,1),("S1","S3",2,2),("S1","S3",3,3),("S1","S2",4,2)];
+out2 = JosephsonCircuits.connectS(networks2,connections2);
+
+println(isapprox(out1[1][1],out2[1][1]));
+println(isequal(out1[2][1],out2[2][1]));
+
+# output
+true
+true
+```
+"""
+function connectS(networks::AbstractVector{Tuple{T,N}},
+    connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}}) where {T,N}
+
+    netflat, conflat = add_splitters(networks, connections)
+    return connectS(netflat, conflat)
+end
 
 
 # generate the non in-place versions of the network parameter conversion
@@ -1449,7 +1618,6 @@ See [`StoY`](@ref) for description.
 """
 function StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,oneoversqrtportimpedances)
     
-
     # tmp = (I + S)
     copy!(tmp,S)
     for d in 1:size(tmp,1)
