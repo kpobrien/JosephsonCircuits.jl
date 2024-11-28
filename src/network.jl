@@ -1125,7 +1125,7 @@ doi:10.1155/2015/759439.
 """
 function add_splitters(networks::AbstractVector{Tuple{T,N}},
     connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
-    splitter_name_length = 20, small_splitters = true) where {T,N}
+    small_splitters = true) where {T,N}
 
     # copy the networks vector. don't deepcopy so we don't duplicate all of
     # the arrays contained in the vector.
@@ -1310,10 +1310,9 @@ true
 """
 function connectS(networks::AbstractVector{Tuple{T,N}},
     connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
-    splitter_name_length = 20, small_splitters = true) where {T,N}
+    small_splitters = true) where {T,N}
 
     netflat, conflat = add_splitters(networks, connections;
-        splitter_name_length = splitter_name_length,
         small_splitters = small_splitters)
     return connectS(netflat, conflat)
 end
