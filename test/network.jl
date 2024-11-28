@@ -393,6 +393,31 @@ import StaticArrays
         @test isapprox(Sout1,Sout2)
     end
 
+    @testset "connectS with list of connections, small_splitters" begin
+        N = 100
+
+        port1 = rand(Complex{Float64},2,2,N)
+        port2 = rand(Complex{Float64},2,2,N)
+        port3 = rand(Complex{Float64},2,2,N)
+        port4 = rand(Complex{Float64},2,2,N)
+
+        networks = [
+            ("port1",port1),("port2",port2),("port3",port3),("port4",port4),
+            ]
+
+        connections = [
+            [("port1", 1),("port2", 1),("port3", 1),("port4", 1)],
+        ]
+
+        out1 = JosephsonCircuits.connectS(networks, connections;
+            small_splitters=false);
+
+        out2 = JosephsonCircuits.connectS(networks, connections;
+            small_splitters=true);
+        @test isapprox(out1[1],out2[1])
+
+    end
+
     @testset "StoZ, StoY, StoA, StoB, StoABCD consistency" begin
         # the different functions we want to test
         for f in [

@@ -1125,7 +1125,7 @@ doi:10.1155/2015/759439.
 """
 function add_splitters(networks::AbstractVector{Tuple{T,N}},
     connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
-    splitter_name_length = 20) where {T,N}
+    splitter_name_length = 20, small_splitters = true) where {T,N}
 
     # copy the networks vector. don't deepcopy so we don't duplicate all of
     # the arrays contained in the vector.
@@ -1151,24 +1151,86 @@ function add_splitters(networks::AbstractVector{Tuple{T,N}},
         # if more than two tuples, add a splitter
         # and make all of the connections
         else
-            # make a new name
-            id = T(string(UUIDs.uuid1()))
+            # if small_splitters is true, then generate the N port splitter
+            # by combining (N-2) 3 port splitters. if small_splitters is
+            # false, then make the N port splitter and connect the components
+            # to it.
+            if small_splitters
+                Nsplitters = length(c)-2
 
-            # compute the size of the splitter
-            sizeS = NTuple{ndims(netflat[1][2])}(ifelse(j<=2,length(c),size(netflat[1][2],j)) for j in 1:ndims(netflat[1][2]))
-            
-            # check if we have already made this splitter and make a new one
-            # if not.
-            if !haskey(splitters,length(c))
-                splitters[length(c)] = S_splitter!(similar(N,sizeS))
-            end
+                # make all of the splitters
+                for i in 1:Nsplitters
 
-            # add the splitter to the vector of networks
-            push!(netflat,(id,splitters[length(c)]))
-    
-            # add the connections to the splitter
-            for j in eachindex(c)
-                push!(conflat,(id,c[j][1],j,c[j][2]))
+                    # make a new name for the splitter
+                    id = T(string(UUIDs.uuid1()))
+
+                    # compute the size of the splitter
+                    # assume we will always make a 3 port splitter
+                    sizeS = NTuple{ndims(netflat[1][2])}(ifelse(j<=2,3,size(netflat[1][2],j)) for j in 1:ndims(netflat[1][2]))
+
+                    # check if we have already made this splitter and make a new
+                    # one if not.
+                    if !haskey(splitters,2)
+                        splitters[2] = S_splitter!(similar(N,sizeS))
+                    end
+
+                    # add the splitter to the vector of networks
+                    push!(netflat,(id,splitters[2]))
+
+                end
+
+                # always make the first two connections between the splitter and
+                # the components
+                # first port of first splitter to first component
+                push!(conflat,(netflat[end-Nsplitters+1][1],c[1][1],1,c[1][2]))
+
+                # second port of first splitter to second component
+                push!(conflat,(netflat[end-Nsplitters+1][1],c[2][1],2,c[2][2]))
+
+                # if only one splitter make a connection between the third port
+                # of the splitter to the third component
+                if Nsplitters == 1
+                    push!(conflat,(netflat[end-Nsplitters+1][1],c[3][1],3,c[3][2]))
+                # if more than one splitter, then connect the third port of the
+                # splitter to the first port of the next splitter
+                else
+                    push!(conflat,(netflat[end-Nsplitters+1][1],netflat[end-Nsplitters+2][1],3,1))
+                end
+
+                # loop through the rest of the splitters
+                # add groups of two connections
+                for i in 2:Nsplitters
+                    # first is always between the second port of the splitter
+                    # and a component
+                    push!(conflat,(netflat[end-Nsplitters+i][1],c[i+1][1],2,c[i+1][2]))
+
+                    if i == Nsplitters
+                        push!(conflat,(netflat[end-Nsplitters+i][1],c[i+2][1],3,c[i+2][2]))
+                    else
+                        push!(conflat,(netflat[end-Nsplitters+i][1],netflat[end-Nsplitters+i+1][1],3,1))
+                    end
+                end
+
+            else
+                # make a new name
+                id = T(string(UUIDs.uuid1()))
+
+                # compute the size of the splitter
+                sizeS = NTuple{ndims(netflat[1][2])}(ifelse(j<=2,length(c),size(netflat[1][2],j)) for j in 1:ndims(netflat[1][2]))
+                
+                # check if we have already made this splitter and make a new one
+                # if not.
+                if !haskey(splitters,length(c))
+                    splitters[length(c)] = S_splitter!(similar(N,sizeS))
+                end
+
+                # add the splitter to the vector of networks
+                push!(netflat,(id,splitters[length(c)]))
+        
+                # add the connections to the splitter
+                for j in eachindex(c)
+                    push!(conflat,(id,c[j][1],j,c[j][2]))
+                end
             end
         end
     end
@@ -1247,9 +1309,12 @@ true
 ```
 """
 function connectS(networks::AbstractVector{Tuple{T,N}},
-    connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}}) where {T,N}
+    connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
+    splitter_name_length = 20, small_splitters = true) where {T,N}
 
-    netflat, conflat = add_splitters(networks, connections)
+    netflat, conflat = add_splitters(networks, connections;
+        splitter_name_length = splitter_name_length,
+        small_splitters = small_splitters)
     return connectS(netflat, conflat)
 end
 
