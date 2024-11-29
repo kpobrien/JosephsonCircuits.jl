@@ -914,7 +914,12 @@ function move_edges!(g,node,node_new,fadjlist1,fadjlist2)
 end
 
 """
-    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,connection_index)
+    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,
+    connection_index)
+
+Apply the connection specified by the source node `src_node` and the index
+of the connection in the forward adjacency list `connection_index`. Modify the
+arguments and return nothing.
 
 """
 function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,connection_index)
@@ -933,7 +938,7 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
     # remove and store the connection associated with that edge
     connection = popat!(fconnectionlist[src_node], connection_index)
 
-    # remove the weight for that connection          
+    # remove the weight for that connection
     weight = popat!(fweightlist[src_node], connection_index)
 
     # the source and destination ports eg. (:S1,1) and (:S2,1)
@@ -944,7 +949,7 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
     # destination scattering parameter matrix
     src_port_index = findfirst(isequal(src_port),ports[src_node])
     dst_port_index = findfirst(isequal(dst_port),ports[dst_node])
-                            
+
     if isnothing(src_port_index)
         throw(ArgumentError("Port $(src_port) is listed twice in the netlist."))
     end
@@ -952,7 +957,7 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
     if isnothing(dst_port_index)
         throw(ArgumentError("Port $(dst_port) is listed twice in the netlist."))
     end
-                                    
+
     # println("src_node => dst_node: ",src_node," => ",dst_node)
     # println("src_port => dst_port: ",src_port," => ",dst_port)
     # println("src_port_index => dst_port_index: ",src_port_index," => ",dst_port_index)
@@ -984,7 +989,11 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
         move_edges!(g,dst_node,src_node,fconnectionlist,fweightlist)
     end
 
-    # update the weights for the src_node
+    # applying a connection changes the size of the scattering parameter
+    # matrices. first update the weights for the connections originating
+    # from the src_node. fadjlist[src_node] has the indices of the nodes
+    # for each connection originating there, so loop over those, and
+    # update the weights
     for k in eachindex(g.fadjlist[src_node])
         # update the weights of fweightlist[src_node][k]
         if src_node == g.fadjlist[src_node][k]
@@ -997,16 +1006,18 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
             fweightlist[src_node][k] = connection_weight
         end
     end
-    for k in eachindex(g.badjlist[src_node])
+    # also update the weights for any connection that ends at the
+    # src_node. those nodes are found in g.badjlist[src_node]
+    for k in g.badjlist[src_node]
         for l in eachindex(g.fadjlist[k])
             if g.fadjlist[k][l] == src_node
                  # update the weights of fweightlist[k][l]
-                if src_node == g.badjlist[src_node][k]
+                if src_node == k
                     # self connections always reduce the size so give them zero weight
                     fweightlist[k][l] = 0
                 else
                     src_weight = size(networkdata[src_node],1)-1
-                    dst_weight = size(networkdata[g.badjlist[src_node][k]],1)-1
+                    dst_weight = size(networkdata[k],1)-1
                     connection_weight = src_weight*dst_weight
                     fweightlist[k][l] = connection_weight
                 end
@@ -1019,6 +1030,11 @@ end
 """
     make_connections!(g,fconnectionlist,fweightlist,ports,networkdata)
 
+Return the non-empty elements of the updated `networkdata` and `ports` after
+applying all of the connections in the connection forward adjacency list
+`fconnectionlist` to the graph `g`, the forward adjacency weight list
+`fweightlist`, the vector of ports `ports`, and the vector of scattering
+parameters `networkdata`.
 
 """
 function make_connections!(g,fconnectionlist,fweightlist,ports,networkdata)
@@ -1037,6 +1053,7 @@ function make_connections!(g,fconnectionlist,fweightlist,ports,networkdata)
             end
         end
     end
+    # println("minweight ",minweight)
     while !all(isempty.(fweightlist))
         for i in eachindex(fweightlist)
             j = 1
@@ -1045,6 +1062,8 @@ function make_connections!(g,fconnectionlist,fweightlist,ports,networkdata)
                 weight = fweightlist[i][j]
                 if weight <= minweight
                     # perform the connection
+                    # println("i ",i," j ",j," N ",N," length(fweightlist[i]) ",length(fweightlist[i]))
+                    # println(fweightlist[i])
                     make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j)
                     # set j = 1
                     j = 1
