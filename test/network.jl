@@ -407,13 +407,15 @@ import StaticArrays
         port2 = rand(Complex{Float64},2,2,N)
         port3 = rand(Complex{Float64},2,2,N)
         port4 = rand(Complex{Float64},2,2,N)
+        port5 = rand(Complex{Float64},2,2,N)
 
         networks = [
             ("port1",port1),("port2",port2),("port3",port3),("port4",port4),
+            ("port5",port5),
             ]
 
         connections = [
-            [("port1", 1),("port2", 1),("port3", 1),("port4", 1)],
+            [("port1", 1),("port2", 1),("port3", 1),("port4", 1),("port5", 1)],
         ]
 
         out1 = JosephsonCircuits.connectS(networks, connections;
