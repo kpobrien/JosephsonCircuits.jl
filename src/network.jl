@@ -702,6 +702,13 @@ function parse_connections(networks::AbstractVector{Tuple{T,N}},connections::Abs
     
     # loop through the connections and populate the adjacency lists
     for (src_name, dst_name, src_port, dst_port) in connections
+        if !haskey(networkindices,src_name)
+            throw(ArgumentError("Source network $(src_name) not found."))
+        end
+        if !haskey(networkindices,dst_name)
+            throw(ArgumentError("Destination network $(dst_name) not found."))
+        end
+
         src_index = networkindices[src_name]
         dst_index = networkindices[dst_name]
 
@@ -924,17 +931,21 @@ arguments and return nothing.
 """
 function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,connection_index)
 
-    if src_node > length(g.fadjlist)
-        throw(ArgumentError("`src_node` is larger than the number of elements in the forward adjacency list `g.fadjlist`."))
-    end
+    # if  !(length(g.fadjlist) >= src_node >= 1)
+    #     throw(ArgumentError("`src_node`=$(src_node) is less than one or greater than the number of nodes in the forward adjacency list."))
+    # end
 
-    if connection_index > length(g.fadjlist[src_node])
-        throw(ArgumentError("`connection_index` is larger than the number of connections for this node."))
-    end
+    # if  !(length(g.fadjlist[src_node]) >= connection_index >= 1)
+    #     throw(ArgumentError("`connection_index`=$(connection_index) is less than one or larger than the number of connections for this node."))
+    # end
 
     # remove the edge from the graph
     dst_node = remove_edge!(g,src_node,connection_index)
-    
+
+    # if  !(length(g.fadjlist) >= dst_node >= 1)
+    #     throw(ArgumentError("`dst_node`=$(dst_node) is less than one or greater than the number of nodes in the forward adjacency list."))
+    # end
+
     # remove and store the connection associated with that edge
     connection = popat!(fconnectionlist[src_node], connection_index)
 
@@ -951,11 +962,11 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
     dst_port_index = findfirst(isequal(dst_port),ports[dst_node])
 
     if isnothing(src_port_index)
-        throw(ArgumentError("Port $(src_port) is listed twice in the netlist."))
+        throw(ArgumentError("Source port $(src_port) not found in the vector of ports."))
     end
 
     if isnothing(dst_port_index)
-        throw(ArgumentError("Port $(dst_port) is listed twice in the netlist."))
+        throw(ArgumentError("Destination port $(dst_port) not found in the vector of ports."))
     end
 
     # println("src_node => dst_node: ",src_node," => ",dst_node)

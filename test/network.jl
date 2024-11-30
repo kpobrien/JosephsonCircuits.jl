@@ -347,7 +347,14 @@ import StaticArrays
         networks = [(:S1,S1),(:S2,S2),(:S3,Ssplitter),(:S4,Sopen)]
         connections = [(:S1,:S1,1,2),(:S1,:S2,3,2),(:S3,:S2,2,2),(:S3,:S4,3,1)]
         @test_throws(
-            ArgumentError("Port (:S2, 2) is listed twice in the netlist."),
+            ArgumentError("Destination port (:S2, 2) not found in the vector of ports."),
+            JosephsonCircuits.connectS(networks,connections)
+        )
+
+        networks = [(:S1,S1),(:S2,S2),(:S3,Ssplitter),(:S4,Sopen)]
+        connections = [(:S1,:S1,1,2),(:S1,:S2,3,2),(:S3,:S2,3,1),(:S3,:S4,3,1)]
+        @test_throws(
+            ArgumentError("Source port (:S3, 3) not found in the vector of ports."),
             JosephsonCircuits.connectS(networks,connections)
         )
 
@@ -415,6 +422,26 @@ import StaticArrays
         out2 = JosephsonCircuits.connectS(networks, connections;
             small_splitters=true);
         @test isapprox(out1[1],out2[1])
+
+    end
+
+    @testset "parse_connections errors" begin
+
+
+        networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [(:S3,:S2,1,2)];
+        @test_throws(
+            ArgumentError("Source network S3 not found."),
+            JosephsonCircuits.parse_connections(networks,connections)
+        )
+
+
+        networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [(:S1,:S3,1,2)];
+        @test_throws(
+            ArgumentError("Destination network S3 not found."),
+            JosephsonCircuits.parse_connections(networks,connections)
+        )
 
     end
 
