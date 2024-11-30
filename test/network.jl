@@ -427,7 +427,6 @@ import StaticArrays
 
     @testset "parse_connections errors" begin
 
-
         networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S3,:S2,1,2)];
         @test_throws(
@@ -435,14 +434,28 @@ import StaticArrays
             JosephsonCircuits.parse_connections(networks,connections)
         )
 
-
         networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S1,:S3,1,2)];
         @test_throws(
             ArgumentError("Destination network S3 not found."),
             JosephsonCircuits.parse_connections(networks,connections)
         )
+    end
 
+    @testset "add_splitters errors" begin
+        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [[(:S1,1)]];
+        @test_throws(
+            ArgumentError("Invalid connection."),
+            JosephsonCircuits.add_splitters(networks,connections)
+        )
+    end
+
+    @testset "S_splitter! errors" begin
+        @test_throws(
+            ArgumentError("First two dimensions of the scattering matrix must be the same."),
+            JosephsonCircuits.S_splitter!(ones(3,2))
+        )
     end
 
     @testset "StoZ, StoY, StoA, StoB, StoABCD consistency" begin

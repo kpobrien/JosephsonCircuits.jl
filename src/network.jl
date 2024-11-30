@@ -662,30 +662,29 @@ JosephsonCircuits.parse_connections(networks,connections)
 """
 function parse_connections(networks::AbstractVector{Tuple{T,N}},connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
-    # portnames are associated with each node, so store those
-    # as a vector where the index is the node index
+    # portnames are associated with each node, so store those as a vector
+    # where the index is the node index
     ports = [[(network[1],i) for i in 1:size(network[2],1)] for network in networks]
 
-    # network data is associated with each node, so also store
-    # those as a vector of matrices where the index is the node
-    # index.
+    # network data is associated with each node, so also store those as a
+    # vector of matrices where the index is the node index.
     networkdata = [network[2] for network in networks]
 
-    # make a dictionary where the keys are the network names and
-    # the values are the node indices.
+    # make a dictionary where the keys are the network names and the values
+    # are the node indices.
     networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
     
     if length(networkindices) != length(networkdata)
         throw(ArgumentError("Duplicate network name detected."))
     end
-    
+
     # make the adjacency lists for the connections
     fadjlist = Vector{Vector{Int}}(undef,length(networks))
     badjlist = Vector{Vector{Int}}(undef,length(networks))
     fconnectionlist = Vector{Vector{Tuple{T, T, Int64, Int64}}}(undef,length(networks))
     fweightlist = Vector{Vector{Int}}(undef,length(networks))
 
-    
+
     # fill them with empty vectors
     for i in eachindex(fadjlist)
         fadjlist[i] = []
@@ -699,7 +698,7 @@ function parse_connections(networks::AbstractVector{Tuple{T,N}},connections::Abs
     for i in eachindex(fweightlist)
         fweightlist[i] = []
     end
-    
+
     # loop through the connections and populate the adjacency lists
     for (src_name, dst_name, src_port, dst_port) in connections
         if !haskey(networkindices,src_name)
@@ -786,11 +785,11 @@ function move_fedge!(g,src_node,src_node_new,edge_index,fadjlist1,fadjlist2)
     dst_node = popat!(g.fadjlist[src_node], edge_index)
     # add the new source
     push!(g.fadjlist[src_node_new], dst_node)
-    
+
     if !isempty(fadjlist1)
         push!(fadjlist1[src_node_new], popat!(fadjlist1[src_node], edge_index))
     end
-    
+
     if !isempty(fadjlist2)
         push!(fadjlist2[src_node_new], popat!(fadjlist2[src_node], edge_index))
     end
@@ -835,15 +834,15 @@ function move_bedge!(g,dst_node,dst_node_new,edge_index,fadjlist1,fadjlist2)
         if g.fadjlist[src_node][k] == dst_node
             deleteat!(g.fadjlist[src_node],k)
             push!(g.fadjlist[src_node], dst_node_new)
-                
+
             if !isempty(fadjlist1)
                 push!(fadjlist1[src_node], popat!(fadjlist1[src_node], k))
             end
-               
+
             if !isempty(fadjlist2)
                 push!(fadjlist2[src_node], popat!(fadjlist2[src_node], k))
-            end            
-            
+            end
+
             break
         end
     end
