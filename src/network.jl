@@ -1415,6 +1415,14 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     # loop through the connections and compute the sparse connection matrix
     # gamma
     for (src_name, dst_name, src_port, dst_port) in connections
+
+        if !haskey(networkindices,src_name)
+            throw(ArgumentError("Source network $(src_name) not found."))
+        end
+        if !haskey(networkindices,dst_name)
+            throw(ArgumentError("Destination network $(dst_name) not found."))
+        end
+        
         src_index = networkindices[src_name]
         dst_index = networkindices[dst_name]
 
