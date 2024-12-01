@@ -1479,6 +1479,54 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     return portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S
 end
 
+function solveS_initialize(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
+        small_splitters::Bool = true, klu::Bool = true,
+        internal_ports::Bool = false,
+        nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+
+    netflat, conflat = add_splitters(networks, connections;
+        small_splitters = small_splitters)
+
+    return solveS_initialize(netflat, conflat;
+        klu = klu, internal_ports = internal_ports,
+        nbatches = nbatches)
+end
+
+function solveS_initialize(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{Tuple{T,T,Int,Int}};
+        klu::Bool = true, internal_ports::Bool = false,
+        nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+
+    portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S = parse_connections_sparse(networks,connections)
+
+    portsp = ports[portp_indices]
+    portsc = ports[portc_indices]
+
+    Scp_indices = Sindices[portc_indices,portp_indices]
+    Spc_indices = Sindices[portp_indices,portc_indices]
+    Spp_indices = Sindices[portp_indices,portp_indices]
+    Scc_indices = Sindices[portc_indices,portc_indices]
+
+    Scp = S[portc_indices,portp_indices]
+    Spc = S[portp_indices,portc_indices]
+    Spp = S[portp_indices,portp_indices]
+    Scc = S[portc_indices,portc_indices]
+
+    gammacc = gamma[portc_indices,portc_indices]
+
+    sizeSp = NTuple{ndims(networkdata[1]),Int}(ifelse(i<=2,length(portsp),size(networkdata[1],i)) for i in 1:ndims(networkdata[1]))
+    Sp = zeros(eltype(N),sizeSp)
+
+    sizeSc = tuple(length(portsc),length(portsp),[size(networkdata[1],i) for i in 3:ndims(networkdata[1])]...)
+    Sc = ifelse(internal_ports,zeros(eltype(N),sizeSc),zeros(eltype(N),0))
+
+    return Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc, Spp_indices,
+        Spc_indices, Scp_indices, Scc_indices, networkdata, nbatches, klu,
+        internal_ports
+end
+
+
 """
     solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
         Scp_indices, Scc_indices, networkdata, i)
@@ -1509,89 +1557,6 @@ function solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
     return nothing
 end
 
-"""
-    solveS(networks::AbstractVector{Tuple{T,N}},
-        connections::AbstractVector{Tuple{T,T,Int,Int}};
-        klu::Bool = true, nbatches::Integer = Base.Threads.nthreads()) where {T,N}
-
-Perform the connections between the networks in `networks` specified by the
-vector of tuples `connections`. Return the sparse matrix of scattering
-parameters for the external ports `Sp` and the external ports `portsp`. Also
-return the internal port scattering parameters `Sc` and the internal ports
-`portsc`.
-
-# Arguments
-- `networks::AbstractVector{Tuple{T,N}}`: a vector of tuples of the network
-    name and scattering parameter matrix such as
-    [("network1name",rand(Complex{Float64},2,2)
-- `connections::AbstractVector{Tuple{T,T,Int,Int}}`: a vector of tuples of
-    networks names and ports such as [("network1name", "network2name",
-    1,2)] where network1 and network2 are the two networks being connected and
-    1 and 2 are integers describing the ports to connect.
-
-# Keywords
-- `klu::Bool = true`: use KLU factorization if true or LU if false.
-- `internal_ports::Bool = false`: return the scattering parameters for the
-    internal ports.
-- `nbatches::Integer = Base.Threads.nthreads()`: the number of batches to run
-    on threads. Defaults to the number of threads with which Julia was
-    launched.
-
-# Returns
-- `Sp`: sparse matrix of scattering parameters for the external ports.
-- `portsp`: the vector of tuples of network name and port number for the
-    external ports.
-- `Sc`: sparse matrix of scattering parameters for the internal ports.
-- `portsc`: the vector of tuples of network name and port number for the
-    internal ports.
-
-# References
-V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
-in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
-249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
-"""
-function solveS(networks::AbstractVector{Tuple{T,N}},
-        connections::AbstractVector{Tuple{T,T,Int,Int}};
-        klu::Bool = true, internal_ports::Bool = false,
-        nbatches::Integer = Base.Threads.nthreads()) where {T,N}
-
-    portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S = parse_connections_sparse(networks,connections)
-
-    portsp = ports[portp_indices]
-    portsc = ports[portc_indices]
-
-    Scp_indices = Sindices[portc_indices,portp_indices]
-    Spc_indices = Sindices[portp_indices,portc_indices]
-    Spp_indices = Sindices[portp_indices,portp_indices]
-    Scc_indices = Sindices[portc_indices,portc_indices]
-
-    Scp = S[portc_indices,portp_indices]
-    Spc = S[portp_indices,portc_indices]
-    Spp = S[portp_indices,portp_indices]
-    Scc = S[portc_indices,portc_indices]
-
-    gammacc = gamma[portc_indices,portc_indices]
-
-    sizeSp = NTuple{ndims(networkdata[1]),Int}(ifelse(i<=2,length(portsp),size(networkdata[1],i)) for i in 1:ndims(networkdata[1]))
-    Sp = zeros(eltype(N),sizeSp)
-
-    sizeSc = tuple(length(portsc),length(portsp),[size(networkdata[1],i) for i in 3:ndims(networkdata[1])]...)
-    Sc = ifelse(internal_ports,zeros(eltype(N),sizeSc),zeros(eltype(N),0))
-
-    # solve the linear system for the specified frequencies. the response for
-    # each frequency is independent so it can be done in parallel; however
-    # we want to reuse the factorization object and other input arrays. 
-    # perform array allocations and factorization "nbatches" times.
-    # parallelize using native threading
-    indices = CartesianIndices(axes(networkdata[1])[3:end])
-    batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
-    Base.Threads.@threads for i in 1:length(batches)
-        solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
-            Scp_indices, Scc_indices, networkdata,indices,batches[i],klu)
-    end
-
-    return Sp,portsp,Sc,portsc
-end
 
 function solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
             Scp_indices, Scc_indices, networkdata,indices,batch,klu)
@@ -1642,14 +1607,116 @@ function solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indice
     return nothing
 end
 
+"""
+    solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
+        Spp_indices, Spc_indices, Scp_indices, Scc_indices, networkdata,
+        nbatches, klu, internal_ports)
+
+In-place version of `solveS`. See [`solveS`](@ref) for description. The use-
+case for this function is to perform in-place updates of a network connection,
+for example, by changing the arrays that are referenced in `networks` then
+recomputing the scattering parameters for the connected system.
+
+# Examples
+```jldoctest
+networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+connections = [[(:S1,1),(:S2,2)]];
+sol = JosephsonCircuits.solveS_initialize(networks, connections);
+JosephsonCircuits.solveS!(sol...)
+
+# output
+(Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S2, 1)], Sc = Float64[], portsc = [(:S1, 1), (:S2, 2)])
+```
+
+"""
+function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
+    Spp_indices, Spc_indices, Scp_indices, Scc_indices, networkdata, nbatches,
+    klu, internal_ports)
+
+    # solve the linear system for the specified frequencies. the response for
+    # each frequency is independent so it can be done in parallel; however
+    # we want to reuse the factorization object and other input arrays. 
+    # perform array allocations and factorization "nbatches" times.
+    # parallelize using native threading
+    indices = CartesianIndices(axes(networkdata[1])[3:end])
+    batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
+    Base.Threads.@threads for i in 1:length(batches)
+        solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
+            Scp_indices, Scc_indices, networkdata,indices,batches[i],klu)
+    end
+
+    return (Sp=Sp, portsp=portsp, Sc=Sc, portsc = portsc)
+end
+
+"""
+    solveS(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{Tuple{T,T,Int,Int}};
+        klu::Bool = true, nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+
+See [`solveS`](@ref) for description.
+
+"""
+function solveS(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{Tuple{T,T,Int,Int}};
+        klu::Bool = true, internal_ports::Bool = false,
+        nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+
+        sol = solveS_initialize(networks,connections;klu = klu,
+            internal_ports = internal_ports, nbatches = nbatches)
+
+    return solveS!(sol...)
+end
 
 """
     solveS(networks::AbstractVector{Tuple{T,N}},
         connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
         small_splitters = true) where {T,N}
 
-See [`solveS`](@ref) for description.
+Perform the connections between the networks in `networks` specified by the
+vector of vector of tuples `connections`. Return the sparse matrix of
+scattering parameters for the external ports `Sp` and the external ports
+`portsp`. Also return the internal port scattering parameters `Sc` and the
+internal ports `portsc`.
 
+# Arguments
+- `networks::AbstractVector{Tuple{T,N}}`: a vector of tuples of the network
+    name and scattering parameter matrix such as
+    [("network1name",rand(Complex{Float64},2,2)
+- `connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}}`: a vector of
+    vector of tuples of networks names and ports such as [[("network1name",1),
+    ("network2name",2)]] where network1 and network2 are the two networks
+    being connected and 1 and 2 are integers describing the ports to connect.
+
+# Keywords
+- `klu::Bool = true`: use KLU factorization if true or LU if false.
+- `internal_ports::Bool = false`: return the scattering parameters for the
+    internal ports.
+- `nbatches::Integer = Base.Threads.nthreads()`: the number of batches to run
+    on threads. Defaults to the number of threads with which Julia was
+    launched.
+
+# Returns
+- `Sp`: sparse matrix of scattering parameters for the external ports.
+- `portsp`: the vector of tuples of network name and port number for the
+    external ports.
+- `Sc`: sparse matrix of scattering parameters for the internal ports.
+- `portsc`: the vector of tuples of network name and port number for the
+    internal ports.
+
+# Examples
+```jldoctest
+networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+connections = [[(:S1,1),(:S2,2)]];
+JosephsonCircuits.solveS(networks,connections)
+
+# output
+(Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S2, 1)], Sc = Float64[], portsc = [(:S1, 1), (:S2, 2)])
+```
+
+# References
+V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
+in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
+249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
 function solveS(networks::AbstractVector{Tuple{T,N}},
     connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
@@ -1660,7 +1727,6 @@ function solveS(networks::AbstractVector{Tuple{T,N}},
         small_splitters = small_splitters)
     return solveS(netflat, conflat;klu = klu, internal_ports = internal_ports,
         nbatches = nbatches)
-
 end
 
 
