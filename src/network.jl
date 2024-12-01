@@ -638,18 +638,6 @@ end
 
 Return a directed graph of connections between the networks.
 
-# Arguments
-- `networks`: 
-- `connections`: 
-
-# Returns
-- `networkdata`: 
-- `ports`: 
-- `networkindices`: 
-- `g`: 
-- `fconnectionlist`: 
-- `fweightlist`: 
-
 # Examples
 ```jldoctest
 networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
@@ -1302,7 +1290,8 @@ end
 
 """
     connectS(networks::AbstractVector{Tuple{T,N}},
-        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}}) where {T,N}
+        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
+        small_splitters = true) where {T,N}
 
 Return the network and ports resulting from connecting the networks in
 `networks` according to the connections in `connections`. `networks` is a
@@ -1344,6 +1333,326 @@ function connectS(networks::AbstractVector{Tuple{T,N}},
     netflat, conflat = add_splitters(networks, connections;
         small_splitters = small_splitters)
     return connectS(netflat, conflat)
+end
+
+
+"""
+    parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
+
+Return the indices of the internal ports `portc_indices`, the external ports
+`portp_indices`, the vector of port tuples `ports`, the vector of scattering
+parameter data `networkdata`, the connection matrix `gamma`, the sparse matrix
+containing indices in networkdata `Sindices`, and an empty sparse matrix of
+scattering parameter data `S`. The scattering parameter data consists of the
+input networks assembled as a block diagonal matrix.
+
+# References
+V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
+in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
+249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
+"""
+function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
+    connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
+
+    # network data is associated with each node, so also store those as a
+    # vector of matrices where the index is the node index.
+    networkdata = [network[2] for network in networks]
+
+    # first dimension of the final scattering matrix
+    m = 0
+    # number of nonzero elements in S
+    M = 0
+    for i in eachindex(networkdata)
+        if size(networkdata[i],1) != size(networkdata[i],2)
+            throw(ArgumentError("First two dimensions of the scattering matrices must be the same."))
+        end
+        m+=size(networkdata[i],1)
+        M+=size(networkdata[i],1)*size(networkdata[i],2)
+    end
+
+
+    # a vector of tuples containing the ports for each of the networks in the
+    # same order the networks were supplied. eg.
+    # [(:S1,1),(:S1,2),(:S2,1),(:S2,2)]
+    ports = Vector{Tuple{T,Int}}(undef,m)
+    j = 1
+    for network in networks
+        for i in 1:size(network[2],1)
+            ports[j] = (network[1],i)
+            j+=1
+        end
+    end
+
+    # the indices in the sparse matrix formed by placing all of the scattering
+    # matrices along the diagonal.
+    networkdataindices = zeros(Int,length(networks))
+    networkdataindices[1] = 1
+    for i in 2:length(networkdataindices)
+        networkdataindices[i] = networkdataindices[i-1] + size(networkdata[i-1],1)
+    end
+
+    # make a dictionary where the keys are the network names and the values
+    # are the node indices.
+    networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
+    
+    if length(networkindices) != length(networkdata)
+        throw(ArgumentError("Duplicate network name detected."))
+    end
+
+    # Compute the sparse connection matrix gamma and the port indices as which
+    # connections occur which are also called internal ports.
+    Igamma = Vector{Int}(undef,2*length(connections))
+    Jgamma = Vector{Int}(undef,2*length(connections))
+    Vgamma = Vector{Int}(undef,2*length(connections))
+    empty!(Igamma)
+    empty!(Jgamma)
+    empty!(Vgamma)
+
+    portc_indices = Vector{Int}(undef,2*length(connections))
+    empty!(portc_indices)
+
+    # loop through the connections and compute the sparse connection matrix
+    # gamma
+    for (src_name, dst_name, src_port, dst_port) in connections
+        src_index = networkindices[src_name]
+        dst_index = networkindices[dst_name]
+
+        push!(Igamma,networkdataindices[src_index]+src_port-1)
+        push!(Jgamma,networkdataindices[dst_index]+dst_port-1)
+        push!(Vgamma,1)
+
+        push!(Igamma,networkdataindices[dst_index]+dst_port-1)
+        push!(Jgamma,networkdataindices[src_index]+src_port-1)
+        push!(Vgamma,1)
+
+        # add to the vector of internal ports
+        push!(portc_indices,networkdataindices[src_index]+src_port-1)
+        push!(portc_indices,networkdataindices[dst_index]+dst_port-1)
+
+    end
+
+    # then sort the internal port indices
+    sort!(portc_indices)
+    # and generate the external port indices
+    portp_indices = collect(1:m)
+    deleteat!(portp_indices,portc_indices)
+
+    # make the sparse connection matrix
+    gamma = sparse(Igamma,Jgamma,Vgamma,m,m)
+
+    # compute the block diagonal scattering matrix formed by placing all of
+    # the input networks along the diagonal. Sindices contains the
+    # indices from networkdata from which the components should come from.
+    # S has the same sparsity pattern so we can use Sindices to copy over
+    # the values from networkdata. this is useful when looping over different
+    # frequencies.
+    Iindices =  Vector{Int}(undef,M)
+    Jindices = Vector{Int}(undef,M)
+    Vindices = Vector{Tuple{Int,Int,Int}}(undef,M)
+    empty!(Iindices)
+    empty!(Jindices)
+    empty!(Vindices)
+
+    for i in eachindex(networkdata)
+        for c in CartesianIndices(axes(networkdata[i])[1:2])
+            push!(Iindices,networkdataindices[i]+c[1]-1)
+            push!(Jindices,networkdataindices[i]+c[2]-1)
+            push!(Vindices,(i,c[1],c[2]))
+        end
+    end
+
+    Sindices = sparse(Iindices,Jindices,Vindices,m,m)
+
+    # compute an empty block diagonal scattering parameter matrix to be
+    # populated later. we can reuse the sparsity structure from Sindices.
+    S = SparseMatrixCSC(Sindices.m,Sindices.n,copy(Sindices.colptr),copy(Sindices.rowval),Vector{eltype(N)}(undef,M))
+
+    return portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S
+end
+
+"""
+    solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
+        Scp_indices, Scc_indices, networkdata, i)
+
+Update the sparse matrices `Spp`, `Spc`, `Scp`, and `Scc` using the indices
+from `Spp_indices`, `Spc_indices`, `Scp_indices`, and `Scc_indices` which
+are indices into `networkdata` with frequency index `i`.
+"""
+function solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
+    Scp_indices, Scc_indices, networkdata, i)
+
+    for (j,c) in enumerate(Spp_indices.nzval)
+        Spp.nzval[j] = networkdata[c[1]][c[2],c[3],i]
+    end
+
+    for (j,c) in enumerate(Spc_indices.nzval)
+        Spc.nzval[j] = networkdata[c[1]][c[2],c[3],i]
+    end
+
+    for (j,c) in enumerate(Scp_indices.nzval)
+        Scp.nzval[j] = networkdata[c[1]][c[2],c[3],i]
+    end
+
+    for (j,c) in enumerate(Scc_indices.nzval)
+        Scc.nzval[j] = networkdata[c[1]][c[2],c[3],i]
+    end
+
+    return nothing
+end
+
+"""
+    solveS(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{Tuple{T,T,Int,Int}};
+        klu::Bool = true, nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+
+Perform the connections between the networks in `networks` specified by the
+vector of tuples `connections`. Return the sparse matrix of scattering
+parameters for the external ports `Sp` and the external ports `portsp`. Also
+return the internal port scattering parameters `Sc` and the internal ports
+`portsc`.
+
+# Arguments
+- `networks::AbstractVector{Tuple{T,N}}`: a vector of tuples of the network
+    name and scattering parameter matrix such as
+    [("network1name",rand(Complex{Float64},2,2)
+- `connections::AbstractVector{Tuple{T,T,Int,Int}}`: a vector of tuples of
+    networks names and ports such as [("network1name", "network2name",
+    1,2)] where network1 and network2 are the two networks being connected and
+    1 and 2 are integers describing the ports to connect.
+
+# Keywords
+- `klu::Bool = true`: use KLU factorization if true or LU if false.
+- `internal_ports::Bool = false`: return the scattering parameters for the
+    internal ports.
+- `nbatches::Integer = Base.Threads.nthreads()`: the number of batches to run
+    on threads. Defaults to the number of threads with which Julia was
+    launched.
+
+# Returns
+- `Sp`: sparse matrix of scattering parameters for the external ports.
+- `portsp`: the vector of tuples of network name and port number for the
+    external ports.
+- `Sc`: sparse matrix of scattering parameters for the internal ports.
+- `portsc`: the vector of tuples of network name and port number for the
+    internal ports.
+
+# References
+V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
+in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
+249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
+"""
+function solveS(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{Tuple{T,T,Int,Int}};
+        klu::Bool = true, internal_ports::Bool = false,
+        nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+
+    portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S = parse_connections_sparse(networks,connections)
+
+    portsp = ports[portp_indices]
+    portsc = ports[portc_indices]
+
+    Scp_indices = Sindices[portc_indices,portp_indices]
+    Spc_indices = Sindices[portp_indices,portc_indices]
+    Spp_indices = Sindices[portp_indices,portp_indices]
+    Scc_indices = Sindices[portc_indices,portc_indices]
+
+    Scp = S[portc_indices,portp_indices]
+    Spc = S[portp_indices,portc_indices]
+    Spp = S[portp_indices,portp_indices]
+    Scc = S[portc_indices,portc_indices]
+
+    gammacc = gamma[portc_indices,portc_indices]
+
+    sizeSp = NTuple{ndims(networkdata[1]),Int}(ifelse(i<=2,length(portsp),size(networkdata[1],i)) for i in 1:ndims(networkdata[1]))
+    Sp = zeros(eltype(N),sizeSp)
+
+    sizeSc = tuple(length(portsc),length(portsp),[size(networkdata[1],i) for i in 3:ndims(networkdata[1])]...)
+    Sc = ifelse(internal_ports,zeros(eltype(N),sizeSc),zeros(eltype(N),0))
+
+    # solve the linear system for the specified frequencies. the response for
+    # each frequency is independent so it can be done in parallel; however
+    # we want to reuse the factorization object and other input arrays. 
+    # perform array allocations and factorization "nbatches" times.
+    # parallelize using native threading
+    indices = CartesianIndices(axes(networkdata[1])[3:end])
+    batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
+    Base.Threads.@threads for i in 1:length(batches)
+        solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
+            Scp_indices, Scc_indices, networkdata,indices,batches[i],klu)
+    end
+
+    return Sp,portsp,Sc,portsc
+end
+
+function solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
+            Scp_indices, Scc_indices, networkdata,indices,batch,klu)
+
+    # make a copy for each thread
+    Spp = copy(Spp)
+    Spc = copy(Spc)
+    Scp = copy(Scp)
+    Scc = copy(Scc)
+    Scptmp = similar(Sp,size(Scp,1),size(Scp,2))
+    ac = similar(Sp,size(Scc,1),size(Spp,1))
+
+    cache = FactorizationCache(0)
+
+    # loop over the dimensions of the array greater than 2
+    for i in batch
+
+        solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
+            Scp_indices, Scc_indices, networkdata, indices[i])
+
+        Scptmp .= Scp
+
+        # if using the KLU factorization and sparse solver then make a 
+        # factorization
+        if i == batch[1]
+            if klu
+                cache = FactorizationCache(KLU.klu(gammacc - Scc))
+            else
+                cache = FactorizationCache(lu(gammacc - Scc))
+            end
+        else
+            if klu
+                factorklu!(cache, gammacc - Scc)
+            else
+                lu!(cache.factorization, gammacc - Scc)
+            end
+        end
+
+        # solve the linear system
+        ldiv!(ac,cache.factorization, Scptmp)
+
+        Sp[:,:,i] .= Spp + Spc*ac
+        if !isempty(Sc)
+            Sc[:,:,i] .= Scp + Scc*ac
+        end
+    end
+
+    return nothing
+end
+
+
+"""
+    solveS(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
+        small_splitters = true) where {T,N}
+
+See [`solveS`](@ref) for description.
+
+"""
+function solveS(networks::AbstractVector{Tuple{T,N}},
+    connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
+    small_splitters = true, klu = true, internal_ports::Bool = false,
+    nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+
+    netflat, conflat = add_splitters(networks, connections;
+        small_splitters = small_splitters)
+    return solveS(netflat, conflat;klu = klu, internal_ports = internal_ports,
+        nbatches = nbatches)
+
 end
 
 

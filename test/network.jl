@@ -398,6 +398,11 @@ import StaticArrays
         end
 
         @test isapprox(Sout1,Sout2)
+
+        Sout3 = JosephsonCircuits.solveS(networks,connections)
+
+        @test isapprox(Sout1,Sout3[1])
+
     end
 
     @testset "connectS with list of connections, small_splitters" begin
@@ -424,6 +429,23 @@ import StaticArrays
         out2 = JosephsonCircuits.connectS(networks, connections;
             small_splitters=true);
         @test isapprox(out1[1],out2[1])
+
+        # test solveS
+        out3 = JosephsonCircuits.solveS(networks, connections;
+            small_splitters=false, klu=false)
+        @test isapprox(out1[1][1],out3[1])
+
+        out4 = JosephsonCircuits.solveS(networks, connections;
+            small_splitters=false, klu=true)
+        @test isapprox(out1[1][1],out4[1])
+
+        out5 = JosephsonCircuits.solveS(networks, connections;
+            small_splitters=true, klu=false)
+        @test isapprox(out1[1][1],out5[1])
+
+        out6 = JosephsonCircuits.solveS(networks, connections;
+            small_splitters=true, klu=true)
+        @test isapprox(out1[1][1],out6[1])
 
     end
 

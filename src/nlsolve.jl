@@ -38,7 +38,7 @@ function factorklu!(cache::FactorizationCache, A::SparseMatrixCSC)
             throw(e)
         end
     end
-    return nothing
+    return cache
 end
 
 """

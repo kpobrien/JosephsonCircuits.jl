@@ -454,15 +454,20 @@ function warmupconnect()
 
     networks = [("S1",S1),("S2",S2),("S3",Ssplitter),("S4",Sopen)]
     connections = [("S1","S1",1,2),("S1","S2",3,1),("S3","S2",2,2),("S3","S4",3,1)]
-    networkdata, ports = JosephsonCircuits.connectS(networks,connections)
-    Sout1 = networkdata[1]
+    JosephsonCircuits.connectS(networks,connections)
+    JosephsonCircuits.solveS(networks,connections)
 
-    Sout2 = begin
+    connections = [[("S1",1),("S1",2)],[("S1",3),("S2",2),("S4",1)]]
+    JosephsonCircuits.connectS(networks,connections)
+    JosephsonCircuits.solveS(networks,connections)
+
+    begin
         S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
         S = JosephsonCircuits.connectS(S,S2,2,2)
         S = JosephsonCircuits.connectS(S1,S,3,2)
         S = JosephsonCircuits.connectS(S,1,2)
     end
+
 
     return true
 end
