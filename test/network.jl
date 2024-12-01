@@ -449,20 +449,20 @@ import StaticArrays
 
     end
 
-    @testset "parse_connections errors" begin
+    @testset "connectS_initialize errors" begin
 
         networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S3,:S2,1,2)];
         @test_throws(
             ArgumentError("Source network S3 not found."),
-            JosephsonCircuits.parse_connections(networks,connections)
+            JosephsonCircuits.connectS_initialize(networks,connections)
         )
 
         networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S1,:S3,1,2)];
         @test_throws(
             ArgumentError("Destination network S3 not found."),
-            JosephsonCircuits.parse_connections(networks,connections)
+            JosephsonCircuits.connectS_initialize(networks,connections)
         )
     end
 

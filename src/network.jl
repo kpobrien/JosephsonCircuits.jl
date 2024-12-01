@@ -632,98 +632,6 @@ function cascadeS!(S::AbstractMatrix, Sa::AbstractMatrix, Sb::AbstractMatrix)
     return nothing
 end
 
-
-"""
-    parse_connections(networks,connections)
-
-Return a directed graph of connections between the networks.
-
-# Examples
-```jldoctest
-networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
-connections = [(:S1,:S2,1,2)];
-JosephsonCircuits.parse_connections(networks,connections)
-
-# output
-(Matrix[[0 1; 1 0], [0.5 0.5; 0.5 0.5]], [[(:S1, 1), (:S1, 2)], [(:S2, 1), (:S2, 2)]], Dict(:S2 => 2, :S1 => 1), Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[(:S1, :S2, 1, 2)], Tuple{Symbol, Symbol, Int64, Int64}[]], [[1], Int64[]])
-```
-"""
-function parse_connections(networks::AbstractVector{Tuple{T,N}},connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
-
-    # portnames are associated with each node, so store those as a vector
-    # where the index is the node index
-    ports = [[(network[1],i) for i in 1:size(network[2],1)] for network in networks]
-
-    # network data is associated with each node, so also store those as a
-    # vector of matrices where the index is the node index.
-    networkdata = [network[2] for network in networks]
-
-    # make a dictionary where the keys are the network names and the values
-    # are the node indices.
-    networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
-    
-    if length(networkindices) != length(networkdata)
-        throw(ArgumentError("Duplicate network name detected."))
-    end
-
-    # make the adjacency lists for the connections
-    fadjlist = Vector{Vector{Int}}(undef,length(networks))
-    badjlist = Vector{Vector{Int}}(undef,length(networks))
-    fconnectionlist = Vector{Vector{Tuple{T, T, Int64, Int64}}}(undef,length(networks))
-    fweightlist = Vector{Vector{Int}}(undef,length(networks))
-
-
-    # fill them with empty vectors
-    for i in eachindex(fadjlist)
-        fadjlist[i] = []
-    end
-    for i in eachindex(badjlist)
-        badjlist[i] = []
-    end
-    for i in eachindex(fconnectionlist)
-        fconnectionlist[i] = []
-    end
-    for i in eachindex(fweightlist)
-        fweightlist[i] = []
-    end
-
-    # loop through the connections and populate the adjacency lists
-    for (src_name, dst_name, src_port, dst_port) in connections
-        if !haskey(networkindices,src_name)
-            throw(ArgumentError("Source network $(src_name) not found."))
-        end
-        if !haskey(networkindices,dst_name)
-            throw(ArgumentError("Destination network $(dst_name) not found."))
-        end
-
-        src_index = networkindices[src_name]
-        dst_index = networkindices[dst_name]
-
-        # the source node entry points to the destination node 
-        push!(fadjlist[src_index],dst_index)
-
-        # the destination node entry points to the source node
-        push!(badjlist[dst_index],src_index)
-
-        # only store the source connections
-        push!(fconnectionlist[src_index],(src_name, dst_name, src_port, dst_port))
-
-        src_weight = size(networkdata[src_index],1)-1
-        dst_weight = size(networkdata[dst_index],1)-1
-        connection_weight = src_weight*dst_weight
-        if src_index == dst_index
-            connection_weight = 0
-        end
-        push!(fweightlist[src_index],connection_weight)
-
-    end
-
-    # turn the adjacency lists into a graph
-    g = Graphs.SimpleGraphs.SimpleDiGraph(length(networkdata), fadjlist,badjlist)
-
-    return (networkdata,ports,networkindices,g,fconnectionlist,fweightlist)
-end
-
 """
     remove_edge!(g,src_node,edge_index)
 
@@ -908,180 +816,6 @@ function move_edges!(g,node,node_new,fadjlist1,fadjlist2)
 end
 
 """
-    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,
-    connection_index)
-
-Apply the connection specified by the source node `src_node` and the index
-of the connection in the forward adjacency list `connection_index`. Modify the
-arguments and return nothing.
-
-"""
-function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,connection_index)
-
-    # if  !(length(g.fadjlist) >= src_node >= 1)
-    #     throw(ArgumentError("`src_node`=$(src_node) is less than one or greater than the number of nodes in the forward adjacency list."))
-    # end
-
-    # if  !(length(g.fadjlist[src_node]) >= connection_index >= 1)
-    #     throw(ArgumentError("`connection_index`=$(connection_index) is less than one or larger than the number of connections for this node."))
-    # end
-
-    # remove the edge from the graph
-    dst_node = remove_edge!(g,src_node,connection_index)
-
-    # if  !(length(g.fadjlist) >= dst_node >= 1)
-    #     throw(ArgumentError("`dst_node`=$(dst_node) is less than one or greater than the number of nodes in the forward adjacency list."))
-    # end
-
-    # remove and store the connection associated with that edge
-    connection = popat!(fconnectionlist[src_node], connection_index)
-
-    # remove the weight for that connection
-    weight = popat!(fweightlist[src_node], connection_index)
-
-    # the source and destination ports eg. (:S1,1) and (:S2,1)
-    src_port = (connection[1],connection[3])
-    dst_port = (connection[2],connection[4])
-
-    # the indices at which these ports are located in the source
-    # destination scattering parameter matrix
-    src_port_index = findfirst(isequal(src_port),ports[src_node])
-    dst_port_index = findfirst(isequal(dst_port),ports[dst_node])
-
-    if isnothing(src_port_index)
-        throw(ArgumentError("Source port $(src_port) not found in the vector of ports."))
-    end
-
-    if isnothing(dst_port_index)
-        throw(ArgumentError("Destination port $(dst_port) not found in the vector of ports."))
-    end
-
-    # println("src_node => dst_node: ",src_node," => ",dst_node)
-    # println("src_port => dst_port: ",src_port," => ",dst_port)
-    # println("src_port_index => dst_port_index: ",src_port_index," => ",dst_port_index)
-
-    # if src_node == dst_node, then make a self connection
-    if src_node == dst_node
-        # connect the networks and find the ports of the connected network
-        connected_network = JosephsonCircuits.connectS(networkdata[src_node],src_port_index,dst_port_index)
-        connected_ports = JosephsonCircuits.connectSports(ports[src_node],src_port_index,dst_port_index)
-    
-        # delete the ports for the dst. update the ports for the src.
-        ports[src_node] = connected_ports
-
-        # update the networkdata for the src and replace the src with an empty array.
-        networkdata[src_node] = connected_network
-    else
-        # connect the networks and find the ports of the connected network
-        connected_network = JosephsonCircuits.connectS(networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index)
-        connected_ports = JosephsonCircuits.connectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
-
-        # delete the ports for the dst. update the ports for the src.
-        ports[src_node] = connected_ports
-        ports[dst_node] = []
-
-        # update the networkdata for the src and replace the src with an empty array.
-        networkdata[src_node] = connected_network
-        networkdata[dst_node] = Array{eltype(connected_network)}(undef,ntuple(zero,ndims(connected_network)))
-        # move the edges away from the dst node
-        move_edges!(g,dst_node,src_node,fconnectionlist,fweightlist)
-    end
-
-    # applying a connection changes the size of the scattering parameter
-    # matrices. first update the weights for the connections originating
-    # from the src_node. fadjlist[src_node] has the indices of the nodes
-    # for each connection originating there, so loop over those, and
-    # update the weights
-    for k in eachindex(g.fadjlist[src_node])
-        # update the weights of fweightlist[src_node][k]
-        if src_node == g.fadjlist[src_node][k]
-            # self connections always reduce the size so give them zero weight
-            fweightlist[src_node][k] = 0
-        else
-            src_weight = size(networkdata[src_node],1)-1
-            dst_weight = size(networkdata[g.fadjlist[src_node][k]],1)-1
-            connection_weight = src_weight*dst_weight
-            fweightlist[src_node][k] = connection_weight
-        end
-    end
-    # also update the weights for any connection that ends at the
-    # src_node. those nodes are found in g.badjlist[src_node]
-    for k in g.badjlist[src_node]
-        for l in eachindex(g.fadjlist[k])
-            if g.fadjlist[k][l] == src_node
-                 # update the weights of fweightlist[k][l]
-                if src_node == k
-                    # self connections always reduce the size so give them zero weight
-                    fweightlist[k][l] = 0
-                else
-                    src_weight = size(networkdata[src_node],1)-1
-                    dst_weight = size(networkdata[k],1)-1
-                    connection_weight = src_weight*dst_weight
-                    fweightlist[k][l] = connection_weight
-                end
-            end
-        end
-    end
-    return nothing
-end
-
-"""
-    make_connections!(g,fconnectionlist,fweightlist,ports,networkdata)
-
-Return the non-empty elements of the updated `networkdata` and `ports` after
-applying all of the connections in the connection forward adjacency list
-`fconnectionlist` to the graph `g`, the forward adjacency weight list
-`fweightlist`, the vector of ports `ports`, and the vector of scattering
-parameters `networkdata`.
-
-"""
-function make_connections!(g,fconnectionlist,fweightlist,ports,networkdata)
-    # find the minimum weight and the second to minimum weight
-    minweight = Inf
-    secondtominweight = Inf
-    for i in eachindex(fweightlist)
-        for j in eachindex(fweightlist[i])
-            weight = fweightlist[i][j]
-            if weight <= minweight
-                minweight = weight
-            elseif weight <= secondtominweight
-                secondtominweight = weight
-            else
-                nothing
-            end
-        end
-    end
-    # println("minweight ",minweight)
-    while !all(isempty.(fweightlist))
-        for i in eachindex(fweightlist)
-            j = 1
-            N = length(fweightlist[i]) 
-            while j <= N
-                weight = fweightlist[i][j]
-                if weight <= minweight
-                    # perform the connection
-                    # println("i ",i," j ",j," N ",N," length(fweightlist[i]) ",length(fweightlist[i]))
-                    # println(fweightlist[i])
-                    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j)
-                    # set j = 1
-                    j = 1
-                    N = length(fweightlist[i]) 
-                    minweight = weight
-                elseif weight <= secondtominweight
-                    secondtominweight = weight
-                    j+=1
-                else
-                    j+=1
-                end
-            end
-        end
-        minweight = secondtominweight
-        secondtominweight = Inf
-    end
-    return networkdata[map(!isempty,networkdata)],ports[map(!isempty,networkdata)]
-end
-
-"""
     S_splitter!(S::AbstractArray)
 
 Return the scattering parameters for a N port ideal lossless symmetrical
@@ -1255,6 +989,309 @@ function add_splitters(networks::AbstractVector{Tuple{T,N}},
     return netflat, conflat
 end
 
+"""
+    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,
+    connection_index)
+
+Apply the connection specified by the source node `src_node` and the index
+of the connection in the forward adjacency list `connection_index`. Modify the
+arguments and return nothing.
+
+"""
+function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,connection_index)
+
+    # if  !(length(g.fadjlist) >= src_node >= 1)
+    #     throw(ArgumentError("`src_node`=$(src_node) is less than one or greater than the number of nodes in the forward adjacency list."))
+    # end
+
+    # if  !(length(g.fadjlist[src_node]) >= connection_index >= 1)
+    #     throw(ArgumentError("`connection_index`=$(connection_index) is less than one or larger than the number of connections for this node."))
+    # end
+
+    # remove the edge from the graph
+    dst_node = remove_edge!(g,src_node,connection_index)
+
+    # if  !(length(g.fadjlist) >= dst_node >= 1)
+    #     throw(ArgumentError("`dst_node`=$(dst_node) is less than one or greater than the number of nodes in the forward adjacency list."))
+    # end
+
+    # remove and store the connection associated with that edge
+    connection = popat!(fconnectionlist[src_node], connection_index)
+
+    # remove the weight for that connection
+    weight = popat!(fweightlist[src_node], connection_index)
+
+    # the source and destination ports eg. (:S1,1) and (:S2,1)
+    src_port = (connection[1],connection[3])
+    dst_port = (connection[2],connection[4])
+
+    # the indices at which these ports are located in the source
+    # destination scattering parameter matrix
+    src_port_index = findfirst(isequal(src_port),ports[src_node])
+    dst_port_index = findfirst(isequal(dst_port),ports[dst_node])
+
+    if isnothing(src_port_index)
+        throw(ArgumentError("Source port $(src_port) not found in the vector of ports."))
+    end
+
+    if isnothing(dst_port_index)
+        throw(ArgumentError("Destination port $(dst_port) not found in the vector of ports."))
+    end
+
+    # println("src_node => dst_node: ",src_node," => ",dst_node)
+    # println("src_port => dst_port: ",src_port," => ",dst_port)
+    # println("src_port_index => dst_port_index: ",src_port_index," => ",dst_port_index)
+
+    # if src_node == dst_node, then make a self connection
+    if src_node == dst_node
+        # connect the networks and find the ports of the connected network
+        connected_network = JosephsonCircuits.connectS(networkdata[src_node],src_port_index,dst_port_index)
+        connected_ports = JosephsonCircuits.connectSports(ports[src_node],src_port_index,dst_port_index)
+    
+        # delete the ports for the dst. update the ports for the src.
+        ports[src_node] = connected_ports
+
+        # update the networkdata for the src and replace the src with an empty array.
+        networkdata[src_node] = connected_network
+    else
+        # connect the networks and find the ports of the connected network
+        connected_network = JosephsonCircuits.connectS(networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index)
+        connected_ports = JosephsonCircuits.connectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
+
+        # delete the ports for the dst. update the ports for the src.
+        ports[src_node] = connected_ports
+        ports[dst_node] = []
+
+        # update the networkdata for the src and replace the src with an empty array.
+        networkdata[src_node] = connected_network
+        networkdata[dst_node] = Array{eltype(connected_network)}(undef,ntuple(zero,ndims(connected_network)))
+        # move the edges away from the dst node
+        move_edges!(g,dst_node,src_node,fconnectionlist,fweightlist)
+    end
+
+    # applying a connection changes the size of the scattering parameter
+    # matrices. first update the weights for the connections originating
+    # from the src_node. fadjlist[src_node] has the indices of the nodes
+    # for each connection originating there, so loop over those, and
+    # update the weights
+    for k in eachindex(g.fadjlist[src_node])
+        # update the weights of fweightlist[src_node][k]
+        if src_node == g.fadjlist[src_node][k]
+            # self connections always reduce the size so give them zero weight
+            fweightlist[src_node][k] = 0
+        else
+            src_weight = size(networkdata[src_node],1)-1
+            dst_weight = size(networkdata[g.fadjlist[src_node][k]],1)-1
+            connection_weight = src_weight*dst_weight
+            fweightlist[src_node][k] = connection_weight
+        end
+    end
+    # also update the weights for any connection that ends at the
+    # src_node. those nodes are found in g.badjlist[src_node]
+    for k in g.badjlist[src_node]
+        for l in eachindex(g.fadjlist[k])
+            if g.fadjlist[k][l] == src_node
+                 # update the weights of fweightlist[k][l]
+                if src_node == k
+                    # self connections always reduce the size so give them zero weight
+                    fweightlist[k][l] = 0
+                else
+                    src_weight = size(networkdata[src_node],1)-1
+                    dst_weight = size(networkdata[k],1)-1
+                    connection_weight = src_weight*dst_weight
+                    fweightlist[k][l] = connection_weight
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    connectS_initialize(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
+        small_splitters = true) where {T,N}
+
+Return a directed graph of connections between the networks.
+
+# Examples
+```jldoctest
+networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+connections = [[(:S1,1),(:S2,2)]];
+JosephsonCircuits.connectS_initialize(networks,connections)
+
+# output
+(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[(:S1, :S2, 1, 2)], Tuple{Symbol, Symbol, Int64, Int64}[]], [[1], Int64[]], [[(:S1, 1), (:S1, 2)], [(:S2, 1), (:S2, 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
+```
+"""
+function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
+    connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
+    small_splitters = true) where {T,N}
+
+    netflat, conflat = add_splitters(networks, connections;
+        small_splitters = small_splitters)
+    return connectS_initialize(netflat, conflat)
+end
+
+
+"""
+    connectS_initialize(networks::AbstractVector{Tuple{T,N}},
+        connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
+
+Return a directed graph of connections between the networks.
+
+# Examples
+```jldoctest
+networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+connections = [(:S1,:S2,1,2)];
+JosephsonCircuits.connectS_initialize(networks,connections)
+
+# output
+(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[(:S1, :S2, 1, 2)], Tuple{Symbol, Symbol, Int64, Int64}[]], [[1], Int64[]], [[(:S1, 1), (:S1, 2)], [(:S2, 1), (:S2, 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
+```
+"""
+function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
+    connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
+
+    # portnames are associated with each node, so store those as a vector
+    # where the index is the node index
+    ports = [[(network[1],i) for i in 1:size(network[2],1)] for network in networks]
+
+    # network data is associated with each node, so also store those as a
+    # vector of matrices where the index is the node index.
+    networkdata = [network[2] for network in networks]
+
+    # make a dictionary where the keys are the network names and the values
+    # are the node indices.
+    networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
+    
+    if length(networkindices) != length(networkdata)
+        throw(ArgumentError("Duplicate network name detected."))
+    end
+
+    # make the adjacency lists for the connections
+    fadjlist = Vector{Vector{Int}}(undef,length(networks))
+    badjlist = Vector{Vector{Int}}(undef,length(networks))
+    fconnectionlist = Vector{Vector{Tuple{T, T, Int64, Int64}}}(undef,length(networks))
+    fweightlist = Vector{Vector{Int}}(undef,length(networks))
+
+
+    # fill them with empty vectors
+    for i in eachindex(fadjlist)
+        fadjlist[i] = []
+    end
+    for i in eachindex(badjlist)
+        badjlist[i] = []
+    end
+    for i in eachindex(fconnectionlist)
+        fconnectionlist[i] = []
+    end
+    for i in eachindex(fweightlist)
+        fweightlist[i] = []
+    end
+
+    # loop through the connections and populate the adjacency lists
+    for (src_name, dst_name, src_port, dst_port) in connections
+        if !haskey(networkindices,src_name)
+            throw(ArgumentError("Source network $(src_name) not found."))
+        end
+        if !haskey(networkindices,dst_name)
+            throw(ArgumentError("Destination network $(dst_name) not found."))
+        end
+
+        src_index = networkindices[src_name]
+        dst_index = networkindices[dst_name]
+
+        # the source node entry points to the destination node 
+        push!(fadjlist[src_index],dst_index)
+
+        # the destination node entry points to the source node
+        push!(badjlist[dst_index],src_index)
+
+        # only store the source connections
+        push!(fconnectionlist[src_index],(src_name, dst_name, src_port, dst_port))
+
+        src_weight = size(networkdata[src_index],1)-1
+        dst_weight = size(networkdata[dst_index],1)-1
+        connection_weight = src_weight*dst_weight
+        if src_index == dst_index
+            connection_weight = 0
+        end
+        push!(fweightlist[src_index],connection_weight)
+
+    end
+
+    # turn the adjacency lists into a graph
+    g = Graphs.SimpleGraphs.SimpleDiGraph(length(networkdata), fadjlist,badjlist)
+
+    return (g, fconnectionlist, fweightlist, ports, networkdata)
+end
+
+"""
+    connectS!(g,fconnectionlist,fweightlist,ports,networkdata)
+
+Return the non-empty elements of the updated `networkdata` and `ports` after
+applying all of the connections in the connection forward adjacency list
+`fconnectionlist` to the graph `g`, the forward adjacency weight list
+`fweightlist`, the vector of ports `ports`, and the vector of scattering
+parameter matrices `networkdata`.
+
+# Examples
+```jldoctest
+networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+connections = [[(:S1,1),(:S2,2)]];
+sol = JosephsonCircuits.connectS_initialize(networks, connections);
+JosephsonCircuits.connectS!(sol...)
+
+# output
+(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
+```
+"""
+function connectS!(g,fconnectionlist,fweightlist,ports,networkdata)
+    # find the minimum weight and the second to minimum weight
+    minweight = Inf
+    secondtominweight = Inf
+    for i in eachindex(fweightlist)
+        for j in eachindex(fweightlist[i])
+            weight = fweightlist[i][j]
+            if weight <= minweight
+                minweight = weight
+            elseif weight <= secondtominweight
+                secondtominweight = weight
+            else
+                nothing
+            end
+        end
+    end
+    # println("minweight ",minweight)
+    while !all(isempty.(fweightlist))
+        for i in eachindex(fweightlist)
+            j = 1
+            N = length(fweightlist[i]) 
+            while j <= N
+                weight = fweightlist[i][j]
+                if weight <= minweight
+                    # perform the connection
+                    # println("i ",i," j ",j," N ",N," length(fweightlist[i]) ",length(fweightlist[i]))
+                    # println(fweightlist[i])
+                    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j)
+                    # set j = 1
+                    j = 1
+                    N = length(fweightlist[i]) 
+                    minweight = weight
+                elseif weight <= secondtominweight
+                    secondtominweight = weight
+                    j+=1
+                else
+                    j+=1
+                end
+            end
+        end
+        minweight = secondtominweight
+        secondtominweight = Inf
+    end
+    return (S=networkdata[map(!isempty,networkdata)],ports=ports[map(!isempty,networkdata)])
+end
 
 """
     connectS(networks::AbstractVector{Tuple{T,N}},
@@ -1278,15 +1315,14 @@ connections = [(:S1,:S2,1,2)];
 JosephsonCircuits.connectS(networks,connections)
 
 # output
-([[0.5 0.5; 0.5 0.5]], [[(:S1, 2), (:S2, 1)]])
+(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
 ```
 """
 function connectS(networks::AbstractVector{Tuple{T,N}},
         connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
-    networkdata, ports, networkindices,g1,fconnectionlist,fweightlist = parse_connections(networks,connections);
-    return make_connections!(g1,fconnectionlist,fweightlist,ports,networkdata)
+    sol = connectS_initialize(networks,connections);
+    return connectS!(sol...)
 end
-
 
 """
     connectS(networks::AbstractVector{Tuple{T,N}},
@@ -1329,12 +1365,9 @@ true
 function connectS(networks::AbstractVector{Tuple{T,N}},
     connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
     small_splitters = true) where {T,N}
-
-    netflat, conflat = add_splitters(networks, connections;
-        small_splitters = small_splitters)
-    return connectS(netflat, conflat)
+    sol = connectS_initialize(networks,connections;small_splitters = true)
+    return connectS!(sol...)
 end
-
 
 """
     parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
@@ -1627,7 +1660,6 @@ JosephsonCircuits.solveS!(sol...)
 # output
 (Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S2, 1)], Sc = Float64[], portsc = [(:S1, 1), (:S2, 2)])
 ```
-
 """
 function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
     Spp_indices, Spc_indices, Scp_indices, Scc_indices, networkdata, nbatches,
@@ -1654,7 +1686,6 @@ end
         klu::Bool = true, nbatches::Integer = Base.Threads.nthreads()) where {T,N}
 
 See [`solveS`](@ref) for description.
-
 """
 function solveS(networks::AbstractVector{Tuple{T,N}},
         connections::AbstractVector{Tuple{T,T,Int,Int}};
