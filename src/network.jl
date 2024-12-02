@@ -1475,6 +1475,12 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
 
     # then sort the internal port indices
     sort!(portc_indices)
+
+    # check if the port indices are unique
+    if !allunique(portc_indices)
+        throw(ArgumentError("Duplicate (networkname,portnumber) in `connections`."))
+    end
+
     # and generate the external port indices
     portp_indices = collect(1:m)
     deleteat!(portp_indices,portc_indices)
