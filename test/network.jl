@@ -481,6 +481,22 @@ import StaticArrays
             ArgumentError("Destination network S3 not found."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
+
+        networks = [(:S1,[0 1 1;1 0 1]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [(:S1,:S3,1,2)];
+        @test_throws(
+            ArgumentError("First two dimensions of the scattering matrices must be the same."),
+            JosephsonCircuits.parse_connections_sparse(networks,connections)
+        )
+
+        networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0 1;1 0])];
+        connections = [(:S1,:S2,1,2)];
+        @test_throws(
+            ArgumentError("Duplicate network name detected."),
+            JosephsonCircuits.parse_connections_sparse(networks,connections)
+        )
+
+
     end
 
     @testset "add_splitters errors" begin

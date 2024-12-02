@@ -1738,10 +1738,10 @@ internal ports `portsc`.
 ```jldoctest
 networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
 connections = [[(:S1,1),(:S2,2)]];
-JosephsonCircuits.solveS(networks,connections)
+JosephsonCircuits.solveS(networks,connections;internal_ports=true)
 
 # output
-(Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S2, 1)], Sc = Float64[], portsc = [(:S1, 1), (:S2, 2)])
+(Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S2, 1)], Sc = [1.0 0.0; 0.5 0.5], portsc = [(:S1, 1), (:S2, 2)])
 ```
 
 # References
