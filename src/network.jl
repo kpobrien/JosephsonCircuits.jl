@@ -839,7 +839,7 @@ function S_splitter!(S::AbstractArray)
 
     # scattering matrices should be square.
     if size(S,1) != size(S,2)
-        throw(ArgumentError("First two dimensions of the scattering matrix must be the same."))
+        throw(ArgumentError("The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix must be the same."))
     end
 
     # fill with 2/N where N is the size of the scattering matrix.
@@ -895,7 +895,7 @@ function add_splitters(networks::AbstractVector{Tuple{T,N}},
     for c in connections
         # if less than two tuples, not a valid connection
         if length(c) < 2
-            throw(ArgumentError("Invalid connection."))
+            throw(ArgumentError("Invalid connection $(c) with only network and port."))
         # if two tuples, this is a single connection
         elseif length(c) == 2
             push!(conflat,(c[1][1],c[2][1],c[1][2],c[2][2]))
@@ -1030,13 +1030,15 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
     src_port_index = findfirst(isequal(src_port),ports[src_node])
     dst_port_index = findfirst(isequal(dst_port),ports[dst_node])
 
-    if isnothing(src_port_index)
-        throw(ArgumentError("Source port $(src_port) not found in the vector of ports."))
-    end
+    ###  these errors shouldn't be needed anymore with the error checking in
+    ### connectS_initialize
+    # if isnothing(src_port_index)
+    #     throw(ArgumentError("Source port $(src_port) not found in the vector of ports."))
+    # end
 
-    if isnothing(dst_port_index)
-        throw(ArgumentError("Destination port $(dst_port) not found in the vector of ports."))
-    end
+    # if isnothing(dst_port_index)
+    #     throw(ArgumentError("Destination port $(dst_port) not found in the vector of ports."))
+    # end
 
     # println("src_node => dst_node: ",src_node," => ",dst_node)
     # println("src_port => dst_port: ",src_port," => ",dst_port)
@@ -1155,6 +1157,34 @@ function find_duplicate_network_names(networks::AbstractVector{Tuple{T,N}}) wher
     return networkdataduplicates
 end
 
+function find_duplicate_connections(connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T}
+    # find the duplicates to return a useful error message
+    connectionscounts = Dict{Tuple{T,Int},Int}()
+    # count the number of times each network occurs
+    for connection in connections
+        key1 = (connection[1],connection[3])
+        if haskey(connectionscounts,key1)
+            connectionscounts[key1] += 1
+        else
+            connectionscounts[key1] = 1
+        end
+        key2 = (connection[2],connection[4])
+        if haskey(connectionscounts,key2)
+            connectionscounts[key2] += 1
+        else
+            connectionscounts[key2] = 1
+        end
+    end
+    # report any networks that occur more than once
+    connectionsduplicates = Tuple{Tuple{T,Int},Int}[]
+    for (key,val) in connectionscounts
+        if val > 1
+            push!(connectionsduplicates,(key,val))
+        end
+    end
+    return connectionsduplicates
+end
+
 """
     connectS_initialize(networks::AbstractVector{Tuple{T,N}},
         connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
@@ -1185,7 +1215,7 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
     # check that the scattering matrices are square
     for i in eachindex(networkdata)
         if size(networkdata[i],1) != size(networkdata[i],2)
-            throw(ArgumentError("First two dimensions of the scattering matrix $(networks[i][1]) must be the same."))
+            throw(ArgumentError("The sizes of the first two dimensions ($(size(networkdata[i],1)),$(size(networkdata[i],2))) of the scattering matrix $(networks[i][1]) must be the same."))
         end
     end
 
@@ -1193,8 +1223,15 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
     # are the node indices.
     networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
 
+    # check if there are duplicate networks
     if length(networkindices) != length(networkdata)
-        throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))"))
+        throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
+    end
+
+    # check if the port indices are unique
+    duplicateconnections = find_duplicate_connections(connections)
+    if !isempty(duplicateconnections)
+        throw(ArgumentError("Duplicate connections detected [(networkname,port),counts]: $(duplicateconnections)."))
     end
 
     # make the adjacency lists for the connections
@@ -1234,10 +1271,10 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
 
         # check if the source and destination network ports are valid
         if !(1 <= src_port <= size(networkdata[src_index],1))
-            throw(ArgumentError("Source port $(src_port) on network $(src_name) out of range [1,$(size(networkdata[src_index],1))]."))
+            throw(ArgumentError("Source port $(src_port) on network $(src_name) out of range [1,$(size(networkdata[src_index],1))] in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
         if !(1 <= dst_port <= size(networkdata[dst_index],1))
-            throw(ArgumentError("Destination port $(dst_port) on network $(dst_name) out of range [1,$(size(networkdata[dst_index],1))]."))
+            throw(ArgumentError("Destination port $(dst_port) on network $(dst_name) out of range [1,$(size(networkdata[dst_index],1))] in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
 
         # the source node entry points to the destination node 
@@ -1436,7 +1473,7 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     M = 0
     for i in eachindex(networkdata)
         if size(networkdata[i],1) != size(networkdata[i],2)
-            throw(ArgumentError("First two dimensions of the scattering matrix $(networks[i][1]) must be the same."))
+            throw(ArgumentError("The sizes of the first two dimensions ($(size(networkdata[i],1)),$(size(networkdata[i],2))) of the scattering matrix $(networks[i][1]) must be the same."))
         end
         m+=size(networkdata[i],1)
         M+=size(networkdata[i],1)*size(networkdata[i],2)
@@ -1468,7 +1505,7 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
 
     if length(networkindices) != length(networkdata)
-        throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))"))
+        throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
     end
 
     # Compute the sparse connection matrix gamma and the port indices as which
@@ -1500,10 +1537,10 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
 
         # check if the source and destination network ports are valid
         if !(1 <= src_port <= size(networkdata[src_index],1))
-            throw(ArgumentError("Source port $(src_port) on network $(src_name) out of range [1,$(size(networkdata[src_index],1))]."))
+            throw(ArgumentError("Source port $(src_port) on network $(src_name) out of range [1,$(size(networkdata[src_index],1))] in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
         if !(1 <= dst_port <= size(networkdata[dst_index],1))
-            throw(ArgumentError("Destination port $(dst_port) on network $(dst_name) out of range [1,$(size(networkdata[dst_index],1))]."))
+            throw(ArgumentError("Destination port $(dst_port) on network $(dst_name) out of range [1,$(size(networkdata[dst_index],1))] in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
 
         push!(Igamma,networkdataindices[src_index]+src_port-1)
@@ -1525,7 +1562,7 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
 
     # check if the port indices are unique
     if !allunique(portc_indices)
-        throw(ArgumentError("Duplicate (networkname,portnumber) in `connections`."))
+        throw(ArgumentError("Duplicate connections detected [(networkname,port),counts]: $(find_duplicate_connections(connections))."))
     end
 
     # and generate the external port indices
