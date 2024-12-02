@@ -358,13 +358,6 @@ import StaticArrays
             JosephsonCircuits.connectS(networks,connections)
         )
 
-        networks = [(:S1,S1),(:S1,S2),(:S3,Ssplitter),(:S4,Sopen)]
-        connections = [(:S3,:S1,2,2),(:S3,:S4,3,1)]
-        @test_throws(
-            ArgumentError("Duplicate network name detected."),
-            JosephsonCircuits.connectS(networks,connections)
-        )
-
     end
 
     @testset "connectS with list of connections, many frequencies" begin
@@ -454,14 +447,42 @@ import StaticArrays
         networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S3,:S2,1,2)];
         @test_throws(
-            ArgumentError("Source network S3 not found."),
+            ArgumentError("Source network S3 not found in connection (S3,S2,1,2)."),
             JosephsonCircuits.connectS_initialize(networks,connections)
         )
 
         networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S1,:S3,1,2)];
         @test_throws(
-            ArgumentError("Destination network S3 not found."),
+            ArgumentError("Destination network S3 not found in connection (S1,S3,1,2)."),
+            JosephsonCircuits.connectS_initialize(networks,connections)
+        )
+
+        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [(:S1,:S2,10,2)];
+        @test_throws(
+            ArgumentError("Source port 10 on network S1 out of range [1,2]."),
+            JosephsonCircuits.connectS_initialize(networks,connections)
+        )
+
+        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [(:S1,:S2,1,10)];
+        @test_throws(
+            ArgumentError("Destination port 10 on network S2 out of range [1,2]."),
+            JosephsonCircuits.connectS_initialize(networks,connections)
+        )
+
+        networks = [(:S1,[0.0 1.0 1.0;1.0 0.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [(:S1,:S2,1,2)];
+        @test_throws(
+            ArgumentError("First two dimensions of the scattering matrix S1 must be the same."),
+            JosephsonCircuits.connectS_initialize(networks,connections)
+        )
+
+        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0 1;1 0])];
+        connections = [(:S1,:S2,1,2)];
+        @test_throws(
+            ArgumentError("Duplicate network names detected [(networkname,count)]: [(:S1, 2)]"),
             JosephsonCircuits.connectS_initialize(networks,connections)
         )
 
@@ -472,28 +493,28 @@ import StaticArrays
         networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S3,:S2,1,2)];
         @test_throws(
-            ArgumentError("Source network S3 not found."),
+            ArgumentError("Source network S3 not found in connection (S3,S2,1,2)."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
         networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S1,:S3,1,2)];
         @test_throws(
-            ArgumentError("Destination network S3 not found."),
+            ArgumentError("Destination network S3 not found in connection (S1,S3,1,2)."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
         networks = [(:S1,[0.0 1.0 1.0;1.0 0.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S1,:S2,1,2)];
         @test_throws(
-            ArgumentError("First two dimensions of the scattering matrices must be the same."),
+            ArgumentError("First two dimensions of the scattering matrix S1 must be the same."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
         networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0 1;1 0])];
         connections = [(:S1,:S2,1,2)];
         @test_throws(
-            ArgumentError("Duplicate network name detected."),
+            ArgumentError("Duplicate network names detected [(networkname,count)]: [(:S1, 2)]"),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
@@ -501,6 +522,20 @@ import StaticArrays
         connections = [(:S1,:S2,1,2),(:S1,:S3,1,2)];
         @test_throws(
             ArgumentError("Duplicate (networkname,portnumber) in `connections`."),
+            JosephsonCircuits.parse_connections_sparse(networks,connections)
+        )
+
+        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [(:S1,:S2,10,2)];
+        @test_throws(
+            ArgumentError("Source port 10 on network S1 out of range [1,2]."),
+            JosephsonCircuits.parse_connections_sparse(networks,connections)
+        )
+
+        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [(:S1,:S2,1,10)];
+        @test_throws(
+            ArgumentError("Destination port 10 on network S2 out of range [1,2]."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 

@@ -1134,6 +1134,27 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
 end
 
 
+function find_duplicate_network_names(networks::AbstractVector{Tuple{T,N}}) where {T,N}
+    # find the duplicates to return a useful error message
+    networkdatacounts = Dict{T,Int}()
+    # count the number of times each network occurs
+    for network in networks
+        if haskey(networkdatacounts,network[1])
+            networkdatacounts[network[1]] += 1
+        else
+            networkdatacounts[network[1]] = 1
+        end
+    end
+    # report any networks that occur more than once
+    networkdataduplicates = Tuple{T,Int}[]
+    for (key,val) in networkdatacounts
+        if val > 1
+            push!(networkdataduplicates,(key,val))
+        end
+    end
+    return networkdataduplicates
+end
+
 """
     connectS_initialize(networks::AbstractVector{Tuple{T,N}},
         connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
@@ -1161,12 +1182,19 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
     # vector of matrices where the index is the node index.
     networkdata = [network[2] for network in networks]
 
+    # check that the scattering matrices are square
+    for i in eachindex(networkdata)
+        if size(networkdata[i],1) != size(networkdata[i],2)
+            throw(ArgumentError("First two dimensions of the scattering matrix $(networks[i][1]) must be the same."))
+        end
+    end
+
     # make a dictionary where the keys are the network names and the values
     # are the node indices.
     networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
-    
+
     if length(networkindices) != length(networkdata)
-        throw(ArgumentError("Duplicate network name detected."))
+        throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))"))
     end
 
     # make the adjacency lists for the connections
@@ -1192,15 +1220,25 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
 
     # loop through the connections and populate the adjacency lists
     for (src_name, dst_name, src_port, dst_port) in connections
+
+        # check if the source and destination networks exist
         if !haskey(networkindices,src_name)
-            throw(ArgumentError("Source network $(src_name) not found."))
+            throw(ArgumentError("Source network $(src_name) not found in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
         if !haskey(networkindices,dst_name)
-            throw(ArgumentError("Destination network $(dst_name) not found."))
+            throw(ArgumentError("Destination network $(dst_name) not found in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
 
         src_index = networkindices[src_name]
         dst_index = networkindices[dst_name]
+
+        # check if the source and destination network ports are valid
+        if !(1 <= src_port <= size(networkdata[src_index],1))
+            throw(ArgumentError("Source port $(src_port) on network $(src_name) out of range [1,$(size(networkdata[src_index],1))]."))
+        end
+        if !(1 <= dst_port <= size(networkdata[dst_index],1))
+            throw(ArgumentError("Destination port $(dst_port) on network $(dst_name) out of range [1,$(size(networkdata[dst_index],1))]."))
+        end
 
         # the source node entry points to the destination node 
         push!(fadjlist[src_index],dst_index)
@@ -1398,7 +1436,7 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     M = 0
     for i in eachindex(networkdata)
         if size(networkdata[i],1) != size(networkdata[i],2)
-            throw(ArgumentError("First two dimensions of the scattering matrices must be the same."))
+            throw(ArgumentError("First two dimensions of the scattering matrix $(networks[i][1]) must be the same."))
         end
         m+=size(networkdata[i],1)
         M+=size(networkdata[i],1)*size(networkdata[i],2)
@@ -1428,9 +1466,9 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     # make a dictionary where the keys are the network names and the values
     # are the node indices.
     networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
-    
+
     if length(networkindices) != length(networkdata)
-        throw(ArgumentError("Duplicate network name detected."))
+        throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))"))
     end
 
     # Compute the sparse connection matrix gamma and the port indices as which
@@ -1449,15 +1487,24 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     # gamma
     for (src_name, dst_name, src_port, dst_port) in connections
 
+        # check if the source and destination networks exist
         if !haskey(networkindices,src_name)
-            throw(ArgumentError("Source network $(src_name) not found."))
+            throw(ArgumentError("Source network $(src_name) not found in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
         if !haskey(networkindices,dst_name)
-            throw(ArgumentError("Destination network $(dst_name) not found."))
+            throw(ArgumentError("Destination network $(dst_name) not found in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
         
         src_index = networkindices[src_name]
         dst_index = networkindices[dst_name]
+
+        # check if the source and destination network ports are valid
+        if !(1 <= src_port <= size(networkdata[src_index],1))
+            throw(ArgumentError("Source port $(src_port) on network $(src_name) out of range [1,$(size(networkdata[src_index],1))]."))
+        end
+        if !(1 <= dst_port <= size(networkdata[dst_index],1))
+            throw(ArgumentError("Destination port $(dst_port) on network $(dst_name) out of range [1,$(size(networkdata[dst_index],1))]."))
+        end
 
         push!(Igamma,networkdataindices[src_index]+src_port-1)
         push!(Jgamma,networkdataindices[dst_index]+dst_port-1)
