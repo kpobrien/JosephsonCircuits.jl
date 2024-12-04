@@ -481,10 +481,24 @@ import StaticArrays
             JosephsonCircuits.connectS_initialize(networks,connections)
         )
 
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0 1;1 0])];
+        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
         connections = [(:S1,:S2,1,2)];
         @test_throws(
             ArgumentError("Duplicate network names detected [(networkname,count)]: [(:S1, 2)]."),
+            JosephsonCircuits.connectS_initialize(networks,connections)
+        )
+
+        networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
+        connections = [(:S1,:S2,1,2)];
+        @test_throws(
+            ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of S1 is (2, 2, 2) and size of S2 is (2, 2)."),
+            JosephsonCircuits.connectS_initialize(networks,connections)
+        )
+
+        networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [(:S1,:S2,1,2)];
+        @test_throws(
+            ArgumentError("The element types of the scattering matrices must be the same. Element type of S1 is Int64 and element type of S2 is Float64."),
             JosephsonCircuits.connectS_initialize(networks,connections)
         )
 
@@ -513,7 +527,7 @@ import StaticArrays
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0 1;1 0])];
+        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
         connections = [(:S1,:S2,1,2)];
         @test_throws(
             ArgumentError("Duplicate network names detected [(networkname,count)]: [(:S1, 2)]."),
@@ -538,6 +552,20 @@ import StaticArrays
         connections = [(:S1,:S2,1,10)];
         @test_throws(
             ArgumentError("Destination port 10 on network S2 out of range [1,2] in connection (S1,S2,1,10)."),
+            JosephsonCircuits.parse_connections_sparse(networks,connections)
+        )
+
+        networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
+        connections = [(:S1,:S2,1,2)];
+        @test_throws(
+            ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of S1 is (2, 2, 2) and size of S2 is (2, 2)."),
+            JosephsonCircuits.parse_connections_sparse(networks,connections)
+        )
+
+        networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [(:S1,:S2,1,2)];
+        @test_throws(
+            ArgumentError("The element types of the scattering matrices must be the same. Element type of S1 is Int64 and element type of S2 is Float64."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 

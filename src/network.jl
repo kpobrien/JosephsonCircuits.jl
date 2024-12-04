@@ -1212,10 +1212,19 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
     # vector of matrices where the index is the node index.
     networkdata = [network[2] for network in networks]
 
-    # check that the scattering matrices are square
+    # compute the size and element type of the first scattering matrix and
+    # check the rest against this
+    sizeS = size(networkdata[1])[3:end]
+    typeS = eltype(networkdata[1])
     for i in eachindex(networkdata)
         if size(networkdata[i],1) != size(networkdata[i],2)
             throw(ArgumentError("The sizes of the first two dimensions ($(size(networkdata[i],1)),$(size(networkdata[i],2))) of the scattering matrix $(networks[i][1]) must be the same."))
+        end
+        if sizeS != size(networkdata[i])[3:end]
+            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1][1]) is $(size(networks[1][2])) and size of $(networks[i][1]) is $(size(networks[i][2]))."))
+        end
+        if typeS != eltype(networkdata[i])
+            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1][1]) is $(eltype(networks[1][2])) and element type of $(networks[i][1]) is $(eltype(networks[i][2]))."))
         end
     end
 
@@ -1471,9 +1480,19 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     m = 0
     # number of nonzero elements in S
     M = 0
+    # compute the size and element type of the first scattering matrix and
+    # check the rest against this
+    sizeS = size(networkdata[1])[3:end]
+    typeS = eltype(networkdata[1])
     for i in eachindex(networkdata)
         if size(networkdata[i],1) != size(networkdata[i],2)
             throw(ArgumentError("The sizes of the first two dimensions ($(size(networkdata[i],1)),$(size(networkdata[i],2))) of the scattering matrix $(networks[i][1]) must be the same."))
+        end
+        if sizeS != size(networkdata[i])[3:end]
+            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1][1]) is $(size(networks[1][2])) and size of $(networks[i][1]) is $(size(networks[i][2]))."))
+        end
+        if typeS != eltype(networkdata[i])
+            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1][1]) is $(eltype(networks[1][2])) and element type of $(networks[i][1]) is $(eltype(networks[i][2]))."))
         end
         m+=size(networkdata[i],1)
         M+=size(networkdata[i],1)*size(networkdata[i],2)
