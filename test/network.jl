@@ -578,6 +578,28 @@ import StaticArrays
             ArgumentError("Invalid connection [(:S1, 1)] with only network and port."),
             JosephsonCircuits.add_splitters(networks,connections)
         )
+
+        networks = [(:S1,[0.0 1.0 1.0;1.0 0.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [[(:S1,1),(:S2,2)]];
+        @test_throws(
+            ArgumentError("The sizes of the first two dimensions (2,3) of the scattering matrix S1 must be the same."),
+            JosephsonCircuits.add_splitters(networks,connections)
+        )
+
+        networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
+        connections = [[(:S1,1),(:S2,2)]];
+        @test_throws(
+            ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of S1 is (2, 2, 2) and size of S2 is (2, 2)."),
+            JosephsonCircuits.add_splitters(networks,connections)
+        )
+
+        networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
+        connections = [[(:S1,1),(:S2,2)]];
+        @test_throws(
+            ArgumentError("The element types of the scattering matrices must be the same. Element type of S1 is Int64 and element type of S2 is Float64."),
+            JosephsonCircuits.add_splitters(networks,connections)
+        )
+
     end
 
     @testset "S_splitter! errors" begin

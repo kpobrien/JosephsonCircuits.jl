@@ -878,6 +878,22 @@ function add_splitters(networks::AbstractVector{Tuple{T,N}},
     connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
     small_splitters = true) where {T,N}
 
+    # compute the size and element type of the first scattering matrix and
+    # check the rest against this
+    sizeS = size(networks[1][2])[3:end]
+    typeS = eltype(networks[1][2])
+    for network in networks
+        if size(network[2],1) != size(network[2],2)
+            throw(ArgumentError("The sizes of the first two dimensions ($(size(network[2],1)),$(size(network[2],2))) of the scattering matrix $(network[1]) must be the same."))
+        end
+        if sizeS != size(network[2])[3:end]
+            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1][1]) is $(size(networks[1][2])) and size of $(network[1]) is $(size(network[2]))."))
+        end
+        if typeS != eltype(network[2])
+            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1][1]) is $(eltype(networks[1][2])) and element type of $(network[1]) is $(eltype(network[2]))."))
+        end
+    end
+
     # copy the networks vector. don't deepcopy so we don't duplicate all of
     # the arrays contained in the vector.
     netflat = copy(networks)
@@ -968,7 +984,7 @@ function add_splitters(networks::AbstractVector{Tuple{T,N}},
 
                 # compute the size of the splitter
                 sizeS = NTuple{ndims(netflat[1][2])}(ifelse(j<=2,length(c),size(netflat[1][2],j)) for j in 1:ndims(netflat[1][2]))
-                
+
                 # check if we have already made this splitter and make a new one
                 # if not.
                 if !haskey(splitters,length(c))
