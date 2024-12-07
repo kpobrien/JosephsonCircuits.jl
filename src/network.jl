@@ -1637,6 +1637,7 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     return portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S
 end
 
+
 function solveS_initialize(networks::AbstractVector{Tuple{T,N}},
         connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
         small_splitters::Bool = true, klu::Bool = true,
@@ -1650,6 +1651,7 @@ function solveS_initialize(networks::AbstractVector{Tuple{T,N}},
         klu = klu, internal_ports = internal_ports,
         nbatches = nbatches)
 end
+
 
 function solveS_initialize(networks::AbstractVector{Tuple{T,N}},
         connections::AbstractVector{Tuple{T,T,Int,Int}};
@@ -1679,9 +1681,19 @@ function solveS_initialize(networks::AbstractVector{Tuple{T,N}},
     sizeSc = tuple(length(portsc),length(portsp),[size(networkdata[1],i) for i in 3:ndims(networkdata[1])]...)
     Sc = ifelse(internal_ports,zeros(eltype(N),sizeSc),zeros(eltype(N),0))
 
+    # make gammacc - Scc. Scc can contain zeros (eg. a match at some
+    # frequency). we want to retain these structural zeros because the
+    # scattering matrix structure must not change.
+    gammacc_Scc = spaddkeepzeros(gammacc,-Scc)
+
+    # generate the index maps so we can perform non-allocating sparse matrix
+    # addition
+    gammacc_indexmap = sparseaddmap(gammacc_Scc,gammacc)
+    Scc_indexmap = sparseaddmap(gammacc_Scc,Scc)
+
     return Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc, Spp_indices,
-        Spc_indices, Scp_indices, Scc_indices, networkdata, nbatches, klu,
-        internal_ports
+        Spc_indices, Scp_indices, Scc_indices, gammacc_indexmap, Scc_indexmap,
+        networkdata, nbatches, klu, internal_ports
 end
 
 
@@ -1717,48 +1729,77 @@ end
 
 
 function solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
-            Scp_indices, Scc_indices, networkdata,indices,batch,klu)
+            Scp_indices, Scc_indices, gammacc_indexmap, Scc_indexmap,
+            networkdata, indices, batch, klu)
 
-    # make a copy for each thread
+    # make a copy of the scattering matrices for each thread
     Spp = copy(Spp)
     Spc = copy(Spc)
     Scp = copy(Scp)
     Scc = copy(Scc)
-    Scptmp = similar(Sp,size(Scp,1),size(Scp,2))
+
+    # a dense matrix version of Scp
+    Scp_dense = zeros(eltype(Sp),size(Scp,1),size(Scp,2))
     ac = similar(Sp,size(Scc,1),size(Spp,1))
 
+    # generate an empty FactorizationCache struct
     cache = FactorizationCache(0)
 
+    # update the scattering matrices for the first element in the batch
+    solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
+        Scp_indices, Scc_indices, networkdata, indices[batch[1]])
+
+    # make gammacc - Scc. Scc can contain zeros (eg. a match at some
+    # frequency). we want to retain these structural zeros because the
+    # scattering matrix structure must not change.
+    gammacc_Scc = spaddkeepzeros(gammacc,-Scc)
+
     # loop over the dimensions of the array greater than 2
-    for i in batch
+    for (i,j) in enumerate(batch)
+        # only perform the updates for the second or later element in the
+        # batch
+        if i > 1
+            solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
+                Scp_indices, Scc_indices, networkdata, indices[j])
+            fill!(gammacc_Scc,0)
+            sparseadd!(gammacc_Scc,1,gammacc,gammacc_indexmap)
+            sparseadd!(gammacc_Scc,-1,Scc,Scc_indexmap)
+        end
 
-        solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
-            Scp_indices, Scc_indices, networkdata, indices[i])
+        # copy only the nonzero elements. the rest of the temporary array
+        # is always zero
+        # Scptmp .= Scp
+        for k in 1:length(Scp.colptr)-1
+            for l in Scp.colptr[k]:(Scp.colptr[k+1]-1)
+                Scp_dense[Scp.rowval[l],k] = Scp.nzval[l]
+            end
+        end
 
-        Scptmp .= Scp
-
-        # if using the KLU factorization and sparse solver then make a 
-        # factorization
-        if i == batch[1]
+        # if using the KLU factorization and sparse solver then perform a 
+        # factorization or update the factorization
+        if j == batch[1]
             if klu
-                cache = FactorizationCache(KLU.klu(gammacc - Scc))
+                cache = FactorizationCache(KLU.klu(gammacc_Scc))
             else
-                cache = FactorizationCache(lu(gammacc - Scc))
+                cache = FactorizationCache(lu(gammacc_Scc))
             end
         else
             if klu
-                factorklu!(cache, gammacc - Scc)
+                factorklu!(cache, gammacc_Scc)
             else
-                lu!(cache.factorization, gammacc - Scc)
+                lu!(cache.factorization, gammacc_Scc)
             end
         end
 
         # solve the linear system
-        ldiv!(ac,cache.factorization, Scptmp)
+        # Eq. 26
+        ldiv!(ac,cache.factorization, Scp_dense)
 
-        Sp[:,:,i] .= Spp + Spc*ac
+        # Eq. 28
+        Sp[:,:,j] .= Spp + Spc*ac
         if !isempty(Sc)
-            Sc[:,:,i] .= Scp + Scc*ac
+            # derived from Eqns. 24, 28
+            Sc[:,:,j] .= Scp + Scc*ac
         end
     end
 
@@ -1785,10 +1826,15 @@ JosephsonCircuits.solveS!(sol...)
 # output
 (Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S2, 1)], Sc = Float64[], portsc = [(:S1, 1), (:S2, 2)])
 ```
+
+# References
+V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
+in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
+249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
 function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
-    Spp_indices, Spc_indices, Scp_indices, Scc_indices, networkdata, nbatches,
-    klu, internal_ports)
+    Spp_indices, Spc_indices, Scp_indices, Scc_indices, gammacc_indexmap,
+    Scc_indexmap, networkdata, nbatches, klu, internal_ports)
 
     # solve the linear system for the specified frequencies. the response for
     # each frequency is independent so it can be done in parallel; however
@@ -1799,7 +1845,8 @@ function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
     batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
     Base.Threads.@threads for i in 1:length(batches)
         solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
-            Scp_indices, Scc_indices, networkdata,indices,batches[i],klu)
+            Scp_indices, Scc_indices, gammacc_indexmap, Scc_indexmap,
+            networkdata,indices,batches[i],klu)
     end
 
     return (Sp=Sp, portsp=portsp, Sc=Sc, portsc = portsc)
@@ -3697,29 +3744,82 @@ function A_coupled_tlines(L,Cmaxwell,omega,l)
 
     N = size(L,1)
 
-    ZC, TI, TV, theta, U, lambda, S = ZC_basis_coupled_tlines(L,Cmaxwell)
+    # compute the basis for the coupled lines
+    b = ZC_basis_coupled_tlines(L,Cmaxwell)
+    TI = b.TI
+    TV = b.TV
+    ZC = b.ZC
+    lambda = b.lambda
+
     TIinv = inv(TI)
     TVinv = inv(TV)
     YC = inv(ZC)
 
-    gamma = im*lambda*omega
+    # pre-compute these matrix products. they are the same for every frequency
+    ZC_TI = ZC*TI
+    TIinv_YC = TIinv*YC
 
-    phi11 = 1/2*ZC*TI*(exp(gamma*l)+exp(-gamma*l))*TIinv*YC
-    phi12 = -1/2*ZC*TI*(exp(-gamma*l)-exp(gamma*l))*TIinv
-    phi21 = -1/2*TI*(exp(-gamma*l)-exp(gamma*l))*TIinv*YC
-    phi22 = 1/2*TI*(exp(gamma*l)+exp(-gamma*l))*TIinv
+    # compute the first gamma*l
+    gammal = im*lambda*first(omega)*l
+
+    # compute the first cosh(gamma*l) and sinh(gamma*l). reuse these Diagonal
+    # matrices for the rest of the frequencies.
+    coshgammal = cosh(gammal)
+    sinhgammal = sinh(gammal)
+
+    # allocate a temporary array
+    phi_tmp = zeros(Complex{Float64},N,N)
+
+    # define the output matrix
+    A = zeros(Complex{Float64},ifelse(length(omega)>1,(2*N,2*N,length(omega)),(2*N,2*N)))
+
+    # loop over the frequencies
+    for i in eachindex(omega)
+        # update coshgammal and sinhgammal
+        if i > 1
+            gammal .= im*lambda*omega[i]*l
+            coshgammal .= cosh(gammal)
+            sinhgammal .= sinh(gammal)
+        end
+
+        # make views for the sub-matrices
+        phi11 = view(A,1:N,1:N,i)
+        phi12 = view(A,1:N,N+1:2*N,i)
+        phi21 = view(A,N+1:2*N,1:N,i)
+        phi22 = view(A,N+1:2*N,N+1:2*N,i)
+        
+        # compute the ABCD matrix for the coupled lines
+        A_coupled_tlines!(phi11,phi12,phi21,phi22,phi_tmp,TI,TIinv,ZC_TI,TIinv_YC,coshgammal,sinhgammal)
+    end
+    return A
+end
+
+
+function A_coupled_tlines!(phi11, phi12, phi21, phi22, phi_tmp, TI, TIinv,
+    ZC_TI, TIinv_YC, coshgammal, sinhgammal)
+
+    # # The equations
+    # phi11 = 1/2*ZC*TI*(exp(gamma*l)+exp(-gamma*l))*TIinv*YC
+    # phi12 = -1/2*ZC*TI*(exp(-gamma*l)-exp(gamma*l))*TIinv
+    # phi21 = -1/2*TI*(exp(-gamma*l)-exp(gamma*l))*TIinv*YC
+    # phi22 = 1/2*TI*(exp(gamma*l)+exp(-gamma*l))*TIinv
 
     # phi11 = 1/2*TV*(exp(gamma*l)+exp(-gamma*l))*TVinv
     # phi12 = -1/2*TV*(exp(gamma*l)-exp(-gamma*l))*TVinv*ZC
     # phi21 = -1/2*YC*TV*(exp(gamma*l)-exp(-gamma*l))*TVinv
     # phi22 = 1/2*YC*TV*(exp(gamma*l)+exp(-gamma*l))*TVinv*ZC
 
-    A = zeros(Complex{Float64},2*N,2*N)
-    A[1:N,1:N] .= phi11
-    A[1:N,N+1:end] .= phi12
-    A[N+1:end,1:N] .= phi21
-    A[N+1:end,N+1:end] .= phi22
-    return A
+    mul!(phi_tmp,coshgammal,TIinv_YC)
+    mul!(phi11,ZC_TI,phi_tmp)
+
+    mul!(phi_tmp,sinhgammal,TIinv)
+    mul!(phi12,ZC_TI,phi_tmp)
+
+    mul!(phi_tmp,sinhgammal,TIinv_YC)
+    mul!(phi21,TI,phi_tmp)
+
+    mul!(phi_tmp,coshgammal,TIinv)
+    mul!(phi22,TI,phi_tmp)
 end
 
 """
@@ -3756,27 +3856,27 @@ nodd = 1.08
 c = JosephsonCircuits.speed_of_light
 
 L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
-ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_tlines(L,C)
-@show ZC
-@show TI
-@show TV
-@show Matrix(theta)
-@show U
-@show Matrix(lambda)
-@show S
-println(isapprox(Zeven,ZC[1,1]+ZC[1,2]))
-println(isapprox(Zodd,ZC[1,1]-ZC[1,2]))
-println(isapprox(neven,lambda[2,2]*c))
-println(isapprox(nodd,lambda[1,1]*c))
+b = JosephsonCircuits.ZC_basis_coupled_tlines(L,C)
+@show b.ZC
+@show b.TI
+@show b.TV
+@show Matrix(b.theta)
+@show b.U
+@show Matrix(b.lambda)
+@show b.S
+println(isapprox(Zeven,b.ZC[1,1]+b.ZC[1,2]))
+println(isapprox(Zodd,b.ZC[1,1]-b.ZC[1,2]))
+println(isapprox(neven,b.lambda[2,2]*c))
+println(isapprox(nodd,b.lambda[1,1]*c))
 
 # output
-ZC = [49.999999999999986 0.9999999999999929; 0.9999999999999929 49.999999999999986]
-TI = [-6.063012846509498e-6 -5.997716107132906e-6; 6.063012846509498e-6 -5.997716107132906e-6]
-TV = [-82467.25063230767 -83365.06614665617; 82467.25063230767 -83365.06614665617]
-Matrix(theta) = [8.48205146197092e-6 0.0; 0.0 8.574394996376037e-6]
-U = [-0.7071067811865475 -0.7071067811865475; -0.7071067811865475 0.7071067811865475]
-Matrix(lambda) = [3.6024922281400425e-9 0.0; 0.0 3.669205047179673e-9]
-S = [0.0 1.0; 1.0 0.0]
+b.ZC = [49.999999999999986 0.9999999999999929; 0.9999999999999929 49.999999999999986]
+b.TI = [-6.063012846509498e-6 -5.997716107132906e-6; 6.063012846509498e-6 -5.997716107132906e-6]
+b.TV = [-82467.25063230767 -83365.06614665617; 82467.25063230767 -83365.06614665617]
+Matrix(b.theta) = [8.48205146197092e-6 0.0; 0.0 8.574394996376037e-6]
+b.U = [-0.7071067811865475 -0.7071067811865475; -0.7071067811865475 0.7071067811865475]
+Matrix(b.lambda) = [3.6024922281400425e-9 0.0; 0.0 3.669205047179673e-9]
+b.S = [0.0 1.0; 1.0 0.0]
 true
 true
 true
@@ -3806,10 +3906,23 @@ function ZC_basis_coupled_tlines(L,Cmaxwell)
     # compute ZC and YC
     ZC = U*inv(theta)*S*lambda*S'*inv(theta)*U'
 
-    return (ZC = ZC, TI = TI, TV = TV, theta = theta, U = U, lambda = lambda,
-        S = S)
+    return CoupledLinesBasis(ZC, TI, TV, theta, U, lambda,S)
 end
 
+"""
+    CoupledLinesBasis(ZC, TI, TV, theta, U, lambda, S)
+
+A simple structure to hold the output of `ZC_basis_coupled_tlines`.
+"""
+struct CoupledLinesBasis
+    ZC
+    TI
+    TV
+    theta
+    U
+    lambda
+    S
+end
 
 """
     maxwell_to_mutual(Cmaxwell::AbstractMatrix)

@@ -693,8 +693,14 @@ import StaticArrays
         Lm = 2.330215467621682e-8
         C = JosephsonCircuits.LinearAlgebra.Symmetric([Cg -Cm;-Cm Cg])
         L = JosephsonCircuits.LinearAlgebra.Symmetric([Ls Lm;Lm Ls])
-        ZC, TI, TV, theta, U, lambda, S = JosephsonCircuits.ZC_basis_coupled_tlines(L,C)
-
+        b = JosephsonCircuits.ZC_basis_coupled_tlines(L,C)
+        ZC = b.ZC
+        TI = b.TI
+        TV = b.TV
+        theta = b.theta
+        U = b.U
+        lambda = b.lambda
+        S = b.S
         @test isapprox(U'*C*U,theta^2)
         @test isapprox(S'*(theta*U'*L*U*theta)*S,lambda^2)
         @test isapprox(inv(TI)*C*L*TI,lambda^2)
