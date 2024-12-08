@@ -1972,25 +1972,6 @@ function solveS(networks, connections; small_splitters::Bool = true,
     return solveS!(init...)
 end
 
-"""
-    solveS(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
-        connections::AbstractVector{Tuple{T,T,Int,Int}};
-        klu::Bool = true, internal_ports::Bool = false,
-        nbatches::Integer = Base.Threads.nthreads()) where {T,N}
-
-See [`solveS`](@ref) for description.
-"""
-function solveS(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
-    connections::AbstractVector{Tuple{T,T,Int,Int}};
-    klu::Bool = true, internal_ports::Bool = false,
-    nbatches::Integer = Base.Threads.nthreads()) where {T,N}
-
-    init = solveS_initialize(networks,connections;klu = klu,
-        internal_ports = internal_ports, nbatches = nbatches)
-
-    return solveS!(init...)
-end
-
 # generate the non in-place versions of the network parameter conversion
 # functions.
 

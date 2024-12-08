@@ -457,6 +457,13 @@ import StaticArrays
             JosephsonCircuits.connectS_initialize(networks,connections)
         )
 
+        networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),(:S3,[0.0 1.0;1.0 0.0],[(:S3,1),(:S3,2)])];
+        connections = [(:S1,:S2,1,2),(:S1,:S3,1,2)];
+        @test_throws(
+            ArgumentError("Duplicate connections detected [(networkname,port),counts]: [((:S1, 1), 2)]."),
+            JosephsonCircuits.connectS_initialize(networks,connections)
+        )
+
         networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
         connections = [(:S1,:S2,1,2)];
         @test_throws(
