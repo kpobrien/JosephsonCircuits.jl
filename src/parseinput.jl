@@ -104,7 +104,7 @@ println(parsesortcircuit(circuit))
 JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 0 3 3; 1 1 1 1 0 1 1], ["0", "1", "2"], ["L1", "L2"], ["P1", "I1", "R1", "L1", "K1", "L2", "C2"], [:P, :I, :R, :L, :K, :L, :C], Num[1, Ipump, Rleft, L1, Kfun(L1), L2, C2], Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5), 3)
 ```
 """
-function parsesortcircuit(circuit; sorting = :number)
+function parsesortcircuit(circuit; sorting::Symbol = :number)
 
     # parse the circuit components
     parsedcircuit = parsecircuit(circuit)
@@ -682,7 +682,8 @@ julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:none)
  4
 ```
 """
-function calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
+function calcnodesorting(uniquenodevector::Vector{String};
+    sorting::Symbol = :number)
 
     # vector of indices for the sortperm. if sorting is nothing, use this
     # uniquenodevectorsortindices = ones(Int,length(uniquenodevector))
@@ -778,7 +779,7 @@ julia> nodenames,nodeindexarray=JosephsonCircuits.sortnodes(["1", "0", "2"],[1, 
 ```
 """
 function sortnodes(uniquenodevector::Vector{String},
-        nodeindexvector::Vector{Int};sorting=:name)
+        nodeindexvector::Vector{Int};sorting::Symbol = :name)
 
     nodeindices = zeros(eltype(nodeindexvector),2,length(nodeindexvector)÷2)
 
@@ -1250,8 +1251,8 @@ Any[50, Zfun(w, 50)]
 ```
 """
 function componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
-    return [valuetonumber(v,circuitdefs) for v in componentvalues]
-    # return map(valuetonumber,componentvalues,Base.Iterators.repeated(circuitdefs,length(componentvalues)))
+    # return [valuetonumber(v,circuitdefs) for v in componentvalues]
+    return map(valuetonumber,componentvalues,Base.Iterators.repeated(circuitdefs,length(componentvalues)))
 end
 
 """

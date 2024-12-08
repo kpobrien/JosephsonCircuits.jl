@@ -33,13 +33,15 @@ P 1 0 1
 R 1 0 50.0
 ```
 """
-function export_netlist!(io::IO, circuit, circuitdefs)
-    for c in circuit
-        for (i,ci) in enumerate(c)
-            if i > 1
+function export_netlist!(io::IO, circuit::AbstractVector, circuitdefs::Dict)
+    for i in eachindex(circuit)
+        c = circuit[i]
+        for j in eachindex(c)
+            cj = c[j]
+            if j > 1
                 write(io," ")
             end
-            write(io,string(JosephsonCircuits.Symbolics.substitute(ci,circuitdefs)))
+            write(io,string(JosephsonCircuits.Symbolics.substitute(cj,circuitdefs)))
         end
         write(io,"\n")
     end
@@ -78,7 +80,7 @@ julia> io = IOBuffer("P 1 0 1\\n R 1 0 50.0");circuit2 = Tuple{String,String,Str
  ("R", "1", "0", 50.0)
 ```
 """
-function import_netlist!(io::IO, circuit)
+function import_netlist!(io::IO, circuit::AbstractVector)
     seekstart(io)
     for line in eachline(io)
         split_line = split(strip(line),r"\s+")

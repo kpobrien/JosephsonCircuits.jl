@@ -204,7 +204,8 @@ function spaddkeepzeros(A::SparseMatrixCSC, B::SparseMatrixCSC)
     # for the number of nonzero elements in the sum.
     # set rowval and nzval to be that size then reduce size later
     rowval = Vector{Int}(undef,nnz(A)+nnz(B))
-    nzval = zeros(promote_type(eltype(A.nzval),eltype(B.nzval)),nnz(A)+nnz(B))
+    nzval = Vector{promote_type(eltype(A.nzval),eltype(B.nzval))}(undef,nnz(A)+nnz(B))
+    fill!(nzval,0)
 
     colptr[1] = 1
     # loop over the columns and combine the row elements
@@ -910,8 +911,10 @@ function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
         end
     end
 
-    if !(isnothing(symfreqvar) || checkissymbolic(symfreqvar))
-        error("symfreqvar must be a symbolic variable (or nothing if no symbolic variables)")
+    if !isnothing(symfreqvar)
+        if !checkissymbolic(symfreqvar)
+            error("symfreqvar must be a symbolic variable (or nothing if no symbolic variables)")
+        end
     end
 
     # set the output to be Complex{Float64} since the input type may be something
@@ -920,12 +923,12 @@ function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
 
     @inbounds for i in 1:length(A.colptr)-1
         for j in A.colptr[i]:(A.colptr[i+1]-1)
-            if checkissymbolic(A.nzval[j] )
-
-                if !checkissymbolic(symfreqvar)
+            if checkissymbolic(A.nzval[j])
+                if isnothing(symfreqvar)
                     error("Set symfreqvar equal to the symbolic variable representing frequency.")
+                else
+                    nzval[j] = valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
                 end
-                nzval[j] = valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
             else
                 nzval[j] = A.nzval[j]
             end

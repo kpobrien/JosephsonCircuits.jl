@@ -833,7 +833,7 @@ julia> networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0
  (:S2, [0.5 0.5; 0.5 0.5], [(:S3, 1), (:S3, 2)])
 ```
 """
-function add_ports(networks)
+function add_ports(networks::AbstractVector)
     return [(network[1],network[2],get_ports(network)) for network in networks]
 end
 
@@ -1006,7 +1006,7 @@ Journal of Antennas and Propagation Vol. 2015, 759439,
 doi:10.1155/2015/759439.
 """
 function add_splitters(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
-    connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
+    connections::AbstractVector{Vector{Tuple{T,Int}}};
     small_splitters = true) where {T,N}
 
     # compute the size and element type of the first scattering matrix and
@@ -1039,7 +1039,9 @@ function add_splitters(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}
 
     # loop over the connections, converting to the flattened format and adding
     # splitters where more than two ports are connected.
-    for c in connections
+    # for c in connections
+    for k in eachindex(connections)
+        c = connections[k]
         # if less than two tuples, not a valid connection
         if length(c) < 2
             throw(ArgumentError("Invalid connection $(c) with only network and port."))
@@ -1143,7 +1145,7 @@ end
 If the connections are already in the correct format, just return them
 """
 function add_splitters(networks, connections::AbstractVector{Tuple{T,T,Int,Int}};
-    kwargs...) where T
+    small_splitters = true) where T
     return networks,connections
 end
 
@@ -1156,7 +1158,12 @@ of the connection in the forward adjacency list `connection_index`. Modify the
 arguments and return nothing.
 
 """
-function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,connection_index)
+function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
+    fconnectionlist::AbstractVector{<:AbstractVector{Tuple{T,T,Int,Int}}},
+    fweightlist::AbstractVector{<:AbstractVector{Int}},
+    ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
+    networkdata::AbstractVector{N},
+    src_node::Int,connection_index::Int) where {T,N}
 
     # remove the edge from the graph
     dst_node = remove_edge!(g,src_node,connection_index)
@@ -1176,6 +1183,12 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
     src_port_index = findfirst(isequal(src_port),ports[src_node])
     dst_port_index = findfirst(isequal(dst_port),ports[dst_node])
 
+    if isnothing(src_port_index)
+        throw(ArgumentError("Source port $(src_port) not found in the ports $(ports[src_node]) of the source node $(src_node)."))
+    end
+    if isnothing(dst_port_index)
+        throw(ArgumentError("Destination port $(dst_port) not found in the ports $(ports[dst_node]) of the destination node $(dst_node)."))
+    end
     # println("src_node => dst_node: ",src_node," => ",dst_node)
     # println("src_port => dst_port: ",src_port," => ",dst_port)
     # println("src_port_index => dst_port_index: ",src_port_index," => ",dst_port_index)
@@ -1183,8 +1196,8 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
     # if src_node == dst_node, then make a self connection
     if src_node == dst_node
         # connect the networks and find the ports of the connected network
-        connected_network = JosephsonCircuits.connectS(networkdata[src_node],src_port_index,dst_port_index)
-        connected_ports = JosephsonCircuits.connectSports(ports[src_node],src_port_index,dst_port_index)
+        connected_network = connectS(networkdata[src_node],src_port_index,dst_port_index)
+        connected_ports = connectSports(ports[src_node],src_port_index,dst_port_index)
     
         # delete the ports for the dst. update the ports for the src.
         ports[src_node] = connected_ports
@@ -1193,8 +1206,8 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
         networkdata[src_node] = connected_network
     else
         # connect the networks and find the ports of the connected network
-        connected_network = JosephsonCircuits.connectS(networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index)
-        connected_ports = JosephsonCircuits.connectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
+        connected_network = connectS(networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index)
+        connected_ports = connectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
 
         # delete the ports for the dst. update the ports for the src.
         ports[src_node] = connected_ports
@@ -1262,7 +1275,7 @@ JosephsonCircuits.connectS_initialize(networks,connections)
 (Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[(:S1, :S2, 1, 2)], Tuple{Symbol, Symbol, Int64, Int64}[]], [[1], Int64[]], [[(:S1, 1), (:S1, 2)], [(:S2, 1), (:S2, 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
 ```
 """
-function connectS_initialize(networks, connections;
+function connectS_initialize(networks::AbstractVector, connections::AbstractVector;
     small_splitters = true)
 
     networks_ports = add_ports(networks)
@@ -1426,7 +1439,11 @@ JosephsonCircuits.connectS!(init...)
 (S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
 ```
 """
-function connectS!(g,fconnectionlist,fweightlist,ports,networkdata)
+function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
+    fconnectionlist::AbstractVector{<:AbstractVector{Tuple{T,T,Int,Int}}},
+    fweightlist::AbstractVector{<:AbstractVector{Int}},
+    ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
+    networkdata::AbstractVector{N}) where {T,N}
     # find the minimum weight and the second to minimum weight
     minweight = Inf
     secondtominweight = Inf
@@ -1446,8 +1463,8 @@ function connectS!(g,fconnectionlist,fweightlist,ports,networkdata)
     while !all(isempty.(fweightlist))
         for i in eachindex(fweightlist)
             j = 1
-            N = length(fweightlist[i]) 
-            while j <= N
+            n = length(fweightlist[i]) 
+            while j <= n
                 weight = fweightlist[i][j]
                 if weight <= minweight
                     # perform the connection
@@ -1456,7 +1473,7 @@ function connectS!(g,fconnectionlist,fweightlist,ports,networkdata)
                     make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j)
                     # set j = 1
                     j = 1
-                    N = length(fweightlist[i]) 
+                    n = length(fweightlist[i]) 
                     minweight = weight
                 elseif weight <= secondtominweight
                     secondtominweight = weight
@@ -1473,9 +1490,7 @@ function connectS!(g,fconnectionlist,fweightlist,ports,networkdata)
 end
 
 """
-    connectS(networks::AbstractVector{Tuple{T,N}},
-        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
-        small_splitters = true) where {T,N}
+    connectS(networks, connections; small_splitters = true)
 
 Return the network and ports resulting from connecting the networks in
 `networks` according to the connections in `connections`. `networks` is a
@@ -1675,7 +1690,9 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tupl
         end
     end
 
-    Sindices = sparse(Iindices,Jindices,Vindices,m,m)
+    # make the sparse matrix, erroring if there are multiple elements with the
+    # same coordinates
+    Sindices = sparse(Iindices,Jindices,Vindices,m,m,error)
 
     # compute an empty block diagonal scattering parameter matrix to be
     # populated later. we can reuse the sparsity structure from Sindices.
@@ -1684,9 +1701,9 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tupl
     return portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S
 end
 
-function solveS_initialize(networks,connections;
-        small_splitters::Bool = true, klu::Bool = true,
-        internal_ports::Bool = false,
+function solveS_initialize(networks::AbstractVector,
+        connections::AbstractVector; small_splitters::Bool = true,
+        klu::Bool = true, internal_ports::Bool = false,
         nbatches::Integer = Base.Threads.nthreads())
 
     networks_ports = add_ports(networks)
@@ -1961,9 +1978,9 @@ V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
 in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function solveS(networks, connections; small_splitters::Bool = true,
-    klu::Bool = true, internal_ports::Bool = false,
-    nbatches::Integer = Base.Threads.nthreads())
+function solveS(networks::AbstractVector, connections::AbstractVector;
+    small_splitters::Bool = true, klu::Bool = true,
+    internal_ports::Bool = false, nbatches::Integer = Base.Threads.nthreads())
 
     init = solveS_initialize(networks,connections;
         small_splitters = small_splitters,klu = klu,

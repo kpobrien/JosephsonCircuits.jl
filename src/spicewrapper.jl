@@ -319,12 +319,13 @@ processes in parallel. The number of parallel processes is decided from
 Threads.nthreads(). It can be changed manually.
 
 """
-function spice_run(input::AbstractVector,spicecmd;ntasks = Threads.nthreads())
+function spice_run(inputs::AbstractVector,spicecmd;ntasks::Int = Threads.nthreads())
     # Set the number of simultaneous parallel simulations equal to
     # the number of threads. ntasks can be manually changed here
     # or by changing the number of threads. Note this is only faster because
     # we are calling an external program which launches a new processes.
-    return asyncmap((input) -> spice_run(input,spicecmd),input;ntasks=ntasks);
+    tsk(input) = spice_run(input,spicecmd)
+    return asyncmap(tsk,inputs;ntasks=ntasks);
 end
 
 """

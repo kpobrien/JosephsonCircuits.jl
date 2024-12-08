@@ -94,9 +94,21 @@ function comparestruct(x,y)
   return out
 end
 
-compare(x,y) = isequal(x,y)
-compare(x::AbstractArray{Complex{Float64}},y::AbstractArray{Complex{Float64}}) = isapprox(x,y,atol=1e-6)
-compare(x::AbstractArray{Float64},y::AbstractArray{Float64}) = isapprox(x,y,atol=1e-6)
+function comparearray(x::AbstractArray{T},y::AbstractArray{T}) where T
+    if size(x) == size(y)
+        z = similar(x)
+        for i in eachindex(x)
+            z[i] = x[i]-y[i]
+        end
+        return LinearAlgebra.norm(z) <= 1e-6
+    else
+        return false
+    end
+end
+
+compare(x,y)::Bool = isequal(x,y)
+compare(x::AbstractArray{Complex{Float64}},y::AbstractArray{Complex{Float64}}) = comparearray(x,y)
+compare(x::AbstractArray{Float64},y::AbstractArray{Float64}) = comparearray(x,y)
 compare(x::StepRangeLen, y::StepRangeLen) = true
 
 compare(x::Nothing,y::Nothing) = true

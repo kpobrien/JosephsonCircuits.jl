@@ -102,11 +102,13 @@ JosephsonCircuits.testshow(stdout,symbolicmatrices(psc, cg))
 JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolic{Real}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolic{Real}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolic{Real}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolic{Real}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
 ```
 """
-function symbolicmatrices(circuit; Nmodes = 1, sorting = :number)
+function symbolicmatrices(circuit::AbstractVector; Nmodes::Int = 1,
+    sorting::Symbol = :number)
     return numericmatrices(circuit, Dict(), Nmodes = Nmodes, sorting = sorting)
 end
 
-function symbolicmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph; Nmodes = 1)
+function symbolicmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph;
+    Nmodes::Int = 1)
     return numericmatrices(psc, cg, Dict(), Nmodes = Nmodes)
 end
 
@@ -155,7 +157,8 @@ JosephsonCircuits.testshow(stdout,numericmatrices(psc, cg, circuitdefs))
 JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
 ```
 """
-function numericmatrices(circuit, circuitdefs; Nmodes = 1, sorting = :number)
+function numericmatrices(circuit::AbstractVector, circuitdefs::Dict; Nmodes::Int = 1,
+    sorting::Symbol = :number)
 
     # parse the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -167,7 +170,7 @@ function numericmatrices(circuit, circuitdefs; Nmodes = 1, sorting = :number)
 end
 
 function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
-    circuitdefs; Nmodes = 1)
+    circuitdefs; Nmodes::Int = 1)
 
     # convert as many values as we can to numerical values using definitions
     # from circuitdefs
@@ -737,7 +740,7 @@ sparse([1, 2], [1, 2], Num[1 / L1, 1 / L2], 2, 2)
 ```
 """
 function calcinvLn(Lb::SparseVector, Mb::SparseMatrixCSC,
-    Rbn::SparseMatrixCSC, Nmodes)
+    Rbn::SparseMatrixCSC, Nmodes::Int)
     if nnz(Lb) > 0 &&  nnz(Mb) > 0
         valuetype = promote_type(eltype(Lb),eltype(Mb))
     else 
@@ -748,7 +751,7 @@ function calcinvLn(Lb::SparseVector, Mb::SparseMatrixCSC,
 end
 
 function calcinvLn_inner(Lb::SparseVector, Mb::SparseMatrixCSC,
-    Rbn::SparseMatrixCSC, Nmodes, valuecomponenttypes::Vector)
+    Rbn::SparseMatrixCSC, Nmodes::Int, valuecomponenttypes::Vector)
 
     # if there are no mutual inductors, return the inverse of the diagonal
     # elements
