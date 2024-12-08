@@ -578,6 +578,16 @@ import StaticArrays
         )
     end
 
+    @testset "connectS solveS comparison" begin
+
+        networks =[("S1",rand(Complex{Float64},4,4,10)),("S2",rand(Complex{Float64},3,3,10))];
+        connections = [[("S1",1),("S1",2),("S1",3)],[("S1",4),("S2",2)]];
+        out1 = JosephsonCircuits.connectS(networks,connections)
+        out2 = JosephsonCircuits.solveS(networks,connections)
+        @test isapprox(out1[1][1],out2[1])
+
+    end
+
     @testset "StoZ, StoY, StoA, StoB, StoABCD consistency" begin
         # the different functions we want to test
         for f in [
@@ -674,6 +684,23 @@ import StaticArrays
         @test isapprox(S'*(theta*U'*L*U*theta)*S,lambda^2)
         @test isapprox(inv(TI)*C*L*TI,lambda^2)
         @test isapprox(TV'*TI,I)
+    end
+
+    @testset "A_coupled_tlines" begin
+
+        Zeven = 51.0
+        Zodd = 49.0
+        neven = 1.1
+        nodd = 1.08
+        l = 3.5e-3
+        c = JosephsonCircuits.speed_of_light
+        omega = 2*pi*(1:10)*1e9
+
+        L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
+        A1 = JosephsonCircuits.A_coupled_tlines(L,C,omega,l)
+        A2 = stack(JosephsonCircuits.ABCD_coupled_tline.(neven*omega/c*l,nodd*omega/c*l,Zeven,Zodd))
+        @test isapprox(A1,A2)
+
     end
 
     @testset "Z_canonical_coupled_line_circuits" begin

@@ -1473,19 +1473,6 @@ function connectS!(g,fconnectionlist,fweightlist,ports,networkdata)
 end
 
 """
-    connectS(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
-        connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
-
-See [`connectS`](@ref) for description.
-
-"""
-function connectS(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
-        connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
-    init = connectS_initialize(networks,connections);
-    return connectS!(init...)
-end
-
-"""
     connectS(networks::AbstractVector{Tuple{T,N}},
         connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
         small_splitters = true) where {T,N}
