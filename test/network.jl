@@ -343,23 +343,6 @@ import StaticArrays
         end
         @test isapprox(Sout1,Sout2)
 
-        ###  these errors shouldn't be needed anymore with the error checking in
-        ### connectS_initialize
-        # # errors
-        # networks = [(:S1,S1),(:S2,S2),(:S3,Ssplitter),(:S4,Sopen)]
-        # connections = [(:S1,:S1,1,2),(:S1,:S2,3,2),(:S3,:S2,2,2),(:S3,:S4,3,1)]
-        # @test_throws(
-        #     ArgumentError("Destination port (:S2, 2) not found in the vector of ports."),
-        #     JosephsonCircuits.connectS(networks,connections)
-        # )
-
-        # networks = [(:S1,S1),(:S2,S2),(:S3,Ssplitter),(:S4,Sopen)]
-        # connections = [(:S1,:S1,1,2),(:S1,:S2,3,2),(:S3,:S2,3,1),(:S3,:S4,3,1)]
-        # @test_throws(
-        #     ArgumentError("Source port (:S3, 3) not found in the vector of ports."),
-        #     JosephsonCircuits.connectS(networks,connections)
-        # )
-
     end
 
     @testset "connectS with list of connections, many frequencies" begin
@@ -449,28 +432,14 @@ import StaticArrays
         networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S3,:S2,1,2)];
         @test_throws(
-            ArgumentError("Source network S3 not found in connection (S3,S2,1,2)."),
+            ArgumentError("Source (network name, port number) (:S3, 1) not found for connection (S3,S2,1,2)."),
             JosephsonCircuits.connectS_initialize(networks,connections)
         )
 
         networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
         connections = [(:S1,:S3,1,2)];
         @test_throws(
-            ArgumentError("Destination network S3 not found in connection (S1,S3,1,2)."),
-            JosephsonCircuits.connectS_initialize(networks,connections)
-        )
-
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-        connections = [(:S1,:S2,10,2)];
-        @test_throws(
-            ArgumentError("Source port 10 on network S1 out of range [1,2] in connection (S1,S2,10,2)."),
-            JosephsonCircuits.connectS_initialize(networks,connections)
-        )
-
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-        connections = [(:S1,:S2,1,10)];
-        @test_throws(
-            ArgumentError("Destination port 10 on network S2 out of range [1,2] in connection (S1,S2,1,10)."),
+            ArgumentError("Destination (network name, port number) (:S3, 2) not found for connection (S1,S3,1,2)."),
             JosephsonCircuits.connectS_initialize(networks,connections)
         )
 
@@ -499,6 +468,13 @@ import StaticArrays
         connections = [(:S1,:S2,1,2)];
         @test_throws(
             ArgumentError("The element types of the scattering matrices must be the same. Element type of S1 is Int64 and element type of S2 is Float64."),
+            JosephsonCircuits.connectS_initialize(networks,connections)
+        )
+
+        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,5)])];
+        connections = [(:S1,:S3,1,5)];
+        @test_throws(
+            ArgumentError("Duplicate port (:S3, 5) in network S2."),
             JosephsonCircuits.connectS_initialize(networks,connections)
         )
 
@@ -506,94 +482,87 @@ import StaticArrays
 
     @testset "parse_connections_sparse errors" begin
 
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         connections = [(:S3,:S2,1,2)];
         @test_throws(
-            ArgumentError("Source network S3 not found in connection (S3,S2,1,2)."),
+            ArgumentError("Source (network name, port number) (:S3, 1) not found for connection (S3,S2,1,2)."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         connections = [(:S1,:S3,1,2)];
         @test_throws(
-            ArgumentError("Destination network S3 not found in connection (S1,S3,1,2)."),
+            ArgumentError("Destination (network name, port number) (:S3, 2) not found for connection (S1,S3,1,2)."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
-        networks = [(:S1,[0.0 1.0 1.0;1.0 0.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        networks = [(:S1,[0.0 1.0 0.0;1.0 0.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         connections = [(:S1,:S2,1,2)];
         @test_throws(
             ArgumentError("The sizes of the first two dimensions (2,3) of the scattering matrix S1 must be the same."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
+        networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)])];
         connections = [(:S1,:S2,1,2)];
         @test_throws(
             ArgumentError("Duplicate network names detected [(networkname,count)]: [(:S1, 2)]."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S3,[0.5 0.5;0.5 0.5])];
+        networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),(:S3,[0.0 1.0;1.0 0.0],[(:S3,1),(:S3,2)])];
         connections = [(:S1,:S2,1,2),(:S1,:S3,1,2)];
         @test_throws(
             ArgumentError("Duplicate connections detected [(networkname,port),counts]: [((:S1, 1), 2)]."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-        connections = [(:S1,:S2,10,2)];
-        @test_throws(
-            ArgumentError("Source port 10 on network S1 out of range [1,2] in connection (S1,S2,10,2)."),
-            JosephsonCircuits.parse_connections_sparse(networks,connections)
-        )
-
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-        connections = [(:S1,:S2,1,10)];
-        @test_throws(
-            ArgumentError("Destination port 10 on network S2 out of range [1,2] in connection (S1,S2,1,10)."),
-            JosephsonCircuits.parse_connections_sparse(networks,connections)
-        )
-
-        networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
+        networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         connections = [(:S1,:S2,1,2)];
         @test_throws(
             ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of S1 is (2, 2, 2) and size of S2 is (2, 2)."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
-        networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
+        networks = [(:S1,[0 1;1 0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         connections = [(:S1,:S2,1,2)];
         @test_throws(
             ArgumentError("The element types of the scattering matrices must be the same. Element type of S1 is Int64 and element type of S2 is Float64."),
             JosephsonCircuits.parse_connections_sparse(networks,connections)
         )
 
+        networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,5)])];
+        connections = [(:S1,:S3,1,5)];
+        @test_throws(
+            ArgumentError("Duplicate port (:S3, 5) in network S2."),
+            JosephsonCircuits.parse_connections_sparse(networks,connections)
+        )
+
     end
 
     @testset "add_splitters errors" begin
-        networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         connections = [[(:S1,1)]];
         @test_throws(
             ArgumentError("Invalid connection [(:S1, 1)] with only network and port."),
             JosephsonCircuits.add_splitters(networks,connections)
         )
 
-        networks = [(:S1,[0.0 1.0 1.0;1.0 0.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+        networks = [(:S1,[0.0 1.0 0.0;1.0 0.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         connections = [[(:S1,1),(:S2,2)]];
         @test_throws(
             ArgumentError("The sizes of the first two dimensions (2,3) of the scattering matrix S1 must be the same."),
             JosephsonCircuits.add_splitters(networks,connections)
         )
 
-        networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
+        networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         connections = [[(:S1,1),(:S2,2)]];
         @test_throws(
             ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of S1 is (2, 2, 2) and size of S2 is (2, 2)."),
             JosephsonCircuits.add_splitters(networks,connections)
         )
 
-        networks = [(:S1,[0 1;1 0]),(:S2,[0.5 0.5;0.5 0.5])];
+        networks = [(:S1,[0 1;1 0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         connections = [[(:S1,1),(:S2,2)]];
         @test_throws(
             ArgumentError("The element types of the scattering matrices must be the same. Element type of S1 is Int64 and element type of S2 is Float64."),

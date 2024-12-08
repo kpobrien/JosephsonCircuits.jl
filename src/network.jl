@@ -816,6 +816,137 @@ function move_edges!(g,node,node_new,fadjlist1,fadjlist2)
 end
 
 """
+    add_ports(networks)
+
+Return the vector of networks `networks` with ports added.
+
+# Examples
+```jldoctest
+julia> networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];JosephsonCircuits.add_ports(networks)
+2-element Vector{Tuple{Symbol, Matrix{Float64}, Vector{Tuple{Symbol, Int64}}}}:
+ (:S1, [0.0 1.0; 1.0 0.0], [(:S1, 1), (:S1, 2)])
+ (:S2, [0.5 0.5; 0.5 0.5], [(:S2, 1), (:S2, 2)])
+
+julia> networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,1),(:S3,2)])];JosephsonCircuits.add_ports(networks)
+2-element Vector{Tuple{Symbol, Matrix{Float64}, Vector{Tuple{Symbol, Int64}}}}:
+ (:S1, [0.0 1.0; 1.0 0.0], [(:S1, 1), (:S1, 2)])
+ (:S2, [0.5 0.5; 0.5 0.5], [(:S3, 1), (:S3, 2)])
+```
+"""
+function add_ports(networks)
+    return [(network[1],network[2],get_ports(network)) for network in networks]
+end
+
+function add_ports(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}}) where {T,N}
+    return networks
+end
+
+"""
+    get_ports(network::Tuple{T, N}) where {T,N}
+
+Return the ports for a network `network`. The ports are generated based on
+the network name.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.get_ports((:S1,[0.0 1.0;1.0 0.0]))
+2-element Vector{Tuple{Symbol, Int64}}:
+ (:S1, 1)
+ (:S1, 2)
+```
+"""
+function get_ports(network::Tuple{T, N}) where {T,N}
+    # a vector of tuples containing the ports for each of the networks in the
+    # same order the networks were supplied. eg.
+    # [(:S1,1),(:S1,2)]
+    return [(network[1],i) for i in 1:size(network[2],1)]
+end
+
+"""
+    get_ports(network::Tuple{T, N, Vector{Tuple{T, Int}}}) where {T,N}
+
+Return the ports for a network `network`. The ports are already present in the
+network.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.get_ports((:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S2,3)]))
+2-element Vector{Tuple{Symbol, Int64}}:
+ (:S1, 1)
+ (:S2, 3)
+```
+"""
+function get_ports(network::Tuple{T, N, Vector{Tuple{T, Int}}}) where {T,N}
+    return network[3]
+end
+
+"""
+    find_duplicate_network_names(
+        networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}}) where {T,N}
+
+Return a vector of tuples of (networkname, counts) where counts is the number
+of times a given network name appears.
+
+"""
+function find_duplicate_network_names(
+    networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}}) where {T,N}
+    # find the duplicates to return a useful error message
+    networkdatacounts = Dict{T,Int}()
+    # count the number of times each network occurs
+    for network in networks
+        if haskey(networkdatacounts,network[1])
+            networkdatacounts[network[1]] += 1
+        else
+            networkdatacounts[network[1]] = 1
+        end
+    end
+    # report any networks that occur more than once
+    networkdataduplicates = Tuple{T,Int}[]
+    for (key,val) in networkdatacounts
+        if val > 1
+            push!(networkdataduplicates,(key,val))
+        end
+    end
+    return networkdataduplicates
+end
+
+"""
+    find_duplicate_connections(
+        connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T}
+
+Return a vector of tuples of (connection, counts) where counts is the number
+of times a given connection appears.
+"""
+function find_duplicate_connections(
+    connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T}
+    # find the duplicates to return a useful error message
+    connectionscounts = Dict{Tuple{T,Int},Int}()
+    # count the number of times each network occurs
+    for connection in connections
+        key1 = (connection[1],connection[3])
+        if haskey(connectionscounts,key1)
+            connectionscounts[key1] += 1
+        else
+            connectionscounts[key1] = 1
+        end
+        key2 = (connection[2],connection[4])
+        if haskey(connectionscounts,key2)
+            connectionscounts[key2] += 1
+        else
+            connectionscounts[key2] = 1
+        end
+    end
+    # report any networks that occur more than once
+    connectionsduplicates = Tuple{Tuple{T,Int},Int}[]
+    for (key,val) in connectionscounts
+        if val > 1
+            push!(connectionsduplicates,(key,val))
+        end
+    end
+    return connectionsduplicates
+end
+
+"""
     S_splitter!(S::AbstractArray)
 
 Return the scattering parameters for a N port ideal lossless symmetrical
@@ -874,7 +1005,7 @@ Scattering Matrix on the Microwave Circuits and Antenna Arrays". International
 Journal of Antennas and Propagation Vol. 2015, 759439,
 doi:10.1155/2015/759439.
 """
-function add_splitters(networks::AbstractVector{Tuple{T,N}},
+function add_splitters(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
     connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
     small_splitters = true) where {T,N}
 
@@ -942,7 +1073,7 @@ function add_splitters(networks::AbstractVector{Tuple{T,N}},
                     end
 
                     # add the splitter to the vector of networks
-                    push!(netflat,(id,splitters[2]))
+                    push!(netflat,(id,splitters[2],get_ports((id,splitters[2]))))
 
                 end
 
@@ -992,7 +1123,7 @@ function add_splitters(networks::AbstractVector{Tuple{T,N}},
                 end
 
                 # add the splitter to the vector of networks
-                push!(netflat,(id,splitters[length(c)]))
+                push!(netflat,(id,splitters[length(c)],get_ports((id,splitters[length(c)]))))
         
                 # add the connections to the splitter
                 for j in eachindex(c)
@@ -1006,6 +1137,17 @@ function add_splitters(networks::AbstractVector{Tuple{T,N}},
 end
 
 """
+    add_splitters(networks, connections::AbstractVector{Tuple{T,T,Int,Int}};
+        kwargs...)) where T
+
+If the connections are already in the correct format, just return them
+"""
+function add_splitters(networks, connections::AbstractVector{Tuple{T,T,Int,Int}};
+    kwargs...) where T
+    return networks,connections
+end
+
+"""
     make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,
     connection_index)
 
@@ -1016,20 +1158,8 @@ arguments and return nothing.
 """
 function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,connection_index)
 
-    # if  !(length(g.fadjlist) >= src_node >= 1)
-    #     throw(ArgumentError("`src_node`=$(src_node) is less than one or greater than the number of nodes in the forward adjacency list."))
-    # end
-
-    # if  !(length(g.fadjlist[src_node]) >= connection_index >= 1)
-    #     throw(ArgumentError("`connection_index`=$(connection_index) is less than one or larger than the number of connections for this node."))
-    # end
-
     # remove the edge from the graph
     dst_node = remove_edge!(g,src_node,connection_index)
-
-    # if  !(length(g.fadjlist) >= dst_node >= 1)
-    #     throw(ArgumentError("`dst_node`=$(dst_node) is less than one or greater than the number of nodes in the forward adjacency list."))
-    # end
 
     # remove and store the connection associated with that edge
     connection = popat!(fconnectionlist[src_node], connection_index)
@@ -1045,16 +1175,6 @@ function make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_no
     # destination scattering parameter matrix
     src_port_index = findfirst(isequal(src_port),ports[src_node])
     dst_port_index = findfirst(isequal(dst_port),ports[dst_node])
-
-    ###  these errors shouldn't be needed anymore with the error checking in
-    ### connectS_initialize
-    # if isnothing(src_port_index)
-    #     throw(ArgumentError("Source port $(src_port) not found in the vector of ports."))
-    # end
-
-    # if isnothing(dst_port_index)
-    #     throw(ArgumentError("Destination port $(dst_port) not found in the vector of ports."))
-    # end
 
     # println("src_node => dst_node: ",src_node," => ",dst_node)
     # println("src_port => dst_port: ",src_port," => ",dst_port)
@@ -1142,67 +1262,19 @@ JosephsonCircuits.connectS_initialize(networks,connections)
 (Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[(:S1, :S2, 1, 2)], Tuple{Symbol, Symbol, Int64, Int64}[]], [[1], Int64[]], [[(:S1, 1), (:S1, 2)], [(:S2, 1), (:S2, 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
 ```
 """
-function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
-    connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
-    small_splitters = true) where {T,N}
+function connectS_initialize(networks, connections;
+    small_splitters = true)
 
-    netflat, conflat = add_splitters(networks, connections;
-        small_splitters = small_splitters)
-    return connectS_initialize(netflat, conflat)
-end
+    networks_ports = add_ports(networks)
 
+    networks_flat, connnections_flat = add_splitters(networks_ports,
+        connections; small_splitters = small_splitters)
 
-function find_duplicate_network_names(networks::AbstractVector{Tuple{T,N}}) where {T,N}
-    # find the duplicates to return a useful error message
-    networkdatacounts = Dict{T,Int}()
-    # count the number of times each network occurs
-    for network in networks
-        if haskey(networkdatacounts,network[1])
-            networkdatacounts[network[1]] += 1
-        else
-            networkdatacounts[network[1]] = 1
-        end
-    end
-    # report any networks that occur more than once
-    networkdataduplicates = Tuple{T,Int}[]
-    for (key,val) in networkdatacounts
-        if val > 1
-            push!(networkdataduplicates,(key,val))
-        end
-    end
-    return networkdataduplicates
-end
-
-function find_duplicate_connections(connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T}
-    # find the duplicates to return a useful error message
-    connectionscounts = Dict{Tuple{T,Int},Int}()
-    # count the number of times each network occurs
-    for connection in connections
-        key1 = (connection[1],connection[3])
-        if haskey(connectionscounts,key1)
-            connectionscounts[key1] += 1
-        else
-            connectionscounts[key1] = 1
-        end
-        key2 = (connection[2],connection[4])
-        if haskey(connectionscounts,key2)
-            connectionscounts[key2] += 1
-        else
-            connectionscounts[key2] = 1
-        end
-    end
-    # report any networks that occur more than once
-    connectionsduplicates = Tuple{Tuple{T,Int},Int}[]
-    for (key,val) in connectionscounts
-        if val > 1
-            push!(connectionsduplicates,(key,val))
-        end
-    end
-    return connectionsduplicates
+    return connectS_initialize(networks_flat, connnections_flat)
 end
 
 """
-    connectS_initialize(networks::AbstractVector{Tuple{T,N}},
+    connectS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
         connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
 Return a directed graph of connections between the networks.
@@ -1217,12 +1289,8 @@ JosephsonCircuits.connectS_initialize(networks,connections)
 (Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[(:S1, :S2, 1, 2)], Tuple{Symbol, Symbol, Int64, Int64}[]], [[1], Int64[]], [[(:S1, 1), (:S1, 2)], [(:S2, 1), (:S2, 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
 ```
 """
-function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
+function connectS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
     connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
-
-    # portnames are associated with each node, so store those as a vector
-    # where the index is the node index
-    ports = [[(network[1],i) for i in 1:size(network[2],1)] for network in networks]
 
     # network data is associated with each node, so also store those as a
     # vector of matrices where the index is the node index.
@@ -1259,6 +1327,22 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
         throw(ArgumentError("Duplicate connections detected [(networkname,port),counts]: $(duplicateconnections)."))
     end
 
+    # portnames are associated with each node, so store those as a vector
+    # where the index is the node index
+    ports = [network[3] for network in networks]
+
+    # make the port dictionary
+    portdict = Dict{Tuple{T,Int},Tuple{Int,Int}}()
+    for i in eachindex(networks)
+        for (j,port) in enumerate(networks[i][3])
+            if haskey(portdict,port)
+                throw(ArgumentError("Duplicate port $(port) in network $(networks[i][1])."))
+            else
+                portdict[port] = (i,j)
+            end
+        end
+    end
+
     # make the adjacency lists for the connections
     fadjlist = Vector{Vector{Int}}(undef,length(networks))
     badjlist = Vector{Vector{Int}}(undef,length(networks))
@@ -1283,24 +1367,19 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N}},
     # loop through the connections and populate the adjacency lists
     for (src_name, dst_name, src_port, dst_port) in connections
 
+        src = (src_name,src_port)
+        dst = (dst_name,dst_port)
+
         # check if the source and destination networks exist
-        if !haskey(networkindices,src_name)
-            throw(ArgumentError("Source network $(src_name) not found in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+        if !haskey(portdict,src)
+            throw(ArgumentError("Source (network name, port number) $(src) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
-        if !haskey(networkindices,dst_name)
-            throw(ArgumentError("Destination network $(dst_name) not found in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+        if !haskey(portdict,dst)
+            throw(ArgumentError("Destination (network name, port number) $(dst) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
 
-        src_index = networkindices[src_name]
-        dst_index = networkindices[dst_name]
-
-        # check if the source and destination network ports are valid
-        if !(1 <= src_port <= size(networkdata[src_index],1))
-            throw(ArgumentError("Source port $(src_port) on network $(src_name) out of range [1,$(size(networkdata[src_index],1))] in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
-        end
-        if !(1 <= dst_port <= size(networkdata[dst_index],1))
-            throw(ArgumentError("Destination port $(dst_port) on network $(dst_name) out of range [1,$(size(networkdata[dst_index],1))] in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
-        end
+        src_index, src_port_index = portdict[src]
+        dst_index, dst_port_index = portdict[dst]
 
         # the source node entry points to the destination node 
         push!(fadjlist[src_index],dst_index)
@@ -1340,8 +1419,8 @@ parameter matrices `networkdata`.
 ```jldoctest
 networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
 connections = [[(:S1,1),(:S2,2)]];
-sol = JosephsonCircuits.connectS_initialize(networks, connections);
-JosephsonCircuits.connectS!(sol...)
+init = JosephsonCircuits.connectS_initialize(networks, connections);
+JosephsonCircuits.connectS!(init...)
 
 # output
 (S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
@@ -1394,34 +1473,16 @@ function connectS!(g,fconnectionlist,fweightlist,ports,networkdata)
 end
 
 """
-    connectS(networks::AbstractVector{Tuple{T,N}},
+    connectS(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
         connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
-Return the network and ports resulting from connecting the networks in
-`networks` according to the connections in `connections`. `networks` is a
-vector of tuples of the network name and scattering parameter matrix such as
-[("network1name",rand(Complex{Float64},2,2),
-("network2name",rand(Complex{Float64},2,2)]. `connections` is a vector of
-tuples of networks names and ports such as [("network1name", "network2name",
-1,2)] where network1 and network2 are the two networks being connected and 1
-and 2 are integers describing the ports to connect.
+See [`connectS`](@ref) for description.
 
-See [`connectS`](@ref) for other connection methods.
-
-# Examples
-```jldoctest
-networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-connections = [(:S1,:S2,1,2)];
-JosephsonCircuits.connectS(networks,connections)
-
-# output
-(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
-```
 """
-function connectS(networks::AbstractVector{Tuple{T,N}},
+function connectS(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
         connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
-    sol = connectS_initialize(networks,connections);
-    return connectS!(sol...)
+    init = connectS_initialize(networks,connections);
+    return connectS!(init...)
 end
 
 """
@@ -1441,32 +1502,28 @@ connected and 1 and 2 are integers describing the ports to connect.
 This function supports connections between more than two ports by
 automatically adding splitters.
 
-See [`connectS`](@ref) for other connection methods.
-
 # Examples
 ```jldoctest
-networks1 =[("S1",rand(Complex{Float64},4,4)),("S2",rand(Complex{Float64},3,3))];
-connections1 = [[("S1",1),("S1",2),("S1",3)],[("S1",4),("S2",2)]];
-out1 = JosephsonCircuits.connectS(networks1,connections1);
-
-networks2 = copy(networks1)
-push!(networks2,("S3",JosephsonCircuits.S_splitter!(ones(Complex{Float64},3,3))))
-connections2 = [("S1","S3",1,1),("S1","S3",2,2),("S1","S3",3,3),("S1","S2",4,2)];
-out2 = JosephsonCircuits.connectS(networks2,connections2);
-
-println(isapprox(out1[1][1],out2[1][1]));
-println(isequal(out1[2][1],out2[2][1]));
+networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
+connections = [[(:S1,1),(:S2,2)]];
+JosephsonCircuits.connectS(networks,connections)
 
 # output
-true
-true
+(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
+```
+```jldoctest
+networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,6)])];
+connections = [(:S1,:S3,1,6)];
+JosephsonCircuits.connectS(networks,connections)
+
+# output
+(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S3, 5)]])
 ```
 """
-function connectS(networks::AbstractVector{Tuple{T,N}},
-    connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
-    small_splitters = true) where {T,N}
-    sol = connectS_initialize(networks,connections;small_splitters = true)
-    return connectS!(sol...)
+function connectS(networks, connections; small_splitters = true)
+    init = connectS_initialize(networks,connections;
+        small_splitters = small_splitters)
+    return connectS!(init...)
 end
 
 """
@@ -1485,7 +1542,7 @@ V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
 in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
+function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
     connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
     # network data is associated with each node, so also store those as a
@@ -1514,19 +1571,6 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
         M+=size(networkdata[i],1)*size(networkdata[i],2)
     end
 
-
-    # a vector of tuples containing the ports for each of the networks in the
-    # same order the networks were supplied. eg.
-    # [(:S1,1),(:S1,2),(:S2,1),(:S2,2)]
-    ports = Vector{Tuple{T,Int}}(undef,m)
-    j = 1
-    for network in networks
-        for i in 1:size(network[2],1)
-            ports[j] = (network[1],i)
-            j+=1
-        end
-    end
-
     # the indices in the sparse matrix formed by placing all of the scattering
     # matrices along the diagonal.
     networkdataindices = zeros(Int,length(networks))
@@ -1541,6 +1585,27 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
 
     if length(networkindices) != length(networkdata)
         throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
+    end
+
+    # a vector of tuples containing the ports for each of the networks in the
+    # same order the networks were supplied. eg.
+    # [(:S1,1),(:S1,2),(:S2,1),(:S2,2)]
+    ports = Vector{Tuple{T,Int}}(undef,m)
+
+    # make the port dictionary
+    portdict = Dict{Tuple{T,Int},Int}()
+
+    k = 1
+    for i in eachindex(networks)
+        for port in networks[i][3]
+            if haskey(portdict,port)
+                throw(ArgumentError("Duplicate port $(port) in network $(networks[i][1])."))
+            else
+                portdict[port] = k
+                ports[k] = port
+            end
+            k+=1
+        end
     end
 
     # Compute the sparse connection matrix gamma and the port indices as which
@@ -1559,36 +1624,31 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     # gamma
     for (src_name, dst_name, src_port, dst_port) in connections
 
+        src = (src_name,src_port)
+        dst = (dst_name,dst_port)
+
         # check if the source and destination networks exist
-        if !haskey(networkindices,src_name)
-            throw(ArgumentError("Source network $(src_name) not found in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+        if !haskey(portdict,src)
+            throw(ArgumentError("Source (network name, port number) $(src) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
-        if !haskey(networkindices,dst_name)
-            throw(ArgumentError("Destination network $(dst_name) not found in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
-        end
-        
-        src_index = networkindices[src_name]
-        dst_index = networkindices[dst_name]
-
-        # check if the source and destination network ports are valid
-        if !(1 <= src_port <= size(networkdata[src_index],1))
-            throw(ArgumentError("Source port $(src_port) on network $(src_name) out of range [1,$(size(networkdata[src_index],1))] in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
-        end
-        if !(1 <= dst_port <= size(networkdata[dst_index],1))
-            throw(ArgumentError("Destination port $(dst_port) on network $(dst_name) out of range [1,$(size(networkdata[dst_index],1))] in connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+        if !haskey(portdict,dst)
+            throw(ArgumentError("Destination (network name, port number) $(dst) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
 
-        push!(Igamma,networkdataindices[src_index]+src_port-1)
-        push!(Jgamma,networkdataindices[dst_index]+dst_port-1)
+        src_index = portdict[src]
+        dst_index = portdict[dst]
+
+        push!(Igamma,src_index)
+        push!(Jgamma,dst_index)
         push!(Vgamma,1)
 
-        push!(Igamma,networkdataindices[dst_index]+dst_port-1)
-        push!(Jgamma,networkdataindices[src_index]+src_port-1)
+        push!(Igamma,dst_index)
+        push!(Jgamma,src_index)
         push!(Vgamma,1)
 
         # add to the vector of internal ports
-        push!(portc_indices,networkdataindices[src_index]+src_port-1)
-        push!(portc_indices,networkdataindices[dst_index]+dst_port-1)
+        push!(portc_indices,src_index)
+        push!(portc_indices,dst_index)
 
     end
 
@@ -1637,23 +1697,22 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
     return portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S
 end
 
-
-function solveS_initialize(networks::AbstractVector{Tuple{T,N}},
-        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
+function solveS_initialize(networks,connections;
         small_splitters::Bool = true, klu::Bool = true,
         internal_ports::Bool = false,
-        nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+        nbatches::Integer = Base.Threads.nthreads())
 
-    netflat, conflat = add_splitters(networks, connections;
+    networks_ports = add_ports(networks)
+
+    networks_flat,connnections_flat = add_splitters(networks_ports,connections;
         small_splitters = small_splitters)
 
-    return solveS_initialize(netflat, conflat;
+    return solveS_initialize(networks_flat, connnections_flat;
         klu = klu, internal_ports = internal_ports,
         nbatches = nbatches)
 end
 
-
-function solveS_initialize(networks::AbstractVector{Tuple{T,N}},
+function solveS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
         connections::AbstractVector{Tuple{T,T,Int,Int}};
         klu::Bool = true, internal_ports::Bool = false,
         nbatches::Integer = Base.Threads.nthreads()) where {T,N}
@@ -1820,8 +1879,8 @@ recomputing the scattering parameters for the connected system.
 ```jldoctest
 networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
 connections = [[(:S1,1),(:S2,2)]];
-sol = JosephsonCircuits.solveS_initialize(networks, connections);
-JosephsonCircuits.solveS!(sol...)
+init = JosephsonCircuits.solveS_initialize(networks, connections);
+JosephsonCircuits.solveS!(init...)
 
 # output
 (Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S2, 1)], Sc = Float64[], portsc = [(:S1, 1), (:S2, 2)])
@@ -1853,44 +1912,30 @@ function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
 end
 
 """
-    solveS(networks::AbstractVector{Tuple{T,N}},
-        connections::AbstractVector{Tuple{T,T,Int,Int}};
-        klu::Bool = true, nbatches::Integer = Base.Threads.nthreads()) where {T,N}
-
-See [`solveS`](@ref) for description.
-"""
-function solveS(networks::AbstractVector{Tuple{T,N}},
-        connections::AbstractVector{Tuple{T,T,Int,Int}};
+    solveS(networks, connections; small_splitters::Bool = true,
         klu::Bool = true, internal_ports::Bool = false,
-        nbatches::Integer = Base.Threads.nthreads()) where {T,N}
-
-        sol = solveS_initialize(networks,connections;klu = klu,
-            internal_ports = internal_ports, nbatches = nbatches)
-
-    return solveS!(sol...)
-end
-
-"""
-    solveS(networks::AbstractVector{Tuple{T,N}},
-        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
-        small_splitters = true) where {T,N}
+        nbatches::Integer = Base.Threads.nthreads())
 
 Perform the connections between the networks in `networks` specified by the
-vector of vector of tuples `connections`. Return the sparse matrix of
+vector of vectors of tuples `connections`. Return the sparse matrix of
 scattering parameters for the external ports `Sp` and the external ports
 `portsp`. Also return the internal port scattering parameters `Sc` and the
 internal ports `portsc`.
 
 # Arguments
-- `networks::AbstractVector{Tuple{T,N}}`: a vector of tuples of the network
-    name and scattering parameter matrix such as
-    [("network1name",rand(Complex{Float64},2,2)
+- `networks`: a vector of tuples of the network name, scattering parameter
+    matrix, and optionally the ports  such as
+    [("network1name",rand(Complex{Float64},2,2))] or
+    [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,6)])].
 - `connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}}`: a vector of
     vector of tuples of networks names and ports such as [[("network1name",1),
     ("network2name",2)]] where network1 and network2 are the two networks
     being connected and 1 and 2 are integers describing the ports to connect.
 
 # Keywords
+- `small_splitters::Bool = true`: if true, then generate any N port splitter
+    by combining (N-2) 3 port splitters. if false, then make the N port
+    splitter and connect the components to it.
 - `klu::Bool = true`: use KLU factorization if true or LU if false.
 - `internal_ports::Bool = false`: return the scattering parameters for the
     internal ports.
@@ -1915,23 +1960,49 @@ JosephsonCircuits.solveS(networks,connections;internal_ports=true)
 # output
 (Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S2, 1)], Sc = [1.0 0.0; 0.5 0.5], portsc = [(:S1, 1), (:S2, 2)])
 ```
+```jldoctest
+networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,6)])];
+connections = [(:S1,:S3,1,6)];
+JosephsonCircuits.solveS(networks,connections)
+
+# output
+(Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S3, 5)], Sc = Float64[], portsc = [(:S1, 1), (:S3, 6)])
+```
 
 # References
 V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
 in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function solveS(networks::AbstractVector{Tuple{T,N}},
-    connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
-    small_splitters = true, klu = true, internal_ports::Bool = false,
-    nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+function solveS(networks, connections; small_splitters::Bool = true,
+    klu::Bool = true, internal_ports::Bool = false,
+    nbatches::Integer = Base.Threads.nthreads())
 
-    netflat, conflat = add_splitters(networks, connections;
-        small_splitters = small_splitters)
-    return solveS(netflat, conflat;klu = klu, internal_ports = internal_ports,
-        nbatches = nbatches)
+    init = solveS_initialize(networks,connections;
+        small_splitters = small_splitters,klu = klu,
+        internal_ports = internal_ports, nbatches = nbatches)
+
+    return solveS!(init...)
 end
 
+"""
+    solveS(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
+        connections::AbstractVector{Tuple{T,T,Int,Int}};
+        klu::Bool = true, internal_ports::Bool = false,
+        nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+
+See [`solveS`](@ref) for description.
+"""
+function solveS(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
+    connections::AbstractVector{Tuple{T,T,Int,Int}};
+    klu::Bool = true, internal_ports::Bool = false,
+    nbatches::Integer = Base.Threads.nthreads()) where {T,N}
+
+    init = solveS_initialize(networks,connections;klu = klu,
+        internal_ports = internal_ports, nbatches = nbatches)
+
+    return solveS!(init...)
+end
 
 # generate the non in-place versions of the network parameter conversion
 # functions.
