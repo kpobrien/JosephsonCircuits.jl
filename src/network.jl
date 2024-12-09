@@ -144,7 +144,7 @@ function connectS!(Sout,Sx,k::Int,l::Int;
   
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
-    if length(indices) > nbatches
+    if  nbatches > 1 && length(indices) > nbatches
         batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
         Base.Threads.@threads for i in 1:length(batches)
                 connectS_inner!(Sout,Sx,k,l,m,xindices,batches[i])
@@ -361,7 +361,7 @@ function connectS!(Sout,Sx,Sy,k::Int,l::Int;
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
-    if length(indices) > nbatches
+    if nbatches > 1 && length(indices) > nbatches
         batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
         Base.Threads.@threads for i in 1:length(batches)
             connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batches[i])
@@ -1227,7 +1227,7 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
         networkdata[src_node] = connected_network
     else
         # connect the networks and find the ports of the connected network
-        connected_network = connectS(networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index)
+        connected_network = connectS(networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
         connected_ports = connectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
 
         # delete the ports for the dst. update the ports for the src.
