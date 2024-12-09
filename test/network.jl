@@ -436,7 +436,7 @@ import StaticArrays
         ports = [[(:S1, 1), (:S1, 2)],[(:S2, 1), (:S3, 2)]]
         @test_throws(
             ArgumentError("Destination port (:S2, 2) not found in the ports [(:S2, 1), (:S3, 2)] of the destination node 2."),
-            JosephsonCircuits.make_connection!(g, fconnectionlist, fweightlist, ports, networkdata,1,1)
+            JosephsonCircuits.make_connection!(g, fconnectionlist, fweightlist, ports, networkdata,1,1,1)
         )
 
         networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
@@ -446,7 +446,7 @@ import StaticArrays
         ports = [[(:S3, 1), (:S1, 2)],[(:S2, 1), (:S2, 2)]]
         @test_throws(
             ArgumentError("Source port (:S1, 1) not found in the ports [(:S3, 1), (:S1, 2)] of the source node 1."),
-            JosephsonCircuits.make_connection!(g, fconnectionlist, fweightlist, ports, networkdata,1,1)
+            JosephsonCircuits.make_connection!(g, fconnectionlist, fweightlist, ports, networkdata,1,1,1)
         )
 
     end

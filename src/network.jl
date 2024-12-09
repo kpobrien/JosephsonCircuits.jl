@@ -1,6 +1,7 @@
 
 """
-    connectS(Sx::AbstractArray, k::Int, l::Int)
+    connectS(Sx::AbstractArray, k::Int, l::Int;
+        nbatches::Int = Base.Threads.nthreads())
 
 Connect ports `k` and `l` on the same `m` port microwave network represented by
 the scattering parameter matrix `Sx`, resulting in an `(m-2)` port network, as illustrated below:
@@ -54,7 +55,8 @@ G. Filipsson, "A New General Computer Algorithm for S-Matrix Calculation of
 Interconnected Multiports," 1981 11th European Microwave Conference,
 Amsterdam, Netherlands, 1981, pp. 700-704, doi: 10.1109/EUMA.1981.332972.
 """
-function connectS(Sx::AbstractArray{T,N},k::Int,l::Int) where {T,N}
+function connectS(Sx::AbstractArray{T,N},k::Int,l::Int;
+    nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
     # make a tuple with the size of the array
     # the first two dimensions are two smaller
@@ -64,7 +66,7 @@ function connectS(Sx::AbstractArray{T,N},k::Int,l::Int) where {T,N}
     Sout = similar(Sx,sizeS)
 
     # remove the self loop
-    connectS!(Sout,Sx,k,l)
+    connectS!(Sout,Sx,k,l;nbatches = nbatches)
 
     return Sout
 end
@@ -75,7 +77,8 @@ end
 See [`connectS`](@ref) for description.
 
 """
-function connectS!(Sout,Sx,k::Int,l::Int)
+function connectS!(Sout,Sx,k::Int,l::Int;
+    nbatches::Int = Base.Threads.nthreads())
 
     # validate all of the inputs
     if ndims(Sx) != ndims(Sout)
@@ -140,50 +143,58 @@ function connectS!(Sout,Sx,k::Int,l::Int)
     end
   
     # loop over the dimensions of the array greater than 2
-    for i in CartesianIndices(axes(Sout)[3:end])
-        connectS_inner!(view(Sout,:,:,i),view(Sx,:,:,i),k,l,m,xindices)
+    indices = CartesianIndices(axes(Sout)[3:end])
+    if length(indices) > nbatches
+        batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
+        Base.Threads.@threads for i in 1:length(batches)
+                connectS_inner!(Sout,Sx,k,l,m,xindices,batches[i])
+        end
+    else
+        connectS_inner!(Sout,Sx,k,l,m,xindices,indices)
     end
 
-    return nothing
+    return Sout
 end
 
 """
-    connectS_inner!(Sout,Sx,k,l,m,xindices)
+    connectS_inner!(Sout,Sx,k,l,m,xindices,batch)
 
 See [`connectS`](@ref) for description.
 
 """
-function connectS_inner!(Sout,Sx,k,l,m,xindices)
+function connectS_inner!(Sout,Sx,k,l,m,xindices,batch)
 
-    # Eq. 16.3
-    oneoverdelta = 1/((1 - Sx[l,k])*(1 - Sx[k,l]) - Sx[l,l]*Sx[k,k])
+    for ii in batch
+        # Eq. 16.3
+        @inbounds oneoverdelta = 1/((1 - Sx[l,k,ii])*(1 - Sx[k,l,ii]) - Sx[l,l,ii]*Sx[k,k,ii])
 
-    # generate the scattering parameters
-    # by looping over the output matrix indices
-    for i in 1:m-2
-
-        # input matrix index
-        xi = xindices[i]
-
-        # Eq. 16.1, 16.2
-        al = (Sx[l,xi]*Sx[k,k]+Sx[k,xi]*(1 - Sx[l,k]))*oneoverdelta
-        ak = (Sx[k,xi]*Sx[l,l]+Sx[l,xi]*(1 - Sx[k,l]))*oneoverdelta
-
-        for j in 1:m-2
+        # generate the scattering parameters
+        # by looping over the output matrix indices
+        for i in 1:m-2
 
             # input matrix index
-            xj = xindices[j]
+            @inbounds xi = xindices[i]
 
-            # Eq. 15
-            Sout[j,i] =Sx[xj,xi] + Sx[xj,l]*al + Sx[xj,k]*ak
+            # Eq. 16.1, 16.2
+            @inbounds al = (Sx[l,xi,ii]*Sx[k,k,ii]+Sx[k,xi,ii]*(1 - Sx[l,k,ii]))*oneoverdelta
+            @inbounds ak = (Sx[k,xi,ii]*Sx[l,l,ii]+Sx[l,xi,ii]*(1 - Sx[k,l,ii]))*oneoverdelta
+
+            for j in 1:m-2
+
+                # input matrix index
+                @inbounds xj = xindices[j]
+
+                # Eq. 15
+                @inbounds Sout[j,i,ii] = Sx[xj,xi,ii] + Sx[xj,l,ii]*al + Sx[xj,k,ii]*ak
+            end
         end
     end
     return nothing
 end
 
-
 """
-    connectS(Sx::AbstractArray,Sy::AbstractArray,k::Int,l::Int)
+    connectS(Sx::AbstractArray,Sy::AbstractArray,k::Int,l::Int;
+        nbatches::Int = Base.Threads.nthreads())
 
 Connect port `k` on an `m` port network, represented by the scattering
 parameter matrix `Sx`, to port `l` on an `n` port network, represented by the
@@ -246,7 +257,8 @@ Interconnected Multiports," 1981 11th European Microwave Conference,
 Amsterdam, Netherlands, 1981, pp. 700-704, doi: 10.1109/EUMA.1981.332972.
 
 """
-function connectS(Sx::AbstractArray{T,N},Sy::AbstractArray{T,N},k::Int,l::Int) where {T,N}
+function connectS(Sx::AbstractArray{T,N},Sy::AbstractArray{T,N},k::Int,l::Int;
+    nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
     # make a tuple with the size of the array
     # the first two dimensions are two smaller
@@ -258,7 +270,7 @@ function connectS(Sx::AbstractArray{T,N},Sy::AbstractArray{T,N},k::Int,l::Int) w
     Sout = similar(Sx,sizeS)
 
     # connect the networks
-    connectS!(Sout,Sx,Sy,k,l)
+    connectS!(Sout,Sx,Sy,k,l;nbatches = nbatches)
 
     return Sout
 end
@@ -269,7 +281,8 @@ end
 See [`connectS`](@ref) for description.
 
 """
-function connectS!(Sout,Sx,Sy,k::Int,l::Int)
+function connectS!(Sout,Sx,Sy,k::Int,l::Int;
+    nbatches::Int = Base.Threads.nthreads())
   
 
     # validate all of the inputs
@@ -347,73 +360,81 @@ function connectS!(Sout,Sx,Sy,k::Int,l::Int)
     end
 
     # loop over the dimensions of the array greater than 2
-    for i in CartesianIndices(axes(Sout)[3:end])
-        connectS_inner!(view(Sout,:,:,i),view(Sx,:,:,i),view(Sy,:,:,i),k,l,m,
-            n,xindices,yindices)
+    indices = CartesianIndices(axes(Sout)[3:end])
+    if length(indices) > nbatches
+        batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
+        Base.Threads.@threads for i in 1:length(batches)
+            connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batches[i])
+        end
+    else
+        connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,indices)
     end
 
-    return nothing
+    return Sout
 end
 
 """
-    connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices)
+    connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batches)
 
 See [`connectS`](@ref) for description.
 
 """
-function connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices)
+function connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batch)
 
-    # use a separate loop for each
-    # quadrant of the output matrix
 
-    # calculate the inverse of the denominator
-    oneoverdenom = 1/(1-Sx[k,k]*Sy[l,l])
+    for ii in batch
+        # use a separate loop for each
+        # quadrant of the output matrix
 
-    # upper left quadrant, i,j in Sx
-    for i in 1:m-1
-        for j in 1:m-1
-            # indices for the input matrices
-            xi = xindices[i]
-            xj = xindices[j] 
+        # calculate the inverse of the denominator
+        @inbounds oneoverdenom = 1/(1-Sx[k,k,ii]*Sy[l,l,ii])
 
-            # Eq. 10.1
-            Sout[j,i] = Sx[xj,xi] + Sx[k,xi]*Sy[l,l]*Sx[xj,k]*oneoverdenom
+        # upper left quadrant, i,j in Sx
+        for i in 1:m-1
+            for j in 1:m-1
+                # indices for the input matrices
+                @inbounds xi = xindices[i]
+                @inbounds xj = xindices[j] 
+
+                # Eq. 10.1
+                @inbounds @inbounds Sout[j,i,ii] = Sx[xj,xi,ii] + Sx[k,xi,ii]*Sy[l,l,ii]*Sx[xj,k,ii]*oneoverdenom
+            end
         end
-    end
 
-    # upper right  quadrant, i in Sy, j in Sx
-    for i in m:m+n-2
-        for j in 1:m-1
-            # indices for the input matrices
-            yi = yindices[i - m + 1]
-            xj = xindices[j]
+        # upper right  quadrant, i in Sy, j in Sx
+        for i in m:m+n-2
+            for j in 1:m-1
+                # indices for the input matrices
+                @inbounds yi = yindices[i - m + 1]
+                @inbounds xj = xindices[j]
 
-            # Eq. 10.3
-            Sout[j,i] = Sx[xj,k]*Sy[l,yi]*oneoverdenom
+                # Eq. 10.3
+                @inbounds Sout[j,i,ii] = Sx[xj,k,ii]*Sy[l,yi,ii]*oneoverdenom
+            end
         end
-    end
 
-    # lower left quadrant, i in Sx, j in Sy
-    for i in 1:m-1
-        for j in m:m+n-2
-            # indices for the input matrices
-            xi = xindices[i]
-            yj = yindices[j - m + 1]
+        # lower left quadrant, i in Sx, j in Sy
+        for i in 1:m-1
+            for j in m:m+n-2
+                # indices for the input matrices
+                @inbounds xi = xindices[i]
+                @inbounds yj = yindices[j - m + 1]
 
-            # Eq. 10.3
-            Sout[j,i] = Sx[k,xi]*Sy[yj,l]*oneoverdenom 
+                # Eq. 10.3
+                @inbounds Sout[j,i,ii] = Sx[k,xi,ii]*Sy[yj,l,ii]*oneoverdenom 
+            end
         end
-    end
 
-    # lower right quadrant, i,j in Sy
-    for i in m:m+n-2
-        for j in m:m+n-2
-            # indices for the input matrices
-            yi = yindices[i - m + 1]
-            yj = yindices[j - m + 1] 
-              
-            # Eq. 10.2
-            Sout[j,i] = Sy[yj,yi] + Sy[l,yi]*Sx[k,k]*Sy[yj,l]*oneoverdenom
+        # lower right quadrant, i,j in Sy
+        for i in m:m+n-2
+            for j in m:m+n-2
+                # indices for the input matrices
+                @inbounds yi = yindices[i - m + 1]
+                @inbounds yj = yindices[j - m + 1] 
+                  
+                # Eq. 10.2
+                @inbounds Sout[j,i,ii] = Sy[yj,yi,ii] + Sy[l,yi,ii]*Sx[k,k,ii]*Sy[yj,l,ii]*oneoverdenom
+            end
         end
     end
     return nothing
@@ -1163,7 +1184,7 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     fweightlist::AbstractVector{<:AbstractVector{Int}},
     ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
     networkdata::AbstractVector{N},
-    src_node::Int,connection_index::Int) where {T,N}
+    src_node::Int,connection_index::Int,nbatches::Int) where {T,N}
 
     # remove the edge from the graph
     dst_node = remove_edge!(g,src_node,connection_index)
@@ -1196,7 +1217,7 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     # if src_node == dst_node, then make a self connection
     if src_node == dst_node
         # connect the networks and find the ports of the connected network
-        connected_network = connectS(networkdata[src_node],src_port_index,dst_port_index)
+        connected_network = connectS(networkdata[src_node],src_port_index,dst_port_index;nbatches=nbatches)
         connected_ports = connectSports(ports[src_node],src_port_index,dst_port_index)
     
         # delete the ports for the dst. update the ports for the src.
@@ -1420,7 +1441,12 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, 
 end
 
 """
-    connectS!(g,fconnectionlist,fweightlist,ports,networkdata)
+    connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
+        fconnectionlist::AbstractVector{<:AbstractVector{Tuple{T,T,Int,Int}}},
+        fweightlist::AbstractVector{<:AbstractVector{Int}},
+        ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
+        networkdata::AbstractVector{N};
+        nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
 Return the non-empty elements of the updated `networkdata` and `ports` after
 applying all of the connections in the connection forward adjacency list
@@ -1443,7 +1469,8 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     fconnectionlist::AbstractVector{<:AbstractVector{Tuple{T,T,Int,Int}}},
     fweightlist::AbstractVector{<:AbstractVector{Int}},
     ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
-    networkdata::AbstractVector{N}) where {T,N}
+    networkdata::AbstractVector{N};
+    nbatches::Int = Base.Threads.nthreads()) where {T,N}
     # find the minimum weight and the second to minimum weight
     minweight = Inf
     secondtominweight = Inf
@@ -1470,7 +1497,7 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
                     # perform the connection
                     # println("i ",i," j ",j," N ",N," length(fweightlist[i]) ",length(fweightlist[i]))
                     # println(fweightlist[i])
-                    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j)
+                    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j,nbatches)
                     # set j = 1
                     j = 1
                     n = length(fweightlist[i]) 
@@ -1490,7 +1517,8 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
 end
 
 """
-    connectS(networks, connections; small_splitters = true)
+    connectS(networks, connections; small_splitters::Bool = true,
+        nbatches::Int = Base.Threads.nthreads())
 
 Return the network and ports resulting from connecting the networks in
 `networks` according to the connections in `connections`. `networks` is a
@@ -1522,10 +1550,11 @@ JosephsonCircuits.connectS(networks,connections)
 (S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S3, 5)]])
 ```
 """
-function connectS(networks, connections; small_splitters = true)
+function connectS(networks, connections; small_splitters::Bool = true,
+    nbatches::Int = Base.Threads.nthreads())
     init = connectS_initialize(networks,connections;
         small_splitters = small_splitters)
-    return connectS!(init...)
+    return connectS!(init...;nbatches = nbatches)
 end
 
 """
