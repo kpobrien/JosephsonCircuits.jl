@@ -130,27 +130,38 @@ function connectS!(Sout,Sx,k::Int,l::Int;
     # the number of ports in the input matrix
     m = size(Sx,1)
 
-    # make the indices so we can skip k and l
-    xindices = zeros(Int,m-2)
-    iout = 0
-    for i in 1:m
-        if i != k && i != l
-            # if the current index is neither
-            # k nor l, then keep it
-            iout+=1
-            xindices[iout] = i
-        end
-    end
+    # # make the indices so we can skip k and l
+    # xindices = zeros(Int,m-2)
+    # iout = 0
+    # for i in 1:m
+    #     if i != k && i != l
+    #         # if the current index is neither
+    #         # k nor l, then keep it
+    #         iout+=1
+    #         xindices[iout] = i
+    #     end
+    # end
   
+    # # loop over the dimensions of the array greater than 2
+    # indices = CartesianIndices(axes(Sout)[3:end])
+    # if  nbatches > 1 && length(indices) > nbatches
+    #     batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
+    #     Base.Threads.@threads for i in 1:length(batches)
+    #             connectS_inner!(Sout,Sx,k,l,m,xindices,batches[i])
+    #     end
+    # else
+    #     connectS_inner!(Sout,Sx,k,l,m,xindices,indices)
+    # end
+
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
     if  nbatches > 1 && length(indices) > nbatches
         batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
         Base.Threads.@threads for i in 1:length(batches)
-                connectS_inner!(Sout,Sx,k,l,m,xindices,batches[i])
+                connectS_inner!(Sout,Sx,k,l,m,batches[i])
         end
     else
-        connectS_inner!(Sout,Sx,k,l,m,xindices,indices)
+        connectS_inner!(Sout,Sx,k,l,m,indices)
     end
 
     return Sout
@@ -162,35 +173,106 @@ end
 See [`connectS`](@ref) for description.
 
 """
-function connectS_inner!(Sout,Sx,k,l,m,xindices,batch)
+function connectS_inner!(Sout,Sx,k,l,m,batch)
 
-    for ii in batch
+    range1 = 0
+    range2 = 0
+    if k > l
+        range1 = l
+        range2 = k
+    else
+        range1 = k
+        range2 = l
+    end
+
+    @inbounds for ii in batch
         # Eq. 16.3
-        @inbounds oneoverdelta = 1/((1 - Sx[l,k,ii])*(1 - Sx[k,l,ii]) - Sx[l,l,ii]*Sx[k,k,ii])
+        oneoverdelta = 1/((1 - Sx[l,k,ii])*(1 - Sx[k,l,ii]) - Sx[l,l,ii]*Sx[k,k,ii])
 
         # generate the scattering parameters
         # by looping over the output matrix indices
-        for i in 1:m-2
 
-            # input matrix index
-            @inbounds xi = xindices[i]
+        # Eq. 16.1, 16.2
+        for i in 1:range1-1
+            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(1 - Sx[l,k,ii]))*oneoverdelta
+            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(1 - Sx[k,l,ii]))*oneoverdelta
 
-            # Eq. 16.1, 16.2
-            @inbounds al = (Sx[l,xi,ii]*Sx[k,k,ii]+Sx[k,xi,ii]*(1 - Sx[l,k,ii]))*oneoverdelta
-            @inbounds ak = (Sx[k,xi,ii]*Sx[l,l,ii]+Sx[l,xi,ii]*(1 - Sx[k,l,ii]))*oneoverdelta
-
-            for j in 1:m-2
-
-                # input matrix index
-                @inbounds xj = xindices[j]
-
-                # Eq. 15
-                @inbounds Sout[j,i,ii] = Sx[xj,xi,ii] + Sx[xj,l,ii]*al + Sx[xj,k,ii]*ak
+            # Eq. 15
+            @simd for j in 1:range1-1
+                Sout[j,i,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
+            end
+            @simd for j in range1+1:range2-1
+                Sout[j-1,i,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
+            end
+            @simd for j in range2+1:m
+                Sout[j-2,i,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
             end
         end
+        for i in range1+1:range2-1
+            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(1 - Sx[l,k,ii]))*oneoverdelta
+            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(1 - Sx[k,l,ii]))*oneoverdelta
+
+            # Eq. 15
+            @simd for j in 1:range1-1
+                Sout[j,i-1,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
+            end
+            @simd for j in range1+1:range2-1
+                Sout[j-1,i-1,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
+            end
+            @simd for j in range2+1:m
+                Sout[j-2,i-1,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
+            end
+        end
+        for i in range2+1:m
+            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(1 - Sx[l,k,ii]))*oneoverdelta
+            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(1 - Sx[k,l,ii]))*oneoverdelta
+
+            # Eq. 15
+            @simd for j in 1:range1-1
+                Sout[j,i-2,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
+            end
+            @simd for j in range1+1:range2-1
+                Sout[j-1,i-2,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
+            end
+            @simd for j in range2+1:m
+                Sout[j-2,i-2,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
+            end
+        end
+
     end
     return nothing
 end
+
+
+# function connectS_inner!(Sout,Sx,k,l,m,xindices,batch)
+
+#     @inbounds for ii in batch
+#         # Eq. 16.3
+#         oneoverdelta = 1/((1 - Sx[l,k,ii])*(1 - Sx[k,l,ii]) - Sx[l,l,ii]*Sx[k,k,ii])
+
+#         # generate the scattering parameters
+#         # by looping over the output matrix indices
+#         for i in 1:m-2
+
+#             # input matrix index
+#             xi = xindices[i]
+
+#             # Eq. 16.1, 16.2
+#             al = (Sx[l,xi,ii]*Sx[k,k,ii]+Sx[k,xi,ii]*(1 - Sx[l,k,ii]))*oneoverdelta
+#             ak = (Sx[k,xi,ii]*Sx[l,l,ii]+Sx[l,xi,ii]*(1 - Sx[k,l,ii]))*oneoverdelta
+
+#             for j in 1:m-2
+
+#                 # input matrix index
+#                 xj = xindices[j]
+
+#                 # Eq. 15
+#                 Sout[j,i,ii] = Sx[xj,xi,ii] + Sx[xj,l,ii]*al + Sx[xj,k,ii]*ak
+#             end
+#         end
+#     end
+#     return nothing
+# end
 
 """
     connectS(Sx::AbstractArray,Sy::AbstractArray,k::Int,l::Int;
@@ -341,33 +423,44 @@ function connectS!(Sout,Sx,Sy,k::Int,l::Int;
     m = size(Sx,1)
     n = size(Sy,1)
     
-    # make the indices so we can skip k
-    xindices = zeros(Int,m-1)
-    for iout in 1:k-1
-        xindices[iout] = iout
-    end
-    for iout in k:m-1
-        xindices[iout] = iout+1
-    end
+    # # make the indices so we can skip k
+    # xindices = zeros(Int,m-1)
+    # for iout in 1:k-1
+    #     xindices[iout] = iout
+    # end
+    # for iout in k:m-1
+    #     xindices[iout] = iout+1
+    # end
 
-    # make the indices so we can skip l
-    yindices = zeros(Int,n-1)
-    for iout in 1:l-1
-        yindices[iout] = iout
-    end
-    for iout in l:n-1
-        yindices[iout] = iout+1
-    end
+    # # make the indices so we can skip l
+    # yindices = zeros(Int,n-1)
+    # for iout in 1:l-1
+    #     yindices[iout] = iout
+    # end
+    # for iout in l:n-1
+    #     yindices[iout] = iout+1
+    # end
+
+    # # loop over the dimensions of the array greater than 2
+    # indices = CartesianIndices(axes(Sout)[3:end])
+    # if nbatches > 1 && length(indices) > nbatches
+    #     batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
+    #     Base.Threads.@threads for i in 1:length(batches)
+    #         connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batches[i])
+    #     end
+    # else
+    #     connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,indices)
+    # end
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
     if nbatches > 1 && length(indices) > nbatches
         batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
         Base.Threads.@threads for i in 1:length(batches)
-            connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batches[i])
+            connectS_inner!(Sout,Sx,Sy,k,l,m,n,batches[i])
         end
     else
-        connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,indices)
+        connectS_inner!(Sout,Sx,Sy,k,l,m,n,indices)
     end
 
     return Sout
@@ -379,66 +472,164 @@ end
 See [`connectS`](@ref) for description.
 
 """
-function connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batch)
+function connectS_inner!(Sout,Sx,Sy,k,l,m,n,batch)
 
-
-    for ii in batch
+    @inbounds for ii in batch
         # use a separate loop for each
         # quadrant of the output matrix
 
         # calculate the inverse of the denominator
-        @inbounds oneoverdenom = 1/(1-Sx[k,k,ii]*Sy[l,l,ii])
+        oneoverdenom = 1/(1-Sx[k,k,ii]*Sy[l,l,ii])
 
         # upper left quadrant, i,j in Sx
-        for i in 1:m-1
-            for j in 1:m-1
-                # indices for the input matrices
-                @inbounds xi = xindices[i]
-                @inbounds xj = xindices[j] 
-
-                # Eq. 10.1
-                @inbounds @inbounds Sout[j,i,ii] = Sx[xj,xi,ii] + Sx[k,xi,ii]*Sy[l,l,ii]*Sx[xj,k,ii]*oneoverdenom
+        # Eq. 10.1
+        for i in 1:k-1
+            a = Sx[k,i,ii]*Sy[l,l,ii]*oneoverdenom
+            @simd for j in 1:k-1
+                # Sout[j,i,ii] = Sx[j,i,ii] + Sx[k,i,ii]*Sy[l,l,ii]*Sx[j,k,ii]*oneoverdenom
+                Sout[j,i,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
+            end
+            @simd for j in k+1:m
+                Sout[j-1,i,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
+            end
+        end
+        for i in k+1:m
+            a = Sx[k,i,ii]*Sy[l,l,ii]*oneoverdenom
+            @simd for j in 1:k-1
+                Sout[j,i-1,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
+            end
+            @simd for j in k+1:m
+                Sout[j-1,i-1,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
             end
         end
 
         # upper right  quadrant, i in Sy, j in Sx
-        for i in m:m+n-2
-            for j in 1:m-1
-                # indices for the input matrices
-                @inbounds yi = yindices[i - m + 1]
-                @inbounds xj = xindices[j]
-
-                # Eq. 10.3
-                @inbounds Sout[j,i,ii] = Sx[xj,k,ii]*Sy[l,yi,ii]*oneoverdenom
+        # Eq. 10.3
+        for i in m+1:m+l-1
+            a = Sy[l,i-m,ii]*oneoverdenom
+            @simd for j in 1:k-1
+                Sout[j,i-1,ii] = a*Sx[j,k,ii]
+            end
+            @simd for j in k+1:m
+                Sout[j-1,i-1,ii] = a*Sx[j,k,ii]
+            end
+        end
+        for i in m+l+1:m+n
+            a = Sy[l,i-m,ii]*oneoverdenom
+            @simd for j in 1:k-1
+                Sout[j,i-2,ii] = a*Sx[j,k,ii]
+            end
+            @simd for j in k+1:m
+                Sout[j-1,i-2,ii] = a*Sx[j,k,ii]
             end
         end
 
         # lower left quadrant, i in Sx, j in Sy
-        for i in 1:m-1
-            for j in m:m+n-2
-                # indices for the input matrices
-                @inbounds xi = xindices[i]
-                @inbounds yj = yindices[j - m + 1]
-
-                # Eq. 10.3
-                @inbounds Sout[j,i,ii] = Sx[k,xi,ii]*Sy[yj,l,ii]*oneoverdenom 
+        # Eq. 10.3
+        for i in 1:k-1
+            a = Sx[k,i,ii]*oneoverdenom
+            @simd for j in m+1:m+l-1
+                Sout[j-1,i,ii] = a*Sy[j-m,l,ii] 
+            end
+            @simd for j in m+l+1:m+n
+                Sout[j-2,i,ii] = a*Sy[j-m,l,ii] 
+            end
+        end
+        for i in k+1:m
+            a = Sx[k,i,ii]*oneoverdenom
+            @simd for j in m+1:m+l-1
+                Sout[j-1,i-1,ii] = a*Sy[j-m,l,ii] 
+            end
+            @simd for j in m+l+1:m+n
+                Sout[j-2,i-1,ii] = a*Sy[j-m,l,ii] 
             end
         end
 
         # lower right quadrant, i,j in Sy
-        for i in m:m+n-2
-            for j in m:m+n-2
-                # indices for the input matrices
-                @inbounds yi = yindices[i - m + 1]
-                @inbounds yj = yindices[j - m + 1] 
-                  
-                # Eq. 10.2
-                @inbounds Sout[j,i,ii] = Sy[yj,yi,ii] + Sy[l,yi,ii]*Sx[k,k,ii]*Sy[yj,l,ii]*oneoverdenom
+        # Eq. 10.2
+        for i in m+1:m+l-1
+            a = Sy[l,i-m,ii]*Sx[k,k,ii]*oneoverdenom
+            @simd for j in m+1:m+l-1
+                Sout[j-1,i-1,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
+            end
+            @simd for j in m+l+1:m+n
+                Sout[j-2,i-1,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
+            end
+        end
+        for i in m+l+1:m+n
+            a = Sy[l,i-m,ii]*Sx[k,k,ii]*oneoverdenom
+            @simd for j in m+1:m+l-1
+                Sout[j-1,i-2,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
+            end
+            @simd for j in m+l+1:m+n
+                Sout[j-2,i-2,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
             end
         end
     end
     return nothing
 end
+
+
+# function connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batch)
+
+
+#     @inbounds for ii in batch
+#         # use a separate loop for each
+#         # quadrant of the output matrix
+
+#         # calculate the inverse of the denominator
+#         oneoverdenom = 1/(1-Sx[k,k,ii]*Sy[l,l,ii])
+
+#         # upper left quadrant, i,j in Sx
+#         for i in 1:m-1
+#             xi = xindices[i]
+#             a = Sx[k,xi,ii]*Sy[l,l,ii]*oneoverdenom
+#             for j in 1:m-1
+#                 xj = xindices[j] 
+
+#                 # Eq. 10.1
+#                 Sout[j,i,ii] = Sx[xj,xi,ii] + a*Sx[xj,k,ii]
+#             end
+#         end
+
+#         # upper right  quadrant, i in Sy, j in Sx
+#         for i in m:m+n-2
+#             yi = yindices[i - m + 1]
+#             a = Sy[l,yi,ii]*oneoverdenom
+#             for j in 1:m-1
+#                 xj = xindices[j]
+
+#                 # Eq. 10.3
+#                 Sout[j,i,ii] = a*Sx[xj,k,ii]
+#             end
+#         end
+
+#         # lower left quadrant, i in Sx, j in Sy
+#         for i in 1:m-1
+#             xi = xindices[i]
+#             a = Sx[k,xi,ii]*oneoverdenom
+#             for j in m:m+n-2
+#                 yj = yindices[j - m + 1]
+
+#                 # Eq. 10.3
+#                 Sout[j,i,ii] = a*Sy[yj,l,ii] 
+#             end
+#         end
+
+#         # lower right quadrant, i,j in Sy
+#         for i in m:m+n-2
+#             yi = yindices[i - m + 1]
+#             a = Sy[l,yi,ii]*Sx[k,k,ii]*oneoverdenom
+#             for j in m:m+n-2
+#                 yj = yindices[j - m + 1] 
+                  
+#                 # Eq. 10.2
+#                 Sout[j,i,ii] = Sy[yj,yi,ii] + a*Sy[yj,l,ii]
+#             end
+#         end
+#     end
+#     return nothing
+# end
 
 """
     connectSports(portsa::AbstractVector{Tuple{T,Int}},k::Int,l::Int) where T
@@ -1184,7 +1375,9 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     fweightlist::AbstractVector{<:AbstractVector{Int}},
     ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
     networkdata::AbstractVector{N},
-    src_node::Int,connection_index::Int,nbatches::Int) where {T,N}
+    src_node::Int,connection_index::Int,nbatches::Int,
+    userinput::AbstractVector{Bool},
+    storage::Dict{Int,N}) where {T,N}
 
     # remove the edge from the graph
     dst_node = remove_edge!(g,src_node,connection_index)
@@ -1226,17 +1419,51 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
         # update the networkdata for the src and replace the src with an empty array.
         networkdata[src_node] = connected_network
     else
+
+        # when making a new array. try to see if that same sizes is in storage.
+        # if so, reuse that. if not, make a new one and add to storage.
+        # then switch from connectS to connectS!
+        d = size(networkdata[src_node],1)+size(networkdata[dst_node],1)-2
+        if haskey(storage,d)
+            connected_network = pop!(storage,d)
+        else
+            # make a tuple with the size of the array
+            # the first two dimensions are two smaller
+            sizeSx = size(networkdata[src_node])
+            sizeSy = size(networkdata[dst_node])
+            sizeS = NTuple{length(sizeSx)}(ifelse(i<=2,sizeSx[i]+sizeSy[i]-2,sizeSx[i]) for i in 1:length(sizeSx))
+
+            # allocate an array of zeros of the same type as Sx
+            connected_network = similar(networkdata[src_node],sizeS)
+        end
+
         # connect the networks and find the ports of the connected network
-        connected_network = connectS(networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
+         connectS!(connected_network,networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
+        # connected_network = connectS(networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
         connected_ports = connectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
 
         # delete the ports for the dst. update the ports for the src.
         ports[src_node] = connected_ports
         ports[dst_node] = []
 
+
+        # if the nodes are not user input, then store the arrays
+        if !userinput[src_node]
+            storage[size(networkdata[src_node],1)]= networkdata[src_node]
+        end
+        if !userinput[dst_node]
+            storage[size(networkdata[dst_node],1)]= networkdata[dst_node]
+        end
+
         # update the networkdata for the src and replace the src with an empty array.
         networkdata[src_node] = connected_network
         networkdata[dst_node] = Array{eltype(connected_network)}(undef,ntuple(zero,ndims(connected_network)))
+        
+        # mark the source and destination nodes as non-user input
+        # so we can re-use the arrays if desired
+        userinput[src_node] = false
+        userinput[dst_node] = false
+
         # move the edges away from the dst node
         move_edges!(g,dst_node,src_node,fconnectionlist,fweightlist)
     end
@@ -1471,6 +1698,9 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
     networkdata::AbstractVector{N};
     nbatches::Int = Base.Threads.nthreads()) where {T,N}
+
+    userinput = ones(Bool,length(networkdata))
+    storage = Dict{Int,N}()
     # find the minimum weight and the second to minimum weight
     minweight = Inf
     secondtominweight = Inf
@@ -1497,7 +1727,7 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
                     # perform the connection
                     # println("i ",i," j ",j," N ",N," length(fweightlist[i]) ",length(fweightlist[i]))
                     # println(fweightlist[i])
-                    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j,nbatches)
+                    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j,nbatches,userinput,storage)
                     # set j = 1
                     j = 1
                     n = length(fweightlist[i]) 
