@@ -457,6 +457,7 @@ function warmupconnect()
     JosephsonCircuits.connectS(networks,connections)
     JosephsonCircuits.solveS(networks,connections)
 
+    networks = [("S1",S1),("S2",S2),("S4",Sopen)]
     connections = [[("S1",1),("S1",2)],[("S1",3),("S2",2),("S4",1)]]
     JosephsonCircuits.connectS(networks,connections)
     JosephsonCircuits.solveS(networks,connections)
@@ -480,11 +481,13 @@ export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
 # the below precompile directives are to help the compiler perform type inference
 # during the precompilation stage (when the package is installed) instead of
 # when it is loaded or the functions are run. this is a helpful guide:
-# https://timholy.github.io/SnoopCompile.jl/stable/snoopi_deep_analysis/#inferrability
+# https://timholy.github.io/SnoopCompile.jl/stable/tutorials/invalidations/#Tutorial-on-@snoop_invalidations
+# https://timholy.github.io/SnoopCompile.jl/stable/tutorials/snoop_inference/#Tutorial-on-@snoop_inference
 # and the basic commands to look at the inference triggers
-# julia> using SnoopCompile, JosephsonCircuits
-# julia> tinf = @snoopi_deep JosephsonCircuits.warmupsyms();
-# julia> itrigs = inference_triggers(tinf)
+# julia> using SnoopCompileCore, JosephsonCircuits
+# julia> tinf = @snoop_inference JosephsonCircuits.warmupconnect();
+# julia> using SnoopCompile, AbstractTrees
+# julia> print_tree(tinf, maxdepth=100)
 
 PrecompileTools.@compile_workload begin
     warmup()

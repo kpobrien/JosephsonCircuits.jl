@@ -173,68 +173,72 @@ end
 See [`connectS`](@ref) for description.
 
 """
-function connectS_inner!(Sout,Sx,k,l,m,batch)
+function connectS_inner!(Sout,Sx,k::Int,l::Int,m::Int,batch::AbstractArray)
 
-    range1 = 0
-    range2 = 0
+    firstport = 0
+    secondport = 0
     if k > l
-        range1 = l
-        range2 = k
+        firstport = l
+        secondport = k
     else
-        range1 = k
-        range2 = l
+        firstport = k
+        secondport = l
     end
+
+    range1 = 1:firstport-1
+    range2 = firstport+1:secondport-1
+    range3 = secondport+1:m
 
     @inbounds for ii in batch
         # Eq. 16.3
-        oneoverdelta = 1/((1 - Sx[l,k,ii])*(1 - Sx[k,l,ii]) - Sx[l,l,ii]*Sx[k,k,ii])
+        oneoverdelta = one(Sx[l,k,ii])/((one(Sx[l,k,ii]) - Sx[l,k,ii])*(one(Sx[k,l,ii]) - Sx[k,l,ii]) - Sx[l,l,ii]*Sx[k,k,ii])
 
         # generate the scattering parameters
         # by looping over the output matrix indices
 
         # Eq. 16.1, 16.2
-        for i in 1:range1-1
-            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(1 - Sx[l,k,ii]))*oneoverdelta
-            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(1 - Sx[k,l,ii]))*oneoverdelta
+        for i in range1
+            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(one(Sx[l,k,ii]) - Sx[l,k,ii]))*oneoverdelta
+            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(one(Sx[k,l,ii]) - Sx[k,l,ii]))*oneoverdelta
 
             # Eq. 15
-            @simd for j in 1:range1-1
+            for j in range1
                 Sout[j,i,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
             end
-            @simd for j in range1+1:range2-1
+            for j in range2
                 Sout[j-1,i,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
             end
-            @simd for j in range2+1:m
+            for j in range3
                 Sout[j-2,i,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
             end
         end
-        for i in range1+1:range2-1
-            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(1 - Sx[l,k,ii]))*oneoverdelta
-            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(1 - Sx[k,l,ii]))*oneoverdelta
+        for i in range2
+            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(one(Sx[l,k,ii]) - Sx[l,k,ii]))*oneoverdelta
+            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(one(Sx[k,l,ii]) - Sx[k,l,ii]))*oneoverdelta
 
             # Eq. 15
-            @simd for j in 1:range1-1
+            for j in range1
                 Sout[j,i-1,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
             end
-            @simd for j in range1+1:range2-1
+            for j in range2
                 Sout[j-1,i-1,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
             end
-            @simd for j in range2+1:m
+            for j in range3
                 Sout[j-2,i-1,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
             end
         end
-        for i in range2+1:m
-            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(1 - Sx[l,k,ii]))*oneoverdelta
-            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(1 - Sx[k,l,ii]))*oneoverdelta
+        for i in range3
+            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(one(Sx[l,k,ii]) - Sx[l,k,ii]))*oneoverdelta
+            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(one(Sx[k,l,ii]) - Sx[k,l,ii]))*oneoverdelta
 
             # Eq. 15
-            @simd for j in 1:range1-1
+            for j in range1
                 Sout[j,i-2,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
             end
-            @simd for j in range1+1:range2-1
+            for j in range2
                 Sout[j-1,i-2,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
             end
-            @simd for j in range2+1:m
+            for j in range3
                 Sout[j-2,i-2,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
             end
         end
@@ -472,96 +476,100 @@ end
 See [`connectS`](@ref) for description.
 
 """
-function connectS_inner!(Sout,Sx,Sy,k,l,m,n,batch)
+function connectS_inner!(Sout,Sx,Sy,k::Int,l::Int,m::Int,n::Int,batch::AbstractArray)
+
+    range1 = 1:k-1
+    range2 = k+1:m
+    range3 = m+1:m+l-1
+    range4 = m+l+1:m+n
 
     @inbounds for ii in batch
         # use a separate loop for each
         # quadrant of the output matrix
 
         # calculate the inverse of the denominator
-        oneoverdenom = 1/(1-Sx[k,k,ii]*Sy[l,l,ii])
+        oneoverdenom = one(Sx[k,k,ii])/(one(Sx[k,k,ii])-Sx[k,k,ii]*Sy[l,l,ii])
 
         # upper left quadrant, i,j in Sx
         # Eq. 10.1
-        for i in 1:k-1
+        for i in range1
             a = Sx[k,i,ii]*Sy[l,l,ii]*oneoverdenom
-            @simd for j in 1:k-1
-                # Sout[j,i,ii] = Sx[j,i,ii] + Sx[k,i,ii]*Sy[l,l,ii]*Sx[j,k,ii]*oneoverdenom
+            for j in range1
                 Sout[j,i,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
             end
-            @simd for j in k+1:m
+            for j in range2
                 Sout[j-1,i,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
             end
         end
-        for i in k+1:m
+        for i in range2
             a = Sx[k,i,ii]*Sy[l,l,ii]*oneoverdenom
-            @simd for j in 1:k-1
+            for j in range1
                 Sout[j,i-1,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
             end
-            @simd for j in k+1:m
+            for j in range2
                 Sout[j-1,i-1,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
             end
         end
 
         # upper right  quadrant, i in Sy, j in Sx
         # Eq. 10.3
-        for i in m+1:m+l-1
+        for i in range3
             a = Sy[l,i-m,ii]*oneoverdenom
-            @simd for j in 1:k-1
+            for j in range1
                 Sout[j,i-1,ii] = a*Sx[j,k,ii]
             end
-            @simd for j in k+1:m
+            for j in range2
                 Sout[j-1,i-1,ii] = a*Sx[j,k,ii]
             end
         end
-        for i in m+l+1:m+n
+        for i in range4
             a = Sy[l,i-m,ii]*oneoverdenom
-            @simd for j in 1:k-1
+            for j in range1
                 Sout[j,i-2,ii] = a*Sx[j,k,ii]
             end
-            @simd for j in k+1:m
+            for j in range2
                 Sout[j-1,i-2,ii] = a*Sx[j,k,ii]
             end
         end
 
         # lower left quadrant, i in Sx, j in Sy
         # Eq. 10.3
-        for i in 1:k-1
+        for i in range1
             a = Sx[k,i,ii]*oneoverdenom
-            @simd for j in m+1:m+l-1
+            for j in range3
                 Sout[j-1,i,ii] = a*Sy[j-m,l,ii] 
             end
-            @simd for j in m+l+1:m+n
+            for j in range4
                 Sout[j-2,i,ii] = a*Sy[j-m,l,ii] 
             end
         end
-        for i in k+1:m
+        for i in range2
             a = Sx[k,i,ii]*oneoverdenom
-            @simd for j in m+1:m+l-1
+            for j in range3
                 Sout[j-1,i-1,ii] = a*Sy[j-m,l,ii] 
             end
-            @simd for j in m+l+1:m+n
+            for j in range4
                 Sout[j-2,i-1,ii] = a*Sy[j-m,l,ii] 
             end
         end
 
         # lower right quadrant, i,j in Sy
         # Eq. 10.2
-        for i in m+1:m+l-1
+        for i in range3
             a = Sy[l,i-m,ii]*Sx[k,k,ii]*oneoverdenom
-            @simd for j in m+1:m+l-1
+            for j in range3
                 Sout[j-1,i-1,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
             end
-            @simd for j in m+l+1:m+n
+            for j in range4
                 Sout[j-2,i-1,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
             end
         end
-        for i in m+l+1:m+n
+        for i in range4
             a = Sy[l,i-m,ii]*Sx[k,k,ii]*oneoverdenom
-            @simd for j in m+1:m+l-1
+            for j in range3
                 Sout[j-1,i-2,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
             end
-            @simd for j in m+l+1:m+n
+            for j in range4
                 Sout[j-2,i-2,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
             end
         end
@@ -1689,7 +1697,7 @@ init = JosephsonCircuits.connectS_initialize(networks, connections);
 JosephsonCircuits.connectS!(init...)
 
 # output
-(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
+(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S2, 1)])
 ```
 """
 function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
@@ -1743,7 +1751,11 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
         minweight = secondtominweight
         secondtominweight = Inf
     end
-    return (S=networkdata[map(!isempty,networkdata)],ports=ports[map(!isempty,networkdata)])
+    non_empty_indices = map(!isempty,networkdata)
+    if count(!iszero,non_empty_indices) > 1
+        throw(ArgumentError("Multiple disconnected networks remaining with ports $(ports[non_empty_indices])."))
+    end
+    return (S=first(networkdata[non_empty_indices]),ports=first(ports[non_empty_indices]))
 end
 
 """
@@ -1769,7 +1781,7 @@ connections = [[(:S1,1),(:S2,2)]];
 JosephsonCircuits.connectS(networks,connections)
 
 # output
-(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
+(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S2, 1)])
 ```
 ```jldoctest
 networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,6)])];
@@ -1777,7 +1789,7 @@ connections = [(:S1,:S3,1,6)];
 JosephsonCircuits.connectS(networks,connections)
 
 # output
-(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S3, 5)]])
+(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S3, 5)])
 ```
 """
 function connectS(networks, connections; small_splitters::Bool = true,
@@ -2146,7 +2158,7 @@ init = JosephsonCircuits.solveS_initialize(networks, connections);
 JosephsonCircuits.solveS!(init...)
 
 # output
-(Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S2, 1)], Sc = Float64[], portsc = [(:S1, 1), (:S2, 2)])
+(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S2, 1)], Sinternal = Float64[], portsinternal = [(:S1, 1), (:S2, 2)])
 ```
 
 # References
@@ -2171,7 +2183,7 @@ function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
             networkdata,indices,batches[i],klu)
     end
 
-    return (Sp=Sp, portsp=portsp, Sc=Sc, portsc = portsc)
+    return (S=Sp, ports=portsp, Sinternal=Sc, portsinternal = portsc)
 end
 
 """
@@ -2181,9 +2193,9 @@ end
 
 Perform the connections between the networks in `networks` specified by the
 vector of vectors of tuples `connections`. Return the sparse matrix of
-scattering parameters for the external ports `Sp` and the external ports
-`portsp`. Also return the internal port scattering parameters `Sc` and the
-internal ports `portsc`.
+scattering parameters for the external ports `S` and the external ports
+`ports`. Also return the internal port scattering parameters `Sinternal` and
+the internal ports `portsinternal`.
 
 # Arguments
 - `networks`: a vector of tuples of the network name, scattering parameter
@@ -2207,11 +2219,11 @@ internal ports `portsc`.
     launched.
 
 # Returns
-- `Sp`: sparse matrix of scattering parameters for the external ports.
-- `portsp`: the vector of tuples of network name and port number for the
+- `S`: sparse matrix of scattering parameters for the external ports.
+- `ports`: the vector of tuples of network name and port number for the
     external ports.
-- `Sc`: sparse matrix of scattering parameters for the internal ports.
-- `portsc`: the vector of tuples of network name and port number for the
+- `Sinternal`: sparse matrix of scattering parameters for the internal ports.
+- `portsinternal`: the vector of tuples of network name and port number for the
     internal ports.
 
 # Examples
@@ -2221,7 +2233,7 @@ connections = [[(:S1,1),(:S2,2)]];
 JosephsonCircuits.solveS(networks,connections;internal_ports=true)
 
 # output
-(Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S2, 1)], Sc = [1.0 0.0; 0.5 0.5], portsc = [(:S1, 1), (:S2, 2)])
+(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S2, 1)], Sinternal = [1.0 0.0; 0.5 0.5], portsinternal = [(:S1, 1), (:S2, 2)])
 ```
 ```jldoctest
 networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,6)])];
@@ -2229,7 +2241,7 @@ connections = [(:S1,:S3,1,6)];
 JosephsonCircuits.solveS(networks,connections)
 
 # output
-(Sp = [0.5 0.5; 0.5 0.5], portsp = [(:S1, 2), (:S3, 5)], Sc = Float64[], portsc = [(:S1, 1), (:S3, 6)])
+(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S3, 5)], Sinternal = Float64[], portsinternal = [(:S1, 1), (:S3, 6)])
 ```
 
 # References

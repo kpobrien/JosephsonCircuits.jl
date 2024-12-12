@@ -318,8 +318,7 @@ import StaticArrays
         # with symbols
         networks = [(:S1,S1),(:S2,S2),(:S3,Ssplitter),(:S4,Sopen)]
         connections = [(:S1,:S1,1,2),(:S1,:S2,3,1),(:S3,:S2,2,2),(:S3,:S4,3,1)]
-        networkdata, ports = JosephsonCircuits.connectS(networks,connections)
-        Sout1 = networkdata[1]
+        Sout1, ports = JosephsonCircuits.connectS(networks,connections)
 
         Sout2 = begin
             S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
@@ -332,8 +331,7 @@ import StaticArrays
         # with strings
         networks = [("S1",S1),("S2",S2),("S3",Ssplitter),("S4",Sopen)]
         connections = [("S1","S1",1,2),("S1","S2",3,1),("S3","S2",2,2),("S3","S4",3,1)]
-        networkdata, ports = JosephsonCircuits.connectS(networks,connections)
-        Sout1 = networkdata[1]
+        Sout1, ports = JosephsonCircuits.connectS(networks,connections)
 
         Sout2 = begin
             S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
@@ -365,8 +363,7 @@ import StaticArrays
 
         networks = [("S1",S1),("S2",S2),("S3",Ssplitter),("S4",Sopen)]
         connections = [("S1","S1",1,2),("S1","S2",3,1),("S3","S2",2,2),("S3","S4",3,1)]
-        networkdata, ports = JosephsonCircuits.connectS(networks,connections)
-        Sout1 = networkdata[1]
+        Sout1, ports = JosephsonCircuits.connectS(networks,connections)
 
         Sout2 = begin
             S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
@@ -377,9 +374,9 @@ import StaticArrays
 
         @test isapprox(Sout1,Sout2)
 
-        Sout3 = JosephsonCircuits.solveS(networks,connections)
+        Sout3, ports = JosephsonCircuits.solveS(networks,connections)
 
-        @test isapprox(Sout1,Sout3[1])
+        @test isapprox(Sout1,Sout3)
 
     end
 
@@ -411,19 +408,19 @@ import StaticArrays
         # test solveS
         out3 = JosephsonCircuits.solveS(networks, connections;
             small_splitters=false, klu=false)
-        @test isapprox(out1[1][1],out3[1])
+        @test isapprox(out1[1],out3[1])
 
         out4 = JosephsonCircuits.solveS(networks, connections;
             small_splitters=false, klu=true)
-        @test isapprox(out1[1][1],out4[1])
+        @test isapprox(out1[1],out4[1])
 
         out5 = JosephsonCircuits.solveS(networks, connections;
             small_splitters=true, klu=false)
-        @test isapprox(out1[1][1],out5[1])
+        @test isapprox(out1[1],out5[1])
 
         out6 = JosephsonCircuits.solveS(networks, connections;
             small_splitters=true, klu=true)
-        @test isapprox(out1[1][1],out6[1])
+        @test isapprox(out1[1],out6[1])
 
     end
 
@@ -619,7 +616,8 @@ import StaticArrays
         connections = [[("S1",1),("S1",2),("S1",3)],[("S1",4),("S2",2)]];
         out1 = JosephsonCircuits.connectS(networks,connections)
         out2 = JosephsonCircuits.solveS(networks,connections)
-        @test isapprox(out1[1][1],out2[1])
+        @test isapprox(out1[1],out2[1])
+        @test isequal(out1[2],out2[2])
 
     end
 
