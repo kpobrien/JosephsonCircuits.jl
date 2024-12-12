@@ -1697,7 +1697,7 @@ init = JosephsonCircuits.connectS_initialize(networks, connections);
 JosephsonCircuits.connectS!(init...)
 
 # output
-(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S2, 1)])
+(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
 ```
 """
 function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
@@ -1751,11 +1751,7 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
         minweight = secondtominweight
         secondtominweight = Inf
     end
-    non_empty_indices = map(!isempty,networkdata)
-    if count(!iszero,non_empty_indices) > 1
-        throw(ArgumentError("Multiple disconnected networks remaining with ports $(ports[non_empty_indices])."))
-    end
-    return (S=first(networkdata[non_empty_indices]),ports=first(ports[non_empty_indices]))
+    return (S=networkdata[map(!isempty,networkdata)],ports=ports[map(!isempty,networkdata)])
 end
 
 """
@@ -1781,7 +1777,7 @@ connections = [[(:S1,1),(:S2,2)]];
 JosephsonCircuits.connectS(networks,connections)
 
 # output
-(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S2, 1)])
+(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
 ```
 ```jldoctest
 networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,6)])];
@@ -1789,7 +1785,7 @@ connections = [(:S1,:S3,1,6)];
 JosephsonCircuits.connectS(networks,connections)
 
 # output
-(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S3, 5)])
+(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S3, 5)]])
 ```
 """
 function connectS(networks, connections; small_splitters::Bool = true,
