@@ -845,7 +845,7 @@ function cascadeS!(S::AbstractMatrix, Sa::AbstractMatrix, Sb::AbstractMatrix)
     tmp1 = (I-S22a*S11b)\S21a
     tmp2 = (I-S11b*S22a)\S12b
     S11 .= S11a + S12a*S11b*tmp1 # typo in ref: S21 should be S21a
-    S12 .= S12a*tmp2 # typo in ref: S11a should be S11a
+    S12 .= S12a*tmp2 # typo in ref: S11a should be S11b
     S21 .= S21b*tmp1
     S22 .= S22b + S21b*S22a*tmp2
 
@@ -3891,7 +3891,7 @@ function Z_TZ(Z1,Z2,Z3)
 end
 
 """
-    ABCD_tline(theta,Z0)
+    ABCD_tline(Z0, theta)
 
 Return the ABCD matrix for a transmission line described by phase delay
 `theta` in radians and characteristic impedance `Z0` in Ohms.
@@ -3904,21 +3904,21 @@ o------------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_tline(pi/4,1)
+julia> JosephsonCircuits.ABCD_tline(50, pi/4)
 2×2 Matrix{ComplexF64}:
- 0.707107+0.0im            0.0+0.707107im
-      0.0+0.707107im  0.707107+0.0im
+ 0.707107+0.0im             0.0+35.3553im
+      0.0+0.0141421im  0.707107+0.0im
 ```
 """
-function ABCD_tline(theta,Z0)
+function ABCD_tline(Z0, theta)
     return [cos(theta) im*Z0*sin(theta);im/Z0*sin(theta) cos(theta)]
 end
 
 """
-    Z_tline(theta, Z0)
+    Z_tline(Z0, theta)
 
-Return the impedance matrix for a transmission line described by phase delay
-`theta` in radians and characteristic impedance `Z0` in Ohms.
+Return the impedance matrix for a transmission line described by a
+characteristic impedance `Z0` in Ohms and phase delay `theta` in radians 
 ```
    theta, Z0  
 o--========--o
@@ -3928,21 +3928,21 @@ o------------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.Z_tline(pi/4,1)
+julia> JosephsonCircuits.Z_tline(50, pi/4)
 2×2 Matrix{ComplexF64}:
- 0.0-1.0im      0.0-1.41421im
- 0.0-1.41421im  0.0-1.0im
+ 0.0-50.0im     0.0-70.7107im
+ 0.0-70.7107im  0.0-50.0im
 
-julia> isapprox(JosephsonCircuits.Z_tline(pi/4,1),JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_tline(pi/4,1)))
+julia> isapprox(JosephsonCircuits.Z_tline(50, pi/4),JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_tline(50, pi/4)))
 true
 ```
 """
-function Z_tline(theta, Z0)
+function Z_tline(Z0, theta)
     return [-im*Z0*cot(theta) -im*Z0*csc(theta);-im*Z0*csc(theta) -im*Z0*cot(theta)]
 end
 
 """
-    ABCD_coupled_tline(thetae, thetao, Z0e, Z0o)
+    ABCD_coupled_tline(Z0e, Z0o, thetae, thetao)
 
 Return the ABCD matrix for two coupled transmission lines described by
 even and odd mode phase delays `thetae` and `thetao`, and even and odd mode
@@ -3961,18 +3961,18 @@ V2, I2 -->  ======== <-- I4, V4
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_coupled_tline(pi/4,pi/4,50,50)
+julia> JosephsonCircuits.ABCD_coupled_tline(50,50,pi/4,pi/4)
 4×4 Matrix{ComplexF64}:
  0.707107+0.0im             0.0+0.0im        …       0.0+0.0im
       0.0+0.0im        0.707107+0.0im                0.0+35.3553im
       0.0+0.0141421im       0.0+0.0im                0.0+0.0im
       0.0+0.0im             0.0+0.0141421im     0.707107+0.0im
 
-julia> isapprox(JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_coupled_tline(pi/4,pi/4,55,50)),JosephsonCircuits.Z_coupled_tline(pi/4,pi/4,55,50))
+julia> isapprox(JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_coupled_tline(55,50,pi/4,pi/4)),JosephsonCircuits.Z_coupled_tline(55,50,pi/4,pi/4))
 true
 ```
 """
-function ABCD_coupled_tline(thetae, thetao, Z0e, Z0o)
+function ABCD_coupled_tline(Z0e, Z0o, thetae, thetao)
     A11 = A22 = A33 = A44 = 1/2*(cos(thetae) + cos(thetao))
     A12 = A21 = A34 = A43 = 1/2*(cos(thetae) - cos(thetao))
     A13 = A24 = im/2*(Z0e*sin(thetae) + Z0o*sin(thetao))
@@ -3983,11 +3983,11 @@ function ABCD_coupled_tline(thetae, thetao, Z0e, Z0o)
 end
 
 """
-    Z_coupled_tline(thetae, thetao, Z0e, Z0o)
+    Z_coupled_tline(Z0e, Z0o, thetae, thetao)
 
-Return the impedance matrix for two coupled transmission lines described by
-even and odd mode phase delays `thetae` and `thetao`, and even and odd mode
-impedances `Z0e` and `Z0o`.
+Return the impedance matrix for two coupled transmission lines described even
+and odd mode impedances `Z0e` and `Z0o` and by even and odd mode phase delays
+`thetae` and `thetao`.
 ```
 thetae, Z0e
 thetao, Z0o
@@ -4002,7 +4002,7 @@ V2, I2 -->  ======== <-- I4, V4
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.Z_coupled_tline(pi/4,pi/4,50,50)
+julia> JosephsonCircuits.Z_coupled_tline(50,50,pi/4,pi/4)
 4×4 Matrix{ComplexF64}:
  0.0-50.0im     0.0-0.0im      0.0-70.7107im  0.0-0.0im
  0.0-0.0im      0.0-50.0im     0.0-0.0im      0.0-70.7107im
@@ -4010,7 +4010,7 @@ julia> JosephsonCircuits.Z_coupled_tline(pi/4,pi/4,50,50)
  0.0-0.0im      0.0-70.7107im  0.0-0.0im      0.0-50.0im
 ```
 """
-function Z_coupled_tline(thetae,thetao,Z0e,Z0o)
+function Z_coupled_tline(Z0e,Z0o,thetae,thetao)
     Z11 = Z22 = Z33 = Z44 = -im/2*(Z0e*cot(thetae) + Z0o*cot(thetao))
     Z12 = Z21 = Z34 = Z43 = -im/2*(Z0e*cot(thetae) - Z0o*cot(thetao)) 
     Z13 = Z31 = Z42 = Z24 = -im/2*(Z0e*csc(thetae) + Z0o*csc(thetao))
@@ -4019,13 +4019,13 @@ function Z_coupled_tline(thetae,thetao,Z0e,Z0o)
 end
 
 """
-    A_coupled_tlines(L,Cmaxwell,omega,l)
+    A_coupled_tlines(L,Cmaxwell,l,omega)
 
 Returns the 2mx2m chain (ABCD) matrix for a port number symmetric multi-port
 network of m coupled transmission lines described by a symmetric mxm
 Maxwell inductance (per unit length) matrix `L`, a symmetric mxm Maxwell
-capacitance matrix (per unit length) `Cmaxwell`, an angular frequency `omega`,
-and a physical length `l`.
+capacitance matrix (per unit length) `Cmaxwell`, a physical length `l`, and an
+angular frequency `omega`.
 ```
 V_1, I_1 -->  ======== <-- I_{m+1}, V_{m+1}
 V_2, I_2 -->  ======== <-- I_{m+2}, V_{m+2}
@@ -4051,8 +4051,8 @@ c = JosephsonCircuits.speed_of_light
 omega = 2*pi*5e9
 
 L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
-A1 = JosephsonCircuits.A_coupled_tlines(L,C,omega,l)
-A2 = JosephsonCircuits.ABCD_coupled_tline(neven*omega/c*l,nodd*omega/c*l,Zeven,Zodd)
+A1 = JosephsonCircuits.A_coupled_tlines(L,C,l,omega)
+A2 = JosephsonCircuits.ABCD_coupled_tline(Zeven,Zodd,neven*omega/c*l,nodd*omega/c*l)
 println(isapprox(A1,A2))
 
 # output
@@ -4063,7 +4063,7 @@ true
 Paul, Clayton R. Analysis of Multiconductor Transmission Lines, Second
 Edition. Wiley, 2008.
 """
-function A_coupled_tlines(L,Cmaxwell,omega,l)
+function A_coupled_tlines(L,Cmaxwell,l,omega)
 
     N = size(L,1)
 
@@ -4433,7 +4433,7 @@ end
 
 
 """
-    Z_canonical_coupled_line_circuit(i::Int, thetae, thetao, Z0e, Z0o)
+    Z_canonical_coupled_line_circuit(i::Int,  Z0e, Z0o, thetae, thetao)
 
 Return the impedance matrix for the `i`'th canonical coupled line circuit, as
 a function of the even mode phase delay `thetae` in radians, the odd mode
@@ -4491,7 +4491,7 @@ in Ohms, and the odd mode characteristic impedance `Z0o` in Ohms.
 ```
 # Examples
 ```jldoctest
-julia> @variables θe, θo, Ze, Zo;JosephsonCircuits.Z_canonical_coupled_line_circuits(3,θe,θo,Ze,Zo)
+julia> @variables θe, θo, Ze, Zo;JosephsonCircuits.Z_canonical_coupled_line_circuits(3,Ze,Zo,θe,θo)
 2×2 Matrix{Complex{Num}}:
  -0.5(Ze*cot(θe) + Zo*cot(θo))*im  -0.5(Ze*csc(θe) - Zo*csc(θo))*im
  -0.5(Ze*csc(θe) - Zo*csc(θo))*im  -0.5(Ze*cot(θe) + Zo*cot(θo))*im
@@ -4504,7 +4504,7 @@ no. 2, pp. 75-81, April 1956, doi: 10.1109/TMTT.1956.1125022.
 Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
 ISBN 9780470631553.
 """
-function Z_canonical_coupled_line_circuits(i::Int, thetae, thetao, Z0e, Z0o)
+function Z_canonical_coupled_line_circuits(i::Int, Z0e, Z0o, thetae, thetao)
 
     if i == 1
         Z11 = -2*im*Z0e*Z0o*cos(thetae)*cos(thetao)/(Z0o*cos(thetao)*sin(thetae)+Z0e*cos(thetae)*sin(thetao))
@@ -4546,7 +4546,7 @@ function Z_canonical_coupled_line_circuits(i::Int, thetae, thetao, Z0e, Z0o)
     return [Z11 Z12; Z21 Z22]
 end
 
-function canonical_coupled_line_circuits(i::Int, ne, no, Z0e, Z0o)
+function canonical_coupled_line_circuits(i::Int, Z0e, Z0o, ne, no)
     c = JosephsonCircuits.speed_of_light
 
     if i == 3

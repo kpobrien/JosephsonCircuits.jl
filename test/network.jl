@@ -729,8 +729,8 @@ import StaticArrays
         omega = 2*pi*(1:10)*1e9
 
         L, C = JosephsonCircuits.even_odd_to_maxwell(Zeven, Zodd, neven, nodd)
-        A1 = JosephsonCircuits.A_coupled_tlines(L,C,omega,l)
-        A2 = stack(JosephsonCircuits.ABCD_coupled_tline.(neven*omega/c*l,nodd*omega/c*l,Zeven,Zodd))
+        A1 = JosephsonCircuits.A_coupled_tlines(L,C,l,omega)
+        A2 = stack(JosephsonCircuits.ABCD_coupled_tline.(Zeven,Zodd,neven*omega/c*l,nodd*omega/c*l))
         @test isapprox(A1,A2)
 
     end
@@ -744,7 +744,7 @@ import StaticArrays
         c = 2.998e8
         omega = 2*pi*5e9
 
-        function S_canonical_coupled_line_circuits(i::Int, thetae, thetao, Ze, Zo)
+        function S_canonical_coupled_line_circuits(i::Int, Ze, Zo, thetae, thetao)
 
             # define an open
             Sopen = ones(Complex{Float64},1,1)
@@ -753,7 +753,7 @@ import StaticArrays
             Sshort = -ones(Complex{Float64},1,1)
             
             # and a coupled transmission line
-            S = JosephsonCircuits.ZtoS(JosephsonCircuits.Z_coupled_tline(thetae,thetao,Zeven,Zodd));
+            S = JosephsonCircuits.ZtoS(JosephsonCircuits.Z_coupled_tline(Zeven,Zodd,thetae,thetao));
 
             if i == 1
                 S = JosephsonCircuits.connectS(S,Sopen,3,1)
@@ -783,7 +783,7 @@ import StaticArrays
                 S = JosephsonCircuits.connectS(S,Sshort,3,1)
             elseif i == 10
                 S = JosephsonCircuits.connectS(S,Sopen,4,1)
-                S = JosephsonCircuits.connectS(S,Sopen,3,1)        
+                S = JosephsonCircuits.connectS(S,Sopen,3,1)
             else
                 throw(ArgumentError("Canonical coupled line circuit number must be 1-10."))
             end
@@ -792,14 +792,14 @@ import StaticArrays
         end
 
         for i in 1:10
-            S1 = S_canonical_coupled_line_circuits(i, neven*omega/c*l,nodd*omega/c*l,Zeven,Zodd)
-            S2 = JosephsonCircuits.ZtoS(JosephsonCircuits.Z_canonical_coupled_line_circuits(i, neven*omega/c*l, nodd*omega/c*l, Zeven, Zodd));
+            S1 = S_canonical_coupled_line_circuits(i, Zeven, Zodd, neven*omega/c*l, nodd*omega/c*l)
+            S2 = JosephsonCircuits.ZtoS(JosephsonCircuits.Z_canonical_coupled_line_circuits(i, Zeven, Zodd, neven*omega/c*l, nodd*omega/c*l));
             @test isapprox(S1,S2)
         end
 
         @test_throws(
             ArgumentError("Canonical coupled line circuit number must be 1-10."),
-            JosephsonCircuits.Z_canonical_coupled_line_circuits(11, neven*omega/c*l, nodd*omega/c*l, Zeven, Zodd),
+            JosephsonCircuits.Z_canonical_coupled_line_circuits(11, Zeven, Zodd, neven*omega/c*l, nodd*omega/c*l),
         )
 
     end
@@ -813,28 +813,28 @@ import StaticArrays
 
         # 3
         outa = (L1 = 1.1963832214440388e-7, L2 = 1.1963832214440388e-7, M = -3.780393078912389e-9, C1 = 1.4112327104537203e-10, C2 = 1.4112327104537203e-10, Cm = 2.4055103019097465e-12)
-        outb = JosephsonCircuits.canonical_coupled_line_circuits(3, neven, nodd, Zeven, Zodd)
+        outb = JosephsonCircuits.canonical_coupled_line_circuits(3, Zeven, Zodd, neven, nodd)
         @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
 
         # 8
         outa = (L1 = 1.1941849319292907e-7, L2 = 3.5891496643321166e-7, M = -8.333511920257754e-9, C1 = 1.4352878134728178e-10)
-        outb = JosephsonCircuits.canonical_coupled_line_circuits(8, neven, nodd, Zeven, Zodd)
+        outb = JosephsonCircuits.canonical_coupled_line_circuits(8, Zeven, Zodd, neven, nodd)
         @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
 
         # 9
         outa = (L1 = 3.5891496643321166e-7, L2 = 3.5891496643321166e-7, M = 2.268235847347433e-8)
-        outb = JosephsonCircuits.canonical_coupled_line_circuits(9, neven, nodd, Zeven, Zodd)
+        outb = JosephsonCircuits.canonical_coupled_line_circuits(9, Zeven, Zodd, neven, nodd)
         @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
 
         # 10
         outa = (L1 = 1.1963832214440388e-7, L2 = 1.1963832214440388e-7, M = 7.560786157824777e-9, C1 = 1.4112327104537203e-10, C2 = 1.4112327104537203e-10, Cm = 2.4055103019097465e-12)
-        outb = JosephsonCircuits.canonical_coupled_line_circuits(10, neven, nodd, Zeven, Zodd)
+        outb = JosephsonCircuits.canonical_coupled_line_circuits(10, Zeven, Zodd, neven, nodd)
         @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
 
 
         @test_throws(
             ArgumentError("Canonical coupled line circuit number must be 1-10."),
-            JosephsonCircuits.canonical_coupled_line_circuits(11, neven, nodd, Zeven, Zodd),
+            JosephsonCircuits.canonical_coupled_line_circuits(11, Zeven, Zodd, neven, nodd),
         )
 
     end
