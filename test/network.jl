@@ -620,6 +620,29 @@ import StaticArrays
         @test isapprox(out1[1][1],out2[1])
     end
 
+    @testset "connectS! solveS! in-place updates" begin
+        S1 = rand(Complex{Float64},4,4,10)
+        S2 = rand(Complex{Float64},3,3,10)
+        networks =[("S1",S1),("S2",S2)];
+        connections = [[("S1",1),("S1",2),("S1",3)],[("S1",4),("S2",2)]];
+        init1 = JosephsonCircuits.connectS_initialize(networks,connections)
+        init2 = JosephsonCircuits.solveS_initialize(networks,connections)
+
+        S1a = JosephsonCircuits.connectS!(init1...)[1][1]
+        S2a = copy(JosephsonCircuits.solveS!(init2...)[1])
+        @test isapprox(S1a,S2a)
+
+        # update the S1 scattering matrix. check that the two solvers give
+        # the same results and that it's different from the initial solution
+        S1 .= rand(Complex{Float64},4,4,10)
+        S1b = JosephsonCircuits.connectS!(init1...)[1][1]
+        S2b = copy(JosephsonCircuits.solveS!(init2...)[1])
+        @test isapprox(S1b,S2b)
+        @test !isapprox(S1a,S1b)
+        @test !isapprox(S2a,S2b)
+
+    end
+
     @testset "StoZ, StoY, StoA, StoB, StoABCD consistency" begin
         # the different functions we want to test
         for f in [

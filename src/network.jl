@@ -1707,6 +1707,18 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     networkdata::AbstractVector{N};
     nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
+    # copy the graph, fconnectionlist, fweightlist, ports, and networkdata
+    # so we don't mutate these, so we can apply connectS! multiple times only
+    # modifying the input networks.
+    g = deepcopy(g)
+    fconnectionlist = deepcopy(fconnectionlist)
+    fweightlist = deepcopy(fweightlist)
+    ports = deepcopy(ports)
+    # we don't modify the scattering parameter matrices that make up networkdata so
+    # there is no need to deepycopy networkdata.
+    networkdata = copy(networkdata)
+
+
     userinput = ones(Bool,length(networkdata))
     storage = Dict{Int,N}()
     # find the minimum weight and the second to minimum weight
