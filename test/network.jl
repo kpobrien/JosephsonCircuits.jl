@@ -408,19 +408,23 @@ import StaticArrays
 
         # test solveS
         out3 = JosephsonCircuits.solveS(networks, connections;
-            small_splitters=false, klu=false)
+            small_splitters=false,
+            factorization=JosephsonCircuits.LUfactorization())
         @test isapprox(out1[1][1],out3[1])
 
         out4 = JosephsonCircuits.solveS(networks, connections;
-            small_splitters=false, klu=true)
+            small_splitters=false,
+            factorization=JosephsonCircuits.KLUfactorization())
         @test isapprox(out1[1][1],out4[1])
 
         out5 = JosephsonCircuits.solveS(networks, connections;
-            small_splitters=true, klu=false)
+            small_splitters=true,
+            factorization=JosephsonCircuits.LUfactorization())
         @test isapprox(out1[1][1],out5[1])
 
         out6 = JosephsonCircuits.solveS(networks, connections;
-            small_splitters=true, klu=true)
+            small_splitters=true,
+            factorization=JosephsonCircuits.KLUfactorization())
         @test isapprox(out1[1][1],out6[1])
 
     end

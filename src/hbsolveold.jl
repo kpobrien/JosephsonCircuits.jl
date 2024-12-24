@@ -92,7 +92,8 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
     sensitivitynames = String[], returnSsensitivity = false,
     returnZ = false, returnZadjoint = false,
-    returnZsensitivity = false, returnZsensitivityadjoint = false) where K
+    returnZsensitivity = false, returnZsensitivityadjoint = false,
+    factorization = KLUfactorization()) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting=sorting)
@@ -129,7 +130,8 @@ function hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
         returnSsensitivity = returnSsensitivity,
         returnZ = returnZ, returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
-        returnZsensitivityadjoint = returnZsensitivityadjoint)
+        returnZsensitivityadjoint = returnZsensitivityadjoint,
+        factorization = factorization)
     return HB(nonlinear, linearized)
 end
 
@@ -214,7 +216,8 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
     keyedarrays::Val{K} = Val(false),sensitivitynames = String[],
     returnZ = false, returnZadjoint = false,
     returnSsensitivity = false, returnZsensitivity = false,
-    returnZsensitivityadjoint = false) where K
+    returnZsensitivityadjoint = false,
+    factorization = KLUfactorization()) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -232,7 +235,8 @@ function hblinsolveold(w, circuit, circuitdefs; wp = 0.0, Nmodes = 1,
         returnSsensitivity = returnSsensitivity,
         returnZ = returnZ, returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
-        returnZsensitivityadjoint = returnZsensitivityadjoint)
+        returnZsensitivityadjoint = returnZsensitivityadjoint,
+        factorization = factorization)
 end
 
 function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
@@ -246,7 +250,8 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
     returnSsensitivity = false, 
     returnZ = false, returnZadjoint = false,
     returnZsensitivity = false,
-    returnZsensitivityadjoint = false) where K
+    returnZsensitivityadjoint = false,
+    factorization = KLUfactorization()) where K
 
     @assert nbatches >= 1
 
@@ -468,7 +473,7 @@ function hblinsolveold(w, psc::ParsedSortedCircuit, cg::CircuitGraph,
             portindices, portimpedanceindices, noiseportimpedanceindices,
             sensitivityindices, portimpedances, noiseportimpedances,
             nodeindices, componenttypes, w, wpumpmodes, Nmodes, Nnodes,
-            symfreqvar, batches[i])
+            symfreqvar, batches[i],factorization)
     end
 
     # calculate the `ideal` quantum efficiency based on the gain assuming an
@@ -651,7 +656,8 @@ hbnlsolve(wp, Ip, Nmodes, circuit, circuitdefs, ports=[1])
 function hbnlsolveold(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
     iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4, symfreqvar = nothing,
-    sorting = :number, keyedarrays::Val{K} = Val(false)) where K
+    sorting = :number, keyedarrays::Val{K} = Val(false),
+    factorization = KLUfactorization()) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -662,14 +668,16 @@ function hbnlsolveold(wp, Ip, Nmodes, circuit, circuitdefs; ports = [1],
     return hbnlsolveold(wp, Ip, Nmodes, psc, cg, circuitdefs; ports = ports,
         iterations = iterations, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        symfreqvar = symfreqvar, keyedarrays = keyedarrays)
+        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+        factorization = factorization)
 
 end
 
 function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph,
     circuitdefs; ports = [1], iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, keyedarrays::Val{K} = Val(false)) where K
+    symfreqvar = nothing, keyedarrays::Val{K} = Val(false),
+    factorization = KLUfactorization()) where K
 
     if length(ports) != length(Ip)
         throw(DimensionMismatch("Number of currents Ip must be equal to number of pump ports"))
@@ -795,7 +803,8 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
     # solve the nonlinear system. skip the nonlinear solve if the Jacobian
     # has no nonzero terms
     nlsolve!(fj!, F, Jsparse, x; iterations = iterations, ftol = ftol,
-        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin)
+        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
+        factorization = factorization)
 
     nodeflux = x
 

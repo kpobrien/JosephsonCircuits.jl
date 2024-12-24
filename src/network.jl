@@ -1982,7 +1982,7 @@ end
 
 function solveS_initialize(networks::AbstractVector,
         connections::AbstractVector; small_splitters::Bool = true,
-        klu::Bool = true, internal_ports::Bool = false,
+        factorization = KLUfactorization(), internal_ports::Bool = false,
         nbatches::Integer = Base.Threads.nthreads())
 
     networks_ports = add_ports(networks)
@@ -1991,13 +1991,13 @@ function solveS_initialize(networks::AbstractVector,
         small_splitters = small_splitters)
 
     return solveS_initialize(networks_flat, connnections_flat;
-        klu = klu, internal_ports = internal_ports,
+        factorization = factorization, internal_ports = internal_ports,
         nbatches = nbatches)
 end
 
 function solveS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
         connections::AbstractVector{Tuple{T,T,Int,Int}};
-        klu::Bool = true, internal_ports::Bool = false,
+        factorization = KLUfactorization(), internal_ports::Bool = false,
         nbatches::Integer = Base.Threads.nthreads()) where {T,N}
 
     portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S = parse_connections_sparse(networks,connections)
@@ -2035,7 +2035,7 @@ function solveS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, In
 
     return Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc, Spp_indices,
         Spc_indices, Scp_indices, Scc_indices, gammacc_indexmap, Scc_indexmap,
-        networkdata, nbatches, klu, internal_ports
+        networkdata, nbatches, factorization, internal_ports
 end
 
 
@@ -2072,7 +2072,7 @@ end
 
 function solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
             Scp_indices, Scc_indices, gammacc_indexmap, Scc_indexmap,
-            networkdata, indices, batch, klu)
+            networkdata, indices, batch, factorization)
 
     # make a copy of the scattering matrices for each thread
     Spp = copy(Spp)
@@ -2085,7 +2085,7 @@ function solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indice
     ac = similar(Sp,size(Scc,1),size(Spp,1))
 
     # generate an empty FactorizationCache struct
-    cache = FactorizationCache(0)
+    cache = FactorizationCache()
 
     # update the scattering matrices for the first element in the batch
     solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
@@ -2117,21 +2117,8 @@ function solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indice
             end
         end
 
-        # if using the KLU factorization and sparse solver then perform a 
-        # factorization or update the factorization
-        if j == batch[1]
-            if klu
-                cache = FactorizationCache(KLU.klu(gammacc_Scc))
-            else
-                cache = FactorizationCache(lu(gammacc_Scc))
-            end
-        else
-            if klu
-                factorklu!(cache, gammacc_Scc)
-            else
-                lu!(cache.factorization, gammacc_Scc)
-            end
-        end
+        # perform a factorization or update the factorization
+        tryfactorize!(cache, factorization, gammacc_Scc)
 
         # solve the linear system
         # Eq. 26
@@ -2151,7 +2138,7 @@ end
 """
     solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
         Spp_indices, Spc_indices, Scp_indices, Scc_indices, networkdata,
-        nbatches, klu, internal_ports)
+        nbatches, factorization, internal_ports)
 
 In-place version of `solveS`. See [`solveS`](@ref) for description. The use-
 case for this function is to perform in-place updates of a network connection,
@@ -2176,7 +2163,7 @@ in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 """
 function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
     Spp_indices, Spc_indices, Scp_indices, Scc_indices, gammacc_indexmap,
-    Scc_indexmap, networkdata, nbatches, klu, internal_ports)
+    Scc_indexmap, networkdata, nbatches, factorization, internal_ports)
 
     # solve the linear system for the specified frequencies. the response for
     # each frequency is independent so it can be done in parallel; however
@@ -2188,7 +2175,7 @@ function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
     Base.Threads.@threads for i in 1:length(batches)
         solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
             Scp_indices, Scc_indices, gammacc_indexmap, Scc_indexmap,
-            networkdata,indices,batches[i],klu)
+            networkdata, indices, batches[i], factorization)
     end
 
     return (S=Sp, ports=portsp, Sinternal=Sc, portsinternal = portsc)
@@ -2196,7 +2183,7 @@ end
 
 """
     solveS(networks, connections; small_splitters::Bool = true,
-        klu::Bool = true, internal_ports::Bool = false,
+        factorization = KLUfactorization(), internal_ports::Bool = false,
         nbatches::Integer = Base.Threads.nthreads())
 
 Perform the connections between the networks in `networks` specified by the
@@ -2258,11 +2245,11 @@ in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
 function solveS(networks::AbstractVector, connections::AbstractVector;
-    small_splitters::Bool = true, klu::Bool = true,
+    small_splitters::Bool = true, factorization = KLUfactorization(),
     internal_ports::Bool = false, nbatches::Integer = Base.Threads.nthreads())
 
     init = solveS_initialize(networks,connections;
-        small_splitters = small_splitters,klu = klu,
+        small_splitters = small_splitters, factorization = factorization,
         internal_ports = internal_ports, nbatches = nbatches)
 
     return solveS!(init...)

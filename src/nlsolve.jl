@@ -1,4 +1,31 @@
 
+
+"""
+    Factorization(outofplace,inplace,kwargs)
+
+A structure to hold the factorizations and their keyword arguments.
+
+```
+"""
+struct Factorization
+    factorize
+    factorize!
+    kwargs
+end
+
+function KLUfactorization(;kwargs...)
+    return Factorization(KLU.klu,KLU.klu!,kwargs)
+end
+
+function LUfactorization(;kwargs...)
+    return Factorization(lu,lu!,kwargs)
+end
+
+# function QRfactorization(;kwargs...)
+#     return Factorization(qr,qr!,kwargs)
+# end
+
+
 """
     FactorizationCache(factorization)
 
@@ -11,31 +38,47 @@ julia> JosephsonCircuits.FactorizationCache(JosephsonCircuits.KLU.klu(JosephsonC
 ```
 """
 mutable struct FactorizationCache
-factorization
+    factorization
+end
+
+function FactorizationCache()
+    return FactorizationCache(nothing)
 end
 
 """
-    factorklu!(cache::FactorizationCache, A::SparseMatrixCSC)
+    tryfactorize!(cache::FactorizationCache,
+        factorization::Factorization, A::AbstractArray)
 
-Factor the sparse matrix `A` using KLU and place the result in `cache`.
-Attempt to reuse the symbolic factorization. Redo the symbolic factorization
-if we get a SingularException.
+Factorize the matrix `A` using the factorization from `factorization` and
+store the result in `cache`. Attempt to reuse the symbolic factorization. Redo the
+symbolic factorization if we get a SingularException.
 
 """
-function factorklu!(cache::FactorizationCache, A::SparseMatrixCSC)
-    # solve the linear system
-    try
-        # update the factorization. the sparsity structure does 
-        # not change so we can reuse the factorization object.
-        KLU.klu!(cache.factorization, A)
-    catch e
-        if isa(e, SingularException)
-            # reusing the symbolic factorization can sometimes
-            # lead to numerical problems. if the first linear
-            # solve fails try factoring and solving again
-            cache.factorization = KLU.klu(A)
-        else
-            throw(e)
+function tryfactorize!(cache::FactorizationCache,
+    factorization::Factorization, A::AbstractMatrix)
+
+    # if the factorization cache is empty then generate a factorizaion
+    if isnothing(cache.factorization)
+        cache.factorization = factorization.factorize(A;
+            factorization.kwargs...)
+    # otherwise, try to update the factorization, falling back to generating
+    # a new one if that fails
+    else
+        try
+            # update the factorization. the sparsity structure does 
+            # not change so we can reuse the factorization object.
+            factorization.factorize!(cache.factorization, A;
+                factorization.kwargs...)
+        catch e
+            if isa(e, SingularException)
+                # reusing the symbolic factorization can sometimes
+                # lead to numerical problems. if the first linear
+                # solve fails try factoring and solving again
+                cache.factorization = factorization.factorize(A;
+                    factorization.kwargs...)
+            else
+                throw(e)
+            end
         end
     end
     return cache
@@ -124,9 +167,9 @@ isapprox([0.0,1.0],x)
 true
 ```
 """
-function nlsolve!(fj!::Function, F::Vector{T}, J::SparseMatrixCSC{T, Int64},
+function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     x::Vector{T}; iterations=1000, ftol=1e-8, switchofflinesearchtol = 1e-5,
-    alphamin = 1e-4) where T
+    alphamin = 1e-4,factorization = KLUfactorization()) where T
 
     if size(J,1) != size(J,2)
         throw(DimensionMismatch("The Jacobian `J` matrix must be square."))
@@ -140,9 +183,8 @@ function nlsolve!(fj!::Function, F::Vector{T}, J::SparseMatrixCSC{T, Int64},
         throw(DimensionMismatch("First axis of the Jacobian `J` must have the same length as the residual `F`."))
     end
 
-    # factorization = KLU.klu(J)
-    cache = FactorizationCache(KLU.klu(J))
-
+    cache = FactorizationCache()
+    tryfactorize!(cache,factorization,J)
 
     deltax = copy(x)
 
@@ -175,7 +217,7 @@ function nlsolve!(fj!::Function, F::Vector{T}, J::SparseMatrixCSC{T, Int64},
         push!(normF, norm(F))
 
         # factor the Jacobian
-        factorklu!(cache, J)
+        tryfactorize!(cache,factorization,J)
 
         # solve the linear system
         ldiv!(deltax, cache.factorization, F)

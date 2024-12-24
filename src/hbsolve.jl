@@ -174,7 +174,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
     sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
     returnZ = false, returnZadjoint = false,
-    returnZsensitivity = false, returnZsensitivityadjoint = false) where K
+    returnZsensitivity = false, returnZsensitivityadjoint = false,
+    factorization = KLUfactorization()) where K
 
     # solve the nonlinear system using the old syntax externally and the new
     # syntax internally
@@ -247,7 +248,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         returnSsensitivity = returnSsensitivity,
         returnZ = returnZ, returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
-        returnZsensitivityadjoint = returnZsensitivityadjoint)
+        returnZsensitivityadjoint = returnZsensitivityadjoint,
+        factorization = factorization)
 
     return HB(nonlinear, linearized)
 end
@@ -321,7 +323,7 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
     keyedarrays::Val{K} = Val(true), sensitivitynames::Vector{String} = String[],
     returnSsensitivity = false, returnZ = false, returnZadjoint = false,
     returnZsensitivity = false, returnZsensitivityadjoint = false,
-    ) where {N,M,K}
+    factorization = KLUfactorization()) where {N,M,K}
 
     # calculate the Frequencies struct
     freq = removeconjfreqs(
@@ -370,7 +372,8 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
         returnSsensitivity = returnSsensitivity,
         returnZ = returnZ, returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
-        returnZsensitivityadjoint = returnZsensitivityadjoint)
+        returnZsensitivityadjoint = returnZsensitivityadjoint,
+        factorization = factorization)
 
     return HB(nonlinear, linearized)
 end
@@ -478,7 +481,8 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     returnvoltage = false, returnvoltageadjoint = false,
     keyedarrays::Val{K} = Val(true), sensitivitynames::Vector{String} = String[],
     returnSsensitivity = false, returnZ = false, returnZadjoint = false,
-    returnZsensitivity = false, returnZsensitivityadjoint = false) where K
+    returnZsensitivity = false, returnZsensitivityadjoint = false,
+    factorization = KLUfactorization()) where K
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -504,7 +508,8 @@ return hblinsolve(w, psc, cg, circuitdefs, signalfreq; nonlinear = nonlinear,
         returnSsensitivity = returnSsensitivity,
         returnZ = returnZ, returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
-        returnZsensitivityadjoint = returnZsensitivityadjoint)
+        returnZsensitivityadjoint = returnZsensitivityadjoint,
+        factorization = factorization)
 end
 
 """
@@ -593,7 +598,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
     sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
     returnZ = false, returnZadjoint = false,
-    returnZsensitivity = false, returnZsensitivityadjoint = false) where {N,K}
+    returnZsensitivity = false, returnZsensitivityadjoint = false,
+    factorization = KLUfactorization()) where {N,K}
 
     Nsignalmodes = length(signalfreq.modes)
     # calculate the numeric matrices
@@ -884,7 +890,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
             portindices, portimpedanceindices, noiseportimpedanceindices, sensitivityindices,
             portimpedances, noiseportimpedances, nodeindices, componenttypes,
-            w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batches[i])
+            w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batches[i],factorization)
     end
 
     # calculate the `ideal` quantum efficiency based on the gain assuming an
@@ -1019,7 +1025,7 @@ end
         Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
         portindices, portimpedanceindices, noiseportimpedanceindices,
         portimpedances, noiseportimpedances, nodeindices, componenttypes,
-        w, indices, wp, Nmodes, Nnodes, symfreqvar, wi)
+        w, indices, wp, Nmodes, Nnodes, symfreqvar, wi, factorization)
 
 Solve the linearized harmonic balance problem for a subset of the frequencies
 given by `wi`. This function is thread safe in that different frequencies can
@@ -1032,7 +1038,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
     Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
     portindices, portimpedanceindices, noiseportimpedanceindices,
     sensitivityindices, portimpedances, noiseportimpedances, nodeindices,
-    componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi)
+    componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization)
 
     Nports = length(portindices)
     phin = zeros(Complex{Float64}, Nmodes*(Nnodes-1), Nmodes*Nports)
@@ -1056,7 +1062,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
 
     # if using the KLU factorization and sparse solver then make a 
     # factorization for the sparsity pattern.
-    cache = FactorizationCache(KLU.klu(Asparsecopy))
+    cache = FactorizationCache()
 
     # if the scattering matrix is empty define a new working matrix
     if isempty(S)
@@ -1145,7 +1151,8 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
             wmodesm, invLnmfreqsubstindices, symfreqvar)
 
         # factor the sparse matrix
-        factorklu!(cache, Asparsecopy)
+        # factorklu!(cache, Asparsecopy)
+        tryfactorize!(cache, factorization, Asparsecopy)
 
         # solve the linear system
         ldiv!(phin, cache.factorization, bnm)
@@ -1203,7 +1210,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
                 wmodesm, invLnmfreqsubstindices, symfreqvar)
 
             # factor the sparse matrix
-            factorklu!(cache, Asparsecopy)
+            tryfactorize!(cache, factorization, Asparsecopy)
 
             # solve the linear system
             ldiv!(phin, cache.factorization, bnm)
@@ -1446,7 +1453,8 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, keyedarrays::Val{K} = Val(true),
-    sensitivitynames::Vector{String} = String[]) where {N,K}
+    sensitivitynames::Vector{String} = String[],
+    factorization = KLUfactorization()) where {N,K}
 
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
@@ -1608,7 +1616,8 @@ function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
 
     # solve the nonlinear system
     nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
-        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin)
+        switchofflinesearchtol = switchofflinesearchtol,
+        alphamin = alphamin, factorization = factorization)
 
     nodeflux = x
 
