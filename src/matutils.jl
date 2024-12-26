@@ -997,6 +997,8 @@ which is the LU factorization of `A`.
 """
 function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
     p1, p2 = fact.p
+
+    # solve L*y = b
     if p1 == 1 && p2 == 2
         y1 = b[1]/fact.L[1,1]
         y2 = (b[2]-y1*fact.L[2,1])/fact.L[2,2]
@@ -1006,15 +1008,27 @@ function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
     else
         throw(ArgumentError("Unknown pivot."))
     end
-    
-    x2 = y2/fact.U[2,2]
-    if isnan(x2)
-        x2 = zero(y2)
-        @warn "x2 is NaN in ldiv_2x2. Setting to zero."
-    end
-    x1 = (y1-x2*fact.U[1,2])/fact.U[1,1]
 
-    return StaticArrays.SVector{2}(x1, x2)
+    # solve U*x = y
+    if iszero(fact.U[2,2])
+        # if U[2,2] is zero, the matrix is singular, so no unique solution.
+        x2 = one(y2)
+    else
+        x2 = y2/fact.U[2,2]
+    end
+
+    x1 = (y1-x2*fact.U[1,2])/fact.U[1,1]
+    x = StaticArrays.SVector{2}(x1, x2)
+
+    if iszero(fact.U[2,2])
+        # if the matrix is singular, check that we are returning a valid
+        # solution to the nonlinear system
+        if !isequal(fact.L*fact.U*x,b)
+            throw(ArgumentError("Failed to solve linear system."))
+        end
+    end
+
+    return x
 end
 
 """
@@ -1025,26 +1039,50 @@ Don't check if `A` is singular, but do error if an LU decomposition is not
 possible.
 """
 function lu_2x2(A::AbstractArray)
-    if iszero(A[2,1])
-    # if abs(A[2,1]) < abs(A[1,1]) # this would help stability but doesn't work for Symbolic variables
-        if iszero(A[1,1])
-            throw(ArgumentError("A[2,1] and A[1,1] both zero. LU decomposition not possible."))
-        end
-        u11 = A[1,1]
+    # decide whether or not to pivot
+    if iszero(A[2,1]) && iszero(A[1,1])
+        # if A[2,1] and A[1,1] are both zero, no point in pivoting
+        # the matrix is singular, but still has an LU decomposition.
+        u11 = zero(A[1,1])
         u12 = A[1,2]
-        l21 = A[2,1]/u11
+        l21 = zero(A[2,1])
         u22 = A[2,2] - l21*u12
         p = StaticArrays.SVector{2}(1,2)
-    else
+    elseif  pivot_rows(A[1,1],A[2,1]) 
         u11 = A[2,1]
         u12 = A[2,2]
         l21 = A[1,1]/u11
         u22 = A[1,2] - l21*u12
         p = StaticArrays.SVector{2}(2,1)
+    else
+        u11 = A[1,1]
+        u12 = A[1,2]
+        l21 = A[2,1]/u11
+        u22 = A[2,2] - l21*u12
+        p = StaticArrays.SVector{2}(1,2)
     end
 
     L = LinearAlgebra.LowerTriangular(StaticArrays.SMatrix{2,2}(one(l21),l21,zero(l21),one(l21)))
     U = LinearAlgebra.UpperTriangular(StaticArrays.SMatrix{2,2}(u11,zero(u11),u12,u22))
     
     return StaticArrays.LU(L,U,p)
+end
+
+function pivot_rows(A11::Union{T,Complex{T}},A21::Union{T,Complex{T}}) where {T<:AbstractFloat}
+    # this help stability but doesn't work for Symbolic variables.
+    if abs(A11) < abs(A21)
+        return true
+    else
+        return false
+    end
+end
+
+function pivot_rows(A11,A21)
+    # this works for Symbolic variables, but isn't the best for numerical
+    # stability.
+    if iszero(A11)
+        return true
+    else
+        return false
+    end
 end

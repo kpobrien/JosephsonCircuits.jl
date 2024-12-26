@@ -647,7 +647,9 @@ import StaticArrays
     end
 
     @testset "connectS solveS splitters" begin
-        # https://github.com/scikit-rf/scikit-rf/issues/1221
+        # tests from https://github.com/scikit-rf/scikit-rf/issues/1221
+
+        # first test of connecting two splitters
         S_splitter = JosephsonCircuits.S_splitter!(zeros(Complex{Float64},3,3))
 
         networks = [("S1_splitter",S_splitter),("S2_splitter",S_splitter)]
@@ -661,26 +663,42 @@ import StaticArrays
 
         @test isapprox(sol1[1],sol3)
         @test isapprox(sol2[1][1],sol3)
+
+        # second test of connecting two splitters with through lines
+        S_thru = JosephsonCircuits.S_splitter!(zeros(Complex{Float64},2,2))
+        networks = [
+            ("S1",S_thru),("S2",S_thru),("S3",S_thru),
+            ("S4",S_thru),("S5",S_thru),("S6",S_thru),
+        ]
+        connections = [
+            [("S1",2),("S2",1),("S3",1)],
+            [("S2",2),("S4",1)],
+            [("S3",2),("S5",1)],
+            [("S4",2),("S5",2),("S6",1)],
+        ]
+        sol2 = JosephsonCircuits.connectS(networks,connections)
+        sol3 = Complex{Float64}[0 1;1 0]
+        @test isapprox(sol2[1][1],sol3)
     end
 
-@testset "connectS solveS mirror" begin
-    # https://github.com/scikit-rf/scikit-rf/issues/1221
+    @testset "connectS solveS mirror" begin
+        # test from https://github.com/scikit-rf/scikit-rf/issues/1221
 
-    S1 = rand(Complex{Float64},3,3)
-    S1_mirror = inv(S1)
+        S1 = rand(Complex{Float64},3,3)
+        S1_mirror = inv(S1)
 
-    networks = [("S1",S1),("S1_mirror",S1_mirror)]
-    connections = [[("S1",2),("S1_mirror",2)],[("S1",3),("S1_mirror",3)]]
-    
-    ## solveS sometimes gives singular matrix errors, so don't test on this
-    ## network.
-    # sol1 = JosephsonCircuits.solveS(networks,connections;factorization=JosephsonCircuits.LUfactorization())
-    sol2 = JosephsonCircuits.connectS(networks,connections)
-    sol3 = Complex{Float64}[0 1;1 0]
+        networks = [("S1",S1),("S1_mirror",S1_mirror)]
+        connections = [[("S1",2),("S1_mirror",2)],[("S1",3),("S1_mirror",3)]]
+        
+        ## solveS sometimes gives singular matrix errors, so don't test on this
+        ## network.
+        # sol1 = JosephsonCircuits.solveS(networks,connections;factorization=JosephsonCircuits.LUfactorization())
+        sol2 = JosephsonCircuits.connectS(networks,connections)
+        sol3 = Complex{Float64}[0 1;1 0]
 
-    # @test isapprox(sol1[1],sol3)
-    @test isapprox(sol2[1][1],sol3)
-end
+        # @test isapprox(sol1[1],sol3)
+        @test isapprox(sol2[1][1],sol3)
+    end
 
     @testset "StoZ, StoY, StoA, StoB, StoABCD consistency" begin
         # the different functions we want to test

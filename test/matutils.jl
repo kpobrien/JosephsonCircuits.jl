@@ -362,24 +362,29 @@ using Test
         )
     end
 
-    ### in lu_2x2 we use a different criteria for pivoting than lu(), so
-    ### disable these tests for now.
-    # @testset "lu_2x2" begin
-    #     A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
-    #     Afact1 = LinearAlgebra.lu(A)
-    #     Afact2 = JosephsonCircuits.lu_2x2(A)
-    #     @test isapprox(Afact1.L,Afact2.L)
-    #     @test isapprox(Afact1.U,Afact2.U)
-    #     @test isapprox(Afact1.p,Afact2.p)
+    @testset "lu_2x2" begin
+        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+        Afact1 = LinearAlgebra.lu(A)
+        Afact2 = JosephsonCircuits.lu_2x2(A)
+        @test isapprox(Afact1.L,Afact2.L)
+        @test isapprox(Afact1.U,Afact2.U)
+        @test isapprox(Afact1.p,Afact2.p)
 
-    #     A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
-    #     A = StaticArrays.SMatrix{2,2}(A[1,1],0*A[2,1],A[1,2],A[2,2])
-    #     Afact1 = LinearAlgebra.lu(A)
-    #     Afact2 = JosephsonCircuits.lu_2x2(A)
-    #     @test isapprox(Afact1.L,Afact2.L)
-    #     @test isapprox(Afact1.U,Afact2.U)
-    #     @test isapprox(Afact1.p,Afact2.p)
-    # end
+        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+        A = StaticArrays.SMatrix{2,2}(A[1,1],0*A[2,1],A[1,2],A[2,2])
+        Afact1 = LinearAlgebra.lu(A)
+        Afact2 = JosephsonCircuits.lu_2x2(A)
+        @test isapprox(Afact1.L,Afact2.L)
+        @test isapprox(Afact1.U,Afact2.U)
+        @test isapprox(Afact1.p,Afact2.p)
+
+        # LU decomposition of a matrix where A[1,1] = A[2,1] = 0
+        A = rand(Complex{Float64},2,2)
+        A[1,1] = 0
+        A[2,1] = 0
+        fact = JosephsonCircuits.lu_2x2(A);
+        @test isapprox(fact.L*fact.U,A)
+    end
 
     @testset "ldiv_2x2 errors" begin
         A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
@@ -398,8 +403,8 @@ using Test
         u22 = fact.U[2,2]*0
         U = LinearAlgebra.UpperTriangular(StaticArrays.SMatrix{2,2}(u11,zero(u11),u12,u22))
         fact2 = StaticArrays.LU(fact.L,U,fact.p)
-        @test_warn(
-            "x2 is NaN in ldiv_2x2. Setting to zero.",
+        @test_throws(
+            ArgumentError("Failed to solve linear system."),
             JosephsonCircuits.ldiv_2x2(fact2,b)
         )
     end
@@ -417,6 +422,18 @@ using Test
             JosephsonCircuits.lu_2x2(A) \ b,
         )
 
+        # set A21 equal to zero to test LU without pivoting.
+        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+        B = StaticArrays.SMatrix{2,2}(A[1,1],0,A[1,2],A[2,2])
+        @test isapprox(
+            JosephsonCircuits.ldiv_2x2(JosephsonCircuits.lu_2x2(B),b),
+            LinearAlgebra.lu(B) \ b,
+        )
+
+        @test isapprox(
+            JosephsonCircuits.ldiv_2x2(LinearAlgebra.lu(B),b),
+            JosephsonCircuits.lu_2x2(B) \ b,
+        )
     end
 
 end
