@@ -988,3 +988,63 @@ function spmatmul!(C::SparseMatrixCSC, A::SparseMatrixCSC, B::SparseMatrixCSC,
     resize!(C.nzval, ip - 1)
     return nothing
 end
+
+"""
+    ldiv_2x2(fact,b)
+
+Solve the linear system A*x = b for x using left division when given `fact` 
+which is the LU factorization of `A`.
+"""
+function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
+    p1, p2 = fact.p
+    if p1 == 1 && p2 == 2
+        y1 = b[1]/fact.L[1,1]
+        y2 = (b[2]-y1*fact.L[2,1])/fact.L[2,2]
+    elseif p1 == 2 && p2 == 1
+        y1 = b[2]/fact.L[1,1]
+        y2 = (b[1]-y1*fact.L[2,1])/fact.L[2,2]
+    else
+        throw(ArgumentError("Unknown pivot."))
+    end
+    
+    x2 = y2/fact.U[2,2]
+    if isnan(x2)
+        x2 = zero(y2)
+        @warn "x2 is NaN in ldiv_2x2. Setting to zero."
+    end
+    x1 = (y1-x2*fact.U[1,2])/fact.U[1,1]
+
+    return StaticArrays.SVector{2}(x1, x2)
+end
+
+"""
+    lu_2x2(A)
+
+Return the LU factorization of a 2 by 2 matrix as a StaticArrays.LU struct.
+Don't check if `A` is singular, but do error if an LU decomposition is not
+possible.
+"""
+function lu_2x2(A::AbstractArray)
+    if iszero(A[2,1])
+    # if abs(A[2,1]) < abs(A[1,1]) # this would help stability but doesn't work for Symbolic variables
+        if iszero(A[1,1])
+            throw(ArgumentError("A[2,1] and A[1,1] both zero. LU decomposition not possible."))
+        end
+        u11 = A[1,1]
+        u12 = A[1,2]
+        l21 = A[2,1]/u11
+        u22 = A[2,2] - l21*u12
+        p = StaticArrays.SVector{2}(1,2)
+    else
+        u11 = A[2,1]
+        u12 = A[2,2]
+        l21 = A[1,1]/u11
+        u22 = A[1,2] - l21*u12
+        p = StaticArrays.SVector{2}(2,1)
+    end
+
+    L = LinearAlgebra.LowerTriangular(StaticArrays.SMatrix{2,2}(one(l21),l21,zero(l21),one(l21)))
+    U = LinearAlgebra.UpperTriangular(StaticArrays.SMatrix{2,2}(u11,zero(u11),u12,u22))
+    
+    return StaticArrays.LU(L,U,p)
+end

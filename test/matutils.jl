@@ -361,4 +361,62 @@ using Test
             JosephsonCircuits.spmatmul!(c[:,1:end-1],a,b,xb)
         )
     end
+
+    ### in lu_2x2 we use a different criteria for pivoting than lu(), so
+    ### disable these tests for now.
+    # @testset "lu_2x2" begin
+    #     A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+    #     Afact1 = LinearAlgebra.lu(A)
+    #     Afact2 = JosephsonCircuits.lu_2x2(A)
+    #     @test isapprox(Afact1.L,Afact2.L)
+    #     @test isapprox(Afact1.U,Afact2.U)
+    #     @test isapprox(Afact1.p,Afact2.p)
+
+    #     A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+    #     A = StaticArrays.SMatrix{2,2}(A[1,1],0*A[2,1],A[1,2],A[2,2])
+    #     Afact1 = LinearAlgebra.lu(A)
+    #     Afact2 = JosephsonCircuits.lu_2x2(A)
+    #     @test isapprox(Afact1.L,Afact2.L)
+    #     @test isapprox(Afact1.U,Afact2.U)
+    #     @test isapprox(Afact1.p,Afact2.p)
+    # end
+
+    @testset "ldiv_2x2 errors" begin
+        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+        b = StaticArrays.SVector{2}(rand(Complex{Float64},2))
+        fact = JosephsonCircuits.lu_2x2(A)
+        
+        @test_throws(
+            ArgumentError("Unknown pivot."),
+            JosephsonCircuits.ldiv_2x2(StaticArrays.LU(fact.L,fact.U,
+            StaticArrays.SVector{2}(3,4)),b)
+        )
+
+        # test the warning
+        u11 = fact.U[1,1]
+        u12 = fact.U[1,2]
+        u22 = fact.U[2,2]*0
+        U = LinearAlgebra.UpperTriangular(StaticArrays.SMatrix{2,2}(u11,zero(u11),u12,u22))
+        fact2 = StaticArrays.LU(fact.L,U,fact.p)
+        @test_warn(
+            "x2 is NaN in ldiv_2x2. Setting to zero.",
+            JosephsonCircuits.ldiv_2x2(fact2,b)
+        )
+    end
+
+    @testset "ldiv_2x2" begin
+        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+        b = StaticArrays.SVector{2}(rand(Complex{Float64},2))
+        @test isapprox(
+            JosephsonCircuits.ldiv_2x2(JosephsonCircuits.lu_2x2(A),b),
+            LinearAlgebra.lu(A) \ b,
+        )
+
+        @test isapprox(
+            JosephsonCircuits.ldiv_2x2(LinearAlgebra.lu(A),b),
+            JosephsonCircuits.lu_2x2(A) \ b,
+        )
+
+    end
+
 end

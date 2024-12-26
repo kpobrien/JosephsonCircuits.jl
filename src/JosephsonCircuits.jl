@@ -12,6 +12,7 @@ import SymbolicUtils
 import AxisKeys
 import PrecompileTools
 import OrderedCollections
+import StaticArrays
 import Statistics
 
 using LinearAlgebra

@@ -1,10 +1,11 @@
 
 """
-    connectS(Sx::AbstractArray, k::Int, l::Int;
+    connectS(Sa::AbstractArray, k::Int, l::Int;
         nbatches::Int = Base.Threads.nthreads())
 
-Connect ports `k` and `l` on the same `m` port microwave network represented by
-the scattering parameter matrix `Sx`, resulting in an `(m-2)` port network, as illustrated below:
+Connect ports `k` and `l` on the same `m` port microwave network represented
+by the scattering parameter matrix `Sa`, resulting in an `(m-2)` port network,
+as illustrated below:
 
 Input network:
 ```
@@ -12,7 +13,7 @@ Input network:
         |   ...   |         l
         |_________|__________ 
         |         |          |
-        |   Sx    |  ...     |
+        |   Sa    |  ...     |
         |  m x m  |          |
     ____|_________|_____ k+1 |
     1   |   ...   |          |
@@ -35,84 +36,75 @@ Output network:
       2 |                   
 ```
 # Arguments
-- `Sx::Array`: Array of scattering parameters representing the network
+- `Sa::Array`: Array of scattering parameters representing the network
     with ports along first two dimensions, followed by an arbitrary number
     of other dimensions (eg. frequency).
 - `k::Int`: First port to connect, with one based indexing.
 - `l::Int`: Second port to connect, with one based indexing.
 
 # References
-Haifang Liao and Wayne Wei-Ming Dai, "Capturing Time-of-flight Delay For
-Transient Analysis Based On Scattering Parameter Macromodel,"
-IEEE/ACM International Conference on Computer-Aided Design,
-San Jose, CA, USA, 1994, pp. 412-417, doi: 10.1109/ICCAD.1994.629836.
-
-R. C. Compton, "Perspectives in microwave circuit analysis," Proceedings of
-the 32nd Midwest Symposium on Circuits and Systems,
-Champaign, IL, USA, 1989, pp. 716-718 vol.2, doi: 10.1109/MWSCAS.1989.101955.
-
-G. Filipsson, "A New General Computer Algorithm for S-Matrix Calculation of
-Interconnected Multiports," 1981 11th European Microwave Conference,
-Amsterdam, Netherlands, 1981, pp. 700-704, doi: 10.1109/EUMA.1981.332972.
+V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
+in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
+249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function connectS(Sx::AbstractArray{T,N},k::Int,l::Int;
+function connectS(Sa::AbstractArray{T,N},k::Int,l::Int;
     nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
     # make a tuple with the size of the array
     # the first two dimensions are two smaller
-    sizeS = NTuple{N}(ifelse(i<=2,size(Sx,i)-2,size(Sx,i)) for i in 1:ndims(Sx))
+    sizeS = NTuple{N}(ifelse(i<=2,size(Sa,i)-2,size(Sa,i)) for i in 1:ndims(Sa))
 
-    # allocate an array of zeros of the same type as Sx
-    Sout = similar(Sx,sizeS)
+    # allocate an array of zeros of the same type as Sa
+    Sout = similar(Sa,sizeS)
 
     # remove the self loop
-    connectS!(Sout,Sx,k,l;nbatches = nbatches)
+    connectS!(Sout,Sa,k,l;nbatches = nbatches)
 
     return Sout
 end
 
 """
-    connectS!(Sout,Sx,k::Int,l::Int)
+    connectS!(Sout, Sa, k::Int, l::Int; nbatches::Int = Base.Threads.nthreads())
 
 See [`connectS`](@ref) for description.
 
 """
-function connectS!(Sout,Sx,k::Int,l::Int;
+function connectS!(Sout,Sa,k::Int,l::Int;
     nbatches::Int = Base.Threads.nthreads())
 
     # validate all of the inputs
-    if ndims(Sx) != ndims(Sout)
-        throw(DimensionMismatch("`Sout` and `Sx` must have the same number of dimensions."))
+    if ndims(Sa) != ndims(Sout)
+        throw(DimensionMismatch("`Sout` and `Sa` must have the same number of dimensions."))
     end
 
-    if ndims(Sx) < 2
-        throw(DimensionMismatch("`Sout` and `Sx` must have at least two dimensions."))
+    if ndims(Sa) < 2
+        throw(DimensionMismatch("`Sout` and `Sa` must have at least two dimensions."))
     end
 
-    if size(Sx,1) != size(Sx,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sx` must be equal."))
+    if size(Sa,1) != size(Sa,2)
+        throw(DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."))
     end
 
     if size(Sout,1) != size(Sout,2)
         throw(DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."))
     end
 
-    if size(Sx,1) -2 != size(Sout,1)
-        throw(DimensionMismatch("Length of first two dimensions must be 2 smaller for `Sout` than `Sx` because we are merging two ports."))
+    if size(Sa,1) -2 != size(Sout,1)
+        throw(DimensionMismatch("Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."))
     end
 
-    for i in 3:ndims(Sx)
-        if size(Sx,i) != size(Sout,i)
-            throw(DimensionMismatch("Non-port axis lengths of `Sx` and `Sout` must be equal."))
+    for i in 3:ndims(Sa)
+        if size(Sa,i) != size(Sout,i)
+            throw(DimensionMismatch("Non-port axis lengths of `Sa` and `Sout` must be equal."))
         end
     end
 
-    if k > size(Sx,1)
-        throw(ArgumentError("Port `k` is larger than number of ports in `Sx`."))
+    if k > size(Sa,1)
+        throw(ArgumentError("Port `k` is larger than number of ports in `Sa`."))
     end
 
-    if l > size(Sx,1)
-        throw(ArgumentError("Port `l` is larger than number of ports in `Sx`."))
+    if l > size(Sa,1)
+        throw(ArgumentError("Port `l` is larger than number of ports in `Sa`."))
     end
 
     if l < 1
@@ -126,165 +118,82 @@ function connectS!(Sout,Sx,k::Int,l::Int;
     if l == k
         throw(ArgumentError("`k` and `l` cannot be equal because a port cannot be merged with itself."))
     end
-  
-    # the number of ports in the input matrix
-    m = size(Sx,1)
-
-    # # make the indices so we can skip k and l
-    # xindices = zeros(Int,m-2)
-    # iout = 0
-    # for i in 1:m
-    #     if i != k && i != l
-    #         # if the current index is neither
-    #         # k nor l, then keep it
-    #         iout+=1
-    #         xindices[iout] = i
-    #     end
-    # end
-  
-    # # loop over the dimensions of the array greater than 2
-    # indices = CartesianIndices(axes(Sout)[3:end])
-    # if  nbatches > 1 && length(indices) > nbatches
-    #     batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
-    #     Base.Threads.@threads for i in 1:length(batches)
-    #             connectS_inner!(Sout,Sx,k,l,m,xindices,batches[i])
-    #     end
-    # else
-    #     connectS_inner!(Sout,Sx,k,l,m,xindices,indices)
-    # end
 
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
     if  nbatches > 1 && length(indices) > nbatches
         batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
         Base.Threads.@threads for i in 1:length(batches)
-                connectS_inner!(Sout,Sx,k,l,m,batches[i])
+                connectS_inner!(Sout,Sa,k,l,batches[i])
         end
     else
-        connectS_inner!(Sout,Sx,k,l,m,indices)
+        connectS_inner!(Sout,Sa,k,l,indices)
     end
 
     return Sout
 end
 
 """
-    connectS_inner!(Sout,Sx,k,l,m,xindices,batch)
+    connectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
 
 See [`connectS`](@ref) for description.
 
 """
-function connectS_inner!(Sout,Sx,k::Int,l::Int,m::Int,batch::AbstractArray)
+function connectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
 
-    firstport = 0
-    secondport = 0
-    if k > l
-        firstport = l
-        secondport = k
-    else
-        firstport = k
-        secondport = l
-    end
+    # the number of ports in the input matrix
+    m = size(Sa,1)
+
+    # order the ports
+    firstport, secondport = ifelse(k>l,(l,k),(k,l))
 
     range1 = 1:firstport-1
     range2 = firstport+1:secondport-1
     range3 = secondport+1:m
+    ranges = (range1,range2,range3)
 
-    @inbounds for ii in batch
-        # Eq. 16.3
-        oneoverdelta = one(Sx[l,k,ii])/((one(Sx[l,k,ii]) - Sx[l,k,ii])*(one(Sx[k,l,ii]) - Sx[k,l,ii]) - Sx[l,l,ii]*Sx[k,k,ii])
+    @inbounds for b in batch
+        gammacc_Scc = StaticArrays.SMatrix{2,2}(
+            -Sa[firstport,firstport,b],
+            one(Sa[secondport,firstport,b])-Sa[secondport,firstport,b],
+            one(Sa[firstport,secondport,b])-Sa[firstport,secondport,b],
+            -Sa[secondport,secondport,b]
+        )
+        # gammacc_Scc_lu =  lu(gammacc_Scc)
+        gammacc_Scc_lu = lu_2x2(gammacc_Scc)
 
-        # generate the scattering parameters
-        # by looping over the output matrix indices
+        # ii and jj are the indices which extend up to m and skip k,l
+        # i and j extend up to m-2 and are consecutive 
+        for jindex in eachindex(ranges)
+            for jj in ranges[jindex]
+                j = jj-jindex+1
 
-        # Eq. 16.1, 16.2
-        for i in range1
-            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(one(Sx[l,k,ii]) - Sx[l,k,ii]))*oneoverdelta
-            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(one(Sx[k,l,ii]) - Sx[k,l,ii]))*oneoverdelta
+                Scp = StaticArrays.SVector{2}(Sa[firstport,jj,b],Sa[secondport,jj,b])
 
-            # Eq. 15
-            for j in range1
-                Sout[j,i,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
-            end
-            for j in range2
-                Sout[j-1,i,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
-            end
-            for j in range3
-                Sout[j-2,i,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
+                # solve the linear system
+                # ac1jj, ac2jj = gammacc_Scc_lu \ Scp
+                ac1jj, ac2jj = ldiv_2x2(gammacc_Scc_lu,Scp)
+
+                for iindex in eachindex(ranges)
+                    for ii in ranges[iindex]
+                        i = ii-iindex+1
+                        Sout[i,j,b] = Sa[ii,jj,b] + Sa[ii,firstport,b]*ac1jj + Sa[ii,secondport,b]*ac2jj
+                    end
+                end
             end
         end
-        for i in range2
-            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(one(Sx[l,k,ii]) - Sx[l,k,ii]))*oneoverdelta
-            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(one(Sx[k,l,ii]) - Sx[k,l,ii]))*oneoverdelta
-
-            # Eq. 15
-            for j in range1
-                Sout[j,i-1,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
-            end
-            for j in range2
-                Sout[j-1,i-1,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
-            end
-            for j in range3
-                Sout[j-2,i-1,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
-            end
-        end
-        for i in range3
-            al = (Sx[l,i,ii]*Sx[k,k,ii]+Sx[k,i,ii]*(one(Sx[l,k,ii]) - Sx[l,k,ii]))*oneoverdelta
-            ak = (Sx[k,i,ii]*Sx[l,l,ii]+Sx[l,i,ii]*(one(Sx[k,l,ii]) - Sx[k,l,ii]))*oneoverdelta
-
-            # Eq. 15
-            for j in range1
-                Sout[j,i-2,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
-            end
-            for j in range2
-                Sout[j-1,i-2,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
-            end
-            for j in range3
-                Sout[j-2,i-2,ii] = Sx[j,i,ii] + Sx[j,l,ii]*al + Sx[j,k,ii]*ak
-            end
-        end
-
     end
-    return nothing
+
+    return Sout
 end
 
-
-# function connectS_inner!(Sout,Sx,k,l,m,xindices,batch)
-
-#     @inbounds for ii in batch
-#         # Eq. 16.3
-#         oneoverdelta = 1/((1 - Sx[l,k,ii])*(1 - Sx[k,l,ii]) - Sx[l,l,ii]*Sx[k,k,ii])
-
-#         # generate the scattering parameters
-#         # by looping over the output matrix indices
-#         for i in 1:m-2
-
-#             # input matrix index
-#             xi = xindices[i]
-
-#             # Eq. 16.1, 16.2
-#             al = (Sx[l,xi,ii]*Sx[k,k,ii]+Sx[k,xi,ii]*(1 - Sx[l,k,ii]))*oneoverdelta
-#             ak = (Sx[k,xi,ii]*Sx[l,l,ii]+Sx[l,xi,ii]*(1 - Sx[k,l,ii]))*oneoverdelta
-
-#             for j in 1:m-2
-
-#                 # input matrix index
-#                 xj = xindices[j]
-
-#                 # Eq. 15
-#                 Sout[j,i,ii] = Sx[xj,xi,ii] + Sx[xj,l,ii]*al + Sx[xj,k,ii]*ak
-#             end
-#         end
-#     end
-#     return nothing
-# end
-
 """
-    connectS(Sx::AbstractArray,Sy::AbstractArray,k::Int,l::Int;
+    connectS(Sa::AbstractArray,Sb::AbstractArray,k::Int,l::Int;
         nbatches::Int = Base.Threads.nthreads())
 
 Connect port `k` on an `m` port network, represented by the scattering
-parameter matrix `Sx`, to port `l` on an `n` port network, represented by the
-scattering parameter matrix `Sy`, resulting in a single `(m+n-2)` port
+parameter matrix `Sa`, to port `l` on an `n` port network, represented by the
+scattering parameter matrix `Sb`, resulting in a single `(m+n-2)` port
 network, as illustrated below:
 
 Input network:
@@ -294,7 +203,7 @@ Input network:
         |   ...  |                     ...   |
         |________|                  _________|________
         |        |                  |        |       1
-        |   Sx   |                  |   Sy   |
+        |   Sa   |                  |   Sb   |
         |  m x m |                  |  n x n |
     ____|________|__________________|________|
     1   |   ...     k           l   |   ...  |
@@ -319,99 +228,88 @@ Output network:
                 m-1+l              
 ```
 # Arguments
-- `Sx::Array`: Array of scattering parameters representing the first network
+- `Sa::Array`: Array of scattering parameters representing the first network
     with ports along first two dimensions, followed by an arbitrary number
     of other dimensions (eg. frequency).
-- `Sy::Array`: Array of scattering parameters representing the second network
+- `Sb::Array`: Array of scattering parameters representing the second network
     with ports along first two dimensions, followed by an arbitrary number
     of other dimensions (eg. frequency).
 - `k::Int`: Port on first network, with one based indexing.
 - `l::Int`: Port on second network, with one based indexing.
 
 # References
-Haifang Liao and Wayne Wei-Ming Dai, "Capturing Time-of-flight Delay For
-Transient Analysis Based On Scattering Parameter Macromodel,"
-IEEE/ACM International Conference on Computer-Aided Design,
-San Jose, CA, USA, 1994, pp. 412-417, doi: 10.1109/ICCAD.1994.629836.
-
-R. C. Compton, "Perspectives in microwave circuit analysis," Proceedings of
-the 32nd Midwest Symposium on Circuits and Systems,
-Champaign, IL, USA, 1989, pp. 716-718 vol.2, doi: 10.1109/MWSCAS.1989.101955.
-
-G. Filipsson, "A New General Computer Algorithm for S-Matrix Calculation of
-Interconnected Multiports," 1981 11th European Microwave Conference,
-Amsterdam, Netherlands, 1981, pp. 700-704, doi: 10.1109/EUMA.1981.332972.
-
+V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
+in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
+249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function connectS(Sx::AbstractArray{T,N},Sy::AbstractArray{T,N},k::Int,l::Int;
+function connectS(Sa::AbstractArray{T,N},Sb::AbstractArray{T,N},k::Int,l::Int;
     nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
     # make a tuple with the size of the array
     # the first two dimensions are two smaller
-    sizeSx = size(Sx)
-    sizeSy = size(Sy)
-    sizeS = NTuple{N}(ifelse(i<=2,sizeSx[i]+sizeSy[i]-2,sizeSx[i]) for i in 1:length(sizeSx))
+    sizeSa = size(Sa)
+    sizeSb = size(Sb)
+    sizeS = NTuple{N}(ifelse(i<=2,sizeSa[i]+sizeSb[i]-2,sizeSa[i]) for i in 1:length(sizeSa))
 
-    # allocate an array of zeros of the same type as Sx
-    Sout = similar(Sx,sizeS)
+    # allocate an array of zeros of the same type as Sa
+    Sout = similar(Sa,sizeS)
 
     # connect the networks
-    connectS!(Sout,Sx,Sy,k,l;nbatches = nbatches)
+    connectS!(Sout,Sa,Sb,k,l;nbatches = nbatches)
 
     return Sout
 end
 
 """
-    connectS!(Sout,Sx,Sy,k,l)
+    connectS!(Sout,Sa,Sb,k,l)
 
 See [`connectS`](@ref) for description.
 
 """
-function connectS!(Sout,Sx,Sy,k::Int,l::Int;
+function connectS!(Sout,Sa,Sb,k::Int,l::Int;
     nbatches::Int = Base.Threads.nthreads())
-  
 
     # validate all of the inputs
-    if ndims(Sx) != ndims(Sy)
-        throw(DimensionMismatch("`Sx` and `Sy` must have the same number of dimensions."))
+    if ndims(Sa) != ndims(Sb)
+        throw(DimensionMismatch("`Sa` and `Sb` must have the same number of dimensions."))
     end
 
-    if ndims(Sx) != ndims(Sout)
-        throw(DimensionMismatch("`Sout`, `Sx`, and `Sy` must have the same number of dimensions."))
+    if ndims(Sa) != ndims(Sout)
+        throw(DimensionMismatch("`Sout`, `Sa`, and `Sb` must have the same number of dimensions."))
     end
 
-    if ndims(Sx) < 2
-        throw(DimensionMismatch("`Sout`, `Sx`, and `Sy` must have atleast two dimensions."))
+    if ndims(Sa) < 2
+        throw(DimensionMismatch("`Sout`, `Sa`, and `Sb` must have atleast two dimensions."))
     end
 
-    if size(Sx,1) != size(Sx,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sx` must be equal."))
+    if size(Sa,1) != size(Sa,2)
+        throw(DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."))
     end
 
-    if size(Sy,1) != size(Sy,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sy` must be equal."))
+    if size(Sb,1) != size(Sb,2)
+        throw(DimensionMismatch("Lengths of first two dimensions of `Sb` must be equal."))
     end
 
     if size(Sout,1) != size(Sout,2)
         throw(DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."))
     end
 
-    if size(Sx,1) + size(Sy,1) - 2 != size(Sout,1)
+    if size(Sa,1) + size(Sb,1) - 2 != size(Sout,1)
         throw(DimensionMismatch("First two dimensions of `Sout` must be `m+n-2`."))
     end
 
-    for i in 3:ndims(Sx)
-        if size(Sx,i) != size(Sout,i)
-            throw(DimensionMismatch("Non-port axis lengths of `Sx`, `Sy, and `Sout` must be equal."))
+    for i in 3:ndims(Sa)
+        if size(Sa,i) != size(Sout,i)
+            throw(DimensionMismatch("Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."))
         end
     end
 
-    if k > size(Sx,1)
-        throw(ArgumentError("Port `k` is larger than number of ports in `Sx`."))
+    if k > size(Sa,1)
+        throw(ArgumentError("Port `k` is larger than number of ports in `Sa`."))
     end
 
-    if l > size(Sy,1)
-        throw(ArgumentError("Port `l` is larger than number of ports in `Sy`."))
+    if l > size(Sb,1)
+        throw(ArgumentError("Port `l` is larger than number of ports in `Sb`."))
     end
 
     if l < 1
@@ -422,222 +320,129 @@ function connectS!(Sout,Sx,Sy,k::Int,l::Int;
         throw(ArgumentError("Port `k` is smaller than one."))
     end
 
-  
-    # the number of ports in the input matrix
-    m = size(Sx,1)
-    n = size(Sy,1)
-    
-    # # make the indices so we can skip k
-    # xindices = zeros(Int,m-1)
-    # for iout in 1:k-1
-    #     xindices[iout] = iout
-    # end
-    # for iout in k:m-1
-    #     xindices[iout] = iout+1
-    # end
-
-    # # make the indices so we can skip l
-    # yindices = zeros(Int,n-1)
-    # for iout in 1:l-1
-    #     yindices[iout] = iout
-    # end
-    # for iout in l:n-1
-    #     yindices[iout] = iout+1
-    # end
-
-    # # loop over the dimensions of the array greater than 2
-    # indices = CartesianIndices(axes(Sout)[3:end])
-    # if nbatches > 1 && length(indices) > nbatches
-    #     batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
-    #     Base.Threads.@threads for i in 1:length(batches)
-    #         connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batches[i])
-    #     end
-    # else
-    #     connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,indices)
-    # end
-
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
     if nbatches > 1 && length(indices) > nbatches
         batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
         Base.Threads.@threads for i in 1:length(batches)
-            connectS_inner!(Sout,Sx,Sy,k,l,m,n,batches[i])
+            connectS_inner!(Sout,Sa,Sb,k,l,batches[i])
         end
     else
-        connectS_inner!(Sout,Sx,Sy,k,l,m,n,indices)
+        connectS_inner!(Sout,Sa,Sb,k,l,indices)
     end
 
     return Sout
 end
 
 """
-    connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batches)
+    connectS_inner!(Sout,Sa,Sb,k::Int,l::Int,batch::AbstractArray)
 
 See [`connectS`](@ref) for description.
 
 """
-function connectS_inner!(Sout,Sx,Sy,k::Int,l::Int,m::Int,n::Int,batch::AbstractArray)
+function connectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray)
 
-    range1 = 1:k-1
-    range2 = k+1:m
-    range3 = m+1:m+l-1
-    range4 = m+l+1:m+n
+    # the number of ports in the input matrix
+    m = size(Sa,1)
+    n = size(Sb,1)
 
-    @inbounds for ii in batch
-        # use a separate loop for each
-        # quadrant of the output matrix
+    range1a = 1:k-1
+    range1b = k+1:m
+    range2a = m+1:m+l-1
+    range2b = m+l+1:m+n
 
-        # calculate the inverse of the denominator
-        oneoverdenom = one(Sx[k,k,ii])/(one(Sx[k,k,ii])-Sx[k,k,ii]*Sy[l,l,ii])
+    # this indexes across the entire array
+    ranges = (range1a, range1b, range2a, range2b)
 
-        # upper left quadrant, i,j in Sx
-        # Eq. 10.1
-        for i in range1
-            a = Sx[k,i,ii]*Sy[l,l,ii]*oneoverdenom
-            for j in range1
-                Sout[j,i,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
-            end
-            for j in range2
-                Sout[j-1,i,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
-            end
-        end
-        for i in range2
-            a = Sx[k,i,ii]*Sy[l,l,ii]*oneoverdenom
-            for j in range1
-                Sout[j,i-1,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
-            end
-            for j in range2
-                Sout[j-1,i-1,ii] = Sx[j,i,ii] + a*Sx[j,k,ii]
-            end
-        end
+    # this indexes across the first part
+    ranges1 = (range1a, range1b)
 
-        # upper right  quadrant, i in Sy, j in Sx
-        # Eq. 10.3
-        for i in range3
-            a = Sy[l,i-m,ii]*oneoverdenom
-            for j in range1
-                Sout[j,i-1,ii] = a*Sx[j,k,ii]
-            end
-            for j in range2
-                Sout[j-1,i-1,ii] = a*Sx[j,k,ii]
-            end
-        end
-        for i in range4
-            a = Sy[l,i-m,ii]*oneoverdenom
-            for j in range1
-                Sout[j,i-2,ii] = a*Sx[j,k,ii]
-            end
-            for j in range2
-                Sout[j-1,i-2,ii] = a*Sx[j,k,ii]
-            end
-        end
+    # this indexes across the second part
+    ranges2 = (range2a, range2b)
 
-        # lower left quadrant, i in Sx, j in Sy
-        # Eq. 10.3
-        for i in range1
-            a = Sx[k,i,ii]*oneoverdenom
-            for j in range3
-                Sout[j-1,i,ii] = a*Sy[j-m,l,ii] 
+    # loop over the axes of the scattering parameter matrices after the first
+    # two (eg. frequencies).
+    @inbounds for b in batch
+
+        gammacc_Scc = StaticArrays.SMatrix{2,2}(
+            -Sa[k,k,b],
+            one(Sa[k,k,b]),
+            one(Sa[k,k,b]),
+            -Sb[l,l,b]
+        )
+        # gammacc_Scc_lu = lu(gammacc_Scc)
+        gammacc_Scc_lu = lu_2x2(gammacc_Scc)
+
+        # ii and jj are the indices which extend up to m+n and skip k,l
+        # i and j extend up to m+n-2 and are consecutive 
+
+        # left side
+        for jindex in eachindex(ranges1)
+
+            for jj in ranges1[jindex]
+                j = jj-jindex+1
+                Scp = StaticArrays.SVector{2}(Sa[k,jj,b],zero(Sa[k,jj,b]))
+
+                # solve the linear system
+                # ac1jj, ac2jj = gammacc_Scc_lu \ Scp
+                ac1jj, ac2jj = ldiv_2x2(gammacc_Scc_lu,Scp)
+
+                # upper left quadrant
+                for iindex in eachindex(ranges1)
+                    for ii in ranges1[iindex]
+                        i = ii-iindex+1
+                        Sout[i,j,b] = Sa[ii,jj,b] + Sa[ii,k,b]*ac1jj
+                    end
+                end
+
+                # lower left quadrant
+                for iindex in eachindex(ranges2)
+                    for ii in ranges2[iindex]
+                        i = ii-iindex+1-1
+                        Sout[i,j,b] = Sb[ii-m,l,b]*ac2jj
+                    end
+                end
+
             end
-            for j in range4
-                Sout[j-2,i,ii] = a*Sy[j-m,l,ii] 
-            end
-        end
-        for i in range2
-            a = Sx[k,i,ii]*oneoverdenom
-            for j in range3
-                Sout[j-1,i-1,ii] = a*Sy[j-m,l,ii] 
-            end
-            for j in range4
-                Sout[j-2,i-1,ii] = a*Sy[j-m,l,ii] 
-            end
+
         end
 
-        # lower right quadrant, i,j in Sy
-        # Eq. 10.2
-        for i in range3
-            a = Sy[l,i-m,ii]*Sx[k,k,ii]*oneoverdenom
-            for j in range3
-                Sout[j-1,i-1,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
+        # right side
+        for jindex in eachindex(ranges2)
+
+            for jj in ranges2[jindex]
+                j = jj-jindex+1-1
+                Scp = StaticArrays.SVector{2}(zero(Sb[l,jj-m,b]),Sb[l,jj-m,b])
+
+                # solve the linear system.
+                # ac1jj, ac2jj = gammacc_Scc_lu \ Scp
+                ac1jj, ac2jj = ldiv_2x2(gammacc_Scc_lu,Scp)
+
+                # upper right quadrant
+                for iindex in eachindex(ranges1)
+                    for ii in ranges1[iindex]
+                        i = ii-iindex+1
+                        Sout[i,j,b] =  Sa[ii,k,b]*ac1jj
+                    end
+                end
+
+                # lower right quadrant
+                for iindex in eachindex(ranges2)
+                    for ii in ranges2[iindex]
+                        i = ii-iindex+1-1
+                        Sout[i,j,b] = Sb[ii-m,jj-m,b] + Sb[ii-m,l,b]*ac2jj
+                    end
+                end
+
             end
-            for j in range4
-                Sout[j-2,i-1,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
-            end
+
         end
-        for i in range4
-            a = Sy[l,i-m,ii]*Sx[k,k,ii]*oneoverdenom
-            for j in range3
-                Sout[j-1,i-2,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
-            end
-            for j in range4
-                Sout[j-2,i-2,ii] = Sy[j-m,i-m,ii] + a*Sy[j-m,l,ii]
-            end
-        end
+
     end
-    return nothing
+
+    return Sout
+
 end
-
-
-# function connectS_inner!(Sout,Sx,Sy,k,l,m,n,xindices,yindices,batch)
-
-
-#     @inbounds for ii in batch
-#         # use a separate loop for each
-#         # quadrant of the output matrix
-
-#         # calculate the inverse of the denominator
-#         oneoverdenom = 1/(1-Sx[k,k,ii]*Sy[l,l,ii])
-
-#         # upper left quadrant, i,j in Sx
-#         for i in 1:m-1
-#             xi = xindices[i]
-#             a = Sx[k,xi,ii]*Sy[l,l,ii]*oneoverdenom
-#             for j in 1:m-1
-#                 xj = xindices[j] 
-
-#                 # Eq. 10.1
-#                 Sout[j,i,ii] = Sx[xj,xi,ii] + a*Sx[xj,k,ii]
-#             end
-#         end
-
-#         # upper right  quadrant, i in Sy, j in Sx
-#         for i in m:m+n-2
-#             yi = yindices[i - m + 1]
-#             a = Sy[l,yi,ii]*oneoverdenom
-#             for j in 1:m-1
-#                 xj = xindices[j]
-
-#                 # Eq. 10.3
-#                 Sout[j,i,ii] = a*Sx[xj,k,ii]
-#             end
-#         end
-
-#         # lower left quadrant, i in Sx, j in Sy
-#         for i in 1:m-1
-#             xi = xindices[i]
-#             a = Sx[k,xi,ii]*oneoverdenom
-#             for j in m:m+n-2
-#                 yj = yindices[j - m + 1]
-
-#                 # Eq. 10.3
-#                 Sout[j,i,ii] = a*Sy[yj,l,ii] 
-#             end
-#         end
-
-#         # lower right quadrant, i,j in Sy
-#         for i in m:m+n-2
-#             yi = yindices[i - m + 1]
-#             a = Sy[l,yi,ii]*Sx[k,k,ii]*oneoverdenom
-#             for j in m:m+n-2
-#                 yj = yindices[j - m + 1] 
-                  
-#                 # Eq. 10.2
-#                 Sout[j,i,ii] = Sy[yj,yi,ii] + a*Sy[yj,l,ii]
-#             end
-#         end
-#     end
-#     return nothing
-# end
 
 """
     connectSports(portsa::AbstractVector{Tuple{T,Int}},k::Int,l::Int) where T
