@@ -1167,10 +1167,12 @@ end
     add_splitters(networks, connections::AbstractVector{Tuple{T,T,Int,Int}};
         kwargs...)) where T
 
-If the connections are already in the correct format, just return them
+If the connections are already in the correct format, just return them. This
+function assumes ports have already been added to `networks`.
 """
-function add_splitters(networks, connections::AbstractVector{Tuple{T,T,Int,Int}};
-    small_splitters = true) where T
+function add_splitters(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
+    connections::AbstractVector{Tuple{T,T,Int,Int}};
+    small_splitters = true) where {T,N}
     return networks,connections
 end
 
@@ -1320,24 +1322,23 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
 end
 
 """
-    connectS_initialize(networks::AbstractVector{Tuple{T,N}},
-        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
-        small_splitters = true) where {T,N}
+    connectS_initialize(networks::AbstractVector, connections::AbstractVector;
+    small_splitters::Bool = true)
 
 Return a directed graph of connections between the networks.
 
 # Examples
 ```jldoctest
-networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-connections = [[(:S1,1),(:S2,2)]];
+networks = [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5])];
+connections = [[("S1",1),("S2",2)]];
 JosephsonCircuits.connectS_initialize(networks,connections)
 
 # output
-(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[(:S1, :S2, 1, 2)], Tuple{Symbol, Symbol, Int64, Int64}[]], [[1], Int64[]], [[(:S1, 1), (:S1, 2)], [(:S2, 1), (:S2, 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
+(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
 ```
 """
 function connectS_initialize(networks::AbstractVector, connections::AbstractVector;
-    small_splitters = true)
+    small_splitters::Bool = true) 
 
     networks_ports = add_ports(networks)
 
@@ -1355,12 +1356,12 @@ Return a directed graph of connections between the networks.
 
 # Examples
 ```jldoctest
-networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-connections = [(:S1,:S2,1,2)];
+networks = [("S1", [0.0 1.0; 1.0 0.0], [("S1", 1), ("S1", 2)]), ("S2", [0.5 0.5; 0.5 0.5], [("S2", 1), ("S2", 2)])];
+connections = [("S1","S2",1,2)];
 JosephsonCircuits.connectS_initialize(networks,connections)
 
 # output
-(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[(:S1, :S2, 1, 2)], Tuple{Symbol, Symbol, Int64, Int64}[]], [[1], Int64[]], [[(:S1, 1), (:S1, 2)], [(:S2, 1), (:S2, 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
+(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
 ```
 """
 function connectS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
@@ -1496,13 +1497,13 @@ parameter matrices `networkdata`.
 
 # Examples
 ```jldoctest
-networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-connections = [[(:S1,1),(:S2,2)]];
+networks = [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5])];
+connections = [[("S1",1),("S2",2)]];
 init = JosephsonCircuits.connectS_initialize(networks, connections);
 JosephsonCircuits.connectS!(init...)
 
 # output
-(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
+(S = [[0.5 0.5; 0.5 0.5]], ports = [[("S1", 2), ("S2", 1)]])
 ```
 """
 function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
@@ -1589,20 +1590,20 @@ automatically adding splitters.
 
 # Examples
 ```jldoctest
-networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-connections = [[(:S1,1),(:S2,2)]];
+networks = [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5])];
+connections = [[("S1",1),("S2",2)]];
 JosephsonCircuits.connectS(networks,connections)
 
 # output
-(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S2, 1)]])
+(S = [[0.5 0.5; 0.5 0.5]], ports = [[("S1", 2), ("S2", 1)]])
 ```
 ```jldoctest
-networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,6)])];
-connections = [(:S1,:S3,1,6)];
+networks = [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5],[("S3",5),("S3",6)])];
+connections = [("S1","S3",1,6)];
 JosephsonCircuits.connectS(networks,connections)
 
 # output
-(S = [[0.5 0.5; 0.5 0.5]], ports = [[(:S1, 2), (:S3, 5)]])
+(S = [[0.5 0.5; 0.5 0.5]], ports = [[("S1", 2), ("S3", 5)]])
 ```
 """
 function connectS(networks, connections; small_splitters::Bool = true,
@@ -1952,13 +1953,13 @@ recomputing the scattering parameters for the connected system.
 
 # Examples
 ```jldoctest
-networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-connections = [[(:S1,1),(:S2,2)]];
+networks = [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5])];
+connections = [[("S1",1),("S2",2)]];
 init = JosephsonCircuits.solveS_initialize(networks, connections);
 JosephsonCircuits.solveS!(init...)
 
 # output
-(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S2, 1)], Sinternal = Float64[], portsinternal = [(:S1, 1), (:S2, 2)])
+(S = [0.5 0.5; 0.5 0.5], ports = [("S1", 2), ("S2", 1)], Sinternal = Float64[], portsinternal = [("S1", 1), ("S2", 2)])
 ```
 
 # References
@@ -2001,17 +2002,21 @@ the internal ports `portsinternal`.
 - `networks`: a vector of tuples of the network name, scattering parameter
     matrix, and optionally the ports  such as
     [("network1name",rand(Complex{Float64},2,2))] or
-    [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,6)])].
+    [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5])].
 - `connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}}`: a vector of
-    vector of tuples of networks names and ports such as [[("network1name",1),
-    ("network2name",2)]] where network1 and network2 are the two networks
-    being connected and 1 and 2 are integers describing the ports to connect.
+    vectors of tuples of networks names and ports such as [[("S1",1),("S2",2)]]
+    or [[("network1name",1),("network2name",2)]] where network1 and network2
+    are the two networks being connected and 1 and 2 are integers describing
+    the ports to connect.
 
 # Keywords
 - `small_splitters::Bool = true`: if true, then generate any N port splitter
     by combining (N-2) 3 port splitters. if false, then make the N port
     splitter and connect the components to it.
-- `klu::Bool = true`: use KLU factorization if true or LU if false.
+- `factorization = KLUfactorization()`: use KLU factorization by default. 
+    JosephsonCircuits.LUfactorization() is another good choice. Keyword
+    arguments can be passed to the solver as keyword arguments to these
+    functions.
 - `internal_ports::Bool = false`: return the scattering parameters for the
     internal ports.
 - `nbatches::Integer = Base.Threads.nthreads()`: the number of batches to run
@@ -2028,20 +2033,20 @@ the internal ports `portsinternal`.
 
 # Examples
 ```jldoctest
-networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-connections = [[(:S1,1),(:S2,2)]];
+networks = [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5])];
+connections = [[("S1",1),("S2",2)]];
 JosephsonCircuits.solveS(networks,connections;internal_ports=true)
 
 # output
-(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S2, 1)], Sinternal = [1.0 0.0; 0.5 0.5], portsinternal = [(:S1, 1), (:S2, 2)])
+(S = [0.5 0.5; 0.5 0.5], ports = [("S1", 2), ("S2", 1)], Sinternal = [1.0 0.0; 0.5 0.5], portsinternal = [("S1", 1), ("S2", 2)])
 ```
 ```jldoctest
-networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,6)])];
-connections = [(:S1,:S3,1,6)];
+networks = [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5],[("S3",5),("S3",6)])];
+connections = [("S1","S3",1,6)];
 JosephsonCircuits.solveS(networks,connections)
 
 # output
-(S = [0.5 0.5; 0.5 0.5], ports = [(:S1, 2), (:S3, 5)], Sinternal = Float64[], portsinternal = [(:S1, 1), (:S3, 6)])
+(S = [0.5 0.5; 0.5 0.5], ports = [("S1", 2), ("S3", 5)], Sinternal = Float64[], portsinternal = [("S1", 1), ("S3", 6)])
 ```
 
 # References

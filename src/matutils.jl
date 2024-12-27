@@ -1011,8 +1011,9 @@ function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
 
     # solve U*x = y
     if iszero(fact.U[2,2])
-        # if U[2,2] is zero, the matrix is singular, so no unique solution.
-        x2 = one(y2)
+        # if U[2,2] is zero, the matrix is singular and the linear system
+        # has potentially no solution or no unique solution.
+        x2 = zero(y2)
     else
         x2 = y2/fact.U[2,2]
     end
@@ -1022,7 +1023,7 @@ function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
 
     if iszero(fact.U[2,2])
         # if the matrix is singular, check that we are returning a valid
-        # solution to the nonlinear system
+        # solution to the linear system
         if !isequal(fact.L*fact.U*x,b)
             throw(ArgumentError("Failed to solve linear system."))
         end
@@ -1035,8 +1036,7 @@ end
     lu_2x2(A)
 
 Return the LU factorization of a 2 by 2 matrix as a StaticArrays.LU struct.
-Don't check if `A` is singular, but do error if an LU decomposition is not
-possible.
+Perform the LU factorization even if `A` is singular.
 """
 function lu_2x2(A::AbstractArray)
     # decide whether or not to pivot

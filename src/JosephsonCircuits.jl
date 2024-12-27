@@ -476,7 +476,7 @@ end
 
 export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
-    @variables, @register_symbolic, Num, Symbolics
+    @variables, @register_symbolic, Num, Symbolics, connectS, solveS
 
 
 # the below precompile directives are to help the compiler perform type inference
