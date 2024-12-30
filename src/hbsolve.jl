@@ -769,11 +769,11 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # the capacitance and conductance matrices. substitute in the symbolic
     # frequency variable if present.
     sparseaddconjsubst!(Asparse, -1, Cnm, wmodes2m, Cnmindexmap,
-        wmodesm .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
+        real.(wmodesm) .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
     sparseaddconjsubst!(Asparse, im, Gnm, wmodesm, Gnmindexmap,
-        wmodesm .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
+        real.(wmodesm) .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
     sparseaddconjsubst!(Asparse, 1, invLnm,
-        Diagonal(ones(size(invLnm,1))), invLnmindexmap, wmodesm .< 0,
+        Diagonal(ones(size(invLnm,1))), invLnmindexmap, real.(wmodesm) .< 0,
         wmodesm, invLnmfreqsubstindices, symfreqvar)
 
 
@@ -1143,11 +1143,11 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
         # the capacitance and conductance matrices. substitute in the symbolic
         # frequency variable if present.
         sparseaddconjsubst!(Asparsecopy, -1, Cnm, wmodes2m, Cnmindexmap,
-            wmodesm .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
+            real.(wmodesm) .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
         sparseaddconjsubst!(Asparsecopy, im, Gnm, wmodesm, Gnmindexmap,
-            wmodesm .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
+            real.(wmodesm) .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
         sparseaddconjsubst!(Asparsecopy, 1, invLnm,
-            Diagonal(ones(size(invLnm,1))), invLnmindexmap, wmodesm .< 0,
+            Diagonal(ones(size(invLnm,1))), invLnmindexmap, real.(wmodesm) .< 0,
             wmodesm, invLnmfreqsubstindices, symfreqvar)
 
         # factor the sparse matrix
@@ -1202,11 +1202,11 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
             # the capacitance and conductance matrices. substitute in the symbolic
             # frequency variable if present. 
             sparseaddconjsubst!(Asparsecopy, -1, Cnm, wmodes2m, Cnmindexmap,
-                wmodesm .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
+                real.(wmodesm) .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
             sparseaddconjsubst!(Asparsecopy, im, Gnm, wmodesm, Gnmindexmap,
-                wmodesm .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
+                real.(wmodesm) .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
             sparseaddconjsubst!(Asparsecopy, 1, invLnm,
-                Diagonal(ones(size(invLnm,1))),invLnmindexmap, wmodesm .< 0,
+                Diagonal(ones(size(invLnm,1))),invLnmindexmap, real.(wmodesm) .< 0,
                 wmodesm, invLnmfreqsubstindices, symfreqvar)
 
             # factor the sparse matrix

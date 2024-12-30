@@ -420,19 +420,19 @@ function calcimpedance(c::Union{T,Complex{T}}, type, w, symfreqvar,
     ) where {T<:Union{AbstractFloat,Integer}}
 
     if type == :R
-        if w >= 0
+        if real(w) >= 0
             return c+0.0im
         else
             return conj(c)+0.0im
         end
     elseif type == :C
-        if w >= 0
+        if real(w) >= 0
             return 1/(im*w*c)
         else
             return 1/(im*w*conj(c))
         end
     elseif type == :L
-        if w >= 0
+        if real(w) >= 0
             return (im*w*c)
         else
             return (im*w*conj(c))
@@ -567,11 +567,11 @@ function calccm!(cm::AbstractArray{T}, S, w) where {T<:AbstractFloat}
     c = zeros(eltype(cm),size(cm))
     @inbounds for j in 1:size(S,2)
         for i in 1:size(S,1)
-            t = cm[i] + abs2(S[i,j])*sign(w[(j-1) % m + 1])
+            t = cm[i] + abs2(S[i,j])*sign(real(w[(j-1) % m + 1]))
             c[i] += ifelse(
                 abs(cm[i]) >= abs2(S[i,j]),
-                (cm[i]-t) + abs2(S[i,j])*sign(w[(j-1) % m + 1]),
-                (abs2(S[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i])
+                (cm[i]-t) + abs2(S[i,j])*sign(real(w[(j-1) % m + 1])),
+                (abs2(S[i,j])*sign(real(w[(j-1) % m + 1]))-t) + cm[i])
             cm[i]  = t
         end
     end
@@ -710,22 +710,22 @@ function calccm!(cm::AbstractArray{T}, S, Snoise, w) where {T<:AbstractFloat}
     c = zeros(eltype(cm),size(cm))
     @inbounds for j in 1:size(S,2)
         for i in 1:size(S,1)
-            t = cm[i] + abs2(S[i,j])*sign(w[(j-1) % m + 1])
+            t = cm[i] + abs2(S[i,j])*sign(real(w[(j-1) % m + 1]))
             c[i] += ifelse(
                 abs(cm[i]) >= abs2(S[i,j]),
-                (cm[i]-t) + abs2(S[i,j])*sign(w[(j-1) % m + 1]),
-                (abs2(S[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i])
+                (cm[i]-t) + abs2(S[i,j])*sign(real(w[(j-1) % m + 1])),
+                (abs2(S[i,j])*sign(real(w[(j-1) % m + 1]))-t) + cm[i])
             cm[i]  = t
         end
     end
 
     @inbounds for j in 1:size(Snoise,2)
         for i in 1:size(Snoise,1)
-            t = cm[i] + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])
+            t = cm[i] + abs2(Snoise[i,j])*sign(real(w[(j-1) % m + 1]))
             c[i] += ifelse(
                 abs(cm[i]) >= abs2(Snoise[i,j]),
-                (cm[i]-t) + abs2(Snoise[i,j])*sign(w[(j-1) % m + 1]),
-                (abs2(Snoise[i,j])*sign(w[(j-1) % m + 1])-t) + cm[i])
+                (cm[i]-t) + abs2(Snoise[i,j])*sign(real(w[(j-1) % m + 1])),
+                (abs2(Snoise[i,j])*sign(real(w[(j-1) % m + 1]))-t) + cm[i])
             cm[i]  = t
         end
     end
