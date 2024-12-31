@@ -180,6 +180,16 @@ for f in [:ABCD_coupled_tline, :Z_coupled_tline]
         return y
     end
 
+    # in-place version for scalar x1, x2, x3, x4
+    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray, x1::Number,
+        x2::Number, x3::Number, x4::Number)
+        # loop over the dimensions of the array greater than 2
+        for i in CartesianIndices(axes(y)[3:end])
+            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1,x2,x3,x4)
+        end
+        return y
+    end
+
     # in-place version for scalar x1, x2, abstract array x3, x4
     @eval function $(Symbol(String(f)*"!"))(y::AbstractArray,
         x1::Number, x2::Number, x3::AbstractArray, x4::AbstractArray)
@@ -240,6 +250,19 @@ function ABCD_seriesZ(Z1::Number)
     return [one(Z1) Z1;zero(Z1) one(Z1)]
 end
 
+"""
+    ABCD_seriesZ!(ABCD,Z1)
+
+In-place version of [`ABCD_seriesZ`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_seriesZ!(zeros(2,2),50)
+2×2 Matrix{Float64}:
+ 1.0  50.0
+ 0.0   1.0
+```
+"""
 function ABCD_seriesZ!(ABCD::AbstractMatrix,Z1::Number)
     if size(ABCD,1) != 2 || size(ABCD,2) != 2
         throw(ArgumentError("Size of output $(size(ABCD)) must be (2, 2)."))
@@ -273,6 +296,19 @@ function Y_seriesY(Y1::Number)
     return [Y1 -Y1;-Y1 Y1]
 end
 
+"""
+    Y_seriesY!(Y,Y1)
+
+In-place version of [`Y_seriesY`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Y_seriesY!(zeros(2,2),1/50)
+2×2 Matrix{Float64}:
+  0.02  -0.02
+ -0.02   0.02
+```
+"""
 function Y_seriesY!(Y::AbstractMatrix,Y1::Number)
     if size(Y,1) != 2 || size(Y,2) != 2
         throw(ArgumentError("Size of output $(size(Y)) must be (2, 2)."))
@@ -307,6 +343,19 @@ function ABCD_shuntY(Y1::Number)
     return [one(Y1) zero(Y1);Y1 one(Y1)]
 end
 
+"""
+    ABCD_shuntY!(ABCD,Y1)
+
+In-place version of [`ABCD_shuntY`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_shuntY!(zeros(2,2),1/50)
+2×2 Matrix{Float64}:
+ 1.0   0.0
+ 0.02  1.0
+```
+"""
 function ABCD_shuntY!(ABCD::AbstractMatrix,Y1::Number)
     if size(ABCD,1) != 2 || size(ABCD,2) != 2
         throw(ArgumentError("Size of output $(size(ABCD)) must be (2, 2)."))
@@ -341,6 +390,19 @@ function Z_shuntZ(Z1::Number)
     return [Z1 Z1;Z1 Z1]
 end
 
+"""
+    Z_shuntZ!(Z,Z1)
+
+In-place version of [`Z_shuntZ`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Z_shuntZ!(zeros(2,2),50)
+2×2 Matrix{Float64}:
+ 50.0  50.0
+ 50.0  50.0
+```
+"""
 function Z_shuntZ!(Z::AbstractMatrix,Z1::Number)
     if size(Z,1) != 2 || size(Z,2) != 2
         throw(ArgumentError("Size of output $(size(Z)) must be (2, 2)."))
@@ -375,6 +437,19 @@ function ABCD_PiY(Y1::Number,Y2::Number,Y3::Number)
     return [1+Y2/Y3 1/Y3;Y1+Y2+Y1*Y2/Y3 1+Y1/Y3]
 end
 
+"""
+    ABCD_PiY!(ABCD,Y1,Y2,Y3)
+
+In-place version of [`ABCD_PiY`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_PiY!(zeros(2,2),1,2,4)
+2×2 Matrix{Float64}:
+ 1.5  0.25
+ 3.5  1.25
+```
+"""
 function ABCD_PiY!(ABCD::AbstractMatrix,Y1::Number,Y2::Number,Y3::Number)
     if size(ABCD,1) != 2 || size(ABCD,2) != 2
         throw(ArgumentError("Size of output $(size(ABCD)) must be (2, 2)."))
@@ -413,6 +488,19 @@ function Y_PiY(Y1::Number,Y2::Number,Y3::Number)
     return [Y1+Y3 -Y3;-Y3 Y2+Y3]
 end
 
+"""
+    Y_PiY!(Y,Y1,Y2,Y3)
+
+In-place version of [`Y_PiY`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Y_PiY!(zeros(2,2),1.0,2.0,4.0)
+2×2 Matrix{Float64}:
+  5.0  -4.0
+ -4.0   6.0
+```
+"""
 function Y_PiY!(Y::AbstractMatrix,Y1::Number,Y2::Number,Y3::Number)
     if size(Y,1) != 2 || size(Y,2) != 2
         throw(ArgumentError("Size of output $(size(Y)) must be (2, 2)."))
@@ -447,6 +535,19 @@ function ABCD_TZ(Z1::Number,Z2::Number,Z3::Number)
     return [1+Z1/Z3 Z1+Z2+Z1*Z2/Z3;1/Z3 1+Z2/Z3]
 end
 
+"""
+    ABCD_TZ!(ABCD,Z1,Z2,Z3)
+
+In-place version of [`ABCD_TZ`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_TZ!(ones(2,2),1,2,4)
+2×2 Matrix{Float64}:
+ 1.25  3.5
+ 0.25  1.5
+```
+"""
 function ABCD_TZ!(ABCD::AbstractMatrix,Z1::Number,Z2::Number,Z3::Number)
     if size(ABCD,1) != 2 || size(ABCD,2) != 2
         throw(ArgumentError("Size of output $(size(ABCD)) must be (2, 2)."))
@@ -471,10 +572,10 @@ o-------------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_TZ(1,2,4)
-2×2 Matrix{Float64}:
- 1.25  3.5
- 0.25  1.5
+julia> JosephsonCircuits.Z_TZ(1,2,4)
+2×2 Matrix{Int64}:
+ 5  4
+ 4  6
 
 julia> Z1=1.0;Z2=2.0;Z3=4.0;isapprox(JosephsonCircuits.ZtoA(JosephsonCircuits.Z_TZ(Z1,Z2,Z3)),JosephsonCircuits.ABCD_TZ(Z1,Z2,Z3))
 true
@@ -484,6 +585,19 @@ function Z_TZ(Z1::Number,Z2::Number,Z3::Number)
     return [Z1+Z3 Z3;Z3 Z2+Z3]
 end
 
+"""
+    Z_TZ!(Z,Z1,Z2,Z3)
+
+In-place version of [`Z_TZ`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Z_TZ!(ones(2,2),1,2,4)
+2×2 Matrix{Float64}:
+ 5.0  4.0
+ 4.0  6.0
+```
+"""
 function Z_TZ!(Z::AbstractMatrix,Z1::Number,Z2::Number,Z3::Number)
     if size(Z,1) != 2 || size(Z,2) != 2
         throw(ArgumentError("Size of output $(size(Z)) must be (2, 2)."))
@@ -519,6 +633,19 @@ function ABCD_tline(Z0::Number, theta::Number)
     return [cos(theta) im*Z0*sin(theta);im/Z0*sin(theta) cos(theta)]
 end
 
+"""
+    ABCD_tline!(ABCD, Z0, theta)
+
+In-place version of [`ABCD_tline`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_tline!(ones(Complex{Float64},2,2),50, pi/4)
+2×2 Matrix{ComplexF64}:
+ 0.707107+0.0im             0.0+35.3553im
+      0.0+0.0141421im  0.707107+0.0im
+```
+"""
 function ABCD_tline!(ABCD::AbstractMatrix,Z0::Number,theta::Number)
     if size(ABCD,1) != 2 || size(ABCD,2) != 2
         throw(ArgumentError("Size of output $(size(ABCD)) must be (2, 2)."))
@@ -557,6 +684,19 @@ function Z_tline(Z0::Number, theta::Number)
     return [-im*Z0*cot(theta) -im*Z0*csc(theta);-im*Z0*csc(theta) -im*Z0*cot(theta)]
 end
 
+"""
+    Z_tline!(Z, Z0, theta)
+
+In-place version of [`Z_tline`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Z_tline!(ones(Complex{Float64},2,2),50, pi/4)
+2×2 Matrix{ComplexF64}:
+ 0.0-50.0im     0.0-70.7107im
+ 0.0-70.7107im  0.0-50.0im
+```
+"""
 function Z_tline!(Z::AbstractMatrix,Z0::Number,theta::Number)
     if size(Z,1) != 2 || size(Z,2) != 2
         throw(ArgumentError("Size of output $(size(Z)) must be (2, 2)."))
@@ -610,6 +750,21 @@ function ABCD_coupled_tline(Z0e::Number, Z0o::Number, thetae::Number,
     return [A11 A12 A13 A14; A21 A22 A23 A24; A31 A32 A33 A34; A41 A42 A43 A44]
 end
 
+"""
+    ABCD_coupled_tline!(A, Z0e, Z0o, thetae, thetao)
+
+In-place version of [`ABCD_coupled_tline`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_coupled_tline!(zeros(Complex{Float64},4,4),50,50,pi/4,pi/4)
+4×4 Matrix{ComplexF64}:
+ 0.707107+0.0im             0.0+0.0im        …       0.0+0.0im
+      0.0+0.0im        0.707107+0.0im                0.0+35.3553im
+      0.0+0.0141421im       0.0+0.0im                0.0+0.0im
+      0.0+0.0im             0.0+0.0141421im     0.707107+0.0im
+```
+"""
 function ABCD_coupled_tline!(A::AbstractMatrix, Z0e::Number, Z0o::Number,
     thetae::Number, thetao::Number)
     if size(A,1) != 4 || size(A,2) != 4
@@ -661,6 +816,21 @@ function Z_coupled_tline(Z0e::Number, Z0o::Number, thetae::Number,
     return [Z11 Z12 Z13 Z14; Z21 Z22 Z23 Z24; Z31 Z32 Z33 Z34; Z41 Z42 Z43 Z44]
 end
 
+"""
+    Z_coupled_tline!(Z, Z0e, Z0o, thetae, thetao)
+
+In-place version of [`Z_coupled_tline`](@ref).
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Z_coupled_tline!(zeros(Complex{Float64},4,4),50,50,pi/4,pi/4)
+4×4 Matrix{ComplexF64}:
+ 0.0-50.0im     0.0-0.0im      0.0-70.7107im  0.0-0.0im
+ 0.0-0.0im      0.0-50.0im     0.0-0.0im      0.0-70.7107im
+ 0.0-70.7107im  0.0-0.0im      0.0-50.0im     0.0-0.0im
+ 0.0-0.0im      0.0-70.7107im  0.0-0.0im      0.0-50.0im
+```
+"""
 function Z_coupled_tline!(Z::AbstractMatrix, Z0e::Number, Z0o::Number,
     thetae::Number, thetao::Number)
     if size(Z,1) != 4 || size(Z,2) != 4
@@ -670,7 +840,7 @@ function Z_coupled_tline!(Z::AbstractMatrix, Z0e::Number, Z0o::Number,
     Z[1,2] = Z[2,1] = Z[3,4] = Z[4,3] = -im/2*(Z0e*cot(thetae) - Z0o*cot(thetao)) 
     Z[1,3] = Z[3,1] = Z[4,2] = Z[2,4] = -im/2*(Z0e*csc(thetae) + Z0o*csc(thetao))
     Z[1,4] = Z[4,1] = Z[3,2] = Z[2,3] = -im/2*(Z0e*csc(thetae) - Z0o*csc(thetao))
-    return ABCD
+    return Z
 end
 
 """

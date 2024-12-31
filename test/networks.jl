@@ -6,94 +6,235 @@ import StaticArrays
 @testset verbose=true "networks" begin
 
     # one argument functions
-    for f in [:ABCD_seriesZ, :ABCD_shuntY, :Y_seriesY, :Z_shuntZ]
+    for fname in [:ABCD_seriesZ, :ABCD_shuntY, :Y_seriesY, :Z_shuntZ]
+        f! = @eval JosephsonCircuits.$(Symbol(String(fname)*"!"))
+        f = @eval JosephsonCircuits.$fname
 
         # check errors
-        @testset "$(f) errors" begin
+        @testset "$(fname) errors" begin
             @test_throws(
                 ArgumentError("Size of output (3, 2) must be (2, 2)."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(3,2),1.0)
+                f!(zeros(3,2),1.0)
             )
             @test_throws(
-                ArgumentError("Sizes of output (3, 2) and input (1,) not compatible."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(3,2),ones(1))
+                ArgumentError("Sizes of output (2, 2) and input (1,) not compatible."),
+                f!(zeros(2,2),ones(1))
             )
         end
 
+        # check consistency for different input types
+        @testset "$(fname) consistency" begin
+            x1 = rand(Complex{Float64},1)[1]
+            # out-of-place, scalar input
+            y1 = f(x1)
+            # out-of-place, vector input
+            @test isapprox(
+                y1,
+                f([x1]),
+            )
+            # in-place matrix, scalar input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},2,2),x1),
+            )
+            # in-place array, scalar input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},2,2,1),x1),
+            )
+            # in-place array, vector input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},2,2,1),[x1]),
+            )
+        end
     end
 
     # two argument functions, complex
-    for f in [:ABCD_tline, :Z_tline]
+    for fname in [:ABCD_tline, :Z_tline]
+        f! = @eval JosephsonCircuits.$(Symbol(String(fname)*"!"))
+        f = @eval JosephsonCircuits.$fname
 
         # check errors
-        @testset "$(f) errors" begin
+        @testset "$(fname) errors" begin
             @test_throws(
                 ArgumentError("Size of output (3, 2) must be (2, 2)."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(3,2),1.0,1.0)
+                f!(zeros(3,2),1.0,1.0)
             )
             @test_throws(
                 ArgumentError("Sizes of output (3, 2) and inputs (1,) not compatible."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(3,2),ones(1),ones(1))
+                f!(zeros(3,2),ones(1),ones(1))
+            )
+        end
+
+        # check consistency for different input types
+        @testset "$(fname) consistency" begin
+            x1 = rand(Complex{Float64},1)[1]
+            x2 = rand(Complex{Float64},1)[1]
+            # out-of-place, scalar input
+            y1 = f(x1,x2)
+            # out-of-place, vector input
+            @test isapprox(
+                y1,
+                f([x1],[x2]),
+            )
+            # out-of-place, scalar and vector input
+            @test isapprox(
+                y1,
+                f(x1,[x2]),
+            )
+            # in-place matrix, scalar input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},2,2),x1,x2),
+            )
+            # in-place array, scalar input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},2,2,1),x1,x2),
+            )
+            # in-place array, vector input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},2,2,1),[x1],[x2]),
+            )
+            # in-place array, scalar and vector input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},2,2,1),x1,[x2]),
             )
         end
     end
 
     # three argument functions
-    for f in [:ABCD_PiY, :Y_PiY, :ABCD_TZ, :Z_TZ]
+    for fname in [:ABCD_PiY, :Y_PiY, :ABCD_TZ, :Z_TZ]
+        f! = @eval JosephsonCircuits.$(Symbol(String(fname)*"!"))
+        f = @eval JosephsonCircuits.$fname
 
         # check errors
-        @testset "$(f) errors" begin
+        @testset "$(fname) errors" begin
             @test_throws(
                 ArgumentError("Size of output (3, 2) must be (2, 2)."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(3,2),1.0,1.0,1.0)
+                f!(zeros(3,2),1.0,1.0,1.0)
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (2,), (1,), and (1,) must be equal."),
-                @eval JosephsonCircuits.$f(ones(2),ones(1),ones(1))
+                f(ones(2),ones(1),ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (2,), (1,), and (1,) must be equal."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(2,2),ones(2),ones(1),ones(1))
+                f!(zeros(2,2),ones(2),ones(1),ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of output (3, 2) and inputs (1,) not compatible."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(3,2),ones(1),ones(1),ones(1))
+                f!(zeros(3,2),ones(1),ones(1),ones(1))
+            )
+        end
+
+        # check consistency for different input types
+        @testset "$(fname) consistency" begin
+            x1 = rand(Complex{Float64},1)[1]
+            x2 = rand(Complex{Float64},1)[1]
+            x3 = rand(Complex{Float64},1)[1]
+            # out-of-place, scalar input
+            y1 = f(x1,x2,x3)
+            # out-of-place, vector input
+            @test isapprox(
+                y1,
+                f([x1],[x2],[x3]),
+            )
+            # in-place matrix, scalar input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},2,2),x1,x2,x3),
+            )
+            # in-place array, scalar input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},2,2,1),x1,x2,x3),
+            )
+            # in-place array, vector input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},2,2,1),[x1],[x2],[x3]),
             )
         end
     end
 
     # four argument functions, complex
-    for f in [:ABCD_coupled_tline, :Z_coupled_tline]
+    for fname in [:ABCD_coupled_tline, :Z_coupled_tline]
+        f! = @eval JosephsonCircuits.$(Symbol(String(fname)*"!"))
+        f = @eval JosephsonCircuits.$fname
 
         # check errors
-        @testset "$(f) errors" begin
+        @testset "$(fname) errors" begin
             @test_throws(
                 ArgumentError("Size of output (4, 3) must be (4, 4)."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(4,3),1.0,1.0,1.0,1.0)
+                f!(zeros(4,3),1.0,1.0,1.0,1.0)
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (2,), (1,), (1,), and (1,) must be equal."),
-                @eval JosephsonCircuits.$f(ones(2),ones(1),ones(1),ones(1))
+                f(ones(2),ones(1),ones(1),ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
-                @eval JosephsonCircuits.$f(1.0,1.0,ones(2),ones(1))
+                f(1.0,1.0,ones(2),ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(4,4),1.0,1.0,ones(2),ones(1))
+                f!(zeros(4,4),1.0,1.0,ones(2),ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of output (4, 4) and inputs (2,) not compatible."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(4,4),1.0,1.0,ones(2),ones(2))
+                f!(zeros(4,4),1.0,1.0,ones(2),ones(2))
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (1,), (1,), (2,), and (1,) must be equal."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(4,4),ones(1),ones(1),ones(2),ones(1))
+                f!(zeros(4,4),ones(1),ones(1),ones(2),ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of output (4, 4) and inputs (2,) not compatible."),
-                @eval JosephsonCircuits.$(Symbol(String(f)*"!"))(zeros(4,4),ones(2),ones(2),ones(2),ones(2))
+                f!(zeros(4,4),ones(2),ones(2),ones(2),ones(2))
+            )
+        end
+
+        # check consistency for different input types
+        @testset "$(fname) consistency" begin
+            x1 = rand(Complex{Float64},1)[1]
+            x2 = rand(Complex{Float64},1)[1]
+            x3 = rand(Complex{Float64},1)[1]
+            x4 = rand(Complex{Float64},1)[1]
+            # out-of-place, scalar input
+            y1 = f(x1,x2,x3,x4)
+            # out-of-place, vector input
+            @test isapprox(
+                y1,
+                f([x1],[x2],[x3],[x4]),
+            )
+            # out-of-place, scalar and vector input
+            @test isapprox(
+                y1,
+                f(x1,x2,[x3],[x4]),
+            )
+            # in-place matrix, scalar input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},4,4),x1,x2,x3,x4),
+            )
+            # in-place array, scalar input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},4,4,1),x1,x2,x3,x4),
+            )
+            # in-place array, vector input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},4,4,1),[x1],[x2],[x3],[x4]),
+            )
+            # in-place array, scalar and vector input
+            @test isapprox(
+                y1,
+                f!(zeros(Complex{Float64},4,4,1),x1,x2,[x3],[x4]),
             )
         end
     end
