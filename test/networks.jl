@@ -24,7 +24,7 @@ import StaticArrays
 
         # check consistency for different input types
         @testset "$(fname) consistency" begin
-            x1 = rand(Complex{Float64},1)[1]
+            x1 = rand(Complex{Float64})
             # out-of-place, scalar input
             y1 = f(x1)
             # out-of-place, vector input
@@ -58,19 +58,31 @@ import StaticArrays
         # check errors
         @testset "$(fname) errors" begin
             @test_throws(
+                ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
+                f(ones(2),ones(1))
+            )
+            @test_throws(
                 ArgumentError("Size of output (3, 2) must be (2, 2)."),
                 f!(zeros(3,2),1.0,1.0)
             )
             @test_throws(
-                ArgumentError("Sizes of output (3, 2) and inputs (1,) not compatible."),
-                f!(zeros(3,2),ones(1),ones(1))
+                ArgumentError("Sizes of output (2, 2) and inputs (1,) not compatible."),
+                f!(zeros(2,2),ones(1),ones(1))
+            )
+            @test_throws(
+                ArgumentError("Sizes of output (2, 2) and inputs (1,) not compatible."),
+                f!(zeros(2,2),1.0,ones(1))
+            )
+            @test_throws(
+                ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
+                f!(zeros(2,2,1),ones(2),ones(1))
             )
         end
 
         # check consistency for different input types
         @testset "$(fname) consistency" begin
-            x1 = rand(Complex{Float64},1)[1]
-            x2 = rand(Complex{Float64},1)[1]
+            x1 = rand(Complex{Float64})
+            x2 = rand(Complex{Float64})
             # out-of-place, scalar input
             y1 = f(x1,x2)
             # out-of-place, vector input
@@ -133,9 +145,9 @@ import StaticArrays
 
         # check consistency for different input types
         @testset "$(fname) consistency" begin
-            x1 = rand(Complex{Float64},1)[1]
-            x2 = rand(Complex{Float64},1)[1]
-            x3 = rand(Complex{Float64},1)[1]
+            x1 = rand(Complex{Float64})
+            x2 = rand(Complex{Float64})
+            x3 = rand(Complex{Float64})
             # out-of-place, scalar input
             y1 = f(x1,x2,x3)
             # out-of-place, vector input
@@ -200,10 +212,10 @@ import StaticArrays
 
         # check consistency for different input types
         @testset "$(fname) consistency" begin
-            x1 = rand(Complex{Float64},1)[1]
-            x2 = rand(Complex{Float64},1)[1]
-            x3 = rand(Complex{Float64},1)[1]
-            x4 = rand(Complex{Float64},1)[1]
+            x1 = rand(Complex{Float64})
+            x2 = rand(Complex{Float64})
+            x3 = rand(Complex{Float64})
+            x4 = rand(Complex{Float64})
             # out-of-place, scalar input
             y1 = f(x1,x2,x3,x4)
             # out-of-place, vector input
@@ -252,6 +264,45 @@ import StaticArrays
                 f(ones(1))
             )
         end
+    end
+
+    @testset "consistency checks" begin
+
+        x1 = rand(Complex{Float64})
+        x2 = rand(Complex{Float64})
+        x3 = rand(Complex{Float64})
+        x4 = rand(Complex{Float64})
+
+        @test isapprox(
+            JosephsonCircuits.ABCD_seriesZ(x1),
+            JosephsonCircuits.YtoA(JosephsonCircuits.Y_seriesY(1/x1)),
+        )
+
+        @test isapprox(
+            JosephsonCircuits.ABCD_shuntY(1/x1),
+            JosephsonCircuits.ZtoA(JosephsonCircuits.Z_shuntZ(x1)),
+        )
+
+        @test isapprox(
+            JosephsonCircuits.ABCD_tline(x1,x2),
+            JosephsonCircuits.ZtoA(JosephsonCircuits.Z_tline(x1,x2)),
+        )
+
+        @test isapprox(
+            JosephsonCircuits.ABCD_PiY(x1,x2,x3),
+            JosephsonCircuits.YtoA(JosephsonCircuits.Y_PiY(x1,x2,x3)),
+        )
+
+        @test isapprox(
+            JosephsonCircuits.ABCD_TZ(x1,x2,x3),
+            JosephsonCircuits.ZtoA(JosephsonCircuits.Z_TZ(x1,x2,x3)),
+        )
+
+        @test isapprox(
+            JosephsonCircuits.ABCD_coupled_tline(x1,x2,x3,x4),
+            JosephsonCircuits.ZtoA(JosephsonCircuits.Z_coupled_tline(x1,x2,x3,x4)),
+        )
+
     end
 
     @testset "ZC_basis_coupled_lines" begin
