@@ -39,7 +39,11 @@ end
 
     include("JosephsonCircuits.jl")
 
-    include("network.jl")
+    include("networkparamconversion.jl")
+
+    include("networks.jl")
+
+    include("networkconnection.jl")
 
     include("matutils.jl")
 

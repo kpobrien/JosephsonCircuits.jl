@@ -57,7 +57,11 @@ include("parseinput.jl")
 include("graphproc.jl")
 include("capindmat.jl")
 include("matutils.jl")
-include("network.jl")
+
+include("networkparamconversion.jl")
+include("networks.jl")
+include("networkconnection.jl")
+
 include("nlsolve.jl")
 include("fftutils.jl")
 include("qesparams.jl")
