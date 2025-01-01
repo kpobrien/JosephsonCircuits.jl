@@ -169,98 +169,97 @@ using SpecialFunctions
 
     @testset "phimatrixtovector!"  begin
 
-        freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
-        conjsourceindices = [16, 6]
-        conjtargetindices = [21, 31]
-        Nbranches = 1
+        begin
+            freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+            conjsourceindices = [16, 6]
+            conjtargetindices = [21, 31]
+            Nbranches = 1
 
-        phivector = zeros(Complex{Float64}, Nbranches*length(freqindexmap)-1)
-        phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
+            phivector = zeros(Complex{Float64}, Nbranches*length(freqindexmap)-1)
+            phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
 
-        @test_throws(
-            DimensionMismatch("Unexpected length for phivector"),
-            JosephsonCircuits.phimatrixtovector!(phivector,
+            @test_throws(
+                DimensionMismatch("Unexpected length for phivector"),
+                JosephsonCircuits.phimatrixtovector!(phivector,
+                    phimatrix,
+                    freqindexmap,
+                    conjsourceindices,
+                    conjtargetindices,
+                    Nbranches,
+                )
+            )
+        end
+
+        begin
+            freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+            conjsourceindices = [16, 6]
+            conjtargetindices = [21, 31]
+            Nbranches = 1
+
+            phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
+            phivector = 1im.*Complex.(1:Nbranches*length(freqindexmap));
+
+            phimatrix1 = similar(phimatrix)
+            phivector1 = similar(phivector)
+
+            JosephsonCircuits.phimatrixtovector!(phivector1,
                 phimatrix,
                 freqindexmap,
                 conjsourceindices,
                 conjtargetindices,
                 Nbranches,
             )
-        )
 
-    end
-
-    @testset "phimatrixtovector!"  begin
-
-        freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
-        conjsourceindices = [16, 6]
-        conjtargetindices = [21, 31]
-        Nbranches = 1
-
-        phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
-        phivector = 1im.*Complex.(1:Nbranches*length(freqindexmap));
-
-        phimatrix1 = similar(phimatrix)
-        phivector1 = similar(phivector)
-
-        JosephsonCircuits.phimatrixtovector!(phivector1,
-            phimatrix,
-            freqindexmap,
-            conjsourceindices,
-            conjtargetindices,
-            Nbranches,
-        )
-
-        @test all(phivector .== phivector1)
+            @test all(phivector .== phivector1)
+        end
     end
 
 
 
     @testset "phivectortomatrix!"  begin
+        begin
+            freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+            conjsourceindices = [16, 6]
+            conjtargetindices = [21, 31]
+            Nbranches = 1
 
-        freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
-        conjsourceindices = [16, 6]
-        conjtargetindices = [21, 31]
-        Nbranches = 1
+            phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
+            phivector = 1im.*Complex.(1:Nbranches*length(freqindexmap));
 
-        phimatrix = [0.0 + 0.0im 0.0 + 3.0im 0.0 + 0.0im 0.0 + 6.0im 0.0 - 6.0im 0.0 + 0.0im 0.0 - 3.0im; 0.0 + 1.0im 0.0 + 0.0im 0.0 + 5.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 7.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 4.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 8.0im; 0.0 + 2.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;]
-        phivector = 1im.*Complex.(1:Nbranches*length(freqindexmap));
+            phimatrix1 = similar(phimatrix)
+            phivector1 = similar(phivector)
 
-        phimatrix1 = similar(phimatrix)
-        phivector1 = similar(phivector)
-
-        JosephsonCircuits.phivectortomatrix!(phivector,
-            phimatrix1,
-            freqindexmap,
-            conjsourceindices,
-            conjtargetindices,
-            Nbranches,
-        )
-
-        @test all(phimatrix .== phimatrix1)
-    end
-
-    @testset "phivectortomatrix!"  begin
-
-        freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
-        conjsourceindices = [16, 6]
-        conjtargetindices = [21, 31]
-        Nbranches = 1
-
-        phivector = 1im.*Complex.(1:(Nbranches*length(freqindexmap)-1));
-        phimatrix=zeros(Complex{Float64},5,7,1)
-
-        @test_throws(
-            DimensionMismatch("Unexpected length for phivector"),
             JosephsonCircuits.phivectortomatrix!(phivector,
-                phimatrix,
+                phimatrix1,
                 freqindexmap,
                 conjsourceindices,
                 conjtargetindices,
                 Nbranches,
             )
-        )
 
+            @test all(phimatrix .== phimatrix1)
+        end
+
+        begin
+            freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
+            conjsourceindices = [16, 6]
+            conjtargetindices = [21, 31]
+            Nbranches = 1
+
+            phivector = 1im.*Complex.(1:(Nbranches*length(freqindexmap)-1));
+            phimatrix=zeros(Complex{Float64},5,7,1)
+
+            @test_throws(
+                DimensionMismatch("Unexpected length for phivector"),
+                JosephsonCircuits.phivectortomatrix!(phivector,
+                    phimatrix,
+                    freqindexmap,
+                    conjsourceindices,
+                    conjtargetindices,
+                    Nbranches,
+                )
+            )
+        end
     end
 
 end

@@ -94,6 +94,20 @@ function comparestruct(x,y)
   return out
 end
 
+"""
+    comparearray(x::AbstractArray{T},y::AbstractArray{T}) where T
+
+Compare two arrays for testing purposes.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.comparearray([1,2],[1,2,3])
+false
+
+julia> JosephsonCircuits.comparearray([1,2],[1,2,])
+true
+```
+"""
 function comparearray(x::AbstractArray{T},y::AbstractArray{T}) where T
     if size(x) == size(y)
         z = similar(x)

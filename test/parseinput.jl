@@ -26,9 +26,7 @@ using Test
             ArgumentError("parsecomponenttype() currently only works for two letter components"),
             JosephsonCircuits.parsecomponenttype("BAD1",["Lj","BAD","L","C","K","I","R","P"])
         )
-    end
 
-    @testset "parsecomponenttype" begin
         @test_throws(
             ArgumentError("No matching component found in allowedcomponents."),
             JosephsonCircuits.parsecomponenttype("B1",["Lj","L","C","K","I","R","P"])
@@ -50,9 +48,7 @@ using Test
                 [2 2 2 2 3; 1 1 1 3 1]
             )
         )
-    end
 
-    @testset "extractbranches" begin
         @test_throws(
             DimensionMismatch("the length of the first axis must be 2"),
             JosephsonCircuits.extractbranches(
@@ -78,23 +74,17 @@ using Test
             ArgumentError("Unknown sorting type."),
             JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:test)
         )
-    end
 
-    @testset "calcnodesorting" begin
         @test_throws(
             ArgumentError("No ground node found in netlist."),
             JosephsonCircuits.calcnodesorting(["30","11","1","2"];sorting=:none)
         )
-    end
 
-    @testset "calcnodesorting" begin
         @test_throws(
             ArgumentError("No ground node found in netlist."),
             JosephsonCircuits.calcnodesorting(String[];sorting=:none)
         )
-    end
 
-    @testset "calcnodesorting" begin
         @test_throws(
             ArgumentError("Failed to parse the nodes as integers. Try setting the keyword argument `sorting=:name` or `sorting=:none`."),
             JosephsonCircuits.calcnodesorting(["30","11","0","a"];sorting=:number)
@@ -122,9 +112,7 @@ using Test
                 [50,5e-15,1e-12,30e-15]
             )
         )
-    end
 
-    @testset "calcnoiseportimpedanceindices" begin
         @test_throws(
             DimensionMismatch("The length of the first axis must be 2"),
             JosephsonCircuits.calcnoiseportimpedanceindices(
@@ -146,9 +134,7 @@ using Test
                 [1,50,5e-15,1e-12,30e-15]
             )
         )
-    end
 
-    @testset "calcportindicesnumbers" begin
         @test_throws(
             DimensionMismatch("Input arrays must have the same length"),
             JosephsonCircuits.calcportindicesnumbers(
@@ -158,9 +144,7 @@ using Test
                 [1,50,5e-15,1e-12,30e-15]
             )
         )
-    end
 
-    @testset "calcportindicesnumbers" begin
         @test_throws(
             ArgumentError("Only one port allowed per branch."),
             JosephsonCircuits.calcportindicesnumbers(
@@ -170,9 +154,7 @@ using Test
                 [1,2,5e-15,1e-12,30e-15]
             )
         )
-    end
 
-    @testset "calcportindicesnumbers" begin
         @test_throws(
             ArgumentError("Duplicate ports are not allowed."),
             JosephsonCircuits.calcportindicesnumbers(
@@ -194,9 +176,7 @@ using Test
                 [1,50,5e-15,1e-12,30e-15]
             )
         )
-    end
 
-    @testset "calcportimpedanceindices" begin
         @test_throws(
             DimensionMismatch("Input arrays must have the same length"),
             JosephsonCircuits.calcportimpedanceindices(
@@ -206,9 +186,7 @@ using Test
                 [1,50,5e-15,1e-12,30e-15]
             )
         )
-    end
 
-    @testset "calcportimpedanceindices" begin
         @test_throws(
             ArgumentError("Only one port allowed per branch."),
             JosephsonCircuits.calcportimpedanceindices(
@@ -218,9 +196,7 @@ using Test
                 [1,2,5e-15,1e-12,30e-15]
             )
         )
-    end
 
-    @testset "calcportimpedanceindices" begin
         @test_throws(
             ArgumentError("Duplicate ports are not allowed."),
             JosephsonCircuits.calcportimpedanceindices(
@@ -230,9 +206,7 @@ using Test
                 [1,50,5e-15,1e-12,1]
             )
         )
-    end
 
-    @testset "calcportimpedanceindices" begin
         @test_throws(
             ArgumentError("Only one resistor allowed per port."),
             JosephsonCircuits.calcportimpedanceindices(
@@ -242,9 +216,7 @@ using Test
                 [1,50.0,50.0,1e-12,30e-15]
             )
         )
-    end
 
-    @testset "calcportimpedanceindices" begin
         @test_throws(
             ArgumentError("Ports without resistors detected. Each port must have a resistor to define the impedance."),
             JosephsonCircuits.calcportimpedanceindices(

@@ -11,7 +11,7 @@ import StaticArrays
         f = @eval JosephsonCircuits.$fname
 
         # check errors
-        @testset "$(fname) errors" begin
+        @testset "$(f), $(f!) errors" begin
             @test_throws(
                 ArgumentError("Size of output (3, 2) must be (2, 2)."),
                 f!(zeros(3,2),1.0)
@@ -23,7 +23,7 @@ import StaticArrays
         end
 
         # check consistency for different input types
-        @testset "$(fname) consistency" begin
+        @testset "$(f), $(f!) consistency" begin
             x1 = rand(Complex{Float64})
             # out-of-place, scalar input
             y1 = f(x1)
@@ -56,7 +56,7 @@ import StaticArrays
         f = @eval JosephsonCircuits.$fname
 
         # check errors
-        @testset "$(fname) errors" begin
+        @testset "$(f), $(f!) errors" begin
             @test_throws(
                 ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
                 f(ones(2),ones(1))
@@ -80,7 +80,7 @@ import StaticArrays
         end
 
         # check consistency for different input types
-        @testset "$(fname) consistency" begin
+        @testset "$(f), $(f!) consistency" begin
             x1 = rand(Complex{Float64})
             x2 = rand(Complex{Float64})
             # out-of-place, scalar input
@@ -124,7 +124,7 @@ import StaticArrays
         f = @eval JosephsonCircuits.$fname
 
         # check errors
-        @testset "$(fname) errors" begin
+        @testset "$(f), $(f!) errors" begin
             @test_throws(
                 ArgumentError("Size of output (3, 2) must be (2, 2)."),
                 f!(zeros(3,2),1.0,1.0,1.0)
@@ -144,7 +144,7 @@ import StaticArrays
         end
 
         # check consistency for different input types
-        @testset "$(fname) consistency" begin
+        @testset "$(f), $(f!) consistency" begin
             x1 = rand(Complex{Float64})
             x2 = rand(Complex{Float64})
             x3 = rand(Complex{Float64})
@@ -179,7 +179,7 @@ import StaticArrays
         f = @eval JosephsonCircuits.$fname
 
         # check errors
-        @testset "$(fname) errors" begin
+        @testset "$(f), $(f!) errors" begin
             @test_throws(
                 ArgumentError("Size of output (4, 3) must be (4, 4)."),
                 f!(zeros(4,3),1.0,1.0,1.0,1.0)
@@ -211,7 +211,7 @@ import StaticArrays
         end
 
         # check consistency for different input types
-        @testset "$(fname) consistency" begin
+        @testset "$(f), $(f!) consistency" begin
             x1 = rand(Complex{Float64})
             x2 = rand(Complex{Float64})
             x3 = rand(Complex{Float64})

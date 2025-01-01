@@ -299,53 +299,57 @@ using Test
     end
 
     @testset "calcAoLjbm error" begin
-        @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
-        @test_throws(
-            DimensionMismatch("The length of Ljb cannot be larger than the number of branches."),
-            JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,1))
-    end
+        begin
+            @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
+            @test_throws(
+                DimensionMismatch("The length of Ljb cannot be larger than the number of branches."),
+                JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,1))
+        end
 
-   @testset "calcAoLjbm error" begin
-        @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
-        @test_throws(
-            DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."),
-            JosephsonCircuits.calcAoLjbm([A11;A21;A31],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2))
-    end
-
-    @testset "updateAoLjbm! error" begin
-        @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
-        AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2);
-        AoLjbmcopy = copy(AoLjbm);
-        AoLjbmcopy.nzval .= 0;
-
-        @test_throws(
-            DimensionMismatch("The number of nonzero elements in AoLjbm are not consistent with nnz(Ljb) and Nmodes."),
-            JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,3,2)
-        )
+       begin
+            @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
+            @test_throws(
+                DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."),
+                JosephsonCircuits.calcAoLjbm([A11;A21;A31],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2))
+        end
     end
 
     @testset "updateAoLjbm! error" begin
-        @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
-        AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2);
-        AoLjbmcopy = copy(AoLjbm);
-        AoLjbmcopy.nzval .= 0;
+        begin
+            @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
+            AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2);
+            AoLjbmcopy = copy(AoLjbm);
+            AoLjbmcopy.nzval .= 0;
 
-        @test_throws(
-            DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."),
-            JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12 0;A21 A22 0;A31 A32 0],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2)
-        )
-    end
+            @test_throws(
+                DimensionMismatch("The number of nonzero elements in AoLjbm are not consistent with nnz(Ljb) and Nmodes."),
+                JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,3,2)
+            )
+        end
 
-    @testset "updateAoLjbm! error" begin
-        @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
-        AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2);
-        AoLjbmcopy = copy(AoLjbm);
-        AoLjbmcopy.nzval .= 0;
+        begin
+            @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
+            AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2);
+            AoLjbmcopy = copy(AoLjbm);
+            AoLjbmcopy.nzval .= 0;
 
-        @test_throws(
-            DimensionMismatch("The length of Ljb cannot be larger than the number of branches."),
-            JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,1)
-        )
+            @test_throws(
+                DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."),
+                JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12 0;A21 A22 0;A31 A32 0],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2)
+            )
+        end
+
+        begin
+            @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;
+            AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2);
+            AoLjbmcopy = copy(AoLjbm);
+            AoLjbmcopy.nzval .= 0;
+
+            @test_throws(
+                DimensionMismatch("The length of Ljb cannot be larger than the number of branches."),
+                JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,1)
+            )
+        end
     end
 
     @testset "sincosnloddtoboth" begin

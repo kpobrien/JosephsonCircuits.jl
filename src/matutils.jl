@@ -1068,6 +1068,21 @@ function lu_2x2(A::AbstractArray)
     return StaticArrays.LU(L,U,p)
 end
 
+"""
+    pivot_rows(A11::Union{T,Complex{T}},
+    A21::Union{T,Complex{T}}) where {T<:AbstractFloat}
+
+Return true if pivoting during LU decomposition.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.pivot_rows(0.1+0.0im,0.9+0.1im)
+true
+
+julia> JosephsonCircuits.pivot_rows(0.9+0.1im,0.1+0.0im)
+false
+```
+"""
 function pivot_rows(A11::Union{T,Complex{T}},A21::Union{T,Complex{T}}) where {T<:AbstractFloat}
     # this help stability but doesn't work for Symbolic variables.
     if abs(A11) < abs(A21)
@@ -1077,6 +1092,20 @@ function pivot_rows(A11::Union{T,Complex{T}},A21::Union{T,Complex{T}}) where {T<
     end
 end
 
+"""
+    pivot_rows(A11,A21)
+
+Return true if pivoting during LU decomposition.
+
+# Examples
+```jldoctest
+julia> @variables A21;JosephsonCircuits.pivot_rows(0,A21)
+true
+
+julia> @variables A11 A21;JosephsonCircuits.pivot_rows(A11,A21)
+false
+```
+"""
 function pivot_rows(A11,A21)
     # this works for Symbolic variables, but isn't the best for numerical
     # stability.

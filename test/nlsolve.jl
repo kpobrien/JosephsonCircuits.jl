@@ -33,7 +33,7 @@ using Test
                 J[1, 2] = 3*x[2]^2*(x[1]+3)
                 u = exp(x[1])*cos(x[2]*exp(x[1])-1)
                 J[2, 1] = x[2]*u
-                J[2, 2] = u    
+                J[2, 2] = u
             end
             return nothing
         end
@@ -45,30 +45,35 @@ using Test
         #     DimensionMismatch("Number of columns in C must equal number of columns in B."),
         #     JosephsonCircuits.nlsolve!(fj!, F, J, x)
         # )
+        begin
+            x = [ 0.1, 1.2]
+            F = [0.0, 0.0, 0.0]
+            J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2])
+            @test_throws(
+                DimensionMismatch("First axis of the Jacobian `J` must have the same length as the residual `F`."),
+                JosephsonCircuits.nlsolve!(fj!, F, J, x)
+            )
+        end
 
-        x = [ 0.1, 1.2]
-        F = [0.0, 0.0, 0.0]
-        J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2])
-        @test_throws(
-            DimensionMismatch("First axis of the Jacobian `J` must have the same length as the residual `F`."),
-            JosephsonCircuits.nlsolve!(fj!, F, J, x)
-        )
+        begin
+            x = [ 0.1, 1.2, 1.0]
+            F = [0.0, 0.0]
+            J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2])
+            @test_throws(
+                DimensionMismatch("Second axis of Jacobian `J` must have the same length as the input `x`."),
+                JosephsonCircuits.nlsolve!(fj!, F, J, x)
+            )
+        end
 
-        x = [ 0.1, 1.2, 1.0]
-        F = [0.0, 0.0]
-        J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2])
-        @test_throws(
-            DimensionMismatch("Second axis of Jacobian `J` must have the same length as the input `x`."),
-            JosephsonCircuits.nlsolve!(fj!, F, J, x)
-        )
-
-        x = [ 0.1, 1.2]
-        F = [0.0, 0.0]
-        J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,3)
-        @test_throws(
-            DimensionMismatch("The Jacobian `J` matrix must be square."),
-            JosephsonCircuits.nlsolve!(fj!, F, J, x)
-        )
+        begin
+            x = [ 0.1, 1.2]
+            F = [0.0, 0.0]
+            J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,3)
+            @test_throws(
+                DimensionMismatch("The Jacobian `J` matrix must be square."),
+                JosephsonCircuits.nlsolve!(fj!, F, J, x)
+            )
+        end
     end
 
 
@@ -102,17 +107,31 @@ using Test
 
     @testset verbose=true "tryfactorize! error" begin
 
-        factorization = JosephsonCircuits.KLUfactorization()
-        J1 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,2)
-        cache = JosephsonCircuits.FactorizationCache()
-        JosephsonCircuits.tryfactorize!(cache,factorization,J1)
-        J2 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[0.0, 0.0, 0.0, 0.0],2,2)
-        # as of 2023-09-17 1.9.3 and older throws the first error and
-        # 1.10.0-beta2 throws the second error
-        @test_throws(
-            str -> isequal("SingularException(0)",str) || isequal("Unknown KLU error code: 2",str),
-            JosephsonCircuits.tryfactorize!(cache,factorization,J2)
-        )
+        begin
+            factorization = JosephsonCircuits.KLUfactorization()
+            J1 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,2)
+            cache = JosephsonCircuits.FactorizationCache()
+            JosephsonCircuits.tryfactorize!(cache,factorization,J1)
+            J2 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[0.0, 0.0, 0.0, 0.0],2,2)
+            # as of 2023-09-17 1.9.3 and older throws the first error and
+            # 1.10.0-beta2 throws the second error
+            @test_throws(
+                str -> isequal("SingularException(0)",str) || isequal("Unknown KLU error code: 2",str),
+                JosephsonCircuits.tryfactorize!(cache,factorization,J2),
+            )
+        end
+
+        begin
+            cache = JosephsonCircuits.FactorizationCache()
+            factorization = JosephsonCircuits.KLUfactorization()
+            J3 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,3)
+            @test_throws(
+                DimensionMismatch(""),
+                JosephsonCircuits.tryfactorize!(cache,factorization,J3),
+            )
+        end
+
+
     end
 
 end
