@@ -131,6 +131,18 @@ using Test
             )
         end
 
+        begin
+            factorization = JosephsonCircuits.KLUfactorization()
+            J1 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,2)
+            cache = JosephsonCircuits.FactorizationCache()
+            JosephsonCircuits.tryfactorize!(cache,factorization,J1)
+            J3 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,3)
+
+            @test_throws(
+                ArgumentError("Sizes of K and S must match."),
+                JosephsonCircuits.tryfactorize!(cache,factorization,J3),
+            )
+        end
 
     end
 

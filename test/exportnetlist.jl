@@ -2,6 +2,62 @@ using JosephsonCircuits
 using Test
 
 @testset verbose=true "exportnetlist" begin
+
+    @testset "export_netlist import_netlist" begin
+
+        begin
+            #find the temporary directory
+            path = tempdir()
+
+            #generate unique filenames
+            filename = joinpath(path,"JosephsonCircuits-"* string(JosephsonCircuits.UUIDs.uuid1()) * ".net")
+
+            # write the netlist
+            circuit1 = [("P","1","0",1),("R","1","0",50.0)]
+            JosephsonCircuits.export_netlist(filename, circuit1, Dict())
+
+            # read the netlist
+            circuit2 = JosephsonCircuits.import_netlist(filename)
+
+            # clean up the temporary file
+            rm(filename)
+
+            @test isequal(circuit1, circuit2)
+        end
+
+        begin
+            #find the temporary directory
+            path = tempdir()
+
+            #generate unique filenames
+            filename = joinpath(path,"JosephsonCircuits-"* string(JosephsonCircuits.UUIDs.uuid1()) * ".net")
+
+            # write the netlist
+            @variables R1
+            circuit1 = [("P","1","0",1),("R","1","0",R1)]
+            JosephsonCircuits.export_netlist(filename, circuit1)
+
+            # read the netlist
+            circuit2 = JosephsonCircuits.import_netlist(filename)
+
+            # clean up the temporary file
+            rm(filename)
+
+            @test isequal(circuit1, circuit2)
+        end
+    end
+
+    @testset "import_netlist! errors" begin
+        io = IOBuffer("P 1 1")
+        circuit2 = Tuple{String,String,String,Num}[];
+        
+        @test_throws(
+            ErrorException("each line should have component name, node1, node2, component value"),
+            JosephsonCircuits.import_netlist!(io,circuit2)
+        )
+    end
+
+
     @testset "sumvalues" begin
         @test_throws(
             ErrorException("unknown component type in sumvalues"),
