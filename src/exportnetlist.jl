@@ -73,11 +73,6 @@ julia> io = IOBuffer();circuit1=[("P","1","0",1),("R","1","0",50.0)];JosephsonCi
 2-element Vector{Tuple{String, String, String, Num}}:
  ("P", "1", "0", 1.0)
  ("R", "1", "0", 50.0)
-
-julia> io = IOBuffer("P 1 0 1\\n R 1 0 50.0");circuit2 = Tuple{String,String,String,Num}[];JosephsonCircuits.import_netlist!(io,circuit2);circuit2
-2-element Vector{Tuple{String, String, String, Num}}:
- ("P", "1", "0", 1.0)
- ("R", "1", "0", 50.0)
 ```
 """
 function import_netlist!(io::IO, circuit::AbstractVector)

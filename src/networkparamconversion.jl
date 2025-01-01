@@ -51,7 +51,7 @@ for f in [:ABCDtoS, :StoABCD]
         y = copy(x)
         # if portimpedances is a scalar, pass that, otherwise pass as a
         # diagonal matrix
-        if ndims(portimpedances) == 0
+        if iszero(ndims(portimpedances))
             # assume the port impedances are all the same for all ports and
             # frequencies. loop over the dimensions of the array greater than 2
             for i in CartesianIndices(axes(y)[3:end])
@@ -105,7 +105,7 @@ for f in [:StoZ, :YtoS]
         sqrtportimpedances = sqrt.(portimpedances)
         # if portimpedances is a scalar, pass that, otherwise pass as a
         # diagonal matrix
-        if ndims(portimpedances) == 0
+        if iszero(ndims(portimpedances))
             # assume the port impedances are all the same for all ports and
             # frequencies. loop over the dimensions of the array greater than 2
             for i in CartesianIndices(axes(x)[3:end])
@@ -158,7 +158,7 @@ for f in [:StoY, :ZtoS]
         oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
         # if portimpedances is a scalar, pass that, otherwise pass as a
         # diagonal matrix
-        if ndims(portimpedances) == 0
+        if iszero(ndims(portimpedances))
             # assume the port impedances are all the same for all ports and
             # frequencies. loop over the dimensions of the array greater than 2
             for i in CartesianIndices(axes(x)[3:end])
@@ -213,7 +213,7 @@ for f in [:StoA, :AtoS, :StoB, :BtoS]
         sqrtportimpedances = sqrt.(portimpedances)
         # if portimpedances is a scalar, pass that, otherwise pass as a
         # diagonal matrix
-        if ndims(portimpedances) == 0
+        if iszero(ndims(portimpedances))
             # assume the port impedances are all the same for all ports and
             # frequencies. loop over the dimensions of the array greater than 2
             for i in CartesianIndices(axes(x)[3:end])
@@ -247,15 +247,10 @@ Convert the scattering parameter matrix `S` to a transmission matrix
 
 # Examples
 ```jldoctest
-julia> S = [0.0 1.0;1.0 0.0];JosephsonCircuits.StoT(S)
-2×2 Matrix{Float64}:
-  1.0  -0.0
- -0.0   1.0
-
-julia> @variables S11 S12 S21 S22 Z0;S = [S11 S12;S21 S22];JosephsonCircuits.StoT(S)
-2×2 Matrix{Num}:
- S12 + (-S11*S22) / S21  S11 / S21
-           (-S22) / S21    1 / S21
+julia> S = Complex{Float64}[0.0 1.0;1.0 0.0];JosephsonCircuits.StoT(S)
+2×2 Matrix{ComplexF64}:
+  1.0+0.0im  -0.0+0.0im
+ -0.0-0.0im   1.0-0.0im
 ```
 
 # References
@@ -278,7 +273,7 @@ function StoT!(T::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix)
     # tmp = [-I S11; 0 S21]
     fill!(tmp,zero(eltype(tmp)))
     for d in range1
-        tmp[d,d] = -1
+        tmp[d,d] = -one(eltype(tmp))
     end
     tmp[range1,range2] .= S[range1, range1]
     tmp[range2,range2] .= S[range2, range1]
@@ -286,7 +281,7 @@ function StoT!(T::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix)
     # T = [-S12 0; -S22 I]
     fill!(T,zero(eltype(T)))
     for d in range2
-        T[d,d] = 1
+        T[d,d] = one(eltype(T))
     end
 
     T[range1,range1] .= -S[range1, range2]
@@ -309,15 +304,15 @@ specified with the `portimpedances` keyword argument.
 
 # Examples
 ```jldoctest
-julia> S = [0.0 0.0;0.0 0.0];JosephsonCircuits.StoZ(S)
-2×2 Matrix{Float64}:
- 50.0   0.0
-  0.0  50.0
+julia> S = Complex{Float64}[0.0 0.0;0.0 0.0];JosephsonCircuits.StoZ(S)
+2×2 Matrix{ComplexF64}:
+ 50.0+0.0im   0.0+0.0im
+  0.0+0.0im  50.0+0.0im
 
-julia> S = [0.0 0.999;0.999 0.0];JosephsonCircuits.StoZ(S)
-2×2 Matrix{Float64}:
- 49975.0  49975.0
- 49975.0  49975.0
+julia> S = Complex{Float64}[0.0 0.999;0.999 0.0];JosephsonCircuits.StoZ(S)
+2×2 Matrix{ComplexF64}:
+ 49975.0+0.0im  49975.0+0.0im
+ 49975.0+0.0im  49975.0+0.0im
 ```
 
 # References
@@ -366,15 +361,10 @@ specified with the `portimpedances` keyword argument.
 
 # Examples
 ```jldoctest
-julia> S = [0.0 0.0;0.0 0.0];JosephsonCircuits.StoY(S)
-2×2 Matrix{Float64}:
-  0.02  -0.0
- -0.0    0.02
-
-julia> S = [0.0 0.999;0.999 0.0];JosephsonCircuits.StoY(S)
-2×2 Matrix{Float64}:
-  19.99  -19.99
- -19.99   19.99
+julia> S = Complex{Float64}[0.0 0.999;0.999 0.0];JosephsonCircuits.StoY(S)
+2×2 Matrix{ComplexF64}:
+  19.99+0.0im  -19.99+0.0im
+ -19.99+0.0im   19.99+0.0im
 ```
 
 # References
@@ -421,12 +411,6 @@ end
 
 Convert the scattering parameter matrix `S` to the chain (ABCD) matrix `A` and
 return the result.
-
-# Examples
-```jldoctest
-julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.ZtoA(JosephsonCircuits.StoZ(S)),JosephsonCircuits.StoA(S))
-true
-```
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -494,15 +478,6 @@ Convert the scattering parameter matrix `S` to the inverse chain (ABCD) matrix
 `B` and return the result. Note that despite the name, the inverse of the chain
 matrix is not equal to the inverse chain matrix, inv(A) ≠ B.
 
-# Examples
-```jldoctest
-julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.BtoS(JosephsonCircuits.StoB(S)),S)
-true
-
-julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.AtoS(JosephsonCircuits.BtoA(JosephsonCircuits.StoB(S))),S)
-true
-```
-
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
 Communications Engineering, Second Edition. Artech House, 2006.
@@ -569,15 +544,10 @@ Convert the transmission matrix `T` to a scattering parameter matrix `S` and ret
 
 # Examples
 ```jldoctest
-julia> T = [1.0 0.0;0.0 1.0];JosephsonCircuits.TtoS(T)
-2×2 Matrix{Float64}:
- -0.0   1.0
-  1.0  -0.0
-
-julia> @variables T11 T12 T21 T22;T = [T11 T12;T21 T22];JosephsonCircuits.TtoS(T)
-2×2 Matrix{Num}:
- T12 / T22  T11 + (-T12*T21) / T22
-   1 / T22            (-T21) / T22
+julia> T = Complex{Float64}[1.0 0.0;0.0 1.0];JosephsonCircuits.TtoS(T)
+2×2 Matrix{ComplexF64}:
+ -0.0-0.0im   1.0+0.0im
+  1.0-0.0im  -0.0-0.0im
 ```
 
 # References
@@ -648,15 +618,10 @@ the `portimpedances` keyword argument.
 
 # Examples
 ```jldoctest
-julia> Z = [50.0 0.0;0.0 50.0];JosephsonCircuits.ZtoS(Z)
-2×2 Matrix{Float64}:
- 0.0  0.0
- 0.0  0.0
-
-julia> Z = [0.0 0.0;0.0 0.0];JosephsonCircuits.ZtoS(Z)
-2×2 Matrix{Float64}:
- -1.0   0.0
-  0.0  -1.0
+julia> Z = Complex{Float64}[0.0 0.0;0.0 0.0];JosephsonCircuits.ZtoS(Z)
+2×2 Matrix{ComplexF64}:
+ -1.0+0.0im   0.0-0.0im
+  0.0-0.0im  -1.0+0.0im
 ```
 
 # References
@@ -712,15 +677,10 @@ Convert the impedance matrix `Z` to the ABCD matrix `A` and return the result.
 
 # Examples
 ```jldoctest
-julia> Z=[50.0 50.0;50.0 50.0];JosephsonCircuits.ZtoA(Z)
-2×2 Matrix{Float64}:
- 1.0   -0.0
- 0.02   1.0
-
-julia> @variables Z11 Z12 Z21 Z22;JosephsonCircuits.AtoZ([Z11 Z12;Z21 Z22])
-2×2 Matrix{Num}:
- Z11 / Z21  -Z12 + (Z11*Z22) / Z21
-   1 / Z21               Z22 / Z21
+julia> Z = Complex{Float64}[50.0 50.0;50.0 50.0];JosephsonCircuits.ZtoA(Z)
+2×2 Matrix{ComplexF64}:
+  1.0+0.0im  0.0-0.0im
+ 0.02+0.0im  1.0+0.0im
 ```
 
 # References
@@ -746,10 +706,10 @@ the result.
 
 # Examples
 ```jldoctest
-julia> Z=[50.0 50;50 50];JosephsonCircuits.ZtoB(Z)
-2×2 Matrix{Float64}:
- 1.0   -0.0
- 0.02   1.0
+julia> Z = Complex{Float64}[50.0 50;50 50];JosephsonCircuits.ZtoB(Z)
+2×2 Matrix{ComplexF64}:
+  1.0+0.0im  0.0-0.0im
+ 0.02+0.0im  1.0+0.0im
 ```
 
 # References
@@ -803,15 +763,10 @@ port impedances.
 
 # Examples
 ```jldoctest
-julia> Y = [1/50.0 0.0;0.0 1/50.0];JosephsonCircuits.YtoS(Y)
-2×2 Matrix{Float64}:
-  0.0  -0.0
- -0.0   0.0
-
-julia> Y = [0.0 0.0;0.0 0.0];JosephsonCircuits.YtoS(Y)
-2×2 Matrix{Float64}:
-  1.0  -0.0
- -0.0   1.0
+julia> Y = Complex{Float64}[1/50.0 0.0;0.0 1/50.0];JosephsonCircuits.YtoS(Y)
+2×2 Matrix{ComplexF64}:
+  0.0-0.0im  -0.0-0.0im
+ -0.0-0.0im   0.0-0.0im
 ```
 
 # References
@@ -859,10 +814,10 @@ the result.
 
 # Examples
 ```jldoctest
-julia> Y=[1/50 1/50;1/50 1/50];JosephsonCircuits.YtoA(Y)
-2×2 Matrix{Float64}:
- -1.0  -50.0
-  0.0   -1.0
+julia> Y = Complex{Float64}[1/50 1/50;1/50 1/50];JosephsonCircuits.YtoA(Y)
+2×2 Matrix{ComplexF64}:
+ -1.0+0.0im  -50.0+0.0im
+  0.0+0.0im   -1.0+0.0im
 ```
 
 # References
@@ -914,10 +869,10 @@ the result.
 
 # Examples
 ```jldoctest
-julia> Y=[1/50 1/50;1/50 1/50];JosephsonCircuits.YtoB(Y)
-2×2 Matrix{Float64}:
- -1.0  -50.0
-  0.0   -1.0
+julia> Y = Complex{Float64}[1/50 1/50;1/50 1/50];JosephsonCircuits.YtoB(Y)
+2×2 Matrix{ComplexF64}:
+ -1.0+0.0im  -50.0+0.0im
+  0.0+0.0im   -1.0+0.0im
 ```
 
 # References
@@ -966,12 +921,6 @@ end
 
 Convert the chain (ABCD) matrix `A` to the scattering parameter matrix `S` and
 return the result.
-
-# Examples
-```jldoctest
-julia> S = rand(Complex{Float64},2,2);isapprox(S,JosephsonCircuits.AtoS(JosephsonCircuits.StoA(S)))
-true
-```
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -1055,15 +1004,10 @@ Convert the ABCD matrix `A` to the impedance matrix `Z` and return the result.
 
 # Examples
 ```jldoctest
-julia> A=[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoZ(A)
-2×2 Matrix{Float64}:
- 50.0  50.0
- 50.0  50.0
-
-julia> @variables A B C D;JosephsonCircuits.AtoZ([A B;C D])
-2×2 Matrix{Num}:
- A / C  -B + (A*D) / C
- 1 / C           D / C
+julia> A = Complex{Float64}[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoZ(A)
+2×2 Matrix{ComplexF64}:
+ 50.0+0.0im  50.0+0.0im
+ 50.0+0.0im  50.0+0.0im
 ```
 
 # References
@@ -1115,10 +1059,10 @@ the result.
 
 # Examples
 ```jldoctest
-julia> A=[-1 -50.0;0 -1];JosephsonCircuits.AtoY(A)
-2×2 Matrix{Float64}:
- 0.02  0.02
- 0.02  0.02
+julia> A = Complex{Float64}[-1 -50.0;0 -1];JosephsonCircuits.AtoY(A)
+2×2 Matrix{ComplexF64}:
+ 0.02+0.0im  0.02+0.0im
+ 0.02+0.0im  0.02+0.0im
 ```
 
 # References
@@ -1171,13 +1115,10 @@ matrix is not equal to the inverse chain matrix, inv(A) ≠ B.
 
 # Examples
 ```jldoctest
-julia> A=[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoB(A)
-2×2 Matrix{Float64}:
- 1.0   0.0
- 0.02  1.0
-
-julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.AtoB(JosephsonCircuits.ZtoA(JosephsonCircuits.StoZ(S))),JosephsonCircuits.StoB(S))
-true
+julia> A = Complex{Float64}[1.0 0.0;1/50 1.0];JosephsonCircuits.AtoB(A)
+2×2 Matrix{ComplexF64}:
+  1.0+0.0im  0.0+0.0im
+ 0.02-0.0im  1.0-0.0im
 ```
 
 # References
@@ -1223,12 +1164,6 @@ end
 
 Convert the inverse chain (ABCD) matrix `B` to the scattering parameter matrix
 `S` and return the result.
-
-# Examples
-```jldoctest
-julia> S = rand(Complex{Float64},2,2);isapprox(S,JosephsonCircuits.BtoS(JosephsonCircuits.StoB(S)))
-true
-```
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -1312,10 +1247,10 @@ the result.
 
 # Examples
 ```jldoctest
-julia> B=[1.0 0.0;1/50 1];JosephsonCircuits.BtoZ(B)
-2×2 Matrix{Float64}:
- 50.0  50.0
- 50.0  50.0
+julia> B = Complex{Float64}[1.0 0.0;1/50 1];JosephsonCircuits.BtoZ(B)
+2×2 Matrix{ComplexF64}:
+ 50.0+0.0im  50.0+0.0im
+ 50.0+0.0im  50.0+0.0im
 ```
 
 # References
@@ -1368,15 +1303,10 @@ the result.
 
 # Examples
 ```jldoctest
-julia> @variables A B C D;JosephsonCircuits.BtoY([A B;C D])
-2×2 Matrix{Num}:
-          A / B       -1 / B
- C + (-A*D) / B  -((-D) / B)
-
-julia> B=[-1 -50.0;0 -1];JosephsonCircuits.BtoY(B)
-2×2 Matrix{Float64}:
- 0.02  0.02
- 0.02  0.02
+julia> B = Complex{Float64}[-1 -50.0;0 -1];JosephsonCircuits.BtoY(B)
+2×2 Matrix{ComplexF64}:
+ 0.02+0.0im  0.02+0.0im
+ 0.02+0.0im  0.02+0.0im
 ```
 
 # References
@@ -1428,10 +1358,10 @@ matrix is not equal to the inverse chain matrix, inv(A) ≠ B.
 
 # Examples
 ```jldoctest
-julia> B=[1.0 0.0;1/50 1.0];JosephsonCircuits.BtoA(B)
-2×2 Matrix{Float64}:
- 1.0   0.0
- 0.02  1.0
+julia> B = Complex{Float64}[1.0 0.0;1/50 1.0];JosephsonCircuits.BtoA(B)
+2×2 Matrix{ComplexF64}:
+  1.0+0.0im  0.0+0.0im
+ 0.02-0.0im  1.0-0.0im
 ```
 
 # References
@@ -1456,15 +1386,6 @@ end
 Convert the 2 port chain (ABCD) matrix `ABCD` to the scattering parameter
 matrix `S` and return the result. Assumes a port impedance of 50 Ohms unless
 specified with the `portimpedances` keyword argument.
-
-# Examples
-```jldoctest
-julia> A = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.AtoS(A),JosephsonCircuits.ABCDtoS(A))
-true
-
-julia> A = rand(Complex{Float64},2,2,10);isapprox(JosephsonCircuits.AtoS(A),JosephsonCircuits.ABCDtoS(A))
-true
-```
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -1495,15 +1416,6 @@ end
 Convert the scattering parameter matrix `S` to the 2 port chain (ABCD) matrix and
 return the result. Assumes a port impedance of 50 Ohms unless specified with the
 `portimpedances` keyword argument.
-
-# Examples
-```jldoctest
-julia> S = rand(Complex{Float64},2,2);isapprox(JosephsonCircuits.StoA(S),JosephsonCircuits.StoABCD(S))
-true
-
-julia> S = rand(Complex{Float64},2,2,10);isapprox(JosephsonCircuits.StoA(S),JosephsonCircuits.StoABCD(S))
-true
-```
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for

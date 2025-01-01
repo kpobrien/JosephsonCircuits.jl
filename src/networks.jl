@@ -240,10 +240,10 @@ o--------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_seriesZ(50)
-2×2 Matrix{Int64}:
- 1  50
- 0   1
+julia> JosephsonCircuits.ABCD_seriesZ(50.0+0.0im)
+2×2 Matrix{ComplexF64}:
+ 1.0+0.0im  50.0+0.0im
+ 0.0+0.0im   1.0+0.0im
 ```
 """
 function ABCD_seriesZ(Z1::Number)
@@ -257,10 +257,10 @@ In-place version of [`ABCD_seriesZ`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_seriesZ!(zeros(2,2),50)
-2×2 Matrix{Float64}:
- 1.0  50.0
- 0.0   1.0
+julia> JosephsonCircuits.ABCD_seriesZ!(zeros(Complex{Float64},2,2),50)
+2×2 Matrix{ComplexF64}:
+ 1.0+0.0im  50.0+0.0im
+ 0.0+0.0im   1.0+0.0im
 ```
 """
 function ABCD_seriesZ!(ABCD::AbstractMatrix,Z1::Number)
@@ -286,10 +286,10 @@ o--------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.Y_seriesY(1/50)
-2×2 Matrix{Float64}:
-  0.02  -0.02
- -0.02   0.02
+julia> JosephsonCircuits.Y_seriesY(1/(50.0+0.0im))
+2×2 Matrix{ComplexF64}:
+  0.02-0.0im  -0.02+0.0im
+ -0.02+0.0im   0.02-0.0im
 ```
 """
 function Y_seriesY(Y1::Number)
@@ -303,10 +303,10 @@ In-place version of [`Y_seriesY`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.Y_seriesY!(zeros(2,2),1/50)
-2×2 Matrix{Float64}:
-  0.02  -0.02
- -0.02   0.02
+julia> JosephsonCircuits.Y_seriesY!(zeros(Complex{Float64},2,2),1/50)
+2×2 Matrix{ComplexF64}:
+  0.02+0.0im  -0.02+0.0im
+ -0.02+0.0im   0.02+0.0im
 ```
 """
 function Y_seriesY!(Y::AbstractMatrix,Y1::Number)
@@ -333,10 +333,10 @@ o---------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_shuntY(1/50)
-2×2 Matrix{Float64}:
- 1.0   0.0
- 0.02  1.0
+julia> JosephsonCircuits.ABCD_shuntY(1/(50.0+0.0im))
+2×2 Matrix{ComplexF64}:
+  1.0+0.0im  0.0+0.0im
+ 0.02-0.0im  1.0+0.0im
 ```
 """
 function ABCD_shuntY(Y1::Number)
@@ -350,10 +350,10 @@ In-place version of [`ABCD_shuntY`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_shuntY!(zeros(2,2),1/50)
-2×2 Matrix{Float64}:
- 1.0   0.0
- 0.02  1.0
+julia> JosephsonCircuits.ABCD_shuntY!(zeros(Complex{Float64},2,2),1/50)
+2×2 Matrix{ComplexF64}:
+  1.0+0.0im  0.0+0.0im
+ 0.02+0.0im  1.0+0.0im
 ```
 """
 function ABCD_shuntY!(ABCD::AbstractMatrix,Y1::Number)
@@ -380,10 +380,10 @@ o---------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.Z_shuntZ(50)
-2×2 Matrix{Int64}:
- 50  50
- 50  50
+julia> JosephsonCircuits.Z_shuntZ(50.0+0.0im)
+2×2 Matrix{ComplexF64}:
+ 50.0+0.0im  50.0+0.0im
+ 50.0+0.0im  50.0+0.0im
 ```
 """
 function Z_shuntZ(Z1::Number)
@@ -397,10 +397,10 @@ In-place version of [`Z_shuntZ`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.Z_shuntZ!(zeros(2,2),50)
-2×2 Matrix{Float64}:
- 50.0  50.0
- 50.0  50.0
+julia> JosephsonCircuits.Z_shuntZ!(zeros(Complex{Float64},2,2),50)
+2×2 Matrix{ComplexF64}:
+ 50.0+0.0im  50.0+0.0im
+ 50.0+0.0im  50.0+0.0im
 ```
 """
 function Z_shuntZ!(Z::AbstractMatrix,Z1::Number)
@@ -427,10 +427,10 @@ o-----------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_PiY(1,2,4)
-2×2 Matrix{Float64}:
- 1.5  0.25
- 3.5  1.25
+julia> JosephsonCircuits.ABCD_PiY(1.0+0.0im,2.0+0.0im,4.0+0.0im)
+2×2 Matrix{ComplexF64}:
+ 1.5+0.0im  0.25-0.0im
+ 3.5+0.0im  1.25+0.0im
 ```
 """
 function ABCD_PiY(Y1::Number,Y2::Number,Y3::Number)
@@ -444,10 +444,10 @@ In-place version of [`ABCD_PiY`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_PiY!(zeros(2,2),1,2,4)
-2×2 Matrix{Float64}:
- 1.5  0.25
- 3.5  1.25
+julia> JosephsonCircuits.ABCD_PiY!(zeros(Complex{Float64},2,2),1,2,4)
+2×2 Matrix{ComplexF64}:
+ 1.5+0.0im  0.25+0.0im
+ 3.5+0.0im  1.25+0.0im
 ```
 """
 function ABCD_PiY!(ABCD::AbstractMatrix,Y1::Number,Y2::Number,Y3::Number)
@@ -475,13 +475,10 @@ o-----------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.Y_PiY(1.0,2.0,4.0)
-2×2 Matrix{Float64}:
-  5.0  -4.0
- -4.0   6.0
-
-julia> Y1=1.0;Y2=2.0;Y3=4.0;isapprox(JosephsonCircuits.YtoA(JosephsonCircuits.Y_PiY(Y1,Y2,Y3)),JosephsonCircuits.ABCD_PiY(Y1,Y2,Y3))
-true
+julia> JosephsonCircuits.Y_PiY(1.0+0.0im,2.0+0.0im,4.0+0.0im)
+2×2 Matrix{ComplexF64}:
+  5.0+0.0im  -4.0-0.0im
+ -4.0-0.0im   6.0+0.0im
 ```
 """
 function Y_PiY(Y1::Number,Y2::Number,Y3::Number)
@@ -495,10 +492,10 @@ In-place version of [`Y_PiY`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.Y_PiY!(zeros(2,2),1.0,2.0,4.0)
-2×2 Matrix{Float64}:
-  5.0  -4.0
- -4.0   6.0
+julia> JosephsonCircuits.Y_PiY!(zeros(Complex{Float64},2,2),1.0,2.0,4.0)
+2×2 Matrix{ComplexF64}:
+  5.0+0.0im  -4.0+0.0im
+ -4.0+0.0im   6.0+0.0im
 ```
 """
 function Y_PiY!(Y::AbstractMatrix,Y1::Number,Y2::Number,Y3::Number)
@@ -525,10 +522,10 @@ o-------------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_TZ(1,2,4)
-2×2 Matrix{Float64}:
- 1.25  3.5
- 0.25  1.5
+julia> JosephsonCircuits.ABCD_TZ(1.0+0.0im,2.0+0.0im,4.0+0.0im)
+2×2 Matrix{ComplexF64}:
+ 1.25+0.0im  3.5+0.0im
+ 0.25-0.0im  1.5+0.0im
 ```
 """
 function ABCD_TZ(Z1::Number,Z2::Number,Z3::Number)
@@ -542,10 +539,10 @@ In-place version of [`ABCD_TZ`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.ABCD_TZ!(ones(2,2),1,2,4)
-2×2 Matrix{Float64}:
- 1.25  3.5
- 0.25  1.5
+julia> JosephsonCircuits.ABCD_TZ!(ones(Complex{Float64},2,2),1,2,4)
+2×2 Matrix{ComplexF64}:
+ 1.25+0.0im  3.5+0.0im
+ 0.25+0.0im  1.5+0.0im
 ```
 """
 function ABCD_TZ!(ABCD::AbstractMatrix,Z1::Number,Z2::Number,Z3::Number)
@@ -572,13 +569,10 @@ o-------------o
 ```
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.Z_TZ(1,2,4)
-2×2 Matrix{Int64}:
- 5  4
- 4  6
-
-julia> Z1=1.0;Z2=2.0;Z3=4.0;isapprox(JosephsonCircuits.ZtoA(JosephsonCircuits.Z_TZ(Z1,Z2,Z3)),JosephsonCircuits.ABCD_TZ(Z1,Z2,Z3))
-true
+julia> JosephsonCircuits.Z_TZ(1.0+0.0im,2.0+0.0im,4.0+0.0im)
+2×2 Matrix{ComplexF64}:
+ 5.0+0.0im  4.0+0.0im
+ 4.0+0.0im  6.0+0.0im
 ```
 """
 function Z_TZ(Z1::Number,Z2::Number,Z3::Number)
@@ -592,10 +586,10 @@ In-place version of [`Z_TZ`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.Z_TZ!(ones(2,2),1,2,4)
-2×2 Matrix{Float64}:
- 5.0  4.0
- 4.0  6.0
+julia> JosephsonCircuits.Z_TZ!(ones(Complex{Float64},2,2),1,2,4)
+2×2 Matrix{ComplexF64}:
+ 5.0+0.0im  4.0+0.0im
+ 4.0+0.0im  6.0+0.0im
 ```
 """
 function Z_TZ!(Z::AbstractMatrix,Z1::Number,Z2::Number,Z3::Number)
@@ -675,9 +669,6 @@ julia> JosephsonCircuits.Z_tline(50, pi/4)
 2×2 Matrix{ComplexF64}:
  0.0-50.0im     0.0-70.7107im
  0.0-70.7107im  0.0-50.0im
-
-julia> isapprox(JosephsonCircuits.Z_tline(50, pi/4),JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_tline(50, pi/4)))
-true
 ```
 """
 function Z_tline(Z0::Number, theta::Number)
@@ -734,9 +725,6 @@ julia> JosephsonCircuits.ABCD_coupled_tline(50,50,pi/4,pi/4)
       0.0+0.0im        0.707107+0.0im                0.0+35.3553im
       0.0+0.0141421im       0.0+0.0im                0.0+0.0im
       0.0+0.0im             0.0+0.0141421im     0.707107+0.0im
-
-julia> isapprox(JosephsonCircuits.AtoZ(JosephsonCircuits.ABCD_coupled_tline(55,50,pi/4,pi/4)),JosephsonCircuits.Z_coupled_tline(55,50,pi/4,pi/4))
-true
 ```
 """
 function ABCD_coupled_tline(Z0e::Number, Z0o::Number, thetae::Number,

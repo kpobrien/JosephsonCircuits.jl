@@ -14,11 +14,11 @@ import StaticArrays
         @testset "$(f), $(f!) errors" begin
             @test_throws(
                 ArgumentError("Size of output (3, 2) must be (2, 2)."),
-                f!(zeros(3,2),1.0)
+                f!(zeros(Complex{Float64},3,2),1.0)
             )
             @test_throws(
                 ArgumentError("Sizes of output (2, 2) and input (1,) not compatible."),
-                f!(zeros(2,2),ones(1))
+                f!(zeros(Complex{Float64},2,2),ones(1))
             )
         end
 
@@ -63,19 +63,19 @@ import StaticArrays
             )
             @test_throws(
                 ArgumentError("Size of output (3, 2) must be (2, 2)."),
-                f!(zeros(3,2),1.0,1.0)
+                f!(zeros(Complex{Float64},3,2),1.0,1.0)
             )
             @test_throws(
                 ArgumentError("Sizes of output (2, 2) and inputs (1,) not compatible."),
-                f!(zeros(2,2),ones(1),ones(1))
+                f!(zeros(Complex{Float64},2,2),ones(1),ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of output (2, 2) and inputs (1,) not compatible."),
-                f!(zeros(2,2),1.0,ones(1))
+                f!(zeros(Complex{Float64},2,2),1.0,ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
-                f!(zeros(2,2,1),ones(2),ones(1))
+                f!(zeros(Complex{Float64},2,2,1),ones(2),ones(1))
             )
         end
 
@@ -127,7 +127,7 @@ import StaticArrays
         @testset "$(f), $(f!) errors" begin
             @test_throws(
                 ArgumentError("Size of output (3, 2) must be (2, 2)."),
-                f!(zeros(3,2),1.0,1.0,1.0)
+                f!(zeros(Complex{Float64},3,2),1.0,1.0,1.0)
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (2,), (1,), and (1,) must be equal."),
@@ -135,11 +135,11 @@ import StaticArrays
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (2,), (1,), and (1,) must be equal."),
-                f!(zeros(2,2),ones(2),ones(1),ones(1))
+                f!(zeros(Complex{Float64},2,2),ones(2),ones(1),ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of output (3, 2) and inputs (1,) not compatible."),
-                f!(zeros(3,2),ones(1),ones(1),ones(1))
+                f!(zeros(Complex{Float64},3,2),ones(1),ones(1),ones(1))
             )
         end
 
@@ -182,7 +182,7 @@ import StaticArrays
         @testset "$(f), $(f!) errors" begin
             @test_throws(
                 ArgumentError("Size of output (4, 3) must be (4, 4)."),
-                f!(zeros(4,3),1.0,1.0,1.0,1.0)
+                f!(zeros(Complex{Float64},4,3),1.0,1.0,1.0,1.0)
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (2,), (1,), (1,), and (1,) must be equal."),
@@ -194,19 +194,19 @@ import StaticArrays
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
-                f!(zeros(4,4),1.0,1.0,ones(2),ones(1))
+                f!(zeros(Complex{Float64},4,4),1.0,1.0,ones(2),ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of output (4, 4) and inputs (2,) not compatible."),
-                f!(zeros(4,4),1.0,1.0,ones(2),ones(2))
+                f!(zeros(Complex{Float64},4,4),1.0,1.0,ones(2),ones(2))
             )
             @test_throws(
                 ArgumentError("Sizes of inputs (1,), (1,), (2,), and (1,) must be equal."),
-                f!(zeros(4,4),ones(1),ones(1),ones(2),ones(1))
+                f!(zeros(Complex{Float64},4,4),ones(1),ones(1),ones(2),ones(1))
             )
             @test_throws(
                 ArgumentError("Sizes of output (4, 4) and inputs (2,) not compatible."),
-                f!(zeros(4,4),ones(2),ones(2),ones(2),ones(2))
+                f!(zeros(Complex{Float64},4,4),ones(2),ones(2),ones(2),ones(2))
             )
         end
 

@@ -2,8 +2,6 @@ using Aqua
 using Documenter
 using Test
 using JosephsonCircuits
-import StaticArrays
-
 
 @testset verbose = true "Code quality (Aqua.jl)" begin
     Aqua.test_all(JosephsonCircuits; ambiguities = false, persistent_tasks=false)

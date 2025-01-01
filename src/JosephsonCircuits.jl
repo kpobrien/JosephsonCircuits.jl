@@ -351,16 +351,20 @@ function warmupnetwork()
         for portimpedances in [
                 rand(Complex{Float64}), rand(Complex{Float64},2),
             ]
-            for arg1 in [rand(Complex{Float64},2,2)]
-                arg2 = f[1](arg1,portimpedances=portimpedances)
-                arg3 = f[2](arg2,portimpedances=portimpedances)
+            for arg1 in [rand(Complex{Float64},2,2), (StaticArrays.@MMatrix rand(Complex{Float64},2,2))]
+                f[1](arg1,portimpedances=portimpedances)
+                f[2](arg1,portimpedances=portimpedances)
+                f[1](arg1)
+                f[2](arg1)
             end
         end
         # array input
         for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2,10)]
             for arg1 in [rand(Complex{Float64},2,2,10)]
-                arg2 = f[1](arg1,portimpedances=portimpedances)
-                arg3 = f[2](arg2,portimpedances=portimpedances)
+                f[1](arg1,portimpedances=portimpedances)
+                f[2](arg1,portimpedances=portimpedances)
+                f[1](arg1)
+                f[2](arg1)
             end
         end
         # vector of matrices
@@ -368,8 +372,10 @@ function warmupnetwork()
             for arg1 in [
                     [rand(Complex{Float64},2,2) for i in 1:10],
                 ]
-                arg2 = [f[1](arg1[i],portimpedances=portimpedances) for i in 1:10]
-                arg3 = [f[2](arg2[i],portimpedances=portimpedances) for i in 1:10]
+                [f[1](arg1[i],portimpedances=portimpedances) for i in 1:10]
+                [f[2](arg1[i],portimpedances=portimpedances) for i in 1:10]
+                [f[1](arg1[i]) for i in 1:10]
+                [f[2](arg1[i]) for i in 1:10]
             end
         end
     end
@@ -386,23 +392,48 @@ function warmupnetwork()
             (JosephsonCircuits.ZtoY,JosephsonCircuits.YtoZ),
         ]
         # single matrix input
-        for arg1 in [rand(Complex{Float64},2,2)]
-            arg2 = f[1](arg1)
-            arg3 = f[2](arg2)
+        for arg1 in [rand(Complex{Float64},2,2), (StaticArrays.@MMatrix rand(Complex{Float64},2,2))]
+            f[1](arg1)
+            f[2](arg1)
         end
         # array input
         for arg1 in [rand(Complex{Float64},2,2,10)]
-            arg2 = f[1](arg1)
-            arg3 = f[2](arg2)
+            f[1](arg1)
+            f[2](arg1)
         end
         # vector of matrices
         for arg1 in [
                 [rand(Complex{Float64},2,2) for i in 1:10],
             ]
-            arg2 = [f[1](arg1[i]) for i in 1:10]
-            arg3 = [f[2](arg2[i]) for i in 1:10]
+            [f[1](arg1[i]) for i in 1:10]
+            [f[2](arg1[i]) for i in 1:10]
         end
     end
+
+
+    #  network devices, consistency check
+    x1 = rand(Complex{Float64})
+    x2 = rand(Complex{Float64})
+    x3 = rand(Complex{Float64})
+    x4 = rand(Complex{Float64})
+    JosephsonCircuits.ABCD_seriesZ(x1)
+    JosephsonCircuits.YtoA(JosephsonCircuits.Y_seriesY(1/x1))
+
+    JosephsonCircuits.ABCD_shuntY(1/x1)
+    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_shuntZ(x1))
+
+    JosephsonCircuits.ABCD_tline(x1,x2)
+    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_tline(x1,x2))
+
+    JosephsonCircuits.ABCD_PiY(x1,x2,x3)
+    JosephsonCircuits.YtoA(JosephsonCircuits.Y_PiY(x1,x2,x3))
+
+    JosephsonCircuits.ABCD_TZ(x1,x2,x3)
+    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_TZ(x1,x2,x3))
+
+    JosephsonCircuits.ABCD_coupled_tline(x1,x2,x3,x4)
+    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_coupled_tline(x1,x2,x3,x4))
+
 
     return true
 end

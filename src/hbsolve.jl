@@ -1964,25 +1964,6 @@ JosephsonCircuits.calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbran
          ⋅          ⋅          ⋅  A22 / Lj2  A12 / Lj2  A22 / Lj2
          ⋅          ⋅          ⋅  A32 / Lj2  A22 / Lj2  A12 / Lj2
 ```
-```jldoctest
-@syms A11 A12 A21 A22 A31 A32 Lj1 Lj2
-Amatrix = [A11 A12;A21 A22;A31 A32]
-Amatrixindices = [1 0 0; 0 1 0; 0 0 1]
-Ljb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2])
-Lmean = 1
-Nmodes = 3
-Nbranches = 2
-JosephsonCircuits.calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches).nzval
-
-# output
-6-element Vector{Any}:
- A11 / Lj1
- A11 / Lj1
- A11 / Lj1
- A12 / Lj2
- A12 / Lj2
- A12 / Lj2
-```
 """
 function calcAoLjbm2(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector,
     Lmean, Nmodes, Nbranches)

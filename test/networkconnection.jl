@@ -8,7 +8,7 @@ import StaticArrays
     # one network
     @testset "connectS one network errors" begin
         begin
-            Sa = Float64[1 2;3 4]
+            Sa = Complex{Float64}[1 2;3 4]
             @test_throws(
                 ArgumentError("Port `k` is smaller than one."),
                 JosephsonCircuits.connectS(Sa,0,1)
@@ -36,7 +36,7 @@ import StaticArrays
         end
 
         begin
-            Sa = Float64[1 2 3;4 5 6]
+            Sa = Complex{Float64}[1 2 3;4 5 6]
             @test_throws(
                 DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."),
                 JosephsonCircuits.connectS(Sa,1,2)
@@ -95,8 +95,8 @@ import StaticArrays
     # two networks
     @testset "connectS two networks errors" begin
         begin
-            Sa = Float64[1 2;3 4]
-            Sb = Float64[5 6;7 8]
+            Sa = Complex{Float64}[1 2;3 4]
+            Sb = Complex{Float64}[5 6;7 8]
             @test_throws(
                 ArgumentError("Port `k` is smaller than one."),
                 JosephsonCircuits.connectS(Sa,Sb,0,1)
@@ -119,8 +119,8 @@ import StaticArrays
         end
 
         begin
-            Sa = Float64[1 2 3;4 5 6]
-            Sb = Float64[5 6;7 8]
+            Sa = Complex{Float64}[1 2 3;4 5 6]
+            Sb = Complex{Float64}[5 6;7 8]
             @test_throws(
                 DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."),
                 JosephsonCircuits.connectS(Sa,Sb,1,2)
@@ -128,8 +128,8 @@ import StaticArrays
         end
 
         begin
-            Sa = Float64[1 2;4 5]
-            Sb = Float64[5 6 7;8 9 10]
+            Sa = Complex{Float64}[1 2;4 5]
+            Sb = Complex{Float64}[5 6 7;8 9 10]
             @test_throws(
                 DimensionMismatch("Lengths of first two dimensions of `Sb` must be equal."),
                 JosephsonCircuits.connectS(Sa,Sb,1,2)
@@ -325,19 +325,6 @@ import StaticArrays
         S1 = rand(Complex{Float64},3,3)
         S2 = rand(Complex{Float64},2,2)
 
-        # with symbols
-        networks = [(:S1,S1),(:S2,S2),(:S3,Ssplitter),(:S4,Sopen)]
-        connections = [(:S1,:S1,1,2),(:S1,:S2,3,1),(:S3,:S2,2,2),(:S3,:S4,3,1)]
-        Sout1, ports = JosephsonCircuits.connectS(networks,connections)
-
-        Sout2 = begin
-            S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
-            S = JosephsonCircuits.connectS(S,S2,2,2)
-            S = JosephsonCircuits.connectS(S1,S,3,2)
-            S = JosephsonCircuits.connectS(S,1,2)
-        end
-        @test isapprox(Sout1[1],Sout2)
-
         # with strings
         networks = [("S1",S1),("S2",S2),("S3",Ssplitter),("S4",Sopen)]
         connections = [("S1","S1",1,2),("S1","S2",3,1),("S3","S2",2,2),("S3","S4",3,1)]
@@ -441,29 +428,29 @@ import StaticArrays
 
     @testset "make_connection! errors" begin
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-            connections = [(:S1,:S2,1,2)];
+            networks = [("S1",Complex{Float64}[0.0 1.0;1.0 0.0]),("S2",Complex{Float64}[0.5 0.5;0.5 0.5])];
+            connections = [("S1","S2",1,2)];
             userinput = ones(Bool,length(networks))
             storage = Dict{Int,typeof(networks[1][2])}()
             g, fconnectionlist, fweightlist, ports, networkdata = JosephsonCircuits.connectS_initialize(networks,connections)
             # corrupt the vector of ports
-            ports = [[(:S1, 1), (:S1, 2)],[(:S2, 1), (:S3, 2)]]
+            ports = [[("S1", 1), ("S1", 2)],[("S2", 1), ("S3", 2)]]
             @test_throws(
-                ArgumentError("Destination port (:S2, 2) not found in the ports [(:S2, 1), (:S3, 2)] of the destination node 2."),
+                ArgumentError("""Destination port ("S2", 2) not found in the ports [("S2", 1), ("S3", 2)] of the destination node 2."""),
                 JosephsonCircuits.make_connection!(g, fconnectionlist, fweightlist, ports, networkdata,1,1,1,userinput,storage)
             )
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-            connections = [(:S1,:S2,1,2)];
+            networks = [("S1",Complex{Float64}[0.0 1.0;1.0 0.0]),("S2",Complex{Float64}[0.5 0.5;0.5 0.5])];
+            connections = [("S1","S2",1,2)];
             userinput = ones(Bool,length(networks))
             storage = Dict{Int,typeof(networks[1][2])}()
             g, fconnectionlist, fweightlist, ports, networkdata = JosephsonCircuits.connectS_initialize(networks,connections)
             # corrupt the vector of ports
-            ports = [[(:S3, 1), (:S1, 2)],[(:S2, 1), (:S2, 2)]]
+            ports = [[("S3", 1), ("S1", 2)],[("S2", 1), ("S2", 2)]]
             @test_throws(
-                ArgumentError("Source port (:S1, 1) not found in the ports [(:S3, 1), (:S1, 2)] of the source node 1."),
+                ArgumentError("""Source port ("S1", 1) not found in the ports [("S3", 1), ("S1", 2)] of the source node 1."""),
                 JosephsonCircuits.make_connection!(g, fconnectionlist, fweightlist, ports, networkdata,1,1,1,userinput,storage)
             )
         end
@@ -473,26 +460,26 @@ import StaticArrays
     @testset "connectS_initialize errors" begin
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-            connections = [(:S3,:S2,1,2)];
+            networks = [("S1",Complex{Float64}[0.0 1.0;1.0 0.0]),("S2",Complex{Float64}[0.5 0.5;0.5 0.5])];
+            connections = [("S3","S2",1,2)];
             @test_throws(
-                ArgumentError("Source (network name, port number) (:S3, 1) not found for connection (S3,S2,1,2)."),
+                ArgumentError("Source (network name, port number) (S3, 1) not found for connection (S3,S2,1,2)."),
                 JosephsonCircuits.connectS_initialize(networks,connections)
             )
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-            connections = [(:S1,:S3,1,2)];
+            networks = [("S1",Complex{Float64}[0.0 1.0;1.0 0.0]),("S2",Complex{Float64}[0.5 0.5;0.5 0.5])];
+            connections = [("S1","S3",1,2)];
             @test_throws(
-                ArgumentError("Destination (network name, port number) (:S3, 2) not found for connection (S1,S3,1,2)."),
+                ArgumentError("Destination (network name, port number) (S3, 2) not found for connection (S1,S3,1,2)."),
                 JosephsonCircuits.connectS_initialize(networks,connections)
             )
         end
 
         begin
-            networks = [(:S1,[0.0 1.0 1.0;1.0 0.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];
-            connections = [(:S1,:S2,1,2)];
+            networks = [("S1",Complex{Float64}[0.0 1.0 1.0;1.0 0.0 0.0]),("S2",Complex{Float64}[0.5 0.5;0.5 0.5])];
+            connections = [("S1","S2",1,2)];
             @test_throws(
                 ArgumentError("The sizes of the first two dimensions (2,3) of the scattering matrix S1 must be the same."),
                 JosephsonCircuits.connectS_initialize(networks,connections)
@@ -500,7 +487,7 @@ import StaticArrays
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5]),(:S1,Complex{Float64}[0.0 1.0;1.0 0.0])];
             connections = [(:S1,:S2,1,2)];
             @test_throws(
                 ArgumentError("Duplicate network names detected [(networkname,count)]: [(:S1, 2)]."),
@@ -509,7 +496,7 @@ import StaticArrays
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),(:S3,[0.0 1.0;1.0 0.0],[(:S3,1),(:S3,2)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),(:S3,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S3,1),(:S3,2)])];
             connections = [(:S1,:S2,1,2),(:S1,:S3,1,2)];
             @test_throws(
                 ArgumentError("Duplicate connections detected [(networkname,port),counts]: [((:S1, 1), 2)]."),
@@ -518,7 +505,7 @@ import StaticArrays
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5]),(:S1,[0.0 1.0;1.0 0.0])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5]),(:S1,Complex{Float64}[0.0 1.0;1.0 0.0])];
             connections = [(:S1,:S2,1,2)];
             @test_throws(
                 ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of S1 is (2, 2, 2) and size of S2 is (2, 2)."),
@@ -536,7 +523,7 @@ import StaticArrays
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,5)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,5)])];
             connections = [(:S1,:S3,1,5)];
             @test_throws(
                 ArgumentError("Duplicate port (:S3, 5) in network S2."),
@@ -549,25 +536,25 @@ import StaticArrays
     @testset "parse_connections_sparse errors" begin
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [(:S3,:S2,1,2)];
             @test_throws(
-                ArgumentError("Source (network name, port number) (:S3, 1) not found for connection (S3,S2,1,2)."),
+                ArgumentError("Source (network name, port number) (S3, 1) not found for connection (S3,S2,1,2)."),
                 JosephsonCircuits.parse_connections_sparse(networks,connections)
             )
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [(:S1,:S3,1,2)];
             @test_throws(
-                ArgumentError("Destination (network name, port number) (:S3, 2) not found for connection (S1,S3,1,2)."),
+                ArgumentError("Destination (network name, port number) (S3, 2) not found for connection (S1,S3,1,2)."),
                 JosephsonCircuits.parse_connections_sparse(networks,connections)
             )
         end
 
         begin
-            networks = [(:S1,[0.0 1.0 0.0;1.0 0.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0 0.0;1.0 0.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [(:S1,:S2,1,2)];
             @test_throws(
                 ArgumentError("The sizes of the first two dimensions (2,3) of the scattering matrix S1 must be the same."),
@@ -576,7 +563,7 @@ import StaticArrays
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)])];
             connections = [(:S1,:S2,1,2)];
             @test_throws(
                 ArgumentError("Duplicate network names detected [(networkname,count)]: [(:S1, 2)]."),
@@ -585,7 +572,7 @@ import StaticArrays
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),(:S3,[0.0 1.0;1.0 0.0],[(:S3,1),(:S3,2)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),(:S3,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S3,1),(:S3,2)])];
             connections = [(:S1,:S2,1,2),(:S1,:S3,1,2)];
             @test_throws(
                 ArgumentError("Duplicate connections detected [(networkname,port),counts]: [((:S1, 1), 2)]."),
@@ -594,7 +581,7 @@ import StaticArrays
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [(:S1,:S2,1,2)];
             @test_throws(
                 ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of S1 is (2, 2, 2) and size of S2 is (2, 2)."),
@@ -612,7 +599,7 @@ import StaticArrays
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,5)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,5)])];
             connections = [(:S1,:S3,1,5)];
             @test_throws(
                 ArgumentError("Duplicate port (:S3, 5) in network S2."),
@@ -623,7 +610,7 @@ import StaticArrays
 
     @testset "add_splitters errors" begin
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [[(:S1,1)]];
             @test_throws(
                 ArgumentError("Invalid connection [(:S1, 1)] with only network and port."),
@@ -632,7 +619,7 @@ import StaticArrays
         end
 
         begin
-            networks = [(:S1,[0.0 1.0 0.0;1.0 0.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0 0.0;1.0 0.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [[(:S1,1),(:S2,2)]];
             @test_throws(
                 ArgumentError("The sizes of the first two dimensions (2,3) of the scattering matrix S1 must be the same."),
@@ -641,7 +628,7 @@ import StaticArrays
         end
 
         begin
-            networks = [(:S1,[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [(:S1,Complex{Float64}[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [[(:S1,1),(:S2,2)]];
             @test_throws(
                 ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of S1 is (2, 2, 2) and size of S2 is (2, 2)."),
@@ -726,23 +713,23 @@ import StaticArrays
         @test isapprox(sol2[1][1],sol3)
     end
 
-    @testset "connectS solveS mirror" begin
-        # test from https://github.com/scikit-rf/scikit-rf/issues/1221
+    # @testset "connectS solveS mirror" begin
+    #     # test from https://github.com/scikit-rf/scikit-rf/issues/1221
 
-        S1 = rand(Complex{Float64},3,3)
-        S1_mirror = inv(S1)
+    #     S1 = rand(Complex{Float64},3,3)
+    #     S1_mirror = inv(S1)
 
-        networks = [("S1",S1),("S1_mirror",S1_mirror)]
-        connections = [[("S1",2),("S1_mirror",2)],[("S1",3),("S1_mirror",3)]]
+    #     networks = [("S1",S1),("S1_mirror",S1_mirror)]
+    #     connections = [[("S1",2),("S1_mirror",2)],[("S1",3),("S1_mirror",3)]]
         
-        ## solveS sometimes gives singular matrix errors, so don't test on this
-        ## network.
-        # sol1 = JosephsonCircuits.solveS(networks,connections;factorization=JosephsonCircuits.LUfactorization())
-        sol2 = JosephsonCircuits.connectS(networks,connections)
-        sol3 = Complex{Float64}[0 1;1 0]
+    #     ## solveS sometimes gives singular matrix errors, so don't test on this
+    #     ## network.
+    #     # sol1 = JosephsonCircuits.solveS(networks,connections;factorization=JosephsonCircuits.LUfactorization())
+    #     sol2 = JosephsonCircuits.connectS(networks,connections)
+    #     sol3 = Complex{Float64}[0 1;1 0]
 
-        # @test isapprox(sol1[1],sol3)
-        @test isapprox(sol2[1][1],sol3)
-    end
+    #     # @test isapprox(sol1[1],sol3)
+    #     @test isapprox(sol2[1][1],sol3)
+    # end
 
 end

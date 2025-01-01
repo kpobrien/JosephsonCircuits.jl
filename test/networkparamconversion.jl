@@ -90,4 +90,33 @@ import StaticArrays
         end
     end
 
+    @testset "Different types of conversions" begin
+
+        S = rand(Complex{Float64},2,2)
+
+        @test isapprox(JosephsonCircuits.ZtoA(JosephsonCircuits.StoZ(S)),JosephsonCircuits.StoA(S))
+
+        @test isapprox(JosephsonCircuits.BtoS(JosephsonCircuits.StoB(S)),S)
+
+        @test isapprox(JosephsonCircuits.AtoS(JosephsonCircuits.BtoA(JosephsonCircuits.StoB(S))),S)
+
+        @test isapprox(S,JosephsonCircuits.AtoS(JosephsonCircuits.StoA(S)))
+
+        @test isapprox(JosephsonCircuits.AtoB(JosephsonCircuits.ZtoA(JosephsonCircuits.StoZ(S))),JosephsonCircuits.StoB(S))
+
+        @test isapprox(S,JosephsonCircuits.BtoS(JosephsonCircuits.StoB(S)))
+
+        A = rand(Complex{Float64},2,2)
+
+        @test isapprox(JosephsonCircuits.AtoS(A),JosephsonCircuits.ABCDtoS(A))
+
+        @test isapprox(JosephsonCircuits.AtoS(A),JosephsonCircuits.ABCDtoS(A))
+
+        @test isapprox(JosephsonCircuits.StoA(S),JosephsonCircuits.StoABCD(S))
+
+        @test isapprox(JosephsonCircuits.StoA(S),JosephsonCircuits.StoABCD(S))
+
+    end
+
+
 end

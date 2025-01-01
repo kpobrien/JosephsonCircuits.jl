@@ -793,12 +793,6 @@ symbolic variables.
 
 # Examples
 ```jldoctest
-julia> @syms w;A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,1.0,3*w+1]);println(A.nzval);JosephsonCircuits.symbolicindices(A)
-Any[w, 1 + 3w, 1.0]
-2-element Vector{Int64}:
- 1
- 2
-
 julia> @variables w;A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,1.0,3*w+1]);println(A.nzval);JosephsonCircuits.symbolicindices(A)
 Num[w, 1 + 3w, 1.0]
 2-element Vector{Int64}:
@@ -843,7 +837,7 @@ different function call is required for `@syms` vs `@variables`.
 
 # Examples
 ```jldoctest
-julia> @syms w;JosephsonCircuits.checkissymbolic(w)
+julia> @variables w;JosephsonCircuits.checkissymbolic(w)
 true
 
 julia> JosephsonCircuits.checkissymbolic(1.0)

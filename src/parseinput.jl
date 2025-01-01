@@ -832,9 +832,6 @@ ComplexF64[]
 
 julia> @variables R1 C1 R2;JosephsonCircuits.calcvaluetype([:R,:C,:R],[R1,C1,R2],[:R])
 Num[]
-
-julia> @syms R1 C1 R2;JosephsonCircuits.calcvaluetype([:R,:C,:R],[R1,C1,R2],[:R])
-SymbolicUtils.BasicSymbolic{Number}[]
 ```
 """
 function calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,

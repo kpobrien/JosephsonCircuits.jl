@@ -1406,10 +1406,10 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, 
 
         # check if the source and destination networks exist
         if !haskey(portdict,src)
-            throw(ArgumentError("Source (network name, port number) $(src) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+            throw(ArgumentError("Source (network name, port number) ($(src_name), $(src_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
         if !haskey(portdict,dst)
-            throw(ArgumentError("Destination (network name, port number) $(dst) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+            throw(ArgumentError("Destination (network name, port number) ($(dst_name), $(dst_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
 
         src_index, src_port_index = portdict[src]
@@ -1675,10 +1675,10 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tupl
 
         # check if the source and destination networks exist
         if !haskey(portdict,src)
-            throw(ArgumentError("Source (network name, port number) $(src) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+            throw(ArgumentError("Source (network name, port number) ($(src_name), $(src_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
         if !haskey(portdict,dst)
-            throw(ArgumentError("Destination (network name, port number) $(dst) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+            throw(ArgumentError("Destination (network name, port number) ($(dst_name), $(dst_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
 
         src_index = portdict[src]

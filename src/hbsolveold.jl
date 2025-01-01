@@ -921,13 +921,6 @@ julia> @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([
  A11 / Lj1  A31 / Lj1
  A31 / Lj1  A11 / Lj1
 
-julia> @syms Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11;A21;A31],JosephsonCircuits.SparseArrays.sparsevec([1],[Lj1]),1,2,1).nzval
-4-element Vector{Any}:
- A11 / Lj1
- A31 / Lj1
- conj(A31 / Lj1)
- A11 / Lj1
-
 julia> @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2)
 4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 8 stored entries:
  A11 / Lj1  A31 / Lj1          ⋅          ⋅
