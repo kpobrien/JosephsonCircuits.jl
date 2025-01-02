@@ -715,7 +715,7 @@ println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
 sparse([1, 2, 1, 2], [1, 1, 2, 2], Num[(1.0 + (Lm*(Lm / L1)) / (L2 + (-(Lm^2)) / L1)) / L1, (-(Lm / L1)) / (L2 + (-(Lm^2)) / L1), (-(Lm / (L2 + (-(Lm^2)) / L1))) / L1, 1.0 / (L2 + (-(Lm^2)) / L1)], 2, 2)
 ```
 ```jldoctest
-@syms L1 L2
+@variables L1 L2
 Nmodes = 1
 Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2]);
 Mb = JosephsonCircuits.SparseArrays.sparse([], [], Nothing[]);
@@ -723,7 +723,18 @@ Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
 println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
 
 # output
-sparse([1, 2], [1, 2], Any[1 / L1, 1 / L2], 2, 2)
+sparse([1, 2], [1, 2], Num[1 / L1, 1 / L2], 2, 2)
+```
+```jldoctest
+@syms L1 L2 Lm
+Nmodes = 1
+Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2]);
+Mb = JosephsonCircuits.SparseArrays.sparse([2,1], [1,2], [Lm,Lm]);
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1.0,1.0])
+println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
+
+# output
+sparse([1, 2, 1, 2], [1, 1, 2, 2], Num[(1.0 + (Lm*(Lm / L1)) / (L2 + (-(Lm^2)) / L1)) / L1, (-(Lm / L1)) / (L2 + (-(Lm^2)) / L1), (-(Lm / (L2 + (-(Lm^2)) / L1))) / L1, 1.0 / (L2 + (-(Lm^2)) / L1)], 2, 2)
 ```
 """
 function calcinvLn(Lb::SparseVector, Mb::SparseMatrixCSC,
