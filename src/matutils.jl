@@ -992,7 +992,8 @@ which is the LU factorization of `A`.
 function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
     p1, p2 = fact.p
 
-    # solve L*y = b
+    # solve P*L*y = b where L = [l11 0; l21 l22] and P = [1 0; 0 1] if not
+    # pivoting and [0 1;1 0] if pivoting
     if p1 == 1 && p2 == 2
         y1 = b[1]/fact.L[1,1]
         y2 = (b[2]-y1*fact.L[2,1])/fact.L[2,2]
@@ -1003,10 +1004,12 @@ function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
         throw(ArgumentError("Unknown pivot."))
     end
 
-    # solve U*x = y
+    # solve U*x = y where U = [u11 u12; 0 u22]
     if iszero(fact.U[2,2])
         # if U[2,2] is zero, the matrix is singular and the linear system
-        # has potentially no solution or no unique solution.
+        # has potentially no solution or no unique solution. assume the matrix
+        # is rank 1 (solution not unique) then check if the solution we find
+        # solves the linear system.
         x2 = zero(y2)
     else
         x2 = y2/fact.U[2,2]
@@ -1018,7 +1021,12 @@ function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
     if iszero(fact.U[2,2])
         # if the matrix is singular, check that we are returning a valid
         # solution to the linear system
-        if !isequal(fact.L*fact.U*x,b)
+        if p1 == 1 && p2 == 2
+            P = StaticArrays.SMatrix{2,2}(1,0,0,1)
+        else
+            P = StaticArrays.SMatrix{2,2}(0,1,1,0)
+        end
+        if !(isequal(P*fact.L*fact.U*x,b) || isapprox(P*fact.L*fact.U*x,b))
             throw(ArgumentError("Failed to solve linear system."))
         end
     end
