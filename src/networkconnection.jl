@@ -1887,7 +1887,7 @@ function solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indice
 
         # solve the linear system
         # Eq. 26
-        ldiv!(ac,cache.factorization, Scp_dense)
+        trysolve!(ac, cache.factorization, Scp_dense)
 
         # Eq. 28
         Sp[:,:,j] .= Spp + Spc*ac

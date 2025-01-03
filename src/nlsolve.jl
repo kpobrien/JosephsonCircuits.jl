@@ -21,9 +21,9 @@ function LUfactorization(;kwargs...)
     return Factorization(lu,lu!,kwargs)
 end
 
-# function QRfactorization(;kwargs...)
-#     return Factorization(qr,qr!,kwargs)
-# end
+function QRfactorization(;kwargs...)
+    return Factorization(qr,nothing,kwargs)
+end
 
 
 """
@@ -63,6 +63,9 @@ function tryfactorize!(cache::FactorizationCache,
             factorization.kwargs...)
     # otherwise, try to update the factorization, falling back to generating
     # a new one if that fails
+    elseif isnothing(factorization.factorize!)
+        cache.factorization = factorization.factorize(A;
+            factorization.kwargs...)
     else
         try
             # update the factorization. the sparsity structure does 
@@ -83,6 +86,24 @@ function tryfactorize!(cache::FactorizationCache,
     end
     return cache
 end
+
+
+"""
+    trysolve!(x,factorization,b)
+
+First try to solve a linear system using ldiv! then if it errors, use \\. The
+motivation for this function is some factorizations such as `qr` with sparse
+matrices don't support ldiv!. 
+"""
+function trysolve!(x,factorization,b)
+    try
+        ldiv!(x,factorization,b)
+    catch
+        x .= factorization \ b
+    end
+    return x
+end
+
 
 """
     linesearch(f, fp, dfdalpha, alphamin)
@@ -220,7 +241,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         tryfactorize!(cache,factorization,J)
 
         # solve the linear system
-        ldiv!(deltax, cache.factorization, F)
+        trysolve!(deltax, cache.factorization, F)
 
         # multiply deltax by -1
         rmul!(deltax, -1)

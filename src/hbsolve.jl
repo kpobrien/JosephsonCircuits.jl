@@ -218,7 +218,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     nonlinear = hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = nothing, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        symfreqvar = symfreqvar, keyedarrays = keyedarrays)
+        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+        factorization = factorization)
 
     # generate the signal modes
     signalfreq =truncfreqs(
@@ -351,7 +352,8 @@ function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
     nonlinear = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = nothing, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        symfreqvar = symfreqvar, keyedarrays = keyedarrays)
+        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+        factorization = factorization)
 
     # generate the signal modes
     signalfreq =truncfreqs(
@@ -1155,7 +1157,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
         tryfactorize!(cache, factorization, Asparsecopy)
 
         # solve the linear system
-        ldiv!(phin, cache.factorization, bnm)
+        trysolve!(phin, cache.factorization, bnm)
 
         # convert to node voltages. node flux is defined as the time integral
         # of node voltage so node voltage is derivative of node flux which can
@@ -1213,7 +1215,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
             tryfactorize!(cache, factorization, Asparsecopy)
 
             # solve the linear system
-            ldiv!(phin, cache.factorization, bnm)
+            trysolve!(phin, cache.factorization, bnm)
 
             # copy the nodeflux adjoint for output
             if !isempty(nodefluxadjoint)
@@ -1354,7 +1356,8 @@ function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
     maxintermodorder = Inf, dc = false, odd = true, even = false,
     x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, sorting= :number, keyedarrays::Val{K} = Val(true),
-    sensitivitynames::Vector{String} = String[]) where {N,K}
+    sensitivitynames::Vector{String} = String[],
+    factorization = KLUfactorization()) where {N,K}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -1381,7 +1384,8 @@ function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
         iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
-        sensitivitynames = sensitivitynames)
+        sensitivitynames = sensitivitynames,
+        factorization = factorization)
 end
 
 """

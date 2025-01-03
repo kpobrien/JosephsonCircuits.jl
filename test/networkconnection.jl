@@ -713,23 +713,23 @@ import StaticArrays
         @test isapprox(sol2[1][1],sol3)
     end
 
-    # @testset "connectS solveS mirror" begin
-    #     # test from https://github.com/scikit-rf/scikit-rf/issues/1221
+    @testset "connectS solveS mirror" begin
+        # test from https://github.com/scikit-rf/scikit-rf/issues/1221
 
-    #     S1 = rand(Complex{Float64},3,3)
-    #     S1_mirror = inv(S1)
+        S1 = rand(Complex{Float64},3,3)
+        S1_mirror = inv(S1)
 
-    #     networks = [("S1",S1),("S1_mirror",S1_mirror)]
-    #     connections = [[("S1",2),("S1_mirror",2)],[("S1",3),("S1_mirror",3)]]
+        networks = [("S1",S1),("S1_mirror",S1_mirror)]
+        connections = [[("S1",2),("S1_mirror",2)],[("S1",3),("S1_mirror",3)]]
         
-    #     ## solveS sometimes gives singular matrix errors, so don't test on this
-    #     ## network.
-    #     # sol1 = JosephsonCircuits.solveS(networks,connections;factorization=JosephsonCircuits.LUfactorization())
-    #     sol2 = JosephsonCircuits.connectS(networks,connections)
-    #     sol3 = Complex{Float64}[0 1;1 0]
+        ## solveS sometimes gives singular matrix errors, so don't test on this
+        ## network.
+        sol1 = JosephsonCircuits.solveS(networks,connections;factorization=JosephsonCircuits.QRfactorization())
+        sol2 = JosephsonCircuits.connectS(networks,connections)
+        sol3 = Complex{Float64}[0 1;1 0]
 
-    #     # @test isapprox(sol1[1],sol3)
-    #     @test isapprox(sol2[1][1],sol3)
-    # end
+        @test isapprox(sol1[1],sol3)
+        @test isapprox(sol2[1][1],sol3)
+    end
 
 end
