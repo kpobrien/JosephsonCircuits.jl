@@ -154,13 +154,26 @@ end
         switchofflinesearchtol = 1e-5)
 
 A simple nonlinear solver for sparse matrices using Newton's method with
-linesearch based on Nocedal and Wright, chapter 3 section 5. A few points to
-note:
+linesearch based on Nocedal and Wright, chapter 3 section 5.
+
+This solver attempts to find x such that F = f(x), where f is a
+nonlinear function with Jacobian J.
+
+A few points to note:
 (1) It uses KLU factorization, so only works on sparse matrices.
 (2) The Jacobian J cannot change sparsity structure.
 (3) This function attempts to reuse the symbolic factorization which can
     sometimes result in a SingularException, which we catch, then create a
     new factorization object.
+
+# Arguments
+- `fj!`: a function to compute a vector-valued objective function and
+its Jacobian.
+- `F`: target value for objective function.
+- `J`: sparse matrix with with the desired sparsity structure of the
+  Jacobian. Initial values are ignored and can be bogus values, as
+  long as the sparsity structure is correct.
+- `x`: initial guess for x.
 
 # Examples
 ```jldoctest
