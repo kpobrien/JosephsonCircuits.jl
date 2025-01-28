@@ -156,7 +156,7 @@ end
 A simple nonlinear solver for sparse matrices using Newton's method with
 linesearch based on Nocedal and Wright, chapter 3 section 5.
 
-This solver attempts to find x such that F = f(x), where f is a
+This solver attempts to find x such that f(x) == 0, where f is a
 nonlinear function with Jacobian J.
 
 A few points to note:
@@ -169,10 +169,11 @@ A few points to note:
 # Arguments
 - `fj!`: a function to compute a vector-valued objective function and
 its Jacobian.
-- `F`: target value for objective function.
+- `F`: matrix for holding intermediate results. Initial values may be
+  overwritten and can be bogus values.
 - `J`: sparse matrix with with the desired sparsity structure of the
-  Jacobian. Initial values are ignored and can be bogus values, as
-  long as the sparsity structure is correct.
+  Jacobian. Initial values may be overwritten and can be bogus values,
+  as long as the sparsity structure is correct.
 - `x`: initial guess for x.
 
 # Examples
