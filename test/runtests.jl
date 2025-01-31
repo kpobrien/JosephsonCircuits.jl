@@ -3,23 +3,29 @@ using Documenter
 using Test
 using JosephsonCircuits
 
-@testset verbose = true "Code quality (Aqua.jl)" begin
-    Aqua.test_all(JosephsonCircuits; ambiguities = false, persistent_tasks=false)
-end
+# don't run Aqua and Doctests on nightly
+if !occursin("DEV", string(VERSION))
+    @testset verbose=true "Code quality (Aqua.jl)" begin
+        using Aqua
+        Aqua.test_all(JosephsonCircuits; ambiguities = false, persistent_tasks=false)
+    end
 
-@testset verbose = true "Doctests (Documenter.jl)" begin
-    DocMeta.setdocmeta!(JosephsonCircuits, 
-        :DocTestSetup,
-        :(using JosephsonCircuits);
-        recursive=true)
-    makedocs(
-        remotes = nothing,
-        root = joinpath(dirname(pathof(JosephsonCircuits)), "..", "docs"),
-        modules=[JosephsonCircuits],
-        doctest = :only,
-        sitename="JosephsonCircuits",
-        format = Documenter.HTML(edit_link = nothing, disable_git = true),
-        )
+    @testset verbose = true "Doctests (Documenter.jl)" begin
+        using Documenter
+
+        DocMeta.setdocmeta!(JosephsonCircuits, 
+            :DocTestSetup,
+            :(using JosephsonCircuits);
+            recursive=true)
+        makedocs(
+            remotes = nothing,
+            root = joinpath(dirname(pathof(JosephsonCircuits)), "..", "docs"),
+            modules=[JosephsonCircuits],
+            doctest = :only,
+            sitename="JosephsonCircuits",
+            format = Documenter.HTML(edit_link = nothing, disable_git = true),
+            )
+    end
 end
 
 @testset verbose = true "JosephsonCircuits" begin
