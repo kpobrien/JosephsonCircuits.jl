@@ -96,10 +96,13 @@ using Test
         x = [ 0.1, 1.2]
         F = [0.0, 0.0]
         J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,2)
-        # as of 2023-09-17 1.9.3 and older throws the first error and
+        # as of 2025-03-03 1.9.3 and older throws the first error and
         # 1.10.0-beta2 throws the second error
+        # 1.13.0-DEV throws the third error
         @test_throws(
-            str -> isequal("SingularException(0)",str) || isequal("Unknown KLU error code: 2",str),
+            str -> isequal("SingularException(0)",str) || 
+            isequal("Unknown KLU error code: 2",str) ||
+            isequal("SingularException: matrix is singular; factorization failed. Zero pivot found at index 0",str),
             JosephsonCircuits.nlsolve!(fj!, F, J, x)
         )
 
@@ -116,7 +119,9 @@ using Test
             # as of 2023-09-17 1.9.3 and older throws the first error and
             # 1.10.0-beta2 throws the second error
             @test_throws(
-                str -> isequal("SingularException(0)",str) || isequal("Unknown KLU error code: 2",str),
+                str -> isequal("SingularException(0)",str) || 
+                isequal("Unknown KLU error code: 2",str) ||
+                isequal("SingularException: matrix is singular; factorization failed. Zero pivot found at index 0",str),
                 JosephsonCircuits.tryfactorize!(cache,factorization,J2),
             )
         end
