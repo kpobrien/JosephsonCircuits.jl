@@ -269,7 +269,7 @@ function calcIb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(componenttypes, nodeindices, componentvalues,
         calcvaluetype(componenttypes, componentvalues, [:I]), edge2indexdict,
-        Nmodes, Nbranches, :I)
+        Nmodes, Nbranches, :I, combine_sum)
 end
 
 """
@@ -315,7 +315,7 @@ function calcVb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(componenttypes, nodeindices, componentvalues,
         calcvaluetype(componenttypes, componentvalues, [:V]), edge2indexdict,
-        Nmodes, Nbranches, :V)
+        Nmodes, Nbranches, :V, combine_error)
 end
 
 """
@@ -361,7 +361,7 @@ function calcLb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(componenttypes, nodeindices, componentvalues,
         calcvaluetype(componenttypes, componentvalues, [:L,:K]),
-        edge2indexdict, Nmodes, Nbranches, :L)
+        edge2indexdict, Nmodes, Nbranches, :L, combine_reciprocal_sum)
 end
 
 """
@@ -407,23 +407,24 @@ function calcLjb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(componenttypes, nodeindices, componentvalues,
         calcvaluetype(componenttypes, componentvalues, [:Lj]), edge2indexdict,
-        Nmodes, Nbranches, :Lj)
+        Nmodes, Nbranches, :Lj, combine_error)
 end
 
 """
     calcbranchvector(componenttypes::Vector{Symbol},
         nodeindices::Matrix{Int}, componentvalues::Vector,
         valuecomponenttypes::Vector, edge2indexdict::Dict, Nmodes, Nbranches,
-        component::Symbol)
+        component::Symbol, combine::Function)
 
 Calculate the sparse branch vector whose length is `Nbranches*Nmodes` for the
 given component symbol. Note that `nodeindices` is "one indexed" so 1 is
-the ground node.
+the ground node. The `combine` function determines how elements of the sparse
+vector will be combined.
 """
 function calcbranchvector(componenttypes::Vector{Symbol},
     nodeindices::Matrix{Int}, componentvalues::Vector,
     valuecomponenttypes::Vector, edge2indexdict::Dict, Nmodes, Nbranches,
-    component::Symbol)
+    component::Symbol, combine::Function)
 
     # calculate the expected number of elements
     Nelements = 0
@@ -448,13 +449,17 @@ function calcbranchvector(componenttypes::Vector{Symbol},
     end
 
     # return a sparse vector
-    branchvector = sparsevec(Ib,Vb,Nbranches)
+    branchvector = sparsevec(Ib,Vb,Nbranches,combine)
     if Nmodes == 1
         return branchvector
     else
         return diagrepeat(branchvector, Nmodes)
     end
 end
+
+combine_reciprocal_sum(x1,x2) = x1*x2/(x1+x2)
+combine_sum(x1,x2)= x1+x2
+combine_error(x1,x2) = throw(ArgumentError("Components $(x1) and $(x2) cannot be combined to a single element. Please place the two components between different nodes."))
 
 """
     calcMb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
