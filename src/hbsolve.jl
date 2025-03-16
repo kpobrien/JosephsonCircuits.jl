@@ -465,8 +465,9 @@ end
         )
 
 Harmonic balance solver supporting an arbitrary number of small signals (weak
-tones) linearized around `pump`, the solution of the nonlinear system
-consisting of an arbitrary number of large signals (strong tones).
+tones) linearized around `nonlinear`, the solution of the nonlinear system
+consisting of an arbitrary number of large signals (strong tones) from
+`hbnlsolve`.
 
 # Arguments
 - `w`: the small signal frequency or frequencies.
@@ -480,7 +481,7 @@ consisting of an arbitrary number of large signals (strong tones).
 # Keywords
 - `Nmodulationharmonics::NTuple{M,Int}`: a tuple of integers describing how
     many signal and idler modes.
-- `nonlinear=nothing`: solution to the nonlinear system.
+- `nonlinear=nothing`: solution to the nonlinear system from `hbnlsolve`.
 - `symfreqvar = nothing`: the symbolic frequency variable, eg `w`.
 - `threewavemixing = false`: simulate three wave mixing processes. 
 - `fourwavemixing = true`: simulate four wave mixing processes.
