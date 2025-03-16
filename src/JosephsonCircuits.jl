@@ -141,6 +141,7 @@ function warmup()
     )
 
     return hbsolve(2*pi*(4.5:0.5:5.0)*1e9,2*pi*4.75001*1e9,0.00565e-6,2,2,circuit,circuitdefs,pumpports=[1]);
+    # return hbsolve(2*pi*(4.5:0.5:5.0)*1e9,(2*pi*4.75001*1e9,),[(mode=(1,),port=1,current=0.00565e-6)],(2,),(2,),circuit,circuitdefs;keyedarrays=Val(false));
 
 end
 
@@ -161,7 +162,7 @@ function warmupsyms()
     )
 
     return hbsolve(2*pi*(4.5:0.5:5.0)*1e9, 2*pi*4.75001*1e9, 0.00565e-6, 2, 2, circuit, circuitdefs, pumpports=[1]);
-
+    # return hbsolve(2*pi*(4.5:0.5:5.0)*1e9,(2*pi*4.75001*1e9,),[(mode=(1,),port=1,current=0.00565e-6)],(2,),(2,),circuit,circuitdefs);
 end
 
 function warmupsymsnew()

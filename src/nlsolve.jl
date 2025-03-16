@@ -150,11 +150,12 @@ function linesearch(f, fp, dfdalpha, alphamin)
 end
 
 """
-    nlsolve!(fj!, F, J::SparseMatrixCSC, x; iterations=1000, ftol=1e-8,
-        switchofflinesearchtol = 1e-5)
+    nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
+        x::Vector{T}; iterations=1000, ftol=1e-8, switchofflinesearchtol = 1e-5,
+        alphamin = 1e-4,factorization = KLUfactorization())
 
-A simple nonlinear solver for sparse matrices using Newton's method with
-linesearch based on Nocedal and Wright, chapter 3 section 5.
+A simple nonlinear solver using Newton's method with linesearch based on
+Nocedal and Wright, chapter 3 section 5.
 
 This solver attempts to find x such that f(x) == 0, where f is a
 nonlinear function with Jacobian J.

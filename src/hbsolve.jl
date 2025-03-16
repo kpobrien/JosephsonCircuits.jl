@@ -143,21 +143,24 @@ struct HB
 end
 
 """
-    hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs;
-        pumpports = [1], iterations = 1000, ftol = 1e-8,
+    hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
+        circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
         switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-        symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
-        sorting = :number, returnS = true, returnSnoise = false,
-        returnQE = true, returnCM = true, returnnodeflux = false,
-        returnvoltage = false, returnnodefluxadjoint = false,
-        )
+        symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
+        returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
+        returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
+        returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
+        sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
+        returnZ = false, returnZadjoint = false,
+        returnZsensitivity = false, returnZsensitivityadjoint = false,
+        factorization = KLUfactorization())
 
 Calls the new harmonic balance solvers, [`hbnlsolve`](@ref) and
 [`hblinsolve`](@ref), which work for an arbitrary number of modes and ports),
 using an identical syntax to [`hbsolveold`](@ref), which only supports four
 wave mixing processes involving single strong tone and an arbitrary number of
 tone in the linearized solver. This function is primarily for testing the new
-solvers and will eventually be deprecated.
+solvers and is now deprecated.
 
 This function attempts to mimic [`hbsolveold`](@ref), but with the difference:
 The outputs of the linearized harmonic balance solver [`hblinsolve`](@ref) may
@@ -176,6 +179,15 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     returnZ = false, returnZadjoint = false,
     returnZsensitivity = false, returnZsensitivityadjoint = false,
     factorization = KLUfactorization()) where K
+
+    # Base.depwarn("""
+    # Calls the new harmonic balance solvers, [`hbnlsolve`](@ref) and
+    # [`hblinsolve`](@ref), which work for an arbitrary number of modes and ports),
+    # using an identical syntax to [`hbsolveold`](@ref), which only supports four
+    # wave mixing processes involving single strong tone and an arbitrary number of
+    # tone in the linearized solver. This function is primarily for testing the new
+    # solvers and is now deprecated. Please switch to the new syntax.
+    #     """, :hbsolve)
 
     # solve the nonlinear system using the old syntax externally and the new
     # syntax internally
@@ -256,64 +268,126 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
 end
 
 """
-    hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
-        Nmodulationharmonics::NTuple{M,Any}, Npumpharmonics::NTuple{N,Any},
-        circuit, circuitdefs; dc = false, threewavemixing = false,
+    hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
+        Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
+        circuit, circuitdefs;dc = false, threewavemixing = false,
         fourwavemixing = true, maxintermodorder=Inf, iterations = 1000,
         ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
         symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
-        sorting = :number, returnS = true, returnSnoise = false,
-        returnQE = true, returnCM = true, returnnodeflux = false,
-        returnvoltage = false, returnnodefluxadjoint = false,
-        returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
-        sensitivitynames = String[], returnSsensitivity = false,
-        returnZ = false, returnZadjoint = false,
-        returnZsensitivity = false, returnZsensitivityadjoint = false)
+        sorting = :number, returnS = true, returnSnoise = false, returnQE = true,
+        returnCM = true, returnnodeflux = false, returnvoltage = false,
+        returnnodefluxadjoint = false, returnvoltageadjoint = false,
+        keyedarrays::Val{K} = Val(true), sensitivitynames::Vector{String} = String[],
+        returnSsensitivity = false, returnZ = false, returnZadjoint = false,
+        returnZsensitivity = false, returnZsensitivityadjoint = false,
+        factorization = KLUfactorization()) where {N,M,K}
+
+Calls the harmonic balance solvers, [`hbnlsolve`](@ref) and
+[`hblinsolve`](@ref), which work for an arbitrary number of modes and ports,
+and for both three and four wave mixing processes.
 
 # Arguments
-- `ws`:
-- `wp::NTuple{N,Any}`:
-- `sources::Vector`:
-- `Nmodulationharmonics::NTuple{M,Any}`:
-- `Npumpharmonics::NTuple{N,Any}`:
-- `circuit`:
-- `circuitdefs`:
+- `ws`: the angular frequency or frequencies of the signal in Hz such as
+    2\\*pi\\*5.0e9 or 2\\*pi\\*(4.5:0.001:5.0)\\*1e9.
+- `wp::NTuple{N,Number}`: a tuple containing the angular frequencies of the
+    strong tones (or pumps) such as (2\\*pi\\*5.0e9,) for a single pump at 5 GHz
+    (2\\*pi\\*5.0e9,2\\*pi\\*6.0e9) for a pump at 5 GHz and a pump at 6 GHz. The
+    frequencies should be non-commensurate. For commensurate pumps, the lowest
+    pump frequency should be provided here, and the other pumps added to
+    `sources` with a mode index equal to the ratio.
+- `sources::Vector`: a vector of named tuples specifying the mode index,
+    port, and current for each source. The named tuple(s) have names
+    mode, port, and current. mode is a tuple specifying the mode or harmonic
+    indices of the pumps, port is an integer specifying the port, and current
+    is a number specifying the current. Note that the current is a complex
+    number 
+    For example:
+    [(mode=(1,0),port=1,current=Ip1),(mode=(0,1),port=1,current=Ip2)]
+    specifies two pumps where the frequency of the first pump would be
+    1\\*wp1 + 0\\*wp2 and the second 0\\*wp1+1\\*wp2 where wp1 is the first
+    pump frequency and wp2 is the second pump frequency. Both of the pumps are
+    applied to port 1 with currents Ip1 and Ip2, respectively. 
+- `Nmodulationharmonics::NTuple{M,Int}`: a tuple of integers describing how
+    many signal and idler modes.
+- `Npumpharmonics::NTuple{N,Int}`: a tuple of integers describing how many
+    harmonics to simulate for each of the pumps. The length of the tuple must
+    equal the number of non-commensurate pumps.
+- `circuit`: vector of tuples each of which contain the component name, the
+    first node, the second node, and the component value. The first three must
+    be strings.
+- `circuitdefs`: a dictionary where the keys are symbols or symbolic
+    variables for component values and the values are the numerical values
+    for the components.
 
 # Keywords
-- `dc = false`:
-- `threewavemixing = false`:
-- `fourwavemixing = true`:
-- `maxintermodorder=Inf`:
-- `iterations = 1000`:
-- `ftol = 1e-8`:
-- `switchofflinesearchtol = 1e-5`:
-- `alphamin = 1e-4`:
-- `symfreqvar = nothing`:
-- `nbatches = Base.Threads.nthreads()`:
-- `sorting = :number`:
-- `returnS = true`:
-- `returnSnoise = false`:
-- `returnQE = true`:
-- `returnCM = true`:
-- `returnnodeflux = false`:
-- `returnvoltage = false`:
-- `returnnodefluxadjoint = false`:
-- `returnvoltageadjoint = false`:
-- `keyedarrays::Val{K} = Val(true)`:
-- `sensitivitynames = String[]`:
-- `returnSsensitivity = false`:
-- `returnZ = false`:
-- `returnZadjoint = false`:
-- `returnZsensitivity = false`:
-- `returnZsensitivityadjoint = false`:
+- `dc = false`: include 0 frequency terms in the harmonic balance analysis.
+- `threewavemixing = false`: simulate three wave mixing processes. 
+- `fourwavemixing = true`: simulate four wave mixing processes.
+- `maxintermodorder=Inf`: the maximum intermod order as defined by the sum of
+    the absolute values of the integers multiplying each of the frequencies
+    being less than or equal to `maxintermodorder`. This performs a diamond
+    truncation of the discrete Fourier space.
+- `iterations = 1000`: the number of iterations before the nonlinear solver
+    returns an error.
+- `ftol = 1e-8`: the function tolerance defined we considered converged,
+    defined as norm(F)/norm(x) < ftol or norm(F,Inf) <= ftol.
+- `switchofflinesearchtol = 1e-5`: the function tolerance at which we switch
+    from Newton with linesearch to only Newton. For easily converging
+    functions, setting this to zero can speed up simulations.
+- `alphamin = 1e-4`: the minimum step size relative to 1 for the linesearch.
+- `symfreqvar = nothing`: the symbolic frequency variable, eg `w`.
+- `nbatches = Base.Threads.nthreads()`: the number of batches to split the
+    signal frequencies into for multi-threading. Set to 1 for singled threaded
+    evaluation.
+- `sorting = :number`: sort the nodes by:
+    `:name`: Sort the vector of strings. This always works but leads
+    to results like "101" comes before "11".
+    `:number`: Convert the node strings to integer and sort by these
+    (this errors if the nodes names cannot be converted to integers).
+    `:none`: Don't perform any sorting except to place the ground node
+    first. In other words, order the nodes in the order they are found in
+    `circuit`.
+- `returnS = true`: return the scattering parameters from the linearized
+    simulations.
+- `returnSnoise = false`: return the noise scattering parameters from the
+    linearized simulations.
+- `returnQE = true`: return the quantum efficiency from the linearized
+    simulations.
+- `returnCM = true`: return the commutation relations from the linearized
+    simulations.
+- `returnnodeflux = false`: return the node fluxes from the linearized
+    simulations.
+- `returnvoltage = false`: return the node voltages from the linearized
+    simulations.
+- `returnnodefluxadjoint = false`: return the node fluxes from the linearized
+    adjoint simulations.
+- `returnvoltageadjoint = false`: return the node voltages from the linearized
+    adjoint simulations.
+- `keyedarrays::Val{K} = Val(true)`: when Val(true) return the output matrices
+    and vectors as keyed arrays for more intuitive indexing. When Val(false)
+    return normal matrices and vectors.
+- `sensitivitynames::Vector{String} = String[]`: the component names for which
+    to return the sensitivities (in progress).
+- `returnSsensitivity = false`: return the scattering parameter sensitivity
+    matrix from the linearized simulations (in progress).
+- `returnZ = false`: return the impedance matrix from the linearized
+    simulations.
+- `returnZadjoint = false`: return the impedance matrix from the linearized
+    adjoint simulations.
+- `returnZsensitivity = false`: return the Z parameter sensitivity
+    matrix from the linearized simulations (in progress).
+- `returnZsensitivityadjoint = false`: return the Z parameter sensitivity
+    matrix from the linearized adjoint simulations (in progress).
+- `factorization = KLUfactorization()`: the type of factorization to use for
+    the nonlinear and the linearized simulations.
 
 # Returns
 - `HB`: A simple structure to hold the harmonic balance solutions. See
     [`HB`](@ref).
 
 """
-function hbsolve(ws, wp::NTuple{N,Any}, sources::Vector,
-    Nmodulationharmonics::NTuple{M,Any}, Npumpharmonics::NTuple{N,Any},
+function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
+    Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
     circuit, circuitdefs;dc = false, threewavemixing = false,
     fourwavemixing = true, maxintermodorder=Inf, iterations = 1000,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
@@ -395,25 +469,69 @@ tones) linearized around `pump`, the solution of the nonlinear system
 consisting of an arbitrary number of large signals (strong tones).
 
 # Arguments
-- `w`:
-- `circuit`:
-- `circuitdefs`:
+- `w`: the small signal frequency or frequencies.
+- `circuit`: vector of tuples each of which contain the component name, the
+    first node, the second node, and the component value. The first three must
+    be strings.
+- `circuitdefs`: a dictionary where the keys are symbols or symbolic
+    variables for component values and the values are the numerical values
+    for the components.
 
 # Keywords
-- `Nmodulationharmonics = (0,)`:
-- `nonlinear=nothing`:
-- `symfreqvar=nothing`:
-- `threewavemixing=false`:
-- `fourwavemixing=true`:
-- `maxintermodorder=Inf`:
-- `nbatches::Integer = Base.Threads.nthreads()`:
-- `returnS = true`:
-- `returnSnoise = false`:
-- `returnQE = true`:
-- `returnCM = true`:
-- `returnnodeflux = false`:
-- `returnnodefluxadjoint = false`:
-- `returnvoltage = false`:
+- `Nmodulationharmonics::NTuple{M,Int}`: a tuple of integers describing how
+    many signal and idler modes.
+- `nonlinear=nothing`: solution to the nonlinear system.
+- `symfreqvar = nothing`: the symbolic frequency variable, eg `w`.
+- `threewavemixing = false`: simulate three wave mixing processes. 
+- `fourwavemixing = true`: simulate four wave mixing processes.
+- `maxintermodorder=Inf`: the maximum intermod order as defined by the sum of
+    the absolute values of the integers multiplying each of the frequencies
+    being less than or equal to `maxintermodorder`. This performs a diamond
+    truncation of the discrete Fourier space.
+- `nbatches = Base.Threads.nthreads()`: the number of batches to split the
+    signal frequencies into for multi-threading. Set to 1 for singled threaded
+    evaluation.
+- `sorting = :number`: sort the nodes by:
+    `:name`: Sort the vector of strings. This always works but leads
+    to results like "101" comes before "11".
+    `:number`: Convert the node strings to integer and sort by these
+    (this errors if the nodes names cannot be converted to integers).
+    `:none`: Don't perform any sorting except to place the ground node
+    first. In other words, order the nodes in the order they are found in
+    `circuit`.
+- `returnS = true`: return the scattering parameters from the linearized
+    simulations.
+- `returnSnoise = false`: return the noise scattering parameters from the
+    linearized simulations.
+- `returnQE = true`: return the quantum efficiency from the linearized
+    simulations.
+- `returnCM = true`: return the commutation relations from the linearized
+    simulations.
+- `returnnodeflux = false`: return the node fluxes from the linearized
+    simulations.
+- `returnvoltage = false`: return the node voltages from the linearized
+    simulations.
+- `returnnodefluxadjoint = false`: return the node fluxes from the linearized
+    adjoint simulations.
+- `returnvoltageadjoint = false`: return the node voltages from the linearized
+    adjoint simulations.
+- `keyedarrays::Val{K} = Val(true)`: when Val(true) return the output matrices
+    and vectors as keyed arrays for more intuitive indexing. When Val(false)
+    return normal matrices and vectors.
+- `sensitivitynames::Vector{String} = String[]`: the component names for which
+    to return the sensitivities (in progress).
+- `returnSsensitivity = false`: return the scattering parameter sensitivity
+    matrix from the linearized simulations (in progress).
+- `returnZ = false`: return the impedance matrix from the linearized
+    simulations.
+- `returnZadjoint = false`: return the impedance matrix from the linearized
+    adjoint simulations.
+- `returnZsensitivity = false`: return the Z parameter sensitivity
+    matrix from the linearized simulations (in progress).
+- `returnZsensitivityadjoint = false`: return the Z parameter sensitivity
+    matrix from the linearized adjoint simulations (in progress).
+- `factorization = KLUfactorization()`: the type of factorization to use for
+    the nonlinear and the linearized simulations.
 
 # Returns
 - `LinearizedHB`: A simple structure to hold the harmonic balance solutions.
@@ -882,17 +1000,17 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # each frequency is independent so it can be done in parallel; however
     # we want to reuse the factorization object and other input arrays. 
     # perform array allocations and factorization "nbatches" times.
-    # parallelize using native threading
-    batches = collect(Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches))
-    Base.Threads.@threads for i in 1:length(batches)
-        hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Zsensitivityadjoint,
+    # parallelize using tasks
+    batches = Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
+    Threads.@sync for batch in batches
+        Base.Threads.@spawn hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Zsensitivityadjoint,
             QE, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, Asparse,
             AoLjnm, invLnm, Cnm, Gnm, bnm,
             AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
             Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
             portindices, portimpedanceindices, noiseportimpedanceindices, sensitivityindices,
             portimpedances, noiseportimpedances, nodeindices, componenttypes,
-            w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batches[i],factorization)
+            w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batch, factorization)
     end
 
     # calculate the `ideal` quantum efficiency based on the gain assuming an
@@ -1275,7 +1393,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
 end
 
 """
-    hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
+    hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         circuit, circuitdefs; iterations = 1000,
         maxintermodorder = Inf, dc = false, odd = true, even = false,
         x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5,
@@ -1286,24 +1404,60 @@ numbers of ports, sources, and drives including direct current (zero
 frequency) or flux pumping using a current source and a mutual inductor.
 
 # Arguments
-- `w::NTuple{N,Any}`:
-- `Nharmonics::NTuple{N,Int}`:
-- `sources`:
-- `circuit`:
-- `circuitdefs`:
+- `w::NTuple{N,Number}`: a tuple containing the angular frequencies of the
+    strong tones (or pumps) such as (2\\*pi\\*5.0e9,) for a single tone at 5
+    GHz and (2\\*pi\\*5.0e9,2\\*pi\\*6.0e9) for a tone at 5 GHz and a tone at
+    6 GHz. The frequencies should be non-commensurate. For commensurate
+    frequencies, the lowest frequency should be provided here, and the other
+    added to `sources` with a mode index equal to the ratio.
+- `Nharmonics::NTuple{N,Int}`: a tuple of integers describing how many
+    harmonics to simulate for each of the tones. The length of the tuple must
+    equal the number of non-commensurate tones.
+- `sources::Vector`: a vector of named tuples specifying the mode index,
+    port, and current for each source. The named tuple(s) have names
+    mode, port, and current. mode is a tuple specifying the mode or harmonic
+    indices of the pumps, port is an integer specifying the port, and current
+    is a number specifying the current. Note that the current is a complex
+    number 
+    For example:
+    [(mode=(1,0),port=1,current=Ip1),(mode=(0,1),port=1,current=Ip2)]
+    specifies two pumps where the frequency of the first pump would be
+    1\\*wp1 + 0\\*wp2 and the second 0\\*wp1+1\\*wp2 where wp1 is the first
+    pump frequency and wp2 is the second pump frequency. Both of the pumps are
+    applied to port 1 with currents Ip1 and Ip2, respectively. 
+- `circuit`: vector of tuples each of which contain the component name, the
+    first node, the second node, and the component value. The first three must
+    be strings.
+- `circuitdefs`: a dictionary where the keys are symbols or symbolic
+    variables for component values and the values are the numerical values
+    for the components.
 
 # Keywords
-- `iterations = 1000`:
-- `maxintermodorder = Inf`:
-- `dc = false`:
-- `odd = true`:
-- `even = false`:
-- `x0 = nothing`:
-- `ftol = 1e-8`:
+- `iterations = 1000`: the number of iterations before the nonlinear solver
+    returns an error.
+- `maxintermodorder = Inf`: the maximum intermod order as defined by the sum of
+    the absolute values of the integers multiplying each of the frequencies
+    being less than or equal to `maxintermodorder`. This performs a diamond
+    truncation of the discrete Fourier space.
+- `dc = false`: include 0 frequency terms in the harmonic balance analysis.
+- `odd = true`: include odd terms in the harmonic balance analysis.
+- `even = false`: include even terms in the harmonic balance analysis.
+- `x0 = nothing`: initial value for the nodeflux.
+- `ftol = 1e-8`: the function tolerance defined we considered converged,
+    defined as norm(F)/norm(x) < ftol or norm(F,Inf) <= ftol.
 - `switchofflinesearchtol = 1e-5`:
-- `alphamin = 1e-4`:
-- `symfreqvar = nothing`:
-- `sorting= :number`:
+- `alphamin = 1e-4`: the function tolerance at which we switch
+    from Newton with linesearch to only Newton. For easily converging
+    functions, setting this to zero can speed up simulations.
+- `symfreqvar = nothing`: the symbolic frequency variable, eg `w`.
+- `sorting = :number`: sort the nodes by:
+    `:name`: Sort the vector of strings. This always works but leads
+    to results like "101" comes before "11".
+    `:number`: Convert the node strings to integer and sort by these
+    (this errors if the nodes names cannot be converted to integers).
+    `:none`: Don't perform any sorting except to place the ground node
+    first. In other words, order the nodes in the order they are found in
+    `circuit`.
 
 # Returns
 - `NonlinearHB`: A simple structure to hold the harmonic balance solutions.
@@ -1351,7 +1505,7 @@ isapprox(out.nodeflux[:],
 true
 ```
 """
-function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
+function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     circuit, circuitdefs; iterations = 1000,
     maxintermodorder = Inf, dc = false, odd = true, even = false,
     x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
@@ -1389,7 +1543,7 @@ function hbnlsolve(w::NTuple{N,Any}, Nharmonics::NTuple{N,Int}, sources,
 end
 
 """
-    hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
+    hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
         indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
         nm::CircuitMatrices; iterations = 1000, x0 = nothing,
         ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
@@ -1452,7 +1606,7 @@ isapprox(out.nodeflux[:],
 true
 ```
 """
-function hbnlsolve(w::NTuple{N,Any}, sources, frequencies::Frequencies{N},
+function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
     indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
