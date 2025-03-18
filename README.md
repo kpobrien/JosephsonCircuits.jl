@@ -471,6 +471,11 @@ plot!(
 plot(p1,p2,layout=(2,1))
 ```
 
+```
+  0.010345 seconds (16.74 k allocations: 40.025 MiB)
+  0.011252 seconds (16.68 k allocations: 39.985 MiB)
+```
+
 ![SNAIL parametric amplifier simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/snail.png)
 
 
@@ -1034,10 +1039,417 @@ plot(p1, p2, p3, p4, layout = (2, 2))
 
 ![Flux driven TWPA simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/twpa_flux_driven.png)
 
+## Impedance-engineered JPA
+Circuit parameters of the lumped-element snake amplifier (LESA) from [here](https://doi.org/10.1103/PhysRevApplied.12.044051).
+
+<details>
+
+<summary>Code</summary>
+
+Utility functions
+```julia
+using JosephsonCircuits, Plots
+
+function calc_Lsnake(N,L1,L2,LJ,delta0)
+   return N/2*((L1+L2)*LJ+L1*L2*cos(delta0))/(LJ+(4*L1+L2)*cos(delta0))
+end
+
+"""
+    add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+
+Add a `snake` a tunable inductor made of two rf-SQUID arrays 
+in parallel as detailed in arXiv:2209.07757 and PhysRevLett.109.137003
+to the netlist contained in `circuit`. See also [`add_snake_squid!`](@ref).
+
+            <-----------Nstages------ ... -->
+             stage
+            <----->start_node+skip_nodes+2
+start_node o--Lj--o--L2--o--Lj- ... -o--L2--o
+           |      |      |           |      |
+           L1     L1     L1          L1     L1
+           |      |      |           |      |
+           o--L2--o--Lj--o--L2- ...  o--Lj--o end_node
+start_node     start_node
++skip_nodes+1  +skip_nodes+3
+
+# Arguments
+- `circuit`: Vector of tuples containing the netlist.
+- `start_node`: The first node of the transmission line.
+- `skip_nodes`: The number of nodes to skip before the device.
+- `L1`: Inductor of the inductance from upper to lower.
+- `L2`: Inductance of the upper/lower inductor.
+- `Lj`: Inductance of the Josephson junction.
+- `Nstages`: The number of stages (JJs) in the snake.
+
+# Returns
+- `end_node`: The last node of the transmission line.
+- `skip_nodes`: The number of nodes to skip after end_node. Always 0.
+"""
+function add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    # add examples, fix behavior for skip_nodes
+    # check that returned end_node skip_node behavior correct
+    
+    # add the SNAKE
+    j=start_node+skip_nodes
+    # add the first stage outside of the loop
+    # so we can keep the same pattern in the array
+    
+    # L1 linear inductor at the start of the stage
+    push!(circuit,("L$(start_node)_$(j+1)","$(start_node)","$(j+1)",L1))    
+    # the L1 linear inductor at the end of the stage
+    push!(circuit,("L$(j+2)_$(j+3)","$(j+2)","$(j+3)",L1))
+    # the JJ
+    push!(circuit,("Lj$(start_node)_$(j+2)","$(start_node)","$(j+2)",Lj))
+    # then L2
+    push!(circuit,("L$(j+1)_$(j+3)","$(j+1)","$(j+3)",L2))
+    # increase the current node number by 2
+    # since each cell adds 2 nodes
+    j+=2
+    for i in 2:Nstages
+        # the L1 linear inductor at the end of the stage
+        push!(circuit,("L$(j+2)_$(j+3)","$(j+2)","$(j+3)",L1))
+
+        # JJ and L1 swap places
+        if !iszero(mod(i,2)) # first cell and every odd cell
+            # JJ is first
+            push!(circuit,("Lj$(j)_$(j+2)","$(j)","$(j+2)",Lj))
+            # then L2
+            push!(circuit,("L$(j+1)_$(j+3)","$(j+1)","$(j+3)",L2))
+        else
+            # inductor is first
+            push!(circuit,("L$(j)_$(j+2)","$(j)","$(j+2)",L2))
+            # then JJ
+            push!(circuit,("Lj$(j+1)_$(j+3)","$(j+1)","$(j+3)",Lj))
+        end
+        # increase the current node number by 2
+        # since each cell adds 2 nodes
+        j+=2
+    end
+    skip_nodes = 0
+    end_node = j+1
+    return (end_node,skip_nodes)
+end
+
+"""
+    add_snake_squid!(circuit,start_node,skip_nodes,L1,L2,L3,Lj,Lb,K,R,Nstages)
+    
+Add a SQUID made of four `snakes` (tunable inductors made of two rf-SQUID arrays 
+in parallel) as detailed in arXiv:2209.07757 and PhysRevLett.109.137003
+to the netlist contained in `circuit`. See also [`add_snake!`](@ref).
+    
+     start_node o
+                |
+                |
+---snake-------------------snake---
+|                 -               |
+L3               ---              L3
+|                 |               |
+---snake--|       R     |--snake---
+          |       |     |
+          |  Port o     |
+          |       |     |
+          Lb  K   Lb    |
+          |       |     |
+          |       Lb  K Lb
+          |       |     |
+         ---     ---   ---
+          -       -     -
+
+# Arguments
+- `circuit`: Vector of tuples containing the netlist.
+- `start_node`: The first node of the transmission line.
+- `skip_nodes`: The number of nodes to skip before the device.
+- `L1`: Inductance of the inductor from upper to lower
+    branch of snake.
+- `L2`: Inductance of the upper/lower inductor.
+- `L3`: Inductance in series between the snakes.
+- `Lj`: Inductance of the Josephson junction.
+- `Lb`: Inductance of inductors on the bias lines.
+- `K`: Mutual inductance between the bias line to the SQUID
+- `R`: Resistance of the bias port.
+- `Nstages`: The number of stages (JJs) in the snake. The
+    snake SQUID will have 4*Nstages JJs.
+
+# Returns
+- `end_node`: The last node of the transmission line.
+- `skip_nodes`: The number of nodes to skip after end_node. Always 0.
+"""
+function add_snake_squid!(circuit,start_node,skip_nodes,L1,L2,L3,Lj,Lb,K,R,Nstages)
+    # add examples, fix behavior for skip_nodes
+    # check that returned end_node skip_node behavior correct
+    
+    # first snake
+    # start_node = 1
+    # skip_nodes = 0
+    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    j = end_node
+    
+    # linear inductor in between the snakes
+    push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L3))
+    j+=1
+    
+    # second snake
+    start_node = j
+    skip_nodes = 0
+    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    j = end_node
+    
+    # add the coupling to bias inductors Lb1
+    push!(circuit,("L$(j)_$(0)","$(j)","0",Lb))
+    push!(circuit,("Kb1","L$(j)_$(0)","Lb1",K))
+    j+=1
+    
+    # add the second arm of the snake
+    # third snake
+    start_node = 1
+    skip_nodes = j-start_node-1
+    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    j = end_node
+    
+    # linear inductor in between the snakes
+    push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L3))
+    j+=1
+    
+    # fourth snake
+    start_node = j
+    skip_nodes = 0
+    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    j = end_node
+
+    # add the coupling to bias inductors Lb2
+    push!(circuit,("L$(j)_$(0)","$(j)","0",Lb))
+    push!(circuit,("Kb2","L$(j)_$(0)","Lb2",K))
+    j+=1
+    
+    # bias across this port
+    push!(circuit,("P2","$(j)","$(0)",2))
+    push!(circuit,("R$(j)_$(0)","$(j)","$(0)",R))
+            
+    # add the two bias inductors
+    push!(circuit,("Lb1","$(j)","$(j+1)",Lb))
+    push!(circuit,("Lb2","$(j+1)","0",Lb))
+
+    end_node = j+1
+    skip_nodes = 0
+    return (end_node,skip_nodes)
+
+end
+
+"""
+    add_tline!(circuit,start_node,skip_nodes,theta,w0,wc,Z0)
+
+Add an LC ladder that approximates a transmission line to the netlist
+contained in `circuit`. The transmission line starts and ends with
+half an inductor.
+    
+start_node       start_node+skip_nodes+1
+          o--L/2--o- ... --L--- ... ---L/2--o
+                  |           |
+                  C           C
+                  |           |
+          o--------- ... ------- ... -------o
+                          Ncells-1
+# Arguments
+- `circuit`: Vector of tuples containing the netlist.
+- `start_node`: The first node of the transmission line.
+- `skip_nodes`: The number of nodes to skip before the second
+    node of the transmission line.
+- `theta`: The phase angle of the transmission line at frequency w0.
+- `Z0`: The characteristic impedance.
+- `w0`: The frequency at which the phase angle is defined.
+- `wc`: The cutoff frequency of the LC ladder. This should likely
+    be much higher than w0. This determines the number of cells
+    in the transmission line.
+
+# Returns
+- `end_node`: The last node of the transmission line.
+- `skip_nodes`: The number of nodes to skip after end_node. Always 0.
+
+# Examples
+```jldoctest
+julia> circuit = Tuple{String,String,String,Num}[];theta=0.1;w0=2*pi*1e9;wc=2*pi*100e9;Z0=50;add_tline!(circuit,1,0,theta,w0,wc,Z0);circuit
+11-element Vector{Tuple{String, String, String, Num}}:
+ ("L1_2", "1", "2", 7.957747154594768e-11)
+ ("C2_0", "2", "0", 6.366197723675814e-14)
+ ("L2_3", "2", "3", 1.5915494309189535e-10)
+ ("C3_0", "3", "0", 6.366197723675814e-14)
+ ("L3_4", "3", "4", 1.5915494309189535e-10)
+ ("C4_0", "4", "0", 6.366197723675814e-14)
+ ("L4_5", "4", "5", 1.5915494309189535e-10)
+ ("C5_0", "5", "0", 6.366197723675814e-14)
+ ("L5_6", "5", "6", 1.5915494309189535e-10)
+ ("C6_0", "6", "0", 6.366197723675814e-14)
+ ("L6_7", "6", "7", 7.957747154594768e-11)
+```
+"""
+function add_tline!(circuit,start_node,skip_nodes,theta,w0,wc,Z0)
+    # add examples, fix behavior for skip_nodes
+    # check that returned end_node skip_node behavior correct
+
+    # based on the cutoff frequency, operating frequency, and phase shift
+    # estimate the number of cells required.
+    # round up
+    Ncells = ceil(theta*wc/(2*w0))
+
+    # based on the rounded number of cells, revise the cutoff frequency
+    # and compute the capacitance and inductance per unit cell
+    wc = Ncells*2*w0/theta
+        
+    # inductance and capacitance per cell
+    L = 2*Z0/wc
+    C = 2/(wc*Z0)
+
+
+    j = start_node
+    for i = 1:Ncells
+        if i == 1
+            # start with half an inductor
+            push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L/2))
+            j+=1
+        end
+        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",C))
+        if i == Ncells
+            # end with half an inductor
+            push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L/2))
+        else
+            push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L))
+        end
+        # increment the index
+        j+=1
+    end
+    end_node = j
+    skip_nodes = 0
+    return (end_node,skip_nodes)
+end
+```
+
+LESA simulation
+```julia
+@variables R Lj L1 L2 L3 Lb K Lg C1 PLCC PLCL L22 C6 C7
+Nstages_snake = 10
+
+circuit = Tuple{String,String,String,Num}[]
+
+
+# add X1, a snake squid
+start_node = 1
+skip_nodes = 0
+end_node, skip_nodes = add_snake_squid!(circuit,start_node,skip_nodes,L1,L2,L3,Lj,Lb,K,R,Nstages_snake)
+j = end_node
+# and add C1, a capacitor to ground
+push!(circuit,("C$(start_node)_$(0)","$(start_node)","$(0)",C1))
+# add C6, a series capacitor
+push!(circuit,("C$(start_node)_$(j+1)","$(start_node)","$(j+1)",C6))
+j+=1
+
+# add PLC1, a parallel LC capacitor to ground
+push!(circuit,("C$(j)_$(0)","$(j)","$(0)",PLCC))
+push!(circuit,("L$(j)_$(0)","$(j)","$(0)",PLCL))
+# add C7, a series capacitor
+push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",C7))
+j+=1
+
+# end
+Z0 = 50.0
+w0 = 2*pi*4.9e9
+wc = 2*pi*150e9
+theta = 32.6*pi/180
+start_node = j
+skip_nodes = 0
+end_node, skip_nodes = add_tline!(circuit,start_node,skip_nodes,theta,w0,wc,Z0)
+j = end_node
+
+push!(circuit,("L$(j)_$(0)","$(j)","$(0)",L22))
+push!(circuit,("P1","$(j)","$(0)",1))
+push!(circuit,("R1","$(j)","$(0)",R))
+
+circuitdefs = Dict(
+    Lj => JosephsonCircuits.IctoLj(16e-6),
+    L1 => 2.6e-12,
+    L2 => 8.0e-12,
+    L3 => 5e-12,
+    Lg => 100.0e-9,
+    L22 => 1.320e-9,
+    C1 => 6.607e-12,
+    C6 => 0.743e-12,
+    C7 => 0.265e-12,
+    PLCC => 0.654e-12,
+    PLCL => 0.650e-9,
+    R => 50.0, 
+    Lb => 60e-12, 
+    K => 0.5*50/sqrt(60*60),
+)
+
+# ws = 2*pi*(1:0.01:10.0)*1e9
+ws = 2*pi*(4.0:0.01:5.8)*1e9
+wp = (2*pi*9.8001*1e9,)
+Ip = 0.247e-3
+Idc = 0.686e-3
+# add the DC bias and pump to port 2
+sourcespumpon = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=Ip)]
+Npumpharmonics = (8,)
+Nmodulationharmonics = (4,)
+@time sol = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs, dc = true, threewavemixing=true,fourwavemixing=true,
+        switchofflinesearchtol=0.0,alphamin=1e-7,iterations=200,
+)
+
+plot(
+    sol.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        sol.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+    label="signal",
+    linewidth=2,
+    ylim=(-10,30),
+#     ylim=(19,22),
+#     xlim=(4.69,4.71),
+)
+
+plot!(
+    sol.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        sol.linearized.S(
+            outputmode=(-1,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ).*sqrt.(abs.((wp.-sol.linearized.w)./sol.linearized.w)), # convert from photon number to power
+    )),
+    linewidth=2,
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+    label="idler",
+)
+
+```
+</details>
+
+```
+  0.081631 seconds (34.78 k allocations: 67.609 MiB, 48.06% gc time)
+```
+
+![lumped-element snake amplifier (LESA) with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/lesa.png)
+
+
+
 
 # Performance tips:
 
 Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores. See the [Julia documentation](https://docs.julialang.org/en/v1/manual/multi-threading) for the procedure. Check how many threads you are using by calling `Threads.nthreads()`. For context, the simulation times reported for the examples above use 16 threads on an AMD Ryzen 9 7950X system running Linux.
+
+# Contributing:
+
+We welcome contributions in the form of issues/bug reports or pull requests. This project uses the [MIT open source license](https://opensource.org/license/MIT). You retain the copyright to any code you contribute.
 
 # References:
 
