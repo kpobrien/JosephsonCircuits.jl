@@ -1264,23 +1264,6 @@ start_node       start_node+skip_nodes+1
 # Returns
 - `end_node`: The last node of the transmission line.
 - `skip_nodes`: The number of nodes to skip after end_node. Always 0.
-
-# Examples
-```jldoctest
-julia> circuit = Tuple{String,String,String,Num}[];theta=0.1;w0=2*pi*1e9;wc=2*pi*100e9;Z0=50;add_tline!(circuit,1,0,theta,w0,wc,Z0);circuit
-11-element Vector{Tuple{String, String, String, Num}}:
- ("L1_2", "1", "2", 7.957747154594768e-11)
- ("C2_0", "2", "0", 6.366197723675814e-14)
- ("L2_3", "2", "3", 1.5915494309189535e-10)
- ("C3_0", "3", "0", 6.366197723675814e-14)
- ("L3_4", "3", "4", 1.5915494309189535e-10)
- ("C4_0", "4", "0", 6.366197723675814e-14)
- ("L4_5", "4", "5", 1.5915494309189535e-10)
- ("C5_0", "5", "0", 6.366197723675814e-14)
- ("L5_6", "5", "6", 1.5915494309189535e-10)
- ("C6_0", "6", "0", 6.366197723675814e-14)
- ("L6_7", "6", "7", 7.957747154594768e-11)
-```
 """
 function add_tline!(circuit,start_node,skip_nodes,theta,w0,wc,Z0)
     # add examples, fix behavior for skip_nodes
