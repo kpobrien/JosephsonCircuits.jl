@@ -1040,7 +1040,7 @@ plot(p1, p2, p3, p4, layout = (2, 2))
 ![Flux driven TWPA simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/twpa_flux_driven.png)
 
 ## Impedance-engineered JPA
-Circuit parameters of the lumped-element snake amplifier (LESA) from [here](https://doi.org/10.1103/PhysRevApplied.12.044051).
+Circuit parameters of the lumped-element snake amplifier (LESA) from [here](https://arxiv.org/abs/2408.07861).
 
 <details>
 
