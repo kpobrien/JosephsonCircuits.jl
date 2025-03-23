@@ -49,8 +49,19 @@ Then check that you are running the latest version of the package with:
 Pkg.status()
 ```
 
+Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores. This can be done with the command line argument `--threads` or by setting the environmental variable `JULIA_NUM_THREADS`. See the [Julia documentation](https://docs.julialang.org/en/v1/manual/multi-threading) for the more details. Verify you are using the desired number of threads by running:
+```
+Threads.nthreads()
+```
+For context, the simulation times reported for the examples below use 16 threads on an AMD Ryzen 9 9950X system running Linux.
+
+The examples can be run in the command line (REPL) after starting Julia or you can run them in a Jupyter notebook with [IJulia](https://github.com/JuliaLang/IJulia.jl) or in Visual Studio Code with the [Julia extension](https://code.visualstudio.com/docs/languages/julia).
+
 # Usage:
-Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions described by the Josephson inductance `Lj`, mutual inductors described by the mutual coupling coefficient `K`, and resistors `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format), docstrings, and examples below for usage. Run the harmonic balance analysis using `hbnlsolve` to solve a nonlinear system at one operating point, `hblinsolve` to solve a linear (or linearized) system at one or more frequencies, or `hbsolve` to run both analyses. Add a question mark `?` in front of a function to access the docstring.
+Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions described by the Josephson inductance `Lj`, mutual inductors described by the mutual coupling coefficient `K`, and resistors `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format), docstrings, and examples below for usage. Run the harmonic balance analysis using `hbnlsolve` to solve a nonlinear system at one operating point, `hblinsolve` to solve a linear (or linearized) system at one or more frequencies, or `hbsolve` to run both analyses. Add a question mark `?` in front of a function to access the docstring. For example, type (don't copy-paste) the following to see the documentation for `hbsolve`:
+```
+?hbsolve
+```
 
 # Examples:
 ## Josephson parametric amplifier (JPA)
@@ -1423,12 +1434,6 @@ plot!(
 
 ![lumped-element snake amplifier (LESA) with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/lesa.png)
 
-
-
-
-# Performance tips:
-
-Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores. See the [Julia documentation](https://docs.julialang.org/en/v1/manual/multi-threading) for the procedure. Check how many threads you are using by calling `Threads.nthreads()`. For context, the simulation times reported for the examples above use 16 threads on an AMD Ryzen 9 7950X system running Linux.
 
 # Contributing:
 

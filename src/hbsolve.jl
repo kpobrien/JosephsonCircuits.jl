@@ -142,32 +142,31 @@ struct HB
     linearized
 end
 
-"""
-    hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
-        circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
-        switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-        symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
-        returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-        returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-        returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
-        sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
-        returnZ = false, returnZadjoint = false,
-        returnZsensitivity = false, returnZsensitivityadjoint = false,
-        factorization = KLUfactorization())
 
-Calls the new harmonic balance solvers, [`hbnlsolve`](@ref) and
-[`hblinsolve`](@ref), which work for an arbitrary number of modes and ports),
-using an identical syntax to [`hbsolveold`](@ref), which only supports four
-wave mixing processes involving single strong tone and an arbitrary number of
-tone in the linearized solver. This function is primarily for testing the new
-solvers and is now deprecated.
+#     hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
+#         circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
+#         switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+#         symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
+#         returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
+#         returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
+#         returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
+#         sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
+#         returnZ = false, returnZadjoint = false,
+#         returnZsensitivity = false, returnZsensitivityadjoint = false,
+#         factorization = KLUfactorization())
 
-This function attempts to mimic [`hbsolveold`](@ref), but with the difference:
-The outputs of the linearized harmonic balance solver [`hblinsolve`](@ref) may
-not have the same ordering of signal modes as in [`hblinsolveold`](@ref). In
-[`hblinsolve`](@ref) the signal mode is always at index 1 and the location of
-the other modes can be found by inspecting the contents of `modes`.
-"""
+# Calls the new harmonic balance solvers, [`hbnlsolve`](@ref) and
+# [`hblinsolve`](@ref), which work for an arbitrary number of modes and ports),
+# using an identical syntax to [`hbsolveold`](@ref), which only supports four
+# wave mixing processes involving single strong tone and an arbitrary number of
+# tone in the linearized solver. This function is primarily for testing the new
+# solvers and is now deprecated.
+
+# This function attempts to mimic [`hbsolveold`](@ref), but with the difference:
+# The outputs of the linearized harmonic balance solver [`hblinsolve`](@ref) may
+# not have the same ordering of signal modes as in [`hblinsolveold`](@ref). In
+# [`hblinsolve`](@ref) the signal mode is always at index 1 and the location of
+# the other modes can be found by inspecting the contents of `modes`.
 function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
@@ -284,7 +283,8 @@ end
 
 Calls the harmonic balance solvers, [`hbnlsolve`](@ref) and
 [`hblinsolve`](@ref), which work for an arbitrary number of modes and ports,
-and for both three and four wave mixing processes.
+and for both three and four wave mixing processes. See also [`hbnlsolve`](@ref)
+and [`hblinsolve`](@ref).
 
 # Arguments
 - `ws`: the angular frequency or frequencies of the signal in Hz such as
@@ -1400,9 +1400,13 @@ end
         x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5,
         alphamin = 1e-4, symfreqvar = nothing, sorting= :number)
 
-New version of the nonlinear harmonic balance solver suitable for arbitrary
-numbers of ports, sources, and drives including direct current (zero
-frequency) or flux pumping using a current source and a mutual inductor.
+New version of the nonlinear harmonic balance solver suitable for 
+
+Harmonic balance solver supporting an arbitrary number of large signals
+(strong tones or pumps) and arbitrary numbers of ports, sources, and drives
+including direct current (zero frequency) or flux pumping using a current
+source and a mutual inductor. Use `hblinsolve` to linearize the system of
+equations about the operating point found with `hbnlsolve`.
 
 # Arguments
 - `w::NTuple{N,Number}`: a tuple containing the angular frequencies of the
