@@ -147,7 +147,9 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 ## Double-pumped Josephson parametric amplifier (JPA)
 
 <details>
+
 <summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -193,7 +195,9 @@ plot(
     ylabel="S11 (dB)",
 )
 ```
+
 </details>
+
 
 ```
   0.182720 seconds (12.70 k allocations: 713.087 MiB)
@@ -201,7 +205,9 @@ plot(
 
 and compare with WRspice
 <details>
+
 <summary>Code</summary>
+
 ```julia
 using XicTools_jll
 
@@ -216,7 +222,9 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     label="WRspice",
     seriestype=:scatter)
 ```
+
 </details>
+
 
 ```
  15.782862 seconds (32.80 k allocations: 509.192 MiB, 0.39% gc time)
@@ -228,7 +236,9 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 Circuit and parameters from [here](https://doi.org/10.1063/1.2964182
 ). Please note that three wave mixing (3WM) and flux-biasing are relatively untested, so you may encounter bugs. Please file issues or PRs.
 <details>
+
 <summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -295,7 +305,9 @@ plot(
     label="JosephsonCircuits.jl",
 )
 ```
+
 </details>
+
 
 ```
   0.015623 seconds (22.07 k allocations: 80.082 MiB)
@@ -303,7 +315,9 @@ plot(
 
 and compare with WRspice
 <details>
+
 <summary>Code</summary>
+
 ```julia
 using XicTools_jll
 
@@ -321,7 +335,9 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     label="WRspice",
     seriestype=:scatter)
 ```
+
 </details>
+
 
 ```
 283.557011 seconds (26.76 k allocations: 7.205 GiB, 0.66% gc time)
@@ -331,7 +347,9 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 
 Simulate the JPA frequency as a function of DC bias current:
 <details>
+
 <summary>Code</summary>
+
 ```julia
 ws = 2*pi*(8.0:0.01:11.0)*1e9
 currentvals = (-20:0.1:20)*1e-5
@@ -361,7 +379,9 @@ plot(
     title="S11 (dB), pump off",
 )
 ```
+
 </details>
+
 
 ```
 0.219279 seconds (3.27 M allocations: 639.981 MiB, 20.84% gc time)
@@ -375,6 +395,7 @@ Circuit parameters from [here](https://doi.org/10.1103/PhysRevApplied.10.054020)
 <details>
 
 <summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -499,7 +520,9 @@ plot!(
 )
 plot(p1,p2,layout=(2,1))
 ```
+
 </details>
+
 
 ```
   0.010345 seconds (16.74 k allocations: 40.025 MiB)
@@ -511,7 +534,9 @@ plot(p1,p2,layout=(2,1))
 
 and compare with WRspice
 <details>
+
 <summary>Code</summary>
+
 ```julia
 using XicTools_jll
 
@@ -544,6 +569,9 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     label="WRspice",
     seriestype=:scatter)
 ```
+
+</details>
+
 ```
 2067.364975 seconds (149.73 k allocations: 29.873 GiB, 0.01% gc time)
 ```
@@ -555,7 +583,9 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 
 Circuit parameters from [here](https://www.science.org/doi/10.1126/science.aaa8525).
 <details>
+
 <summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -680,7 +710,9 @@ p4=plot(ws/(2*pi*1e9),
 
 plot(p1, p2, p3, p4, layout = (2, 2))
 ```
+
 </details>
+
 
 ```
   2.959010 seconds (257.75 k allocations: 2.392 GiB, 0.21% gc time)
@@ -693,7 +725,9 @@ plot(p1, p2, p3, p4, layout = (2, 2))
 
 Circuit parameters from [here](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306).
 <details>
+
 <summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -818,7 +852,9 @@ p4=plot(ws/(2*pi*1e9),
 
 plot(p1, p2, p3,p4,layout = (2, 2))
 ```
+
 </details>
+
 
 ```
   2.079267 seconds (456.63 k allocations: 1.997 GiB, 0.48% gc time)
@@ -831,7 +867,9 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 
 Dissipation due to capacitors with dielectric loss, parameterized by a loss tangent. Run the above code block to define the circuit then run the following:
 <details>
+
 <summary>Code</summary>
+
 ```julia
 results = []
 tandeltas = [1.0e-6,1.0e-3, 2.0e-3, 3.0e-3]
@@ -893,7 +931,9 @@ end
 
 plot(p1, p2, p3,p4,layout = (2, 2))
 ```
+
 </details>
+
 
 ```
   3.815835 seconds (470.00 k allocations: 2.303 GiB, 0.22% gc time)
@@ -907,7 +947,9 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 ## Flux-Driven Josephson Traveling-Wave Parametric Amplifier (JTWPA)
 Circuit and parameters from [here](https://doi.org/10.1103/PhysRevApplied.12.044051). Please note that three wave mixing (3WM) and flux-biasing are relatively untested, so you may encounter bugs. Please file issues or PRs.
 <details>
+
 <summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -1074,7 +1116,9 @@ p4=plot(sol.linearized.w/(2*pi*1e9),
 
 plot(p1, p2, p3, p4, layout = (2, 2))
 ```
+
 </details>
+
 
 ```
  28.342059 seconds (1.59 M allocations: 1.637 GiB, 0.35% gc time)
@@ -1086,6 +1130,7 @@ plot(p1, p2, p3, p4, layout = (2, 2))
 Circuit parameters of the lumped-element snake amplifier (LESA) from [here](https://arxiv.org/abs/2408.07861).
 
 <details>
+
 <summary>Code</summary>
 
 Utility functions
@@ -1457,6 +1502,7 @@ plot!(
 )
 
 ```
+
 </details>
 
 ```
