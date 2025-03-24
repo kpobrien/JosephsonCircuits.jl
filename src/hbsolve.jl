@@ -1400,8 +1400,6 @@ end
         x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5,
         alphamin = 1e-4, symfreqvar = nothing, sorting= :number)
 
-New version of the nonlinear harmonic balance solver suitable for 
-
 Harmonic balance solver supporting an arbitrary number of large signals
 (strong tones or pumps) and arbitrary numbers of ports, sources, and drives
 including direct current (zero frequency) or flux pumping using a current
