@@ -603,6 +603,83 @@ function Z_TZ!(Z::AbstractMatrix,Z1::Number,Z2::Number,Z3::Number)
     return Z
 end
 
+
+"""
+  Z_L(L,w)
+
+The impedance matrix `Z` for a network of inductors and mutual inductors is
+the inductance matrix `Z_L` times im*w.
+"""
+function Z_L(L::AbstractMatrix,w::Number)
+    return im*w*L
+end
+
+function Z_L!(Z::AbstractMatrix,L::AbstractMatrix,w::Number)
+    if size(Z) != size(L)
+        throw(ArgumentError("The size of the input $(size(L)) must equal the size of the output $(size(Z))."))
+    end
+    copy!(Z,L)
+    mul!(Z,im*w)
+    return Z
+end
+
+"""
+  Z_invC(invCmaxwell,w)
+
+The impedance matrix `Z` for a network of capacitors is the inverse of the
+Maxwell capacitance matrix `invCmaxwell` times im*w.
+"""
+function Z_invC(invC,w)
+    return im*w*invC
+end
+
+function Z_invC!(Z,invC,w)
+    if size(Z) != size(invC)
+        throw(ArgumentError("The size of the input $(size(invC)) must equal the size of the output $(size(Z))."))
+    end
+    copy!(Z,invC)
+    mul!(Z,im*w)
+    return Z
+end
+
+"""
+  Y_C(Cmaxwell,w)
+
+The admittance matrix `Y` for a network of capacitors is the Maxwell
+capacitance matrix `Cmaxwell` times im*w.
+"""
+function Y_C(C,w)
+    return im*w*C
+end
+
+function Y_C!(Y,C,w)
+    if size(Y) != size(C)
+        throw(ArgumentError("The size of the input $(size(C)) must equal the size of the output $(size(Y))."))
+    end
+    copy!(Y,C)
+    mul!(Y,im*w)
+    return Y
+end
+
+"""
+  Y_invL(L,w)
+
+The admittance matrix `Y` for a network of inductors and mutual inductors is
+the inverse of the inductance matrix `L` times im*w.
+"""
+function Y_invL(invL,w)
+    return im*w*invL
+end
+
+function Y_invL!(Y,invL,w)
+    if size(Y) != size(invL)
+        throw(ArgumentError("The size of the input $(size(invL)) must equal the size of the output $(size(Y))."))
+    end
+    copy!(Y,invL)
+    mul!(Y,im*w)
+    return Y
+end
+
 """
     ABCD_tline(Z0, theta)
 
