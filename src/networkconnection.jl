@@ -122,9 +122,9 @@ function connectS!(Sout,Sa,k::Int,l::Int;
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
     if  nbatches > 1 && length(indices) > nbatches
-        batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
-        Base.Threads.@threads for i in 1:length(batches)
-                connectS_inner!(Sout,Sa,k,l,batches[i])
+        batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
+        Threads.@sync for batch in batches
+            Base.Threads.@spawn connectS_inner!(Sout,Sa,k,l,batch)
         end
     else
         connectS_inner!(Sout,Sa,k,l,indices)
@@ -323,10 +323,11 @@ function connectS!(Sout,Sa,Sb,k::Int,l::Int;
     # loop over the dimensions of the array greater than 2
     indices = CartesianIndices(axes(Sout)[3:end])
     if nbatches > 1 && length(indices) > nbatches
-        batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
-        Base.Threads.@threads for i in 1:length(batches)
-            connectS_inner!(Sout,Sa,Sb,k,l,batches[i])
+        batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
+        Threads.@sync for batch in batches
+            Base.Threads.@spawn connectS_inner!(Sout,Sa,Sb,k,l,batch)
         end
+
     else
         connectS_inner!(Sout,Sa,Sb,k,l,indices)
     end
@@ -1934,13 +1935,13 @@ function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
     # each frequency is independent so it can be done in parallel; however
     # we want to reuse the factorization object and other input arrays. 
     # perform array allocations and factorization "nbatches" times.
-    # parallelize using native threading
+    # parallelize using tasks
     indices = CartesianIndices(axes(networkdata[1])[3:end])
-    batches = collect(Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches))
-    Base.Threads.@threads for i in 1:length(batches)
-        solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
+    batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
+    Threads.@sync for batch in batches
+        Base.Threads.@spawn solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
             Scp_indices, Scc_indices, gammacc_indexmap, Scc_indexmap,
-            networkdata, indices, batches[i], factorization)
+            networkdata, indices, batch, factorization)
     end
 
     return (S=Sp, ports=portsp, Sinternal=Sc, portsinternal = portsc)
