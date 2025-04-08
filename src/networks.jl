@@ -1763,6 +1763,10 @@ ISBN 9780470631553.
 function S_directional_coupler!(S::AbstractMatrix, α::Number, β::Number,
     θ::Number, ϕ::Number)
     # check if S is 4x4
+
+    # fill with zeros
+    fill!(S,zero(eltype(S)))
+
     S[1,2] = S[2,1] = S[3,4] = S[4,3] = α
     S[1,3] = S[3,1] = β*exp(im*θ)
     S[2,4] = S[4,2] = β*exp(im*ϕ)
