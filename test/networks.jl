@@ -447,4 +447,31 @@ import StaticArrays
 
     end
 
+    @testset "directional couplers" begin
+
+        Z0 = 50.0
+        couplingdB = 20
+
+        # compute the scattering parameters for an ideal directional coupler
+        S = JosephsonCircuits.S_directional_coupler_symmetric(couplingdB)
+        @test isapprox(-10*log10(abs2(S[3,1])),couplingdB)
+
+        # compute the even and odd mode characteristic impedance for a
+        # directional coupler, then compare this with the scattering
+        # parameters from coupled transmission lines.
+        Zeven, Zodd = JosephsonCircuits.coupling_to_even_odd(couplingdB,Z0)
+        theta = pi/2
+        S = JosephsonCircuits.AtoS(JosephsonCircuits.ABCD_coupled_tline(Zeven,Zodd,theta,theta));
+        @test isapprox(-10*log10(abs2(S[2,1])),couplingdB)
+
+
+        # test that the in-place and out-of-place directional coupler
+        # functions give the same results
+        S1 = JosephsonCircuits.S_directional_coupler_symmetric(couplingdB)
+        S2 = similar(S1)
+        JosephsonCircuits.S_directional_coupler_symmetric!(S2,couplingdB)
+        @test isequal(S1,S2)
+
+    end
+
 end

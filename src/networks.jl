@@ -1323,6 +1323,42 @@ end
 
 
 """
+    even_odd_to_coupling(Zeven, Zodd)
+
+Return the coupling in dB `couplingdB` and system characteristic impedance
+`Z0` for a directional coupler made from two coupled transmission lines with
+with even and odd mode impedances `Zeven` and `Zodd`.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.even_odd_to_coupling(55.0,45.0)
+(couplingdB = 20.0, Z0 = 49.749371855331)
+```
+"""
+function even_odd_to_coupling(Zeven, Zodd)
+    c = (Zeven-Zodd)/(Zeven+Zodd)
+    return (couplingdB=-20*log10(c), Z0=sqrt(Zeven*Zodd))
+end
+
+"""
+    coupling_to_even_odd(couplingdB, Z0)
+
+Return the even and odd mode impedances `Zeven` and `Zodd` for a directional
+coupler made from two coupled transmission lines with coupling in dB
+`couplingdB` and system characteristic impedance `Z0`.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.coupling_to_even_odd(20.0,50.0)
+(Zeven = 55.27707983925667, Zodd = 45.22670168666455)
+```
+"""
+function coupling_to_even_odd(couplingdB, Z0)
+    c = 10^(-couplingdB/20)
+    return (Zeven = sqrt((1+c)/(1-c))*Z0, Zodd = sqrt((1-c)/(1+c))*Z0)
+end
+
+"""
     Z_canonical_coupled_line_circuit(i::Int,  Z0e, Z0o, thetae, thetao)
 
 Return the impedance matrix for the `i`'th canonical coupled line circuit, as
@@ -1678,4 +1714,177 @@ function S_match!(S::AbstractArray)
     fill!(S,zero(eltype(S)))
 
     return S
+end
+
+
+"""
+    S_directional_coupler!(S::AbstractMatrix, α::Number, β::Number, 
+        θ::Number, ϕ::Number)
+
+Overwrite `S` with the scattering parameter matrix for an ideal directional
+coupler with the convention that if a wave is input at port 1, then port 2 is
+the through, port 3 is the coupled port, and port 4 is the isolated port:
+
+```
+                           _______
+port 1 (input)    -->  ====|     |==== --> port 2 (through)
+                           |     |
+port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
+                           -------
+
+[0            α            exp(im\\*θ)β 0;
+ α            0            0            exp(im\\*ϕ)β;
+ exp(im\\*θ)β 0            0            α;
+ 0            exp(im\\*ϕ)β α            0]
+```
+
+The directional coupler is specified by the real coefficients α, β such that
+α²+β² = 1 and the real phases θ, ϕ which satisfy the condition
+θ + ϕ = π ± 2*n*π.
+
+The scattering parameter matrix is unitary. Arbitrary phases can be applied to
+any of the ports (eg. by connecting a lossless transmission line).
+
+The coupling coefficient c is a real number where α = √(1-c^2) and β = c. The
+coupling coefficient in dB is C = -20*log10(c).
+
+* A symmetric directional coupler has θ = ϕ = π/2.
+
+* An anti-symmetric directional coupler has θ = 0 and ϕ = π.
+
+* A quadature hybrid has c = 1/√2 and θ = ϕ = π/2.
+
+* A magic-T hybrid or a rat-race hybrid has c = 1/√2 and θ = 0, ϕ = π.
+
+# References
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function S_directional_coupler!(S::AbstractMatrix, α::Number, β::Number,
+    θ::Number, ϕ::Number)
+    # check if S is 4x4
+    S[1,2] = S[2,1] = S[3,4] = S[4,3] = α
+    S[1,3] = S[3,1] = β*exp(im*θ)
+    S[2,4] = S[4,2] = β*exp(im*ϕ)
+    return S
+end
+
+
+"""
+    S_directional_coupler(α::Number, β::Number, θ::Number, ϕ::Number)
+
+Overwrite `S` with the scattering parameter matrix for an ideal directional
+coupler with the convention that if a wave is input at port 1, then port 2 is
+the through, port 3 is the coupled port, and port 4 is the isolated port:
+
+```
+                           _______
+port 1 (input)    -->  ====|     |==== --> port 2 (through)
+                           |     |
+port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
+                           -------
+
+[0            α            exp(im\\*θ)β 0;
+ α            0            0            exp(im\\*ϕ)β;
+ exp(im\\*θ)β 0            0            α;
+ 0            exp(im\\*ϕ)β α            0]
+```
+
+The directional coupler is specified by the real coefficients α, β such that
+α²+β² = 1 and the real phases θ, ϕ which satisfy the condition
+θ + ϕ = π ± 2*n*π.
+
+The scattering parameter matrix is unitary. Arbitrary phases can be applied to
+any of the ports (eg. by connecting a lossless transmission line).
+
+The coupling coefficient c is a real number where α = √(1-c^2) and β = c. The
+coupling coefficient in dB is C = -20*log10(c).
+
+* A symmetric directional coupler has θ = ϕ = π/2.
+
+* An anti-symmetric directional coupler has θ = 0 and ϕ = π.
+
+* A quadature hybrid has c = 1/√2 and θ = ϕ = π/2.
+
+* A magic-T hybrid or a rat-race hybrid has c = 1/√2 and θ = 0, ϕ = π.
+
+# References
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function S_directional_coupler(α,β,θ,ϕ)
+    return [0  α β*exp(im*θ) 0;
+            α  0 0 β*exp(im*ϕ);
+            β*exp(im*θ)  0 0 α;
+            0 β*exp(im*ϕ) α 0]
+end
+
+
+"""
+    S_directional_coupler_symmetric(couplingdB::Number)
+
+Return the scattering parameter matrix for an ideal symmetric directional
+coupler with the convention that if a wave is input at port 1, then port 2 is
+the through, port 3 is the coupled port, and port 4 is the isolated port:
+
+```
+                           _______
+port 1 (input)    -->  ====|     |==== --> port 2 (through)
+                           |     |
+port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
+                           -------
+
+[0            α            exp(im\\*θ)β 0;
+ α            0            0            exp(im\\*ϕ)β;
+ exp(im\\*θ)β 0            0            α;
+ 0            exp(im\\*ϕ)β α            0]
+```
+where α = √(1-c^2) and β = c and c is the coupling coefficient which is
+related to the coupling in dB as c = 10^(-couplingdB/20). The symmetric
+directional coupler has θ = ϕ = π/2.
+
+# References
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function S_directional_coupler_symmetric(couplingdB::Number)
+    c = 10^(-couplingdB/20)
+    β = c
+    α = sqrt(1-abs2(c))
+    return S_directional_coupler(α, β, pi/2, pi/2)
+end
+
+"""
+    S_directional_coupler_symmetric!(S::AbstractArray, couplingdB::Number)
+
+Overwrite `S` with the scattering parameter matrix for an ideal symmetric
+directional coupler with the convention that if a wave is input at port 1,
+then port 2 is the through, port 3 is the coupled port, and port 4 is the
+isolated port:
+
+```
+                           _______
+port 1 (input)    -->  ====|     |==== --> port 2 (through)
+                           |     |
+port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
+                           -------
+
+[0            α            exp(im\\*θ)β 0;
+ α            0            0            exp(im\\*ϕ)β;
+ exp(im\\*θ)β 0            0            α;
+ 0            exp(im\\*ϕ)β α            0]
+```
+where α = √(1-c^2) and β = c and c is the coupling coefficient which is
+related to the coupling in dB as c = 10^(-couplingdB/20). The symmetric
+directional coupler has θ = ϕ = π/2.
+
+# References
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function S_directional_coupler_symmetric!(S::AbstractArray, couplingdB::Number)
+    c = 10^(-couplingdB/20)
+    β = c
+    α = sqrt(1-abs2(c))
+    return S_directional_coupler!(S, α, β, pi/2, pi/2)
 end
