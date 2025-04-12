@@ -465,13 +465,35 @@ import StaticArrays
         @test isapprox(-10*log10(abs2(S[2,1])),couplingdB)
 
 
-        # test that the in-place and out-of-place directional coupler
-        # functions give the same results
+        # test that the in-place and out-of-place directional coupler,
+        # hybrid coupler, and circulator functions give the same results
         S1 = JosephsonCircuits.S_directional_coupler_symmetric(couplingdB)
         S2 = similar(S1)
         JosephsonCircuits.S_directional_coupler_symmetric!(S2,couplingdB)
         @test isequal(S1,S2)
 
+        S1 = JosephsonCircuits.S_directional_coupler_antisymmetric(couplingdB)
+        S2 = similar(S1)
+        JosephsonCircuits.S_directional_coupler_antisymmetric!(S2,couplingdB)
+        @test isequal(S1,S2)
+
+        S1 = JosephsonCircuits.S_hybrid_coupler_symmetric()
+        S2 = similar(S1)
+        JosephsonCircuits.S_hybrid_coupler_symmetric!(S2)
+        @test isequal(S1,S2)
+
+        S1 = JosephsonCircuits.S_hybrid_coupler_antisymmetric()
+        S2 = similar(S1)
+        JosephsonCircuits.S_hybrid_coupler_antisymmetric!(S2)
+        @test isequal(S1,S2)
+
+        # test for array input
+        S1 = JosephsonCircuits.S_directional_coupler_symmetric(couplingdB)
+        S2 = similar(S1,4,4,10)
+        JosephsonCircuits.S_directional_coupler_symmetric!(S2,couplingdB)
+        for i in 1:size(S2,3)
+            @test isequal(S1,S2[:,:,i])
+        end
     end
 
 end

@@ -1773,6 +1773,15 @@ function S_directional_coupler!(S::AbstractMatrix, α::Number, β::Number,
     return S
 end
 
+function S_directional_coupler!(S::AbstractArray, α::Number, β::Number,
+    θ::Number, ϕ::Number)
+
+    # loop over the dimensions of the array greater than 2
+    for i in CartesianIndices(axes(S)[3:end])
+        S_directional_coupler!(view(S,:,:,i),α,β,θ,ϕ)
+    end
+    return S
+end
 
 """
     S_directional_coupler(α::Number, β::Number, θ::Number, ϕ::Number)
@@ -1808,9 +1817,11 @@ coupling coefficient in dB is C = -20*log10(c).
 
 * An anti-symmetric directional coupler has θ = 0 and ϕ = π.
 
-* A quadature hybrid has c = 1/√2 and θ = ϕ = π/2.
+* A symmetric hybrid coupler (a 90 degree or quadature hybrid) has c = 1/√2
+and θ = ϕ = π/2.
 
-* A magic-T hybrid or a rat-race hybrid has c = 1/√2 and θ = 0, ϕ = π.
+* An anti-symmetric hybrid coupler (a magic-T hybrid or a rat-race hybrid or
+a 180 degree hybrid) has c = 1/√2 and θ = 0, ϕ = π.
 
 # References
 Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
@@ -1822,7 +1833,6 @@ function S_directional_coupler(α,β,θ,ϕ)
             β*exp(im*θ)  0 0 α;
             0 β*exp(im*ϕ) α 0]
 end
-
 
 """
     S_directional_coupler_symmetric(couplingdB::Number)
@@ -1859,7 +1869,7 @@ function S_directional_coupler_symmetric(couplingdB::Number)
 end
 
 """
-    S_directional_coupler_symmetric!(S::AbstractArray, couplingdB::Number)
+    S_directional_coupler_symmetric!(S, couplingdB::Number)
 
 Overwrite `S` with the scattering parameter matrix for an ideal symmetric
 directional coupler with the convention that if a wave is input at port 1,
@@ -1886,9 +1896,201 @@ directional coupler has θ = ϕ = π/2.
 Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
 ISBN 9780470631553.
 """
-function S_directional_coupler_symmetric!(S::AbstractArray, couplingdB::Number)
+function S_directional_coupler_symmetric!(S, couplingdB::Number)
     c = 10^(-couplingdB/20)
     β = c
     α = sqrt(1-abs2(c))
     return S_directional_coupler!(S, α, β, pi/2, pi/2)
+end
+
+"""
+    S_directional_coupler_antisymmetric(couplingdB::Number)
+
+Return the scattering parameter matrix for an ideal anti-symmetric directional
+coupler with the convention that if a wave is input at port 1, then port 2 is
+the through, port 3 is the coupled port, and port 4 is the isolated port:
+
+```
+                           _______
+port 1 (input)    -->  ====|     |==== --> port 2 (through)
+                           |     |
+port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
+                           -------
+
+[0            α            exp(im\\*θ)β 0;
+ α            0            0            exp(im\\*ϕ)β;
+ exp(im\\*θ)β 0            0            α;
+ 0            exp(im\\*ϕ)β α            0]
+```
+where α = √(1-c^2) and β = c and c is the coupling coefficient which is
+related to the coupling in dB as c = 10^(-couplingdB/20). The anti-symmetric
+directional coupler has θ = 0 and ϕ = π.
+
+# References
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function S_directional_coupler_antisymmetric(couplingdB::Number)
+    c = 10^(-couplingdB/20)
+    β = c
+    α = sqrt(1-abs2(c))
+    return S_directional_coupler(α, β, 0.0, pi)
+end
+
+"""
+    S_directional_coupler_antisymmetric!(S, couplingdB::Number)
+
+Overwrite `S` with the scattering parameter matrix for an ideal anti-symmetric
+directional coupler with the convention that if a wave is input at port 1,
+then port 2 is the through, port 3 is the coupled port, and port 4 is the
+isolated port:
+
+```
+                           _______
+port 1 (input)    -->  ====|     |==== --> port 2 (through)
+                           |     |
+port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
+                           -------
+
+[0            α            exp(im\\*θ)β 0;
+ α            0            0            exp(im\\*ϕ)β;
+ exp(im\\*θ)β 0            0            α;
+ 0            exp(im\\*ϕ)β α            0]
+```
+where α = √(1-c^2) and β = c and c is the coupling coefficient which is
+related to the coupling in dB as c = 10^(-couplingdB/20). The anti-symmetric
+directional coupler has θ = 0 and ϕ = π.
+
+# References
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function S_directional_coupler_antisymmetric!(S, couplingdB::Number)
+    c = 10^(-couplingdB/20)
+    β = c
+    α = sqrt(1-abs2(c))
+    return S_directional_coupler!(S, α, β, 0.0, pi)
+end
+
+
+"""
+    S_hybrid_coupler_symmetric()
+
+Return the scattering parameter matrix for an ideal symmetric hybrid
+(3 dB) coupler (a 90 degree or quadature hybrid) with the convention that if
+a wave is input at port 1, then port 2 is the through, port 3 is the coupled
+port, and port 4 is the isolated port:
+
+```
+                           _______
+port 1 (input)    -->  ====|     |==== --> port 2 (through)
+                           |     |
+port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
+                           -------
+
+[0            α            exp(im\\*θ)β 0;
+ α            0            0            exp(im\\*ϕ)β;
+ exp(im\\*θ)β 0            0            α;
+ 0            exp(im\\*ϕ)β α            0]
+```
+where α = β = 1/√2 and θ = ϕ = π/2 for a symmetric hybrid (3 dB) coupler.
+
+# References
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function S_hybrid_coupler_symmetric()
+    return S_directional_coupler_symmetric(3)
+end
+
+"""
+    S_hybrid_coupler_symmetric!()
+
+Overwrite `S` with the scattering parameter matrix for an ideal symmetric
+hybrid (3 dB) coupler (a 90 degree or quadature hybrid) with the convention
+that if a wave is input at port 1, then port 2 is the through, port 3 is the
+coupled port, and port 4 is the isolated port:
+
+```
+                           _______
+port 1 (input)    -->  ====|     |==== --> port 2 (through)
+                           |     |
+port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
+                           -------
+
+[0            α            exp(im\\*θ)β 0;
+ α            0            0            exp(im\\*ϕ)β;
+ exp(im\\*θ)β 0            0            α;
+ 0            exp(im\\*ϕ)β α            0]
+```
+where α = β = 1/√2 and θ = ϕ = π/2 for a symmetric hybrid (3 dB) coupler.
+
+# References
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function S_hybrid_coupler_symmetric!(S)
+    return S_directional_coupler_symmetric!(S, 3)
+end
+
+"""
+    S_hybrid_coupler_antisymmetric()
+
+Return the scattering parameter matrix for an ideal anti-symmetric hybrid
+(3 dB) coupler (a magic-T hybrid or a rat-race hybrid or a 180 degree hybrid)
+with the convention that if a wave is input at port 1, then port 2 is the
+through, port 3 is the coupled port, and port 4 is the isolated port:
+
+```
+                           _______
+port 1 (input)    -->  ====|     |==== --> port 2 (through)
+                           |     |
+port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
+                           -------
+
+[0            α            exp(im\\*θ)β 0;
+ α            0            0            exp(im\\*ϕ)β;
+ exp(im\\*θ)β 0            0            α;
+ 0            exp(im\\*ϕ)β α            0]
+```
+where α = β = 1/√2 and θ = 0 and ϕ = π for an anti-symmetric hybrid (3 dB)
+coupler.
+
+# References
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function S_hybrid_coupler_antisymmetric()
+    return S_directional_coupler_antisymmetric(3)
+end
+
+"""
+    S_hybrid_coupler_antisymmetric!(S)
+
+Overwrite `S` with the scattering parameter matrix for an ideal anti-symmetric
+hybrid (3 dB) coupler (a magic-T hybrid or a rat-race hybrid or a 180 degree
+hybrid) with the convention that if a wave is input at port 1, then port 2 is
+the through, port 3 is the coupled port, and port 4 is the isolated port:
+
+```
+                           _______
+port 1 (input)    -->  ====|     |==== --> port 2 (through)
+                           |     |
+port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
+                           -------
+
+[0            α            exp(im\\*θ)β 0;
+ α            0            0            exp(im\\*ϕ)β;
+ exp(im\\*θ)β 0            0            α;
+ 0            exp(im\\*ϕ)β α            0]
+```
+where α = β = 1/√2 and θ = 0 and ϕ = π for an anti-symmetric hybrid (3 dB)
+coupler.
+
+# References
+Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
+ISBN 9780470631553.
+"""
+function S_hybrid_coupler_antisymmetric!(S)
+    return S_directional_coupler_antisymmetric!(S, 3)
 end
