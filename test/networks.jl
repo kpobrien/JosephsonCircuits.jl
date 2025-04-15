@@ -305,6 +305,61 @@ import StaticArrays
 
     end
 
+    @testset "Z_invC, Y_C, Z_L, Y_invL, Z_L!, Z_invC!, Y_C!, Y_invL!" begin
+
+        C = rand(Complex{Float64},2,2)
+        w=rand()
+        @test isapprox(JosephsonCircuits.Z_invC(inv(C),w),inv(JosephsonCircuits.Y_C(C,w)))
+
+        L = rand(Complex{Float64},2,2)
+        w=rand()
+        @test isapprox(JosephsonCircuits.Z_L(L,w),inv(JosephsonCircuits.Y_invL(inv(L),w)))
+
+        L = rand(Complex{Float64},2,2)
+        w=rand()
+        Z = zeros(Complex{Float64},2,2)
+        @test isapprox(JosephsonCircuits.Z_L(L,w),JosephsonCircuits.Z_L!(Z,L,w))
+
+        invC = rand(Complex{Float64},2,2)
+        w=rand()
+        Z = zeros(Complex{Float64},2,2)
+        @test isapprox(JosephsonCircuits.Z_invC(invC,w),JosephsonCircuits.Z_invC!(Z,invC,w))
+
+        C = rand(Complex{Float64},2,2)
+        w=rand()
+        Y = zeros(Complex{Float64},2,2)
+        @test isapprox(JosephsonCircuits.Y_C(C,w),JosephsonCircuits.Y_C!(Y,C,w))
+
+        invL = rand(Complex{Float64},2,2)
+        w=rand()
+        Y = zeros(Complex{Float64},2,2)
+        @test isapprox(JosephsonCircuits.Y_invL(invL,w),JosephsonCircuits.Y_invL!(Y,invL,w))
+
+    end
+
+    @testset "Z_L!, Z_invC!, Y_C!, Y_invL! errors" begin
+
+        A = rand(Complex{Float64},2,2)
+        w=rand()
+        B = zeros(Complex{Float64},4,4)
+        @test_throws(
+            ArgumentError("The size of the input (4, 4) must equal the size of the output (2, 2)."),
+            JosephsonCircuits.Z_L!(A,B,w),
+        )
+        @test_throws(
+            ArgumentError("The size of the input (4, 4) must equal the size of the output (2, 2)."),
+            JosephsonCircuits.Z_invC!(A,B,w),
+        )
+        @test_throws(
+            ArgumentError("The size of the input (4, 4) must equal the size of the output (2, 2)."),
+            JosephsonCircuits.Y_C!(A,B,w),
+        )
+        @test_throws(
+            ArgumentError("The size of the input (4, 4) must equal the size of the output (2, 2)."),
+            JosephsonCircuits.Y_invL!(A,B,w),
+        )
+    end
+
     @testset "ZC_basis_coupled_lines" begin
         Cg = 1.6670474181399462e-10
         Cm = 9.320861870486729e-12

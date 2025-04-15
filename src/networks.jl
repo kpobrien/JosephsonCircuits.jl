@@ -619,7 +619,7 @@ function Z_L!(Z::AbstractMatrix,L::AbstractMatrix,w::Number)
         throw(ArgumentError("The size of the input $(size(L)) must equal the size of the output $(size(Z))."))
     end
     copy!(Z,L)
-    mul!(Z,im*w)
+    rmul!(Z,im*w)
     return Z
 end
 
@@ -627,10 +627,10 @@ end
   Z_invC(invCmaxwell,w)
 
 The impedance matrix `Z` for a network of capacitors is the inverse of the
-Maxwell capacitance matrix `invCmaxwell` times im*w.
+Maxwell capacitance matrix `invCmaxwell` divided by im*w.
 """
 function Z_invC(invC,w)
-    return im*w*invC
+    return invC/(im*w)
 end
 
 function Z_invC!(Z,invC,w)
@@ -638,7 +638,7 @@ function Z_invC!(Z,invC,w)
         throw(ArgumentError("The size of the input $(size(invC)) must equal the size of the output $(size(Z))."))
     end
     copy!(Z,invC)
-    mul!(Z,im*w)
+    rdiv!(Z,im*w)
     return Z
 end
 
@@ -657,7 +657,7 @@ function Y_C!(Y,C,w)
         throw(ArgumentError("The size of the input $(size(C)) must equal the size of the output $(size(Y))."))
     end
     copy!(Y,C)
-    mul!(Y,im*w)
+    rmul!(Y,im*w)
     return Y
 end
 
@@ -665,10 +665,10 @@ end
   Y_invL(L,w)
 
 The admittance matrix `Y` for a network of inductors and mutual inductors is
-the inverse of the inductance matrix `L` times im*w.
+the inverse of the inductance matrix `L` divided by im*w.
 """
 function Y_invL(invL,w)
-    return im*w*invL
+    return invL/(im*w)
 end
 
 function Y_invL!(Y,invL,w)
@@ -676,7 +676,7 @@ function Y_invL!(Y,invL,w)
         throw(ArgumentError("The size of the input $(size(invL)) must equal the size of the output $(size(Y))."))
     end
     copy!(Y,invL)
-    mul!(Y,im*w)
+    rdiv!(Y,im*w)
     return Y
 end
 
@@ -1745,8 +1745,8 @@ The directional coupler is specified by the real coefficients α, β such that
 The scattering parameter matrix is unitary. Arbitrary phases can be applied to
 any of the ports (eg. by connecting a lossless transmission line).
 
-The coupling coefficient c is a real number where α = √(1-c^2) and β = c. The
-coupling coefficient in dB is C = -20*log10(c).
+The voltage coupling coefficient c is a real number where α = √(1-c^2) and
+β = c. The coupling in dB is defined as C = -20*log10(c).
 
 * A symmetric directional coupler has θ = ϕ = π/2.
 
@@ -1810,8 +1810,8 @@ The directional coupler is specified by the real coefficients α, β such that
 The scattering parameter matrix is unitary. Arbitrary phases can be applied to
 any of the ports (eg. by connecting a lossless transmission line).
 
-The coupling coefficient c is a real number where α = √(1-c^2) and β = c. The
-coupling coefficient in dB is C = -20*log10(c).
+The voltage coupling coefficient c is a real number where α = √(1-c^2) and
+β = c. The coupling in dB is defined as C = -20*log10(c).
 
 * A symmetric directional coupler has θ = ϕ = π/2.
 
@@ -1853,8 +1853,8 @@ port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
  exp(im\\*θ)β 0            0            α;
  0            exp(im\\*ϕ)β α            0]
 ```
-where α = √(1-c^2) and β = c and c is the coupling coefficient which is
-related to the coupling in dB as c = 10^(-couplingdB/20). The symmetric
+where α = √(1-c^2) and β = c and c is the voltage coupling coefficient which
+is related to the coupling in dB as c = 10^(-couplingdB/20). The symmetric
 directional coupler has θ = ϕ = π/2.
 
 # References
@@ -1888,8 +1888,8 @@ port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
  exp(im\\*θ)β 0            0            α;
  0            exp(im\\*ϕ)β α            0]
 ```
-where α = √(1-c^2) and β = c and c is the coupling coefficient which is
-related to the coupling in dB as c = 10^(-couplingdB/20). The symmetric
+where α = √(1-c^2) and β = c and c is the voltage coupling coefficient which
+is related to the coupling in dB as c = 10^(-couplingdB/20). The symmetric
 directional coupler has θ = ϕ = π/2.
 
 # References
@@ -1922,9 +1922,9 @@ port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
  exp(im\\*θ)β 0            0            α;
  0            exp(im\\*ϕ)β α            0]
 ```
-where α = √(1-c^2) and β = c and c is the coupling coefficient which is
-related to the coupling in dB as c = 10^(-couplingdB/20). The anti-symmetric
-directional coupler has θ = 0 and ϕ = π.
+where α = √(1-c^2) and β = c and c is the voltage coupling coefficient which
+is related to the coupling in dB as c = 10^(-couplingdB/20). The
+anti-symmetric directional coupler has θ = 0 and ϕ = π.
 
 # References
 Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
@@ -1957,9 +1957,9 @@ port 4 (isolated) <--  ====|     |==== --> port 3 (coupled)
  exp(im\\*θ)β 0            0            α;
  0            exp(im\\*ϕ)β α            0]
 ```
-where α = √(1-c^2) and β = c and c is the coupling coefficient which is
-related to the coupling in dB as c = 10^(-couplingdB/20). The anti-symmetric
-directional coupler has θ = 0 and ϕ = π.
+where α = √(1-c^2) and β = c and c is the voltage coupling coefficient which
+is related to the coupling in dB as c = 10^(-couplingdB/20). The
+anti-symmetric directional coupler has θ = 0 and ϕ = π.
 
 # References
 Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
