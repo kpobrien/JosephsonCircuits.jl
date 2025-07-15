@@ -25,8 +25,7 @@ inductances. See also [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
 - `Ljb::SparseVector`: vector of branch Josephson junction inductances.
 - `Ljbm::SparseVector`: vector of branch Josephson junction inductances with
     each element duplicated Nmodes times.
-- `Mb::SparseMatrixCSC`: the mutual inductance matrix in the branch basis with
-    each element duplicated along the diagonal Nmodes times.
+- `Mb::SparseMatrixCSC`: the mutual inductance matrix in the branch basis.
 - `invLnm::SparseMatrixCSC`: the inverse inductance matrix in the node basis
     with each element duplicated along the diagonal Nmodes times.
 - `Rbnm::SparseMatrixCSC{Int, Int}`: incidence matrix to convert between the
