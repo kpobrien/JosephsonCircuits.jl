@@ -82,7 +82,7 @@ julia> JosephsonCircuits.calcgraphs([(2, 1), (2, 1), (2, 1), (3, 1)], 3)
 JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), sparse([1, 2], [1, 2], [1, 1], 2, 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2)
 
 julia> JosephsonCircuits.calcgraphs([(4, 3), (3, 6), (5, 3), (3, 7), (2, 4), (6, 8), (2, 5), (8, 7), (2, 8)], 8)
-JosephsonCircuits.CircuitGraph(Dict((6, 8) => 8, (2, 5) => 2, (3, 7) => 7, (6, 3) => 6, (7, 8) => 9, (3, 4) => 4, (7, 3) => 7, (2, 8) => 3, (4, 2) => 1, (8, 6) => 8…), sparse([1, 2, 3, 4, 5, 6, 7, 1, 4, 2, 5, 6, 8, 7, 9, 3, 8, 9], [1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 7], [-1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, -1, 1, -1, 1, 1, 1], 9, 7), [(2, 4), (2, 5), (2, 8), (3, 4), (6, 8), (7, 8)], [(5, 3), (6, 3), (7, 3)], [(2, 4), (2, 5), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (6, 8), (7, 8)], [[2, 4, 3, 5], [2, 4, 3, 6, 8], [2, 4, 3, 7, 8]], [1], Graphs.SimpleGraphs.SimpleGraph{Int64}(9, [Int64[], [4, 5, 8], [4, 5, 6, 7], [2, 3], [2, 3], [3, 8], [3, 8], [2, 6, 7]]), 9)
+JosephsonCircuits.CircuitGraph(Dict((6, 8) => 8, (2, 5) => 2, (3, 7) => 7, (6, 3) => 6, (7, 8) => 9, (3, 4) => 4, (7, 3) => 7, (2, 8) => 3, (4, 2) => 1, (8, 6) => 8…), sparse([1, 2, 3, 4, 5, 6, 7, 1, 4, 2, 5, 6, 8, 7, 9, 3, 8, 9], [1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 7], [-1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, -1, 1, -1, 1, 1, 1], 9, 7), [(2, 4), (2, 5), (2, 8), (3, 4), (3, 6), (3, 7)], [(5, 3), (8, 6), (8, 7)], [(2, 4), (2, 5), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (6, 8), (7, 8)], [[2, 4, 3, 5], [2, 4, 3, 6, 8], [2, 4, 3, 7, 8]], [1], Graphs.SimpleGraphs.SimpleGraph{Int64}(9, [Int64[], [4, 5, 8], [4, 5, 6, 7], [2, 3], [2, 3], [3, 8], [3, 8], [2, 6, 7]]), 9)
 
 julia> JosephsonCircuits.calcgraphs([(2, 1), (2, 1), (3, 1)],4)
 JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), sparse([1, 2], [1, 2], [1, 1], 2, 3), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2)
@@ -112,8 +112,8 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int)
         gli, vmap = Graphs.induced_subgraph(gl,v)
 
         #superconducting spanning tree
-        # si = Graphs.SimpleGraph(Graphs.kruskal_mst(gli))
-        si = Graphs.SimpleGraph(Graphs.prim_mst(gli))
+        si = Graphs.SimpleGraph(Graphs.kruskal_mst(gli))
+        #si = Graphs.SimpleGraph(prim_mst(gli))
 
         #calculate the closure branches
         ci = collect(Graphs.edges(Graphs.difference(gli,si)))
