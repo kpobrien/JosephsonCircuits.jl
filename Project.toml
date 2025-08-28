@@ -41,7 +41,7 @@ Symbolics = "4, 5, 6"
 Test = "1"
 UUIDs = "1"
 XicTools_jll = "4"
-julia = "1.9"
+julia = "1.10"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
