@@ -18,6 +18,7 @@ import Statistics
 using LinearAlgebra
 using SparseArrays
 using Printf
+using Touchstone
 
 # define the zero for symbolic numbers so that we can view the sparse arrays
 # Base.zero(::Type{Symbolic{Number}}) = 0
@@ -79,9 +80,6 @@ include("exportnetlist.jl")
 include("spiceutils.jl")
 include("spicewrapper.jl")
 include("spiceraw.jl")
-
-# This is for reading and writing files in the touchstone format. 
-include("touchstone.jl")
 
 # These are functions for perofrming tests
 include("testutils.jl")
