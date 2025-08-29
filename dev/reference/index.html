@@ -57,24 +57,7 @@ JosephsonCircuits.ParsedSortedCircuit([2 2 2 2 0 3 3; 1 1 1 1 0 1 1], [&quot;0&q
 JosephsonCircuits.SpiceRaw{Matrix{ComplexF64}}(JosephsonCircuits.SpiceRawHeader(&quot;CKT1&quot;, &quot;Thu Dec 29 01:29:27 2022&quot;, &quot;A.C. Small signal analysis&quot;, &quot;complex&quot;, 4, 3, &quot;version 4.3.14&quot;, &quot;&quot;), Dict(&quot;V&quot; =&gt; [&quot;v(1)&quot;, &quot;v(2)&quot;, &quot;v(3)&quot;], &quot;Hz&quot; =&gt; [&quot;frequency&quot;]), Dict{String, Matrix{ComplexF64}}(&quot;V&quot; =&gt; [48.87562301047733 - 7.413126995337487im 49.97131616467212 + 1.1949290155299537im 49.02611690128596 - 6.90980805243651im; -10.116167243319213 + 1.534380793728424im 57.578470543293086 + 1.3775359827006193im 12.368446655904192 - 1.743197747303436im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im], &quot;Hz&quot; =&gt; [4.0e9 + 0.0im 5.0e9 + 0.0im 6.0e9 + 0.0im]))</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.SpiceRawHeader" href="#JosephsonCircuits.SpiceRawHeader"><code>JosephsonCircuits.SpiceRawHeader</code></a> — <span class="docstring-category">Type</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">SpiceRawHeader(title::String, date::String, plotname::String,
     flags::String, nvariables::Int, npoints::Int, command::String,
     option::String)</code></pre><p>A simple structure to hold the SPICE raw file header.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.SpiceRawHeader(&quot;CKT1&quot;, &quot;Thu Dec 29 01:29:27 2022&quot;, &quot;A.C. Small signal analysis&quot;, &quot;complex&quot;, 4, 3, &quot;version 4.3.14&quot;, &quot;&quot;)
-JosephsonCircuits.SpiceRawHeader(&quot;CKT1&quot;, &quot;Thu Dec 29 01:29:27 2022&quot;, &quot;A.C. Small signal analysis&quot;, &quot;complex&quot;, 4, 3, &quot;version 4.3.14&quot;, &quot;&quot;)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.TouchstoneFile" href="#JosephsonCircuits.TouchstoneFile"><code>JosephsonCircuits.TouchstoneFile</code></a> — <span class="docstring-category">Type</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">TouchstoneFile(f::Vector{Float64},
-    N::Array{Complex{Float64}},
-    frequencyunit::String,
-    parameter::String,
-    format::String,
-    R::Float64,
-    version::Float64,
-    numberofports::Int,
-    twoportdataorder::String,
-    numberoffrequencies::Int,
-    numberofnoisefrequencies::Int,
-    reference::Vector{Float64},
-    information::Vector{String},
-    matrixformat::String,
-    mixedmodeorder::Vector{Tuple{Char, Vector{Int}}},
-    comments::Vector{String},
-    networkdata::Vector{Float64},
-    noisedata::Vector{Float64})</code></pre><p>A structure to hold the data contained in a Touchstone file. In most cases, the user will not generate the struct directly. Instead, they will load a Touchstone file with <a href="#JosephsonCircuits.touchstone_load-Tuple{Any}"><code>touchstone_load</code></a>, parse an IOStream or IOBuffer with <a href="#JosephsonCircuits.touchstone_parse-Tuple{IO}"><code>touchstone_parse</code></a>, or generate a TouchstoneFile struct with <a href="#JosephsonCircuits.touchstone_file-Tuple{AbstractVector{Float64}, Array{ComplexF64, 3}}"><code>touchstone_file</code></a>.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ABCD_PiY!-Tuple{AbstractMatrix, Number, Number, Number}" href="#JosephsonCircuits.ABCD_PiY!-Tuple{AbstractMatrix, Number, Number, Number}"><code>JosephsonCircuits.ABCD_PiY!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ABCD_PiY!(ABCD,Y1,Y2,Y3)</code></pre><p>In-place version of <a href="#JosephsonCircuits.ABCD_PiY-Tuple{Number, Number, Number}"><code>ABCD_PiY</code></a>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.ABCD_PiY!(zeros(Complex{Float64},2,2),1,2,4)
+JosephsonCircuits.SpiceRawHeader(&quot;CKT1&quot;, &quot;Thu Dec 29 01:29:27 2022&quot;, &quot;A.C. Small signal analysis&quot;, &quot;complex&quot;, 4, 3, &quot;version 4.3.14&quot;, &quot;&quot;)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ABCD_PiY!-Tuple{AbstractMatrix, Number, Number, Number}" href="#JosephsonCircuits.ABCD_PiY!-Tuple{AbstractMatrix, Number, Number, Number}"><code>JosephsonCircuits.ABCD_PiY!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ABCD_PiY!(ABCD,Y1,Y2,Y3)</code></pre><p>In-place version of <a href="#JosephsonCircuits.ABCD_PiY-Tuple{Number, Number, Number}"><code>ABCD_PiY</code></a>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.ABCD_PiY!(zeros(Complex{Float64},2,2),1,2,4)
 2×2 Matrix{ComplexF64}:
  1.5+0.0im  0.25+0.0im
  3.5+0.0im  1.25+0.0im</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ABCD_PiY-Tuple{Number, Number, Number}" href="#JosephsonCircuits.ABCD_PiY-Tuple{Number, Number, Number}"><code>JosephsonCircuits.ABCD_PiY</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ABCD_PiY(Y1,Y2,Y3)</code></pre><p>Return the ABCD matrix for a Pi network of admittances <code>Y1</code>, <code>Y2</code>, and <code>Y3</code>.</p><pre><code class="nohighlight hljs">o----Y3-----o
@@ -559,101 +542,7 @@ julia&gt; JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55
 [:, :, 1] =
  -0.0209812+0.0im   0.295151+0.0im   0.295151+0.0im
    0.359826+0.0im  -0.041417+0.0im  -0.041417+0.0im
- 0.00788681+0.0im  -0.110947+0.0im  -0.110947+0.0im</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.arraytonetworkdata-NTuple{11, Any}" href="#JosephsonCircuits.arraytonetworkdata-NTuple{11, Any}"><code>JosephsonCircuits.arraytonetworkdata</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies,
-    matrixformat, twoportdataorder, parameter, frequencyunit, format, R,
-    version)</code></pre><p>Return a vector with a frequency followed by the network data parameters for that frequency.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">frequencies = 4.0e9:5.0e8:6.0e9
-N = [0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.046691189499470154im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
-numberofports = 1
-numberoffrequencies = 5
-matrixformat = &quot;Full&quot;
-twoportdataorder = &quot;12_21&quot;
-parameter = &quot;S&quot;
-frequencyunit = &quot;GHz&quot;
-format = &quot;MA&quot;
-R = 50.0
-version = 2.0
-JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports, numberoffrequencies, 
-    matrixformat, twoportdataorder, parameter, frequencyunit, format, R, version)
-
-# output
-15-element Vector{Float64}:
-   4.0
-   0.9995813511383583
- -17.248815971093425
-   4.5
-   0.9958480363660398
- -26.451285931791276
-   5.0
-   0.9868361175866559
-   2.711906450972103
-   5.5
-   0.9985678550072272
- -12.21545548845392
-   6.0
-   0.9993761539770525
- -16.045248853866596</code></pre><pre><code class="language-julia hljs">frequencies = 4.0e9:5.0e8:6.0e9
-N = [0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.046691189499470154im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
-numberofports = 1
-numberoffrequencies = 5
-matrixformat = &quot;Lower&quot;
-twoportdataorder = &quot;12_21&quot;
-parameter = &quot;Z&quot;
-frequencyunit = &quot;GHz&quot;
-format = &quot;MA&quot;
-R = 50.0
-version = 2.0
-JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports,
-    numberoffrequencies, matrixformat, twoportdataorder, parameter,
-    frequencyunit, format, R, version)
-
-# output
-15-element Vector{Float64}:
-   4.0
-   0.9995813511383583
- -17.248815971093425
-   4.5
-   0.9958480363660398
- -26.451285931791276
-   5.0
-   0.9868361175866559
-   2.711906450972103
-   5.5
-   0.9985678550072272
- -12.21545548845392
-   6.0
-   0.9993761539770525
- -16.045248853866596</code></pre><pre><code class="language-julia hljs">frequencies = 4.0e9:5.0e8:6.0e9
-N = [0.9546262517670427 - 0.296397700700921im;;; 0.8915960960938982 - 0.44358732281729774im;;; 0.9857309246425359 + 0.046691189499470154im;;; 0.9759591344506418 - 0.21128542054786678im;;; 0.9604441706426364 - 0.2762239892126382im]
-numberofports = 1
-numberoffrequencies = 5
-matrixformat = &quot;Lower&quot;
-twoportdataorder = &quot;12_21&quot;
-parameter = &quot;Z&quot;
-frequencyunit = &quot;GHz&quot;
-format = &quot;MA&quot;
-R = 50.0
-version = 1.0
-JosephsonCircuits.arraytonetworkdata(frequencies,N, numberofports,
-    numberoffrequencies, matrixformat, twoportdataorder, parameter,
-    frequencyunit, format, R, version)
-
-# output
-15-element Vector{Float64}:
-   4.0
-   0.019991627022767165
- -17.248815971093425
-   4.5
-   0.019916960727320795
- -26.451285931791276
-   5.0
-   0.01973672235173312
-   2.7119064509721027
-   5.5
-   0.019971357100144544
- -12.215455488453918
-   6.0
-   0.019987523079541047
- -16.0452488538666</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcAoLjbm-Tuple{Any, SparseArrays.SparseVector, Any, Any, Any}" href="#JosephsonCircuits.calcAoLjbm-Tuple{Any, SparseArrays.SparseVector, Any, Any, Any}"><code>JosephsonCircuits.calcAoLjbm</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">calcAoLjbm(Am, Ljb::SparseVector, Lmean, Nmodes, Nbranches)</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11;A21;A31],JosephsonCircuits.SparseArrays.sparsevec([1],[Lj1]),1,2,1)
+ 0.00788681+0.0im  -0.110947+0.0im  -0.110947+0.0im</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.calcAoLjbm-Tuple{Any, SparseArrays.SparseVector, Any, Any, Any}" href="#JosephsonCircuits.calcAoLjbm-Tuple{Any, SparseArrays.SparseVector, Any, Any, Any}"><code>JosephsonCircuits.calcAoLjbm</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">calcAoLjbm(Am, Ljb::SparseVector, Lmean, Nmodes, Nbranches)</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; @variables Lj1 Lj2 A11 A12 A21 A22 A31 A32;JosephsonCircuits.calcAoLjbm([A11;A21;A31],JosephsonCircuits.SparseArrays.sparsevec([1],[Lj1]),1,2,1)
 2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
  A11 / Lj1  A31 / Lj1
  A31 / Lj1  A11 / Lj1
@@ -2114,8 +2003,7 @@ JosephsonCircuits.freqsubst(A,wmodes,nothing)
  1.0+0.0im      ⋅      3.0+0.0im      ⋅    
      ⋅      1.0+0.0im      ⋅      3.0+0.0im
      ⋅          ⋅      2.0+0.0im      ⋅    
-     ⋅          ⋅          ⋅      2.0+0.0im</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.frequencyscale-Tuple{String}" href="#JosephsonCircuits.frequencyscale-Tuple{String}"><code>JosephsonCircuits.frequencyscale</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">frequencyscale(frequencyunit::String)</code></pre><p>Convert the SI prefix in the string <code>frequencyunit</code> to the corresponding numerical value.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.frequencyscale(&quot;MHz&quot;)
-1.0e6</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.get_ports-Union{Tuple{Tuple{T, N, Array{Tuple{T, Int64}, 1}}}, Tuple{N}, Tuple{T}} where {T, N}" href="#JosephsonCircuits.get_ports-Union{Tuple{Tuple{T, N, Array{Tuple{T, Int64}, 1}}}, Tuple{N}, Tuple{T}} where {T, N}"><code>JosephsonCircuits.get_ports</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">get_ports(network::Tuple{T, N, Vector{Tuple{T, Int}}}) where {T,N}</code></pre><p>Return the ports for a network <code>network</code>. The ports are already present in the network.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.get_ports((:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S2,3)]))
+     ⋅          ⋅          ⋅      2.0+0.0im</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.get_ports-Union{Tuple{Tuple{T, N, Array{Tuple{T, Int64}, 1}}}, Tuple{N}, Tuple{T}} where {T, N}" href="#JosephsonCircuits.get_ports-Union{Tuple{Tuple{T, N, Array{Tuple{T, Int64}, 1}}}, Tuple{N}, Tuple{T}} where {T, N}"><code>JosephsonCircuits.get_ports</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">get_ports(network::Tuple{T, N, Vector{Tuple{T, Int}}}) where {T,N}</code></pre><p>Return the ports for a network <code>network</code>. The ports are already present in the network.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.get_ports((:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S2,3)]))
 2-element Vector{Tuple{Symbol, Int64}}:
  (:S1, 1)
  (:S2, 3)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.get_ports-Union{Tuple{Tuple{T, N}}, Tuple{N}, Tuple{T}} where {T, N}" href="#JosephsonCircuits.get_ports-Union{Tuple{Tuple{T, N}}, Tuple{N}, Tuple{T}} where {T, N}"><code>JosephsonCircuits.get_ports</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">get_ports(network::Tuple{T, N}) where {T,N}</code></pre><p>Return the ports for a network <code>network</code>. The ports are generated based on the network name.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.get_ports((:S1,[0.0 1.0;1.0 0.0]))
@@ -2464,63 +2352,7 @@ result=JosephsonCircuits.hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circui
 using Plots;plot(ws/(2*pi*1e9),10*log10.(abs2.(result.signal.S[result.signal.signalindex,result.signal.signalindex,:])))</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.import_netlist!-Tuple{IO, AbstractVector}" href="#JosephsonCircuits.import_netlist!-Tuple{IO, AbstractVector}"><code>JosephsonCircuits.import_netlist!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">import_netlist!(io::IO, circuit)</code></pre><p>Import the netlist from the IOBuffer or IOStream <code>io</code> to the vector of tuples <code>circuit</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; io = IOBuffer();circuit1=[(&quot;P&quot;,&quot;1&quot;,&quot;0&quot;,1),(&quot;R&quot;,&quot;1&quot;,&quot;0&quot;,50.0)];JosephsonCircuits.export_netlist!(io,circuit1,Dict());circuit2 = Tuple{String,String,String,Num}[];JosephsonCircuits.import_netlist!(io,circuit2);circuit2
 2-element Vector{Tuple{String, String, String, Num}}:
  (&quot;P&quot;, &quot;1&quot;, &quot;0&quot;, 1.0)
- (&quot;R&quot;, &quot;1&quot;, &quot;0&quot;, 50.0)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.import_netlist-Tuple{Any}" href="#JosephsonCircuits.import_netlist-Tuple{Any}"><code>JosephsonCircuits.import_netlist</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">import_netlist(filename)</code></pre><p>Import the netlist from the IOBuffer or IOStream <code>io</code> and return a vector of tuples representing the circuit.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isbegininformation-Tuple{String}" href="#JosephsonCircuits.isbegininformation-Tuple{String}"><code>JosephsonCircuits.isbegininformation</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isbegininformation(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [begin information] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isbegininformation(&quot;[begin information]&quot;)
-true
-
-julia&gt; JosephsonCircuits.isbegininformation(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isend-Tuple{String}" href="#JosephsonCircuits.isend-Tuple{String}"><code>JosephsonCircuits.isend</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isend(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [end] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isend(&quot;[end]&quot;)
-true
-
-julia&gt; JosephsonCircuits.isend(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isendinformation-Tuple{String}" href="#JosephsonCircuits.isendinformation-Tuple{String}"><code>JosephsonCircuits.isendinformation</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isendinformation(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [end information] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isendinformation(&quot;[end information]&quot;)
-true
-
-julia&gt; JosephsonCircuits.isendinformation(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ismatrixformat-Tuple{String}" href="#JosephsonCircuits.ismatrixformat-Tuple{String}"><code>JosephsonCircuits.ismatrixformat</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ismatrixformat(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [matrix format] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.ismatrixformat(&quot;[matrix format] full&quot;)
-true
-
-julia&gt; JosephsonCircuits.ismatrixformat(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ismixedmodeorder-Tuple{String}" href="#JosephsonCircuits.ismixedmodeorder-Tuple{String}"><code>JosephsonCircuits.ismixedmodeorder</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ismixedmodeorder(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [mixed-mode order] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.ismixedmodeorder(&quot;[mixed-mode order] full&quot;)
-true
-
-julia&gt; JosephsonCircuits.ismixedmodeorder(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isnetworkdata-Tuple{String}" href="#JosephsonCircuits.isnetworkdata-Tuple{String}"><code>JosephsonCircuits.isnetworkdata</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isnetworkdata(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [network data] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isnetworkdata(&quot;[network data]&quot;)
-true
-
-julia&gt; JosephsonCircuits.isnetworkdata(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isnoisedata-Tuple{String}" href="#JosephsonCircuits.isnoisedata-Tuple{String}"><code>JosephsonCircuits.isnoisedata</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isnoisedata(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [noise data] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isnoisedata(&quot;[noise data]&quot;)
-true
-
-julia&gt; JosephsonCircuits.isnoisedata(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isnumberoffrequencies-Tuple{String}" href="#JosephsonCircuits.isnumberoffrequencies-Tuple{String}"><code>JosephsonCircuits.isnumberoffrequencies</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isnumberoffrequencies(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [number of frequencies] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isnumberoffrequencies(&quot;[number of frequencies]&quot;)
-true
-
-julia&gt; JosephsonCircuits.isnumberoffrequencies(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isnumberofnoisefrequencies-Tuple{String}" href="#JosephsonCircuits.isnumberofnoisefrequencies-Tuple{String}"><code>JosephsonCircuits.isnumberofnoisefrequencies</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isnumberofnoisefrequencies(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [number of noise frequencies] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isnumberofnoisefrequencies(&quot;[number of noise frequencies]&quot;)
-true
-
-julia&gt; JosephsonCircuits.isnumberofnoisefrequencies(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isnumberofports-Tuple{String}" href="#JosephsonCircuits.isnumberofports-Tuple{String}"><code>JosephsonCircuits.isnumberofports</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isnumberofports(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [number of ports] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isnumberofports(&quot;[number of ports] 1&quot;)
-true
-
-julia&gt; JosephsonCircuits.isnumberofports(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isoptionline-Tuple{String}" href="#JosephsonCircuits.isoptionline-Tuple{String}"><code>JosephsonCircuits.isoptionline</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isoptionline(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the option line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isoptionline(&quot;# MHz Z MA R 75&quot;)
-true
-
-julia&gt; JosephsonCircuits.isoptionline(&quot;[number of ports] 1&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isreference-Tuple{String}" href="#JosephsonCircuits.isreference-Tuple{String}"><code>JosephsonCircuits.isreference</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isreference(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [reference] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isreference(&quot;[reference]&quot;)
-true
-
-julia&gt; JosephsonCircuits.isreference(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.istwoportdataorder-Tuple{String}" href="#JosephsonCircuits.istwoportdataorder-Tuple{String}"><code>JosephsonCircuits.istwoportdataorder</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">istwoportdataorder(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [two-port data order] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.istwoportdataorder(&quot;[two-port data order] 12_21&quot;)
-true
-
-julia&gt; JosephsonCircuits.istwoportdataorder(&quot;[version] 1.0&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.isversion-Tuple{String}" href="#JosephsonCircuits.isversion-Tuple{String}"><code>JosephsonCircuits.isversion</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">isversion(line::String)</code></pre><p>Return <code>true</code> if the string <code>line</code> is the [version] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.isversion(&quot;[version] 1.0&quot;)
-true
-
-julia&gt; JosephsonCircuits.isversion(&quot;[number of ports] 1&quot;)
-false</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.keepfreqs-Union{Tuple{N}, Tuple{JosephsonCircuits.Frequencies{N}, AbstractArray{CartesianIndex{N}, 1}}} where N" href="#JosephsonCircuits.keepfreqs-Union{Tuple{N}, Tuple{JosephsonCircuits.Frequencies{N}, AbstractArray{CartesianIndex{N}, 1}}} where N"><code>JosephsonCircuits.keepfreqs</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">keepfreqs(frequencies::Frequencies{N},
+ (&quot;R&quot;, &quot;1&quot;, &quot;0&quot;, 50.0)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.import_netlist-Tuple{Any}" href="#JosephsonCircuits.import_netlist-Tuple{Any}"><code>JosephsonCircuits.import_netlist</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">import_netlist(filename)</code></pre><p>Import the netlist from the IOBuffer or IOStream <code>io</code> and return a vector of tuples representing the circuit.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.keepfreqs-Union{Tuple{N}, Tuple{JosephsonCircuits.Frequencies{N}, AbstractArray{CartesianIndex{N}, 1}}} where N" href="#JosephsonCircuits.keepfreqs-Union{Tuple{N}, Tuple{JosephsonCircuits.Frequencies{N}, AbstractArray{CartesianIndex{N}, 1}}} where N"><code>JosephsonCircuits.keepfreqs</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">keepfreqs(frequencies::Frequencies{N},
     keepcoords::AbstractVector{CartesianIndex{N}})</code></pre><p>Return a new Frequencies struct with all coordinates and modes except the ones in keepmodes removed.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[])
 JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[], Tuple{Int64}[])
 
@@ -2531,42 +2363,7 @@ JosephsonCircuits.Frequencies{2}((2, 2), (3, 5), (4, 5), CartesianIndex{2}[Carte
 
 julia&gt; JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,2)),Tuple{Int64,Int64}[])
 JosephsonCircuits.Frequencies{2}((2, 2), (3, 5), (4, 5), CartesianIndex{2}[], Tuple{Int64, Int64}[])</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.ldiv_2x2-Tuple{Union{LinearAlgebra.LU, StaticArrays.LU}, AbstractVector}" href="#JosephsonCircuits.ldiv_2x2-Tuple{Union{LinearAlgebra.LU, StaticArrays.LU}, AbstractVector}"><code>JosephsonCircuits.ldiv_2x2</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">ldiv_2x2(fact,b)</code></pre><p>Solve the linear system A*x = b for x using left division when given <code>fact</code>  which is the LU factorization of <code>A</code>.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.linesearch-NTuple{4, Any}" href="#JosephsonCircuits.linesearch-NTuple{4, Any}"><code>JosephsonCircuits.linesearch</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">linesearch(f, fp, dfdalpha, alphamin)</code></pre><p>Quadratic linesearch based on Nocedal and Wright, chapter 3 section 5. <code>f</code> is the value at the first point alpha=0.0, <code>fp</code> is the value at the second point, alpha=1.0, <code>dfdalpha</code> is the derivative at the first point, and <code>alphamin</code> is the minimum value of <code>dfdalpha</code> below which we will take a full step. The linesearch will return the fitted minimum of the function with respect to alpha as (alpha at which minimum occurs, minimum value of function).</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.lu_2x2-Tuple{AbstractArray}" href="#JosephsonCircuits.lu_2x2-Tuple{AbstractArray}"><code>JosephsonCircuits.lu_2x2</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">lu_2x2(A)</code></pre><p>Return the LU factorization of a 2 by 2 matrix as a StaticArrays.LU struct. Perform the LU factorization even if <code>A</code> is singular.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.make_connection!-Union{Tuple{N}, Tuple{T}, Tuple{Graphs.SimpleGraphs.SimpleDiGraph{Int64}, AbstractVector{&lt;:AbstractArray{Tuple{T, T, Int64, Int64}, 1}}, AbstractVector{&lt;:AbstractVector{Int64}}, AbstractVector{&lt;:AbstractArray{Tuple{T, Int64}, 1}}, AbstractVector{N}, Int64, Int64, Int64, AbstractVector{Bool}, Dict{Int64, N}}} where {T, N}" href="#JosephsonCircuits.make_connection!-Union{Tuple{N}, Tuple{T}, Tuple{Graphs.SimpleGraphs.SimpleDiGraph{Int64}, AbstractVector{&lt;:AbstractArray{Tuple{T, T, Int64, Int64}, 1}}, AbstractVector{&lt;:AbstractVector{Int64}}, AbstractVector{&lt;:AbstractArray{Tuple{T, Int64}, 1}}, AbstractVector{N}, Int64, Int64, Int64, AbstractVector{Bool}, Dict{Int64, N}}} where {T, N}"><code>JosephsonCircuits.make_connection!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,
-connection_index)</code></pre><p>Apply the connection specified by the source node <code>src_node</code> and the index of the connection in the forward adjacency list <code>connection_index</code>. Modify the arguments and return nothing.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.matrixindices-Tuple{Any, Any, Any}" href="#JosephsonCircuits.matrixindices-Tuple{Any, Any, Any}"><code>JosephsonCircuits.matrixindices</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">matrixindices(nports, format, twoportdataorder)</code></pre><p>Return the cartesian indices of the elements of a scattering matrix given the number of ports <code>nports</code> and the format <code>format</code> which can be &quot;Full&quot;, &quot;Upper&quot;, or &quot;Lower&quot;. The two port data order <code>twoportdataorder</code> can be &quot;<code>12_21</code>&quot; or &quot;<code>21_12</code>&quot; for 2 ports but must be &quot;<code>12_21</code>&quot; for other numbers of ports.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.matrixindices(2,&quot;Full&quot;,&quot;12_21&quot;)
-4-element Vector{CartesianIndex{2}}:
- CartesianIndex(1, 1)
- CartesianIndex(1, 2)
- CartesianIndex(2, 1)
- CartesianIndex(2, 2)
-
-julia&gt; JosephsonCircuits.matrixindices(2,&quot;Full&quot;,&quot;21_12&quot;)
-4-element Vector{CartesianIndex{2}}:
- CartesianIndex(1, 1)
- CartesianIndex(2, 1)
- CartesianIndex(1, 2)
- CartesianIndex(2, 2)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.matrixindices-Tuple{Any, Any}" href="#JosephsonCircuits.matrixindices-Tuple{Any, Any}"><code>JosephsonCircuits.matrixindices</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">matrixindices(nports, format)</code></pre><p>Return the cartesian indices of the elements of a scattering matrix given the number of ports <code>nports</code> and the format <code>format</code> which can be &quot;Full&quot;, &quot;Upper&quot;, or &quot;Lower&quot;.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.matrixindices(2,&quot;Full&quot;,printflag=true)
-11 12 
-21 22 
-4-element Vector{CartesianIndex{2}}:
- CartesianIndex(1, 1)
- CartesianIndex(1, 2)
- CartesianIndex(2, 1)
- CartesianIndex(2, 2)
-
-julia&gt; JosephsonCircuits.matrixindices(2,&quot;Upper&quot;,printflag=true)
-11 12 
-   22 
-      3-element Vector{CartesianIndex{2}}:
- CartesianIndex(1, 1)
- CartesianIndex(1, 2)
- CartesianIndex(2, 2)
-
-julia&gt; JosephsonCircuits.matrixindices(2,&quot;Lower&quot;,printflag=true)
-11 
-21 22 
-3-element Vector{CartesianIndex{2}}:
- CartesianIndex(1, 1)
- CartesianIndex(2, 1)
- CartesianIndex(2, 2)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.maxwell_combine-Union{Tuple{T}, Tuple{N}, Tuple{Int64, Dict{NTuple{N, Int64}, T}}} where {N, T&lt;:(AbstractMatrix)}" href="#JosephsonCircuits.maxwell_combine-Union{Tuple{T}, Tuple{N}, Tuple{Int64, Dict{NTuple{N, Int64}, T}}} where {N, T&lt;:(AbstractMatrix)}"><code>JosephsonCircuits.maxwell_combine</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">maxwell_combine(n::Int, d::Dict{NTuple{N, Int}, T}) where {N,T&lt;:AbstractMatrix}</code></pre><p>Return the Maxwell capacitance matrix for an <code>n</code> terminal system from the Maxwell capacitance matrices for sets of terminals stored in the dictionary <code>d</code>. The dictionary keys are tuples of the terminal numbers for the capacitance matrices and the values are the capacitance matrices.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; @variables C11, C12, C13, C21, C22, C23, C31, C32, C33;JosephsonCircuits.maxwell_combine(3, Dict((1,2)=&gt;[C11 C12;C21 C22],(1,3)=&gt;[C11 C13;C31 C33],(2,3)=&gt;[C22 C23;C32 C33]))
+connection_index)</code></pre><p>Apply the connection specified by the source node <code>src_node</code> and the index of the connection in the forward adjacency list <code>connection_index</code>. Modify the arguments and return nothing.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.maxwell_combine-Union{Tuple{T}, Tuple{N}, Tuple{Int64, Dict{NTuple{N, Int64}, T}}} where {N, T&lt;:(AbstractMatrix)}" href="#JosephsonCircuits.maxwell_combine-Union{Tuple{T}, Tuple{N}, Tuple{Int64, Dict{NTuple{N, Int64}, T}}} where {N, T&lt;:(AbstractMatrix)}"><code>JosephsonCircuits.maxwell_combine</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">maxwell_combine(n::Int, d::Dict{NTuple{N, Int}, T}) where {N,T&lt;:AbstractMatrix}</code></pre><p>Return the Maxwell capacitance matrix for an <code>n</code> terminal system from the Maxwell capacitance matrices for sets of terminals stored in the dictionary <code>d</code>. The dictionary keys are tuples of the terminal numbers for the capacitance matrices and the values are the capacitance matrices.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; @variables C11, C12, C13, C21, C22, C23, C31, C32, C33;JosephsonCircuits.maxwell_combine(3, Dict((1,2)=&gt;[C11 C12;C21 C22],(1,3)=&gt;[C11 C13;C31 C33],(2,3)=&gt;[C22 C23;C32 C33]))
 3×3 Matrix{Num}:
  C11  C12  C13
  C21  C22  C23
@@ -2640,27 +2437,7 @@ nodd = 2.99792458e8sqrt((Cg + 2Cm)*(-Lm + Ls))</code></pre></div></section></art
 julia&gt; C = [0.9 0.1;0.1 1.9];JosephsonCircuits.mutual_to_maxwell(C)
 2×2 Matrix{Float64}:
   1.0  -0.1
- -0.1   2.0</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.networkdatatoarray-NTuple{10, Any}" href="#JosephsonCircuits.networkdatatoarray-NTuple{10, Any}"><code>JosephsonCircuits.networkdatatoarray</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">networkdatatoarray(networkdata, numberofports, numberoffrequencies,
-    matrixformat, twoportdataorder, parameter, frequencyunit, format, R,
-    version)</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">networkdata = [4.0, 0.9995813511383583, -17.248815971093425, 4.5, 0.9958480363660398, -26.451285931791276, 5.0, 0.9868361175866559, 2.711906450972103, 5.5, 0.9985678550072272, -12.21545548845392, 6.0, 0.9993761539770525, -16.045248853866596]
-numberofports = 1
-numberoffrequencies = 5
-matrixformat = &quot;Full&quot;
-twoportdataorder = &quot;12_21&quot;
-parameter = &quot;s&quot;
-frequencyunit = &quot;ghz&quot;
-format = &quot;ma&quot;
-R = 50.0
-version = 2.0
-frequencies, N = JosephsonCircuits.networkdatatoarray(networkdata,
-    numberofports, numberoffrequencies, matrixformat, twoportdataorder,
-    parameter, frequencyunit, format, R, version)
-println(frequencies)
-println(N[1,1,:])
-
-# output
-[4.0e9, 4.5e9, 5.0e9, 5.5e9, 6.0e9]
-ComplexF64[0.9546262517670427 - 0.296397700700921im, 0.8915960960938982 - 0.44358732281729774im, 0.9857309246425359 + 0.04669118949947016im, 0.9759591344506418 - 0.21128542054786678im, 0.9604441706426364 - 0.2762239892126382im]</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.nlsolve!-Union{Tuple{T}, Tuple{Function, AbstractVector{T}, AbstractArray{T}, Vector{T}}} where T" href="#JosephsonCircuits.nlsolve!-Union{Tuple{T}, Tuple{Function, AbstractVector{T}, AbstractArray{T}, Vector{T}}} where T"><code>JosephsonCircuits.nlsolve!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
+ -0.1   2.0</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.nlsolve!-Union{Tuple{T}, Tuple{Function, AbstractVector{T}, AbstractArray{T}, Vector{T}}} where T" href="#JosephsonCircuits.nlsolve!-Union{Tuple{T}, Tuple{Function, AbstractVector{T}, AbstractArray{T}, Vector{T}}} where T"><code>JosephsonCircuits.nlsolve!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     x::Vector{T}; iterations=1000, ftol=1e-8, switchofflinesearchtol = 1e-5,
     alphamin = 1e-4,factorization = KLUfactorization())</code></pre><p>A simple nonlinear solver using Newton&#39;s method with linesearch based on Nocedal and Wright, chapter 3 section 5.</p><p>This solver attempts to find x such that f(x) == 0, where f is a nonlinear function with Jacobian J.</p><p>A few points to note: (1) It uses KLU factorization, so only works on sparse matrices. (2) The Jacobian J cannot change sparsity structure. (3) This function attempts to reuse the symbolic factorization which can     sometimes result in a SingularException, which we catch, then create a     new factorization object.</p><p><strong>Arguments</strong></p><ul><li><code>fj!</code>: a function to compute a vector-valued objective function and</li></ul><p>its Jacobian.</p><ul><li><code>F</code>: matrix for holding intermediate results. Initial values may be overwritten and can be bogus values.</li><li><code>J</code>: sparse matrix with with the desired sparsity structure of the Jacobian. Initial values may be overwritten and can be bogus values, as long as the sparsity structure is correct.</li><li><code>x</code>: initial guess for x.</li></ul><p><strong>Examples</strong></p><pre><code class="language-julia hljs">function fj!(F, J, x)
     if !isnothing(F)
@@ -2814,136 +2591,7 @@ julia&gt; [JosephsonCircuits.parsecomponenttype(c,[&quot;Lj&quot;,&quot;L&quot;,
  7
 
 julia&gt; JosephsonCircuits.parsecomponenttype(&quot;L10&quot;,[&quot;Lj&quot;,&quot;L&quot;,&quot;C&quot;,&quot;K&quot;,&quot;I&quot;,&quot;R&quot;,&quot;P&quot;])
-2</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parseinformation!-Tuple{Vector{String}, Vector{String}, IO}" href="#JosephsonCircuits.parseinformation!-Tuple{Vector{String}, Vector{String}, IO}"><code>JosephsonCircuits.parseinformation!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parseinformation!(information::Vector{String},io::IO)</code></pre><p>Append the contents of the information section of a Touchstone file from the IOBuffer or IOStream <code>io</code> to the vector <code>information</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">information = String[]
-comments = String[]
-io = IOBuffer(&quot;This is an information section.
-[End Information]&quot;)
-JosephsonCircuits.parseinformation!(information,comments,io)
-println(information)
-
-# output
-[&quot;this is an information section.&quot;]</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsematrixformat-Tuple{String}" href="#JosephsonCircuits.parsematrixformat-Tuple{String}"><code>JosephsonCircuits.parsematrixformat</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsematrixformat(line::String)</code></pre><p>Return the two-port data order string parsed from the [two-port data order] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.parsematrixformat(&quot;[matrix format] lower&quot;)
-&quot;Lower&quot;
-
-julia&gt; JosephsonCircuits.parsematrixformat(&quot;[matrix format] upper&quot;)
-&quot;Upper&quot;</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsemixedmodeorder!-Tuple{Vector{Tuple{Char, Vector{Int64}}}, String}" href="#JosephsonCircuits.parsemixedmodeorder!-Tuple{Vector{Tuple{Char, Vector{Int64}}}, String}"><code>JosephsonCircuits.parsemixedmodeorder!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsemixedmodeorder!(mixedmodeorder::Vector{Tuple{Char, Vector{Int}}},
-    line::String)</code></pre><p>Append the contents of the [mixed-mode order] line of a Touchstone file from the to the vector <code>mixedmodeorder</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; mixedmodeorder = Tuple{Char, Vector{Int}}[];JosephsonCircuits.parsemixedmodeorder!(mixedmodeorder,&quot;[Mixed-Mode Order] D2,3 D6,5 C2,3 C6,5 S4 S1&quot;);mixedmodeorder
-6-element Vector{Tuple{Char, Vector{Int64}}}:
- (&#39;D&#39;, [2, 3])
- (&#39;D&#39;, [6, 5])
- (&#39;C&#39;, [2, 3])
- (&#39;C&#39;, [6, 5])
- (&#39;S&#39;, [4])
- (&#39;S&#39;, [1])</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsenetworkdata!-Tuple{Vector{Float64}, Vector{String}, IO}" href="#JosephsonCircuits.parsenetworkdata!-Tuple{Vector{Float64}, Vector{String}, IO}"><code>JosephsonCircuits.parsenetworkdata!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsenetworkdata!(networkdata::Vector{Float64}, comments::Vector{String}, io::IO)</code></pre><p>Append the contents of the networkdata section of a Touchstone file from the IOBuffer or IOStream <code>io</code> to the vector <code>networkdata</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">networkdata = Float64[]
-comments = String[]
-io = IOBuffer(&quot;1.0000 0.3926 -0.1211 -0.0003 -0.0021 -0.0003 -0.0021 0.3926 -0.1211
-2.0000 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054
-10.000 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336&quot;)
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-println(networkdata)
-
-# output
-[1.0, 0.3926, -0.1211, -0.0003, -0.0021, -0.0003, -0.0021, 0.3926, -0.1211, 2.0, 0.3517, -0.3054, -0.0096, -0.0298, -0.0096, -0.0298, 0.3517, -0.3054, 10.0, 0.3419, 0.3336, -0.0134, 0.0379, -0.0134, 0.0379, 0.3419, 0.3336]</code></pre><pre><code class="language-julia hljs">networkdata = Float64[]
-comments = String[]
-io = IOBuffer(&quot;2 .95 -26 3.57 157 .04 76 .66 -14
-22 .60 -144 1.30 40 .14 40 .56 -85
-! NOISE PARAMETERS
-4 .7 .64 69 .38
-18 2.7 .46 -33 .40&quot;)
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-println(networkdata)
-
-# output
-[2.0, 0.95, -26.0, 3.57, 157.0, 0.04, 76.0, 0.66, -14.0, 22.0, 0.6, -144.0, 1.3, 40.0, 0.14, 40.0, 0.56, -85.0]</code></pre><pre><code class="language-julia hljs">networkdata = Float64[]
-comments = String[]
-io = IOBuffer(&quot;2 .95 -26 3.57 157 .04 76 .66 -14
-22 .60 -144 1.30 40 .14 40 .56 -85
-[Noise Data]
-4 .7 .64 69 19
-18 2.7 .46 -33 20
-[End]&quot;)
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-println(networkdata)
-
-# output
-[2.0, 0.95, -26.0, 3.57, 157.0, 0.04, 76.0, 0.66, -14.0, 22.0, 0.6, -144.0, 1.3, 40.0, 0.14, 40.0, 0.56, -85.0]</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsenoisedata!-Tuple{Any, Any, Any}" href="#JosephsonCircuits.parsenoisedata!-Tuple{Any, Any, Any}"><code>JosephsonCircuits.parsenoisedata!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsenoisedata!(noisedata::Vector{Float64}, comments::Vector{String},
-    io::IO)</code></pre><p>Append the contents of the networkdata section of a Touchstone file from the IOBuffer or IOStream <code>io</code> to the vector <code>networkdata</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">networkdata = Float64[]
-noisedata = Float64[]
-comments = String[]
-io = IOBuffer(&quot;1.0000 0.3926 -0.1211 -0.0003 -0.0021 -0.0003 -0.0021 0.3926 -0.1211
-2.0000 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054
-10.000 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336&quot;)
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
-println(noisedata)
-
-# output
-Float64[]</code></pre><pre><code class="language-julia hljs">networkdata = Float64[]
-noisedata = Float64[]
-comments = String[]
-io = IOBuffer(&quot;2 .95 -26 3.57 157 .04 76 .66 -14
-22 .60 -144 1.30 40 .14 40 .56 -85
-! NOISE PARAMETERS
-4 .7 .64 69 .38
-18 2.7 .46 -33 .40&quot;)
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
-println(noisedata)
-
-# output
-[4.0, 0.7, 0.64, 69.0, 0.38, 18.0, 2.7, 0.46, -33.0, 0.4]</code></pre><pre><code class="language-julia hljs">networkdata = Float64[]
-noisedata = Float64[]
-comments = String[]
-io = IOBuffer(&quot;2 .95 -26 3.57 157 .04 76 .66 -14
-22 .60 -144 1.30 40 .14 40 .56 -85
-[Noise Data]
-4 .7 .64 69 19
-18 2.7 .46 -33 20
-[End]&quot;)
-JosephsonCircuits.parsenetworkdata!(networkdata,comments,io)
-JosephsonCircuits.parsenoisedata!(noisedata,comments,io)
-println(noisedata)
-
-# output
-[4.0, 0.7, 0.64, 69.0, 19.0, 18.0, 2.7, 0.46, -33.0, 20.0]</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsenumberoffrequencies-Tuple{String}" href="#JosephsonCircuits.parsenumberoffrequencies-Tuple{String}"><code>JosephsonCircuits.parsenumberoffrequencies</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsenumberoffrequencies(line::String)</code></pre><p>Return the number of frequencies parsed from the [number of frequencies] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.parsenumberoffrequencies(&quot;[number of frequencies] 10&quot;)
-10</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsenumberofnoisefrequencies-Tuple{String}" href="#JosephsonCircuits.parsenumberofnoisefrequencies-Tuple{String}"><code>JosephsonCircuits.parsenumberofnoisefrequencies</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsenumberofnoisefrequencies(line::String)</code></pre><p>Return the number of noise frequencies parsed from the [number of noise frequencies] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.parsenumberofnoisefrequencies(&quot;[number of noise frequencies] 10&quot;)
-10</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsenumberofports-Tuple{String}" href="#JosephsonCircuits.parsenumberofports-Tuple{String}"><code>JosephsonCircuits.parsenumberofports</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsenumberofports(line::String)</code></pre><p>Return the number of ports parsed from the [number of ports] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.parsenumberofports(&quot;[number of ports] 1&quot;)
-1</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parseoptionline-Tuple{String}" href="#JosephsonCircuits.parseoptionline-Tuple{String}"><code>JosephsonCircuits.parseoptionline</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parseoptionline(line::String)</code></pre><p>Return a struct TouchstoneOptionLine which contains the option line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.parseoptionline(&quot;# MHz Z MA R 75&quot;)
-JosephsonCircuits.TouchstoneOptionLine(&quot;MHz&quot;, &quot;Z&quot;, &quot;MA&quot;, 75.0)
-
-julia&gt; JosephsonCircuits.parseoptionline(&quot;# MHz H RI R 75&quot;)
-JosephsonCircuits.TouchstoneOptionLine(&quot;MHz&quot;, &quot;H&quot;, &quot;RI&quot;, 75.0)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsereference!-Tuple{Vector{Float64}, Vector{String}, String, Int64, IO}" href="#JosephsonCircuits.parsereference!-Tuple{Vector{Float64}, Vector{String}, String, Int64, IO}"><code>JosephsonCircuits.parsereference!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsereference!(reference::Vector{Float64}, comments::Vector{String},
-    line::String, numberofports::Int, io::IO)</code></pre><p>Append the contents of the [reference] section of a Touchstone file from the IOBuffer or IOStream <code>io</code> to the vector <code>reference</code>. The reference impedance values can be spread across multiple lines.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">io = IOBuffer(&quot;[Reference] 50.0 60.0 75.0&quot;)
-numberofports = 3
-comments = String[]
-reference = Float64[]
-line = JosephsonCircuits.stripcommentslowercase!(comments,readline(io))
-JosephsonCircuits.parsereference!(reference, comments, line, numberofports, io)
-println(reference)
-
-# output
-[50.0, 60.0, 75.0]</code></pre><pre><code class="language-julia hljs">io = IOBuffer(&quot;[Reference] 50.0 
-60.0 75.0&quot;)
-numberofports = 3
-comments = String[]
-reference = Float64[]
-line = JosephsonCircuits.stripcommentslowercase!(comments,readline(io))
-JosephsonCircuits.parsereference!(reference, comments, line, numberofports, io)
-println(reference)
-
-# output
-[50.0, 60.0, 75.0]</code></pre><pre><code class="language-julia hljs">io = IOBuffer(&quot;[Reference] 50.0 
-60.0 75.0
-[Number of Frequencies] 1&quot;)
-numberofports = 3
-comments = String[]
-reference = Float64[]
-line = JosephsonCircuits.stripcommentslowercase!(comments,readline(io))
-JosephsonCircuits.parsereference!(reference, comments, line, numberofports, io)
-println(reference)
-
-# output
-[50.0, 60.0, 75.0]</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsesortcircuit-Tuple{Any}" href="#JosephsonCircuits.parsesortcircuit-Tuple{Any}"><code>JosephsonCircuits.parsesortcircuit</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsesortcircuit(circuit; sorting = :name)</code></pre><p>Parse and sort the circuit. See <a href="#JosephsonCircuits.parsecircuit-Tuple{Any}"><code>parsecircuit</code></a>, <a href="#JosephsonCircuits.sortnodes-Tuple{Vector{String}, Vector{Int64}}"><code>sortnodes</code></a> for more explanation.</p><p><strong>Arguments</strong></p><ul><li><code>circuit</code>: vector of tuples each of which contain the component name, the   first node, the second node, and the component value. The first three must   be strings.</li></ul><p><strong>Keywords</strong></p><ul><li><code>sorting = :name</code>: Sort the vector of strings. This always works but leads   to results like &quot;101&quot; comes before &quot;11&quot;.</li><li><code>sorting = :number</code>: Convert the node strings to integer and sort by these   (this errors if the nodes names cannot be converted to integers).</li><li><code>sorting = :none</code>: Don&#39;t perform any sorting except to place the ground node   first. In other words, order the nodes in the order they are found in   <code>circuit</code>.</li></ul><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables Ipump Rleft Cc Lj Cj
+2</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsesortcircuit-Tuple{Any}" href="#JosephsonCircuits.parsesortcircuit-Tuple{Any}"><code>JosephsonCircuits.parsesortcircuit</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsesortcircuit(circuit; sorting = :name)</code></pre><p>Parse and sort the circuit. See <a href="#JosephsonCircuits.parsecircuit-Tuple{Any}"><code>parsecircuit</code></a>, <a href="#JosephsonCircuits.sortnodes-Tuple{Vector{String}, Vector{Int64}}"><code>sortnodes</code></a> for more explanation.</p><p><strong>Arguments</strong></p><ul><li><code>circuit</code>: vector of tuples each of which contain the component name, the   first node, the second node, and the component value. The first three must   be strings.</li></ul><p><strong>Keywords</strong></p><ul><li><code>sorting = :name</code>: Sort the vector of strings. This always works but leads   to results like &quot;101&quot; comes before &quot;11&quot;.</li><li><code>sorting = :number</code>: Convert the node strings to integer and sort by these   (this errors if the nodes names cannot be converted to integers).</li><li><code>sorting = :none</code>: Don&#39;t perform any sorting except to place the ground node   first. In other words, order the nodes in the order they are found in   <code>circuit</code>.</li></ul><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables Ipump Rleft Cc Lj Cj
 circuit = Tuple{String,String,String,Num}[]
 push!(circuit,(&quot;P1&quot;,&quot;1&quot;,&quot;0&quot;,1))
 push!(circuit,(&quot;I1&quot;,&quot;1&quot;,&quot;0&quot;,Ipump))
@@ -2977,12 +2625,7 @@ julia&gt; JosephsonCircuits.parsespicevariable(&quot;V-1&quot;)
 (&quot;V&quot;, 1)
 
 julia&gt; JosephsonCircuits.parsespicevariable(&quot;frequency&quot;)
-(&quot;frequency&quot;, &quot;frequency&quot;)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parsetwoportdataorder-Tuple{String}" href="#JosephsonCircuits.parsetwoportdataorder-Tuple{String}"><code>JosephsonCircuits.parsetwoportdataorder</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parsetwoportdataorder(line::String)</code></pre><p>Return the two-port data order string parsed from the [two-port data order] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.parsetwoportdataorder(&quot;[two-port data order] 12_21&quot;)
-&quot;12_21&quot;
-
-julia&gt; JosephsonCircuits.parsetwoportdataorder(&quot;[two-port data order] 21_12&quot;)
-&quot;21_12&quot;</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.parseversion-Tuple{String}" href="#JosephsonCircuits.parseversion-Tuple{String}"><code>JosephsonCircuits.parseversion</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">parseversion(line::String)</code></pre><p>Return the version parsed from the [version] line of a Touchstone file.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.parseversion(&quot;[version] 1.0&quot;)
-1.0</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.phimatrixtovector!-Tuple{AbstractVector, AbstractArray, Vector{Int64}, Vector{Int64}, Vector{Int64}, Int64}" href="#JosephsonCircuits.phimatrixtovector!-Tuple{AbstractVector, AbstractArray, Vector{Int64}, Vector{Int64}, Vector{Int64}, Int64}"><code>JosephsonCircuits.phimatrixtovector!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">phimatrixtovector!(phivector::Vector, phimatrix::Array,
+(&quot;frequency&quot;, &quot;frequency&quot;)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.phimatrixtovector!-Tuple{AbstractVector, AbstractArray, Vector{Int64}, Vector{Int64}, Vector{Int64}, Int64}" href="#JosephsonCircuits.phimatrixtovector!-Tuple{AbstractVector, AbstractArray, Vector{Int64}, Vector{Int64}, Vector{Int64}, Int64}"><code>JosephsonCircuits.phimatrixtovector!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">phimatrixtovector!(phivector::Vector, phimatrix::Array,
     indexmap::Vector{Int}, conjsourceindices::Vector{Int},
     conjtargetindices::Vector{Int}, Nbranches::Int)</code></pre><p>The harmonic balance method requires a vector with all of the conjugate symmetric terms removed and potentially other terms dropped if specified by the user ( for example, intermodulation products which are not of interest) whereas the Fourier transform operates on multidimensional arrays with the proper conjugate symmetries and with dropped terms set to zero. This function converts an array to a vector with the above properties.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">freqindexmap = [2, 4, 6, 8, 12, 16, 27, 33]
 conjsourceindices = [16, 6]
@@ -3320,13 +2963,7 @@ true</code></pre></div></section></article><article class="docstring"><header><a
 
 julia&gt; lvarray = Vector{Int}[];JosephsonCircuits.storeuniqueloops!(lvarray,[1, 2, 3],Vector{Int64}[]);lvarray
 1-element Vector{Vector{Int64}}:
- []</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.stripcommentslowercase!-Tuple{Vector{String}, String}" href="#JosephsonCircuits.stripcommentslowercase!-Tuple{Vector{String}, String}"><code>JosephsonCircuits.stripcommentslowercase!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">stripcommentslowercase!(comments::Vector{String},line::String)</code></pre><p>Append the comment portion of a line <code>line</code> of a Touchstone file to the vector <code>comments</code>. Return the line with the comments removed and made lowercase.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; comments=String[];println(JosephsonCircuits.stripcommentslowercase!(comments,&quot;! This is a comment&quot;));println(comments)
-
-[&quot; This is a comment&quot;]
-
-julia&gt; comments=String[];println(JosephsonCircuits.stripcommentslowercase!(comments,&quot;This is a !comment&quot;));println(comments)
-this is a 
-[&quot;comment&quot;]</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.sumbranchvalues!-Tuple{Symbol, Int64, Int64, Vector, Dict, Dict}" href="#JosephsonCircuits.sumbranchvalues!-Tuple{Symbol, Int64, Int64, Vector, Dict, Dict}"><code>JosephsonCircuits.sumbranchvalues!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">sumbranchvalues!(type::Symbol, node1::Int, node2::Int,componentvalues::Vector,
+ []</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.sumbranchvalues!-Tuple{Symbol, Int64, Int64, Vector, Dict, Dict}" href="#JosephsonCircuits.sumbranchvalues!-Tuple{Symbol, Int64, Int64, Vector, Dict, Dict}"><code>JosephsonCircuits.sumbranchvalues!</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">sumbranchvalues!(type::Symbol, node1::Int, node2::Int,componentvalues::Vector,
     countdict, indexdict)</code></pre><p>Given a branch and a type, return the sum of all of the values of the same type and branch. The sum will behave differently depending on the type.</p><p><strong>Examples</strong></p><pre><code class="language-julia hljs">vvn = Real[1, 50.0, 1.0e-13, 2.0e-9, 2.0e-9, 5.0e-13, 5.0e-13, 0.1]
 countdict = Dict((:L, 1, 3) =&gt; 2, (:R, 1, 2) =&gt; 1, (:P, 1, 2) =&gt; 1, (:C, 1, 3) =&gt; 2, (:C, 2, 3) =&gt; 1, (:I, 1, 3) =&gt; 1)
 indexdict = Dict((:C, 2, 3, 1) =&gt; 3, (:C, 1, 3, 1) =&gt; 6, (:R, 1, 2, 1) =&gt; 2, (:L, 1, 3, 1) =&gt; 4, (:C, 1, 3, 2) =&gt; 7, (:L, 1, 3, 2) =&gt; 5, (:P, 1, 2, 1) =&gt; 1, (:I, 1, 3, 1) =&gt; 8)
@@ -3380,98 +3017,7 @@ sparsevec([1], [2], 3)
 julia&gt; JosephsonCircuits.testshow(stdout,JosephsonCircuits.SparseArrays.sparsevec([],Nothing[],3))
 sparsevec(Int64[], Nothing[], 3)
 
-julia&gt; JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.AxisKeys.KeyedArray(rand(Int8, 2,10), ([:a, :b], 10:10:100)))</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.touchstone_file-Tuple{AbstractVector{Float64}, Array{ComplexF64, 3}}" href="#JosephsonCircuits.touchstone_file-Tuple{AbstractVector{Float64}, Array{ComplexF64, 3}}"><code>JosephsonCircuits.touchstone_file</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">touchstone_file(f::Vector{Float64}, N::Array{Complex{Float64}};
-    frequencyunit::String = &quot;GHz&quot;,
-    parameter::String = &quot;S&quot;,
-    format::String = &quot;MA&quot;,
-    R::Float64 = 50.0,
-    version::Float64 = 2.0,
-    twoportdataorder::String = &quot;&quot;,
-    numberofnoisefrequencies::Int = 0,
-    reference::Vector{Float64} = Float64[],
-    information::Vector{String} = String[],
-    matrixformat::String = &quot;Full&quot;,
-    mixedmodeorder::Vector{Tuple{Char, Vector{Int}}} = Tuple{Char, Vector{Int}}[],
-    comments::Vector{String} = String[],
-    noisedata::Vector{Float64} = Float64[])</code></pre><p>Generate a TouchstoneFile struct from the frequency vector <code>f</code> in units of Hz and the complex network data array <code>N</code> where the frequency axis is the last dimension. All other arguments are optional.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.touchstone_load-Tuple{Any}" href="#JosephsonCircuits.touchstone_load-Tuple{Any}"><code>JosephsonCircuits.touchstone_load</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">touchstone_load(filename)</code></pre><p>Read a file in the Touchstone format. Standard compliant.</p><p>References to the <a href="https://ibis.org/connector/touchstone_spec11.pdf">1.1 spec</a> and the <a href="https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf">2.0 spec</a>.</p><p>Outputs un-normalized network parameters with frequency units of Hz. Don&#39;t enforce any particular file extension or try to infer the number of ports from the extension.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.touchstone_parse-Tuple{IO}" href="#JosephsonCircuits.touchstone_parse-Tuple{IO}"><code>JosephsonCircuits.touchstone_parse</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">touchstone_parse(io::IO)</code></pre><p>Parse the Touchstone file described by the IOBuffer or IOStream <code>io</code>.</p><p>References to the <a href="https://ibis.org/connector/touchstone_spec11.pdf">1.1 spec</a> and the <a href="https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf">2.0 spec</a>.</p><p><strong>Examples</strong></p><pre><code class="nohighlight hljs">str=&quot;!Example 1:
-!1-port S-parameter file, single frequency point
-# MHz S MA R 50
-!freq magS11 angS11
-2.000 0.894 -12.136&quot;;
-println(str);
-JosephsonCircuits.touchstone_parse(IOBuffer(str))
-
-# output
-!Example 1:
-!1-port S-parameter file, single frequency point
-# MHz S MA R 50
-!freq magS11 angS11
-2.000 0.894 -12.136
-JosephsonCircuits.TouchstoneFile([2.0e6], ComplexF64[0.874020294860635 - 0.18794819544685323im;;;], &quot;mhz&quot;, &quot;s&quot;, &quot;ma&quot;, 50.0, 1.0, 1, &quot;12_21&quot;, 1, 0, [50.0], String[], &quot;Full&quot;, Tuple{Char, Vector{Int64}}[], [&quot;Example 1:&quot;, &quot;1-port S-parameter file, single frequency point&quot;, &quot;freq magS11 angS11&quot;], [2.0, 0.894, -12.136], Float64[])</code></pre><pre><code class="nohighlight hljs">str=&quot;!Example 4 (Version 2.0):
-! 4-port S-parameter data
-! Default impedance is overridden by [Reference]
-! Data cannot be represented using 1.0 syntax
-! Note that the [Reference] keyword arguments appear on a separate line
-[Version] 2.0
-# GHz S MA R 50
-[Number of Ports] 4
-[Reference]
-50 75 0.01 0.01
-[Number of Frequencies] 1
-[Network Data]
-5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1
-0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2
-0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3
-0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4&quot;;
-println(str);
-JosephsonCircuits.touchstone_parse(IOBuffer(str))
-
-# output
-!Example 4 (Version 2.0):
-! 4-port S-parameter data
-! Default impedance is overridden by [Reference]
-! Data cannot be represented using 1.0 syntax
-! Note that the [Reference] keyword arguments appear on a separate line
-[Version] 2.0
-# GHz S MA R 50
-[Number of Ports] 4
-[Reference]
-50 75 0.01 0.01
-[Number of Frequencies] 1
-[Network Data]
-5.00000 0.60 161.24 0.40 -42.20 0.42 -66.58 0.53 -79.34 !row 1
-0.40 -42.20 0.60 161.20 0.53 -79.34 0.42 -66.58 !row 2
-0.42 -66.58 0.53 -79.34 0.60 161.24 0.40 -42.20 !row 3
-0.53 -79.34 0.42 -66.58 0.40 -42.20 0.60 161.24 !row 4
-JosephsonCircuits.TouchstoneFile([5.0e9], ComplexF64[-0.5681244079815996 + 0.1929628385351877im 0.29632183851470006 - 0.2686882357291961im 0.16693665375723588 - 0.38539869438327984im 0.09803970583787712 - 0.5208533537179372im; 0.29632183851470006 - 0.2686882357291961im -0.5679895560694177 + 0.1933594171383067im 0.09803970583787712 - 0.5208533537179372im 0.16693665375723588 - 0.38539869438327984im; 0.16693665375723588 - 0.38539869438327984im 0.09803970583787712 - 0.5208533537179372im -0.5681244079815996 + 0.1929628385351877im 0.29632183851470006 - 0.2686882357291961im; 0.09803970583787712 - 0.5208533537179372im 0.16693665375723588 - 0.38539869438327984im 0.29632183851470006 - 0.2686882357291961im -0.5681244079815996 + 0.1929628385351877im;;;], &quot;ghz&quot;, &quot;s&quot;, &quot;ma&quot;, 50.0, 2.0, 4, &quot;12_21&quot;, 1, 0, [50.0, 75.0, 0.01, 0.01], String[], &quot;Full&quot;, Tuple{Char, Vector{Int64}}[], [&quot;Example 4 (Version 2.0):&quot;, &quot; 4-port S-parameter data&quot;, &quot; Default impedance is overridden by [Reference]&quot;, &quot; Data cannot be represented using 1.0 syntax&quot;, &quot; Note that the [Reference] keyword arguments appear on a separate line&quot;, &quot;row 1&quot;, &quot;row 2&quot;, &quot;row 3&quot;, &quot;row 4&quot;], [5.0, 0.6, 161.24, 0.4, -42.2, 0.42, -66.58, 0.53, -79.34, 0.4  …  0.4, -42.2, 0.53, -79.34, 0.42, -66.58, 0.4, -42.2, 0.6, 161.24], Float64[])</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.touchstone_save-Tuple{String, AbstractVector, AbstractArray}" href="#JosephsonCircuits.touchstone_save-Tuple{String, AbstractVector, AbstractArray}"><code>JosephsonCircuits.touchstone_save</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">touchstone_save(filename::String,frequencies::AbstractArray,
-    N::AbstractArray;version=1.0,reference=[50.0,50.0],R = 50.0,format=&quot;RI&quot;,
-    comments=[&quot;&quot;],twoportdataorder=&quot;12_21&quot;,matrixformat=&quot;Full&quot;,frequencyunit=&quot;Hz&quot;)</code></pre><p>Write a file in the Touchstone format. Standards compliant except does not support writing noise data.</p><p>References to the <a href="https://ibis.org/connector/touchstone_spec11.pdf">1.1 spec</a> and the <a href="https://ibis.org/touchstone_ver2.0/touchstone_ver2_0.pdf">2.0 spec</a>.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.touchstone_write-Tuple{IO, AbstractVector{Float64}, Array{ComplexF64, 3}}" href="#JosephsonCircuits.touchstone_write-Tuple{IO, AbstractVector{Float64}, Array{ComplexF64, 3}}"><code>JosephsonCircuits.touchstone_write</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">touchstone_write(io::IO, frequencies::AbstractVector, N::AbstractArray;
-    version=1.0, reference=[50.0,50.0], R = 50.0, format=&quot;RI&quot;,
-    parameter = &quot;S&quot;, comments=[&quot;&quot;], twoportdataorder=&quot;12_21&quot;,
-    matrixformat=&quot;Full&quot;, frequencyunit=&quot;Hz&quot;)</code></pre><p>Write a Touchstone file to the IOStream or IOBuffer <code>io</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; io = IOBuffer();JosephsonCircuits.touchstone_write(io, [1.0e9, 2.0e9, 10.0e9], [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im];version=1.0,R=50.0,format=&quot;RI&quot;,frequencyunit=&quot;Hz&quot;,comments=[&quot;Example 4:&quot;,&quot;2-port S-parameter file, three frequency points&quot;]);println(String(take!(io)))
-!Example 4:
-!2-port S-parameter file, three frequency points
-# Hz S RI R 50.0
-! freq ReS11 ImS11 ReS21 ImS21 ReS12 ImS12 ReS22 ImS22 
-1.0e9 0.3926 -0.1211 -0.0003 -0.0021 -0.0003 -0.0021 0.3926 -0.1211
-2.0e9 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054
-1.0e10 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336
-
-julia&gt; io = IOBuffer();JosephsonCircuits.touchstone_write(io, [1.0e9, 2.0e9, 10.0e9], [0.3926 - 0.1211im -0.0003 - 0.0021im; -0.0003 - 0.0021im 0.3926 - 0.1211im;;; 0.3517 - 0.3054im -0.0096 - 0.0298im; -0.0096 - 0.0298im 0.3517 - 0.3054im;;; 0.3419 + 0.3336im -0.0134 + 0.0379im; -0.0134 + 0.0379im 0.3419 + 0.3336im];version=2.0,R=50.0,format=&quot;RI&quot;,frequencyunit=&quot;Hz&quot;,comments=[&quot;Example 4:&quot;,&quot;2-port S-parameter file, three frequency points&quot;]);println(String(take!(io)))
-!Example 4:
-!2-port S-parameter file, three frequency points
-[Version] 2.0
-# Hz S RI R 50.0
-[Number of Ports] 2
-[Two-Port Data Order] 12_21
-[Number of Frequencies] 3
-[Reference] 50.0 50.0
-[Network Data]
-! freq ReS11 ImS11 ReS12 ImS12 ReS21 ImS21 ReS22 ImS22 
-1.0e9 0.3926 -0.1211 -0.0003 -0.0021 -0.0003 -0.0021 0.3926 -0.1211
-2.0e9 0.3517 -0.3054 -0.0096 -0.0298 -0.0096 -0.0298 0.3517 -0.3054
-1.0e10 0.3419 0.3336 -0.0134 0.0379 -0.0134 0.0379 0.3419 0.3336
-[End]</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.touchstone_write-Tuple{IO, JosephsonCircuits.TouchstoneFile}" href="#JosephsonCircuits.touchstone_write-Tuple{IO, JosephsonCircuits.TouchstoneFile}"><code>JosephsonCircuits.touchstone_write</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">touchstone_write(io::IO, ts::TouchstoneFile)</code></pre><p>Write a Touchstone file specified by the TouchstoneFile object <code>ts</code> to the IOStream or IOBuffer <code>io</code>.</p></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.truncfreqs-Tuple{JosephsonCircuits.Frequencies}" href="#JosephsonCircuits.truncfreqs-Tuple{JosephsonCircuits.Frequencies}"><code>JosephsonCircuits.truncfreqs</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">truncfreqs(frequencies::Frequencies;
+julia&gt; JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.AxisKeys.KeyedArray(rand(Int8, 2,10), ([:a, :b], 10:10:100)))</code></pre></div></section></article><article class="docstring"><header><a class="docstring-article-toggle-button fa-solid fa-chevron-down" href="javascript:;" title="Collapse docstring"></a><a class="docstring-binding" id="JosephsonCircuits.truncfreqs-Tuple{JosephsonCircuits.Frequencies}" href="#JosephsonCircuits.truncfreqs-Tuple{JosephsonCircuits.Frequencies}"><code>JosephsonCircuits.truncfreqs</code></a> — <span class="docstring-category">Method</span><span class="is-flex-grow-1 docstring-article-toggle-button" title="Collapse docstring"></span></header><section><div><pre><code class="language-julia hljs">truncfreqs(frequencies::Frequencies;
     dc = false, odd = true, even = false, maxintermodorder = Inf)</code></pre><p>Return a new Frequencies struct with the coordinates and modes truncated according to the user specified criteria.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsrdft((3,3));maxintermodorder=2).modes
 12-element Vector{Tuple{Int64, Int64}}:
  (0, 0)
@@ -3748,4 +3294,4 @@ set dphimax=0.01
 run
 set filetype=binary
 write
-.endc</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.14.1 on <span class="colophon-date" title="Thursday 28 August 2025 02:34">Thursday 28 August 2025</span>. Using Julia version 1.11.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+.endc</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.14.1 on <span class="colophon-date" title="Friday 29 August 2025 01:56">Friday 29 August 2025</span>. Using Julia version 1.11.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
