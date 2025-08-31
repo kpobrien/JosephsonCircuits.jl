@@ -1972,7 +1972,6 @@ function S_directional_coupler_antisymmetric!(S, couplingdB::Number)
     return S_directional_coupler!(S, α, β, 0.0, pi)
 end
 
-
 """
     S_hybrid_coupler_symmetric()
 
@@ -2093,4 +2092,262 @@ ISBN 9780470631553.
 """
 function S_hybrid_coupler_antisymmetric!(S)
     return S_directional_coupler_antisymmetric!(S, 3)
+end
+
+"""
+    ABCD_attenuator_T(Z0,attenuationdB)
+
+Return the ABCD matrix for an attenuator with input and output impedance `Z0`
+and attenuation `attenuationdB` made with a T network of impedances `Ra`,
+`Rb`, and `Rc`.
+```
+o--Ra-----Rb--o
+       |       
+       Rc       
+       |       
+o-------------o
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_attenuator_T(50.0,10.0)
+2×2 Matrix{Float64}:
+ 1.73925    71.1512
+ 0.0284605   1.73925
+```
+"""
+function ABCD_attenuator_T(Z0::Number,attenuationdB::Number)
+    A = 10^(-attenuationdB/20)
+    Ra = Rb = Z0*(1-A)/(1+A)
+    Rc = (Z0^2-Rb^2)/(2*Rb)
+    return JosephsonCircuits.ABCD_TZ(Ra,Rb,Rc)
+end
+
+"""
+    ABCD_attenuator_T!(ABCD, Z0, attenuationdB)
+
+Overwrite `ABCD` with the ABCD matrix for an attenuator with input and output
+impedance `Z0` and attenuation `attenuationdB` made with a T network of
+impedances `Ra`, `Rb`, and `Rc`.
+```
+o--Ra-----Rb--o
+       |       
+       Rc       
+       |       
+o-------------o
+```
+# Examples
+```jldoctest
+julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_T!(ABCD, 50.0, 10.0)
+2×2 Matrix{Float64}:
+ 1.73925    71.1512
+ 0.0284605   1.73925
+```
+"""
+function ABCD_attenuator_T!(ABCD, Z0::Number,attenuationdB::Number)
+    A = 10^(-attenuationdB/20)
+    Ra = Rb = Z0*(1-A)/(1+A)
+    Rc = (Z0^2-Rb^2)/(2*Rb)
+    return JosephsonCircuits.ABCD_TZ!(ABCD, Ra,Rb,Rc)
+end
+
+"""
+    ABCD_attenuator_Pi(Z0,attenuationdB)
+
+Return the ABCD matrix for an attenuator with input and output impedance `Z0`
+and attenuation `attenuationdB` made with a T network of impedances `Rx`,
+`Ry`, and `Rz`.
+```
+o----Rz-----o
+   |     |   
+   Rx    Ry  
+   |     |   
+o-----------o
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_attenuator_Pi(50.0,10.0)
+2×2 Matrix{Float64}:
+ 1.73925    71.1512
+ 0.0284605   1.73925
+```
+"""
+function ABCD_attenuator_Pi(Z0::Number,attenuationdB::Number)
+    A = 10^(-attenuationdB/20)
+    Rx = Z0*(1+A)/(1-A)
+    Rz = 2*Rx/((Rx/Z0)^2-1)
+    return JosephsonCircuits.ABCD_PiY(1/Rx,1/Rx,1/Rz)
+end
+
+"""
+    ABCD_attenuator_Pi!(ABCD, Z0, attenuationdB)
+
+Overwrite `ABCD` with the ABCD matrix for an attenuator with input and output
+impedance `Z0` and attenuation `attenuationdB` made with a T network of
+impedances `Rx`, `Ry`, and `Rz`.
+```
+o----Rz-----o
+   |     |   
+   Rx    Ry  
+   |     |   
+o-----------o
+```
+# Examples
+```jldoctest
+julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_Pi!(ABCD,50.0,10.0)
+2×2 Matrix{Float64}:
+ 1.73925    71.1512
+ 0.0284605   1.73925
+```
+"""
+function ABCD_attenuator_Pi!(ABCD,Z0::Number,attenuationdB::Number)
+    A = 10^(-attenuationdB/20)
+    Rx = Z0*(1+A)/(1-A)
+    Rz = 2*Rx/((Rx/Z0)^2-1)
+    return JosephsonCircuits.ABCD_PiY!(ABCD,1/Rx,1/Rx,1/Rz)
+end
+
+function Z_attenuator_inner(Zsource::Number,Zload::Number,attenuationdB::Number)
+    # https://en.wikipedia.org/wiki/Attenuator_(electronics)
+    rho = max(Zsource,Zload)/min(Zsource,Zload)
+
+    attenuationdBmin = 20*log10(sqrt(rho-1)+sqrt(rho))
+
+    if attenuationdB < attenuationdBmin
+        throw(ValueError("Attenuation below minimum possible for passive circuit given the source and load impedances."))
+    end
+    
+    A = 10^-(attenuationdB/20)
+    num = 1+A^2
+    denom = 1-A^2
+    Z11 = Zsource*num/denom
+    Z22 = Zload*num/denom
+    Z21 = 2*A*sqrt(Zsource*Zload)/denom
+    return Z11,Z22,Z21
+end
+
+# function Z_attenuator(Zsource::Number,Zload::Number,attenuationdB::Number)
+#     Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
+#     return [Z11 Z21; Z21 Z22]
+# end
+
+"""
+    ABCD_attenuator_T(Zsource, Zload, attenuationdB)
+
+Return the ABCD matrix for an attenuator with input impedance `Zsource`,
+output impedance `Zload`, and attenuation `attenuationdB` made with a T
+network of impedances `Ra`, `Rb`, and `Rc`.
+```
+o--Ra-----Rb--o
+       |       
+       Rc       
+       |       
+o-------------o
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_attenuator_T(50.0,50.0,10.0)
+2×2 Matrix{Float64}:
+ 1.73925    71.1512
+ 0.0284605   1.73925
+```
+"""
+function ABCD_attenuator_T(Zsource::Number,Zload::Number,attenuationdB::Number)
+
+    Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
+    
+    return JosephsonCircuits.ABCD_TZ(Z11 - Z21, Z22 - Z21, Z21)
+end
+
+"""
+    ABCD_attenuator_T!(ABCD, Zsource, Zload, attenuationdB)
+
+Overwrite `ABCD` with the ABCD matrix for an attenuator with input impedance 
+`Zsource`, output impedance `Zload`, and attenuation `attenuationdB` made with
+a T network of impedances `Ra`, `Rb`, and `Rc`.
+```
+o--Ra-----Rb--o
+       |       
+       Rc       
+       |       
+o-------------o
+```
+# Examples
+```jldoctest
+julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_T!(ABCD, 50.0, 50.0, 10.0)
+2×2 Matrix{Float64}:
+ 1.73925    71.1512
+ 0.0284605   1.73925
+```
+"""
+function ABCD_attenuator_T!(ABCD, Zsource::Number,Zload::Number,attenuationdB::Number)
+
+    Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
+    
+    return JosephsonCircuits.ABCD_TZ!(ABCD, Z11 - Z21, Z22 - Z21, Z21)
+end
+
+"""
+    ABCD_attenuator_Pi(Zsource, Zload, attenuationdB)
+
+Return the ABCD matrix for an attenuator with input impedance `Zsource`,
+output impedance `Zload`, and attenuation `attenuationdB` made with a T
+network of impedances `Rx`, `Ry`, and `Rz`.
+```
+o----Rz-----o
+   |     |   
+   Rx    Ry  
+   |     |   
+o-----------o
+```
+# Examples
+```jldoctest
+julia> JosephsonCircuits.ABCD_attenuator_Pi(50.0,50.0,10.0)
+2×2 Matrix{Float64}:
+ 1.73925    71.1512
+ 0.0284605   1.73925
+```
+"""
+function ABCD_attenuator_Pi(Zsource::Number,Zload::Number,attenuationdB::Number)
+
+    # make a Y_attenuator_inner function for cases where Z_attenuator_inner
+    # has NaN or Inf. 
+    Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
+    denom = (Z11*Z22-Z21^2)
+    Y11 = Z22/denom
+    Y22 = Z11/denom
+    Y21 = Z21/denom
+    
+    return JosephsonCircuits.ABCD_PiY(Y11 - Y21, Y22 - Y21, Y21)
+end
+
+"""
+    ABCD_attenuator_Pi!(ABCD, Zsource, Zload, attenuationdB)
+
+Overwrite `ABCD` with the ABCD matrix for an attenuator with input impedance 
+`Zsource`, output impedance `Zload`, and attenuation `attenuationdB` made with
+a T network of impedances `Rx`, `Ry`, and `Rz`.
+```
+o----Rz-----o
+   |     |   
+   Rx    Ry  
+   |     |   
+o-----------o
+```
+# Examples
+```jldoctest
+julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_Pi!(ABCD,50.0,50.0,10.0)
+2×2 Matrix{Float64}:
+ 1.73925    71.1512
+ 0.0284605   1.73925
+```
+"""
+function ABCD_attenuator_Pi!(ABCD, Zsource::Number,Zload::Number,attenuationdB::Number)
+
+    Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
+    denom = (Z11*Z22-Z21^2)
+    Y11 = Z22/denom
+    Y22 = Z11/denom
+    Y21 = Z21/denom
+    
+    return JosephsonCircuits.ABCD_PiY!(ABCD, Y11 - Y21, Y22 - Y21, Y21)
 end
