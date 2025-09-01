@@ -213,7 +213,7 @@ import StaticArrays
             Sout2 = JosephsonCircuits.connectS(Sa,Sb,1,2)
             @test isapprox(Sout1,Sout2)
 
-            # test wit nbatches=1
+            # test with nbatches=1
             Sout1 = JosephsonCircuits.connectS(Sboth,1,2+size(Sa,1);nbatches=1)
             Sout2 = JosephsonCircuits.connectS(Sa,Sb,1,2;nbatches=1)
             @test isapprox(Sout1,Sout2)
