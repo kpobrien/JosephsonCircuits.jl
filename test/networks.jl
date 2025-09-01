@@ -555,13 +555,30 @@ import StaticArrays
 
         S1 = JosephsonCircuits.S_circulator_clockwise()
         S2 = similar(S1)
+        S3 = zeros(Complex{Float64},3,3,1)
         JosephsonCircuits.S_circulator_clockwise!(S2)
+        JosephsonCircuits.S_circulator_clockwise!(S3)
         @test isequal(S1,S2)
+        @test isequal(S1,S3[:,:,1])
+
+        @test_throws(
+            ArgumentError("Size of output (4, 4) must be (3, 3)."),
+            JosephsonCircuits.S_circulator_clockwise!(zeros(Complex{Float64},4,4)),
+        )
 
         S1 = JosephsonCircuits.S_circulator_counterclockwise()
         S2 = similar(S1)
+        S3 = zeros(Complex{Float64},3,3,1)
         JosephsonCircuits.S_circulator_counterclockwise!(S2)
+        JosephsonCircuits.S_circulator_counterclockwise!(S3)
         @test isequal(S1,S2)
+        @test isequal(S1,S3[:,:,1])
+
+        @test_throws(
+            ArgumentError("Size of output (4, 4) must be (3, 3)."),
+            JosephsonCircuits.S_circulator_counterclockwise!(zeros(Complex{Float64},4,4)),
+        )
+
     end
 
 end
