@@ -2216,7 +2216,7 @@ function Z_attenuator_inner(Zsource::Number,Zload::Number,attenuationdB::Number)
     attenuationdBmin = 20*log10(sqrt(rho-1)+sqrt(rho))
 
     if attenuationdB < attenuationdBmin
-        throw(ValueError("Attenuation below minimum possible for passive circuit given the source and load impedances."))
+        throw(ArgumentError("Attenuation of $(attenuationdB) dB is below the minimum attenuation of $(attenuationdBmin) dB for a passive circuit given the source and load impedances of $(Zsource) and $(Zload) Ohms."))
     end
     
     A = 10^-(attenuationdB/20)

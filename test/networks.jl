@@ -549,7 +549,22 @@ import StaticArrays
         for i in 1:size(S2,3)
             @test isequal(S1,S2[:,:,i])
         end
+
+        @test_throws(
+            ArgumentError("Size of output (2, 2) must be (4, 4)."),
+            JosephsonCircuits.S_directional_coupler!(zeros(Complex{Float64},2,2),1,2,3,4),
+        )
+
     end
+
+    @testset "attenuators" begin
+
+        @test_throws(
+            ArgumentError("Attenuation of 0 dB is below the minimum attenuation of 3.7653971144370946 dB for a passive circuit given the source and load impedances of 50 and 60 Ohms."),
+            JosephsonCircuits.Z_attenuator_inner(50,60,0),
+        )
+    end
+
 
     @testset "circulators" begin
 
