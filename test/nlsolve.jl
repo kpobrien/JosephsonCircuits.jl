@@ -151,4 +151,15 @@ using Test
 
     end
 
+    @testset verbose=true "tryfactorize! elseif path" begin
+        A = [1.0 2.0; 3.0 5.0]
+        cache = JosephsonCircuits.FactorizationCache()
+        fact = JosephsonCircuits.QRfactorization()
+        JosephsonCircuits.tryfactorize!(cache, fact, A)
+        @test cache.factorization !== nothing
+        A[1,1] = 1.1
+        JosephsonCircuits.tryfactorize!(cache, fact, A)
+        @test cache.factorization !== nothing
+    end
+
 end

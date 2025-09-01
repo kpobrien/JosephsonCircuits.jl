@@ -551,4 +551,17 @@ import StaticArrays
         end
     end
 
+    @testset "circulators" begin
+
+        S1 = JosephsonCircuits.S_circulator_clockwise()
+        S2 = similar(S1)
+        JosephsonCircuits.S_circulator_clockwise!(S2)
+        @test isequal(S1,S2)
+
+        S1 = JosephsonCircuits.S_circulator_counterclockwise()
+        S2 = similar(S1)
+        JosephsonCircuits.S_circulator_counterclockwise!(S2)
+        @test isequal(S1,S2)
+    end
+
 end

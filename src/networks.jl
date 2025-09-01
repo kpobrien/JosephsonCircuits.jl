@@ -1763,6 +1763,9 @@ ISBN 9780470631553.
 function S_directional_coupler!(S::AbstractMatrix, α::Number, β::Number,
     θ::Number, ϕ::Number)
     # check if S is 4x4
+    if size(S,1) != 4 || size(S,2) != 4
+        throw(ArgumentError("Size of output $(size(S)) must be (4, 4)."))
+    end
 
     # fill with zeros
     fill!(S,zero(eltype(S)))
@@ -2350,4 +2353,62 @@ function ABCD_attenuator_Pi!(ABCD, Zsource::Number,Zload::Number,attenuationdB::
     Y21 = Z21/denom
     
     return JosephsonCircuits.ABCD_PiY!(ABCD, Y11 - Y21, Y22 - Y21, Y21)
+end
+
+
+
+function S_circulator_clockwise()
+    return Complex{Float64}[0 0 1;
+        1 0 0;
+        0 1 0]
+end
+
+function S_circulator_clockwise!(S::AbstractMatrix)
+    # check if S is 3x3
+    if size(S,1) != 3 || size(S,2) != 3
+        throw(ArgumentError("Size of output $(size(S)) must be (3, 3)."))
+    end
+
+    # fill with zeros
+    fill!(S,zero(eltype(S)))
+
+    S[1,3] = S[2,1] = S[3,2] = 1
+    return S
+end
+
+function S_circulator_clockwise!(S::AbstractArray)
+
+    # loop over the dimensions of the array greater than 2
+    for i in CartesianIndices(axes(S)[3:end])
+        S_circulator_clockwise!(view(S,:,:,i))
+    end
+    return S
+end
+
+function S_circulator_counterclockwise()
+    return Complex{Float64}[0 1 0;
+        0 0 1;
+        1 0 0]
+end
+
+function S_circulator_counterclockwise!(S::AbstractMatrix)
+    # check if S is 3x3
+    if size(S,1) != 3 || size(S,2) != 3
+        throw(ArgumentError("Size of output $(size(S)) must be (3, 3)."))
+    end
+
+    # fill with zeros
+    fill!(S,zero(eltype(S)))
+
+    S[1,2] = S[2,3] = S[3,1] = 1
+    return S
+end
+
+function S_circulator_counterclockwise!(S::AbstractArray)
+
+    # loop over the dimensions of the array greater than 2
+    for i in CartesianIndices(axes(S)[3:end])
+        S_circulator_counterclockwise!(view(S,:,:,i))
+    end
+    return S
 end
