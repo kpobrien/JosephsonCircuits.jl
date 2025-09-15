@@ -25,8 +25,7 @@ inductances. See also [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
 - `Ljb::SparseVector`: vector of branch Josephson junction inductances.
 - `Ljbm::SparseVector`: vector of branch Josephson junction inductances with
     each element duplicated Nmodes times.
-- `Mb::SparseMatrixCSC`: the mutual inductance matrix in the branch basis with
-    each element duplicated along the diagonal Nmodes times.
+- `Mb::SparseMatrixCSC`: the mutual inductance matrix in the branch basis.
 - `invLnm::SparseMatrixCSC`: the inverse inductance matrix in the node basis
     with each element duplicated along the diagonal Nmodes times.
 - `Rbnm::SparseMatrixCSC{Int, Int}`: incidence matrix to convert between the
@@ -1073,15 +1072,15 @@ julia> @variables Rg1 Rg2;JosephsonCircuits.calcGn([:R,:R],[2 3;1 1],[Rg1,Rg2],1
 
 julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],1,3)
 2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
- 1 / Rg1 + 1 / Rc           -1 / Rc
-          -1 / Rc  1 / Rg2 + 1 / Rc
+ 1 / Rc + 1 / Rg1           -1 / Rc
+          -1 / Rc  1 / Rc + 1 / Rg2
 
 julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],2,3)
 4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 8 stored entries:
- 1 / Rg1 + 1 / Rc                 ⋅           -1 / Rc                 ⋅
-                ⋅  1 / Rg1 + 1 / Rc                 ⋅           -1 / Rc
-          -1 / Rc                 ⋅  1 / Rg2 + 1 / Rc                 ⋅
-                ⋅           -1 / Rc                 ⋅  1 / Rg2 + 1 / Rc
+ 1 / Rc + 1 / Rg1                 ⋅           -1 / Rc                 ⋅
+                ⋅  1 / Rc + 1 / Rg1                 ⋅           -1 / Rc
+          -1 / Rc                 ⋅  1 / Rc + 1 / Rg2                 ⋅
+                ⋅           -1 / Rc                 ⋅  1 / Rc + 1 / Rg2
 ```
 """
 function calcGn(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},

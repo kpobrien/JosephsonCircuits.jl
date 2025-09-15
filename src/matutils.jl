@@ -1,9 +1,9 @@
 
 """
-    diagrepeat(A::Matrix, counts::Integer)
+    diagrepeat(A::AbstractVecOrMat, Nmodes::Integer)
 
 Return a matrix with each element of `A` duplicated along the diagonal
-`counts` times.
+`Nmodes` times.
 
 # Examples
 ```jldoctest
@@ -22,16 +22,23 @@ julia> JosephsonCircuits.diagrepeat([1,2],2)
  2
 ```
 """
-function diagrepeat(A::AbstractArray, counts::Integer)
-    out = zeros(eltype(A),size(A).*counts)
-    diagrepeat!(out,A,counts)
+function diagrepeat(A::AbstractVecOrMat, Nmodes::Integer)
+    out = zeros(eltype(A),size(A).*Nmodes)
+    diagrepeat!(out,A,Nmodes)
     return out
 end
 
-"""
-    diagrepeat!(out, A, counts::Integer)
+function diagrepeat(A::AbstractArray, Nmodes::Integer)
+    # only scale the first two dimensions
+    sizeout = NTuple{ndims(A),Int}(ifelse(i == 1 || i == 2, Nmodes*val, val) for (i,val) in enumerate(size(A)))
+    out = zeros(eltype(A),sizeout)
+    return diagrepeat!(out,A,Nmodes)
+end
 
-Overwrite `out` with the elements of `A` duplicated `counts` times along
+"""
+    diagrepeat!(out::AbstractVecOrMat, A::AbstractVecOrMat, Nmodes::Integer)
+
+Overwrite `out` with the elements of `A` duplicated `Nmodes` times along
 the diagonal.
 
 # Examples
@@ -44,28 +51,37 @@ julia> A = [1 2;3 4];out = zeros(eltype(A),4,4);JosephsonCircuits.diagrepeat!(ou
  0  3  0  4
 ```
 """
-function diagrepeat!(out, A, counts::Integer)
+function diagrepeat!(out::AbstractVecOrMat, A::AbstractVecOrMat, Nmodes::Integer)
 
-    if size(A).*counts != size(out)
+    if size(A).*Nmodes != size(out)
         throw(DimensionMismatch("Sizes not consistent"))
     end
 
     @inbounds for coord in CartesianIndices(A)
-        if A[coord] != 0
-            for i in 1:counts
-                out[CartesianIndex((coord.I .- 1).*counts .+ i)] = A[coord]
+        if !iszero(A[coord])
+            for i in 1:Nmodes
+                out[CartesianIndex((coord.I .- 1).*Nmodes .+ i)] = A[coord]
             end
         end
     end
 
-    return nothing
+    return out
+end
+
+function diagrepeat!(out::AbstractArray, A::AbstractArray, Nmodes::Integer)
+    # use views to loop over the dimensions of the
+    # array higher than 2.
+    for i in CartesianIndices(axes(A)[3:end])
+        diagrepeat!(view(out,:,:,i),view(A,:,:,i),Nmodes)
+    end
+    return out
 end
 
 """
-    diagrepeat(A::Diagonal, counts::Integer)
+    diagrepeat(A::Diagonal, Nmodes::Integer)
 
 Return a diagonal matrix with each element of `A` duplicated along the
-diagonal `counts` times.
+diagonal `Nmodes` times.
 
 # Examples
 ```jldoctest
@@ -77,17 +93,17 @@ julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.LinearAlgebra.Diagonal([1,
  ⋅  ⋅  ⋅  2
 ```
 """
-function diagrepeat(A::Diagonal, counts::Integer)
-    out = zeros(eltype(A),length(A.diag)*counts)
-    diagrepeat!(out,A.diag,counts)
+function diagrepeat(A::Diagonal, Nmodes::Integer)
+    out = zeros(eltype(A),length(A.diag)*Nmodes)
+    diagrepeat!(out,A.diag,Nmodes)
     return Diagonal(out)
 end
 
 """
-    diagrepeat(A::SparseMatrixCSC, counts::Integer)
+    diagrepeat(A::SparseMatrixCSC, Nmodes::Integer)
 
 Return a sparse matrix with each element of `A` duplicated along the diagonal 
-`counts` times.
+`Nmodes` times.
 
 # Examples
 ```jldoctest
@@ -99,24 +115,24 @@ julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,1,2
  ⋅  3  ⋅  4
 ```
 """
-function diagrepeat(A::SparseMatrixCSC, counts::Integer)
+function diagrepeat(A::SparseMatrixCSC, Nmodes::Integer)
 
     # column pointer has length number of columns + 1
-    colptr = Vector{Int}(undef,counts*A.n+1)
+    colptr = Vector{Int}(undef,Nmodes*A.n+1)
     
     # the sum of the number of nonzero elements is an upper bound 
     # for the number of nonzero elements in the sum.
     # set rowval and nzval to be that size then reduce size later
-    rowval = Vector{Int}(undef,counts*nnz(A))
-    nzval = Vector{eltype(A.nzval)}(undef,counts*nnz(A))
+    rowval = Vector{Int}(undef,Nmodes*nnz(A))
+    nzval = Vector{eltype(A.nzval)}(undef,Nmodes*nnz(A))
 
-    diagrepeat!(colptr,rowval,nzval,A,counts)
+    diagrepeat!(colptr,rowval,nzval,A,Nmodes)
 
-    return SparseMatrixCSC(A.m*counts,A.n*counts,colptr,rowval,nzval)
+    return SparseMatrixCSC(A.m*Nmodes,A.n*Nmodes,colptr,rowval,nzval)
 end
 
 function diagrepeat!(colptr::Vector, rowval::Vector, nzval::Vector,
-    A::SparseMatrixCSC, counts::Integer)
+    A::SparseMatrixCSC, Nmodes::Integer)
 
     colptr[1] = 1
     # loop over the columns
@@ -124,11 +140,11 @@ function diagrepeat!(colptr::Vector, rowval::Vector, nzval::Vector,
         # the diagonally repeated elements are additional columns
         # in between the original columns with the elements shifted
         # down.
-        for k in 1:counts
-            idx = (i-2)*counts+k+1
-            colptr[idx] = colptr[(i-2)*counts+k]
+        for k in 1:Nmodes
+            idx = (i-2)*Nmodes+k+1
+            colptr[idx] = colptr[(i-2)*Nmodes+k]
             for j in A.colptr[i-1]:(A.colptr[i]-1)
-                rowval[colptr[idx]] = (A.rowval[j]-1)*counts+k
+                rowval[colptr[idx]] = (A.rowval[j]-1)*Nmodes+k
                 nzval[colptr[idx]] = A.nzval[j]
                 colptr[idx] += 1
             end
@@ -138,10 +154,10 @@ function diagrepeat!(colptr::Vector, rowval::Vector, nzval::Vector,
 end
 
 """
-    diagrepeat(A::SparseVector, counts::Integer)
+    diagrepeat(A::SparseVector, Nmodes::Integer)
 
 Return a sparse vector with each element of `A` duplicated along the diagonal 
-`counts` times.
+`Nmodes` times.
 
 # Examples
 ```jldoctest
@@ -153,21 +169,206 @@ julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparsevec([1,
   [4]  =  2
 ```
 """
-function diagrepeat(A::SparseVector, counts::Integer)
+function diagrepeat(A::SparseVector, Nmodes::Integer)
 
     # define empty vectors for the rows, columns, and values
-    nzind = Vector{eltype(A.nzind)}(undef,nnz(A)*counts)
-    nzval = Vector{eltype(A.nzval)}(undef,nnz(A)*counts)
+    nzind = Vector{eltype(A.nzind)}(undef,nnz(A)*Nmodes)
+    nzval = Vector{eltype(A.nzval)}(undef,nnz(A)*Nmodes)
 
     @inbounds for i in 1:length(A.nzind)
-        for j in 1:counts
-            nzind[(i-1)*counts+j] = (A.nzind[i]-1)*counts+j
-            nzval[(i-1)*counts+j] = A.nzval[i]
+        for j in 1:Nmodes
+            nzind[(i-1)*Nmodes+j] = (A.nzind[i]-1)*Nmodes+j
+            nzval[(i-1)*Nmodes+j] = A.nzval[i]
         end
     end
 
-    return SparseVector(A.n*counts,nzind,nzval)
+    return SparseVector(A.n*Nmodes,nzind,nzval)
 end
+
+"""
+    diagcombine(x::Vector{T}) where T<:AbstractArray
+
+Accept a vector of abstract arrays `x` where each element is a matrix or array
+of scattering parameters for one mode. Returns a single matrix or array of the 
+multi-mode scattering parameter matrices.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.diagcombine([[111 121;211 221],[112 122;212 222],[113 123;213 223]])
+6×6 Matrix{Int64}:
+ 111    0    0  121    0    0
+   0  112    0    0  122    0
+   0    0  113    0    0  123
+ 211    0    0  221    0    0
+   0  212    0    0  222    0
+   0    0  213    0    0  223
+```
+"""
+function diagcombine(x::Vector{T}) where T<:AbstractArray
+    
+    # check if the sizes of the matrices are consistent
+    sizex = size(first(x))
+    for xi in x
+        if size(xi) != sizex
+            error("Sizes are not consistent.")
+        end
+    end
+
+    # prepare a new tuple with the size of the scattering
+    # parameter array.
+    # the first two dimensions are multiplied by the length
+    # of the 
+    outsize = NTuple{length(sizex),Int}(ifelse(i == 1 || i == 2, length(x)*val, val) for (i,val) in enumerate(sizex))
+
+    out = zeros(eltype(eltype(x)),outsize)
+
+    # now assign the elements
+    for (i,xi) in enumerate(x)
+        diagcombine!(out,xi,i)
+    end
+
+    return out
+end
+
+function diagcombine!(out::AbstractVecOrMat,A::AbstractVecOrMat,mode_index::Int)
+    # should this only operate on matrices?
+    # i think this function is really simple
+    # should i check that the size is sufficient?
+#     Nports = size(A,1)
+    Nmodes = size(out,1) ÷ size(A,1)
+    
+    if mode_index <= 0
+        throw(ArgumentError("mode_index, $(mode_index), is less than or equal to zero."))
+    end
+    
+    if mode_index > Nmodes
+        throw(ArgumentError("mode_index, $(mode_index), cannot be larger than Nmodes, which is $(Nmodes) from the matrix sizes."))
+    end
+        
+    for coord in CartesianIndices(A)
+        out[CartesianIndex((coord.I .- 1).*Nmodes .+ mode_index)] = A[coord]
+    end
+    return out
+end
+
+function diagcombine!(out::AbstractArray, A::AbstractArray, mode_index::Integer)
+    # use views to loop over the dimensions of the
+    # array higher than 2.
+    for i in CartesianIndices(axes(A)[3:end])
+        diagcombine!(view(out,:,:,i),view(A,:,:,i),mode_index)
+    end
+    return out
+end
+
+
+"""
+    axis_to_modes(S::AbstractArray, modes_axis::Integer)
+
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.axis_to_modes([111 121;211 221;;; 112 122;212 222;;; 113 123;213 223],3)
+6×6 Matrix{Int64}:
+ 111    0    0  121    0    0
+   0  112    0    0  122    0
+   0    0  113    0    0  123
+ 211    0    0  221    0    0
+   0  212    0    0  222    0
+   0    0  213    0    0  223
+
+julia> JosephsonCircuits.axis_to_modes([111 121;211 221;;;; 112 122;212 222;;;; 113 123;213 223],4)
+6×6×1 Array{Int64, 3}:
+[:, :, 1] =
+ 111    0    0  121    0    0
+   0  112    0    0  122    0
+   0    0  113    0    0  123
+ 211    0    0  221    0    0
+   0  212    0    0  222    0
+   0    0  213    0    0  223
+
+julia> JosephsonCircuits.axis_to_modes([111 121;211 221;;;; 112 122;212 222;;;; 113 123;213 223],3)
+2×2×3 Array{Int64, 3}:
+[:, :, 1] =
+ 111  121
+ 211  221
+
+[:, :, 2] =
+ 112  122
+ 212  222
+
+[:, :, 3] =
+ 113  123
+ 213  223
+```
+"""
+function axis_to_modes(S::AbstractArray, modes_axis::Integer)
+
+    if modes_axis > ndims(S)
+        error("modes_axis larger than number of dimensions in input array.")
+    end
+
+    if modes_axis < 3
+        error("modes_axis must be 3 or more (the first two dimensions are ports.")
+    end
+
+    if ndims(S) < 3
+        error("The input array needs 3 or more dimensions (two for ports and one for modes).")
+    end
+
+    # the size of S with the dimension we will delete removed
+    indicesS = NTuple{ndims(S)-1,Int}(ifelse(i < modes_axis, i, i+1) for i in 1:ndims(S)-1)
+
+    # allocate an array with the
+    # don't assume the number of input ports are equal to the number
+    # of output ports
+    sizeout = NTuple{ndims(S)-1,Int}(ifelse(i == 1 || i == 2, size(S,modes_axis)*size(S,i), size(S,i)) for i in indicesS)
+
+
+    # make sure to allocate a matrix of zeros because some of the
+    # elements will be zero
+    out = zeros(eltype(S),sizeout)
+
+    # copy over the data
+    Nmodes = size(S,modes_axis)
+    
+    # loop over the dimensions of the array greater than 2
+    for c in CartesianIndices(axes(out)[3:end])
+        # 
+        if modes_axis == 3
+            axis_to_modes!(view(out,:,:,c),view(S,:,:,:,c.I[(modes_axis-2):end]...))
+         else
+            axis_to_modes!(view(out,:,:,c),view(S,:,:,c.I[1:(modes_axis-3)]...,:,c.I[(modes_axis-2):end]...))
+        end
+    end
+
+    return out
+end
+
+function axis_to_modes!(X::AbstractMatrix,S::AbstractArray)
+
+    Nmodes = size(S,3)
+
+    # check that the dimensions are consistent
+    if ndims(S) != 3
+        error("S parameter array must have 3 dimensions (the first two dimensions are ports and the last is the modes).")
+    end
+
+    if size(X,1) != size(S,1)*Nmodes || size(X,2) != size(S,2)*Nmodes
+        error("Dimensions of X and S not consistent.")
+    end
+    # copy over the data
+    for k in axes(S,3)
+        for j in axes(S,2)
+            for i in axes(S,1)
+                X[(i-1)*Nmodes+k,(j-1)*Nmodes+k] = S[i,j,k]
+            end
+        end
+    end
+
+    return X
+end
+
+
 
 """
     spaddkeepzeros(A::SparseMatrixCSC, B::SparseMatrixCSC)
@@ -326,7 +527,7 @@ function sparseadd!(A::SparseMatrixCSC,As::SparseMatrixCSC,indexmap)
     for i in 1:nnz(As)
         A.nzval[indexmap[i]] += As.nzval[i]
     end
-    return nothing
+    return A
 end
 
 """
@@ -367,7 +568,7 @@ function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,indexmap::V
     for i in 1:nnz(As)
         A.nzval[indexmap[i]] += c*As.nzval[i]
     end
-    return nothing
+    return A
 end
 
 """
@@ -417,7 +618,7 @@ function sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
             A.nzval[indexmap[j]] += c*Ad[i,i]*As.nzval[j]
         end
     end
-    return nothing
+    return A
 end
 
 """
@@ -467,7 +668,7 @@ function sparseadd!(A::SparseMatrixCSC, c::Number, Ad::Diagonal,
             A.nzval[indexmap[j]] += c*Ad[As.rowval[j],As.rowval[j]]*As.nzval[j]
         end
     end
-    return nothing
+    return A
 end
 
 
@@ -629,7 +830,7 @@ function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
             end
         end
     end
-    return nothing
+    return A
 end
 
 """
@@ -782,7 +983,7 @@ function conjnegfreq!(A::SparseMatrixCSC, wmodes::Vector)
           end
         end
       end
-    return nothing
+    return A
 end
 
 """
@@ -980,7 +1181,7 @@ function spmatmul!(C::SparseMatrixCSC, A::SparseMatrixCSC, B::SparseMatrixCSC,
     end
     resize!(C.rowval, ip - 1)
     resize!(C.nzval, ip - 1)
-    return nothing
+    return C
 end
 
 """

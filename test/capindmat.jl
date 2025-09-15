@@ -57,4 +57,15 @@ using Test
         )
     end
 
+    @testset "combine" begin
+
+        a = rand()
+        b = rand()
+        @test(JosephsonCircuits.combine_sum(a,b) == a+b)
+        @test(JosephsonCircuits.combine_reciprocal_sum(a,b) == a*b/(a+b))
+        @test_throws(
+            ArgumentError("Components 1 and 2 cannot be combined to a single element. Please place the two components between different nodes."),
+            JosephsonCircuits.combine_error(1,2),
+        )
+    end
 end

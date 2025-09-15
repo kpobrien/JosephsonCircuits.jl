@@ -549,6 +549,51 @@ import StaticArrays
         for i in 1:size(S2,3)
             @test isequal(S1,S2[:,:,i])
         end
+
+        @test_throws(
+            ArgumentError("Size of output (2, 2) must be (4, 4)."),
+            JosephsonCircuits.S_directional_coupler!(zeros(Complex{Float64},2,2),1,2,3,4),
+        )
+
+    end
+
+    @testset "attenuators" begin
+
+        @test_throws(
+            ArgumentError("Attenuation of 0 dB is below the minimum attenuation of 3.7653971144370946 dB for a passive circuit given the source and load impedances of 50 and 60 Ohms."),
+            JosephsonCircuits.Z_attenuator_inner(50,60,0),
+        )
+    end
+
+
+    @testset "circulators" begin
+
+        S1 = JosephsonCircuits.S_circulator_clockwise()
+        S2 = similar(S1)
+        S3 = zeros(Complex{Float64},3,3,1)
+        JosephsonCircuits.S_circulator_clockwise!(S2)
+        JosephsonCircuits.S_circulator_clockwise!(S3)
+        @test isequal(S1,S2)
+        @test isequal(S1,S3[:,:,1])
+
+        @test_throws(
+            ArgumentError("Size of output (4, 4) must be (3, 3)."),
+            JosephsonCircuits.S_circulator_clockwise!(zeros(Complex{Float64},4,4)),
+        )
+
+        S1 = JosephsonCircuits.S_circulator_counterclockwise()
+        S2 = similar(S1)
+        S3 = zeros(Complex{Float64},3,3,1)
+        JosephsonCircuits.S_circulator_counterclockwise!(S2)
+        JosephsonCircuits.S_circulator_counterclockwise!(S3)
+        @test isequal(S1,S2)
+        @test isequal(S1,S3[:,:,1])
+
+        @test_throws(
+            ArgumentError("Size of output (4, 4) must be (3, 3)."),
+            JosephsonCircuits.S_circulator_counterclockwise!(zeros(Complex{Float64},4,4)),
+        )
+
     end
 
 end

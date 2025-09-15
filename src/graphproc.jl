@@ -113,7 +113,7 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int)
 
         #superconducting spanning tree
         si = Graphs.SimpleGraph(Graphs.kruskal_mst(gli))
-        #si = SimpleGraph(prim_mst(gli))
+        #si = Graphs.SimpleGraph(prim_mst(gli))
 
         #calculate the closure branches
         ci = collect(Graphs.edges(Graphs.difference(gli,si)))
