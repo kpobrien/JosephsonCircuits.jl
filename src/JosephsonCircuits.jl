@@ -510,6 +510,14 @@ export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
     @variables, @register_symbolic, Num, Symbolics, connectS, solveS
 
+# Export the new functions
+export NonlinearElement
+
+export identify_nonlinear_elements
+
+export debug_log, get_debug_log, clear_debug_log
+
+export warning_log, get_warning_log, clear_warning_log
 
 # the below precompile directives are to help the compiler perform type inference
 # during the precompilation stage (when the package is installed) instead of
@@ -522,14 +530,16 @@ export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
 # julia> using SnoopCompile, AbstractTrees
 # julia> print_tree(tinf, maxdepth=100)
 
+#=
 PrecompileTools.@compile_workload begin
     warmup()
-    warmupsyms()
-    warmupsymsold()
-    warmupsymsnew()
+    # warmupsyms()
+    # warmupsymsold()
+    # warmupsymsnew()
     warmupnetwork()
     warmupconnect()
 end
+=#
 
 #end module
 end

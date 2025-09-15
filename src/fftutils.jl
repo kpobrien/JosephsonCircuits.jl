@@ -1203,6 +1203,135 @@ function applynl!(fd::Array{Complex{T}}, td::Array{T}, f, irfftplan,
 end
 
 """
+   applynl_mixed!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vector{Function}, 
+       irfftplan, rfftplan)
+
+Apply different nonlinear functions to each column of the frequency domain data by 
+transforming to the time domain, applying the corresponding function from `nl_functions`, 
+then transforming back to the frequency domain, overwriting the contents of fd and td 
+in the process. We use plans for the forward and reverse RFFT prepared by [`plan_applynl`](@ref).
+
+# Arguments
+- `fd`: Frequency domain data array where each column represents a different nonlinear element
+- `td`: Time domain data array (workspace)
+- `nl_functions`: Vector of functions where `nl_functions[i]` is applied to column `i`
+- `irfftplan`: Inverse RFFT plan
+- `rfftplan`: Forward RFFT plan
+
+# Examples
+```jldoctest
+fd=ones(Complex{Float64},3,2)
+td, irfftplan, rfftplan = JosephsonCircuits.plan_applynl(fd)
+nl_functions = [sin, cos]
+JosephsonCircuits.applynl_mixed!(fd, td, nl_functions, irfftplan, rfftplan)
+fd
+
+# output
+3×2 Matrix{ComplexF64}:
+ 0.454649+0.0im   0.586589+0.0im
+-0.545351+0.0im  -0.413411+0.0im
+-0.545351+0.0im  -0.413411+0.0im
+"""
+
+function applynl_mixed!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vector{Function}, 
+    irfftplan, rfftplan) where T
+
+    # debug_log("applynl_mixed! - fd size: $(size(fd)), td size: $(size(td))")
+    # debug_log("DC mode values before transform: $(fd[1,:])")  # First frequency bin is DC
+
+    # Transform to time domain
+    mul!(td, irfftplan, fd)
+
+    # debug_log("TD values after IRFFT (first few): $(td[1:min(4,end),:])")
+
+    # Normalize the fft
+    normalization = prod(size(td)[1:end-1])
+    invnormalization = 1/normalization
+
+    # Apply the appropriate nonlinear function to each column
+    # Note: The last dimension corresponds to different nonlinear elements
+    for col in 1:size(td, ndims(td))
+        nl_func = nl_functions[col]
+        for idx in CartesianIndices(size(td)[1:end-1])
+            full_idx = CartesianIndex(idx.I..., col)
+            td[full_idx] = nl_func(td[full_idx] * normalization)
+        end
+    end
+
+    # Transform back to frequency domain
+    mul!(fd, rfftplan, td)
+
+    # Normalize
+    for i in eachindex(fd)
+        fd[i] = fd[i] * invnormalization
+    end
+
+    return nothing
+end
+
+function applynl_mixed_verbose!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vector{Function}, 
+    irfftplan, rfftplan) where T
+
+    # Transform to time domain
+    mul!(td, irfftplan, fd)
+
+    # Normalize the fft
+    normalization = prod(size(td)[1:end-1])
+    invnormalization = 1/normalization
+
+    #=
+    # Debug: Check what's in fd before transform
+    if size(fd, ndims(fd)) == 2  # Only for 2-element case
+        debug_log("FFT Debug:")
+        debug_log("  fd before FFT (frequency domain):")
+        for col in 1:2
+            debug_log("    Column $col: max|val| = $(maximum(abs.(fd[:, col])))")
+        end
+    end
+    =#
+
+    # Apply the appropriate nonlinear function to each column
+    for col in 1:size(td, ndims(td))
+        nl_func = nl_functions[col]
+        
+        #= 
+        # Debug first iteration only
+        if col <= 2 && !isdefined(Main, :fft_debug_done)
+            flux_sample = td[1, col] * normalization
+            current_sample = nl_func(flux_sample)
+            debug_log("  Column $col: sample flux=$flux_sample → current=$current_sample")
+        end
+        =# 
+
+        for idx in CartesianIndices(size(td)[1:end-1])
+            full_idx = CartesianIndex(idx.I..., col)
+            td[full_idx] = nl_func(td[full_idx] * normalization)
+        end
+    end
+
+    # Transform back to frequency domain
+    mul!(fd, rfftplan, td)
+
+    # Normalize
+    for i in eachindex(fd)
+        fd[i] = fd[i] * invnormalization
+    end
+    
+    #= 
+    # Debug: Check what's in fd after transform
+    if size(fd, ndims(fd)) == 2 && !isdefined(Main, :fft_debug_done)
+        debug_log("  fd after FFT (frequency domain):")
+        for col in 1:2
+            debug_log("    Column $col: max|val| = $(maximum(abs.(fd[:, col])))")
+        end
+        global fft_debug_done = true
+    end
+    
+    =#
+    return nothing
+end
+
+"""
     hbmatind(truncfrequencies::Frequencies{N})
 
 Returns a matrix describing which indices of the frequency domain matrix

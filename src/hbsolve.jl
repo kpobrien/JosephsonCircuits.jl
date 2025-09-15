@@ -1,3 +1,33 @@
+# Global debug buffer
+const DEBUG_MESSAGES = String[]
+
+function debug_log(msg::String)
+    push!(DEBUG_MESSAGES, msg)
+end
+
+function get_debug_log()
+    return copy(DEBUG_MESSAGES)
+end
+
+function clear_debug_log()
+    empty!(DEBUG_MESSAGES)
+end
+
+
+# Warning buffer (separate from debug)
+const WARNING_MESSAGES = String[]
+
+function warning_log(msg::String)
+    push!(WARNING_MESSAGES, msg)
+end
+
+function get_warning_log()
+    return copy(WARNING_MESSAGES)
+end
+
+function clear_warning_log()
+    empty!(WARNING_MESSAGES)
+end
 
 """
     NonlinearHB(nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
@@ -39,6 +69,7 @@ struct NonlinearHB
     ports
     modes
     S
+    nonlinear_elements
 end
 
 """
@@ -143,6 +174,20 @@ struct HB
 end
 
 
+# Add near the top of hbsolve.jl, after the struct definitions
+
+"""
+    NonlinearElement
+
+Represents a nonlinear element with its type and parameters.
+"""
+struct NonlinearElement
+    type::Symbol  # :josephson, :taylor, :kinetic
+    indices::Vector{Int}  # Branch indices
+    params::Dict{Symbol,Any}  # Parameters for the nonlinearity
+end
+
+
 #     hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
 #         circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
 #         switchofflinesearchtol = 1e-5, alphamin = 1e-4,
@@ -170,6 +215,7 @@ end
 function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+    x0 = nothing,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
     returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
@@ -225,15 +271,27 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     # calculate the numeric matrices
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
+    # identify nonlinear elements
+    nonlinear_elements = identify_nonlinear_elements(
+        psc.componenttypes,
+        psc.componentvalues,
+        psc.nodeindices,
+        cg.edge2indexdict,
+        circuitdefs 
+    )
+
+    
+    nonlinear_elements::Dict{Int, NonlinearElement} = nonlinear_elements
+
     # solve the nonlinear problem
-    nonlinear = hbnlsolve(w, sources, freq, indices, psc, cg, nm;
-        iterations = iterations, x0 = nothing, ftol = ftol,
+    nonlinear = hbnlsolve(w, sources, freq, indices, psc, cg, nm, nonlinear_elements;
+        iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
         factorization = factorization)
 
     # generate the signal modes
-    signalfreq =truncfreqs(
+    signalfreq = truncfreqs(
         calcfreqsdft((Nsignalmodes,)),
         dc=true,odd=false,even=true,maxintermodorder=Inf,
     )
@@ -391,6 +449,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     circuit, circuitdefs;dc = false, threewavemixing = false,
     fourwavemixing = true, maxintermodorder=Inf, iterations = 1000,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+    x0 = nothing,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
     sorting = :number, returnS = true, returnSnoise = false, returnQE = true,
     returnCM = true, returnnodeflux = false, returnvoltage = false,
@@ -398,7 +457,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     keyedarrays::Val{K} = Val(true), sensitivitynames::Vector{String} = String[],
     returnSsensitivity = false, returnZ = false, returnZadjoint = false,
     returnZsensitivity = false, returnZsensitivityadjoint = false,
-    factorization = KLUfactorization()) where {N,M,K}
+    factorization = KLUfactorization()) where {N,M,K}    
 
     # calculate the Frequencies struct
     freq = removeconjfreqs(
@@ -422,15 +481,27 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     # calculate the numeric matrices
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
+    # identify nonlinear elements
+    nonlinear_elements = identify_nonlinear_elements(
+        psc.componenttypes,
+        psc.componentvalues,
+        psc.nodeindices,
+        cg.edge2indexdict,
+        circuitdefs 
+    )
+    
+    nonlinear_elements::Dict{Int, NonlinearElement} = nonlinear_elements
+
+
     # solve the nonlinear problem
-    nonlinear = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
-        iterations = iterations, x0 = nothing, ftol = ftol,
+    nonlinear = hbnlsolve(wp, sources, freq, indices, psc, cg, nm, nonlinear_elements;
+        iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
         factorization = factorization)
 
     # generate the signal modes
-    signalfreq =truncfreqs(
+    signalfreq = truncfreqs(
         calcfreqsdft(Nmodulationharmonics),
         dc=true, odd=threewavemixing, even=fourwavemixing,
         maxintermodorder=maxintermodorder,
@@ -612,7 +683,7 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     cg = calccircuitgraph(psc)
 
     # generate the signal modes
-    signalfreq =truncfreqs(
+    signalfreq = truncfreqs(
         calcfreqsdft(Nmodulationharmonics),
         dc=true, odd=threewavemixing, even=fourwavemixing, 
             maxintermodorder=maxintermodorder,
@@ -696,7 +767,7 @@ nonlinear = hbnlsolve(
         (mode=(1,),port=1,current=Ip),
     ],
     frequencies, fi, psc, cg, nm)
-signalfreq =JosephsonCircuits.truncfreqs(
+signalfreq = JosephsonCircuits.truncfreqs(
     JosephsonCircuits.calcfreqsdft(Nmodulationharmonics),
     dc = true, odd = threewavemixing, even = fourwavemixing,
     maxintermodorder = Inf,
@@ -709,7 +780,6 @@ isapprox(linearized.nodeflux,
 
 # output
 true
-```
 """
 function hblinsolve(w, psc::ParsedSortedCircuit,
     cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N}; nonlinear = nothing,
@@ -725,6 +795,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     Nsignalmodes = length(signalfreq.modes)
     # calculate the numeric matrices
     signalnm = numericmatrices(psc, cg, circuitdefs, Nmodes = Nsignalmodes)
+    
 
     if isnothing(nonlinear)
 
@@ -738,17 +809,21 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
         pumpfreq = nonlinear.frequencies
 
+        Npumpmodes = length(pumpfreq.modes)
+        
         # pumpfreq = JosephsonCircuits.calcfreqsrdft((2*Npumpmodes,))
         allpumpfreq = calcfreqsrdft(pumpfreq.Nharmonics)
-        pumpindices = fourierindices(pumpfreq)
-        Npumpmodes = length(pumpfreq.modes)
+        
+        pumpindices = fourierindices(pumpfreq)        
 
-        Amatrixmodes, Amatrixindices = hbmatind(allpumpfreq, signalfreq)
+        Amatrixmodes, Amatrixindices = hbmatind(allpumpfreq, signalfreq)    
 
         # calculate the dimensions of the array which holds the frequency
         # domain information for the fourier transform
-        Nwtuple = NTuple{length(pumpfreq.Nw)+1,Int}((pumpfreq.Nw..., length(nonlinear.Ljb.nzval)))
-
+        # Count all nonlinear elements
+        num_nl_elements = length(nonlinear.nonlinear_elements)
+        Nwtuple = NTuple{length(pumpfreq.Nw)+1,Int}((pumpfreq.Nw..., num_nl_elements))
+        
         # create an array to hold the frequency domain data for the
         # fourier transform
         phimatrix = zeros(Complex{Float64}, Nwtuple)
@@ -760,26 +835,55 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         # convert the branch flux vector to a matrix with the terms arranged
         # in the correct way for the inverse rfft including the appropriate
         # complex conjugates.
-        branchflux = nonlinear.Rbnm*nonlinear.nodeflux[:]
+        branchflux = nonlinear.Rbnm*nonlinear.nodeflux[:]                             
+
+        # Recreate all_nl_branches from nonlinear_elements
+        all_nl_branches = SparseVector(cg.Nbranches, Int[], Float64[])
+        for (branch, elem) in sort(collect(nonlinear.nonlinear_elements), by=x->x[1])
+            push!(all_nl_branches.nzind, branch)
+            push!(all_nl_branches.nzval, 1.0)
+        end 
+               
+
+        # Create the repeated version
+        all_nl_branches_m = SparseVector(cg.Nbranches * Nsignalmodes, Int[], Float64[])
+        for idx in all_nl_branches.nzind
+            for m in 1:Nsignalmodes
+                push!(all_nl_branches_m.nzind, (idx-1)*Nsignalmodes + m)
+                push!(all_nl_branches_m.nzval, 1.0)
+            end
+        end        
+
+        # Create pump mode indices for extraction        
+        pump_nl_indices = Int[]
+        for idx in all_nl_branches.nzind
+            for m in 1:Npumpmodes
+                push!(pump_nl_indices, (idx-1)*Npumpmodes + m)
+            end
+        end
+        
+
+        # Use all_nl_branches_m instead of Ljbm for indices
         phivectortomatrix!(
-            branchflux[nonlinear.Ljbm.nzind], phimatrix,
+            branchflux[pump_nl_indices], phimatrix,
             pumpindices.vectomatmap,
             pumpindices.conjsourceindices,
             pumpindices.conjtargetindices,
-            length(nonlinear.Ljb.nzval)
+            length(all_nl_branches.nzval)
         )
 
-        # apply the sinusoidal nonlinearity when evaluaing the function
-        applynl!(
-            phimatrix,
-            phimatrixtd,
-            cos,
-            irfftplan,
-            rfftplan,
-        )
+        # Apply the linearization of nonlinearities
+        # For Josephson: cos(φ), for Taylor: derivative of polynomial
+        apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear.nonlinear_elements,
+                            :jacobian, irfftplan, rfftplan) 
+                                   
+                            
 
         wpumpmodes = calcmodefreqs(nonlinear.w,signalfreq.modes)
-    end
+        
+        
+    end    
+
 
     # this is the first signal frequency. we will use it for various setup tasks
     wmodes = w[1] .+ wpumpmodes
@@ -788,15 +892,55 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     Nfreq = prod(signalfreq.Nw)
 
-    AoLjbmindices, conjindicessorted = calcAoLjbmindices(
-        Amatrixindices, signalnm.Ljb, Nsignalmodes, cg.Nbranches, Nfreq
-    )
+    # Modified to handle all nonlinear elements, not just Josephson
+    if isnothing(nonlinear)
+        # Use signalnm.Ljb for the no-nonlinear case
+        AoLjbmindices, conjindicessorted = calcAoLjbmindices(
+            Amatrixindices, signalnm.Ljb, Nsignalmodes, cg.Nbranches, Nfreq
+        )
+        
+        AoLjbm = calcAoLjbm2(phimatrix, 
+            Amatrixindices, signalnm.Ljb, 1, Nsignalmodes, cg.Nbranches
+        )
+    else        
+                
+        all_nl_branches_for_calc = SparseVector(cg.Nbranches, Int[], Float64[])
 
-    AoLjbm = calcAoLjbm2(phimatrix, 
-        Amatrixindices, signalnm.Ljb, 1, Nsignalmodes, cg.Nbranches
-    )
+        # First, add all Josephson junctions in the order they appear in signalnm.Ljb
+        for i in 1:length(signalnm.Ljb.nzind)
+            branch = signalnm.Ljb.nzind[i]
+            if haskey(nonlinear.nonlinear_elements, branch)
+                push!(all_nl_branches_for_calc.nzind, branch)
+                push!(all_nl_branches_for_calc.nzval, signalnm.Ljb.nzval[i])
+            end
+        end
 
-    AoLjnm = signalnm.Rbnm'*AoLjbm*signalnm.Rbnm
+        # Then, add any Taylor elements that aren't already included
+        for (branch, elem) in sort(collect(nonlinear.nonlinear_elements), by=x->x[1])
+            if elem.type == :taylor && !(branch in all_nl_branches_for_calc.nzind)
+                push!(all_nl_branches_for_calc.nzind, branch)
+                if haskey(elem.params, :inductance)
+                    push!(all_nl_branches_for_calc.nzval, elem.params[:inductance])
+                else
+                    push!(all_nl_branches_for_calc.nzval, 1.0)  # Fallback
+                end
+            end
+        end                        
+        
+        
+        AoLjbmindices, conjindicessorted = calcAoLjbmindices(
+            Amatrixindices, all_nl_branches_for_calc, Nsignalmodes, cg.Nbranches, Nfreq
+        )                                
+                
+        AoLjbm = calcAoLjbm2(phimatrix, 
+            Amatrixindices, all_nl_branches_for_calc, 1, Nsignalmodes, cg.Nbranches
+        )                      
+                
+
+    end
+
+    AoLjnm = signalnm.Rbnm'*AoLjbm*signalnm.Rbnm  
+
 
     # extract the elements we need
     Nnodes = psc.Nnodes
@@ -817,7 +961,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     portnumbers = signalnm.portnumbers
     portimpedanceindices = signalnm.portimpedanceindices
     vvn = signalnm.vvn
-    modes = signalfreq.modes
+    modes = signalfreq.modes 
+    
 
     # find the indices associated with the components for which we will
     # calculate sensitivities
@@ -840,6 +985,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             # bbm2[(i-1)*Nmodes+j,(i-1)*Nmodes+j] = Lmean*1/phi0
         end
     end
+    
 
     # calculate the source terms in the node basis
     bnm = transpose(Rbnm)*bbm
@@ -855,6 +1001,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             mutualinductorbranchnames,
             Symbolics.substitute.(vvn, symfreqvar => wmodes[1]))
     end
+    
 
     # find the indices at which there are symbolic variables so we can
     # perform a substitution on only those. 
@@ -896,7 +1043,6 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     sparseaddconjsubst!(Asparse, 1, invLnm,
         Diagonal(ones(size(invLnm,1))), invLnmindexmap, real.(wmodesm) .< 0,
         wmodesm, invLnmfreqsubstindices, symfreqvar)
-
 
     # make arrays for the voltages, node fluxes, scattering parameters,
     # quantum efficiency, and commutatio relations. if we aren't returning a
@@ -1160,6 +1306,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
     portindices, portimpedanceindices, noiseportimpedanceindices,
     sensitivityindices, portimpedances, noiseportimpedances, nodeindices,
     componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization)
+    
 
     Nports = length(portindices)
     phin = zeros(Complex{Float64}, Nmodes*(Nnodes-1), Nmodes*Nports)
@@ -1249,9 +1396,10 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
         # calculate the frequency matrices
         ws = w[i]
         # wmodes = calcw(ws,indices,wp);
-        wmodes = ws .+ wpumpmodes
+        wmodes = ws .+ wpumpmodes       
         wmodesm = Diagonal(repeat(wmodes, outer = Nnodes-1));
         wmodes2m = Diagonal(repeat(wmodes.^2, outer = Nnodes-1));
+        
 
         # perform the operation below in a way that doesn't allocate
         # significant memory, plus take the conjugates mentioned below.
@@ -1259,6 +1407,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
 
         fill!(Asparsecopy.nzval, zero(eltype(Asparsecopy.nzval)))
         sparseadd!(Asparsecopy, 1, AoLjnm, AoLjnmindexmap)
+        
 
         # take the complex conjugate of the negative frequency terms in
         # the capacitance and conductance matrices. substitute in the symbolic
@@ -1269,14 +1418,16 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
             real.(wmodesm) .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
         sparseaddconjsubst!(Asparsecopy, 1, invLnm,
             Diagonal(ones(size(invLnm,1))), invLnmindexmap, real.(wmodesm) .< 0,
-            wmodesm, invLnmfreqsubstindices, symfreqvar)
+            wmodesm, invLnmfreqsubstindices, symfreqvar)        
+                            
+        
 
         # factor the sparse matrix
         # factorklu!(cache, Asparsecopy)
-        tryfactorize!(cache, factorization, Asparsecopy)
+        tryfactorize!(cache, factorization, Asparsecopy)        
 
         # solve the linear system
-        trysolve!(phin, cache.factorization, bnm)
+        trysolve!(phin, cache.factorization, bnm)        
 
         # convert to node voltages. node flux is defined as the time integral
         # of node voltage so node voltage is derivative of node flux which can
@@ -1288,7 +1439,7 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
         # copy the nodeflux for output
         if !isempty(nodeflux)
             copy!(view(nodeflux,:,:,i),phin)
-        end
+        end        
 
         # calculate the scattering parameters
         if !isempty(S) || !isempty(QE) || !isempty(CM)
@@ -1514,7 +1665,7 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, sorting= :number, keyedarrays::Val{K} = Val(true),
     sensitivitynames::Vector{String} = String[],
-    factorization = KLUfactorization()) where {N,K}
+    factorization = KLUfactorization()) where {N,K}    
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -1537,7 +1688,17 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     # calculate the numeric matrices
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
-    return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
+    # identify nonlinear elements
+    nonlinear_elements = identify_nonlinear_elements(
+        psc.componenttypes,
+        psc.componentvalues,
+        psc.nodeindices,
+        cg.edge2indexdict,
+        circuitdefs 
+    )
+    nonlinear_elements::Dict{Int, NonlinearElement} = nonlinear_elements
+
+    return hbnlsolve(w, sources, freq, indices, psc, cg, nm, nonlinear_elements;
         iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
@@ -1600,7 +1761,7 @@ out=hbnlsolve(
         (mode=(0,),port=1,current=Idc),
         (mode=(1,),port=1,current=Ip),
     ],
-    frequencies, fi, psc, cg, nm)
+    frequencies, fi, psc, cg, nm, nonlinear_elements)
 isapprox(out.nodeflux[:],
     ComplexF64[15.190314040027522 - 8.56492651167657e-24im, 2.991103820177504e-6 - 1.8501001011477133e-8im, -6.835392148510984 - 1.0356102442254259e-14im, 7.396422335315908e-6 - 4.5749403967992827e-8im, 6.835392148539885 - 1.0356102451770844e-14im, 1.008026285172782e-5 - 6.23498762664213e-8im],
     atol = 1e-6)
@@ -1611,11 +1772,12 @@ true
 """
 function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
     indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
-    nm::CircuitMatrices; iterations = 1000, x0 = nothing,
+    nm::CircuitMatrices, nonlinear_elements::Dict{Int, NonlinearElement}; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, keyedarrays::Val{K} = Val(true),
     sensitivitynames::Vector{String} = String[],
     factorization = KLUfactorization()) where {N,K}
+    
 
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
@@ -1673,14 +1835,60 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
 
     # calculate the source terms in the branch basis
     bbm = calcsources(modes, sources, portindices, portnumbers,
-        nodeindices, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)
+        nodeindices, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes)       
 
     # convert from the node basis to the branch basis
-    bnm = transpose(Rbnm)*bbm
+    bnm = transpose(Rbnm)*bbm            
+
+    # Create a sparse vector that includes ALL nonlinear elements
+    all_nl_branches = SparseVector(Nbranches, Int[], Float64[])
+    for (branch, elem) in sort(collect(nonlinear_elements), by=x->x[1])
+        push!(all_nl_branches.nzind, branch)
+        
+        # Get the actual inductance value
+        if elem.type == :josephson
+            # Find the inductance in Ljb
+            idx = findfirst(x -> x == branch, Ljb.nzind)
+            if !isnothing(idx)                
+                push!(all_nl_branches.nzval, Ljb.nzval[idx])
+            else
+                error("Josephson junction at branch $branch not found in Ljb")
+            end
+        elseif elem.type == :taylor
+            # Use the inductance from params
+            if haskey(elem.params, :inductance)
+                push!(all_nl_branches.nzval, elem.params[:inductance])
+            else
+                error("Taylor element at branch $branch missing inductance parameter")
+            end
+        else
+            error("Unknown nonlinear element type: $(elem.type)")
+        end
+    end
+
+    # Recalculate Lmean based on ALL nonlinear elements (not just Josephson)
+    if iszero(nm.Lmean) && nnz(all_nl_branches) > 0
+        # Calculate mean inductance from all nonlinear inductances
+        Lmean = sum(all_nl_branches.nzval) / nnz(all_nl_branches)
+    else
+        # Keep the existing Lmean
+        # debug_log("Using original Lmean: $Lmean")
+    end
+
+    # Create the repeated version for all nonlinear branches
+    all_nl_branches_m = SparseVector(Nbranches * Nmodes, Int[], Float64[])
+    for idx in all_nl_branches.nzind
+        for m in 1:Nmodes
+            push!(all_nl_branches_m.nzind, (idx-1)*Nmodes + m)            
+            push!(all_nl_branches_m.nzval, all_nl_branches.nzval[findfirst(==(idx), all_nl_branches.nzind)])
+        end
+    end
 
     # calculate the dimensions of the array which holds the frequency
     # domain information for the fourier transform
-    Nwtuple = NTuple{length(Nw)+1,Int}((Nw..., length(Ljb.nzval)))
+    # Nwtuple = NTuple{length(Nw)+1,Int}((Nw..., length(Ljb.nzval)))
+    # Calculate the dimensions based on ALL nonlinear elements
+    Nwtuple = NTuple{length(Nw)+1,Int}((Nw..., length(all_nl_branches.nzval)))
 
     # create an array to hold the frequency domain data for the
     # fourier transform
@@ -1695,25 +1903,31 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
     # matrix.
     Amatrix = rand(Complex{Float64}, Nwtuple)
     Nfreq = prod(size(Amatrix)[1:end-1])
-    AoLjbmindices, conjindicessorted = calcAoLjbmindices(Amatrixindices,
-        Ljb, Nmodes, Nbranches, Nfreq)
+
+    
+    # AoLjbmindices, conjindicessorted = calcAoLjbmindices(Amatrixindices, Ljb, Nmodes, Nbranches, Nfreq)
+
+    AoLjbmindices, conjindicessorted = calcAoLjbmindices(Amatrixindices, all_nl_branches, Nmodes, Nbranches, Nfreq)
 
     # right now i redo the calculation of AoLjbmindices, conjindicessorted in
     # calcAoLjbm2
-    AoLjbm = calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes,
-        Nbranches)
-    AoLjbmcopy = calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes,
-        Nbranches)
+    AoLjbm = calcAoLjbm2(Amatrix, Amatrixindices, all_nl_branches, Lmean, Nmodes, Nbranches)
+    AoLjbmcopy = calcAoLjbm2(Amatrix, Amatrixindices, all_nl_branches, Lmean, Nmodes, Nbranches)   
+    
 
     # convert to a sparse node matrix. Note: I was having problems with type 
     # instability when i used AoLjbm here instead of AoLjbmcopy. 
-    AoLjnm = transpose(Rbnm)*AoLjbmcopy*Rbnm;
+    AoLjnm = transpose(Rbnm)*AoLjbmcopy*Rbnm    
+   
 
     if isnothing(x0)
-        x = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
+        x = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)   
     else
-        x = x0
-    end
+        x = x0    
+    end    
+
+
+
     F = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
     AoLjbmvector = zeros(Complex{Float64}, Nbranches*Nmodes)
 
@@ -1738,8 +1952,9 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
     # symbolic factorization. We perform the sparse matrix addition keeping
     # numerical zeros (the usual sparse matrix addition converts these to
     # structural zeros which would change the sparsity structure).
-    # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
-    # J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm*wmodesm), - Cnm*wmodes2m)
+
+    # Always use the same Jacobian pattern for consistency
+    # When there are no Josephson junctions, AoLjnm will just contain zeros
     J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm), -Cnm)
 
     # make the arrays and datastructures we need for
@@ -1757,15 +1972,17 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
     Cnmindexmap = sparseaddmap(J, Cnm)
 
     # build the function and Jacobian for solving the nonlinear system
+    # build the function and Jacobian for solving the nonlinear system
     function fj!(F, J, x)
         calcfj2!(F, J, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
-            Cnm, Gnm, bnm, Ljb, Ljbm, Nmodes,
+            Cnm, Gnm, bnm, Ljb, all_nl_branches_m, Nmodes,
             Nbranches, Lmean, AoLjbmvector, AoLjbm,
             AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap,
             AoLjbmindices, conjindicessorted,
             freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
             AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
             phimatrixtd, irfftplan, rfftplan,
+            nonlinear_elements  # important
         )
         return nothing
     end
@@ -1775,15 +1992,26 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
     # fj!(F,J,x)
     # return (F,J,x)
 
+    # Debug: Check dimensions before calling fj!
+    # debug_log("Before fj! call:")
+    # debug_log("  x length = $(length(x))")
+    # debug_log("  F length = $(length(F))")
+    # debug_log("  J size = $(size(J))")
+    # debug_log("  Nnodes = $Nnodes, Nmodes = $Nmodes")
+    # debug_log("  Nbranches = $Nbranches")
+
     # solve the nonlinear system
     nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol,
         alphamin = alphamin, factorization = factorization)
 
-    nodeflux = x
+
+    nodeflux = x    
 
     # calculate the scattering parameters for the pump
-    Nports = length(portindices)
+    Nports = length(portindices)        
+
+
     S = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
     inputwave = zeros(Complex{Float64}, Nports*Nmodes)
     outputwave = zeros(Complex{Float64}, Nports*Nmodes)
@@ -1809,7 +2037,7 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
     end
 
     return NonlinearHB(w, frequencies, nodefluxout, Rbnm, Ljb, Lb, Ljbm,
-        Nmodes, Nbranches, nodenames, portnumbers, modes, Sout)
+        Nmodes, Nbranches, nodenames, portnumbers, modes, Sout, nonlinear_elements)
 
 end
 
@@ -1845,70 +2073,145 @@ function calcfj2!(F,
         freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
         AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
         phimatrixtd, irfftplan, rfftplan,
+        nonlinear_elements::Dict{Int, NonlinearElement},
         )
 
-    # convert from a node flux to a branch flux
+    # Convert from node flux to branch flux
     phib = Rbnm*nodeflux
 
-    if !isnothing(F)
-
-        # convert the branch flux vector to a matrix with the terms arranged
-        # in the correct way for the inverse rfft including the appropriate
-        # complex conjugates.
-        phivectortomatrix!(phib[Ljbm.nzind], phimatrix, freqindexmap,
-            conjsourceindices, conjtargetindices, length(Ljb.nzval))
-
-        # apply the sinusoidal nonlinearity when evaluaing the function
-        applynl!(phimatrix, phimatrixtd, sin, irfftplan, rfftplan)
-
-        # convert the sinphimatrix to a vector
-        fill!(AoLjbmvector, 0)
-        AoLjbmvectorview = view(AoLjbmvector, Ljbm.nzind)
-        phimatrixtovector!(AoLjbmvectorview, phimatrix, freqindexmap,
-            conjsourceindices, conjtargetindices, length(Ljb.nzval))
-
-        for i in eachindex(AoLjbmvectorview)
-            AoLjbmvectorview[i] = AoLjbmvectorview[i] * (Lmean/Ljbm.nzval[i])
+    # Extract ALL nonlinear branches (not just Josephson)
+    all_nl_branches = Int[]
+    branch_to_nl_idx = Dict{Int,Int}()
+    nl_idx = 0
+    
+    for (branch, elem) in sort(collect(nonlinear_elements), by=x->x[1])
+        nl_idx += 1
+        branch_to_nl_idx[branch] = nl_idx
+        push!(all_nl_branches, branch)
+    end
+    
+    # Build indices for ALL nonlinear elements
+    all_nl_indices = Int[]
+    for branch in all_nl_branches
+        for m in 1:Nmodes
+            push!(all_nl_indices, (branch-1)*Nmodes + m)
         end
-        # TODO: for multi-tone harmonic balance this needs conjugates (when any
-        # of the frequencies are negative)
-        F .= Rbnmt*AoLjbmvector .+ invLnm*nodeflux .+ im*Gnm*wmodesm*nodeflux .- Cnm*wmodes2m*nodeflux .- bnm
-
     end
 
-    #calculate the Jacobian
+    # Create a sparse vector with inductances for ALL nonlinear elements
+    # Determine the appropriate type for the inductances array
+    all_nl_inductances = Float64[]
+    all_nl_branches_for_sparse = Int[]
+
+    for (branch, elem) in sort(collect(nonlinear_elements), by=x->x[1])
+        push!(all_nl_branches_for_sparse, branch)
+        if elem.type == :josephson
+            # Use stored inductance or find in Ljb
+            if haskey(elem.params, :inductance)                
+                push!(all_nl_inductances, elem.params[:inductance])                
+            else
+                idx = findfirst(x -> x == branch, Ljb.nzind)
+                if !isnothing(idx)            
+                    push!(all_nl_inductances, Ljb.nzval[idx])
+                else                    
+                    push!(all_nl_inductances, Lmean)
+                end
+            end
+        elseif elem.type == :taylor
+            # Use the inductance stored in params
+            if haskey(elem.params, :inductance)
+                L0_value = elem.params[:inductance]
+            else
+                # Fallback to Lmean if inductance not found
+                L0_value = Lmean
+                # debug_log("  Taylor branch $branch: WARNING - no inductance found, using Lmean = $L0_value")
+            end
+            push!(all_nl_inductances, L0_value)
+        else
+            push!(all_nl_inductances, Lmean)
+        end
+    end
+    
+    # Create the sparse vector
+    all_nl_Lb = SparseVector(Nbranches, all_nl_branches_for_sparse, all_nl_inductances)
+    
+
+    if !isnothing(F)
+        if !isempty(all_nl_indices)
+            # Extract flux values for ALL nonlinear elements
+            phivector_all = phib[all_nl_indices]
+            
+            # Map to phimatrix - sized for ALL nonlinear elements
+            phivectortomatrix!(phivector_all, phimatrix, freqindexmap,
+                conjsourceindices, conjtargetindices, length(nonlinear_elements))
+            
+            # Apply nonlinearities through FFT (now handles mixed types!)
+            apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements, 
+                                :function, irfftplan, rfftplan)
+            
+            # Convert back to vector
+            fill!(AoLjbmvector, 0)
+            AoLjbmvectorview = view(AoLjbmvector, all_nl_indices)
+            phimatrixtovector!(AoLjbmvectorview, phimatrix, freqindexmap,
+                conjsourceindices, conjtargetindices, length(nonlinear_elements))
+                
+            # Scale by inductance for each element
+            for (idx, nl_idx) in enumerate(all_nl_indices)
+                branch = (nl_idx - 1) ÷ Nmodes + 1
+                elem = nonlinear_elements[branch]
+        
+
+                # Get the appropriate inductance value for scaling
+                if elem.type == :josephson
+                    # Find this branch in Ljbm
+                    ljbm_idx = findfirst(x -> x == nl_idx, Ljbm.nzind)
+                    if !isnothing(ljbm_idx)
+                        AoLjbmvectorview[idx] *= (Lmean/Ljbm.nzval[ljbm_idx])
+                    end
+                elseif elem.type == :taylor
+                    # For Taylor, use the L0 value from params
+                    L0 = get(elem.params, :inductance, Lmean)
+                    AoLjbmvectorview[idx] *= (Lmean/L0)                    
+                end
+            end
+        end
+        
+        # Calculate F
+        F .= Rbnmt*AoLjbmvector .+ invLnm*nodeflux .+ im*Gnm*wmodesm*nodeflux .- Cnm*wmodes2m*nodeflux .- bnm
+    end
+
+    # Calculate the Jacobian
     if !isnothing(J)
-
-        # turn the phivector into a matrix again because applynl! overwrites
-        # the frequency domain data
-        phivectortomatrix!(phib[Ljbm.nzind], phimatrix, freqindexmap,
-            conjsourceindices, conjtargetindices, length(Ljb.nzval))
-
-        # apply a cosinusoidal nonlinearity when evaluating the Jacobian
-        applynl!(phimatrix, phimatrixtd, cos, irfftplan, rfftplan)
-
-        # calculate  AoLjbm
-        updateAoLjbm2!(AoLjbm, phimatrix, AoLjbmindices, conjindicessorted,
-            Ljb, Lmean)
-
-        # convert to a sparse node matrix
-        # AoLjnm = Rbnmt*AoLjbm*Rbnm
-        # non allocating sparse matrix multiplication
+        if !isempty(all_nl_indices)
+            # Extract flux values for ALL nonlinear elements
+            phivector_all = phib[all_nl_indices]
+            
+            # Map to phimatrix
+            phivectortomatrix!(phivector_all, phimatrix, freqindexmap,
+                conjsourceindices, conjtargetindices, length(nonlinear_elements))
+            
+            # Apply derivative of nonlinearities for Jacobian
+            apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements,
+                                :jacobian, irfftplan, rfftplan)                        
+        
+            
+            # Update AoLjbm with ALL nonlinear contributions
+            updateAoLjbm2!(AoLjbm, phimatrix, AoLjbmindices, conjindicessorted,
+                all_nl_Lb, Lmean)            
+        end
+        
+        # Convert to sparse node matrix        
         spmatmul!(AoLjbmRbnm, AoLjbm, Rbnm, xbAoLjbmRbnm)
         spmatmul!(AoLjnm, Rbnmt, AoLjbmRbnm, xbAoLjnm)
 
-        # calculate the Jacobian. If J is sparse, keep it sparse. 
-        # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
-        # the code below adds the sparse matrices together with minimal
-        # memory allocations and without changing the sparsity structure.
+        # Build Jacobian
         fill!(J, 0)
-        # TODO: for multi-tone harmonic balance this needs conjugates (when 
-        # any of the frequencies are negative)
         sparseadd!(J, AoLjnm, AoLjnmindexmap)
         sparseadd!(J, invLnm, invLnmindexmap)
         sparseadd!(J, im, Gnm, wmodesm, Gnmindexmap)
         sparseadd!(J, -1, Cnm, wmodes2m, Cnmindexmap)
     end
+    
     return nothing
 end
 
@@ -2133,12 +2436,17 @@ function calcAoLjbm2(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector,
 
 
     # calculate the sparse matrix filled with the indices of Am
-    AoLjbmindices, conjindicessorted, Nfreq = calcAoLjbmindices(Amatrixindices,
-        Ljb, Nmodes, Nbranches, Nfreq)
+    # it looks like there was a bug here.
+    # AoLjbmindices, conjindicessorted, Nfreq = calcAoLjbmindices(Amatrixindices,
+    #     Ljb, Nmodes, Nbranches, Nfreq)
+    AoLjbmindices, conjindicessorted, nentries = calcAoLjbmindices(Amatrixindices,
+        Ljb, Nmodes, Nbranches, Nfreq)    
+
 
     # determine the type to use for AoLjbm
     type = promote_type(eltype(Am), eltype(1 ./Ljb.nzval))
 
+    # Check if we have symbolic values
     if type <: Symbolic
         type = Any
     end
@@ -2162,28 +2470,23 @@ Update the values in the sparse AoLjbm matrix in place.
 
 """
 function updateAoLjbm2!(AoLjbm::SparseMatrixCSC, Am::Array, AoLjbmindices,
-    conjindicessorted, Ljb::SparseVector, Lmean)
-
+    conjindicessorted, Ljb::SparseVector, Lmean)       
+    
+    
     if nnz(AoLjbm) == 0
         nentries = 0
     else
         nentries = nnz(AoLjbm) ÷ nnz(Ljb)
     end
+    
 
-    # # does this run into problems if the inductance vector isn't sorted?
-    # # can i guarantee that Ljb is always sorted? look into this
-    # # copy over the values and scale by the inductance
+    # Copy over the values and scale by the inductance
     for i in eachindex(Ljb.nzval)
         for j in 1:nentries
-            k = (i-1)*nentries+j
+            k = (i-1)*nentries+j            
             AoLjbm.nzval[k] = Am[AoLjbmindices.nzval[k]] * (Lmean / Ljb.nzval[i])
         end
     end
-
-    # for i in eachindex(AoLjbm.nzval)
-    #     j = (i-1) ÷ (nentries) + 1
-    #     AoLjbm.nzval[i] = Am[AoLjbmindices.nzval[i]] * (Lmean / Ljb.nzval[j])
-    # end
 
     # take the complex conjugates
     for i in conjindicessorted
@@ -2250,12 +2553,12 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
 
     # fill the vector with zeros
     fill!(bbm,0)
-
+  
     # make a dictionary of ports
     portdict = Dict{eltype(portnumbers), eltype(portindices)}()
     for i in eachindex(portindices)
         portdict[portnumbers[i]] = portindices[i]
-    end
+    end        
 
     # make a dictionary of modes
     modedict = Dict{eltype(modes), Int}()
@@ -2267,26 +2570,129 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
         # pull out the necessary values from the named tuple
         port = source[:port]
         mode = source[:mode]
-        current = source[:current]
+        current = source[:current]        
 
         # check if the port is in the dictionary of ports
         if haskey(portdict, port)
             portindex = portdict[port]
+            
+            # new code 20250710
+            # portindex is a component index, we need to find the actual branch
+            # port_nodes = nodeindices[:, portindex]
+            # key = (port_nodes[1], port_nodes[2])
+            # end new
+
             # check if the mode is in the dictionary of modes
             if haskey(modedict, mode)
                 # if we find the mode and the port, set that branch in bbm
                 # equal to the current scaled by the mean inductance and the
                 # flux quantum.
-                modeindex = modedict[mode]
-                key = (nodeindices[1, portindex], nodeindices[2, portindex])
-                bbm[(edge2indexdict[key]-1)*Nmodes+modeindex] += Lmean*current/phi0
+                modeindex = modedict[mode]                
+                # old code 20250710:
+                key = (nodeindices[1, portindex], nodeindices[2, portindex])                                    
+                
+                # old code 20250710: branch-major ordering
+                bbm[(edge2indexdict[key]-1)*Nmodes+modeindex] += Lmean*current/phi0    
+                # new code 20250710: mode-major ordering 
+                # bbm[(modeindex-1)*Nbranches+edge2indexdict[key]] += Lmean*current/phi0           
             else
                 throw(ArgumentError("Source mode $(mode) not found."))
             end
         else
             throw(ArgumentError("Source port $(port) not found."))
         end
-    end
+    end     
 
     return nothing
+end
+
+
+
+function apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements, 
+                               mode::Symbol, irfftplan, rfftplan)
+    
+    # Create a mapping of which nonlinearity to apply to each column
+    nl_functions = Vector{Function}(undef, length(nonlinear_elements))
+
+    # Sort nonlinear_elements by branch index to ensure consistent ordering
+    sorted_elements = sort(collect(nonlinear_elements), by=x->x[1])
+    
+    for (i, (branch, elem)) in enumerate(sorted_elements)
+        if elem.type == :josephson
+            nl_functions[i] = (mode == :function) ? sin : cos
+        elseif elem.type == :taylor
+            coeffs = elem.params[:coeffs]
+            powers = elem.params[:powers]
+            
+            # Get the inductance for normalization from params
+            # L0 = elem.params[:inductance]  # This should be 3.29e-10
+            # Ic_equiv = phi0 / L0  # Equivalent critical current for normalization
+            
+            # Handle empty coefficients/powers
+            if isempty(coeffs) || isempty(powers)
+                nl_functions[i] = φ -> φ
+                # debug_log("Warning: Taylor branch $branch has empty coefficients, using linear")
+            else  # This is the Taylor expansion case
+                # CHANGE THIS VALUE TO ADJUST WRAPPING
+                wrap_boundary = Inf #π  # e.g., 2.0, π/2, 1000*π for no wrapping, etc.
+                
+                # Define the wrapping function once
+                wrap_phase = function(x)
+                    if isinf(wrap_boundary)
+                        # No wrapping
+                        return x
+                    else
+                        # Proper wrapping to [-wrap_boundary, wrap_boundary]
+                        # Using mod to handle both positive and negative values correctly
+                        return mod(x + wrap_boundary, 2*wrap_boundary) - wrap_boundary
+                    end
+                end
+                
+                if mode == :function
+                    # already normalized: no need to divide by Ic_equiv
+                    nl_functions[i] = φ -> begin
+                        # Wrap φ
+                        if isa(φ, Complex)
+                            φ_wrapped = complex(wrap_phase(real(φ)), wrap_phase(imag(φ)))
+                        else
+                            φ_wrapped = wrap_phase(φ)
+                        end
+                        
+                        result = zero(typeof(φ))
+                        for (c, p) in zip(coeffs, powers)
+                            result += (c) * φ_wrapped^p
+                        end
+                        return result
+                    end
+                else # :jacobian
+                    # Derivative of polynomial with wrapping
+                    nl_functions[i] = φ -> begin
+                        # Wrap φ (same as above)
+                        if isa(φ, Complex)
+                            φ_wrapped = complex(wrap_phase(real(φ)), wrap_phase(imag(φ)))
+                        else
+                            φ_wrapped = wrap_phase(φ)
+                        end
+                        
+                        # Compute derivative
+                        result = zero(typeof(φ))
+                        for (c, p) in zip(coeffs, powers)
+                            if p > 0
+                                result += p * (c) * φ_wrapped^(p-1)
+                            end
+                        end
+                        return result
+                    end
+                end
+            end            
+        else
+            # Default to linear
+            nl_functions[i] = φ -> φ
+            debug_log("Warning: Unknown nonlinearity type $(elem.type) for branch $branch")
+        end
+    end
+    
+
+    # Apply mixed nonlinearities
+    applynl_mixed!(phimatrix, phimatrixtd, nl_functions, irfftplan, rfftplan)
 end

@@ -1,0 +1,4 @@
+[deps]
+FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+JosephsonCircuits = "23a5dba6-321f-4fcf-be1e-689e290df087"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"

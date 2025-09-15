@@ -1,6 +1,7 @@
 MIT License
 
 Copyright (c) 2022 [Kevin O'Brien](mailto:kpobrien@mit.edu)
+Copyright (c) 2025 Maxime Malnou (fork contributions)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
