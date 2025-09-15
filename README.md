@@ -1,6 +1,8 @@
 # JosephsonCircuits.jl (Fork with Taylor Expansion Nonlinearities)
 
 > **Note**: This is a fork of the original [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) by Kevin O'Brien with added support for Taylor expansion nonlinearities (NL elements).
+> 
+> **Latest Merge**: This fork includes all upstream updates through v0.4.19 (Sept 2025), including new attenuator and circulator components, multimode connection improvements, and Touchstone.jl integration.
 
 ## Fork Features
 
