@@ -973,6 +973,83 @@ function find_duplicate_connections(
 end
 
 """
+    add_modes(connections::AbstractVector{Tuple{T,T,Int,Int}},
+        Nmodes::Integer) where {T}
+
+Assume the scattering parameter matrices are multi-mode and `connections`
+specifies the connections between physical ports. Return the connections
+vector with the existing connections re-numbered and with added connections
+between every mode associated with each physical port.
+
+# Examples
+```jldoctest
+julia> connections = [("S1","S2",3,4),("S1","S2",2,1)];JosephsonCircuits.add_modes(connections,2)
+4-element Vector{Tuple{String, String, Int64, Int64}}:
+ ("S1", "S2", 5, 7)
+ ("S1", "S2", 6, 8)
+ ("S1", "S2", 3, 1)
+ ("S1", "S2", 4, 2)
+```
+"""
+function add_modes(connections::AbstractVector{Tuple{T,T,Int,Int}},
+    Nmodes::Integer) where {T}
+
+    # initialize an empty vector for the connections that is Nmodes times
+    # longer than the input
+    connections_modes = Vector{Tuple{T,T,Int,Int}}(undef,Nmodes*length(connections))
+    
+    # loop over the connections and for each connection between two ports, add
+    # a connection between each of the same two ports for each mode. adjust
+    # the indices of the ports to follow the all modes for the first port,
+    # then all the modes for the next port convention.
+    for k in eachindex(connections)
+        (name1,name2,port1,port2) = connections[k]
+        for i in 1:Nmodes
+            connections_modes[(k-1)*Nmodes+i] = (name1,name2,(port1-1)*Nmodes+i,(port2-1)*Nmodes+i)
+        end
+    end
+    return connections_modes
+end
+
+"""
+    add_modes(connections::AbstractVector{Vector{Tuple{T,Int}}},
+        Nmodes::Integer) where {T}
+
+Assume the scattering parameter matrices are multi-mode and `connections`
+specifies the connections between physical ports. Return the connections
+vector with the existing connections re-numbered and with added connections
+between every mode associated with each physical port.
+
+# Examples
+```jldoctest
+julia> connections = [[("S1",3),("S2",4)],[("S1",2),("S2",1)]];JosephsonCircuits.add_modes(connections,2)
+4-element Vector{Vector{Tuple{String, Int64}}}:
+ [("S1", 5), ("S2", 7)]
+ [("S1", 6), ("S2", 8)]
+ [("S1", 3), ("S2", 1)]
+ [("S1", 4), ("S2", 2)]
+```
+"""
+function add_modes(connections::AbstractVector{Vector{Tuple{T,Int}}},
+    Nmodes::Integer) where {T}
+
+    # initialize an empty vector for the connections that is Nmodes times
+    # longer than the input
+    connections_modes = Vector{Vector{Tuple{T,Int}}}(undef,Nmodes*length(connections))
+    
+    # loop over the connections and for each connection between two ports, add
+    # a connection between each of the same two ports for each mode. adjust
+    # the indices of the ports to follow the all modes for the first port,
+    # then all the modes for the next port convention.
+    for k in eachindex(connections)
+        for i in 1:Nmodes
+            connections_modes[(k-1)*Nmodes+i] = [(name,(port-1)*Nmodes+i) for (name,port) in connections[k]]
+        end
+    end
+    return connections_modes
+end
+
+"""
     add_splitters(networks::AbstractVector{Tuple{T,N}},
         connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
         splitter_name_length = 20) where {T,N}
@@ -1298,12 +1375,14 @@ JosephsonCircuits.connectS_initialize(networks,connections)
 ```
 """
 function connectS_initialize(networks::AbstractVector, connections::AbstractVector;
-    small_splitters::Bool = true) 
+    small_splitters::Bool = true, Nmodes::Integer = 1) 
 
     networks_ports = add_ports(networks)
 
+    connections_modes = add_modes(connections, Nmodes)
+
     networks_flat, connnections_flat = add_splitters(networks_ports,
-        connections; small_splitters = small_splitters)
+        connections_modes; small_splitters = small_splitters)
 
     return connectS_initialize(networks_flat, connnections_flat)
 end
@@ -1567,9 +1646,9 @@ JosephsonCircuits.connectS(networks,connections)
 ```
 """
 function connectS(networks, connections; small_splitters::Bool = true,
-    nbatches::Int = Base.Threads.nthreads())
+    Nmodes::Integer = 1, nbatches::Int = Base.Threads.nthreads())
     init = connectS_initialize(networks,connections;
-        small_splitters = small_splitters)
+        small_splitters = small_splitters, Nmodes = Nmodes)
     return connectS!(init...;nbatches = nbatches)
 end
 
@@ -1749,12 +1828,14 @@ end
 function solveS_initialize(networks::AbstractVector,
         connections::AbstractVector; small_splitters::Bool = true,
         factorization = KLUfactorization(), internal_ports::Bool = false,
-        nbatches::Integer = Base.Threads.nthreads())
+        Nmodes::Integer = 1, nbatches::Integer = Base.Threads.nthreads())
 
     networks_ports = add_ports(networks)
 
-    networks_flat,connnections_flat = add_splitters(networks_ports,connections;
-        small_splitters = small_splitters)
+    connections_modes = add_modes(connections, Nmodes)
+
+    networks_flat,connnections_flat = add_splitters(networks_ports,
+        connections_modes; small_splitters = small_splitters)
 
     return solveS_initialize(networks_flat, connnections_flat;
         factorization = factorization, internal_ports = internal_ports,
@@ -2016,11 +2097,12 @@ in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 """
 function solveS(networks::AbstractVector, connections::AbstractVector;
     small_splitters::Bool = true, factorization = KLUfactorization(),
-    internal_ports::Bool = false, nbatches::Integer = Base.Threads.nthreads())
+    internal_ports::Bool = false, Nmodes::Integer = 1,
+    nbatches::Integer = Base.Threads.nthreads())
 
     init = solveS_initialize(networks,connections;
         small_splitters = small_splitters, factorization = factorization,
-        internal_ports = internal_ports, nbatches = nbatches)
+        internal_ports = internal_ports, Nmodes = Nmodes, nbatches = nbatches)
 
     return solveS!(init...)
 end
