@@ -28,6 +28,24 @@ function diagrepeat(A::AbstractVecOrMat, Nmodes::Integer)
     return out
 end
 
+
+"""
+    diagrepeat(A::AbstractArray, Nmodes::Integer)
+
+Return a array with each element of the first two axes of `A` duplicated along
+the diagonal `Nmodes` times.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.diagrepeat([1 2;3 4;;;],2)
+4×4×1 Array{Int64, 3}:
+[:, :, 1] =
+ 1  0  2  0
+ 0  1  0  2
+ 3  0  4  0
+ 0  3  0  4
+```
+"""
 function diagrepeat(A::AbstractArray, Nmodes::Integer)
     # only scale the first two dimensions
     sizeout = NTuple{ndims(A),Int}(ifelse(i == 1 || i == 2, Nmodes*val, val) for (i,val) in enumerate(size(A)))
@@ -202,6 +220,16 @@ julia> JosephsonCircuits.diagcombine([[111 121;211 221],[112 122;212 222],[113 1
  211    0    0  221    0    0
    0  212    0    0  222    0
    0    0  213    0    0  223
+
+julia> JosephsonCircuits.diagcombine([[111 121;211 221;;;],[112 122;212 222;;;],[113 123;213 223;;;]])
+6×6×1 Array{Int64, 3}:
+[:, :, 1] =
+ 111    0    0  121    0    0
+   0  112    0    0  122    0
+   0    0  113    0    0  123
+ 211    0    0  221    0    0
+   0  212    0    0  222    0
+   0    0  213    0    0  223
 ```
 """
 function diagcombine(x::Vector{T}) where T<:AbstractArray
@@ -210,7 +238,7 @@ function diagcombine(x::Vector{T}) where T<:AbstractArray
     sizex = size(first(x))
     for xi in x
         if size(xi) != sizex
-            error("Sizes are not consistent.")
+            throw(DimensionMismatch("Sizes are not consistent."))
         end
     end
 

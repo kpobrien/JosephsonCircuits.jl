@@ -12,6 +12,13 @@ using Test
         )
     end
 
+    @testset "diagcombine" begin
+        @test_throws(
+            DimensionMismatch("Sizes are not consistent."),
+            JosephsonCircuits.diagcombine([[111 121;211 221],[112 122;212 222],[113 123]])
+        )
+    end
+
     @testset "spaddkeepzeros" begin
         A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,0],2,2);
         B = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1],3,2);
