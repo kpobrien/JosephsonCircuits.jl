@@ -99,7 +99,7 @@ function identify_nonlinear_elements(componenttypes, componentvalues,
   4. Distinguishes between :josephson and :taylor types
 - **Output**: Dict{Int, NonlinearElement} mapping branch indices to nonlinear elements
 
-**valuetonumber(value::PolyNL, circuitdefs) - Overload**
+**valuetonumber(value::PolyNL, circuitdefs) - New Method**
 ```julia
 function valuetonumber(value::PolyNL, circuitdefs)
 ```
@@ -129,16 +129,454 @@ circuitdefs = Dict(:Lj => 300e-12, :alpha => 0.1, :beta => 0.3)
 4. **Unified nonlinearity handling**: Both JJ and NL processed through same pipeline
 
 ### 2. `src/hbsolve.jl`
-[To be documented - includes NonlinearElement struct, apply_nonlinearities!, etc.]
+
+#### Purpose
+Core solver modifications to handle both Josephson and Taylor expansion nonlinearities through unified FFT machinery, with careful inductance normalization.
+
+#### New Data Structures
+
+**NonlinearElement Struct (Lines 180-187)**
+```julia
+struct NonlinearElement
+    type::Symbol  # :josephson, :taylor
+    indices::Vector{Int}  # Branch indices
+    params::Dict{Symbol,Any}  # Parameters for the nonlinearity
+end
+```
+- Unified representation for all nonlinear elements
+- Type field distinguishes between Josephson junctions and Taylor expansions
+- Params dict holds coefficients, powers, and inductance values
+
+**Debug/Warning Message Buffers (Lines 2-29)**
+```julia
+const DEBUG_MESSAGES = String[]
+const WARNING_MESSAGES = String[]
+```
+- Global buffers for capturing debug and warning messages
+- Accessible from Python wrapper for troubleshooting
+- Functions: `debug_log()`, `warning_log()`, `get_debug_log()`, `clear_debug_log()`
+
+#### Modified Structures
+
+**NonlinearHB Struct - Line 72**
+```julia
+# Added field:
+nonlinear_elements  # Dict{Int, NonlinearElement}
+```
+- Stores all nonlinear elements for post-processing
+
+#### Modified Functions
+
+**hbsolve() - Main entry point**
+- Added `x0 = nothing` parameter for initial guess (Line 218)
+- Calls `identify_nonlinear_elements()` to catalog all nonlinearities (Lines 274-280)
+- Passes `nonlinear_elements` to `hbnlsolve()` (Line 287)
+
+**hbnlsolve() - Core nonlinear solver**
+
+Key modifications:
+1. **Unified nonlinear element handling** (Lines 1835-1865):
+   ```julia
+   # Create sparse vector including ALL nonlinear elements
+   all_nl_branches = SparseVector(Nbranches, Int[], Float64[])
+   for (branch, elem) in sort(collect(nonlinear_elements), by=x->x[1])
+       # Add both Josephson and Taylor elements
+   end
+   ```
+
+2. **Lmean recalculation** (Lines 1867-1875):
+   ```julia
+   # Recalculate Lmean based on ALL nonlinear elements
+   if iszero(nm.Lmean) && nnz(all_nl_branches) > 0
+       Lmean = sum(all_nl_branches.nzval) / nnz(all_nl_branches)
+   end
+   ```
+   - Includes Taylor expansion inductances in mean calculation
+   - Critical for proper normalization
+
+3. **Matrix structure update** (Lines 1909-1910):
+   ```julia
+   # Use all_nl_branches instead of just Ljb
+   AoLjbmindices, conjindicessorted = calcAoLjbmindices(Amatrixindices, 
+                                                        all_nl_branches, ...)
+   ```
+
+4. **Pass nonlinear_elements to calcfj2!** (Line 1988)
+
+**calcfj2!() - Jacobian and function evaluation**
+
+Major changes:
+1. **Extract all nonlinear branches** (Lines 2082-2095):
+   ```julia
+   all_nl_branches = Int[]
+   for (branch, elem) in nonlinear_elements
+       # Collect indices for all nonlinear elements
+   end
+   ```
+
+2. **Unified nonlinearity application** (Lines 2120-2135):
+   ```julia
+   # Apply nonlinearities through FFT (handles mixed types!)
+   apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements, 
+                        :function, irfftplan, rfftplan)
+   ```
+
+3. **Inductance-specific scaling** (Lines 2140-2155):
+   ```julia
+   for (idx, nl_idx) in enumerate(all_nl_indices)
+       branch = (nl_idx - 1) ÷ Nmodes + 1
+       elem = nonlinear_elements[branch]
+       
+       if elem.type == :josephson
+           AoLjbmvectorview[idx] *= (Lmean/Ljb.nzval[ljbm_idx])
+       elseif elem.type == :taylor
+           L0 = get(elem.params, :inductance, Lmean)
+           AoLjbmvectorview[idx] *= (Lmean/L0)
+       end
+   end
+   ```
+   - Different scaling for each nonlinearity type
+   - Preserves Kevin's normalization approach
+
+#### New Functions
+
+**apply_nonlinearities!()**
+```julia
+function apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements, 
+                               mode::Symbol, irfftplan, rfftplan)
+```
+- **Purpose**: Apply appropriate nonlinearity based on element type
+- **Modes**:
+  - `:function` - Apply sin() for Josephson, polynomial for Taylor
+  - `:jacobian` - Apply cos() for Josephson, derivative for Taylor
+- **Process**:
+  1. Maps each column to its nonlinearity type
+  2. Calls `applynl_mixed!` from fftutils.jl
+  3. Handles mixed Josephson/Taylor elements in same circuit
+
+**Key Implementation Details**:
+
+1. **FFT-based approach**: Both Josephson and Taylor nonlinearities are evaluated in time domain via FFT/IFFT
+2. **Normalization consistency**: All inductances (Josephson and Taylor) normalized by Lmean
+3. **Sparse matrix preservation**: Maintains sparsity pattern even with mixed nonlinearities
+4. **Backward compatibility**: Original Josephson-only circuits work unchanged
 
 ### 3. `src/fftutils.jl`
-[To be documented - includes applynl_mixed! for handling both JJ and Taylor nonlinearities]
+
+#### Purpose
+Extended FFT utilities to handle mixed nonlinearity types (Josephson and Taylor) in the same circuit, enabling Kevin's FFT machinery to process different nonlinear functions per column.
+
+#### New Functions
+
+**applynl_mixed!() - Core mixed nonlinearity function**
+```julia
+function applynl_mixed!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vector{Function}, 
+                        irfftplan, rfftplan) where T
+```
+- **Purpose**: Apply different nonlinear functions to each column of frequency domain data
+- **Extension of**: Original `applynl!()` which applies single function to all columns
+- **Key Innovation**: `nl_functions[i]` is applied to column `i`, enabling mixed circuits
+
+**Process Flow**:
+1. **Transform to time domain**: `mul!(td, irfftplan, fd)`
+2. **Apply column-specific nonlinearities**:
+   ```julia
+   for col in 1:size(td, ndims(td))
+       nl_func = nl_functions[col]  # Different function per column
+       for idx in CartesianIndices(size(td)[1:end-1])
+           td[full_idx] = nl_func(td[full_idx] * normalization)
+       end
+   end
+   ```
+3. **Transform back to frequency domain**: `mul!(fd, rfftplan, td)`
+4. **Normalize**: Apply `invnormalization` factor
+
+**Column-to-Element Mapping**:
+- Column 1 → First nonlinear element (could be Josephson: `sin()` or `cos()`)
+- Column 2 → Second nonlinear element (could be Taylor: polynomial function)
+- Each column corresponds to one branch's nonlinearity
+
+**applynl_mixed_verbose!() - Debug version**
+```julia
+function applynl_mixed_verbose!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vector{Function}, 
+                                irfftplan, rfftplan) where T
+```
+- **Purpose**: Same as `applynl_mixed!()` but with extensive debug logging
+- **Debug Features**:
+  - Logs frequency domain values before/after transform
+  - Tracks sample flux→current transformations per column
+  - Uses commented debug statements for troubleshooting
+  - Prevents multiple debug output with `fft_debug_done` flag
+
+#### Integration with Existing Code
+
+**Backward Compatibility**:
+- Original `applynl!(fd, td, f, irfftplan, rfftplan)` unchanged
+- New functions extend rather than replace existing functionality
+- Single-function circuits continue to use original `applynl!()`
+
+**Usage in hbsolve.jl**:
+```julia
+# Called from apply_nonlinearities!() in hbsolve.jl
+function apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements, 
+                               mode::Symbol, irfftplan, rfftplan)
+    # Create function array: [sin, polynomial, cos, ...]
+    nl_functions = Vector{Function}(undef, length(nonlinear_elements))
+    
+    # Populate based on element types and mode (:function or :jacobian)
+    for (i, (branch, elem)) in enumerate(sorted_elements)
+        if elem.type == :josephson
+            nl_functions[i] = (mode == :function) ? sin : cos
+        elseif elem.type == :taylor
+            coeffs = elem.params[:coeffs]
+            powers = elem.params[:powers]
+            
+            if mode == :function
+                # Create polynomial: I(φ) = Σ(c_i * φ^p_i)
+                nl_functions[i] = φ -> begin
+                    result = zero(typeof(φ))
+                    for (c, p) in zip(coeffs, powers)
+                        result += c * φ^p
+                    end
+                    return result
+                end
+            else # :jacobian
+                # Create derivative: dI/dφ = Σ(p_i * c_i * φ^(p_i-1))
+                nl_functions[i] = φ -> begin
+                    result = zero(typeof(φ))
+                    for (c, p) in zip(coeffs, powers)
+                        if p > 0
+                            result += p * c * φ^(p-1)
+                        end
+                    end
+                    return result
+                end
+            end
+        end
+    end
+    
+    # Apply mixed nonlinearities
+    applynl_mixed!(phimatrix, phimatrixtd, nl_functions, irfftplan, rfftplan)
+end
+```
+
+#### Technical Details
+
+**Normalization Handling**:
+- Preserves Kevin's FFT normalization approach
+- `normalization = prod(size(td)[1:end-1])`
+- Applied before nonlinearity: `nl_func(td[idx] * normalization)`
+- Applied after inverse FFT: `fd[i] * invnormalization`
+
+**Memory Efficiency**:
+- Reuses existing `td` and `fd` arrays (no additional allocation)
+- Overwrites arrays in-place like original `applynl!()`
+- Uses pre-planned FFT operations for speed
+
+**Multi-dimensional Support**:
+- Handles arbitrary frequency dimensions via `CartesianIndices`
+- Last dimension always corresponds to different nonlinear elements
+- Maintains compatibility with Kevin's multi-tone harmonic balance
+
+#### Key Innovation
+The ability to apply different nonlinear functions per column enables circuits with mixed Josephson junctions and Taylor expansion elements. This extends Kevin's efficient FFT-based nonlinearity evaluation to handle heterogeneous nonlinear elements while maintaining the same computational performance.
 
 ### 4. `src/capindmat.jl`
-[To be documented - includes modifications to handle NL in inductance matrices]
 
-### 5. `src/JosephsonCircuits.jl`
-[To be documented - includes exports and precompile modifications]
+#### Purpose
+Modifications to include NL elements in inductance matrix calculations and ensure proper type handling for mixed Josephson/Taylor circuits.
+
+#### Modified Functions
+
+**numericmatrices() - Lines 177-185**
+```julia
+# Convert NL Dict values to numeric inductance values
+for (i, type) in enumerate(psc.componenttypes)
+    if type == :NL && isa(vvn[i], Dict)
+        coeffs = vvn[i][:coeffs]
+        vvn[i] = phi0 / coeffs[1]  # L0 value
+    end
+end
+```
+- **Purpose**: Extract numeric L₀ inductance from NL element dictionaries
+- **Process**: Uses first coefficient (linear term) to calculate L₀ = φ₀/coeffs[1]
+- **Integration**: Ensures NL elements have numeric values for matrix calculations
+
+**calcLjb() - Lines 414-416**
+```julia
+# Original:
+return calcbranchvector(..., [:Lj], ..., :Lj, ...)
+# Modified:
+return calcbranchvector(..., [:Lj, :NL], ..., [:Lj, :NL], ...)
+```
+- **Purpose**: Include NL elements in Josephson inductance branch calculations
+- **Effect**: NL elements now populate the Ljb sparse vector alongside Josephson junctions
+
+**calcbranchvector() - Major refactor**
+
+Key changes:
+1. **Accept multiple component types** (Line 433):
+   ```julia
+   # Original: component::Symbol
+   # Modified: component::Union{Symbol, Vector{Symbol}}
+   components = component isa Symbol ? [component] : component
+   ```
+
+2. **Handle component filtering** (Lines 461-467):
+   ```julia
+   for (i,type) in enumerate(componenttypes)
+       if type in components
+           # Skip NL when looking for L (prevents double-counting)
+           if type == :NL && components == [:L]
+               continue
+           end
+   ```
+   - Prevents NL elements from being counted as regular inductors
+   - Maintains separation between linear (L) and nonlinear (NL) inductances
+
+3. **Remove type conversion** (Line 467):
+   ```julia
+   # Original: Vb[j] = convert(eltype(valuecomponenttypes), componentvalues[i])
+   # Modified: Vb[j] = componentvalues[i]
+   ```
+   - Preserves original data structure (allows Dict for NL elements)
+
+**calcLmean() - Lines 883-897**
+```julia
+function calcLmean(componenttypes::Vector{Symbol}, componentvalues::Vector)
+    # Check if we have any NL components
+    has_nl = any(t -> t == :NL, componenttypes)
+
+    if has_nl
+        # Force Float64 type for calculation since we extract numeric L0 values
+        return calcLmean_inner(componenttypes, componentvalues, Float64[])
+    else
+        # Use original type detection for L and Lj only
+        return calcLmean_inner(componenttypes, componentvalues,
+            calcvaluetype(componenttypes, componentvalues, [:Lj, :L]))
+    end
+end
+```
+- **Purpose**: Handle mean inductance calculation with NL elements
+- **Type safety**: Forces Float64 when NL present (since L₀ extraction yields numeric values)
+- **Backward compatibility**: Original behavior preserved for Josephson-only circuits
+
+**calcLmean_inner() - Line 946**
+```julia
+# Include NL in inductor counting and processing
+if type == :L || type == :Lj || type == :NL
+    ninductors += 1
+end
+```
+- **Purpose**: Include NL elements in mean inductance calculation
+- **Effect**: NL inductances contribute to overall Lmean normalization
+
+#### Key Design Decisions
+
+1. **Unified handling**: NL elements populate same sparse vectors as Josephson junctions
+2. **Type preservation**: Maintains Dict structure for NL until numeric conversion needed  
+3. **Selective filtering**: Prevents double-counting when separating L vs NL components
+4. **Normalization consistency**: NL inductances included in Lmean calculation for proper scaling
+
+#### Integration Impact
+
+These changes ensure that:
+- NL elements are properly included in all inductance-related matrix calculations
+- Type safety is maintained when mixing symbolic and numeric values
+- The existing sparse matrix structure accommodates both Josephson and Taylor elements
+- Mean inductance normalization accounts for all nonlinear inductances in the circuit
+
+### 5. Minor Supporting Changes
+
+#### `src/nlsolve.jl` - Enhanced Convergence Monitoring
+```julia
+if n == iterations
+    # Log to warning system
+    warning_log("Solver did not converge after maximum iterations of $n")
+    warning_log("norm(F)/norm(x): $(norm(F)/norm(x))")
+    warning_log("Infinity norm: $(norm(F,Inf))")
+```
+- **Purpose**: Capture convergence failures in warning log system
+- **Benefit**: Python wrapper can detect and handle convergence issues
+- **Original behavior preserved**: Still prints warnings to console
+
+#### `src/qesparams.jl` - Formatting
+```julia
+function calcinputoutput!(...)
+# Added blank line for consistent formatting
+```
+- **Purpose**: Minor formatting improvement for code consistency
+- **Impact**: No functional changes
+
+### 6. `src/JosephsonCircuits.jl`
+
+#### Purpose
+Main module file modifications to export new Taylor expansion functionality and manage precompilation for the extended feature set.
+
+#### New Exports (Lines 511-517)
+
+**Core Types and Functions**:
+```julia
+export NonlinearElement
+export identify_nonlinear_elements
+```
+- `NonlinearElement`: The unified struct for representing both Josephson and Taylor nonlinearities
+- `identify_nonlinear_elements`: Function that catalogs all nonlinear elements in a circuit
+
+**Debug and Warning System**:
+```julia
+export debug_log, get_debug_log, clear_debug_log
+export warning_log, get_warning_log, clear_warning_log
+```
+- Debug logging functions accessible from Python wrapper
+- Enables troubleshooting and monitoring of nonlinear element processing
+- Separate debug and warning message streams
+
+#### Precompilation Changes (Lines 531-540)
+
+**Commented Out Precompilation Workload**:
+```julia
+#=
+PrecompileTools.@compile_workload begin
+    warmup()
+    # warmupsyms()
+    # warmupsymsold()
+    # warmupsymsnew()
+    warmupnetwork()
+    warmupconnect()
+end
+=#
+```
+
+**Modifications Made**:
+- **Disabled symbolic precompilation**: Commented out `warmupsyms()`, `warmupsymsold()`, `warmupsymsnew()`
+- **Kept network precompilation**: Retained `warmupnetwork()` and `warmupconnect()`
+- **Entire workload commented**: Full precompilation temporarily disabled
+
+**Rationale**:
+- Prevents precompilation conflicts with new NL element types
+- Avoids potential issues with Dict-based component values during package building
+- Maintains core network functionality precompilation
+- Can be re-enabled after further testing with symbolic NL parameters
+
+#### Integration Notes
+
+**Public API Extensions**:
+The exported functions extend JosephsonCircuits.jl's public API to include:
+1. **Nonlinear element introspection**: Users can access `NonlinearElement` structures
+2. **Circuit analysis**: `identify_nonlinear_elements` enables circuit composition analysis  
+3. **Debug capabilities**: Python wrapper can retrieve debug/warning messages for troubleshooting
+
+**Backward Compatibility**:
+- All original exports unchanged
+- New exports are additive only
+- Precompilation changes don't affect runtime functionality
+- Package still loads and functions normally with or without precompilation
+
+**Future Considerations**:
+- Precompilation can be re-enabled once NL parameter handling is fully stabilized
+- Additional exports may be added for Taylor coefficient manipulation functions
+- Debug system could be extended with different message levels (info, warn, error)
 
 ## Testing
 The implementation has been tested with:

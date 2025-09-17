@@ -182,7 +182,7 @@ end
 Represents a nonlinear element with its type and parameters.
 """
 struct NonlinearElement
-    type::Symbol  # :josephson, :taylor, :kinetic
+    type::Symbol  # :josephson, :taylor
     indices::Vector{Int}  # Branch indices
     params::Dict{Symbol,Any}  # Parameters for the nonlinearity
 end
