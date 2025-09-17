@@ -30,8 +30,8 @@ Where:
 ### 🔧 Technical Implementation
 
 #### New Component Type: NL (Nonlinear Inductor)
-- **Syntax**: `("NL1", "node1", "node2", "poly, L0, c1, c2, c3, c4")`
-- **Example**: `("NL1", "1", "2", "poly, 329e-12, 0.0, 0.5")` approximates a 329 pH Josephson junction
+- **Syntax**: `("NL1", "node1", "node2", "poly L0, c1, c2, c3, c4")`
+- **Example**: `("NL1", "1", "2", "poly 329e-12, 0.0, 0.5")` approximates a 329 pH Josephson junction
 - Supports symbolic variables defined in `circuitdefs` dictionary
 
 #### Code Infrastructure
@@ -54,7 +54,7 @@ Where:
 
 ### 📊 Example Comparisons
 
-The `examples/` folder contains side-by-side comparisons between the original JJ-based examples and equivalent NL element implementations, where Josephson junctions are replaced by their Taylor expansion approximation (expanded to second order, "poly, L0, c1, c2"). These comparisons are also documented in the `julia_wrapper_examples.ipynb` notebook in the TWPA Design Package.
+The `examples/` folder contains side-by-side comparisons between the original JJ-based examples and equivalent NL element implementations, where Josephson junctions are replaced by their Taylor expansion approximation (expanded to second order, "poly L0, c1, c2"). These comparisons are also documented in the `julia_wrapper_examples.ipynb` notebook in the TWPA Design Package.
 
 ### ✅ Comprehensive Testing
 
@@ -63,7 +63,7 @@ The fork has been tested against the original implementation:
 **Basic Functionality**
 - ✅ Linear NL elements match regular inductors exactly
 - ✅ Taylor approximation of sin(φ) matches JJ for fundamental frequency
-- ✅ Example: `"poly, 329e-12, 0.0, 0.5"` approximates a 329 pH Josephson junction
+- ✅ Example: `"poly 329e-12, 0.0, 0.5"` approximates a 329 pH Josephson junction
 - ✅ No numerical issues even at high currents (120% of Ic)
 
 **JosephsonCircuits Examples Verification**
@@ -178,7 +178,7 @@ Pkg.update()
 circuit = [
     ("P1", "1", "0", "1"),
     ("R1", "1", "0", "50"),
-    ("NL1", "1", "2", "poly, 1e-9, 0.0, 0.5, 0.0, 0.1"),  # L0=1nH, c2=0.5, c4=0.1
+    ("NL1", "1", "2", "poly 1e-9, 0.0, 0.5, 0.0, 0.1"),  # L0=1nH, c2=0.5, c4=0.1
     ("C1", "2", "0", "1e-15"),
     ("P2", "2", "0", "2"),
     ("R2", "2", "0", "50")
@@ -189,7 +189,7 @@ circuit = [
 ```julia
 # Circuit with symbolic parameters
 circuit = [
-    ("NL1", "1", "2", "poly, L0val, c1val, c2val, c3val, c4val")
+    ("NL1", "1", "2", "poly L0val, c1val, c2val, c3val, c4val")
 ]
 
 # Define parameters in dictionary
@@ -209,7 +209,7 @@ jj_circuit = [("B1", "1", "0", "100e-6")]  # 100 μA critical current
 
 # Equivalent Taylor approximation (sin(φ) ≈ φ - φ³/6)
 # For a JJ: L_J = Φ₀/(2π*Ic) = 329 pH for Ic = 1 mA
-nl_circuit = [("NL1", "1", "0", "poly, 329e-12, 0.0, 0.5, 0.0, 0.0")]
+nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5, 0.0, 0.0")]
 ```
 
 ## Complete Example: TWPA Simulation

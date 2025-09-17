@@ -314,7 +314,7 @@ function parsecircuit(circuit)
     # the JJs will be first matched as inductors. 
     # NOTE: voltage sources currently not supported
     # allowedcomponents = ["Lj","L","C","K","I","R","P"]
-    allowedcomponents = ["Lj","LK","NL","L","C","K","I","R","P"]
+    allowedcomponents = ["Lj","NL","L","C","K","I","R","P"]
 
     # check that we can properly parse these
     checkcomponenttypes(allowedcomponents)
@@ -623,7 +623,7 @@ function extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},no
         throw(DimensionMismatch("branchvector should be length zero"))
     end
 
-    allowedcomponenttypes = [:Lj,:L,:I,:P,:V,:NL,:LK]
+    allowedcomponenttypes = [:Lj,:L,:I,:P,:V,:NL]
     for i in eachindex(componenttypes)
         type = componenttypes[i]
         if type in allowedcomponenttypes
