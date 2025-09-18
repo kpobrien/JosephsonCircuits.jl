@@ -54,7 +54,7 @@ Where:
 
 ### 📊 Example Comparisons
 
-The `examples/` folder contains side-by-side comparisons between the original JJ-based examples and equivalent NL element implementations, where Josephson junctions are replaced by their Taylor expansion approximation (expanded to second order, "poly L0, c1, c2"). These comparisons are also documented in the `julia_wrapper_examples.ipynb` notebook in the TWPA Design Package.
+The `examples/` folder contains side-by-side comparisons between the original JJ-based examples and equivalent NL element implementations, where Josephson junctions are replaced by their Taylor expansion approximation (expanded to second order, "poly L0, c1, c2").
 
 ### ✅ Comprehensive Testing
 
@@ -123,9 +123,7 @@ As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.
 
 ## Installing This Fork
 
-To use this fork with the TWPA Design Package, it will be automatically installed when you first use the julia_wrapper module. No manual installation needed.
-
-For manual installation in Julia:
+To install this fork in Julia:
 ```julia
 using Pkg
 Pkg.add(url="https://github.com/MaxMalnou/JosephsonCircuits.jl")
@@ -240,7 +238,7 @@ S = JosephsonCircuits.sparams(solution)
 
 # Fork Maintenance
 
-This fork is maintained by Maxime Malnou for use with the [TWPA Design Package](https://github.com/MaxMalnou/twpa_design).
+This fork is maintained by Maxime Malnou.
 
 ## Reporting Issues
 - **Fork-specific issues** (NL elements, Taylor expansions): Open an issue in this repository
