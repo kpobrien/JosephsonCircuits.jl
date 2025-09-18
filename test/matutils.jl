@@ -19,6 +19,43 @@ using Test
         )
     end
 
+    @testset "diagcombine!" begin
+        @test_throws(
+            DimensionMismatch("`mode_index` = 0 must be greater than zero."),
+            JosephsonCircuits.diagcombine!(zeros(4,4),zeros(2,2),0)
+        )
+        @test_throws(
+            DimensionMismatch("`mode_index` = 10 must be less than or equal to the number of modes, which is 2 from the matrix sizes."),
+            JosephsonCircuits.diagcombine!(zeros(4,4),zeros(2,2),10)
+        )
+    end
+
+    @testset "axis_to_modes" begin
+        @test_throws(
+            DimensionMismatch("The input array needs 3 or more dimensions (two for ports and one for modes)."),
+            JosephsonCircuits.axis_to_modes([111 122],3)
+        )
+        @test_throws(
+            ArgumentError("`modes_axis` must be 3 or more (the first two dimensions are ports."),
+            JosephsonCircuits.axis_to_modes([111 121;211 221;;; 112 122;212 222;;; 113 123;213 223],0)
+        )
+        @test_throws(
+            ArgumentError("`modes_axis` must be less than or equal to the number of dimensions in input array."),
+            JosephsonCircuits.axis_to_modes([111 121;211 221;;; 112 122;212 222;;; 113 123;213 223],4)
+        )
+    end
+
+    @testset "axis_to_modes!" begin
+        @test_throws(
+            DimensionMismatch("The S parameter array `S` must have 3 dimensions (the first two dimensions are ports and the last is the modes)."),
+            JosephsonCircuits.axis_to_modes!([1.0 1.0;1.0 1.0],[1.0,1.0])
+        )
+        @test_throws(
+            DimensionMismatch("The first two dimensions of `out` must equal the first two dimensions of `S` times `Nmodes`."),
+            JosephsonCircuits.axis_to_modes!(zeros(4,5),zeros(2,2,2))
+        )
+    end
+
     @testset "spaddkeepzeros" begin
         A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,0],2,2);
         B = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1],3,2);

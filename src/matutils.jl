@@ -266,11 +266,11 @@ function diagcombine!(out::AbstractVecOrMat,A::AbstractVecOrMat,mode_index::Int)
     Nmodes = size(out,1) ÷ size(A,1)
     
     if mode_index <= 0
-        throw(ArgumentError("mode_index, $(mode_index), is less than or equal to zero."))
+        throw(ArgumentError("`mode_index` = $(mode_index) must be greater than zero."))
     end
     
     if mode_index > Nmodes
-        throw(ArgumentError("mode_index, $(mode_index), cannot be larger than Nmodes, which is $(Nmodes) from the matrix sizes."))
+        throw(ArgumentError("`mode_index` = $(mode_index) must be less than or equal to the number of modes, which is $(Nmodes) from the matrix sizes."))
     end
         
     for coord in CartesianIndices(A)
@@ -331,16 +331,16 @@ julia> JosephsonCircuits.axis_to_modes([111 121;211 221;;;; 112 122;212 222;;;; 
 """
 function axis_to_modes(S::AbstractArray, modes_axis::Integer)
 
+    if ndims(S) < 3
+        throw(DimensionMismatch("The input array needs 3 or more dimensions (two for ports and one for modes)."))
+    end
+
     if modes_axis > ndims(S)
-        error("modes_axis larger than number of dimensions in input array.")
+        throw(ArgumentError("`modes_axis` must be less than or equal to the number of dimensions in input array."))
     end
 
     if modes_axis < 3
-        error("modes_axis must be 3 or more (the first two dimensions are ports.")
-    end
-
-    if ndims(S) < 3
-        error("The input array needs 3 or more dimensions (two for ports and one for modes).")
+        throw(ArgumentError("`modes_axis` must be 3 or more (the first two dimensions are ports."))
     end
 
     # the size of S with the dimension we will delete removed
@@ -372,28 +372,28 @@ function axis_to_modes(S::AbstractArray, modes_axis::Integer)
     return out
 end
 
-function axis_to_modes!(X::AbstractMatrix,S::AbstractArray)
+function axis_to_modes!(out::AbstractMatrix,S::AbstractArray)
 
     Nmodes = size(S,3)
 
     # check that the dimensions are consistent
     if ndims(S) != 3
-        error("S parameter array must have 3 dimensions (the first two dimensions are ports and the last is the modes).")
+        throw(DimensionMismatch("The S parameter array `S` must have 3 dimensions (the first two dimensions are ports and the last is the modes)."))
     end
 
-    if size(X,1) != size(S,1)*Nmodes || size(X,2) != size(S,2)*Nmodes
-        error("Dimensions of X and S not consistent.")
+    if size(out,1) != size(S,1)*Nmodes || size(out,2) != size(S,2)*Nmodes
+        throw(DimensionMismatch("The first two dimensions of `out` must equal the first two dimensions of `S` times `Nmodes`."))
     end
     # copy over the data
     for k in axes(S,3)
         for j in axes(S,2)
             for i in axes(S,1)
-                X[(i-1)*Nmodes+k,(j-1)*Nmodes+k] = S[i,j,k]
+                out[(i-1)*Nmodes+k,(j-1)*Nmodes+k] = S[i,j,k]
             end
         end
     end
 
-    return X
+    return out
 end
 
 
