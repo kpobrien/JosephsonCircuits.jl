@@ -65,11 +65,11 @@ circuitdefs = Dict(
 #### Approximating a Josephson Junction with Taylor Expansion
 ```julia
 # Josephson junction circuit
-jj_circuit = [("B1", "1", "0", "100e-6")]  # 100 μA critical current
+jj_circuit = [("B1", "1", "0", "1e-6")]  # 1 μA critical current
 
 # Equivalent Taylor approximation (sin(φ) ≈ φ - φ³/6)
-# For a JJ: L_J = Φ₀/(2π*Ic) = 329 pH for Ic = 1 mA
-nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5, 0.0, 0.0")]
+# For a JJ: L_J = Φ₀/(2π*Ic) = 329 pH for Ic = 1 μA
+nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5")]
 ```
 
 ### Technical Implementation
