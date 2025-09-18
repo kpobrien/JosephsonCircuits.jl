@@ -1,104 +1,4 @@
-# JosephsonCircuits.jl (Fork with Taylor Expansion Nonlinearities)
-
-> **Note**: This is a fork of the original [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) by Kevin O'Brien with added support for Taylor expansion nonlinearities (NL elements).
-> 
-> **Latest Merge**: This fork includes all upstream updates through v0.4.19 (Sept 2025), including new attenuator and circulator components, multimode connection improvements, and Touchstone.jl integration.
-
-## Fork Features
-
-### ✨ What's New in This Fork
-
-**Taylor Expansion Nonlinearities (NL elements)**: Support for nonlinear inductors with polynomial current-flux relationships, enabling simulation of DC-biased RF SQUID TWPAs, KTWPAs, and other nonlinear inductance-based devices.
-
-### 📝 Implementation Summary
-
-This fork extends JosephsonCircuits.jl to support Taylor expansion nonlinearities in addition to Josephson junctions. This enables modeling of nonlinear inductors of the form:
-
-```
-L(φ) = L₀(1 + c₁φ + c₂φ² + c₃φ³ + c₄φ⁴)
-```
-corresponding to a current-phase relation:
-```
-I(φ) = φ₀/L₀ (φ - c₁φ²/2 + (c₁² - c₂)φ³/3 - (c₁³ - 2 c₁c₂ + c₃)φ⁴/4 + (c₁⁴ - 3 c₁²c₂ + c₂² + 2c₁c₃ - c₄)φ⁵/5)
-```
-
-Where:
-- `L₀` is the linear inductance = φ₀/Ic
-- `c₁, c₂, c₃, c₄` are the Taylor expansion coefficients
-- `φ` is the flux
-
-### 🔧 Technical Implementation
-
-#### New Component Type: NL (Nonlinear Inductor)
-- **Syntax**: `("NL1", "node1", "node2", "poly L0, c1, c2, c3, c4")`
-- **Example**: `("NL1", "1", "2", "poly 329e-12, 0.0, 0.5")` approximates a 329 pH Josephson junction
-- Supports symbolic variables defined in `circuitdefs` dictionary
-
-#### Code Infrastructure
-
-**Parser Modifications** (`parseinput.jl`)
-- Added `:NL` to `allowedcomponenttypes`
-- Parser recognizes "poly" syntax with symbolic variables
-- Created `parse_nl_value()` to parse L(φ).
-- Created `convert_poly_to_taylor_coeffs` to convert L(φ) to I(φ) coefficients
-- Added `PolyNL` struct to hold polynomial NL information
-- Added `NonlinearElement` struct (in `hbsolve.jl`) to track different types (josephson, taylor)
-- Implemented `identify_nonlinear_elements()` function
-
-**Unified FFT Machinery** (`hbsolve.jl`)
-- Both JJ and NL are passed to the FFT machinery when applying the nonlinearity
-- Created `apply_nonlinearities!` for generating appropriate functions per element type
-- All nonlinearities (Josephson and Taylor) now go through `applynl_mixed!` (defined in `fftutils.jl`)
-- Modified `calcfj2!` to handle all nonlinear elements uniformly
-- Updated `hbnlsolve` and `hblinsolve` to use `all_nl_branches` instead of just `Ljb`
-
-### 📊 Example Comparisons
-
-The `examples/` folder contains side-by-side comparisons between the original JJ-based examples and equivalent NL element implementations, where Josephson junctions are replaced by their Taylor expansion approximation (expanded to second order, "poly L0, c1, c2").
-
-### ✅ Comprehensive Testing
-
-The fork has been tested against the original implementation:
-
-**Basic Functionality**
-- ✅ Linear NL elements match regular inductors exactly
-- ✅ Taylor approximation of sin(φ) matches JJ for fundamental frequency
-- ✅ Example: `"poly 329e-12, 0.0, 0.5"` approximates a 329 pH Josephson junction
-- ✅ No numerical issues even at high currents (120% of Ic)
-
-**JosephsonCircuits Examples Verification**
-1. ✅ **JJ-JPA**: Functions identically in both Registered and Forked versions
-2. ✅ **NL-JPA**: Taylor approximation gives a similar result than JJ-JPA (slightly more gain) for the same pump parameters
-3. ✅ **JJ-JTWPA**: Functions similarly in both Registered and Forked versions
-4. ✅ **NL-JTWPA**: Taylor approximation gives a similar result than JJ-JTWPA (slightly more gain) for the same pump parameters
-5. ✅ **JJ-SNAIL-PA**: Functions similarly in both versions
-6. ✅ **NL-SNAIL-PA**: Taylor approximation needs lower dc bias (~ 0.94 Id) to give a similar result than JJ-SNAIL-PA
-7. ✅ **JJ-flux-JTWPA**: Functions similarly in both Registered and Forked versions
-8. ✅ **NL-flux-JTWPA**: Taylor approximation needs slightly lower dc bias (0.985 Id) and lower pump amplitude (0.7 Ip) to give a similar result than JJ-flux-JTWPA
-9. ✅ **JJ-Floquet-JTWPA with loss**: Functions similarly in both Registered and Forked versions
-10. ✅ **NL-Floquet-JTWPA with loss**: Taylor approximation gives a similar result than NL-Floquet-JTWPA (slightly more gain) for the same pump parameters
-
-**Small Signal Regime**
-- ✅ `hbnlsolve`: L, JJ, and NL all give identical results in small current regime
-- ✅ `hbnlsolve`: JJ and NL give consistent results in high current regime
-
-### 🚀 Future Improvements
-
-The code would benefit from:
-- ⭕ True DC analysis (currently not supported)
-
-### 📁 Key Modified Files
-
-- `parseinput.jl`: Added `:NL` to allowed components, created parser for polynomial syntax
-- `hbsolve.jl`: Main modifications for unified nonlinear solver
-- `calcfj2!`: Core function handling all nonlinearities
-- `identify_nonlinear_elements()`: New function to find and categorize nonlinear elements
-- `apply_nonlinearities!`: Handles mixed nonlinearity types
-- `applynl_mixed!`: FFT machinery for multiple element types
-
----
-
-## Original JosephsonCircuits.jl Documentation
+# JosephsonCircuits.jl
 
 [![Code coverage](https://codecov.io/gh/kpobrien/JosephsonCircuits.jl/branch/main/graphs/badge.svg)](https://codecov.io/gh/kpobrien/JosephsonCircuits.jl)
 [![Build Status](https://github.com/kpobrien/JosephsonCircuits.jl/actions/workflows/CI.yml/badge.svg
@@ -108,6 +8,86 @@ The code would benefit from:
 [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) simulates the frequency domain behavior using a variant [1] of nodal analysis [2] and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
 
 Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by capacitors with an imaginary capacitance or frequency dependent resistors. 
+
+## New Feature: Taylor Expansion Nonlinearities
+
+JosephsonCircuits.jl now supports Taylor expansion nonlinearities (NL elements) in addition to Josephson junctions. This enables modeling of nonlinear inductors with polynomial current-flux relationships, useful for simulating DC-biased RF SQUID TWPAs, KTWPAs, and other nonlinear inductance-based devices.
+
+### Mathematical Model
+
+The NL element models nonlinear inductors of the form:
+```
+L(φ) = L₀(1 + c₁φ + c₂φ² + c₃φ³ + c₄φ⁴)
+```
+
+This corresponds to a current-phase relation:
+```
+I(φ) = φ₀/L₀ (φ - c₁φ²/2 + (c₁² - c₂)φ³/3 - (c₁³ - 2c₁c₂ + c₃)φ⁴/4 + (c₁⁴ - 3c₁²c₂ + c₂² + 2c₁c₃ - c₄)φ⁵/5)
+```
+
+Where:
+- `L₀` is the linear inductance
+- `c₁, c₂, c₃, c₄` are the Taylor expansion coefficients
+- `φ` is the flux
+
+### Usage
+
+#### Basic NL Element Definition
+```julia
+# Define a circuit with Taylor expansion nonlinearity
+circuit = [
+    ("P1", "1", "0", "1"),
+    ("R1", "1", "0", "50"),
+    ("NL1", "1", "2", "poly 1e-9, 0.0, 0.5, 0.0, 0.1"),  # L0=1nH, c2=0.5, c4=0.1
+    ("C1", "2", "0", "1e-15"),
+    ("P2", "2", "0", "2"),
+    ("R2", "2", "0", "50")
+]
+```
+
+#### Using Symbolic Variables
+```julia
+# Circuit with symbolic parameters
+circuit = [
+    ("NL1", "1", "2", "poly L0val, c1val, c2val, c3val, c4val")
+]
+
+# Define parameters in dictionary
+circuitdefs = Dict(
+    "L0val" => 1e-9,    # Base inductance
+    "c1val" => 0.0,     # Linear term (usually 0)
+    "c2val" => 0.5,     # Quadratic term
+    "c3val" => 0.0,     # Cubic term
+    "c4val" => 0.1      # Quartic term
+)
+```
+
+#### Approximating a Josephson Junction with Taylor Expansion
+```julia
+# Josephson junction circuit
+jj_circuit = [("B1", "1", "0", "100e-6")]  # 100 μA critical current
+
+# Equivalent Taylor approximation (sin(φ) ≈ φ - φ³/6)
+# For a JJ: L_J = Φ₀/(2π*Ic) = 329 pH for Ic = 1 mA
+nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5, 0.0, 0.0")]
+```
+
+### Technical Implementation
+
+The implementation extends the existing harmonic balance solver to handle both Josephson and Taylor nonlinearities through the same FFT machinery:
+
+- **Component Type**: Added `:NL` to recognized component types
+- **Syntax**: `"poly L0, c1, c2, c3, c4"` format with support for symbolic parameters
+- **Unified FFT Machinery**: Both JJ and NL elements use the same FFT-based nonlinearity evaluation
+- **Mixed Circuits**: Supports circuits with both Josephson junctions and Taylor expansion elements
+
+Key modified files:
+- `parseinput.jl`: Parser for NL component syntax and conversion to Taylor coefficients
+- `hbsolve.jl`: Unified nonlinear solver handling both element types
+- `fftutils.jl`: Extended FFT utilities for column-specific nonlinear functions
+- `capindmat.jl`: Include NL elements in inductance matrix calculations
+
+## Features
 
 [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) supports the following:
 * Nonlinear simulations in which the user defines a circuit, the drive current, frequency, and number of harmonics and the code calculates the node flux or node voltage at each harmonic.
@@ -121,30 +101,7 @@ As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.
 
 # Installation:
 
-## Installing This Fork
-
-To install this fork in Julia:
-```julia
-using Pkg
-Pkg.add(url="https://github.com/MaxMalnou/JosephsonCircuits.jl")
-```
-
-### Running the Examples
-
-The examples folder includes a `Project.toml` that specifies all required dependencies (including CairoMakie for plotting). When you run any example, it will automatically activate this environment and install the necessary packages:
-
-```julia
-# The examples automatically handle this:
-using Pkg
-Pkg.activate("path/to/examples")
-Pkg.instantiate()  # Installs CairoMakie and other dependencies
-```
-
-No manual package installation is needed for running the examples.
-
-## Installing Original Version
-
-To install the latest release of the original package, start Julia and enter:
+To install the latest release:
 ```julia
 using Pkg
 Pkg.add("JosephsonCircuits")
@@ -167,48 +124,6 @@ Pkg.update()
 ```
 
 # Usage Examples
-
-## Using NL Elements (Fork Feature)
-
-### Basic NL Element Definition
-```julia
-# Define a circuit with Taylor expansion nonlinearity
-circuit = [
-    ("P1", "1", "0", "1"),
-    ("R1", "1", "0", "50"),
-    ("NL1", "1", "2", "poly 1e-9, 0.0, 0.5, 0.0, 0.1"),  # L0=1nH, c2=0.5, c4=0.1
-    ("C1", "2", "0", "1e-15"),
-    ("P2", "2", "0", "2"),
-    ("R2", "2", "0", "50")
-]
-```
-
-### Using Symbolic Variables
-```julia
-# Circuit with symbolic parameters
-circuit = [
-    ("NL1", "1", "2", "poly L0val, c1val, c2val, c3val, c4val")
-]
-
-# Define parameters in dictionary
-circuitdefs = Dict(
-    "L0val" => 1e-9,    # Base inductance
-    "c1val" => 0.0,     # Linear term (usually 0)
-    "c2val" => 0.5,     # Quadratic term
-    "c3val" => 0.0,     # Cubic term
-    "c4val" => 0.1      # Quartic term
-)
-```
-
-### Approximating a Josephson Junction with Taylor Expansion
-```julia
-# Josephson junction circuit
-jj_circuit = [("B1", "1", "0", "100e-6")]  # 100 μA critical current
-
-# Equivalent Taylor approximation (sin(φ) ≈ φ - φ³/6)
-# For a JJ: L_J = Φ₀/(2π*Ic) = 329 pH for Ic = 1 mA
-nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5, 0.0, 0.0")]
-```
 
 ## Complete Example: TWPA Simulation
 
@@ -234,16 +149,18 @@ S = JosephsonCircuits.sparams(solution)
 
 # References
 
-[1-6] See original JosephsonCircuits.jl documentation for references
+[1] J. D. Crutchfield, "Josephson-Junction Elements for Digital Simulation," IEEE Transactions on Magnetics, vol. 15, no. 1, pp. 462–466, Jan. 1979, [doi: 10.1109/TMAG.1979.1060082](https://doi.org/10.1109/TMAG.1979.1060082).
 
-# Fork Maintenance
+[2] J. Vlach and K. Singhal, Computer Methods for Circuit Analysis and Design. Springer Science & Business Media, Dec. 2013.
 
-This fork is maintained by Maxime Malnou.
+[3] S. A. Maas, Nonlinear Microwave and RF Circuits. Artech House, 2003.
 
-## Reporting Issues
-- **Fork-specific issues** (NL elements, Taylor expansions): Open an issue in this repository
-- **General JosephsonCircuits.jl issues**: Report to the [original repository](https://github.com/kpobrien/JosephsonCircuits.jl)
+[4] E. Ginossar et al., "Microwave transitions as a signature of coherent parity mixing effects in the Majorana-transmon qubit," Nat Commun, vol. 5, p. 4772, Sep. 2014, [doi: 10.1038/ncomms5772](https://doi.org/10.1038/ncomms5772).
 
-## Acknowledgments
+[5] K. M. Sundqvist and P. Delsing, "Negative-resistance models for parametrically flux-pumped superconducting quantum interference devices," EPJ Quantum Technol., vol. 1, no. 1, p. 6, Jul. 2014, [doi: 10.1140/epjqt6](https://doi.org/10.1140/epjqt6).
 
-Original JosephsonCircuits.jl developed by Kevin O'Brien. Fork extensions for Taylor expansion nonlinearities developed for TWPA simulations.
+[6] K. P. O'Brien, C. Macklin, I. Siddiqi, and X. Zhang, "Resonant Phase Matching of Josephson Junction Traveling Wave Parametric Amplifiers," Physical Review Letters, vol. 113, no. 15, p. 157001, Oct. 2014, [doi: 10.1103/PhysRevLett.113.157001](https://doi.org/10.1103/PhysRevLett.113.157001).
+
+# Acknowledgments
+
+Original JosephsonCircuits.jl developed by Kevin O'Brien. Taylor expansion nonlinearity feature contributed by Maxime Malnou.
