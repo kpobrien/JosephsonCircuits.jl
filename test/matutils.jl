@@ -21,11 +21,11 @@ using Test
 
     @testset "diagcombine!" begin
         @test_throws(
-            DimensionMismatch("`mode_index` = 0 must be greater than zero."),
+            ArgumentError("`mode_index` = 0 must be greater than zero."),
             JosephsonCircuits.diagcombine!(zeros(4,4),zeros(2,2),0)
         )
         @test_throws(
-            DimensionMismatch("`mode_index` = 10 must be less than or equal to the number of modes, which is 2 from the matrix sizes."),
+            ArgumentError("`mode_index` = 10 must be less than or equal to the number of modes, which is 2 from the matrix sizes."),
             JosephsonCircuits.diagcombine!(zeros(4,4),zeros(2,2),10)
         )
     end
