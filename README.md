@@ -236,30 +236,31 @@ The following example demonstrates the Taylor expansion nonlinearity feature by 
 using JosephsonCircuits
 using CairoMakie
 
-# Circuit parameters
+# Define circuit parameter values as variables
 Lj = 1000.0e-12  # 1 nH
 Cc = 100.0e-15   # 100 fF
 Cj = 1000.0e-15  # 1 pF
 R = 50.0
 
-# JJ version
-jj_circuit = [
+# Circuit components for JJ version - use actual variables
+jj_circuit = Tuple{String,String,String,Any}[
+    ("P1", "1", "0", 1),
+    ("R1", "1", "0", R),     # Use the actual variable value
+    ("C1", "1", "2", Cc),    # Use the actual variable value
+    ("Lj1", "2", "0", Lj),   # Use the actual variable value
+    ("C2", "2", "0", Cj)     # Use the actual variable value
+]
+
+# Circuit components for NL version
+nl_circuit = Tuple{String,String,String,Any}[
     ("P1", "1", "0", 1),
     ("R1", "1", "0", R),
     ("C1", "1", "2", Cc),
-    ("Lj1", "2", "0", Lj),
+    ("NL1", "2", "0", "poly Lj, 0.0, 0.5"),  # This stays as string
     ("C2", "2", "0", Cj)
 ]
 
-# NL version - Taylor approximation of Josephson junction
-nl_circuit = [
-    ("P1", "1", "0", 1),
-    ("R1", "1", "0", R),
-    ("C1", "1", "2", Cc),
-    ("NL1", "2", "0", "poly Lj, 0.0, 0.5"),  # sin(φ) ≈ φ - φ³/6
-    ("C2", "2", "0", Cj)
-]
-
+# Circuit parameters dictionary with symbols
 circuitdefs = Dict(
     :Lj => Lj,
     :Cc => Cc,
@@ -270,33 +271,43 @@ circuitdefs = Dict(
 # Simulation parameters
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.75001*1e9,)
-pump_current = 0.00565e-6
-sources = [(mode=(1,), port=1, current=pump_current)]
 Npumpharmonics = (16,)
 Nmodulationharmonics = (8,)
 
-# Run both simulations
-sol_jj = hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics, 
-                 jj_circuit, circuitdefs)
-sol_nl = hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics, 
-                 nl_circuit, circuitdefs)
+# Sources
+pump_current_jj = 0.00565e-6
+pump_current_nl = 0.00565e-6
+
+sources_jj = [(mode=(1,), port=1, current=pump_current_jj)]
+sources_nl = [(mode=(1,), port=1, current=pump_current_nl)]
+
+# Run simulations
+sol_jj = hbsolve(ws, wp, sources_jj, Nmodulationharmonics, Npumpharmonics, 
+                 jj_circuit, circuitdefs, sorting=:name)
+
+sol_nl = hbsolve(ws, wp, sources_nl, Nmodulationharmonics, Npumpharmonics, 
+                 nl_circuit, circuitdefs, sorting=:name)
 
 # Extract results
 freq_GHz = ws./(2*pi*1e9)
-S11_jj = abs2.(sol_jj.linearized.S((0,), 1, (0,), 1, :))
-S11_nl = abs2.(sol_nl.linearized.S((0,), 1, (0,), 1, :))
+S11_jj = abs2.(sol_jj.linearized.S(outputmode=(0,), outputport=1, 
+                                   inputmode=(0,), inputport=1, freqindex=:))
+S11_nl = abs2.(sol_nl.linearized.S(outputmode=(0,), outputport=1, 
+                                   inputmode=(0,), inputport=1, freqindex=:))
 
-# Plot comparison
-fig = Figure(size = (600, 400))
-ax = Axis(fig[1, 1], 
+# Create figure with CairoMakie
+fig = Figure(size = (600, 600))
+
+# Gain plot
+ax1 = Axis(fig[1, 1], 
     xlabel = "Frequency [GHz]",
     ylabel = "S11 Gain [dB]",
-    title = "JPA: Josephson Junction vs Taylor Expansion"
+    title = "JPA Gain Comparison"
 )
 
-lines!(ax, freq_GHz, 10*log10.(S11_jj), label="JJ", linewidth=2)
-lines!(ax, freq_GHz, 10*log10.(S11_nl), label="NL (Taylor)", linewidth=2)
-axislegend(ax)
+lines!(ax1, freq_GHz, 10*log10.(S11_jj), label="JJ", linewidth=2, color=:blue)
+lines!(ax1, freq_GHz, 10*log10.(S11_nl), label="NL", linewidth=2, color=:red)
+axislegend(ax1, position = :lt)
 ```
 
 <img src="examples/jpa_comparison.png" width="60%">
@@ -502,12 +513,12 @@ The following example demonstrates the Taylor expansion implementation for a SNA
 using JosephsonCircuits
 using CairoMakie
 
-# Circuit parameters  
+# Circuit parameters
 α = 0.29
 Lj = 60e-12
-Lj_large = Lj / α
+Lj_large = 60e-12 / α
 Cj = 10.0e-15
-Cj_large = Cj / α
+Cj_large = 10.0e-15 / α
 Lr = 0.4264e-9 * 1.25
 Cr = 0.4e-12 * 1.25
 Lg = 100.0e-9
@@ -518,8 +529,8 @@ K = 0.999
 Ldc = 0.74e-12
 Rdc = 1000.0
 
-# JJ version
-jj_circuit = [
+# JJ circuit
+jj_circuit = Tuple{String,String,String,Any}[
     ("P1", "1", "0", 1),
     ("R1", "1", "0", R),
     ("L0", "1", "0", Lg),
@@ -541,8 +552,8 @@ jj_circuit = [
     ("R2", "7", "0", Rdc)
 ]
 
-# NL version - Replace all JJs with Taylor expansion
-nl_circuit = [
+# NL circuit
+nl_circuit = Tuple{String,String,String,Any}[
     ("P1", "1", "0", 1),
     ("R1", "1", "0", R),
     ("L0", "1", "0", Lg),
@@ -584,17 +595,18 @@ circuitdefs = Dict(
 ws = 2*pi*(7.8:0.001:8.2)*1e9
 wp = (2*pi*16.0*1e9,)
 dc_current_jj = 159e-6
-dc_current_nl = dc_current_jj * 0.94  # NL needs 94% of JJ bias
-pump_current = 4.4e-6
+dc_current_nl = 159e-6 * 0.94
+pump_current_jj = 4.4e-6
+pump_current_nl = 4.4e-6
 
 sources_jj = [
     (mode=(0,), port=2, current=dc_current_jj),
-    (mode=(1,), port=2, current=pump_current)
+    (mode=(1,), port=2, current=pump_current_jj)
 ]
 
 sources_nl = [
     (mode=(0,), port=2, current=dc_current_nl),
-    (mode=(1,), port=2, current=pump_current)
+    (mode=(1,), port=2, current=pump_current_nl)
 ]
 
 Npumpharmonics = (16,)
@@ -603,26 +615,30 @@ Nmodulationharmonics = (8,)
 # Run simulations
 sol_jj = hbsolve(ws, wp, sources_jj, Nmodulationharmonics, Npumpharmonics,
                  jj_circuit, circuitdefs, dc=true, threewavemixing=true,
-                 fourwavemixing=true)
+                 fourwavemixing=true, sorting=:name)
 
 sol_nl = hbsolve(ws, wp, sources_nl, Nmodulationharmonics, Npumpharmonics,
                  nl_circuit, circuitdefs, dc=true, threewavemixing=true,
-                 fourwavemixing=true)
+                 fourwavemixing=true, sorting=:name)
 
-# Extract results and plot
+# Extract results
 freq_GHz = ws./(2*pi*1e9)
-S11_jj = abs2.(sol_jj.linearized.S((0,), 1, (0,), 1, :))
-S11_nl = abs2.(sol_nl.linearized.S((0,), 1, (0,), 1, :))
+S11_jj = abs2.(sol_jj.linearized.S(outputmode=(0,), outputport=1,
+                                   inputmode=(0,), inputport=1, freqindex=:))
+S11_nl = abs2.(sol_nl.linearized.S(outputmode=(0,), outputport=1,
+                                   inputmode=(0,), inputport=1, freqindex=:))
 
+# Create figure
 fig = Figure(size = (600, 400))
+
 ax = Axis(fig[1, 1],
     xlabel = "Frequency [GHz]",
     ylabel = "S11 Gain [dB]",
-    title = "SNAIL PA: JJ vs Taylor Expansion"
+    title = "SNAILPA with DC Bias"
 )
 
-lines!(ax, freq_GHz, 10*log10.(S11_jj), label="JJ", linewidth=2)
-lines!(ax, freq_GHz, 10*log10.(S11_nl), label="NL (94% DC bias)", linewidth=2)
+lines!(ax, freq_GHz, 10*log10.(S11_jj), label="JJ", linewidth=2, color=:blue)
+lines!(ax, freq_GHz, 10*log10.(S11_nl), label="NL", linewidth=2, color=:red)
 axislegend(ax)
 ```
 
