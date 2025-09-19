@@ -559,6 +559,8 @@ The following example demonstrates the Taylor expansion implementation for a SNA
 using JosephsonCircuits
 using CairoMakie
 
+println("=== SNAILPA Test Example ===")
+
 # Circuit parameters
 α = 0.29
 Lj = 60e-12
@@ -574,6 +576,22 @@ Ll = 34e-12
 K = 0.999
 Ldc = 0.74e-12
 Rdc = 1000.0
+
+circuitdefs = Dict(
+    :Lj => Lj,
+    :Lj_large => Lj_large,
+    :Cj => Cj,
+    :Cj_large => Cj_large,
+    :Lr => Lr,
+    :Cr => Cr,
+    :Lg => Lg,
+    :Cc => Cc,
+    :R => R,
+    :Ll => Ll,
+    :K => K,
+    :Ldc => Ldc,
+    :Rdc => Rdc
+)
 
 # JJ circuit
 jj_circuit = Tuple{String,String,String,Any}[
@@ -621,22 +639,6 @@ nl_circuit = Tuple{String,String,String,Any}[
     ("R2", "7", "0", Rdc)
 ]
 
-circuitdefs = Dict(
-    :Lj => Lj,
-    :Lj_large => Lj_large,
-    :Cj => Cj,
-    :Cj_large => Cj_large,
-    :Lr => Lr,
-    :Cr => Cr,
-    :Lg => Lg,
-    :Cc => Cc,
-    :R => R,
-    :Ll => Ll,
-    :K => K,
-    :Ldc => Ldc,
-    :Rdc => Rdc
-)
-
 # Simulation parameters
 ws = 2*pi*(7.8:0.001:8.2)*1e9
 wp = (2*pi*16.0*1e9,)
@@ -658,11 +660,16 @@ sources_nl = [
 Npumpharmonics = (16,)
 Nmodulationharmonics = (8,)
 
+
 # Run simulations
+println("Running JJ version with DC bias...")
 sol_jj = hbsolve(ws, wp, sources_jj, Nmodulationharmonics, Npumpharmonics,
                  jj_circuit, circuitdefs, dc=true, threewavemixing=true,
                  fourwavemixing=true, sorting=:name)
 
+
+
+println("Running NL version with scaled DC bias...")
 sol_nl = hbsolve(ws, wp, sources_nl, Nmodulationharmonics, Npumpharmonics,
                  nl_circuit, circuitdefs, dc=true, threewavemixing=true,
                  fourwavemixing=true, sorting=:name)
@@ -686,6 +693,14 @@ ax = Axis(fig[1, 1],
 lines!(ax, freq_GHz, 10*log10.(S11_jj), label="JJ", linewidth=2, color=:blue)
 lines!(ax, freq_GHz, 10*log10.(S11_nl), label="NL", linewidth=2, color=:red)
 axislegend(ax)
+
+println("\n=== Performance Summary ===")
+println("JJ max gain: $(round(maximum(10*log10.(S11_jj)), digits=1)) dB")
+println("NL max gain: $(round(maximum(10*log10.(S11_nl)), digits=1)) dB")
+println("JJ DC bias: $(round(dc_current_jj*1e6, digits=1)) μA")
+println("NL DC bias: $(round(dc_current_nl*1e6, digits=1)) μA")
+println("JJ pump current: $(round(pump_current_jj*1e6, digits=1)) μA")
+println("NL pump current: $(round(pump_current_nl*1e6, digits=1)) μA")
 ```
 
 </details>
