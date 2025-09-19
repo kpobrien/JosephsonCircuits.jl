@@ -20,15 +20,12 @@ The NL element models nonlinear inductors of the form:
 L(φ) = L₀(1 + c₁φ + c₂φ² + c₃φ³ + c₄φ⁴)
 ```
 
-This corresponds to a current-phase relation:
-```
-I(φ) = φ₀/L₀ (φ - c₁φ²/2 + (c₁² - c₂)φ³/3 - (c₁³ - 2c₁c₂ + c₃)φ⁴/4 + (c₁⁴ - 3c₁²c₂ + c₂² + 2c₁c₃ - c₄)φ⁵/5)
-```
-
 Where:
 - `L₀` is the linear inductance
-- `c₁, c₂, c₃, c₄` are the Taylor expansion coefficients
+- `c₁, c₂, c₃, c₄` are the Taylor expansion coefficients  
 - `φ` is the flux
+
+For detailed mathematical derivations and implementation details, see [docs/nl_implementation.md](docs/nl_implementation.md).
 
 ### Usage
 
@@ -72,20 +69,14 @@ jj_circuit = [("B1", "1", "0", "1e-6")]  # 1 μA critical current
 nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5")]
 ```
 
-### Technical Implementation
+### Technical Summary
 
-The implementation extends the existing harmonic balance solver to handle both Josephson and Taylor nonlinearities through the same FFT machinery:
-
-- **Component Type**: Added `:NL` to recognized component types
+- **Component Type**: New `:NL` component type for nonlinear inductors
 - **Syntax**: `"poly L0, c1, c2, c3, c4"` format with support for symbolic parameters
-- **Unified FFT Machinery**: Both JJ and NL elements use the same FFT-based nonlinearity evaluation
+- **Integration**: Extends existing harmonic balance solver through unified FFT machinery
 - **Mixed Circuits**: Supports circuits with both Josephson junctions and Taylor expansion elements
 
-Key modified files:
-- `parseinput.jl`: Parser for NL component syntax and conversion to Taylor coefficients
-- `hbsolve.jl`: Unified nonlinear solver handling both element types
-- `fftutils.jl`: Extended FFT utilities for column-specific nonlinear functions
-- `capindmat.jl`: Include NL elements in inductance matrix calculations
+See [docs/nl_implementation.md](docs/nl_implementation.md) for complete implementation details.
 
 ## Features
 
