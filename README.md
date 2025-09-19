@@ -1057,25 +1057,18 @@ For more circuit simulation examples, including JTWPA with flux bias, Floquet JT
 
 # Contributing
 
-We welcome contributions to JosephsonCircuits.jl! Here are some ways you can contribute:
+We welcome contributions in the form of issues/bug reports or pull requests. This project uses the [MIT open source license](https://opensource.org/license/MIT). You retain the copyright to any code you contribute.
 
 - **Bug Reports**: If you find a bug, please open an issue on GitHub with a minimal example that demonstrates the problem
 - **Feature Requests**: Suggest new features or improvements by opening an issue
 - **Pull Requests**: Submit code contributions by forking the repository and creating a pull request
 - **Documentation**: Help improve documentation and examples
 
-When contributing code:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with appropriate tests
-4. Submit a pull request with a clear description of the changes
-
-This project uses the MIT open source license, and contributors retain copyright to their code.
-
 # Philosophy
 
-The motivation for developing JosephsonCircuits.jl is to simulate the gain and noise performance of ultra low noise amplifiers for quantum computing applications such as the Josephson traveling-wave parametric amplifier, which have thousands of linear and nonlinear circuit elements. We prioritize:
+The motivation for developing this package is to simulate the gain and noise performance of ultra low noise amplifiers for quantum computing applications such as the [Josephson traveling-wave parametric amplifier](https://www.science.org/doi/10.1126/science.aaa8525), which have thousands of linear and nonlinear circuit elements. 
 
+We prioritize:
 - **Speed**: Fast simulation execution and compilation times
 - **Simplicity**: Easy-to-use interface and clear documentation  
 - **Scalability**: Ability to handle large circuits efficiently
@@ -1092,35 +1085,32 @@ Planned improvements include:
 # Related Packages
 
 Other Julia packages for circuit simulation:
-- [Xyce.jl](https://github.com/FemtoCleaner/Xyce.jl): Julia wrapper for the Xyce circuit simulator
-- [NgSpice.jl](https://github.com/JuliaElectronics/NgSpice.jl): Julia wrapper for NgSpice
+- [Xyce.jl](https://github.com/JuliaComputing/Xyce.jl) provides a wrapper for [Xyce](https://xyce.sandia.gov/), the open source parallel circuit simulator from Sandia National Laboratories which can perform time domain and harmonic balance method simulations.
+- [NgSpice.jl](https://github.com/JuliaComputing/Ngspice.jl) and [LTspice.jl](https://github.com/cstook/LTspice.jl) provide wrappers for [NgSpice](http://ngspice.sourceforge.net/) and [LTspice](https://www.analog.com/en/design-center/design-tools-and-calculators/ltspice-simulator.html), respectively.  
 - [LTspice.jl](https://github.com/cstook/LTspice.jl): Julia wrapper for LTspice  
-- [ModelingToolkit.jl](https://github.com/SciML/ModelingToolkit.jl): Symbolic modeling framework with circuit simulation capabilities
-- [ACME.jl](https://github.com/HSU-ANT/ACME.jl): Analog Circuit Modeling and Emulation
+- [ModelingToolkit.jl](https://github.com/SciML/ModelingToolkit.jl) supports time domain circuit simulations from [scratch](https://mtk.sciml.ai/stable/tutorials/acausal_components) and using their [standard library](https://docs.sciml.ai/ModelingToolkitStandardLibrary/stable/tutorials/rc_circuit/)
+- [ACME.jl](https://github.com/HSU-ANT/ACME.jl) simulates electrical circuits in the time domain with an emphasis on audio effect circuits.
 
 External tools:
+- [Cedar EDA](https://cedar-eda.com) is a Julia-based commercial cloud service for circuit simulations.
 - [Keysight ADS](https://www.keysight.com/us/en/products/software/pathwave-design-software/pathwave-advanced-design-system.html): Commercial RF/microwave circuit simulator
-- [Cadence AWR](https://www.cadence.com/en_US/home/tools/system-analysis/rf-microwave-design.html): High-frequency electronic design automation
-- [WRspice](http://wrcad.com/wrspice.html): Open source SPICE circuit simulator
+- [Keysight ADS](https://www.keysight.com/us/en/products/software/pathwave-design-software/pathwave-advanced-design-system.html), [Cadence AWR](https://www.cadence.com/en_US/home/tools/system-analysis/rf-microwave-design/awr-microwave-office.html), [Cadence Spectre RF](https://www.cadence.com/en_US/home/tools/custom-ic-analog-rf-design/circuit-simulation/spectre-rf-option.html), and [Qucs](http://qucs.sourceforge.net/) are capable of time and frequency domain analysis of nonlinear circuits.
+- [WRSPICE](http://wrcad.com/wrspice.html) performs time domain simulations of Josephson junction containing circuits and frequency domain simulations of linear circuits.
 
 # Funding
-
-This project gratefully acknowledges funding from:
-- AWS Center for Quantum Computing  
-- MIT Center for Quantum Engineering (CQE)
-
+We gratefully acknowledge funding from
+- [AWS Center for Quantum Computing](https://aws.amazon.com/blogs/quantum-computing/announcing-the-opening-of-the-aws-center-for-quantum-computing/)
+- [MIT Center for Quantum Engineering (CQE)](https://cqe.mit.edu/).
+- 
 # License
 
 JosephsonCircuits.jl is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-# References
+# References:
 
-[1] Andrew J. Kerman, "Efficient numerical simulation of complex Josephson quantum circuits," *arXiv preprint arXiv:2010.14929* (2020).
-
-[2] L. O. Chua and P. M. Lin, *Computer-Aided Analysis of Electronic Circuits: Algorithms and Computational Techniques* (Prentice-Hall, 1975).
-
-[3] K. S. Kundert, *The Designer's Guide to SPICE and Spectre* (Kluwer Academic Publishers, 1995).
-
-[4] D. E. Root et al., "X-parameters: characterization, modeling, and design of nonlinear RF and microwave components," *Cambridge University Press* (2013).
-
-[5] J. Verspecht and D. E. Root, "Polyharmonic distortion modeling," *IEEE Microwave Magazine*, vol. 7, no. 3, pp. 44-57 (2006).
+1. Andrew J. Kerman "Efficient numerical simulation of complex Josephson quantum circuits" [arXiv:2010.14929 (2020)](https://doi.org/10.48550/arXiv.2010.14929) 
+2. Ji&#345;&#237; Vlach and Kishore Singhal "Computer Methods for Circuit Analysis and Design" 2nd edition, [Springer New York, NY (1993)](https://link.springer.com/book/9780442011949)
+3. Stephen A. Maas "Nonlinear Microwave and RF Circuits" 2nd edition, [Artech House (1997)](https://us.artechhouse.com/Nonlinear-Microwave-and-RF-Circuits-Second-Edition-P1097.aspx)
+4. Jos&#233; Carlos Pedro, David E. Root, Jianjun Xu, and Lu&#237;s C&#243;timos Nunes. "Nonlinear Circuit Simulation and Modeling: Fundamentals for Microwave Design" The Cambridge RF and Microwave Engineering Series, [Cambridge University Press (2018)](https://www.cambridge.org/core/books/nonlinear-circuit-simulation-and-modeling/1705F3B449B4313A2BE890599DAC0E38)
+5. David E. Root, Jan Verspecht, Jason Horn, and Mihai Marcu. "X-Parameters: Characterization, Modeling, and Design of Nonlinear RF and Microwave Components" The Cambridge RF and microwave engineering series, [Cambridge University Press (2013)](https://www.cambridge.org/sb/academic/subjects/engineering/rf-and-microwave-engineering/x-parameters-characterization-modeling-and-design-nonlinear-rf-and-microwave-components)
+6. Kaidong Peng, Rick Poore, Philip Krantz, David E. Root, and Kevin P. O'Brien "X-parameter based design and simulation of Josephson traveling-wave parametric amplifiers for quantum computing applications" [IEEE International Conference on Quantum Computing & Engineering (QCE22) (2022)](http://arxiv.org/abs/2211.05328)
