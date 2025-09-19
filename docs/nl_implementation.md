@@ -37,9 +37,9 @@ The implementation converts polynomial inductance coefficients to Taylor series 
 - **4th order**: `I₄ = (-c₃ + 2c₁c₂ - c₁³)/4`
 - **5th order**: `I₅ = (c₁⁴ - 3c₁²c₂ + c₂² + 2c₁c₃ - c₄)/5`
 
-## Component Syntax
+## Component Syntax and Usage
 
-### Basic Usage
+### Basic Syntax
 ```julia
 ("NL1", "node1", "node2", "poly L0[, c1][, c2][, c3][, c4]")
 ```
@@ -54,6 +54,33 @@ Note: Coefficients are optional and default to 0 if not specified.
 # Symbolic parameters
 ("NL1", "1", "2", "poly Lj*exp(alpha), 0, beta")
 # With circuitdefs = Dict(:Lj => 300e-12, :alpha => 0.1, :beta => 0.3)
+```
+
+### Circuit Examples
+
+**Simple NL Circuit**
+```julia
+circuit = [
+    ("NL1", "1", "0", "poly 329e-12"),  # Linear inductor (defaults to linear)
+    ("NL1", "1", "0", "poly 329e-12, 0.0, 0.5"),  # Nonlinear inductor
+    ("C1", "1", "0", "1e-15"),  # Shunt capacitor
+    ("P1", "1", "0", "1")  # Port
+]
+```
+
+**Mixed JJ/NL Circuit**
+```julia
+circuit = [
+    ("B1", "1", "2", "1e-6"),  # Josephson junction
+    ("NL1", "2", "3", "poly 500e-12, 0.0, 0.3"),  # Nonlinear inductor
+    ("C1", "3", "0", "2e-15")  # Capacitor
+]
+```
+
+**Symbolic Parameters**
+```julia
+circuit = [("NL1", "1", "0", "poly Lj*exp(alpha), 0, beta")]
+circuitdefs = Dict(:Lj => 300e-12, :alpha => 0.1, :beta => 0.3)
 ```
 
 ## Technical Implementation
@@ -81,21 +108,31 @@ Note: Coefficients are optional and default to 0 if not specified.
 - Modified `calcfj2!` to handle all nonlinear elements uniformly
 - Updated `hbnlsolve` and `hblinsolve` to use `all_nl_branches` instead of just `Ljb`
 
-## Example Comparisons
+## Design Decisions
+
+### 1. Unified FFT Machinery
+Both Josephson and Taylor nonlinearities use the same FFT-based evaluation pipeline, maintaining Kevin O'Brien's efficient architecture while extending it for heterogeneous circuits.
+
+### 2. Backward Compatibility
+All original functionality is preserved. Circuits with only Josephson junctions work identically to the original implementation.
+
+### 3. Normalization Consistency
+All inductances (Josephson and Taylor) are normalized by Lmean, preserving the numerical stability of the original solver.
+
+### 4. Sparse Matrix Preservation
+The implementation maintains sparsity patterns even with mixed nonlinearities, ensuring scalability to large circuits.
+
+## Testing and Validation
 
 The `examples/` folder contains side-by-side comparisons between the original JJ-based examples and equivalent NL element implementations, where Josephson junctions are replaced by their Taylor expansion approximation (expanded to second order, "poly L0, c1, c2").
 
-## Comprehensive Testing
-
-The implementation has been tested against the original implementation:
-
-**Basic Functionality**
+### Basic Functionality
 - ✅ Linear NL elements match regular inductors exactly
 - ✅ Taylor approximation of sin(φ) matches JJ for fundamental frequency
 - ✅ Example: `"poly 329e-12, 0.0, 0.5"` approximates a 329 pH Josephson junction
 - ✅ No numerical issues even at high currents (120% of Ic)
 
-**JosephsonCircuits Examples Verification**
+### JosephsonCircuits Examples Verification
 1. ✅ **JJ-JPA**: Functions identically in both Registered and Forked versions
 2. ✅ **NL-JPA**: Taylor approximation gives a similar result than JJ-JPA (slightly more gain) for the same pump parameters
 3. ✅ **JJ-JTWPA**: Functions similarly in both Registered and Forked versions
@@ -107,7 +144,7 @@ The implementation has been tested against the original implementation:
 9. ✅ **JJ-Floquet-JTWPA with loss**: Functions similarly in both Registered and Forked versions
 10. ✅ **NL-Floquet-JTWPA with loss**: Taylor approximation gives a similar result than NL-Floquet-JTWPA (slightly more gain) for the same pump parameters
 
-**Small Signal Regime**
+### Small Signal Regime
 - ✅ `hbnlsolve`: L, JJ, and NL all give identical results in small current regime
 - ✅ `hbnlsolve`: JJ and NL give consistent results in high current regime
 
@@ -117,6 +154,11 @@ The code would benefit from:
 - ⭕ True DC analysis (currently not supported)
 - ⭕ Netlist viewer implementation
 - ⭕ Higher-order polynomial terms (beyond 4th order)
+
+## Debug Features
+- `debug_log()`: Captures debug messages accessible from Python wrapper
+- `warning_log()`: Captures warnings for non-critical issues
+- Commented debug statements throughout for troubleshooting
 
 ## Detailed Implementation Changes
 
@@ -425,11 +467,6 @@ function applynl_mixed_verbose!(fd::Array{Complex{T}}, td::Array{T}, nl_function
 
 #### Integration with Existing Code
 
-**Backward Compatibility**:
-- Original `applynl!(fd, td, f, irfftplan, rfftplan)` unchanged
-- New functions extend rather than replace existing functionality
-- Single-function circuits continue to use original `applynl!()`
-
 **Usage in hbsolve.jl**:
 ```julia
 # Called from apply_nonlinearities!() in hbsolve.jl
@@ -674,67 +711,9 @@ end
 - Maintains core network functionality precompilation
 - Can be re-enabled after further testing with symbolic NL parameters
 
-#### Integration Notes
+#### Public API Extensions
 
-**Public API Extensions**:
 The exported functions extend JosephsonCircuits.jl's public API to include:
 1. **Nonlinear element introspection**: Users can access `NonlinearElement` structures
 2. **Circuit analysis**: `identify_nonlinear_elements` enables circuit composition analysis  
 3. **Debug capabilities**: Python wrapper can retrieve debug/warning messages for troubleshooting
-
-**Backward Compatibility**:
-- All original exports unchanged
-- New exports are additive only
-- Precompilation changes don't affect runtime functionality
-- Package still loads and functions normally with or without precompilation
-
-**Future Considerations**:
-- Precompilation can be re-enabled once NL parameter handling is fully stabilized
-- Additional exports may be added for Taylor coefficient manipulation functions
-- Debug system could be extended with different message levels (info, warn, error)
-
-## Design Decisions
-
-### 1. Unified FFT Machinery
-Both Josephson and Taylor nonlinearities use the same FFT-based evaluation pipeline, maintaining Kevin O'Brien's efficient architecture while extending it for heterogeneous circuits.
-
-### 2. Backward Compatibility
-All original functionality is preserved. Circuits with only Josephson junctions work identically to the original implementation.
-
-### 3. Normalization Consistency
-All inductances (Josephson and Taylor) are normalized by Lmean, preserving the numerical stability of the original solver.
-
-### 4. Sparse Matrix Preservation
-The implementation maintains sparsity patterns even with mixed nonlinearities, ensuring scalability to large circuits.
-
-## Debug Features
-- `debug_log()`: Captures debug messages accessible from Python wrapper
-- `warning_log()`: Captures warnings for non-critical issues
-- Commented debug statements throughout for troubleshooting
-
-## Usage Examples
-
-### Simple NL Circuit
-```julia
-circuit = [
-    ("NL1", "1", "0", "poly 329e-12"),  # Linear inductor (defaults to linear)
-    ("NL1", "1", "0", "poly 329e-12, 0.0, 0.5"),  # Nonlinear inductor
-    ("C1", "1", "0", "1e-15"),  # Shunt capacitor
-    ("P1", "1", "0", "1")  # Port
-]
-```
-
-### Mixed JJ/NL Circuit
-```julia
-circuit = [
-    ("B1", "1", "2", "1e-6"),  # Josephson junction
-    ("NL1", "2", "3", "poly 500e-12, 0.0, 0.3"),  # Nonlinear inductor
-    ("C1", "3", "0", "2e-15")  # Capacitor
-]
-```
-
-### Symbolic Parameters
-```julia
-circuit = [("NL1", "1", "0", "poly Lj*exp(alpha), 0, beta")]
-circuitdefs = Dict(:Lj => 300e-12, :alpha => 0.1, :beta => 0.3)
-```
