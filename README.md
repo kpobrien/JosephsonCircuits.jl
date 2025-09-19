@@ -43,6 +43,16 @@ The corresponding current-phase relation is derived from `φ₀ dφ/dt = L di/dt
 I(φ) = φ₀/L₀ (φ - c₁φ²/2 + (c₁² - c₂)φ³/3 - (c₁³ - 2c₁c₂ + c₃)φ⁴/4 + (c₁⁴ - 3c₁²c₂ + c₂² + 2c₁c₃ - c₄)φ⁵/5)
 ```
 
+### Technical Summary
+
+- **Component Type**: New `NL` component type for nonlinear inductors
+- **Syntax**: `("NL1", "node1", "node2", "poly L0[, c1][, c2][, c3][, c4]")`. Supports symbolic variables defined in `circuitdefs` dictionary
+- **Example**: `("NL1", "1", "2", "poly 329e-12, 0.0, 0.5")` approximates a 329 pH Josephson junction
+- **Integration**: Extends existing harmonic balance solver through unified FFT machinery
+- **Mixed Circuits**: Supports circuits with both Josephson junctions and Taylor expansion elements
+
+For detailed implementation details, see [docs/nl_implementation.md](docs/nl_implementation.md).
+
 ### Usage
 
 #### Basic NL Element Definition
@@ -84,15 +94,6 @@ jj_circuit = [("B1", "1", "0", "1e-6")]  # 1 μA critical current
 # For a JJ: L_J = `\phi_0`/(2π*Ic) = 329 pH for Ic = 1 μA
 nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5")]
 ```
-
-### Technical Summary
-
-- **Component Type**: New `:NL` component type for nonlinear inductors
-- **Syntax**: `"poly L0[, c1][, c2][, c3][, c4]"` format with support for symbolic parameters (coefficients are optional, default to 0)
-- **Integration**: Extends existing harmonic balance solver through unified FFT machinery
-- **Mixed Circuits**: Supports circuits with both Josephson junctions and Taylor expansion elements
-
-For detailed implementation details, see [docs/nl_implementation.md](docs/nl_implementation.md).
 
 # Acknowledgments
 
