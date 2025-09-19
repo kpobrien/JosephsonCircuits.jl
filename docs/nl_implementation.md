@@ -21,7 +21,7 @@ Where:
 
 ### Current-Phase Relationship
 
-The corresponding current-phase relation is derived from `I = ∫(φ/L(φ))dφ`:
+The corresponding current-phase relation is derived from `φ₀ dφ/dt = L di/dt` where φ₀ is the reduced flux quantum:
 
 ```
 I(φ) = φ₀/L₀ (φ - c₁φ²/2 + (c₁² - c₂)φ³/3 - (c₁³ - 2c₁c₂ + c₃)φ⁴/4 + (c₁⁴ - 3c₁²c₂ + c₂² + 2c₁c₃ - c₄)φ⁵/5)
@@ -58,29 +58,44 @@ Note: Coefficients are optional and default to 0 if not specified.
 
 ### Circuit Examples
 
-**Simple NL Circuit**
+**Basic NL Element Definition**
 ```julia
+# Define a circuit with Taylor expansion nonlinearity
 circuit = [
-    ("NL1", "1", "0", "poly 329e-12"),  # Linear inductor (defaults to linear)
-    ("NL1", "1", "0", "poly 329e-12, 0.0, 0.5"),  # Nonlinear inductor
-    ("C1", "1", "0", "1e-15"),  # Shunt capacitor
-    ("P1", "1", "0", "1")  # Port
+    ("P1", "1", "0", "1"),
+    ("R1", "1", "0", "50"),
+    ("NL1", "1", "2", "poly 1e-9, 0.0, 0.5, 0.0, 0.1"),  # L0=1nH, c2=0.5, c4=0.1
+    ("C1", "2", "0", "1e-15"),
+    ("P2", "2", "0", "2"),
+    ("R2", "2", "0", "50")
 ]
 ```
 
-**Mixed JJ/NL Circuit**
+**Using Symbolic Variables**
 ```julia
+# Circuit with symbolic parameters
 circuit = [
-    ("B1", "1", "2", "1e-6"),  # Josephson junction
-    ("NL1", "2", "3", "poly 500e-12, 0.0, 0.3"),  # Nonlinear inductor
-    ("C1", "3", "0", "2e-15")  # Capacitor
+    ("NL1", "1", "2", "poly L0val, c1val, c2val, c3val, c4val")
 ]
+
+# Define parameters in dictionary
+circuitdefs = Dict(
+    "L0val" => 1e-9,    # Base inductance
+    "c1val" => 0.0,     # Linear term (usually 0)
+    "c2val" => 0.5,     # Quadratic term
+    "c3val" => 0.0,     # Cubic term
+    "c4val" => 0.1      # Quartic term
+)
 ```
 
-**Symbolic Parameters**
+**Approximating a Josephson Junction with Taylor Expansion**
 ```julia
-circuit = [("NL1", "1", "0", "poly Lj*exp(alpha), 0, beta")]
-circuitdefs = Dict(:Lj => 300e-12, :alpha => 0.1, :beta => 0.3)
+# Josephson junction circuit
+jj_circuit = [("B1", "1", "0", "1e-6")]  # 1 μA critical current
+
+# Equivalent Taylor approximation (sin(φ) ≈ φ - φ³/6)
+# For a JJ: L_J = Φ₀/(2π*Ic) = 329 pH for Ic = 1 μA
+nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5")]
 ```
 
 ## Technical Implementation
