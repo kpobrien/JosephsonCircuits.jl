@@ -35,6 +35,14 @@ Where:
 - `c₁, c₂, c₃, c₄` are the Taylor expansion coefficients  
 - `φ` is the flux
 
+### Current-Phase Relationship
+
+The corresponding current-phase relation is derived from `φ₀ dφ/dt = L di/dt` where `φ₀` is the reduced flux quantum:
+
+```
+I(φ) = φ₀/L₀ (φ - c₁φ²/2 + (c₁² - c₂)φ³/3 - (c₁³ - 2c₁c₂ + c₃)φ⁴/4 + (c₁⁴ - 3c₁²c₂ + c₂² + 2c₁c₃ - c₄)φ⁵/5)
+```
+
 For detailed mathematical derivations and implementation details, see [docs/nl_implementation.md](docs/nl_implementation.md).
 
 ### Usage
@@ -109,6 +117,11 @@ Pkg.add(name="JosephsonCircuits",rev="main")
 To run the examples below, you will need to install Plots.jl using the command:
 ```
 Pkg.add("Plots")
+```
+
+To run the Taylor expansion nonlinearity comparison examples, you will also need to install CairoMakie.jl:
+```
+Pkg.add("CairoMakie")
 ```
 
 If you get errors when running the examples, please try installing the latest version of Julia and updating to the latest version of JosephsonCircuits.jl by running:
@@ -481,7 +494,7 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 
 ### SNAIL Parametric Amplifier with Taylor Expansion Nonlinearities: JJ vs NL Comparison
 
-The following example demonstrates the Taylor expansion implementation for a SNAIL parametric amplifier. Note that the NL version requires approximately 94% of the original JJ DC bias current to achieve similar performance:
+The following example demonstrates the Taylor expansion implementation for a SNAIL parametric amplifier. Note that the NL version requires 94% of the original JJ DC bias current to achieve similar performance:
 
 ```julia
 using JosephsonCircuits
