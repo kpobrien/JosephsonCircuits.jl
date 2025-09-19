@@ -96,7 +96,7 @@ For detailed implementation details, see [docs/nl_implementation.md](docs/nl_imp
 
 # Acknowledgments
 
-Original JosephsonCircuits.jl developed by Kevin O'Brien. Taylor expansion nonlinearity feature contributed by Maxime Malnou.
+Original JosephsonCircuits.jl developed by [Kevin O'Brien](https://github.com/kpobrien). Taylor expansion nonlinearity feature contributed by [Maxime Malnou](https://github.com/MaxMalnou).
 
 # Installation:
 
@@ -494,6 +494,10 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 
 The following example demonstrates the Taylor expansion implementation for a SNAIL parametric amplifier. Note that the NL version requires 94% of the original JJ DC bias current to achieve similar performance:
 
+<details>
+
+<summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using CairoMakie
@@ -621,5 +625,7 @@ lines!(ax, freq_GHz, 10*log10.(S11_jj), label="JJ", linewidth=2)
 lines!(ax, freq_GHz, 10*log10.(S11_nl), label="NL (94% DC bias)", linewidth=2)
 axislegend(ax)
 ```
+
+</details>
 
 <img src="examples/snailpa_comparison.png" width="60%">
