@@ -341,6 +341,21 @@ println("Max QE (JJ): $(round(maximum(QE_jj), digits=3))")
 println("Max QE (NL): $(round(maximum(QE_nl), digits=3))")
 ```
 
+Output:
+```julia
+=== Simple JPA Test (No DC Bias) ===
+Running JJ version...
+JJ pump current: 5.65 nA
+Running NL version...
+NL pump current: 5.65 nA
+
+=== Performance Summary ===
+JJ max gain: 13.3 dB
+NL max gain: 14.3 dB
+Max QE (JJ): 1.0
+Max QE (NL): 1.0
+```
+
 <img src="examples/jpa_comparison.png" width="60%">
 
 ## SNAIL Parametric Amplifier
