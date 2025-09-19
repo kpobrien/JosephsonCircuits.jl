@@ -49,6 +49,9 @@ Note: Coefficients are optional and default to 0 if not specified.
 ```julia
 # Fixed coefficients
 ("NL1", "1", "2", "poly 329e-12")  # Linear inductor (all coefficients = 0)
+```
+or 
+```julia
 ("NL1", "1", "2", "poly 329e-12, 0.0, 0.5")  # Approximates 1μA JJ
 
 # Symbolic parameters
