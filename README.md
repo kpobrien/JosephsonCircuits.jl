@@ -1098,9 +1098,9 @@ External tools:
 
 # Funding
 We gratefully acknowledge funding from
-- [AWS Center for Quantum Computing](https://aws.amazon.com/blogs/quantum-computing/announcing-the-opening-of-the-aws-center-for-quantum-computing/)
-- [MIT Center for Quantum Engineering (CQE)](https://cqe.mit.edu/).
-- 
+- [AWS Center for Quantum Computing](https://aws.amazon.com/blogs/quantum-computing/announcing-the-opening-of-the-aws-center-for-quantum-computing/)  
+- [MIT Center for Quantum Engineering (CQE)](https://cqe.mit.edu/)
+
 # License
 
 JosephsonCircuits.jl is licensed under the MIT License. See [LICENSE](LICENSE) for details.
