@@ -990,7 +990,7 @@ plot(p1, p2, p3, p4, layout = (2, 2))
 
 ### Flux-driven JTWPA with Taylor Expansion Nonlinearities: JJ vs NL Comparison
 
-The following example demonstrates the Taylor expansion implementation for Flux-driven JTWPA. Note that the NL version requires 98.5% of the original JJ DC bias current to achieve similar performance:
+The following example demonstrates the Taylor expansion implementation for Flux-driven JTWPA. Note that the NL version requires 98.5% of the original JJ DC bias current and lower pump amplitude (0.7 Ip) to achieve similar performance:
 
 <details>
 
