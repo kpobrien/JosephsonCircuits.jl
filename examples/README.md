@@ -994,6 +994,7 @@ plot(p1, p2, p3, p4, layout = (2, 2))
 
 <summary>Code</summary>
 
+```julia
 using JosephsonCircuits
 using CairoMakie
 
@@ -1173,6 +1174,7 @@ println("JJ pump current: $(round(modulation_jj * dc_current_jj*1e6, digits=1)) 
 println("NL pump current: $(round(modulation_nl * dc_current_nl*1e6, digits=1)) μA")
 println("JJ max gain: $(round(maximum(10*log10.(S21_jj)), digits=1)) dB")
 println("NL max gain: $(round(maximum(10*log10.(S21_nl)), digits=1)) dB")
+```
 
 </details>
 
@@ -1263,6 +1265,8 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 <details>
 
 <summary>Code</summary>
+
+```julia
 
 using JosephsonCircuits
 using CairoMakie
@@ -1459,5 +1463,7 @@ println("NL base pump: $(round(pump_base_nl*1e6, digits=2)) μA")
 println("NL adjusted pump: $(round(pump_adjusted_nl*1e6, digits=2)) μA")
 println("JJ max gain: $(round(maximum(10*log10.(S21_jj)), digits=1)) dB")
 println("NL max gain: $(round(maximum(10*log10.(S21_nl)), digits=1)) dB")
+
+```
 
 </details>
