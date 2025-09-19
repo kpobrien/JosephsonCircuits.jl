@@ -164,13 +164,6 @@ The `examples/` folder contains side-by-side comparisons between the original JJ
 - ✅ `hbnlsolve`: L, JJ, and NL all give identical results in small current regime
 - ✅ `hbnlsolve`: JJ and NL give consistent results in high current regime
 
-## Future Improvements
-
-The code would benefit from:
-- ⭕ True DC analysis (currently not supported)
-- ⭕ Netlist viewer implementation
-- ⭕ Higher-order polynomial terms (beyond 4th order)
-
 ## Debug Features
 - `debug_log()`: Captures debug messages accessible from Python wrapper
 - `warning_log()`: Captures warnings for non-critical issues
