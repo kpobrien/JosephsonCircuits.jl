@@ -9,6 +9,16 @@
 
 Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by capacitors with an imaginary capacitance or frequency dependent resistors. 
 
+[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) supports the following:
+* Nonlinear simulations in which the user defines a circuit, the drive current, frequency, and number of harmonics and the code calculates the node flux or node voltage at each harmonic.
+* Linearized simulations about the nonlinear operating point calculated above. This simulates the small signal response of a periodically time varying linear circuit and is useful for simulating parametric amplification and frequency conversion in the undepleted (strong) pump limit. Calculation of node fluxes (or node voltages) and scattering parameters of the linearized circuit [4-5].
+* Linear simulations of linear circuits. Calculation of node fluxes (or node voltages) and scattering parameters.
+* Calculation of symbolic capacitance and inverse inductance matrices.
+
+As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.keysight.com/us/en/products/software/pathwave-design-software/pathwave-advanced-design-system.html) simulations and Fourier analysis of time domain simulation performed by [WRSPICE](http://wrcad.com/wrspice.html).
+
+**Warning:** this package is under heavy development and there will be breaking changes. We will keep the examples updated to ease the burden of any breaking changes.
+
 ## New Feature: Taylor Expansion Nonlinearities
 
 JosephsonCircuits.jl now supports Taylor expansion nonlinearities (NL elements) in addition to Josephson junctions. This enables modeling of nonlinear inductors with polynomial current-flux relationships, useful for simulating DC-biased RF SQUID TWPAs, KTWPAs, and other nonlinear inductance-based devices.
@@ -65,7 +75,7 @@ circuitdefs = Dict(
 jj_circuit = [("B1", "1", "0", "1e-6")]  # 1 μA critical current
 
 # Equivalent Taylor approximation (sin(φ) ≈ φ - φ³/6)
-# For a JJ: L_J = Φ₀/(2π*Ic) = 329 pH for Ic = 1 μA
+# For a JJ: L_J = `\phi_0`/(2π*Ic) = 329 pH for Ic = 1 μA
 nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5")]
 ```
 
@@ -78,80 +88,49 @@ nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5")]
 
 See [docs/nl_implementation.md](docs/nl_implementation.md) for complete implementation details.
 
-## Features
+# Acknowledgments
 
-[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) supports the following:
-* Nonlinear simulations in which the user defines a circuit, the drive current, frequency, and number of harmonics and the code calculates the node flux or node voltage at each harmonic.
-* Linearized simulations about the nonlinear operating point calculated above. This simulates the small signal response of a periodically time varying linear circuit and is useful for simulating parametric amplification and frequency conversion in the undepleted (strong) pump limit. Calculation of node fluxes (or node voltages) and scattering parameters of the linearized circuit [4-5].
-* Linear simulations of linear circuits. Calculation of node fluxes (or node voltages) and scattering parameters.
-* Calculation of symbolic capacitance and inverse inductance matrices.
-
-As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.keysight.com/us/en/products/software/pathwave-design-software/pathwave-advanced-design-system.html) simulations and Fourier analysis of time domain simulation performed by [WRSPICE](http://wrcad.com/wrspice.html).
-
-**Warning:** this package is under heavy development and there will be breaking changes. We will keep the examples updated to ease the burden of any breaking changes.
+Original JosephsonCircuits.jl developed by Kevin O'Brien. Taylor expansion nonlinearity feature contributed by Maxime Malnou.
 
 # Installation:
 
-To install the latest release:
-```julia
+To install the latest release of the package, install Julia using [Juliaup](https://github.com/JuliaLang/juliaup), start Julia, and enter the following command:
+```
 using Pkg
 Pkg.add("JosephsonCircuits")
 ```
 
-To install the development version:
-```julia
+To install the development version, start Julia and enter the command:
+```
 using Pkg
 Pkg.add(name="JosephsonCircuits",rev="main")
 ```
 
-To run the examples below, you will need to install Plots.jl:
-```julia
+To run the examples below, you will need to install Plots.jl using the command:
+```
 Pkg.add("Plots")
 ```
 
 If you get errors when running the examples, please try installing the latest version of Julia and updating to the latest version of JosephsonCircuits.jl by running:
-```julia
+```
 Pkg.update()
 ```
 
-# Usage Examples
-
-## Complete Example: TWPA Simulation
-
-```julia
-using JosephsonCircuits
-using Plots
-
-# Generate a netlist for a TWPA (example)
-netlist = generate_twpa_netlist()  # Your netlist generation function
-
-# Parse circuit
-circuit = JosephsonCircuits.parseinputfile(netlist)
-
-# Setup sources
-sources = [(mode=(1,), port=1, current=1e-6)]  # 1 μA pump
-
-# Run harmonic balance
-solution = hbsolve(circuit, sources, freq=8e9, Nharmonics=10)
-
-# Extract S-parameters
-S = JosephsonCircuits.sparams(solution)
+Then check that you are running the latest version of the package with:
+```
+Pkg.status()
 ```
 
-# References
+Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores. This can be done with the command line argument `--threads` or by setting the environmental variable `JULIA_NUM_THREADS`. See the [Julia documentation](https://docs.julialang.org/en/v1/manual/multi-threading) for the more details. Verify you are using the desired number of threads by running:
+```
+Threads.nthreads()
+```
+For context, the simulation times reported for the examples below use 16 threads on an AMD Ryzen 9 9950X system running Linux.
 
-[1] J. D. Crutchfield, "Josephson-Junction Elements for Digital Simulation," IEEE Transactions on Magnetics, vol. 15, no. 1, pp. 462–466, Jan. 1979, [doi: 10.1109/TMAG.1979.1060082](https://doi.org/10.1109/TMAG.1979.1060082).
+The examples can be run in the command line (REPL) after starting Julia or you can run them in a Jupyter notebook with [IJulia](https://github.com/JuliaLang/IJulia.jl) or in Visual Studio Code with the [Julia extension](https://code.visualstudio.com/docs/languages/julia).
 
-[2] J. Vlach and K. Singhal, Computer Methods for Circuit Analysis and Design. Springer Science & Business Media, Dec. 2013.
-
-[3] S. A. Maas, Nonlinear Microwave and RF Circuits. Artech House, 2003.
-
-[4] E. Ginossar et al., "Microwave transitions as a signature of coherent parity mixing effects in the Majorana-transmon qubit," Nat Commun, vol. 5, p. 4772, Sep. 2014, [doi: 10.1038/ncomms5772](https://doi.org/10.1038/ncomms5772).
-
-[5] K. M. Sundqvist and P. Delsing, "Negative-resistance models for parametrically flux-pumped superconducting quantum interference devices," EPJ Quantum Technol., vol. 1, no. 1, p. 6, Jul. 2014, [doi: 10.1140/epjqt6](https://doi.org/10.1140/epjqt6).
-
-[6] K. P. O'Brien, C. Macklin, I. Siddiqi, and X. Zhang, "Resonant Phase Matching of Josephson Junction Traveling Wave Parametric Amplifiers," Physical Review Letters, vol. 113, no. 15, p. 157001, Oct. 2014, [doi: 10.1103/PhysRevLett.113.157001](https://doi.org/10.1103/PhysRevLett.113.157001).
-
-# Acknowledgments
-
-Original JosephsonCircuits.jl developed by Kevin O'Brien. Taylor expansion nonlinearity feature contributed by Maxime Malnou.
+# Usage:
+Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions described by the Josephson inductance `Lj`, nonlinear inductors described by Taylor expansion coefficients `NL`, mutual inductors described by the mutual coupling coefficient `K`, and resistors `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format), docstrings, and examples below for usage. Run the harmonic balance analysis using [`hbnlsolve`](https://josephsoncircuits.org/stable/reference/#JosephsonCircuits.hbnlsolve-Union{Tuple{K},%20Tuple{N},%20Tuple{NTuple{N,%20Number},%20Any,%20JosephsonCircuits.Frequencies{N},%20JosephsonCircuits.FourierIndices{N},%20JosephsonCircuits.ParsedSortedCircuit,%20JosephsonCircuits.CircuitGraph,%20JosephsonCircuits.CircuitMatrices}}%20where%20{N,%20K}) to solve a nonlinear system at one operating point, [`hblinsolve`](https://josephsoncircuits.org/dev/reference/#JosephsonCircuits.hblinsolve-Union{Tuple{K},%20Tuple{Any,%20Any,%20Any}}%20where%20K) to solve a linear (or linearized) system at one or more frequencies, or [`hbsolve`](https://josephsoncircuits.org/dev/reference/#JosephsonCircuits.hbsolve-Union{Tuple{K},%20Tuple{M},%20Tuple{N},%20Tuple{Any,%20NTuple{N,%20Number},%20Vector,%20NTuple{M,%20Int64},%20NTuple{N,%20Int64},%20Any,%20Any}}%20where%20{N,%20M,%20K}) to run both analyses. Add a question mark `?` in front of a function to access the docstring. For example, type (don't copy-paste) the following to see the documentation for `hbsolve`:
+```
+?hbsolve
+```
