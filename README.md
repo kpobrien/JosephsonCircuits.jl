@@ -307,7 +307,28 @@ ax1 = Axis(fig[1, 1],
 
 lines!(ax1, freq_GHz, 10*log10.(S11_jj), label="JJ", linewidth=2, color=:blue)
 lines!(ax1, freq_GHz, 10*log10.(S11_nl), label="NL", linewidth=2, color=:red)
+vlines!(ax1, [4.75001], label="pump", linestyle=:dot, color=:purple, alpha=0.5)
 axislegend(ax1, position = :lt)
+
+# QE plot
+ax2 = Axis(fig[2, 1],
+    xlabel = "Frequency [GHz]",
+    ylabel = "QE/QE_ideal",
+    title = "Quantum Efficiency"
+)
+
+lines!(ax2, freq_GHz, QE_jj, label="JJ", linewidth=2, color=:blue)
+lines!(ax2, freq_GHz, QE_nl, label="NL", linewidth=2, color=:red)
+hlines!(ax2, [1.0], label="Ideal", linestyle=:dash, color=:black, alpha=0.7)
+ylims!(ax2, 0, 1.05)
+axislegend(ax2, position = :lb)
+
+# Print summary
+println("\n=== Performance Summary ===")
+println("JJ max gain: $(round(maximum(10*log10.(S11_jj)), digits=1)) dB")
+println("NL max gain: $(round(maximum(10*log10.(S11_nl)), digits=1)) dB")
+println("Max QE (JJ): $(round(maximum(QE_jj), digits=3))")
+println("Max QE (NL): $(round(maximum(QE_nl), digits=3))")
 ```
 
 <img src="examples/jpa_comparison.png" width="60%">
