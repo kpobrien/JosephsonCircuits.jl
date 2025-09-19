@@ -1103,7 +1103,7 @@ We gratefully acknowledge funding from
 
 # License
 
-JosephsonCircuits.jl is licensed under the MIT License. See [LICENSE](license.md) for details.
+JosephsonCircuits.jl is licensed under the MIT License. See [LICENSE](LICENSE.md) for details.
 
 # References:
 
