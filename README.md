@@ -358,6 +358,319 @@ Max QE (NL): 1.0
 
 <img src="examples/jpa_comparison.png" width="60%">
 
+## Josephson traveling wave parametric amplifier (JTWPA)
+
+Circuit parameters from [here](https://www.science.org/doi/10.1126/science.aaa8525).
+<details>
+
+<summary>Code</summary>
+
+```julia
+using JosephsonCircuits
+using Plots
+
+@variables Rleft Rright Cg Lj Cj Cc Cr Lr
+circuit = Tuple{String,String,String,Num}[]
+
+# port on the input side
+push!(circuit,("P$(1)_$(0)","1","0",1))
+push!(circuit,("R$(1)_$(0)","1","0",Rleft))
+Nj=2048
+pmrpitch = 4
+#first half cap to ground
+push!(circuit,("C$(1)_$(0)","1","0",Cg/2))
+#middle caps and jj's
+push!(circuit,("Lj$(1)_$(2)","1","2",Lj)) 
+push!(circuit,("C$(1)_$(2)","1","2",Cj)) 
+
+j=2
+for i = 2:Nj-1
+    
+    if mod(i,pmrpitch) == pmrpitch÷2
+
+        # make the jj cell with modified capacitance to ground
+        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg-Cc))
+        push!(circuit,("Lj$(j)_$(j+2)","$(j)","$(j+2)",Lj))
+
+        push!(circuit,("C$(j)_$(j+2)","$(j)","$(j+2)",Cj))
+        
+        #make the pmr
+        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cc))
+        push!(circuit,("C$(j+1)_$(0)","$(j+1)","$(0)",Cr))
+        push!(circuit,("L$(j+1)_$(0)","$(j+1)","$(0)",Lr))
+        
+        # increment the index
+        j+=1
+    else
+        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg))
+        push!(circuit,("Lj$(j)_$(j+1)","$(j)","$(j+1)",Lj))
+        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cj))
+    end
+    
+    # increment the index
+    j+=1
+
+end
+
+#last jj
+push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg/2))
+push!(circuit,("R$(j)_$(0)","$(j)","$(0)",Rright))
+# port on the output side
+push!(circuit,("P$(j)_$(0)","$(j)","$(0)",2))
+
+circuitdefs = Dict(
+    Lj => IctoLj(3.4e-6),
+    Cg => 45.0e-15,
+    Cc => 30.0e-15,
+    Cr =>  2.8153e-12,
+    Lr => 1.70e-10,
+    Cj => 55e-15,
+    Rleft => 50.0,
+    Rright => 50.0,
+)
+
+ws=2*pi*(1.0:0.1:14)*1e9
+wp=(2*pi*7.12*1e9,)
+Ip=1.85e-6
+sources = [(mode=(1,),port=1,current=Ip)]
+Npumpharmonics = (20,)
+Nmodulationharmonics = (10,)
+
+@time rpm = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs)
+
+p1=plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.linearized.S(
+            outputmode=(0,),
+            outputport=2,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:),
+    )),
+    ylim=(-40,30),label="S21",
+    xlabel="Signal Frequency (GHz)",
+    legend=:bottomright,
+    title="Scattering Parameters",
+    ylabel="dB")
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.linearized.S((0,),1,(0,),2,:))),
+    label="S12",
+    )
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.linearized.S((0,),1,(0,),1,:))),
+    label="S11",
+    )
+
+plot!(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.linearized.S((0,),2,(0,),2,:))),
+    label="S22",
+    )
+
+p2=plot(ws/(2*pi*1e9),
+    rpm.linearized.QE((0,),2,(0,),1,:)./rpm.linearized.QEideal((0,),2,(0,),1,:),    
+    ylim=(0,1.05),
+    title="Quantum efficiency",legend=false,
+    ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)");
+
+p3=plot(ws/(2*pi*1e9),
+    10*log10.(abs2.(rpm.linearized.S(:,2,(0,),1,:)')),
+    ylim=(-40,30),
+    xlabel="Signal Frequency (GHz)",
+    legend=false,
+    title="All idlers",
+    ylabel="dB")
+
+p4=plot(ws/(2*pi*1e9),
+    1 .- rpm.linearized.CM((0,),2,:),    
+    legend=false,title="Commutation \n relation error",
+    ylabel="Commutation \n relation error",xlabel="Signal Frequency (GHz)");
+
+plot(p1, p2, p3, p4, layout = (2, 2))
+```
+
+</details>
+
+
+```
+  2.959010 seconds (257.75 k allocations: 2.392 GiB, 0.21% gc time)
+```
+
+![JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/uniform.png)
+
+### JTWPA with Taylor Expansion Nonlinearities: JJ vs NL Comparison
+
+The following example demonstrates the Taylor expansion implementation for a JTWPA, comparing Josephson junction and nonlinear inductor implementations:
+
+```julia
+using JosephsonCircuits
+using CairoMakie
+
+println("=== JTWPA Test Example ===")
+
+# Physical constants
+const ϕ₀ = 2.0678338484619295e-15
+const ϕ₀_red = ϕ₀ / (2π)
+
+# Circuit parameters
+Ic = 3.4e-6  # Critical current
+Lj = ϕ₀_red / Ic  # Junction inductance
+nr_junctions = 2048
+pmr_pitch = 4
+
+# Define all parameter values
+Cg = 45.0e-15
+Cg_half = 22.5e-15
+Cg_minus_Cc = 15.0e-15
+Cc = 30.0e-15
+Cr = 2.8153e-12
+Lr = 1.70e-10
+Cj = 55e-15
+Rleft = 50.0
+Rright = 50.0
+
+circuitdefs = Dict(
+    :Lj => Lj,
+    :Cg => Cg,
+    :Cg_half => Cg_half,
+    :Cg_minus_Cc => Cg_minus_Cc,
+    :Cc => Cc,
+    :Cr => Cr,
+    :Lr => Lr,
+    :Cj => Cj,
+    :Rleft => Rleft,
+    :Rright => Rright
+)
+
+# Build circuit function
+function build_jtwpa_circuit(use_nl::Bool)
+    circuit = Tuple{String,String,String,Any}[]
+    
+    # Port 1
+    push!(circuit, ("P1_0", "1", "0", 1))
+    push!(circuit, ("R1_0", "1", "0", Rleft))
+    push!(circuit, ("C1_0", "1", "0", Cg_half))
+    
+    # First junction
+    if use_nl
+        push!(circuit, ("NL1_2", "1", "2", "poly Lj, 0, 0.5"))
+    else
+        push!(circuit, ("Lj1_2", "1", "2", Lj))
+    end
+    push!(circuit, ("C1_2", "1", "2", Cj))
+    
+    # Build middle cells
+    node = 2
+    for i in 2:nr_junctions-1
+        if i % pmr_pitch == pmr_pitch ÷ 2
+            # PMR cell
+            push!(circuit, ("C$(node)_0", "$node", "0", Cg_minus_Cc))
+            if use_nl
+                push!(circuit, ("NL$(node)_$(node+2)", "$node", "$(node+2)", "poly Lj, 0, 0.5"))
+            else
+                push!(circuit, ("Lj$(node)_$(node+2)", "$node", "$(node+2)", Lj))
+            end
+            push!(circuit, ("C$(node)_$(node+2)", "$node", "$(node+2)", Cj))
+            
+            # PMR branch
+            push!(circuit, ("C$(node)_$(node+1)", "$node", "$(node+1)", Cc))
+            push!(circuit, ("C$(node+1)_0", "$(node+1)", "0", Cr))
+            push!(circuit, ("L$(node+1)_0", "$(node+1)", "0", Lr))
+            node += 2
+        else
+            # Regular cell
+            push!(circuit, ("C$(node)_0", "$node", "0", Cg))
+            if use_nl
+                push!(circuit, ("NL$(node)_$(node+1)", "$node", "$(node+1)", "poly Lj, 0, 0.5"))
+            else
+                push!(circuit, ("Lj$(node)_$(node+1)", "$node", "$(node+1)", Lj))
+            end
+            push!(circuit, ("C$(node)_$(node+1)", "$node", "$(node+1)", Cj))
+            node += 1
+        end
+    end
+    
+    # Last components
+    push!(circuit, ("C$(node)_0", "$node", "0", Cg_half))
+    push!(circuit, ("R$(node)_0", "$node", "0", Rright))
+    push!(circuit, ("P$(node)_0", "$node", "0", 2))
+    
+    return circuit
+end
+
+# Build both circuits
+jj_circuit = build_jtwpa_circuit(false)
+nl_circuit = build_jtwpa_circuit(true)
+
+# Simulation parameters
+ws = 2*pi*(1.0:0.1:14.0)*1e9
+wp = (2*pi*7.12*1e9,)
+pump_current_jj = 1.85e-6
+pump_current_nl = 1.85e-6
+sources_jj = [(mode=(1,), port=1, current=pump_current_jj)]
+sources_nl = [(mode=(1,), port=1, current=pump_current_nl)]
+Npumpharmonics = (20,)
+Nmodulationharmonics = (10,)
+
+# Run simulations
+println("Running JJ version ($(length(jj_circuit)) components)...")
+sol_jj = hbsolve(ws, wp, sources_jj, Nmodulationharmonics, Npumpharmonics,
+                 jj_circuit, circuitdefs, sorting=:name)
+                 
+
+println("Running NL version ($(length(nl_circuit)) components)...")
+sol_nl = hbsolve(ws, wp, sources_nl, Nmodulationharmonics, Npumpharmonics,
+                 nl_circuit, circuitdefs, sorting=:name)
+
+# Extract results
+freq_GHz = ws./(2*pi*1e9)
+S21_jj = abs2.(sol_jj.linearized.S(outputmode=(0,), outputport=2,
+                                   inputmode=(0,), inputport=1, freqindex=:))
+S21_nl = abs2.(sol_nl.linearized.S(outputmode=(0,), outputport=2,
+                                   inputmode=(0,), inputport=1, freqindex=:))
+
+QE_jj = sol_jj.linearized.QE((0,),2,(0,),1,:) ./
+        sol_jj.linearized.QEideal((0,),2,(0,),1,:)
+QE_nl = sol_nl.linearized.QE((0,),2,(0,),1,:) ./
+        sol_nl.linearized.QEideal((0,),2,(0,),1,:)
+
+# Create figure
+fig = Figure(size = (600, 600))
+
+ax1 = Axis(fig[1, 1],
+    xlabel = "Frequency [GHz]",
+    ylabel = "S21 Gain [dB]",
+    title = "JTWPA Gain Comparison"
+)
+
+lines!(ax1, freq_GHz, 10*log10.(S21_jj), label="JJ", linewidth=2, color=:blue)
+lines!(ax1, freq_GHz, 10*log10.(S21_nl), label="NL", linewidth=2, color=:red)
+axislegend(ax1, position = :lt)
+
+# QE plot
+ax2 = Axis(fig[2, 1],
+    xlabel = "Frequency [GHz]",
+    ylabel = "QE/QE_ideal",
+    title = "Quantum Efficiency"
+)
+
+lines!(ax2, freq_GHz, QE_jj, label="JJ", linewidth=2, color=:blue)
+lines!(ax2, freq_GHz, QE_nl, label="NL", linewidth=2, color=:red)
+hlines!(ax2, [1.0], label="Ideal", linestyle=:dash, color=:black, alpha=0.7)
+ylims!(ax2, 0, 1.05)
+axislegend(ax2, position = :lb)
+
+# Print summary
+println("\n=== Performance Summary ===")
+println("JJ max gain: $(round(maximum(10*log10.(S21_jj)), digits=1)) dB")
+println("NL max gain: $(round(maximum(10*log10.(S21_nl)), digits=1)) dB")
+println("Max QE (JJ): $(round(maximum(QE_jj), digits=3))")
+println("Max QE (NL): $(round(maximum(QE_nl), digits=3))")
+```
+
+<img src="examples/jtwpa_comparison.png" width="60%">
+
 ## SNAIL Parametric Amplifier
 Circuit parameters from [here](https://doi.org/10.1103/PhysRevApplied.10.054020). Notice that the resonance frequency is similar for pump-on and pump-off, indicating it is operating near the Kerr-free point.
 
