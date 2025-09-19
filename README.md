@@ -134,3 +134,131 @@ Generate a netlist using circuit components including capacitors `C`, inductors 
 ```
 ?hbsolve
 ```
+
+# Examples:
+## Josephson parametric amplifier (JPA)
+A driven nonlinear LC resonator.
+
+**Note**: Timing results shown below are from the original JosephsonCircuits.jl package and may differ when using the Taylor expansion features.
+
+```julia
+using JosephsonCircuits
+using Plots
+
+@variables R Cc Lj Cj
+circuit = [
+    ("P1","1","0",1),
+    ("R1","1","0",R),
+    ("C1","1","2",Cc),
+    ("Lj1","2","0",Lj),
+    ("C2","2","0",Cj)]
+
+circuitdefs = Dict(
+    Lj =>1000.0e-12,
+    Cc => 100.0e-15,
+    Cj => 1000.0e-15,
+    R => 50.0)
+
+ws = 2*pi*(4.5:0.001:5.0)*1e9
+wp = (2*pi*4.75001*1e9,)
+Ip = 0.00565e-6
+sources = [(mode=(1,),port=1,current=Ip)]
+Npumpharmonics = (16,)
+Nmodulationharmonics = (8,)
+
+@time jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs)
+
+plot(
+    jpa.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        jpa.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    label="JosephsonCircuits.jl",
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+)
+```
+
+```
+  0.001817 seconds (12.99 k allocations: 4.361 MiB)
+```
+
+### JPA with Taylor Expansion Nonlinearities: JJ vs NL Comparison
+
+The following example demonstrates the Taylor expansion nonlinearity feature by comparing a JPA implemented with Josephson junctions versus nonlinear inductors:
+
+```julia
+using JosephsonCircuits
+using CairoMakie
+
+# Circuit parameters
+Lj = 1000.0e-12  # 1 nH
+Cc = 100.0e-15   # 100 fF
+Cj = 1000.0e-15  # 1 pF
+R = 50.0
+
+# JJ version
+jj_circuit = [
+    ("P1", "1", "0", 1),
+    ("R1", "1", "0", R),
+    ("C1", "1", "2", Cc),
+    ("Lj1", "2", "0", Lj),
+    ("C2", "2", "0", Cj)
+]
+
+# NL version - Taylor approximation of Josephson junction
+nl_circuit = [
+    ("P1", "1", "0", 1),
+    ("R1", "1", "0", R),
+    ("C1", "1", "2", Cc),
+    ("NL1", "2", "0", "poly Lj, 0.0, 0.5"),  # sin(φ) ≈ φ - φ³/6
+    ("C2", "2", "0", Cj)
+]
+
+circuitdefs = Dict(
+    :Lj => Lj,
+    :Cc => Cc,
+    :Cj => Cj,
+    :R => R
+)
+
+# Simulation parameters
+ws = 2*pi*(4.5:0.001:5.0)*1e9
+wp = (2*pi*4.75001*1e9,)
+pump_current = 0.00565e-6
+sources = [(mode=(1,), port=1, current=pump_current)]
+Npumpharmonics = (16,)
+Nmodulationharmonics = (8,)
+
+# Run both simulations
+sol_jj = hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics, 
+                 jj_circuit, circuitdefs)
+sol_nl = hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics, 
+                 nl_circuit, circuitdefs)
+
+# Extract results
+freq_GHz = ws./(2*pi*1e9)
+S11_jj = abs2.(sol_jj.linearized.S((0,), 1, (0,), 1, :))
+S11_nl = abs2.(sol_nl.linearized.S((0,), 1, (0,), 1, :))
+
+# Plot comparison
+fig = Figure(size = (600, 400))
+ax = Axis(fig[1, 1], 
+    xlabel = "Frequency [GHz]",
+    ylabel = "S11 Gain [dB]",
+    title = "JPA: Josephson Junction vs Taylor Expansion"
+)
+
+lines!(ax, freq_GHz, 10*log10.(S11_jj), label="JJ", linewidth=2)
+lines!(ax, freq_GHz, 10*log10.(S11_nl), label="NL (Taylor)", linewidth=2)
+axislegend(ax)
+```
+
+![JPA Comparison](examples/jpa_comparison.png)
