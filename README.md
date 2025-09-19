@@ -503,6 +503,10 @@ plot(p1, p2, p3, p4, layout = (2, 2))
 
 The following example demonstrates the Taylor expansion implementation for a JTWPA, comparing Josephson junction and nonlinear inductor implementations:
 
+<details>
+
+<summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using CairoMakie
@@ -668,6 +672,7 @@ println("NL max gain: $(round(maximum(10*log10.(S21_nl)), digits=1)) dB")
 println("Max QE (JJ): $(round(maximum(QE_jj), digits=3))")
 println("Max QE (NL): $(round(maximum(QE_nl), digits=3))")
 ```
+</details>
 
 <img src="examples/jtwpa_comparison.png" width="60%">
 
