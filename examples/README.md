@@ -1178,6 +1178,13 @@ println("NL max gain: $(round(maximum(10*log10.(S21_nl)), digits=1)) dB")
 
 </details>
 
+Output:
+```Julia
+
+```
+
+<img src="examples/flux_jtwpa_comparison.png" width="60%">
+
 ## Floquet JTWPA with dissipation
 
 Dissipation due to capacitors with dielectric loss, parameterized by a loss tangent. Run the above code block to define the circuit then run the following:
@@ -1467,3 +1474,10 @@ println("NL max gain: $(round(maximum(10*log10.(S21_nl)), digits=1)) dB")
 ```
 
 </details>
+
+Output:
+```Julia
+
+```
+
+<img src="examples/floquet_jtwpa_loss_comparison.png" width="60%">
