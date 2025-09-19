@@ -236,6 +236,8 @@ The following example demonstrates the Taylor expansion nonlinearity feature by 
 using JosephsonCircuits
 using CairoMakie
 
+println("=== Simple JPA Test (No DC Bias) ===")
+
 # Define circuit parameter values as variables
 Lj = 1000.0e-12  # 1 nH
 Cc = 100.0e-15   # 100 fF
@@ -282,9 +284,13 @@ sources_jj = [(mode=(1,), port=1, current=pump_current_jj)]
 sources_nl = [(mode=(1,), port=1, current=pump_current_nl)]
 
 # Run simulations
+println("Running JJ version...")
+println("JJ pump current: ", pump_current_jj*1e9, " nA")
 sol_jj = hbsolve(ws, wp, sources_jj, Nmodulationharmonics, Npumpharmonics, 
                  jj_circuit, circuitdefs, sorting=:name)
 
+println("Running NL version...")
+println("NL pump current: ", pump_current_nl*1e9, " nA")
 sol_nl = hbsolve(ws, wp, sources_nl, Nmodulationharmonics, Npumpharmonics, 
                  nl_circuit, circuitdefs, sorting=:name)
 
@@ -294,6 +300,10 @@ S11_jj = abs2.(sol_jj.linearized.S(outputmode=(0,), outputport=1,
                                    inputmode=(0,), inputport=1, freqindex=:))
 S11_nl = abs2.(sol_nl.linearized.S(outputmode=(0,), outputport=1, 
                                    inputmode=(0,), inputport=1, freqindex=:))
+QE_jj = sol_jj.linearized.QE((0,),1,(0,),1,:) ./ 
+        sol_jj.linearized.QEideal((0,),1,(0,),1,:)
+QE_nl = sol_nl.linearized.QE((0,),1,(0,),1,:) ./ 
+        sol_nl.linearized.QEideal((0,),1,(0,),1,:)
 
 # Create figure with CairoMakie
 fig = Figure(size = (600, 600))
