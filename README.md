@@ -288,4 +288,327 @@ lines!(ax, freq_GHz, 10*log10.(S11_nl), label="NL (Taylor)", linewidth=2)
 axislegend(ax)
 ```
 
-![JPA Comparison](examples/jpa_comparison.png)
+<img src="examples/jpa_comparison.png" width="60%">
+
+## SNAIL Parametric Amplifier
+Circuit parameters from [here](https://doi.org/10.1103/PhysRevApplied.10.054020). Notice that the resonance frequency is similar for pump-on and pump-off, indicating it is operating near the Kerr-free point.
+
+<details>
+
+<summary>Code</summary>
+
+```julia
+using JosephsonCircuits
+using Plots
+
+@variables R Cc Cj Lj Cr Lr Ll Ldc K Lg
+alpha = 0.29
+Z0 = 50
+w0 = 2*pi*8e9
+l=10e-3
+circuit = [
+    ("P1","1","0",1),
+    ("R1","1","0",R),
+    # a very large inductor so the DC node flux of this node isn't floating
+    ("L0","1","0",Lg), 
+    ("C1","1","2",Cc),
+    ("L1","2","3",Lr),
+    ("C2","2","0",Cr),
+    ("Lj1","3","0",Lj/alpha),
+    ("Cj1","3","0",Cj/alpha),
+    ("L2","3","4",Ll),
+    ("Lj2","4","5",Lj),
+    ("Cj2","4","5",Cj),
+    ("Lj3","5","6",Lj),
+    ("Cj3","5","6",Cj),
+    ("Lj4","6","0",Lj),
+    ("Cj4","6","0",Cj),
+    ("L3","7","0",Ldc), 
+    ("K1","L2","L3",K),
+    # a port with a very large resistor so we can apply the bias across the port
+    ("P2","7","0",2),
+    ("R2","7","0",1000.0),
+] 
+
+circuitdefs = Dict(
+    Lj => 60e-12,
+    Cj => 10.0e-15, 
+    Lr =>0.4264e-9*1.25,
+    Cr => 0.4e-12*1.25,
+    Lg => 100.0e-9,
+    Cc => 0.048e-12,
+    R => 50.0, 
+    Ll => 34e-12, 
+    K => 0.999, # the inverse inductance matrix for K=1.0 diverges, so set K<1.0
+    Ldc => 0.74e-12,
+)
+
+# ws = 2*pi*(9.7:0.0001:9.8)*1e9
+# ws = 2*pi*(5.0:0.001:11)*1e9
+ws = 2*pi*(7.8:0.001:8.2)*1e9
+wp = (2*pi*16.00*1e9,)
+Ip = 4.4e-6
+# Idc = 140.3e-6
+Idc = 0.000159
+# add the DC bias and pump to port 2
+sourcespumpon = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=Ip)]
+sourcespumpoff = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=0.0)]
+Npumpharmonics = (16,)
+Nmodulationharmonics = (8,)
+@time jpapumpon = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
+@time jpapumpoff = hbsolve(ws, wp, sourcespumpoff, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
+
+p1 = plot(
+    jpapumpon.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        jpapumpon.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+    label="pump on",
+)
+
+plot!(
+    jpapumpoff.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        jpapumpoff.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    label="pump off",
+)
+
+p2 = plot(
+    jpapumpon.linearized.w/(2*pi*1e9),
+    angle.(
+        jpapumpon.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    ),
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+    label="pump on",
+)
+
+plot!(
+    jpapumpoff.linearized.w/(2*pi*1e9),
+    angle.(
+        jpapumpoff.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    ),
+    label="pump off",
+)
+plot(p1,p2,layout=(2,1))
+```
+
+</details>
+
+
+```
+  0.010345 seconds (16.74 k allocations: 40.025 MiB)
+  0.011252 seconds (16.68 k allocations: 39.985 MiB)
+```
+
+![SNAIL parametric amplifier simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/snail.png)
+
+
+and compare with WRspice
+<details>
+
+<summary>Code</summary>
+
+```julia
+using XicTools_jll
+
+# simulate the JPA in WRSPICE
+wswrspice=2*pi*(7.8:0.005:8.2)*1e9
+n = JosephsonCircuits.exportnetlist(circuit,circuitdefs);
+input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,[0.0,wp[1]],[Idc,2*Ip],[(0,1)],[(0,7),(0,7)];trise=10e-9,tstop=600e-9);
+
+@time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
+S11,S21=JosephsonCircuits.wrspice_calcS_paramp(output,wswrspice,n.Nnodes);
+
+# plot the output
+plot(
+    jpapumpon.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        jpapumpon.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+    label="JosephsonCircuits.jl",
+)
+
+plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
+    label="WRspice",
+    seriestype=:scatter)
+```
+
+</details>
+
+```
+2067.364975 seconds (149.73 k allocations: 29.873 GiB, 0.01% gc time)
+```
+
+![SNAIL parametric amplifier simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/snail_WRspice.png)
+
+### SNAIL Parametric Amplifier with Taylor Expansion Nonlinearities: JJ vs NL Comparison
+
+The following example demonstrates the Taylor expansion implementation for a SNAIL parametric amplifier. Note that the NL version requires approximately 94% of the original JJ DC bias current to achieve similar performance:
+
+```julia
+using JosephsonCircuits
+using CairoMakie
+
+# Circuit parameters  
+α = 0.29
+Lj = 60e-12
+Lj_large = Lj / α
+Cj = 10.0e-15
+Cj_large = Cj / α
+Lr = 0.4264e-9 * 1.25
+Cr = 0.4e-12 * 1.25
+Lg = 100.0e-9
+Cc = 0.048e-12
+R = 50.0
+Ll = 34e-12
+K = 0.999
+Ldc = 0.74e-12
+Rdc = 1000.0
+
+# JJ version
+jj_circuit = [
+    ("P1", "1", "0", 1),
+    ("R1", "1", "0", R),
+    ("L0", "1", "0", Lg),
+    ("C1", "1", "2", Cc),
+    ("L1", "2", "3", Lr),
+    ("C2", "2", "0", Cr),
+    ("Lj1", "3", "0", Lj_large),
+    ("Cj1", "3", "0", Cj_large),
+    ("L2", "3", "4", Ll),
+    ("Lj2", "4", "5", Lj),
+    ("Cj2", "4", "5", Cj),
+    ("Lj3", "5", "6", Lj),
+    ("Cj3", "5", "6", Cj),
+    ("Lj4", "6", "0", Lj),
+    ("Cj4", "6", "0", Cj),
+    ("L3", "7", "0", Ldc),
+    ("K1", "L2", "L3", K),
+    ("P2", "7", "0", 2),
+    ("R2", "7", "0", Rdc)
+]
+
+# NL version - Replace all JJs with Taylor expansion
+nl_circuit = [
+    ("P1", "1", "0", 1),
+    ("R1", "1", "0", R),
+    ("L0", "1", "0", Lg),
+    ("C1", "1", "2", Cc),
+    ("L1", "2", "3", Lr),
+    ("C2", "2", "0", Cr),
+    ("NL1", "3", "0", "poly Lj_large, 0.0, 0.5"),
+    ("Cj1", "3", "0", Cj_large),
+    ("L2", "3", "4", Ll),
+    ("NL2", "4", "5", "poly Lj, 0.0, 0.5"),
+    ("Cj2", "4", "5", Cj),
+    ("NL3", "5", "6", "poly Lj, 0.0, 0.5"),
+    ("Cj3", "5", "6", Cj),
+    ("NL4", "6", "0", "poly Lj, 0.0, 0.5"),
+    ("Cj4", "6", "0", Cj),
+    ("L3", "7", "0", Ldc),
+    ("K1", "L2", "L3", K),
+    ("P2", "7", "0", 2),
+    ("R2", "7", "0", Rdc)
+]
+
+circuitdefs = Dict(
+    :Lj => Lj,
+    :Lj_large => Lj_large,
+    :Cj => Cj,
+    :Cj_large => Cj_large,
+    :Lr => Lr,
+    :Cr => Cr,
+    :Lg => Lg,
+    :Cc => Cc,
+    :R => R,
+    :Ll => Ll,
+    :K => K,
+    :Ldc => Ldc,
+    :Rdc => Rdc
+)
+
+# Simulation parameters
+ws = 2*pi*(7.8:0.001:8.2)*1e9
+wp = (2*pi*16.0*1e9,)
+dc_current_jj = 159e-6
+dc_current_nl = dc_current_jj * 0.94  # NL needs 94% of JJ bias
+pump_current = 4.4e-6
+
+sources_jj = [
+    (mode=(0,), port=2, current=dc_current_jj),
+    (mode=(1,), port=2, current=pump_current)
+]
+
+sources_nl = [
+    (mode=(0,), port=2, current=dc_current_nl),
+    (mode=(1,), port=2, current=pump_current)
+]
+
+Npumpharmonics = (16,)
+Nmodulationharmonics = (8,)
+
+# Run simulations
+sol_jj = hbsolve(ws, wp, sources_jj, Nmodulationharmonics, Npumpharmonics,
+                 jj_circuit, circuitdefs, dc=true, threewavemixing=true,
+                 fourwavemixing=true)
+
+sol_nl = hbsolve(ws, wp, sources_nl, Nmodulationharmonics, Npumpharmonics,
+                 nl_circuit, circuitdefs, dc=true, threewavemixing=true,
+                 fourwavemixing=true)
+
+# Extract results and plot
+freq_GHz = ws./(2*pi*1e9)
+S11_jj = abs2.(sol_jj.linearized.S((0,), 1, (0,), 1, :))
+S11_nl = abs2.(sol_nl.linearized.S((0,), 1, (0,), 1, :))
+
+fig = Figure(size = (600, 400))
+ax = Axis(fig[1, 1],
+    xlabel = "Frequency [GHz]",
+    ylabel = "S11 Gain [dB]",
+    title = "SNAIL PA: JJ vs Taylor Expansion"
+)
+
+lines!(ax, freq_GHz, 10*log10.(S11_jj), label="JJ", linewidth=2)
+lines!(ax, freq_GHz, 10*log10.(S11_nl), label="NL (94% DC bias)", linewidth=2)
+axislegend(ax)
+```
+
+<img src="examples/snailpa_comparison.png" width="60%">
