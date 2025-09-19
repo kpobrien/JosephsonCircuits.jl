@@ -190,6 +190,33 @@ plot(
   0.001817 seconds (12.99 k allocations: 4.361 MiB)
 ```
 
+![JPA simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/jpa.png)
+
+
+Compare with WRspice. Please note that on Linux you can install the [XicTools_jll](https://github.com/JuliaBinaryWrappers/XicTools_jll.jl/) package which provides WRspice for x86_64. For other operating systems and platforms, you can install WRspice yourself and substitute `XicTools_jll.wrspice()` with `JosephsonCircuits.wrspice_cmd()` which will attempt to provide the path to your WRspice executable. 
+
+```julia
+using XicTools_jll
+
+wswrspice=2*pi*(4.5:0.01:5.0)*1e9
+n = JosephsonCircuits.exportnetlist(circuit,circuitdefs);
+input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,wp[1],2*Ip,(0,1),(0,1));
+
+@time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
+S11,S21=JosephsonCircuits.wrspice_calcS_paramp(output,wswrspice,n.Nnodes);
+
+plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
+    label="WRspice",
+    seriestype=:scatter)
+
+```
+
+```
+ 12.743245 seconds (32.66 k allocations: 499.263 MiB, 0.41% gc time)
+```
+
+![JPA simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/jpa_WRspice.png)
+
 ### JPA with Taylor Expansion Nonlinearities: JJ vs NL Comparison
 
 The following example demonstrates the Taylor expansion nonlinearity feature by comparing a JPA implemented with Josephson junctions versus nonlinear inductors:
