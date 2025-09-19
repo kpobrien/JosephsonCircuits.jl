@@ -1056,9 +1056,9 @@ NL pump current: 4.4 μA
 
 For more circuit simulation examples, including JTWPA with flux bias, Floquet JTWPA, impedance-engineered JPA, and other, see the [examples folder](examples/README.md).
 
-# Contributing
+# Contributing and License
 
-We welcome contributions in the form of issues/bug reports or pull requests. This project uses the [MIT open source license](https://opensource.org/license/MIT). You retain the copyright to any code you contribute.
+We welcome contributions in the form of issues/bug reports or pull requests. This project uses the [MIT open source license](https://opensource.org/license/MIT). You retain the copyright to any code you contribute. See [LICENSE](LICENSE.md) for details.
 
 - **Bug Reports**: If you find a bug, please open an issue on GitHub with a minimal example that demonstrates the problem
 - **Feature Requests**: Suggest new features or improvements by opening an issue
@@ -1101,9 +1101,6 @@ We gratefully acknowledge funding from
 - [AWS Center for Quantum Computing](https://aws.amazon.com/blogs/quantum-computing/announcing-the-opening-of-the-aws-center-for-quantum-computing/)  
 - [MIT Center for Quantum Engineering (CQE)](https://cqe.mit.edu/)
 
-# License
-
-JosephsonCircuits.jl is licensed under the MIT License. See [LICENSE](LICENSE.md) for details.
 
 # References:
 
