@@ -1053,4 +1053,4 @@ NL pump current: 4.4 μA
 
 ## Additional Examples
 
-For more circuit simulation examples, including JTWPA with flux bias, Floquet analysis, and other advanced features, see the [examples folder](examples/README.md).
+For more circuit simulation examples, including JTWPA with flux bias, Floquet JTWPA, impedance-engineered JPA, and other, see the [examples folder](examples/README.md).
