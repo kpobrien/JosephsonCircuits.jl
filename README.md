@@ -1076,11 +1076,11 @@ We prioritize:
 # Future Developments
 
 Planned improvements include:  
-⭕ Design optimization capabilities  
-⭕ True DC analysis (currently not supported)  
-⭕ Netlist viewer implementation  
-⭕ Higher-order polynomial terms for the Taylor nonlinearity (beyond 4th order)  
-⭕ Time domain simulations 
+- Design optimization capabilities  
+- True DC analysis (currently not supported)  
+- Netlist viewer implementation  
+- Higher-order polynomial terms for the Taylor nonlinearity (beyond 4th order)  
+- Time domain simulations 
 
 # Related Packages
 
@@ -1092,7 +1092,6 @@ Other Julia packages for circuit simulation:
 
 External tools:
 - [Cedar EDA](https://cedar-eda.com) is a Julia-based commercial cloud service for circuit simulations.
-- [Keysight ADS](https://www.keysight.com/us/en/products/software/pathwave-design-software/pathwave-advanced-design-system.html): Commercial RF/microwave circuit simulator
 - [Keysight ADS](https://www.keysight.com/us/en/products/software/pathwave-design-software/pathwave-advanced-design-system.html), [Cadence AWR](https://www.cadence.com/en_US/home/tools/system-analysis/rf-microwave-design/awr-microwave-office.html), [Cadence Spectre RF](https://www.cadence.com/en_US/home/tools/custom-ic-analog-rf-design/circuit-simulation/spectre-rf-option.html), and [Qucs](http://qucs.sourceforge.net/) are capable of time and frequency domain analysis of nonlinear circuits.
 - [WRSPICE](http://wrcad.com/wrspice.html) performs time domain simulations of Josephson junction containing circuits and frequency domain simulations of linear circuits.
 
