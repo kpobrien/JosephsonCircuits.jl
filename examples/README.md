@@ -1183,7 +1183,7 @@ Output:
 
 ```
 
-<img src="examples/flux_jtwpa_comparison.png" width="60%">
+<img src="flux_jtwpa_comparison.png" width="60%">
 
 ## Floquet JTWPA with dissipation
 
@@ -1480,4 +1480,4 @@ Output:
 
 ```
 
-<img src="examples/floquet_jtwpa_loss_comparison.png" width="60%">
+<img src="floquet_jtwpa_loss_comparison.png" width="60%">
