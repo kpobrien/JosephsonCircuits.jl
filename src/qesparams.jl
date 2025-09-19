@@ -107,6 +107,7 @@ ComplexF64[-10.606601717798213 + 0.0im;;]
 function calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
     outputportindices, inputportimpedances, outputportimpedances,
     nodeindices, componenttypes, wmodes, symfreqvar)
+
     return calcinputoutput_inner!(inputwave, outputwave, phin, bnm,
         inputportindices, outputportindices, inputportimpedances,
         outputportimpedances, nodeindices, componenttypes, wmodes, symfreqvar,
