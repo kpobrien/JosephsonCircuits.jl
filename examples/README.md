@@ -1180,7 +1180,18 @@ println("NL max gain: $(round(maximum(10*log10.(S21_nl)), digits=1)) dB")
 
 Output:
 ```Julia
+=== Flux JTWPA Test Example ===
+Running JJ version (4511 components)...
+Running NL version...
 
+=== Performance Summary ===
+DC flux bias: Φ₀/3
+JJ DC current: 199.2 μA
+NL DC current: 196.2 μA
+JJ pump current: 12.0 μA
+NL pump current: 8.2 μA
+JJ max gain: 24.6 dB
+NL max gain: 25.1 dB
 ```
 
 <img src="flux_jtwpa_comparison.png" width="60%">
