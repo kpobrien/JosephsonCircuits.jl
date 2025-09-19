@@ -43,8 +43,6 @@ The corresponding current-phase relation is derived from `φ₀ dφ/dt = L di/dt
 I(φ) = φ₀/L₀ (φ - c₁φ²/2 + (c₁² - c₂)φ³/3 - (c₁³ - 2c₁c₂ + c₃)φ⁴/4 + (c₁⁴ - 3c₁²c₂ + c₂² + 2c₁c₃ - c₄)φ⁵/5)
 ```
 
-For detailed mathematical derivations and implementation details, see [docs/nl_implementation.md](docs/nl_implementation.md).
-
 ### Usage
 
 #### Basic NL Element Definition
@@ -94,7 +92,7 @@ nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5")]
 - **Integration**: Extends existing harmonic balance solver through unified FFT machinery
 - **Mixed Circuits**: Supports circuits with both Josephson junctions and Taylor expansion elements
 
-See [docs/nl_implementation.md](docs/nl_implementation.md) for complete implementation details.
+For detailed implementation details, see [docs/nl_implementation.md](docs/nl_implementation.md).
 
 # Acknowledgments
 
