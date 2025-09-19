@@ -1083,11 +1083,11 @@ The motivation for developing JosephsonCircuits.jl is to simulate the gain and n
 # Future Developments
 
 Planned improvements include:
-- ⭕ Design optimization capabilities
-- ⭕ True DC analysis (currently not supported)
-- ⭕ Netlist viewer implementation
-- ⭕ Higher-order polynomial terms for the Taylor nonlinearity (beyond 4th order)
-- ⭕ Time domain simulations
+⭕ Design optimization capabilities
+⭕ True DC analysis (currently not supported)
+⭕ Netlist viewer implementation
+⭕ Higher-order polynomial terms for the Taylor nonlinearity (beyond 4th order)
+⭕ Time domain simulations
 
 # Related Packages
 
