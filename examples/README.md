@@ -1488,7 +1488,18 @@ println("NL max gain: $(round(maximum(10*log10.(S21_nl)), digits=1)) dB")
 
 Output:
 ```Julia
+=== Floquet JTWPA with Dielectric Loss ===
+Running JJ version with loss (6752 components)...
+Running NL version with loss...
 
+=== Performance Summary ===
+Loss tangent: 0.001
+JJ base pump: 1.1 μA
+JJ adjusted pump: 1.24 μA
+NL base pump: 1.1 μA
+NL adjusted pump: 1.24 μA
+JJ max gain: 29.1 dB
+NL max gain: 30.0 dB
 ```
 
 <img src="floquet_jtwpa_loss_comparison.png" width="60%">
