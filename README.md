@@ -859,6 +859,17 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 
 </details>
 
+Output:
+```julia
+=== JTWPA Test Example ===
+Running JJ version (7682 components)...
+Running NL version (7682 components)...
+
+=== Performance Summary ===
+JJ max S21 gain: 27.6 dB
+NL max S21 gain: 28.7 dB
+```
+
 ```
 2067.364975 seconds (149.73 k allocations: 29.873 GiB, 0.01% gc time)
 ```
