@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2022 [Kevin O'Brien](mailto:kpobrien@mit.edu)
+Copyright (c) 2022 [Kevin O'Brien](mailto:kpobrien@mit.edu)  
 Copyright (c) 2025 [Maxime Malnou](mailto:maxime.malnoun@nist.gov) (Taylor expansion nonlinearity contribution)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
