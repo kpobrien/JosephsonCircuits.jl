@@ -1050,3 +1050,7 @@ NL pump current: 4.4 μA
 ```
 
 <img src="examples/snailpa_comparison.png" width="60%">
+
+## Additional Examples
+
+For more circuit simulation examples, including JTWPA with flux bias, Floquet analysis, and other advanced features, see the [examples folder](examples/README.md).
