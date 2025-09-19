@@ -1054,3 +1054,72 @@ NL pump current: 4.4 μA
 ## Additional Examples
 
 For more circuit simulation examples, including JTWPA with flux bias, Floquet JTWPA, impedance-engineered JPA, and other, see the [examples folder](examples/README.md).
+
+# Contributing
+
+We welcome contributions to JosephsonCircuits.jl! Here are some ways you can contribute:
+
+- **Bug Reports**: If you find a bug, please open an issue on GitHub with a minimal example that demonstrates the problem
+- **Feature Requests**: Suggest new features or improvements by opening an issue
+- **Pull Requests**: Submit code contributions by forking the repository and creating a pull request
+- **Documentation**: Help improve documentation and examples
+
+When contributing code:
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes with appropriate tests
+4. Submit a pull request with a clear description of the changes
+
+This project uses the MIT open source license, and contributors retain copyright to their code.
+
+# Philosophy
+
+The motivation for developing JosephsonCircuits.jl is to simulate the gain and noise performance of ultra low noise amplifiers for quantum computing applications such as the Josephson traveling-wave parametric amplifier, which have thousands of linear and nonlinear circuit elements. We prioritize:
+
+- **Speed**: Fast simulation execution and compilation times
+- **Simplicity**: Easy-to-use interface and clear documentation  
+- **Scalability**: Ability to handle large circuits efficiently
+
+# Future Developments
+
+Planned improvements include:
+- Design optimization capabilities
+- Additional nonlinear components (e.g., kinetic inductors)
+- Time domain simulations
+- Enhanced visualization tools
+
+# Related Packages
+
+Other Julia packages for circuit simulation:
+- [Xyce.jl](https://github.com/FemtoCleaner/Xyce.jl): Julia wrapper for the Xyce circuit simulator
+- [NgSpice.jl](https://github.com/JuliaElectronics/NgSpice.jl): Julia wrapper for NgSpice
+- [LTspice.jl](https://github.com/cstook/LTspice.jl): Julia wrapper for LTspice  
+- [ModelingToolkit.jl](https://github.com/SciML/ModelingToolkit.jl): Symbolic modeling framework with circuit simulation capabilities
+- [ACME.jl](https://github.com/HSU-ANT/ACME.jl): Analog Circuit Modeling and Emulation
+
+External tools:
+- [Keysight ADS](https://www.keysight.com/us/en/products/software/pathwave-design-software/pathwave-advanced-design-system.html): Commercial RF/microwave circuit simulator
+- [Cadence AWR](https://www.cadence.com/en_US/home/tools/system-analysis/rf-microwave-design.html): High-frequency electronic design automation
+- [WRspice](http://wrcad.com/wrspice.html): Open source SPICE circuit simulator
+
+# Funding
+
+This project gratefully acknowledges funding from:
+- AWS Center for Quantum Computing  
+- MIT Center for Quantum Engineering (CQE)
+
+# License
+
+JosephsonCircuits.jl is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+# References
+
+[1] Andrew J. Kerman, "Efficient numerical simulation of complex Josephson quantum circuits," *arXiv preprint arXiv:2010.14929* (2020).
+
+[2] L. O. Chua and P. M. Lin, *Computer-Aided Analysis of Electronic Circuits: Algorithms and Computational Techniques* (Prentice-Hall, 1975).
+
+[3] K. S. Kundert, *The Designer's Guide to SPICE and Spectre* (Kluwer Academic Publishers, 1995).
+
+[4] D. E. Root et al., "X-parameters: characterization, modeling, and design of nonlinear RF and microwave components," *Cambridge University Press* (2013).
+
+[5] J. Verspecht and D. E. Root, "Polyharmonic distortion modeling," *IEEE Microwave Magazine*, vol. 7, no. 3, pp. 44-57 (2006).
