@@ -19,11 +19,11 @@ As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.
 
 **Warning:** this package is under heavy development and there will be breaking changes. We will keep the examples updated to ease the burden of any breaking changes.
 
-## New Feature: Taylor Expansion Nonlinearities
+# New Feature: Taylor Expansion Nonlinearities
 
 JosephsonCircuits.jl now supports Taylor expansion nonlinearities (NL elements) in addition to Josephson junctions. This enables modeling of nonlinear inductors with polynomial current-flux relationships, useful for simulating DC-biased RF SQUID TWPAs, KTWPAs, and other nonlinear inductance-based devices.
 
-### Mathematical Model
+## Mathematical Model
 
 The NL element models nonlinear inductors of the form:
 ```
@@ -35,7 +35,7 @@ Where:
 - `c₁, c₂, c₃, c₄` are the Taylor expansion coefficients  
 - `φ` is the flux
 
-### Current-Phase Relationship
+## Current-Phase Relationship
 
 The corresponding current-phase relation is derived from `φ₀ dφ/dt = L di/dt` where `φ₀` is the reduced flux quantum:
 
@@ -43,7 +43,7 @@ The corresponding current-phase relation is derived from `φ₀ dφ/dt = L di/dt
 I(φ) = φ₀/L₀ (φ - c₁φ²/2 + (c₁² - c₂)φ³/3 - (c₁³ - 2c₁c₂ + c₃)φ⁴/4 + (c₁⁴ - 3c₁²c₂ + c₂² + 2c₁c₃ - c₄)φ⁵/5)
 ```
 
-### Technical Summary
+## Technical Summary
 
 - **Component Type**: New `NL` component type for nonlinear inductors
 - **Syntax**: `("NL1", "node1", "node2", "poly L0[, c1][, c2][, c3][, c4]")`. Supports symbolic variables defined in `circuitdefs` dictionary
@@ -53,9 +53,9 @@ I(φ) = φ₀/L₀ (φ - c₁φ²/2 + (c₁² - c₂)φ³/3 - (c₁³ - 2c₁c�
 
 For detailed implementation details, see [docs/nl_implementation.md](docs/nl_implementation.md).
 
-### Usage
+## Usage
 
-#### Basic NL Element Definition
+### Basic NL Element Definition
 ```julia
 # Define a circuit with Taylor expansion nonlinearity
 circuit = [
@@ -68,7 +68,7 @@ circuit = [
 ]
 ```
 
-#### Using Symbolic Variables
+### Using Symbolic Variables
 ```julia
 # Circuit with symbolic parameters
 circuit = [
@@ -85,7 +85,7 @@ circuitdefs = Dict(
 )
 ```
 
-#### Approximating a Josephson Junction with Taylor Expansion
+### Approximating a Josephson Junction with Taylor Expansion
 ```julia
 # Josephson junction circuit
 jj_circuit = [("B1", "1", "0", "1e-6")]  # 1 μA critical current
