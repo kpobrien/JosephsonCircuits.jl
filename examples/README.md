@@ -1,6 +1,6 @@
 # Additional JosephsonCircuits.jl Examples
 
-This folder contains additional circuit simulation examples demonstrating advanced features of JosephsonCircuits.jl, including flux-pumped TWPAs, Floquet analysis with dielectric loss, and Taylor expansion nonlinearity comparisons.
+This folder contains additional circuit simulation examples demonstrating advanced features of JosephsonCircuits.jl, including flux-pumped TWPAs, Floquet JTWPA with dielectric loss, and Taylor expansion nonlinearity comparisons.
 
 **Note**: Timing results shown in the examples below are from the original JosephsonCircuits.jl package and may differ when using the Taylor expansion features.
 
