@@ -72,7 +72,7 @@ nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5")]
 ### Technical Summary
 
 - **Component Type**: New `:NL` component type for nonlinear inductors
-- **Syntax**: `"poly L0, c1, c2, c3, c4"` format with support for symbolic parameters
+- **Syntax**: `"poly L0[, c1][, c2][, c3][, c4]"` format with support for symbolic parameters (coefficients are optional, default to 0)
 - **Integration**: Extends existing harmonic balance solver through unified FFT machinery
 - **Mixed Circuits**: Supports circuits with both Josephson junctions and Taylor expansion elements
 
