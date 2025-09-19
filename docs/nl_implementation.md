@@ -31,7 +31,7 @@ I(φ) = φ₀/L₀ (φ - c₁φ²/2 + (c₁² - c₂)φ³/3 - (c₁³ - 2c₁c�
 
 The implementation converts polynomial inductance coefficients to Taylor series current coefficients:
 
-- **1st order**: `I₁ = 1.0` (normalized by φ₀/L₀)
+- **1st order**: `I₁ = 1.0` (normalized by `φ₀/L₀`)
 - **2nd order**: `I₂ = -c₁/2`
 - **3rd order**: `I₃ = (c₁² - c₂)/3`
 - **4th order**: `I₄ = (-c₃ + 2c₁c₂ - c₁³)/4`
