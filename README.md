@@ -705,4 +705,19 @@ println("NL pump current: $(round(pump_current_nl*1e6, digits=1)) μA")
 
 </details>
 
+Output:
+```Julia
+=== SNAILPA Test Example ===
+Running JJ version with DC bias...
+Running NL version with scaled DC bias...
+
+=== Performance Summary ===
+JJ max gain: 21.1 dB
+NL max gain: 19.6 dB
+JJ DC bias: 159.0 μA
+NL DC bias: 149.5 μA
+JJ pump current: 4.4 μA
+NL pump current: 4.4 μA
+```
+
 <img src="examples/snailpa_comparison.png" width="60%">
