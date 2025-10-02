@@ -1492,6 +1492,9 @@ function identify_nonlinear_elements(componenttypes::Vector{Symbol},
                 # Evaluate the symbolic value
                 L_value = Symbolics.value(Symbolics.substitute(L_value, circuitdefs))
                 # debug_log("Evaluated symbolic Lj for branch $branch_idx: $(L_value)")
+            elseif isa(L_value, Symbol)
+                # Resolve Symbol from circuitdefs
+                L_value = circuitdefs[L_value]
             end
 
             # Traditional Josephson junction - store evaluated inductance in params
@@ -1522,6 +1525,9 @@ function identify_nonlinear_elements(componenttypes::Vector{Symbol},
                 for (k, v) in componentvalues[i]
                     if typeof(v) <: Num
                         params[k] = Symbolics.substitute(v, circuitdefs)
+                    elseif isa(v, Symbol)
+                        # Resolve Symbol from circuitdefs
+                        params[k] = circuitdefs[v]
                     else
                         params[k] = v
                     end
