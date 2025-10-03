@@ -1754,7 +1754,7 @@ Nmodes = length(frequencies.modes)
 psc = JosephsonCircuits.parsesortcircuit(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
 nm = JosephsonCircuits.numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
-nonlinear_elements = JosephsonCircuits.extractnonlinearelements(psc, cg, circuitdefs)
+nonlinear_elements = JosephsonCircuits.identify_nonlinear_elements(psc, cg, circuitdefs)
 
 out=hbnlsolve(
     (wp,),
