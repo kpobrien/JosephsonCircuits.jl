@@ -842,8 +842,25 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         for (branch, elem) in sort(collect(nonlinear.nonlinear_elements), by=x->x[1])
             push!(all_nl_branches.nzind, branch)
             push!(all_nl_branches.nzval, 1.0)
-        end 
-               
+        end
+
+        # Separate nonlinear elements by type for efficient processing
+        sorted_nl_pump = sort(collect(nonlinear.nonlinear_elements), by=x->x[1])
+        jj_branches_pump = Int[]
+        taylor_branches_pump = Int[]
+        taylor_coeffs_list_pump = Vector{Vector{Float64}}()
+        taylor_powers_list_pump = Vector{Vector{Int}}()
+
+        for (branch, elem) in sorted_nl_pump
+            if elem.type == :josephson
+                push!(jj_branches_pump, branch)
+            elseif elem.type == :taylor
+                push!(taylor_branches_pump, branch)
+                push!(taylor_coeffs_list_pump, elem.params[:coeffs])
+                push!(taylor_powers_list_pump, elem.params[:powers])
+            end
+        end
+
 
         # Create the repeated version
         all_nl_branches_m = SparseVector(cg.Nbranches * Nsignalmodes, Int[], Float64[])
@@ -872,10 +889,12 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             length(all_nl_branches.nzval)
         )
 
-        # Apply the linearization of nonlinearities
+        # Apply the linearization of nonlinearities without closures
         # For Josephson: cos(φ), for Taylor: derivative of polynomial
-        apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear.nonlinear_elements,
-                            :jacobian, irfftplan, rfftplan) 
+        apply_separated_nonlinearities!(phimatrix, phimatrixtd,
+                                       length(jj_branches_pump), length(taylor_branches_pump),
+                                       taylor_coeffs_list_pump, taylor_powers_list_pump,
+                                       :jacobian, irfftplan, rfftplan) 
                                    
                             
 
@@ -1876,6 +1895,42 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
         # debug_log("Using original Lmean: $Lmean")
     end
 
+    # Separate nonlinear elements by type for efficient processing
+    # Josephson and Taylor elements are processed with different functions
+    sorted_nl = sort(collect(nonlinear_elements), by=x->x[1])
+
+    jj_branches = Int[]
+    jj_inductances = Float64[]
+    taylor_branches = Int[]
+    taylor_inductances = Float64[]
+    taylor_coeffs_list = Vector{Vector{Float64}}()
+    taylor_powers_list = Vector{Vector{Int}}()
+
+    for (branch, elem) in sorted_nl
+        if elem.type == :josephson
+            push!(jj_branches, branch)
+            idx = findfirst(x -> x == branch, Ljb.nzind)
+            if !isnothing(idx)
+                push!(jj_inductances, Ljb.nzval[idx])
+            else
+                error("Josephson junction at branch $branch not found in Ljb")
+            end
+        elseif elem.type == :taylor
+            push!(taylor_branches, branch)
+            push!(taylor_inductances, elem.params[:inductance])
+            push!(taylor_coeffs_list, elem.params[:coeffs])
+            push!(taylor_powers_list, elem.params[:powers])
+        end
+    end
+
+    # Pre-compute inductance scaling factors to avoid Dict lookups in hot loop
+    # Create array indexed same as all_nl_indices for fast access
+    all_nl_inductances = vcat(jj_inductances, taylor_inductances)
+
+    # Pre-compute counts to avoid length() calls in hot loop
+    num_jj_branches = length(jj_branches)
+    num_taylor_branches = length(taylor_branches)
+
     # Create the repeated version for all nonlinear branches
     all_nl_branches_m = SparseVector(Nbranches * Nmodes, Int[], Float64[])
     for idx in all_nl_branches.nzind
@@ -1983,7 +2038,10 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
             freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
             AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
             phimatrixtd, irfftplan, rfftplan,
-            nonlinear_elements  # important
+            nonlinear_elements,  # important
+            jj_branches, jj_inductances,
+            taylor_branches, taylor_inductances, taylor_coeffs_list, taylor_powers_list,
+            all_nl_inductances, num_jj_branches, num_taylor_branches
         )
         return nothing
     end
@@ -2075,6 +2133,15 @@ function calcfj2!(F,
         AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
         phimatrixtd, irfftplan, rfftplan,
         nonlinear_elements::Dict{Int, NonlinearElement},
+        jj_branches::Vector{Int},
+        jj_inductances::Vector{Float64},
+        taylor_branches::Vector{Int},
+        taylor_inductances::Vector{Float64},
+        taylor_coeffs_list::Vector{Vector{Float64}},
+        taylor_powers_list::Vector{Vector{Int}},
+        all_nl_inductances::Vector{Float64},
+        num_jj_branches::Int,
+        num_taylor_branches::Int,
         )
 
     # Convert from node flux to branch flux
@@ -2145,34 +2212,32 @@ function calcfj2!(F,
             # Map to phimatrix - sized for ALL nonlinear elements
             phivectortomatrix!(phivector_all, phimatrix, freqindexmap,
                 conjsourceindices, conjtargetindices, length(nonlinear_elements))
-            
-            # Apply nonlinearities through FFT (now handles mixed types!)
-            apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements, 
-                                :function, irfftplan, rfftplan)
+
+            # Apply nonlinearities without closures for better performance
+            apply_separated_nonlinearities!(phimatrix, phimatrixtd,
+                                          num_jj_branches, num_taylor_branches,
+                                          taylor_coeffs_list, taylor_powers_list,
+                                          :function, irfftplan, rfftplan)
             
             # Convert back to vector
             fill!(AoLjbmvector, 0)
             AoLjbmvectorview = view(AoLjbmvector, all_nl_indices)
             phimatrixtovector!(AoLjbmvectorview, phimatrix, freqindexmap,
                 conjsourceindices, conjtargetindices, length(nonlinear_elements))
-                
-            # Scale by inductance for each element
-            for (idx, nl_idx) in enumerate(all_nl_indices)
-                branch = (nl_idx - 1) ÷ Nmodes + 1
-                elem = nonlinear_elements[branch]
-        
 
-                # Get the appropriate inductance value for scaling
-                if elem.type == :josephson
-                    # Find this branch in Ljbm
-                    ljbm_idx = findfirst(x -> x == nl_idx, Ljbm.nzind)
-                    if !isnothing(ljbm_idx)
-                        AoLjbmvectorview[idx] *= (Lmean/Ljbm.nzval[ljbm_idx])
-                    end
-                elseif elem.type == :taylor
-                    # For Taylor, use the L0 value from params
-                    L0 = get(elem.params, :inductance, Lmean)
-                    AoLjbmvectorview[idx] *= (Lmean/L0)                    
+            # Scale by pre-computed inductances (no Dict lookups or type checks!)
+            # Elements are ordered: JJ first, then Taylor
+            for col_idx in 1:num_jj_branches
+                for m in 1:Nmodes
+                    idx = (col_idx - 1) * Nmodes + m
+                    AoLjbmvectorview[idx] *= (Lmean / jj_inductances[col_idx])
+                end
+            end
+
+            for col_idx in 1:num_taylor_branches
+                for m in 1:Nmodes
+                    idx = (num_jj_branches + col_idx - 1) * Nmodes + m
+                    AoLjbmvectorview[idx] *= (Lmean / taylor_inductances[col_idx])
                 end
             end
         end
@@ -2190,10 +2255,12 @@ function calcfj2!(F,
             # Map to phimatrix
             phivectortomatrix!(phivector_all, phimatrix, freqindexmap,
                 conjsourceindices, conjtargetindices, length(nonlinear_elements))
-            
-            # Apply derivative of nonlinearities for Jacobian
-            apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements,
-                                :jacobian, irfftplan, rfftplan)                        
+
+            # Apply derivative of nonlinearities without closures
+            apply_separated_nonlinearities!(phimatrix, phimatrixtd,
+                                          num_jj_branches, num_taylor_branches,
+                                          taylor_coeffs_list, taylor_powers_list,
+                                          :jacobian, irfftplan, rfftplan)                        
         
             
             # Update AoLjbm with ALL nonlinear contributions
@@ -2607,93 +2674,104 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
     return nothing
 end
 
+"""
+    apply_separated_nonlinearities!(phimatrix, phimatrixtd, jj_count, taylor_count,
+                                    taylor_coeffs_list, taylor_powers_list,
+                                    mode, irfftplan, rfftplan)
 
+Apply nonlinearities using separated JJ and Taylor data without closures.
+This eliminates closure creation overhead for better performance.
+"""
+function apply_separated_nonlinearities!(phimatrix, phimatrixtd,
+                                        jj_count::Int, taylor_count::Int,
+                                        taylor_coeffs_list::Vector{Vector{Float64}},
+                                        taylor_powers_list::Vector{Vector{Int}},
+                                        mode::Symbol, irfftplan, rfftplan)
 
-function apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements, 
-                               mode::Symbol, irfftplan, rfftplan)
-    
-    # Create a mapping of which nonlinearity to apply to each column
-    nl_functions = Vector{Function}(undef, length(nonlinear_elements))
+    # If we have only JJ elements, use Kevin's fast path
+    if taylor_count == 0
+        func = (mode == :function) ? sin : cos
+        applynl!(phimatrix, phimatrixtd, func, irfftplan, rfftplan)
+        return nothing
+    end
 
-    # Sort nonlinear_elements by branch index to ensure consistent ordering
-    sorted_elements = sort(collect(nonlinear_elements), by=x->x[1])
-    
-    for (i, (branch, elem)) in enumerate(sorted_elements)
-        if elem.type == :josephson
-            nl_functions[i] = (mode == :function) ? sin : cos
-        elseif elem.type == :taylor
-            coeffs = elem.params[:coeffs]
-            powers = elem.params[:powers]
-            
-            # Get the inductance for normalization from params
-            # L0 = elem.params[:inductance]  # This should be 3.29e-10
-            # Ic_equiv = phi0 / L0  # Equivalent critical current for normalization
-            
-            # Handle empty coefficients/powers
-            if isempty(coeffs) || isempty(powers)
-                nl_functions[i] = φ -> φ
-                # debug_log("Warning: Taylor branch $branch has empty coefficients, using linear")
-            else  # This is the Taylor expansion case
-                # CHANGE THIS VALUE TO ADJUST WRAPPING
-                wrap_boundary = Inf #π  # e.g., 2.0, π/2, 1000*π for no wrapping, etc.
-                
-                # Define the wrapping function once
-                wrap_phase = function(x)
-                    if isinf(wrap_boundary)
-                        # No wrapping
-                        return x
-                    else
-                        # Proper wrapping to [-wrap_boundary, wrap_boundary]
-                        # Using mod to handle both positive and negative values correctly
-                        return mod(x + wrap_boundary, 2*wrap_boundary) - wrap_boundary
-                    end
-                end
-                
-                if mode == :function
-                    # already normalized: no need to divide by Ic_equiv
-                    nl_functions[i] = φ -> begin
-                        # Wrap φ
-                        if isa(φ, Complex)
-                            φ_wrapped = complex(wrap_phase(real(φ)), wrap_phase(imag(φ)))
-                        else
-                            φ_wrapped = wrap_phase(φ)
-                        end
-                        
-                        result = zero(typeof(φ))
-                        for (c, p) in zip(coeffs, powers)
-                            result += (c) * φ_wrapped^p
-                        end
-                        return result
-                    end
-                else # :jacobian
-                    # Derivative of polynomial with wrapping
-                    nl_functions[i] = φ -> begin
-                        # Wrap φ (same as above)
-                        if isa(φ, Complex)
-                            φ_wrapped = complex(wrap_phase(real(φ)), wrap_phase(imag(φ)))
-                        else
-                            φ_wrapped = wrap_phase(φ)
-                        end
-                        
-                        # Compute derivative
-                        result = zero(typeof(φ))
-                        for (c, p) in zip(coeffs, powers)
-                            if p > 0
-                                result += p * (c) * φ_wrapped^(p-1)
-                            end
-                        end
-                        return result
-                    end
-                end
-            end            
-        else
-            # Default to linear
-            nl_functions[i] = φ -> φ
-            debug_log("Warning: Unknown nonlinearity type $(elem.type) for branch $branch")
+    # If we have only Taylor elements, use Taylor-only path
+    if jj_count == 0
+        if mode == :function
+            applynl_taylor!(phimatrix, phimatrixtd, taylor_coeffs_list, taylor_powers_list,
+                          irfftplan, rfftplan)
+        else # :jacobian
+            applynl_taylor_deriv!(phimatrix, phimatrixtd, taylor_coeffs_list, taylor_powers_list,
+                                irfftplan, rfftplan)
+        end
+        return nothing
+    end
+
+    # Mixed case: process each element type in its columns
+    # Transform to time domain once
+    mul!(phimatrixtd, irfftplan, phimatrix)
+
+    normalization = prod(size(phimatrixtd)[1:end-1])
+    invnormalization = 1/normalization
+
+    # Process JJ columns (first jj_count columns)
+    func = (mode == :function) ? sin : cos
+    for col in 1:jj_count
+        for idx in CartesianIndices(size(phimatrixtd)[1:end-1])
+            full_idx = CartesianIndex(idx.I..., col)
+            phimatrixtd[full_idx] = func(phimatrixtd[full_idx] * normalization)
         end
     end
-    
 
-    # Apply mixed nonlinearities
-    applynl_mixed!(phimatrix, phimatrixtd, nl_functions, irfftplan, rfftplan)
+    # Process Taylor columns - branch on mode OUTSIDE the loop
+    if mode == :function
+        # Function evaluation
+        for col in 1:taylor_count
+            matrix_col = jj_count + col
+            coeffs = taylor_coeffs_list[col]
+            powers = taylor_powers_list[col]
+
+            for idx in CartesianIndices(size(phimatrixtd)[1:end-1])
+                full_idx = CartesianIndex(idx.I..., matrix_col)
+                φ = phimatrixtd[full_idx] * normalization
+
+                result = zero(typeof(φ))
+                @inbounds for i in eachindex(coeffs)
+                    result += coeffs[i] * φ^powers[i]
+                end
+                phimatrixtd[full_idx] = result
+            end
+        end
+    else # :jacobian
+        # Derivative evaluation
+        for col in 1:taylor_count
+            matrix_col = jj_count + col
+            coeffs = taylor_coeffs_list[col]
+            powers = taylor_powers_list[col]
+
+            for idx in CartesianIndices(size(phimatrixtd)[1:end-1])
+                full_idx = CartesianIndex(idx.I..., matrix_col)
+                φ = phimatrixtd[full_idx] * normalization
+
+                result = zero(typeof(φ))
+                @inbounds for i in eachindex(coeffs)
+                    p = powers[i]
+                    if p > 0
+                        result += p * coeffs[i] * φ^(p-1)
+                    end
+                end
+                phimatrixtd[full_idx] = result
+            end
+        end
+    end
+
+    # Transform back to frequency domain
+    mul!(phimatrix, rfftplan, phimatrixtd)
+
+    # Normalize
+    for i in eachindex(phimatrix)
+        phimatrix[i] = phimatrix[i] * invnormalization
+    end
+
+    return nothing
 end

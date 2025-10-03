@@ -528,16 +528,14 @@ export warning_log, get_warning_log, clear_warning_log
 # julia> using SnoopCompile, AbstractTrees
 # julia> print_tree(tinf, maxdepth=100)
 
-#=
 PrecompileTools.@compile_workload begin
     warmup()
-    # warmupsyms()
-    # warmupsymsold()
-    # warmupsymsnew()
+    warmupsyms()
+    warmupsymsold()
+    warmupsymsnew()
     warmupnetwork()
     warmupconnect()
 end
-=#
 
 #end module
 end

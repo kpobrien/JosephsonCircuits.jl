@@ -117,11 +117,14 @@ nl_circuit = [("NL1", "1", "0", "poly 329e-12, 0.0, 0.5")]
 - Added `NonlinearElement` struct (in `hbsolve.jl`) to track different types (josephson, taylor)
 - Implemented `identify_nonlinear_elements()` function
 
-**Unified FFT Machinery** (`hbsolve.jl`)
-- Both JJ and NL are passed to the FFT machinery when applying the nonlinearity
-- Created `apply_nonlinearities!` for generating appropriate functions per element type
-- All nonlinearities (Josephson and Taylor) now go through `applynl_mixed!` (defined in `fftutils.jl`)
-- Modified `calcfj2!` to handle all nonlinear elements uniformly
+**Unified FFT Machinery** (`hbsolve.jl` and `fftutils.jl`)
+- Both JJ and NL elements use FFT-based nonlinearity evaluation
+- Elements are separated by type at setup time for efficient processing
+- Created `apply_separated_nonlinearities!` that processes elements without closures
+- For JJ-only circuits, uses Kevin's original `applynl!` (in `fftutils.jl`)
+- For Taylor elements, uses `applynl_taylor!` and `applynl_taylor_deriv!` (in `fftutils.jl`)
+- For mixed circuits, processes JJ and Taylor elements separately in their respective columns
+- Modified `calcfj2!` to handle all nonlinear elements with pre-computed scaling factors
 - Updated `hbnlsolve` and `hblinsolve` to use `all_nl_branches` instead of just `Ljb`
 
 ## Design Decisions
@@ -380,11 +383,13 @@ Major changes:
    end
    ```
 
-2. **Unified nonlinearity application** (Lines 2120-2135):
+2. **Separated nonlinearity application**:
    ```julia
-   # Apply nonlinearities through FFT (handles mixed types!)
-   apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements, 
-                        :function, irfftplan, rfftplan)
+   # Apply nonlinearities through FFT (separate paths for JJ and Taylor!)
+   apply_separated_nonlinearities!(phimatrix, phimatrixtd,
+                                   num_jj_branches, num_taylor_branches,
+                                   taylor_coeffs_list, taylor_powers_list,
+                                   :function, irfftplan, rfftplan)
    ```
 
 3. **Inductance-specific scaling** (Lines 2140-2155):
@@ -406,120 +411,65 @@ Major changes:
 
 #### New Functions
 
-**apply_nonlinearities!()**
+**apply_separated_nonlinearities!()**
 ```julia
-function apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements, 
-                               mode::Symbol, irfftplan, rfftplan)
+function apply_separated_nonlinearities!(phimatrix, phimatrixtd,
+                                        jj_count::Int, taylor_count::Int,
+                                        taylor_coeffs_list::Vector{Vector{Float64}},
+                                        taylor_powers_list::Vector{Vector{Int}},
+                                        mode::Symbol, irfftplan, rfftplan)
 ```
-- **Purpose**: Apply appropriate nonlinearity based on element type
+- **Purpose**: Apply nonlinearities efficiently without closure overhead
 - **Modes**:
   - `:function` - Apply sin() for Josephson, polynomial for Taylor
   - `:jacobian` - Apply cos() for Josephson, derivative for Taylor
-- **Process**:
-  1. Maps each column to its nonlinearity type
-  2. Calls `applynl_mixed!` from fftutils.jl
-  3. Handles mixed Josephson/Taylor elements in same circuit
+- **Key Features**:
+  - No closure creation (passes data arrays directly)
+  - Separate fast paths for JJ-only, Taylor-only, and mixed circuits
+  - Pre-computed element counts avoid repeated `length()` calls
+  - Branch on mode outside inner loops for efficiency
+
+**Process Flow**:
+1. **JJ-only path**: Uses Kevin's original `applynl!(phimatrix, phimatrixtd, func, ...)`
+2. **Taylor-only path**: Uses `applynl_taylor!()` or `applynl_taylor_deriv!()`
+3. **Mixed path**: Processes JJ and Taylor columns separately without closures
 
 **Key Implementation Details**:
 
 1. **FFT-based approach**: Both Josephson and Taylor nonlinearities are evaluated in time domain via FFT/IFFT
-2. **Normalization consistency**: All inductances (Josephson and Taylor) normalized by Lmean
-3. **Sparse matrix preservation**: Maintains sparsity pattern even with mixed nonlinearities
-4. **Backward compatibility**: Original Josephson-only circuits work unchanged
+2. **No closures**: Polynomial evaluation done directly with coefficient/power arrays
+3. **Normalization consistency**: All inductances (Josephson and Taylor) normalized by Lmean
+4. **Sparse matrix preservation**: Maintains sparsity pattern even with mixed nonlinearities
+5. **Backward compatibility**: Original Josephson-only circuits use unmodified fast path
 
 ### 3. `src/fftutils.jl`
 
 #### Purpose
-Extended FFT utilities to handle mixed nonlinearity types (Josephson and Taylor) in the same circuit, enabling Kevin's FFT machinery to process different nonlinear functions per column.
+Extended FFT utilities to provide efficient Taylor polynomial evaluation without closures.
 
 #### New Functions
 
-**applynl_mixed!() - Core mixed nonlinearity function**
+**applynl_taylor!() - Taylor polynomial evaluation**
 ```julia
-function applynl_mixed!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vector{Function}, 
-                        irfftplan, rfftplan) where T
+function applynl_taylor!(fd::Array{Complex{T}}, td::Array{T},
+                         coeffs_list::Vector{Vector{Float64}},
+                         powers_list::Vector{Vector{Int}},
+                         irfftplan, rfftplan) where T
 ```
-- **Purpose**: Apply different nonlinear functions to each column of frequency domain data
-- **Extension of**: Original `applynl!()` which applies single function to all columns
-- **Key Innovation**: `nl_functions[i]` is applied to column `i`, enabling mixed circuits
+- **Purpose**: Apply Taylor polynomial nonlinearities without creating closures
+- **Process**: Transform to time domain, evaluate polynomials directly from coefficient arrays, transform back
 
-**Process Flow**:
-1. **Transform to time domain**: `mul!(td, irfftplan, fd)`
-2. **Apply column-specific nonlinearities**:
-   ```julia
-   for col in 1:size(td, ndims(td))
-       nl_func = nl_functions[col]  # Different function per column
-       for idx in CartesianIndices(size(td)[1:end-1])
-           td[full_idx] = nl_func(td[full_idx] * normalization)
-       end
-   end
-   ```
-3. **Transform back to frequency domain**: `mul!(fd, rfftplan, td)`
-4. **Normalize**: Apply `invnormalization` factor
-
-**Column-to-Element Mapping**:
-- Column 1 → First nonlinear element (could be Josephson: `sin()` or `cos()`)
-- Column 2 → Second nonlinear element (could be Taylor: polynomial function)
-- Each column corresponds to one branch's nonlinearity
-
-**applynl_mixed_verbose!() - Debug version**
+**applynl_taylor_deriv!() - Derivative evaluation**
 ```julia
-function applynl_mixed_verbose!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vector{Function}, 
-                                irfftplan, rfftplan) where T
+function applynl_taylor_deriv!(fd::Array{Complex{T}}, td::Array{T},
+                               coeffs_list::Vector{Vector{Float64}},
+                               powers_list::Vector{Vector{Int}},
+                               irfftplan, rfftplan) where T
 ```
-- **Purpose**: Same as `applynl_mixed!()` but with extensive debug logging
-- **Debug Features**:
-  - Logs frequency domain values before/after transform
-  - Tracks sample flux→current transformations per column
-  - Uses commented debug statements for troubleshooting
-  - Prevents multiple debug output with `fft_debug_done` flag
+- **Purpose**: Apply polynomial derivatives for Jacobian calculation
+- **Process**: Same as `applynl_taylor!()` but evaluates dI/dφ = Σ(p_i * c_i * φ^(p_i-1))
 
-#### Integration with Existing Code
-
-**Usage in hbsolve.jl**:
-```julia
-# Called from apply_nonlinearities!() in hbsolve.jl
-function apply_nonlinearities!(phimatrix, phimatrixtd, nonlinear_elements, 
-                               mode::Symbol, irfftplan, rfftplan)
-    # Create function array: [sin, polynomial, cos, ...]
-    nl_functions = Vector{Function}(undef, length(nonlinear_elements))
-    
-    # Populate based on element types and mode (:function or :jacobian)
-    for (i, (branch, elem)) in enumerate(sorted_elements)
-        if elem.type == :josephson
-            nl_functions[i] = (mode == :function) ? sin : cos
-        elseif elem.type == :taylor
-            coeffs = elem.params[:coeffs]
-            powers = elem.params[:powers]
-            
-            if mode == :function
-                # Create polynomial: I(φ) = Σ(c_i * φ^p_i)
-                nl_functions[i] = φ -> begin
-                    result = zero(typeof(φ))
-                    for (c, p) in zip(coeffs, powers)
-                        result += c * φ^p
-                    end
-                    return result
-                end
-            else # :jacobian
-                # Create derivative: dI/dφ = Σ(p_i * c_i * φ^(p_i-1))
-                nl_functions[i] = φ -> begin
-                    result = zero(typeof(φ))
-                    for (c, p) in zip(coeffs, powers)
-                        if p > 0
-                            result += p * c * φ^(p-1)
-                        end
-                    end
-                    return result
-                end
-            end
-        end
-    end
-    
-    # Apply mixed nonlinearities
-    applynl_mixed!(phimatrix, phimatrixtd, nl_functions, irfftplan, rfftplan)
-end
-```
+**Key Optimization**: These functions receive coefficient and power arrays directly, avoiding the overhead of closure creation and capture that would occur if using `φ -> Σ(c_i * φ^p_i)` style functions.
 
 #### Technical Details
 
@@ -692,33 +642,6 @@ export warning_log, get_warning_log, clear_warning_log
 - Debug logging functions accessible from Python wrapper
 - Enables troubleshooting and monitoring of nonlinear element processing
 - Separate debug and warning message streams
-
-#### Precompilation Changes (Lines 531-540)
-
-**Commented Out Precompilation Workload**:
-```julia
-#=
-PrecompileTools.@compile_workload begin
-    warmup()
-    # warmupsyms()
-    # warmupsymsold()
-    # warmupsymsnew()
-    warmupnetwork()
-    warmupconnect()
-end
-=#
-```
-
-**Modifications Made**:
-- **Disabled symbolic precompilation**: Commented out `warmupsyms()`, `warmupsymsold()`, `warmupsymsnew()`
-- **Kept network precompilation**: Retained `warmupnetwork()` and `warmupconnect()`
-- **Entire workload commented**: Full precompilation temporarily disabled
-
-**Rationale**:
-- Prevents precompilation conflicts with new NL element types
-- Avoids potential issues with Dict-based component values during package building
-- Maintains core network functionality precompilation
-- Can be re-enabled after further testing with symbolic NL parameters
 
 #### Public API Extensions
 

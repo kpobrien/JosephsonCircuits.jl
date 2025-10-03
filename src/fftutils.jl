@@ -1203,58 +1203,48 @@ function applynl!(fd::Array{Complex{T}}, td::Array{T}, f, irfftplan,
 end
 
 """
-   applynl_mixed!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vector{Function}, 
-       irfftplan, rfftplan)
+    applynl_taylor!(fd, td, coeffs_list, powers_list, irfftplan, rfftplan)
 
-Apply different nonlinear functions to each column of the frequency domain data by 
-transforming to the time domain, applying the corresponding function from `nl_functions`, 
-then transforming back to the frequency domain, overwriting the contents of fd and td 
-in the process. We use plans for the forward and reverse RFFT prepared by [`plan_applynl`](@ref).
+Apply Taylor polynomial nonlinearities to frequency domain data without using closures.
+Each column corresponds to a different Taylor element with its own coefficients and powers.
 
 # Arguments
-- `fd`: Frequency domain data array where each column represents a different nonlinear element
-- `td`: Time domain data array (workspace)
-- `nl_functions`: Vector of functions where `nl_functions[i]` is applied to column `i`
+- `fd`: Frequency domain array (will be overwritten)
+- `td`: Time domain array (will be overwritten)
+- `coeffs_list`: Vector of coefficient vectors, one per Taylor element
+- `powers_list`: Vector of power vectors, one per Taylor element
 - `irfftplan`: Inverse RFFT plan
-- `rfftplan`: Forward RFFT plan
-
-# Examples
-```jldoctest
-fd=ones(Complex{Float64},3,2)
-td, irfftplan, rfftplan = JosephsonCircuits.plan_applynl(fd)
-nl_functions = [sin, cos]
-JosephsonCircuits.applynl_mixed!(fd, td, nl_functions, irfftplan, rfftplan)
-fd
-
-# output
-3×2 Matrix{ComplexF64}:
- 0.454649+0.0im   0.586589+0.0im
--0.545351+0.0im  -0.413411+0.0im
--0.545351+0.0im  -0.413411+0.0im
+- `rfftplan`: RFFT plan
 """
-
-function applynl_mixed!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vector{Function}, 
-    irfftplan, rfftplan) where T
-
-    # debug_log("applynl_mixed! - fd size: $(size(fd)), td size: $(size(td))")
-    # debug_log("DC mode values before transform: $(fd[1,:])")  # First frequency bin is DC
+function applynl_taylor!(fd::Array{Complex{T}}, td::Array{T},
+                         coeffs_list::Vector{Vector{Float64}},
+                         powers_list::Vector{Vector{Int}},
+                         irfftplan, rfftplan) where T
 
     # Transform to time domain
     mul!(td, irfftplan, fd)
 
-    # debug_log("TD values after IRFFT (first few): $(td[1:min(4,end),:])")
-
-    # Normalize the fft
+    # Normalize the FFT
     normalization = prod(size(td)[1:end-1])
     invnormalization = 1/normalization
 
-    # Apply the appropriate nonlinear function to each column
-    # Note: The last dimension corresponds to different nonlinear elements
+    # Apply polynomial to each column
     for col in 1:size(td, ndims(td))
-        nl_func = nl_functions[col]
+        coeffs = coeffs_list[col]
+        powers = powers_list[col]
+
+        # Evaluate polynomial for each time point in this column
         for idx in CartesianIndices(size(td)[1:end-1])
             full_idx = CartesianIndex(idx.I..., col)
-            td[full_idx] = nl_func(td[full_idx] * normalization)
+            φ = td[full_idx] * normalization
+
+            # Evaluate polynomial: result = Σ(c_i * φ^p_i)
+            result = zero(T)
+            @inbounds for i in eachindex(coeffs)
+                result += coeffs[i] * φ^powers[i]
+            end
+
+            td[full_idx] = result
         end
     end
 
@@ -1269,43 +1259,43 @@ function applynl_mixed!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vecto
     return nothing
 end
 
-function applynl_mixed_verbose!(fd::Array{Complex{T}}, td::Array{T}, nl_functions::Vector{Function}, 
-    irfftplan, rfftplan) where T
+"""
+    applynl_taylor_deriv!(fd, td, coeffs_list, powers_list, irfftplan, rfftplan)
+
+Apply derivative of Taylor polynomial nonlinearities (for Jacobian calculation).
+"""
+function applynl_taylor_deriv!(fd::Array{Complex{T}}, td::Array{T},
+                               coeffs_list::Vector{Vector{Float64}},
+                               powers_list::Vector{Vector{Int}},
+                               irfftplan, rfftplan) where T
 
     # Transform to time domain
     mul!(td, irfftplan, fd)
 
-    # Normalize the fft
+    # Normalize the FFT
     normalization = prod(size(td)[1:end-1])
     invnormalization = 1/normalization
 
-    #=
-    # Debug: Check what's in fd before transform
-    if size(fd, ndims(fd)) == 2  # Only for 2-element case
-        debug_log("FFT Debug:")
-        debug_log("  fd before FFT (frequency domain):")
-        for col in 1:2
-            debug_log("    Column $col: max|val| = $(maximum(abs.(fd[:, col])))")
-        end
-    end
-    =#
-
-    # Apply the appropriate nonlinear function to each column
+    # Apply polynomial derivative to each column
     for col in 1:size(td, ndims(td))
-        nl_func = nl_functions[col]
-        
-        #= 
-        # Debug first iteration only
-        if col <= 2 && !isdefined(Main, :fft_debug_done)
-            flux_sample = td[1, col] * normalization
-            current_sample = nl_func(flux_sample)
-            debug_log("  Column $col: sample flux=$flux_sample → current=$current_sample")
-        end
-        =# 
+        coeffs = coeffs_list[col]
+        powers = powers_list[col]
 
+        # Evaluate polynomial derivative for each time point
         for idx in CartesianIndices(size(td)[1:end-1])
             full_idx = CartesianIndex(idx.I..., col)
-            td[full_idx] = nl_func(td[full_idx] * normalization)
+            φ = td[full_idx] * normalization
+
+            # Evaluate derivative: result = Σ(p_i * c_i * φ^(p_i-1))
+            result = zero(T)
+            @inbounds for i in eachindex(coeffs)
+                p = powers[i]
+                if p > 0
+                    result += p * coeffs[i] * φ^(p-1)
+                end
+            end
+
+            td[full_idx] = result
         end
     end
 
@@ -1316,18 +1306,7 @@ function applynl_mixed_verbose!(fd::Array{Complex{T}}, td::Array{T}, nl_function
     for i in eachindex(fd)
         fd[i] = fd[i] * invnormalization
     end
-    
-    #= 
-    # Debug: Check what's in fd after transform
-    if size(fd, ndims(fd)) == 2 && !isdefined(Main, :fft_debug_done)
-        debug_log("  fd after FFT (frequency domain):")
-        for col in 1:2
-            debug_log("    Column $col: max|val| = $(maximum(abs.(fd[:, col])))")
-        end
-        global fft_debug_done = true
-    end
-    
-    =#
+
     return nothing
 end
 

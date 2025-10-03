@@ -151,7 +151,7 @@ Generate a netlist using circuit components including capacitors `C`, inductors 
 ## Josephson parametric amplifier (JPA)
 A driven nonlinear LC resonator.
 
-**Note**: Timing results shown below are from the original JosephsonCircuits.jl package and may differ when using the Taylor expansion features.
+**Note**: The Taylor expansion feature has been optimized to have minimal performance impact compared to the original Josephson-only implementation (~2% overhead).
 
 ```julia
 using JosephsonCircuits
