@@ -136,3 +136,15 @@ compare(x::JosephsonCircuits.ParsedSortedCircuit,y::JosephsonCircuits.ParsedSort
 compare(x::JosephsonCircuits.ParsedCircuit,y::JosephsonCircuits.ParsedCircuit) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CircuitGraph,y::JosephsonCircuits.CircuitGraph) = comparestruct(x,y)
 compare(x::JosephsonCircuits.Frequencies,y::JosephsonCircuits.Frequencies) = comparestruct(x,y)
+compare(x::JosephsonCircuits.NonlinearElement,y::JosephsonCircuits.NonlinearElement) = comparestruct(x,y)
+function compare(x::Dict{Int,JosephsonCircuits.NonlinearElement},y::Dict{Int,JosephsonCircuits.NonlinearElement})
+    if length(x) != length(y)
+        return false
+    end
+    for (k, v) in x
+        if !haskey(y, k) || !compare(v, y[k])
+            return false
+        end
+    end
+    return true
+end

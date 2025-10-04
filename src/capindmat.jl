@@ -174,6 +174,13 @@ function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
     # convert as many values as we can to numerical values using definitions
     # from circuitdefs
     vvn = componentvaluestonumber(psc.componentvalues, circuitdefs)
+    # Convert NL Dict values to numeric inductance values
+    for (i, type) in enumerate(psc.componenttypes)
+        if type == :NL && isa(vvn[i], Dict)
+            coeffs = vvn[i][:coeffs]
+            vvn[i] = phi0 / coeffs[1]  # L0 value
+        end
+    end
     
     # capacitance matrix
     Cnm = calcCn(psc.componenttypes, psc.nodeindices, vvn, Nmodes, psc.Nnodes)
@@ -405,8 +412,8 @@ sparsevec([1, 2], Num[Lj1, Lj2], 2)
 function calcLjb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
     componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
     return calcbranchvector(componenttypes, nodeindices, componentvalues,
-        calcvaluetype(componenttypes, componentvalues, [:Lj]), edge2indexdict,
-        Nmodes, Nbranches, :Lj, combine_error)
+        calcvaluetype(componenttypes, componentvalues, [:Lj, :NL]), edge2indexdict,
+        Nmodes, Nbranches, [:Lj, :NL], combine_error)
 end
 
 """
@@ -423,12 +430,23 @@ vector will be combined.
 function calcbranchvector(componenttypes::Vector{Symbol},
     nodeindices::Matrix{Int}, componentvalues::Vector,
     valuecomponenttypes::Vector, edge2indexdict::Dict, Nmodes, Nbranches,
-    component::Symbol, combine::Function)
+    component::Union{Symbol, Vector{Symbol}}, combine::Function)
+
+    # Debug
+    # debug_log("calcbranchvector called with component: $(component)")
+    # for (i, val) in enumerate(componentvalues)
+    #     if isa(val, Dict)
+    #         debug_log("componentvalues[$(i)] is Dict $(val)")
+    #     end
+    # end
+
+    # Make component a vector if it isn't already
+    components = component isa Symbol ? [component] : component
 
     # calculate the expected number of elements
     Nelements = 0
     for (i,type) in enumerate(componenttypes)
-        if type == component
+        if type in components
             Nelements += 1
         end
     end
@@ -440,9 +458,13 @@ function calcbranchvector(componenttypes::Vector{Symbol},
     # copy the components over
     j = 1
     for (i,type) in enumerate(componenttypes)
-        if type == component
+        if type in components
+            # Skip NL when looking for L
+            if type == :NL && components == [:L]
+                continue
+            end            
             Ib[j] = edge2indexdict[(nodeindices[1,i],nodeindices[2,i])]
-            Vb[j] = convert(eltype(valuecomponenttypes), componentvalues[i])
+            Vb[j] = componentvalues[i]
             j += 1
         end
     end
@@ -858,8 +880,18 @@ julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L
 ```
 """
 function calcLmean(componenttypes::Vector{Symbol}, componentvalues::Vector)
-    return calcLmean_inner(componenttypes, componentvalues,
-        calcvaluetype(componenttypes, componentvalues, [:Lj, :L]))
+    # For NL components, we'll work with Float64 since we extract L0
+    # Check if we have any NL components
+    has_nl = any(t -> t == :NL, componenttypes)
+
+    if has_nl
+        # Force Float64 type for the calculation since we'll extract numeric L0 values
+        return calcLmean_inner(componenttypes, componentvalues, Float64[])
+    else
+        # Use the original type detection for L and Lj only
+        return calcLmean_inner(componenttypes, componentvalues,
+            calcvaluetype(componenttypes, componentvalues, [:Lj, :L]))
+    end
 end
 
 """
@@ -911,7 +943,7 @@ function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
     # count the number of inductors
     ninductors = 0
     for (i,type) in enumerate(componenttypes)
-        if type == :L || type == :Lj
+        if type == :L || type == :Lj || type == :NL
             ninductors += 1
         end
     end
@@ -922,9 +954,9 @@ function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
     Vn = Array{eltype(valuecomponenttypes), 1}(undef, ninductors)
     j = 1
     for (i,type) in enumerate(componenttypes)
-        if type == :L || type == :Lj
+        if type == :L || type == :Lj || type == :NL
             Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
-            j += 1
+            j += 1        
         end
     end
 

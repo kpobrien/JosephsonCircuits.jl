@@ -1203,6 +1203,114 @@ function applynl!(fd::Array{Complex{T}}, td::Array{T}, f, irfftplan,
 end
 
 """
+    applynl_taylor!(fd, td, coeffs_list, powers_list, irfftplan, rfftplan)
+
+Apply Taylor polynomial nonlinearities to frequency domain data without using closures.
+Each column corresponds to a different Taylor element with its own coefficients and powers.
+
+# Arguments
+- `fd`: Frequency domain array (will be overwritten)
+- `td`: Time domain array (will be overwritten)
+- `coeffs_list`: Vector of coefficient vectors, one per Taylor element
+- `powers_list`: Vector of power vectors, one per Taylor element
+- `irfftplan`: Inverse RFFT plan
+- `rfftplan`: RFFT plan
+"""
+function applynl_taylor!(fd::Array{Complex{T}}, td::Array{T},
+                         coeffs_list::Vector{Vector{Float64}},
+                         powers_list::Vector{Vector{Int}},
+                         irfftplan, rfftplan) where T
+
+    # Transform to time domain
+    mul!(td, irfftplan, fd)
+
+    # Normalize the FFT
+    normalization = prod(size(td)[1:end-1])
+    invnormalization = 1/normalization
+
+    # Apply polynomial to each column
+    for col in 1:size(td, ndims(td))
+        coeffs = coeffs_list[col]
+        powers = powers_list[col]
+
+        # Evaluate polynomial for each time point in this column
+        for idx in CartesianIndices(size(td)[1:end-1])
+            full_idx = CartesianIndex(idx.I..., col)
+            φ = td[full_idx] * normalization
+
+            # Evaluate polynomial: result = Σ(c_i * φ^p_i)
+            result = zero(T)
+            @inbounds for i in eachindex(coeffs)
+                result += coeffs[i] * φ^powers[i]
+            end
+
+            td[full_idx] = result
+        end
+    end
+
+    # Transform back to frequency domain
+    mul!(fd, rfftplan, td)
+
+    # Normalize
+    for i in eachindex(fd)
+        fd[i] = fd[i] * invnormalization
+    end
+
+    return nothing
+end
+
+"""
+    applynl_taylor_deriv!(fd, td, coeffs_list, powers_list, irfftplan, rfftplan)
+
+Apply derivative of Taylor polynomial nonlinearities (for Jacobian calculation).
+"""
+function applynl_taylor_deriv!(fd::Array{Complex{T}}, td::Array{T},
+                               coeffs_list::Vector{Vector{Float64}},
+                               powers_list::Vector{Vector{Int}},
+                               irfftplan, rfftplan) where T
+
+    # Transform to time domain
+    mul!(td, irfftplan, fd)
+
+    # Normalize the FFT
+    normalization = prod(size(td)[1:end-1])
+    invnormalization = 1/normalization
+
+    # Apply polynomial derivative to each column
+    for col in 1:size(td, ndims(td))
+        coeffs = coeffs_list[col]
+        powers = powers_list[col]
+
+        # Evaluate polynomial derivative for each time point
+        for idx in CartesianIndices(size(td)[1:end-1])
+            full_idx = CartesianIndex(idx.I..., col)
+            φ = td[full_idx] * normalization
+
+            # Evaluate derivative: result = Σ(p_i * c_i * φ^(p_i-1))
+            result = zero(T)
+            @inbounds for i in eachindex(coeffs)
+                p = powers[i]
+                if p > 0
+                    result += p * coeffs[i] * φ^(p-1)
+                end
+            end
+
+            td[full_idx] = result
+        end
+    end
+
+    # Transform back to frequency domain
+    mul!(fd, rfftplan, td)
+
+    # Normalize
+    for i in eachindex(fd)
+        fd[i] = fd[i] * invnormalization
+    end
+
+    return nothing
+end
+
+"""
     hbmatind(truncfrequencies::Frequencies{N})
 
 Returns a matrix describing which indices of the frequency domain matrix
