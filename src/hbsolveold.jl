@@ -831,7 +831,8 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
     modes = freq.modes
 
     return NonlinearHB((wp,), freq, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
-        Nbranches, psc.nodenames[2:end], portnumbers, modes, S)
+        Nbranches, psc.nodenames[2:end], portnumbers, modes, S,
+        Dict{Int,NonlinearElement}())
 end
 
 """

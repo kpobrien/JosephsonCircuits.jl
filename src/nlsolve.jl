@@ -298,6 +298,11 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         end
 
         if n == iterations
+            # Log to warning system
+            warning_log("Solver did not converge after maximum iterations of $n")
+            warning_log("norm(F)/norm(x): $(norm(F)/norm(x))")
+            warning_log("Infinity norm: $(norm(F,Inf))")
+
             @warn string("Solver did not converge after maximum iterations of ", n,".")
             println("norm(F)/norm(x): ", norm(F)/norm(x))
             println("Infinity norm: ", norm(F,Inf))

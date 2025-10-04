@@ -1,4 +1,24 @@
 
+# Define a struct to hold polynomial NL information
+struct PolyNL
+    L0
+    c_coeffs::Vector
+    value::Float64  # Numeric value for arithmetic operations
+end
+
+# Define arithmetic operations for PolyNL to use the numeric value
+Base.:/(x::Number, p::PolyNL) = x / p.value
+Base.:*(p::PolyNL, x::Number) = p.value * x
+Base.:*(x::Number, p::PolyNL) = x * p.value
+Base.:+(p::PolyNL, x::Number) = p.value + x
+Base.:+(x::Number, p::PolyNL) = x + p.value
+Base.:-(p::PolyNL, x::Number) = p.value - x
+Base.:-(x::Number, p::PolyNL) = x - p.value
+
+# Define conversion to allow PolyNL in numeric arrays
+Base.convert(::Type{Float64}, p::PolyNL) = p.value
+Base.convert(::Type{ComplexF64}, p::PolyNL) = Complex(p.value)
+
 """
     ParsedSortedCircuit(nodeindices::Matrix{Int},
         nodenames::Vector{String},
@@ -51,6 +71,7 @@ struct ParsedSortedCircuit
     componentnamedict::Dict{String, Int}
     Nnodes::Int
 end
+
 
 """
     parsesortcircuit(circuit; sorting = :name)
@@ -292,7 +313,8 @@ function parsecircuit(circuit)
     # the component types we can handle. Note: Lj must come before L otherwise
     # the JJs will be first matched as inductors. 
     # NOTE: voltage sources currently not supported
-    allowedcomponents = ["Lj","L","C","K","I","R","P"]
+    # allowedcomponents = ["Lj","L","C","K","I","R","P"]
+    allowedcomponents = ["Lj","NL","L","C","K","I","R","P"]
 
     # check that we can properly parse these
     checkcomponenttypes(allowedcomponents)
@@ -358,7 +380,14 @@ function parsecircuit(circuit)
         # store the component name, type, and value
         componentnames[i] = name
         componenttypes[i] = componenttype
-        componentvalues[i] = value
+        
+        # Special handling for NL components with "poly" syntax
+        if componenttype == :NL && isa(value, AbstractString) && startswith(value, "poly")
+            componentvalues[i] = parse_nl_value(value)
+        else
+            componentvalues[i] = value
+        end
+
 
         # mutual inductors are treated differently because their "nodes"
         # refer to inductors rather than actual nodes. add zeros to
@@ -594,7 +623,7 @@ function extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},no
         throw(DimensionMismatch("branchvector should be length zero"))
     end
 
-    allowedcomponenttypes = [:Lj,:L,:I,:P,:V]
+    allowedcomponenttypes = [:Lj,:L,:I,:P,:V,:NL]
     for i in eachindex(componenttypes)
         type = componenttypes[i]
         if type in allowedcomponenttypes
@@ -1355,4 +1384,279 @@ julia> JosephsonCircuits.valuetonumber(1.0,Dict(:Lj1=>1e-12,:Lj2=>2e-12))
 """
 function valuetonumber(value, circuitdefs)
     return value
+end
+
+
+"""
+    valuetonumber(value::PolyNL, circuitdefs)
+
+Substitute symbolic values in a PolyNL struct.
+"""
+function valuetonumber(value::PolyNL, circuitdefs)
+    # Substitute L0 - handle expressions
+    if isa(value.L0, AbstractString)
+        # This is an expression like "Lj*exp(...)"
+        # Create a module with all the parameters from circuitdefs
+        expr_module = Module()
+        
+        # Define all parameters in the module
+        for (key, val) in circuitdefs
+            Core.eval(expr_module, :($key = $val))
+        end
+        
+        # Also define common math functions
+        Core.eval(expr_module, :(using Base: exp, sin, cos, tan, sqrt, log, ^))
+        
+        # Now evaluate the expression in this module
+        L0_subst = Core.eval(expr_module, Meta.parse(value.L0))
+    elseif isa(value.L0, Symbol)
+        L0_subst = circuitdefs[value.L0]
+    else
+        L0_subst = value.L0
+    end
+    
+    # Substitute coefficients
+    c_coeffs_subst = []
+    for c in value.c_coeffs
+        if isa(c, Symbol)
+            push!(c_coeffs_subst, circuitdefs[c])
+        else
+            push!(c_coeffs_subst, c)
+        end
+    end
+    
+    # Update numeric value with evaluated L0
+    numeric_value = isa(L0_subst, Number) ? L0_subst : value.value
+    
+    return PolyNL(L0_subst, c_coeffs_subst, numeric_value)
+end
+
+"""
+    identify_nonlinear_elements(componenttypes::Vector{Symbol}, 
+        componentvalues::Vector, nodeindices::Matrix{Int}, 
+        edge2indexdict::Dict)
+
+Identify nonlinear elements in the circuit and return a dictionary mapping
+branch indices to NonlinearElement structs.
+
+Currently supports:
+- :Lj - Traditional Josephson junctions
+- :NL - Taylor expansion nonlinear elements  
+
+# Examples
+```jldoctest
+# Test with simple circuit
+componenttypes = [:R, :Lj, :C]
+componentvalues = [50.0, 1e-12, 1e-15]
+nodeindices = [1 2 2; 0 0 0]
+edge2indexdict = Dict((1,0)=>1, (2,0)=>2)
+nl_elements = JosephsonCircuits.identify_nonlinear_elements(
+    componenttypes, componentvalues, nodeindices, edge2indexdict)
+length(nl_elements)
+# output
+1
+"""
+function identify_nonlinear_elements(componenttypes::Vector{Symbol},
+    componentvalues::Vector, nodeindices::Matrix{Int},
+    edge2indexdict::Dict, circuitdefs)  # Add circuitdefs parameter
+
+    nonlinear_elements = Dict{Int, NonlinearElement}()
+
+    for i in eachindex(componenttypes)
+        comptype = componenttypes[i]
+
+        # Get the branch index for this component
+        node1 = nodeindices[1, i]
+        node2 = nodeindices[2, i]
+
+        # Skip if this is a mutual inductor (nodes are 0)
+        if node1 == 0 || node2 == 0
+            continue
+        end
+
+        # Get branch index
+        key = (node1, node2)
+        if !haskey(edge2indexdict, key)
+            # Try reversed key
+            key = (node2, node1)
+        end
+
+        if comptype == :Lj && haskey(edge2indexdict, key)
+            branch_idx = edge2indexdict[key]
+
+            # Get the inductance value and evaluate if symbolic
+            L_value = componentvalues[i]
+            # debug_log("Branch $branch_idx: Original Lj value = $L_value (type: $(typeof(L_value)))")
+
+            if typeof(L_value) <: Num
+                # Evaluate the symbolic value
+                L_value = Symbolics.value(Symbolics.substitute(L_value, circuitdefs))
+                # debug_log("Evaluated symbolic Lj for branch $branch_idx: $(L_value)")
+            elseif isa(L_value, Symbol)
+                # Resolve Symbol from circuitdefs
+                L_value = circuitdefs[L_value]
+            end
+
+            # Traditional Josephson junction - store evaluated inductance in params
+            nonlinear_elements[branch_idx] = NonlinearElement(
+                :josephson,
+                [branch_idx],
+                Dict{Symbol,Any}(
+                    :Lj => L_value,
+                    :inductance => L_value  # Both use evaluated value
+                )
+            )
+
+        elseif comptype == :NL && haskey(edge2indexdict, key)
+            # Taylor expansion nonlinearity
+            branch_idx = edge2indexdict[key]
+            
+            # Get the value
+            nl_value = componentvalues[i]
+            
+            if isa(nl_value, PolyNL)
+                # Substitute symbolic values FIRST
+                nl_value = valuetonumber(nl_value, circuitdefs)
+                # Convert to Taylor coefficients
+                params = convert_poly_to_taylor_coeffs(nl_value)
+            elseif isa(nl_value, Dict)
+                # Already a Dict format
+                params = Dict{Symbol,Any}()
+                for (k, v) in componentvalues[i]
+                    if typeof(v) <: Num
+                        params[k] = Symbolics.substitute(v, circuitdefs)
+                    elseif isa(v, Symbol)
+                        # Resolve Symbol from circuitdefs
+                        params[k] = circuitdefs[v]
+                    else
+                        params[k] = v
+                    end
+                end
+                
+                if !haskey(params, :inductance) && haskey(params, :L0)
+                    params[:inductance] = params[:L0]
+                end
+            else
+                throw(ArgumentError("NL component must be PolyNL or Dict"))
+            end
+            
+            nonlinear_elements[branch_idx] = NonlinearElement(
+                :taylor,
+                [branch_idx],
+                params
+            )
+        end
+    end
+
+    return nonlinear_elements
+end
+
+
+"""
+    parse_nl_value(value_str::AbstractString)
+
+Parse a nonlinear inductance string of the form "poly L0 c1 c2 c3 ..."
+where L(φ) = L0(1 + c1*φ + c2*φ^2 + c3*φ^3 + ...).
+Returns a PolyNL struct.
+"""
+function parse_nl_value(value_str::AbstractString)
+    # Check if string starts with "poly"
+    if !startswith(value_str, "poly")
+        throw(ArgumentError("NL value must start with 'poly'"))
+    end
+    
+    # Remove "poly " prefix (5 characters)
+    content = strip(value_str[6:end])
+    
+    # Split on commas and trim whitespace
+    parts = [strip(part) for part in split(content, ',')]
+    
+    if length(parts) < 1
+        throw(ArgumentError("NL value must have at least L0: 'poly L0[, c1, c2, ...]'"))
+    end
+    
+    # First part is L0 - keep as string for expression evaluation
+    L0 = parts[1]
+    
+    # Rest are coefficients
+    c_coeffs = []
+    for i in 2:length(parts)
+        # Try to parse as number, otherwise keep as symbol/expression
+        c_parsed = tryparse(Float64, parts[i])
+        if isnothing(c_parsed)
+            # It's a symbol or expression
+            push!(c_coeffs, Symbol(parts[i]))
+        else
+            push!(c_coeffs, c_parsed)
+        end
+    end
+    
+    # For numeric value, we'll use a default for now
+    numeric_value = 1e-9  # Default 1 nH
+    
+    return PolyNL(L0, c_coeffs, numeric_value)
+end
+
+
+"""
+    convert_poly_to_taylor_coeffs(poly::PolyNL)
+
+Convert a PolyNL struct to Taylor expansion coefficients for I(φ).
+"""
+function convert_poly_to_taylor_coeffs(poly::PolyNL)
+    # Make sure L0 is numeric
+    L0 = isa(poly.L0, Number) ? poly.L0 : poly.value
+    c_coeffs = poly.c_coeffs
+    
+    # Ensure all coefficients are numeric
+    c_coeffs_numeric = []
+    for c in c_coeffs
+        if isa(c, Number)
+            push!(c_coeffs_numeric, c)
+        else
+            # If it's still symbolic, use 0
+            push!(c_coeffs_numeric, 0.0)
+        end
+    end
+    
+    # Convert L(φ) = L0(1 + c1*φ + c2*φ^2 + c3*φ^3 + c4*φ^4) to I(φ) coefficients
+    # We use φ0 \dot{φ} = L \dot{I}
+    # We'll compute coefficients up to the order of provided c_coeffs
+    max_order = length(c_coeffs_numeric) + 1
+    I_coeffs = zeros(Float64, max_order)
+    
+    # First order term coefficient: φ₀/L0. But, we're normalizing L by this value so no need to put it
+    I_coeffs[1] = 1.0 # phi0 / L0
+    
+    # Higher order terms
+    if length(c_coeffs_numeric) > 0
+        # Second order: -φ₀*c1/L0 / 2
+        I_coeffs[2] = - c_coeffs_numeric[1] / 2
+    end
+    
+    if length(c_coeffs_numeric) > 1
+        # Third order: (-c2 + c1²) / 3
+        I_coeffs[3] = (c_coeffs_numeric[1]^2 - c_coeffs_numeric[2]) / 3
+    end
+    
+    if length(c_coeffs_numeric) > 2
+        # Fourth order: (-c3 + 2*c1*c2 - c1³) / 4
+        I_coeffs[4] = (-c_coeffs_numeric[3] + 2*c_coeffs_numeric[1]*c_coeffs_numeric[2] - c_coeffs_numeric[1]^3) / 4
+    end
+
+    if length(c_coeffs_numeric) > 3
+        # Fifth order: (c1^4 - 3 c1^2 c2 + c2^2 + 2 c1 c3 - c4) / 5
+        I_coeffs[5] = (c_coeffs_numeric[1]^4-3*c_coeffs_numeric[1]^2*c_coeffs_numeric[2]+c_coeffs_numeric[2]^2+2*c_coeffs_numeric[1]*c_coeffs_numeric[3]-c_coeffs_numeric[4]) / 5
+    end
+    
+    # Remove trailing zeros
+    while length(I_coeffs) > 1 && I_coeffs[end] ≈ 0
+        pop!(I_coeffs)
+    end
+    
+    # Create powers array
+    powers = collect(1:length(I_coeffs))
+    
+    # Use the numeric L0 for inductance
+    return Dict(:coeffs => I_coeffs, :powers => powers, :inductance => L0)
 end
