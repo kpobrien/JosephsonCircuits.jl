@@ -943,10 +943,6 @@ function calcAoLjbm(Am, Ljb::SparseVector, Lmean, Nmodes, Nbranches)
 
     type = promote_type(eltype(Am),eltype(1 ./Ljb.nzval))
 
-    if type <: Symbolic
-        type = Any
-    end
-
     V = Vector{type}(undef,nnz(Ljb)*Nmodes^2)
 
 
@@ -1008,7 +1004,7 @@ AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuit
 AoLjbmcopy = copy(AoLjbm);
 AoLjbmcopy.nzval .= 0;
 JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,2,2)
-all(AoLjbmcopy.nzval .- AoLjbm.nzval .== 0)
+all(JosephsonCircuits.Symbolics.simplify.(AoLjbmcopy.nzval .- AoLjbm.nzval) .== 0)
 
 # output
 true
@@ -1019,7 +1015,7 @@ AoLjbm = JosephsonCircuits.calcAoLjbm([A11 A12;A21 A22;A31 A32],JosephsonCircuit
 AoLjbmcopy = copy(AoLjbm);
 AoLjbmcopy.nzval .= 0;
 JosephsonCircuits.updateAoLjbm!(AoLjbmcopy,[A11 A12;A21 A22;A31 A32],JosephsonCircuits.SparseArrays.sparsevec([1,2],[Lj1,Lj2]),1,3,2)
-all(AoLjbmcopy.nzval .- AoLjbm.nzval .== 0)
+all(JosephsonCircuits.Symbolics.simplify.(AoLjbmcopy.nzval .- AoLjbm.nzval) .== 0)
 
 # output
 true

@@ -2139,10 +2139,6 @@ function calcAoLjbm2(Am::Array, Amatrixindices::Matrix, Ljb::SparseVector,
     # determine the type to use for AoLjbm
     type = promote_type(eltype(Am), eltype(1 ./Ljb.nzval))
 
-    if type <: Symbolic
-        type = Any
-    end
-
     nzval = Vector{type}(undef, nnz(AoLjbmindices))
 
     AoLjbm = SparseMatrixCSC(AoLjbmindices.m, AoLjbmindices.n,

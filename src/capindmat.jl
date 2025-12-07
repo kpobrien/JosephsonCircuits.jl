@@ -82,23 +82,7 @@ push!(circuit,("C2","2","0",Cj))
 JosephsonCircuits.testshow(stdout,symbolicmatrices(circuit))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolic{Real}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolic{Real}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolic{Real}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolic{Real}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
-```
-```jldoctest
-@variables Ipump Rleft Cc Lj Cj
-circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("I1","1","0",Ipump))
-push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("C1","1","2",Cc)) 
-push!(circuit,("Lj1","2","0",Lj)) 
-push!(circuit,("C2","2","0",Cj))
-psc = JosephsonCircuits.parsesortcircuit(circuit)
-cg = JosephsonCircuits.calccircuitgraph(psc)
-JosephsonCircuits.testshow(stdout,symbolicmatrices(psc, cg))
-
-# output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolic{Real}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolic{Real}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolic{Real}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolic{Real}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
 ```
 """
 function symbolicmatrices(circuit::AbstractVector; Nmodes::Int = 1,
@@ -716,7 +700,7 @@ Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1.0,1.0])
 println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
 
 # output
-sparse([1, 2, 1, 2], [1, 1, 2, 2], Num[(1.0 + (Lm*(Lm / L1)) / (L2 + (-(Lm^2)) / L1)) / L1, (-(Lm / L1)) / (L2 + (-(Lm^2)) / L1), (-(Lm / (L2 + (-(Lm^2)) / L1))) / L1, 1.0 / (L2 + (-(Lm^2)) / L1)], 2, 2)
+sparse([1, 2, 1, 2], [1, 1, 2, 2], Num[(1.0 + (Lm^2) / (L1*(L2 + (-(Lm^2)) / L1))) / L1, (-Lm) / (L1*(L2 + (-(Lm^2)) / L1)), (-Lm) / (L1*(L2 + (-(Lm^2)) / L1)), 1 / (L2 + (-(Lm^2)) / L1)], 2, 2)
 ```
 ```jldoctest
 @variables L1 L2
@@ -738,7 +722,7 @@ Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1.0,1.0])
 println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
 
 # output
-sparse([1, 2, 1, 2], [1, 1, 2, 2], Num[(1.0 + (Lm*(Lm / L1)) / (L2 + (-(Lm^2)) / L1)) / L1, (-(Lm / L1)) / (L2 + (-(Lm^2)) / L1), (-(Lm / (L2 + (-(Lm^2)) / L1))) / L1, 1.0 / (L2 + (-(Lm^2)) / L1)], 2, 2)
+sparse([1, 2, 1, 2], [1, 1, 2, 2], Num[(1.0 + (Lm^2) / (L1*(L2 + (-(Lm^2)) / L1))) / L1, (-Lm) / (L1*(L2 + (-(Lm^2)) / L1)), (-Lm) / (L1*(L2 + (-(Lm^2)) / L1)), 1 / (L2 + (-(Lm^2)) / L1)], 2, 2)
 ```
 """
 function calcinvLn(Lb::SparseVector, Mb::SparseMatrixCSC,
@@ -765,7 +749,8 @@ function calcinvLn_inner(Lb::SparseVector, Mb::SparseMatrixCSC,
         # we pick out only the indices where there are inductors for
         # efficiency reasons.
         # calculate the symbolic inductance matrix
-        if eltype(valuecomponenttypes) <: Symbolic
+        # if eltype(valuecomponenttypes) <: Symbolic
+        if eltype(valuecomponenttypes) <: Num || eltype(valuecomponenttypes) <: Symbolics.SymbolicT
 
             # take a subset of the arrays
             Mbs = Mb[Lb.nzind,Lb.nzind]
@@ -801,13 +786,13 @@ function calcinvLn_inner(Lb::SparseVector, Mb::SparseMatrixCSC,
             # println(eltype(valuecomponenttypes)
             # println("type: ",eltype(valuecomponenttypes) <: Symbolic)
 
-
-            L = Array{Any,2}(undef,size(Lsparse))
+            L = Array{Num,2}(undef,size(Lsparse))
             fill!(L,0)
 
             for i = 1:length(Lsparse.colptr)-1
                 for j in Lsparse.colptr[i]:(Lsparse.colptr[i+1]-1)
-                    L[Lsparse.rowval[j],i] = Lsparse.nzval[j]
+                    # L[Lsparse.rowval[j],i] = Lsparse.nzval[j]
+                    L[Lsparse.rowval[j],i] = Num(Lsparse.nzval[j])
                 end
             end
 
@@ -854,7 +839,7 @@ julia> JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[10,4,5,1])
 2.5
 
 julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L1, C1, Lj1])
-(1//2)*(L1 + Lj1)
+(L1 + Lj1) / 2
 ```
 """
 function calcLmean(componenttypes::Vector{Symbol}, componentvalues::Vector)
@@ -897,8 +882,8 @@ julia> JosephsonCircuits.calcLmean_inner([:R,:L,:C,:Lj],[10,4,5,1],Float64[])
 julia> JosephsonCircuits.calcLmean_inner([:R,:C,:C,:C],[10,4,5,1],Float64[])
 0.0
 
-julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean_inner([:R,:L,:C,:Lj],[R1, L1, C1, Lj1], Num[])
-(1//2)*(L1 + Lj1)
+julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L1, C1, Lj1])
+(L1 + Lj1) / 2
 ```
 """
 function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
@@ -1111,8 +1096,7 @@ function calcnodematrix(componenttypes::Vector{Symbol},
                 # capacitance to ground, add to diagonal
                 In[j] = nodeindices[2,i]-1
                 Jn[j] = nodeindices[2,i]-1
-                # convert is necessary here to avoid allocations
-                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
+                Vn[j] = componentvalues[i]
                 if invert
                     Vn[j] = 1/Vn[j]
                 end
@@ -1122,8 +1106,7 @@ function calcnodematrix(componenttypes::Vector{Symbol},
                 # capacitance to ground, add to diagonal
                 In[j] = nodeindices[1,i]-1
                 Jn[j] = nodeindices[1,i]-1
-                # convert is necessary here to avoid allocations
-                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
+                Vn[j] = componentvalues[i]
                 if invert
                     Vn[j] = 1/Vn[j]
                 end
@@ -1133,8 +1116,7 @@ function calcnodematrix(componenttypes::Vector{Symbol},
                 # diagonal elements
                 In[j] = nodeindices[1,i]-1
                 Jn[j] = nodeindices[1,i]-1
-                # convert is necessary here to avoid allocations
-                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
+                Vn[j] = componentvalues[i]
                 if invert
                     Vn[j] = 1/Vn[j]
                 end
@@ -1142,8 +1124,7 @@ function calcnodematrix(componenttypes::Vector{Symbol},
 
                 In[j] = nodeindices[2,i]-1
                 Jn[j] = nodeindices[2,i]-1
-                # convert is necessary here to avoid allocations
-                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
+                Vn[j] = componentvalues[i]
                 if invert
                     Vn[j] = 1/Vn[j]
                 end
@@ -1152,8 +1133,7 @@ function calcnodematrix(componenttypes::Vector{Symbol},
                 # off diagonal elements
                 In[j] = nodeindices[1,i]-1
                 Jn[j] = nodeindices[2,i]-1
-                # convert is necessary here to avoid allocations
-                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
+                Vn[j] = componentvalues[i]
                 Vn[j] = -Vn[j]
                 if invert
                     Vn[j] = 1/Vn[j]
@@ -1162,8 +1142,7 @@ function calcnodematrix(componenttypes::Vector{Symbol},
 
                 In[j] = nodeindices[2,i]-1
                 Jn[j] = nodeindices[1,i]-1
-                # convert is necessary here to avoid allocations
-                Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
+                Vn[j] = componentvalues[i]
                 Vn[j] = -Vn[j]
                 if invert
                     Vn[j] = 1/Vn[j]

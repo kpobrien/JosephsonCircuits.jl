@@ -1074,7 +1074,7 @@ false
 ```
 """
 function checkissymbolic(a)
-    return a isa Symbolic
+    return a isa Symbolics.SymbolicT
 end
 
 """
@@ -1150,6 +1150,8 @@ function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
                 if isnothing(symfreqvar)
                     error("Set symfreqvar equal to the symbolic variable representing frequency.")
                 else
+                    # println(valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1])))
+                    # println(typeof(valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))))
                     nzval[j] = valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
                 end
             else

@@ -292,7 +292,7 @@ function parsecircuit(circuit)
     # the component types we can handle. Note: Lj must come before L otherwise
     # the JJs will be first matched as inductors. 
     # NOTE: voltage sources currently not supported
-    allowedcomponents = ["Lj","L","C","K","I","R","P"]
+    allowedcomponents = ["Lj","NL","L","C","K","I","R","P"]
 
     # check that we can properly parse these
     checkcomponenttypes(allowedcomponents)
@@ -484,11 +484,11 @@ first value.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.parsecomponenttype("L10",["Lj","L","C","K","I","R","P"])
-2
+julia> JosephsonCircuits.parsecomponenttype("L10",["Lj","NL","L","C","K","I","R","P"])
+3
 
-julia> [JosephsonCircuits.parsecomponenttype(c,["Lj","L","C","K","I","R","P"]) for c in ["Lj","L","C","K","I","R","P"]]
-7-element Vector{Int64}:
+julia> [JosephsonCircuits.parsecomponenttype(c,["Lj","NL","L","C","K","I","R","P"]) for c in ["Lj","NL","L","C","K","I","R","P"]]
+8-element Vector{Int64}:
  1
  2
  3
@@ -496,9 +496,7 @@ julia> [JosephsonCircuits.parsecomponenttype(c,["Lj","L","C","K","I","R","P"]) f
  5
  6
  7
-
-julia> JosephsonCircuits.parsecomponenttype("L10",["Lj","L","C","K","I","R","P"])
-2
+ 8
 ```
 """
 function parsecomponenttype(name::String,allowedcomponents::Vector{String})
@@ -532,7 +530,7 @@ function will throw an error.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.checkcomponenttypes(["Lj","L","C","K","I","R","P"])
+julia> JosephsonCircuits.checkcomponenttypes(["Lj","NL","L","C","K","I","R","P"])
 true
 ```
 """
@@ -594,7 +592,7 @@ function extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},no
         throw(DimensionMismatch("branchvector should be length zero"))
     end
 
-    allowedcomponenttypes = [:Lj,:L,:I,:P,:V]
+    allowedcomponenttypes = [:Lj,:NL,:L,:I,:P,:V]
     for i in eachindex(componenttypes)
         type = componenttypes[i]
         if type in allowedcomponenttypes
@@ -1237,9 +1235,9 @@ Zfun(w,R) = ifelse(w>10,R,100*R);
 out=JosephsonCircuits.componentvaluestonumber([R,Zfun(w,R)],Dict(R=>50));
 println(out)
 # evaluate with w = 2
-println(JosephsonCircuits.Symbolics.substitute.(out,(Dict(w=>2),)))
+println(JosephsonCircuits.Symbolics.value.(JosephsonCircuits.Symbolics.substitute.(out,(Dict(w=>2),);fold=Val(true))))
 # evaluate with w = 11
-println(JosephsonCircuits.Symbolics.substitute.(out,(Dict(w=>11),)))
+println(JosephsonCircuits.Symbolics.value.(JosephsonCircuits.Symbolics.substitute.(out,(Dict(w=>11),);fold=Val(true))))
 
 # output
 Any[50, Zfun(w, 50)]
@@ -1300,32 +1298,35 @@ julia> @variables Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e
 function valuetonumber(value::Symbolics.Num,circuitdefs)
     # for Num types unwrap helps speed up
     # their evaluation and evalutes to a number. 
-    return Symbolics.substitute(Symbolics.unwrap(value),circuitdefs)
+    # update for Symbolics v7: need a call to Symbolics.value to get the value
+    # and fold=Val(true) to evaluate functions of symbolic variables
+    return Symbolics.value(Symbolics.substitute(value,circuitdefs;fold=Val(true)))
 end
 
+# """
+#     valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
+
+# If the component value `value` is Complex{Symbolics.Num}, then try substituting in the
+# definition from `circuitdefs`. This function is currently broken as of 
+# Symbolics v7.1.1
+
+# # Examples
+# ```jldoctest
+# julia> @variables Lj1::Complex;JosephsonCircuits.valuetonumber(Lj1,Dict(Lj1=>3.0e-12))
+# 3.0e-12
+
+# julia> @variables Lj1::Complex Lj2::Complex;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
+# ComplexTerm(real(Lj2) + real(Lj1) + im*(imag(Lj2) + imag(Lj1)))
+# ```
+# """
+# function valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
+#     return Symbolics.unwrap(Symbolics.substitute(value,circuitdefs))
+# end
+
 """
-    valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
+    valuetonumber(value::Symbolics.SymbolicT, circuitdefs)
 
-If the component value `value` is Complex{Symbolics.Num}, then try substituting in the
-definition from `circuitdefs`.
-
-# Examples
-```jldoctest
-julia> @variables Lj1::Complex;JosephsonCircuits.valuetonumber(Lj1,Dict(Lj1=>3.0e-12))
-3.0e-12
-
-julia> @variables Lj1::Complex Lj2::Complex;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
-ComplexTerm(real(Lj2) + real(Lj1) + im*(imag(Lj2) + imag(Lj1)))
-```
-"""
-function valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
-    return Symbolics.unwrap(Symbolics.substitute(value,circuitdefs))
-end
-
-"""
-    valuetonumber(value::Symbolics.Symbol, circuitdefs)
-
-If the component value `value` has a type Complex{Symbolics.Num}, then try
+If the component value `value` has a type Symbolics.SymbolicT, then try
 substituting in the definition from `circuitdefs`.
 
 # Examples
@@ -1337,8 +1338,8 @@ julia> @syms Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,L
 4.0e-12
 ```
 """
-function valuetonumber(value::Symbolics.Symbolic, circuitdefs)
-    return Symbolics.substitute(value, circuitdefs)
+function valuetonumber(value::Symbolics.SymbolicT, circuitdefs)
+    return Symbolics.value(Symbolics.substitute(value, circuitdefs;fold=Val(true)))
 end
 
 """

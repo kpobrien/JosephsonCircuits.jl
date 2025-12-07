@@ -645,8 +645,8 @@ julia> JosephsonCircuits.calccm(Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],Comp
 
 julia> @variables a b c d an bn cn dn;JosephsonCircuits.calccm([a b; c d],[an bn; cn dn],[1, -1])
 2-element Vector{Num}:
- abs2(an) + abs2(a) - abs2(b) - abs2(bn)
- abs2(c) + abs2(cn) - abs2(d) - abs2(dn)
+ -abs2(bn) + abs2(a) - abs2(b) + abs2(an)
+  abs2(c) - abs2(dn) - abs2(d) + abs2(cn)
 ```
 """
 function calccm(S::AbstractArray{T}, Snoise::AbstractArray{T}, w) where {T}
@@ -748,8 +748,8 @@ field ladder operator basis. Overwrites cm with output.
 ```jldoctest
 julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn],[1, -1]);cm
 2-element Vector{Num}:
- abs2(an) + abs2(a) - abs2(b) - abs2(bn)
- abs2(c) + abs2(cn) - abs2(d) - abs2(dn)
+ -abs2(bn) + abs2(a) - abs2(b) + abs2(an)
+  abs2(c) - abs2(dn) - abs2(d) + abs2(cn)
 ```
 """
 function calccm!(cm, S, Snoise, w)
@@ -881,8 +881,8 @@ julia> JosephsonCircuits.calcqe(Complex{Float64}[3/5 4/5;4/5 3/5],Complex{Float6
 
 julia> @variables a b c d an bn cn dn;JosephsonCircuits.calcqe([a b; c d],[an bn; cn dn])
 2×2 Matrix{Num}:
- abs2(a) / (abs2(an) + abs2(a) + abs2(b) + abs2(bn))  …  abs2(b) / (abs2(an) + abs2(a) + abs2(b) + abs2(bn))
- abs2(c) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))     abs2(d) / (abs2(c) + abs2(cn) + abs2(d) + abs2(dn))
+ abs2(a) / (abs2(bn) + abs2(a) + abs2(b) + abs2(an))  …  abs2(b) / (abs2(bn) + abs2(a) + abs2(b) + abs2(an))
+ abs2(c) / (abs2(c) + abs2(dn) + abs2(d) + abs2(cn))     abs2(d) / (abs2(c) + abs2(dn) + abs2(d) + abs2(cn))
 ```
 """
 function calcqe(S::AbstractArray{T}, Snoise::AbstractArray{T}) where {T}
