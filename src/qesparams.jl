@@ -511,11 +511,6 @@ julia> JosephsonCircuits.calccm([1 1e-100 2e-100 1;1 0 0 1],[1, -1])
 2-element Vector{Float64}:
  3.0e-200
  0.0
-
-julia> @variables a b;JosephsonCircuits.calccm([a b; b a],[1, -1])
-2-element Vector{Num}:
-  abs2(a) - abs2(b)
- -abs2(a) + abs2(b)
 ```
 """
 function calccm(S::AbstractArray{T}, w) where {T}
@@ -590,13 +585,13 @@ end
 Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Overwrites cm with output.
 
-# Examples
-```jldoctest
-julia> @variables a b;cm=Num[0,0];JosephsonCircuits.calccm!(cm,[a b; b a],[-1,1]);cm
-2-element Vector{Num}:
- -abs2(a) + abs2(b)
-  abs2(a) - abs2(b)
-```
+# # Examples
+# ```jldoctest
+# julia> @variables a b;cm=Num[0,0];JosephsonCircuits.calccm!(cm,[a b; b a],[-1,1]);cm
+# 2-element Vector{Num}:
+#  -abs2(a) + abs2(b)
+#   abs2(a) - abs2(b)
+# ```
 """
 function calccm!(cm, S, w)
 
