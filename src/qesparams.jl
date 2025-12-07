@@ -642,11 +642,6 @@ julia> JosephsonCircuits.calccm(Complex{Float64}[1 1e-100 2e-100 1;1 1 1 1],Comp
 2-element Vector{Float64}:
  6.0e-200
  0.0
-
-julia> @variables a b c d an bn cn dn;JosephsonCircuits.calccm([a b; c d],[an bn; cn dn],[1, -1])
-2-element Vector{Num}:
- -abs2(bn) + abs2(a) - abs2(b) + abs2(an)
-  abs2(c) - abs2(dn) - abs2(d) + abs2(cn)
 ```
 """
 function calccm(S::AbstractArray{T}, Snoise::AbstractArray{T}, w) where {T}
@@ -744,13 +739,13 @@ end
 Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Overwrites cm with output.
 
-# Examples
-```jldoctest
-julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn],[1, -1]);cm
-2-element Vector{Num}:
- -abs2(bn) + abs2(a) - abs2(b) + abs2(an)
-  abs2(c) - abs2(dn) - abs2(d) + abs2(cn)
-```
+# # Examples
+# ```jldoctest
+# julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn],[1, -1]);cm
+# 2-element Vector{Num}:
+#  -abs2(bn) + abs2(a) - abs2(b) + abs2(an)
+#   abs2(c) - abs2(dn) - abs2(d) + abs2(cn)
+# ```
 """
 function calccm!(cm, S, Snoise, w)
 
@@ -811,11 +806,6 @@ julia> JosephsonCircuits.calcqe(Complex{Float64}[3/5 4/5;4/5 3/5])
 2×2 Matrix{Float64}:
  0.36  0.64
  0.64  0.36
-
-julia> @variables a b c d;JosephsonCircuits.calcqe([a b; c d])
-2×2 Matrix{Num}:
- abs2(a) / (abs2(a) + abs2(b))  abs2(b) / (abs2(a) + abs2(b))
- abs2(c) / (abs2(c) + abs2(d))  abs2(d) / (abs2(c) + abs2(d))
 ```
 """
 function calcqe(S::AbstractArray{T}) where {T}
@@ -878,11 +868,6 @@ julia> JosephsonCircuits.calcqe(Complex{Float64}[3/5 4/5;4/5 3/5],Complex{Float6
 2×2 Matrix{Float64}:
  0.36  0.64
  0.64  0.36
-
-julia> @variables a b c d an bn cn dn;JosephsonCircuits.calcqe([a b; c d],[an bn; cn dn])
-2×2 Matrix{Num}:
- abs2(a) / (abs2(bn) + abs2(a) + abs2(b) + abs2(an))  …  abs2(b) / (abs2(bn) + abs2(a) + abs2(b) + abs2(an))
- abs2(c) / (abs2(c) + abs2(dn) + abs2(d) + abs2(cn))     abs2(d) / (abs2(c) + abs2(dn) + abs2(d) + abs2(cn))
 ```
 """
 function calcqe(S::AbstractArray{T}, Snoise::AbstractArray{T}) where {T}

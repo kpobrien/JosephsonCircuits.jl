@@ -520,14 +520,14 @@ export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
 # julia> using SnoopCompile, AbstractTrees
 # julia> print_tree(tinf, maxdepth=100)
 
-# PrecompileTools.@compile_workload begin
-#     warmup()
-#     warmupsyms()
-#     warmupsymsold()
-#     warmupsymsnew()
-#     warmupnetwork()
-#     warmupconnect()
-# end
+PrecompileTools.@compile_workload begin
+    warmup()
+    warmupsyms()
+    warmupsymsold()
+    warmupsymsnew()
+    warmupnetwork()
+    warmupconnect()
+end
 
 #end module
 end
