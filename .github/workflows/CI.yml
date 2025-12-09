@@ -28,7 +28,7 @@ jobs:
         version:
           - 'lts' # long-term support release
           - '1'   # latest stable 1.x release
-          - 'pre' # latest stable prerelease
+          # - 'pre' # latest stable prerelease
           # - 'nightly'
         os:
           - ubuntu-latest
