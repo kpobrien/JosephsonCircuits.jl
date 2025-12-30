@@ -444,25 +444,34 @@ import StaticArrays
         end
 
         begin
-            Sa = rand(Complex{Float64},3,3)
-            Ca = rand(Complex{Float64},3,3)
-            Sb = rand(Complex{Float64},3,3)
-            Cb = rand(Complex{Float64},3,3)
-            Sboth = zeros(Complex{Float64},6,6)
-            Sboth[1:size(Sa,1),1:size(Sa,1),:,:] .= Sa
-            Sboth[size(Sa,1)+1:end,size(Sa,1)+1:end,:,:] .= Sb
-            Cboth = zeros(Complex{Float64},6,6)
-            Cboth[1:size(Ca,1),1:size(Ca,1),:,:] .= Ca
-            Cboth[size(Ca,1)+1:end,size(Ca,1)+1:end,:,:] .= Cb
+            # test a bunch of matrix sizes and port numbers
+            for m in 1:3
+                for n in 1:3
+                    Sa = rand(Complex{Float64},m,m)
+                    Ca = rand(Complex{Float64},m,m)
+                    Sb = rand(Complex{Float64},n,n)
+                    Cb = rand(Complex{Float64},n,n)
+                    Sboth = zeros(Complex{Float64},m+n,m+n)
+                    Sboth[1:size(Sa,1),1:size(Sa,1),:,:] .= Sa
+                    Sboth[size(Sa,1)+1:end,size(Sa,1)+1:end,:,:] .= Sb
+                    Cboth = zeros(Complex{Float64},m+n,m+n)
+                    Cboth[1:size(Ca,1),1:size(Ca,1),:,:] .= Ca
+                    Cboth[size(Ca,1)+1:end,size(Ca,1)+1:end,:,:] .= Cb
 
-            Sout1 = JosephsonCircuits.intraconnectS(Sboth,2,1+size(Sa,1))
-            Sout2 = JosephsonCircuits.interconnectS(Sa,Sb,2,1)
-            Sout3, Cout3 = JosephsonCircuits.intraconnectS(Sboth,Cboth,2,1+size(Sa,1))
-            Sout4, Cout4 = JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,2,1)
-            @test isapprox(Sout1,Sout2)
-            @test isapprox(Sout2,Sout3)
-            @test isapprox(Sout3,Sout4)
-            @test isapprox(Cout3,Cout4)
+                    for k in 1:m
+                        for l in 1:n
+                            Sout1 = JosephsonCircuits.intraconnectS(Sboth,k,l+size(Sa,1))
+                            Sout2 = JosephsonCircuits.interconnectS(Sa,Sb,k,l)
+                            Sout3, Cout3 = JosephsonCircuits.intraconnectS(Sboth,Cboth,k,l+size(Sa,1))
+                            Sout4, Cout4 = JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,k,l)
+                            @test isapprox(Sout1,Sout2)
+                            @test isapprox(Sout2,Sout3)
+                            @test isapprox(Sout3,Sout4)
+                            @test isapprox(Cout3,Cout4)
+                        end
+                    end
+                end
+            end
         end
 
         begin

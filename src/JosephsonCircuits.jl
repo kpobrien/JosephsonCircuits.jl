@@ -81,6 +81,9 @@ include("spiceutils.jl")
 include("spicewrapper.jl")
 include("spiceraw.jl")
 
+# These are deprecated functions
+include("deprecated.jl")
+
 # These are functions for perofrming tests
 include("testutils.jl")
 
