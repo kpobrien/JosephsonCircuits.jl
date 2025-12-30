@@ -1,6 +1,6 @@
 
 """
-    connectS(Sa::AbstractArray, k::Int, l::Int;
+    intraconnectS(Sa::AbstractArray, k::Int, l::Int;
         nbatches::Int = Base.Threads.nthreads())
 
 Connect ports `k` and `l` on the same `m` port microwave network represented
@@ -43,11 +43,14 @@ Output network:
 - `l::Int`: Second port to connect, with one based indexing.
 
 # References
+R. C. Compton and D. B. Rutledge, "Perspectives in Microwave Circuit
+Analysis," Proceedings of the 32nd Midwest Symposium on Circuits and Systems,
+vol. 2, pp. 716–718, Aug. 1989. doi: 10.1109/MWSCAS.1989.101955
 V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
 in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function connectS(Sa::AbstractArray{T,N},k::Int,l::Int;
+function intraconnectS(Sa::AbstractArray{T,N}, k::Int, l::Int;
     nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
     # make a tuple with the size of the array
@@ -58,18 +61,18 @@ function connectS(Sa::AbstractArray{T,N},k::Int,l::Int;
     Sout = similar(Sa,sizeS)
 
     # remove the self loop
-    connectS!(Sout,Sa,k,l;nbatches = nbatches)
+    intraconnectS!(Sout,Sa,k,l;nbatches = nbatches)
 
     return Sout
 end
 
 """
-    connectS!(Sout, Sa, k::Int, l::Int; nbatches::Int = Base.Threads.nthreads())
+    intraconnectS!(Sout, Sa, k::Int, l::Int; nbatches::Int = Base.Threads.nthreads())
 
-See [`connectS`](@ref) for description.
+See [`intraconnectS`](@ref) for description.
 
 """
-function connectS!(Sout,Sa,k::Int,l::Int;
+function intraconnectS!(Sout, Sa, k::Int, l::Int;
     nbatches::Int = Base.Threads.nthreads())
 
     # validate all of the inputs
@@ -124,43 +127,43 @@ function connectS!(Sout,Sa,k::Int,l::Int;
     if  nbatches > 1 && length(indices) > nbatches
         batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
         Threads.@sync for batch in batches
-            Base.Threads.@spawn connectS_inner!(Sout,Sa,k,l,batch)
+            Base.Threads.@spawn intraconnectS_inner!(Sout,Sa,k,l,batch)
         end
     else
-        connectS_inner!(Sout,Sa,k,l,indices)
+        intraconnectS_inner!(Sout,Sa,k,l,indices)
     end
 
     return Sout
 end
 
 """
-    connectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
+    intraconnectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
 
-See [`connectS`](@ref) for description.
+See [`intraconnectS`](@ref) for description.
 
 """
-function connectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
+function intraconnectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
 
     # the number of ports in the input matrix
     m = size(Sa,1)
 
-    # order the ports
-    firstport, secondport = ifelse(k>l,(l,k),(k,l))
+    # order the ports as k < l
+    k, l = ifelse(k>l,(l,k),(k,l))
 
-    range1 = 1:firstport-1
-    range2 = firstport+1:secondport-1
-    range3 = secondport+1:m
+    range1 = 1:k-1
+    range2 = k+1:l-1
+    range3 = l+1:m
     ranges = (range1,range2,range3)
 
     @inbounds for b in batch
         gammacc_Scc = StaticArrays.SMatrix{2,2}(
-            -Sa[firstport,firstport,b],
-            one(Sa[secondport,firstport,b])-Sa[secondport,firstport,b],
-            one(Sa[firstport,secondport,b])-Sa[firstport,secondport,b],
-            -Sa[secondport,secondport,b]
+            -Sa[k,k,b],
+            one(Sa[l,k,b])-Sa[l,k,b],
+            one(Sa[k,l,b])-Sa[k,l,b],
+            -Sa[l,l,b]
         )
-        # gammacc_Scc_lu =  lu(gammacc_Scc)
         gammacc_Scc_lu = lu_2x2(gammacc_Scc)
+        # gammacc_Scc_lu =  lu(gammacc_Scc)
 
         # ii and jj are the indices which extend up to m and skip k,l
         # i and j extend up to m-2 and are consecutive 
@@ -168,16 +171,16 @@ function connectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
             for jj in ranges[jindex]
                 j = jj-jindex+1
 
-                Scp = StaticArrays.SVector{2}(Sa[firstport,jj,b],Sa[secondport,jj,b])
+                Scp = StaticArrays.SVector{2}(Sa[k,jj,b],Sa[l,jj,b])
 
                 # solve the linear system
-                # ac1jj, ac2jj = gammacc_Scc_lu \ Scp
                 ac1jj, ac2jj = ldiv_2x2(gammacc_Scc_lu,Scp)
+                # ac1jj, ac2jj = gammacc_Scc_lu \ Scp
 
                 for iindex in eachindex(ranges)
                     for ii in ranges[iindex]
                         i = ii-iindex+1
-                        Sout[i,j,b] = Sa[ii,jj,b] + Sa[ii,firstport,b]*ac1jj + Sa[ii,secondport,b]*ac2jj
+                        Sout[i,j,b] = Sa[ii,jj,b] + Sa[ii,k,b]*ac1jj + Sa[ii,l,b]*ac2jj
                     end
                 end
             end
@@ -188,7 +191,606 @@ function connectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
 end
 
 """
-    connectS(Sa::AbstractArray,Sb::AbstractArray,k::Int,l::Int;
+    intraconnectS(Sa::AbstractArray, Ca::AbstractArray, k::Int, l::Int;
+        nbatches::Int = Base.Threads.nthreads())
+
+Connect ports `k` and `l` on the same `m` port microwave network represented
+by the scattering parameter matrix `Sa`, and noise correlation matrix `Ca` 
+resulting in an `(m-2)` port network, as illustrated below:
+
+Input network:
+```
+      m |         | l+1    
+        |   ...   |         l
+        |_________|__________ 
+        |         |          |
+        |   Sa    |  ...     |
+        |  m x m  |          |
+    ____|_________|_____ k+1 |
+    1   |   ...   |          |
+        |         | k        |
+      2 |         |__________|
+```
+Output network:
+```
+    m-2 |         | l-1     
+        |         |         
+        |   ...   |         
+        |_________|         
+        |         |         
+        |    S    |  ...    
+        |m-2 x m-2|         
+    ____|_________|_________
+    1   |   ...         k   
+        |                   
+        |                   
+      2 |                   
+```
+# Arguments
+- `Sa::Array`: Array of scattering parameters representing the network
+    with ports along first two dimensions, followed by an arbitrary number
+    of other dimensions (eg. frequency).
+- `Ca::Array`: Array of noise correlation parameters of the same dimensions as
+    `Sa`.
+- `k::Int`: First port to connect, with one based indexing.
+- `l::Int`: Second port to connect, with one based indexing.
+
+# References
+S. W. Wedge, "Computer-aided design of low noise microwave circuits," PhD
+thesis (1991).
+R. C. Compton and D. B. Rutledge, "Perspectives in Microwave Circuit
+Analysis," Proceedings of the 32nd Midwest Symposium on Circuits and Systems,
+vol. 2, pp. 716–718, Aug. 1989. doi: 10.1109/MWSCAS.1989.101955
+V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
+in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
+249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
+"""
+function intraconnectS(Sa::AbstractArray{T,N}, Ca::AbstractArray{T,N}, k::Int,
+    l::Int; nbatches::Int = Base.Threads.nthreads()) where {T,N}
+
+    # make a tuple with the size of the array
+    # the first two dimensions are two smaller
+    sizeS = NTuple{N}(ifelse(i<=2,size(Sa,i)-2,size(Sa,i)) for i in 1:ndims(Sa))
+
+    # allocate an array of zeros of the same type as Sa
+    Sout = similar(Sa,sizeS)
+    Cout = similar(Ca,sizeS)
+
+    # remove the self loop
+    intraconnectS!(Sout,Cout,Sa,Ca,k,l;nbatches = nbatches)
+
+    return Sout, Cout
+end
+
+"""
+    intraconnectS!(Sout, Cout, Sa, Ca, k::Int, l::Int; nbatches::Int = Base.Threads.nthreads())
+
+See [`intraconnectS`](@ref) for description.
+
+"""
+function intraconnectS!(Sout, Cout, Sa, Ca, k::Int, l::Int;
+    nbatches::Int = Base.Threads.nthreads())
+
+    # validate all of the inputs
+    if ndims(Sa) != ndims(Sout)
+        throw(DimensionMismatch("`Sout` and `Sa` must have the same number of dimensions."))
+    end
+
+    if ndims(Sa) < 2
+        throw(DimensionMismatch("`Sout` and `Sa` must have at least two dimensions."))
+    end
+
+    if size(Sa,1) != size(Sa,2)
+        throw(DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."))
+    end
+
+    if size(Sout,1) != size(Sout,2)
+        throw(DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."))
+    end
+
+    if size(Sa,1) -2 != size(Sout,1)
+        throw(DimensionMismatch("Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."))
+    end
+
+    for i in 3:ndims(Sa)
+        if size(Sa,i) != size(Sout,i)
+            throw(DimensionMismatch("Non-port axis lengths of `Sa` and `Sout` must be equal."))
+        end
+    end
+
+    if k > size(Sa,1)
+        throw(ArgumentError("Port `k` is larger than number of ports in `Sa`."))
+    end
+
+    if l > size(Sa,1)
+        throw(ArgumentError("Port `l` is larger than number of ports in `Sa`."))
+    end
+
+    if l < 1
+        throw(ArgumentError("Port `l` is smaller than one."))
+    end
+
+    if k < 1
+        throw(ArgumentError("Port `k` is smaller than one."))
+    end
+
+    if l == k
+        throw(ArgumentError("`k` and `l` cannot be equal because a port cannot be merged with itself."))
+    end
+
+    if size(Ca) != size(Sa)
+        throw(DimensionMismatch("The size of `Ca` must the same as the size of `Sa`."))
+    end
+
+    if size(Cout) != size(Sout)
+        throw(DimensionMismatch("The size of `Cout` must the same as the size of `Sout`."))
+    end
+
+    # loop over the dimensions of the array greater than 2
+    indices = CartesianIndices(axes(Sout)[3:end])
+    if  nbatches > 1 && length(indices) > nbatches
+        batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
+        Threads.@sync for batch in batches
+            Base.Threads.@spawn intraconnectS_inner!(Sout,Cout,Sa,Ca,k,l,batch)
+        end
+    else
+        intraconnectS_inner!(Sout,Cout,Sa,Ca,k,l,indices)
+    end
+
+    return Sout, Cout
+end
+
+function intraconnectS_inner!(Sout, Cout, Sa, Ca, k::Int, l::Int,
+    batch::AbstractArray)
+
+    # the number of ports in the input matrix
+    m = size(Sa,1)
+
+    # order the ports as k < l
+    k, l = ifelse(k>l,(l,k),(k,l))
+
+    range1 = 1:k-1
+    range2 = k+1:l-1
+    range3 = l+1:m
+    ranges = (range1,range2,range3)
+
+    il_lk_ll_ik = similar(Sa,m-2)
+    ik_kl_kk_il = similar(Sa,m-2)
+
+    @inbounds for b in batch
+        gammacc_Scc = StaticArrays.SMatrix{2,2}(
+            -Sa[k,k,b],
+            one(Sa[k,l,b])-Sa[k,l,b],
+            one(Sa[l,k,b])-Sa[l,k,b],
+            -Sa[l,l,b]
+        )
+        gammacc_Scc_lu = lu_2x2(gammacc_Scc)
+        # gammacc_Scc_lu =  lu(gammacc_Scc)
+
+        # compute the terms we will use in the inner loop
+        for iindex in eachindex(ranges)
+            for ii in ranges[iindex]
+                i = ii-iindex+1
+
+                # solve the linear system to compute il_lk_ll_ik and
+                # ik_kl_kk_il where
+                # il_lk_ll_ik = (Sa[i,l]*(1-Sa[l,k])+Sa[l,l]*Sa[i,k])/denom
+                # ik_kl_kk_il = (Sa[i,k]*(1-Sa[k,l])+Sa[k,k]*Sa[i,l])/denom
+                # denom = (1-Sa[k,l])*(1-Sa[l,k]) - Sa[k,k]*Sa[l,l]
+                Scp = StaticArrays.SVector{2}(Sa[ii,k,b],Sa[ii,l,b])
+                il_lk_ll_ik[i], ik_kl_kk_il[i] = ldiv_2x2(gammacc_Scc_lu,Scp)
+                # il_lk_ll_ik[i], ik_kl_kk_il[i] = gammacc_Scc_lu \ Scp
+
+            end
+        end
+
+        # ii and jj are the indices which extend up to m and skip k,l
+        # i and j extend up to m-2 and are consecutive 
+        for jindex in eachindex(ranges)
+            for jj in ranges[jindex]
+                j = jj-jindex+1
+
+                # solve the linear system to compute jl_lk_ll_jk and
+                # jk_kl_kk_jl where
+                # jl_lk_ll_jk = (Sa[j,l]*(1-Sa[l,k])+Sa[l,l]*Sa[j,k])/denom
+                # jk_kl_kk_jl = (Sa[j,k]*(1-Sa[k,l])+Sa[k,k]*Sa[j,l])/denom
+                # denom = (1-Sa[k,l])*(1-Sa[l,k]) - Sa[k,k]*Sa[l,l]
+                Scp = StaticArrays.SVector{2}(Sa[jj,k,b],Sa[jj,l,b])
+                jl_lk_ll_jk, jk_kl_kk_jl = ldiv_2x2(gammacc_Scc_lu,Scp)
+                # jl_lk_ll_jk, jk_kl_kk_jl = gammacc_Scc_lu \ Scp
+
+                for iindex in eachindex(ranges)
+                    for ii in ranges[iindex]
+                        i = ii-iindex+1
+
+                        # compute the scattering matrix
+                        # Wedge thesis Eq. 3.14
+                        Sout[i,j,b] = Sa[ii,jj,b] +
+                           Sa[l,jj,b]*ik_kl_kk_il[i] +
+                           Sa[k,jj,b]*il_lk_ll_ik[i]
+
+                        # compute the noise correlation matrix
+                        # Wedge thesis Eq. 3.17
+                        Cout[i,j,b] = Ca[ii,jj,b] +
+                            Ca[l,k,b]*ik_kl_kk_il[i]*conj(jl_lk_ll_jk) +
+                            Ca[k,l,b]*il_lk_ll_ik[i]*conj(jk_kl_kk_jl) +
+                            Ca[l,l,b]*ik_kl_kk_il[i]*conj(jk_kl_kk_jl) +
+                            Ca[k,k,b]*il_lk_ll_ik[i]*conj(jl_lk_ll_jk) +
+                            Ca[l,jj,b]*ik_kl_kk_il[i] +
+                            Ca[k,jj,b]*il_lk_ll_ik[i] +
+                            Ca[ii,l,b]*conj(jk_kl_kk_jl) +
+                            Ca[ii,k,b]*conj(jl_lk_ll_jk)
+                    end
+                end
+            end
+        end
+    end
+    return Sout, Cout
+end
+
+"""
+    interconnectS(Sa::AbstractArray, Sb::AbstractArray, Ca::AbstractArray,
+        Cb::AbstractArray,k::Int, l::Int;
+        nbatches::Int = Base.Threads.nthreads())
+
+Connect port `k` on an `m` port network, represented by the scattering
+parameter matrix `Sa`, to port `l` on an `n` port network, represented by the
+scattering parameter matrix `Sb`, resulting in a single `(m+n-2)` port
+network, as illustrated below:
+
+Input network:
+```
+      m |        | k+1                       | 2
+        |        |                           |
+        |   ...  |                     ...   |
+        |________|                  _________|________
+        |        |                  |        |       1
+        |   Sa   |                  |   Sb   |
+        |  m x m |                  |  n x n |
+    ____|________|__________________|________|
+    1   |   ...     k           l   |   ...  |
+        |                           |        |
+        |                           |        |
+      2 |                       l+1 |        | n
+```
+Output network:
+```
+    m-1 |        | k      | m+1    
+        |        |        |        
+        |   ...  |   ...  |        
+        |________|________|________
+        |                 |     m  
+        |        S        |        
+        |  m+n-2 x m+n-2  |        
+    ____|_________________|        
+    1   |   ...  |   ...  |        
+        |        |        |        
+        |        |        |        
+      2 |        |        |  m+n-2 
+                m-1+l              
+```
+# Arguments
+- `Sa::Array`: Array of scattering parameters representing the first network
+    with ports along first two dimensions, followed by an arbitrary number
+    of other dimensions (eg. frequency).
+- `Sb::Array`: Array of scattering parameters representing the second network
+    with ports along first two dimensions, followed by an arbitrary number
+    of other dimensions (eg. frequency).
+- `Ca::Array`: Array of noise correlation parameters of the same dimensions as
+    `Sa`.
+- `Cb::Array`: Array of noise correlation parameters of the same dimensions as
+    `Sb`.
+- `k::Int`: Port on first network, with one based indexing.
+- `l::Int`: Port on second network, with one based indexing.
+
+# References
+S. W. Wedge, "Computer-aided design of low noise microwave circuits," PhD
+thesis (1991).
+R. C. Compton and D. B. Rutledge, "Perspectives in Microwave Circuit
+Analysis," Proceedings of the 32nd Midwest Symposium on Circuits and Systems,
+vol. 2, pp. 716–718, Aug. 1989. doi: 10.1109/MWSCAS.1989.101955
+V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
+in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
+249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
+"""
+function interconnectS(Sa::AbstractArray{T,N}, Sb::AbstractArray{T,N},
+    Ca::AbstractArray{T,N}, Cb::AbstractArray{T,N}, k::Int, l::Int;
+    nbatches::Int = Base.Threads.nthreads()) where {T,N}
+
+    # make a tuple with the size of the array
+    # the first two dimensions are two smaller
+    sizeSa = size(Sa)
+    sizeSb = size(Sb)
+    sizeS = NTuple{N}(ifelse(i<=2,sizeSa[i]+sizeSb[i]-2,sizeSa[i]) for i in 1:length(sizeSa))
+
+    # allocate an array of zeros of the same type as Sa
+    Sout = similar(Sa,sizeS)
+    Cout = similar(Ca,sizeS)
+
+    # connect the networks
+    interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,k,l;nbatches = nbatches)
+
+    return Sout, Cout
+end
+
+
+"""
+    interconnectS!(Sout, Cout, Sa, Sb, Ca, Cb, k, l)
+
+See [`interconnectS`](@ref) for description.
+
+"""
+function interconnectS!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int;
+    nbatches::Int = Base.Threads.nthreads())
+
+    # validate all of the inputs
+    if ndims(Sa) != ndims(Sb)
+        throw(DimensionMismatch("`Sa` and `Sb` must have the same number of dimensions."))
+    end
+
+    if ndims(Sa) != ndims(Sout)
+        throw(DimensionMismatch("`Sout`, `Sa`, and `Sb` must have the same number of dimensions."))
+    end
+
+    if ndims(Sa) < 2
+        throw(DimensionMismatch("`Sout`, `Sa`, and `Sb` must have atleast two dimensions."))
+    end
+
+    if size(Sa,1) != size(Sa,2)
+        throw(DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."))
+    end
+
+    if size(Sb,1) != size(Sb,2)
+        throw(DimensionMismatch("Lengths of first two dimensions of `Sb` must be equal."))
+    end
+
+    if size(Sout,1) != size(Sout,2)
+        throw(DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."))
+    end
+
+    if size(Sa,1) + size(Sb,1) - 2 != size(Sout,1)
+        throw(DimensionMismatch("First two dimensions of `Sout` must be `m+n-2`."))
+    end
+
+    for i in 3:ndims(Sa)
+        if size(Sa,i) != size(Sout,i)
+            throw(DimensionMismatch("Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."))
+        end
+    end
+
+    if k > size(Sa,1)
+        throw(ArgumentError("Port `k` is larger than number of ports in `Sa`."))
+    end
+
+    if l > size(Sb,1)
+        throw(ArgumentError("Port `l` is larger than number of ports in `Sb`."))
+    end
+
+    if l < 1
+        throw(ArgumentError("Port `l` is smaller than one."))
+    end
+
+    if k < 1
+        throw(ArgumentError("Port `k` is smaller than one."))
+    end
+
+    if size(Ca) != size(Sa)
+        throw(DimensionMismatch("The size of `Ca` must the same as the size of `Sa`."))
+    end
+
+    if size(Cb) != size(Sb)
+        throw(DimensionMismatch("The size of `Cb` must the same as the size of `Sb`."))
+    end
+
+    if size(Cout) != size(Sout)
+        throw(DimensionMismatch("The size of `Cout` must the same as the size of `Sout`."))
+    end
+
+    # loop over the dimensions of the array greater than 2
+    indices = CartesianIndices(axes(Sout)[3:end])
+    if nbatches > 1 && length(indices) > nbatches
+        batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
+        Threads.@sync for batch in batches
+            Base.Threads.@spawn interconnectS_inner!(Sout,Cout,Sa,Sb,Ca,Cb,k,l,batch)
+        end
+
+    else
+        interconnectS_inner!(Sout,Cout,Sa,Sb,Ca,Cb,k,l,indices)
+    end
+
+    return Sout
+end
+
+"""
+    interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
+        batch::AbstractArray)
+
+See [`interconnectS`](@ref) for description.
+
+"""
+function interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
+    batch::AbstractArray)
+
+    # the number of ports in the input matrix
+    m = size(Sa,1)
+    n = size(Sb,1)
+
+    range1a = 1:k-1
+    range1b = k+1:m
+    range2a = m+1:m+l-1
+    range2b = m+l+1:m+n
+
+    # this indexes across the first part
+    ranges1 = (range1a, range1b)
+
+    # this indexes across the second part
+    ranges2 = (range2a, range2b)
+
+    a_ik = similar(Sa,m)
+    a_ik_b_ll = similar(Sa,m)
+    b_il = similar(Sb,n)
+    b_il_a_kk = similar(Sb,n)
+
+    # loop over the axes of the scattering parameter matrices after the first
+    # two (eg. frequencies).
+    @inbounds for b in batch
+
+        gammacc_Scc = StaticArrays.SMatrix{2,2}(
+            -Sa[k,k,b],
+            one(Sa[k,k,b]),
+            one(Sa[k,k,b]),
+            -Sb[l,l,b]
+        )
+        # gammacc_Scc_lu = lu(gammacc_Scc)
+        gammacc_Scc_lu = lu_2x2(gammacc_Scc)
+
+        # solve the linear system to compute Sa[i,k]*Sb[l,l]/denom and
+        # Sa[i,k]/denom
+        for iindex in eachindex(ranges1)
+            for ii in ranges1[iindex]
+                Scp = StaticArrays.SVector{2}(Sa[ii,k,b],0)
+                a_ik_b_ll[ii], a_ik[ii] = ldiv_2x2(gammacc_Scc_lu,Scp)
+            end
+        end
+
+        # solve the linear system to compute Sb[i,l]*Sa[k,k]/denom and
+        # Sb[i,l]/denom
+        for iindex in eachindex(ranges2)
+            for ii in ranges2[iindex]
+                Scp = StaticArrays.SVector{2}(0,Sb[ii-m,l,b])
+                b_il[ii-m], b_il_a_kk[ii-m] = ldiv_2x2(gammacc_Scc_lu,Scp)
+            end
+        end
+
+        # # calculate the denominator, for debugging
+        # denom = one(Sa[k,k,b])-Sa[k,k,b]*Sb[l,l,b]
+
+        # ii and jj index across the concatenated Sa and Sb arrays skipping
+        # the k'th and l'th elements. Imagine the Sa nxn array in the upper
+        # left quadrant and the Sb mxm in the lower right quadrant. These are
+        # used to pick out the elements of Sa and Sb. i and j index into the 
+        # m+n-2 output array. These indices are contiguous.
+
+        # left side
+        for jindex in eachindex(ranges1)
+
+            for jj in ranges1[jindex]
+                j = jj-jindex+1
+
+                # upper left quadrant
+                for iindex in eachindex(ranges1)
+                    for ii in ranges1[iindex]
+                        i = ii-iindex+1
+
+                        # Eq. 3.15a from Wedge thesis
+                        Sout[i,j,b] = Sa[ii,jj,b] + Sa[k,jj,b]*a_ik_b_ll[ii]
+                        # Eq. 3.19a from Wedge thesis
+                        Cout[i,j,b] = Ca[ii,jj,b] +
+                            Ca[ii,k,b]*conj(a_ik_b_ll[jj]) +
+                            Ca[k,jj,b]*a_ik_b_ll[ii] +
+                            Cb[l,l,b]*a_ik[ii]*conj(a_ik[jj]) +
+                            Ca[k,k,b]*a_ik_b_ll[ii]*conj(a_ik_b_ll[jj])
+
+                        # # a non-optimized version of the above for debugging
+                        # Sout[i,j,b] = Sa[ii,jj,b] + Sa[k,jj,b]*Sb[l,l,b]*Sa[ii,k,b]/denom
+                        # Cout[i,j,b] = Ca[ii,jj,b] +
+                        #     Ca[ii,k,b]*conj(Sa[jj,k,b]*Sb[l,l,b]/denom) +
+                        #     Ca[k,jj,b]*Sa[ii,k,b]*Sb[l,l,b]/denom +
+                        #     Cb[l,l,b]*Sa[ii,k,b]/denom*conj(Sa[jj,k,b]/denom) +
+                        #     Ca[k,k,b]*Sb[l,l,b]*Sa[ii,k,b]/denom*conj(Sb[l,l,b]*Sa[jj,k,b]/denom)
+                    end
+                end
+
+                # lower left quadrant
+                for iindex in eachindex(ranges2)
+                    for ii in ranges2[iindex]
+                        i = ii-iindex+1-1
+
+                        # Eq. 3.15b from Wedge thesis
+                        Sout[i,j,b] = Sa[k,jj,b]*b_il[ii-m]
+                        # Eq. 3.19b from Wedge thesis
+                        Cout[i,j,b] = Cb[ii-m,l,b]*conj(a_ik[jj]) +
+                            Ca[k,jj,b]*b_il[ii-m] +
+                            Cb[l,l,b]*b_il_a_kk[ii-m]*conj(a_ik[jj]) +
+                            Ca[k,k,b]*b_il[ii-m]*conj(a_ik_b_ll[jj])
+
+                        # # a non-optimized version of the above for debugging
+                        # Sout[i,j,b] = Sa[k,jj,b]*Sb[ii-m,l,b]/denom
+                        # Cout[i,j,b] = Cb[ii-m,l,b]*conj(Sa[jj,k,b]/denom) +
+                        #     Ca[k,jj,b]*Sb[ii-m,l,b]/denom +
+                        #     Cb[l,l,b]*Sb[ii-m,l,b]*Sa[k,k,b]/denom*conj(Sa[jj,k,b]/denom) +
+                        #     Ca[k,k,b]*Sb[ii-m,l,b]/denom*conj(Sa[jj,k,b]*Sb[l,l,b]/denom)
+                    end
+                end
+
+            end
+
+        end
+
+        # right side
+        for jindex in eachindex(ranges2)
+
+            for jj in ranges2[jindex]
+                j = jj-jindex+1-1
+
+                # upper right quadrant
+                for iindex in eachindex(ranges1)
+                    for ii in ranges1[iindex]
+                        i = ii-iindex+1
+
+                        # Eq. 3.15b from Wedge thesis
+                        Sout[i,j,b] = Sb[l,jj-m,b]*a_ik[ii]
+                        # Eq. 3.19b from Wedge thesis
+                        Cout[i,j,b] = Ca[ii,k,b]*conj(b_il[jj-m]) +
+                            Cb[l,jj-m,b]*a_ik[ii] +
+                            Ca[k,k,b]*a_ik_b_ll[ii]*conj(b_il[jj-m]) +
+                            Cb[l,l,b]*a_ik[ii]*conj(b_il_a_kk[jj-m])
+
+                        # # a non-optimized version of the above for debugging
+                        # Sout[i,j,b] = Sb[l,jj-m,b]*Sa[ii,k,b]/denom
+                        # Cout[i,j,b] = Ca[ii,k,b]*conj(Sb[jj-m,l,b]/denom) +
+                        #     Cb[l,jj-m,b]*Sa[ii,k,b]/denom +
+                        #     Ca[k,k,b]*Sa[ii,k,b]*Sb[l,l,b]/denom*conj(Sb[jj-m,l,b]/denom) +
+                        #     Cb[l,l,b]*Sa[ii,k,b]/denom*conj(Sb[jj-m,l,b]*Sa[k,k,b]/denom)
+                    end
+                end
+
+                # lower right quadrant
+                for iindex in eachindex(ranges2)
+                    for ii in ranges2[iindex]
+                        i = ii-iindex+1-1
+
+                        # Eq. 3.15a from Wedge thesis
+                        Sout[i,j,b] = Sb[ii-m,jj-m,b] + Sb[l,jj-m,b]*b_il_a_kk[ii-m]
+                        # Eq. 3.19a from Wedge thesis
+                        Cout[i,j,b] = Cb[ii-m,jj-m,b] +
+                            Cb[ii-m,l,b]*conj(b_il_a_kk[jj-m]) +
+                            Cb[l,jj-m,b]*b_il_a_kk[ii-m] +
+                            Ca[k,k,b]*b_il[ii-m]*conj(b_il[jj-m]) +
+                            Cb[l,l,b]*b_il_a_kk[ii-m]*conj(b_il_a_kk[jj-m])
+
+                        # # a non-optimized version of the above for debugging
+                        # Sout[i,j,b] = Sb[ii-m,jj-m,b] + Sb[l,jj-m,b]*Sa[k,k,b]*Sb[ii-m,l,b]/denom
+                        # Cout[i,j,b] = Cb[ii-m,jj-m,b] +
+                        #     Cb[ii-m,l,b]*conj(Sb[jj-m,l,b]*Sa[k,k,b]/denom) +
+                        #     Cb[l,jj-m,b]*Sb[ii-m,l,b]*Sa[k,k,b]/denom +
+                        #     Ca[k,k,b]*Sb[ii-m,l,b]/denom*conj(Sb[jj-m,l,b]/denom) +
+                        #     Cb[l,l,b]*Sa[k,k,b]*Sb[ii-m,l,b]/denom*conj(Sa[k,k,b]*Sb[jj-m,l,b]/denom)
+                    end
+                end
+
+            end
+
+        end
+
+    end
+
+    return Sout, Cout
+
+end
+
+"""
+    interconnectS(Sa::AbstractArray, Sb::AbstractArray, k::Int, l::Int;
         nbatches::Int = Base.Threads.nthreads())
 
 Connect port `k` on an `m` port network, represented by the scattering
@@ -242,8 +844,8 @@ V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
 in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function connectS(Sa::AbstractArray{T,N},Sb::AbstractArray{T,N},k::Int,l::Int;
-    nbatches::Int = Base.Threads.nthreads()) where {T,N}
+function interconnectS(Sa::AbstractArray{T,N}, Sb::AbstractArray{T,N}, k::Int,
+    l::Int; nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
     # make a tuple with the size of the array
     # the first two dimensions are two smaller
@@ -255,18 +857,18 @@ function connectS(Sa::AbstractArray{T,N},Sb::AbstractArray{T,N},k::Int,l::Int;
     Sout = similar(Sa,sizeS)
 
     # connect the networks
-    connectS!(Sout,Sa,Sb,k,l;nbatches = nbatches)
+    interconnectS!(Sout,Sa,Sb,k,l;nbatches = nbatches)
 
     return Sout
 end
 
 """
-    connectS!(Sout,Sa,Sb,k,l)
+    interconnectS!(Sout, Sa, Sb, k, l)
 
-See [`connectS`](@ref) for description.
+See [`interconnectS`](@ref) for description.
 
 """
-function connectS!(Sout,Sa,Sb,k::Int,l::Int;
+function interconnectS!(Sout, Sa, Sb, k::Int, l::Int;
     nbatches::Int = Base.Threads.nthreads())
 
     # validate all of the inputs
@@ -325,23 +927,23 @@ function connectS!(Sout,Sa,Sb,k::Int,l::Int;
     if nbatches > 1 && length(indices) > nbatches
         batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
         Threads.@sync for batch in batches
-            Base.Threads.@spawn connectS_inner!(Sout,Sa,Sb,k,l,batch)
+            Base.Threads.@spawn interconnectS_inner!(Sout,Sa,Sb,k,l,batch)
         end
 
     else
-        connectS_inner!(Sout,Sa,Sb,k,l,indices)
+        interconnectS_inner!(Sout,Sa,Sb,k,l,indices)
     end
 
     return Sout
 end
 
 """
-    connectS_inner!(Sout,Sa,Sb,k::Int,l::Int,batch::AbstractArray)
+    interconnectS_inner!(Sout,Sa,Sb,k::Int,l::Int,batch::AbstractArray)
 
-See [`connectS`](@ref) for description.
+See [`interconnectS`](@ref) for description.
 
 """
-function connectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray)
+function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray)
 
     # the number of ports in the input matrix
     m = size(Sa,1)
@@ -446,7 +1048,7 @@ function connectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray)
 end
 
 """
-    connectSports(portsa::AbstractVector{Tuple{T,Int}},k::Int,l::Int) where T
+    intraconnectSports(portsa::AbstractVector{Tuple{T,Int}},k::Int,l::Int) where T
 
 Return a vector of tuples of (networkname, portindex) from `portsa` after
 ports `k` and `l` have been connected. See [`connectS`](@ref) for more
@@ -454,14 +1056,15 @@ information.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.connectSports([(:S1,1),(:S1,2),(:S1,3),(:S1,4),(:S1,5)],3,4)
+julia> JosephsonCircuits.intraconnectSports([(:S1,1),(:S1,2),(:S1,3),(:S1,4),(:S1,5)],3,4)
 3-element Vector{Tuple{Symbol, Int64}}:
  (:S1, 1)
  (:S1, 2)
  (:S1, 5)
 ```
 """
-function connectSports(portsa::AbstractVector{Tuple{T,Int}},k::Int,l::Int) where T
+function intraconnectSports(portsa::AbstractVector{Tuple{T,Int}}, k::Int,
+    l::Int) where T
 
 
     if k > length(portsa)
@@ -507,7 +1110,7 @@ function connectSports(portsa::AbstractVector{Tuple{T,Int}},k::Int,l::Int) where
 end
 
 """
-    connectSports(portsa::AbstractVector{Tuple{T,Int}},
+    interconnectSports(portsa::AbstractVector{Tuple{T,Int}},
         portsb::AbstractVector{Tuple{T,Int}}, k::Int, l::Int) where T
 
 Return a vector of tuples of (networkname, portindex) with `portsa` from the
@@ -518,7 +1121,7 @@ has `(m+n-2)` ports. See [`connectS`](@ref) for more information.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.connectSports([(:S1,1),(:S1,2),(:S1,3),(:S1,4),(:S1,5)],[(:S2,1),(:S2,2),(:S2,3),(:S2,4),(:S2,5)],3,4)
+julia> JosephsonCircuits.interconnectSports([(:S1,1),(:S1,2),(:S1,3),(:S1,4),(:S1,5)],[(:S2,1),(:S2,2),(:S2,3),(:S2,4),(:S2,5)],3,4)
 8-element Vector{Tuple{Symbol, Int64}}:
  (:S1, 1)
  (:S1, 2)
@@ -530,7 +1133,7 @@ julia> JosephsonCircuits.connectSports([(:S1,1),(:S1,2),(:S1,3),(:S1,4),(:S1,5)]
  (:S2, 5)
 ```
 """
-function connectSports(portsa::AbstractVector{Tuple{T,Int}},
+function interconnectSports(portsa::AbstractVector{Tuple{T,Int}},
         portsb::AbstractVector{Tuple{T,Int}}, k::Int, l::Int) where T
 
 
@@ -581,7 +1184,7 @@ end
 
 
 """
-    cascadeS(Sa,Sb)
+    cascadeS(Sa, Sb)
 
 Cascade the scattering parameter matrix `Sa` with the scattering matrix `Sb`
 and return the combined scattering matrix.
@@ -606,7 +1209,7 @@ Cascaded 2n-Ports (Correspondence)," in IRE Transactions on Microwave
 Theory and Techniques, vol. 9, no. 5, pp. 454-454, September 1961, doi:
 10.1109/TMTT.1961.1125369 .
 """
-function cascadeS(Sa,Sb)
+function cascadeS(Sa, Sb)
 
     S = similar(Sa)
     # make a view of T,S and loop
@@ -670,7 +1273,7 @@ julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tu
 1
 ```
 """
-function remove_edge!(g,src_node,edge_index)
+function remove_edge!(g, src_node, edge_index)
 
     # remove the source
     dst_node = popat!(g.fadjlist[src_node], edge_index)
@@ -701,7 +1304,8 @@ julia> g=JosephsonCircuits.Graphs.SimpleDiGraphFromIterator(JosephsonCircuits.tu
  []
 ```
 """
-function move_fedge!(g,src_node,src_node_new,edge_index,fadjlist1,fadjlist2)
+function move_fedge!(g, src_node, src_node_new, edge_index, fadjlist1,
+    fadjlist2)
 
     # remove the source
     dst_node = popat!(g.fadjlist[src_node], edge_index)
@@ -1262,8 +1866,8 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     # if src_node == dst_node, then make a self connection
     if src_node == dst_node
         # connect the networks and find the ports of the connected network
-        connected_network = connectS(networkdata[src_node],src_port_index,dst_port_index;nbatches=nbatches)
-        connected_ports = connectSports(ports[src_node],src_port_index,dst_port_index)
+        connected_network = intraconnectS(networkdata[src_node],src_port_index,dst_port_index;nbatches=nbatches)
+        connected_ports = intraconnectSports(ports[src_node],src_port_index,dst_port_index)
     
         # delete the ports for the dst. update the ports for the src.
         ports[src_node] = connected_ports
@@ -1290,9 +1894,8 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
         end
 
         # connect the networks and find the ports of the connected network
-         connectS!(connected_network,networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
-        # connected_network = connectS(networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
-        connected_ports = connectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
+         interconnectS!(connected_network,networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
+        connected_ports = interconnectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
 
         # delete the ports for the dst. update the ports for the src.
         ports[src_node] = connected_ports

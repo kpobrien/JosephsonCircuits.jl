@@ -6,316 +6,577 @@ import StaticArrays
 @testset verbose=true "network connection" begin
 
     # one network
-    @testset "connectS one network errors" begin
+    @testset "intraconnectS errors" begin
         begin
             Sa = Complex{Float64}[1 2;3 4]
+            Ca = Complex{Float64}[1 2;3 4]
+
             @test_throws(
                 ArgumentError("Port `k` is smaller than one."),
-                JosephsonCircuits.connectS(Sa,0,1)
+                JosephsonCircuits.intraconnectS(Sa,0,1)
+            )
+
+            @test_throws(
+                ArgumentError("Port `k` is smaller than one."),
+                JosephsonCircuits.intraconnectS(Sa,Ca,0,1)
             )
 
             @test_throws(
                 ArgumentError("Port `l` is smaller than one."),
-                JosephsonCircuits.connectS(Sa,1,0)
+                JosephsonCircuits.intraconnectS(Sa,1,0)
+            )
+
+            @test_throws(
+                ArgumentError("Port `l` is smaller than one."),
+                JosephsonCircuits.intraconnectS(Sa,Ca,1,0)
             )
 
             @test_throws(
                 ArgumentError("Port `k` is larger than number of ports in `Sa`."),
-                JosephsonCircuits.connectS(Sa,3,1)
+                JosephsonCircuits.intraconnectS(Sa,3,1)
+            )
+
+            @test_throws(
+                ArgumentError("Port `k` is larger than number of ports in `Sa`."),
+                JosephsonCircuits.intraconnectS(Sa,Ca,3,1)
             )
 
             @test_throws(
                 ArgumentError("Port `l` is larger than number of ports in `Sa`."),
-                JosephsonCircuits.connectS(Sa,1,3)
+                JosephsonCircuits.intraconnectS(Sa,1,3)
+            )
+
+            @test_throws(
+                ArgumentError("Port `l` is larger than number of ports in `Sa`."),
+                JosephsonCircuits.intraconnectS(Sa,Ca,1,3)
             )
 
             @test_throws(
                 ArgumentError("`k` and `l` cannot be equal because a port cannot be merged with itself."),
-                JosephsonCircuits.connectS(Sa,1,1)
+                JosephsonCircuits.intraconnectS(Sa,1,1)
             )
+
+            @test_throws(
+                ArgumentError("`k` and `l` cannot be equal because a port cannot be merged with itself."),
+                JosephsonCircuits.intraconnectS(Sa,Ca,1,1)
+            )
+
         end
 
         begin
             Sa = Complex{Float64}[1 2 3;4 5 6]
+            Ca = Complex{Float64}[1 2 3;4 5 6]
+
             @test_throws(
                 DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."),
-                JosephsonCircuits.connectS(Sa,1,2)
+                JosephsonCircuits.intraconnectS(Sa,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."),
+                JosephsonCircuits.intraconnectS(Sa,Ca,1,2)
+            )
+        end
+
+        begin
+            Sa = Complex{Float64}[1 2;3 4]
+            Ca = Complex{Float64}[1 2 3;4 5 6;7 8 9]
+
+            @test_throws(
+                DimensionMismatch("The size of `Ca` must the same as the size of `Sa`."),
+                JosephsonCircuits.intraconnectS(Sa,Ca,1,2)
             )
         end
 
         # one network, in place
         begin
             Sa = rand(Complex{Float64},3,3)
+            Ca = rand(Complex{Float64},3,3)
             Sout = zeros(Complex{Float64},2,2)
+            Cout = zeros(Complex{Float64},2,2)
+
             @test_throws(
                 DimensionMismatch("Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."),
-                JosephsonCircuits.connectS!(Sout,Sa,1,2)
+                JosephsonCircuits.intraconnectS!(Sout,Sa,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."),
+                JosephsonCircuits.intraconnectS!(Sout,Cout,Sa,Ca,1,2)
+            )
+        end
+
+        begin
+            Sa = rand(Complex{Float64},4,4)
+            Ca = rand(Complex{Float64},4,4)
+            Sout = zeros(Complex{Float64},2,2)
+            Cout = zeros(Complex{Float64},3,3)
+
+            @test_throws(
+                DimensionMismatch("The size of `Cout` must the same as the size of `Sout`."),
+                JosephsonCircuits.intraconnectS!(Sout,Cout,Sa,Ca,1,2)
             )
         end
     end
 
-    @testset "connectS! one network errors" begin
+    @testset "intraconnectS! errors" begin
         begin
             Sa = rand(Complex{Float64},4,4)
+            Ca = rand(Complex{Float64},4,4)
             Sout = zeros(Complex{Float64},2,2,1)
+            Cout = zeros(Complex{Float64},2,2,1)
+
             @test_throws(
                 DimensionMismatch("`Sout` and `Sa` must have the same number of dimensions."),
-                JosephsonCircuits.connectS!(Sout,Sa,1,2)
+                JosephsonCircuits.intraconnectS!(Sout,Sa,1,2)
             )
+
+            @test_throws(
+                DimensionMismatch("`Sout` and `Sa` must have the same number of dimensions."),
+                JosephsonCircuits.intraconnectS!(Sout,Cout,Sa,Ca,1,2)
+            )
+
+    # if size(Cout) != size(Sout)
+    #     throw(DimensionMismatch("The size of `Cout` must the same as the size of `Sout`."))
+    # end
+
         end
 
         begin
             Sa = rand(Complex{Float64},4)
+            Ca = rand(Complex{Float64},4)
             Sout = zeros(Complex{Float64},2)
+            Cout = zeros(Complex{Float64},2)
+
             @test_throws(
                 DimensionMismatch("`Sout` and `Sa` must have at least two dimensions."),
-                JosephsonCircuits.connectS!(Sout,Sa,1,2)
+                JosephsonCircuits.intraconnectS!(Sout,Sa,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("`Sout` and `Sa` must have at least two dimensions."),
+                JosephsonCircuits.intraconnectS!(Sout,Cout,Sa,Ca,1,2)
             )
         end
 
         begin
             Sa = rand(Complex{Float64},4,4)
+            Ca = rand(Complex{Float64},4,4)
             Sout = zeros(Complex{Float64},2,3)
+            Cout = zeros(Complex{Float64},2,3)
+
             @test_throws(
                 DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."),
-                JosephsonCircuits.connectS!(Sout,Sa,1,2)
+                JosephsonCircuits.intraconnectS!(Sout,Sa,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."),
+                JosephsonCircuits.intraconnectS!(Sout,Cout,Sa,Ca,1,2)
             )
         end
 
         begin
             Sa = rand(Complex{Float64},3,3,3)
+            Ca = rand(Complex{Float64},3,3,3)
             Sout = zeros(Complex{Float64},1,1,4)
+            Cout = zeros(Complex{Float64},1,1,4)
+
             @test_throws(
                 DimensionMismatch("Non-port axis lengths of `Sa` and `Sout` must be equal."),
-                JosephsonCircuits.connectS!(Sout,Sa,1,2)
+                JosephsonCircuits.intraconnectS!(Sout,Sa,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("Non-port axis lengths of `Sa` and `Sout` must be equal."),
+                JosephsonCircuits.intraconnectS!(Sout,Cout,Sa,Ca,1,2)
             )
         end
     end
 
     # two networks
-    @testset "connectS two networks errors" begin
+    @testset "interconnectS errors" begin
         begin
             Sa = Complex{Float64}[1 2;3 4]
+            Ca = Complex{Float64}[1 2;3 4]
             Sb = Complex{Float64}[5 6;7 8]
+            Cb = Complex{Float64}[5 6;7 8]
+
             @test_throws(
                 ArgumentError("Port `k` is smaller than one."),
-                JosephsonCircuits.connectS(Sa,Sb,0,1)
+                JosephsonCircuits.interconnectS(Sa,Sb,0,1)
+            )
+
+            @test_throws(
+                ArgumentError("Port `k` is smaller than one."),
+                JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,0,1)
             )
 
             @test_throws(
                 ArgumentError("Port `l` is smaller than one."),
-                JosephsonCircuits.connectS(Sa,Sb,1,0)
+                JosephsonCircuits.interconnectS(Sa,Sb,1,0)
+            )
+
+            @test_throws(
+                ArgumentError("Port `l` is smaller than one."),
+                JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,1,0)
             )
 
             @test_throws(
                 ArgumentError("Port `k` is larger than number of ports in `Sa`."),
-                JosephsonCircuits.connectS(Sa,Sb,3,1)
+                JosephsonCircuits.interconnectS(Sa,Sb,3,1)
+            )
+
+            @test_throws(
+                ArgumentError("Port `k` is larger than number of ports in `Sa`."),
+                JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,3,1)
             )
 
             @test_throws(
                 ArgumentError("Port `l` is larger than number of ports in `Sb`."),
-                JosephsonCircuits.connectS(Sa,Sb,1,3)
+                JosephsonCircuits.interconnectS(Sa,Sb,1,3)
+            )
+
+            @test_throws(
+                ArgumentError("Port `l` is larger than number of ports in `Sb`."),
+                JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,1,3)
             )
         end
 
         begin
             Sa = Complex{Float64}[1 2 3;4 5 6]
+            Ca = Complex{Float64}[1 2 3;4 5 6]
             Sb = Complex{Float64}[5 6;7 8]
+            Cb = Complex{Float64}[5 6;7 8]
+
             @test_throws(
                 DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."),
-                JosephsonCircuits.connectS(Sa,Sb,1,2)
+                JosephsonCircuits.interconnectS(Sa,Sb,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."),
+                JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,1,2)
             )
         end
 
         begin
             Sa = Complex{Float64}[1 2;4 5]
+            Ca = Complex{Float64}[1 2;4 5]
             Sb = Complex{Float64}[5 6 7;8 9 10]
+            Cb = Complex{Float64}[5 6 7;8 9 10]
+
             @test_throws(
                 DimensionMismatch("Lengths of first two dimensions of `Sb` must be equal."),
-                JosephsonCircuits.connectS(Sa,Sb,1,2)
+                JosephsonCircuits.interconnectS(Sa,Sb,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("Lengths of first two dimensions of `Sb` must be equal."),
+                JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,1,2)
             )
         end
     end
 
     # two networks, in place
-    @testset "connectS! two networks errors" begin
+    @testset "interconnectS! errors" begin
         begin
             Sa = rand(Complex{Float64},3,3)
+            Ca = rand(Complex{Float64},3,3)
             Sb = rand(Complex{Float64},3,3)
+            Cb = rand(Complex{Float64},3,3)
             Sout = zeros(Complex{Float64},2,2)
+            Cout = zeros(Complex{Float64},2,2)
+
             @test_throws(
                 DimensionMismatch("First two dimensions of `Sout` must be `m+n-2`."),
-                JosephsonCircuits.connectS!(Sout,Sa,Sb,1,2)
+                JosephsonCircuits.interconnectS!(Sout,Sa,Sb,1,2)
             )
+
+            @test_throws(
+                DimensionMismatch("First two dimensions of `Sout` must be `m+n-2`."),
+                JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
+            )
+
         end
 
         begin
             Sa = rand(Complex{Float64},3,3)
+            Ca = rand(Complex{Float64},3,3)
             Sb = rand(Complex{Float64},3,3,1)
+            Cb = rand(Complex{Float64},3,3,1)
             Sout = zeros(Complex{Float64},4,4)
+            Cout = zeros(Complex{Float64},4,4)
+
             @test_throws(
                 DimensionMismatch("`Sa` and `Sb` must have the same number of dimensions."),
-                JosephsonCircuits.connectS!(Sout,Sa,Sb,1,2)
+                JosephsonCircuits.interconnectS!(Sout,Sa,Sb,1,2)
             )
+
+            @test_throws(
+                DimensionMismatch("`Sa` and `Sb` must have the same number of dimensions."),
+                JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
+            )
+
         end
 
         begin
             Sa = rand(Complex{Float64},4,4)
+            Ca = rand(Complex{Float64},4,4)
             Sb = rand(Complex{Float64},4,4)
+            Cb = rand(Complex{Float64},4,4)
             Sout = zeros(Complex{Float64},6,6,1)
+            Cout = zeros(Complex{Float64},6,6,1)
+
             @test_throws(
                 DimensionMismatch("`Sout`, `Sa`, and `Sb` must have the same number of dimensions."),
-                JosephsonCircuits.connectS!(Sout,Sa,Sb,1,2)
+                JosephsonCircuits.interconnectS!(Sout,Sa,Sb,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("`Sout`, `Sa`, and `Sb` must have the same number of dimensions."),
+                JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
             )
         end
 
         begin
             Sa = rand(Complex{Float64},4)
+            Ca = rand(Complex{Float64},4)
             Sb = rand(Complex{Float64},4)
+            Cb = rand(Complex{Float64},4)
             Sout = zeros(Complex{Float64},6)
+            Cout = zeros(Complex{Float64},6)
+
             @test_throws(
                 DimensionMismatch("`Sout`, `Sa`, and `Sb` must have atleast two dimensions."),
-                JosephsonCircuits.connectS!(Sout,Sa,Sb,1,2)
+                JosephsonCircuits.interconnectS!(Sout,Sa,Sb,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("`Sout`, `Sa`, and `Sb` must have atleast two dimensions."),
+                JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
             )
         end
 
         begin
             Sa = rand(Complex{Float64},4,4)
+            Ca = rand(Complex{Float64},4,4)
             Sb = rand(Complex{Float64},4,4)
+            Cb = rand(Complex{Float64},4,4)
             Sout = zeros(Complex{Float64},6,7)
+            Cout = zeros(Complex{Float64},6,7)
+
             @test_throws(
                 DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."),
-                JosephsonCircuits.connectS!(Sout,Sa,Sb,1,2)
+                JosephsonCircuits.interconnectS!(Sout,Sa,Sb,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."),
+                JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
             )
         end
 
         begin
             Sa = rand(Complex{Float64},3,3,3)
+            Ca = rand(Complex{Float64},3,3,3)
             Sb = rand(Complex{Float64},3,3,3)
+            Cb = rand(Complex{Float64},3,3,3)
             Sout = zeros(Complex{Float64},4,4,4)
+            Cout = zeros(Complex{Float64},4,4,4)
+
             @test_throws(
                 DimensionMismatch("Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."),
-                JosephsonCircuits.connectS!(Sout,Sa,Sb,1,2)
+                JosephsonCircuits.interconnectS!(Sout,Sa,Sb,1,2)
+            )
+
+            @test_throws(
+                DimensionMismatch("Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."),
+                JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
             )
         end
     end
 
     # check for consistency between the one and two network functions
-    @testset "connectS consistency" begin
+    @testset "interconnectS, intraconnectS consistency" begin
 
         begin
             Sa = rand(Complex{Float64},3,3,3)
+            Ca = rand(Complex{Float64},3,3,3)
             Sb = rand(Complex{Float64},3,3,3)
+            Cb = rand(Complex{Float64},3,3,3)
             Sboth = zeros(Complex{Float64},6,6,3)
             Sboth[1:size(Sa,1),1:size(Sa,1),:,:] .= Sa
             Sboth[size(Sa,1)+1:end,size(Sa,1)+1:end,:,:] .= Sb
-            Sout1 = JosephsonCircuits.connectS(Sboth,1,2+size(Sa,1))
-            Sout2 = JosephsonCircuits.connectS(Sa,Sb,1,2)
+            Cboth = zeros(Complex{Float64},6,6,3)
+            Cboth[1:size(Ca,1),1:size(Ca,1),:,:] .= Ca
+            Cboth[size(Ca,1)+1:end,size(Ca,1)+1:end,:,:] .= Cb
+
+            # test
+            Sout1 = JosephsonCircuits.intraconnectS(Sboth,1,2+size(Sa,1))
+            Sout2 = JosephsonCircuits.interconnectS(Sa,Sb,1,2)
+            Sout3, Cout3 = JosephsonCircuits.intraconnectS(Sboth,Cboth,1,2+size(Sa,1))
+            Sout4, Cout4 = JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,1,2)
             @test isapprox(Sout1,Sout2)
+            @test isapprox(Sout2,Sout3)
+            @test isapprox(Sout3,Sout4)
+            @test isapprox(Cout3,Cout4)
 
             # test with nbatches=1
-            Sout1 = JosephsonCircuits.connectS(Sboth,1,2+size(Sa,1);nbatches=1)
-            Sout2 = JosephsonCircuits.connectS(Sa,Sb,1,2;nbatches=1)
+            Sout1 = JosephsonCircuits.intraconnectS(Sboth,1,2+size(Sa,1);nbatches=1)
+            Sout2 = JosephsonCircuits.interconnectS(Sa,Sb,1,2;nbatches=1)
+            Sout3, Cout3 = JosephsonCircuits.intraconnectS(Sboth,Cboth,1,2+size(Sa,1);nbatches=1)
+            Sout4, Cout4 = JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,1,2;nbatches=1)
             @test isapprox(Sout1,Sout2)
+            @test isapprox(Sout2,Sout3)
+            @test isapprox(Sout3,Sout4)
+            @test isapprox(Cout3,Cout4)
 
             # test with nbatches=2
-            Sout1 = JosephsonCircuits.connectS(Sboth,1,2+size(Sa,1);nbatches=2)
-            Sout2 = JosephsonCircuits.connectS(Sa,Sb,1,2;nbatches=2)
+            Sout1 = JosephsonCircuits.intraconnectS(Sboth,1,2+size(Sa,1);nbatches=2)
+            Sout2 = JosephsonCircuits.interconnectS(Sa,Sb,1,2;nbatches=2)
+            Sout3, Cout3 = JosephsonCircuits.intraconnectS(Sboth,Cboth,1,2+size(Sa,1);nbatches=2)
+            Sout4, Cout4 = JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,1,2;nbatches=2)
             @test isapprox(Sout1,Sout2)
+            @test isapprox(Sout2,Sout3)
+            @test isapprox(Sout3,Sout4)
+            @test isapprox(Cout3,Cout4)
         end
 
         begin
             Sa = rand(Complex{Float64},3,3)
+            Ca = rand(Complex{Float64},3,3)
             Sb = rand(Complex{Float64},3,3)
+            Cb = rand(Complex{Float64},3,3)
             Sboth = zeros(Complex{Float64},6,6)
             Sboth[1:size(Sa,1),1:size(Sa,1),:,:] .= Sa
             Sboth[size(Sa,1)+1:end,size(Sa,1)+1:end,:,:] .= Sb
-            Sout1 = JosephsonCircuits.connectS(Sboth,2,1+size(Sa,1))
-            Sout2 = JosephsonCircuits.connectS(Sa,Sb,2,1)
-            @test isapprox(Sout1,Sout2)
-        end
+            Cboth = zeros(Complex{Float64},6,6)
+            Cboth[1:size(Ca,1),1:size(Ca,1),:,:] .= Ca
+            Cboth[size(Ca,1)+1:end,size(Ca,1)+1:end,:,:] .= Cb
 
-        begin
-            Sa = rand(Complex{Float64},3,3,3)
-            Sb = rand(Complex{Float64},3,3,3)
-            Sboth = zeros(Complex{Float64},6,6,3)
-            Sboth[1:size(Sa,1),1:size(Sa,1),:,:] .= Sa
-            Sboth[size(Sa,1)+1:end,size(Sa,1)+1:end,:,:] .= Sb
-            Sboth = [StaticArrays.MMatrix{size(Sboth,1),size(Sboth,2)}(Sboth[:,:,i]) for i=1:size(Sboth,3)]
-            Sa = [StaticArrays.MMatrix{size(Sa,1),size(Sa,2)}(Sa[:,:,i]) for i=1:size(Sa,3)]
-            Sb = [StaticArrays.MMatrix{size(Sb,1),size(Sb,2)}(Sb[:,:,i]) for i=1:size(Sb,3)]
-            Sout1 = JosephsonCircuits.connectS.(Sboth,1,2+size(Sa,1))
-            Sout2 = JosephsonCircuits.connectS.(Sa,Sb,1,2)
+            Sout1 = JosephsonCircuits.intraconnectS(Sboth,2,1+size(Sa,1))
+            Sout2 = JosephsonCircuits.interconnectS(Sa,Sb,2,1)
+            Sout3, Cout3 = JosephsonCircuits.intraconnectS(Sboth,Cboth,2,1+size(Sa,1))
+            Sout4, Cout4 = JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,2,1)
             @test isapprox(Sout1,Sout2)
+            @test isapprox(Sout2,Sout3)
+            @test isapprox(Sout3,Sout4)
+            @test isapprox(Cout3,Cout4)
         end
 
         begin
             Sa = rand(Complex{Float64},3,3)
+            Ca = rand(Complex{Float64},3,3)
             Sb = rand(Complex{Float64},3,3)
+            Cb = rand(Complex{Float64},3,3)
             Sboth = zeros(Complex{Float64},6,6)
             Sboth[1:size(Sa,1),1:size(Sa,1),:,:] .= Sa
             Sboth[size(Sa,1)+1:end,size(Sa,1)+1:end,:,:] .= Sb
+            Cboth = zeros(Complex{Float64},6,6)
+            Cboth[1:size(Ca,1),1:size(Ca,1),:,:] .= Ca
+            Cboth[size(Ca,1)+1:end,size(Ca,1)+1:end,:,:] .= Cb
+
             # convert to MMatrix
-            Sboth = StaticArrays.MMatrix{size(Sboth,1),size(Sboth,2)}(Sboth)
-            Sa = StaticArrays.MMatrix{size(Sa,1),size(Sa,2)}(Sa)
-            Sb = StaticArrays.MMatrix{size(Sb,1),size(Sb,2)}(Sb)
-            Sout1 = JosephsonCircuits.connectS(Sboth,2,1+size(Sa,1))
-            Sout2 = JosephsonCircuits.connectS(Sa,Sb,2,1)
+            Sa = [StaticArrays.MMatrix{size(Sa,1),size(Sa,2)}(Sa[:,:,i]) for i=1:size(Sa,3)]
+            Ca = [StaticArrays.MMatrix{size(Ca,1),size(Ca,2)}(Ca[:,:,i]) for i=1:size(Ca,3)]
+            Sb = [StaticArrays.MMatrix{size(Sb,1),size(Sb,2)}(Sb[:,:,i]) for i=1:size(Sb,3)]
+            Cb = [StaticArrays.MMatrix{size(Cb,1),size(Cb,2)}(Cb[:,:,i]) for i=1:size(Cb,3)]
+            Sboth = [StaticArrays.MMatrix{size(Sboth,1),size(Sboth,2)}(Sboth[:,:,i]) for i=1:size(Sboth,3)]
+            Cboth = [StaticArrays.MMatrix{size(Cboth,1),size(Cboth,2)}(Cboth[:,:,i]) for i=1:size(Cboth,3)]
+
+            Sout1 = JosephsonCircuits.intraconnectS.(Sboth,2,1+size(Sa[1],1))[1]
+            Sout2 = JosephsonCircuits.interconnectS.(Sa,Sb,2,1)[1]
+            Sout3, Cout3 = JosephsonCircuits.intraconnectS.(Sboth,Cboth,2,1+size(Sa[1],1))[1]
+            Sout4, Cout4 = JosephsonCircuits.interconnectS.(Sa,Sb,Ca,Cb,2,1)[1]
             @test isapprox(Sout1,Sout2)
+            @test isapprox(Sout2,Sout3)
+            @test isapprox(Sout3,Sout4)
+            @test isapprox(Cout3,Cout4)
+        end
+
+        begin
+            Sa = rand(Complex{Float64},3,3)
+            Ca = rand(Complex{Float64},3,3)
+            Sb = rand(Complex{Float64},3,3)
+            Cb = rand(Complex{Float64},3,3)
+            Sboth = zeros(Complex{Float64},6,6)
+            Sboth[1:size(Sa,1),1:size(Sa,1),:,:] .= Sa
+            Sboth[size(Sa,1)+1:end,size(Sa,1)+1:end,:,:] .= Sb
+            Cboth = zeros(Complex{Float64},6,6)
+            Cboth[1:size(Ca,1),1:size(Ca,1),:,:] .= Ca
+            Cboth[size(Ca,1)+1:end,size(Ca,1)+1:end,:,:] .= Cb
+
+            # convert to MMatrix
+            Sa = StaticArrays.MMatrix{size(Sa,1),size(Sa,2)}(Sa)
+            Ca = StaticArrays.MMatrix{size(Ca,1),size(Ca,2)}(Ca)
+            Sb = StaticArrays.MMatrix{size(Sb,1),size(Sb,2)}(Sb)
+            Cb = StaticArrays.MMatrix{size(Cb,1),size(Cb,2)}(Cb)
+            Sboth = StaticArrays.MMatrix{size(Sboth,1),size(Sboth,2)}(Sboth)
+            Cboth = StaticArrays.MMatrix{size(Cboth,1),size(Cboth,2)}(Cboth)
+
+            Sout1 = JosephsonCircuits.intraconnectS(Sboth,2,1+size(Sa,1))
+            Sout2 = JosephsonCircuits.interconnectS(Sa,Sb,2,1)
+            Sout3, Cout3 = JosephsonCircuits.intraconnectS(Sboth,Cboth,2,1+size(Sa,1))
+            Sout4, Cout4 = JosephsonCircuits.interconnectS(Sa,Sb,Ca,Cb,2,1)
+            @test isapprox(Sout1,Sout2)
+            @test isapprox(Sout2,Sout3)
+            @test isapprox(Sout3,Sout4)
+            @test isapprox(Cout3,Cout4)
         end
     end
 
     # one network
-    @testset "connectSports one network" begin
+    @testset "intraconnectSports errors" begin
         portsa = [(:S1,1),(:S1,2)]
         @test_throws(
             ArgumentError("Port `k` is smaller than one."),
-            JosephsonCircuits.connectSports(portsa,0,1)
+            JosephsonCircuits.intraconnectSports(portsa,0,1)
         )
 
         @test_throws(
             ArgumentError("Port `l` is smaller than one."),
-            JosephsonCircuits.connectSports(portsa,1,0)
+            JosephsonCircuits.intraconnectSports(portsa,1,0)
         )
 
         @test_throws(
             ArgumentError("Port `k` is larger than number of ports."),
-            JosephsonCircuits.connectSports(portsa,3,1)
+            JosephsonCircuits.intraconnectSports(portsa,3,1)
         )
 
         @test_throws(
             ArgumentError("Port `l` is larger than number of ports."),
-            JosephsonCircuits.connectSports(portsa,1,3)
+            JosephsonCircuits.intraconnectSports(portsa,1,3)
         )
 
         @test_throws(
             ArgumentError("`k` and `l` cannot be equal because a port cannot be merged with itself."),
-            JosephsonCircuits.connectSports(portsa,1,1)
+            JosephsonCircuits.intraconnectSports(portsa,1,1)
         )
     end
 
     # two networks
-    @testset "connectSports two networks" begin
+    @testset "interconnectSports errors" begin
         portsa = [(:S1,1),(:S1,2)]
         portsb = [(:S2,1),(:S2,2)]
         @test_throws(
             ArgumentError("Port `k` is smaller than one."),
-            JosephsonCircuits.connectSports(portsa,portsb,0,1)
+            JosephsonCircuits.interconnectSports(portsa,portsb,0,1)
         )
 
         @test_throws(
             ArgumentError("Port `l` is smaller than one."),
-            JosephsonCircuits.connectSports(portsa,portsb,1,0)
+            JosephsonCircuits.interconnectSports(portsa,portsb,1,0)
         )
 
         @test_throws(
             ArgumentError("Port `k` is larger than number of ports in `portsa`."),
-            JosephsonCircuits.connectSports(portsa,portsb,3,1)
+            JosephsonCircuits.interconnectSports(portsa,portsb,3,1)
         )
 
         @test_throws(
             ArgumentError("Port `l` is larger than number of ports in `portsb`."),
-            JosephsonCircuits.connectSports(portsa,portsb,1,3)
+            JosephsonCircuits.interconnectSports(portsa,portsb,1,3)
         )
     end
 
@@ -341,10 +602,10 @@ import StaticArrays
         Sout1, ports = JosephsonCircuits.connectS(networks,connections)
 
         Sout2 = begin
-            S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
-            S = JosephsonCircuits.connectS(S,S2,2,2)
-            S = JosephsonCircuits.connectS(S1,S,3,2)
-            S = JosephsonCircuits.connectS(S,1,2)
+            S = JosephsonCircuits.interconnectS(Ssplitter,Sopen,3,1)
+            S = JosephsonCircuits.interconnectS(S,S2,2,2)
+            S = JosephsonCircuits.interconnectS(S1,S,3,2)
+            S = JosephsonCircuits.intraconnectS(S,1,2)
         end
         @test isapprox(Sout1[1],Sout2)
 
@@ -374,10 +635,10 @@ import StaticArrays
         Sout1 = networkdata[1]
 
         Sout2 = begin
-            S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
-            S = JosephsonCircuits.connectS(S,S2,2,2)
-            S = JosephsonCircuits.connectS(S1,S,3,2)
-            S = JosephsonCircuits.connectS(S,1,2)
+            S = JosephsonCircuits.interconnectS(Ssplitter,Sopen,3,1)
+            S = JosephsonCircuits.interconnectS(S,S2,2,2)
+            S = JosephsonCircuits.interconnectS(S1,S,3,2)
+            S = JosephsonCircuits.intraconnectS(S,1,2)
         end
 
         @test isapprox(Sout1,Sout2)

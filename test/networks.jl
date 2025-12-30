@@ -419,34 +419,34 @@ import StaticArrays
             S = JosephsonCircuits.ZtoS(JosephsonCircuits.Z_coupled_tline(Zeven,Zodd,thetae,thetao));
 
             if i == 1
-                S = JosephsonCircuits.connectS(S,Sopen,3,1)
-                S = JosephsonCircuits.connectS(S,Sshort,1,1)
+                S = JosephsonCircuits.interconnectS(S,Sopen,3,1)
+                S = JosephsonCircuits.interconnectS(S,Sshort,1,1)
             elseif i == 2
-                S = JosephsonCircuits.connectS(S,Sshort,4,1)
-                S = JosephsonCircuits.connectS(S,Sshort,1,1)
+                S = JosephsonCircuits.interconnectS(S,Sshort,4,1)
+                S = JosephsonCircuits.interconnectS(S,Sshort,1,1)
             elseif i == 3
-                S = JosephsonCircuits.connectS(S,Sopen,4,1)
-                S = JosephsonCircuits.connectS(S,Sopen,1,1)
+                S = JosephsonCircuits.interconnectS(S,Sopen,4,1)
+                S = JosephsonCircuits.interconnectS(S,Sopen,1,1)
             elseif i == 4
-                S = JosephsonCircuits.connectS(S,Sopen,4,1)
-                S = JosephsonCircuits.connectS(S,Sshort,3,1)
+                S = JosephsonCircuits.interconnectS(S,Sopen,4,1)
+                S = JosephsonCircuits.interconnectS(S,Sshort,3,1)
             elseif i == 5
-                S = JosephsonCircuits.connectS(S,Sopen,3,1)
-                S = JosephsonCircuits.connectS(S,Sopen,1,1)
+                S = JosephsonCircuits.interconnectS(S,Sopen,3,1)
+                S = JosephsonCircuits.interconnectS(S,Sopen,1,1)
             elseif i == 6
-                S = JosephsonCircuits.connectS(S,Sshort,3,1)
-                S = JosephsonCircuits.connectS(S,Sshort,1,1)
+                S = JosephsonCircuits.interconnectS(S,Sshort,3,1)
+                S = JosephsonCircuits.interconnectS(S,Sshort,1,1)
             elseif i == 7
-                S = JosephsonCircuits.connectS(S,4,3)
+                S = JosephsonCircuits.intraconnectS(S,4,3)
             elseif i == 8
-                S = JosephsonCircuits.connectS(S,Sopen,4,1)
-                S = JosephsonCircuits.connectS(S,Sshort,1,1)
+                S = JosephsonCircuits.interconnectS(S,Sopen,4,1)
+                S = JosephsonCircuits.interconnectS(S,Sshort,1,1)
             elseif i == 9
-                S = JosephsonCircuits.connectS(S,Sshort,4,1)
-                S = JosephsonCircuits.connectS(S,Sshort,3,1)
+                S = JosephsonCircuits.interconnectS(S,Sshort,4,1)
+                S = JosephsonCircuits.interconnectS(S,Sshort,3,1)
             elseif i == 10
-                S = JosephsonCircuits.connectS(S,Sopen,4,1)
-                S = JosephsonCircuits.connectS(S,Sopen,3,1)
+                S = JosephsonCircuits.interconnectS(S,Sopen,4,1)
+                S = JosephsonCircuits.interconnectS(S,Sopen,3,1)
             else
                 throw(ArgumentError("Canonical coupled line circuit number must be 1-10."))
             end

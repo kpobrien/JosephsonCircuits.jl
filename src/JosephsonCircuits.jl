@@ -459,10 +459,10 @@ function warmupconnect()
     networkdata, ports = JosephsonCircuits.connectS(networks,connections)
     Sout1 = networkdata[1]
 
-    S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
-    S = JosephsonCircuits.connectS(S,S2,2,2)
-    S = JosephsonCircuits.connectS(S1,S,3,2)
-    S = JosephsonCircuits.connectS(S,1,2)
+    S = JosephsonCircuits.interconnectS(Ssplitter,Sopen,3,1)
+    S = JosephsonCircuits.interconnectS(S,S2,2,2)
+    S = JosephsonCircuits.interconnectS(S1,S,3,2)
+    S = JosephsonCircuits.intraconnectS(S,1,2)
 
     # many frequencies
     N = 100
@@ -495,11 +495,10 @@ function warmupconnect()
     JosephsonCircuits.connectS(networks,connections)
     JosephsonCircuits.solveS(networks,connections)
 
-    S = JosephsonCircuits.connectS(Ssplitter,Sopen,3,1)
-    S = JosephsonCircuits.connectS(S,S2,2,2)
-    S = JosephsonCircuits.connectS(S1,S,3,2)
-    S = JosephsonCircuits.connectS(S,1,2)
-
+    S = JosephsonCircuits.interconnectS(Ssplitter,Sopen,3,1)
+    S = JosephsonCircuits.interconnectS(S,S2,2,2)
+    S = JosephsonCircuits.interconnectS(S1,S,3,2)
+    S = JosephsonCircuits.intraconnectS(S,1,2)
 
     return true
 end
