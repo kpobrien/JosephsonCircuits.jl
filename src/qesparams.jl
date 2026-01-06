@@ -1222,11 +1222,11 @@ julia> C=zeros(Float64,2,2);JosephsonCircuits.calcCnoise!(C,[1 2;3 4],[0.0 0 0;0
 function calcCnoise!(Cnoise, S, Snoise)
 
     if size(Cnoise) != size(S)
-        throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
+        throw(DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
     end
 
     if size(S,1) != size(Snoise,1)
-        throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
+        throw(DimensionMismatch("The first dimensions of the scattering parameter and noise scattering parameter matrices must be equal."))
     end
 
     # add the noise covariance from the noise ports to the
@@ -1287,11 +1287,11 @@ photon number) basis. Overwrites qe with output.
 function calcqe_S_Cnoise!(qe, S, Cnoise)
 
     if size(qe) != size(S)
-        throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
+        throw(DimensionMismatch("The dimensions of the quantum efficiency and scattering parameter matrices must be equal."))
     end
 
-    if size(S,1) != size(Cnoise,1)
-        throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
+    if size(S) != size(Cnoise)
+        throw(DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
     end
 
     # more cache efficient version of QE calculation
@@ -1299,7 +1299,6 @@ function calcqe_S_Cnoise!(qe, S, Cnoise)
     @inbounds for i in 1:size(Cnoise,1)
             denom[i] += Cnoise[i,i]
     end
-
 
     # more cache efficient version of QE calculation
     # denom = zeros(eltype(qe),size(S,1))

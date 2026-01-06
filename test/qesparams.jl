@@ -37,6 +37,12 @@ using Test
         end
     end
 
+    @testset "calcdZdroZ2" begin
+        @test_throws(
+            ArgumentError("Unknown component."),
+            JosephsonCircuits.calcdZdroZ2([1],[:K], [2.0], [1.0],nothing))
+    end
+
     @testset "calccm! errors" begin
         begin
             cm=Float64[0,0]
@@ -128,6 +134,26 @@ using Test
         end
     end
 
+    @testset "calccm!" begin
+        begin
+            @variables a b
+            cm=Num[0,0]
+            @test isequal(
+                JosephsonCircuits.calccm!(cm,[a b; b a],[-1,1]),
+                Num[-abs2(a) + abs2(b),abs2(a) - abs2(b)],
+            )
+        end
+
+        begin
+            @variables a b c d an bn cn dn
+            cm = Num[0, 0]
+            @test isequal(
+                JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn],[1, -1]),
+                Num[-abs2(bn) + abs2(a) - abs2(b) + abs2(an),abs2(c) - abs2(dn) - abs2(d) + abs2(cn)],
+            )
+        end
+    end
+
     @testset "calcqe! errors" begin
         @test_throws(
             DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."),
@@ -148,10 +174,31 @@ using Test
             JosephsonCircuits.calcqeideal!([1 2;3 4],[1 2 3;4 5 6]))
     end
 
-    @testset "calcdZdroZ2" begin
+    @testset "calcCnoise! errors" begin
         @test_throws(
-            ArgumentError("Unknown component."),
-            JosephsonCircuits.calcdZdroZ2([1],[:K], [2.0], [1.0],nothing))
+            DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."),
+            JosephsonCircuits.calcCnoise!([1 2;3 4],[1 2 3;4 5 6]))
+
+        @test_throws(
+            DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."),
+            JosephsonCircuits.calcCnoise!([1 2;3 4],[1 2 3;4 5 6],[1 2;3 4]))
+
+        @test_throws(
+            DimensionMismatch("The first dimensions of the scattering parameter and noise scattering parameter matrices must be equal."),
+            JosephsonCircuits.calcCnoise!([1 2;3 4],[1 2;3 4],[1 2;3 4;5 6]))
+
+    end
+
+    @testset "calcqe_S_Cnoise!(qe, S, Cnoise) errors" begin
+
+        @test_throws(
+            DimensionMismatch("The dimensions of the quantum efficiency and scattering parameter matrices must be equal."),
+            JosephsonCircuits.calcqe_S_Cnoise!([1 2;3 4],[1 2 3;4 5 6],[1 2;3 4]))
+
+        @test_throws(
+            DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."),
+            JosephsonCircuits.calcqe_S_Cnoise!([1 2;3 4],[1 2;3 4],[1 2;3 4;5 6]))
+    
     end
 
     @testset "noise wave covariance matrice and QE" begin
