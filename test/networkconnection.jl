@@ -395,6 +395,46 @@ import StaticArrays
                 JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
             )
         end
+
+        begin
+            Sa = rand(Complex{Float64},3,3,3)
+            Ca = rand(Complex{Float64},4,4,3)
+            Sb = rand(Complex{Float64},3,3,3)
+            Cb = rand(Complex{Float64},3,3,3)
+            Sout = zeros(Complex{Float64},4,4,3)
+            Cout = zeros(Complex{Float64},4,4,3)
+            @test_throws(
+                DimensionMismatch("The size of `Ca` must the same as the size of `Sa`."),
+                JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
+            )
+        end
+
+        begin
+            Sa = rand(Complex{Float64},3,3,3)
+            Ca = rand(Complex{Float64},3,3,3)
+            Sb = rand(Complex{Float64},3,3,3)
+            Cb = rand(Complex{Float64},4,4,3)
+            Sout = zeros(Complex{Float64},4,4,3)
+            Cout = zeros(Complex{Float64},4,4,3)
+            @test_throws(
+                DimensionMismatch("The size of `Cb` must the same as the size of `Sb`."),
+                JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
+            )
+        end
+
+        begin
+            Sa = rand(Complex{Float64},3,3,3)
+            Ca = rand(Complex{Float64},3,3,3)
+            Sb = rand(Complex{Float64},3,3,3)
+            Cb = rand(Complex{Float64},3,3,3)
+            Sout = zeros(Complex{Float64},4,4,3)
+            Cout = zeros(Complex{Float64},3,3,3)
+            @test_throws(
+                DimensionMismatch("The size of `Cout` must the same as the size of `Sout`."),
+                JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
+            )
+        end
+
     end
 
     # check for consistency between the one and two network functions
