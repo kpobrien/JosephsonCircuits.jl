@@ -115,6 +115,7 @@ using Test
             returnSsensitivity = true,
             returnZsensitivity=true, returnZsensitivityadjoint=true,
             sensitivitynames=["C1"],
+            returnZ = true, returnZadjoint = true,
             nbatches=4)
 
         @test result.linearized.QE == Array{Float64, 3}(undef, 0, 0, 0)
