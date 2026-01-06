@@ -154,4 +154,73 @@ using Test
             JosephsonCircuits.calcdZdroZ2([1],[:K], [2.0], [1.0],nothing))
     end
 
+    @testset "noise wave covariance matrice and QE" begin
+
+        # symbolic
+        N = 3
+        for i in 1:N
+            indices = collect(1:N)
+            popat!(indices,i)
+
+            # generate the `S` matrices. assume `S` is the scattering
+            # parameter matrix for a lossless network.
+            @variables S11 S12 S13 S21 S22 S23 S31 S32 S33
+            S = [S11 S12 S13; S21 S22 S23; S31 S32 S33]
+
+            # pick one port and imagine that it is a resistor with
+            # resistance equal to the port impedance. Snoise represents noise emerging
+            # from the resistor and propagating to the other ports.
+            Snoise = transpose(S[indices,i])
+
+            # generate the noise wave covariance matrices `C`
+            # C1 will be zero for a passive network and C2 will be non-zero since we
+            # replaced the port with a resistor.
+            # C1 = JosephsonCircuits.calcCnoise(S)
+            C = JosephsonCircuits.calcCnoise(S[indices,indices],transpose(Snoise))
+
+            # test that the QE's are equal for the original network and the
+            # reduced network, with the scattering parameter based QE calculation
+            QE1 = JosephsonCircuits.calcqe(S)[indices,indices]
+            QE2 = JosephsonCircuits.calcqe(S[indices,indices],transpose(Snoise))
+            @test isequal(QE1,QE2)
+
+            # test the QE computed from the covariance matrix is the same
+            QE3 = JosephsonCircuits.calcqe_S_Cnoise(S[indices,indices],C)
+            @test isequal(QE1,QE3)
+        end
+
+        # numeric
+        N = 3
+        for i in 1:N
+            indices = collect(1:N)
+            popat!(indices,i)
+
+            # generate the `S` matrices. assume `S` is the scattering
+            # parameter matrix for a lossless network.
+            S = zeros(Complex{Float64},N,N)
+
+            # pick one port and imagine that it is a resistor with
+            # resistance equal to the port impedance. Snoise represents noise emerging
+            # from the resistor and propagating to the other ports.
+            Snoise = transpose(S[indices,i])
+
+            # generate the noise wave covariance matrices `C`
+            # C1 will be zero for a passive network and C2 will be non-zero since we
+            # replaced the port with a resistor.
+            # C1 = JosephsonCircuits.calcCnoise(S)
+            C = JosephsonCircuits.calcCnoise(S[indices,indices],transpose(Snoise))
+
+            # test that the QE's are equal for the original network and the
+            # reduced network, with the scattering parameter based QE calculation
+            QE1 = JosephsonCircuits.calcqe(S)[indices,indices]
+            QE2 = JosephsonCircuits.calcqe(S[indices,indices],transpose(Snoise))
+            @test isequal(QE1,QE2)
+
+            # test the QE computed from the covariance matrix is the same
+            QE3 = JosephsonCircuits.calcqe_S_Cnoise(S[indices,indices],C)
+            @test isequal(QE1,QE3)
+        end
+
+    end
+
 end

@@ -2121,7 +2121,7 @@ julia> JosephsonCircuits.ABCD_attenuator_T(50.0,10.0)
 function ABCD_attenuator_T(Z0::Number,attenuationdB::Number)
     A = 10^(-attenuationdB/20)
     Ra = Rb = Z0*(1-A)/(1+A)
-    Rc = (Z0^2-Rb^2)/(2*Rb)
+    Rc = 2*Z0*A/(1-A^2)
     return JosephsonCircuits.ABCD_TZ(Ra,Rb,Rc)
 end
 
@@ -2149,7 +2149,7 @@ julia> ABCD = zeros(Float64,2,2);JosephsonCircuits.ABCD_attenuator_T!(ABCD, 50.0
 function ABCD_attenuator_T!(ABCD, Z0::Number,attenuationdB::Number)
     A = 10^(-attenuationdB/20)
     Ra = Rb = Z0*(1-A)/(1+A)
-    Rc = (Z0^2-Rb^2)/(2*Rb)
+    Rc = 2*Z0*A/(1-A^2)
     return JosephsonCircuits.ABCD_TZ!(ABCD, Ra,Rb,Rc)
 end
 

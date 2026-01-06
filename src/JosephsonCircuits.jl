@@ -45,9 +45,32 @@ const Phi0 = 2.067833848e-15
 """
     const speed_of_light
 
-A constant for the speed of light which is 2.99792458e8 m/s
+A constant for the speed of light which is 2.99792458e8 m/s.
 """
 const speed_of_light = 2.99792458e8
+
+
+"""
+    const planck_constant
+
+A constant for the Planck constant which is 6.62607015e-34 J*s.
+"""
+const planck_constant = 6.62607015e-34
+
+"""
+    const reduced_planck_constant
+
+A constant for the reduced Planck constant which is planck_constant/(2*pi).
+"""
+const reduced_planck_constant = planck_constant/(2*pi)
+
+"""
+    const boltzmann_constant
+
+A constant for the Boltzmann constant which is 1.380649×10−23 J/K.
+"""
+const boltzmann_constant = 1.380649e-23
+
 
 # The file structure below mimics the typical analysis flow. An input file
 # is first parsed, then the incidence matrix is calculated, then the 
