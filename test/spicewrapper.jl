@@ -71,9 +71,12 @@ using XicTools_jll
 
     if haskey(ENV,"CI")
         @testset "wrspice_cmd" begin
-            @test_throws(
-                ErrorException("WRSPICE executable not found. Please install WRSPICE or supply a path manually if already installed."),
-                JosephsonCircuits.wrspice_cmd())
+            # only run this test if the XicTools_jll executable isn't found.
+            if !isdefined(XicTools_jll,:wrspice)
+                @test_throws(
+                    ErrorException("WRSPICE executable not found. Please install WRSPICE, load XicTools_jll, or supply a path manually if installed elsewhere."),
+                    JosephsonCircuits.wrspice_cmd())
+            end
         end
     end
 
@@ -83,7 +86,7 @@ using XicTools_jll
             input = "* SPICE Simulation\nR1 1 0 50.0\nC1 1 2 100.0f\nB1 2 0 3 jjk ics=0.32910597599999997u\nC2 2 0 674.18508376f\n.model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9\n* Current source\n* 1-hyperbolic secant rise\nisrc 0 1 0.011300000000000001u*sin(29.84519304095611g*x+0.0)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))\nisrc2 0 1 0.0u*sin(29.84519304095611g*x+0.0)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))\nisrc3 0 1 0.0u*sin(0.0g*x+0.0)*(1-2/(exp(x/1.0e-8)+exp(-x/1.0e-8)))\n\n* Set up the transient simulation\n* .tran 5p 10n\n.tran 2.6315734072138794p 20.0n uic\n\n* The control block\n.control\nset maxdata=2.0e9\nset jjaccel=1\nset dphimax=0.01\nrun\nset filetype=binary\nwrite\n.endc\n\n"
             savedoutput = [1.9613450192807734e-24 2.0074538412437603e-16 2.864451080543789e-15 1.3120773989412112e-14 3.768124499190959e-14 8.399007993917563e-14 1.5954632153709466e-13 2.71557278630489e-13 4.266497702086937e-13 6.305226098969998e-13; 1.7830403984905592e-25 1.8245472126928553e-17 2.6017079896847483e-16 1.1903318606729214e-15 3.4127007259546297e-15 7.589659388906407e-15 1.4376315642898046e-14 2.4384847008116373e-14 3.815428549472124e-14 5.611610966214862e-14; 9.779370376757019e-24 3.016205159873438e-14 8.644788812965574e-13 6.021131461378511e-12 2.33445773551018e-11 6.582428233515808e-11 1.5170260251549065e-10 3.0433217417470633e-10 5.517474693786351e-10 9.256640408918309e-10]
 
-            output1 = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice())
+            output1 = JosephsonCircuits.spice_run(input,JosephsonCircuits.wrspice_cmd())
             @test(
                 isapprox(
                  output1.values["V"][:,1:10],
@@ -91,7 +94,7 @@ using XicTools_jll
                 atol = 1e-6)
                 )
 
-            output2 = JosephsonCircuits.spice_run([input],XicTools_jll.wrspice())
+            output2 = JosephsonCircuits.spice_run([input],JosephsonCircuits.wrspice_cmd())
             @test(
                 isapprox(
                  output2[1].values["V"][:,1:10],

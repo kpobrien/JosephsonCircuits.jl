@@ -247,18 +247,23 @@ This returns the path of the WRSPICE executable.
 
 """
 function wrspice_cmd()
-    # Note: This code has been tested on Linux but not macOS or Windows. 
-    if Sys.isunix()
-        wrspicecmd = "/usr/local/xictools/bin/wrspice"
-    elseif Sys.iswindows()
+
+    if Sys.iswindows()
         wrspicecmd = "C:/usr/local/xictools/bin/wrspice.bat"
+    # Note: This code has been tested on Linux but not macOS or Windows. 
     else
-        error("Operating system not supported")
+        wrspicecmd = "/usr/local/xictools/bin/wrspice"
     end
 
     # Check if the wrspice executable exists
     if !islink(wrspicecmd) && !isfile(wrspicecmd)
-        error("WRSPICE executable not found. Please install WRSPICE or supply a path manually if already installed.")
+        # if the path isn't valid, try checking if we have imported
+        # XicTools_jll and use that.
+        if :XicTools_jll in names(Main,imported=true) && isdefined(Main.XicTools_jll,:wrspice)
+           wrspicecmd =  Main.XicTools_jll.wrspice()
+        else
+            error("WRSPICE executable not found. Please install WRSPICE, load XicTools_jll, or supply a path manually if installed elsewhere.")
+        end
     end
 
     return wrspicecmd
