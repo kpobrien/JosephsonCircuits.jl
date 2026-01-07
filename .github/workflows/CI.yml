@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ github.event_name }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - $${{ matrix.threads }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,7 +41,6 @@ jobs:
           version: ${{ matrix.version }}
       - uses: actions/cache@v4
         env:
-          JULIA_NUM_THREADS: ${{ matrix.threads }}
           cache-name: cache-artifacts
         with:
           path: ~/.julia/artifacts
@@ -54,6 +53,8 @@ jobs:
         with:
           ignore-no-cache: true
       - uses: julia-actions/julia-runtest@v1
+        env:
+          JULIA_NUM_THREADS: ${{ matrix.threads }}
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v5
         with:
