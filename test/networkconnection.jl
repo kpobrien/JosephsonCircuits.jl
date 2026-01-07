@@ -629,6 +629,13 @@ import StaticArrays
         )
     end
 
+    @testset "find_duplicate_connections" begin
+        @test isequal(
+                JosephsonCircuits.find_duplicate_connections([(:S1,:S2,1,1),(:S1,:S2,1,1)]),
+                [((:S2, 1), 2),((:S1, 1), 2)],
+            )
+    end
+
     @testset "connectS with list of connections" begin
         # define an open
         Sopen = ones(Complex{Float64},1,1)

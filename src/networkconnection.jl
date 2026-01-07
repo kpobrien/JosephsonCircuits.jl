@@ -2170,17 +2170,21 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     userinput = ones(Bool,length(networkdata))
     storage = Dict{Int,N}()
     # find the minimum weight and the second to minimum weight
+    # we want unique weights, eg, both shouldn't be the same weight
     minweight = Inf
     secondtominweight = Inf
     for i in eachindex(fweightlist)
         for j in eachindex(fweightlist[i])
             weight = fweightlist[i][j]
-            if weight <= minweight
+            if weight < minweight
+                # this is the new minimum weight and the old
+                # minimum weight is now the second to minimum weight
+                secondtominweight = minweight
                 minweight = weight
-            elseif weight <= secondtominweight
+            elseif weight > minweight && weight < secondtominweight
+                # this is the new second minimum weight that is greater
+                # than the minweight but less than the secondtominweight
                 secondtominweight = weight
-            else
-                nothing
             end
         end
     end
@@ -2192,18 +2196,22 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
             while j <= n
                 weight = fweightlist[i][j]
                 if weight <= minweight
-                    # perform the connection
+                    # perform the connection if this is the minimum weight
                     # println("i ",i," j ",j," N ",N," length(fweightlist[i]) ",length(fweightlist[i]))
                     # println(fweightlist[i])
                     make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j,nbatches,userinput,storage)
-                    # set j = 1
+                    # set j = 1 to start looping through again
                     j = 1
-                    n = length(fweightlist[i]) 
+                    n = length(fweightlist[i])
+                    # we want to make all of the minimum weight connections
                     minweight = weight
-                elseif weight <= secondtominweight
-                    secondtominweight = weight
-                    j+=1
                 else
+                    if weight < secondtominweight
+                        # record the second to minimum weight
+                        # which is greater than the minweight and less
+                        # than the secondtominweight
+                        secondtominweight = weight
+                    end
                     j+=1
                 end
             end
