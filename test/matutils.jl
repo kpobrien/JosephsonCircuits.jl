@@ -488,6 +488,13 @@ using Test
             JosephsonCircuits.ldiv_2x2(LinearAlgebra.lu(B),b),
             JosephsonCircuits.lu_2x2(B) \ b,
         )
+
+        # test the singular case when !(p1 == 1 && p2 == 2)
+        A = StaticArrays.SMatrix{2,2}(0.0,1.0,1.0,1.0)
+        b = StaticArrays.SVector{2}(2,1)
+        x = JosephsonCircuits.ldiv_2x2(JosephsonCircuits.lu_2x2(A),b)
+        @test isapprox(A*x,b)
+
     end
 
 end
