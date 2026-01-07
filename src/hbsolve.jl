@@ -230,7 +230,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         iterations = iterations, x0 = nothing, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
-        factorization = factorization)
+        sensitivitynames = sensitivitynames, factorization = factorization)
 
     # generate the signal modes
     signalfreq =truncfreqs(
@@ -427,7 +427,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         iterations = iterations, x0 = nothing, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
-        factorization = factorization)
+        sensitivitynames = sensitivitynames, factorization = factorization)
 
     # generate the signal modes
     signalfreq =truncfreqs(

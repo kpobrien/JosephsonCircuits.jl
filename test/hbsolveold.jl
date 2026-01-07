@@ -76,7 +76,7 @@ using Test
             returnvoltage=true,returnvoltageadjoint=true,returnSnoise=true,
             returnnodefluxadjoint=true,returnSsensitivity = true,
             returnZsensitivity=true, returnZsensitivityadjoint=true,
-            sensitivitynames=["C1"],
+            returnZ=true, returnZadjoint=true,sensitivitynames=["C1"],
             nbatches = 4)
 
         @test isapprox(
@@ -90,7 +90,7 @@ using Test
             returnvoltage=true,returnvoltageadjoint=true,returnSnoise=true,
             returnnodefluxadjoint=true,returnSsensitivity = true,
             returnZsensitivity=true, returnZsensitivityadjoint=true,
-            sensitivitynames=["C1"],
+            returnZ=true, returnZadjoint=true,sensitivitynames=["C1"],
             nbatches = 4, keyedarrays = Val(true))
 
         @test isapprox(

@@ -106,8 +106,9 @@ using Test
             atol = 1e-6)
 
         # test some uncommon options
+        @variables w
         result = hbsolve(ws, wp, sources, Nmodulationharmonics,
-            Npumpharmonics, circuit, circuitdefs, ftol=1e-12,
+            Npumpharmonics, circuit, circuitdefs, ftol=1e-12, symfreqvar = w,
             returnS=false, returnSnoise=true, returnQE=false,
             returnnodeflux=true,
             returnnodefluxadjoint=true, returnCM=false,
