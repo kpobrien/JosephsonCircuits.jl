@@ -156,14 +156,14 @@ function intraconnectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
     ranges = (range1,range2,range3)
 
     @inbounds for b in batch
-        gammacc_Scc = StaticArrays.SMatrix{2,2}(
+        gammaii_Sii = StaticArrays.SMatrix{2,2}(
             -Sa[k,k,b],
             one(Sa[l,k,b])-Sa[l,k,b],
             one(Sa[k,l,b])-Sa[k,l,b],
             -Sa[l,l,b]
         )
-        gammacc_Scc_lu = lu_2x2(gammacc_Scc)
-        # gammacc_Scc_lu =  lu(gammacc_Scc)
+        gammaii_Sii_lu = lu_2x2(gammaii_Sii)
+        # gammaii_Sii_lu =  lu(gammaii_Sii)
 
         # ii and jj are the indices which extend up to m and skip k,l
         # i and j extend up to m-2 and are consecutive 
@@ -171,16 +171,16 @@ function intraconnectS_inner!(Sout, Sa, k::Int, l::Int, batch::AbstractArray)
             for jj in ranges[jindex]
                 j = jj-jindex+1
 
-                Scp = StaticArrays.SVector{2}(Sa[k,jj,b],Sa[l,jj,b])
+                Sie = StaticArrays.SVector{2}(Sa[k,jj,b],Sa[l,jj,b])
 
                 # solve the linear system
-                ac1jj, ac2jj = ldiv_2x2(gammacc_Scc_lu,Scp)
-                # ac1jj, ac2jj = gammacc_Scc_lu \ Scp
+                ai1jj, ai2jj = ldiv_2x2(gammaii_Sii_lu,Sie)
+                # ai1jj, ai2jj = gammaii_Sii_lu \ Sie
 
                 for iindex in eachindex(ranges)
                     for ii in ranges[iindex]
                         i = ii-iindex+1
-                        Sout[i,j,b] = Sa[ii,jj,b] + Sa[ii,k,b]*ac1jj + Sa[ii,l,b]*ac2jj
+                        Sout[i,j,b] = Sa[ii,jj,b] + Sa[ii,k,b]*ai1jj + Sa[ii,l,b]*ai2jj
                     end
                 end
             end
@@ -358,14 +358,14 @@ function intraconnectS_inner!(Sout, Cout, Sa, Ca, k::Int, l::Int,
     ik_kl_kk_il = similar(Sa,m-2)
 
     @inbounds for b in batch
-        gammacc_Scc = StaticArrays.SMatrix{2,2}(
+        gammaii_Sii = StaticArrays.SMatrix{2,2}(
             -Sa[k,k,b],
             one(Sa[k,l,b])-Sa[k,l,b],
             one(Sa[l,k,b])-Sa[l,k,b],
             -Sa[l,l,b]
         )
-        gammacc_Scc_lu = lu_2x2(gammacc_Scc)
-        # gammacc_Scc_lu =  lu(gammacc_Scc)
+        gammaii_Sii_lu = lu_2x2(gammaii_Sii)
+        # gammaii_Sii_lu =  lu(gammaii_Sii)
 
         # compute the terms we will use in the inner loop
         for iindex in eachindex(ranges)
@@ -377,9 +377,9 @@ function intraconnectS_inner!(Sout, Cout, Sa, Ca, k::Int, l::Int,
                 # il_lk_ll_ik = (Sa[i,l]*(1-Sa[l,k])+Sa[l,l]*Sa[i,k])/denom
                 # ik_kl_kk_il = (Sa[i,k]*(1-Sa[k,l])+Sa[k,k]*Sa[i,l])/denom
                 # denom = (1-Sa[k,l])*(1-Sa[l,k]) - Sa[k,k]*Sa[l,l]
-                Scp = StaticArrays.SVector{2}(Sa[ii,k,b],Sa[ii,l,b])
-                il_lk_ll_ik[i], ik_kl_kk_il[i] = ldiv_2x2(gammacc_Scc_lu,Scp)
-                # il_lk_ll_ik[i], ik_kl_kk_il[i] = gammacc_Scc_lu \ Scp
+                Sie = StaticArrays.SVector{2}(Sa[ii,k,b],Sa[ii,l,b])
+                il_lk_ll_ik[i], ik_kl_kk_il[i] = ldiv_2x2(gammaii_Sii_lu,Sie)
+                # il_lk_ll_ik[i], ik_kl_kk_il[i] = gammaii_Sii_lu \ Sie
 
             end
         end
@@ -395,9 +395,9 @@ function intraconnectS_inner!(Sout, Cout, Sa, Ca, k::Int, l::Int,
                 # jl_lk_ll_jk = (Sa[j,l]*(1-Sa[l,k])+Sa[l,l]*Sa[j,k])/denom
                 # jk_kl_kk_jl = (Sa[j,k]*(1-Sa[k,l])+Sa[k,k]*Sa[j,l])/denom
                 # denom = (1-Sa[k,l])*(1-Sa[l,k]) - Sa[k,k]*Sa[l,l]
-                Scp = StaticArrays.SVector{2}(Sa[jj,k,b],Sa[jj,l,b])
-                jl_lk_ll_jk, jk_kl_kk_jl = ldiv_2x2(gammacc_Scc_lu,Scp)
-                # jl_lk_ll_jk, jk_kl_kk_jl = gammacc_Scc_lu \ Scp
+                Sie = StaticArrays.SVector{2}(Sa[jj,k,b],Sa[jj,l,b])
+                jl_lk_ll_jk, jk_kl_kk_jl = ldiv_2x2(gammaii_Sii_lu,Sie)
+                # jl_lk_ll_jk, jk_kl_kk_jl = gammaii_Sii_lu \ Sie
 
                 for iindex in eachindex(ranges)
                     for ii in ranges[iindex]
@@ -635,21 +635,21 @@ function interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
     # two (eg. frequencies).
     @inbounds for b in batch
 
-        gammacc_Scc = StaticArrays.SMatrix{2,2}(
+        gammaii_Sii = StaticArrays.SMatrix{2,2}(
             -Sa[k,k,b],
             one(Sa[k,k,b]),
             one(Sa[k,k,b]),
             -Sb[l,l,b]
         )
-        # gammacc_Scc_lu = lu(gammacc_Scc)
-        gammacc_Scc_lu = lu_2x2(gammacc_Scc)
+        # gammaii_Sii_lu = lu(gammaii_Sii)
+        gammaii_Sii_lu = lu_2x2(gammaii_Sii)
 
         # solve the linear system to compute Sa[i,k]*Sb[l,l]/denom and
         # Sa[i,k]/denom
         for iindex in eachindex(ranges1)
             for ii in ranges1[iindex]
-                Scp = StaticArrays.SVector{2}(Sa[ii,k,b],0)
-                a_ik_b_ll[ii], a_ik[ii] = ldiv_2x2(gammacc_Scc_lu,Scp)
+                Sie = StaticArrays.SVector{2}(Sa[ii,k,b],0)
+                a_ik_b_ll[ii], a_ik[ii] = ldiv_2x2(gammaii_Sii_lu,Sie)
             end
         end
 
@@ -657,8 +657,8 @@ function interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
         # Sb[i,l]/denom
         for iindex in eachindex(ranges2)
             for ii in ranges2[iindex]
-                Scp = StaticArrays.SVector{2}(0,Sb[ii-m,l,b])
-                b_il[ii-m], b_il_a_kk[ii-m] = ldiv_2x2(gammacc_Scc_lu,Scp)
+                Sie = StaticArrays.SVector{2}(0,Sb[ii-m,l,b])
+                b_il[ii-m], b_il_a_kk[ii-m] = ldiv_2x2(gammaii_Sii_lu,Sie)
             end
         end
 
@@ -967,14 +967,14 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
     # two (eg. frequencies).
     @inbounds for b in batch
 
-        gammacc_Scc = StaticArrays.SMatrix{2,2}(
+        gammaii_Sii = StaticArrays.SMatrix{2,2}(
             -Sa[k,k,b],
             one(Sa[k,k,b]),
             one(Sa[k,k,b]),
             -Sb[l,l,b]
         )
-        # gammacc_Scc_lu = lu(gammacc_Scc)
-        gammacc_Scc_lu = lu_2x2(gammacc_Scc)
+        # gammaii_Sii_lu = lu(gammaii_Sii)
+        gammaii_Sii_lu = lu_2x2(gammaii_Sii)
 
         # ii and jj are the indices which extend up to m+n and skip k,l
         # i and j extend up to m+n-2 and are consecutive 
@@ -984,17 +984,17 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
 
             for jj in ranges1[jindex]
                 j = jj-jindex+1
-                Scp = StaticArrays.SVector{2}(Sa[k,jj,b],zero(Sa[k,jj,b]))
+                Sie = StaticArrays.SVector{2}(Sa[k,jj,b],zero(Sa[k,jj,b]))
 
                 # solve the linear system
-                # ac1jj, ac2jj = gammacc_Scc_lu \ Scp
-                ac1jj, ac2jj = ldiv_2x2(gammacc_Scc_lu,Scp)
+                # ai1jj, ai2jj = gammaii_Sii_lu \ Sie
+                ai1jj, ai2jj = ldiv_2x2(gammaii_Sii_lu,Sie)
 
                 # upper left quadrant
                 for iindex in eachindex(ranges1)
                     for ii in ranges1[iindex]
                         i = ii-iindex+1
-                        Sout[i,j,b] = Sa[ii,jj,b] + Sa[ii,k,b]*ac1jj
+                        Sout[i,j,b] = Sa[ii,jj,b] + Sa[ii,k,b]*ai1jj
                     end
                 end
 
@@ -1002,7 +1002,7 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
                 for iindex in eachindex(ranges2)
                     for ii in ranges2[iindex]
                         i = ii-iindex+1-1
-                        Sout[i,j,b] = Sb[ii-m,l,b]*ac2jj
+                        Sout[i,j,b] = Sb[ii-m,l,b]*ai2jj
                     end
                 end
 
@@ -1015,17 +1015,17 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
 
             for jj in ranges2[jindex]
                 j = jj-jindex+1-1
-                Scp = StaticArrays.SVector{2}(zero(Sb[l,jj-m,b]),Sb[l,jj-m,b])
+                Sie = StaticArrays.SVector{2}(zero(Sb[l,jj-m,b]),Sb[l,jj-m,b])
 
                 # solve the linear system.
-                # ac1jj, ac2jj = gammacc_Scc_lu \ Scp
-                ac1jj, ac2jj = ldiv_2x2(gammacc_Scc_lu,Scp)
+                # ai1jj, ai2jj = gammaii_Sii_lu \ Sie
+                ai1jj, ai2jj = ldiv_2x2(gammaii_Sii_lu,Sie)
 
                 # upper right quadrant
                 for iindex in eachindex(ranges1)
                     for ii in ranges1[iindex]
                         i = ii-iindex+1
-                        Sout[i,j,b] =  Sa[ii,k,b]*ac1jj
+                        Sout[i,j,b] =  Sa[ii,k,b]*ai1jj
                     end
                 end
 
@@ -1033,7 +1033,7 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
                 for iindex in eachindex(ranges2)
                     for ii in ranges2[iindex]
                         i = ii-iindex+1-1
-                        Sout[i,j,b] = Sb[ii-m,jj-m,b] + Sb[ii-m,l,b]*ac2jj
+                        Sout[i,j,b] = Sb[ii-m,jj-m,b] + Sb[ii-m,l,b]*ai2jj
                     end
                 end
 
@@ -2267,8 +2267,8 @@ end
     parse_connections_sparse(networks::AbstractVector{Tuple{T,N}},
         connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
-Return the indices of the internal ports `portc_indices`, the external ports
-`portp_indices`, the vector of port tuples `ports`, the vector of scattering
+Return the indices of the internal ports `porti_indices`, the external ports
+`porte_indices`, the vector of port tuples `ports`, the vector of scattering
 parameter data `networkdata`, the connection matrix `gamma`, the sparse matrix
 containing indices in networkdata `Sindices`, and an empty sparse matrix of
 scattering parameter data `S`. The scattering parameter data consists of the
@@ -2354,8 +2354,8 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tupl
     empty!(Jgamma)
     empty!(Vgamma)
 
-    portc_indices = Vector{Int}(undef,2*length(connections))
-    empty!(portc_indices)
+    porti_indices = Vector{Int}(undef,2*length(connections))
+    empty!(porti_indices)
 
     # loop through the connections and compute the sparse connection matrix
     # gamma
@@ -2384,22 +2384,22 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tupl
         push!(Vgamma,1)
 
         # add to the vector of internal ports
-        push!(portc_indices,src_index)
-        push!(portc_indices,dst_index)
+        push!(porti_indices,src_index)
+        push!(porti_indices,dst_index)
 
     end
 
     # then sort the internal port indices
-    sort!(portc_indices)
+    sort!(porti_indices)
 
     # check if the port indices are unique
-    if !allunique(portc_indices)
+    if !allunique(porti_indices)
         throw(ArgumentError("Duplicate connections detected [(networkname,port),counts]: $(find_duplicate_connections(connections))."))
     end
 
     # and generate the external port indices
-    portp_indices = collect(1:m)
-    deleteat!(portp_indices,portc_indices)
+    porte_indices = collect(1:m)
+    deleteat!(porte_indices,porti_indices)
 
     # make the sparse connection matrix
     gamma = sparse(Igamma,Jgamma,Vgamma,m,m)
@@ -2433,7 +2433,7 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tupl
     # populated later. we can reuse the sparsity structure from Sindices.
     S = SparseMatrixCSC(Sindices.m,Sindices.n,copy(Sindices.colptr),copy(Sindices.rowval),Vector{eltype(N)}(undef,M))
 
-    return portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S
+    return porti_indices, porte_indices, ports, networkdata, gamma, Sindices, S
 end
 
 function solveS_initialize(networks::AbstractVector,
@@ -2458,135 +2458,135 @@ function solveS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, In
         factorization = KLUfactorization(), internal_ports::Bool = false,
         nbatches::Integer = Base.Threads.nthreads()) where {T,N}
 
-    portc_indices, portp_indices, ports, networkdata, gamma, Sindices, S = parse_connections_sparse(networks,connections)
+    porti_indices, porte_indices, ports, networkdata, gamma, Sindices, S = parse_connections_sparse(networks,connections)
 
-    portsp = ports[portp_indices]
-    portsc = ports[portc_indices]
+    portse = ports[porte_indices]
+    portsi = ports[porti_indices]
 
-    Scp_indices = Sindices[portc_indices,portp_indices]
-    Spc_indices = Sindices[portp_indices,portc_indices]
-    Spp_indices = Sindices[portp_indices,portp_indices]
-    Scc_indices = Sindices[portc_indices,portc_indices]
+    Sie_indices = Sindices[porti_indices,porte_indices]
+    Sei_indices = Sindices[porte_indices,porti_indices]
+    See_indices = Sindices[porte_indices,porte_indices]
+    Sii_indices = Sindices[porti_indices,porti_indices]
 
-    Scp = S[portc_indices,portp_indices]
-    Spc = S[portp_indices,portc_indices]
-    Spp = S[portp_indices,portp_indices]
-    Scc = S[portc_indices,portc_indices]
+    Sie = S[porti_indices,porte_indices]
+    Sei = S[porte_indices,porti_indices]
+    See = S[porte_indices,porte_indices]
+    Sii = S[porti_indices,porti_indices]
 
-    gammacc = gamma[portc_indices,portc_indices]
+    gammaii = gamma[porti_indices,porti_indices]
 
-    sizeSp = NTuple{ndims(networkdata[1]),Int}(ifelse(i<=2,length(portsp),size(networkdata[1],i)) for i in 1:ndims(networkdata[1]))
-    Sp = zeros(eltype(N),sizeSp)
+    sizeSe = NTuple{ndims(networkdata[1]),Int}(ifelse(i<=2,length(portse),size(networkdata[1],i)) for i in 1:ndims(networkdata[1]))
+    Se = zeros(eltype(N),sizeSe)
 
-    sizeSc = tuple(length(portsc),length(portsp),[size(networkdata[1],i) for i in 3:ndims(networkdata[1])]...)
-    Sc = ifelse(internal_ports,zeros(eltype(N),sizeSc),zeros(eltype(N),0))
+    sizeSi = tuple(length(portsi),length(portse),[size(networkdata[1],i) for i in 3:ndims(networkdata[1])]...)
+    Si = ifelse(internal_ports,zeros(eltype(N),sizeSi),zeros(eltype(N),0))
 
-    # make gammacc - Scc. Scc can contain zeros (eg. a match at some
+    # make gammaii - Sii. Sii can contain zeros (eg. a match at some
     # frequency). we want to retain these structural zeros because the
     # scattering matrix structure must not change.
-    gammacc_Scc = spaddkeepzeros(gammacc,-Scc)
+    gammaii_Sii = spaddkeepzeros(gammaii,-Sii)
 
     # generate the index maps so we can perform non-allocating sparse matrix
     # addition
-    gammacc_indexmap = sparseaddmap(gammacc_Scc,gammacc)
-    Scc_indexmap = sparseaddmap(gammacc_Scc,Scc)
+    gammaii_indexmap = sparseaddmap(gammaii_Sii,gammaii)
+    Sii_indexmap = sparseaddmap(gammaii_Sii,Sii)
 
-    return Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc, Spp_indices,
-        Spc_indices, Scp_indices, Scc_indices, gammacc_indexmap, Scc_indexmap,
+    return Se, Si, portse, portsi, gammaii, See, Sei, Sie, Sii, See_indices,
+        Sei_indices, Sie_indices, Sii_indices, gammaii_indexmap, Sii_indexmap,
         networkdata, nbatches, factorization, internal_ports
 end
 
 
 """
-    solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
-        Scp_indices, Scc_indices, networkdata, i)
+    solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
+        Sie_indices, Sii_indices, networkdata, i)
 
-Update the sparse matrices `Spp`, `Spc`, `Scp`, and `Scc` using the indices
-from `Spp_indices`, `Spc_indices`, `Scp_indices`, and `Scc_indices` which
+Update the sparse matrices `See`, `Sei`, `Sie`, and `Sii` using the indices
+from `See_indices`, `Sei_indices`, `Sie_indices`, and `Sii_indices` which
 are indices into `networkdata` with frequency index `i`.
 """
-function solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
-    Scp_indices, Scc_indices, networkdata, i)
+function solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
+    Sie_indices, Sii_indices, networkdata, i)
 
-    for (j,c) in enumerate(Spp_indices.nzval)
-        Spp.nzval[j] = networkdata[c[1]][c[2],c[3],i]
+    for (j,c) in enumerate(See_indices.nzval)
+        See.nzval[j] = networkdata[c[1]][c[2],c[3],i]
     end
 
-    for (j,c) in enumerate(Spc_indices.nzval)
-        Spc.nzval[j] = networkdata[c[1]][c[2],c[3],i]
+    for (j,c) in enumerate(Sei_indices.nzval)
+        Sei.nzval[j] = networkdata[c[1]][c[2],c[3],i]
     end
 
-    for (j,c) in enumerate(Scp_indices.nzval)
-        Scp.nzval[j] = networkdata[c[1]][c[2],c[3],i]
+    for (j,c) in enumerate(Sie_indices.nzval)
+        Sie.nzval[j] = networkdata[c[1]][c[2],c[3],i]
     end
 
-    for (j,c) in enumerate(Scc_indices.nzval)
-        Scc.nzval[j] = networkdata[c[1]][c[2],c[3],i]
+    for (j,c) in enumerate(Sii_indices.nzval)
+        Sii.nzval[j] = networkdata[c[1]][c[2],c[3],i]
     end
 
     return nothing
 end
 
 
-function solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
-            Scp_indices, Scc_indices, gammacc_indexmap, Scc_indexmap,
+function solveS_inner!(Se,Si,gammaii,See, Sei, Sie, Sii, See_indices, Sei_indices,
+            Sie_indices, Sii_indices, gammaii_indexmap, Sii_indexmap,
             networkdata, indices, batch, factorization)
 
     # make a copy of the scattering matrices for each thread
-    Spp = copy(Spp)
-    Spc = copy(Spc)
-    Scp = copy(Scp)
-    Scc = copy(Scc)
+    See = copy(See)
+    Sei = copy(Sei)
+    Sie = copy(Sie)
+    Sii = copy(Sii)
 
-    # a dense matrix version of Scp
-    Scp_dense = zeros(eltype(Sp),size(Scp,1),size(Scp,2))
-    ac = similar(Sp,size(Scc,1),size(Spp,1))
+    # a dense matrix version of Sie
+    Sie_dense = zeros(eltype(Se),size(Sie,1),size(Sie,2))
+    ai = similar(Se,size(Sii,1),size(See,1))
 
     # generate an empty FactorizationCache struct
     cache = FactorizationCache()
 
     # update the scattering matrices for the first element in the batch
-    solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
-        Scp_indices, Scc_indices, networkdata, indices[batch[1]])
+    solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
+        Sie_indices, Sii_indices, networkdata, indices[batch[1]])
 
-    # make gammacc - Scc. Scc can contain zeros (eg. a match at some
+    # make gammaii - Sii. Sii can contain zeros (eg. a match at some
     # frequency). we want to retain these structural zeros because the
     # scattering matrix structure must not change.
-    gammacc_Scc = spaddkeepzeros(gammacc,-Scc)
+    gammaii_Sii = spaddkeepzeros(gammaii,-Sii)
 
     # loop over the dimensions of the array greater than 2
     for (i,j) in enumerate(batch)
         # only perform the updates for the second or later element in the
         # batch
         if i > 1
-            solveS_update!(Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
-                Scp_indices, Scc_indices, networkdata, indices[j])
-            fill!(gammacc_Scc,0)
-            sparseadd!(gammacc_Scc,1,gammacc,gammacc_indexmap)
-            sparseadd!(gammacc_Scc,-1,Scc,Scc_indexmap)
+            solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
+                Sie_indices, Sii_indices, networkdata, indices[j])
+            fill!(gammaii_Sii,0)
+            sparseadd!(gammaii_Sii,1,gammaii,gammaii_indexmap)
+            sparseadd!(gammaii_Sii,-1,Sii,Sii_indexmap)
         end
 
         # copy only the nonzero elements. the rest of the temporary array
         # is always zero
-        # Scptmp .= Scp
-        for k in 1:length(Scp.colptr)-1
-            for l in Scp.colptr[k]:(Scp.colptr[k+1]-1)
-                Scp_dense[Scp.rowval[l],k] = Scp.nzval[l]
+        # Sietmp .= Sie
+        for k in 1:length(Sie.colptr)-1
+            for l in Sie.colptr[k]:(Sie.colptr[k+1]-1)
+                Sie_dense[Sie.rowval[l],k] = Sie.nzval[l]
             end
         end
 
         # perform a factorization or update the factorization
-        tryfactorize!(cache, factorization, gammacc_Scc)
+        tryfactorize!(cache, factorization, gammaii_Sii)
 
         # solve the linear system
         # Eq. 26
-        trysolve!(ac, cache.factorization, Scp_dense)
+        trysolve!(ai, cache.factorization, Sie_dense)
 
         # Eq. 28
-        Sp[:,:,j] .= Spp + Spc*ac
-        if !isempty(Sc)
+        Se[:,:,j] .= See + Sei*ai
+        if !isempty(Si)
             # derived from Eqns. 24, 28
-            Sc[:,:,j] .= Scp + Scc*ac
+            Si[:,:,j] .= Sie + Sii*ai
         end
     end
 
@@ -2594,8 +2594,8 @@ function solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indice
 end
 
 """
-    solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
-        Spp_indices, Spc_indices, Scp_indices, Scc_indices, networkdata,
+    solveS!(Se, Si, portse, portsi, gammaii, See, Sei, Sie, Sii,
+        See_indices, Sei_indices, Sie_indices, Sii_indices, networkdata,
         nbatches, factorization, internal_ports)
 
 In-place version of `solveS`. See [`solveS`](@ref) for description. The use-
@@ -2619,9 +2619,9 @@ V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
 in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
-    Spp_indices, Spc_indices, Scp_indices, Scc_indices, gammacc_indexmap,
-    Scc_indexmap, networkdata, nbatches, factorization, internal_ports)
+function solveS!(Se, Si, portse, portsi, gammaii, See, Sei, Sie, Sii,
+    See_indices, Sei_indices, Sie_indices, Sii_indices, gammaii_indexmap,
+    Sii_indexmap, networkdata, nbatches, factorization, internal_ports)
 
     # solve the linear system for the specified frequencies. the response for
     # each frequency is independent so it can be done in parallel; however
@@ -2631,12 +2631,12 @@ function solveS!(Sp, Sc, portsp, portsc, gammacc, Spp, Spc, Scp, Scc,
     indices = CartesianIndices(axes(networkdata[1])[3:end])
     batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
     Threads.@sync for batch in batches
-        Base.Threads.@spawn solveS_inner!(Sp,Sc,gammacc,Spp, Spc, Scp, Scc, Spp_indices, Spc_indices,
-            Scp_indices, Scc_indices, gammacc_indexmap, Scc_indexmap,
+        Base.Threads.@spawn solveS_inner!(Se,Si,gammaii,See, Sei, Sie, Sii, See_indices, Sei_indices,
+            Sie_indices, Sii_indices, gammaii_indexmap, Sii_indexmap,
             networkdata, indices, batch, factorization)
     end
 
-    return (S=Sp, ports=portsp, Sinternal=Sc, portsinternal = portsc)
+    return (S=Se, ports=portse, Sinternal=Si, portsinternal = portsi)
 end
 
 """
