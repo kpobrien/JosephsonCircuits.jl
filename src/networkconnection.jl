@@ -1990,10 +1990,13 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     fconnectionlist::AbstractVector{<:AbstractVector{Tuple{T,T,Int,Int}}},
     fweightlist::AbstractVector{<:AbstractVector{Int}},
     ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
-    networkdata::AbstractVector{N},
+    scattering_parameters::AbstractVector{N},
+    noise_covariances::AbstractVector{N},
     src_node::Int,connection_index::Int,nbatches::Int,
     userinput::AbstractVector{Bool},
-    storage::Dict{Int,N}) where {T,N}
+    scattering_parameter_storage::Dict{Int,N},
+    noise_covariance_storage::Dict{Int,N},
+    noise::Bool) where {T,N}
 
     # remove the edge from the graph
     dst_node = remove_edge!(g,src_node,connection_index)
@@ -2026,35 +2029,54 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     # if src_node == dst_node, then make a self connection
     if src_node == dst_node
         # connect the networks and find the ports of the connected network
-        connected_network = intraconnectS(networkdata[src_node],src_port_index,dst_port_index;nbatches=nbatches)
+        if noise
+            connected_network, connected_noise = intraconnectS(scattering_parameters[src_node],noise_covariances[src_node],src_port_index,dst_port_index;nbatches=nbatches)
+            # update the noise_covariances for the src and replace the src with an empty array.
+            noise_covariances[src_node] = connected_noise
+        else
+            connected_network = intraconnectS(scattering_parameters[src_node],src_port_index,dst_port_index;nbatches=nbatches)
+        end
+
+        # update the networkdata for the src and replace the src with an empty array.
+        scattering_parameters[src_node] = connected_network
+
         connected_ports = intraconnectSports(ports[src_node],src_port_index,dst_port_index)
-    
+        
         # delete the ports for the dst. update the ports for the src.
         ports[src_node] = connected_ports
 
-        # update the networkdata for the src and replace the src with an empty array.
-        networkdata[src_node] = connected_network
+
     else
 
         # when making a new array. try to see if that same sizes is in storage.
         # if so, reuse that. if not, make a new one and add to storage.
         # then switch from connectS to connectS!
-        d = size(networkdata[src_node],1)+size(networkdata[dst_node],1)-2
-        if haskey(storage,d)
-            connected_network = pop!(storage,d)
+        d = size(scattering_parameters[src_node],1)+size(scattering_parameters[dst_node],1)-2
+        if haskey(scattering_parameter_storage,d)
+            connected_network = pop!(scattering_parameter_storage,d)
+            if noise
+                connected_noise = pop!(noise_covariance_storage,d)
+            end
         else
             # make a tuple with the size of the array
             # the first two dimensions are two smaller
-            sizeSx = size(networkdata[src_node])
-            sizeSy = size(networkdata[dst_node])
+            sizeSx = size(scattering_parameters[src_node])
+            sizeSy = size(scattering_parameters[dst_node])
             sizeS = NTuple{length(sizeSx)}(ifelse(i<=2,sizeSx[i]+sizeSy[i]-2,sizeSx[i]) for i in 1:length(sizeSx))
 
             # allocate an array of zeros of the same type as Sx
-            connected_network = similar(networkdata[src_node],sizeS)
+            connected_network = similar(scattering_parameters[src_node],sizeS)
+            if noise
+                connected_noise = similar(noise_covariances[src_node],sizeS)
+            end
         end
 
         # connect the networks and find the ports of the connected network
-         interconnectS!(connected_network,networkdata[src_node],networkdata[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
+        if noise
+            interconnectS!(connected_network,connected_noise,scattering_parameters[src_node],scattering_parameters[dst_node],noise_covariances[src_node],noise_covariances[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
+        else
+            interconnectS!(connected_network,scattering_parameters[src_node],scattering_parameters[dst_node],src_port_index,dst_port_index;nbatches=nbatches)
+        end
         connected_ports = interconnectSports(ports[src_node],ports[dst_node],src_port_index,dst_port_index)
 
         # delete the ports for the dst. update the ports for the src.
@@ -2064,16 +2086,27 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
 
         # if the nodes are not user input, then store the arrays
         if !userinput[src_node]
-            storage[size(networkdata[src_node],1)]= networkdata[src_node]
+            scattering_parameter_storage[size(scattering_parameters[src_node],1)]= scattering_parameters[src_node]
+            if noise
+                noise_covariance_storage[size(noise_covariances[src_node],1)]= noise_covariances[src_node]
+            end
         end
         if !userinput[dst_node]
-            storage[size(networkdata[dst_node],1)]= networkdata[dst_node]
+            scattering_parameter_storage[size(scattering_parameters[dst_node],1)]= scattering_parameters[dst_node]
+            if noise
+                noise_covariance_storage[size(noise_covariances[dst_node],1)]= noise_covariances[dst_node]
+            end
         end
 
         # update the networkdata for the src and replace the src with an empty array.
-        networkdata[src_node] = connected_network
-        networkdata[dst_node] = Array{eltype(connected_network)}(undef,ntuple(zero,ndims(connected_network)))
+        scattering_parameters[src_node] = connected_network
+        scattering_parameters[dst_node] = Array{eltype(connected_network)}(undef,ntuple(zero,ndims(connected_network)))
         
+        if noise
+            noise_covariances[src_node] = connected_noise
+            noise_covariances[dst_node] = Array{eltype(connected_noise)}(undef,ntuple(zero,ndims(connected_noise)))
+        end
+
         # mark the source and destination nodes as non-user input
         # so we can re-use the arrays if desired
         userinput[src_node] = false
@@ -2094,8 +2127,8 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
             # self connections always reduce the size so give them zero weight
             fweightlist[src_node][k] = 0
         else
-            src_weight = size(networkdata[src_node],1)-1
-            dst_weight = size(networkdata[g.fadjlist[src_node][k]],1)-1
+            src_weight = size(scattering_parameters[src_node],1)-1
+            dst_weight = size(scattering_parameters[g.fadjlist[src_node][k]],1)-1
             connection_weight = src_weight*dst_weight
             fweightlist[src_node][k] = connection_weight
         end
@@ -2110,8 +2143,8 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
                     # self connections always reduce the size so give them zero weight
                     fweightlist[k][l] = 0
                 else
-                    src_weight = size(networkdata[src_node],1)-1
-                    dst_weight = size(networkdata[k],1)-1
+                    src_weight = size(scattering_parameters[src_node],1)-1
+                    dst_weight = size(scattering_parameters[k],1)-1
                     connection_weight = src_weight*dst_weight
                     fweightlist[k][l] = connection_weight
                 end
@@ -2134,7 +2167,7 @@ connections = [[("S1",1),("S2",2)]];
 JosephsonCircuits.connectS_initialize(networks,connections)
 
 # output
-(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
+(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [[0.0 0.0; 0.0 0.0], [0.0 0.0; 0.0 0.0]])
 ```
 """
 function connectS_initialize(networks::AbstractVector, connections::AbstractVector;
@@ -2163,7 +2196,7 @@ connections = [("S1","S2",1,2)];
 JosephsonCircuits.connectS_initialize(networks,connections)
 
 # output
-(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
+(Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [[0.0 0.0; 0.0 0.0], [0.0 0.0; 0.0 0.0]])
 ```
 """
 function connectS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
@@ -2171,20 +2204,22 @@ function connectS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
 
     # network data is associated with each node, so also store those as a
     # vector of matrices where the index is the node index.
-    networkdata = [network.scattering_parameters for network in networks]
+    scattering_parameters = [network.scattering_parameters for network in networks]
+    noise_covariances = [network.noise_covariances for network in networks]
+
 
     # compute the size and element type of the first scattering matrix and
     # check the rest against this
-    sizeS = size(networkdata[1])[3:end]
-    typeS = eltype(networkdata[1])
-    for i in eachindex(networkdata)
-        if size(networkdata[i],1) != size(networkdata[i],2)
-            throw(ArgumentError("The sizes of the first two dimensions ($(size(networkdata[i],1)),$(size(networkdata[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
+    sizeS = size(scattering_parameters[1])[3:end]
+    typeS = eltype(scattering_parameters[1])
+    for i in eachindex(scattering_parameters)
+        if size(scattering_parameters[i],1) != size(scattering_parameters[i],2)
+            throw(ArgumentError("The sizes of the first two dimensions ($(size(scattering_parameters[i],1)),$(size(scattering_parameters[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
         end
-        if sizeS != size(networkdata[i])[3:end]
+        if sizeS != size(scattering_parameters[i])[3:end]
             throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(networks[i].network_name) is $(size(networks[i].scattering_parameters))."))
         end
-        if typeS != eltype(networkdata[i])
+        if typeS != eltype(scattering_parameters[i])
             throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(networks[i].network_name) is $(eltype(networks[i].scattering_parameters))."))
         end
     end
@@ -2194,7 +2229,7 @@ function connectS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
     networkindices = Dict(network.network_name=>i for (i,network) in enumerate(networks))
 
     # check if there are duplicate networks
-    if length(networkindices) != length(networkdata)
+    if length(networkindices) != length(scattering_parameters)
         throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
     end
 
@@ -2267,8 +2302,8 @@ function connectS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
         # only store the source connections
         push!(fconnectionlist[src_index],(src_name, dst_name, src_port, dst_port))
 
-        src_weight = size(networkdata[src_index],1)-1
-        dst_weight = size(networkdata[dst_index],1)-1
+        src_weight = size(scattering_parameters[src_index],1)-1
+        dst_weight = size(scattering_parameters[dst_index],1)-1
         connection_weight = src_weight*dst_weight
         if src_index == dst_index
             connection_weight = 0
@@ -2278,9 +2313,10 @@ function connectS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
     end
 
     # turn the adjacency lists into a graph
-    g = Graphs.SimpleGraphs.SimpleDiGraph(length(networkdata), fadjlist,badjlist)
+    g = Graphs.SimpleGraphs.SimpleDiGraph(length(scattering_parameters),
+        fadjlist, badjlist)
 
-    return (g, fconnectionlist, fweightlist, ports, networkdata)
+    return (g, fconnectionlist, fweightlist, ports, scattering_parameters, noise_covariances)
 end
 
 """
@@ -2312,7 +2348,9 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     fconnectionlist::AbstractVector{<:AbstractVector{Tuple{T,T,Int,Int}}},
     fweightlist::AbstractVector{<:AbstractVector{Int}},
     ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
-    networkdata::AbstractVector{N};
+    scattering_parameters::AbstractVector{N},
+    noise_covariances::AbstractVector{N};
+    noise::Bool = false,
     nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
     # copy the graph, fconnectionlist, fweightlist, ports, and networkdata
@@ -2322,13 +2360,15 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     fconnectionlist = deepcopy(fconnectionlist)
     fweightlist = deepcopy(fweightlist)
     ports = deepcopy(ports)
-    # we don't modify the scattering parameter matrices that make up networkdata so
-    # there is no need to deepycopy networkdata.
-    networkdata = copy(networkdata)
+    # we don't modify the scattering parameter matrices that make up
+    # scattering_parameters so there is no need to deepycopy
+    # scattering_parameters.
+    scattering_parameters = copy(scattering_parameters)
+    noise_covariances = copy(noise_covariances)
 
-
-    userinput = ones(Bool,length(networkdata))
-    storage = Dict{Int,N}()
+    userinput = ones(Bool,length(scattering_parameters))
+    scattering_parameter_storage = Dict{Int,N}()
+    noise_covariance_storage = Dict{Int,N}()
     # find the minimum weight and the second to minimum weight
     # we want unique weights, eg, both shouldn't be the same weight
     minweight = Inf
@@ -2359,7 +2399,10 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
                     # perform the connection if this is the minimum weight
                     # println("i ",i," j ",j," N ",N," length(fweightlist[i]) ",length(fweightlist[i]))
                     # println(fweightlist[i])
-                    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,i,j,nbatches,userinput,storage)
+                    make_connection!(g,fconnectionlist,fweightlist,ports,
+                        scattering_parameters,noise_covariances,i,j,nbatches,
+                        userinput,scattering_parameter_storage,
+                        noise_covariance_storage,noise)
                     # set j = 1 to start looping through again
                     j = 1
                     n = length(fweightlist[i])
@@ -2379,7 +2422,11 @@ function connectS!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
         minweight = secondtominweight
         secondtominweight = Inf
     end
-    return (S=networkdata[map(!isempty,networkdata)],ports=ports[map(!isempty,networkdata)])
+    if noise
+        return (S=scattering_parameters[map(!isempty,scattering_parameters)],C=noise_covariances[map(!isempty,scattering_parameters)],ports=ports[map(!isempty,scattering_parameters)])
+    else
+        return (S=scattering_parameters[map(!isempty,scattering_parameters)],ports=ports[map(!isempty,scattering_parameters)])
+    end
 end
 
 """
@@ -2421,7 +2468,7 @@ function connectS(networks, connections; noise::Bool = false,
     nbatches::Int = Base.Threads.nthreads())
     init = connectS_initialize(networks,connections; noise = noise,
         small_splitters = small_splitters, Nmodes = Nmodes)
-    return connectS!(init...;nbatches = nbatches)
+    return connectS!(init...;noise = noise, nbatches = nbatches)
 end
 
 """
