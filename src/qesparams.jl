@@ -1124,7 +1124,7 @@ function calcqeideal!(qeideal,S)
 end
 
 """
-    calcCnoise(S::AbstractArray{T}) where {T}
+    calcCnoise(S::AbstractMatrix{T}) where {T}
 
 Return the noise wave covariance matrix computed using Bosma's theorem for a
 passive linear network with scattering parameter matrix `S`. The network can
@@ -1144,7 +1144,7 @@ julia> S = rand(Complex{Float64},3,3);isapprox(JosephsonCircuits.calcCnoise(S),[
 true
 ```
 """
-function calcCnoise(S::AbstractArray{T}) where {T}
+function calcCnoise(S::AbstractMatrix{T}) where {T}
     Cnoise = zeros(T,size(S))
     return calcCnoise!(Cnoise,S)
 end
@@ -1155,15 +1155,24 @@ end
 Calculate the noise wave covariance matrix for a scattering matrix in the field
 ladder operator basis. Overwrites `Cnoise` with output.
 """
-function calcCnoise!(Cnoise, S)
+function calcCnoise!(Cnoise::AbstractMatrix, S)
 
     if size(Cnoise) != size(S)
         throw(DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
     end
 
+    if size(S,1) != size(S,2)
+        throw(DimensionMismatch("The scattering parameter and noise wave covariance matrices must be square."))
+    end
+
     # compute C = I - S*S' from Bosma's theorem
     @inbounds for j in 1:size(S,2)
         for i in 1:size(S,1)
+            # if i == j
+            #     Cnoise[i,j] = one(eltype(Cnoise))
+            # else
+            #     Cnoise[i,j] = zero(eltype(Cnoise))
+            # end
             Cnoise[i,j] = zero(eltype(Cnoise))
             for k in 1:size(S,2)
                 # use abs2 as a cludge to make sure QE is identical for

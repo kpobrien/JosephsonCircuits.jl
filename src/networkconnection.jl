@@ -1445,31 +1445,175 @@ function move_edges!(g,node,node_new,fadjlist1,fadjlist2)
     return g
 end
 
-"""
-    add_ports(networks)
 
-Return the vector of networks `networks` with ports added.
 
-# Examples
-```jldoctest
-julia> networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];JosephsonCircuits.add_ports(networks)
-2-element Vector{Tuple{Symbol, Matrix{Float64}, Vector{Tuple{Symbol, Int64}}}}:
- (:S1, [0.0 1.0; 1.0 0.0], [(:S1, 1), (:S1, 2)])
- (:S2, [0.5 0.5; 0.5 0.5], [(:S2, 1), (:S2, 2)])
+struct LinearNetwork{T,N}
+    network_name::T
+    scattering_parameters::N
+    noise_covariances::N
+    port_names::Vector{Tuple{T, Int}}
 
-julia> networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,1),(:S3,2)])];JosephsonCircuits.add_ports(networks)
-2-element Vector{Tuple{Symbol, Matrix{Float64}, Vector{Tuple{Symbol, Int64}}}}:
- (:S1, [0.0 1.0; 1.0 0.0], [(:S1, 1), (:S1, 2)])
- (:S2, [0.5 0.5; 0.5 0.5], [(:S3, 1), (:S3, 2)])
-```
-"""
-function add_ports(networks::AbstractVector)
-    return [(network[1],network[2],get_ports(network)) for network in networks]
+    # the different options:
+    # if noise = true, then compute the noise covariance matrix
+    # if noise = false, then make an empty noise covariance matrix
+
+    # 1. network_name, scattering_parameters
+    function LinearNetwork(network_name::T, scattering_parameters::N; noise = true) where {T,N}
+        new{T,N}(
+            network_name,
+            scattering_parameters,
+            calc_noise_covariances(scattering_parameters;noise = noise),
+            calc_port_names(network_name,scattering_parameters),
+            )
+    end
+
+    # 2. network_name, scattering_parameters, noise_covariances
+    function LinearNetwork(network_name::T, scattering_parameters::N, noise_covariances::N; noise = true) where {T,N}
+        new{T,N}(
+            network_name,
+            scattering_parameters,
+            noise_covariances,
+            calc_port_names(network_name,scattering_parameters),
+            )
+    end
+
+    # 3. network_name, scattering_parameters, port_names
+    function LinearNetwork(network_name::T, scattering_parameters::N, port_names::Vector{Tuple{T, Int}}; noise = false) where {T,N}
+        new{T,N}(
+            network_name,
+            scattering_parameters,
+            calc_noise_covariances(scattering_parameters;noise = noise),
+            port_names,
+            )
+    end
+
+    # 4. network_name, scattering_parameters, noise_covariances, port_names
+    function LinearNetwork(network_name::T, scattering_parameters::N, noise_covariances::N, port_names::Vector{Tuple{T, Int}}; noise = true) where {T,N}
+        new{T,N}(
+            network_name,
+            scattering_parameters,
+            noise_covariances,
+            port_names,
+            )
+    end
 end
 
-function add_ports(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}}) where {T,N}
-    return networks
+function calc_noise_covariances(scattering_parameters::AbstractArray;noise = true)
+    # define the output matrix
+    noise_covariances = similar(scattering_parameters)
+    # evaluate the in place version of the function
+    if noise
+        for i in CartesianIndices(axes(scattering_parameters)[3:end])
+            calcCnoise!(view(noise_covariances,:,:,i),view(scattering_parameters,:,:,i))
+        end
+    else
+        fill!(noise_covariances,zero(eltype(noise_covariances)))
+    end
+    return noise_covariances
 end
+
+function calc_noise_covariances(scattering_parameters::AbstractMatrix;noise = true)
+    # define the output matrix
+    noise_covariances = similar(scattering_parameters)
+    # evaluate the in place version of the function
+    if noise
+        calcCnoise!(noise_covariances,scattering_parameters)
+    else
+        fill!(noise_covariances,zero(eltype(noise_covariances)))
+    end
+    return noise_covariances
+end
+
+
+function calc_port_names(network_name,scattering_parameters)
+    return [(network_name,i) for i in 1:size(scattering_parameters,1)]
+end
+
+
+
+function add_covariances_and_port_names(networks::AbstractVector; noise = true)
+
+    # loop through the networks 
+    # identify which scattering parameter 
+    # matrices are unique
+
+    # also add a size check on the noise covariance matrices
+
+    # compute the size and element type of the first scattering matrix and
+    # check the rest against this
+    sizeS = size(networks[1][2])[3:end]
+    typeS = eltype(networks[1][2])
+    for network in networks
+        if size(network[2],1) != size(network[2],2)
+            throw(ArgumentError("The sizes of the first two dimensions ($(size(network[2],1)),$(size(network[2],2))) of the scattering matrix $(network[1]) must be the same."))
+        end
+        if sizeS != size(network[2])[3:end]
+            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1][1]) is $(size(networks[1][2])) and size of $(network[1]) is $(size(network[2]))."))
+        end
+        if typeS != eltype(network[2])
+            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1][1]) is $(eltype(networks[1][2])) and element type of $(network[1]) is $(eltype(network[2]))."))
+        end
+    end
+
+
+    network_names = [network[1] for network in networks]
+    scattering_parameters = [network[2] for network in networks]
+    noise_covariances = similar(scattering_parameters)
+
+    aliased_scattering_parameters_dict = Dict{Tuple{UInt64},Int64}()
+    # if the noise covariance matrix is user supplied then i shouldn't reuse it
+    for (i,network) in enumerate(networks)
+
+        # check if there is a user supplied noise covariance matrix
+        # if there is, then we shouldn't reuse it because it may have been
+        # defined not according to Bosma's theorem (eg. a more noisy device).
+        if !(length(network) > 2 && typeof(network[2]) == typeof(network[3]))
+
+            # check if this scattering parameter matrix aliases another one
+            key = Base.dataids(network[2])
+            if haskey(aliased_scattering_parameters_dict,key)
+                # if not user supplied and is aliased, then reuse the covariance matrix
+                # from the index
+                noise_covariances[i] = noise_covariances[aliased_scattering_parameters_dict[key]]
+
+            else
+                # if not user supplied and is not aliased, then generate a covariance matrix
+                # and store the index for future use
+                noise_covariances[i] = calc_noise_covariances(scattering_parameters[i];noise = noise)
+                aliased_scattering_parameters_dict[key] = i
+            end
+        end
+
+    end
+
+    return [LinearNetwork(network_names[i],scattering_parameters[i],noise_covariances[i],get_ports(networks[i])) for i in eachindex(networks)]
+end
+
+# """
+#     add_ports(networks)
+
+# Return the vector of networks `networks` with ports added.
+
+# # Examples
+# ```jldoctest
+# julia> networks = [(:S1,[0.0 1.0;1.0 0.0]),(:S2,[0.5 0.5;0.5 0.5])];JosephsonCircuits.add_ports(networks)
+# 2-element Vector{Tuple{Symbol, Matrix{Float64}, Vector{Tuple{Symbol, Int64}}}}:
+#  (:S1, [0.0 1.0; 1.0 0.0], [(:S1, 1), (:S1, 2)])
+#  (:S2, [0.5 0.5; 0.5 0.5], [(:S2, 1), (:S2, 2)])
+
+# julia> networks = [(:S1,[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),(:S2,[0.5 0.5;0.5 0.5],[(:S3,1),(:S3,2)])];JosephsonCircuits.add_ports(networks)
+# 2-element Vector{Tuple{Symbol, Matrix{Float64}, Vector{Tuple{Symbol, Int64}}}}:
+#  (:S1, [0.0 1.0; 1.0 0.0], [(:S1, 1), (:S1, 2)])
+#  (:S2, [0.5 0.5; 0.5 0.5], [(:S3, 1), (:S3, 2)])
+# ```
+# """
+# function add_ports(networks::AbstractVector)
+#     return [(network[1],network[2],get_ports(network)) for network in networks]
+# end
+
+# function add_ports(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}}) where {T,N}
+#     return networks
+# end
 
 """
     get_ports(network::Tuple{T, N}) where {T,N}
@@ -1486,6 +1630,13 @@ julia> JosephsonCircuits.get_ports((:S1,[0.0 1.0;1.0 0.0]))
 ```
 """
 function get_ports(network::Tuple{T, N}) where {T,N}
+    # a vector of tuples containing the ports for each of the networks in the
+    # same order the networks were supplied. eg.
+    # [(:S1,1),(:S1,2)]
+    return [(network[1],i) for i in 1:size(network[2],1)]
+end
+
+function get_ports(network::Tuple{T, N, N}) where {T,N}
     # a vector of tuples containing the ports for each of the networks in the
     # same order the networks were supplied. eg.
     # [(:S1,1),(:S1,2)]
@@ -1510,6 +1661,10 @@ function get_ports(network::Tuple{T, N, Vector{Tuple{T, Int}}}) where {T,N}
     return network[3]
 end
 
+function get_ports(network::Tuple{T, N, N, Vector{Tuple{T, Int}}}) where {T,N}
+    return network[4]
+end
+
 """
     find_duplicate_network_names(
         networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}}) where {T,N}
@@ -1519,15 +1674,15 @@ of times a given network name appears.
 
 """
 function find_duplicate_network_names(
-    networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}}) where {T,N}
+    networks::AbstractVector{LinearNetwork{T,N}}) where {T,N}
     # find the duplicates to return a useful error message
     networkdatacounts = Dict{T,Int}()
     # count the number of times each network occurs
     for network in networks
-        if haskey(networkdatacounts,network[1])
-            networkdatacounts[network[1]] += 1
+        if haskey(networkdatacounts,network.network_name)
+            networkdatacounts[network.network_name] += 1
         else
-            networkdatacounts[network[1]] = 1
+            networkdatacounts[network.network_name] = 1
         end
     end
     # report any networks that occur more than once
@@ -1671,24 +1826,24 @@ Scattering Matrix on the Microwave Circuits and Antenna Arrays". International
 Journal of Antennas and Propagation Vol. 2015, 759439,
 doi:10.1155/2015/759439.
 """
-function add_splitters(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
+function add_splitters(networks::AbstractVector{LinearNetwork{T,N}},
     connections::AbstractVector{Vector{Tuple{T,Int}}};
     small_splitters = true) where {T,N}
 
     # compute the size and element type of the first scattering matrix and
     # check the rest against this
-    sizeS = size(networks[1][2])[3:end]
-    typeS = eltype(networks[1][2])
+    sizeS = size(networks[1].scattering_parameters)[3:end]
+    typeS = eltype(networks[1].scattering_parameters)
     for network in networks
-        if size(network[2],1) != size(network[2],2)
-            throw(ArgumentError("The sizes of the first two dimensions ($(size(network[2],1)),$(size(network[2],2))) of the scattering matrix $(network[1]) must be the same."))
+        if size(network.scattering_parameters,1) != size(network.scattering_parameters,2)
+            throw(ArgumentError("The sizes of the first two dimensions ($(size(network.scattering_parameters,1)),$(size(network.scattering_parameters,2))) of the scattering matrix $(network.network_name) must be the same."))
         end
-        if sizeS != size(network[2])[3:end]
-            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1][1]) is $(size(networks[1][2])) and size of $(network[1]) is $(size(network[2]))."))
+        if sizeS != size(network.scattering_parameters)[3:end]
+            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(network.network_name) is $(size(network.scattering_parameters))."))
         end
-        if typeS != eltype(network[2])
-            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1][1]) is $(eltype(networks[1][2])) and element type of $(network[1]) is $(eltype(network[2]))."))
-        end
+        # if typeS != eltype(network.scattering_parameters)
+        #     throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(network.network_name) is $(eltype(network.scattering_parameters))."))
+        # end
     end
 
     # copy the networks vector. don't deepcopy so we don't duplicate all of
@@ -1702,6 +1857,7 @@ function add_splitters(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}
     # reuse the matrices if the same splitter is used twice. The key is the
     # size the scattering matrix and the value is the matrix itself.
     splitters = Dict{Int,N}()
+    splitter_covariances = Dict{Int,N}()
 
     # loop over the connections, converting to the flattened format and adding
     # splitters where more than two ports are connected.
@@ -1732,35 +1888,37 @@ function add_splitters(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}
 
                     # compute the size of the splitter
                     # assume we will always make a 3 port splitter
-                    sizeS = NTuple{ndims(netflat[1][2])}(ifelse(j<=2,3,size(netflat[1][2],j)) for j in 1:ndims(netflat[1][2]))
+                    sizeS = NTuple{ndims(netflat[1].scattering_parameters)}(ifelse(j<=2,3,size(netflat[1].scattering_parameters,j)) for j in 1:ndims(netflat[1].scattering_parameters))
 
                     # check if we have already made this splitter and make a new
                     # one if not.
                     if !haskey(splitters,2)
                         splitters[2] = S_splitter!(similar(N,sizeS))
+                        splitter_covariances[2] = zeros(eltype(N),sizeS)
                     end
 
                     # add the splitter to the vector of networks
-                    push!(netflat,(id,splitters[2],get_ports((id,splitters[2]))))
+                    # push!(netflat,(id,splitters[2],get_ports((id,splitters[2]))))
+                    push!(netflat,LinearNetwork(id,splitters[2],splitter_covariances[2],get_ports((id,splitters[2]))))
 
                 end
 
                 # always make the first two connections between the splitter and
                 # the components
                 # first port of first splitter to first component
-                push!(conflat,(netflat[end-Nsplitters+1][1],c[1][1],1,c[1][2]))
+                push!(conflat,(netflat[end-Nsplitters+1].network_name,c[1][1],1,c[1][2]))
 
                 # second port of first splitter to second component
-                push!(conflat,(netflat[end-Nsplitters+1][1],c[2][1],2,c[2][2]))
+                push!(conflat,(netflat[end-Nsplitters+1].network_name,c[2][1],2,c[2][2]))
 
                 # if only one splitter make a connection between the third port
                 # of the splitter to the third component
                 if Nsplitters == 1
-                    push!(conflat,(netflat[end-Nsplitters+1][1],c[3][1],3,c[3][2]))
+                    push!(conflat,(netflat[end-Nsplitters+1].network_name,c[3][1],3,c[3][2]))
                 # if more than one splitter, then connect the third port of the
                 # splitter to the first port of the next splitter
                 else
-                    push!(conflat,(netflat[end-Nsplitters+1][1],netflat[end-Nsplitters+2][1],3,1))
+                    push!(conflat,(netflat[end-Nsplitters+1].network_name,netflat[end-Nsplitters+2].network_name,3,1))
                 end
 
                 # loop through the rest of the splitters
@@ -1768,12 +1926,12 @@ function add_splitters(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}
                 for i in 2:Nsplitters
                     # first is always between the second port of the splitter
                     # and a component
-                    push!(conflat,(netflat[end-Nsplitters+i][1],c[i+1][1],2,c[i+1][2]))
+                    push!(conflat,(netflat[end-Nsplitters+i].network_name,c[i+1][1],2,c[i+1][2]))
 
                     if i == Nsplitters
-                        push!(conflat,(netflat[end-Nsplitters+i][1],c[i+2][1],3,c[i+2][2]))
+                        push!(conflat,(netflat[end-Nsplitters+i].network_name,c[i+2][1],3,c[i+2][2]))
                     else
-                        push!(conflat,(netflat[end-Nsplitters+i][1],netflat[end-Nsplitters+i+1][1],3,1))
+                        push!(conflat,(netflat[end-Nsplitters+i].network_name,netflat[end-Nsplitters+i+1].network_name,3,1))
                     end
                 end
 
@@ -1782,16 +1940,18 @@ function add_splitters(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}
                 id = T(string(UUIDs.uuid1()))
 
                 # compute the size of the splitter
-                sizeS = NTuple{ndims(netflat[1][2])}(ifelse(j<=2,length(c),size(netflat[1][2],j)) for j in 1:ndims(netflat[1][2]))
+                sizeS = NTuple{ndims(netflat[1].scattering_parameters)}(ifelse(j<=2,length(c),size(netflat[1].scattering_parameters,j)) for j in 1:ndims(netflat[1].scattering_parameters))
 
                 # check if we have already made this splitter and make a new one
                 # if not.
                 if !haskey(splitters,length(c))
                     splitters[length(c)] = S_splitter!(similar(N,sizeS))
+                    splitter_covariances[length(c)] = zeros(eltype(N),sizeS)
                 end
 
                 # add the splitter to the vector of networks
-                push!(netflat,(id,splitters[length(c)],get_ports((id,splitters[length(c)]))))
+                # push!(netflat,(id,splitters[length(c)],get_ports((id,splitters[length(c)]))))
+                push!(netflat,LinearNetwork(id,splitters[length(c)],splitter_covariances[length(c)],get_ports((id,splitters[length(c)]))))
         
                 # add the connections to the splitter
                 for j in eachindex(c)
@@ -1811,7 +1971,7 @@ end
 If the connections are already in the correct format, just return them. This
 function assumes ports have already been added to `networks`.
 """
-function add_splitters(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
+function add_splitters(networks::AbstractVector{LinearNetwork{T,N}},
     connections::AbstractVector{Tuple{T,T,Int,Int}};
     small_splitters = true) where {T,N}
     return networks,connections
@@ -1978,9 +2138,9 @@ JosephsonCircuits.connectS_initialize(networks,connections)
 ```
 """
 function connectS_initialize(networks::AbstractVector, connections::AbstractVector;
-    small_splitters::Bool = true, Nmodes::Integer = 1) 
+    small_splitters::Bool = true, noise::Bool = false, Nmodes::Integer = 1) 
 
-    networks_ports = add_ports(networks)
+    networks_ports = add_covariances_and_port_names(networks; noise = noise)
 
     connections_modes = add_modes(connections, Nmodes)
 
@@ -2006,12 +2166,12 @@ JosephsonCircuits.connectS_initialize(networks,connections)
 (Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]])
 ```
 """
-function connectS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
+function connectS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
     connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
     # network data is associated with each node, so also store those as a
     # vector of matrices where the index is the node index.
-    networkdata = [network[2] for network in networks]
+    networkdata = [network.scattering_parameters for network in networks]
 
     # compute the size and element type of the first scattering matrix and
     # check the rest against this
@@ -2019,19 +2179,19 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, 
     typeS = eltype(networkdata[1])
     for i in eachindex(networkdata)
         if size(networkdata[i],1) != size(networkdata[i],2)
-            throw(ArgumentError("The sizes of the first two dimensions ($(size(networkdata[i],1)),$(size(networkdata[i],2))) of the scattering matrix $(networks[i][1]) must be the same."))
+            throw(ArgumentError("The sizes of the first two dimensions ($(size(networkdata[i],1)),$(size(networkdata[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
         end
         if sizeS != size(networkdata[i])[3:end]
-            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1][1]) is $(size(networks[1][2])) and size of $(networks[i][1]) is $(size(networks[i][2]))."))
+            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(networks[i].network_name) is $(size(networks[i].scattering_parameters))."))
         end
         if typeS != eltype(networkdata[i])
-            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1][1]) is $(eltype(networks[1][2])) and element type of $(networks[i][1]) is $(eltype(networks[i][2]))."))
+            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(networks[i].network_name) is $(eltype(networks[i].scattering_parameters))."))
         end
     end
 
     # make a dictionary where the keys are the network names and the values
     # are the node indices.
-    networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
+    networkindices = Dict(network.network_name=>i for (i,network) in enumerate(networks))
 
     # check if there are duplicate networks
     if length(networkindices) != length(networkdata)
@@ -2046,14 +2206,14 @@ function connectS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, 
 
     # portnames are associated with each node, so store those as a vector
     # where the index is the node index
-    ports = [network[3] for network in networks]
+    ports = [network.port_names for network in networks]
 
     # make the port dictionary
     portdict = Dict{Tuple{T,Int},Tuple{Int,Int}}()
     for i in eachindex(networks)
-        for (j,port) in enumerate(networks[i][3])
+        for (j,port) in enumerate(networks[i].port_names)
             if haskey(portdict,port)
-                throw(ArgumentError("Duplicate port $(port) in network $(networks[i][1])."))
+                throw(ArgumentError("Duplicate port $(port) in network $(networks[i].network_name)."))
             else
                 portdict[port] = (i,j)
             end
@@ -2256,9 +2416,10 @@ JosephsonCircuits.connectS(networks,connections)
 (S = [[0.5 0.5; 0.5 0.5]], ports = [[("S1", 2), ("S3", 5)]])
 ```
 """
-function connectS(networks, connections; small_splitters::Bool = true,
-    Nmodes::Integer = 1, nbatches::Int = Base.Threads.nthreads())
-    init = connectS_initialize(networks,connections;
+function connectS(networks, connections; noise::Bool = false,
+    small_splitters::Bool = true, Nmodes::Integer = 1,
+    nbatches::Int = Base.Threads.nthreads())
+    init = connectS_initialize(networks,connections; noise = noise,
         small_splitters = small_splitters, Nmodes = Nmodes)
     return connectS!(init...;nbatches = nbatches)
 end
@@ -2279,12 +2440,12 @@ V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
 in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
+function parse_connections_sparse(networks::AbstractVector{LinearNetwork{T,N}},
     connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
     # network data is associated with each node, so also store those as a
     # vector of matrices where the index is the node index.
-    networkdata = [network[2] for network in networks]
+    networkdata = [network.scattering_parameters for network in networks]
 
     # first dimension of the final scattering matrix
     m = 0
@@ -2296,13 +2457,13 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tupl
     typeS = eltype(networkdata[1])
     for i in eachindex(networkdata)
         if size(networkdata[i],1) != size(networkdata[i],2)
-            throw(ArgumentError("The sizes of the first two dimensions ($(size(networkdata[i],1)),$(size(networkdata[i],2))) of the scattering matrix $(networks[i][1]) must be the same."))
+            throw(ArgumentError("The sizes of the first two dimensions ($(size(networkdata[i],1)),$(size(networkdata[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
         end
         if sizeS != size(networkdata[i])[3:end]
-            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1][1]) is $(size(networks[1][2])) and size of $(networks[i][1]) is $(size(networks[i][2]))."))
+            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(networks[i].network_name) is $(size(networks[i].scattering_parameters))."))
         end
         if typeS != eltype(networkdata[i])
-            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1][1]) is $(eltype(networks[1][2])) and element type of $(networks[i][1]) is $(eltype(networks[i][2]))."))
+            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(networks[i].network_name) is $(eltype(networks[i].scattering_parameters))."))
         end
         m+=size(networkdata[i],1)
         M+=size(networkdata[i],1)*size(networkdata[i],2)
@@ -2318,7 +2479,7 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tupl
 
     # make a dictionary where the keys are the network names and the values
     # are the node indices.
-    networkindices = Dict(network[1]=>i for (i,network) in enumerate(networks))
+    networkindices = Dict(network.network_name=>i for (i,network) in enumerate(networks))
 
     if length(networkindices) != length(networkdata)
         throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
@@ -2334,9 +2495,9 @@ function parse_connections_sparse(networks::AbstractVector{Tuple{T,N,Vector{Tupl
 
     k = 1
     for i in eachindex(networks)
-        for port in networks[i][3]
+        for port in networks[i].port_names
             if haskey(portdict,port)
-                throw(ArgumentError("Duplicate port $(port) in network $(networks[i][1])."))
+                throw(ArgumentError("Duplicate port $(port) in network $(networks[i].network_name)."))
             else
                 portdict[port] = k
                 ports[k] = port
@@ -2438,10 +2599,11 @@ end
 
 function solveS_initialize(networks::AbstractVector,
         connections::AbstractVector; small_splitters::Bool = true,
-        factorization = KLUfactorization(), internal_ports::Bool = false,
-        Nmodes::Integer = 1, nbatches::Integer = Base.Threads.nthreads())
+        noise::Bool = false, factorization = KLUfactorization(),
+        internal_ports::Bool = false, Nmodes::Integer = 1,
+        nbatches::Integer = Base.Threads.nthreads())
 
-    networks_ports = add_ports(networks)
+    networks_ports = add_covariances_and_port_names(networks;noise = noise)
 
     connections_modes = add_modes(connections, Nmodes)
 
@@ -2449,13 +2611,14 @@ function solveS_initialize(networks::AbstractVector,
         connections_modes; small_splitters = small_splitters)
 
     return solveS_initialize(networks_flat, connnections_flat;
-        factorization = factorization, internal_ports = internal_ports,
-        nbatches = nbatches)
+        noise = noise, factorization = factorization,
+        internal_ports = internal_ports, nbatches = nbatches)
 end
 
-function solveS_initialize(networks::AbstractVector{Tuple{T,N,Vector{Tuple{T, Int}}}},
+function solveS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
         connections::AbstractVector{Tuple{T,T,Int,Int}};
-        factorization = KLUfactorization(), internal_ports::Bool = false,
+        noise::Bool = false, factorization = KLUfactorization(),
+        internal_ports::Bool = false,
         nbatches::Integer = Base.Threads.nthreads()) where {T,N}
 
     porti_indices, porte_indices, ports, networkdata, gamma, Sindices, S = parse_connections_sparse(networks,connections)
@@ -2707,13 +2870,14 @@ in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
 function solveS(networks::AbstractVector, connections::AbstractVector;
-    small_splitters::Bool = true, factorization = KLUfactorization(),
-    internal_ports::Bool = false, Nmodes::Integer = 1,
-    nbatches::Integer = Base.Threads.nthreads())
+    small_splitters::Bool = true, noise::Bool = false,
+    factorization = KLUfactorization(), internal_ports::Bool = false,
+    Nmodes::Integer = 1, nbatches::Integer = Base.Threads.nthreads())
 
     init = solveS_initialize(networks,connections;
-        small_splitters = small_splitters, factorization = factorization,
-        internal_ports = internal_ports, Nmodes = Nmodes, nbatches = nbatches)
+        noise = noise, small_splitters = small_splitters,
+        factorization = factorization, internal_ports = internal_ports,
+        Nmodes = Nmodes, nbatches = nbatches)
 
     return solveS!(init...)
 end
