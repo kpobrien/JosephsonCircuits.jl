@@ -39,8 +39,9 @@ psc = JosephsonCircuits.ParsedSortedCircuit(
     Dict("L1" => 4, "I1" => 2, "L2" => 6, "C2" => 7, "R1" => 3, "P1" => 1, "K1" => 5),
     3)
 cg = JosephsonCircuits.calccircuitgraph(psc)
+JosephsonCircuits.comparestruct(cg,JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), JosephsonCircuits.SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], JosephsonCircuits.Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2))
 # output
-JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), sparse([1, 2], [1, 2], [1, 1], 2, 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2)
+true
 ```
 ```jldoctest
 @variables Ipump Rleft L Lj Cj
@@ -53,8 +54,9 @@ push!(circuit,("Lj1","2","0",Lj))
 push!(circuit,("C2","2","0",Cj))
 psc = JosephsonCircuits.parsesortcircuit(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
+JosephsonCircuits.comparestruct(cg,JosephsonCircuits.CircuitGraph(Dict((3, 2) => 3, (1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1, (2, 3) => 3), JosephsonCircuits.SparseArrays.sparse([1, 3, 2, 3], [1, 1, 2, 2], [1, -1, 1, 1], 3, 2), [(1, 2), (1, 3)], [(3, 2)], [(1, 2), (1, 3), (2, 3)], [[1, 2, 3]], Int64[], JosephsonCircuits.Graphs.SimpleGraphs.SimpleGraph{Int64}(3, [[2, 3], [1, 3], [1, 2]]), 3))
 # output
-JosephsonCircuits.CircuitGraph(Dict((3, 2) => 3, (1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1, (2, 3) => 3), sparse([1, 3, 2, 3], [1, 1, 2, 2], [1, -1, 1, 1], 3, 2), [(1, 2), (1, 3)], [(3, 2)], [(1, 2), (1, 3), (2, 3)], [[1, 2, 3]], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(3, [[2, 3], [1, 3], [1, 2]]), 3)
+true
 ```
 """
 function calccircuitgraph(parsedsortedcircuit::ParsedSortedCircuit)
@@ -75,18 +77,6 @@ end
 Calculate the superconducting spanning tree, closure branches, and loops.
 Accepts the graph of linear inductors and Josephson junctions. Outputs lists
 of edges that can be used to generate graphs.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.calcgraphs([(2, 1), (2, 1), (2, 1), (3, 1)], 3)
-JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), sparse([1, 2], [1, 2], [1, 1], 2, 2), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2)
-
-julia> JosephsonCircuits.calcgraphs([(4, 3), (3, 6), (5, 3), (3, 7), (2, 4), (6, 8), (2, 5), (8, 7), (2, 8)], 8)
-JosephsonCircuits.CircuitGraph(Dict((6, 8) => 8, (2, 5) => 2, (3, 7) => 7, (6, 3) => 6, (7, 8) => 9, (3, 4) => 4, (7, 3) => 7, (2, 8) => 3, (4, 2) => 1, (8, 6) => 8…), sparse([1, 2, 3, 4, 5, 6, 7, 1, 4, 2, 5, 6, 8, 7, 9, 3, 8, 9], [1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 7], [-1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, -1, 1, -1, 1, 1, 1], 9, 7), [(2, 4), (2, 5), (2, 8), (3, 4), (3, 6), (3, 7)], [(5, 3), (8, 6), (8, 7)], [(2, 4), (2, 5), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (6, 8), (7, 8)], [[2, 4, 3, 5], [2, 4, 3, 6, 8], [2, 4, 3, 7, 8]], [1], Graphs.SimpleGraphs.SimpleGraph{Int64}(9, [Int64[], [4, 5, 8], [4, 5, 6, 7], [2, 3], [2, 3], [3, 8], [3, 8], [2, 6, 7]]), 9)
-
-julia> JosephsonCircuits.calcgraphs([(2, 1), (2, 1), (3, 1)],4)
-JosephsonCircuits.CircuitGraph(Dict((1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1), sparse([1, 2], [1, 2], [1, 1], 2, 3), [(1, 2), (1, 3)], Tuple{Int64, Int64}[], [(1, 2), (1, 3)], Vector{Int64}[], Int64[], Graphs.SimpleGraphs.SimpleGraph{Int64}(2, [[2, 3], [1], [1]]), 2)
-```
 """
 function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int)
 
@@ -222,18 +212,6 @@ is the key and the value is an index. The index gives the order the edge
 is found when iterating over the edges of the graph. The same index is used
 for both orderings of source and destination nodes on the edge. We don't care
 about the ordering of the indices as long as they are sequential and unique.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.edge2index(JosephsonCircuits.Graphs.path_digraph(4))
-Dict{Tuple{Int64, Int64}, Int64} with 6 entries:
-  (3, 2) => 2
-  (1, 2) => 1
-  (2, 1) => 1
-  (3, 4) => 3
-  (4, 3) => 3
-  (2, 3) => 2
-```
 """
 function edge2index(graph::Graphs.SimpleDiGraph{Int})
     edge2indexdict = Dict{Tuple{Int, Int},Int}()
@@ -308,33 +286,6 @@ end
 Converts a dictionary whose keys are edges specified by tuples of integers to
 a dictionary whose keys are Graphs edges. The values associated with each key
 are preserved.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int}, Int}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2))
-Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, Int64} with 3 entries:
-  Edge 1 => 2 => 1
-  Edge 3 => 4 => 3
-  Edge 2 => 3 => 2
-
-julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int}, Float64}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2))
-Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, Float64} with 3 entries:
-  Edge 1 => 2 => 1.0
-  Edge 3 => 4 => 3.0
-  Edge 2 => 3 => 2.0
-
-julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int}, Complex{Float64}}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2))
-Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, ComplexF64} with 3 entries:
-  Edge 1 => 2 => 1.0+0.0im
-  Edge 3 => 4 => 3.0+0.0im
-  Edge 2 => 3 => 2.0+0.0im
-
-julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int}, Any}((1, 2) => 1, (3, 4) => 3, (2, 3) => 2))
-Dict{Graphs.SimpleGraphs.SimpleEdge{Int64}, Any} with 3 entries:
-  Edge 1 => 2 => 1
-  Edge 3 => 4 => 3
-  Edge 2 => 3 => 2
-```
 """
 function tuple2edge(tupledict::Dict{Tuple{Int, Int},T}) where T
     edgedict = Dict{Graphs.SimpleGraphs.SimpleEdge{Int},T}()
@@ -352,29 +303,6 @@ end
 Converts a dictionary whose keys are edges specified by tuples of integers to
 a dictionary whose keys are Graphs edges. The values associated with each key
 are preserved.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int, Int, Int}, Int}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3))
-Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, Int64} with 2 entries:
-  (Edge 1 => 2, Edge 3 => 4) => 1
-  (Edge 5 => 6, Edge 7 => 8) => 3
-
-julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int, Int, Int}, Float64}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3))
-Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, Float64} with 2 entries:
-  (Edge 1 => 2, Edge 3 => 4) => 1.0
-  (Edge 5 => 6, Edge 7 => 8) => 3.0
-
-julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int, Int, Int}, Complex{Float64}}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3))
-Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, ComplexF64} with 2 entries:
-  (Edge 1 => 2, Edge 3 => 4) => 1.0+0.0im
-  (Edge 5 => 6, Edge 7 => 8) => 3.0+0.0im
-
-julia> JosephsonCircuits.tuple2edge(Dict{Tuple{Int, Int, Int, Int}, Any}((1, 2, 3, 4) => 1, (5, 6, 7, 8) => 3))
-Dict{Tuple{Graphs.SimpleGraphs.SimpleEdge{Int64}, Graphs.SimpleGraphs.SimpleEdge{Int64}}, Any} with 2 entries:
-  (Edge 1 => 2, Edge 3 => 4) => 1
-  (Edge 5 => 6, Edge 7 => 8) => 3
-```
 """
 function tuple2edge(tupledict::Dict{Tuple{Int, Int, Int, Int},T}) where T
     edgedict = Dict{

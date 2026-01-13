@@ -5,12 +5,6 @@
         option::String)
 
 A simple structure to hold the SPICE raw file header.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.SpiceRawHeader("CKT1", "Thu Dec 29 01:29:27 2022", "A.C. Small signal analysis", "complex", 4, 3, "version 4.3.14", "")
-JosephsonCircuits.SpiceRawHeader("CKT1", "Thu Dec 29 01:29:27 2022", "A.C. Small signal analysis", "complex", 4, 3, "version 4.3.14", "")
-```
 """
 struct SpiceRawHeader
     title::String
@@ -29,12 +23,6 @@ end
 
 A simple structure to hold the SPICE raw file contents including the header,
 variables, and values.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.SpiceRaw{Matrix{ComplexF64}}(JosephsonCircuits.SpiceRawHeader("CKT1", "Thu Dec 29 01:29:27 2022", "A.C. Small signal analysis", "complex", 4, 3, "version 4.3.14", ""), Dict("V" => ["v(1)", "v(2)", "v(3)"], "Hz" => ["frequency"]), Dict{String, Matrix{ComplexF64}}("V" => [48.87562301047733 - 7.413126995337487im 49.97131616467212 + 1.1949290155299537im 49.02611690128596 - 6.90980805243651im; -10.116167243319213 + 1.534380793728424im 57.578470543293086 + 1.3775359827006193im 12.368446655904192 - 1.743197747303436im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im], "Hz" => [4.0e9 + 0.0im 5.0e9 + 0.0im 6.0e9 + 0.0im]))
-JosephsonCircuits.SpiceRaw{Matrix{ComplexF64}}(JosephsonCircuits.SpiceRawHeader("CKT1", "Thu Dec 29 01:29:27 2022", "A.C. Small signal analysis", "complex", 4, 3, "version 4.3.14", ""), Dict("V" => ["v(1)", "v(2)", "v(3)"], "Hz" => ["frequency"]), Dict{String, Matrix{ComplexF64}}("V" => [48.87562301047733 - 7.413126995337487im 49.97131616467212 + 1.1949290155299537im 49.02611690128596 - 6.90980805243651im; -10.116167243319213 + 1.534380793728424im 57.578470543293086 + 1.3775359827006193im 12.368446655904192 - 1.743197747303436im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im], "Hz" => [4.0e9 + 0.0im 5.0e9 + 0.0im 6.0e9 + 0.0im]))
-```
 """
 struct SpiceRaw{T}
     header::SpiceRawHeader
@@ -203,14 +191,6 @@ end
     calcspicesortperms(variabledict::Dict{String,Vector{String}})
 
 Calculate the sortperms which will sort the variable and node names.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.calcspicesortperms(Dict("V" => ["v(1)", "v(2)", "v(3)"], "Hz" => ["frequency"]))
-Dict{String, Vector{Int64}} with 2 entries:
-  "V"  => [1, 2, 3]
-  "Hz" => [1]
-```
 """
 function calcspicesortperms(variabledict::Dict{String,Vector{String}})
 

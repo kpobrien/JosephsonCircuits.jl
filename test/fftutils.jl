@@ -4,6 +4,175 @@ using SpecialFunctions
 
 @testset verbose=true "fftutils" begin
 
+    @testset "calcfreqsrdft" begin
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.calcfreqsrdft((1,)),
+            JosephsonCircuits.Frequencies{1}((1,), (2,), (3,), CartesianIndex{1}[CartesianIndex(1), CartesianIndex(2)], [(0,), (1,)]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.calcfreqsrdft((2,)),
+            JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1), CartesianIndex(2), CartesianIndex(3)], [(0,), (1,), (2,)]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.calcfreqsrdft((3,)),
+            JosephsonCircuits.Frequencies{1}((3,), (4,), (6,), CartesianIndex{1}[CartesianIndex(1), CartesianIndex(2), CartesianIndex(3), CartesianIndex(4)], [(0,), (1,), (2,), (3,)]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.calcfreqsrdft((3,3)),
+            JosephsonCircuits.Frequencies{2}((3, 3), (4, 7), (6, 7), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(4, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3), CartesianIndex(4, 3), CartesianIndex(1, 4), CartesianIndex(2, 4), CartesianIndex(3, 4), CartesianIndex(4, 4), CartesianIndex(1, 5), CartesianIndex(2, 5), CartesianIndex(3, 5), CartesianIndex(4, 5), CartesianIndex(1, 6), CartesianIndex(2, 6), CartesianIndex(3, 6), CartesianIndex(4, 6), CartesianIndex(1, 7), CartesianIndex(2, 7), CartesianIndex(3, 7), CartesianIndex(4, 7)], [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (2, 1), (3, 1), (0, 2), (1, 2), (2, 2), (3, 2), (0, 3), (1, 3), (2, 3), (3, 3), (0, -3), (1, -3), (2, -3), (3, -3), (0, -2), (1, -2), (2, -2), (3, -2), (0, -1), (1, -1), (2, -1), (3, -1)]),
+        )
+    end
+
+    @testset "calcfreqsdft" begin
+
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.calcfreqsdft((1,)),
+            JosephsonCircuits.Frequencies{1}((1,), (3,), (3,), CartesianIndex{1}[CartesianIndex(1), CartesianIndex(2), CartesianIndex(3)], [(0,), (1,), (-1,)]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.calcfreqsdft((2,)),
+            JosephsonCircuits.Frequencies{1}((2,), (5,), (5,), CartesianIndex{1}[CartesianIndex(1), CartesianIndex(2), CartesianIndex(3), CartesianIndex(4), CartesianIndex(5)], [(0,), (1,), (2,), (-2,), (-1,)]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.calcfreqsdft((3,)),
+            JosephsonCircuits.Frequencies{1}((3,), (7,), (7,), CartesianIndex{1}[CartesianIndex(1), CartesianIndex(2), CartesianIndex(3), CartesianIndex(4), CartesianIndex(5), CartesianIndex(6), CartesianIndex(7)], [(0,), (1,), (2,), (3,), (-3,), (-2,), (-1,)]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.calcfreqsdft((3,3)),
+            JosephsonCircuits.Frequencies{2}((3, 3), (7, 7), (7, 7), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(5, 1), CartesianIndex(6, 1), CartesianIndex(7, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(4, 2), CartesianIndex(5, 2), CartesianIndex(6, 2), CartesianIndex(7, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3), CartesianIndex(4, 3), CartesianIndex(5, 3), CartesianIndex(6, 3), CartesianIndex(7, 3), CartesianIndex(1, 4), CartesianIndex(2, 4), CartesianIndex(3, 4), CartesianIndex(4, 4), CartesianIndex(5, 4), CartesianIndex(6, 4), CartesianIndex(7, 4), CartesianIndex(1, 5), CartesianIndex(2, 5), CartesianIndex(3, 5), CartesianIndex(4, 5), CartesianIndex(5, 5), CartesianIndex(6, 5), CartesianIndex(7, 5), CartesianIndex(1, 6), CartesianIndex(2, 6), CartesianIndex(3, 6), CartesianIndex(4, 6), CartesianIndex(5, 6), CartesianIndex(6, 6), CartesianIndex(7, 6), CartesianIndex(1, 7), CartesianIndex(2, 7), CartesianIndex(3, 7), CartesianIndex(4, 7), CartesianIndex(5, 7), CartesianIndex(6, 7), CartesianIndex(7, 7)], [(0, 0), (1, 0), (2, 0), (3, 0), (-3, 0), (-2, 0), (-1, 0), (0, 1), (1, 1), (2, 1), (3, 1), (-3, 1), (-2, 1), (-1, 1), (0, 2), (1, 2), (2, 2), (3, 2), (-3, 2), (-2, 2), (-1, 2), (0, 3), (1, 3), (2, 3), (3, 3), (-3, 3), (-2, 3), (-1, 3), (0, -3), (1, -3), (2, -3), (3, -3), (-3, -3), (-2, -3), (-1, -3), (0, -2), (1, -2), (2, -2), (3, -2), (-3, -2), (-2, -2), (-1, -2), (0, -1), (1, -1), (2, -1), (3, -1), (-3, -1), (-2, -1), (-1, -1)]),
+        )
+    end
+
+
+    @testset "removeconjfreqs" begin
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.removeconjfreqs(JosephsonCircuits.Frequencies{1}((1,), (2,), (3,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)])),
+            JosephsonCircuits.Frequencies{1}((1,), (2,), (3,), CartesianIndex{1}[CartesianIndex(1), CartesianIndex(2)], [(0,), (1,)]),
+        )
+
+        frequencies = JosephsonCircuits.Frequencies{2}((2,2), (3, 5), (4, 5), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(3, 2), CartesianIndex(1, 3), CartesianIndex(2, 3), CartesianIndex(3, 3), CartesianIndex(1, 4), CartesianIndex(2, 4), CartesianIndex(3, 4), CartesianIndex(1, 5), CartesianIndex(2, 5), CartesianIndex(3, 5)], [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2), (0, -2), (1, -2), (2, -2), (0, -1), (1, -1), (2, -1)]);
+        @test isequal(
+            JosephsonCircuits.removeconjfreqs(frequencies).modes,
+            [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2), (1, -2), (1, -1)],
+        )
+
+        @test isequal(
+            JosephsonCircuits.removeconjfreqs(JosephsonCircuits.calcfreqsrdft((2,2))).modes,
+            [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2), (1, -2), (1, -1)],
+        )
+
+    end
+
+    @testset "keepfreqs" begin
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,2)),[(0,0),(1,0),(0,1),(1,1)]),
+            JosephsonCircuits.Frequencies{2}((2, 2), (3, 5), (4, 5), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(1, 2), CartesianIndex(2, 2)], [(0, 0), (1, 0), (0, 1), (1, 1)]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,2)),Tuple{Int64,Int64}[]),
+            JosephsonCircuits.Frequencies{2}((2, 2), (3, 5), (4, 5), CartesianIndex{2}[], Tuple{Int64, Int64}[]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[]),
+            JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[], Tuple{Int64}[]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.keepfreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[CartesianIndex(1,)]),
+            JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1)], [(0,)]),
+        )
+
+    end
+
+    @testset "removefreqs" begin
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),Tuple{Int64}[(2,)]),
+            JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,)], [(0,), (1,)]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),Tuple{Int64}[(0,),(1,),(2,),(3,)]),
+            JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[], Tuple{Int64}[]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),Tuple{Int64}[]),
+            JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[CartesianIndex(1,)]),
+            JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(2,), CartesianIndex(3,)], [(1,), (2,)]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[CartesianIndex(1,),CartesianIndex(2,),CartesianIndex(3,),CartesianIndex(4,)]),
+            JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[], Tuple{Int64}[]),
+        )
+
+        @test JosephsonCircuits.comparestruct(
+            JosephsonCircuits.removefreqs(JosephsonCircuits.calcfreqsrdft((2,)),CartesianIndex{1}[]),
+            JosephsonCircuits.Frequencies{1}((2,), (3,), (4,), CartesianIndex{1}[CartesianIndex(1,), CartesianIndex(2,), CartesianIndex(3,)], [(0,), (1,), (2,)]),
+        )
+
+    end
+
+    @testset "conjsym" begin
+
+        @test isequal(
+            JosephsonCircuits.conjsym(JosephsonCircuits.calcfreqsrdft((2,))),
+            Dict{CartesianIndex{1}, CartesianIndex{1}}(),
+        )
+
+        @test isequal(
+            JosephsonCircuits.conjsym(JosephsonCircuits.calcfreqsdft((2,))),
+            Dict{CartesianIndex{1}, CartesianIndex{1}}(CartesianIndex(3) => CartesianIndex(4), CartesianIndex(2) => CartesianIndex(5)),
+        )
+
+        @test isequal(
+            JosephsonCircuits.conjsym(JosephsonCircuits.calcfreqsrdft((2,1))),
+            Dict{CartesianIndex{2}, CartesianIndex{2}}(CartesianIndex(3, 2) => CartesianIndex(3, 3), CartesianIndex(1, 2) => CartesianIndex(1, 3)),
+        )
+
+        @test isequal(
+            JosephsonCircuits.conjsym(JosephsonCircuits.calcfreqsdft((2,1))),
+            Dict{CartesianIndex{2}, CartesianIndex{2}}(CartesianIndex(3, 2) => CartesianIndex(4, 3), CartesianIndex(2, 1) => CartesianIndex(5, 1), CartesianIndex(1, 2) => CartesianIndex(1, 3), CartesianIndex(3, 1) => CartesianIndex(4, 1), CartesianIndex(2, 2) => CartesianIndex(5, 3), CartesianIndex(3, 3) => CartesianIndex(4, 2), CartesianIndex(2, 3) => CartesianIndex(5, 2)),
+        )
+
+        @test isequal(
+            JosephsonCircuits.conjsym(JosephsonCircuits.calcfreqsrdft((2,1,1))),
+            Dict{CartesianIndex{3}, CartesianIndex{3}}(CartesianIndex(1, 1, 2) => CartesianIndex(1, 1, 3), CartesianIndex(3, 1, 2) => CartesianIndex(3, 1, 3), CartesianIndex(1, 2, 3) => CartesianIndex(1, 3, 2), CartesianIndex(1, 2, 1) => CartesianIndex(1, 3, 1), CartesianIndex(3, 2, 3) => CartesianIndex(3, 3, 2), CartesianIndex(3, 2, 2) => CartesianIndex(3, 3, 3), CartesianIndex(3, 2, 1) => CartesianIndex(3, 3, 1), CartesianIndex(1, 2, 2) => CartesianIndex(1, 3, 3)),
+        )
+    end
+
+
+    @testset "calcindexdict" begin
+
+        @test isequal(
+            JosephsonCircuits.calcindexdict(3),
+            Dict{CartesianIndex{1}, Int64}(CartesianIndex(3) => 3, CartesianIndex(2) => 2, CartesianIndex(1) => 1),
+        )
+
+        @test isequal(
+            JosephsonCircuits.calcindexdict((2,3)),
+            Dict{CartesianIndex{2}, Int64}(CartesianIndex(1, 1) => 1, CartesianIndex(2, 3) => 6, CartesianIndex(2, 1) => 2, CartesianIndex(1, 2) => 3, CartesianIndex(2, 2) => 4, CartesianIndex(1, 3) => 5),
+        )
+
+    end
+
     @testset "applynl: cos(z*cos(theta))" begin
         # test against Jacobi-Anger expansion for cos(z*cos(theta))
         z = 0.9

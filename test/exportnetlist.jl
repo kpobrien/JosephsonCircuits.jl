@@ -103,6 +103,46 @@ using Test
         end
     end
 
+    @testset "componentdictionaries" begin
+        begin
+            @variables Ipump Rleft L1 K1 L2 C2 C3
+            circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+            push!(circuit,("P1","1","0",1))
+            push!(circuit,("I1","1","0",Ipump))
+            push!(circuit,("R1","1","0",Rleft))
+            push!(circuit,("L1","1","0",L1))
+            push!(circuit,("K1","L1","L2",K1))
+            push!(circuit,("L2","2","0",L2))
+            push!(circuit,("C2","2","0",C2))
+            push!(circuit,("C3","2","0",C3))
+            psc = parsesortcircuit(circuit)
+            countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.componenttypes,psc.nodeindices,psc.componentnamedict,psc.mutualinductorbranchnames)
+
+            @test isequal(countdict,Dict((:L, 1, 3) => 1, (:K, 4, 6) => 1, (:R, 1, 2) => 1, (:I, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:L, 1, 2) => 1))
+            @test isequal(indexdict,Dict((:C, 1, 3, 1) => 7, (:I, 1, 2, 1) => 2, (:R, 1, 2, 1) => 3, (:L, 1, 3, 1) => 6, (:C, 1, 3, 2) => 8, (:L, 1, 2, 1) => 4, (:P, 1, 2, 1) => 1, (:K, 4, 6, 1) => 5))
+        end
+
+        begin
+            @variables Ipump Rleft L1 K1 K2 L2 C2 C3
+            circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+            push!(circuit,("P1","1","0",1))
+            push!(circuit,("I1","1","0",Ipump))
+            push!(circuit,("R1","1","0",Rleft))
+            push!(circuit,("L1","1","0",L1))
+            push!(circuit,("K1","L1","L2",K1))
+            push!(circuit,("K2","L1","L2",K2))
+            push!(circuit,("L2","2","0",L2))
+            push!(circuit,("C2","2","0",C2))
+            push!(circuit,("C3","2","0",C3))
+            psc = parsesortcircuit(circuit)
+            countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.componenttypes,psc.nodeindices,psc.componentnamedict,psc.mutualinductorbranchnames)
+
+            @test isequal(countdict,Dict((:L, 1, 3) => 1, (:K, 4, 7) => 2, (:R, 1, 2) => 1, (:I, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:L, 1, 2) => 1))
+            @test isequal(indexdict,Dict((:C, 1, 3, 1) => 8, (:I, 1, 2, 1) => 2, (:R, 1, 2, 1) => 3, (:K, 4, 7, 1) => 5, (:K, 4, 7, 2) => 6, (:L, 1, 2, 1) => 4, (:L, 1, 3, 1) => 7, (:P, 1, 2, 1) => 1, (:C, 1, 3, 2) => 9))
+        end
+
+    end
+
     @testset "calcCjIcmean errors" begin
         begin
             componenttypes = [:P, :R, :C, :Lj, :C, :C, :Lj, :C]
