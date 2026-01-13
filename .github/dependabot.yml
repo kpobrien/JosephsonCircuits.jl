@@ -11,10 +11,13 @@ updates:
     schedule:
       interval: "weekly"
   - package-ecosystem: "julia"
-    directory: "/"
+    directories:
+      - "/"
+      - "/docs"
+      - "/test"
     schedule:
       interval: "weekly"
-    # groups: # uncomment to group all julia package updates into a single PR
-    #   all-julia-packages:
-    #     patterns:
-    #       - "*"%    
+    groups:
+      all-julia-packages:
+        patterns:
+          - "*"
