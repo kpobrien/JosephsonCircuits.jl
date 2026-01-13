@@ -2492,7 +2492,8 @@ function parse_connections_sparse(networks::AbstractVector{LinearNetwork{T,N}},
 
     # network data is associated with each node, so also store those as a
     # vector of matrices where the index is the node index.
-    networkdata = [network.scattering_parameters for network in networks]
+    scattering_parameters = [network.scattering_parameters for network in networks]
+    noise_covariances = [network.noise_covariances for network in networks]
 
     # first dimension of the final scattering matrix
     m = 0
@@ -2500,20 +2501,20 @@ function parse_connections_sparse(networks::AbstractVector{LinearNetwork{T,N}},
     M = 0
     # compute the size and element type of the first scattering matrix and
     # check the rest against this
-    sizeS = size(networkdata[1])[3:end]
-    typeS = eltype(networkdata[1])
-    for i in eachindex(networkdata)
-        if size(networkdata[i],1) != size(networkdata[i],2)
-            throw(ArgumentError("The sizes of the first two dimensions ($(size(networkdata[i],1)),$(size(networkdata[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
+    sizeS = size(scattering_parameters[1])[3:end]
+    typeS = eltype(scattering_parameters[1])
+    for i in eachindex(scattering_parameters)
+        if size(scattering_parameters[i],1) != size(scattering_parameters[i],2)
+            throw(ArgumentError("The sizes of the first two dimensions ($(size(scattering_parameters[i],1)),$(size(scattering_parameters[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
         end
-        if sizeS != size(networkdata[i])[3:end]
+        if sizeS != size(scattering_parameters[i])[3:end]
             throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(networks[i].network_name) is $(size(networks[i].scattering_parameters))."))
         end
-        if typeS != eltype(networkdata[i])
+        if typeS != eltype(scattering_parameters[i])
             throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(networks[i].network_name) is $(eltype(networks[i].scattering_parameters))."))
         end
-        m+=size(networkdata[i],1)
-        M+=size(networkdata[i],1)*size(networkdata[i],2)
+        m+=size(scattering_parameters[i],1)
+        M+=size(scattering_parameters[i],1)*size(scattering_parameters[i],2)
     end
 
     # the indices in the sparse matrix formed by placing all of the scattering
@@ -2521,14 +2522,14 @@ function parse_connections_sparse(networks::AbstractVector{LinearNetwork{T,N}},
     networkdataindices = zeros(Int,length(networks))
     networkdataindices[1] = 1
     for i in 2:length(networkdataindices)
-        networkdataindices[i] = networkdataindices[i-1] + size(networkdata[i-1],1)
+        networkdataindices[i] = networkdataindices[i-1] + size(scattering_parameters[i-1],1)
     end
 
     # make a dictionary where the keys are the network names and the values
     # are the node indices.
     networkindices = Dict(network.network_name=>i for (i,network) in enumerate(networks))
 
-    if length(networkindices) != length(networkdata)
+    if length(networkindices) != length(scattering_parameters)
         throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
     end
 
@@ -2625,8 +2626,8 @@ function parse_connections_sparse(networks::AbstractVector{LinearNetwork{T,N}},
     empty!(Jindices)
     empty!(Vindices)
 
-    for i in eachindex(networkdata)
-        for c in CartesianIndices(axes(networkdata[i])[1:2])
+    for i in eachindex(scattering_parameters)
+        for c in CartesianIndices(axes(scattering_parameters[i])[1:2])
             push!(Iindices,networkdataindices[i]+c[1]-1)
             push!(Jindices,networkdataindices[i]+c[2]-1)
             push!(Vindices,(i,c[1],c[2]))
@@ -2641,7 +2642,7 @@ function parse_connections_sparse(networks::AbstractVector{LinearNetwork{T,N}},
     # populated later. we can reuse the sparsity structure from Sindices.
     S = SparseMatrixCSC(Sindices.m,Sindices.n,copy(Sindices.colptr),copy(Sindices.rowval),Vector{eltype(N)}(undef,M))
 
-    return porti_indices, porte_indices, ports, networkdata, gamma, Sindices, S
+    return porti_indices, porte_indices, ports, scattering_parameters, noise_covariances, gamma, Sindices, S
 end
 
 function solveS_initialize(networks::AbstractVector,
@@ -2668,7 +2669,7 @@ function solveS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
         internal_ports::Bool = false,
         nbatches::Integer = Base.Threads.nthreads()) where {T,N}
 
-    porti_indices, porte_indices, ports, networkdata, gamma, Sindices, S = parse_connections_sparse(networks,connections)
+    porti_indices, porte_indices, ports, scattering_parameters, noise_covariances, gamma, Sindices, S = parse_connections_sparse(networks,connections)
 
     portse = ports[porte_indices]
     portsi = ports[porti_indices]
@@ -2685,11 +2686,14 @@ function solveS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
 
     gammaii = gamma[porti_indices,porti_indices]
 
-    sizeSe = NTuple{ndims(networkdata[1]),Int}(ifelse(i<=2,length(portse),size(networkdata[1],i)) for i in 1:ndims(networkdata[1]))
+    sizeSe = NTuple{ndims(scattering_parameters[1]),Int}(ifelse(i<=2,length(portse),size(scattering_parameters[1],i)) for i in 1:ndims(scattering_parameters[1]))
     Se = zeros(eltype(N),sizeSe)
+    Ce = zeros(eltype(N),sizeSe)
 
-    sizeSi = tuple(length(portsi),length(portse),[size(networkdata[1],i) for i in 3:ndims(networkdata[1])]...)
+    sizeSi = tuple(length(portsi),length(portse),[size(scattering_parameters[1],i) for i in 3:ndims(scattering_parameters[1])]...)
     Si = ifelse(internal_ports,zeros(eltype(N),sizeSi),zeros(eltype(N),0))
+    Ci = ifelse(internal_ports,zeros(eltype(N),sizeSi),zeros(eltype(N),0))
+
 
     # make gammaii - Sii. Sii can contain zeros (eg. a match at some
     # frequency). we want to retain these structural zeros because the
@@ -2701,9 +2705,10 @@ function solveS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
     gammaii_indexmap = sparseaddmap(gammaii_Sii,gammaii)
     Sii_indexmap = sparseaddmap(gammaii_Sii,Sii)
 
-    return Se, Si, portse, portsi, gammaii, See, Sei, Sie, Sii, See_indices,
-        Sei_indices, Sie_indices, Sii_indices, gammaii_indexmap, Sii_indexmap,
-        networkdata, nbatches, factorization, internal_ports
+    return Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
+        See_indices, Sei_indices, Sie_indices, Sii_indices, gammaii_indexmap,
+        Sii_indexmap, scattering_parameters, noise_covariances, nbatches,
+        factorization, internal_ports, noise
 end
 
 
@@ -2738,15 +2743,24 @@ function solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
 end
 
 
-function solveS_inner!(Se,Si,gammaii,See, Sei, Sie, Sii, See_indices, Sei_indices,
-            Sie_indices, Sii_indices, gammaii_indexmap, Sii_indexmap,
-            networkdata, indices, batch, factorization)
+function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
+            See_indices, Sei_indices, Sie_indices, Sii_indices,
+            gammaii_indexmap, Sii_indexmap, scattering_parameters,
+            noise_covariances, indices, batch, factorization, noise)
 
     # make a copy of the scattering matrices for each thread
     See = copy(See)
     Sei = copy(Sei)
     Sie = copy(Sie)
     Sii = copy(Sii)
+
+    # make a copy for the noise covariance matrices for each thread
+    if noise
+        Cee = copy(See)
+        Cei = copy(Sei)
+        Cie = copy(Sie)
+        Cii = copy(Sii)
+    end
 
     # a dense matrix version of Sie
     Sie_dense = zeros(eltype(Se),size(Sie,1),size(Sie,2))
@@ -2757,7 +2771,13 @@ function solveS_inner!(Se,Si,gammaii,See, Sei, Sie, Sii, See_indices, Sei_indice
 
     # update the scattering matrices for the first element in the batch
     solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
-        Sie_indices, Sii_indices, networkdata, indices[batch[1]])
+        Sie_indices, Sii_indices, scattering_parameters, indices[batch[1]])
+
+    if noise
+        # update the noise covariance matrices for the first element in the batch
+        solveS_update!(Cee, Cei, Cie, Cii, See_indices, Sei_indices,
+            Sie_indices, Sii_indices, noise_covariances, indices[batch[1]])
+    end
 
     # make gammaii - Sii. Sii can contain zeros (eg. a match at some
     # frequency). we want to retain these structural zeros because the
@@ -2769,34 +2789,81 @@ function solveS_inner!(Se,Si,gammaii,See, Sei, Sie, Sii, See_indices, Sei_indice
         # only perform the updates for the second or later element in the
         # batch
         if i > 1
+            # solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
+            #     Sie_indices, Sii_indices, networkdata, indices[j])
+
+            # update the scattering matrices for the other elements in the batch
             solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
-                Sie_indices, Sii_indices, networkdata, indices[j])
+                Sie_indices, Sii_indices, scattering_parameters, indices[j])
+
+            if noise
+                # update the noise covariance matrices for the other elements in the batch
+                solveS_update!(Cee, Cei, Cie, Cii, See_indices, Sei_indices,
+                    Sie_indices, Sii_indices, noise_covariances, indices[j])
+            end
+
             fill!(gammaii_Sii,0)
             sparseadd!(gammaii_Sii,1,gammaii,gammaii_indexmap)
             sparseadd!(gammaii_Sii,-1,Sii,Sii_indexmap)
         end
 
-        # copy only the nonzero elements. the rest of the temporary array
-        # is always zero
-        # Sietmp .= Sie
-        for k in 1:length(Sie.colptr)-1
-            for l in Sie.colptr[k]:(Sie.colptr[k+1]-1)
-                Sie_dense[Sie.rowval[l],k] = Sie.nzval[l]
-            end
-        end
-
         # perform a factorization or update the factorization
         tryfactorize!(cache, factorization, gammaii_Sii)
 
-        # solve the linear system
-        # Eq. 26
-        trysolve!(ai, cache.factorization, Sie_dense)
+        if noise
+            # use this identity to evaluate using ldiv instead of rdiv, so
+            # we can use the same factorization
+            # A*inv(B)*C == A*(B \ C) == (A / B) * C == (B' \ A')' * C
+            for k in 1:length(Sei.colptr)-1
+                for l in Sei.colptr[k]:(Sei.colptr[k+1]-1)
+                    Sie_dense[k,Sei.rowval[l]] = conj(Sei.nzval[l])
+                end
+            end
+            trysolve!(ai, cache.factorization', Sie_dense)
 
-        # Eq. 28
-        Se[:,:,j] .= See + Sei*ai
-        if !isempty(Si)
-            # derived from Eqns. 24, 28
-            Si[:,:,j] .= Sie + Sii*ai
+            # Eq. 3.9 from Wedge thesis
+            # Snet = See + Sei*inv(gamma_ii - Sii)*Sie
+            #      = See + ((gamma_ii - Sii)' \Sei')'*Sie
+            Se[:,:,j] .= See .+  ai'*Sie
+
+            # Eq. 3.13 from Wedge thesis
+            # Cnet = [I | Sei*inv(gamma_ii - Sii)] Cs [I | Sei*inv(gamma_ii - Sii)]'
+            # Cs = [Cee Cei;Cie Cii]
+            # Cnet = [I, Aie]    * [Cee Cei;    * [I;
+            #                       Cie Cii]       Aie']
+            # Cnet = [Cee+Aie*Cie, Cei+Aie*Cii]    * [I;
+            #                                         Aie']
+            # Cnet = Cee + Aie*Cie + Cei*Aie' + Aie*Cii*Aie'
+            Ce[:,:,j] .= Cee .+  ai'*Cie .+ Cei*ai .+ ai'*Cii*ai
+        end
+
+        # if we are solving for the internal modes we need to evaluate this
+        if !noise || !isempty(Si)
+
+            # copy only the nonzero elements. the rest of the temporary array
+            # is always zero
+            # Sietmp .= Sie
+            for k in 1:length(Sie.colptr)-1
+                for l in Sie.colptr[k]:(Sie.colptr[k+1]-1)
+                    Sie_dense[Sie.rowval[l],k] = Sie.nzval[l]
+                end
+            end
+
+            # solve the linear system
+            # Eq. 26
+            trysolve!(ai, cache.factorization, Sie_dense)
+
+            # Eq. 3.9 from Wedge thesis or Eq. 28 from Monaco and Tiberio
+            # Snet = See + Sei*inv(gamma_ii - Sii)*Sie
+            #      = See + Sei*((gamma_ii - Sii) \ Sie)
+            Se[:,:,j] .= See + Sei*ai
+
+            if !isempty(Si)
+                # derived from Eqns. 24, 28
+                # Si = Sie + Sii*inv(gamma_ii-Sii)*Sie
+                #    = Sie + Sii*(gamma_ii-Sii)\Sie
+                Si[:,:,j] .= Sie .+ Sii*ai
+            end
         end
     end
 
@@ -2829,24 +2896,30 @@ V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
 in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function solveS!(Se, Si, portse, portsi, gammaii, See, Sei, Sie, Sii,
+function solveS!(Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
     See_indices, Sei_indices, Sie_indices, Sii_indices, gammaii_indexmap,
-    Sii_indexmap, networkdata, nbatches, factorization, internal_ports)
+    Sii_indexmap, scattering_parameters, noise_covariances, nbatches,
+    factorization, internal_ports, noise)
 
     # solve the linear system for the specified frequencies. the response for
     # each frequency is independent so it can be done in parallel; however
     # we want to reuse the factorization object and other input arrays. 
     # perform array allocations and factorization "nbatches" times.
     # parallelize using tasks
-    indices = CartesianIndices(axes(networkdata[1])[3:end])
+    indices = CartesianIndices(axes(scattering_parameters[1])[3:end])
     batches = Base.Iterators.partition(1:length(indices),1+(length(indices)-1)÷nbatches)
     Threads.@sync for batch in batches
-        Base.Threads.@spawn solveS_inner!(Se,Si,gammaii,See, Sei, Sie, Sii, See_indices, Sei_indices,
-            Sie_indices, Sii_indices, gammaii_indexmap, Sii_indexmap,
-            networkdata, indices, batch, factorization)
+        Base.Threads.@spawn solveS_inner!(Se,Si,Ce, Ci, gammaii, See, Sei,
+            Sie, Sii, See_indices, Sei_indices, Sie_indices, Sii_indices,
+            gammaii_indexmap, Sii_indexmap, scattering_parameters,
+            noise_covariances, indices, batch, factorization, noise)
     end
 
-    return (S=Se, ports=portse, Sinternal=Si, portsinternal = portsi)
+    if noise
+        return (S=Se, C=Ce, ports=portse, Sinternal=Si, Cinternal=Ci,  portsinternal = portsi)
+    else
+        return (S=Se, ports=portse, Sinternal=Si, portsinternal = portsi)
+    end
 end
 
 """
