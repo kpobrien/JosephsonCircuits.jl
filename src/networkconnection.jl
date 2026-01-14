@@ -1447,7 +1447,7 @@ end
 
 
 
-struct LinearNetwork{T,N}
+struct PassiveNetwork{T,N}
     network_name::T
     scattering_parameters::N
     noise_covariances::N
@@ -1458,7 +1458,7 @@ struct LinearNetwork{T,N}
     # if noise = false, then make an empty noise covariance matrix
 
     # 1. network_name, scattering_parameters
-    function LinearNetwork(network_name::T, scattering_parameters::N; noise = true) where {T,N}
+    function PassiveNetwork(network_name::T, scattering_parameters::N; noise = true) where {T,N}
         new{T,N}(
             network_name,
             scattering_parameters,
@@ -1468,7 +1468,7 @@ struct LinearNetwork{T,N}
     end
 
     # 2. network_name, scattering_parameters, noise_covariances
-    function LinearNetwork(network_name::T, scattering_parameters::N, noise_covariances::N; noise = true) where {T,N}
+    function PassiveNetwork(network_name::T, scattering_parameters::N, noise_covariances::N; noise = true) where {T,N}
         new{T,N}(
             network_name,
             scattering_parameters,
@@ -1478,7 +1478,7 @@ struct LinearNetwork{T,N}
     end
 
     # 3. network_name, scattering_parameters, port_names
-    function LinearNetwork(network_name::T, scattering_parameters::N, port_names::Vector{Tuple{T, Int}}; noise = false) where {T,N}
+    function PassiveNetwork(network_name::T, scattering_parameters::N, port_names::Vector{Tuple{T, Int}}; noise = false) where {T,N}
         new{T,N}(
             network_name,
             scattering_parameters,
@@ -1488,7 +1488,7 @@ struct LinearNetwork{T,N}
     end
 
     # 4. network_name, scattering_parameters, noise_covariances, port_names
-    function LinearNetwork(network_name::T, scattering_parameters::N, noise_covariances::N, port_names::Vector{Tuple{T, Int}}; noise = true) where {T,N}
+    function PassiveNetwork(network_name::T, scattering_parameters::N, noise_covariances::N, port_names::Vector{Tuple{T, Int}}; noise = true) where {T,N}
         new{T,N}(
             network_name,
             scattering_parameters,
@@ -1512,24 +1512,9 @@ function calc_noise_covariances(scattering_parameters::AbstractArray;noise = tru
     return noise_covariances
 end
 
-function calc_noise_covariances(scattering_parameters::AbstractMatrix;noise = true)
-    # define the output matrix
-    noise_covariances = similar(scattering_parameters)
-    # evaluate the in place version of the function
-    if noise
-        calcCnoise!(noise_covariances,scattering_parameters)
-    else
-        fill!(noise_covariances,zero(eltype(noise_covariances)))
-    end
-    return noise_covariances
-end
-
-
 function calc_port_names(network_name,scattering_parameters)
     return [(network_name,i) for i in 1:size(scattering_parameters,1)]
 end
-
-
 
 function add_covariances_and_port_names(networks::AbstractVector; noise = true)
 
@@ -1586,7 +1571,7 @@ function add_covariances_and_port_names(networks::AbstractVector; noise = true)
 
     end
 
-    return [LinearNetwork(network_names[i],scattering_parameters[i],noise_covariances[i],get_ports(networks[i])) for i in eachindex(networks)]
+    return [PassiveNetwork(network_names[i],scattering_parameters[i],noise_covariances[i],get_ports(networks[i])) for i in eachindex(networks)]
 end
 
 # """
@@ -1674,7 +1659,7 @@ of times a given network name appears.
 
 """
 function find_duplicate_network_names(
-    networks::AbstractVector{LinearNetwork{T,N}}) where {T,N}
+    networks::AbstractVector{PassiveNetwork{T,N}}) where {T,N}
     # find the duplicates to return a useful error message
     networkdatacounts = Dict{T,Int}()
     # count the number of times each network occurs
@@ -1826,7 +1811,7 @@ Scattering Matrix on the Microwave Circuits and Antenna Arrays". International
 Journal of Antennas and Propagation Vol. 2015, 759439,
 doi:10.1155/2015/759439.
 """
-function add_splitters(networks::AbstractVector{LinearNetwork{T,N}},
+function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
     connections::AbstractVector{Vector{Tuple{T,Int}}};
     small_splitters = true) where {T,N}
 
@@ -1899,7 +1884,7 @@ function add_splitters(networks::AbstractVector{LinearNetwork{T,N}},
 
                     # add the splitter to the vector of networks
                     # push!(netflat,(id,splitters[2],get_ports((id,splitters[2]))))
-                    push!(netflat,LinearNetwork(id,splitters[2],splitter_covariances[2],get_ports((id,splitters[2]))))
+                    push!(netflat,PassiveNetwork(id,splitters[2],splitter_covariances[2],get_ports((id,splitters[2]))))
 
                 end
 
@@ -1951,7 +1936,7 @@ function add_splitters(networks::AbstractVector{LinearNetwork{T,N}},
 
                 # add the splitter to the vector of networks
                 # push!(netflat,(id,splitters[length(c)],get_ports((id,splitters[length(c)]))))
-                push!(netflat,LinearNetwork(id,splitters[length(c)],splitter_covariances[length(c)],get_ports((id,splitters[length(c)]))))
+                push!(netflat,PassiveNetwork(id,splitters[length(c)],splitter_covariances[length(c)],get_ports((id,splitters[length(c)]))))
         
                 # add the connections to the splitter
                 for j in eachindex(c)
@@ -1971,7 +1956,7 @@ end
 If the connections are already in the correct format, just return them. This
 function assumes ports have already been added to `networks`.
 """
-function add_splitters(networks::AbstractVector{LinearNetwork{T,N}},
+function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
     connections::AbstractVector{Tuple{T,T,Int,Int}};
     small_splitters = true) where {T,N}
     return networks,connections
@@ -2199,7 +2184,7 @@ JosephsonCircuits.connectS_initialize(networks,connections)
 (Graphs.SimpleGraphs.SimpleDiGraph{Int64}(2, [[2], Int64[]], [Int64[], [1]]), [[("S1", "S2", 1, 2)], Tuple{String, String, Int64, Int64}[]], [[1], Int64[]], [[("S1", 1), ("S1", 2)], [("S2", 1), ("S2", 2)]], [[0.0 1.0; 1.0 0.0], [0.5 0.5; 0.5 0.5]], [[0.0 0.0; 0.0 0.0], [0.0 0.0; 0.0 0.0]])
 ```
 """
-function connectS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
+function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
     connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
     # network data is associated with each node, so also store those as a
@@ -2487,7 +2472,7 @@ V. A. Monaco and P. Tiberio, "Computer-Aided Analysis of Microwave Circuits,"
 in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 249-263, Mar. 1974, doi: 10.1109/TMTT.1974.1128208.
 """
-function parse_connections_sparse(networks::AbstractVector{LinearNetwork{T,N}},
+function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
     connections::AbstractVector{Tuple{T,T,Int,Int}}) where {T,N}
 
     # network data is associated with each node, so also store those as a
@@ -2663,7 +2648,7 @@ function solveS_initialize(networks::AbstractVector,
         internal_ports = internal_ports, nbatches = nbatches)
 end
 
-function solveS_initialize(networks::AbstractVector{LinearNetwork{T,N}},
+function solveS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
         connections::AbstractVector{Tuple{T,T,Int,Int}};
         noise::Bool = false, factorization = KLUfactorization(),
         internal_ports::Bool = false,

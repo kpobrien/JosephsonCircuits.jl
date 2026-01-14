@@ -751,6 +751,13 @@ import StaticArrays
             factorization=JosephsonCircuits.KLUfactorization())
         @test isapprox(out1[1][1],out6[1])
 
+        # test the noise case
+        out7 = JosephsonCircuits.connectS(networks, connections;
+            noise = true);
+        out8 = JosephsonCircuits.solveS(networks, connections;
+            noise = true);
+        @test isapprox(out7[1][1],out8[1])
+        @test isapprox(out7[2][1],out8[2])
     end
 
     @testset "make_connection! errors" begin
@@ -867,7 +874,7 @@ import StaticArrays
     @testset "parse_connections_sparse errors" begin
 
         begin
-            networks = [JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [(:S3,:S2,1,2)];
             @test_throws(
                 ArgumentError("Source (network name, port number) (S3, 1) not found for connection (S3,S2,1,2)."),
@@ -876,7 +883,7 @@ import StaticArrays
         end
 
         begin
-            networks = [JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [(:S1,:S3,1,2)];
             @test_throws(
                 ArgumentError("Destination (network name, port number) (S3, 2) not found for connection (S1,S3,1,2)."),
@@ -885,7 +892,7 @@ import StaticArrays
         end
 
         begin
-            networks = [JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0 0.0;1.0 0.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0 0.0;1.0 0.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [(:S1,:S2,1,2)];
             @test_throws(
                 ArgumentError("The sizes of the first two dimensions (2,3) of the scattering matrix S1 must be the same."),
@@ -894,7 +901,7 @@ import StaticArrays
         end
 
         begin
-            networks = [JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)])];
+            networks = [JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)])];
             connections = [(:S1,:S2,1,2)];
             @test_throws(
                 ArgumentError("Duplicate network names detected [(networkname,count)]: [(:S1, 2)]."),
@@ -903,7 +910,7 @@ import StaticArrays
         end
 
         begin
-            networks = [JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),JosephsonCircuits.LinearNetwork(:S3,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S3,1),(:S3,2)])];
+            networks = [JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)]),JosephsonCircuits.PassiveNetwork(:S3,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S3,1),(:S3,2)])];
             connections = [(:S1,:S2,1,2),(:S1,:S3,1,2)];
             @test_throws(
                 ArgumentError("Duplicate connections detected [(networkname,port),counts]: [((:S1, 1), 2)]."),
@@ -912,7 +919,7 @@ import StaticArrays
         end
 
         begin
-            networks = [JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5;;;],[(:S2,1),(:S2,2)])];
+            networks = [JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5;;;],[(:S2,1),(:S2,2)])];
             connections = [(:S1,:S2,1,2)];
             @test_throws(
                 ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of S1 is (2, 2, 2) and size of S2 is (2, 2, 1)."),
@@ -921,7 +928,7 @@ import StaticArrays
         end
 
         # begin
-        #     networks = [JosephsonCircuits.LinearNetwork(:S1,[0 1;1 0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+        #     networks = [JosephsonCircuits.PassiveNetwork(:S1,[0 1;1 0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         #     connections = [(:S1,:S2,1,2)];
         #     @test_throws(
         #         ArgumentError("The element types of the scattering matrices must be the same. Element type of S1 is Int64 and element type of S2 is Float64."),
@@ -930,7 +937,7 @@ import StaticArrays
         # end
 
         begin
-            networks = [JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,5)])];
+            networks = [JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S3,5),(:S3,5)])];
             connections = [(:S1,:S3,1,5)];
             @test_throws(
                 ArgumentError("Duplicate port (:S3, 5) in network S2."),
@@ -941,7 +948,7 @@ import StaticArrays
 
     @testset "add_splitters errors" begin
         begin
-            networks = [JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [[(:S1,1)]];
             @test_throws(
                 ArgumentError("Invalid connection [(:S1, 1)] with only network and port."),
@@ -950,7 +957,7 @@ import StaticArrays
         end
 
         begin
-            networks = [JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0 0.0;1.0 0.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+            networks = [JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0 0.0;1.0 0.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
             connections = [[(:S1,1),(:S2,2)]];
             @test_throws(
                 ArgumentError("The sizes of the first two dimensions (2,3) of the scattering matrix S1 must be the same."),
@@ -959,7 +966,7 @@ import StaticArrays
         end
 
         begin
-            networks = [JosephsonCircuits.LinearNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5;;;],[(:S2,1),(:S2,2)])];
+            networks = [JosephsonCircuits.PassiveNetwork(:S1,Complex{Float64}[0.0 1.0;1.0 0.0;;;0.0 1.0;1.0 0.0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,Complex{Float64}[0.5 0.5;0.5 0.5;;;],[(:S2,1),(:S2,2)])];
             connections = [[(:S1,1),(:S2,2)]];
             @test_throws(
                 ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of S1 is (2, 2, 2) and size of S2 is (2, 2, 1)."),
@@ -968,7 +975,7 @@ import StaticArrays
         end
 
         # begin
-        #     networks = [JosephsonCircuits.LinearNetwork(:S1,[0 1;1 0],[(:S1,1),(:S1,2)]),JosephsonCircuits.LinearNetwork(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
+        #     networks = [JosephsonCircuits.PassiveNetwork(:S1,[0 1;1 0],[(:S1,1),(:S1,2)]),JosephsonCircuits.PassiveNetwork(:S2,[0.5 0.5;0.5 0.5],[(:S2,1),(:S2,2)])];
         #     connections = [[(:S1,1),(:S2,2)]];
         #     @test_throws(
         #         ArgumentError("The element types of the scattering matrices must be the same. Element type of S1 is Int64 and element type of S2 is Float64."),
@@ -1027,6 +1034,12 @@ import StaticArrays
         @test isapprox(sol1[1],sol3)
         @test isapprox(sol2[1][1],sol3)
 
+        # test the case with noise
+        sol4 = JosephsonCircuits.solveS(networks,connections;factorization=JosephsonCircuits.LUfactorization(), noise = true)
+        sol5 = JosephsonCircuits.connectS(networks,connections; noise = true)
+        @test isapprox(sol4[1],sol3)
+        @test isapprox(sol5[1][1],sol3)
+
         # second test of connecting two splitters with through lines
         S_thru = JosephsonCircuits.S_splitter!(zeros(Complex{Float64},2,2))
         networks = [
@@ -1042,6 +1055,11 @@ import StaticArrays
         sol2 = JosephsonCircuits.connectS(networks,connections)
         sol3 = Complex{Float64}[0 1;1 0]
         @test isapprox(sol2[1][1],sol3)
+
+        # check with noise
+        sol4 = JosephsonCircuits.connectS(networks,connections;noise = true)
+        @test isapprox(sol4[1][1],sol3)
+
     end
 
     @testset "connectS solveS mirror" begin
@@ -1061,6 +1079,30 @@ import StaticArrays
 
         @test isapprox(sol1[1],sol3)
         @test isapprox(sol2[1][1],sol3)
+
+        # interesting that QR doesn't work with adjoints
+        sol5 = JosephsonCircuits.solveS(networks,connections;factorization=JosephsonCircuits.LUfactorization(),noise = true)
+        sol6 = JosephsonCircuits.connectS(networks,connections;noise = true)
+        @test isapprox(sol5[1],sol3)
+        @test isapprox(sol6[1][1],sol3)
+    end
+
+    @testset "PassiveNetwork" begin
+        network_name = "S1"
+        scattering_parameters = rand(Complex{Float64},10,10)
+        noise_covariances = JosephsonCircuits.calc_noise_covariances(scattering_parameters;noise = true)
+        port_names = JosephsonCircuits.calc_port_names(network_name,scattering_parameters)
+        
+        p1 = JosephsonCircuits.PassiveNetwork(network_name, scattering_parameters; noise = true)
+        p2 = JosephsonCircuits.PassiveNetwork(network_name, scattering_parameters, noise_covariances; noise = true)
+        p3 = JosephsonCircuits.PassiveNetwork(network_name, scattering_parameters, port_names; noise = true)
+        p4 = JosephsonCircuits.PassiveNetwork(network_name, scattering_parameters, noise_covariances, port_names; noise = true)
+
+        @test JosephsonCircuits.comparestruct(p1,p2)
+        @test JosephsonCircuits.comparestruct(p1,p3)
+        @test JosephsonCircuits.comparestruct(p1,p4)
     end
 
 end
+
+
