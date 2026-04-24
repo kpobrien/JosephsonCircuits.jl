@@ -955,7 +955,7 @@ function interconnectS_inner!(Sout, Sa, Sb, k::Int, l::Int, batch::AbstractArray
     range2b = m+l+1:m+n
 
     # this indexes across the entire array
-    ranges = (range1a, range1b, range2a, range2b)
+    # ranges = (range1a, range1b, range2a, range2b)
 
     # this indexes across the first part
     ranges1 = (range1a, range1b)
@@ -1550,8 +1550,10 @@ function add_covariances_and_port_names(networks::AbstractVector; noise = true)
     for (i,network) in enumerate(networks)
 
         # check if there is a user supplied noise covariance matrix
-        # if there is, then we shouldn't reuse it because it may have been
-        # defined not according to Bosma's theorem (eg. a more noisy device).
+        # if there is, then we shouldn't reuse it for all the identical aliased
+        # scattering parameter matrices because it may have been defined not
+        # according to Bosma's theorem (eg. it is a higher temperature or more
+        # noisy device).
         if !(length(network) > 2 && typeof(network[2]) == typeof(network[3]))
 
             # check if this scattering parameter matrix aliases another one
@@ -1567,6 +1569,8 @@ function add_covariances_and_port_names(networks::AbstractVector; noise = true)
                 noise_covariances[i] = calc_noise_covariances(scattering_parameters[i];noise = noise)
                 aliased_scattering_parameters_dict[key] = i
             end
+        else
+            noise_covariances[i] = network[3]
         end
 
     end

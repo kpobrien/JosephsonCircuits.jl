@@ -65,6 +65,8 @@ using JosephsonCircuits
 
     include("spicewrapper.jl")
 
+    include("quantumoptics.jl")
+
     include("testutils.jl")
 
     include("deprecated.jl")

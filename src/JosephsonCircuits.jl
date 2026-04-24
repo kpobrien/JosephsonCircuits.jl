@@ -104,10 +104,12 @@ include("spiceutils.jl")
 include("spicewrapper.jl")
 include("spiceraw.jl")
 
+include("quantumoptics.jl")
+
 # These are deprecated functions
 include("deprecated.jl")
 
-# These are functions for perofrming tests
+# These are functions for performing tests
 include("testutils.jl")
 
 
