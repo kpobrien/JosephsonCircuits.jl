@@ -712,10 +712,6 @@ function rand_conj_symplectic_pair(T, n::Integer)
     return block_to_pair(rand_conj_symplectic_block(T, n))
 end
 
-function rand_conj_symplectic_pair(T, n::Integer)
-    return block_to_pair(rand_conj_symplectic_block(T, n))
-end
-
 function rand_conj_symplectic_pair(n::Integer)
     return rand_conj_symplectic_pair(Complex{Float64},n)
 end
@@ -1679,10 +1675,16 @@ J. Phys., vol. 102, no. 10, pp. 497–507, Oct. 2024, doi: 10.1139/cjp-2024-0070
 """
 function autonne_takagi(M::AbstractMatrix)
 
+    # this test is very strict and checks for equality not
+    # just approximate quality. unclear if that's a good thing.
     if !issymmetric(M)
         error("M must be symmetric.")
     end
-    F = svd(Symmetric(M))
+    # does svd specialize for a symmetric matrix?
+    # F = svd(Symmetric(M))
+    # unfortunately for Julia 1.10 and 1.11 svd doesn't have a method defined
+    # for a symmetric complex matrix.
+    F = svd(Matrix(M))
     # this is how Chebotarev and Teretenkov 2014 define Z
     Z = F.U' * transpose(F.Vt)
 
@@ -1739,6 +1741,8 @@ Return a vector `Λ` and a unitary matrix `W` for input matrix `M` such that
 """
 function autonne_takagi(M::AbstractMatrix{<:Real})
 
+    # this test is very strict and checks for equality not
+    # just approximate quality. unclear if that's a good thing.
     if !issymmetric(M)
         error("M must be symmetric.")
     end
