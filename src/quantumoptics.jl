@@ -606,23 +606,23 @@ operator order.
 """
 function rand_posdef_symplectic_block(T, n::Integer)
 
-    M = randn(T,n,n)
-    N = randn(T,n,n)
+    # M = randn(T,n,n)
+    # N = randn(T,n,n)
 
-    # make a positive definite matrix (symmetric if real or Hermitian if
-    # complex)
-    U = M*M'
+    # # make a positive definite matrix (symmetric if real or Hermitian if
+    # # complex)
+    # U = M*M'
 
-    # make a symmetric matrix
-    V = (N+transpose(N))/2
+    # # make a symmetric matrix
+    # V = (N+transpose(N))/2
 
-    # compute the inverse using a Cholesky decomposition
-    F = cholesky(Hermitian(U))  
-    UinvV = F\V
-    Uinv = F\I
+    # # compute the inverse using a Cholesky decomposition
+    # F = cholesky(Hermitian(U))  
+    # UinvV = F\V
+    # Uinv = F\I
 
-    # construct a positive definite symplectic matrix
-    return [Uinv -UinvV;-V'*Uinv transpose(U)+V'*UinvV]
+    # # construct a positive definite symplectic matrix
+    # return [Uinv -UinvV;-V'*Uinv transpose(U)+V'*UinvV]
 
     # Uinv = inv(U)
     # return [Uinv -Uinv*V;-V'*Uinv transpose(U)+V'*Uinv*V]
@@ -632,9 +632,9 @@ function rand_posdef_symplectic_block(T, n::Integer)
     # very brittle. taking the positive definite symplectic term from the
     # polar decomposition of a random symplectic matrix seems to be more
     # robust.
-    # A = rand_symplectic_block(T,n)
-    # S,_ = polar(A)
-    # return S
+    A = rand_symplectic_block(T,n)
+    S,_ = polar(A)
+    return S
 
     # multiplying a symplectic matrix by its adjoint is even easier!
     # A = rand_symplectic_block(T,n)
