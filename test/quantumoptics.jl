@@ -16,14 +16,6 @@ using Test
             JosephsonCircuits.symplectic_form_pair(4),
         )
 
-        # @test JosephsonCircuits.is_symplectic_annihilation_creation_block(
-        #     JosephsonCircuits.symplectic_form_annihilation_creation_block(4),
-        # )
-
-        # @test JosephsonCircuits.is_symplectic_annihilation_creation_pair(
-        #     JosephsonCircuits.symplectic_form_annihilation_creation_pair(4),
-        # )
-
         # Serafini B.3, the inverse equals the adjoint
         @test isapprox(
             inv(Matrix(JosephsonCircuits.symplectic_form_block(4))),
@@ -34,17 +26,6 @@ using Test
             inv(Matrix(JosephsonCircuits.symplectic_form_pair(4))),
             adjoint(JosephsonCircuits.symplectic_form_pair(4)),
         )
-
-        # @test isapprox(
-        #     inv(Matrix(JosephsonCircuits.symplectic_form_annihilation_creation_block(4))),
-        #     adjoint(JosephsonCircuits.symplectic_form_annihilation_creation_block(4)),
-        # )
-
-        # @test isapprox(
-        #     inv(Matrix(JosephsonCircuits.symplectic_form_annihilation_creation_pair(4))),
-        #     adjoint(JosephsonCircuits.symplectic_form_annihilation_creation_pair(4)),
-        # )
-
 
         # Serafini B.3, the adjoint equals the negative of the symplectic
         # form
@@ -59,16 +40,6 @@ using Test
             -JosephsonCircuits.symplectic_form_pair(4),
         )
 
-        # @test isapprox(
-        #     adjoint(JosephsonCircuits.symplectic_form_annihilation_creation_block(4)),
-        #     -JosephsonCircuits.symplectic_form_annihilation_creation_block(4),
-        # )
-
-        # @test isapprox(
-        #     adjoint(JosephsonCircuits.symplectic_form_annihilation_creation_pair(4)),
-        #     -JosephsonCircuits.symplectic_form_annihilation_creation_pair(4),
-        # )
-
         # Serafini pg. 31, symplectic form times itself is minus identity
         @test isapprox(
             JosephsonCircuits.symplectic_form_block(4)^2,
@@ -79,16 +50,6 @@ using Test
             JosephsonCircuits.symplectic_form_pair(4)^2,
             -I(2 * 4),
         )
-
-        # @test isapprox(
-        #     JosephsonCircuits.symplectic_form_annihilation_creation_block(4)^2,
-        #     -I(2 * 4),
-        # )
-
-        # @test isapprox(
-        #     JosephsonCircuits.symplectic_form_annihilation_creation_pair(4)^2,
-        #     -I(2 * 4),
-        # )
 
         # Serafini pg. 31, symplectic form times adjoint is the identity
         @test isapprox(
@@ -101,17 +62,6 @@ using Test
             I(2 * 4),
         )
 
-        # @test isapprox(
-        #     JosephsonCircuits.symplectic_form_annihilation_creation_block(4) * JosephsonCircuits.symplectic_form_annihilation_creation_block(4)',
-        #     I(2 * 4),
-        # )
-
-        # @test isapprox(
-        #     JosephsonCircuits.symplectic_form_annihilation_creation_pair(4) * JosephsonCircuits.symplectic_form_annihilation_creation_pair(4)',
-        #     I(2 * 4),
-        # )
-
-
         # convert between the symplectic forms
         @test isapprox(
             JosephsonCircuits.symplectic_form_block(4),
@@ -123,11 +73,6 @@ using Test
             JosephsonCircuits.pair_to_block2(JosephsonCircuits.symplectic_form_pair(4)),
         )
 
-        # @test isapprox(
-        #     JosephsonCircuits.symplectic_form_block(4),
-        #     JosephsonCircuits.bogoliubov_to_quadrature_block(JosephsonCircuits.symplectic_form_annihilation_creation_block(4)),
-        # )
-
         @test isapprox(
             JosephsonCircuits.symplectic_form_pair(4),
             JosephsonCircuits.block_to_pair(JosephsonCircuits.symplectic_form_block(4)),
@@ -138,37 +83,55 @@ using Test
             JosephsonCircuits.block_to_pair2(JosephsonCircuits.symplectic_form_block(4)),
         )
 
-        # @test isapprox(
-        #     JosephsonCircuits.symplectic_form_pair(4),
-        #     JosephsonCircuits.bogoliubov_to_quadrature_pair(JosephsonCircuits.symplectic_form_annihilation_creation_pair(4)),
-        # )
-
-        # @test isapprox(
-        #     JosephsonCircuits.quadrature_to_bogoliubov_block(JosephsonCircuits.symplectic_form_block(4)),
-        #     JosephsonCircuits.symplectic_form_annihilation_creation_block(4),
-        # )
-
-        # @test isapprox(
-        #     JosephsonCircuits.quadrature_to_ladder_pair(JosephsonCircuits.symplectic_form_pair(4)),
-        #     JosephsonCircuits.symplectic_form_annihilation_creation_pair(4),
-        # )
-
         # test the conversions and their inverses
         @test isapprox(
-            JosephsonCircuits.symplectic_form_block(4),
-            JosephsonCircuits.block_to_pair(JosephsonCircuits.pair_to_block(JosephsonCircuits.symplectic_form_block(4))),
+            JosephsonCircuits.symplectic_form_pair(4),
+            JosephsonCircuits.block_to_pair(JosephsonCircuits.pair_to_block(JosephsonCircuits.symplectic_form_pair(4))),
         )
 
-        # @test isapprox(
-        #     JosephsonCircuits.symplectic_form_annihilation_creation_pair(4),
-        #     JosephsonCircuits.quadrature_to_ladder_pair(JosephsonCircuits.bogoliubov_to_quadrature_pair(JosephsonCircuits.symplectic_form_annihilation_creation_pair(4))),
-        # )
+        @test isapprox(
+            JosephsonCircuits.symplectic_form_block(4),
+            JosephsonCircuits.pair_to_block(JosephsonCircuits.block_to_pair(JosephsonCircuits.symplectic_form_block(4))),
+        )
 
-        # @test isapprox(
-        #     JosephsonCircuits.symplectic_form_annihilation_creation_block(4),
-        #     JosephsonCircuits.quadrature_to_bogoliubov_block(JosephsonCircuits.bogoliubov_to_quadrature_block(JosephsonCircuits.symplectic_form_annihilation_creation_block(4))),
-        # )
     end
+
+    @testset "indefinite hermitian form" begin
+
+        # imaginary number times indefinite Hermitian form is a member of the
+        # bogoliubov group
+        @test JosephsonCircuits.is_bogoliubov_block(
+            -im*JosephsonCircuits.indefinite_hermitian_form_block(4),
+        )
+
+        @test JosephsonCircuits.is_bogoliubov_pair(
+            -im*JosephsonCircuits.indefinite_hermitian_form_pair(4),
+        )
+
+        # convert symplectic form to indefinite hermitian form
+        @test isapprox(
+            JosephsonCircuits.quadrature_to_ladder_block(JosephsonCircuits.symplectic_form_block(4)),
+            -im*JosephsonCircuits.indefinite_hermitian_form_block(4)
+        )
+
+        @test isapprox(
+            JosephsonCircuits.quadrature_to_ladder_pair(JosephsonCircuits.symplectic_form_pair(4)),
+            -im*JosephsonCircuits.indefinite_hermitian_form_pair(4)
+        )
+
+        # convert indefinite hermitian form to symplectic form
+        @test isapprox(
+            JosephsonCircuits.symplectic_form_block(4),
+            JosephsonCircuits.ladder_to_quadrature_block(-im*JosephsonCircuits.indefinite_hermitian_form_block(4))
+        )
+
+        @test isapprox(
+            JosephsonCircuits.symplectic_form_pair(4),
+            JosephsonCircuits.ladder_to_quadrature_pair(-im*JosephsonCircuits.indefinite_hermitian_form_pair(4))
+        )
+
+    end
+
 
     @testset "random symplectic" begin
 

@@ -38,26 +38,26 @@ function symplectic_form_block(n::Integer)
     # return Int[0*I(n) I(n);-I(n) 0*I(n)]
 end
 
-function symplectic_form_block(n::Integer, m::Integer)
-    # column pointer has length number of columns + 1
-    colptr = [i for i in 1:n+m+1]
+# function symplectic_form_block(n::Integer, m::Integer)
+#     # column pointer has length number of columns + 1
+#     colptr = [i for i in 1:n+m+1]
 
-    #
-    rowval = Vector{Int}(undef, n+m)
-    nzval = Vector{Int}(undef, n+m)
+#     #
+#     rowval = Vector{Int}(undef, n+m)
+#     nzval = Vector{Int}(undef, n+m)
 
-    for i in 1:n
-        rowval[i] = n + i
-        nzval[i] = -1
-    end
-    for i in n+1:n+m
-        rowval[i] = i - n
-        nzval[i] = 1
-    end
+#     for i in 1:n
+#         rowval[i] = n + i
+#         nzval[i] = -1
+#     end
+#     for i in n+1:n+m
+#         rowval[i] = i - n
+#         nzval[i] = 1
+#     end
 
-    return SparseMatrixCSC(n+m, n+m, colptr, rowval, nzval)
-    # return Int[0*I(n) I(n);-I(n) 0*I(n)]
-end
+#     return SparseMatrixCSC(n+m, n+m, colptr, rowval, nzval)
+#     # return Int[0*I(n) I(n);-I(n) 0*I(n)]
+# end
 
 """
     direct_sum(A; n::Integer=1)
@@ -141,17 +141,17 @@ function indefinite_hermitian_form_block(n::Integer)
     return Diagonal(d)
 end
 
-function indefinite_hermitian_form_block(n::Integer, m::Integer)
-    d = Vector{Int}(undef, n+m)
-    for i in 1:n
-        d[i] = 1
-    end
-    for i in n+1:n+m
-        d[i] = -1
-    end
-    # return Int[I(n) 0*I(n);0*I(n) -I(n)]
-    return Diagonal(d)
-end
+# function indefinite_hermitian_form_block(n::Integer, m::Integer)
+#     d = Vector{Int}(undef, n+m)
+#     for i in 1:n
+#         d[i] = 1
+#     end
+#     for i in n+1:n+m
+#         d[i] = -1
+#     end
+#     # return Int[I(n) 0*I(n);0*I(n) -I(n)]
+#     return Diagonal(d)
+# end
 
 """
     is_unitary(M)
@@ -1291,18 +1291,18 @@ end
 # Examples
 ```jldoctest
 @variables x1 x2 x3 x4 p1 p2 p3 p4
-r = [x1, x2, x3, x4, p1, p2, p3, p4]
-JosephsonCircuits.quadrature_to_bogoliubov_block(r)
+r = [x1, p1, x2, p2, x3, p3, x4, p4]
+JosephsonCircuits.quadrature_to_ladder_pair(r)
 
 # output
 8-element Vector{Complex{Num}}:
  0.7071067811865475x1 + 0.7071067811865475im*p1
- 0.7071067811865475x2 + 0.7071067811865475im*p2
- 0.7071067811865475x3 + 0.7071067811865475im*p3
- 0.7071067811865475x4 + 0.7071067811865475im*p4
  0.7071067811865475x1 - 0.7071067811865475im*p1
+ 0.7071067811865475x2 + 0.7071067811865475im*p2
  0.7071067811865475x2 - 0.7071067811865475im*p2
+ 0.7071067811865475x3 + 0.7071067811865475im*p3
  0.7071067811865475x3 - 0.7071067811865475im*p3
+ 0.7071067811865475x4 + 0.7071067811865475im*p4
  0.7071067811865475x4 - 0.7071067811865475im*p4
 ```
 """
@@ -1374,11 +1374,11 @@ function ladder_to_quadrature_block(S::AbstractMatrix)
 end
 
 """
-    R_quadrature_to_bogoliubov_block(n::Integer)
+    R_quadrature_to_ladder_block(n::Integer)
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.R_quadrature_to_bogoliubov_block(2)
+julia> JosephsonCircuits.R_quadrature_to_ladder_block(2)
 4×4 Matrix{ComplexF64}:
  0.707107+0.0im       0.0+0.0im  0.0+0.707107im  0.0+0.0im
       0.0+0.0im  0.707107+0.0im  0.0+0.0im       0.0+0.707107im
@@ -1386,43 +1386,43 @@ julia> JosephsonCircuits.R_quadrature_to_bogoliubov_block(2)
       0.0+0.0im  0.707107+0.0im  0.0+0.0im       0.0-0.707107im
 ```
 """
-function R_quadrature_to_bogoliubov_block(n::Integer)
+function R_quadrature_to_ladder_block(n::Integer)
     # I should convert this to a sparse matrix form
     return [I(n)/sqrt(2) im*I(n)/sqrt(2); I(n)/sqrt(2) -im*I(n)/sqrt(2)]
 end
 
 """
-    quadrature_to_bogoliubov_block(r::AbstractVector)
+    quadrature_to_ladder_block(r::AbstractVector)
 
 # Examples
 ```jldoctest
 @variables x1 x2 x3 x4 p1 p2 p3 p4
-r = [x1, p1, x2, p2, x3, p3, x4, p4]
-JosephsonCircuits.quadrature_to_ladder_pair(r)
+r = [x1, x2, x3, x4, p1, p2, p3, p4]
+JosephsonCircuits.quadrature_to_ladder_block(r)
 
 # output
 8-element Vector{Complex{Num}}:
  0.7071067811865475x1 + 0.7071067811865475im*p1
- 0.7071067811865475x1 - 0.7071067811865475im*p1
  0.7071067811865475x2 + 0.7071067811865475im*p2
- 0.7071067811865475x2 - 0.7071067811865475im*p2
  0.7071067811865475x3 + 0.7071067811865475im*p3
- 0.7071067811865475x3 - 0.7071067811865475im*p3
  0.7071067811865475x4 + 0.7071067811865475im*p4
+ 0.7071067811865475x1 - 0.7071067811865475im*p1
+ 0.7071067811865475x2 - 0.7071067811865475im*p2
+ 0.7071067811865475x3 - 0.7071067811865475im*p3
  0.7071067811865475x4 - 0.7071067811865475im*p4
 ```
 """
-function quadrature_to_bogoliubov_block(r::AbstractVector)
-    R = R_quadrature_to_bogoliubov_block(length(r) ÷ 2)
+function quadrature_to_ladder_block(r::AbstractVector)
+    R = R_quadrature_to_ladder_block(length(r) ÷ 2)
     return R * r
 end
 
 """
-    quadrature_to_bogoliubov_block(S::AbstractMatrix)
+    quadrature_to_ladder_block(S::AbstractMatrix)
 
 """
-function quadrature_to_bogoliubov_block(S::AbstractMatrix)
-    R = R_quadrature_to_bogoliubov_block(size(S, 2) ÷ 2)
+function quadrature_to_ladder_block(S::AbstractMatrix)
+    R = R_quadrature_to_ladder_block(size(S, 2) ÷ 2)
     return R * S * R'
 end
 
@@ -1978,9 +1978,9 @@ end
 function iwasawa_bogoliubov_block(S::AbstractMatrix)
     F = iwasawa_block(ladder_to_quadrature_block(S))
     return (
-        K=quadrature_to_bogoliubov_block(F.K),
-        A=quadrature_to_bogoliubov_block(F.A),
-        N=quadrature_to_bogoliubov_block(F.N),
+        K=quadrature_to_ladder_block(F.K),
+        A=quadrature_to_ladder_block(F.A),
+        N=quadrature_to_ladder_block(F.N),
     )
 end
 
