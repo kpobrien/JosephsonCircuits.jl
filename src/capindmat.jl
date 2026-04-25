@@ -471,7 +471,7 @@ end
 
 combine_reciprocal_sum(x1,x2) = x1*x2/(x1+x2)
 combine_sum(x1,x2)= x1+x2
-combine_error(x1,x2) = throw(ArgumentError("Components $(x1) and $(x2) cannot be combined to a single element. Please place the two components between different nodes."))
+combine_error(x1,x2) = throw(ArgumentError(lazy"Components $(x1) and $(x2) cannot be combined to a single element. Please place the two components between different nodes."))
 
 """
     calcMb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
@@ -578,10 +578,10 @@ function calcMb_inner(componenttypes::Vector{Symbol},
 
             # check the two components coupled are actually inductors
             if componenttypes[inductor1index] != :L
-               throw(ArgumentError("Mutual coupling coefficient K must couple two inductors. $(inductor1name) is not an inductor."))
+               throw(ArgumentError(lazy"Mutual coupling coefficient K must couple two inductors. $(inductor1name) is not an inductor."))
             end
             if componenttypes[inductor2index] != :L
-               throw(ArgumentError("Mutual coupling coefficient K must couple two inductors. $(inductor2name) is not an inductor."))
+               throw(ArgumentError(lazy"Mutual coupling coefficient K must couple two inductors. $(inductor2name) is not an inductor."))
             end
 
             # values of mutual inductance Lm
@@ -919,7 +919,7 @@ function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
     valuecomponenttypes::Vector)
 
     if length(componenttypes) != length(componentvalues)
-        throw(DimensionMismatch("componenttypes and componentvalues should have the same length"))
+        throw(DimensionMismatch(lazy"componenttypes and componentvalues should have the same length"))
     end
 
     # count the number of inductors
@@ -1090,11 +1090,11 @@ function calcnodematrix(componenttypes::Vector{Symbol},
     invert::Bool)
 
     if length(componenttypes) != size(nodeindices,2) || length(componenttypes) != length(componentvalues)
-        throw(DimensionMismatch("componenttypes, nodeindices, and componentvalues should have the same length"))
+        throw(DimensionMismatch(lazy"componenttypes, nodeindices, and componentvalues should have the same length"))
     end
 
     if size(nodeindices,1) != 2
-        throw(DimensionMismatch("nodeindices should have a first dimension size of 2."))
+        throw(DimensionMismatch(lazy"nodeindices should have a first dimension size of 2."))
     end
 
     # calculate the expected number of elements

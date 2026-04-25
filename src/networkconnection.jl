@@ -77,49 +77,49 @@ function intraconnectS!(Sout, Sa, k::Int, l::Int;
 
     # validate all of the inputs
     if ndims(Sa) != ndims(Sout)
-        throw(DimensionMismatch("`Sout` and `Sa` must have the same number of dimensions."))
+        throw(DimensionMismatch(lazy"`Sout` and `Sa` must have the same number of dimensions."))
     end
 
     if ndims(Sa) < 2
-        throw(DimensionMismatch("`Sout` and `Sa` must have at least two dimensions."))
+        throw(DimensionMismatch(lazy"`Sout` and `Sa` must have at least two dimensions."))
     end
 
     if size(Sa,1) != size(Sa,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."))
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sa` must be equal."))
     end
 
     if size(Sout,1) != size(Sout,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."))
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sout` must be equal."))
     end
 
     if size(Sa,1) -2 != size(Sout,1)
-        throw(DimensionMismatch("Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."))
+        throw(DimensionMismatch(lazy"Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."))
     end
 
     for i in 3:ndims(Sa)
         if size(Sa,i) != size(Sout,i)
-            throw(DimensionMismatch("Non-port axis lengths of `Sa` and `Sout` must be equal."))
+            throw(DimensionMismatch(lazy"Non-port axis lengths of `Sa` and `Sout` must be equal."))
         end
     end
 
     if k > size(Sa,1)
-        throw(ArgumentError("Port `k` is larger than number of ports in `Sa`."))
+        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `Sa`."))
     end
 
     if l > size(Sa,1)
-        throw(ArgumentError("Port `l` is larger than number of ports in `Sa`."))
+        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `Sa`."))
     end
 
     if l < 1
-        throw(ArgumentError("Port `l` is smaller than one."))
+        throw(ArgumentError(lazy"Port `l` is smaller than one."))
     end
 
     if k < 1
-        throw(ArgumentError("Port `k` is smaller than one."))
+        throw(ArgumentError(lazy"Port `k` is smaller than one."))
     end
 
     if l == k
-        throw(ArgumentError("`k` and `l` cannot be equal because a port cannot be merged with itself."))
+        throw(ArgumentError(lazy"`k` and `l` cannot be equal because a port cannot be merged with itself."))
     end
 
     # loop over the dimensions of the array greater than 2
@@ -273,57 +273,57 @@ function intraconnectS!(Sout, Cout, Sa, Ca, k::Int, l::Int;
 
     # validate all of the inputs
     if ndims(Sa) != ndims(Sout)
-        throw(DimensionMismatch("`Sout` and `Sa` must have the same number of dimensions."))
+        throw(DimensionMismatch(lazy"`Sout` and `Sa` must have the same number of dimensions."))
     end
 
     if ndims(Sa) < 2
-        throw(DimensionMismatch("`Sout` and `Sa` must have at least two dimensions."))
+        throw(DimensionMismatch(lazy"`Sout` and `Sa` must have at least two dimensions."))
     end
 
     if size(Sa,1) != size(Sa,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."))
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sa` must be equal."))
     end
 
     if size(Sout,1) != size(Sout,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."))
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sout` must be equal."))
     end
 
     if size(Sa,1) -2 != size(Sout,1)
-        throw(DimensionMismatch("Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."))
+        throw(DimensionMismatch(lazy"Length of first two dimensions must be 2 smaller for `Sout` than `Sa` because we are merging two ports."))
     end
 
     for i in 3:ndims(Sa)
         if size(Sa,i) != size(Sout,i)
-            throw(DimensionMismatch("Non-port axis lengths of `Sa` and `Sout` must be equal."))
+            throw(DimensionMismatch(lazy"Non-port axis lengths of `Sa` and `Sout` must be equal."))
         end
     end
 
     if k > size(Sa,1)
-        throw(ArgumentError("Port `k` is larger than number of ports in `Sa`."))
+        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `Sa`."))
     end
 
     if l > size(Sa,1)
-        throw(ArgumentError("Port `l` is larger than number of ports in `Sa`."))
+        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `Sa`."))
     end
 
     if l < 1
-        throw(ArgumentError("Port `l` is smaller than one."))
+        throw(ArgumentError(lazy"Port `l` is smaller than one."))
     end
 
     if k < 1
-        throw(ArgumentError("Port `k` is smaller than one."))
+        throw(ArgumentError(lazy"Port `k` is smaller than one."))
     end
 
     if l == k
-        throw(ArgumentError("`k` and `l` cannot be equal because a port cannot be merged with itself."))
+        throw(ArgumentError(lazy"`k` and `l` cannot be equal because a port cannot be merged with itself."))
     end
 
     if size(Ca) != size(Sa)
-        throw(DimensionMismatch("The size of `Ca` must the same as the size of `Sa`."))
+        throw(DimensionMismatch(lazy"The size of `Ca` must the same as the size of `Sa`."))
     end
 
     if size(Cout) != size(Sout)
-        throw(DimensionMismatch("The size of `Cout` must the same as the size of `Sout`."))
+        throw(DimensionMismatch(lazy"The size of `Cout` must the same as the size of `Sout`."))
     end
 
     # loop over the dimensions of the array greater than 2
@@ -525,65 +525,65 @@ function interconnectS!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int;
 
     # validate all of the inputs
     if ndims(Sa) != ndims(Sb)
-        throw(DimensionMismatch("`Sa` and `Sb` must have the same number of dimensions."))
+        throw(DimensionMismatch(lazy"`Sa` and `Sb` must have the same number of dimensions."))
     end
 
     if ndims(Sa) != ndims(Sout)
-        throw(DimensionMismatch("`Sout`, `Sa`, and `Sb` must have the same number of dimensions."))
+        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have the same number of dimensions."))
     end
 
     if ndims(Sa) < 2
-        throw(DimensionMismatch("`Sout`, `Sa`, and `Sb` must have atleast two dimensions."))
+        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have atleast two dimensions."))
     end
 
     if size(Sa,1) != size(Sa,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."))
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sa` must be equal."))
     end
 
     if size(Sb,1) != size(Sb,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sb` must be equal."))
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sb` must be equal."))
     end
 
     if size(Sout,1) != size(Sout,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."))
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sout` must be equal."))
     end
 
     if size(Sa,1) + size(Sb,1) - 2 != size(Sout,1)
-        throw(DimensionMismatch("First two dimensions of `Sout` must be `m+n-2`."))
+        throw(DimensionMismatch(lazy"First two dimensions of `Sout` must be `m+n-2`."))
     end
 
     for i in 3:ndims(Sa)
         if size(Sa,i) != size(Sout,i)
-            throw(DimensionMismatch("Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."))
+            throw(DimensionMismatch(lazy"Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."))
         end
     end
 
     if k > size(Sa,1)
-        throw(ArgumentError("Port `k` is larger than number of ports in `Sa`."))
+        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `Sa`."))
     end
 
     if l > size(Sb,1)
-        throw(ArgumentError("Port `l` is larger than number of ports in `Sb`."))
+        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `Sb`."))
     end
 
     if l < 1
-        throw(ArgumentError("Port `l` is smaller than one."))
+        throw(ArgumentError(lazy"Port `l` is smaller than one."))
     end
 
     if k < 1
-        throw(ArgumentError("Port `k` is smaller than one."))
+        throw(ArgumentError(lazy"Port `k` is smaller than one."))
     end
 
     if size(Ca) != size(Sa)
-        throw(DimensionMismatch("The size of `Ca` must the same as the size of `Sa`."))
+        throw(DimensionMismatch(lazy"The size of `Ca` must the same as the size of `Sa`."))
     end
 
     if size(Cb) != size(Sb)
-        throw(DimensionMismatch("The size of `Cb` must the same as the size of `Sb`."))
+        throw(DimensionMismatch(lazy"The size of `Cb` must the same as the size of `Sb`."))
     end
 
     if size(Cout) != size(Sout)
-        throw(DimensionMismatch("The size of `Cout` must the same as the size of `Sout`."))
+        throw(DimensionMismatch(lazy"The size of `Cout` must the same as the size of `Sout`."))
     end
 
     # loop over the dimensions of the array greater than 2
@@ -873,53 +873,53 @@ function interconnectS!(Sout, Sa, Sb, k::Int, l::Int;
 
     # validate all of the inputs
     if ndims(Sa) != ndims(Sb)
-        throw(DimensionMismatch("`Sa` and `Sb` must have the same number of dimensions."))
+        throw(DimensionMismatch(lazy"`Sa` and `Sb` must have the same number of dimensions."))
     end
 
     if ndims(Sa) != ndims(Sout)
-        throw(DimensionMismatch("`Sout`, `Sa`, and `Sb` must have the same number of dimensions."))
+        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have the same number of dimensions."))
     end
 
     if ndims(Sa) < 2
-        throw(DimensionMismatch("`Sout`, `Sa`, and `Sb` must have atleast two dimensions."))
+        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have atleast two dimensions."))
     end
 
     if size(Sa,1) != size(Sa,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sa` must be equal."))
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sa` must be equal."))
     end
 
     if size(Sb,1) != size(Sb,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sb` must be equal."))
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sb` must be equal."))
     end
 
     if size(Sout,1) != size(Sout,2)
-        throw(DimensionMismatch("Lengths of first two dimensions of `Sout` must be equal."))
+        throw(DimensionMismatch(lazy"Lengths of first two dimensions of `Sout` must be equal."))
     end
 
     if size(Sa,1) + size(Sb,1) - 2 != size(Sout,1)
-        throw(DimensionMismatch("First two dimensions of `Sout` must be `m+n-2`."))
+        throw(DimensionMismatch(lazy"First two dimensions of `Sout` must be `m+n-2`."))
     end
 
     for i in 3:ndims(Sa)
         if size(Sa,i) != size(Sout,i)
-            throw(DimensionMismatch("Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."))
+            throw(DimensionMismatch(lazy"Non-port axis lengths of `Sa`, `Sb`, and `Sout` must be equal."))
         end
     end
 
     if k > size(Sa,1)
-        throw(ArgumentError("Port `k` is larger than number of ports in `Sa`."))
+        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `Sa`."))
     end
 
     if l > size(Sb,1)
-        throw(ArgumentError("Port `l` is larger than number of ports in `Sb`."))
+        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `Sb`."))
     end
 
     if l < 1
-        throw(ArgumentError("Port `l` is smaller than one."))
+        throw(ArgumentError(lazy"Port `l` is smaller than one."))
     end
 
     if k < 1
-        throw(ArgumentError("Port `k` is smaller than one."))
+        throw(ArgumentError(lazy"Port `k` is smaller than one."))
     end
 
     # loop over the dimensions of the array greater than 2
@@ -1068,23 +1068,23 @@ function intraconnectSports(portsa::AbstractVector{Tuple{T,Int}}, k::Int,
 
 
     if k > length(portsa)
-        throw(ArgumentError("Port `k` is larger than number of ports."))
+        throw(ArgumentError(lazy"Port `k` is larger than number of ports."))
     end
 
     if l > length(portsa)
-        throw(ArgumentError("Port `l` is larger than number of ports."))
+        throw(ArgumentError(lazy"Port `l` is larger than number of ports."))
     end
 
     if l < 1
-        throw(ArgumentError("Port `l` is smaller than one."))
+        throw(ArgumentError(lazy"Port `l` is smaller than one."))
     end
 
     if k < 1
-        throw(ArgumentError("Port `k` is smaller than one."))
+        throw(ArgumentError(lazy"Port `k` is smaller than one."))
     end
 
     if l == k
-        throw(ArgumentError("`k` and `l` cannot be equal because a port cannot be merged with itself."))
+        throw(ArgumentError(lazy"`k` and `l` cannot be equal because a port cannot be merged with itself."))
     end
 
     # the ports of the network after the connections
@@ -1138,19 +1138,19 @@ function interconnectSports(portsa::AbstractVector{Tuple{T,Int}},
 
 
     if k > length(portsa)
-        throw(ArgumentError("Port `k` is larger than number of ports in `portsa`."))
+        throw(ArgumentError(lazy"Port `k` is larger than number of ports in `portsa`."))
     end
 
     if l > length(portsb)
-        throw(ArgumentError("Port `l` is larger than number of ports in `portsb`."))
+        throw(ArgumentError(lazy"Port `l` is larger than number of ports in `portsb`."))
     end
 
     if l < 1
-        throw(ArgumentError("Port `l` is smaller than one."))
+        throw(ArgumentError(lazy"Port `l` is smaller than one."))
     end
 
     if k < 1
-        throw(ArgumentError("Port `k` is smaller than one."))
+        throw(ArgumentError(lazy"Port `k` is smaller than one."))
     end
 
     # the ports of the network after the connections
@@ -1530,13 +1530,13 @@ function add_covariances_and_port_names(networks::AbstractVector; noise = true)
     typeS = eltype(networks[1][2])
     for network in networks
         if size(network[2],1) != size(network[2],2)
-            throw(ArgumentError("The sizes of the first two dimensions ($(size(network[2],1)),$(size(network[2],2))) of the scattering matrix $(network[1]) must be the same."))
+            throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(network[2],1)),$(size(network[2],2))) of the scattering matrix $(network[1]) must be the same."))
         end
         if sizeS != size(network[2])[3:end]
-            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1][1]) is $(size(networks[1][2])) and size of $(network[1]) is $(size(network[2]))."))
+            throw(ArgumentError(lazy"The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1][1]) is $(size(networks[1][2])) and size of $(network[1]) is $(size(network[2]))."))
         end
         if typeS != eltype(network[2])
-            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1][1]) is $(eltype(networks[1][2])) and element type of $(network[1]) is $(eltype(network[2]))."))
+            throw(ArgumentError(lazy"The element types of the scattering matrices must be the same. Element type of $(networks[1][1]) is $(eltype(networks[1][2])) and element type of $(network[1]) is $(eltype(network[2]))."))
         end
     end
 
@@ -1825,10 +1825,10 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
     typeS = eltype(networks[1].scattering_parameters)
     for network in networks
         if size(network.scattering_parameters,1) != size(network.scattering_parameters,2)
-            throw(ArgumentError("The sizes of the first two dimensions ($(size(network.scattering_parameters,1)),$(size(network.scattering_parameters,2))) of the scattering matrix $(network.network_name) must be the same."))
+            throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(network.scattering_parameters,1)),$(size(network.scattering_parameters,2))) of the scattering matrix $(network.network_name) must be the same."))
         end
         if sizeS != size(network.scattering_parameters)[3:end]
-            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(network.network_name) is $(size(network.scattering_parameters))."))
+            throw(ArgumentError(lazy"The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(network.network_name) is $(size(network.scattering_parameters))."))
         end
         # if typeS != eltype(network.scattering_parameters)
         #     throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(network.network_name) is $(eltype(network.scattering_parameters))."))
@@ -1855,7 +1855,7 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
         c = connections[k]
         # if less than two tuples, not a valid connection
         if length(c) < 2
-            throw(ArgumentError("Invalid connection $(c) with only network and port."))
+            throw(ArgumentError(lazy"Invalid connection $(c) with only network and port."))
         # if two tuples, this is a single connection
         elseif length(c) == 2
             push!(conflat,(c[1][1],c[2][1],c[1][2],c[2][2]))
@@ -2006,10 +2006,10 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     dst_port_index = findfirst(isequal(dst_port),ports[dst_node])
 
     if isnothing(src_port_index)
-        throw(ArgumentError("Source port $(src_port) not found in the ports $(ports[src_node]) of the source node $(src_node)."))
+        throw(ArgumentError(lazy"Source port $(src_port) not found in the ports $(ports[src_node]) of the source node $(src_node)."))
     end
     if isnothing(dst_port_index)
-        throw(ArgumentError("Destination port $(dst_port) not found in the ports $(ports[dst_node]) of the destination node $(dst_node)."))
+        throw(ArgumentError(lazy"Destination port $(dst_port) not found in the ports $(ports[dst_node]) of the destination node $(dst_node)."))
     end
     # println("src_node => dst_node: ",src_node," => ",dst_node)
     # println("src_port => dst_port: ",src_port," => ",dst_port)
@@ -2203,13 +2203,13 @@ function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
     typeS = eltype(scattering_parameters[1])
     for i in eachindex(scattering_parameters)
         if size(scattering_parameters[i],1) != size(scattering_parameters[i],2)
-            throw(ArgumentError("The sizes of the first two dimensions ($(size(scattering_parameters[i],1)),$(size(scattering_parameters[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
+            throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(scattering_parameters[i],1)),$(size(scattering_parameters[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
         end
         if sizeS != size(scattering_parameters[i])[3:end]
-            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(networks[i].network_name) is $(size(networks[i].scattering_parameters))."))
+            throw(ArgumentError(lazy"The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(networks[i].network_name) is $(size(networks[i].scattering_parameters))."))
         end
         if typeS != eltype(scattering_parameters[i])
-            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(networks[i].network_name) is $(eltype(networks[i].scattering_parameters))."))
+            throw(ArgumentError(lazy"The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(networks[i].network_name) is $(eltype(networks[i].scattering_parameters))."))
         end
     end
 
@@ -2219,13 +2219,13 @@ function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
 
     # check if there are duplicate networks
     if length(networkindices) != length(scattering_parameters)
-        throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
+        throw(ArgumentError(lazy"Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
     end
 
     # check if the port indices are unique
     duplicateconnections = find_duplicate_connections(connections)
     if !isempty(duplicateconnections)
-        throw(ArgumentError("Duplicate connections detected [(networkname,port),counts]: $(duplicateconnections)."))
+        throw(ArgumentError(lazy"Duplicate connections detected [(networkname,port),counts]: $(duplicateconnections)."))
     end
 
     # portnames are associated with each node, so store those as a vector
@@ -2237,7 +2237,7 @@ function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
     for i in eachindex(networks)
         for (j,port) in enumerate(networks[i].port_names)
             if haskey(portdict,port)
-                throw(ArgumentError("Duplicate port $(port) in network $(networks[i].network_name)."))
+                throw(ArgumentError(lazy"Duplicate port $(port) in network $(networks[i].network_name)."))
             else
                 portdict[port] = (i,j)
             end
@@ -2273,10 +2273,10 @@ function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
 
         # check if the source and destination networks exist
         if !haskey(portdict,src)
-            throw(ArgumentError("Source (network name, port number) ($(src_name), $(src_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+            throw(ArgumentError(lazy"Source (network name, port number) ($(src_name), $(src_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
         if !haskey(portdict,dst)
-            throw(ArgumentError("Destination (network name, port number) ($(dst_name), $(dst_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+            throw(ArgumentError(lazy"Destination (network name, port number) ($(dst_name), $(dst_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
 
         src_index, src_port_index = portdict[src]
@@ -2494,13 +2494,13 @@ function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
     typeS = eltype(scattering_parameters[1])
     for i in eachindex(scattering_parameters)
         if size(scattering_parameters[i],1) != size(scattering_parameters[i],2)
-            throw(ArgumentError("The sizes of the first two dimensions ($(size(scattering_parameters[i],1)),$(size(scattering_parameters[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
+            throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(scattering_parameters[i],1)),$(size(scattering_parameters[i],2))) of the scattering matrix $(networks[i].network_name) must be the same."))
         end
         if sizeS != size(scattering_parameters[i])[3:end]
-            throw(ArgumentError("The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(networks[i].network_name) is $(size(networks[i].scattering_parameters))."))
+            throw(ArgumentError(lazy"The sizes of the third and higher dimensions of the scattering matrices must be the same. Size of $(networks[1].network_name) is $(size(networks[1].scattering_parameters)) and size of $(networks[i].network_name) is $(size(networks[i].scattering_parameters))."))
         end
         if typeS != eltype(scattering_parameters[i])
-            throw(ArgumentError("The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(networks[i].network_name) is $(eltype(networks[i].scattering_parameters))."))
+            throw(ArgumentError(lazy"The element types of the scattering matrices must be the same. Element type of $(networks[1].network_name) is $(eltype(networks[1].scattering_parameters)) and element type of $(networks[i].network_name) is $(eltype(networks[i].scattering_parameters))."))
         end
         m+=size(scattering_parameters[i],1)
         M+=size(scattering_parameters[i],1)*size(scattering_parameters[i],2)
@@ -2519,7 +2519,7 @@ function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
     networkindices = Dict(network.network_name=>i for (i,network) in enumerate(networks))
 
     if length(networkindices) != length(scattering_parameters)
-        throw(ArgumentError("Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
+        throw(ArgumentError(lazy"Duplicate network names detected [(networkname,count)]: $(find_duplicate_network_names(networks))."))
     end
 
     # a vector of tuples containing the ports for each of the networks in the
@@ -2534,7 +2534,7 @@ function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
     for i in eachindex(networks)
         for port in networks[i].port_names
             if haskey(portdict,port)
-                throw(ArgumentError("Duplicate port $(port) in network $(networks[i].network_name)."))
+                throw(ArgumentError(lazy"Duplicate port $(port) in network $(networks[i].network_name)."))
             else
                 portdict[port] = k
                 ports[k] = port
@@ -2564,10 +2564,10 @@ function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
 
         # check if the source and destination networks exist
         if !haskey(portdict,src)
-            throw(ArgumentError("Source (network name, port number) ($(src_name), $(src_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+            throw(ArgumentError(lazy"Source (network name, port number) ($(src_name), $(src_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
         if !haskey(portdict,dst)
-            throw(ArgumentError("Destination (network name, port number) ($(dst_name), $(dst_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+            throw(ArgumentError(lazy"Destination (network name, port number) ($(dst_name), $(dst_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
         end
 
         src_index = portdict[src]
@@ -2592,7 +2592,7 @@ function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
 
     # check if the port indices are unique
     if !allunique(porti_indices)
-        throw(ArgumentError("Duplicate connections detected [(networkname,port),counts]: $(find_duplicate_connections(connections))."))
+        throw(ArgumentError(lazy"Duplicate connections detected [(networkname,port),counts]: $(find_duplicate_connections(connections))."))
     end
 
     # and generate the external port indices

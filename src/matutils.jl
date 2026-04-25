@@ -72,7 +72,7 @@ julia> A = [1 2;3 4];out = zeros(eltype(A),4,4);JosephsonCircuits.diagrepeat!(ou
 function diagrepeat!(out::AbstractVecOrMat, A::AbstractVecOrMat, Nmodes::Integer)
 
     if size(A).*Nmodes != size(out)
-        throw(DimensionMismatch("Sizes not consistent"))
+        throw(DimensionMismatch(lazy"Sizes not consistent"))
     end
 
     @inbounds for coord in CartesianIndices(A)
@@ -238,7 +238,7 @@ function diagcombine(x::Vector{T}) where T<:AbstractArray
     sizex = size(first(x))
     for xi in x
         if size(xi) != sizex
-            throw(DimensionMismatch("Sizes are not consistent."))
+            throw(DimensionMismatch(lazy"Sizes are not consistent."))
         end
     end
 
@@ -266,11 +266,11 @@ function diagcombine!(out::AbstractVecOrMat,A::AbstractVecOrMat,mode_index::Int)
     Nmodes = size(out,1) ÷ size(A,1)
     
     if mode_index <= 0
-        throw(ArgumentError("`mode_index` = $(mode_index) must be greater than zero."))
+        throw(ArgumentError(lazy"`mode_index` = $(mode_index) must be greater than zero."))
     end
     
     if mode_index > Nmodes
-        throw(ArgumentError("`mode_index` = $(mode_index) must be less than or equal to the number of modes, which is $(Nmodes) from the matrix sizes."))
+        throw(ArgumentError(lazy"`mode_index` = $(mode_index) must be less than or equal to the number of modes, which is $(Nmodes) from the matrix sizes."))
     end
         
     for coord in CartesianIndices(A)
@@ -332,15 +332,15 @@ julia> JosephsonCircuits.axis_to_modes([111 121;211 221;;;; 112 122;212 222;;;; 
 function axis_to_modes(S::AbstractArray, modes_axis::Integer)
 
     if ndims(S) < 3
-        throw(DimensionMismatch("The input array needs 3 or more dimensions (two for ports and one for modes)."))
+        throw(DimensionMismatch(lazy"The input array needs 3 or more dimensions (two for ports and one for modes)."))
     end
 
     if modes_axis > ndims(S)
-        throw(ArgumentError("`modes_axis` must be less than or equal to the number of dimensions in input array."))
+        throw(ArgumentError(lazy"`modes_axis` must be less than or equal to the number of dimensions in input array."))
     end
 
     if modes_axis < 3
-        throw(ArgumentError("`modes_axis` must be 3 or more (the first two dimensions are ports."))
+        throw(ArgumentError(lazy"`modes_axis` must be 3 or more (the first two dimensions are ports."))
     end
 
     # the size of S with the dimension we will delete removed
@@ -378,11 +378,11 @@ function axis_to_modes!(out::AbstractMatrix,S::AbstractArray)
 
     # check that the dimensions are consistent
     if ndims(S) != 3
-        throw(DimensionMismatch("The S parameter array `S` must have 3 dimensions (the first two dimensions are ports and the last is the modes)."))
+        throw(DimensionMismatch(lazy"The S parameter array `S` must have 3 dimensions (the first two dimensions are ports and the last is the modes)."))
     end
 
     if size(out,1) != size(S,1)*Nmodes || size(out,2) != size(S,2)*Nmodes
-        throw(DimensionMismatch("The first two dimensions of `out` must equal the first two dimensions of `S` times `Nmodes`."))
+        throw(DimensionMismatch(lazy"The first two dimensions of `out` must equal the first two dimensions of `S` times `Nmodes`."))
     end
     # copy over the data
     for k in axes(S,3)
@@ -423,7 +423,7 @@ JosephsonCircuits.spaddkeepzeros(A,B)
 function spaddkeepzeros(A::SparseMatrixCSC, B::SparseMatrixCSC)
 
     if !(A.m == B.m && A.n == B.n)
-        throw(DimensionMismatch("argument shapes must match"))
+        throw(DimensionMismatch(lazy"argument shapes must match"))
     end
 
     # column pointer has length number of columns + 1
@@ -541,15 +541,15 @@ A
 """
 function sparseadd!(A::SparseMatrixCSC,As::SparseMatrixCSC,indexmap)
     if nnz(A) < nnz(As)
-        throw(DimensionMismatch("As cannot have more nonzero elements than A"))
+        throw(DimensionMismatch(lazy"As cannot have more nonzero elements than A"))
     end
 
     if nnz(As) != length(indexmap)
-        throw(DimensionMismatch("The indexmap must be the same length as As"))
+        throw(DimensionMismatch(lazy"The indexmap must be the same length as As"))
     end
 
     if size(A) != size(As)
-        throw(DimensionMismatch("A and As must be the same size."))
+        throw(DimensionMismatch(lazy"A and As must be the same size."))
     end
 
     for i in 1:nnz(As)
@@ -582,15 +582,15 @@ A
 function sparseadd!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,indexmap::Vector)
 
     if nnz(A) < nnz(As)
-        throw(DimensionMismatch("As cannot have more nonzero elements than A"))
+        throw(DimensionMismatch(lazy"As cannot have more nonzero elements than A"))
     end
 
     if nnz(As) != length(indexmap)
-        throw(DimensionMismatch("The indexmap must be the same length as As"))
+        throw(DimensionMismatch(lazy"The indexmap must be the same length as As"))
     end
 
     if size(A) != size(As)
-        throw(DimensionMismatch("A and As must be the same size."))
+        throw(DimensionMismatch(lazy"A and As must be the same size."))
     end
 
     for i in 1:nnz(As)
@@ -626,19 +626,19 @@ function sparseadd!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
     Ad::Diagonal, indexmap::Vector)
 
     if nnz(A) < nnz(As)
-        throw(DimensionMismatch("As cannot have more nonzero elements than A"))
+        throw(DimensionMismatch(lazy"As cannot have more nonzero elements than A"))
     end
 
     if nnz(As) != length(indexmap)
-        throw(DimensionMismatch("The indexmap must be the same length as As"))
+        throw(DimensionMismatch(lazy"The indexmap must be the same length as As"))
     end
 
     if size(A) != size(As)
-        throw(DimensionMismatch("A and As must be the same size."))
+        throw(DimensionMismatch(lazy"A and As must be the same size."))
     end
 
     if size(A) != size(Ad)
-        throw(DimensionMismatch("A and Ad must be the same size."))
+        throw(DimensionMismatch(lazy"A and Ad must be the same size."))
     end
 
     for i in 1:length(As.colptr)-1
@@ -676,19 +676,19 @@ function sparseadd!(A::SparseMatrixCSC, c::Number, Ad::Diagonal,
     As::SparseMatrixCSC, indexmap::Vector)
 
     if nnz(A) < nnz(As)
-        throw(DimensionMismatch("As cannot have more nonzero elements than A"))
+        throw(DimensionMismatch(lazy"As cannot have more nonzero elements than A"))
     end
 
     if nnz(As) != length(indexmap)
-        throw(DimensionMismatch("The indexmap must be the same length as As"))
+        throw(DimensionMismatch(lazy"The indexmap must be the same length as As"))
     end
 
     if size(A) != size(As)
-        throw(DimensionMismatch("A and As must be the same size."))
+        throw(DimensionMismatch(lazy"A and As must be the same size."))
     end
 
     if size(A) != size(Ad)
-        throw(DimensionMismatch("A and Ad must be the same size."))
+        throw(DimensionMismatch(lazy"A and Ad must be the same size."))
     end
 
     for i in 1:length(As.colptr)-1
@@ -794,27 +794,27 @@ function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
     wmodesm::Diagonal, freqsubstindices::Vector, symfreqvar)
 
     if nnz(A) < nnz(As)
-        throw(DimensionMismatch("As cannot have more nonzero elements than A"))
+        throw(DimensionMismatch(lazy"As cannot have more nonzero elements than A"))
     end
 
     if nnz(As) != length(indexmap)
-        throw(DimensionMismatch("The indexmap must be the same length as As"))
+        throw(DimensionMismatch(lazy"The indexmap must be the same length as As"))
     end
 
     if size(A) != size(As)
-        throw(DimensionMismatch("A and As must be the same size."))
+        throw(DimensionMismatch(lazy"A and As must be the same size."))
     end
 
     if size(A) != size(Ad)
-        throw(DimensionMismatch("A and Ad must be the same size."))
+        throw(DimensionMismatch(lazy"A and Ad must be the same size."))
     end
 
     if size(A) != size(conjflag)
-        throw(DimensionMismatch("A and conjflag must be the same size."))
+        throw(DimensionMismatch(lazy"A and conjflag must be the same size."))
     end
 
     if size(A) != size(wmodesm)
-        throw(DimensionMismatch("A and wmodesm must be the same size."))
+        throw(DimensionMismatch(lazy"A and wmodesm must be the same size."))
     end
 
     # if !(symfreqvar isa Symbolic || symfreqvar isa Num) && length(freqsubstindices) > 0
@@ -893,7 +893,7 @@ JosephsonCircuits.sparseaddmap(A,As)
 function sparseaddmap(A::SparseMatrixCSC, B::SparseMatrixCSC)
 
     if size(A) != size(B)
-        throw(DimensionMismatch("A and B must be the same size."))
+        throw(DimensionMismatch(lazy"A and B must be the same size."))
     end
 
     kstart=1
@@ -950,7 +950,7 @@ function sparseaddmap_innerloop(A::SparseMatrixCSC, B::SparseMatrixCSC,
         end
             
     end
-    error("Coordinate not found. Are the positions of elements in As a subset of the positions of elements in A?")
+    error(lazy"Coordinate not found. Are the positions of elements in As a subset of the positions of elements in A?")
 end
 
 """
@@ -1000,7 +1000,7 @@ function conjnegfreq!(A::SparseMatrixCSC, wmodes::Vector)
 
     for i in size(A)
         if i % length(wmodes) != 0
-            throw(DimensionMismatch("The dimensions of A must be integer multiples of the length of wmodes."))
+            throw(DimensionMismatch(lazy"The dimensions of A must be integer multiples of the length of wmodes."))
         end
     end
 
@@ -1130,13 +1130,13 @@ function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
 
     for i in size(A)
         if i % length(wmodes) != 0
-            throw(DimensionMismatch("The dimensions of A must be integer multiples of the length of wmodes."))
+            throw(DimensionMismatch(lazy"The dimensions of A must be integer multiples of the length of wmodes."))
         end
     end
 
     if !isnothing(symfreqvar)
         if !checkissymbolic(symfreqvar)
-            error("symfreqvar must be a symbolic variable (or nothing if no symbolic variables)")
+            error(lazy"symfreqvar must be a symbolic variable (or nothing if no symbolic variables)")
         end
     end
 
@@ -1148,7 +1148,7 @@ function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
         for j in A.colptr[i]:(A.colptr[i+1]-1)
             if checkissymbolic(A.nzval[j])
                 if isnothing(symfreqvar)
-                    error("Set symfreqvar equal to the symbolic variable representing frequency.")
+                    error(lazy"Set symfreqvar equal to the symbolic variable representing frequency.")
                 else
                     # println(valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1])))
                     # println(typeof(valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))))
@@ -1182,19 +1182,19 @@ function spmatmul!(C::SparseMatrixCSC, A::SparseMatrixCSC, B::SparseMatrixCSC,
     xb::Vector{Bool})
 
     if size(A,2) != size(B,1)
-        throw(DimensionMismatch("Number of columns in A must equal number of rows in B."))
+        throw(DimensionMismatch(lazy"Number of columns in A must equal number of rows in B."))
     end
 
     if size(C,1) != size(A,1)
-        throw(DimensionMismatch("Number of rows in C must equal number of rows in A."))
+        throw(DimensionMismatch(lazy"Number of rows in C must equal number of rows in A."))
     end
 
     if size(C,2) != size(B,2)
-        throw(DimensionMismatch("Number of columns in C must equal number of columns in B."))
+        throw(DimensionMismatch(lazy"Number of columns in C must equal number of columns in B."))
     end
 
     if length(xb) != size(A,1)
-        throw(DimensionMismatch("Length of xb vector must equal number of rows in A."))
+        throw(DimensionMismatch(lazy"Length of xb vector must equal number of rows in A."))
     end
 
 
@@ -1232,7 +1232,7 @@ function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
         y1 = b[2]/fact.L[1,1]
         y2 = (b[1]-y1*fact.L[2,1])/fact.L[2,2]
     else
-        throw(ArgumentError("Unknown pivot."))
+        throw(ArgumentError(lazy"Unknown pivot."))
     end
 
     # solve U*x = y where U = [u11 u12; 0 u22]
@@ -1258,7 +1258,7 @@ function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
             P = StaticArrays.SMatrix{2,2}(0,1,1,0)
         end
         if !(isequal(P*fact.L*fact.U*x,b) || isapprox(P*fact.L*fact.U*x,b))
-            throw(ArgumentError("Failed to solve linear system."))
+            throw(ArgumentError(lazy"Failed to solve linear system."))
         end
     end
 

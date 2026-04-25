@@ -247,7 +247,7 @@ function parsecircuit(circuit)
         componenttype=allowedsymbols[componenttypeindex]
 
         if haskey(componentnamedict,name)
-           throw(ArgumentError("Name \"$(name)\" on line $(i) is not unique."))
+           throw(ArgumentError(lazy"Name \"$(name)\" on line $(i) is not unique."))
         end
 
         # add the name to the dictionary
@@ -410,11 +410,11 @@ function parsecomponenttype(name::String,allowedcomponents::Vector{String})
             elseif length(l) == 1
                 return j
             else
-                throw(ArgumentError("parsecomponenttype() currently only works for two letter components"))
+                throw(ArgumentError(lazy"parsecomponenttype() currently only works for two letter components"))
             end
         end
     end
-    throw(ArgumentError("No matching component found in allowedcomponents."))
+    throw(ArgumentError(lazy"No matching component found in allowedcomponents."))
 end
 
 """
@@ -435,7 +435,7 @@ true
 function checkcomponenttypes(allowedcomponents::Vector{String})
     for i in eachindex(allowedcomponents)
         if i != parsecomponenttype(allowedcomponents[i],allowedcomponents)
-            throw(ArgumentError("Allowed components parsing check has failed for $(allowedcomponents[i]). This can happen if a two letter long component comes after a one letter component. Please reorder allowedcomponents."))
+            throw(ArgumentError(lazy"Allowed components parsing check has failed for $(allowedcomponents[i]). This can happen if a two letter long component comes after a one letter component. Please reorder allowedcomponents."))
         end
     end
     return true
@@ -479,15 +479,15 @@ use to calculate the incidence matrix. Appends the tuples to branchvector.
 function extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},nodeindexarray::Matrix{Int})
 
     if  length(componenttypes) != size(nodeindexarray,2)
-        throw(DimensionMismatch("componenttypes must have the same length as the number of node indices"))
+        throw(DimensionMismatch(lazy"componenttypes must have the same length as the number of node indices"))
     end
 
     if size(nodeindexarray,1) != 2
-        throw(DimensionMismatch("the length of the first axis must be 2"))
+        throw(DimensionMismatch(lazy"the length of the first axis must be 2"))
     end
 
     if length(branchvector) != 0
-        throw(DimensionMismatch("branchvector should be length zero"))
+        throw(DimensionMismatch(lazy"branchvector should be length zero"))
     end
 
     allowedcomponenttypes = [:Lj,:NL,:L,:I,:P,:V]
@@ -602,7 +602,7 @@ function calcnodesorting(uniquenodevector::Vector{String};
             if !isnothing(parsednode)
                 uniquenodevectorints[i] = parsednode
             else
-                throw(ArgumentError("Failed to parse the nodes as integers. Try setting the keyword argument `sorting=:name` or `sorting=:none`."))
+                throw(ArgumentError(lazy"Failed to parse the nodes as integers. Try setting the keyword argument `sorting=:name` or `sorting=:none`."))
             end
         end
         sortperm!(uniquenodevectorsortindices, uniquenodevectorints, initialized=true)
@@ -613,14 +613,14 @@ function calcnodesorting(uniquenodevector::Vector{String};
         # ground node first later as always
         nothing
     else
-        throw(ArgumentError("Unknown sorting type."))
+        throw(ArgumentError(lazy"Unknown sorting type."))
     end
 
     # find the ground node. error if we don't find it.
     groundnodeindex = findgroundnodeindex(uniquenodevector)
 
     if groundnodeindex == 0
-        throw(ArgumentError("No ground node found in netlist."))
+        throw(ArgumentError(lazy"No ground node found in netlist."))
     end
 
     # if the ground index is not the first after sorting, make it first and
@@ -734,7 +734,7 @@ function calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,
     components::Vector{Symbol};checkinverse::Bool=true)
 
     if length(componenttypes) !== length(componentvalues)
-         throw(DimensionMismatch("componenttypes and componentvalues should have the same length"))
+         throw(DimensionMismatch(lazy"componenttypes and componentvalues should have the same length"))
     end
 
     # use this to store the types we have seen so we don't call promote_type
@@ -840,11 +840,11 @@ function calcnoiseportimpedanceindices(componenttypes::Vector{Symbol},
     componentvalues::Vector)
 
     if  length(componenttypes) != size(nodeindexarray,2) || length(componenttypes) != length(componentvalues)
-        throw(DimensionMismatch("Input arrays must have the same length"))
+        throw(DimensionMismatch(lazy"Input arrays must have the same length"))
     end
 
     if size(nodeindexarray,1) != 2
-        throw(DimensionMismatch("The length of the first axis must be 2"))
+        throw(DimensionMismatch(lazy"The length of the first axis must be 2"))
     end
 
     portimpedanceindices = calcportimpedanceindices(componenttypes,nodeindexarray,mutualinductorbranchnames,componentvalues)
@@ -927,11 +927,11 @@ function calcportindicesnumbers(componenttypes::Vector{Symbol},
     componentvalues::Vector)
 
     if  length(componenttypes) != size(nodeindexarray,2) || length(componenttypes) != length(componentvalues)
-        throw(DimensionMismatch("Input arrays must have the same length"))
+        throw(DimensionMismatch(lazy"Input arrays must have the same length"))
     end
 
     if size(nodeindexarray,1) != 2
-        throw(DimensionMismatch("The length of the first axis must be 2"))
+        throw(DimensionMismatch(lazy"The length of the first axis must be 2"))
     end
 
     # define vectors to hold the numbers of the ports, the indices in the
@@ -963,13 +963,13 @@ function calcportindicesnumbers(componenttypes::Vector{Symbol},
     # check that all of the port numbers are unique (two ports should not
     # have the same port number)
     if !allunique(portnumbers)
-        throw(ArgumentError("Duplicate ports are not allowed."))
+        throw(ArgumentError(lazy"Duplicate ports are not allowed."))
     end
 
     # check that the port branches are unique (two ports should not be defined
     # on the same branch)
     if !allunique(portbranches)
-        throw(ArgumentError("Only one port allowed per branch."))
+        throw(ArgumentError(lazy"Only one port allowed per branch."))
     end
 
     # sort by the portnumber
@@ -1049,11 +1049,11 @@ function calcportimpedanceindices(componenttypes::Vector{Symbol},
     componentvalues::Vector)
 
     if  length(componenttypes) != size(nodeindexarray,2) || length(componenttypes) != length(componentvalues)
-        throw(DimensionMismatch("Input arrays must have the same length"))
+        throw(DimensionMismatch(lazy"Input arrays must have the same length"))
     end
 
     if size(nodeindexarray,1) != 2
-        throw(DimensionMismatch("The length of the first axis must be 2"))
+        throw(DimensionMismatch(lazy"The length of the first axis must be 2"))
     end
 
     # calculate the indices and numbers of the ports
@@ -1083,7 +1083,7 @@ function calcportimpedanceindices(componenttypes::Vector{Symbol},
 
             if haskey(portbranchdict,key)
                 if haskey(resistorbranchdict,key) || haskey(resistorbranchdict,keyreversed)
-                    throw(ArgumentError("Only one resistor allowed per port."))
+                    throw(ArgumentError(lazy"Only one resistor allowed per port."))
                 else
                     push!(resistorindices,i)
                     push!(resistornumbers,portbranchdict[key])
@@ -1095,7 +1095,7 @@ function calcportimpedanceindices(componenttypes::Vector{Symbol},
 
     # throw an error if we haven't found a resistor for every port
     if length(resistorindices) != length(portindices)
-        throw(ArgumentError("Ports without resistors detected. Each port must have a resistor to define the impedance."))
+        throw(ArgumentError(lazy"Ports without resistors detected. Each port must have a resistor to define the impedance."))
     end
 
     # sort by the portnumber

@@ -340,10 +340,10 @@ julia> inputwave=[1.0,0.0];outputwave=[im/sqrt(2), 1/sqrt(2)];S = zeros(Complex{
 """
 function calcscatteringmatrix!(S, inputwave::Vector, outputwave::Vector)
     if size(S,1) != length(outputwave)
-        throw(DimensionMismatch("First dimension of scattering matrix not consistent with first dimensions of outputwave."))
+        throw(DimensionMismatch(lazy"First dimension of scattering matrix not consistent with first dimensions of outputwave."))
     end
     if size(S,2) != length(inputwave)
-        throw(DimensionMismatch("Second dimension of scattering matrix not consistent with first dimension of input wave."))
+        throw(DimensionMismatch(lazy"Second dimension of scattering matrix not consistent with first dimension of input wave."))
     end
 
     fill!(S,0)
@@ -438,7 +438,7 @@ function calcimpedance(c::Union{T,Complex{T}}, type, w, symfreqvar,
             return (im*w*conj(c))
         end
     else
-        error("Unknown component type")
+        error(lazy"Unknown component type")
     end
 end
 
@@ -487,7 +487,7 @@ function calcimpedance(c, type, w, symfreqvar)
             return (im*w*conj(valuetonumber(c,symfreqvar => w)))
         end
     else
-        error("Unknown component type")
+        error(lazy"Unknown component type")
     end
 end
 
@@ -641,7 +641,7 @@ function calcdZdroZ2(sensitivityindices, componenttypes, componentvalues,
                 dZdroZ2[(i-1)*Nmodes+j] = 1/componentvalues[index]
             end
         else
-            throw(ArgumentError("Unknown component."))
+            throw(ArgumentError(lazy"Unknown component."))
         end
     end
     return dZdroZ2
@@ -701,12 +701,12 @@ function calccm!(cm::AbstractArray{T}, S, w) where {T<:AbstractFloat}
 
     for d in size(S)
         if mod(d, m) != 0
-            throw(DimensionMismatch("Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
+            throw(DimensionMismatch(lazy"Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
         end
     end
 
     if size(S,1) != length(cm)
-        throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
+        throw(DimensionMismatch(lazy"First dimension of scattering matrix must equal the length of cm."))        
     end
 
     # use a Kahan, Babushka, Neumaier compensated sum. more cache efficient
@@ -751,12 +751,12 @@ function calccm!(cm, S, w)
 
     for d in size(S)
         if mod(d, m) != 0
-            throw(DimensionMismatch("Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
+            throw(DimensionMismatch(lazy"Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
         end
     end
 
     if size(S,1) != length(cm)
-        throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
+        throw(DimensionMismatch(lazy"First dimension of scattering matrix must equal the length of cm."))        
     end
 
     # more cache friendly version
@@ -826,22 +826,22 @@ function calccm!(cm::AbstractArray{T}, S, Snoise, w) where {T<:AbstractFloat}
 
     for d in size(S)
         if mod(d, m) != 0
-            throw(DimensionMismatch("Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
+            throw(DimensionMismatch(lazy"Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
         end
     end
 
     for d in size(Snoise)
         if mod(d, m) != 0
-            throw(DimensionMismatch("Dimensions of noise scattering matrix must be integer multiples of the number of frequencies."))
+            throw(DimensionMismatch(lazy"Dimensions of noise scattering matrix must be integer multiples of the number of frequencies."))
         end
     end
 
     if size(S,1) != length(cm)
-        throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
+        throw(DimensionMismatch(lazy"First dimension of scattering matrix must equal the length of cm."))        
     end
 
     if size(S,1) != size(Snoise,1)
-        throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
+        throw(DimensionMismatch(lazy"First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
 
     # use a Kahan, Babushka, Neumaier compensated sum. more cache efficient
@@ -898,22 +898,22 @@ function calccm!(cm, S, Snoise, w)
 
     for d in size(S)
         if mod(d, m) != 0
-            throw(DimensionMismatch("Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
+            throw(DimensionMismatch(lazy"Dimensions of scattering matrix must be integer multiples of the number of frequencies."))
         end
     end
 
     for d in size(Snoise)
         if mod(d, m) != 0
-            throw(DimensionMismatch("Dimensions of noise scattering matrix must be integer multiples of the number of frequencies."))
+            throw(DimensionMismatch(lazy"Dimensions of noise scattering matrix must be integer multiples of the number of frequencies."))
         end
     end
 
     if size(S,1) != length(cm)
-        throw(DimensionMismatch("First dimension of scattering matrix must equal the length of cm."))        
+        throw(DimensionMismatch(lazy"First dimension of scattering matrix must equal the length of cm."))        
     end
 
     if size(S,1) != size(Snoise,1)
-        throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
+        throw(DimensionMismatch(lazy"First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
 
     # more cache friendly version
@@ -974,7 +974,7 @@ ladder operator basis. Overwrites qe with output.
 function calcqe!(qe, S)
 
     if size(qe) != size(S)
-        throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
+        throw(DimensionMismatch(lazy"Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
     end
 
     # more cache efficient version of QE calculation
@@ -1043,11 +1043,11 @@ julia> qe=Float64[1 2;3 4];JosephsonCircuits.calcqe!(qe,[1 2;3 4],[1 2 3;4 5 6])
 function calcqe!(qe, S, Snoise)
 
     if size(qe) != size(S)
-        throw(DimensionMismatch("Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
+        throw(DimensionMismatch(lazy"Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
     end
 
     if size(S,1) != size(Snoise,1)
-        throw(DimensionMismatch("First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
+        throw(DimensionMismatch(lazy"First dimensions of scattering parameter matrice and noise scattering matrix must be equal."))
     end
 
     # more cache efficient version of QE calculation
@@ -1114,7 +1114,7 @@ See [`calcqeideal`](@ref).
 """
 function calcqeideal!(qeideal,S)
     if size(qeideal) != size(S)
-        throw(DimensionMismatch("Sizes of QE and S matrices must be equal."))
+        throw(DimensionMismatch(lazy"Sizes of QE and S matrices must be equal."))
     end
     for i in eachindex(S)
         abs2S = abs2(S[i])
@@ -1158,11 +1158,11 @@ ladder operator basis. Overwrites `Cnoise` with output.
 function calcCnoise!(Cnoise::AbstractMatrix, S)
 
     if size(Cnoise) != size(S)
-        throw(DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
+        throw(DimensionMismatch(lazy"The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
     end
 
     if size(S,1) != size(S,2)
-        throw(DimensionMismatch("The scattering parameter and noise wave covariance matrices must be square."))
+        throw(DimensionMismatch(lazy"The scattering parameter and noise wave covariance matrices must be square."))
     end
 
     # compute C = I - S*S' from Bosma's theorem
@@ -1231,11 +1231,11 @@ julia> C=zeros(Float64,2,2);JosephsonCircuits.calcCnoise!(C,[1 2;3 4],[0.0 0 0;0
 function calcCnoise!(Cnoise, S, Snoise)
 
     if size(Cnoise) != size(S)
-        throw(DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
+        throw(DimensionMismatch(lazy"The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
     end
 
     if size(S,1) != size(Snoise,1)
-        throw(DimensionMismatch("The first dimensions of the scattering parameter and noise scattering parameter matrices must be equal."))
+        throw(DimensionMismatch(lazy"The first dimensions of the scattering parameter and noise scattering parameter matrices must be equal."))
     end
 
     # add the noise covariance from the noise ports to the
@@ -1296,11 +1296,11 @@ photon number) basis. Overwrites qe with output.
 function calcqe_S_Cnoise!(qe, S, Cnoise)
 
     if size(qe) != size(S)
-        throw(DimensionMismatch("The dimensions of the quantum efficiency and scattering parameter matrices must be equal."))
+        throw(DimensionMismatch(lazy"The dimensions of the quantum efficiency and scattering parameter matrices must be equal."))
     end
 
     if size(S) != size(Cnoise)
-        throw(DimensionMismatch("The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
+        throw(DimensionMismatch(lazy"The dimensions of the noise wave covariance and scattering parameter matrices must be equal."))
     end
 
     # more cache efficient version of QE calculation

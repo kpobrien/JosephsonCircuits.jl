@@ -67,21 +67,21 @@ function wrspice_input_transient(netlist::String, current, frequency, phase,
             if (eltype(sourcenodes) <: String || eltype(sourcenodes) <: Int)
                 sourcenodes = [sourcenodes]
             else
-                throw(ArgumentError("Source nodes not strings or integers."))
+                throw(ArgumentError(lazy"Source nodes not strings or integers."))
             end
         end
     end
 
     if length(current) != length(frequency) || length(current) != length(phase) || length(current) != length(sourcenodes)
-        throw(ArgumentError("Input vector lengths not equal."))
+        throw(ArgumentError(lazy"Input vector lengths not equal."))
     end
 
     for s in sourcenodes
         if length(s) != 2
-            throw(ArgumentError("Two nodes are required per source."))
+            throw(ArgumentError(lazy"Two nodes are required per source."))
         end
         if !(eltype(s) <: String || eltype(s) <: Int)
-            throw(ArgumentError("Nodes are not an integer or string."))
+            throw(ArgumentError(lazy"Nodes are not an integer or string."))
         end
     end
 
@@ -262,7 +262,7 @@ function wrspice_cmd()
         if :XicTools_jll in names(Main,imported=true) && isdefined(Main.XicTools_jll,:wrspice)
            wrspicecmd =  Main.XicTools_jll.wrspice()
         else
-            error("WRSPICE executable not found. Please install WRSPICE, load XicTools_jll, or supply a path manually if installed elsewhere.")
+            error(lazy"WRSPICE executable not found. Please install WRSPICE, load XicTools_jll, or supply a path manually if installed elsewhere.")
         end
     end
 

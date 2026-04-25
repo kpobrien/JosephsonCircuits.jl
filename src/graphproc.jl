@@ -193,7 +193,7 @@ julia> lvarray = Vector{Int}[];JosephsonCircuits.storeuniqueloops!(lvarray,[1, 2
 function storeuniqueloops!(lvarray, vmap, ul)
 
     if length(ul) > 1
-        error("There should only be one loop associated with each closure branch.")
+        error(lazy"There should only be one loop associated with each closure branch.")
     elseif length(ul) < 1
         # println("Warning: Loop exists but max loop size too small to find vertices.")
         push!(lvarray,Int[])

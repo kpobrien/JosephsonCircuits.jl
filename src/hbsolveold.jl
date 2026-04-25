@@ -680,7 +680,7 @@ function hbnlsolveold(wp, Ip, Nmodes, psc::ParsedSortedCircuit, cg::CircuitGraph
     factorization = KLUfactorization()) where K
 
     if length(ports) != length(Ip)
-        throw(DimensionMismatch("Number of currents Ip must be equal to number of pump ports"))
+        throw(DimensionMismatch(lazy"Number of currents Ip must be equal to number of pump ports"))
     end
 
     # calculate the numeric matrices
@@ -947,11 +947,11 @@ function calcAoLjbm(Am, Ljb::SparseVector, Lmean, Nmodes, Nbranches)
 
 
     if size(Am,2) != nnz(Ljb)
-        throw(DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
+        throw(DimensionMismatch(lazy"The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
     end
 
     if length(Ljb) > Nbranches
-        throw(DimensionMismatch("The length of Ljb cannot be larger than the number of branches."))
+        throw(DimensionMismatch(lazy"The length of Ljb cannot be larger than the number of branches."))
     end
 
     # calculate  AoLjbm
@@ -1028,15 +1028,15 @@ function updateAoLjbm!(AoLjbm::SparseMatrixCSC, Am, Ljb::SparseVector, Lmean,
     # check that the dimensions are consistent with Nmode and Nbranches.
 
     if nnz(Ljb)*Nmodes^2 != nnz(AoLjbm)
-        throw(DimensionMismatch("The number of nonzero elements in AoLjbm are not consistent with nnz(Ljb) and Nmodes."))
+        throw(DimensionMismatch(lazy"The number of nonzero elements in AoLjbm are not consistent with nnz(Ljb) and Nmodes."))
     end
 
     if size(Am,2) != nnz(Ljb)
-        throw(DimensionMismatch("The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
+        throw(DimensionMismatch(lazy"The second axis of Am must equal the number of nonzero elements in Ljb (the number of JJs)."))
     end
 
     if length(Ljb) > Nbranches
-        throw(DimensionMismatch("The length of Ljb cannot be larger than the number of branches."))
+        throw(DimensionMismatch(lazy"The length of Ljb cannot be larger than the number of branches."))
     end
 
     # i want a vector length(Ljb) where the indices are the values Ljb.nzind
@@ -1092,7 +1092,7 @@ function sincosnloddtoboth(amodd::Array{Complex{Float64},1},
     Nbranches::Int, m::Int)
 
     if length(amodd) != Nbranches*m
-        throw(DimensionMismatch("Length of node flux vector not consistent with number of modes number of frequencies"))
+        throw(DimensionMismatch(lazy"Length of node flux vector not consistent with number of modes number of frequencies"))
     end
 
     am = zeros(Complex{Float64},2*length(amodd))

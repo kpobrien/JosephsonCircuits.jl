@@ -127,7 +127,7 @@ function linesearch(f, fp, dfdalpha, alphamin)
     f1fit = -dfdalpha*dfdalpha/(4*a) + f
 
     if isnan(f) || isnan(fp)
-        error("NaN in nonlinear solver.")
+        error(lazy"NaN in nonlinear solver.")
     end
 
     if f1fit > fp
@@ -208,15 +208,15 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     alphamin = 1e-4,factorization = KLUfactorization()) where T
 
     if size(J,1) != size(J,2)
-        throw(DimensionMismatch("The Jacobian `J` matrix must be square."))
+        throw(DimensionMismatch(lazy"The Jacobian `J` matrix must be square."))
     end
 
     if size(J,2) != length(x)
-        throw(DimensionMismatch("Second axis of Jacobian `J` must have the same length as the input `x`."))
+        throw(DimensionMismatch(lazy"Second axis of Jacobian `J` must have the same length as the input `x`."))
     end
 
     if size(J,1) != length(F)
-        throw(DimensionMismatch("First axis of the Jacobian `J` must have the same length as the residual `F`."))
+        throw(DimensionMismatch(lazy"First axis of the Jacobian `J` must have the same length as the residual `F`."))
     end
 
     cache = FactorizationCache()
@@ -298,9 +298,9 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         end
 
         if n == iterations
-            @warn string("Solver did not converge after maximum iterations of ", n,".")
-            println("norm(F)/norm(x): ", norm(F)/norm(x))
-            println("Infinity norm: ", norm(F,Inf))
+            @warn string(lazy"Solver did not converge after maximum iterations of ", n,".")
+            println(lazy"norm(F)/norm(x): ", norm(F)/norm(x))
+            println(lazy"Infinity norm: ", norm(F,Inf))
             # error(" ")
             # @show alphas
         end

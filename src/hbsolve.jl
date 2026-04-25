@@ -2277,10 +2277,10 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
                 key = (nodeindices[1, portindex], nodeindices[2, portindex])
                 bbm[(edge2indexdict[key]-1)*Nmodes+modeindex] += Lmean*current/phi0
             else
-                throw(ArgumentError("Source mode $(mode) not found."))
+                throw(ArgumentError(lazy"Source mode $(mode) not found."))
             end
         else
-            throw(ArgumentError("Source port $(port) not found."))
+            throw(ArgumentError(lazy"Source port $(port) not found."))
         end
     end
 

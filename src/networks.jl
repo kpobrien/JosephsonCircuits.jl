@@ -24,7 +24,7 @@ for f in [:ABCD_seriesZ, :ABCD_shuntY, :Y_seriesY, :Z_shuntZ]
     # in-place version for abstract array x1
     @eval function $(Symbol(String(f)*"!"))(y::AbstractArray,x1::AbstractArray)
         if size(y)[3:end] != size(x1)
-            throw(ArgumentError("Sizes of output $(size(y)) and input $(size(x1)) not compatible."))
+            throw(ArgumentError(lazy"Sizes of output $(size(y)) and input $(size(x1)) not compatible."))
         end
         # assume a value of x1 is given for each frequency
         # loop over the dimensions of the array greater than 2
@@ -42,7 +42,7 @@ for f in [:ABCD_tline, :Z_tline]
     @eval function $f(x1::AbstractArray, x2::AbstractArray)
         # check the sizes of the inputs
         if size(x1) != size(x2)
-            throw(ArgumentError("Sizes of inputs $(size(x1)) and $(size(x2)) must be equal."))
+            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)) and $(size(x2)) must be equal."))
         end
         # define the output matrix
         y = zeros(promote_type(typeof(im*x1[1]),eltype(x2)),(2,2,size(x1)...))
@@ -75,7 +75,7 @@ for f in [:ABCD_tline, :Z_tline]
         x1::Number, x2::AbstractArray)
         # check the sizes of the inputs
         if size(y)[3:end] != size(x2)
-            throw(ArgumentError("Sizes of output $(size(y)) and inputs $(size(x2)) not compatible."))
+            throw(ArgumentError(lazy"Sizes of output $(size(y)) and inputs $(size(x2)) not compatible."))
         end
         # assume a value of x1 is given for each frequency
         # loop over the dimensions of the array greater than 2
@@ -90,10 +90,10 @@ for f in [:ABCD_tline, :Z_tline]
         x1::AbstractArray, x2::AbstractArray)
         # check the sizes of the inputs
         if size(x1) != size(x2)
-            throw(ArgumentError("Sizes of inputs $(size(x1)) and $(size(x2)) must be equal."))
+            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)) and $(size(x2)) must be equal."))
         end
         if size(y)[3:end] != size(x1)
-            throw(ArgumentError("Sizes of output $(size(y)) and inputs $(size(x1)) not compatible."))
+            throw(ArgumentError(lazy"Sizes of output $(size(y)) and inputs $(size(x1)) not compatible."))
         end
         # assume a value of x1 is given for each frequency
         # loop over the dimensions of the array greater than 2
@@ -111,7 +111,7 @@ for f in [:ABCD_PiY, :Y_PiY, :ABCD_TZ, :Z_TZ]
     @eval function $f(x1::AbstractArray, x2::AbstractArray, x3::AbstractArray)
         # check the sizes of the inputs
         if size(x1) != size(x2) || size(x1) != size(x3)
-            throw(ArgumentError("Sizes of inputs $(size(x1)), $(size(x2)), and $(size(x3)) must be equal."))
+            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)), $(size(x2)), and $(size(x3)) must be equal."))
         end
         # define the output matrix
         y = zeros(promote_type(eltype(x1),eltype(x2),eltype(x3)),(2,2,size(x1)...))
@@ -135,10 +135,10 @@ for f in [:ABCD_PiY, :Y_PiY, :ABCD_TZ, :Z_TZ]
         x1::AbstractArray, x2::AbstractArray, x3::AbstractArray)
         # check the sizes of the inputs
         if size(x1) != size(x2) || size(x1) != size(x3)
-            throw(ArgumentError("Sizes of inputs $(size(x1)), $(size(x2)), and $(size(x3)) must be equal."))
+            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)), $(size(x2)), and $(size(x3)) must be equal."))
         end
         if size(y)[3:end] != size(x1)
-            throw(ArgumentError("Sizes of output $(size(y)) and inputs $(size(x1)) not compatible."))
+            throw(ArgumentError(lazy"Sizes of output $(size(y)) and inputs $(size(x1)) not compatible."))
         end
         # assume a value of x1 is given for each frequency
         # loop over the dimensions of the array greater than 2
@@ -157,7 +157,7 @@ for f in [:ABCD_coupled_tline, :Z_coupled_tline]
         x3::AbstractArray, x4::AbstractArray)
         # check the sizes of the inputs
         if size(x1) != size(x2) || size(x1) != size(x3) || size(x1) != size(x4)
-            throw(ArgumentError("Sizes of inputs $(size(x1)), $(size(x2)), $(size(x3)), and $(size(x4)) must be equal."))
+            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)), $(size(x2)), $(size(x3)), and $(size(x4)) must be equal."))
         end
         # define the output matrix
         y = zeros(promote_type(typeof(im*x1[1]),typeof(im*x2[1]),eltype(x3),eltype(x4)),(4,4,size(x1)...))
@@ -171,7 +171,7 @@ for f in [:ABCD_coupled_tline, :Z_coupled_tline]
         x4::AbstractArray)
         # check the sizes of the inputs
         if size(x3) != size(x4)
-            throw(ArgumentError("Sizes of inputs $(size(x3)) and $(size(x4)) must be equal."))
+            throw(ArgumentError(lazy"Sizes of inputs $(size(x3)) and $(size(x4)) must be equal."))
         end
         # define the output matrix
         y = zeros(promote_type(typeof(im*x1),typeof(im*x2),eltype(x3),eltype(x4)),(4,4,size(x3)...))
@@ -195,10 +195,10 @@ for f in [:ABCD_coupled_tline, :Z_coupled_tline]
         x1::Number, x2::Number, x3::AbstractArray, x4::AbstractArray)
         # check the sizes of the inputs
         if size(x3) != size(x4)
-            throw(ArgumentError("Sizes of inputs $(size(x3)) and $(size(x4)) must be equal."))
+            throw(ArgumentError(lazy"Sizes of inputs $(size(x3)) and $(size(x4)) must be equal."))
         end
         if size(y)[3:end] != size(x3)
-            throw(ArgumentError("Sizes of output $(size(y)) and inputs $(size(x3)) not compatible."))
+            throw(ArgumentError(lazy"Sizes of output $(size(y)) and inputs $(size(x3)) not compatible."))
         end
         # assume a value of x1 is given for each frequency
         # loop over the dimensions of the array greater than 2
@@ -214,10 +214,10 @@ for f in [:ABCD_coupled_tline, :Z_coupled_tline]
         x4::AbstractArray)
         # check the sizes of the inputs
         if size(x1) != size(x2) || size(x1) != size(x3) || size(x1) != size(x4)
-            throw(ArgumentError("Sizes of inputs $(size(x1)), $(size(x2)), $(size(x3)), and $(size(x4)) must be equal."))
+            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)), $(size(x2)), $(size(x3)), and $(size(x4)) must be equal."))
         end
         if size(y)[3:end] != size(x1)
-            throw(ArgumentError("Sizes of output $(size(y)) and inputs $(size(x1)) not compatible."))
+            throw(ArgumentError(lazy"Sizes of output $(size(y)) and inputs $(size(x1)) not compatible."))
         end
         # assume a value of x1 is given for each frequency
         # loop over the dimensions of the array greater than 2
@@ -265,7 +265,7 @@ julia> JosephsonCircuits.ABCD_seriesZ!(zeros(Complex{Float64},2,2),50)
 """
 function ABCD_seriesZ!(ABCD::AbstractMatrix,Z1::Number)
     if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError("Size of output $(size(ABCD)) must be (2, 2)."))
+        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
     end
     ABCD[1,1] = one(eltype(ABCD))
     ABCD[1,2] = Z1
@@ -311,7 +311,7 @@ julia> JosephsonCircuits.Y_seriesY!(zeros(Complex{Float64},2,2),1/50)
 """
 function Y_seriesY!(Y::AbstractMatrix,Y1::Number)
     if size(Y,1) != 2 || size(Y,2) != 2
-        throw(ArgumentError("Size of output $(size(Y)) must be (2, 2)."))
+        throw(ArgumentError(lazy"Size of output $(size(Y)) must be (2, 2)."))
     end
     Y[1,1] = Y1
     Y[1,2] = -Y1
@@ -358,7 +358,7 @@ julia> JosephsonCircuits.ABCD_shuntY!(zeros(Complex{Float64},2,2),1/50)
 """
 function ABCD_shuntY!(ABCD::AbstractMatrix,Y1::Number)
     if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError("Size of output $(size(ABCD)) must be (2, 2)."))
+        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
     end
     ABCD[1,1] = one(eltype(ABCD))
     ABCD[1,2] = zero(eltype(ABCD))
@@ -405,7 +405,7 @@ julia> JosephsonCircuits.Z_shuntZ!(zeros(Complex{Float64},2,2),50)
 """
 function Z_shuntZ!(Z::AbstractMatrix,Z1::Number)
     if size(Z,1) != 2 || size(Z,2) != 2
-        throw(ArgumentError("Size of output $(size(Z)) must be (2, 2)."))
+        throw(ArgumentError(lazy"Size of output $(size(Z)) must be (2, 2)."))
     end
     Z[1,1] = Z1
     Z[1,2] = Z1
@@ -452,7 +452,7 @@ julia> JosephsonCircuits.ABCD_PiY!(zeros(Complex{Float64},2,2),1,2,4)
 """
 function ABCD_PiY!(ABCD::AbstractMatrix,Y1::Number,Y2::Number,Y3::Number)
     if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError("Size of output $(size(ABCD)) must be (2, 2)."))
+        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
     end
     ABCD[1,1] = 1+Y2/Y3
     ABCD[1,2] = 1/Y3
@@ -500,7 +500,7 @@ julia> JosephsonCircuits.Y_PiY!(zeros(Complex{Float64},2,2),1.0,2.0,4.0)
 """
 function Y_PiY!(Y::AbstractMatrix,Y1::Number,Y2::Number,Y3::Number)
     if size(Y,1) != 2 || size(Y,2) != 2
-        throw(ArgumentError("Size of output $(size(Y)) must be (2, 2)."))
+        throw(ArgumentError(lazy"Size of output $(size(Y)) must be (2, 2)."))
     end
     Y[1,1] = Y1+Y3
     Y[1,2] = -Y3
@@ -547,7 +547,7 @@ julia> JosephsonCircuits.ABCD_TZ!(ones(Complex{Float64},2,2),1,2,4)
 """
 function ABCD_TZ!(ABCD::AbstractMatrix,Z1::Number,Z2::Number,Z3::Number)
     if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError("Size of output $(size(ABCD)) must be (2, 2)."))
+        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
     end
     ABCD[1,1] = 1+Z1/Z3
     ABCD[1,2] = Z1+Z2+Z1*Z2/Z3
@@ -594,7 +594,7 @@ julia> JosephsonCircuits.Z_TZ!(ones(Complex{Float64},2,2),1,2,4)
 """
 function Z_TZ!(Z::AbstractMatrix,Z1::Number,Z2::Number,Z3::Number)
     if size(Z,1) != 2 || size(Z,2) != 2
-        throw(ArgumentError("Size of output $(size(Z)) must be (2, 2)."))
+        throw(ArgumentError(lazy"Size of output $(size(Z)) must be (2, 2)."))
     end
     Z[1,1] = Z1+Z3
     Z[1,2] = Z3
@@ -616,7 +616,7 @@ end
 
 function Z_L!(Z::AbstractMatrix,L::AbstractMatrix,w::Number)
     if size(Z) != size(L)
-        throw(ArgumentError("The size of the input $(size(L)) must equal the size of the output $(size(Z))."))
+        throw(ArgumentError(lazy"The size of the input $(size(L)) must equal the size of the output $(size(Z))."))
     end
     copy!(Z,L)
     rmul!(Z,im*w)
@@ -635,7 +635,7 @@ end
 
 function Z_invC!(Z,invC,w)
     if size(Z) != size(invC)
-        throw(ArgumentError("The size of the input $(size(invC)) must equal the size of the output $(size(Z))."))
+        throw(ArgumentError(lazy"The size of the input $(size(invC)) must equal the size of the output $(size(Z))."))
     end
     copy!(Z,invC)
     rdiv!(Z,im*w)
@@ -654,7 +654,7 @@ end
 
 function Y_C!(Y,C,w)
     if size(Y) != size(C)
-        throw(ArgumentError("The size of the input $(size(C)) must equal the size of the output $(size(Y))."))
+        throw(ArgumentError(lazy"The size of the input $(size(C)) must equal the size of the output $(size(Y))."))
     end
     copy!(Y,C)
     rmul!(Y,im*w)
@@ -673,7 +673,7 @@ end
 
 function Y_invL!(Y,invL,w)
     if size(Y) != size(invL)
-        throw(ArgumentError("The size of the input $(size(invL)) must equal the size of the output $(size(Y))."))
+        throw(ArgumentError(lazy"The size of the input $(size(invL)) must equal the size of the output $(size(Y))."))
     end
     copy!(Y,invL)
     rdiv!(Y,im*w)
@@ -719,7 +719,7 @@ julia> JosephsonCircuits.ABCD_tline!(ones(Complex{Float64},2,2),50, pi/4)
 """
 function ABCD_tline!(ABCD::AbstractMatrix,Z0::Number,theta::Number)
     if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError("Size of output $(size(ABCD)) must be (2, 2)."))
+        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
     end
     ABCD[1,1] = cos(theta)
     ABCD[1,2] = im*Z0*sin(theta)
@@ -767,7 +767,7 @@ julia> JosephsonCircuits.Z_tline!(ones(Complex{Float64},2,2),50, pi/4)
 """
 function Z_tline!(Z::AbstractMatrix,Z0::Number,theta::Number)
     if size(Z,1) != 2 || size(Z,2) != 2
-        throw(ArgumentError("Size of output $(size(Z)) must be (2, 2)."))
+        throw(ArgumentError(lazy"Size of output $(size(Z)) must be (2, 2)."))
     end
     Z[1,1] = -im*Z0*cot(theta)
     Z[1,2] = -im*Z0*csc(theta)
@@ -833,7 +833,7 @@ julia> JosephsonCircuits.ABCD_coupled_tline!(zeros(Complex{Float64},4,4),50,50,p
 function ABCD_coupled_tline!(A::AbstractMatrix, Z0e::Number, Z0o::Number,
     thetae::Number, thetao::Number)
     if size(A,1) != 4 || size(A,2) != 4
-        throw(ArgumentError("Size of output $(size(A)) must be (4, 4)."))
+        throw(ArgumentError(lazy"Size of output $(size(A)) must be (4, 4)."))
     end
     A[1,1] = A[2,2] = A[3,3] = A[4,4] = 1/2*(cos(thetae) + cos(thetao))
     A[1,2] = A[2,1] = A[3,4] = A[4,3] = 1/2*(cos(thetae) - cos(thetao))
@@ -899,7 +899,7 @@ julia> JosephsonCircuits.Z_coupled_tline!(zeros(Complex{Float64},4,4),50,50,pi/4
 function Z_coupled_tline!(Z::AbstractMatrix, Z0e::Number, Z0o::Number,
     thetae::Number, thetao::Number)
     if size(Z,1) != 4 || size(Z,2) != 4
-        throw(ArgumentError("Size of output $(size(Z)) must be (4, 4)."))
+        throw(ArgumentError(lazy"Size of output $(size(Z)) must be (4, 4)."))
     end
     Z[1,1] = Z[2,2] = Z[3,3] = Z[4,4] = -im/2*(Z0e*cot(thetae) + Z0o*cot(thetao))
     Z[1,2] = Z[2,1] = Z[3,4] = Z[4,3] = -im/2*(Z0e*cot(thetae) - Z0o*cot(thetao)) 
@@ -1466,7 +1466,7 @@ function Z_canonical_coupled_line_circuits(i::Int, Z0e, Z0o, thetae, thetao)
         Z11 = Z22 = -im/2*(Z0e*cot(thetae) + Z0o*cot(thetao))
         Z12 = Z21 = -im/2*(Z0e*cot(thetae) - Z0o*cot(thetao))
     else
-        throw(ArgumentError("Canonical coupled line circuit number must be 1-10."))
+        throw(ArgumentError(lazy"Canonical coupled line circuit number must be 1-10."))
     end
 
     return [Z11 Z12; Z21 Z22]
@@ -1498,7 +1498,7 @@ function canonical_coupled_line_circuits(i::Int, Z0e, Z0o, ne, no)
         Cm = (no*Z0e-ne*Z0o)/(2*c*Z0e*Z0o)
         return (L1 = L1, L2 = L2, M = M, C1 = C1, C2 = C2, Cm = Cm)
     else
-        throw(ArgumentError("Canonical coupled line circuit number must be 1-10."))
+        throw(ArgumentError(lazy"Canonical coupled line circuit number must be 1-10."))
     end
 end
 
@@ -1568,12 +1568,12 @@ function S_splitter!(S::AbstractArray)
 
     # scattering matrices should be square.
     if size(S,1) != size(S,2)
-        throw(ArgumentError("The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
+        throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
     end
     # scattering matrices need to be matrices or higher dimensional arrays,
     # not vectors
     if ndims(S) < 2
-        throw(ArgumentError("The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
+        throw(ArgumentError(lazy"The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
     end
 
     # fill with 2/N where N is the size of the scattering matrix.
@@ -1613,12 +1613,12 @@ function S_short!(S::AbstractArray)
 
     # scattering matrices should be square.
     if size(S,1) != size(S,2)
-        throw(ArgumentError("The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
+        throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
     end
     # scattering matrices need to be matrices or higher dimensional arrays,
     # not vectors
     if ndims(S) < 2
-        throw(ArgumentError("The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
+        throw(ArgumentError(lazy"The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
     end
 
     # fill with zeros
@@ -1656,12 +1656,12 @@ function S_open!(S::AbstractArray)
 
     # scattering matrices should be square.
     if size(S,1) != size(S,2)
-        throw(ArgumentError("The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
+        throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
     end
     # scattering matrices need to be matrices or higher dimensional arrays,
     # not vectors
     if ndims(S) < 2
-        throw(ArgumentError("The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
+        throw(ArgumentError(lazy"The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
     end
 
     # fill with zeros
@@ -1702,12 +1702,12 @@ function S_match!(S::AbstractArray)
 
     # scattering matrices should be square.
     if size(S,1) != size(S,2)
-        throw(ArgumentError("The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
+        throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
     end
     # scattering matrices need to be matrices or higher dimensional arrays,
     # not vectors
     if ndims(S) < 2
-        throw(ArgumentError("The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
+        throw(ArgumentError(lazy"The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
     end
 
     # fill with zeros
@@ -1764,7 +1764,7 @@ function S_directional_coupler!(S::AbstractMatrix, α::Number, β::Number,
     θ::Number, ϕ::Number)
     # check if S is 4x4
     if size(S,1) != 4 || size(S,2) != 4
-        throw(ArgumentError("Size of output $(size(S)) must be (4, 4)."))
+        throw(ArgumentError(lazy"Size of output $(size(S)) must be (4, 4)."))
     end
 
     # fill with zeros
@@ -2216,7 +2216,7 @@ function Z_attenuator_inner(Zsource::Number,Zload::Number,attenuationdB::Number)
     attenuationdBmin = 20*log10(sqrt(rho-1)+sqrt(rho))
 
     if attenuationdB < attenuationdBmin
-        throw(ArgumentError("Attenuation of $(attenuationdB) dB is below the minimum attenuation of $(attenuationdBmin) dB for a passive circuit given the source and load impedances of $(Zsource) and $(Zload) Ohms."))
+        throw(ArgumentError(lazy"Attenuation of $(attenuationdB) dB is below the minimum attenuation of $(attenuationdBmin) dB for a passive circuit given the source and load impedances of $(Zsource) and $(Zload) Ohms."))
     end
     
     A = 10^-(attenuationdB/20)
@@ -2366,7 +2366,7 @@ end
 function S_circulator_clockwise!(S::AbstractMatrix)
     # check if S is 3x3
     if size(S,1) != 3 || size(S,2) != 3
-        throw(ArgumentError("Size of output $(size(S)) must be (3, 3)."))
+        throw(ArgumentError(lazy"Size of output $(size(S)) must be (3, 3)."))
     end
 
     # fill with zeros
@@ -2394,7 +2394,7 @@ end
 function S_circulator_counterclockwise!(S::AbstractMatrix)
     # check if S is 3x3
     if size(S,1) != 3 || size(S,2) != 3
-        throw(ArgumentError("Size of output $(size(S)) must be (3, 3)."))
+        throw(ArgumentError(lazy"Size of output $(size(S)) must be (3, 3)."))
     end
 
     # fill with zeros

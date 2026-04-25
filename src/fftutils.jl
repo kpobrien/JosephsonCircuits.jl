@@ -796,7 +796,7 @@ function phivectortomatrix!(phivector::AbstractVector, phimatrix::AbstractArray,
     conjtargetindices::Vector{Int}, Nbranches::Int)
 
     if length(indexmap)*Nbranches != length(phivector)
-        throw(DimensionMismatch("Unexpected length for phivector"))
+        throw(DimensionMismatch(lazy"Unexpected length for phivector"))
     end
 
     if length(phivector) == 0
@@ -889,7 +889,7 @@ function phimatrixtovector!(phivector::AbstractVector, phimatrix::AbstractArray,
     fill!(phivector,0)
 
     if length(indexmap)*Nbranches != length(phivector)
-        throw(DimensionMismatch("Unexpected length for phivector"))
+        throw(DimensionMismatch(lazy"Unexpected length for phivector"))
     end
 
     for i in 1:Nbranches

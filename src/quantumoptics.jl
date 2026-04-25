@@ -1556,14 +1556,14 @@ function williamson_pair(M::AbstractMatrix{<:Real})
 
     # test if M is symmetric
     if !isapprox(M,transpose(M))
-        error("M must be positive definite and thus symmetric.")
+        error(lazy"M must be positive definite and thus symmetric.")
     end
 
     valsM, vecsM = eigen(Symmetric(M))
 
     for val in valsM
         if !ispositive(val)
-            error("`M` must be positive definite.")
+            error(lazy"`M` must be positive definite.")
         end
     end
 
@@ -1621,14 +1621,14 @@ function williamson_block(M::AbstractMatrix{<:Real})
 
     # test if M is symmetric
     if !isapprox(M,transpose(M))
-        error("M must be positive definite and thus symmetric.")
+        error(lazy"M must be positive definite and thus symmetric.")
     end
 
     valsM, vecsM = eigen(Symmetric(M))
 
     for val in valsM
         if !ispositive(val)
-            error("`M` must be positive definite.")
+            error(lazy"`M` must be positive definite.")
         end
     end
 
@@ -1678,7 +1678,7 @@ function autonne_takagi(M::AbstractMatrix)
     # this test is very strict and checks for equality not
     # just approximate quality. unclear if that's a good thing.
     if !issymmetric(M)
-        error("M must be symmetric.")
+        error(lazy"M must be symmetric.")
     end
     # does svd specialize for a symmetric matrix?
     # F = svd(Symmetric(M))
@@ -1744,7 +1744,7 @@ function autonne_takagi(M::AbstractMatrix{<:Real})
     # this test is very strict and checks for equality not
     # just approximate quality. unclear if that's a good thing.
     if !issymmetric(M)
-        error("M must be symmetric.")
+        error(lazy"M must be symmetric.")
     end
     F = eigen(Symmetric(M); sortby=abs)
 
@@ -1796,7 +1796,7 @@ function bloch_messiah_block(S::AbstractMatrix{<:Real})
 
     # test if S is symplectic
     if !issymplectic_block(S)
-        error("A must be symplectic.")
+        error(lazy"A must be symplectic.")
     end
 
     # perform a polar decomposition
@@ -1860,7 +1860,7 @@ function pre_iwasawa_block(S::AbstractMatrix)
 
     # test if S is symplectic
     if !issymplectic_block(S)
-        error("A must be symplectic.")
+        error(lazy"A must be symplectic.")
     end
 
     # partition the symplectic matrix S
@@ -1918,7 +1918,7 @@ function iwasawa_block(S::AbstractMatrix)
 
     # test if S is symplectic
     if !issymplectic_block(S)
-        error("A must be symplectic.")
+        error(lazy"A must be symplectic.")
     end
 
     # partition the symplectic matrix S
@@ -2030,13 +2030,13 @@ function symplectic_normal_form_pair(A::AbstractMatrix{<:Real})
 
     # check if the matrix A is skew-symmetric
     if !isapprox(A, -transpose(A))
-        error("A must be skew-symmetric.")
+        error(lazy"A must be skew-symmetric.")
     end
 
     n = size(A, 1)
 
     if isodd(n)
-        error("A must have even dimensions for a symplectic normal form.")
+        error(lazy"A must have even dimensions for a symplectic normal form.")
     end
 
     # use the schur decomposition of A to compute the symplectric normal form.
@@ -2125,7 +2125,7 @@ function B_from_X_Y(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
     # positive definite. The matrix must be symmetric and the eigenvalues must
     # all be positive.
     if !isposdef(Y)
-        error("`Y` must be positive definite.")
+        error(lazy"`Y` must be positive definite.")
     end
 
     # vals, vecs = eigen(Symmetric(Y))
@@ -2269,7 +2269,7 @@ function Ymin_from_X(Omega, X; method=1)
         Ymin = F.V * Diagonal(F.S) * F.Vt
 
     else
-        error("Unknown method")
+        error(lazy"Unknown method")
     end
 
     # return (Ymin+Ymin')/2
@@ -2338,7 +2338,7 @@ function A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix;
     K = nullspace(W * Ωtot; atol=atol, rtol=rtol)  # 6n × k
 
     if size(K, 2) != 4n
-        @warn "Expected nullspace dimension 4n=$(4n), got $(size(K,2)). Try adjusting rtol/atol."
+        @warn lazy"Expected nullspace dimension 4n=$(4n), got $(size(K,2)). Try adjusting rtol/atol."
     end
     N = K'
     # k × 6n  (rows span complement)
@@ -2350,7 +2350,7 @@ function A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix;
 
     # check if the matrix A is skew-symmetric
     if !isapprox(G, -transpose(G))
-        error("G must be skew-symmetric.")
+        error(lazy"G must be skew-symmetric.")
     end
 
     # Real Schur: G = Q*Tschur*Q'

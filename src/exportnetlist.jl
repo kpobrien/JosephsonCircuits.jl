@@ -80,7 +80,7 @@ function import_netlist!(io::IO, circuit::AbstractVector)
     for line in eachline(io)
         split_line = split(strip(line),r"\s+")
         if length(split_line) != 4
-            error("each line should have component name, node1, node2, component value")
+            error(lazy"each line should have component name, node1, node2, component value")
         end
         value = try
             parse(Float64,split_line[4])
@@ -130,7 +130,7 @@ function sumvalues(type::Symbol, value1, value2)
     elseif type == :Lj || type == :L
         return 1/(1/value1+1/value2)
     else
-        error("unknown component type in sumvalues")
+        error(lazy"unknown component type in sumvalues")
     end
 end
 
@@ -203,11 +203,11 @@ function componentdictionaries(componenttypes::Vector{Symbol},
     mutualinductorbranchnames::Vector{String})
 
     if  length(componenttypes) != size(nodeindexarray,2)
-        throw(DimensionMismatch("Input arrays must have the same length"))
+        throw(DimensionMismatch(lazy"Input arrays must have the same length"))
     end
 
     if size(nodeindexarray,1) != 2
-        throw(DimensionMismatch("The length of the first axis must be 2"))
+        throw(DimensionMismatch(lazy"The length of the first axis must be 2"))
     end
 
     # key = (componenttype,node1,node2), value = counts
@@ -389,7 +389,7 @@ function calcCjIcmean(componenttypes::Vector{Symbol},
             # we can always add a separate junction capacitance so we want to find the minimum
             # Cj / Ic to use in the jj model. 
             if CjoIctmp == 0.0
-                error("Cj cannot be zero in the WRSPICE JJ model.")
+                error(lazy"Cj cannot be zero in the WRSPICE JJ model.")
             elseif CjoIctmp < CjoIc
                 CjoIc = CjoIctmp
             end
@@ -406,10 +406,10 @@ function calcCjIcmean(componenttypes::Vector{Symbol},
 
     # check if the junction sizes are within the range allowed by WRSPICE
     if Icmin/Icmean < 0.02
-        error("Minimum junction too much smaller than average for WRSPICE.")
+        error(lazy"Minimum junction too much smaller than average for WRSPICE.")
     end
     if Icmax/Icmean > 50.0
-        error("Maximum junction too much larger than average for WRSPICE.")
+        error(lazy"Maximum junction too much larger than average for WRSPICE.")
     end
 
     # check if the ratio of Cj / Ic is within the range allowed by WRSPICE
