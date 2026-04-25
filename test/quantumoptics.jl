@@ -8,19 +8,19 @@ using Test
 
         # Serafini B.2, the symplectic form is a member of the symplectic
         # group
-        @test JosephsonCircuits.issymplectic_block(
+        @test JosephsonCircuits.is_symplectic_block(
             JosephsonCircuits.symplectic_form_block(4),
         )
 
-        @test JosephsonCircuits.issymplectic_pair(
+        @test JosephsonCircuits.is_symplectic_pair(
             JosephsonCircuits.symplectic_form_pair(4),
         )
 
-        # @test JosephsonCircuits.issymplectic_annihilation_creation_block(
+        # @test JosephsonCircuits.is_symplectic_annihilation_creation_block(
         #     JosephsonCircuits.symplectic_form_annihilation_creation_block(4),
         # )
 
-        # @test JosephsonCircuits.issymplectic_annihilation_creation_pair(
+        # @test JosephsonCircuits.is_symplectic_annihilation_creation_pair(
         #     JosephsonCircuits.symplectic_form_annihilation_creation_pair(4),
         # )
 
@@ -149,7 +149,7 @@ using Test
         # )
 
         # @test isapprox(
-        #     JosephsonCircuits.quadrature_to_bogoliubov_pair(JosephsonCircuits.symplectic_form_pair(4)),
+        #     JosephsonCircuits.quadrature_to_ladder_pair(JosephsonCircuits.symplectic_form_pair(4)),
         #     JosephsonCircuits.symplectic_form_annihilation_creation_pair(4),
         # )
 
@@ -161,7 +161,7 @@ using Test
 
         # @test isapprox(
         #     JosephsonCircuits.symplectic_form_annihilation_creation_pair(4),
-        #     JosephsonCircuits.quadrature_to_bogoliubov_pair(JosephsonCircuits.bogoliubov_to_quadrature_pair(JosephsonCircuits.symplectic_form_annihilation_creation_pair(4))),
+        #     JosephsonCircuits.quadrature_to_ladder_pair(JosephsonCircuits.bogoliubov_to_quadrature_pair(JosephsonCircuits.symplectic_form_annihilation_creation_pair(4))),
         # )
 
         # @test isapprox(
@@ -172,111 +172,111 @@ using Test
 
     @testset "random symplectic" begin
 
-        @test JosephsonCircuits.issymplectic_pair(JosephsonCircuits.rand_symplectic_pair(4))
-        @test JosephsonCircuits.issymplectic_pair(JosephsonCircuits.rand_symplectic_pair(Float64,4))
-        @test JosephsonCircuits.issymplectic_pair(JosephsonCircuits.rand_symplectic_pair(Complex{Float64},4))
+        @test JosephsonCircuits.is_symplectic_pair(JosephsonCircuits.rand_symplectic_pair(4))
+        @test JosephsonCircuits.is_symplectic_pair(JosephsonCircuits.rand_symplectic_pair(Float64,4))
+        @test JosephsonCircuits.is_symplectic_pair(JosephsonCircuits.rand_symplectic_pair(Complex{Float64},4))
 
-        @test JosephsonCircuits.issymplectic_block(JosephsonCircuits.rand_symplectic_block(4))
-        @test JosephsonCircuits.issymplectic_block(JosephsonCircuits.rand_symplectic_block(Float64,4))
-        @test JosephsonCircuits.issymplectic_block(JosephsonCircuits.rand_symplectic_block(Complex{Float64},4))
+        @test JosephsonCircuits.is_symplectic_block(JosephsonCircuits.rand_symplectic_block(4))
+        @test JosephsonCircuits.is_symplectic_block(JosephsonCircuits.rand_symplectic_block(Float64,4))
+        @test JosephsonCircuits.is_symplectic_block(JosephsonCircuits.rand_symplectic_block(Complex{Float64},4))
 
     end
 
     @testset "random orthogonal symplectic" begin
 
-        @test JosephsonCircuits.isorthogonal_symplectic_pair(JosephsonCircuits.rand_orthogonal_symplectic_pair(4))
-        @test JosephsonCircuits.isorthogonal_symplectic_pair(JosephsonCircuits.rand_orthogonal_symplectic_pair(Float64,4))
-        @test JosephsonCircuits.isorthogonal_symplectic_pair(JosephsonCircuits.rand_orthogonal_symplectic_pair(Complex{Float64},4))
+        @test JosephsonCircuits.is_orthogonal_symplectic_pair(JosephsonCircuits.rand_orthogonal_symplectic_pair(4))
+        @test JosephsonCircuits.is_orthogonal_symplectic_pair(JosephsonCircuits.rand_orthogonal_symplectic_pair(Float64,4))
+        @test JosephsonCircuits.is_orthogonal_symplectic_pair(JosephsonCircuits.rand_orthogonal_symplectic_pair(Complex{Float64},4))
 
-        @test JosephsonCircuits.isorthogonal_symplectic_block(JosephsonCircuits.rand_orthogonal_symplectic_block(4))
-        @test JosephsonCircuits.isorthogonal_symplectic_block(JosephsonCircuits.rand_orthogonal_symplectic_block(Float64,4))
-        @test JosephsonCircuits.isorthogonal_symplectic_block(JosephsonCircuits.rand_orthogonal_symplectic_block(Complex{Float64},4))
+        @test JosephsonCircuits.is_orthogonal_symplectic_block(JosephsonCircuits.rand_orthogonal_symplectic_block(4))
+        @test JosephsonCircuits.is_orthogonal_symplectic_block(JosephsonCircuits.rand_orthogonal_symplectic_block(Float64,4))
+        @test JosephsonCircuits.is_orthogonal_symplectic_block(JosephsonCircuits.rand_orthogonal_symplectic_block(Complex{Float64},4))
 
     end
 
     @testset "random positive definite symplectic" begin
 
-        @test JosephsonCircuits.isposdef_symplectic_pair(JosephsonCircuits.rand_posdef_symplectic_pair(4))
-        @test JosephsonCircuits.isposdef_symplectic_pair(JosephsonCircuits.rand_posdef_symplectic_pair(Float64,4))
-        @test JosephsonCircuits.isposdef_symplectic_pair(JosephsonCircuits.rand_posdef_symplectic_pair(Complex{Float64},4))
+        @test JosephsonCircuits.is_posdef_symplectic_pair(JosephsonCircuits.rand_posdef_symplectic_pair(4))
+        @test JosephsonCircuits.is_posdef_symplectic_pair(JosephsonCircuits.rand_posdef_symplectic_pair(Float64,4))
+        @test JosephsonCircuits.is_posdef_symplectic_pair(JosephsonCircuits.rand_posdef_symplectic_pair(Complex{Float64},4))
 
-        @test JosephsonCircuits.isposdef_symplectic_block(JosephsonCircuits.rand_posdef_symplectic_block(4))
-        @test JosephsonCircuits.isposdef_symplectic_block(JosephsonCircuits.rand_posdef_symplectic_block(Float64,4))
-        @test JosephsonCircuits.isposdef_symplectic_block(JosephsonCircuits.rand_posdef_symplectic_block(Complex{Float64},4))
+        @test JosephsonCircuits.is_posdef_symplectic_block(JosephsonCircuits.rand_posdef_symplectic_block(4))
+        @test JosephsonCircuits.is_posdef_symplectic_block(JosephsonCircuits.rand_posdef_symplectic_block(Float64,4))
+        @test JosephsonCircuits.is_posdef_symplectic_block(JosephsonCircuits.rand_posdef_symplectic_block(Complex{Float64},4))
 
     end
 
     @testset "random conjugate symplectic" begin
 
-        @test JosephsonCircuits.isconj_symplectic_pair(JosephsonCircuits.rand_conj_symplectic_pair(4))
-        @test JosephsonCircuits.isconj_symplectic_pair(JosephsonCircuits.rand_conj_symplectic_pair(Float64,4))
-        @test JosephsonCircuits.isconj_symplectic_pair(JosephsonCircuits.rand_conj_symplectic_pair(Complex{Float64},4))
+        @test JosephsonCircuits.is_conjugate_symplectic_pair(JosephsonCircuits.rand_conjugate_symplectic_pair(4))
+        @test JosephsonCircuits.is_conjugate_symplectic_pair(JosephsonCircuits.rand_conjugate_symplectic_pair(Float64,4))
+        @test JosephsonCircuits.is_conjugate_symplectic_pair(JosephsonCircuits.rand_conjugate_symplectic_pair(Complex{Float64},4))
 
-        @test JosephsonCircuits.isconj_symplectic_block(JosephsonCircuits.rand_conj_symplectic_block(4))
-        @test JosephsonCircuits.isconj_symplectic_block(JosephsonCircuits.rand_conj_symplectic_block(Float64,4))
-        @test JosephsonCircuits.isconj_symplectic_block(JosephsonCircuits.rand_conj_symplectic_block(Complex{Float64},4))
+        @test JosephsonCircuits.is_conjugate_symplectic_block(JosephsonCircuits.rand_conjugate_symplectic_block(4))
+        @test JosephsonCircuits.is_conjugate_symplectic_block(JosephsonCircuits.rand_conjugate_symplectic_block(Float64,4))
+        @test JosephsonCircuits.is_conjugate_symplectic_block(JosephsonCircuits.rand_conjugate_symplectic_block(Complex{Float64},4))
 
     end
 
     @testset "random bogoliubov" begin
 
-        @test JosephsonCircuits.isbogoliubov_pair(JosephsonCircuits.rand_bogoliubov_pair(4))
-        @test JosephsonCircuits.isbogoliubov_pair(JosephsonCircuits.rand_bogoliubov_pair(Float64,4))
-        @test JosephsonCircuits.isbogoliubov_pair(JosephsonCircuits.rand_bogoliubov_pair(Complex{Float64},4))
+        @test JosephsonCircuits.is_bogoliubov_pair(JosephsonCircuits.rand_bogoliubov_pair(4))
+        @test JosephsonCircuits.is_bogoliubov_pair(JosephsonCircuits.rand_bogoliubov_pair(Float64,4))
+        @test JosephsonCircuits.is_bogoliubov_pair(JosephsonCircuits.rand_bogoliubov_pair(Complex{Float64},4))
 
-        @test JosephsonCircuits.isbogoliubov_block(JosephsonCircuits.rand_bogoliubov_block(4))
-        @test JosephsonCircuits.isbogoliubov_block(JosephsonCircuits.rand_bogoliubov_block(Float64,4))
-        @test JosephsonCircuits.isbogoliubov_block(JosephsonCircuits.rand_bogoliubov_block(Complex{Float64},4))
+        @test JosephsonCircuits.is_bogoliubov_block(JosephsonCircuits.rand_bogoliubov_block(4))
+        @test JosephsonCircuits.is_bogoliubov_block(JosephsonCircuits.rand_bogoliubov_block(Float64,4))
+        @test JosephsonCircuits.is_bogoliubov_block(JosephsonCircuits.rand_bogoliubov_block(Complex{Float64},4))
 
     end
 
     @testset "random orthogonal bogoliubov" begin
 
-        @test JosephsonCircuits.isorthogonal_bogoliubov_pair(JosephsonCircuits.rand_orthogonal_bogoliubov_pair(4))
-        @test JosephsonCircuits.isorthogonal_bogoliubov_pair(JosephsonCircuits.rand_orthogonal_bogoliubov_pair(Float64,4))
-        @test JosephsonCircuits.isorthogonal_bogoliubov_pair(JosephsonCircuits.rand_orthogonal_bogoliubov_pair(Complex{Float64},4))
+        @test JosephsonCircuits.is_orthogonal_bogoliubov_pair(JosephsonCircuits.rand_orthogonal_bogoliubov_pair(4))
+        @test JosephsonCircuits.is_orthogonal_bogoliubov_pair(JosephsonCircuits.rand_orthogonal_bogoliubov_pair(Float64,4))
+        @test JosephsonCircuits.is_orthogonal_bogoliubov_pair(JosephsonCircuits.rand_orthogonal_bogoliubov_pair(Complex{Float64},4))
 
-        @test JosephsonCircuits.isorthogonal_bogoliubov_block(JosephsonCircuits.rand_orthogonal_bogoliubov_block(4))
-        @test JosephsonCircuits.isorthogonal_bogoliubov_block(JosephsonCircuits.rand_orthogonal_bogoliubov_block(Float64,4))
-        @test JosephsonCircuits.isorthogonal_bogoliubov_block(JosephsonCircuits.rand_orthogonal_bogoliubov_block(Complex{Float64},4))
+        @test JosephsonCircuits.is_orthogonal_bogoliubov_block(JosephsonCircuits.rand_orthogonal_bogoliubov_block(4))
+        @test JosephsonCircuits.is_orthogonal_bogoliubov_block(JosephsonCircuits.rand_orthogonal_bogoliubov_block(Float64,4))
+        @test JosephsonCircuits.is_orthogonal_bogoliubov_block(JosephsonCircuits.rand_orthogonal_bogoliubov_block(Complex{Float64},4))
 
     end
 
     @testset "random pseudo-unitary" begin
 
-        @test JosephsonCircuits.ispseudo_unitary_pair(JosephsonCircuits.rand_pseudo_unitary_pair(4))
-        @test JosephsonCircuits.ispseudo_unitary_pair(JosephsonCircuits.rand_pseudo_unitary_pair(Float64,4))
-        @test JosephsonCircuits.ispseudo_unitary_pair(JosephsonCircuits.rand_pseudo_unitary_pair(Complex{Float64},4))
+        @test JosephsonCircuits.is_pseudo_unitary_pair(JosephsonCircuits.rand_pseudo_unitary_pair(4))
+        @test JosephsonCircuits.is_pseudo_unitary_pair(JosephsonCircuits.rand_pseudo_unitary_pair(Float64,4))
+        @test JosephsonCircuits.is_pseudo_unitary_pair(JosephsonCircuits.rand_pseudo_unitary_pair(Complex{Float64},4))
         
-        @test JosephsonCircuits.ispseudo_unitary_block(JosephsonCircuits.rand_pseudo_unitary_block(4))
-        @test JosephsonCircuits.ispseudo_unitary_block(JosephsonCircuits.rand_pseudo_unitary_block(Float64,4))
-        @test JosephsonCircuits.ispseudo_unitary_block(JosephsonCircuits.rand_pseudo_unitary_block(Complex{Float64},4))
+        @test JosephsonCircuits.is_pseudo_unitary_block(JosephsonCircuits.rand_pseudo_unitary_block(4))
+        @test JosephsonCircuits.is_pseudo_unitary_block(JosephsonCircuits.rand_pseudo_unitary_block(Float64,4))
+        @test JosephsonCircuits.is_pseudo_unitary_block(JosephsonCircuits.rand_pseudo_unitary_block(Complex{Float64},4))
 
     end
 
     @testset "random cptp symplectic" begin
 
         # symplectic
-        @test JosephsonCircuits.iscptp_pair(JosephsonCircuits.rand_cptp_pair(4)...)
-        @test JosephsonCircuits.iscptp_pair(JosephsonCircuits.rand_cptp_pair(Float64,4)...)
-        # @test JosephsonCircuits.iscptp_pair(JosephsonCircuits.rand_cptp_pair(Complex{Float64},4)...)
+        @test JosephsonCircuits.is_cptp_pair(JosephsonCircuits.rand_cptp_pair(4)...)
+        @test JosephsonCircuits.is_cptp_pair(JosephsonCircuits.rand_cptp_pair(Float64,4)...)
+        # @test JosephsonCircuits.is_cptp_pair(JosephsonCircuits.rand_cptp_pair(Complex{Float64},4)...)
         
-        @test JosephsonCircuits.iscptp_block(JosephsonCircuits.rand_cptp_block(4)...)
-        @test JosephsonCircuits.iscptp_block(JosephsonCircuits.rand_cptp_block(Float64,4)...)
-        # @test JosephsonCircuits.iscptp_block(JosephsonCircuits.rand_cptp_block(Complex{Float64},4)...)
+        @test JosephsonCircuits.is_cptp_block(JosephsonCircuits.rand_cptp_block(4)...)
+        @test JosephsonCircuits.is_cptp_block(JosephsonCircuits.rand_cptp_block(Float64,4)...)
+        # @test JosephsonCircuits.is_cptp_block(JosephsonCircuits.rand_cptp_block(Complex{Float64},4)...)
 
     end
 
     @testset "random cptp bogoliubov" begin
 
         # bogoliubov
-        @test JosephsonCircuits.iscptp_bogoliubov_pair(JosephsonCircuits.rand_cptp_bogoliubov_pair(4)...)
-        # @test JosephsonCircuits.iscptp_bogoliubov_pair(JosephsonCircuits.rand_cptp_bogoliubov_pair(Float64,4)...)
-        @test JosephsonCircuits.iscptp_bogoliubov_pair(JosephsonCircuits.rand_cptp_bogoliubov_pair(Complex{Float64},4)...)
+        @test JosephsonCircuits.is_cptp_bogoliubov_pair(JosephsonCircuits.rand_cptp_bogoliubov_pair(4)...)
+        # @test JosephsonCircuits.is_cptp_bogoliubov_pair(JosephsonCircuits.rand_cptp_bogoliubov_pair(Float64,4)...)
+        @test JosephsonCircuits.is_cptp_bogoliubov_pair(JosephsonCircuits.rand_cptp_bogoliubov_pair(Complex{Float64},4)...)
         
-        @test JosephsonCircuits.iscptp_bogoliubov_block(JosephsonCircuits.rand_cptp_bogoliubov_block(4)...)
-        # @test JosephsonCircuits.iscptp_bogoliubov_block(JosephsonCircuits.rand_cptp_bogoliubov_block(Float64,4)...)
-        @test JosephsonCircuits.iscptp_bogoliubov_block(JosephsonCircuits.rand_cptp_bogoliubov_block(Complex{Float64},4)...)
+        @test JosephsonCircuits.is_cptp_bogoliubov_block(JosephsonCircuits.rand_cptp_bogoliubov_block(4)...)
+        # @test JosephsonCircuits.is_cptp_bogoliubov_block(JosephsonCircuits.rand_cptp_bogoliubov_block(Float64,4)...)
+        @test JosephsonCircuits.is_cptp_bogoliubov_block(JosephsonCircuits.rand_cptp_bogoliubov_block(Complex{Float64},4)...)
 
     end
 
@@ -340,20 +340,20 @@ using Test
         # https://github.com/apkille/SymplecticFactorizations.jl/issues/26
         z = 0.1404594873693119
         S = Diagonal([exp(-z), 1, exp(z), 1])
-        @test JosephsonCircuits.issymplectic_block(S)
+        @test JosephsonCircuits.is_symplectic_block(S)
         O, D, Q = JosephsonCircuits.bloch_messiah_block(S)
         @test isapprox(O * Diagonal(D) * Q, S)
-        @test JosephsonCircuits.issymplectic_block(O)
-        @test JosephsonCircuits.issymplectic_block(Diagonal(D))
-        @test JosephsonCircuits.issymplectic_block(Q)
+        @test JosephsonCircuits.is_symplectic_block(O)
+        @test JosephsonCircuits.is_symplectic_block(Diagonal(D))
+        @test JosephsonCircuits.is_symplectic_block(Q)
 
         S = JosephsonCircuits.rand_symplectic_block(Float64, 4)
-        @test JosephsonCircuits.issymplectic_block(S)
+        @test JosephsonCircuits.is_symplectic_block(S)
         O, D, Q = JosephsonCircuits.bloch_messiah_block(S)
         @test isapprox(O * Diagonal(D) * Q, S)
-        @test JosephsonCircuits.issymplectic_block(O)
-        @test JosephsonCircuits.issymplectic_block(Diagonal(D))
-        @test JosephsonCircuits.issymplectic_block(Q)
+        @test JosephsonCircuits.is_symplectic_block(O)
+        @test JosephsonCircuits.is_symplectic_block(Diagonal(D))
+        @test JosephsonCircuits.is_symplectic_block(Q)
 
         # add a test for this
         # Bloch-Messiah returns incorrect results #728
@@ -366,9 +366,9 @@ using Test
         S = Float64[1 0 0 0;1 1 0 0;0 0 1 -1;0 0 0 1]
         O, D, Q = JosephsonCircuits.bloch_messiah_block(S)
         @test isapprox(O * Diagonal(D) * Q, S)
-        @test JosephsonCircuits.issymplectic_block(O)
-        @test JosephsonCircuits.issymplectic_block(Diagonal(D))
-        @test JosephsonCircuits.issymplectic_block(Q)
+        @test JosephsonCircuits.is_symplectic_block(O)
+        @test JosephsonCircuits.is_symplectic_block(Diagonal(D))
+        @test JosephsonCircuits.is_symplectic_block(Q)
 
 
     end
@@ -376,12 +376,12 @@ using Test
     @testset "bloch_messiah_pair" begin
 
         S = JosephsonCircuits.rand_symplectic_pair(Float64, 4)
-        @test JosephsonCircuits.issymplectic_pair(S)
+        @test JosephsonCircuits.is_symplectic_pair(S)
         O, D, Q = JosephsonCircuits.bloch_messiah_pair(S)
         @test isapprox(O * Diagonal(D) * Q, S)
-        @test JosephsonCircuits.issymplectic_pair(O)
-        @test JosephsonCircuits.issymplectic_pair(Diagonal(D))
-        @test JosephsonCircuits.issymplectic_pair(Q)
+        @test JosephsonCircuits.is_symplectic_pair(O)
+        @test JosephsonCircuits.is_symplectic_pair(Diagonal(D))
+        @test JosephsonCircuits.is_symplectic_pair(Q)
 
     end
 
@@ -390,13 +390,13 @@ using Test
         S = JosephsonCircuits.rand_symplectic_block(Float64, 4)
         E, D, F = JosephsonCircuits.pre_iwasawa_block(S)
         @test isapprox(S, E * D * F)
-        @test JosephsonCircuits.issymplectic_block(F)
+        @test JosephsonCircuits.is_symplectic_block(F)
 
         # complex
         S = JosephsonCircuits.rand_symplectic_block(Complex{Float64}, 4)
         E, D, F = JosephsonCircuits.pre_iwasawa_block(S)
         @test isapprox(S, E * D * F)
-        @test JosephsonCircuits.issymplectic_block(F)
+        @test JosephsonCircuits.is_symplectic_block(F)
 
     end
 
@@ -405,13 +405,13 @@ using Test
         S = JosephsonCircuits.rand_symplectic_pair(Float64, 4)
         E, D, F = JosephsonCircuits.pre_iwasawa_pair(S)
         @test isapprox(S, E * D * F)
-        @test JosephsonCircuits.issymplectic_pair(F)
+        @test JosephsonCircuits.is_symplectic_pair(F)
 
         # complex
         S = JosephsonCircuits.rand_symplectic_pair(Complex{Float64}, 4)
         E, D, F = JosephsonCircuits.pre_iwasawa_pair(S)
         @test isapprox(S, E * D * F)
-        @test JosephsonCircuits.issymplectic_pair(F)
+        @test JosephsonCircuits.is_symplectic_pair(F)
 
     end
 
@@ -422,18 +422,18 @@ using Test
         F = JosephsonCircuits.iwasawa_block(S)
         @test isapprox(F.K * F.K', I(4))
         @test isapprox(F.K * F.A * F.N, S)
-        @test JosephsonCircuits.issymplectic_block(F.K)
-        @test JosephsonCircuits.issymplectic_block(F.A)
-        @test JosephsonCircuits.issymplectic_block(F.N)
+        @test JosephsonCircuits.is_symplectic_block(F.K)
+        @test JosephsonCircuits.is_symplectic_block(F.A)
+        @test JosephsonCircuits.is_symplectic_block(F.N)
 
         # complex
         S = JosephsonCircuits.rand_symplectic_block(Complex{Float64}, 2)
         F = JosephsonCircuits.iwasawa_block(S)
         @test isapprox(F.K * F.K', I(4))
         @test isapprox(F.K * F.A * F.N, S)
-        @test JosephsonCircuits.issymplectic_block(F.K)
-        @test JosephsonCircuits.issymplectic_block(F.A)
-        @test JosephsonCircuits.issymplectic_block(F.N)
+        @test JosephsonCircuits.is_symplectic_block(F.K)
+        @test JosephsonCircuits.is_symplectic_block(F.A)
+        @test JosephsonCircuits.is_symplectic_block(F.N)
 
     end
 
@@ -444,18 +444,18 @@ using Test
         F = JosephsonCircuits.iwasawa_pair(S)
         @test isapprox(F.K * F.K', I(4))
         @test isapprox(F.K * F.A * F.N, S)
-        @test JosephsonCircuits.issymplectic_pair(F.K)
-        @test JosephsonCircuits.issymplectic_pair(F.A)
-        @test JosephsonCircuits.issymplectic_pair(F.N)
+        @test JosephsonCircuits.is_symplectic_pair(F.K)
+        @test JosephsonCircuits.is_symplectic_pair(F.A)
+        @test JosephsonCircuits.is_symplectic_pair(F.N)
 
         # complex
         S = JosephsonCircuits.rand_symplectic_pair(Complex{Float64}, 2)
         F = JosephsonCircuits.iwasawa_pair(S)
         @test isapprox(F.K * F.K', I(4))
         @test isapprox(F.K * F.A * F.N, S)
-        @test JosephsonCircuits.issymplectic_pair(F.K)
-        @test JosephsonCircuits.issymplectic_pair(F.A)
-        @test JosephsonCircuits.issymplectic_pair(F.N)
+        @test JosephsonCircuits.is_symplectic_pair(F.K)
+        @test JosephsonCircuits.is_symplectic_pair(F.A)
+        @test JosephsonCircuits.is_symplectic_pair(F.N)
 
     end
 
@@ -467,9 +467,9 @@ using Test
         F = JosephsonCircuits.iwasawa_bogoliubov_block(S)
         @test isapprox(F.K * F.K', I(4))
         @test isapprox(F.K * F.A * F.N, S)
-        @test JosephsonCircuits.isbogoliubov_block(F.K)
-        @test JosephsonCircuits.isbogoliubov_block(F.A)
-        @test JosephsonCircuits.isbogoliubov_block(F.N)
+        @test JosephsonCircuits.is_bogoliubov_block(F.K)
+        @test JosephsonCircuits.is_bogoliubov_block(F.A)
+        @test JosephsonCircuits.is_bogoliubov_block(F.N)
 
     end
 
@@ -480,9 +480,9 @@ using Test
         F = JosephsonCircuits.iwasawa_bogoliubov_pair(S)
         @test isapprox(F.K * F.K', I(4))
         @test isapprox(F.K * F.A * F.N, S)
-        @test JosephsonCircuits.isbogoliubov_pair(F.K)
-        @test JosephsonCircuits.isbogoliubov_pair(F.A)
-        @test JosephsonCircuits.isbogoliubov_pair(F.N)
+        @test JosephsonCircuits.is_bogoliubov_pair(F.K)
+        @test JosephsonCircuits.is_bogoliubov_pair(F.A)
+        @test JosephsonCircuits.is_bogoliubov_pair(F.N)
 
     end
 
@@ -528,7 +528,7 @@ using Test
         A = S0[1:2, 1:2]
         B = S0[1:2, 3:end]
         S1 = JosephsonCircuits.A_B_to_symplectic_pair(A, B)
-        @test JosephsonCircuits.issymplectic_pair(S1)
+        @test JosephsonCircuits.is_symplectic_pair(S1)
 
         nsys = 2
         nenv = 2 * nsys
@@ -540,7 +540,7 @@ using Test
         Y = B * B'
         B1 = JosephsonCircuits.B_from_X_Y_pair(X, Y)
         S1 = JosephsonCircuits.A_B_to_symplectic_pair(A, B1)
-        @test JosephsonCircuits.issymplectic_pair(S1)
+        @test JosephsonCircuits.is_symplectic_pair(S1)
 
     end
 

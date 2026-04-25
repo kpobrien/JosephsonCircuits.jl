@@ -154,7 +154,7 @@ function indefinite_hermitian_form_block(n::Integer, m::Integer)
 end
 
 """
-    isunitary(M)
+    is_unitary(M)
 
 Return `true` if the matrix `M` is unitary, `M ∈ U(n)`, and `false` otherwise.
 
@@ -162,12 +162,12 @@ Tests if `M` satisfies the condition `M*M'==I` where `I` is the identity
 matrix.
 
 """
-function isunitary(M)
+function is_unitary(M)
     return isapprox(M*adjoint(M),I(size(M,1)))
 end
 
 """
-    isorthogonal(M)
+    is_orthogonal(M)
 
 Return `true` if the matrix `M` is orthogonal, `M ∈ O(n)`, and `false`
 otherwise.
@@ -176,12 +176,12 @@ Tests if `M` satisfies the condition `M*transpose(M)==I` where `I` is the
 identity matrix.
 
 """
-function isorthogonal(M)
+function is_orthogonal(M)
     return isapprox(M*transpose(M),I(size(M,1)))
 end
 
 """
-    issymplectic(Ω, S)
+    is_symplectic(Ω, S)
 
 Return `true` if the matrix `S` is symplectic, `S ∈ Sp(2n, ℝ)` or
 `S ∈ Sp(2n, ℂ)`, and `false` otherwise.
@@ -190,18 +190,18 @@ Tests if `S` satisfies the symplectic condition `S*Ω*transpose(S)==Ω` where
 `Ω` is a user supplied symplectic form.
 
 See also [`symplectic_form_block`](@ref),
-[`symplectic_form_pair`](@ref), [`issymplectic_block`](@ref), and
-[`issymplectic_pair`](@ref).
+[`symplectic_form_pair`](@ref), [`is_symplectic_block`](@ref), and
+[`is_symplectic_pair`](@ref).
 
 """
-function issymplectic(Ω, S)
+function is_symplectic(Ω, S)
     # perhaps i should check if Ω is a symplectic form
     # that would guard against swapping the arguments
     return isapprox(S*Ω*transpose(S), Ω)
 end
 
 """
-    issymplectic_block(S)
+    is_symplectic_block(S)
 
 Return `true` if the matrix `S` is symplectic, `S ∈ Sp(2n, ℝ)` or
 `S ∈ Sp(2n, ℂ)`, with block operator order and `false` otherwise.
@@ -212,13 +212,13 @@ Tests if `S` satisfies the symplectic condition `S*Ω*transpose(S)==Ω` where
 See also [`symplectic_form_block`](@ref).
 
 """
-function issymplectic_block(S)
+function is_symplectic_block(S)
     Omega = symplectic_form_block(size(S, 1) ÷ 2)
-    return issymplectic(Omega, S)
+    return is_symplectic(Omega, S)
 end
 
 """
-    issymplectic_pair(S)
+    is_symplectic_pair(S)
 
 Return `true` if the matrix `S` is symplectic, `S ∈ Sp(2n, ℝ)` or
 `S ∈ Sp(2n, ℂ)`, with pair operator order and `false` otherwise.
@@ -230,9 +230,9 @@ order.
 See also [`symplectic_form_pair`](@ref).
 
 """
-function issymplectic_pair(S)
+function is_symplectic_pair(S)
     Omega = symplectic_form_pair(size(S, 1) ÷ 2)
-    return issymplectic(Omega, S)
+    return is_symplectic(Omega, S)
 end
 
 """
@@ -243,51 +243,51 @@ Return `true` if the matrix `M` is orthogonal symplectic,
 otherwise.
 
 """
-function isorthogonal_symplectic_block(M)
-    return issymplectic_block(M) && isorthogonal(M)
+function is_orthogonal_symplectic_block(M)
+    return is_symplectic_block(M) && is_orthogonal(M)
 end
 
 """
-    isorthogonal_symplectic_pair(M)
+    is_orthogonal_symplectic_pair(M)
 
 Return `true` if the matrix `M` is orthogonal symplectic,
 `M ∈ Sp(2n, ℝ) ∩ O(2n) ≅ U(n)`, with pair operator order and `false`
 otherwise.
 
 """
-function isorthogonal_symplectic_pair(M)
-    return issymplectic_pair(M) && isorthogonal(M)
+function is_orthogonal_symplectic_pair(M)
+    return is_symplectic_pair(M) && is_orthogonal(M)
 end
 
 """
-    isconj_symplectic_pair(M)
+    is_conjugate_symplectic_pair(M)
 
 Return `true` if the matrix `M` is conjugate symplectic,
 , with pair operator order and `false`
 otherwise.
 
 """
-function isconj_symplectic_pair(M)
+function is_conjugate_symplectic_pair(M)
     Omega = symplectic_form_pair(size(M, 1) ÷ 2)
-    return ispseudo_unitary(Omega, M)
+    return is_pseudo_unitary(Omega, M)
 end
 
 """
-    isconj_symplectic_block(M)
+    is_conjugate_symplectic_block(M)
 
 Return `true` if the matrix `M` is conjugate symplectic,
 , with block operator order and `false`
 otherwise.
 
 """
-function isconj_symplectic_block(M)
+function is_conjugate_symplectic_block(M)
     Omega = symplectic_form_block(size(M, 1) ÷ 2)
-    return ispseudo_unitary(Omega, M)
+    return is_pseudo_unitary(Omega, M)
 end
 
 
 """
-    ispseudo_unitary(Σ,M)
+    is_pseudo_unitary(Σ,M)
 
 Return `true` if the matrix `M` is pseudo-unitary, `M ∈ U(n, n)`, and `false`
 otherwise.
@@ -296,16 +296,16 @@ Tests if `M` satisfies the pseudo-unitary condition `M*Σ*M'==Σ` where `Σ` is 
 user supplied matrix representing the indefinite Hermitian form.
 
 See also [`indefinite_hermitian_form_pair`](@ref),
-[`indefinite_hermitian_form_block`](@ref), [`ispseudo_unitary_block`](@ref),
-and [`ispseudo_unitary_pair`](@ref).
+[`indefinite_hermitian_form_block`](@ref), [`is_pseudo_unitary_block`](@ref),
+and [`is_pseudo_unitary_pair`](@ref).
 
 """
-function ispseudo_unitary(Sigma, M)
+function is_pseudo_unitary(Sigma, M)
     return isapprox(M*Sigma*M', Sigma)
 end
 
 """
-    ispseudo_unitary_block(M)
+    is_pseudo_unitary_block(M)
 
 Return `true` if the matrix `M` is pseudo-unitary, `M ∈ U(n, n)`, with block
 operator order and `false` otherwise.
@@ -316,13 +316,13 @@ Hermitian form with block operator order.
 See also [`indefinite_hermitian_form_block`](@ref).
 
 """
-function ispseudo_unitary_block(M)
+function is_pseudo_unitary_block(M)
     Sigma = indefinite_hermitian_form_block(size(M, 1) ÷ 2)
-    return ispseudo_unitary(Sigma, M)
+    return is_pseudo_unitary(Sigma, M)
 end
 
 """
-    ispseudo_unitary_pair(M)
+    is_pseudo_unitary_pair(M)
 
 Return `true` if the matrix `M` is pseudo-unitary, `M ∈ U(n, n)`, with
 pair operator order and `false` otherwise.
@@ -333,102 +333,89 @@ Hermitian form with pair operator order.
 See also [`indefinite_hermitian_form_pair`](@ref).
 
 """
-function ispseudo_unitary_pair(M)
+function is_pseudo_unitary_pair(M)
     Sigma = indefinite_hermitian_form_pair(size(M, 1) ÷ 2)
-    return ispseudo_unitary(Sigma, M)
+    return is_pseudo_unitary(Sigma, M)
 end
-
-
-# TODO add comments
-function isconjugate_symplectic_block(M)
-    Omega = symplectic_form_block(size(M, 1) ÷ 2)
-    return ispseudo_unitary(Omega, M)
-end
-
-function isconjugate_symplectic_pair(M)
-    Omega = symplectic_form_pair(size(M, 1) ÷ 2)
-    return ispseudo_unitary(Omega, M)
-end
-
 
 
 """
-    isposdef_symplectic_block(S)
+    is_posdef_symplectic_block(S)
 
 Return `true` if the matrix `S` is positive definite and symplectic,
 `S ∈ Sp(2n, ℝ)` or `S ∈ Sp(2n, ℂ)`, with block operator order and `false`
 otherwise.
 
 """
-function isposdef_symplectic_block(S)
+function is_posdef_symplectic_block(S)
     # the tests for ishermitian and issymmetric are exact, but we want
     # to test for equality up to numerical error so use isappox
-    return issymplectic_block(S) && isapprox(S,S') && isposdef(Hermitian(S))
+    return is_symplectic_block(S) && isapprox(S,S') && isposdef(Hermitian(S))
 end
 
 """
-    isposdef_symplectic_pair(S)
+    is_posdef_symplectic_pair(S)
 
 Return `true` if the matrix `S` is positive definite and symplectic,
 `S ∈ Sp(2n, ℝ)` or `S ∈ Sp(2n, ℂ)`, with pair operator order and
 `false` otherwise.
 
 """
-function isposdef_symplectic_pair(S)
+function is_posdef_symplectic_pair(S)
     # the tests for ishermitian and issymmetric are exact, but we want
     # to test for equality up to numerical error so use isappox
-    return issymplectic_pair(S) && isapprox(S,S') && isposdef(Hermitian(S))
+    return is_symplectic_pair(S) && isapprox(S,S') && isposdef(Hermitian(S))
 end
 
 """
-    isbogoliubov_pair(M)
+    is_bogoliubov_pair(M)
 
 Return `true` if the matrix `M` is Bogoliubov, `M ∈ Sp(2n, ℂ) ∩ U(n, n)`, with
 pair operator order and `false` otherwise.
 
 """
-function isbogoliubov_pair(M)
-    return ispseudo_unitary_pair(M) && issymplectic_pair(M)
+function is_bogoliubov_pair(M)
+    return is_pseudo_unitary_pair(M) && is_symplectic_pair(M)
 end
 
 """
-    isbogoliubov_block(M)
+    is_bogoliubov_block(M)
 
 Return `true` if the matrix `M` is Bogoliubov, `M ∈ Sp(2n, ℂ) ∩ U(n, n)`, with
 block operator order and `false` otherwise.
 
 """
-function isbogoliubov_block(M)
-    return ispseudo_unitary_block(M) && issymplectic_block(M)
+function is_bogoliubov_block(M)
+    return is_pseudo_unitary_block(M) && is_symplectic_block(M)
 end
 
 """
-    isorthogonal_bogoliubov_block(M)
+    is_orthogonal_bogoliubov_block(M)
 
 Return `true` if the matrix `M` is orthogonal Bogoliubov,
 `M ∈ Sp(2n, ℂ) ∩ U(n, n) ∩ U(2n) ≅ U(n)`, with pair operator order and
 `false` otherwise.
 
 """
-function isorthogonal_bogoliubov_block(M)
-    return isbogoliubov_block(M) && isunitary(M)
+function is_orthogonal_bogoliubov_block(M)
+    return is_bogoliubov_block(M) && is_unitary(M)
 end
 
 """
-    isorthogonal_bogoliubov_pair(M)
+    is_orthogonal_bogoliubov_pair(M)
 
 Return `true` if the matrix `M` is orthogonal Bogoliubov,
 `M ∈ Sp(2n, ℂ) ∩ U(n, n) ∩ U(2n) ≅ U(n)`, with pair operator order and
 `false` otherwise.
 
 """
-function isorthogonal_bogoliubov_pair(M)
-    return isbogoliubov_pair(M) && isunitary(M)
+function is_orthogonal_bogoliubov_pair(M)
+    return is_bogoliubov_pair(M) && is_unitary(M)
 end
 
 
-# should i add issymplectic_bogoliubov_pair and
-# issymplectic_bogoliubov_block ?
+# should i add is_symplectic_bogoliubov_pair and
+# is_symplectic_bogoliubov_block ?
 # should i include the bogoliubov form where there are two seperate matrices
 # one for the linear processes and the second for parametric processes
 # how about a random CPTP map?
@@ -437,15 +424,15 @@ end
 # does Ymin need to change depending on pair and block? yes
 # all of these depend on that for computing delta.
 
-# and iscptp_block(n) - would have to check if satisfies uncertainty relations
-# iscptp_pair(n)
+# and is_cptp_block(n) - would have to check if satisfies uncertainty relations
+# is_cptp_pair(n)
 
 """
 
 Eq. 5.37 from Serafini
 
 """
-function iscptp(Omega, X, Y)
+function is_cptp(Omega, X, Y)
     delta = Matrix(Omega) - X * Omega * X'
     # delta = Matrix(Omega) - X * Omega * transpose(X)
     K = Y + im * delta
@@ -461,32 +448,32 @@ function iscptp(Omega, X, Y)
     end
 end
 
-function iscptp_block(X, Y)
+function is_cptp_block(X, Y)
     n = size(X, 1) ÷ 2
     Omega = symplectic_form_block(n)
-    return iscptp(Omega, X, Y)
+    return is_cptp(Omega, X, Y)
 end
 
-function iscptp_pair(X, Y)
+function is_cptp_pair(X, Y)
     n = size(X, 1) ÷ 2
     Omega = symplectic_form_pair(n)
-    return iscptp(Omega, X, Y)
+    return is_cptp(Omega, X, Y)
 end
 
-function iscptp_bogoliubov_pair(X, Y)
+function is_cptp_bogoliubov_pair(X, Y)
     n = size(X, 1) ÷ 2
     # note we need to multiply this by im to get
     # the Robertson-Schrödinger inequality
     Omega = im*indefinite_hermitian_form_pair(n)
-    return iscptp(Omega, X, Y)
+    return is_cptp(Omega, X, Y)
 end
 
-function iscptp_bogoliubov_block(X, Y)
+function is_cptp_bogoliubov_block(X, Y)
     n = size(X, 1) ÷ 2
     # note we need to multiply this by im to get
     # the Robertson-Schrödinger inequality
     Omega = im*indefinite_hermitian_form_block(n)
-    return iscptp(Omega, X, Y)
+    return is_cptp(Omega, X, Y)
 end
 
 # random orthogonal matrix
@@ -681,7 +668,7 @@ end
 
 
 """
-function rand_conj_symplectic_block(T, n::Integer)
+function rand_conjugate_symplectic_block(T, n::Integer)
     # X = randn(T, 2n, 2n)
 
     # Omega = symplectic_form_block(n)
@@ -704,16 +691,16 @@ function rand_conj_symplectic_block(T, n::Integer)
 
 end
 
-function rand_conj_symplectic_block(n::Integer)
-    return rand_conj_symplectic_block(Complex{Float64},n)
+function rand_conjugate_symplectic_block(n::Integer)
+    return rand_conjugate_symplectic_block(Complex{Float64},n)
 end
 
-function rand_conj_symplectic_pair(T, n::Integer)
-    return block_to_pair(rand_conj_symplectic_block(T, n))
+function rand_conjugate_symplectic_pair(T, n::Integer)
+    return block_to_pair(rand_conjugate_symplectic_block(T, n))
 end
 
-function rand_conj_symplectic_pair(n::Integer)
-    return rand_conj_symplectic_pair(Complex{Float64},n)
+function rand_conjugate_symplectic_pair(n::Integer)
+    return rand_conjugate_symplectic_pair(Complex{Float64},n)
 end
 
 """
@@ -1231,28 +1218,28 @@ function pair_to_block2(S::AbstractMatrix)
 end
 
 """
-    R_bogoliubov_to_quadrature_pair(n::Integer)
+    R_ladder_to_quadrature_pair(n::Integer)
 
 # Examples
 ```
-julia> JosephsonCircuits.R_bogoliubov_to_quadrature_pair(1)
+julia> JosephsonCircuits.R_ladder_to_quadrature_pair(1)
 2×2 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 4 stored entries:
  0.707107+0.0im       0.707107+0.0im
       0.0-0.707107im       0.0+0.707107im
 ```
 """
-function R_bogoliubov_to_quadrature_pair(n::Integer)
+function R_ladder_to_quadrature_pair(n::Integer)
     return direct_sum(sparse([1 1; -im im] / sqrt(2)); n=n)
 end
 
 """
-    bogoliubov_to_quadrature_pair(r::AbstractVector)
+    ladder_to_quadrature_pair(r::AbstractVector)
 
 # Examples
 ```jldoctest
 @variables a1 a2 a3 a4 adag1 adag2 adag3 adag4
 r = [a1, adag1, a2, adag2, a3, adag3, a4, adag4]
-JosephsonCircuits.bogoliubov_to_quadrature_pair(r)
+JosephsonCircuits.ladder_to_quadrature_pair(r)
 
 # output
 8-element Vector{Complex{Num}}:
@@ -1266,26 +1253,26 @@ JosephsonCircuits.bogoliubov_to_quadrature_pair(r)
  (-0.7071067811865475a4 + 0.7071067811865475adag4)*im
 ```
 """
-function bogoliubov_to_quadrature_pair(r::AbstractVector)
-    R = R_bogoliubov_to_quadrature_pair(length(r) ÷ 2)
+function ladder_to_quadrature_pair(r::AbstractVector)
+    R = R_ladder_to_quadrature_pair(length(r) ÷ 2)
     return R * r
 end
 
 """
-    bogoliubov_to_quadrature_pair(S::AbstractMatrix)
+    ladder_to_quadrature_pair(S::AbstractMatrix)
 
 """
-function bogoliubov_to_quadrature_pair(S::AbstractMatrix)
-    R = R_bogoliubov_to_quadrature_pair(size(S, 2) ÷ 2)
+function ladder_to_quadrature_pair(S::AbstractMatrix)
+    R = R_ladder_to_quadrature_pair(size(S, 2) ÷ 2)
     return R * S * R'
 end
 
 """
-    R_quadrature_to_bogoliubov_pair(n::Integer)
+    R_quadrature_to_ladder_pair(n::Integer)
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.R_quadrature_to_bogoliubov_pair(2)
+julia> JosephsonCircuits.R_quadrature_to_ladder_pair(2)
 4×4 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 8 stored entries:
  0.707107+0.0im  0.0+0.707107im           ⋅          ⋅
  0.707107+0.0im  0.0-0.707107im           ⋅          ⋅
@@ -1293,13 +1280,13 @@ julia> JosephsonCircuits.R_quadrature_to_bogoliubov_pair(2)
           ⋅          ⋅           0.707107+0.0im  0.0-0.707107im
 ```
 """
-function R_quadrature_to_bogoliubov_pair(n::Integer)
+function R_quadrature_to_ladder_pair(n::Integer)
     return direct_sum(sparse([1 im; 1 -im] / sqrt(2)); n=n)
 end
 
 
 """
-    quadrature_to_bogoliubov_pair(r::AbstractVector)
+    quadrature_to_ladder_pair(r::AbstractVector)
 
 # Examples
 ```jldoctest
@@ -1319,45 +1306,45 @@ JosephsonCircuits.quadrature_to_bogoliubov_block(r)
  0.7071067811865475x4 - 0.7071067811865475im*p4
 ```
 """
-function quadrature_to_bogoliubov_pair(r::AbstractVector)
-    R = R_quadrature_to_bogoliubov_pair(length(r) ÷ 2)
+function quadrature_to_ladder_pair(r::AbstractVector)
+    R = R_quadrature_to_ladder_pair(length(r) ÷ 2)
     return R * r
 end
 
 """
-    quadrature_to_bogoliubov_pair(S::AbstractMatrix)
+    quadrature_to_ladder_pair(S::AbstractMatrix)
 
 """
-function quadrature_to_bogoliubov_pair(S::AbstractMatrix)
-    R = R_quadrature_to_bogoliubov_pair(size(S, 2) ÷ 2)
+function quadrature_to_ladder_pair(S::AbstractMatrix)
+    R = R_quadrature_to_ladder_pair(size(S, 2) ÷ 2)
     return R * S * R'
 end
 
 """
-    R_bogoliubov_to_quadrature_block(n::Integer)
+    R_ladder_to_quadrature_block(n::Integer)
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.R_bogoliubov_to_quadrature_block(1)
+julia> JosephsonCircuits.R_ladder_to_quadrature_block(1)
 2×2 Matrix{ComplexF64}:
  0.707107+0.0im       0.707107+0.0im
       0.0-0.707107im       0.0+0.707107im
 ```
 """
-function R_bogoliubov_to_quadrature_block(n::Integer)
+function R_ladder_to_quadrature_block(n::Integer)
     # I should convert this to a sparse matrix form
 #    return Complex{Float64}[I(n) I(n); -im*I(n) im*I(n)] / sqrt(2)
     return [I(n)/sqrt(2) I(n)/sqrt(2); -im*I(n)/sqrt(2) im*I(n)/sqrt(2)]
 end
 
 """
-    bogoliubov_to_quadrature_block(r::AbstractVector)
+    ladder_to_quadrature_block(r::AbstractVector)
 
 # Examples
 ```jldoctest
 @variables a1 a2 a3 a4 adag1 adag2 adag3 adag4
 r = [a1, a2, a3, a4, adag1, adag2, adag3, adag4]
-JosephsonCircuits.bogoliubov_to_quadrature_block(r)
+JosephsonCircuits.ladder_to_quadrature_block(r)
 
 # output
 8-element Vector{Complex{Num}}:
@@ -1372,17 +1359,17 @@ JosephsonCircuits.bogoliubov_to_quadrature_block(r)
 ```
 
 """
-function bogoliubov_to_quadrature_block(r::AbstractVector)
-    R = R_bogoliubov_to_quadrature_block(length(r) ÷ 2)
+function ladder_to_quadrature_block(r::AbstractVector)
+    R = R_ladder_to_quadrature_block(length(r) ÷ 2)
     return R * r
 end
 
 """
-    bogoliubov_to_quadrature_block(S::AbstractMatrix)
+    ladder_to_quadrature_block(S::AbstractMatrix)
 
 """
-function bogoliubov_to_quadrature_block(S::AbstractMatrix)
-    R = R_bogoliubov_to_quadrature_block(size(S, 2) ÷ 2)
+function ladder_to_quadrature_block(S::AbstractMatrix)
+    R = R_ladder_to_quadrature_block(size(S, 2) ÷ 2)
     return R * S * R'
 end
 
@@ -1411,7 +1398,7 @@ end
 ```jldoctest
 @variables x1 x2 x3 x4 p1 p2 p3 p4
 r = [x1, p1, x2, p2, x3, p3, x4, p4]
-JosephsonCircuits.quadrature_to_bogoliubov_pair(r)
+JosephsonCircuits.quadrature_to_ladder_pair(r)
 
 # output
 8-element Vector{Complex{Num}}:
@@ -1795,7 +1782,7 @@ function bloch_messiah_block(S::AbstractMatrix{<:Real})
     n = size(S, 1) ÷ 2
 
     # test if S is symplectic
-    if !issymplectic_block(S)
+    if !is_symplectic_block(S)
         error(lazy"A must be symplectic.")
     end
 
@@ -1859,7 +1846,7 @@ function pre_iwasawa_block(S::AbstractMatrix)
     n = size(S, 1) ÷ 2
 
     # test if S is symplectic
-    if !issymplectic_block(S)
+    if !is_symplectic_block(S)
         error(lazy"A must be symplectic.")
     end
 
@@ -1917,7 +1904,7 @@ function iwasawa_block(S::AbstractMatrix)
     n = size(S, 1) ÷ 2
 
     # test if S is symplectic
-    if !issymplectic_block(S)
+    if !is_symplectic_block(S)
         error(lazy"A must be symplectic.")
     end
 
@@ -1980,16 +1967,16 @@ function iwasawa_pair(S::AbstractMatrix)
 end
 
 function iwasawa_bogoliubov_pair(S::AbstractMatrix)
-    F = iwasawa_block(bogoliubov_to_quadrature_block(pair_to_block(S)))
+    F = iwasawa_block(ladder_to_quadrature_block(pair_to_block(S)))
     return (
-        K=quadrature_to_bogoliubov_pair(block_to_pair(F.K)),
-        A=quadrature_to_bogoliubov_pair(block_to_pair(F.A)),
-        N=quadrature_to_bogoliubov_pair(block_to_pair(F.N)),
+        K=quadrature_to_ladder_pair(block_to_pair(F.K)),
+        A=quadrature_to_ladder_pair(block_to_pair(F.A)),
+        N=quadrature_to_ladder_pair(block_to_pair(F.N)),
     )
 end
 
 function iwasawa_bogoliubov_block(S::AbstractMatrix)
-    F = iwasawa_block(bogoliubov_to_quadrature_block(S))
+    F = iwasawa_block(ladder_to_quadrature_block(S))
     return (
         K=quadrature_to_bogoliubov_block(F.K),
         A=quadrature_to_bogoliubov_block(F.A),
