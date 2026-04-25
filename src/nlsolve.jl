@@ -25,6 +25,58 @@ function QRfactorization(;kwargs...)
     return Factorization(qr,nothing,kwargs)
 end
 
+# fallback method to handle everything but QR adjoint
+function myldiv!(x,F,b)
+    return ldiv!(x,F,b)
+end
+
+# workaround for lack of QR adjoint factorization
+# modification of solution proposed here
+# and https://github.com/JuliaSparse/SparseArrays.jl/issues/656
+# explanation: https://www.netlib.org/lapack/lug/node41.html
+# and based in part on ldiv! in spqr.jl to handle the rank deficient case
+# https://github.com/JuliaSparse/SparseArrays.jl/blob/main/src/solvers/spqr.jl
+function myldiv!(x::StridedVecOrMat{<:Number},Fadj::LinearAlgebra.AdjointFactorization{<:Number, <:SparseArrays.SPQR.QRSparse},
+                b::StridedVecOrMat{<:Number})
+    F = parent(Fadj)
+    m, n = size(F)
+    pcol = F.pcol
+    prow = F.prow
+    rnk = rank(F)
+
+    nrhs = size(b, 2)
+
+    # define a workspace
+    W = Matrix{eltype(b)}(undef, m, nrhs)
+
+    # c[1:rnk] = first rnk permuted columns of b with the rest of c zero.
+    @inbounds for j in 1:nrhs
+        for i in 1:rnk
+            W[i, j] = b[pcol[i], j]
+        end
+        for i in (rnk+1):m
+            W[i, j] = zero(eltype(W))
+        end
+    end
+
+    # solve R11^H * y[1:rnk] = c[1:rnk]
+    if rnk > 0
+        R11 = F.R[1:rnk, 1:rnk]
+        ldiv!(UpperTriangular(R11)', view(W, 1:rnk, :))
+    end
+
+    # W = Q*y
+    lmul!(F.Q, W)
+
+    # get the solution
+    @inbounds for j in 1:nrhs
+        for i in 1:m
+            x[prow[i], j] = W[i, j]
+        end
+    end
+
+    return x
+end
 
 """
     FactorizationCache(factorization)
@@ -97,7 +149,7 @@ matrices don't support ldiv!.
 """
 function trysolve!(x,factorization,b)
     try
-        ldiv!(x,factorization,b)
+        myldiv!(x,factorization,b)
     catch
         x .= factorization \ b
     end

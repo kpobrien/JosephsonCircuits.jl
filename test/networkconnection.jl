@@ -1080,8 +1080,8 @@ import StaticArrays
         @test isapprox(sol1[1],sol3)
         @test isapprox(sol2[1][1],sol3)
 
-        # interesting that QR doesn't work with adjoints
-        sol5 = JosephsonCircuits.solveS(networks,connections;factorization=JosephsonCircuits.LUfactorization(),noise = true)
+        # same as above with noise
+        sol5 = JosephsonCircuits.solveS(networks,connections;factorization=JosephsonCircuits.QRfactorization(),noise = true)
         sol6 = JosephsonCircuits.connectS(networks,connections;noise = true)
         @test isapprox(sol5[1],sol3)
         @test isapprox(sol6[1][1],sol3)
