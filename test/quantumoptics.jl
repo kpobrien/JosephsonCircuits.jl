@@ -132,6 +132,29 @@ using Test
 
     end
 
+    @testset "random positive definite" begin
+
+        @test JosephsonCircuits.is_positive_definite(JosephsonCircuits.rand_positive_definite(4))
+
+    end
+
+    @testset "random unitary" begin
+
+        @test JosephsonCircuits.is_unitary(JosephsonCircuits.rand_unitary(4))
+
+    end
+
+    @testset "random orthogonal" begin
+
+        @test JosephsonCircuits.is_orthogonal(JosephsonCircuits.rand_orthogonal(4))
+
+    end
+
+    @testset "random positive semi-definite" begin
+
+        @test JosephsonCircuits.is_positive_semi_definite(JosephsonCircuits.rand_positive_semi_definite(2,2))
+
+    end
 
     @testset "random symplectic" begin
 
@@ -159,13 +182,13 @@ using Test
 
     @testset "random positive definite symplectic" begin
 
-        @test JosephsonCircuits.is_posdef_symplectic_pair(JosephsonCircuits.rand_posdef_symplectic_pair(4))
-        @test JosephsonCircuits.is_posdef_symplectic_pair(JosephsonCircuits.rand_posdef_symplectic_pair(Float64,4))
-        @test JosephsonCircuits.is_posdef_symplectic_pair(JosephsonCircuits.rand_posdef_symplectic_pair(Complex{Float64},4))
+        @test JosephsonCircuits.is_positive_definite_symplectic_pair(JosephsonCircuits.rand_positive_definite_symplectic_pair(4))
+        @test JosephsonCircuits.is_positive_definite_symplectic_pair(JosephsonCircuits.rand_positive_definite_symplectic_pair(Float64,4))
+        @test JosephsonCircuits.is_positive_definite_symplectic_pair(JosephsonCircuits.rand_positive_definite_symplectic_pair(Complex{Float64},4))
 
-        @test JosephsonCircuits.is_posdef_symplectic_block(JosephsonCircuits.rand_posdef_symplectic_block(4))
-        @test JosephsonCircuits.is_posdef_symplectic_block(JosephsonCircuits.rand_posdef_symplectic_block(Float64,4))
-        @test JosephsonCircuits.is_posdef_symplectic_block(JosephsonCircuits.rand_posdef_symplectic_block(Complex{Float64},4))
+        @test JosephsonCircuits.is_positive_definite_symplectic_block(JosephsonCircuits.rand_positive_definite_symplectic_block(4))
+        @test JosephsonCircuits.is_positive_definite_symplectic_block(JosephsonCircuits.rand_positive_definite_symplectic_block(Float64,4))
+        @test JosephsonCircuits.is_positive_definite_symplectic_block(JosephsonCircuits.rand_positive_definite_symplectic_block(Complex{Float64},4))
 
     end
 
@@ -250,6 +273,40 @@ using Test
         @test isapprox(P * Y, A)
         @test isapprox(Y * Y', I(4))
 
+    end
+
+    @testset "williamson pair" begin
+
+        for M in [JosephsonCircuits.rand_positive_definite(4), JosephsonCircuits.rand_positive_semi_definite(2,2)]
+            @show M
+            d, S = JosephsonCircuits.williamson_pair(M)
+            @test JosephsonCircuits.is_symplectic_pair(S)
+            # serafini convention
+            # @test isapprox(transpose(S)*Diagonal(d)*S,M)
+            # literature convention
+            @test isapprox(S*Diagonal(d)*transpose(S),M)
+        end
+
+       # #  # add a test for this matrix for both block and pair
+       #  M = Symmetric([
+       #     1.166893242623039673e-01  -1.048482006204835837e-02  -3.493446128036903353e-02   1.565614325188508238e-01;
+       #    -1.048482006204835837e-02   4.805855935380488053e-01  -1.069468907857842987e+00  -3.770319099460901491e-01;
+       #    -3.493446128036903353e-02  -1.069468907857842987e+00   2.409089316529508640e+00   7.648117805967328264e-01;
+       #     1.565614325188508238e-01  -3.770319099460901491e-01   7.648117805967328264e-01   4.847266530147685271e-01;
+       # ])
+    end
+
+
+    @testset "williamson block " begin
+
+        for M in [JosephsonCircuits.rand_positive_definite(4), JosephsonCircuits.rand_positive_semi_definite(2,2)]
+            d, S = JosephsonCircuits.williamson_block(M)
+            @test JosephsonCircuits.is_symplectic_block(S)
+            # serafini convention
+            # @test isapprox(transpose(S)*Diagonal(d)*S,M)
+            # literature convention
+            @test isapprox(S*Diagonal(d)*transpose(S),M)
+        end
     end
 
     @testset "autonne_takagi complex" begin

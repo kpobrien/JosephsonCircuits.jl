@@ -38,27 +38,6 @@ function symplectic_form_block(n::Integer)
     # return Int[0*I(n) I(n);-I(n) 0*I(n)]
 end
 
-# function symplectic_form_block(n::Integer, m::Integer)
-#     # column pointer has length number of columns + 1
-#     colptr = [i for i in 1:n+m+1]
-
-#     #
-#     rowval = Vector{Int}(undef, n+m)
-#     nzval = Vector{Int}(undef, n+m)
-
-#     for i in 1:n
-#         rowval[i] = n + i
-#         nzval[i] = -1
-#     end
-#     for i in n+1:n+m
-#         rowval[i] = i - n
-#         nzval[i] = 1
-#     end
-
-#     return SparseMatrixCSC(n+m, n+m, colptr, rowval, nzval)
-#     # return Int[0*I(n) I(n);-I(n) 0*I(n)]
-# end
-
 """
     direct_sum(A; n::Integer=1)
 
@@ -141,17 +120,29 @@ function indefinite_hermitian_form_block(n::Integer)
     return Diagonal(d)
 end
 
-# function indefinite_hermitian_form_block(n::Integer, m::Integer)
-#     d = Vector{Int}(undef, n+m)
-#     for i in 1:n
-#         d[i] = 1
-#     end
-#     for i in n+1:n+m
-#         d[i] = -1
-#     end
-#     # return Int[I(n) 0*I(n);0*I(n) -I(n)]
-#     return Diagonal(d)
-# end
+
+function is_positive_semi_definite(M)
+   # turn off error checking on cholesky, perform a
+   # pivot so it works in the rank deficient case
+   # and just check if it works to within numerical
+   # error.
+   C = cholesky(M,RowMaximum();check=false)
+   if isempty(C.p)
+      U = C.U
+      L = C.L
+      A = M
+   else
+      U = C.U[1:C.rank, :]
+      L = C.L[:,1:C.rank]
+      A = M[C.p, C.p]
+   end
+   return isapprox(A,U'*U) && isapprox(A,L*L')
+end
+
+function is_positive_definite(M)
+    return isposdef(M)
+end
+
 
 """
     is_unitary(M)
@@ -340,31 +331,31 @@ end
 
 
 """
-    is_posdef_symplectic_block(S)
+    is_positive_definite_symplectic_block(S)
 
 Return `true` if the matrix `S` is positive definite and symplectic,
 `S ∈ Sp(2n, ℝ)` or `S ∈ Sp(2n, ℂ)`, with block operator order and `false`
 otherwise.
 
 """
-function is_posdef_symplectic_block(S)
+function is_positive_definite_symplectic_block(S)
     # the tests for ishermitian and issymmetric are exact, but we want
     # to test for equality up to numerical error so use isappox
-    return is_symplectic_block(S) && isapprox(S,S') && isposdef(Hermitian(S))
+    return is_symplectic_block(S) && isapprox(S,S') && is_positive_definite(Hermitian(S))
 end
 
 """
-    is_posdef_symplectic_pair(S)
+    is_positive_definite_symplectic_pair(S)
 
 Return `true` if the matrix `S` is positive definite and symplectic,
 `S ∈ Sp(2n, ℝ)` or `S ∈ Sp(2n, ℂ)`, with pair operator order and
 `false` otherwise.
 
 """
-function is_posdef_symplectic_pair(S)
+function is_positive_definite_symplectic_pair(S)
     # the tests for ishermitian and issymmetric are exact, but we want
     # to test for equality up to numerical error so use isappox
-    return is_symplectic_pair(S) && isapprox(S,S') && isposdef(Hermitian(S))
+    return is_symplectic_pair(S) && isapprox(S,S') && is_positive_definite(Hermitian(S))
 end
 
 """
@@ -440,11 +431,7 @@ function is_cptp(Omega, X, Y)
     if !isapprox(K, Hermitian(K))
         return false
     else
-        # this might be too strict. since posdef is > 0 whereas i want 
-        # >= 0 including numerical tolerances
-        # could i test if the eigenvalues are approximately equal to
-        # their absolute values?
-        return isposdef(Hermitian(K))
+        return is_positive_semi_definite(Hermitian(K))
     end
 end
 
@@ -476,15 +463,44 @@ function is_cptp_bogoliubov_block(X, Y)
     return is_cptp(Omega, X, Y)
 end
 
-# random orthogonal matrix
-# and random unitary matrix
+function rand_positive_definite(T, n::Integer)
+    A = rand(T,n,n)
+    return A*A'
+end
+
+function rand_positive_definite(n::Integer)
+    return rand_positive_definite(Float64, n)
+end
+
+function rand_unitary(T, n::Integer)
+    A = rand(T,n,n)
+    # make a skew-Hermitian matrix
+    H = (A - A')/2
+    return exp(H)
+end
+
+function rand_unitary(n::Integer)
+    return rand_unitary(Complex{Float64},n)
+end
+
+function rand_orthogonal(n::Integer)
+    return rand_unitary(Float64,n)
+end
 
 
-# function rand_unitary(T, n::Integer)
+"""
+   rand_positive_semi_definite(T,n,m)
 
-#     M = randn(T, 2*n, 2*n)
-#     A = 
-# end
+
+"""
+function rand_positive_semi_definite(T,n,m)
+   A = rand(T,n+m,n)
+   return A*A'
+end
+
+function rand_positive_semi_definite(n,m)
+   return rand_positive_semi_definite(Float64,n,m)
+end
 
 
 """
@@ -584,14 +600,14 @@ end
 
 
 """
-    rand_posdef_symplectic_block(T, n::Integer)
+    rand_positive_definite_symplectic_block(T, n::Integer)
 
 Return a random `2n x 2n` positive definite symplectic matrix `S`,
 `S ∈ Sp(2n, ℝ)` or `S ∈ Sp(2n, ℂ)`, depending on the type `T` with block
 operator order.
 
 """
-function rand_posdef_symplectic_block(T, n::Integer)
+function rand_positive_definite_symplectic_block(T, n::Integer)
 
     # M = randn(T,n,n)
     # N = randn(T,n,n)
@@ -630,39 +646,40 @@ function rand_posdef_symplectic_block(T, n::Integer)
 end
 
 """
-    rand_posdef_symplectic_block(n::Integer)
+    rand_positive_definite_symplectic_block(n::Integer)
 
 Return a random `2n x 2n` positive definite symplectic matrix `S`,
 `S ∈ Sp(2n, ℝ)`, with block operator order.
 
 """
-function rand_posdef_symplectic_block(n::Integer)
-    return rand_posdef_symplectic_block(Float64,n)
+function rand_positive_definite_symplectic_block(n::Integer)
+    return rand_positive_definite_symplectic_block(Float64,n)
 end
 
 """
-    rand_posdef_symplectic_pair(T, n::Integer)
+    rand_positive_definite_symplectic_pair(T, n::Integer)
 
 Return a random `2n x 2n` positive definite symplectic matrix `S`,
 `S ∈ Sp(2n, ℝ)` or `S ∈ Sp(2n, ℂ)`, depending on the type `T` with pair
 operator order.
 
 """
-function rand_posdef_symplectic_pair(T, n::Integer)
+function rand_positive_definite_symplectic_pair(T, n::Integer)
     A = rand_symplectic_pair(T,n)
     return A*A'
 end
 
 """
-    rand_posdef_symplectic_pair(n::Integer)
+    rand_positive_definite_symplectic_pair(n::Integer)
 
 Return a random `2n x 2n` positive definite symplectic matrix `S`,
 `S ∈ Sp(2n, ℝ)`, with pair operator order.
 
 """
-function rand_posdef_symplectic_pair(n::Integer)
-    return rand_posdef_symplectic_pair(Float64,n)
+function rand_positive_definite_symplectic_pair(n::Integer)
+    return rand_positive_definite_symplectic_pair(Float64,n)
 end
+
 
 """
 
@@ -1482,7 +1499,7 @@ end
 
    polar(A)
 
-Return a positive self definite matrix `P` and unitary matrix `U` such that
+Return a positive semi-definite matrix `P` and unitary matrix `U` such that
 `A = P U`. `A` is a square real or complex matrix.
 
 If `A` is symplectic, both `P` and `U` are symplectic.
@@ -1516,17 +1533,16 @@ end
 """
     williamson_pair(M::AbstractMatrix{<:Real})
 
-For a symmetric positive definite matrix `M`, return a vector of values `d`
+For a symmetric positive semi-definite matrix `M`, return a vector of values `d`
 and a real symplectic matrix `S` such that `M = S Diagonal(d) S^T`. `S` is
-symplectic with respect to the pair symplectic form `Ω`.
+symplectic with respect to the pair ordered symplectic form `Ω`.
 
 The values `d` are unique but the matrix `S` is not.
 
 At some point evaluate whether the method in this reference
 http://arxiv.org/abs/2108.05364v2 is better than the one we are using. I
-switch to the Schur decomposition based method from [2] because anything base
+switch to the Schur decomposition based method from [2] because anything based
 on eigedecomposition may have problems with degenerate eigenvalues.
-
 
 # References
 [1] M. Idel, S. Soto Gaona, and M. M. Wolf, “Perturbation bounds for
@@ -1537,118 +1553,223 @@ Optics: Takagi/Autonne, Bloch-Messiah/Euler, Iwasawa, and Williamson,” Can.
 J. Phys., vol. 102, no. 10, pp. 497–507, Oct. 2024, doi: 10.1139/cjp-2024-0070.
 """
 function williamson_pair(M::AbstractMatrix{<:Real})
-
     n = size(M, 1) ÷ 2
     Omega = symplectic_form_pair(n)
-
-    # test if M is symmetric
-    if !isapprox(M,transpose(M))
-        error(lazy"M must be positive definite and thus symmetric.")
-    end
-
-    valsM, vecsM = eigen(Symmetric(M))
-
-    for val in valsM
-        if !ispositive(val)
-            error(lazy"`M` must be positive definite.")
-        end
-    end
-
-    # the matrix is positive definite so no concerns about the matris sqrt
-    # maybe switch to schur anyway?
-    Msqrt = vecsM * Diagonal(sqrt.(valsM)) * vecsM'
-    Mminussqrt = vecsM * Diagonal(1.0 ./ sqrt.(valsM)) * vecsM'
-    K = Msqrt * Omega * Msqrt
-    valsK, vecsK = eigen(Hermitian(im * K))
-
-    d = zeros(eltype(M), 2 * n)
-    S = zeros(eltype(M), 2 * n, 2 * n)
-
-    j = 1
-    for i in eachindex(valsK)
-        lambdai = real(valsK[i])
-        if lambdai > 0
-            u = imag(vecsK[:, i])
-            w = real(vecsK[:, i])
-            S[:, j] .= u ./ norm(u)
-            S[:, j+1] .= w ./ norm(w)
-            d[j] = d[j+1] = lambdai
-            j += 2
-        end
-    end
-    return (d=d, S=Mminussqrt * S * Diagonal(sqrt.(d)))
+    d, S = _williamson(Omega,M)
+    return d, S
 end
 
-"""
-    williamson_block(M::AbstractMatrix{<:Real})
-
-For a symmetric positive definite matrix `M`, return a vector of values `d`
-and a real symplectic matrix `S` such that `M = S Diagonal(d) S^T`. `S` is
-symplectic with respect to the block symplectic form `Ω`.
-
-The values `d` are unique but the matrix `S` is not.
-
-At some point evaluate whether the method in this reference
-http://arxiv.org/abs/2108.05364v2 is better than the one we are using. I
-switch to the Schur decomposition based method from [2] because anything base
-on eigedecomposition may have problems with degenerate eigenvalues.
-
-# References
-[1] M. Idel, S. Soto Gaona, and M. M. Wolf, “Perturbation bounds for
-Williamson’s symplectic normal form,” Linear Algebra and its Applications,
-vol. 525, pp. 45–58, Jul. 2017, doi: 10.1016/j.laa.2017.03.013.
-[2] M. Houde, W. McCutcheon, and N. Quesada, “Matrix decompositions in Quantum
-Optics: Takagi/Autonne, Bloch-Messiah/Euler, Iwasawa, and Williamson,” Can.
-J. Phys., vol. 102, no. 10, pp. 497–507, Oct. 2024, doi: 10.1139/cjp-2024-0070.
-"""
 function williamson_block(M::AbstractMatrix{<:Real})
-
     n = size(M, 1) ÷ 2
-    J = symplectic_form_block(n)
-
-    # test if M is symmetric
-    if !isapprox(M,transpose(M))
-        error(lazy"M must be positive definite and thus symmetric.")
-    end
-
-    valsM, vecsM = eigen(Symmetric(M))
-
-    for val in valsM
-        if !ispositive(val)
-            error(lazy"`M` must be positive definite.")
-        end
-    end
-
-    # the matrix is positive definite so no concerns about the matris sqrt
-    # maybe switch to schur anyway?
-    Msqrt = vecsM * Diagonal(sqrt.(valsM)) * vecsM'
-    Mminussqrt = vecsM * Diagonal(1.0 ./ sqrt.(valsM)) * vecsM'
-    K = Msqrt * J * Msqrt
-    valsK, vecsK = eigen(Hermitian(im * K))
-
-    d = zeros(eltype(M), 2 * n)
-    S = zeros(eltype(M), 2 * n, 2 * n)
-
-    j = 1
-    for i in eachindex(valsK)
-        lambdai = real(valsK[i])
-        if lambdai > 0
-            u = imag(vecsK[:, i])
-            w = real(vecsK[:, i])
-            S[:, j] .= u ./ norm(u)
-            S[:, j+n] .= w ./ norm(w)
-            d[j] = d[j+n] = lambdai
-            j += 1
-        end
-    end
-    return (d=d, S=Mminussqrt * S * Diagonal(sqrt.(d)))
+    # alternatively, we could call williamson_pair(block_to_pair(M)) and 
+    # then convert the outputs back to block ordering. I prefer to do it this
+    # way because 
+    Omega = symplectic_form_block(n)
+    d, S = _williamson(Omega,M)
+    return pair_to_block(d), S*R_block_to_pair(n)
 end
+
+function _williamson(Omega, M::AbstractMatrix{<:Real})
+    n = size(M, 1) ÷ 2
+
+    # compute the pivoted cholesky factorization and turn check to false. this
+    # will fail if the matrix is not positive semi-definite. It's more robust
+    # against small negative eigenvalues due to floating point errors than
+    # non-pivoted cholesky.
+
+    # evaluate this in a function because sparse and non-sparse cholesky have
+    # different syntax
+    L,rankL = choleskyLr(M)
+
+    K = transpose(L)*Omega*L
+
+    # check that C.rank is even
+    # i've noticed that sometimes cholesky produces a rank that is larger
+    # than the rank i set. 
+    if isodd(rankL)
+        # println(rankL)
+        # rankL = rankL - 1
+        error("The rank must be even.")
+    end
+    r = rankL ÷ 2
+
+    # K is skew-symmetric so the real schur decomposition will return
+    # 2x2 blocks of either all zeros or identical values on the off diagonals
+    # differing by a sign.
+    # use the schur decomposition of A to compute the symplectric normal form.
+    F = schur(K)
+    T = Matrix(F.T)
+    Z = Matrix(F.Z)
+
+    # loop through the blocks
+    d = zeros(eltype(T),2*r)
+    phi = zeros(eltype(T),2*r)
+
+    # this naturally gives the pair ordering. for block need to permute the
+    # order, which we do outside of this function.
+    # for i in 1:2:2*n
+    for i in 1:2:2*r
+        a = (T[i, i+1] - T[i+1, i]) / 2
+        d[i] = d[i+1] = abs(a)
+        s = inv(sqrt(abs(a)))
+        phi[i] = phi[i+1] = s
+        phi[i+1] *= sign(a)
+    end
+
+    S1 = L*Z*Diagonal(phi)
+
+    # if r == n then just return the values
+    # otherwise, pad it out using the symplectic complement
+    if r == n
+        return (d = d, S = S1)
+    else
+        S2 = symplectic_complement(Omega,S1)
+        return (d = vcat(d,zeros(eltype(d),2*(n-r))), S = hcat(S1,S2))
+    end
+end
+
+function choleskyLr(M::AbstractArray)
+    # compute the pivoted cholesky factorization and turn check to false. this
+    # will fail if the matrix is not positive semi-definite. It's more robust
+    # against small negative eigenvalues due to floating point errors than
+    # non-pivoted cholesky.
+    C = cholesky(M,RowMaximum();check=false)
+
+    if isodd(C.rank)
+        # println(rankL)
+        rankL = C.rank - 1
+        # error("The rank must be even.")
+    else
+        rankL = C.rank
+    end
+
+    L = C.L[invperm(C.p),1:rankL]
+    return L,rankL
+end
+
+function choleskyLr(M::SparseMatrixCSC)
+    C = cholesky(M)
+    return Matrix(sparse(C.L)[invperm(C.p),:]), size(M,1)
+end
+
+function symplectic_complement(Omega,S1)
+
+    n = size(S1,1) ÷ 2
+    r = size(S1,2) ÷ 2
+
+    # it looks like the rank deficient case is failing in the block format
+    # make sense because i'm using the pair symplectic form for
+    # symplectic_complement. i think i also need to 
+    # Omega = symplectic_form_pair(n)
+
+    # ker(S1' Ω) is the symplectic complement of range(S1) = range(M).
+    # 2n × (2n-r), orthonormal cols
+    S2 = nullspace(transpose(S1) * Omega)
+    # (2n-r) × (2n-r), skew, full-rank
+    K2 = transpose(S2) * Omega * S2
+    F2 = schur(K2)
+    T2 = Matrix(F2.T); Z2 = Matrix(F2.Z)
+    phi2 = zeros(eltype(T2), 2n - 2r)
+    for i in 1:2:(2n - 2r)
+        a = (T2[i, i+1] - T2[i+1, i]) / 2
+        s = inv(sqrt(abs(a)))
+        phi2[i]   = s
+        phi2[i+1] = s * sign(a)
+    end
+    # 2n × (2n-r)
+    return S2 * Z2 * Diagonal(phi2)
+end
+
+
+
+"""
+    symplectic_normal_form_pair(A::AbstractMatrix{<:Real})
+
+For a real skew-symmetric matrix `A` return `Q` such that `A = Q Ω Q^T` where
+`Q` is an invertible matrix and `Ω` is the pair symplectic form. If `A`
+is singular, the decomposition works, but `Q` is no longer invertible.
+
+I should test this function thoroughly to see if the eigenvalues always come
+in pairs, especially for singular matrices.
+
+## alternatively, we can implement this using skewchol from
+## SkewLinearAgebra.jl
+## that method is faster 5x faster for 40x40 matrices, but
+## from the paper not sure how stable
+## https://etna.ricam.oeaw.ac.at/vol.11.2000/pp85-93.dir/pp85-93.pdf
+# using Test, LinearAlgebra
+# import SkewLinearAlgebra as sk
+# A = randn(Float64,40,40);
+# Aa = (A-A')/2
+# C = sk.skewchol(Aa)
+# Omega = jc.symplectic_form_pair(size(A,1)÷2)
+# # undo the pivot and transpose to account for definition differences
+# # skewchol is defined such that transpose(C.R) * C.J * C.R ≈ A[C.p,C.p]
+# # I want C.R*C.J*transpose(C.R) = A
+# R = transpose(C.R[:, invperm(C.p)])
+# @test isapprox(Aa,R*Omega*R')
+
+"""
+function symplectic_normal_form_pair(A::AbstractMatrix{<:Real})
+
+    # check if the matrix A is skew-symmetric
+    if !isapprox(A, -transpose(A))
+        error(lazy"A must be skew-symmetric.")
+    end
+
+    n = size(A, 1)
+
+    if isodd(n)
+        error(lazy"A must have even dimensions for a symplectic normal form.")
+    end
+
+    # use the schur decomposition of A to compute the symplectric normal form.
+    F = schur(A)
+    T = Matrix(F.T)
+    Z = Matrix(F.Z)
+
+    # loop through the blocks
+    d = Vector{eltype(T)}(undef, n)
+    for i in 1:2:n
+        a = (T[i, i+1] - T[i+1, i]) / 2
+        s = sqrt(abs(a))
+        d[i] = s
+        d[i+1] = sign(a) * s
+    end
+
+    Q = Z * Diagonal(d)
+    return Q
+end
+
+function symplectic_normal_form_block(A::AbstractMatrix{<:Real})
+    Q = symplectic_normal_form_pair(block_to_pair(A))
+    return pair_to_block(Q)
+end
+
+function inv_symplectic_pair(S)
+    Omega = symplectic_form_pair(size(S,2)÷2)
+    return transpose(Omega)*transpose(S)*Omega
+end
+
+function inv_symplectic_block(S)
+    Omega = symplectic_form_block(size(S,2)÷2)
+    return transpose(Omega)*transpose(S)*Omega
+end
+
+function inv_bogoliubov_pair(S)
+    return inv_symplectic_pair(S)
+end
+
+function inv_bogoliubov_block(S)
+    return inv_symplectic_block(S)
+end
+
 
 """
     autonne_takagi(M::AbstractMatrix)
 
-Return a vector `Λ` and a unitary matrix `W` for input matrix `M` such that
-`M == W*Diagonal(Λ)*transpose(W)` where `M` is a symmetric complex matrix
+Return a vector `Λ` and a unitary matrix `W` for a symmetric complex input
+matrix `M` such that `M == W*Diagonal(Λ)*transpose(W)` where `M` satisfies
 `M = transpose(M)`. Note that if `M` complex this means `M` is not Hermitian.
 
 # References
@@ -1671,6 +1792,8 @@ function autonne_takagi(M::AbstractMatrix)
     # F = svd(Symmetric(M))
     # unfortunately for Julia 1.10 and 1.11 svd doesn't have a method defined
     # for a symmetric complex matrix.
+    # i could use a try catch block or look for the method so i can use
+    # svd(Symmetric(M)) on more recent Julia versions.
     F = svd(Matrix(M))
     # this is how Chebotarev and Teretenkov 2014 define Z
     Z = F.U' * transpose(F.Vt)
@@ -1759,9 +1882,9 @@ symplectic form `Ω`.
 This decomposition is unique up to permutations and or degeneracies of the
 Takagi-Autonne singular values.
 
-This seems identical to the regular SVD.
-I should sort the eigenvalues.
-
+The singular values are the same as the regular SVD, but the ordering of the
+singular values and order/signs of the factors are different, in order to make
+them orthogonal-symplectic.
 
 # References
 [1] G. Cariolaro and G. Pierobon, “Reexamination of Bloch-Messiah reduction,”
@@ -1984,75 +2107,6 @@ function iwasawa_bogoliubov_block(S::AbstractMatrix)
     )
 end
 
-## alternatively, we can implement this using skewchol from
-## SkewLinearAgebra.jl
-## that method is faster 5x faster for 40x40 matrices, but
-## from the paper not sure how stable
-## https://etna.ricam.oeaw.ac.at/vol.11.2000/pp85-93.dir/pp85-93.pdf
-# using Test, LinearAlgebra
-# import SkewLinearAlgebra as sk
-# A = randn(Float64,40,40);
-# Aa = (A-A')/2
-# C = sk.skewchol(Aa)
-# Omega = jc.symplectic_form_pair(size(A,1)÷2)
-# # undo the pivot and transpose to account for definition differences
-# # skewchol is defined such that transpose(C.R) * C.J * C.R ≈ A[C.p,C.p]
-# # I want C.R*C.J*transpose(C.R) = A
-# R = transpose(C.R[:, invperm(C.p)])
-# @test isapprox(Aa,R*Omega*R')
-
-
-"""
-    symplectic_normal_form_pair(A::AbstractMatrix{<:Real})
-
-For a real skew-symmetric matrix `A` return `Q` such that `A = Q Ω Q^T` where
-`Q` is an invertible matrix and `Ω` is the pair symplectic form. If `A`
-is singular, the decomposition works, but `Q` is no longer invertible.
-
-I should test this function thoroughly to see if the eigenvalues always come
-in pairs, especially for singular matrices.
-
-"""
-function symplectic_normal_form_pair(A::AbstractMatrix{<:Real})
-
-    # check if the matrix A is skew-symmetric
-    if !isapprox(A, -transpose(A))
-        error(lazy"A must be skew-symmetric.")
-    end
-
-    n = size(A, 1)
-
-    if isodd(n)
-        error(lazy"A must have even dimensions for a symplectic normal form.")
-    end
-
-    # use the schur decomposition of A to compute the symplectric normal form.
-    F = schur(A)
-    T = Matrix(F.T)
-    Z = Matrix(F.Z)
-
-    # loop through the blocks
-    d = Vector{eltype(T)}(undef, n)
-    for i in 1:2:n
-        a = (T[i, i+1] - T[i+1, i]) / 2
-        s = sqrt(abs(a))
-        d[i] = s
-        d[i+1] = sign(a) * s
-    end
-
-    # # i might be able to do that with just the values
-    # d = sqrt.(abs.(imag(F.values))).*sign.(imag(F.values))
-
-    Q = Z * Diagonal(d)
-
-    return Q
-
-end
-
-function symplectic_normal_form_block(A::AbstractMatrix{<:Real})
-    Q = symplectic_normal_form_pair(block_to_pair(A))
-    return pair_to_block(Q)
-end
 
 # function B_from_X_Y_pair0(X::AbstractMatrix{<:Real},
 #     Y::AbstractMatrix{<:Real})
@@ -2111,8 +2165,8 @@ function B_from_X_Y(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
     # test if Y is positive definite. Not all real symmetric matrices are
     # positive definite. The matrix must be symmetric and the eigenvalues must
     # all be positive.
-    if !isposdef(Y)
-        error(lazy"`Y` must be positive definite.")
+    if !is_positive_semi_definite(Y)
+        error(lazy"`Y` must be positive semi-definite.")
     end
 
     # vals, vecs = eigen(Symmetric(Y))
@@ -2172,17 +2226,17 @@ function B_from_X_Y_pair(X::AbstractMatrix{<:Real},
     return B[:, p]
 end
 
-"""
+# """
 
-    X_Y_to_sympletic(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+#     X_Y_to_sympletic(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
-Return the symplectic matrix `S` from the completely positive trace preserving
-(CPTP) map `X`, `Y` assumming a vacuum environment.
+# Return the symplectic matrix `S` from the completely positive trace preserving
+# (CPTP) map `X`, `Y` assumming a vacuum environment.
 
-"""
-function X_Y_to_sympletic(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+# """
+# function X_Y_to_sympletic(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
-end
+# end
 
 """
 
