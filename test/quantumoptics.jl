@@ -278,7 +278,6 @@ using Test
     @testset "williamson pair" begin
 
         for M in [JosephsonCircuits.rand_positive_definite(4), JosephsonCircuits.rand_positive_semi_definite(2,2)]
-            @show M
             d, S = JosephsonCircuits.williamson_pair(M)
             @test JosephsonCircuits.is_symplectic_pair(S)
             # serafini convention

@@ -1583,12 +1583,8 @@ function _williamson(Omega, M::AbstractMatrix{<:Real})
 
     K = transpose(L)*Omega*L
 
-    # check that C.rank is even
-    # i've noticed that sometimes cholesky produces a rank that is larger
-    # than the rank i set. 
+    # check that rankL is even
     if isodd(rankL)
-        # println(rankL)
-        # rankL = rankL - 1
         error("The rank must be even.")
     end
     r = rankL ÷ 2
@@ -1635,6 +1631,9 @@ function choleskyLr(M::AbstractArray)
     # non-pivoted cholesky.
     C = cholesky(M,RowMaximum();check=false)
 
+    # i've noticed that sometimes cholesky produces a rank that is larger
+    # than the rank i set. rather than erroring, try reducing the rank by
+    # one
     if isodd(C.rank)
         # println(rankL)
         rankL = C.rank - 1
