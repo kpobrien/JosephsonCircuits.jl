@@ -341,17 +341,17 @@ Load a Xyce harmonic balance simulation.
 function spice_hb_load(filename)
 
     data = Array{Float64}(undef,0)
-    header = []
-    i=0
+    header = SubString{String}[]
 
     #open a file handle
     open(filename, "r") do io
+        i=0
         #loop over the contents of the header and data
         while !eof(io)
             i+=1
             line = readline(io)
             if line[1:5] == "Index"
-                header = split(strip(line),r"\s+")
+                append!(header,split(strip(line),r"\s+"))
             elseif line == "End of Xyce(TM) Simulation"
                 break
             else
@@ -368,9 +368,9 @@ function spice_hb_load(filename)
 
     data1 = zeros(Complex{Float64},(length(header)-2)÷2,length(data) ÷ length(header))
 
-    for i = 1:(length(header)-2)÷2
-        data1[i,:] .= data[2+i:length(header):end]
-        data1[i,:] .+= im.*data[3+i:length(header):end]
+    for j = 1:(length(header)-2)÷2
+        data1[j,:] .= data[2+j:length(header):end]
+        data1[j,:] .+= im.*data[3+j:length(header):end]
     end    
 
     return (data=data1,f=f,index=index,header=header)

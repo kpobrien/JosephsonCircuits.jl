@@ -95,13 +95,11 @@ function calcfreqsrdft(Nharmonics::NTuple{N,Int}) where N
     # coefficients
     # changed to below because i wasn't using enough points when Nmodes=1.
     # the results contained only real values. 
-    if Nw[1] == 2
-        stepsperperiod = 2*Nw[1]-1
+    Nt = if Nw[1] == 2
+        NTuple{N,Int}(ifelse(i == 1, 2*Nw[1]-1, val) for (i,val) in enumerate(Nw))
     else
-        stepsperperiod = 2*Nw[1]-2
+        NTuple{N,Int}(ifelse(i == 1, 2*Nw[1]-2, val) for (i,val) in enumerate(Nw))
     end
-
-    Nt = NTuple{N,Int}(ifelse(i == 1, stepsperperiod, val) for (i,val) in enumerate(Nw))
 
     return calcfreqs(Nharmonics, Nw, Nt)
 end
@@ -955,17 +953,20 @@ function plan_applynl(fd::Array{Complex{T}}) where T
     # changed to below because i wasn't using enough points when Nmodes=1.
     # the results contained only real values. 
     sizefd = size(fd)
-    if sizefd[1] == 2
-        stepsperperiod = 2*sizefd[1]-1
+    stepsperperiod = if sizefd[1] == 2
+        2*sizefd[1]-1
     else
-        stepsperperiod = 2*sizefd[1]-2
+        2*sizefd[1]-2
     end
 
     # generate the time domain array with the appropriate dimensions
-    td = Array{T}(
-        undef,
-        NTuple{length(sizefd),Int}(ifelse(i == 1, stepsperperiod, val) for (i,val) in enumerate(sizefd)),
-    )
+    # changed to prevent boxing of stepsperperiod.
+    dims = (stepsperperiod, sizefd[2:end]...)
+    td = Array{T}(undef, dims)
+    # td = Array{T}(
+    #     undef,
+    #     NTuple{length(sizefd),Int}(ifelse(i == 1, stepsperperiod, val) for (i,val) in enumerate(sizefd)),
+    # )
 
     # make the irfft plan
     irfftplan = FFTW.plan_irfft(fd,stepsperperiod,1:length(size(fd))-1; flags=FFTW.ESTIMATE, timelimit=Inf)

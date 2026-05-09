@@ -732,7 +732,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         Amatrixmodes, Amatrixindices = hbmatind(allpumpfreq, signalfreq)
         Nwtuple = NTuple{length(allpumpfreq.Nw)+1,Int}((allpumpfreq.Nw..., length(signalnm.Ljb.nzval)))
         phimatrix = ones(Complex{Float64}, Nwtuple)
-        wpumpmodes = calcmodefreqs((0.0,),signalfreq.modes)
+        # wpumpmodes = calcmodefreqs((0.0,),signalfreq.modes)
 
     else
 
@@ -778,8 +778,16 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             rfftplan,
         )
 
-        wpumpmodes = calcmodefreqs(nonlinear.w,signalfreq.modes)
+        # wpumpmodes = calcmodefreqs(nonlinear.w,signalfreq.modes)
     end
+
+    # to avoid wpumpmodes being boxed
+    wpumpmodes = if isnothing(nonlinear)
+        calcmodefreqs((0.0,),signalfreq.modes)
+    else
+        calcmodefreqs(nonlinear.w,signalfreq.modes)
+    end
+
 
     # this is the first signal frequency. we will use it for various setup tasks
     wmodes = w[1] .+ wpumpmodes
@@ -847,10 +855,10 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # if there is a symbolic frequency variable, then we need to redo the noise
     # port calculation because calcnoiseportimpedanceindices() can't tell if a
     # symbolic expression is complex. 
-    if isnothing(symfreqvar)
-        noiseportimpedanceindices = signalnm.noiseportimpedanceindices
+    noiseportimpedanceindices = if isnothing(symfreqvar)
+        signalnm.noiseportimpedanceindices
     else
-        noiseportimpedanceindices = calcnoiseportimpedanceindices(
+        calcnoiseportimpedanceindices(
             componenttypes, nodeindices,
             mutualinductorbranchnames,
             Symbolics.substitute.(vvn, symfreqvar => wmodes[1]))
@@ -901,97 +909,97 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # make arrays for the voltages, node fluxes, scattering parameters,
     # quantum efficiency, and commutatio relations. if we aren't returning a
     # matrix, set it to be an empty array.
-    if returnS
-        S = zeros(Complex{Float64}, Nports*Nsignalmodes, Nports*Nsignalmodes,
+    S = if returnS
+        zeros(Complex{Float64}, Nports*Nsignalmodes, Nports*Nsignalmodes,
             length(w))
     else
-        S = zeros(Complex{Float64},0,0,0)
+        zeros(Complex{Float64},0,0,0)
     end
 
-    if returnZ
-        Z = zeros(Complex{Float64}, Nports*Nsignalmodes, Nports*Nsignalmodes,
+    Z = if returnZ
+        zeros(Complex{Float64}, Nports*Nsignalmodes, Nports*Nsignalmodes,
             length(w))
     else
-        Z = zeros(Complex{Float64},0,0,0)
+        zeros(Complex{Float64},0,0,0)
     end
 
-    if returnZadjoint
-        Zadjoint = zeros(Complex{Float64}, Nports*Nsignalmodes,
+    Zadjoint = if returnZadjoint
+        zeros(Complex{Float64}, Nports*Nsignalmodes,
             Nports*Nsignalmodes, length(w))
     else
-        Zadjoint = zeros(Complex{Float64},0,0,0)
+        zeros(Complex{Float64},0,0,0)
     end
 
-    if returnSnoise
-        Snoise = zeros(Complex{Float64},
+    Snoise = if returnSnoise
+        zeros(Complex{Float64},
             length(noiseportimpedanceindices)*Nsignalmodes,
             Nports*Nsignalmodes, length(w))
     else
-        Snoise = zeros(Complex{Float64},0,0,0)
+        zeros(Complex{Float64},0,0,0)
     end
 
-    if returnSsensitivity
-        Ssensitivity = zeros(Complex{Float64},
+    Ssensitivity = if returnSsensitivity
+        zeros(Complex{Float64},
             length(sensitivitynames)*Nsignalmodes,
             Nports*Nsignalmodes, length(w))
     else
-        Ssensitivity = zeros(Complex{Float64},0,0,0)
+        zeros(Complex{Float64},0,0,0)
     end
 
-    if returnZsensitivity
-        Zsensitivity = zeros(Complex{Float64},
+    Zsensitivity = if returnZsensitivity
+        zeros(Complex{Float64},
             length(sensitivitynames)*Nsignalmodes,
             Nports*Nsignalmodes, length(w))
     else
-        Zsensitivity = zeros(Complex{Float64},0,0,0)
+        zeros(Complex{Float64},0,0,0)
     end
 
-    if returnZsensitivityadjoint
-        Zsensitivityadjoint = zeros(Complex{Float64},
+    Zsensitivityadjoint = if returnZsensitivityadjoint
+        zeros(Complex{Float64},
             length(sensitivitynames)*Nsignalmodes,
             Nports*Nsignalmodes, length(w))
     else
-        Zsensitivityadjoint = zeros(Complex{Float64},0,0,0)
+        zeros(Complex{Float64},0,0,0)
     end
 
-    if returnQE
-        QE = zeros(Float64,Nports*Nsignalmodes,Nports*Nsignalmodes,length(w))
+    QE = if returnQE
+        zeros(Float64,Nports*Nsignalmodes,Nports*Nsignalmodes,length(w))
     else
-        QE = zeros(Float64,0,0,0)
+        zeros(Float64,0,0,0)
     end
 
-    if returnCM
-        CM = zeros(Float64,Nports*Nsignalmodes,length(w))
+    CM = if returnCM
+        zeros(Float64,Nports*Nsignalmodes,length(w))
     else
-        CM = zeros(Float64,0,0)
+        zeros(Float64,0,0)
     end
 
-    if returnnodeflux
-        nodeflux = zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),
+    nodeflux = if returnnodeflux
+        zeros(Complex{Float64},Nsignalmodes*(Nnodes-1),
             Nsignalmodes*Nports, length(w))
     else
-        nodeflux = Vector{Complex{Float64}}(undef,0)
+        Vector{Complex{Float64}}(undef,0)
     end
 
-    if returnnodefluxadjoint
-        nodefluxadjoint = zeros(Complex{Float64}, Nsignalmodes*(Nnodes-1),
+    nodefluxadjoint = if returnnodefluxadjoint
+        zeros(Complex{Float64}, Nsignalmodes*(Nnodes-1),
             Nsignalmodes*Nports, length(w))
     else
-        nodefluxadjoint = Vector{Complex{Float64}}(undef,0)
+        Vector{Complex{Float64}}(undef,0)
     end
 
-    if returnvoltage
-        voltage = zeros(Complex{Float64}, Nsignalmodes*(Nnodes-1),
+    voltage = if returnvoltage
+        zeros(Complex{Float64}, Nsignalmodes*(Nnodes-1),
             Nsignalmodes*Nports, length(w))
     else
-        voltage = Vector{Complex{Float64}}(undef,0)
+        Vector{Complex{Float64}}(undef,0)
     end
 
-    if returnvoltageadjoint
-        voltageadjoint = zeros(Complex{Float64}, Nsignalmodes*(Nnodes-1),
+    voltageadjoint = if returnvoltageadjoint
+        zeros(Complex{Float64}, Nsignalmodes*(Nnodes-1),
             Nsignalmodes*Nports, length(w))
     else
-        voltageadjoint = Vector{Complex{Float64}}(undef,0)
+        Vector{Complex{Float64}}(undef,0)
     end
 
     # generate the mode indices and find the signal index
@@ -1016,12 +1024,15 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # calculate the `ideal` quantum efficiency based on the gain assuming an
     # ideal two mode amplifier
+    QEideal = if returnQE
+        # calculate the ideal quantum efficiency.
+        zeros(Float64,size(S))
+    else
+        zeros(Float64,0,0,0)
+    end
     if returnQE
         # calculate the ideal quantum efficiency.
-        QEideal = zeros(Float64,size(S))
         calcqeideal!(QEideal,S)
-    else
-        QEideal = zeros(Float64,0,0,0)
     end
 
     # turn all of the array outputs into keyed arrays if the
@@ -1029,104 +1040,108 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     # for the scattering parameters
-    if returnS && K
-        Sout = Stokeyed(S, modes, portnumbers, modes, portnumbers, w)
+    Sout = if returnS && K
+        Stokeyed(S, modes, portnumbers, modes, portnumbers, w)
     else
-        Sout = S
+        S
     end
 
-    if returnZ && K
-        Zout = Stokeyed(Z, modes, portnumbers, modes, portnumbers, w)
+    Zout = if returnZ && K
+        Stokeyed(Z, modes, portnumbers, modes, portnumbers, w)
     else
-        Zout = Z
+        Z
     end
 
-    if returnZadjoint && K
-        Zadjointout = Stokeyed(Zadjoint, modes, portnumbers, modes, portnumbers, w)
+    Zadjointout = if returnZadjoint && K
+        Stokeyed(Zadjoint, modes, portnumbers, modes, portnumbers, w)
     else
-        Zadjointout = Zadjoint
+        Zadjoint
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     # for the noise scattering parameters
-    if returnSnoise && K
-        Snoiseout =  Snoisetokeyed(Snoise, modes,
+    Snoiseout = if returnSnoise && K
+        Snoisetokeyed(Snoise, modes,
             componentnames[noiseportimpedanceindices], modes, portnumbers, w)
     else
-        Snoiseout = Snoise
+        Snoise
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     # for Ssensitivity
-    if returnSsensitivity && K
-        Ssensitivityout =  Snoisetokeyed(Ssensitivity, modes,
+    Ssensitivityout = if returnSsensitivity && K
+        Snoisetokeyed(Ssensitivity, modes,
             sensitivitynames, modes, portnumbers, w)
     else
-        Ssensitivityout = Ssensitivity
+        Ssensitivity
     end
 
-    if returnZsensitivity && K
-        Zsensitivityout =  Snoisetokeyed(Zsensitivity, modes,
+    Zsensitivityout = if returnZsensitivity && K
+        Snoisetokeyed(Zsensitivity, modes,
             sensitivitynames, modes, portnumbers, w)
     else
-        Zsensitivityout = Zsensitivity
+        Zsensitivity
     end
 
-    if returnZsensitivityadjoint && K
-        Zsensitivityadjointout =  Snoisetokeyed(Zsensitivityadjoint, modes,
+    Zsensitivityadjointout = if returnZsensitivityadjoint && K
+        Snoisetokeyed(Zsensitivityadjoint, modes,
             sensitivitynames, modes, portnumbers, w)
     else
-        Zsensitivityadjointout = Zsensitivityadjoint
+        Zsensitivityadjoint
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     # for the quantum efficiency
-    if returnQE && K
-        QEout = Stokeyed(QE, modes, portnumbers, modes, portnumbers, w)
-        QEidealout = Stokeyed(QEideal, modes, portnumbers, modes, portnumbers, w)
+    QEout = if returnQE && K
+        Stokeyed(QE, modes, portnumbers, modes, portnumbers, w)
     else
-        QEout = QE
-        QEidealout = QEideal
+        QE
+    end
+
+    QEidealout = if returnQE && K
+        Stokeyed(QEideal, modes, portnumbers, modes, portnumbers, w)
+    else
+        QEideal
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
     # for the commutation relations
-    if returnCM && K
-        CMout = CMtokeyed(CM, modes, portnumbers, w)
+    CMout = if returnCM && K
+        CMtokeyed(CM, modes, portnumbers, w)
     else
-        CMout = CM
+        CM
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
-    if returnnodeflux && K
-        nodefluxout = nodevariabletokeyed(nodeflux, modes, nodenames, modes,
+    nodefluxout = if returnnodeflux && K
+        nodevariabletokeyed(nodeflux, modes, nodenames, modes,
             portnumbers, w)
     else
-        nodefluxout = nodeflux
+        nodeflux
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
-    if returnnodefluxadjoint && K
-        nodefluxadjointout = nodevariabletokeyed(nodefluxadjoint, modes,
+    nodefluxadjointout = if returnnodefluxadjoint && K
+        nodevariabletokeyed(nodefluxadjoint, modes,
             nodenames, modes, portnumbers, w)
     else
-        nodefluxadjointout = nodefluxadjoint
+        nodefluxadjoint
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
-    if returnvoltage && K
-        voltageout = nodevariabletokeyed(voltage, modes,
+    voltageout = if returnvoltage && K
+        nodevariabletokeyed(voltage, modes,
             nodenames, modes, portnumbers, w)
     else
-        voltageout = voltage
+        voltage
     end
 
     # if keyword argument keyedarrays = Val(true) then generate keyed arrays
-    if returnvoltageadjoint && K
-        voltageadjointout = nodevariabletokeyed(voltageadjoint, modes,
+    voltageadjointout = if returnvoltageadjoint && K
+        nodevariabletokeyed(voltageadjoint, modes,
             nodenames, modes, portnumbers, w)
     else
-        voltageadjointout = voltageadjoint
+        voltageadjoint
     end
 
     return LinearizedHB(w, modes, Sout, Snoiseout, Ssensitivityout, Zout,
@@ -1646,17 +1661,18 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
     Ljb = nm.Ljb
     Ljbm = nm.Ljbm
     Rbnm = nm.Rbnm
-    Cnm = nm.Cnm
-    Gnm = nm.Gnm
-    invLnm = nm.invLnm
+    Cnmcopy = nm.Cnm
+    Gnmcopy = nm.Gnm
+    invLnmcopy = nm.invLnm
     portindices = nm.portindices
     portnumbers = nm.portnumbers
     portimpedanceindices = nm.portimpedanceindices
     vvn = nm.vvn
-    Lmean = nm.Lmean
     # if there are no inductors, then Lmean will be zero so set it to be one
-    if iszero(Lmean)
-        Lmean = one(eltype(Lmean))
+    Lmean = if iszero(nm.Lmean)
+        one(eltype(nm.Lmean))
+    else
+        nm.Lmean
     end
     Lb = nm.Lb
 
@@ -1707,7 +1723,7 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
 
     # convert to a sparse node matrix. Note: I was having problems with type 
     # instability when i used AoLjbm here instead of AoLjbmcopy. 
-    AoLjnm = transpose(Rbnm)*AoLjbmcopy*Rbnm;
+    AoLjnmcopy = transpose(Rbnm)*AoLjbmcopy*Rbnm;
 
     if isnothing(x0)
         x = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
@@ -1722,14 +1738,14 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
 
     # substitute in the mode frequencies for components which have frequency
     # defined symbolically.
-    Cnm = freqsubst(Cnm, wmodes, symfreqvar)
-    Gnm = freqsubst(Gnm, wmodes, symfreqvar)
-    invLnm = freqsubst(invLnm, wmodes, symfreqvar)
+    Cnm = freqsubst(Cnmcopy, wmodes, symfreqvar)
+    Gnm = freqsubst(Gnmcopy, wmodes, symfreqvar)
+    invLnm = freqsubst(invLnmcopy, wmodes, symfreqvar)
 
     # scale the matrices for numerical reasons
-    Cnm *= Lmean
-    Gnm *= Lmean
-    invLnm *= Lmean
+    rmul!(Cnm,Lmean)
+    rmul!(Gnm,Lmean)
+    rmul!(invLnm,Lmean)
 
     # Calculate an initial Jacobian in order to create the factorization object.
     # This need to have the same sparsity structure as the actual Jacobian. If
@@ -1740,7 +1756,7 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
     # structural zeros which would change the sparsity structure).
     # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
     # J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm*wmodesm), - Cnm*wmodes2m)
-    J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm), -Cnm)
+    J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnmcopy, invLnm), im*Gnm), -Cnm)
 
     # make the arrays and datastructures we need for
     # the non-allocating sparse matrix multiplication.
