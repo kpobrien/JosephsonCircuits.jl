@@ -149,7 +149,7 @@ end
 #         symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
 #         returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
 #         returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-#         returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
+#         returnvoltageadjoint = false, keyedarrays::Bool = false,
 #         sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
 #         returnZ = false, returnZadjoint = false,
 #         returnZsensitivity = false, returnZsensitivityadjoint = false,
@@ -171,13 +171,15 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
-    returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-    returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(false),
-    sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
-    returnZ = false, returnZadjoint = false,
-    returnZsensitivity = false, returnZsensitivityadjoint = false,
-    factorization = KLUfactorization()) where K
+    returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
+    returnCM::Bool = true, returnnodeflux::Bool = false,
+    returnvoltage::Bool = false, returnnodefluxadjoint::Bool = false,
+    returnvoltageadjoint::Bool = false, keyedarrays::Bool = false,
+    sensitivitynames::Vector{String} = String[],
+    returnSsensitivity::Bool = false, returnZ::Bool = false,
+    returnZadjoint::Bool = false, returnZsensitivity::Bool = false,
+    returnZsensitivityadjoint::Bool = false,
+    factorization = KLUfactorization())
 
     # Base.depwarn("""
     # Calls the new harmonic balance solvers, [`hbnlsolve`](@ref) and
@@ -276,7 +278,7 @@ end
         sorting = :number, returnS = true, returnSnoise = false, returnQE = true,
         returnCM = true, returnnodeflux = false, returnvoltage = false,
         returnnodefluxadjoint = false, returnvoltageadjoint = false,
-        keyedarrays::Val{K} = Val(true), sensitivitynames::Vector{String} = String[],
+        keyedarrays = true, sensitivitynames::Vector{String} = String[],
         returnSsensitivity = false, returnZ = false, returnZadjoint = false,
         returnZsensitivity = false, returnZsensitivityadjoint = false,
         factorization = KLUfactorization()) where {N,M,K}
@@ -363,8 +365,8 @@ and [`hblinsolve`](@ref).
     adjoint simulations.
 - `returnvoltageadjoint = false`: return the node voltages from the linearized
     adjoint simulations.
-- `keyedarrays::Val{K} = Val(true)`: when Val(true) return the output matrices
-    and vectors as keyed arrays for more intuitive indexing. When Val(false)
+- `keyedarrays = true`: when true return the output matrices
+    and vectors as keyed arrays for more intuitive indexing. When false
     return normal matrices and vectors.
 - `sensitivitynames::Vector{String} = String[]`: the component names for which
     to return the sensitivities (in progress).
@@ -388,17 +390,19 @@ and [`hblinsolve`](@ref).
 """
 function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
-    circuit, circuitdefs;dc = false, threewavemixing = false,
-    fourwavemixing = true, maxintermodorder=Inf, iterations = 1000,
+    circuit, circuitdefs;dc::Bool = false, threewavemixing::Bool = false,
+    fourwavemixing::Bool = true, maxintermodorder=Inf, iterations = 1000,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
-    sorting = :number, returnS = true, returnSnoise = false, returnQE = true,
-    returnCM = true, returnnodeflux = false, returnvoltage = false,
-    returnnodefluxadjoint = false, returnvoltageadjoint = false,
-    keyedarrays::Val{K} = Val(true), sensitivitynames::Vector{String} = String[],
-    returnSsensitivity = false, returnZ = false, returnZadjoint = false,
-    returnZsensitivity = false, returnZsensitivityadjoint = false,
-    factorization = KLUfactorization()) where {N,M,K}
+    sorting = :number, returnS::Bool = true, returnSnoise::Bool = false,
+    returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
+    returnvoltage::Bool = false, returnnodefluxadjoint::Bool = false,
+    returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
+    sensitivitynames::Vector{String} = String[],
+    returnSsensitivity::Bool = false, returnZ::Bool = false,
+    returnZadjoint::Bool = false, returnZsensitivity::Bool = false,
+    returnZsensitivityadjoint::Bool = false,
+    factorization = KLUfactorization()) where {N,M}
 
     # calculate the Frequencies struct
     freq = removeconjfreqs(
@@ -516,8 +520,8 @@ consisting of an arbitrary number of large signals (strong tones) from
     adjoint simulations.
 - `returnvoltageadjoint = false`: return the node voltages from the linearized
     adjoint simulations.
-- `keyedarrays::Val{K} = Val(true)`: when Val(true) return the output matrices
-    and vectors as keyed arrays for more intuitive indexing. When Val(false)
+- `keyedarrays = true`: when true return the output matrices
+    and vectors as keyed arrays for more intuitive indexing. When false
     return normal matrices and vectors.
 - `sensitivitynames::Vector{String} = String[]`: the component names for which
     to return the sensitivities (in progress).
@@ -584,7 +588,7 @@ nonlinear=hbnlsolve(
 linearized = JosephsonCircuits.hblinsolve(ws,
     circuit, circuitdefs; Nmodulationharmonics = Nmodulationharmonics,
     nonlinear = nonlinear, symfreqvar=nothing, threewavemixing=false,
-    fourwavemixing=true, returnnodeflux=true, keyedarrays = Val(false))
+    fourwavemixing=true, returnnodeflux=true, keyedarrays = false)
 isapprox(linearized.nodeflux,
     ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
     atol = 1e-6)
@@ -594,16 +598,18 @@ true
 ```
 """
 function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
-    nonlinear=nothing, symfreqvar=nothing, threewavemixing=false,
-    fourwavemixing=true, maxintermodorder=Inf,
-    nbatches::Integer = Base.Threads.nthreads(), sorting = :number, returnS = true,
-    returnSnoise = false, returnQE = true, returnCM = true,
-    returnnodeflux = false, returnnodefluxadjoint = false,
-    returnvoltage = false, returnvoltageadjoint = false,
-    keyedarrays::Val{K} = Val(true), sensitivitynames::Vector{String} = String[],
-    returnSsensitivity = false, returnZ = false, returnZadjoint = false,
-    returnZsensitivity = false, returnZsensitivityadjoint = false,
-    factorization = KLUfactorization()) where K
+    nonlinear = nothing, symfreqvar = nothing, threewavemixing::Bool = false,
+    fourwavemixing::Bool = true, maxintermodorder = Inf,
+    nbatches::Integer = Base.Threads.nthreads(), sorting = :number,
+    returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
+    returnCM::Bool = true, returnnodeflux::Bool = false,
+    returnnodefluxadjoint::Bool = false, returnvoltage::Bool = false,
+    returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
+    sensitivitynames::Vector{String} = String[],
+    returnSsensitivity::Bool = false, returnZ::Bool = false,
+    returnZadjoint::Bool = false, returnZsensitivity::Bool = false,
+    returnZsensitivityadjoint::Bool = false,
+    factorization = KLUfactorization())
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -702,7 +708,7 @@ signalfreq =JosephsonCircuits.truncfreqs(
     maxintermodorder = Inf,
 )
 linearized = JosephsonCircuits.hblinsolve(ws, psc, cg, circuitdefs,
-    signalfreq;nonlinear = nonlinear, returnnodeflux=true, keyedarrays = Val(false))
+    signalfreq;nonlinear = nonlinear, returnnodeflux=true, keyedarrays = false)
 isapprox(linearized.nodeflux,
     ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
     atol = 1e-6)
@@ -712,15 +718,17 @@ true
 ```
 """
 function hblinsolve(w, psc::ParsedSortedCircuit,
-    cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N}; nonlinear = nothing,
+    cg::CircuitGraph, circuitdefs, signalfreq::Frequencies; nonlinear = nothing,
     symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
-    returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-    returnnodeflux = false, returnnodefluxadjoint = false, returnvoltage = false,
-    returnvoltageadjoint = false, keyedarrays::Val{K} = Val(true),
-    sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
-    returnZ = false, returnZadjoint = false,
-    returnZsensitivity = false, returnZsensitivityadjoint = false,
-    factorization = KLUfactorization()) where {N,K}
+    returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
+    returnCM::Bool = true, returnnodeflux::Bool = false,
+    returnnodefluxadjoint::Bool = false, returnvoltage::Bool = false,
+    returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
+    sensitivitynames::Vector{String} = String[],
+    returnSsensitivity::Bool = false, returnZ::Bool = false,
+    returnZadjoint::Bool = false, returnZsensitivity::Bool = false,
+    returnZsensitivityadjoint::Bool = false,
+    factorization = KLUfactorization())
 
     Nsignalmodes = length(signalfreq.modes)
     # calculate the numeric matrices
@@ -1036,108 +1044,108 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     end
 
     # turn all of the array outputs into keyed arrays if the
-    # keyedarrays = Val(true)
+    # keyedarrays = true
 
-    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # if keyword argument keyedarrays = true then generate keyed arrays
     # for the scattering parameters
-    Sout = if returnS && K
+    Sout = if returnS && keyedarrays
         Stokeyed(S, modes, portnumbers, modes, portnumbers, w)
     else
         S
     end
 
-    Zout = if returnZ && K
+    Zout = if returnZ && keyedarrays
         Stokeyed(Z, modes, portnumbers, modes, portnumbers, w)
     else
         Z
     end
 
-    Zadjointout = if returnZadjoint && K
+    Zadjointout = if returnZadjoint && keyedarrays
         Stokeyed(Zadjoint, modes, portnumbers, modes, portnumbers, w)
     else
         Zadjoint
     end
 
-    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # if keyword argument keyedarrays = true then generate keyed arrays
     # for the noise scattering parameters
-    Snoiseout = if returnSnoise && K
+    Snoiseout = if returnSnoise && keyedarrays
         Snoisetokeyed(Snoise, modes,
             componentnames[noiseportimpedanceindices], modes, portnumbers, w)
     else
         Snoise
     end
 
-    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # if keyword argument keyedarrays = true then generate keyed arrays
     # for Ssensitivity
-    Ssensitivityout = if returnSsensitivity && K
+    Ssensitivityout = if returnSsensitivity && keyedarrays
         Snoisetokeyed(Ssensitivity, modes,
             sensitivitynames, modes, portnumbers, w)
     else
         Ssensitivity
     end
 
-    Zsensitivityout = if returnZsensitivity && K
+    Zsensitivityout = if returnZsensitivity && keyedarrays
         Snoisetokeyed(Zsensitivity, modes,
             sensitivitynames, modes, portnumbers, w)
     else
         Zsensitivity
     end
 
-    Zsensitivityadjointout = if returnZsensitivityadjoint && K
+    Zsensitivityadjointout = if returnZsensitivityadjoint && keyedarrays
         Snoisetokeyed(Zsensitivityadjoint, modes,
             sensitivitynames, modes, portnumbers, w)
     else
         Zsensitivityadjoint
     end
 
-    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # if keyword argument keyedarrays = true then generate keyed arrays
     # for the quantum efficiency
-    QEout = if returnQE && K
+    QEout = if returnQE && keyedarrays
         Stokeyed(QE, modes, portnumbers, modes, portnumbers, w)
     else
         QE
     end
 
-    QEidealout = if returnQE && K
+    QEidealout = if returnQE && keyedarrays
         Stokeyed(QEideal, modes, portnumbers, modes, portnumbers, w)
     else
         QEideal
     end
 
-    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
+    # if keyword argument keyedarrays = true then generate keyed arrays
     # for the commutation relations
-    CMout = if returnCM && K
+    CMout = if returnCM && keyedarrays
         CMtokeyed(CM, modes, portnumbers, w)
     else
         CM
     end
 
-    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
-    nodefluxout = if returnnodeflux && K
+    # if keyword argument keyedarrays = true then generate keyed arrays
+    nodefluxout = if returnnodeflux && keyedarrays
         nodevariabletokeyed(nodeflux, modes, nodenames, modes,
             portnumbers, w)
     else
         nodeflux
     end
 
-    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
-    nodefluxadjointout = if returnnodefluxadjoint && K
+    # if keyword argument keyedarrays = true then generate keyed arrays
+    nodefluxadjointout = if returnnodefluxadjoint && keyedarrays
         nodevariabletokeyed(nodefluxadjoint, modes,
             nodenames, modes, portnumbers, w)
     else
         nodefluxadjoint
     end
 
-    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
-    voltageout = if returnvoltage && K
+    # if keyword argument keyedarrays = true then generate keyed arrays
+    voltageout = if returnvoltage && keyedarrays
         nodevariabletokeyed(voltage, modes,
             nodenames, modes, portnumbers, w)
     else
         voltage
     end
 
-    # if keyword argument keyedarrays = Val(true) then generate keyed arrays
-    voltageadjointout = if returnvoltageadjoint && K
+    # if keyword argument keyedarrays = true then generate keyed arrays
+    voltageadjointout = if returnvoltageadjoint && keyedarrays
         nodevariabletokeyed(voltageadjoint, modes,
             nodenames, modes, portnumbers, w)
     else
@@ -1525,11 +1533,12 @@ true
 """
 function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     circuit, circuitdefs; iterations = 1000,
-    maxintermodorder = Inf, dc = false, odd = true, even = false,
-    x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, sorting= :number, keyedarrays::Val{K} = Val(true),
+    maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
+    even::Bool = false, x0 = nothing, ftol = 1e-8,
+    switchofflinesearchtol = 1e-5, alphamin = 1e-4, symfreqvar = nothing,
+    sorting= :number, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
-    factorization = KLUfactorization()) where {N,K}
+    factorization = KLUfactorization()) where {N}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -1624,13 +1633,21 @@ isapprox(out.nodeflux[:],
 true
 ```
 """
-function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
-    indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
+function hbnlsolve(w, sources, frequencies::Frequencies,
+    indices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, keyedarrays::Val{K} = Val(true),
+    symfreqvar = nothing, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
-    factorization = KLUfactorization()) where {N,K}
+    factorization = KLUfactorization())
+
+# function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
+#     indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
+#     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
+#     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+#     symfreqvar = nothing, keyedarrays::Bool = true,
+#     sensitivitynames::Vector{String} = String[],
+#     factorization = KLUfactorization()) where {N}
 
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
@@ -1811,17 +1828,17 @@ function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
         calcscatteringmatrix!(S, inputwave, outputwave)
     end
 
-    if K
-        nodefluxout = nodevariabletokeyed(nodeflux, modes, nodenames)
+    nodefluxout = if keyedarrays
+        nodevariabletokeyed(nodeflux, modes, nodenames)
     else
-        nodefluxout = nodeflux
+        nodeflux
     end
 
     #
-    if !isempty(S) && K
-        Sout = Stokeyed(S, modes, portnumbers, modes, portnumbers)
+    Sout = if !isempty(S) && keyedarrays
+        Stokeyed(S, modes, portnumbers, modes, portnumbers)
     else
-        Sout = S
+        S
     end
 
     return NonlinearHB(w, frequencies, nodefluxout, Rbnm, Ljb, Lb, Ljbm,
