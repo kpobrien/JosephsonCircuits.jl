@@ -41,8 +41,6 @@ using JosephsonCircuits
 
     include("hbsolve.jl")
 
-    include("hbsolveold.jl")
-
     include("JosephsonCircuits.jl")
 
     include("networkparamconversion.jl")

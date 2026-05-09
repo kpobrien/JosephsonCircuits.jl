@@ -91,9 +91,6 @@ include("fftutils.jl")
 include("qesparams.jl")
 include("keyedarrayutils.jl")
 
-# old single tone harmonic balance solver code
-include("hbsolveold.jl")
-
 # new mult-tone harmonic balance solver code
 include("hbsolve.jl")
 
@@ -215,26 +212,6 @@ function warmupsymsnew()
 
     return hbsolve(ws, wp, sources, Nmodulationharmonics,
         Npumpharmonics, circuit, circuitdefs)
-end
-
-function warmupsymsold()
-
-    @variables Rleft Cc Lj Cj w L1
-    circuit = Tuple{String,String,String,Num}[]
-    push!(circuit,("P1","1","0",1))
-    push!(circuit,("R1","1","0",Rleft))
-    push!(circuit,("C1","1","2",Cc)) 
-    push!(circuit,("Lj1","2","0",Lj)) 
-    push!(circuit,("C2","2","0",Cj))
-    circuitdefs = Dict(
-        Lj =>1000.0e-12,
-        Cc => 100.0e-15,
-        Cj => 1000.0e-15,
-        Rleft => 50.0,
-    )
-
-    return hbsolveold(2*pi*(4.5:0.5:5.0)*1e9, 2*pi*4.75001*1e9, 0.00565e-6, 2, 2, circuit, circuitdefs, pumpports=[1]);
-
 end
 
 function warmupparse()
@@ -550,7 +527,6 @@ export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
 PrecompileTools.@compile_workload begin
     warmup()
     warmupsyms()
-    warmupsymsold()
     warmupsymsnew()
     warmupnetwork()
     warmupconnect()

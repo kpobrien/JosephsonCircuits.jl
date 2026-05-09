@@ -242,42 +242,6 @@ using Test
                 circuit,circuitdefs;dc=true,odd=true,even=false))
     end
 
-    @testset "hbsolve hbsolveold comparison" begin
-
-        @variables Rleft Cc Lj Cj w L1
-        circuit = Tuple{String,String,String,Num}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",Rleft))
-        push!(circuit,("C1","1","2",Cc)) 
-        push!(circuit,("Lj1","2","0",Lj)) 
-        push!(circuit,("C2","2","0",Cj))
-        circuitdefs = Dict(
-            Lj =>1000.0e-12,
-            Cc => 100.0e-15,
-            Cj => 1000.0e-15,
-            Rleft => 50.0,
-        )
-        ws = 2*pi*(4.5:0.01:5.0)*1e9
-        wp = 2*pi*4.75001*1e9
-        Ip = 0.00565e-6
-        Nsignalmodes = 8
-        Npumpmodes = 8
-
-        # reduce the tolerance in order to get consistent results between different solvers
-        result1=JosephsonCircuits.hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1], ftol=1e-14)
-        result2=hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1], ftol=1e-14)
-
-        @test isapprox(
-            result1.nonlinear.nodeflux,
-            result2.nonlinear.nodeflux,
-            atol = 1e-8)
-
-        @test isapprox(
-            result1.linearized.S[result1.linearized.signalindex,result1.linearized.signalindex,:],
-            result2.linearized.S[1,1,:],
-            atol = 1e-8)
-    end
-
     @testset "hbsolve lossy" begin
 
         @variables Rleft Cc Lj Cj w L1 Rloss
@@ -314,46 +278,6 @@ using Test
         @test isapprox(
             10*log10.(abs2.(result.linearized.S[1,1,:])),
              [-0.35881759555167236, -0.3851174237205393, -0.41414939782595106, -0.4462870004715635, -0.48196714994752377, -0.5217030289528287, -0.5660998957855977, -0.615874647719035, -0.6718801165794636, -0.7351353418633039, -0.8068633960271241, -0.8885387338154525, -0.9819464930235025, -1.0892566478443222, -1.2131163061265446, -1.3567635294998903, -1.5241654076166113, -1.7201809145493425, -1.9507437712551328, -2.223049149697846, -2.545704634827017, -2.9287583966275106, -3.3834221104310536, -3.9211171199862456, -4.551109822158283, -5.275362707148965, -6.078361819718249, -6.90969626897045, -7.662867009688683, -8.174297596028158, -8.287679621767847, -7.968447775092126, -7.33403618231908, -6.555662038768009, -5.76428432885789, -5.030262400951592, -4.380877506283952, -3.820225944113212, -3.3419579811879623, -2.935990186717743, -2.5916846723187135, -2.2992025795746533, -2.049972412052101, -1.8367527622127993, -1.6535251011101937, -1.4953289744293266, -1.3580907826248823, -1.2384674502534234, -1.1337120449250095, -1.0415619181962141, -0.9601472565293714],
-            atol = 1e-8)
-    end
-
-
-    @testset "hbsolve hbsolveold lossy comparison" begin
-
-        @variables Rleft Cc Lj Cj w L1 Rloss
-        circuit = Tuple{String,String,String,Num}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",Rleft))
-        push!(circuit,("C1","1","2",Cc)) 
-        push!(circuit,("Lj1","2","0",Lj)) 
-        push!(circuit,("C2","2","0",Cj))
-        push!(circuit,("R2","2","0",Rloss))
-
-        circuitdefs = Dict(
-            Lj =>1000.0e-12,
-            Cc => 100.0e-15,
-            Cj => 1000.0e-15,
-            Rloss => 1000.0,
-            Rleft => 50.0,
-        )
-        ws = 2*pi*(4.5:0.01:5.0)*1e9
-        wp = 2*pi*4.75001*1e9
-        Ip = 0.00565e-6
-        Nsignalmodes = 8
-        Npumpmodes = 8
-        
-        # reduce the tolerance in order to get consistent results between different solvers
-        result1=JosephsonCircuits.hbsolveold(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1], ftol=1e-14)
-        result2=hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit, circuitdefs, pumpports=[1], ftol=1e-14)
-
-        @test isapprox(
-            result1.nonlinear.nodeflux,
-            result2.nonlinear.nodeflux,
-            atol = 1e-8)
-
-        @test isapprox(
-            result1.linearized.S[result1.linearized.signalindex,result1.linearized.signalindex,:],
-            result2.linearized.S[1,1,:],
             atol = 1e-8)
     end
 
