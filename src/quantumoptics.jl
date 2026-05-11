@@ -186,6 +186,9 @@ See also [`symplectic_form_block`](@ref),
 
 """
 function is_symplectic(Ω, S)
+    if isodd(size(S,1)) || isodd(size(S,2))
+        error("The dimensions of the input matrix must be even.")
+    end
     # perhaps i should check if Ω is a symplectic form
     # that would guard against swapping the arguments
     return isapprox(S*Ω*transpose(S), Ω)
@@ -1444,6 +1447,907 @@ function quadrature_to_ladder_block(S::AbstractMatrix)
 end
 
 
+
+"""
+    scattering_to_quadrature_pair(S_scattering::AbstractVector{Complex{T}}, w) where {T}
+
+# Examples
+```jldoctest
+@variables x1 x2 x3 x4 p1 p2 p3 p4
+JosephsonCircuits.scattering_to_quadrature_pair(JosephsonCircuits.quadrature_to_ladder_pair([x1,p1,x2,p2,x3,p3,x4,p4])[[1,3,6,8]],[1,1,-1,-1])
+
+# output
+8-element Vector{Num}:
+ x1
+ p1
+ x2
+ p2
+ x3
+ p3
+ x4
+ p4
+```
+"""
+function scattering_to_quadrature_pair(S_scattering::AbstractVector{Complex{T}}, w) where {T}
+    # the symplectic matrix is real so if the type of `S_scattering` is
+    # complex, use this parametric method to define a real matrix.
+    n = length(S_scattering)
+    S_symplectic = zeros(T, 2*n)
+    return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
+end
+
+function scattering_to_quadrature_pair(S_scattering::AbstractVector{T}, w) where {T}
+    n  = length(S_scattering)
+    S_symplectic = zeros(T, 2*n)
+    return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
+end
+
+function scattering_to_quadrature_pair!(S_symplectic::AbstractVector,
+    S_scattering::AbstractVector, w::AbstractVector)
+    
+    # check the relative sizes
+    if length(S_symplectic) != 2*length(S_scattering)
+        throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
+    end
+
+    # check that the number of rows and columns of S_scattering are an integer
+    # multiple of wmodes
+    Nmodes = length(w)
+    n = length(S_scattering)
+    if mod(n, Nmodes) != 0
+        throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
+    end
+
+    # loop through the scattering vector to place each of the elements
+    for i in eachindex(S_scattering)
+        if w[mod(i-1,Nmodes)+1] > 0
+            # this is a
+            # assign x and p
+            S_symplectic[2*i-1] = sqrt(2)*real(S_scattering[i])
+            S_symplectic[2*i] = sqrt(2)*imag(S_scattering[i])
+            # assign p
+        else
+            # this is adag
+            # assign x and p
+            S_symplectic[2*i-1] = sqrt(2)*real(S_scattering[i])
+            S_symplectic[2*i] = -sqrt(2)*imag(S_scattering[i])
+        end
+    end
+
+    return S_symplectic
+end
+
+"""
+    scattering_to_quadrature_block(S_scattering::AbstractVector{Complex{T}}, w) where {T}
+
+# Examples
+```jldoctest
+@variables x1 x2 x3 x4 p1 p2 p3 p4
+JosephsonCircuits.scattering_to_quadrature_block(JosephsonCircuits.quadrature_to_ladder_pair([x1,p1,x2,p2,x3,p3,x4,p4])[[1,3,6,8]],[1,1,-1,-1])
+
+# output
+8-element Vector{Num}:
+ x1
+ x2
+ x3
+ x4
+ p1
+ p2
+ p3
+ p4
+```
+"""
+function scattering_to_quadrature_block(S_scattering::AbstractVector{Complex{T}}, w) where {T}
+    # the symplectic matrix is real so if the type of `S_scattering` is
+    # complex, use this parametric method to define a real matrix.
+    n = length(S_scattering)
+    S_symplectic = zeros(T, 2*n)
+    return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
+end
+
+function scattering_to_quadrature_block(S_scattering::AbstractVector{T}, w) where {T}
+    n  = length(S_scattering)
+    S_symplectic = zeros(T, 2*n)
+    return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
+end
+
+function scattering_to_quadrature_block!(S_symplectic::AbstractVector,
+    S_scattering::AbstractVector, w::AbstractVector)
+    
+    # check the relative sizes
+    if length(S_symplectic) != 2*length(S_scattering)
+        throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
+    end
+
+    # check that the number of rows and columns of S_scattering are an integer
+    # multiple of wmodes
+    Nmodes = length(w)
+    n = length(S_scattering)
+    if mod(n, Nmodes) != 0
+        throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
+    end
+
+    # loop through the scattering vector to place each of the elements
+    for i in eachindex(S_scattering)
+        if w[mod(i-1,Nmodes)+1] > 0
+            # this is a
+            # assign x and p
+            S_symplectic[i] = sqrt(2)*real(S_scattering[i])
+            S_symplectic[i+n] = sqrt(2)*imag(S_scattering[i])
+            # assign p
+        else
+            # this is adag
+            # assign x and p
+            S_symplectic[i] = sqrt(2)*real(S_scattering[i])
+            S_symplectic[i+n] = -sqrt(2)*imag(S_scattering[i])
+        end
+    end
+
+    return S_symplectic
+end
+
+"""
+    scattering_to_ladder_pair(S_scattering::AbstractVector, w)
+
+# Examples
+```jldoctest
+@variables x1 x2 x3 x4 p1 p2 p3 p4
+JosephsonCircuits.scattering_to_ladder_pair(JosephsonCircuits.quadrature_to_ladder_pair([x1,p1,x2,p2,x3,p3,x4,p4])[[1,3,6,8]],[1,1,-1,-1])
+
+# output
+8-element Vector{Complex{Num}}:
+ 0.7071067811865475x1 + 0.7071067811865475im*p1
+ 0.7071067811865475x1 - 0.7071067811865475im*p1
+ 0.7071067811865475x2 + 0.7071067811865475im*p2
+ 0.7071067811865475x2 - 0.7071067811865475im*p2
+ 0.7071067811865475x3 + 0.7071067811865475im*p3
+ 0.7071067811865475x3 - 0.7071067811865475im*p3
+ 0.7071067811865475x4 + 0.7071067811865475im*p4
+ 0.7071067811865475x4 - 0.7071067811865475im*p4
+```
+"""
+function scattering_to_ladder_pair(S_scattering::AbstractVector, w)
+    n  = length(S_scattering)
+    S_bogoliubov = zeros(eltype(S_scattering), 2*n)
+    return scattering_to_ladder_pair!(S_bogoliubov, S_scattering, w)
+end
+
+function scattering_to_ladder_pair!(S_bogoliubov::AbstractVector,
+    S_scattering::AbstractVector, w::AbstractVector)
+    
+    # check the relative sizes
+    if length(S_bogoliubov) != 2*length(S_scattering)
+        throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
+    end
+
+    # check that the number of rows and columns of S_scattering are an integer
+    # multiple of wmodes
+    Nmodes = length(w)
+    n = length(S_scattering)
+    if mod(n, Nmodes) != 0
+        throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
+    end
+
+    # loop through the scattering vector to place each of the elements
+    for i in eachindex(S_scattering)
+        if w[mod(i-1,Nmodes)+1] > 0
+            # this is a
+            # assign a and adag
+            S_bogoliubov[2*i-1] = S_scattering[i]
+            S_bogoliubov[2*i] = conj(S_scattering[i])
+            # assign p
+        else
+            # this is adag
+            # assign a and adag
+            S_bogoliubov[2*i-1] = conj(S_scattering[i])
+            S_bogoliubov[2*i] = S_scattering[i]
+        end
+    end
+
+    return S_bogoliubov
+end
+
+"""
+
+    scattering_to_ladder_block(S_scattering::AbstractVector, w)
+
+# Examples
+```jldoctest
+@variables x1 x2 x3 x4 p1 p2 p3 p4
+JosephsonCircuits.scattering_to_ladder_block(JosephsonCircuits.quadrature_to_ladder_pair([x1,p1,x2,p2,x3,p3,x4,p4])[[1,3,6,8]],[1,1,-1,-1])
+
+# output
+8-element Vector{Complex{Num}}:
+ 0.7071067811865475x1 + 0.7071067811865475im*p1
+ 0.7071067811865475x2 + 0.7071067811865475im*p2
+ 0.7071067811865475x3 + 0.7071067811865475im*p3
+ 0.7071067811865475x4 + 0.7071067811865475im*p4
+ 0.7071067811865475x1 - 0.7071067811865475im*p1
+ 0.7071067811865475x2 - 0.7071067811865475im*p2
+ 0.7071067811865475x3 - 0.7071067811865475im*p3
+ 0.7071067811865475x4 - 0.7071067811865475im*p4
+```
+"""
+function scattering_to_ladder_block(S_scattering::AbstractVector, w)
+    n  = length(S_scattering)
+    S_bogoliubov = zeros(eltype(S_scattering), 2*n)
+    return scattering_to_ladder_block!(S_bogoliubov, S_scattering, w)
+end
+
+function scattering_to_ladder_block!(S_bogoliubov::AbstractVector,
+    S_scattering::AbstractVector, w::AbstractVector)
+    
+    # check the relative sizes
+    if length(S_bogoliubov) != 2*length(S_scattering)
+        throw(DimensionMismatch(lazy"The length of the bogoliubov vector must be double that of the scattering parameter vector."))
+    end
+
+    # check that the number of rows and columns of S_scattering are an integer
+    # multiple of wmodes
+    Nmodes = length(w)
+    n = length(S_scattering)
+    if mod(n, Nmodes) != 0
+        throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
+    end
+
+    # loop through the scattering vector to place each of the elements
+    for i in eachindex(S_scattering)
+        if w[mod(i-1,Nmodes)+1] > 0
+            # this is a
+            # assign x and p
+            S_bogoliubov[i] = S_scattering[i]
+            S_bogoliubov[i+n] = conj(S_scattering[i])
+            # assign p
+        else
+            # this is adag
+            # assign x and p
+            S_bogoliubov[i] = conj(S_scattering[i])
+            S_bogoliubov[i+n] = S_scattering[i]
+        end
+    end
+
+    return S_bogoliubov
+end
+
+"""
+    scattering_to_ladder_pair(S_scattering::AbstractMatrix, w)
+
+# Examples
+```jldoctest
+@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex;
+JosephsonCircuits.scattering_to_ladder_pair([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1,1,-1])
+
+# output
+8×8 Matrix{Complex{Num}}:
+ S11            0               …            0               S14
+   0  real(S11) - im*imag(S11)     real(S14) - im*imag(S14)    0
+   0  real(S21) - im*imag(S21)     real(S24) - im*imag(S24)    0
+ S21            0                            0               S24
+ S31            0                            0               S34
+   0  real(S31) - im*imag(S31)  …  real(S34) - im*imag(S34)    0
+   0  real(S41) - im*imag(S41)     real(S44) - im*imag(S44)    0
+ S41            0                            0               S44
+```
+"""
+function scattering_to_ladder_pair(S_scattering::AbstractMatrix, w)
+    n,m  = size(S_scattering)
+    S_bogoliubov = zeros(eltype(S_scattering), 2*n, 2*m)
+    return scattering_to_ladder_pair!(S_bogoliubov, S_scattering, w)
+end
+
+function scattering_to_ladder_pair!(S_bogoliubov::AbstractMatrix,
+    S_scattering::AbstractMatrix, w::AbstractVector)
+    
+    # # check the relative sizes
+    # if length(S_bogoliubov) != 2*length(S_scattering)
+    #     throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
+    # end
+
+    # # check that the number of rows and columns of S_scattering are an integer
+    # # multiple of wmodes
+    # Nmodes = length(w)
+    # n = length(S_scattering)
+    # if mod(n, Nmodes) != 0
+    #     throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
+    # end
+
+    # loop through the scattering parameter matrix
+    # check the signs, then assign one of the 2x2 blocks depending
+    # on the 4 sign combinations.
+
+    for i in 1:size(S_scattering,1)
+        for j in 1:size(S_scattering,2)
+            if ispositive(w[i])
+                if ispositive(w[j])
+                    # both positive
+                    S_bogoliubov[2*i-1,2*j-1] = S_scattering[i,j]
+                    S_bogoliubov[2*i-1,2*j] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i,2*j-1] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i,2*j] = conj(S_scattering[i,j])
+                else
+                    # row positive, col negative
+                    S_bogoliubov[2*i-1,2*j-1] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i-1,2*j] = S_scattering[i,j]
+                    S_bogoliubov[2*i,2*j-1] = conj(S_scattering[i,j])
+                    S_bogoliubov[2*i,2*j] = zero(eltype(S_bogoliubov))
+                end
+            else
+                if ispositive(w[j])
+                    # row negative, col positive
+                    S_bogoliubov[2*i-1,2*j-1] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i-1,2*j] = conj(S_scattering[i,j])
+                    S_bogoliubov[2*i,2*j-1] = S_scattering[i,j]
+                    S_bogoliubov[2*i,2*j] = zero(eltype(S_bogoliubov))
+                else
+                    # both negative
+                    S_bogoliubov[2*i-1,2*j-1] = conj(S_scattering[i,j])
+                    S_bogoliubov[2*i-1,2*j] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i,2*j-1] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i,2*j] = S_scattering[i,j]
+                end
+            end
+        end
+    end
+
+    return S_bogoliubov
+end
+
+
+
+"""
+    scattering_to_ladder_block(S_scattering::AbstractMatrix, w)
+
+# Examples
+```jldoctest
+@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex
+JosephsonCircuits.scattering_to_ladder_block([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1,1,-1])
+
+# output
+8×8 Matrix{Complex{Num}}:
+ S11            0               S13  …  S12            0               S14
+   0  real(S22) - im*imag(S22)    0       0  real(S23) - im*imag(S23)    0
+ S31            0               S33     S32            0               S34
+   0  real(S42) - im*imag(S42)    0       0  real(S43) - im*imag(S43)    0
+   0  real(S12) - im*imag(S12)    0       0  real(S13) - im*imag(S13)    0
+ S21            0               S23  …  S22            0               S24
+   0  real(S32) - im*imag(S32)    0       0  real(S33) - im*imag(S33)    0
+ S41            0               S43     S42            0               S44
+```
+"""
+function scattering_to_ladder_block(S_scattering::AbstractMatrix, w)
+    n,m  = size(S_scattering)
+    S_bogoliubov = zeros(eltype(S_scattering), 2*n, 2*m)
+    return scattering_to_ladder_block!(S_bogoliubov, S_scattering, w)
+end
+
+function scattering_to_ladder_block!(S_bogoliubov::AbstractMatrix,
+    S_scattering::AbstractMatrix, w::AbstractVector)
+    
+    # # check the relative sizes
+    # if length(S_bogoliubov) != 2*length(S_scattering)
+    #     throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
+    # end
+
+    # # check that the number of rows and columns of S_scattering are an integer
+    # # multiple of wmodes
+    # Nmodes = length(w)
+    # n = length(S_scattering)
+    # if mod(n, Nmodes) != 0
+    #     throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
+    # end
+
+    # loop through the scattering parameter matrix
+    # check the signs, then assign one of the 2x2 blocks depending
+    # on the 4 sign combinations.
+
+    # loop through the four blocks
+    # S = [A B;C D]
+
+    n = size(S_scattering,1)
+    m = size(S_scattering,2)
+    
+    for i in 1:n
+        for j in 1:m
+            if ispositive(w[i])
+                if ispositive(w[j])
+                    # both positive
+                    # A
+                    S_bogoliubov[i,j] = S_scattering[i,j]
+                    # B
+                    S_bogoliubov[i,j+m] = zero(eltype(S_bogoliubov))
+                    # C
+                    S_bogoliubov[i+m,j] = zero(eltype(S_bogoliubov))
+                    # D
+                    S_bogoliubov[i+n,j+m] = conj(S_scattering[i,j])
+                else
+                    # row positive, col negative
+                    # A
+                    S_bogoliubov[i,j] = zero(eltype(S_bogoliubov))
+                    # B
+                    S_bogoliubov[i,j+m] = S_scattering[i,j]
+                    # C
+                    S_bogoliubov[i+m,j] = conj(S_scattering[i,j])
+                    # D
+                    S_bogoliubov[i+n,j+m] = zero(eltype(S_bogoliubov))
+
+                end
+            else
+                if ispositive(w[j])
+                    # row negative, col positive
+                    # A
+                    S_bogoliubov[i,j] = zero(eltype(S_bogoliubov))
+                    # B
+                    S_bogoliubov[i,j+m] = conj(S_scattering[i,j])
+                    # C
+                    S_bogoliubov[i+m,j] = S_scattering[i,j]
+                    # D
+                    S_bogoliubov[i+n,j+m] = zero(eltype(S_bogoliubov))
+
+                else
+                    # both negative
+                    # A
+                    S_bogoliubov[i,j] = conj(S_scattering[i,j])
+                    # B
+                    S_bogoliubov[i,j+m] = zero(eltype(S_bogoliubov))
+                    # C
+                    S_bogoliubov[i+m,j] = zero(eltype(S_bogoliubov))
+                    # D
+                    S_bogoliubov[i+n,j+m] = S_scattering[i,j]
+                end
+            end
+        end
+    end
+
+    return S_bogoliubov
+end
+
+"""
+    scattering_to_quadrature_pair(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
+
+# Examples
+```jldoctest
+@variables S11::Complex S12::Complex S21::Complex S22::Complex;
+S=[S11 S12;S21 S22];w=[1,-1];
+JosephsonCircuits.scattering_to_quadrature_pair(S,w)
+
+# output
+4×4 Matrix{Num}:
+  real(S11)  -imag(S11)   real(S12)   imag(S12)
+  imag(S11)   real(S11)   imag(S12)  -real(S12)
+  real(S21)  -imag(S21)   real(S22)   imag(S22)
+ -imag(S21)  -real(S21)  -imag(S22)   real(S22)
+```
+"""
+function scattering_to_quadrature_pair(S_scattering::AbstractMatrix{T}, w) where {T}
+    n,m = size(S_scattering)
+    S_symplectic = zeros(T, 2*n, 2*m)
+    return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
+end
+
+function scattering_to_quadrature_pair(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
+    # the symplectic matrix is real so if the type of `S_scattering` is
+    # complex, use this parametric method to define a real matrix.
+    n,m = size(S_scattering)
+    S_symplectic = zeros(T, 2*n, 2*m)
+    return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
+end
+
+function scattering_to_quadrature_pair!(S_symplectic::AbstractMatrix,
+    S_scattering::AbstractMatrix, w::AbstractVector)
+    
+    # # check the relative sizes
+    # if length(S_bogoliubov) != 2*length(S_scattering)
+    #     throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
+    # end
+
+    # # check that the number of rows and columns of S_scattering are an integer
+    # # multiple of wmodes
+    # Nmodes = length(w)
+    # n = length(S_scattering)
+    # if mod(n, Nmodes) != 0
+    #     throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
+    # end
+
+    # loop through the scattering parameter matrix
+    # check the signs, then assign one of the 2x2 blocks depending
+    # on the 4 sign combinations.
+
+    for i in 1:size(S_scattering,1)
+        for j in 1:size(S_scattering,2)
+            if ispositive(w[i])
+                if ispositive(w[j])
+                    # both positive
+                    S_symplectic[2*i-1,2*j-1] = real(S_scattering[i,j])
+                    S_symplectic[2*i-1,2*j] = -imag(S_scattering[i,j])
+                    S_symplectic[2*i,2*j-1] = imag(S_scattering[i,j])
+                    S_symplectic[2*i,2*j] = real(S_scattering[i,j])
+                else
+                    # row positive, col negative
+                    S_symplectic[2*i-1,2*j-1] = real(S_scattering[i,j])
+                    S_symplectic[2*i-1,2*j] = imag(S_scattering[i,j])
+                    S_symplectic[2*i,2*j-1] = imag(S_scattering[i,j])
+                    S_symplectic[2*i,2*j] = -real(S_scattering[i,j])
+                end
+            else
+                if ispositive(w[j])
+                    # row negative, col positive
+                    S_symplectic[2*i-1,2*j-1] = real(S_scattering[i,j])
+                    S_symplectic[2*i-1,2*j] = -imag(S_scattering[i,j])
+                    S_symplectic[2*i,2*j-1] = -imag(S_scattering[i,j])
+                    S_symplectic[2*i,2*j] = -real(S_scattering[i,j])
+                else
+                    # both negative
+                    S_symplectic[2*i-1,2*j-1] = real(S_scattering[i,j])
+                    S_symplectic[2*i-1,2*j] = imag(S_scattering[i,j])
+                    S_symplectic[2*i,2*j-1] = -imag(S_scattering[i,j])
+                    S_symplectic[2*i,2*j] = real(S_scattering[i,j])
+                end
+            end
+        end
+    end
+
+    return S_symplectic
+end
+
+
+"""
+    scattering_to_quadrature_block(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
+
+# Examples
+```jldoctest
+@variables S11::Complex S12::Complex S21::Complex S22::Complex;
+S=[S11 S12;S21 S22];w=[1,-1];
+JosephsonCircuits.scattering_to_quadrature_block(S,w)
+
+# output
+4×4 Matrix{Num}:
+  real(S11)   real(S12)  -imag(S11)   imag(S12)
+  real(S21)   real(S22)  -imag(S21)   imag(S22)
+  imag(S11)   imag(S12)   real(S11)  -real(S12)
+ -imag(S21)  -imag(S22)  -real(S21)   real(S22)
+```
+"""
+function scattering_to_quadrature_block(S_scattering::AbstractMatrix{T}, w) where {T}
+    n,m = size(S_scattering)
+    S_symplectic = zeros(T, 2*n, 2*m)
+    return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
+end
+
+function scattering_to_quadrature_block(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
+    # the symplectic matrix is real so if the type of `S_scattering` is
+    # complex, use this parametric method to define a real matrix.
+    n,m = size(S_scattering)
+    S_symplectic = zeros(T, 2*n, 2*m)
+    return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
+end
+
+function scattering_to_quadrature_block!(S_symplectic::AbstractMatrix,
+    S_scattering::AbstractMatrix, w::AbstractVector)
+    
+    # # check the relative sizes
+    # if length(S_bogoliubov) != 2*length(S_scattering)
+    #     throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
+    # end
+
+    # # check that the number of rows and columns of S_scattering are an integer
+    # # multiple of wmodes
+    # Nmodes = length(w)
+    # n = length(S_scattering)
+    # if mod(n, Nmodes) != 0
+    #     throw(DimensionMismatch(lazy"Length of scattering vector must be integer multiples of the number of modes."))
+    # end
+
+    # loop through the four blocks
+    # S = [A B;C D]
+
+    n = size(S_scattering,1)
+    m = size(S_scattering,2)
+    
+    for i in 1:n
+        for j in 1:m
+            if ispositive(w[i])
+                if ispositive(w[j])
+                    # both positive
+                    # A
+                    S_symplectic[i,j] = real(S_scattering[i,j])
+                    # B
+                    S_symplectic[i,j+m] = -imag(S_scattering[i,j])
+                    # C
+                    S_symplectic[i+m,j] = imag(S_scattering[i,j])
+                    # D
+                    S_symplectic[i+n,j+m] = real(S_scattering[i,j])
+                else
+                    # row positive, col negative
+                    # A
+                    S_symplectic[i,j] = real(S_scattering[i,j])
+                    # B
+                    S_symplectic[i,j+m] = imag(S_scattering[i,j])
+                    # C
+                    S_symplectic[i+m,j] = imag(S_scattering[i,j])
+                    # D
+                    S_symplectic[i+n,j+m] = -real(S_scattering[i,j])
+
+                end
+            else
+                if ispositive(w[j])
+                    # row negative, col positive
+                    # A
+                    S_symplectic[i,j] = real(S_scattering[i,j])
+                    # B
+                    S_symplectic[i,j+m] = -imag(S_scattering[i,j])
+                    # C
+                    S_symplectic[i+m,j] = -imag(S_scattering[i,j])
+                    # D
+                    S_symplectic[i+n,j+m] = -real(S_scattering[i,j])
+
+                else
+                    # both negative
+                    # A
+                    S_symplectic[i,j] = real(S_scattering[i,j])
+                    # B
+                    S_symplectic[i,j+m] = imag(S_scattering[i,j])
+                    # C
+                    S_symplectic[i+m,j] = -imag(S_scattering[i,j])
+                    # D
+                    S_symplectic[i+n,j+m] = real(S_scattering[i,j])
+                end
+            end
+        end
+    end
+
+
+    return S_symplectic
+end
+
+
+"""
+    ports_modes_to_modes_ports_perm(Nports,Nmodes)
+
+Return a permutation vector that converts one axis of a scattering matrix with
+`Nports` ports and `Nmodes` modes from (port,mode) ordering to a (mode,port)
+ordering. For example, for 2 ports with indices 1,2 and 4 modes with indices
+1,2,3,4 then (port,mode) order is:
+[(1,1),(1,2),(2,1),(2,2),(3,1),(3,2),(4,1),(4,2)]
+and (mode,port) order is:
+[(1,1),(1,2),(1,3),(1,4),(2,1),(2,2),(2,3),(2,4)]
+The permutation to change the first into the second is in the example below:
+
+# Examples
+```jldoctest
+julia> p = JosephsonCircuits.ports_modes_to_modes_ports_perm(2,4)
+8-element Vector{Int64}:
+ 1
+ 3
+ 5
+ 7
+ 2
+ 4
+ 6
+ 8
+```
+"""
+function ports_modes_to_modes_ports_perm(Nports,Nmodes)
+
+    # for (ports,modes) to (modes,ports)
+    p = Vector{Int}(undef,Nports*Nmodes)
+    for i in eachindex(p)
+        p[i] = mod(1+(i-1)*Nports,length(p)) + div(i-1,Nmodes)
+    end
+
+    return p
+end
+
+"""
+    modes_ports_to_ports_modes_perm(Nports,Nmodes)
+
+Return a permutation vector that converts one axis of a scattering matrix with
+`Nports` ports and `Nmodes` modes from (mode,port) ordering to a (port,mode)
+ordering. For example, for 2 ports with indices 1,2 and 4 modes with indices
+1,2,3,4 then (mode,port) order is:
+[(1,1),(1,2),(1,3),(1,4),(2,1),(2,2),(2,3),(2,4)]
+and (port,mode) order is:
+[(1,1),(1,2),(2,1),(2,2),(3,1),(3,2),(4,1),(4,2)]
+The permutation to change the first into the second is in the example below:
+
+# Examples
+```jldoctest
+julia> p = JosephsonCircuits.modes_ports_to_ports_modes_perm(2,4)
+8-element Vector{Int64}:
+ 1
+ 5
+ 2
+ 6
+ 3
+ 7
+ 4
+ 8
+```
+"""
+function modes_ports_to_ports_modes_perm(Nports,Nmodes)
+
+    # for (modes,ports) to (ports,modes)
+    p = Vector{Int}(undef,Nports*Nmodes)
+    for i in eachindex(p)
+        p[i] = mod(1+(i-1)*Nmodes,length(p)) + div(i-1,Nports)
+    end
+
+    return p
+end
+
+"""
+    scattering_to_pair_perm(p0::Vector{Int})
+
+Return a permutation vector that converts one axis of a scattering matrix with
+`Nports` ports and `Nmodes` modes from (port,mode) ordering to a (mode,port)
+ordering. For example, for 2 ports with indices 1,2 and 4 modes with indices
+1,2,3,4 then (port,mode) order is:
+[(1,1),(1,1),(1,2),(1,2),(2,1),(2,1),(2,2),(2,2),(3,1),(3,1),(3,2),(3,2),(4,1),(4,1),(4,2),(4,2)]
+and (mode,port) order is:
+[(1,1),(1,1),(1,2),(1,2),(1,3),(1,3),(1,4),(1,4),(2,1),(2,1),(2,2),(2,2),(2,3),(2,3),(2,4),(2,4)]
+The permutation to change the first into the second is in the example below:
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.scattering_to_pair_perm(JosephsonCircuits.ports_modes_to_modes_ports_perm(2,4))
+16-element Vector{Int64}:
+  1
+  2
+  5
+  6
+  9
+ 10
+ 13
+ 14
+  3
+  4
+  7
+  8
+ 11
+ 12
+ 15
+ 16
+```
+"""
+function scattering_to_pair_perm(p0::Vector{Int})
+
+    # for (ports,modes) to (modes,ports)
+    p = Vector{Int}(undef,2*length(p0))
+    for i in eachindex(p0)
+        p[2*i-1] = 2*p0[i]-1
+        p[2*i] = 2*p0[i]
+    end
+
+    return p
+end
+
+"""
+    scattering_to_block_perm(p0::Vector{Int})
+
+Return a permutation vector that converts one axis of a scattering matrix with
+`Nports` ports and `Nmodes` modes from (port,mode) ordering to a (mode,port)
+ordering. For example, for 2 ports with indices 1,2 and 4 modes with indices
+1,2,3,4 then (port,mode) order is:
+[(1,1),(1,2),(2,1),(2,2),(3,1),(3,2),(4,1),(4,2),(1,1),(1,2),(2,1),(2,2),(3,1),(3,2),(4,1),(4,2)]
+and (mode,port) order is:
+[(1,1),(1,2),(1,3),(1,4),(2,1),(2,2),(2,3),(2,4),(1,1),(1,2),(1,3),(1,4),(2,1),(2,2),(2,3),(2,4)]
+The permutation to change the first into the second is in the example below:
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.scattering_to_block_perm(JosephsonCircuits.ports_modes_to_modes_ports_perm(2,4))
+16-element Vector{Int64}:
+  1
+  3
+  5
+  7
+  2
+  4
+  6
+  8
+  9
+ 11
+ 13
+ 15
+ 10
+ 12
+ 14
+ 16
+```
+"""
+function scattering_to_block_perm(p0::Vector{Int})
+
+    # for (ports,modes) to (modes,ports)
+    p = Vector{Int}(undef,2*length(p0))
+    for i in eachindex(p0)
+        p[i] = p0[i]
+        p[i+length(p0)] = p0[i] + length(p0)
+    end
+
+    return p
+end
+
+
+    # make separate functions for vectors and matrices
+    # for arrays loop over everything but the first two dimensions
+
+    # maybe i should just have seperate ones for scattering, pair, and block
+    # i think so, it's not that trivial. 
+    # for pair and block format, we respect the symplectic structure
+    # 
+
+    # for the pair and block, i can first generate the permutations with
+    # the regular function then adapt them to the pair or block format.
+
+    # for pair, do i just copy each one twice and add one to the second one?
+    # 
+
+
+function modes_ports_to_ports_modes_scattering(S::AbstractMatrix,Nmodes::Int)
+
+    if size(S,1) == size(S,2)
+        p1 = p2 = modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes)
+    else
+        p1 = modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes)
+        p2 = modes_ports_to_ports_modes_perm(size(S,2)÷Nmodes,Nmodes)
+    end
+    return S[p1,p2]
+end
+
+function ports_modes_to_modes_ports_scattering(S::AbstractMatrix,Nmodes::Int)
+
+    if size(S,1) == size(S,2)
+        p1 = p2 = ports_modes_to_modes_ports_perm(size(S,1)÷Nmodes,Nmodes)
+    else
+        p1 = ports_modes_to_modes_ports_perm(size(S,1)÷Nmodes,Nmodes)
+        p2 = ports_modes_to_modes_ports_perm(size(S,2)÷Nmodes,Nmodes)
+    end
+    return S[p1,p2]
+end
+
+function ports_modes_to_modes_ports_pair(S::AbstractMatrix,Nmodes::Int)
+
+    if size(S,1) == size(S,2)
+        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
+    else
+        p1 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm(size(S,1)÷Nmodes,Nmodes))
+        p2 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm(size(S,2)÷Nmodes,Nmodes))
+    end
+    return S[p1,p2]
+end
+
+function modes_ports_to_ports_modes_pair(S::AbstractMatrix,Nmodes::Int)
+
+    if size(S,1) == size(S,2)
+        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
+    else
+        p1 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
+        p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm(size(S,2)÷Nmodes,Nmodes))
+    end
+    return S[p1,p2]
+end
+
+function ports_modes_to_modes_ports_block(S::AbstractMatrix,Nmodes::Int)
+    
+    if size(S,1) == size(S,2)
+        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
+    else
+        p1 = scattering_to_block_perm(ports_modes_to_modes_ports_perm(size(S,1)÷Nmodes,Nmodes))
+        p2 = scattering_to_block_perm(ports_modes_to_modes_ports_perm(size(S,2)÷Nmodes,Nmodes))
+    end
+    return S[p1,p2]
+end
+
+function modes_ports_to_ports_modes_block(S::AbstractMatrix,Nmodes::Int)
+    
+    if size(S,1) == size(S,2)
+        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
+    else
+        p1 = scattering_to_block_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
+        p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm(size(S,2)÷Nmodes,Nmodes))
+    end
+    return S[p1,p2]
+end
+
 """
    optimum_eigenvalue_angle(values)
 
@@ -1643,12 +2547,33 @@ function choleskyLr(M::AbstractArray)
     end
 
     L = C.L[invperm(C.p),1:rankL]
-    return L,rankL
+
+    # if the Cholesky factorization reports it has failed, check that
+    # A ≈ L*L'. 
+    if !issuccess(C)
+        if !isapprox(M,L*L')
+            error("Cholesky factorization has failed. Input matrix is not positive semi-definite.")
+        end
+    end
+
+    return L, rankL
 end
 
 function choleskyLr(M::SparseMatrixCSC)
     C = cholesky(M)
-    return Matrix(sparse(C.L)[invperm(C.p),:]), size(M,1)
+
+    L = Matrix(sparse(C.L)[invperm(C.p),:])
+    rankL = size(M,1)
+
+    # if the Cholesky factorization reports it has failed, check that
+    # A ≈ L*L'. 
+    if !issuccess(C)
+        if !isapprox(M,L*L')
+            error("Cholesky factorization has failed. Input matrix is not positive semi-definite.")
+        end
+    end
+
+    return L, rankL
 end
 
 function symplectic_complement(Omega,S1)
@@ -1663,7 +2588,7 @@ function symplectic_complement(Omega,S1)
 
     # ker(S1' Ω) is the symplectic complement of range(S1) = range(M).
     # 2n × (2n-r), orthonormal cols
-    S2 = nullspace(transpose(S1) * Omega)
+    S2 = nullspace(Matrix(transpose(S1) * Omega))
     # (2n-r) × (2n-r), skew, full-rank
     K2 = transpose(S2) * Omega * S2
     F2 = schur(K2)
