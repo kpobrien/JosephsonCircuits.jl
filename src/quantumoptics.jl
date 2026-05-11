@@ -1757,8 +1757,8 @@ function scattering_to_ladder_pair!(S_bogoliubov::AbstractMatrix,
 
     for i in 1:size(S_scattering,1)
         for j in 1:size(S_scattering,2)
-            if ispositive(w[i])
-                if ispositive(w[j])
+            if w[i] > zero(w[i])
+                if w[j] > zero(w[j])
                     # both positive
                     S_bogoliubov[2*i-1,2*j-1] = S_scattering[i,j]
                     S_bogoliubov[2*i-1,2*j] = zero(eltype(S_bogoliubov))
@@ -1772,7 +1772,7 @@ function scattering_to_ladder_pair!(S_bogoliubov::AbstractMatrix,
                     S_bogoliubov[2*i,2*j] = zero(eltype(S_bogoliubov))
                 end
             else
-                if ispositive(w[j])
+                if w[j] > zero(w[j])
                     # row negative, col positive
                     S_bogoliubov[2*i-1,2*j-1] = zero(eltype(S_bogoliubov))
                     S_bogoliubov[2*i-1,2*j] = conj(S_scattering[i,j])
@@ -1848,8 +1848,8 @@ function scattering_to_ladder_block!(S_bogoliubov::AbstractMatrix,
     
     for i in 1:n
         for j in 1:m
-            if ispositive(w[i])
-                if ispositive(w[j])
+            if w[i] > zero(w[i])
+                if w[j] > zero(w[j])
                     # both positive
                     # A
                     S_bogoliubov[i,j] = S_scattering[i,j]
@@ -1872,7 +1872,7 @@ function scattering_to_ladder_block!(S_bogoliubov::AbstractMatrix,
 
                 end
             else
-                if ispositive(w[j])
+                if w[j] > zero(w[j])
                     # row negative, col positive
                     # A
                     S_bogoliubov[i,j] = zero(eltype(S_bogoliubov))
@@ -1954,8 +1954,8 @@ function scattering_to_quadrature_pair!(S_symplectic::AbstractMatrix,
 
     for i in 1:size(S_scattering,1)
         for j in 1:size(S_scattering,2)
-            if ispositive(w[i])
-                if ispositive(w[j])
+            if w[i] > zero(w[i])
+                if w[j] > zero(w[j])
                     # both positive
                     S_symplectic[2*i-1,2*j-1] = real(S_scattering[i,j])
                     S_symplectic[2*i-1,2*j] = -imag(S_scattering[i,j])
@@ -1969,7 +1969,7 @@ function scattering_to_quadrature_pair!(S_symplectic::AbstractMatrix,
                     S_symplectic[2*i,2*j] = -real(S_scattering[i,j])
                 end
             else
-                if ispositive(w[j])
+                if w[j] > zero(w[j])
                     # row negative, col positive
                     S_symplectic[2*i-1,2*j-1] = real(S_scattering[i,j])
                     S_symplectic[2*i-1,2*j] = -imag(S_scattering[i,j])
@@ -2045,8 +2045,8 @@ function scattering_to_quadrature_block!(S_symplectic::AbstractMatrix,
     
     for i in 1:n
         for j in 1:m
-            if ispositive(w[i])
-                if ispositive(w[j])
+            if w[i] > zero(w[i])
+                if w[j] > zero(w[j])
                     # both positive
                     # A
                     S_symplectic[i,j] = real(S_scattering[i,j])
@@ -2069,7 +2069,7 @@ function scattering_to_quadrature_block!(S_symplectic::AbstractMatrix,
 
                 end
             else
-                if ispositive(w[j])
+                if w[j] > zero(w[j])
                     # row negative, col positive
                     # A
                     S_symplectic[i,j] = real(S_scattering[i,j])
