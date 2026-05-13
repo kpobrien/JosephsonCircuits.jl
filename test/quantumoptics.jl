@@ -560,6 +560,9 @@ using Test
 
     @testset "halmos dilation" begin
 
+        S = [0.1 0;0 0.1]
+        @test isapprox(JosephsonCircuits.halmos_dilation(S),[S sqrt(I(size(S,1)) - S*S');sqrt(I(size(S,1)) - S*S') -S'])
+
     end
 
     @testset "A_B_to_symplectic" begin

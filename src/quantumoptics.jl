@@ -3340,29 +3340,18 @@ end
 # end
 
 """
-
     halmos_dilation(S)
 
-Return the Halmos dilation of the passive potentially lossy scattering
-parameter matrix `S`.
+Return the Halmos dilation of the passive lossy scattering parameter matrix
+`S`.
 
+# Examples
+```jldoctest
+julia> JosephsonCircuits.is_symplectic_block(JosephsonCircuits.scattering_to_ladder_block(JosephsonCircuits.halmos_dilation([0.1 0;0 0.1]),[1,1,1,1]))
+true
+```
 
-X, Y = CP_attenuator(0.4,1.0)
-U = jc.halmos_dilation(X)
-
-does this assume a block form?
-This is only for passive systems so does the operator
-not matter? it would make sense if this is just the a's
-but it should also work for a's and adag's if it's just
-a beamsplitter interaction
-
-I should add the SVD formula
-
-U = [S sqrt(I(size(S,1)) - S*S');sqrt(I(size(S,1)) - S*S') -S']
-
-We can compute this using the SVD
-
-
+# References
 [1] P. L. Robinson, “Julia operators and Halmos dilations,” Mar. 25, 2018,
     arXiv:1803.09329. doi: 10.48550/arXiv.1803.09329.
 [2] B. Sz.-Nagy, C. Foias, H. Bercovici, and L. Kérchy, Harmonic Analysis of
@@ -3382,7 +3371,12 @@ function halmos_dilation(S)
     # perform the dilation
     # W, V, sigma
     # U = [W 0;0 V]*[sigma sqrt(I-sigma^2);sqrt(I-sigma^2) -sigma]*[V' 0;0 W']
+    # this is equivalent to:
+    # [S sqrt(I(size(S,1)) - S*S');sqrt(I(size(S,1)) - S*S') -S']
     F = svd(S)
+
+    # should probably test if the singular values are larger than one. that
+    # would indicate the system is not passive.
     U = [F.U 0*I(n); 0*I(n) F.V] * [Diagonal(F.S) Diagonal(sqrt.(1.0 .- F.S .^ 2)); Diagonal(sqrt.(1.0 .- F.S .^ 2)) -Diagonal(F.S)] * [F.Vt 0*I(n); 0*I(n) F.U']
     return U
 end
