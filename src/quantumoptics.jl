@@ -187,7 +187,7 @@ See also [`symplectic_form_block`](@ref),
 """
 function is_symplectic(Ω, S)
     if isodd(size(S,1)) || isodd(size(S,2))
-        error("The dimensions of the input matrix must be even.")
+        error(lazy"The dimensions of the input matrix must be even.")
     end
     # perhaps i should check if Ω is a symplectic form
     # that would guard against swapping the arguments
@@ -2282,6 +2282,27 @@ end
     # 
 
 
+"""
+    modes_ports_to_ports_modes_scattering(S::AbstractMatrix,Nmodes::Int)
+
+# Examples
+```jldoctest
+@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
+S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+JosephsonCircuits.modes_ports_to_ports_modes_scattering(S,2)
+
+# output
+8×8 Matrix{Num}:
+ S11  S13  S15  S17  S12  S14  S16  S18
+ S31  S33  S35  S37  S32  S34  S36  S38
+ S51  S53  S55  S57  S52  S54  S56  S58
+ S71  S73  S75  S77  S72  S74  S76  S78
+ S21  S23  S25  S27  S22  S24  S26  S28
+ S41  S43  S45  S47  S42  S44  S46  S48
+ S61  S63  S65  S67  S62  S64  S66  S68
+ S81  S83  S85  S87  S82  S84  S86  S88
+```
+"""
 function modes_ports_to_ports_modes_scattering(S::AbstractMatrix,Nmodes::Int)
 
     if size(S,1) == size(S,2)
@@ -2293,6 +2314,27 @@ function modes_ports_to_ports_modes_scattering(S::AbstractMatrix,Nmodes::Int)
     return S[p1,p2]
 end
 
+"""
+    ports_modes_to_modes_ports_scattering(S::AbstractMatrix,Nmodes::Int)
+
+# Examples
+```jldoctest
+@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
+S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+JosephsonCircuits.ports_modes_to_modes_ports_scattering(S,2)
+
+# output
+8×8 Matrix{Num}:
+ S11  S15  S12  S16  S13  S17  S14  S18
+ S51  S55  S52  S56  S53  S57  S54  S58
+ S21  S25  S22  S26  S23  S27  S24  S28
+ S61  S65  S62  S66  S63  S67  S64  S68
+ S31  S35  S32  S36  S33  S37  S34  S38
+ S71  S75  S72  S76  S73  S77  S74  S78
+ S41  S45  S42  S46  S43  S47  S44  S48
+ S81  S85  S82  S86  S83  S87  S84  S88
+```
+"""
 function ports_modes_to_modes_ports_scattering(S::AbstractMatrix,Nmodes::Int)
 
     if size(S,1) == size(S,2)
@@ -2304,46 +2346,130 @@ function ports_modes_to_modes_ports_scattering(S::AbstractMatrix,Nmodes::Int)
     return S[p1,p2]
 end
 
+"""
+    ports_modes_to_modes_ports_pair(S::AbstractMatrix,Nmodes::Int)
+
+# Examples
+```jldoctest
+@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
+S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+JosephsonCircuits.ports_modes_to_modes_ports_pair(S,2)
+
+# output
+8×8 Matrix{Num}:
+ S11  S12  S15  S16  S13  S14  S17  S18
+ S21  S22  S25  S26  S23  S24  S27  S28
+ S51  S52  S55  S56  S53  S54  S57  S58
+ S61  S62  S65  S66  S63  S64  S67  S68
+ S31  S32  S35  S36  S33  S34  S37  S38
+ S41  S42  S45  S46  S43  S44  S47  S48
+ S71  S72  S75  S76  S73  S74  S77  S78
+ S81  S82  S85  S86  S83  S84  S87  S88
+```
+"""
 function ports_modes_to_modes_ports_pair(S::AbstractMatrix,Nmodes::Int)
 
     if size(S,1) == size(S,2)
-        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
+        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
     else
-        p1 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm(size(S,1)÷Nmodes,Nmodes))
-        p2 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm(size(S,2)÷Nmodes,Nmodes))
+        p1 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm((size(S,1)÷2)÷Nmodes,Nmodes))
+        p2 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm((size(S,2)÷2)÷Nmodes,Nmodes))
     end
     return S[p1,p2]
 end
 
+"""
+    modes_ports_to_ports_modes_pair(S::AbstractMatrix,Nmodes::Int)
+
+# Examples
+```jldoctest
+@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
+S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+JosephsonCircuits.modes_ports_to_ports_modes_pair(S,2)
+
+# output
+8×8 Matrix{Num}:
+ S11  S12  S15  S16  S13  S14  S17  S18
+ S21  S22  S25  S26  S23  S24  S27  S28
+ S51  S52  S55  S56  S53  S54  S57  S58
+ S61  S62  S65  S66  S63  S64  S67  S68
+ S31  S32  S35  S36  S33  S34  S37  S38
+ S41  S42  S45  S46  S43  S44  S47  S48
+ S71  S72  S75  S76  S73  S74  S77  S78
+ S81  S82  S85  S86  S83  S84  S87  S88
+```
+"""
 function modes_ports_to_ports_modes_pair(S::AbstractMatrix,Nmodes::Int)
 
     if size(S,1) == size(S,2)
-        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
+        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
     else
-        p1 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
-        p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm(size(S,2)÷Nmodes,Nmodes))
+        p1 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
+        p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S,2)÷2)÷Nmodes,Nmodes))
     end
     return S[p1,p2]
 end
 
+"""
+    ports_modes_to_modes_ports_block(S::AbstractMatrix,Nmodes::Int)
+
+# Examples
+```jldoctest
+@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
+S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+JosephsonCircuits.ports_modes_to_modes_ports_block(S,2)
+
+# output
+8×8 Matrix{Num}:
+ S11  S13  S12  S14  S15  S17  S16  S18
+ S31  S33  S32  S34  S35  S37  S36  S38
+ S21  S23  S22  S24  S25  S27  S26  S28
+ S41  S43  S42  S44  S45  S47  S46  S48
+ S51  S53  S52  S54  S55  S57  S56  S58
+ S71  S73  S72  S74  S75  S77  S76  S78
+ S61  S63  S62  S64  S65  S67  S66  S68
+ S81  S83  S82  S84  S85  S87  S86  S88
+```
+"""
 function ports_modes_to_modes_ports_block(S::AbstractMatrix,Nmodes::Int)
     
     if size(S,1) == size(S,2)
-        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
+        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
     else
-        p1 = scattering_to_block_perm(ports_modes_to_modes_ports_perm(size(S,1)÷Nmodes,Nmodes))
-        p2 = scattering_to_block_perm(ports_modes_to_modes_ports_perm(size(S,2)÷Nmodes,Nmodes))
+        p1 = scattering_to_block_perm(ports_modes_to_modes_ports_perm((size(S,1)÷2)÷Nmodes,Nmodes))
+        p2 = scattering_to_block_perm(ports_modes_to_modes_ports_perm((size(S,2)÷2)÷Nmodes,Nmodes))
     end
     return S[p1,p2]
 end
 
+"""
+    modes_ports_to_ports_modes_block(S::AbstractMatrix,Nmodes::Int)
+
+# Examples
+```jldoctest
+@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
+S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+JosephsonCircuits.modes_ports_to_ports_modes_block(S,2)
+
+# output
+8×8 Matrix{Num}:
+ S11  S13  S12  S14  S15  S17  S16  S18
+ S31  S33  S32  S34  S35  S37  S36  S38
+ S21  S23  S22  S24  S25  S27  S26  S28
+ S41  S43  S42  S44  S45  S47  S46  S48
+ S51  S53  S52  S54  S55  S57  S56  S58
+ S71  S73  S72  S74  S75  S77  S76  S78
+ S61  S63  S62  S64  S65  S67  S66  S68
+ S81  S83  S82  S84  S85  S87  S86  S88
+```
+"""
 function modes_ports_to_ports_modes_block(S::AbstractMatrix,Nmodes::Int)
     
     if size(S,1) == size(S,2)
-        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
+        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
     else
-        p1 = scattering_to_block_perm(modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes))
-        p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm(size(S,2)÷Nmodes,Nmodes))
+        p1 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
+        p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S,2)÷2)÷Nmodes,Nmodes))
     end
     return S[p1,p2]
 end
@@ -2416,7 +2542,6 @@ https://en.wikipedia.org/wiki/Polar_decomposition
 Optics: Takagi/Autonne, Bloch-Messiah/Euler, Iwasawa, and Williamson,” Can.
 J. Phys., vol. 102, no. 10, pp. 497–507, Oct. 2024, doi: 10.1139/cjp-2024-0070.
 [2] https://en.wikipedia.org/wiki/Polar_decomposition#Relation_to_the_SVD
-
 """
 function polar(A::AbstractMatrix)
 
@@ -2489,7 +2614,7 @@ function _williamson(Omega, M::AbstractMatrix{<:Real})
 
     # check that rankL is even
     if isodd(rankL)
-        error("The rank must be even.")
+        error(lazy"The rank must be even.")
     end
     r = rankL ÷ 2
 
@@ -2541,7 +2666,7 @@ function choleskyLr(M::AbstractArray)
     if isodd(C.rank)
         # println(rankL)
         rankL = C.rank - 1
-        # error("The rank must be even.")
+        # error(lazy"The rank must be even.")
     else
         rankL = C.rank
     end
@@ -2552,7 +2677,7 @@ function choleskyLr(M::AbstractArray)
     # A ≈ L*L'. 
     if !issuccess(C)
         if !isapprox(M,L*L')
-            error("Cholesky factorization has failed. Input matrix is not positive semi-definite.")
+            error(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite.")
         end
     end
 
@@ -2569,7 +2694,7 @@ function choleskyLr(M::SparseMatrixCSC)
     # A ≈ L*L'. 
     if !issuccess(C)
         if !isapprox(M,L*L')
-            error("Cholesky factorization has failed. Input matrix is not positive semi-definite.")
+            error(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite.")
         end
     end
 
@@ -2670,20 +2795,72 @@ function symplectic_normal_form_block(A::AbstractMatrix{<:Real})
     return pair_to_block(Q)
 end
 
+"""
+    inv_symplectic_pair(S)
+
+Return the inverse of the symplectic matrix `S` computed from
+`transpose(Ω)*transpose(S)*Ω` where `Ω` is the symplectic form for pair
+operator ordering.
+
+# Examples
+```jldoctest
+julia> S = JosephsonCircuits.rand_symplectic_pair(2);isapprox(inv(S),JosephsonCircuits.inv_symplectic_pair(S))
+true
+```
+"""
 function inv_symplectic_pair(S)
     Omega = symplectic_form_pair(size(S,2)÷2)
     return transpose(Omega)*transpose(S)*Omega
 end
 
+"""
+    inv_symplectic_block(S)
+
+Return the inverse of the symplectic matrix `S` computed from
+`transpose(Ω)*transpose(S)*Ω` where `Ω` is the symplectic form for block
+operator ordering.
+
+# Examples
+```jldoctest
+julia> S = JosephsonCircuits.rand_symplectic_block(2);isapprox(inv(S),JosephsonCircuits.inv_symplectic_block(S))
+true
+```
+"""
 function inv_symplectic_block(S)
     Omega = symplectic_form_block(size(S,2)÷2)
     return transpose(Omega)*transpose(S)*Omega
 end
 
+"""
+    inv_bogoliubov_pair(S)
+
+Return the inverse of the Bogoliubov matrix `S` computed from
+`transpose(Ω)*transpose(S)*Ω` where `Ω` is the symplectic form for pair
+operator ordering.
+
+# Examples
+```jldoctest
+julia> S = JosephsonCircuits.rand_bogoliubov_pair(2);isapprox(inv(S),JosephsonCircuits.inv_bogoliubov_pair(S))
+true
+```
+"""
 function inv_bogoliubov_pair(S)
     return inv_symplectic_pair(S)
 end
 
+"""
+    inv_bogoliubov_block(S)
+
+Return the inverse of the Bogoliubov matrix `S` computed from
+`transpose(Ω)*transpose(S)*Ω` where `Ω` is the symplectic form for block
+operator ordering.
+
+# Examples
+```jldoctest
+julia> S = JosephsonCircuits.rand_bogoliubov_block(2);isapprox(inv(S),JosephsonCircuits.inv_bogoliubov_block(S))
+true
+```
+"""
 function inv_bogoliubov_block(S)
     return inv_symplectic_block(S)
 end
@@ -3044,14 +3221,14 @@ end
 
 #     # test if Y is symmetric
 #     if !issymmetric(Y)
-#         error("`Y` must be positive definite and thus symmetric.")
+#         error(lazy"`Y` must be positive definite and thus symmetric.")
 #     end
 
 #     # test if Y is positive definite. Not all real symmetric matrices are
 #     # positive definite. The matrix must be symmetric and the eigenvalues must
 #     # all be positive.
 #     if !isposdef(Y)
-#         error("`Y` must be positive definite.")
+#         error(lazy"`Y` must be positive definite.")
 #     end
 
 #     vals, vecs = eigen(Symmetric(Y))
@@ -3083,7 +3260,7 @@ function B_from_X_Y(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
 
     # # test if Y is symmetric
     # if !issymmetric(Y)
-    #     error("`Y` must be positive definite and thus symmetric.")
+    #     error(lazy"`Y` must be positive definite and thus symmetric.")
     # end
 
     # test if Y is positive definite. Not all real symmetric matrices are

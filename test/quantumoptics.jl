@@ -266,6 +266,19 @@ using Test
 
     end
 
+    @testset "port mode conversion" begin
+
+        for S = [rand(Complex{Float64},8,8),rand(Complex{Float64},8,12)]
+            Nmodes = 2
+            @test isapprox(JosephsonCircuits.ports_modes_to_modes_ports_scattering(JosephsonCircuits.modes_ports_to_ports_modes_scattering(S,Nmodes),Nmodes),S)
+            @test isapprox(JosephsonCircuits.ports_modes_to_modes_ports_pair(JosephsonCircuits.modes_ports_to_ports_modes_pair(S,Nmodes),Nmodes),S)
+            @test isapprox(JosephsonCircuits.ports_modes_to_modes_ports_block(JosephsonCircuits.modes_ports_to_ports_modes_block(S,Nmodes),Nmodes),S)
+        end
+
+        # note add tests on errors
+
+    end
+
     @testset "polar" begin
 
         A = randn(Complex{Float64}, 4, 4)
