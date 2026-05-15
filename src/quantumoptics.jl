@@ -3343,11 +3343,12 @@ end
     halmos_dilation(S)
 
 Return the Halmos dilation of the passive lossy scattering parameter matrix
-`S`.
+`S`. This converts a passive lossy scattering parameter matrix into a lossless
+(unitary) scattering parameter matrix with twice the number of ports.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.is_symplectic_block(JosephsonCircuits.scattering_to_ladder_block(JosephsonCircuits.halmos_dilation([0.1 0;0 0.1]),[1,1,1,1]))
+julia> JosephsonCircuits.is_unitary(JosephsonCircuits.halmos_dilation([0.1 0;0 0.1]))
 true
 ```
 

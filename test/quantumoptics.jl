@@ -561,8 +561,31 @@ using Test
     @testset "halmos dilation" begin
 
         S = [0.1 0;0 0.1]
+        # test that it gives the same result as the simpler formula
         @test isapprox(JosephsonCircuits.halmos_dilation(S),[S sqrt(I(size(S,1)) - S*S');sqrt(I(size(S,1)) - S*S') -S'])
 
+        # test that the Halmos dilation produces a symplectic matrix after
+        # conversion of the scattering parameter matrix to a symplectic matrix
+        @test JosephsonCircuits.is_symplectic_block(JosephsonCircuits.scattering_to_ladder_block(JosephsonCircuits.halmos_dilation(S),[1,1,1,1]))
+    
+        # test that the Halmos dilation produces a unitary scattering
+        # parameter matrix
+        @test JosephsonCircuits.is_unitary(JosephsonCircuits.halmos_dilation([0.1 0;0 0.1]))
+
+    end
+
+    @testset "Ymin_from_X_pair and Ymin_from_X_block" begin
+
+        X = rand(Float64,4,4)
+        for method in 1:3
+            @test JosephsonCircuits.is_cptp_pair(X,JosephsonCircuits.Ymin_from_X_pair(X;method=method))
+            @test JosephsonCircuits.is_cptp_block(X,JosephsonCircuits.Ymin_from_X_block(X;method=method))
+        end
+
+        @test_throws(
+            ErrorException(lazy"Unknown method"),
+            JosephsonCircuits.is_cptp_pair(X,JosephsonCircuits.Ymin_from_X_pair(X;method=4)),
+            )
     end
 
     @testset "A_B_to_symplectic" begin
