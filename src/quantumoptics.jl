@@ -122,25 +122,34 @@ end
 
 
 function is_positive_semi_definite(M)
-   # turn off error checking on cholesky, perform a
-   # pivot so it works in the rank deficient case
-   # and just check if it works to within numerical
-   # error.
-   C = cholesky(M,RowMaximum();check=false)
-   if isempty(C.p)
-      U = C.U
-      L = C.L
-      A = M
-   else
-      U = C.U[1:C.rank, :]
-      L = C.L[:,1:C.rank]
-      A = M[C.p, C.p]
-   end
-   return isapprox(A,U'*U) && isapprox(A,L*L')
+    # turn off error checking on cholesky, perform a
+    # pivot so it works in the rank deficient case
+    # and just check if it works to within numerical
+    # error.
+    if isapprox(M,M')
+        C = cholesky(Hermitian(M),RowMaximum();check=false)
+        if issuccess(C)
+            return true
+        else
+            if isempty(C.p)
+                L = C.L
+                return isapprox(M,L*L')
+            else
+                L = C.L[:,1:C.rank]
+                return isapprox(M[C.p, C.p],L*L')
+            end
+        end
+    else
+        return false
+    end
 end
 
 function is_positive_definite(M)
-    return isposdef(M)
+    if isapprox(M,M')
+        return isposdef(Hermitian(M))
+    else
+        return false
+    end
 end
 
 
@@ -427,6 +436,8 @@ Eq. 5.37 from Serafini
 
 """
 function is_cptp(Omega, X, Y)
+    # Omega, X, and Y should be the same size. all should be square matrices
+
     delta = Matrix(Omega) - X * Omega * X'
     # delta = Matrix(Omega) - X * Omega * transpose(X)
     K = Y + im * delta
@@ -513,7 +524,7 @@ Return a random `2n x 2n` symplectic matrix `S`, `S ∈ Sp(2n, ℝ)` or
 `S ∈ Sp(2n, ℂ)`, depending on the type `T` with block operator order.
 
 """
-function rand_symplectic_block(T, n::Integer)
+function rand_symplectic_block(T::DataType, n::Integer)
     A = randn(T, 2*n, 2*n)
     Omega = symplectic_form_block(n)
     # generate a random symmetric matrix
@@ -535,7 +546,7 @@ function rand_symplectic_block(n::Integer)
     return rand_symplectic_block(Float64, n)
 end
 
-function rand_symplectic_pair(T, n::Integer)
+function rand_symplectic_pair(T::DataType, n::Integer)
     A = randn(T, 2*n, 2*n)
     Omega = symplectic_form_pair(n)
     # generate a random symmetric matrix
@@ -3327,17 +3338,38 @@ function B_from_X_Y_pair(X::AbstractMatrix{<:Real},
     return B[:, p]
 end
 
-# """
+"""
 
-#     X_Y_to_sympletic(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+    X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
-# Return the symplectic matrix `S` from the completely positive trace preserving
-# (CPTP) map `X`, `Y` assumming a vacuum environment.
+Return the symplectic matrix `S` from the completely positive trace preserving
+(CPTP) map `X`, `Y` assumming a vacuum environment.
 
-# """
-# function X_Y_to_sympletic(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+"""
+function X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
-# end
+    # compute B from X and Y
+    B = B_from_X_Y_pair(X,Y)
+
+    return A_B_to_symplectic_pair(X,B)
+end
+
+
+"""
+
+    X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+
+Return the symplectic matrix `S` from the completely positive trace preserving
+(CPTP) map `X`, `Y` assumming a vacuum environment.
+
+"""
+function X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+
+    # compute B from X and Y
+    B = B_from_X_Y_block(X,Y)
+
+    return pair_to_block(A_B_to_symplectic_pair(block_to_pair(X),block_to_pair(B)))
+end
 
 """
     halmos_dilation(S)

@@ -610,4 +610,22 @@ using Test
 
     end
 
+    @testset "X_Y_to_sympletic_pair" begin
+
+        X = rand(Float64,4,4)
+        Y = JosephsonCircuits.Ymin_from_X_pair(X)
+        S = JosephsonCircuits.X_Y_to_sympletic_pair(X,Y)
+        @test JosephsonCircuits.is_symplectic_pair(S)
+
+    end
+
+    @testset "X_Y_to_sympletic_block" begin
+
+        X = rand(Float64,4,4)
+        Y = JosephsonCircuits.Ymin_from_X_block(X)
+        S = JosephsonCircuits.X_Y_to_sympletic_block(X,Y)
+        @test JosephsonCircuits.is_symplectic_block(S)
+        
+    end
+
 end
