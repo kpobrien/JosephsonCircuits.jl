@@ -14,6 +14,7 @@ import PrecompileTools
 import OrderedCollections
 import StaticArrays
 import Statistics
+import FastInterpolations
 
 using LinearAlgebra
 using SparseArrays
@@ -100,6 +101,9 @@ include("exportnetlist.jl")
 include("spiceutils.jl")
 include("spicewrapper.jl")
 include("spiceraw.jl")
+
+# From DSP.jl https://github.com/JuliaDSP/DSP.jl/blob/master/src/unwrap.jl
+include("unwrap.jl")
 
 include("quantumoptics.jl")
 

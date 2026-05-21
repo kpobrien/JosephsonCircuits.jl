@@ -120,23 +120,29 @@ function indefinite_hermitian_form_block(n::Integer)
     return Diagonal(d)
 end
 
+"""
+    is_positive_semi_definite(M) -> Bool
 
+Return `true` if the matrix `M` is positive semi-definite and `false`
+otherwise.
+
+"""
 function is_positive_semi_definite(M)
     # turn off error checking on cholesky, perform a
     # pivot so it works in the rank deficient case
     # and just check if it works to within numerical
     # error.
-    if isapprox(M,M')
-        C = cholesky(Hermitian(M),RowMaximum();check=false)
+    if isapprox(M, M')
+        C = cholesky(Hermitian(M), RowMaximum(); check=false)
         if issuccess(C)
             return true
         else
             if isempty(C.p)
                 L = C.L
-                return isapprox(M,L*L')
+                return isapprox(M, L * L')
             else
-                L = C.L[:,1:C.rank]
-                return isapprox(M[C.p, C.p],L*L')
+                L = C.L[:, 1:C.rank]
+                return isapprox(M[C.p, C.p], L * L')
             end
         end
     else
@@ -144,8 +150,14 @@ function is_positive_semi_definite(M)
     end
 end
 
+"""
+    is_positive_definite(M) -> Bool
+
+Return `true` if the matrix `M` is positive definite and `false` otherwise.
+
+"""
 function is_positive_definite(M)
-    if isapprox(M,M')
+    if isapprox(M, M')
         return isposdef(Hermitian(M))
     else
         return false
@@ -154,7 +166,7 @@ end
 
 
 """
-    is_unitary(M)
+    is_unitary(M) -> Bool
 
 Return `true` if the matrix `M` is unitary, `M ∈ U(n)`, and `false` otherwise.
 
@@ -163,11 +175,11 @@ matrix.
 
 """
 function is_unitary(M)
-    return isapprox(M*adjoint(M),I(size(M,1)))
+    return isapprox(M * adjoint(M), I(size(M, 1)))
 end
 
 """
-    is_orthogonal(M)
+    is_orthogonal(M) -> Bool
 
 Return `true` if the matrix `M` is orthogonal, `M ∈ O(n)`, and `false`
 otherwise.
@@ -177,11 +189,11 @@ identity matrix.
 
 """
 function is_orthogonal(M)
-    return isapprox(M*transpose(M),I(size(M,1)))
+    return isapprox(M * transpose(M), I(size(M, 1)))
 end
 
 """
-    is_symplectic(Ω, S)
+    is_symplectic(Ω, S) -> Bool
 
 Return `true` if the matrix `S` is symplectic, `S ∈ Sp(2n, ℝ)` or
 `S ∈ Sp(2n, ℂ)`, and `false` otherwise.
@@ -195,16 +207,16 @@ See also [`symplectic_form_block`](@ref),
 
 """
 function is_symplectic(Ω, S)
-    if isodd(size(S,1)) || isodd(size(S,2))
+    if isodd(size(S, 1)) || isodd(size(S, 2))
         error(lazy"The dimensions of the input matrix must be even.")
     end
     # perhaps i should check if Ω is a symplectic form
     # that would guard against swapping the arguments
-    return isapprox(S*Ω*transpose(S), Ω)
+    return isapprox(S * Ω * transpose(S), Ω)
 end
 
 """
-    is_symplectic_block(S)
+    is_symplectic_block(S) -> Bool
 
 Return `true` if the matrix `S` is symplectic, `S ∈ Sp(2n, ℝ)` or
 `S ∈ Sp(2n, ℂ)`, with block operator order and `false` otherwise.
@@ -221,7 +233,7 @@ function is_symplectic_block(S)
 end
 
 """
-    is_symplectic_pair(S)
+    is_symplectic_pair(S) -> Bool
 
 Return `true` if the matrix `S` is symplectic, `S ∈ Sp(2n, ℝ)` or
 `S ∈ Sp(2n, ℂ)`, with pair operator order and `false` otherwise.
@@ -239,7 +251,7 @@ function is_symplectic_pair(S)
 end
 
 """
-    isorthogonal_symplectic_block(M)
+    isorthogonal_symplectic_block(M) -> Bool
 
 Return `true` if the matrix `M` is orthogonal symplectic,
 `M ∈ Sp(2n, ℝ) ∩ O(2n) ≅ U(n)`, with block operator order and `false`
@@ -251,7 +263,7 @@ function is_orthogonal_symplectic_block(M)
 end
 
 """
-    is_orthogonal_symplectic_pair(M)
+    is_orthogonal_symplectic_pair(M) -> Bool
 
 Return `true` if the matrix `M` is orthogonal symplectic,
 `M ∈ Sp(2n, ℝ) ∩ O(2n) ≅ U(n)`, with pair operator order and `false`
@@ -263,7 +275,7 @@ function is_orthogonal_symplectic_pair(M)
 end
 
 """
-    is_conjugate_symplectic_pair(M)
+    is_conjugate_symplectic_pair(M) -> Bool
 
 Return `true` if the matrix `M` is conjugate symplectic,
 , with pair operator order and `false`
@@ -276,7 +288,7 @@ function is_conjugate_symplectic_pair(M)
 end
 
 """
-    is_conjugate_symplectic_block(M)
+    is_conjugate_symplectic_block(M) -> Bool
 
 Return `true` if the matrix `M` is conjugate symplectic,
 , with block operator order and `false`
@@ -290,7 +302,7 @@ end
 
 
 """
-    is_pseudo_unitary(Σ,M)
+    is_pseudo_unitary(Σ,M) -> Bool
 
 Return `true` if the matrix `M` is pseudo-unitary, `M ∈ U(n, n)`, and `false`
 otherwise.
@@ -304,11 +316,11 @@ and [`is_pseudo_unitary_pair`](@ref).
 
 """
 function is_pseudo_unitary(Sigma, M)
-    return isapprox(M*Sigma*M', Sigma)
+    return isapprox(M * Sigma * M', Sigma)
 end
 
 """
-    is_pseudo_unitary_block(M)
+    is_pseudo_unitary_block(M) -> Bool
 
 Return `true` if the matrix `M` is pseudo-unitary, `M ∈ U(n, n)`, with block
 operator order and `false` otherwise.
@@ -325,7 +337,7 @@ function is_pseudo_unitary_block(M)
 end
 
 """
-    is_pseudo_unitary_pair(M)
+    is_pseudo_unitary_pair(M) -> Bool
 
 Return `true` if the matrix `M` is pseudo-unitary, `M ∈ U(n, n)`, with
 pair operator order and `false` otherwise.
@@ -343,7 +355,7 @@ end
 
 
 """
-    is_positive_definite_symplectic_block(S)
+    is_positive_definite_symplectic_block(S) -> Bool
 
 Return `true` if the matrix `S` is positive definite and symplectic,
 `S ∈ Sp(2n, ℝ)` or `S ∈ Sp(2n, ℂ)`, with block operator order and `false`
@@ -353,11 +365,11 @@ otherwise.
 function is_positive_definite_symplectic_block(S)
     # the tests for ishermitian and issymmetric are exact, but we want
     # to test for equality up to numerical error so use isappox
-    return is_symplectic_block(S) && isapprox(S,S') && is_positive_definite(Hermitian(S))
+    return is_symplectic_block(S) && isapprox(S, S') && is_positive_definite(Hermitian(S))
 end
 
 """
-    is_positive_definite_symplectic_pair(S)
+    is_positive_definite_symplectic_pair(S) -> Bool
 
 Return `true` if the matrix `S` is positive definite and symplectic,
 `S ∈ Sp(2n, ℝ)` or `S ∈ Sp(2n, ℂ)`, with pair operator order and
@@ -367,11 +379,11 @@ Return `true` if the matrix `S` is positive definite and symplectic,
 function is_positive_definite_symplectic_pair(S)
     # the tests for ishermitian and issymmetric are exact, but we want
     # to test for equality up to numerical error so use isappox
-    return is_symplectic_pair(S) && isapprox(S,S') && is_positive_definite(Hermitian(S))
+    return is_symplectic_pair(S) && isapprox(S, S') && is_positive_definite(Hermitian(S))
 end
 
 """
-    is_bogoliubov_pair(M)
+    is_bogoliubov_pair(M) -> Bool
 
 Return `true` if the matrix `M` is Bogoliubov, `M ∈ Sp(2n, ℂ) ∩ U(n, n)`, with
 pair operator order and `false` otherwise.
@@ -382,7 +394,7 @@ function is_bogoliubov_pair(M)
 end
 
 """
-    is_bogoliubov_block(M)
+    is_bogoliubov_block(M) -> Bool
 
 Return `true` if the matrix `M` is Bogoliubov, `M ∈ Sp(2n, ℂ) ∩ U(n, n)`, with
 block operator order and `false` otherwise.
@@ -393,7 +405,7 @@ function is_bogoliubov_block(M)
 end
 
 """
-    is_orthogonal_bogoliubov_block(M)
+    is_orthogonal_bogoliubov_block(M) -> Bool
 
 Return `true` if the matrix `M` is orthogonal Bogoliubov,
 `M ∈ Sp(2n, ℂ) ∩ U(n, n) ∩ U(2n) ≅ U(n)`, with pair operator order and
@@ -405,7 +417,7 @@ function is_orthogonal_bogoliubov_block(M)
 end
 
 """
-    is_orthogonal_bogoliubov_pair(M)
+    is_orthogonal_bogoliubov_pair(M) -> Bool
 
 Return `true` if the matrix `M` is orthogonal Bogoliubov,
 `M ∈ Sp(2n, ℂ) ∩ U(n, n) ∩ U(2n) ≅ U(n)`, with pair operator order and
@@ -416,19 +428,6 @@ function is_orthogonal_bogoliubov_pair(M)
     return is_bogoliubov_pair(M) && is_unitary(M)
 end
 
-
-# should i add is_symplectic_bogoliubov_pair and
-# is_symplectic_bogoliubov_block ?
-# should i include the bogoliubov form where there are two seperate matrices
-# one for the linear processes and the second for parametric processes
-# how about a random CPTP map?
-# rand_cptp_block(X,Y) and rand_cptp_pair(X,Y) - should these
-# satisfy the minimum uncertainty relation?
-# does Ymin need to change depending on pair and block? yes
-# all of these depend on that for computing delta.
-
-# and is_cptp_block(n) - would have to check if satisfies uncertainty relations
-# is_cptp_pair(n)
 
 """
 
@@ -449,37 +448,37 @@ function is_cptp(Omega, X, Y)
     end
 end
 
-function is_cptp_block(X, Y)
+function is_cptp_quadrature_block(X, Y)
     n = size(X, 1) ÷ 2
     Omega = symplectic_form_block(n)
     return is_cptp(Omega, X, Y)
 end
 
-function is_cptp_pair(X, Y)
+function is_cptp_quadrature_pair(X, Y)
     n = size(X, 1) ÷ 2
     Omega = symplectic_form_pair(n)
     return is_cptp(Omega, X, Y)
 end
 
-function is_cptp_bogoliubov_pair(X, Y)
+function is_cptp_ladder_pair(X, Y)
     n = size(X, 1) ÷ 2
     # note we need to multiply this by im to get
     # the Robertson-Schrödinger inequality
-    Omega = im*indefinite_hermitian_form_pair(n)
+    Omega = im * indefinite_hermitian_form_pair(n)
     return is_cptp(Omega, X, Y)
 end
 
-function is_cptp_bogoliubov_block(X, Y)
+function is_cptp_ladder_block(X, Y)
     n = size(X, 1) ÷ 2
     # note we need to multiply this by im to get
     # the Robertson-Schrödinger inequality
-    Omega = im*indefinite_hermitian_form_block(n)
+    Omega = im * indefinite_hermitian_form_block(n)
     return is_cptp(Omega, X, Y)
 end
 
 function rand_positive_definite(T, n::Integer)
-    A = rand(T,n,n)
-    return A*A'
+    A = rand(T, n, n)
+    return A * A'
 end
 
 function rand_positive_definite(n::Integer)
@@ -487,18 +486,18 @@ function rand_positive_definite(n::Integer)
 end
 
 function rand_unitary(T, n::Integer)
-    A = rand(T,n,n)
+    A = rand(T, n, n)
     # make a skew-Hermitian matrix
-    H = (A - A')/2
+    H = (A - A') / 2
     return exp(H)
 end
 
 function rand_unitary(n::Integer)
-    return rand_unitary(Complex{Float64},n)
+    return rand_unitary(Complex{Float64}, n)
 end
 
 function rand_orthogonal(n::Integer)
-    return rand_unitary(Float64,n)
+    return rand_unitary(Float64, n)
 end
 
 
@@ -507,13 +506,13 @@ end
 
 
 """
-function rand_positive_semi_definite(T,n,m)
-   A = rand(T,n+m,n)
-   return A*A'
+function rand_positive_semi_definite(T, n, m)
+    A = rand(T, n + m, n)
+    return A * A'
 end
 
-function rand_positive_semi_definite(n,m)
-   return rand_positive_semi_definite(Float64,n,m)
+function rand_positive_semi_definite(n, m)
+    return rand_positive_semi_definite(Float64, n, m)
 end
 
 
@@ -525,7 +524,7 @@ Return a random `2n x 2n` symplectic matrix `S`, `S ∈ Sp(2n, ℝ)` or
 
 """
 function rand_symplectic_block(T::DataType, n::Integer)
-    A = randn(T, 2*n, 2*n)
+    A = randn(T, 2 * n, 2 * n)
     Omega = symplectic_form_block(n)
     # generate a random symmetric matrix
     M = (transpose(A) + A) / 2
@@ -547,7 +546,7 @@ function rand_symplectic_block(n::Integer)
 end
 
 function rand_symplectic_pair(T::DataType, n::Integer)
-    A = randn(T, 2*n, 2*n)
+    A = randn(T, 2 * n, 2 * n)
     Omega = symplectic_form_pair(n)
     # generate a random symmetric matrix
     M = (transpose(A) + A) / 2
@@ -571,18 +570,18 @@ end
 function rand_orthogonal_symplectic_block(T, n::Integer)
     P = randn(T, n, n)
     # make P skew-Symmetric
-    P = (P-transpose(P))/2
+    P = (P - transpose(P)) / 2
 
     Q = randn(T, n, n)
     # make Q complex symmetric
-    Q = (Q+transpose(Q))/2
+    Q = (Q + transpose(Q)) / 2
 
     # assemble M
-    M = [-Q -P;P -Q]
+    M = [-Q -P; P -Q]
 
     # compute the symplectic matrix using the Cayley transform
     Omega = symplectic_form_block(n)
-    return cayley_transform(Omega,M)
+    return cayley_transform(Omega, M)
 end
 
 """
@@ -634,7 +633,7 @@ function rand_positive_definite_symplectic_block(T, n::Integer)
     # V = (N+transpose(N))/2
 
     # # compute the inverse using a Cholesky decomposition
-    # F = cholesky(Hermitian(U))  
+    # F = cholesky(Hermitian(U))
     # UinvV = F\V
     # Uinv = F\I
 
@@ -649,8 +648,8 @@ function rand_positive_definite_symplectic_block(T, n::Integer)
     # very brittle. taking the positive definite symplectic term from the
     # polar decomposition of a random symplectic matrix seems to be more
     # robust.
-    A = rand_symplectic_block(T,n)
-    S,_ = polar(A)
+    A = rand_symplectic_block(T, n)
+    S, _ = polar(A)
     return S
 
     # multiplying a symplectic matrix by its adjoint is even easier!
@@ -667,7 +666,7 @@ Return a random `2n x 2n` positive definite symplectic matrix `S`,
 
 """
 function rand_positive_definite_symplectic_block(n::Integer)
-    return rand_positive_definite_symplectic_block(Float64,n)
+    return rand_positive_definite_symplectic_block(Float64, n)
 end
 
 """
@@ -679,8 +678,8 @@ operator order.
 
 """
 function rand_positive_definite_symplectic_pair(T, n::Integer)
-    A = rand_symplectic_pair(T,n)
-    return A*A'
+    A = rand_symplectic_pair(T, n)
+    return A * A'
 end
 
 """
@@ -691,7 +690,7 @@ Return a random `2n x 2n` positive definite symplectic matrix `S`,
 
 """
 function rand_positive_definite_symplectic_pair(n::Integer)
-    return rand_positive_definite_symplectic_pair(Float64,n)
+    return rand_positive_definite_symplectic_pair(Float64, n)
 end
 
 
@@ -711,7 +710,7 @@ function rand_conjugate_symplectic_block(T, n::Integer)
     # return cayley_transform(I(2n),A)
     # # return exp(A)
 
-    A = randn(T, 2*n, 2*n)
+    A = randn(T, 2 * n, 2 * n)
     Omega = symplectic_form_block(n)
     # generate a random Hermitian matrix
     M = (A + A') / 2
@@ -723,7 +722,7 @@ function rand_conjugate_symplectic_block(T, n::Integer)
 end
 
 function rand_conjugate_symplectic_block(n::Integer)
-    return rand_conjugate_symplectic_block(Complex{Float64},n)
+    return rand_conjugate_symplectic_block(Complex{Float64}, n)
 end
 
 function rand_conjugate_symplectic_pair(T, n::Integer)
@@ -731,7 +730,7 @@ function rand_conjugate_symplectic_pair(T, n::Integer)
 end
 
 function rand_conjugate_symplectic_pair(n::Integer)
-    return rand_conjugate_symplectic_pair(Complex{Float64},n)
+    return rand_conjugate_symplectic_pair(Complex{Float64}, n)
 end
 
 """
@@ -748,14 +747,14 @@ end
 function rand_bogoliubov_block(T, n::Integer)
     P = randn(T, n, n)
     # make P symmetric
-    P = (P+transpose(P))/2
+    P = (P + transpose(P)) / 2
 
     Q = randn(T, n, n)
     # make Q skew-Hermitian
-    Q = (Q-Q')/2
+    Q = (Q - Q') / 2
 
     # assemble M
-    M = [P Q;transpose(Q) -conj(P)]
+    M = [P Q; transpose(Q) -conj(P)]
 
     # compute the symplectic matrix using the Cayley transform
     Omega = symplectic_form_block(n)
@@ -796,14 +795,14 @@ function rand_orthogonal_bogoliubov_block(T, n::Integer)
 
     Q = randn(T, n, n)
     # make Q skew-Hermitian
-    Q = (Q-Q')/2
+    Q = (Q - Q') / 2
 
     # assemble M
-    M = [0*I(n) Q;transpose(Q) 0*I(n)]
+    M = [0*I(n) Q; transpose(Q) 0*I(n)]
 
     # compute the symplectic matrix using the Cayley transform
     Omega = symplectic_form_block(n)
-    return cayley_transform(Omega,M)
+    return cayley_transform(Omega, M)
 end
 
 """
@@ -834,12 +833,12 @@ function rand_pseudo_unitary_block(n::Integer)
 end
 
 function rand_pseudo_unitary_block(T, n::Integer)
-    A = randn(T, 2*n, 2*n)
+    A = randn(T, 2 * n, 2 * n)
     K = indefinite_hermitian_form_block(n)
     # generate a random skew-Hermitian
-    M = (A - A')/2
+    M = (A - A') / 2
     # return exp(K * M)
-    return cayley_transform(K,M)
+    return cayley_transform(K, M)
 end
 
 """
@@ -854,23 +853,23 @@ function rand_pseudo_unitary_pair(n::Integer)
 end
 
 function rand_pseudo_unitary_pair(T, n::Integer)
-    A = randn(T, 2*n, 2*n)
+    A = randn(T, 2 * n, 2 * n)
     K = indefinite_hermitian_form_pair(n)
     # generate a random skew-Hermitian
-    M = (A - A')/2
+    M = (A - A') / 2
     # return exp(K * M)
-    return cayley_transform(K,M)
+    return cayley_transform(K, M)
 end
 
-function cayley_transform(Omega,M)
+function cayley_transform(Omega, M)
     # add a check to verify the sizes of Omega and M are the same
-    n = size(M,1)
-    S = (I(n) + Omega*M) * inv(I(n) - Omega*M)
+    n = size(M, 1)
+    S = (I(n) + Omega * M) * inv(I(n) - Omega * M)
     # S = qr(I(n) - Omega*M)\(I(n) + Omega*M)
     return S
 end
 
-function rand_cptp_block(T, nsys::Integer; nenv::Integer=nsys,
+function rand_cptp_quadrature_block(T, nsys::Integer; nenv::Integer=nsys,
     sigma_env=2 * I(2 * nsys))
     # need to start with an pair matrix
     S = rand_symplectic_pair(T, nsys + nenv)
@@ -880,48 +879,48 @@ function rand_cptp_block(T, nsys::Integer; nenv::Integer=nsys,
 
     X = A
     # Y = B * sigma_env * B'
-    Y = B*sigma_env*transpose(B)
+    Y = B * sigma_env * transpose(B)
     return (X=X, Y=Y)
 end
 
-function rand_cptp_block(nsys::Integer; nenv::Integer=nsys)
-    return rand_cptp_block(Float64, nsys; nenv=nsys)
+function rand_cptp_quadrature_block(nsys::Integer; nenv::Integer=nsys)
+    return rand_cptp_quadrature_block(Float64, nsys; nenv=nsys)
 end
 
-function rand_cptp_pair(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env = 2*I(2*nsys))
+function rand_cptp_quadrature_pair(T, nsys::Integer; nenv::Integer=nsys,
+    sigma_env=2 * I(2 * nsys))
     S = rand_symplectic_pair(T, nsys + nenv)
     A = S[1:2*nsys, 1:2*nsys]
     B = S[1:2*nsys, 2*nsys+1:end]
 
     X = A
     # Y = B * sigma_env * B'
-    Y = B*sigma_env*transpose(B)
+    Y = B * sigma_env * transpose(B)
     return (X=X, Y=Y)
 end
 
-function rand_cptp_pair(nsys::Integer; nenv::Integer=nsys)
-    return rand_cptp_pair(Float64, nsys; nenv=nsys)
+function rand_cptp_quadrature_pair(nsys::Integer; nenv::Integer=nsys)
+    return rand_cptp_quadrature_pair(Float64, nsys; nenv=nsys)
 end
 
 
-function rand_cptp_bogoliubov_pair(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env = 2*I(2*nsys))
+function rand_cptp_ladder_pair(T, nsys::Integer; nenv::Integer=nsys,
+    sigma_env=2 * I(2 * nsys))
     S = rand_bogoliubov_pair(T, nsys + nenv)
     A = S[1:2*nsys, 1:2*nsys]
     B = S[1:2*nsys, 2*nsys+1:end]
 
     X = A
-    Y = B*sigma_env*B'
+    Y = B * sigma_env * B'
     return (X=X, Y=Y)
 end
 
-function rand_cptp_bogoliubov_pair(nsys::Integer; nenv::Integer=nsys)
-    return rand_cptp_bogoliubov_pair(Complex{Float64}, nsys; nenv=nsys)
+function rand_cptp_ladder_pair(nsys::Integer; nenv::Integer=nsys)
+    return rand_cptp_ladder_pair(Complex{Float64}, nsys; nenv=nsys)
 end
 
-function rand_cptp_bogoliubov_block(T, nsys::Integer; nenv::Integer=nsys,
-    sigma_env = 2*I(2*nsys))
+function rand_cptp_ladder_block(T, nsys::Integer; nenv::Integer=nsys,
+    sigma_env=2 * I(2 * nsys))
     # need to start with an pair matrix
     S = rand_bogoliubov_pair(T, nsys + nenv)
     # now convert each of these blocks to the block form
@@ -929,12 +928,12 @@ function rand_cptp_bogoliubov_block(T, nsys::Integer; nenv::Integer=nsys,
     B = pair_to_block(S[1:2*nsys, 2*nsys+1:end])
 
     X = A
-    Y = B*sigma_env*B'
+    Y = B * sigma_env * B'
     return (X=X, Y=Y)
 end
 
-function rand_cptp_bogoliubov_block(nsys::Integer; nenv::Integer=nsys)
-    return rand_cptp_bogoliubov_block(Complex{Float64}, nsys; nenv=nsys)
+function rand_cptp_ladder_block(nsys::Integer; nenv::Integer=nsys)
+    return rand_cptp_ladder_block(Complex{Float64}, nsys; nenv=nsys)
 end
 
 
@@ -1364,7 +1363,7 @@ julia> JosephsonCircuits.R_ladder_to_quadrature_block(1)
 """
 function R_ladder_to_quadrature_block(n::Integer)
     # I should convert this to a sparse matrix form
-#    return Complex{Float64}[I(n) I(n); -im*I(n) im*I(n)] / sqrt(2)
+    #    return Complex{Float64}[I(n) I(n); -im*I(n) im*I(n)] / sqrt(2)
     return [I(n)/sqrt(2) I(n)/sqrt(2); -im*I(n)/sqrt(2) im*I(n)/sqrt(2)]
 end
 
@@ -1483,21 +1482,21 @@ function scattering_to_quadrature_pair(S_scattering::AbstractVector{Complex{T}},
     # the symplectic matrix is real so if the type of `S_scattering` is
     # complex, use this parametric method to define a real matrix.
     n = length(S_scattering)
-    S_symplectic = zeros(T, 2*n)
+    S_symplectic = zeros(T, 2 * n)
     return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
 end
 
 function scattering_to_quadrature_pair(S_scattering::AbstractVector{T}, w) where {T}
-    n  = length(S_scattering)
-    S_symplectic = zeros(T, 2*n)
+    n = length(S_scattering)
+    S_symplectic = zeros(T, 2 * n)
     return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
 end
 
 function scattering_to_quadrature_pair!(S_symplectic::AbstractVector,
     S_scattering::AbstractVector, w::AbstractVector)
-    
+
     # check the relative sizes
-    if length(S_symplectic) != 2*length(S_scattering)
+    if length(S_symplectic) != 2 * length(S_scattering)
         throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
     end
 
@@ -1511,17 +1510,17 @@ function scattering_to_quadrature_pair!(S_symplectic::AbstractVector,
 
     # loop through the scattering vector to place each of the elements
     for i in eachindex(S_scattering)
-        if w[mod(i-1,Nmodes)+1] > 0
+        if w[mod(i - 1, Nmodes)+1] > 0
             # this is a
             # assign x and p
-            S_symplectic[2*i-1] = sqrt(2)*real(S_scattering[i])
-            S_symplectic[2*i] = sqrt(2)*imag(S_scattering[i])
+            S_symplectic[2*i-1] = sqrt(2) * real(S_scattering[i])
+            S_symplectic[2*i] = sqrt(2) * imag(S_scattering[i])
             # assign p
         else
             # this is adag
             # assign x and p
-            S_symplectic[2*i-1] = sqrt(2)*real(S_scattering[i])
-            S_symplectic[2*i] = -sqrt(2)*imag(S_scattering[i])
+            S_symplectic[2*i-1] = sqrt(2) * real(S_scattering[i])
+            S_symplectic[2*i] = -sqrt(2) * imag(S_scattering[i])
         end
     end
 
@@ -1552,21 +1551,21 @@ function scattering_to_quadrature_block(S_scattering::AbstractVector{Complex{T}}
     # the symplectic matrix is real so if the type of `S_scattering` is
     # complex, use this parametric method to define a real matrix.
     n = length(S_scattering)
-    S_symplectic = zeros(T, 2*n)
+    S_symplectic = zeros(T, 2 * n)
     return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
 end
 
 function scattering_to_quadrature_block(S_scattering::AbstractVector{T}, w) where {T}
-    n  = length(S_scattering)
-    S_symplectic = zeros(T, 2*n)
+    n = length(S_scattering)
+    S_symplectic = zeros(T, 2 * n)
     return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
 end
 
 function scattering_to_quadrature_block!(S_symplectic::AbstractVector,
     S_scattering::AbstractVector, w::AbstractVector)
-    
+
     # check the relative sizes
-    if length(S_symplectic) != 2*length(S_scattering)
+    if length(S_symplectic) != 2 * length(S_scattering)
         throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
     end
 
@@ -1580,17 +1579,17 @@ function scattering_to_quadrature_block!(S_symplectic::AbstractVector,
 
     # loop through the scattering vector to place each of the elements
     for i in eachindex(S_scattering)
-        if w[mod(i-1,Nmodes)+1] > 0
+        if w[mod(i - 1, Nmodes)+1] > 0
             # this is a
             # assign x and p
-            S_symplectic[i] = sqrt(2)*real(S_scattering[i])
-            S_symplectic[i+n] = sqrt(2)*imag(S_scattering[i])
+            S_symplectic[i] = sqrt(2) * real(S_scattering[i])
+            S_symplectic[i+n] = sqrt(2) * imag(S_scattering[i])
             # assign p
         else
             # this is adag
             # assign x and p
-            S_symplectic[i] = sqrt(2)*real(S_scattering[i])
-            S_symplectic[i+n] = -sqrt(2)*imag(S_scattering[i])
+            S_symplectic[i] = sqrt(2) * real(S_scattering[i])
+            S_symplectic[i+n] = -sqrt(2) * imag(S_scattering[i])
         end
     end
 
@@ -1618,16 +1617,16 @@ JosephsonCircuits.scattering_to_ladder_pair(JosephsonCircuits.quadrature_to_ladd
 ```
 """
 function scattering_to_ladder_pair(S_scattering::AbstractVector, w)
-    n  = length(S_scattering)
-    S_bogoliubov = zeros(eltype(S_scattering), 2*n)
+    n = length(S_scattering)
+    S_bogoliubov = zeros(eltype(S_scattering), 2 * n)
     return scattering_to_ladder_pair!(S_bogoliubov, S_scattering, w)
 end
 
 function scattering_to_ladder_pair!(S_bogoliubov::AbstractVector,
     S_scattering::AbstractVector, w::AbstractVector)
-    
+
     # check the relative sizes
-    if length(S_bogoliubov) != 2*length(S_scattering)
+    if length(S_bogoliubov) != 2 * length(S_scattering)
         throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
     end
 
@@ -1641,7 +1640,7 @@ function scattering_to_ladder_pair!(S_bogoliubov::AbstractVector,
 
     # loop through the scattering vector to place each of the elements
     for i in eachindex(S_scattering)
-        if w[mod(i-1,Nmodes)+1] > 0
+        if w[mod(i - 1, Nmodes)+1] > 0
             # this is a
             # assign a and adag
             S_bogoliubov[2*i-1] = S_scattering[i]
@@ -1680,16 +1679,16 @@ JosephsonCircuits.scattering_to_ladder_block(JosephsonCircuits.quadrature_to_lad
 ```
 """
 function scattering_to_ladder_block(S_scattering::AbstractVector, w)
-    n  = length(S_scattering)
-    S_bogoliubov = zeros(eltype(S_scattering), 2*n)
+    n = length(S_scattering)
+    S_bogoliubov = zeros(eltype(S_scattering), 2 * n)
     return scattering_to_ladder_block!(S_bogoliubov, S_scattering, w)
 end
 
 function scattering_to_ladder_block!(S_bogoliubov::AbstractVector,
     S_scattering::AbstractVector, w::AbstractVector)
-    
+
     # check the relative sizes
-    if length(S_bogoliubov) != 2*length(S_scattering)
+    if length(S_bogoliubov) != 2 * length(S_scattering)
         throw(DimensionMismatch(lazy"The length of the bogoliubov vector must be double that of the scattering parameter vector."))
     end
 
@@ -1703,7 +1702,7 @@ function scattering_to_ladder_block!(S_bogoliubov::AbstractVector,
 
     # loop through the scattering vector to place each of the elements
     for i in eachindex(S_scattering)
-        if w[mod(i-1,Nmodes)+1] > 0
+        if w[mod(i - 1, Nmodes)+1] > 0
             # this is a
             # assign x and p
             S_bogoliubov[i] = S_scattering[i]
@@ -1741,14 +1740,14 @@ JosephsonCircuits.scattering_to_ladder_pair([S11 S12 S13 S14;S21 S22 S23 S24;S31
 ```
 """
 function scattering_to_ladder_pair(S_scattering::AbstractMatrix, w)
-    n,m  = size(S_scattering)
-    S_bogoliubov = zeros(eltype(S_scattering), 2*n, 2*m)
+    n, m = size(S_scattering)
+    S_bogoliubov = zeros(eltype(S_scattering), 2 * n, 2 * m)
     return scattering_to_ladder_pair!(S_bogoliubov, S_scattering, w)
 end
 
 function scattering_to_ladder_pair!(S_bogoliubov::AbstractMatrix,
     S_scattering::AbstractMatrix, w::AbstractVector)
-    
+
     # # check the relative sizes
     # if length(S_bogoliubov) != 2*length(S_scattering)
     #     throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
@@ -1766,35 +1765,35 @@ function scattering_to_ladder_pair!(S_bogoliubov::AbstractMatrix,
     # check the signs, then assign one of the 2x2 blocks depending
     # on the 4 sign combinations.
 
-    for i in 1:size(S_scattering,1)
-        for j in 1:size(S_scattering,2)
+    for i in 1:size(S_scattering, 1)
+        for j in 1:size(S_scattering, 2)
             if w[i] > zero(w[i])
                 if w[j] > zero(w[j])
                     # both positive
-                    S_bogoliubov[2*i-1,2*j-1] = S_scattering[i,j]
-                    S_bogoliubov[2*i-1,2*j] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i,2*j-1] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i,2*j] = conj(S_scattering[i,j])
+                    S_bogoliubov[2*i-1, 2*j-1] = S_scattering[i, j]
+                    S_bogoliubov[2*i-1, 2*j] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i, 2*j-1] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i, 2*j] = conj(S_scattering[i, j])
                 else
                     # row positive, col negative
-                    S_bogoliubov[2*i-1,2*j-1] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i-1,2*j] = S_scattering[i,j]
-                    S_bogoliubov[2*i,2*j-1] = conj(S_scattering[i,j])
-                    S_bogoliubov[2*i,2*j] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i-1, 2*j-1] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i-1, 2*j] = S_scattering[i, j]
+                    S_bogoliubov[2*i, 2*j-1] = conj(S_scattering[i, j])
+                    S_bogoliubov[2*i, 2*j] = zero(eltype(S_bogoliubov))
                 end
             else
                 if w[j] > zero(w[j])
                     # row negative, col positive
-                    S_bogoliubov[2*i-1,2*j-1] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i-1,2*j] = conj(S_scattering[i,j])
-                    S_bogoliubov[2*i,2*j-1] = S_scattering[i,j]
-                    S_bogoliubov[2*i,2*j] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i-1, 2*j-1] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i-1, 2*j] = conj(S_scattering[i, j])
+                    S_bogoliubov[2*i, 2*j-1] = S_scattering[i, j]
+                    S_bogoliubov[2*i, 2*j] = zero(eltype(S_bogoliubov))
                 else
                     # both negative
-                    S_bogoliubov[2*i-1,2*j-1] = conj(S_scattering[i,j])
-                    S_bogoliubov[2*i-1,2*j] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i,2*j-1] = zero(eltype(S_bogoliubov))
-                    S_bogoliubov[2*i,2*j] = S_scattering[i,j]
+                    S_bogoliubov[2*i-1, 2*j-1] = conj(S_scattering[i, j])
+                    S_bogoliubov[2*i-1, 2*j] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i, 2*j-1] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[2*i, 2*j] = S_scattering[i, j]
                 end
             end
         end
@@ -1826,14 +1825,14 @@ JosephsonCircuits.scattering_to_ladder_block([S11 S12 S13 S14;S21 S22 S23 S24;S3
 ```
 """
 function scattering_to_ladder_block(S_scattering::AbstractMatrix, w)
-    n,m  = size(S_scattering)
-    S_bogoliubov = zeros(eltype(S_scattering), 2*n, 2*m)
+    n, m = size(S_scattering)
+    S_bogoliubov = zeros(eltype(S_scattering), 2 * n, 2 * m)
     return scattering_to_ladder_block!(S_bogoliubov, S_scattering, w)
 end
 
 function scattering_to_ladder_block!(S_bogoliubov::AbstractMatrix,
     S_scattering::AbstractMatrix, w::AbstractVector)
-    
+
     # # check the relative sizes
     # if length(S_bogoliubov) != 2*length(S_scattering)
     #     throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
@@ -1854,56 +1853,56 @@ function scattering_to_ladder_block!(S_bogoliubov::AbstractMatrix,
     # loop through the four blocks
     # S = [A B;C D]
 
-    n = size(S_scattering,1)
-    m = size(S_scattering,2)
-    
+    n = size(S_scattering, 1)
+    m = size(S_scattering, 2)
+
     for i in 1:n
         for j in 1:m
             if w[i] > zero(w[i])
                 if w[j] > zero(w[j])
                     # both positive
                     # A
-                    S_bogoliubov[i,j] = S_scattering[i,j]
+                    S_bogoliubov[i, j] = S_scattering[i, j]
                     # B
-                    S_bogoliubov[i,j+m] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[i, j+m] = zero(eltype(S_bogoliubov))
                     # C
-                    S_bogoliubov[i+m,j] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[i+m, j] = zero(eltype(S_bogoliubov))
                     # D
-                    S_bogoliubov[i+n,j+m] = conj(S_scattering[i,j])
+                    S_bogoliubov[i+n, j+m] = conj(S_scattering[i, j])
                 else
                     # row positive, col negative
                     # A
-                    S_bogoliubov[i,j] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[i, j] = zero(eltype(S_bogoliubov))
                     # B
-                    S_bogoliubov[i,j+m] = S_scattering[i,j]
+                    S_bogoliubov[i, j+m] = S_scattering[i, j]
                     # C
-                    S_bogoliubov[i+m,j] = conj(S_scattering[i,j])
+                    S_bogoliubov[i+m, j] = conj(S_scattering[i, j])
                     # D
-                    S_bogoliubov[i+n,j+m] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[i+n, j+m] = zero(eltype(S_bogoliubov))
 
                 end
             else
                 if w[j] > zero(w[j])
                     # row negative, col positive
                     # A
-                    S_bogoliubov[i,j] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[i, j] = zero(eltype(S_bogoliubov))
                     # B
-                    S_bogoliubov[i,j+m] = conj(S_scattering[i,j])
+                    S_bogoliubov[i, j+m] = conj(S_scattering[i, j])
                     # C
-                    S_bogoliubov[i+m,j] = S_scattering[i,j]
+                    S_bogoliubov[i+m, j] = S_scattering[i, j]
                     # D
-                    S_bogoliubov[i+n,j+m] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[i+n, j+m] = zero(eltype(S_bogoliubov))
 
                 else
                     # both negative
                     # A
-                    S_bogoliubov[i,j] = conj(S_scattering[i,j])
+                    S_bogoliubov[i, j] = conj(S_scattering[i, j])
                     # B
-                    S_bogoliubov[i,j+m] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[i, j+m] = zero(eltype(S_bogoliubov))
                     # C
-                    S_bogoliubov[i+m,j] = zero(eltype(S_bogoliubov))
+                    S_bogoliubov[i+m, j] = zero(eltype(S_bogoliubov))
                     # D
-                    S_bogoliubov[i+n,j+m] = S_scattering[i,j]
+                    S_bogoliubov[i+n, j+m] = S_scattering[i, j]
                 end
             end
         end
@@ -1930,22 +1929,22 @@ JosephsonCircuits.scattering_to_quadrature_pair(S,w)
 ```
 """
 function scattering_to_quadrature_pair(S_scattering::AbstractMatrix{T}, w) where {T}
-    n,m = size(S_scattering)
-    S_symplectic = zeros(T, 2*n, 2*m)
+    n, m = size(S_scattering)
+    S_symplectic = zeros(T, 2 * n, 2 * m)
     return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
 end
 
 function scattering_to_quadrature_pair(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
     # the symplectic matrix is real so if the type of `S_scattering` is
     # complex, use this parametric method to define a real matrix.
-    n,m = size(S_scattering)
-    S_symplectic = zeros(T, 2*n, 2*m)
+    n, m = size(S_scattering)
+    S_symplectic = zeros(T, 2 * n, 2 * m)
     return scattering_to_quadrature_pair!(S_symplectic, S_scattering, w)
 end
 
 function scattering_to_quadrature_pair!(S_symplectic::AbstractMatrix,
     S_scattering::AbstractMatrix, w::AbstractVector)
-    
+
     # # check the relative sizes
     # if length(S_bogoliubov) != 2*length(S_scattering)
     #     throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
@@ -1963,35 +1962,35 @@ function scattering_to_quadrature_pair!(S_symplectic::AbstractMatrix,
     # check the signs, then assign one of the 2x2 blocks depending
     # on the 4 sign combinations.
 
-    for i in 1:size(S_scattering,1)
-        for j in 1:size(S_scattering,2)
+    for i in 1:size(S_scattering, 1)
+        for j in 1:size(S_scattering, 2)
             if w[i] > zero(w[i])
                 if w[j] > zero(w[j])
                     # both positive
-                    S_symplectic[2*i-1,2*j-1] = real(S_scattering[i,j])
-                    S_symplectic[2*i-1,2*j] = -imag(S_scattering[i,j])
-                    S_symplectic[2*i,2*j-1] = imag(S_scattering[i,j])
-                    S_symplectic[2*i,2*j] = real(S_scattering[i,j])
+                    S_symplectic[2*i-1, 2*j-1] = real(S_scattering[i, j])
+                    S_symplectic[2*i-1, 2*j] = -imag(S_scattering[i, j])
+                    S_symplectic[2*i, 2*j-1] = imag(S_scattering[i, j])
+                    S_symplectic[2*i, 2*j] = real(S_scattering[i, j])
                 else
                     # row positive, col negative
-                    S_symplectic[2*i-1,2*j-1] = real(S_scattering[i,j])
-                    S_symplectic[2*i-1,2*j] = imag(S_scattering[i,j])
-                    S_symplectic[2*i,2*j-1] = imag(S_scattering[i,j])
-                    S_symplectic[2*i,2*j] = -real(S_scattering[i,j])
+                    S_symplectic[2*i-1, 2*j-1] = real(S_scattering[i, j])
+                    S_symplectic[2*i-1, 2*j] = imag(S_scattering[i, j])
+                    S_symplectic[2*i, 2*j-1] = imag(S_scattering[i, j])
+                    S_symplectic[2*i, 2*j] = -real(S_scattering[i, j])
                 end
             else
                 if w[j] > zero(w[j])
                     # row negative, col positive
-                    S_symplectic[2*i-1,2*j-1] = real(S_scattering[i,j])
-                    S_symplectic[2*i-1,2*j] = -imag(S_scattering[i,j])
-                    S_symplectic[2*i,2*j-1] = -imag(S_scattering[i,j])
-                    S_symplectic[2*i,2*j] = -real(S_scattering[i,j])
+                    S_symplectic[2*i-1, 2*j-1] = real(S_scattering[i, j])
+                    S_symplectic[2*i-1, 2*j] = -imag(S_scattering[i, j])
+                    S_symplectic[2*i, 2*j-1] = -imag(S_scattering[i, j])
+                    S_symplectic[2*i, 2*j] = -real(S_scattering[i, j])
                 else
                     # both negative
-                    S_symplectic[2*i-1,2*j-1] = real(S_scattering[i,j])
-                    S_symplectic[2*i-1,2*j] = imag(S_scattering[i,j])
-                    S_symplectic[2*i,2*j-1] = -imag(S_scattering[i,j])
-                    S_symplectic[2*i,2*j] = real(S_scattering[i,j])
+                    S_symplectic[2*i-1, 2*j-1] = real(S_scattering[i, j])
+                    S_symplectic[2*i-1, 2*j] = imag(S_scattering[i, j])
+                    S_symplectic[2*i, 2*j-1] = -imag(S_scattering[i, j])
+                    S_symplectic[2*i, 2*j] = real(S_scattering[i, j])
                 end
             end
         end
@@ -2019,22 +2018,22 @@ JosephsonCircuits.scattering_to_quadrature_block(S,w)
 ```
 """
 function scattering_to_quadrature_block(S_scattering::AbstractMatrix{T}, w) where {T}
-    n,m = size(S_scattering)
-    S_symplectic = zeros(T, 2*n, 2*m)
+    n, m = size(S_scattering)
+    S_symplectic = zeros(T, 2 * n, 2 * m)
     return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
 end
 
 function scattering_to_quadrature_block(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
     # the symplectic matrix is real so if the type of `S_scattering` is
     # complex, use this parametric method to define a real matrix.
-    n,m = size(S_scattering)
-    S_symplectic = zeros(T, 2*n, 2*m)
+    n, m = size(S_scattering)
+    S_symplectic = zeros(T, 2 * n, 2 * m)
     return scattering_to_quadrature_block!(S_symplectic, S_scattering, w)
 end
 
 function scattering_to_quadrature_block!(S_symplectic::AbstractMatrix,
     S_scattering::AbstractMatrix, w::AbstractVector)
-    
+
     # # check the relative sizes
     # if length(S_bogoliubov) != 2*length(S_scattering)
     #     throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
@@ -2051,56 +2050,56 @@ function scattering_to_quadrature_block!(S_symplectic::AbstractMatrix,
     # loop through the four blocks
     # S = [A B;C D]
 
-    n = size(S_scattering,1)
-    m = size(S_scattering,2)
-    
+    n = size(S_scattering, 1)
+    m = size(S_scattering, 2)
+
     for i in 1:n
         for j in 1:m
             if w[i] > zero(w[i])
                 if w[j] > zero(w[j])
                     # both positive
                     # A
-                    S_symplectic[i,j] = real(S_scattering[i,j])
+                    S_symplectic[i, j] = real(S_scattering[i, j])
                     # B
-                    S_symplectic[i,j+m] = -imag(S_scattering[i,j])
+                    S_symplectic[i, j+m] = -imag(S_scattering[i, j])
                     # C
-                    S_symplectic[i+m,j] = imag(S_scattering[i,j])
+                    S_symplectic[i+m, j] = imag(S_scattering[i, j])
                     # D
-                    S_symplectic[i+n,j+m] = real(S_scattering[i,j])
+                    S_symplectic[i+n, j+m] = real(S_scattering[i, j])
                 else
                     # row positive, col negative
                     # A
-                    S_symplectic[i,j] = real(S_scattering[i,j])
+                    S_symplectic[i, j] = real(S_scattering[i, j])
                     # B
-                    S_symplectic[i,j+m] = imag(S_scattering[i,j])
+                    S_symplectic[i, j+m] = imag(S_scattering[i, j])
                     # C
-                    S_symplectic[i+m,j] = imag(S_scattering[i,j])
+                    S_symplectic[i+m, j] = imag(S_scattering[i, j])
                     # D
-                    S_symplectic[i+n,j+m] = -real(S_scattering[i,j])
+                    S_symplectic[i+n, j+m] = -real(S_scattering[i, j])
 
                 end
             else
                 if w[j] > zero(w[j])
                     # row negative, col positive
                     # A
-                    S_symplectic[i,j] = real(S_scattering[i,j])
+                    S_symplectic[i, j] = real(S_scattering[i, j])
                     # B
-                    S_symplectic[i,j+m] = -imag(S_scattering[i,j])
+                    S_symplectic[i, j+m] = -imag(S_scattering[i, j])
                     # C
-                    S_symplectic[i+m,j] = -imag(S_scattering[i,j])
+                    S_symplectic[i+m, j] = -imag(S_scattering[i, j])
                     # D
-                    S_symplectic[i+n,j+m] = -real(S_scattering[i,j])
+                    S_symplectic[i+n, j+m] = -real(S_scattering[i, j])
 
                 else
                     # both negative
                     # A
-                    S_symplectic[i,j] = real(S_scattering[i,j])
+                    S_symplectic[i, j] = real(S_scattering[i, j])
                     # B
-                    S_symplectic[i,j+m] = imag(S_scattering[i,j])
+                    S_symplectic[i, j+m] = imag(S_scattering[i, j])
                     # C
-                    S_symplectic[i+m,j] = -imag(S_scattering[i,j])
+                    S_symplectic[i+m, j] = -imag(S_scattering[i, j])
                     # D
-                    S_symplectic[i+n,j+m] = real(S_scattering[i,j])
+                    S_symplectic[i+n, j+m] = real(S_scattering[i, j])
                 end
             end
         end
@@ -2137,12 +2136,12 @@ julia> p = JosephsonCircuits.ports_modes_to_modes_ports_perm(2,4)
  8
 ```
 """
-function ports_modes_to_modes_ports_perm(Nports,Nmodes)
+function ports_modes_to_modes_ports_perm(Nports, Nmodes)
 
     # for (ports,modes) to (modes,ports)
-    p = Vector{Int}(undef,Nports*Nmodes)
+    p = Vector{Int}(undef, Nports * Nmodes)
     for i in eachindex(p)
-        p[i] = mod(1+(i-1)*Nports,length(p)) + div(i-1,Nmodes)
+        p[i] = mod(1 + (i - 1) * Nports, length(p)) + div(i - 1, Nmodes)
     end
 
     return p
@@ -2174,12 +2173,12 @@ julia> p = JosephsonCircuits.modes_ports_to_ports_modes_perm(2,4)
  8
 ```
 """
-function modes_ports_to_ports_modes_perm(Nports,Nmodes)
+function modes_ports_to_ports_modes_perm(Nports, Nmodes)
 
     # for (modes,ports) to (ports,modes)
-    p = Vector{Int}(undef,Nports*Nmodes)
+    p = Vector{Int}(undef, Nports * Nmodes)
     for i in eachindex(p)
-        p[i] = mod(1+(i-1)*Nmodes,length(p)) + div(i-1,Nports)
+        p[i] = mod(1 + (i - 1) * Nmodes, length(p)) + div(i - 1, Nports)
     end
 
     return p
@@ -2222,10 +2221,10 @@ julia> JosephsonCircuits.scattering_to_pair_perm(JosephsonCircuits.ports_modes_t
 function scattering_to_pair_perm(p0::Vector{Int})
 
     # for (ports,modes) to (modes,ports)
-    p = Vector{Int}(undef,2*length(p0))
+    p = Vector{Int}(undef, 2 * length(p0))
     for i in eachindex(p0)
-        p[2*i-1] = 2*p0[i]-1
-        p[2*i] = 2*p0[i]
+        p[2*i-1] = 2 * p0[i] - 1
+        p[2*i] = 2 * p0[i]
     end
 
     return p
@@ -2268,7 +2267,7 @@ julia> JosephsonCircuits.scattering_to_block_perm(JosephsonCircuits.ports_modes_
 function scattering_to_block_perm(p0::Vector{Int})
 
     # for (ports,modes) to (modes,ports)
-    p = Vector{Int}(undef,2*length(p0))
+    p = Vector{Int}(undef, 2 * length(p0))
     for i in eachindex(p0)
         p[i] = p0[i]
         p[i+length(p0)] = p0[i] + length(p0)
@@ -2278,19 +2277,19 @@ function scattering_to_block_perm(p0::Vector{Int})
 end
 
 
-    # make separate functions for vectors and matrices
-    # for arrays loop over everything but the first two dimensions
+# make separate functions for vectors and matrices
+# for arrays loop over everything but the first two dimensions
 
-    # maybe i should just have seperate ones for scattering, pair, and block
-    # i think so, it's not that trivial. 
-    # for pair and block format, we respect the symplectic structure
-    # 
+# maybe i should just have seperate ones for scattering, pair, and block
+# i think so, it's not that trivial.
+# for pair and block format, we respect the symplectic structure
+#
 
-    # for the pair and block, i can first generate the permutations with
-    # the regular function then adapt them to the pair or block format.
+# for the pair and block, i can first generate the permutations with
+# the regular function then adapt them to the pair or block format.
 
-    # for pair, do i just copy each one twice and add one to the second one?
-    # 
+# for pair, do i just copy each one twice and add one to the second one?
+#
 
 
 """
@@ -2314,15 +2313,15 @@ JosephsonCircuits.modes_ports_to_ports_modes_scattering(S,2)
  S81  S83  S85  S87  S82  S84  S86  S88
 ```
 """
-function modes_ports_to_ports_modes_scattering(S::AbstractMatrix,Nmodes::Int)
+function modes_ports_to_ports_modes_scattering(S::AbstractMatrix, Nmodes::Int)
 
-    if size(S,1) == size(S,2)
-        p1 = p2 = modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes)
+    if size(S, 1) == size(S, 2)
+        p1 = p2 = modes_ports_to_ports_modes_perm(size(S, 1) ÷ Nmodes, Nmodes)
     else
-        p1 = modes_ports_to_ports_modes_perm(size(S,1)÷Nmodes,Nmodes)
-        p2 = modes_ports_to_ports_modes_perm(size(S,2)÷Nmodes,Nmodes)
+        p1 = modes_ports_to_ports_modes_perm(size(S, 1) ÷ Nmodes, Nmodes)
+        p2 = modes_ports_to_ports_modes_perm(size(S, 2) ÷ Nmodes, Nmodes)
     end
-    return S[p1,p2]
+    return S[p1, p2]
 end
 
 """
@@ -2346,15 +2345,15 @@ JosephsonCircuits.ports_modes_to_modes_ports_scattering(S,2)
  S81  S85  S82  S86  S83  S87  S84  S88
 ```
 """
-function ports_modes_to_modes_ports_scattering(S::AbstractMatrix,Nmodes::Int)
+function ports_modes_to_modes_ports_scattering(S::AbstractMatrix, Nmodes::Int)
 
-    if size(S,1) == size(S,2)
-        p1 = p2 = ports_modes_to_modes_ports_perm(size(S,1)÷Nmodes,Nmodes)
+    if size(S, 1) == size(S, 2)
+        p1 = p2 = ports_modes_to_modes_ports_perm(size(S, 1) ÷ Nmodes, Nmodes)
     else
-        p1 = ports_modes_to_modes_ports_perm(size(S,1)÷Nmodes,Nmodes)
-        p2 = ports_modes_to_modes_ports_perm(size(S,2)÷Nmodes,Nmodes)
+        p1 = ports_modes_to_modes_ports_perm(size(S, 1) ÷ Nmodes, Nmodes)
+        p2 = ports_modes_to_modes_ports_perm(size(S, 2) ÷ Nmodes, Nmodes)
     end
-    return S[p1,p2]
+    return S[p1, p2]
 end
 
 """
@@ -2378,15 +2377,15 @@ JosephsonCircuits.ports_modes_to_modes_ports_pair(S,2)
  S81  S82  S85  S86  S83  S84  S87  S88
 ```
 """
-function ports_modes_to_modes_ports_pair(S::AbstractMatrix,Nmodes::Int)
+function ports_modes_to_modes_ports_pair(S::AbstractMatrix, Nmodes::Int)
 
-    if size(S,1) == size(S,2)
-        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
+    if size(S, 1) == size(S, 2)
+        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
     else
-        p1 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm((size(S,1)÷2)÷Nmodes,Nmodes))
-        p2 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm((size(S,2)÷2)÷Nmodes,Nmodes))
+        p1 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
+        p2 = scattering_to_pair_perm(ports_modes_to_modes_ports_perm((size(S, 2) ÷ 2) ÷ Nmodes, Nmodes))
     end
-    return S[p1,p2]
+    return S[p1, p2]
 end
 
 """
@@ -2410,15 +2409,15 @@ JosephsonCircuits.modes_ports_to_ports_modes_pair(S,2)
  S81  S82  S85  S86  S83  S84  S87  S88
 ```
 """
-function modes_ports_to_ports_modes_pair(S::AbstractMatrix,Nmodes::Int)
+function modes_ports_to_ports_modes_pair(S::AbstractMatrix, Nmodes::Int)
 
-    if size(S,1) == size(S,2)
-        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
+    if size(S, 1) == size(S, 2)
+        p1 = p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
     else
-        p1 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
-        p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S,2)÷2)÷Nmodes,Nmodes))
+        p1 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
+        p2 = scattering_to_pair_perm(modes_ports_to_ports_modes_perm((size(S, 2) ÷ 2) ÷ Nmodes, Nmodes))
     end
-    return S[p1,p2]
+    return S[p1, p2]
 end
 
 """
@@ -2442,15 +2441,15 @@ JosephsonCircuits.ports_modes_to_modes_ports_block(S,2)
  S81  S83  S82  S84  S85  S87  S86  S88
 ```
 """
-function ports_modes_to_modes_ports_block(S::AbstractMatrix,Nmodes::Int)
-    
-    if size(S,1) == size(S,2)
-        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
+function ports_modes_to_modes_ports_block(S::AbstractMatrix, Nmodes::Int)
+
+    if size(S, 1) == size(S, 2)
+        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
     else
-        p1 = scattering_to_block_perm(ports_modes_to_modes_ports_perm((size(S,1)÷2)÷Nmodes,Nmodes))
-        p2 = scattering_to_block_perm(ports_modes_to_modes_ports_perm((size(S,2)÷2)÷Nmodes,Nmodes))
+        p1 = scattering_to_block_perm(ports_modes_to_modes_ports_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
+        p2 = scattering_to_block_perm(ports_modes_to_modes_ports_perm((size(S, 2) ÷ 2) ÷ Nmodes, Nmodes))
     end
-    return S[p1,p2]
+    return S[p1, p2]
 end
 
 """
@@ -2474,15 +2473,15 @@ JosephsonCircuits.modes_ports_to_ports_modes_block(S,2)
  S81  S83  S82  S84  S85  S87  S86  S88
 ```
 """
-function modes_ports_to_ports_modes_block(S::AbstractMatrix,Nmodes::Int)
-    
-    if size(S,1) == size(S,2)
-        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
+function modes_ports_to_ports_modes_block(S::AbstractMatrix, Nmodes::Int)
+
+    if size(S, 1) == size(S, 2)
+        p1 = p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
     else
-        p1 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S,1)÷2)÷Nmodes,Nmodes))
-        p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S,2)÷2)÷Nmodes,Nmodes))
+        p1 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S, 1) ÷ 2) ÷ Nmodes, Nmodes))
+        p2 = scattering_to_block_perm(modes_ports_to_ports_modes_perm((size(S, 2) ÷ 2) ÷ Nmodes, Nmodes))
     end
-    return S[p1,p2]
+    return S[p1, p2]
 end
 
 """
@@ -2595,18 +2594,18 @@ J. Phys., vol. 102, no. 10, pp. 497–507, Oct. 2024, doi: 10.1139/cjp-2024-0070
 function williamson_pair(M::AbstractMatrix{<:Real})
     n = size(M, 1) ÷ 2
     Omega = symplectic_form_pair(n)
-    d, S = _williamson(Omega,M)
+    d, S = _williamson(Omega, M)
     return d, S
 end
 
 function williamson_block(M::AbstractMatrix{<:Real})
     n = size(M, 1) ÷ 2
-    # alternatively, we could call williamson_pair(block_to_pair(M)) and 
+    # alternatively, we could call williamson_pair(block_to_pair(M)) and
     # then convert the outputs back to block ordering. I prefer to do it this
-    # way because 
+    # way because
     Omega = symplectic_form_block(n)
-    d, S = _williamson(Omega,M)
-    return pair_to_block(d), S*R_block_to_pair(n)
+    d, S = _williamson(Omega, M)
+    return pair_to_block(d), S * R_block_to_pair(n)
 end
 
 function _williamson(Omega, M::AbstractMatrix{<:Real})
@@ -2619,9 +2618,9 @@ function _williamson(Omega, M::AbstractMatrix{<:Real})
 
     # evaluate this in a function because sparse and non-sparse cholesky have
     # different syntax
-    L,rankL = choleskyLr(M)
+    L, rankL = choleskyLr(M)
 
-    K = transpose(L)*Omega*L
+    K = transpose(L) * Omega * L
 
     # check that rankL is even
     if isodd(rankL)
@@ -2638,8 +2637,8 @@ function _williamson(Omega, M::AbstractMatrix{<:Real})
     Z = Matrix(F.Z)
 
     # loop through the blocks
-    d = zeros(eltype(T),2*r)
-    phi = zeros(eltype(T),2*r)
+    d = zeros(eltype(T), 2 * r)
+    phi = zeros(eltype(T), 2 * r)
 
     # this naturally gives the pair ordering. for block need to permute the
     # order, which we do outside of this function.
@@ -2652,15 +2651,15 @@ function _williamson(Omega, M::AbstractMatrix{<:Real})
         phi[i+1] *= sign(a)
     end
 
-    S1 = L*Z*Diagonal(phi)
+    S1 = L * Z * Diagonal(phi)
 
     # if r == n then just return the values
     # otherwise, pad it out using the symplectic complement
     if r == n
-        return (d = d, S = S1)
+        return (d=d, S=S1)
     else
-        S2 = symplectic_complement(Omega,S1)
-        return (d = vcat(d,zeros(eltype(d),2*(n-r))), S = hcat(S1,S2))
+        S2 = symplectic_complement(Omega, S1)
+        return (d=vcat(d, zeros(eltype(d), 2 * (n - r))), S=hcat(S1, S2))
     end
 end
 
@@ -2669,7 +2668,7 @@ function choleskyLr(M::AbstractArray)
     # will fail if the matrix is not positive semi-definite. It's more robust
     # against small negative eigenvalues due to floating point errors than
     # non-pivoted cholesky.
-    C = cholesky(M,RowMaximum();check=false)
+    C = cholesky(M, RowMaximum(); check=false)
 
     # i've noticed that sometimes cholesky produces a rank that is larger
     # than the rank i set. rather than erroring, try reducing the rank by
@@ -2682,12 +2681,12 @@ function choleskyLr(M::AbstractArray)
         rankL = C.rank
     end
 
-    L = C.L[invperm(C.p),1:rankL]
+    L = C.L[invperm(C.p), 1:rankL]
 
     # if the Cholesky factorization reports it has failed, check that
-    # A ≈ L*L'. 
+    # A ≈ L*L'.
     if !issuccess(C)
-        if !isapprox(M,L*L')
+        if !isapprox(M, L * L')
             error(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite.")
         end
     end
@@ -2698,13 +2697,13 @@ end
 function choleskyLr(M::SparseMatrixCSC)
     C = cholesky(M)
 
-    L = Matrix(sparse(C.L)[invperm(C.p),:])
-    rankL = size(M,1)
+    L = Matrix(sparse(C.L)[invperm(C.p), :])
+    rankL = size(M, 1)
 
     # if the Cholesky factorization reports it has failed, check that
-    # A ≈ L*L'. 
+    # A ≈ L*L'.
     if !issuccess(C)
-        if !isapprox(M,L*L')
+        if !isapprox(M, L * L')
             error(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite.")
         end
     end
@@ -2712,14 +2711,14 @@ function choleskyLr(M::SparseMatrixCSC)
     return L, rankL
 end
 
-function symplectic_complement(Omega,S1)
+function symplectic_complement(Omega, S1)
 
-    n = size(S1,1) ÷ 2
-    r = size(S1,2) ÷ 2
+    n = size(S1, 1) ÷ 2
+    r = size(S1, 2) ÷ 2
 
     # it looks like the rank deficient case is failing in the block format
     # make sense because i'm using the pair symplectic form for
-    # symplectic_complement. i think i also need to 
+    # symplectic_complement. i think i also need to
     # Omega = symplectic_form_pair(n)
 
     # ker(S1' Ω) is the symplectic complement of range(S1) = range(M).
@@ -2728,12 +2727,13 @@ function symplectic_complement(Omega,S1)
     # (2n-r) × (2n-r), skew, full-rank
     K2 = transpose(S2) * Omega * S2
     F2 = schur(K2)
-    T2 = Matrix(F2.T); Z2 = Matrix(F2.Z)
+    T2 = Matrix(F2.T)
+    Z2 = Matrix(F2.Z)
     phi2 = zeros(eltype(T2), 2n - 2r)
-    for i in 1:2:(2n - 2r)
+    for i in 1:2:(2n-2r)
         a = (T2[i, i+1] - T2[i+1, i]) / 2
         s = inv(sqrt(abs(a)))
-        phi2[i]   = s
+        phi2[i] = s
         phi2[i+1] = s * sign(a)
     end
     # 2n × (2n-r)
@@ -2820,8 +2820,8 @@ true
 ```
 """
 function inv_symplectic_pair(S)
-    Omega = symplectic_form_pair(size(S,2)÷2)
-    return transpose(Omega)*transpose(S)*Omega
+    Omega = symplectic_form_pair(size(S, 2) ÷ 2)
+    return transpose(Omega) * transpose(S) * Omega
 end
 
 """
@@ -2838,8 +2838,8 @@ true
 ```
 """
 function inv_symplectic_block(S)
-    Omega = symplectic_form_block(size(S,2)÷2)
-    return transpose(Omega)*transpose(S)*Omega
+    Omega = symplectic_form_block(size(S, 2) ÷ 2)
+    return transpose(Omega) * transpose(S) * Omega
 end
 
 """
@@ -3185,7 +3185,7 @@ function iwasawa_block(S::AbstractMatrix)
     # N = inv(A)*transpose(K)*[S12;S22]
     # N = inv(A) * K' * [S12; S22]
     # switch to ldiv
-    N = A\(K' * [S12; S22])
+    N = A \ (K' * [S12; S22])
 
     N12 = view(N, 1:n, 1:n)
     N22 = view(N, n+1:2*n, 1:n)
@@ -3262,7 +3262,7 @@ end
 
 
 
-function B_from_X_Y(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
+function B_from_X_Y_quadrature(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
     Y::AbstractMatrix{<:Real})
 
     # check that X and Y are the same size
@@ -3309,7 +3309,7 @@ function B_from_X_Y(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
 end
 
 """
-    B_from_X_Y(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
+    B_from_X_Y_quadrature_block(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
         Y::AbstractMatrix{<:Real})
 
 Return the `B` part of a symplectic matrix `S=[A B;C D]` from the completely
@@ -3317,21 +3317,21 @@ positive trace preserving (CPTP) map `X`, `Y` assuming the environment is in a
 vacuum state.
 
 """
-function B_from_X_Y_block(X::AbstractMatrix{<:Real},
+function B_from_X_Y_quadrature_block(X::AbstractMatrix{<:Real},
     Y::AbstractMatrix{<:Real})
 
     n = size(X, 1) ÷ 2
     Omega = symplectic_form_block(n)
-    B = B_from_X_Y(Omega, X, Y)
+    B = B_from_X_Y_quadrature(Omega, X, Y)
     return B
 end
 
-function B_from_X_Y_pair(X::AbstractMatrix{<:Real},
+function B_from_X_Y_quadrature_pair(X::AbstractMatrix{<:Real},
     Y::AbstractMatrix{<:Real})
 
     n = size(X, 1) ÷ 2
     Omega = symplectic_form_pair(n)
-    B = B_from_X_Y(Omega, X, Y)
+    B = B_from_X_Y_quadrature(Omega, X, Y)
 
     # permute the columns of B to the pair form
     p = block_to_pair_perm(size(B, 2) ÷ 2)
@@ -3339,7 +3339,6 @@ function B_from_X_Y_pair(X::AbstractMatrix{<:Real},
 end
 
 """
-
     X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
 Return the symplectic matrix `S` from the completely positive trace preserving
@@ -3349,14 +3348,13 @@ Return the symplectic matrix `S` from the completely positive trace preserving
 function X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
     # compute B from X and Y
-    B = B_from_X_Y_pair(X,Y)
+    B = B_from_X_Y_quadrature_pair(X, Y)
 
-    return A_B_to_symplectic_pair(X,B)
+    return A_B_to_symplectic_pair(X, B)
 end
 
 
 """
-
     X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
 Return the symplectic matrix `S` from the completely positive trace preserving
@@ -3366,9 +3364,47 @@ Return the symplectic matrix `S` from the completely positive trace preserving
 function X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
     # compute B from X and Y
-    B = B_from_X_Y_block(X,Y)
+    B = B_from_X_Y_quadrature_block(X, Y)
 
-    return pair_to_block(A_B_to_symplectic_pair(block_to_pair(X),block_to_pair(B)))
+    return pair_to_block(A_B_to_symplectic_pair(block_to_pair(X), block_to_pair(B)))
+end
+
+"""
+    X_Y_to_bogoliubov_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+
+Return the symplectic matrix `S` from the completely positive trace preserving
+(CPTP) map `X`, `Y` assumming a vacuum environment.
+
+"""
+function X_Y_to_bogoliubov_pair(X::AbstractMatrix, Y::AbstractMatrix)
+
+    X_quadrature = real(ladder_to_quadrature_pair(X))
+    Y_quadrature = real(ladder_to_quadrature_pair(Y))
+
+    # compute B from X and Y
+    B = B_from_X_Y_quadrature_pair(X_quadrature, Y_quadrature)
+
+    return quadrature_to_ladder_pair(A_B_to_symplectic_pair(X_quadrature, B))
+end
+
+
+"""
+    X_Y_to_bogoliubov_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+
+Return the symplectic matrix `S` from the completely positive trace preserving
+(CPTP) map `X`, `Y` assumming a vacuum environment.
+
+"""
+function X_Y_to_bogoliubov_block(X::AbstractMatrix, Y::AbstractMatrix)
+
+    X_quadrature = real(ladder_to_quadrature_block(X))
+    Y_quadrature = real(ladder_to_quadrature_block(Y))
+
+
+    # compute B from X and Y
+    B = B_from_X_Y_quadrature_block(X_quadrature, Y_quadrature)
+
+    return quadrature_to_ladder_block(pair_to_block(A_B_to_symplectic_pair(block_to_pair(X_quadrature), block_to_pair(B))))
 end
 
 """
@@ -3446,12 +3482,12 @@ function Ymin_from_X(Omega, X; method=1)
     # return Symmetric(Ymin)
 end
 
-function Ymin_from_X_pair(X; method=1)
+function Ymin_from_X_quadrature_pair(X; method=1)
     Omega = symplectic_form_pair(size(X, 1) ÷ 2)
     return Ymin_from_X(Omega, X; method=method)
 end
 
-function Ymin_from_X_block(X; method=1)
+function Ymin_from_X_quadrature_block(X; method=1)
     Omega = symplectic_form_block(size(X, 1) ÷ 2)
     return Ymin_from_X(Omega, X; method=method)
 end
@@ -3548,4 +3584,129 @@ function A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix;
     D = Wperp[:, 2n+1:end]
 
     return [A B; C D]
+end
+
+"""
+    wmatrix(ws::AbstractRange{T}, wp::NTuple{N,T},
+        modes::AbstractVector{NTuple{N,Int}}) where {T,N}
+
+Return the `Nmodes` by `Nfreqs` matrix of frequencies for the signal, idlers,
+and sidebands given the signal frequencies `ws`, pump frequency `wp`, and
+modes `modes`.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.wmatrix(0.1:0.1:1.0,(1.0,),[(1,),(-1,)])
+2×10 Matrix{Float64}:
+  1.1   1.2   1.3   1.4   1.5   1.6   1.7   1.8   1.9  2.0
+ -0.9  -0.8  -0.7  -0.6  -0.5  -0.4  -0.3  -0.2  -0.1  0.0
+```
+"""
+function wmatrix(ws::AbstractRange{T}, wp::NTuple{N,T},
+    modes::AbstractVector{NTuple{N,Int}}) where {T,N}
+    # the output is Nmodes by Nfreqs
+    w = zeros(T, length(modes), length(ws))
+
+    wmatrix!(w, ws, wp, modes)
+
+    return w
+end
+
+function wmatrix!(w::AbstractArray{T}, ws::AbstractRange{T}, wp::NTuple{N,T},
+    modes::AbstractVector{NTuple{N,Int}}) where {T,N}
+    # check that the size of w is Nmodes by Nfreqs
+
+    for j in eachindex(ws)
+        for i in eachindex(modes)
+            w[i, j] = ws[j] + dot(wp, modes[i])
+        end
+    end
+end
+
+"""
+    interpolate_scattering(w0::AbstractVector, S::AbstractArray, w::AbstractMatrix)
+
+Here is a proposed flow:
+1. Input a function and an array of frequencies. The function should either
+ accept negative frequencies or apply the complex conjugate if the frequency
+ is negative.
+2. Evaluate the function on the array of frequencies.
+3. Yse axis_to_modes to reshape it.
+
+# Examples
+```jldoctest
+w = 0.01:0.01:1.0
+S = JosephsonCircuits.ABCD_tline(50,w)
+isapprox(S,JosephsonCircuits.interpolate_scattering(w,S,w))
+
+# output
+true
+```
+
+"""
+function interpolate_scattering(w0::AbstractVector, S::AbstractArray,
+    w::AbstractArray; extrap::Bool=false, extrap_value=0.0)
+
+    # check that S has only 3 dimensions. the first two are ports and the last
+    # is frequencies.
+    if ndims(S) != 3
+        error("`S` must have 3 dimensions. The first two are ports and the third is frequencies.")
+    end
+
+    if length(w0) != size(S,3)
+        error("The length of the third dimension of `S` must be equal to the number of frequencies.")
+    end
+
+    # the first two dimensions are the dimensions of the scattering parameter
+    # matrix. the rest of of the `w` matrix or vectors.
+    sizeout = NTuple{ndims(w) + 2,Int}(i == 1 || i == 2 ? size(S, i) : size(w, i - 2) for i in 1:(ndims(w)+2))
+
+    Sout = zeros(eltype(S), sizeout)
+
+    # loop over all of the elements of the array. if frequency is negative
+    # take the complex conjugate.  given that i'm interpolating, i should have
+    # the inner loop be the frequency loop.
+    for i in 1: size(S, 1)
+        for j in 1:size(S, 2)
+
+            # do the interpolation here using w0 and S
+            # use fast interpolations
+            # seperate into phase and amplitude
+            phase = angle.(unwrap(S[i, j, :]))
+            mag = abs.(S[i, j, :])
+            phase_interp = if extrap
+                FastInterpolations.quadratic_interp(w0, phase;
+                    extrap = FastInterpolations.Extrap(
+                        :fill;
+                        fill_value = extrap_value,
+                    ),
+                )
+            else
+                FastInterpolations.quadratic_interp(w0, phase)
+            end
+            mag_interp = if extrap
+                FastInterpolations.quadratic_interp(w0, mag;
+                    extrap = FastInterpolations.Extrap(
+                        :fill;
+                        fill_value = extrap_value,
+                    ),
+                )
+            else
+                FastInterpolations.quadratic_interp(w0, mag)
+            end
+
+            for c in CartesianIndices(axes(w))
+                wi = abs(w[c])
+                Sinterp = mag_interp(wi) * exp(im * phase_interp(wi))
+                # if w is less than zero then take the conjugate
+                if w[c] < 0
+                    Sout[i, j, c] = conj(Sinterp)
+                else
+                    Sout[i, j, c] = Sinterp
+                end
+            end
+        end
+    end
+
+    return Sout
 end

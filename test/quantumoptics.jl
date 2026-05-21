@@ -240,29 +240,25 @@ using Test
 
     end
 
-    @testset "random cptp symplectic" begin
+    @testset "random cptp quadrature" begin
 
         # symplectic
-        @test JosephsonCircuits.is_cptp_pair(JosephsonCircuits.rand_cptp_pair(4)...)
-        @test JosephsonCircuits.is_cptp_pair(JosephsonCircuits.rand_cptp_pair(Float64,4)...)
-        # @test JosephsonCircuits.is_cptp_pair(JosephsonCircuits.rand_cptp_pair(Complex{Float64},4)...)
+        @test JosephsonCircuits.is_cptp_quadrature_pair(JosephsonCircuits.rand_cptp_quadrature_pair(4)...)
+        @test JosephsonCircuits.is_cptp_quadrature_pair(JosephsonCircuits.rand_cptp_quadrature_pair(Float64,4)...)
         
-        @test JosephsonCircuits.is_cptp_block(JosephsonCircuits.rand_cptp_block(4)...)
-        @test JosephsonCircuits.is_cptp_block(JosephsonCircuits.rand_cptp_block(Float64,4)...)
-        # @test JosephsonCircuits.is_cptp_block(JosephsonCircuits.rand_cptp_block(Complex{Float64},4)...)
+        @test JosephsonCircuits.is_cptp_quadrature_block(JosephsonCircuits.rand_cptp_quadrature_block(4)...)
+        @test JosephsonCircuits.is_cptp_quadrature_block(JosephsonCircuits.rand_cptp_quadrature_block(Float64,4)...)
 
     end
 
-    @testset "random cptp bogoliubov" begin
+    @testset "random cptp ladder" begin
 
         # bogoliubov
-        @test JosephsonCircuits.is_cptp_bogoliubov_pair(JosephsonCircuits.rand_cptp_bogoliubov_pair(4)...)
-        # @test JosephsonCircuits.is_cptp_bogoliubov_pair(JosephsonCircuits.rand_cptp_bogoliubov_pair(Float64,4)...)
-        @test JosephsonCircuits.is_cptp_bogoliubov_pair(JosephsonCircuits.rand_cptp_bogoliubov_pair(Complex{Float64},4)...)
+        @test JosephsonCircuits.is_cptp_ladder_pair(JosephsonCircuits.rand_cptp_ladder_pair(4)...)
+        @test JosephsonCircuits.is_cptp_ladder_pair(JosephsonCircuits.rand_cptp_ladder_pair(Complex{Float64},4)...)
         
-        @test JosephsonCircuits.is_cptp_bogoliubov_block(JosephsonCircuits.rand_cptp_bogoliubov_block(4)...)
-        # @test JosephsonCircuits.is_cptp_bogoliubov_block(JosephsonCircuits.rand_cptp_bogoliubov_block(Float64,4)...)
-        @test JosephsonCircuits.is_cptp_bogoliubov_block(JosephsonCircuits.rand_cptp_bogoliubov_block(Complex{Float64},4)...)
+        @test JosephsonCircuits.is_cptp_ladder_block(JosephsonCircuits.rand_cptp_ladder_block(4)...)
+        @test JosephsonCircuits.is_cptp_ladder_block(JosephsonCircuits.rand_cptp_ladder_block(Complex{Float64},4)...)
 
     end
 
@@ -574,17 +570,17 @@ using Test
 
     end
 
-    @testset "Ymin_from_X_pair and Ymin_from_X_block" begin
+    @testset "Ymin_from_X_quadrature_pair and Ymin_from_X_quadrature_block" begin
 
         X = rand(Float64,4,4)
         for method in 1:3
-            @test JosephsonCircuits.is_cptp_pair(X,JosephsonCircuits.Ymin_from_X_pair(X;method=method))
-            @test JosephsonCircuits.is_cptp_block(X,JosephsonCircuits.Ymin_from_X_block(X;method=method))
+            @test JosephsonCircuits.is_cptp_quadrature_pair(X,JosephsonCircuits.Ymin_from_X_quadrature_pair(X;method=method))
+            @test JosephsonCircuits.is_cptp_quadrature_block(X,JosephsonCircuits.Ymin_from_X_quadrature_block(X;method=method))
         end
 
         @test_throws(
             ErrorException(lazy"Unknown method"),
-            JosephsonCircuits.is_cptp_pair(X,JosephsonCircuits.Ymin_from_X_pair(X;method=4)),
+            JosephsonCircuits.is_cptp_quadrature_pair(X,JosephsonCircuits.Ymin_from_X_quadrature_pair(X;method=4)),
             )
     end
 
@@ -604,7 +600,7 @@ using Test
 
         X = A
         Y = B * B'
-        B1 = JosephsonCircuits.B_from_X_Y_pair(X, Y)
+        B1 = JosephsonCircuits.B_from_X_Y_quadrature_pair(X, Y)
         S1 = JosephsonCircuits.A_B_to_symplectic_pair(A, B1)
         @test JosephsonCircuits.is_symplectic_pair(S1)
 
@@ -613,7 +609,11 @@ using Test
     @testset "X_Y_to_sympletic_pair" begin
 
         X = rand(Float64,4,4)
-        Y = JosephsonCircuits.Ymin_from_X_pair(X)
+        Y = JosephsonCircuits.Ymin_from_X_quadrature_pair(X)
+        S = JosephsonCircuits.X_Y_to_sympletic_pair(X,Y)
+        @test JosephsonCircuits.is_symplectic_pair(S)
+
+        X, Y = JosephsonCircuits.rand_cptp_quadrature_pair(2)
         S = JosephsonCircuits.X_Y_to_sympletic_pair(X,Y)
         @test JosephsonCircuits.is_symplectic_pair(S)
 
@@ -622,10 +622,31 @@ using Test
     @testset "X_Y_to_sympletic_block" begin
 
         X = rand(Float64,4,4)
-        Y = JosephsonCircuits.Ymin_from_X_block(X)
+        Y = JosephsonCircuits.Ymin_from_X_quadrature_block(X)
         S = JosephsonCircuits.X_Y_to_sympletic_block(X,Y)
         @test JosephsonCircuits.is_symplectic_block(S)
-        
+
+        X, Y = JosephsonCircuits.rand_cptp_quadrature_block(2)
+        S = JosephsonCircuits.X_Y_to_sympletic_block(X,Y)
+        @test JosephsonCircuits.is_symplectic_block(S)
+
     end
+
+    @testset "X_Y_to_bogoliubov_pair" begin
+
+        X, Y = JosephsonCircuits.rand_cptp_ladder_pair(2)
+        S = JosephsonCircuits.X_Y_to_bogoliubov_pair(X,Y)
+        @test JosephsonCircuits.is_bogoliubov_pair(S)
+
+    end
+
+    @testset "X_Y_to_bogoliubov_block" begin
+
+        X, Y = JosephsonCircuits.rand_cptp_ladder_block(2)
+        S = JosephsonCircuits.X_Y_to_bogoliubov_block(X,Y)
+        @test JosephsonCircuits.is_bogoliubov_block(S)
+
+    end
+
 
 end
