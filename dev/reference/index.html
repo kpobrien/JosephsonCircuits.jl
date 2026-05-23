@@ -2905,8 +2905,8 @@ JosephsonCircuits.quadrature_to_ladder_pair(r)
  10
  12
  14
- 16</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.scattering_to_ladder_block-Tuple{AbstractMatrix, Any}"><a class="docstring-binding" href="#JosephsonCircuits.scattering_to_ladder_block-Tuple{AbstractMatrix, Any}"><code>JosephsonCircuits.scattering_to_ladder_block</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">scattering_to_ladder_block(S_scattering::AbstractMatrix, w)</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex
-JosephsonCircuits.scattering_to_ladder_block([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1,1,-1])
+ 16</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.scattering_to_ladder_block-Tuple{AbstractMatrix, Any}"><a class="docstring-binding" href="#JosephsonCircuits.scattering_to_ladder_block-Tuple{AbstractMatrix, Any}"><code>JosephsonCircuits.scattering_to_ladder_block</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">scattering_to_ladder_block(S_scattering::AbstractMatrix, w)</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex;
+JosephsonCircuits.scattering_to_ladder_block([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1])
 
 # output
 8×8 Matrix{Complex{Num}}:
@@ -2930,7 +2930,7 @@ JosephsonCircuits.scattering_to_ladder_block(JosephsonCircuits.quadrature_to_lad
  0.7071067811865475x2 - 0.7071067811865475im*p2
  0.7071067811865475x3 - 0.7071067811865475im*p3
  0.7071067811865475x4 - 0.7071067811865475im*p4</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.scattering_to_ladder_pair-Tuple{AbstractMatrix, Any}"><a class="docstring-binding" href="#JosephsonCircuits.scattering_to_ladder_pair-Tuple{AbstractMatrix, Any}"><code>JosephsonCircuits.scattering_to_ladder_pair</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">scattering_to_ladder_pair(S_scattering::AbstractMatrix, w)</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex;
-JosephsonCircuits.scattering_to_ladder_pair([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1,1,-1])
+JosephsonCircuits.scattering_to_ladder_pair([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1])
 
 # output
 8×8 Matrix{Complex{Num}}:
@@ -2982,16 +2982,19 @@ JosephsonCircuits.scattering_to_quadrature_block(JosephsonCircuits.quadrature_to
  p1
  p2
  p3
- p4</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.scattering_to_quadrature_block-Union{Tuple{T}, Tuple{AbstractMatrix{T}, Any}} where T"><a class="docstring-binding" href="#JosephsonCircuits.scattering_to_quadrature_block-Union{Tuple{T}, Tuple{AbstractMatrix{T}, Any}} where T"><code>JosephsonCircuits.scattering_to_quadrature_block</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">scattering_to_quadrature_block(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables S11::Complex S12::Complex S21::Complex S22::Complex;
-S=[S11 S12;S21 S22];w=[1,-1];
-JosephsonCircuits.scattering_to_quadrature_block(S,w)
+ p4</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.scattering_to_quadrature_block-Union{Tuple{T}, Tuple{AbstractMatrix{T}, Any}} where T"><a class="docstring-binding" href="#JosephsonCircuits.scattering_to_quadrature_block-Union{Tuple{T}, Tuple{AbstractMatrix{T}, Any}} where T"><code>JosephsonCircuits.scattering_to_quadrature_block</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">scattering_to_quadrature_block(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex;
+JosephsonCircuits.scattering_to_quadrature_block([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1])
 
 # output
-4×4 Matrix{Num}:
-  real(S11)   real(S12)  -imag(S11)   imag(S12)
-  real(S21)   real(S22)  -imag(S21)   imag(S22)
-  imag(S11)   imag(S12)   real(S11)  -real(S12)
- -imag(S21)  -imag(S22)  -real(S21)   real(S22)</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.scattering_to_quadrature_pair-Union{Tuple{T}, Tuple{AbstractArray{Complex{T}, 1}, Any}} where T"><a class="docstring-binding" href="#JosephsonCircuits.scattering_to_quadrature_pair-Union{Tuple{T}, Tuple{AbstractArray{Complex{T}, 1}, Any}} where T"><code>JosephsonCircuits.scattering_to_quadrature_pair</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">scattering_to_quadrature_pair(S_scattering::AbstractVector{Complex{T}}, w) where {T}</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables x1 x2 x3 x4 p1 p2 p3 p4
+8×8 Matrix{Num}:
+  real(S11)   real(S12)   real(S13)  …   imag(S12)  -imag(S13)   imag(S14)
+  real(S21)   real(S22)   real(S23)      imag(S22)  -imag(S23)   imag(S24)
+  real(S31)   real(S32)   real(S33)      imag(S32)  -imag(S33)   imag(S34)
+  real(S41)   real(S42)   real(S43)      imag(S42)  -imag(S43)   imag(S44)
+  imag(S11)   imag(S12)   imag(S13)     -real(S12)   real(S13)  -real(S14)
+ -imag(S21)  -imag(S22)  -imag(S23)  …   real(S22)  -real(S23)   real(S24)
+  imag(S31)   imag(S32)   imag(S33)     -real(S32)   real(S33)  -real(S34)
+ -imag(S41)  -imag(S42)  -imag(S43)      real(S42)  -real(S43)   real(S44)</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.scattering_to_quadrature_pair-Union{Tuple{T}, Tuple{AbstractArray{Complex{T}, 1}, Any}} where T"><a class="docstring-binding" href="#JosephsonCircuits.scattering_to_quadrature_pair-Union{Tuple{T}, Tuple{AbstractArray{Complex{T}, 1}, Any}} where T"><code>JosephsonCircuits.scattering_to_quadrature_pair</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">scattering_to_quadrature_pair(S_scattering::AbstractVector{Complex{T}}, w) where {T}</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables x1 x2 x3 x4 p1 p2 p3 p4
 JosephsonCircuits.scattering_to_quadrature_pair(JosephsonCircuits.quadrature_to_ladder_pair([x1,p1,x2,p2,x3,p3,x4,p4])[[1,3,6,8]],[1,1,-1,-1])
 
 # output
@@ -3003,16 +3006,19 @@ JosephsonCircuits.scattering_to_quadrature_pair(JosephsonCircuits.quadrature_to_
  x3
  p3
  x4
- p4</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.scattering_to_quadrature_pair-Union{Tuple{T}, Tuple{AbstractMatrix{T}, Any}} where T"><a class="docstring-binding" href="#JosephsonCircuits.scattering_to_quadrature_pair-Union{Tuple{T}, Tuple{AbstractMatrix{T}, Any}} where T"><code>JosephsonCircuits.scattering_to_quadrature_pair</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">scattering_to_quadrature_pair(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables S11::Complex S12::Complex S21::Complex S22::Complex;
-S=[S11 S12;S21 S22];w=[1,-1];
-JosephsonCircuits.scattering_to_quadrature_pair(S,w)
+ p4</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.scattering_to_quadrature_pair-Union{Tuple{T}, Tuple{AbstractMatrix{T}, Any}} where T"><a class="docstring-binding" href="#JosephsonCircuits.scattering_to_quadrature_pair-Union{Tuple{T}, Tuple{AbstractMatrix{T}, Any}} where T"><code>JosephsonCircuits.scattering_to_quadrature_pair</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">scattering_to_quadrature_pair(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}</code></pre><p><strong>Examples</strong></p><pre><code class="language-julia hljs">@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex;
+JosephsonCircuits.scattering_to_quadrature_pair([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1])
 
 # output
-4×4 Matrix{Num}:
-  real(S11)  -imag(S11)   real(S12)   imag(S12)
-  imag(S11)   real(S11)   imag(S12)  -real(S12)
-  real(S21)  -imag(S21)   real(S22)   imag(S22)
- -imag(S21)  -real(S21)  -imag(S22)   real(S22)</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.showstruct-Tuple{IO, Any}"><a class="docstring-binding" href="#JosephsonCircuits.showstruct-Tuple{IO, Any}"><code>JosephsonCircuits.showstruct</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">showstruct(io::IO,out)</code></pre><p>Recursively print the struct <code>out</code> to the IOStream or IOBuffer <code>io</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.testshow(stdout,JosephsonCircuits.warmupnumericmatrices())
+8×8 Matrix{Num}:
+  real(S11)  -imag(S11)   real(S12)  …  -imag(S13)   real(S14)   imag(S14)
+  imag(S11)   real(S11)   imag(S12)      real(S13)   imag(S14)  -real(S14)
+  real(S21)  -imag(S21)   real(S22)     -imag(S23)   real(S24)   imag(S24)
+ -imag(S21)  -real(S21)  -imag(S22)     -real(S23)  -imag(S24)   real(S24)
+  real(S31)  -imag(S31)   real(S32)     -imag(S33)   real(S34)   imag(S34)
+  imag(S31)   real(S31)   imag(S32)  …   real(S33)   imag(S34)  -real(S34)
+  real(S41)  -imag(S41)   real(S42)     -imag(S43)   real(S44)   imag(S44)
+ -imag(S41)  -real(S41)  -imag(S42)     -real(S43)  -imag(S44)   real(S44)</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.showstruct-Tuple{IO, Any}"><a class="docstring-binding" href="#JosephsonCircuits.showstruct-Tuple{IO, Any}"><code>JosephsonCircuits.showstruct</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">showstruct(io::IO,out)</code></pre><p>Recursively print the struct <code>out</code> to the IOStream or IOBuffer <code>io</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; JosephsonCircuits.testshow(stdout,JosephsonCircuits.warmupnumericmatrices())
 JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], 1.0e-9, Real[1, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
 
 julia&gt; JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.warmupsyms())</code></pre></div></section></details></article><article><details class="docstring" open="true"><summary id="JosephsonCircuits.solveS!-NTuple{23, Any}"><a class="docstring-binding" href="#JosephsonCircuits.solveS!-NTuple{23, Any}"><code>JosephsonCircuits.solveS!</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">solveS!(Se, Si, portse, portsi, gammaii, See, Sei, Sie, Sii,
@@ -3429,4 +3435,4 @@ set dphimax=0.01
 run
 set filetype=binary
 write
-.endc</code></pre></div></section></details></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Friday 22 May 2026 02:07">Friday 22 May 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+.endc</code></pre></div></section></details></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« JosephsonCircuits.jl</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Saturday 23 May 2026 20:46">Saturday 23 May 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
