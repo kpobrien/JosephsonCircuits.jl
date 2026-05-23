@@ -262,9 +262,31 @@ using Test
 
     end
 
+    @testset "scattering to ladder and quadrature" begin
+
+        S = randn(Complex{Float64},8,8)
+        for w in [sign.(randn(4)), sign.(randn(8))]
+            @test isapprox(
+                JosephsonCircuits.ladder_to_quadrature_pair(JosephsonCircuits.scattering_to_ladder_pair(S,w)),
+                JosephsonCircuits.scattering_to_quadrature_pair(S,w),
+            )
+
+            @test isapprox(
+                JosephsonCircuits.ladder_to_quadrature_block(JosephsonCircuits.scattering_to_ladder_block(S,w)),
+                JosephsonCircuits.scattering_to_quadrature_block(S,w),
+            )
+
+            @test isapprox(
+                JosephsonCircuits.ladder_to_quadrature_pair(JosephsonCircuits.scattering_to_ladder_pair(S,w)),
+                JosephsonCircuits.block_to_pair(JosephsonCircuits.scattering_to_quadrature_block(S,w)),
+            )
+        end
+
+    end
+
     @testset "port mode conversion" begin
 
-        for S = [rand(Complex{Float64},8,8),rand(Complex{Float64},8,12)]
+        for S in [rand(Complex{Float64},8,8),rand(Complex{Float64},8,12)]
             Nmodes = 2
             @test isapprox(JosephsonCircuits.ports_modes_to_modes_ports_scattering(JosephsonCircuits.modes_ports_to_ports_modes_scattering(S,Nmodes),Nmodes),S)
             @test isapprox(JosephsonCircuits.ports_modes_to_modes_ports_pair(JosephsonCircuits.modes_ports_to_ports_modes_pair(S,Nmodes),Nmodes),S)
