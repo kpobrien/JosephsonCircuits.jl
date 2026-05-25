@@ -137,6 +137,7 @@ using Test
         @test JosephsonCircuits.is_positive_semi_definite([1 0;0 1])
         @test JosephsonCircuits.is_positive_semi_definite([1 0;0 0])
         @test !JosephsonCircuits.is_positive_semi_definite([1 0;0 -1])
+        @test !JosephsonCircuits.is_positive_semi_definite([1 1;0 1])
 
     end
 
@@ -145,6 +146,7 @@ using Test
         @test JosephsonCircuits.is_positive_definite([1 0;0 1])
         @test !JosephsonCircuits.is_positive_definite([1 0;0 0])
         @test !JosephsonCircuits.is_positive_definite([1 0;0 -1])
+        @test !JosephsonCircuits.is_positive_definite([1 1;0 1])
 
     end
 
@@ -300,6 +302,7 @@ using Test
 
     @testset "scattering to ladder and quadrature" begin
 
+        # matrix functions
         S = randn(Complex{Float64},8,8)
         for w in [sign.(randn(4)), sign.(randn(8))]
             @test isapprox(
@@ -318,6 +321,7 @@ using Test
             )
         end
 
+        # vector functions
         @test_throws(
             DimensionMismatch("The length of the bogoliubov vector must be double that of the scattering parameter vector."),
             JosephsonCircuits.scattering_to_ladder_pair!(zeros(10),zeros(10),ones(5)),
@@ -358,6 +362,12 @@ using Test
             JosephsonCircuits.scattering_to_quadrature_block!(zeros(10),zeros(5),ones(6)),
         )
 
+        X = randn(10)
+        w = sign.(randn(5))
+        @test isequal(
+            JosephsonCircuits.scattering_to_quadrature_block(X,w),
+            JosephsonCircuits.scattering_to_quadrature_block(Complex.(X),w)
+        )
     end
 
     @testset "ladder_to_scattering_pair" begin
