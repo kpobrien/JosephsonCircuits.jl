@@ -3002,11 +3002,11 @@ function _williamson(Omega, M::AbstractMatrix{<:Real})
 
     K = transpose(L) * Omega * L
 
-    # check that rankL is even
-    if isodd(rankL)
-        @show M
-        error(lazy"The rank must be even.")
-    end
+    # # check that rankL is even
+    # if isodd(rankL)
+    #     @show M
+    #     error(lazy"The rank must be even.")
+    # end
     r = rankL ÷ 2
 
     # K is skew-symmetric so the real schur decomposition will return

@@ -423,6 +423,22 @@ using Test
             Complex.(S),
         )
 
+        # error 1
+        @test_throws(
+            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
+            JosephsonCircuits.ladder_to_scattering_pair([1 0 0 0;0 -1 0 0;0 0 1 0;0 0 0 1],[1,1,1,1]),
+        )
+        # error 2
+        @test_throws(
+            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
+            JosephsonCircuits.ladder_to_scattering_pair([1 1 0 0;0 1 0 0;0 0 1 0;0 0 0 1],[1,1,1,1]),
+        )
+        # error 3
+        @test_throws(
+            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
+            JosephsonCircuits.ladder_to_scattering_pair([1 0 0 0;1 1 0 0;0 0 1 0;0 0 0 1],[1,1,1,1]),
+        )
+
     end
 
     @testset "ladder_to_scattering_block" begin
@@ -469,6 +485,22 @@ using Test
             JosephsonCircuits.ladder_to_scattering_block(
                 JosephsonCircuits.scattering_to_ladder_block(S,w),w),
             Complex.(S),
+        )
+
+        # error 1
+        @test_throws(
+            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
+            JosephsonCircuits.ladder_to_scattering_block([1 0 0 0;0 -1 0 0;0 0 1 0;0 0 0 1],[1,1,1,1]),
+        )
+        # error 2
+        @test_throws(
+            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
+            JosephsonCircuits.ladder_to_scattering_block([1 0 0 0;0 1 0 1;0 0 1 0;0 0 0 1],[1,1,1,1]),
+        )
+        # error 3
+        @test_throws(
+            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
+            JosephsonCircuits.ladder_to_scattering_block([1 0 0 0;0 1 0 0;0 0 1 0;1 0 0 1],[1,1,1,1]),
         )
 
     end
