@@ -2998,12 +2998,13 @@ function _williamson(Omega, M::AbstractMatrix{<:Real})
 
     # evaluate this in a function because sparse and non-sparse cholesky have
     # different syntax
-    L, rankL = choleskyLr(M)
+    L, rankL = cholesky_williamson(M)
 
     K = transpose(L) * Omega * L
 
     # check that rankL is even
     if isodd(rankL)
+        @show M
         error(lazy"The rank must be even.")
     end
     r = rankL ÷ 2
@@ -3043,7 +3044,7 @@ function _williamson(Omega, M::AbstractMatrix{<:Real})
     end
 end
 
-function choleskyLr(M::AbstractArray)
+function cholesky_williamson(M::AbstractArray)
     # compute the pivoted cholesky factorization and turn check to false. this
     # will fail if the matrix is not positive semi-definite. It's more robust
     # against small negative eigenvalues due to floating point errors than
@@ -3052,7 +3053,11 @@ function choleskyLr(M::AbstractArray)
 
     # i've noticed that sometimes cholesky produces a rank that is larger
     # than the rank i set. rather than erroring, try reducing the rank by
-    # one
+    # one. followup note: this kludge causes errors when the input matrix is
+    # rank deficient. commenting it out and will look for a better solution
+    # in the future if necessary. another followup note: keep this uncommented
+    # but then check if that causes an error. that will both protect against
+    # the incorrect rank issue and matrices that actually have an odd rank.
     if isodd(C.rank)
         # println(rankL)
         rankL = C.rank - 1
@@ -3060,12 +3065,14 @@ function choleskyLr(M::AbstractArray)
     else
         rankL = C.rank
     end
+    # rankL = C.rank
 
     L = C.L[invperm(C.p), 1:rankL]
 
     # if the Cholesky factorization reports it has failed, check that
-    # A ≈ L*L'.
-    if !issuccess(C)
+    # A ≈ L*L'. Also check if it has failed if we are modifying the
+    # rank.
+    if !issuccess(C) || isodd(C.rank)
         if !isapprox(M, L * L')
             error(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite.")
         end
@@ -3074,7 +3081,7 @@ function choleskyLr(M::AbstractArray)
     return L, rankL
 end
 
-function choleskyLr(M::SparseMatrixCSC)
+function cholesky_williamson(M::SparseMatrixCSC)
     C = cholesky(M,check = false)
 
     L = Matrix(sparse(C.L)[invperm(C.p), :])

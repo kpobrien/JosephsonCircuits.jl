@@ -368,6 +368,13 @@ using Test
             JosephsonCircuits.scattering_to_quadrature_block(X,w),
             JosephsonCircuits.scattering_to_quadrature_block(Complex.(X),w)
         )
+
+        X = randn(10)
+        w = sign.(randn(5))
+        @test isequal(
+            JosephsonCircuits.scattering_to_quadrature_pair(X,w),
+            JosephsonCircuits.scattering_to_quadrature_pair(Complex.(X),w)
+        )
     end
 
     @testset "ladder_to_scattering_pair" begin
@@ -618,6 +625,11 @@ using Test
         #  0.0  1.0  0.0  0.0
         #  0.0  0.0  0.0  0.0
         #  0.0  0.0  0.0  0.0
+
+        # @test_throws(
+        #     ErrorException(lazy"The rank must be even."),
+        #     JosephsonCircuits.williamson_pair([1 0 0 0;0 1 0 0;0 0 1 0;0 0 0 0]),
+        # )
     end
 
 
@@ -633,28 +645,30 @@ using Test
         end
     end
 
-    @testset "choleskyLr" begin
+    @testset "cholesky_williamson" begin
 
-        L1, rankL1 = JosephsonCircuits.choleskyLr([1 0;0 1])
-        L2, rankL2 = JosephsonCircuits.choleskyLr(JosephsonCircuits.SparseArrays.sparse([1 0;0 1]))
+        L1, rankL1 = JosephsonCircuits.cholesky_williamson([1 0;0 1])
+        L2, rankL2 = JosephsonCircuits.cholesky_williamson(JosephsonCircuits.SparseArrays.sparse([1 0;0 1]))
 
         @test isapprox(L1,L2)
         @test isapprox(rankL1,rankL2)
 
         @test_throws(
             ErrorException(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite."),
-            JosephsonCircuits.choleskyLr([1 0 0 0;0 1 0 0;0 0 0 0;0 0 0 -1]),
+            JosephsonCircuits.cholesky_williamson([1 0 0 0;0 1 0 0;0 0 0 0;0 0 0 -1]),
         )
 
         @test_throws(
             ErrorException(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite."),
-            JosephsonCircuits.choleskyLr(JosephsonCircuits.SparseArrays.sparse([1 0 0 0;0 1 0 0;0 0 0 0;0 0 0 -1])),
+            JosephsonCircuits.cholesky_williamson(JosephsonCircuits.SparseArrays.sparse([1 0 0 0;0 1 0 0;0 0 0 0;0 0 0 -1])),
         )
 
-        # this currently fails. it should succeed but doesn't due to the rank
-        # correction kludge. figure out a better way to do that.
-        # JosephsonCircuits.choleskyLr([1 0;0 0])
-
+        # this fails but with the wrong error message because of the rank
+        # reduction kludge in cholesky_williamson.
+        @test_throws(
+            ErrorException(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite."),
+            JosephsonCircuits.cholesky_williamson([1 0;0 0]),
+        )
     end
 
     @testset "autonne_takagi complex" begin
@@ -882,6 +896,7 @@ using Test
         @test isapprox(Aa, Q * Omega * Q')
 
         # singular example
+        # this test seems brittle. think about how to replace it.
         vals, vecs = eigen(Aa)
         Aa1 = real(vecs * Diagonal([0, 0, vals[3], vals[4]]) * vecs')
         Q1 = JosephsonCircuits.symplectic_normal_form_pair(Aa1)
