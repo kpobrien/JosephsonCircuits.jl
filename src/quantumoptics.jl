@@ -1627,7 +1627,7 @@ function scattering_to_ladder_pair!(S_bogoliubov::AbstractVector,
 
     # check the relative sizes
     if length(S_bogoliubov) != 2 * length(S_scattering)
-        throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
+        throw(DimensionMismatch(lazy"The length of the bogoliubov vector must be double that of the scattering parameter vector."))
     end
 
     # check that the number of rows and columns of S_scattering are an integer
@@ -3075,7 +3075,7 @@ function choleskyLr(M::AbstractArray)
 end
 
 function choleskyLr(M::SparseMatrixCSC)
-    C = cholesky(M)
+    C = cholesky(M,check = false)
 
     L = Matrix(sparse(C.L)[invperm(C.p), :])
     rankL = size(M, 1)
