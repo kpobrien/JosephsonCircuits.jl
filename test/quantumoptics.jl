@@ -284,6 +284,198 @@ using Test
 
     end
 
+    @testset "ladder_to_scattering_pair" begin
+
+        # complex floating point input
+        X = JosephsonCircuits.rand_unitary(10)
+        w=sign.(randn(size(X,1)))
+        S = JosephsonCircuits.scattering_to_ladder_pair(X,w)
+        @test isapprox(
+            JosephsonCircuits.ladder_to_scattering_pair(S,w),
+            X,
+        )
+
+        S = JosephsonCircuits.rand_symplectic_pair(5)
+        @test_throws(
+            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
+            JosephsonCircuits.ladder_to_scattering_pair(S,w),
+        )
+
+        # real floating point input
+        X = JosephsonCircuits.rand_unitary(Float64,10)
+        w=sign.(randn(size(X,1)))
+        S = JosephsonCircuits.scattering_to_ladder_pair(X,w)
+        @test isapprox(
+            JosephsonCircuits.ladder_to_scattering_pair(S,w),
+            X,
+        )
+
+        # complex symbolic input
+        @variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex
+        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
+        w = [1,-1]
+        @test isequal(
+            JosephsonCircuits.ladder_to_scattering_pair(
+                JosephsonCircuits.scattering_to_ladder_pair(S,w),w),
+            S,
+        )
+
+        # real symbolic input
+        @variables S11 S12 S13 S14 S21 S22 S23 S24 S31 S32 S33 S34 S41 S42 S43 S44
+        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
+        w = [1,-1]
+        @test isequal(
+            JosephsonCircuits.ladder_to_scattering_pair(
+                JosephsonCircuits.scattering_to_ladder_pair(S,w),w),
+            Complex.(S),
+        )
+
+    end
+
+    @testset "ladder_to_scattering_block" begin
+
+        # complex floating point input
+        X = JosephsonCircuits.rand_unitary(10)
+        w=sign.(randn(size(X,1)))
+        S = JosephsonCircuits.scattering_to_ladder_block(X,w)
+        @test isapprox(
+            JosephsonCircuits.ladder_to_scattering_block(S,w),
+            X,
+        )
+
+        S = JosephsonCircuits.rand_symplectic_block(5)
+        @test_throws(
+            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
+            JosephsonCircuits.ladder_to_scattering_block(S,w),
+        )
+
+        # real floating point input
+        X = JosephsonCircuits.rand_unitary(Float64,10)
+        w=sign.(randn(size(X,1)))
+        S = JosephsonCircuits.scattering_to_ladder_block(X,w)
+        @test isapprox(
+            JosephsonCircuits.ladder_to_scattering_block(S,w),
+            X,
+        )
+
+        # complex symbolic input
+        @variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex
+        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
+        w = [1,-1]
+        @test isequal(
+            JosephsonCircuits.ladder_to_scattering_block(
+                JosephsonCircuits.scattering_to_ladder_block(S,w),w),
+            S,
+        )
+
+        # real symbolic input
+        @variables S11 S12 S13 S14 S21 S22 S23 S24 S31 S32 S33 S34 S41 S42 S43 S44
+        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
+        w = [1,-1]
+        @test isequal(
+            JosephsonCircuits.ladder_to_scattering_block(
+                JosephsonCircuits.scattering_to_ladder_block(S,w),w),
+            Complex.(S),
+        )
+
+    end
+
+    @testset "quadrature_to_scattering_pair" begin
+
+        # complex floating point input
+        X = JosephsonCircuits.rand_unitary(10)
+        w=sign.(randn(size(X,1)))
+        S = JosephsonCircuits.scattering_to_quadrature_pair(X,w)
+        @test isapprox(
+            JosephsonCircuits.quadrature_to_scattering_pair(S,w),
+            X,
+        )
+
+        S = JosephsonCircuits.rand_symplectic_pair(5)
+        @test_throws(
+            ErrorException(lazy"Error in symplectic to scattering parameter conversion larger than `atol` and `rtol`."),
+            JosephsonCircuits.quadrature_to_scattering_pair(S,w),
+        )
+
+        # real floating point input
+        X = JosephsonCircuits.rand_unitary(Float64,10)
+        w=sign.(randn(size(X,1)))
+        S = JosephsonCircuits.scattering_to_quadrature_pair(X,w)
+        @test isapprox(
+            JosephsonCircuits.quadrature_to_scattering_pair(S,w),
+            X,
+        )
+
+        # complex symbolic input
+        @variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex
+        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
+        w = [1,-1]
+        @test isequal(
+            JosephsonCircuits.quadrature_to_scattering_pair(
+                JosephsonCircuits.scattering_to_quadrature_pair(S,w),w),
+            S,
+        )
+
+        # real symbolic input
+        @variables S11 S12 S13 S14 S21 S22 S23 S24 S31 S32 S33 S34 S41 S42 S43 S44
+        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
+        w = [1,-1]
+        @test isequal(
+            JosephsonCircuits.quadrature_to_scattering_pair(
+                JosephsonCircuits.scattering_to_quadrature_pair(S,w),w),
+            Complex.(S),
+        )
+
+    end
+
+    @testset "quadrature_to_scattering_block" begin
+
+        # complex floating point input
+        X = JosephsonCircuits.rand_unitary(10)
+        w=sign.(randn(size(X,1)))
+        S = JosephsonCircuits.scattering_to_quadrature_block(X,w)
+        @test isapprox(
+            JosephsonCircuits.quadrature_to_scattering_block(S,w),
+            X,
+        )
+
+        S = JosephsonCircuits.rand_symplectic_block(5)
+        @test_throws(
+            ErrorException(lazy"Error in symplectic to scattering parameter conversion larger than `atol` and `rtol`."),
+            JosephsonCircuits.quadrature_to_scattering_block(S,w),
+        )
+
+        # real floating point input
+        X = JosephsonCircuits.rand_unitary(Float64,10)
+        w=sign.(randn(size(X,1)))
+        S = JosephsonCircuits.scattering_to_quadrature_block(X,w)
+        @test isapprox(
+            JosephsonCircuits.quadrature_to_scattering_block(S,w),
+            X,
+        )
+
+        # complex symbolic input
+        @variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex
+        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
+        w = [1,-1]
+        @test isequal(
+            JosephsonCircuits.quadrature_to_scattering_block(
+                JosephsonCircuits.scattering_to_quadrature_block(S,w),w),
+            S,
+        )
+
+        # real symbolic input
+        @variables S11 S12 S13 S14 S21 S22 S23 S24 S31 S32 S33 S34 S41 S42 S43 S44
+        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
+        w = [1,-1]
+        @test isequal(
+            JosephsonCircuits.quadrature_to_scattering_block(
+                JosephsonCircuits.scattering_to_quadrature_block(S,w),w),
+            Complex.(S),
+        )
+
+    end
+
     @testset "port mode conversion" begin
 
         for S in [rand(Complex{Float64},8,8),rand(Complex{Float64},8,12)]

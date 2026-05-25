@@ -1766,8 +1766,8 @@ function scattering_to_ladder_pair!(S_bogoliubov::AbstractMatrix,
     # on the 4 sign combinations.
 
     for i in 1:size(S_scattering, 1)
+        wi = w[mod(i - 1, Nmodes)+1]
         for j in 1:size(S_scattering, 2)
-            wi = w[mod(i - 1, Nmodes)+1]
             wj = w[mod(j - 1, Nmodes)+1]
             Sij = S_scattering[i, j]
             if wi > zero(wi)
@@ -1801,10 +1801,99 @@ function scattering_to_ladder_pair!(S_bogoliubov::AbstractMatrix,
             end
         end
     end
-
     return S_bogoliubov
 end
 
+# the functions below are for any type
+function _ladder_to_scattering_pair(S_bogoliubov::AbstractMatrix{T}, w; atol::Real=0,
+    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T
+
+    n, m = size(S_bogoliubov)
+    S_scattering = zeros(Complex{T}, n÷2, m÷2)
+    return ladder_to_scattering_pair!(S_scattering, S_bogoliubov, w; atol = atol, rtol = rtol)
+end
+
+function _ladder_to_scattering_pair(S_bogoliubov::AbstractMatrix{Complex{T}}, w; atol::Real=0,
+    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T
+
+    n, m = size(S_bogoliubov)
+    S_scattering = zeros(Complex{T}, n÷2, m÷2)
+    return ladder_to_scattering_pair!(S_scattering, S_bogoliubov, w; atol = atol, rtol = rtol)
+end
+
+# the functions below are for floating point inputs
+function ladder_to_scattering_pair(S_bogoliubov::AbstractMatrix{T}, w; atol::Real=0,
+    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T<:Union{AbstractFloat,Complex{AbstractFloat}}
+
+    return _ladder_to_scattering_pair(S_bogoliubov, w; atol = atol, rtol = rtol)
+end
+
+# the function below is for symbolic inputs
+function ladder_to_scattering_pair(S_bogoliubov::AbstractArray, w)
+    return _ladder_to_scattering_pair(S_bogoliubov, w; atol = 0, rtol = 0)
+end
+
+function ladder_to_scattering_pair!(S_scattering, S_bogoliubov, w; atol::Real=0,
+    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol))
+
+    Nmodes = length(w)
+    normS = norm(S_bogoliubov)
+
+    for i in 1:size(S_scattering, 1)
+        wi = w[mod(i - 1, Nmodes)+1]
+        for j in 1:size(S_scattering, 2)
+            wj = w[mod(j - 1, Nmodes)+1]
+            if wi > zero(wi)
+                if wj > zero(wj)
+                    # both positive
+                    Sij = (S_bogoliubov[2*i-1, 2*j-1]+conj(S_bogoliubov[2*i, 2*j]))/2
+                    Sij_error1 = (S_bogoliubov[2*i-1, 2*j-1]-conj(S_bogoliubov[2*i, 2*j]))/2
+                    Sij_error2 = S_bogoliubov[2*i-1, 2*j]
+                    Sij_error3 = S_bogoliubov[2*i, 2*j-1]
+                else
+                    # row positive, col negative
+                    Sij = (S_bogoliubov[2*i-1, 2*j]+conj(S_bogoliubov[2*i, 2*j-1]))/2
+                    Sij_error1 = (S_bogoliubov[2*i-1, 2*j]-conj(S_bogoliubov[2*i, 2*j-1]))/2
+                    Sij_error2 = S_bogoliubov[2*i-1, 2*j-1]
+                    Sij_error3 = S_bogoliubov[2*i, 2*j]
+                end
+            else
+                if wj > zero(wj)
+                    # row negative, col positive
+                    Sij = (S_bogoliubov[2*i, 2*j-1]+conj(S_bogoliubov[2*i-1, 2*j]))/2
+                    Sij_error1 = (S_bogoliubov[2*i, 2*j-1]-conj(S_bogoliubov[2*i-1, 2*j]))/2
+                    Sij_error2 = S_bogoliubov[2*i-1, 2*j-1]
+                    Sij_error3 = S_bogoliubov[2*i, 2*j]
+                else
+                    # both negative
+                    Sij = (S_bogoliubov[2*i, 2*j]+conj(S_bogoliubov[2*i-1, 2*j-1]))/2
+                    Sij_error1 = (S_bogoliubov[2*i, 2*j]-conj(S_bogoliubov[2*i-1, 2*j-1]))/2
+                    Sij_error2 = S_bogoliubov[2*i-1, 2*j]
+                    Sij_error3 = S_bogoliubov[2*i, 2*j-1]
+                end
+            end
+            # these nested checks are to avoid errors for symbolic inputs
+            if !iszero(Sij_error1)
+                if abs(Sij_error1) > max(atol, rtol*normS)
+                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
+                end
+            end
+            if !iszero(Sij_error2)
+                if abs(Sij_error2) > max(atol, rtol*normS)
+                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
+                end
+            end
+            if !iszero(Sij_error3)
+                if abs(Sij_error3) > max(atol, rtol*normS)
+                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
+                end
+            end
+            S_scattering[i, j] = Sij
+        end
+    end
+
+    return S_scattering
+end
 
 
 """
@@ -1860,8 +1949,8 @@ function scattering_to_ladder_block!(S_bogoliubov::AbstractMatrix,
     m = size(S_scattering, 2)
 
     for i in 1:n
+        wi = w[mod(i - 1, Nmodes)+1]
         for j in 1:m
-            wi = w[mod(i - 1, Nmodes)+1]
             wj = w[mod(j - 1, Nmodes)+1]
             Sij = S_scattering[i, j]
             if wi > zero(wi)
@@ -1917,6 +2006,108 @@ function scattering_to_ladder_block!(S_bogoliubov::AbstractMatrix,
     return S_bogoliubov
 end
 
+# the functions below are for any type
+function _ladder_to_scattering_block(S_bogoliubov::AbstractMatrix{T}, w; atol::Real=0,
+    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T
+
+    n, m = size(S_bogoliubov)
+    S_scattering = zeros(Complex{T}, n÷2, m÷2)
+    return ladder_to_scattering_block!(S_scattering, S_bogoliubov, w; atol = atol, rtol = rtol)
+end
+
+function _ladder_to_scattering_block(S_bogoliubov::AbstractMatrix{Complex{T}}, w; atol::Real=0,
+    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T
+
+    n, m = size(S_bogoliubov)
+    S_scattering = zeros(Complex{T}, n÷2, m÷2)
+    return ladder_to_scattering_block!(S_scattering, S_bogoliubov, w; atol = atol, rtol = rtol)
+end
+
+# the functions below are for floating point inputs
+function ladder_to_scattering_block(S_bogoliubov::AbstractMatrix{T}, w; atol::Real=0,
+    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol)) where T<:Union{AbstractFloat,Complex{AbstractFloat}}
+
+    return _ladder_to_scattering_block(S_bogoliubov, w; atol = atol, rtol = rtol)
+end
+
+# the function below is for symbolic inputs
+function ladder_to_scattering_block(S_bogoliubov::AbstractArray, w)
+    return _ladder_to_scattering_block(S_bogoliubov, w; atol = 0, rtol = 0)
+end
+
+function ladder_to_scattering_block!(S_scattering, S_bogoliubov, w; atol::Real=0,
+    rtol::Real=(min(size(S_bogoliubov, 1), size(S_bogoliubov, 2)) * eps(real(float(oneunit(eltype(S_bogoliubov)))))) * iszero(atol))
+
+    Nmodes = length(w)
+    normS = norm(S_bogoliubov)
+
+    # loop through the scattering parameter matrix
+    # check the signs, then assign one of the 2x2 blocks depending
+    # on the 4 sign combinations.
+
+    # loop through the four blocks
+    # S = [A B;C D]
+
+    n = size(S_scattering, 1)
+    m = size(S_scattering, 2)
+
+    for i in 1:n
+        wi = w[mod(i - 1, Nmodes)+1]
+        for j in 1:m
+            wj = w[mod(j - 1, Nmodes)+1]
+            Sij = S_scattering[i, j]
+            if wi > zero(wi)
+                if wj > zero(wj)
+                    # both positive
+                    Sij = (S_bogoliubov[i, j]+conj(S_bogoliubov[i+n, j+m]))/2
+                    Sij_error1 = (S_bogoliubov[i, j]-conj(S_bogoliubov[i+n, j+m]))/2
+                    Sij_error2 = S_bogoliubov[i, j+m]
+                    Sij_error3 = S_bogoliubov[i+m, j]
+                else
+                    # row positive, col negative
+                    Sij = (S_bogoliubov[i, j+m]+conj(S_bogoliubov[i+m, j]))/2
+                    Sij_error1 = (S_bogoliubov[i, j+m]-conj(S_bogoliubov[i+m, j]))/2
+                    Sij_error2 = S_bogoliubov[i, j]
+                    Sij_error3 = S_bogoliubov[i+n, j+m]
+                end
+            else
+                if wj > zero(wj)
+                    # row negative, col positive
+                    Sij = (S_bogoliubov[i+m, j]+conj(S_bogoliubov[i, j+m]))/2
+                    Sij_error1 = (S_bogoliubov[i+m, j]-conj(S_bogoliubov[i, j+m]))/2
+                    Sij_error2 = S_bogoliubov[i, j]
+                    Sij_error3 = S_bogoliubov[i+n, j+m]
+                else
+                    # both negative
+                    Sij = (S_bogoliubov[i+n, j+m]+conj(S_bogoliubov[i, j]))/2
+                    Sij_error1 = (S_bogoliubov[i+n, j+m]-conj(S_bogoliubov[i, j]))/2
+                    Sij_error2 = S_bogoliubov[i, j+m]
+                    Sij_error3 = S_bogoliubov[i+m, j]
+                end
+            end
+            # these nested checks are to avoid errors for symbolic inputs
+            if !iszero(Sij_error1)
+                if abs(Sij_error1) > max(atol, rtol*normS)
+                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
+                end
+            end
+            if !iszero(Sij_error2)
+                if abs(Sij_error2) > max(atol, rtol*normS)
+                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
+                end
+            end
+            if !iszero(Sij_error3)
+                if abs(Sij_error3) > max(atol, rtol*normS)
+                    error(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`.")
+                end
+            end
+            S_scattering[i, j] = Sij
+        end
+    end
+    return S_scattering
+end
+
+
 """
     scattering_to_quadrature_pair(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
 
@@ -1954,7 +2145,6 @@ end
 function scattering_to_quadrature_pair!(S_symplectic::AbstractMatrix,
     S_scattering::AbstractMatrix, w::AbstractVector)
 
-
     # # check the relative sizes
     # if length(S_bogoliubov) != 2*length(S_scattering)
     #     throw(DimensionMismatch(lazy"The length of the symplectic vector must be double that of the scattering parameter vector."))
@@ -1973,8 +2163,8 @@ function scattering_to_quadrature_pair!(S_symplectic::AbstractMatrix,
     # on the 4 sign combinations.
 
     for i in 1:size(S_scattering, 1)
+        wi = w[mod(i - 1, Nmodes)+1]
         for j in 1:size(S_scattering, 2)
-            wi = w[mod(i - 1, Nmodes)+1]
             wj = w[mod(j - 1, Nmodes)+1]
             Sij = S_scattering[i, j]
             if wi > zero(wi)
@@ -2010,6 +2200,88 @@ function scattering_to_quadrature_pair!(S_symplectic::AbstractMatrix,
     end
 
     return S_symplectic
+end
+
+
+# the functions below are for any type
+function _quadrature_to_scattering_pair(S_symplectic::AbstractMatrix{T}, w; atol::Real=0,
+    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T
+
+    n, m = size(S_symplectic)
+    S_scattering = zeros(Complex{T}, n÷2, m÷2)
+    return quadrature_to_scattering_pair!(S_scattering, S_symplectic, w; atol = atol, rtol = rtol)
+end
+
+function _quadrature_to_scattering_pair(S_symplectic::AbstractMatrix{Complex{T}}, w; atol::Real=0,
+    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T
+
+    n, m = size(S_symplectic)
+    S_scattering = zeros(Complex{T}, n÷2, m÷2)
+    return quadrature_to_scattering_pair!(S_scattering, S_symplectic, w; atol = atol, rtol = rtol)
+end
+
+# the functions below are for floating point inputs
+function quadrature_to_scattering_pair(S_symplectic::AbstractMatrix{T}, w; atol::Real=0,
+    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T<:Union{AbstractFloat,Complex{AbstractFloat}}
+
+    return _quadrature_to_scattering_pair(S_symplectic, w; atol = atol, rtol = rtol)
+end
+
+# the function below is for symbolic inputs
+function quadrature_to_scattering_pair(S_symplectic::AbstractArray, w)
+    return _quadrature_to_scattering_pair(S_symplectic, w; atol = 0, rtol = 0)
+end
+
+function quadrature_to_scattering_pair!(S_scattering, S_symplectic, w; atol::Real=0,
+    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol))
+
+    Nmodes = length(w)
+    normS = norm(S_symplectic)
+
+    for i in 1:size(S_scattering, 1)
+        wi = w[mod(i - 1, Nmodes)+1]
+        for j in 1:size(S_scattering, 2)
+            wj = w[mod(j - 1, Nmodes)+1]
+            if wi > zero(wi)
+                if wj > zero(wj)
+                    # both positive
+                    Sij = (S_symplectic[2*i-1, 2*j-1]+S_symplectic[2*i, 2*j] +
+                    im*(-S_symplectic[2*i-1, 2*j]+S_symplectic[2*i, 2*j-1]))/2
+                    Sij_error = (S_symplectic[2*i-1, 2*j-1]-S_symplectic[2*i, 2*j] +
+                    im*(-S_symplectic[2*i-1, 2*j]-S_symplectic[2*i, 2*j-1]))/2
+                else
+                    # row positive, col negative
+                    Sij = (S_symplectic[2*i-1, 2*j-1]-S_symplectic[2*i, 2*j] +
+                    im*(S_symplectic[2*i-1, 2*j]+S_symplectic[2*i, 2*j-1]))/2
+                    Sij_error = (S_symplectic[2*i-1, 2*j-1]+S_symplectic[2*i, 2*j] +
+                    im*(S_symplectic[2*i-1, 2*j]-S_symplectic[2*i, 2*j-1]))/2
+                end
+            else
+                if wj > zero(wj)
+                    # row negative, col positive
+                    Sij = (S_symplectic[2*i-1, 2*j-1]-S_symplectic[2*i, 2*j] +
+                    -im*(S_symplectic[2*i-1, 2*j]+S_symplectic[2*i, 2*j-1]))/2
+                    Sij_error = (S_symplectic[2*i-1, 2*j-1]+S_symplectic[2*i, 2*j] +
+                    im*(S_symplectic[2*i-1, 2*j]-S_symplectic[2*i, 2*j-1]))/2
+                else
+                    # both negative
+                    Sij = (S_symplectic[2*i-1, 2*j-1]+S_symplectic[2*i, 2*j] +
+                    im*(S_symplectic[2*i-1, 2*j]-S_symplectic[2*i, 2*j-1]))/2
+                    Sij_error = (S_symplectic[2*i-1, 2*j-1]-S_symplectic[2*i, 2*j] +
+                    im*(S_symplectic[2*i-1, 2*j]+S_symplectic[2*i, 2*j-1]))/2
+                end
+            end
+            # these nested checks are to avoid errors for symbolic inputs
+            if !iszero(Sij_error)
+                if abs(Sij_error) > max(atol, rtol*normS)
+                    error(lazy"Error in symplectic to scattering parameter conversion larger than `atol` and `rtol`.")
+                end
+            end
+            S_scattering[i, j] = Sij
+        end
+    end
+
+    return S_scattering
 end
 
 
@@ -2070,8 +2342,8 @@ function scattering_to_quadrature_block!(S_symplectic::AbstractMatrix,
     m = size(S_scattering, 2)
 
     for i in 1:n
+        wi = w[mod(i - 1, Nmodes)+1]
         for j in 1:m
-            wi = w[mod(i - 1, Nmodes)+1]
             wj = w[mod(j - 1, Nmodes)+1]
             Sij = S_scattering[i, j]
             if wi > zero(wi)
@@ -2124,8 +2396,98 @@ function scattering_to_quadrature_block!(S_symplectic::AbstractMatrix,
         end
     end
 
-
     return S_symplectic
+end
+
+
+# the functions below are for any type
+function _quadrature_to_scattering_block(S_symplectic::AbstractMatrix{T}, w; atol::Real=0,
+    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T
+
+    n, m = size(S_symplectic)
+    S_scattering = zeros(Complex{T}, n÷2, m÷2)
+    return quadrature_to_scattering_block!(S_scattering, S_symplectic, w; atol = atol, rtol = rtol)
+end
+
+function _quadrature_to_scattering_block(S_symplectic::AbstractMatrix{Complex{T}}, w; atol::Real=0,
+    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T
+
+    n, m = size(S_symplectic)
+    S_scattering = zeros(Complex{T}, n÷2, m÷2)
+    return quadrature_to_scattering_block!(S_scattering, S_symplectic, w; atol = atol, rtol = rtol)
+end
+
+# the functions below are for floating point inputs
+function quadrature_to_scattering_block(S_symplectic::AbstractMatrix{T}, w; atol::Real=0,
+    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol)) where T<:Union{AbstractFloat,Complex{AbstractFloat}}
+
+    return _quadrature_to_scattering_block(S_symplectic, w; atol = atol, rtol = rtol)
+end
+
+# the function below is for symbolic inputs
+function quadrature_to_scattering_block(S_symplectic::AbstractArray, w)
+    return _quadrature_to_scattering_block(S_symplectic, w; atol = 0, rtol = 0)
+end
+
+function quadrature_to_scattering_block!(S_scattering, S_symplectic, w; atol::Real=0,
+    rtol::Real=(min(size(S_symplectic, 1), size(S_symplectic, 2)) * eps(real(float(oneunit(eltype(S_symplectic)))))) * iszero(atol))
+
+    Nmodes = length(w)
+
+    normS = norm(S_symplectic)
+
+    # loop through the four blocks
+    # S = [A B;C D]
+
+    n = size(S_scattering, 1)
+    m = size(S_scattering, 2)
+
+    for i in 1:n
+        wi = w[mod(i - 1, Nmodes)+1]
+        for j in 1:m
+            wj = w[mod(j - 1, Nmodes)+1]
+            # Sij = S_scattering[i, j]
+            if wi > zero(wi)
+                if wj > zero(wj)
+                    # both positive
+                    Sij = (S_symplectic[i, j]+S_symplectic[i+n, j+m] +
+                    im*(-S_symplectic[i, j+m]+S_symplectic[i+m, j]))/2
+                    Sij_error = (S_symplectic[i, j]-S_symplectic[i+n, j+m] +
+                    im*(-S_symplectic[i, j+m]-S_symplectic[i+m, j]))/2
+                else
+                    # row positive, col negative
+                    Sij = (S_symplectic[i, j]-S_symplectic[i+n, j+m] +
+                    im*(S_symplectic[i, j+m]+S_symplectic[i+m, j]))/2
+                    Sij_error = (S_symplectic[i, j]+S_symplectic[i+n, j+m] +
+                    im*(S_symplectic[i, j+m]-S_symplectic[i+m, j]))/2
+                end
+            else
+                if wj > zero(wj)
+                    # row negative, col positive
+                    Sij = (S_symplectic[i, j]-S_symplectic[i+n, j+m] +
+                    -im*(S_symplectic[i, j+m]+S_symplectic[i+m, j]))/2
+                    Sij_error = (S_symplectic[i, j]+S_symplectic[i+n, j+m] +
+                    im*(S_symplectic[i, j+m]-S_symplectic[i+m, j]))/2
+                else
+                    # both negative
+                    Sij = (S_symplectic[i, j]+S_symplectic[i+n, j+m] +
+                    im*(S_symplectic[i, j+m]-S_symplectic[i+m, j]))/2
+                    Sij_error = (S_symplectic[i, j]-S_symplectic[i+n, j+m] +
+                    im*(S_symplectic[i, j+m]+S_symplectic[i+m, j]))/2
+                end
+            end
+            # these nested checks are to avoid errors for symbolic inputs
+            if !iszero(Sij_error)
+                if abs(Sij_error) > max(atol, rtol*normS)
+                    error(lazy"Error in symplectic to scattering parameter conversion larger than `atol` and `rtol`.")
+                end
+            end
+            S_scattering[i, j] = Sij
+
+        end
+    end
+
+    return S_scattering
 end
 
 
