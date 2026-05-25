@@ -67,5 +67,7 @@ using JosephsonCircuits
 
     include("testutils.jl")
 
+    include("unwrap.jl")
+
     include("deprecated.jl")
 end

@@ -2446,7 +2446,6 @@ function quadrature_to_scattering_block!(S_scattering, S_symplectic, w; atol::Re
         wi = w[mod(i - 1, Nmodes)+1]
         for j in 1:m
             wj = w[mod(j - 1, Nmodes)+1]
-            # Sij = S_scattering[i, j]
             if wi > zero(wi)
                 if wj > zero(wj)
                     # both positive
