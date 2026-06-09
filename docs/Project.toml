@@ -4,6 +4,6 @@ JosephsonCircuits = "23a5dba6-321f-4fcf-be1e-689e290df087"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
-Documenter = "0.27,1"
+Documenter = "1"
 JosephsonCircuits = "0.5"
 Test = "1"
