@@ -150,12 +150,15 @@ matrices don't support ldiv!.
 function trysolve!(x,factorization,b)
     try
         myldiv!(x,factorization,b)
-    catch
-        x .= factorization \ b
+    catch e
+        if e isa MethodError || e isa ArgumentError
+            x .= factorization \ b
+        else
+            rethrow()
+        end
     end
     return x
 end
-
 
 """
     linesearch(f, fp, dfdalpha, alphamin)
