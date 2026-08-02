@@ -267,7 +267,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
     circuit, circuitdefs;dc::Bool = false, threewavemixing::Bool = false,
     fourwavemixing::Bool = true, maxintermodorder=Inf, iterations = 1000,
-    ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+    ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4, x0 = nothing,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
     sorting = :number, returnS::Bool = true, returnSnoise::Bool = false,
     returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
@@ -303,7 +303,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
 
     # solve the nonlinear problem
     nonlinear = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
-        iterations = iterations, x0 = nothing, ftol = ftol,
+        iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames, factorization = factorization)
@@ -1617,10 +1617,10 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # instability when i used AoLjbm here instead of AoLjbmcopy. 
     AoLjnmcopy = transpose(Rbnm)*AoLjbmcopy*Rbnm;
 
-    if isnothing(x0)
-        x = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
+    x = if isnothing(x0)
+        zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
     else
-        x = x0
+        x0
     end
     F = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
     AoLjbmvector = zeros(Complex{Float64}, Nbranches*Nmodes)
