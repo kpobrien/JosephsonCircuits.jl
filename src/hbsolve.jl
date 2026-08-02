@@ -1620,7 +1620,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     x = if isnothing(x0)
         zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
     else
-        x0
+        copy(x0)
     end
     F = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
     AoLjbmvector = zeros(Complex{Float64}, Nbranches*Nmodes)
