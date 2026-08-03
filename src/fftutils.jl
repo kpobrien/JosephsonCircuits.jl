@@ -95,11 +95,12 @@ function calcfreqsrdft(Nharmonics::NTuple{N,Int}) where N
     # coefficients
     # changed to below because i wasn't using enough points when Nmodes=1.
     # the results contained only real values. 
-    Nt = if Nw[1] == 2
-        NTuple{N,Int}(ifelse(i == 1, 2*Nw[1]-1, val) for (i,val) in enumerate(Nw))
-    else
-        NTuple{N,Int}(ifelse(i == 1, 2*Nw[1]-2, val) for (i,val) in enumerate(Nw))
-    end
+    # Nt = if Nw[1] == 2
+    #     NTuple{N,Int}(ifelse(i == 1, 2*Nw[1]-1, val) for (i,val) in enumerate(Nw))
+    # else
+    #     NTuple{N,Int}(ifelse(i == 1, 2*Nw[1]-2, val) for (i,val) in enumerate(Nw))
+    # end
+    Nt =  NTuple{N,Int}(ifelse(i == 1, 2*Nw[1]-1, val) for (i,val) in enumerate(Nw))
 
     return calcfreqs(Nharmonics, Nw, Nt)
 end
@@ -375,7 +376,7 @@ julia> JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsrdft((3,3));dc=fa
  (2, -1)
 
 julia> JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsrdft((3,3));maxintermodorder=2)
-JosephsonCircuits.Frequencies{2}((3, 3), (4, 7), (6, 7), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(1, 3), CartesianIndex(1, 4), CartesianIndex(1, 5), CartesianIndex(1, 6), CartesianIndex(1, 7), CartesianIndex(2, 7)], [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (0, 2), (0, 3), (0, -3), (0, -2), (0, -1), (1, -1)])
+JosephsonCircuits.Frequencies{2}((3, 3), (4, 7), (7, 7), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(1, 3), CartesianIndex(1, 4), CartesianIndex(1, 5), CartesianIndex(1, 6), CartesianIndex(1, 7), CartesianIndex(2, 7)], [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (0, 2), (0, 3), (0, -3), (0, -2), (0, -1), (1, -1)])
 ```
 """
 function  truncfreqs(frequencies::Frequencies;
@@ -630,9 +631,9 @@ julia> JosephsonCircuits.printsymmetries(JosephsonCircuits.calcfreqsdft((2,)))
 
 julia> JosephsonCircuits.printsymmetries(JosephsonCircuits.calcfreqsrdft((2,2)))
 3×5 Matrix{Int64}:
- 0  1  3  -3  -1
+ 0  1  2  -2  -1
  0  0  0   0   0
- 0  2  4  -4  -2
+ 0  0  0   0   0
 ```
 """
 function printsymmetries(freq::Frequencies)

@@ -3,74 +3,6 @@ using Test
 
 @testset verbose=true "hbsolve" begin
 
-    # @testset "hbsolve lossless" begin
-
-    #     @variables Rleft Cc Lj Cj w L1
-    #     circuit = Tuple{String,String,String,Num}[]
-    #     push!(circuit,("P1","1","0",1))
-    #     push!(circuit,("R1","1","0",Rleft))
-    #     push!(circuit,("C1","1","2",Cc)) 
-    #     push!(circuit,("Lj1","2","0",Lj)) 
-    #     push!(circuit,("C2","2","0",Cj))
-    #     circuitdefs = Dict(
-    #         Lj =>1000.0e-12,
-    #         Cc => 100.0e-15,
-    #         Cj => 1000.0e-15,
-    #         Rleft => 50.0,
-    #     )
-    #     ws = 2*pi*(4.5:0.01:5.0)*1e9
-    #     wp = 2*pi*4.75001*1e9
-    #     Ip = 0.00565e-6
-    #     Nsignalmodes = 8
-    #     Npumpmodes = 8
-    #     result=hbsolve(ws, wp, Ip, Nsignalmodes, Npumpmodes, circuit,
-    #         circuitdefs, pumpports=[1], ftol=1e-12)
-
-    #     @test isapprox(
-    #         result.nonlinear.nodeflux,
-    #         ComplexF64[-0.013189575486618105 - 0.00865077163136891im, 2.6396823809835998e-5 - 5.667772212498911e-6im, -2.3501629748681806e-8 - 2.2306559257777402e-8im, -7.987057959121183e-12 + 3.750064665528795e-11im, 4.337129743740559e-14 - 1.3397330127340191e-14im, -3.812185723603184e-17 - 3.8456119951452504e-17im, -4.278102807441037e-20 + 3.974761087481868e-20im, -8.24749227891514e-25 + 3.0560138516751506e-24im, 0.12157593753208869 + 0.07973582696437984im, 1.3736443951855489e-5 - 6.463164795537436e-5im, -5.3397980865816756e-8 + 9.191484285021433e-9im, 2.7913096743299775e-11 + 4.514682457284182e-11im, 3.3395873694437265e-14 - 4.569085921919452e-14im, -6.154948861291708e-17 - 1.523212283849711e-17im, -2.2291909276375226e-20 + 6.18003971235134e-20im, 5.405242786243393e-25 + 3.424470385254823e-24im],
-    #         atol = 1e-8)
-
-    #     @test isapprox(
-    #         10*log10.(abs2.(result.linearized.S[1,1,:])),
-    #         [0.002717249265375112, 0.0031881165263016476, 0.003764438371177404, 0.004475612824820614, 0.005360972358329889, 0.006473775210238347, 0.007887075336301673, 0.009702494973065136, 0.012063564112722006, 0.0151763872044898, 0.019342315628701326, 0.025010742306207902, 0.03286645328833334, 0.043977897966981386, 0.060055891091184574, 0.08391851842302066, 0.12035318288996377, 0.17776810664422604, 0.27146258097536335, 0.43031121414540996, 0.7108074673012084, 1.2271520892520107, 2.2163506977088527, 4.180249149477177, 8.16945893982768, 13.302337843265873, 8.180459085825893, 4.185698117374451, 2.2190409577860577, 1.2285225612890744, 0.7115311472717254, 0.4307082670317731, 0.2716887696865355, 0.17790149553267967, 0.12043426616790562, 0.08396907049655332, 0.06008804086742857, 0.04399863098219145, 0.0328799192406124, 0.02501947707672059, 0.019347909243977855, 0.015179860051320881, 0.012065584850116115, 0.009703510073587402, 0.007887387964370132, 0.006473594325612282, 0.005360443913078622, 0.0044748399587568825, 0.003763494713109064, 0.0031870550949444913, 0.002716108513561703],
-    #         atol = 1e-6)
-    # end
-
-    # @testset "hbsolve lossless two ports" begin
-
-    #     @variables Rleft Cc Lj Cj w L1
-    #     circuit = Tuple{String,String,String,Num}[]
-    #     push!(circuit,("P1","1","0",1))
-    #     push!(circuit,("R1","1","0",Rleft))
-    #     push!(circuit,("C1","1","2",Cc)) 
-    #     push!(circuit,("Lj1","2","0",Lj)) 
-    #     push!(circuit,("C2","2","0",Cj))
-    #     circuitdefs = Dict(
-    #         Lj =>1000.0e-12,
-    #         Cc => 100.0e-15,
-    #         Cj => 1000.0e-15,
-    #         Rleft => 50.0,
-    #     )
-    #     ws = 2*pi*(4.5:0.01:5.0)*1e9
-    #     wp = 2*pi*4.75001*1e9
-    #     Ip = 0.00565e-6
-    #     Nsignalmodes = 8
-    #     Npumpmodes = 8
-    #     result=hbsolve(ws, wp, [Ip/2,Ip/2], Nsignalmodes, Npumpmodes, circuit,
-    #         circuitdefs, pumpports=[1,1], ftol=1e-12)
-
-    #     @test isapprox(
-    #         result.nonlinear.nodeflux,
-    #         ComplexF64[-0.013189575486618105 - 0.00865077163136891im, 2.6396823809835998e-5 - 5.667772212498911e-6im, -2.3501629748681806e-8 - 2.2306559257777402e-8im, -7.987057959121183e-12 + 3.750064665528795e-11im, 4.337129743740559e-14 - 1.3397330127340191e-14im, -3.812185723603184e-17 - 3.8456119951452504e-17im, -4.278102807441037e-20 + 3.974761087481868e-20im, -8.24749227891514e-25 + 3.0560138516751506e-24im, 0.12157593753208869 + 0.07973582696437984im, 1.3736443951855489e-5 - 6.463164795537436e-5im, -5.3397980865816756e-8 + 9.191484285021433e-9im, 2.7913096743299775e-11 + 4.514682457284182e-11im, 3.3395873694437265e-14 - 4.569085921919452e-14im, -6.154948861291708e-17 - 1.523212283849711e-17im, -2.2291909276375226e-20 + 6.18003971235134e-20im, 5.405242786243393e-25 + 3.424470385254823e-24im],
-    #         atol = 1e-8)
-
-    #     @test isapprox(
-    #         10*log10.(abs2.(result.linearized.S[1,1,:])),
-    #         [0.002717249265375112, 0.0031881165263016476, 0.003764438371177404, 0.004475612824820614, 0.005360972358329889, 0.006473775210238347, 0.007887075336301673, 0.009702494973065136, 0.012063564112722006, 0.0151763872044898, 0.019342315628701326, 0.025010742306207902, 0.03286645328833334, 0.043977897966981386, 0.060055891091184574, 0.08391851842302066, 0.12035318288996377, 0.17776810664422604, 0.27146258097536335, 0.43031121414540996, 0.7108074673012084, 1.2271520892520107, 2.2163506977088527, 4.180249149477177, 8.16945893982768, 13.302337843265873, 8.180459085825893, 4.185698117374451, 2.2190409577860577, 1.2285225612890744, 0.7115311472717254, 0.4307082670317731, 0.2716887696865355, 0.17790149553267967, 0.12043426616790562, 0.08396907049655332, 0.06008804086742857, 0.04399863098219145, 0.0328799192406124, 0.02501947707672059, 0.019347909243977855, 0.015179860051320881, 0.012065584850116115, 0.009703510073587402, 0.007887387964370132, 0.006473594325612282, 0.005360443913078622, 0.0044748399587568825, 0.003763494713109064, 0.0031870550949444913, 0.002716108513561703],
-    #         atol = 1e-6)
-    # end
-
     @testset "hbsolve lossless new syntax" begin
 
         @variables Rleft Cc Lj Cj w L1
@@ -175,6 +107,72 @@ using Test
             circuit,circuitdefs;dc=true,odd=true,even=false,
             x0 = out1.nodeflux[:]);
         @test isapprox(out1.nodeflux[:],out2.nodeflux[:])
+    end
+
+
+    @testset verbose=true "hbsolve return flags" begin
+
+        @variables R Cc Lj Cj
+        circuit = [
+            ("P1","1","0",1),
+            ("R1","1","0",R),
+            ("C1","1","2",Cc),
+            ("Lj1","2","0",Lj),
+            ("C2","2","0",Cj)]
+        
+        circuitdefs = Dict(
+            Lj =>1000.0e-12,
+            Cc => 100.0e-15,
+            Cj => 1000.0e-15/(1+1e-3im),
+            R => 50.0)
+        
+        ws = 2*pi*(4.5:0.5:5.0)*1e9
+        wp = (2*pi*4.75001*1e9,)
+        Ip = 0.00565e-6
+        sources = [(mode=(1,),port=1,current=Ip)]
+        Npumpharmonics = (16,)
+        Nmodulationharmonics = (8,)
+
+        # these are all of the returns we will examine
+        flags = ["S","Snoise","QE","CM","nodeflux","voltage","nodefluxadjoint","voltageadjoint",
+            "Ssensitivity","Z","Zadjoint","Zsensitivity","Zsensitivityadjoint"]
+
+        # set all of the flags to be true
+        returnflags = NamedTuple([(Symbol("return"*flags[i])=>true) for i in 1:length(flags)])
+        solalltrue = hbsolve(ws, wp, sources, Nmodulationharmonics,
+            Npumpharmonics, circuit, circuitdefs;returnflags...);
+
+        # loop over all of the flags, setting one of them to be true
+        for j in 1:length(flags)
+            # set one of the flags to be true and the rest false
+            returnflags = NamedTuple([(Symbol("return"*flags[i])=>ifelse(i==j,true,false)) for i in 1:length(flags)])
+            sol = hbsolve(ws, wp, sources, Nmodulationharmonics,
+                Npumpharmonics, circuit, circuitdefs;returnflags...);
+
+            # loop over all of the flags and check if the returned value when all of the flags
+            # are true is the same as when only the selected flag is true. check that the returned
+            # values for the false flags are empty.
+            for k in 1:length(flags)
+                # compare whether the all flags true return value is the same as when only
+                # one flag is true
+                if k == j
+                    result = @test(isapprox(
+                        getfield(solalltrue.linearized, Symbol(flags[k])),
+                        getfield(sol.linearized, Symbol(flags[k])),
+                        )
+                    )
+                    if result isa Test.Fail
+                        println("",flags[k]," is not correct when ","return"*flags[j]," = true")
+                    end
+                # check that the rest of the return values are empty.
+                else
+                    result = @test(isempty(getfield(sol.linearized, Symbol(flags[k]))))
+                    if result isa Test.Fail
+                        println("",flags[k]," is not empty when ","return"*flags[j]," = true")
+                    end
+                end
+            end
+        end
     end
 
     @testset verbose=true "hbnlsolve lossless error" begin

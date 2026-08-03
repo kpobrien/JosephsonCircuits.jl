@@ -792,7 +792,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # make arrays for the voltages, node fluxes, scattering parameters,
     # quantum efficiency, and commutatio relations. if we aren't returning a
     # matrix, set it to be an empty array.
-    S = if returnS
+    S = if returnS || returnQE 
         zeros(Complex{Float64}, Nports*Nsignalmodes, Nports*Nsignalmodes,
             length(w))
     else
@@ -925,8 +925,10 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # for the scattering parameters
     Sout = if returnS && keyedarrays
         Stokeyed(S, modes, portnumbers, modes, portnumbers, w)
-    else
+    elseif returnS
         S
+    else
+	zeros(Complex{Float64},0,0,0)
     end
 
     Zout = if returnZ && keyedarrays
