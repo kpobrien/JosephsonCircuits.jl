@@ -377,10 +377,22 @@ julia> JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsrdft((3,3));dc=fa
 
 julia> JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsrdft((3,3));maxintermodorder=2)
 JosephsonCircuits.Frequencies{2}((3, 3), (4, 7), (7, 7), CartesianIndex{2}[CartesianIndex(1, 1), CartesianIndex(2, 1), CartesianIndex(3, 1), CartesianIndex(4, 1), CartesianIndex(1, 2), CartesianIndex(2, 2), CartesianIndex(1, 3), CartesianIndex(1, 4), CartesianIndex(1, 5), CartesianIndex(1, 6), CartesianIndex(1, 7), CartesianIndex(2, 7)], [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (0, 2), (0, 3), (0, -3), (0, -2), (0, -1), (1, -1)])
+
+julia> JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsrdft((3,3));dc=false,even=false,maxharmonics=(2,2),maxintermodorder=3).modes
+7-element Vector{Tuple{Int64, Int64}}:
+ (1, 0)
+ (0, 1)
+ (2, 1)
+ (1, 2)
+ (1, -2)
+ (0, -1)
+ (2, -1)
 ```
 """
-function  truncfreqs(frequencies::Frequencies;
-    dc = true, odd = true, even = true, maxintermodorder = Inf)
+function  truncfreqs(frequencies::Frequencies{N};
+    maxharmonics::NTuple{N,Int} = frequencies.Nharmonics,
+    maxintermodorder = Inf,
+    dc::Bool = true, odd::Bool = true, even::Bool = true) where N
 
     coords = frequencies.coords
     modes = frequencies.modes
@@ -409,7 +421,9 @@ function  truncfreqs(frequencies::Frequencies;
                 (odd && mod(sum(abs,nvals),2) == 1)
             ) && # test for containing only one frequency or less than maxintermodorder
                 # (sum( nvals .!== 0) == 1 || sum(abs,nvals) <= maxintermodorder)
-                (count(!=(0), nvals) == 1 || sum(abs,nvals) <= maxintermodorder)
+                (count(!=(0), nvals) == 1 || sum(abs,nvals) <= maxintermodorder) &&
+                # and less than the maxharmonics
+                all(map(<=,abs.(nvals),maxharmonics))
 
             push!(keepcoords,coords[i])
             push!(keepmodes,nvals)
@@ -912,10 +926,10 @@ and [`plan_applynl`](@ref).
 ```jldoctest
 julia> JosephsonCircuits.applynl([[0, 0.2+0.0im, 0, 0];;],cos)
 4×1 Matrix{ComplexF64}:
-   0.9603980498951228 + 0.0im
-                  0.0 + 0.0im
- -0.01966852794611884 + 0.0im
-                  0.0 + 0.0im
+    0.9603982266595633 + 0.0im
+ -8.831900994670556e-8 + 0.0im
+  -0.01973466311703025 + 0.0im
+   6.61351077009899e-5 + 0.0im
 
 julia> JosephsonCircuits.applynl([[0, 0.2+0.0im];;],cos)
 2×1 Matrix{ComplexF64}:
@@ -925,9 +939,9 @@ julia> JosephsonCircuits.applynl([[0, 0.2+0.0im];;],cos)
 julia> JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;],sin)
 3×3×1 Array{ComplexF64, 3}:
 [:, :, 1] =
- -0.0209812+0.0im   0.295151+0.0im   0.295151+0.0im
-   0.359826+0.0im  -0.041417+0.0im  -0.041417+0.0im
- 0.00788681+0.0im  -0.110947+0.0im  -0.110947+0.0im
+ -0.0201302+0.0im    0.292163+0.0im    0.292163+0.0im
+   0.380152+0.0im  -0.0423263+0.0im  -0.0423263+0.0im
+ -0.0168084+0.0im  -0.0530698+0.0im  -0.0530698+0.0im
 ```
 """
 function applynl(fd::Array{Complex{Float64}}, f)
@@ -951,23 +965,13 @@ function plan_applynl(fd::Array{Complex{T}}) where T
 
     #choose the number of time points based on the number of fourier
     #coefficients
-    # changed to below because i wasn't using enough points when Nmodes=1.
-    # the results contained only real values. 
     sizefd = size(fd)
-    stepsperperiod = if sizefd[1] == 2
-        2*sizefd[1]-1
-    else
-        2*sizefd[1]-2
-    end
+    stepsperperiod = 2*sizefd[1]-1
 
     # generate the time domain array with the appropriate dimensions
     # changed to prevent boxing of stepsperperiod.
     dims = (stepsperperiod, sizefd[2:end]...)
     td = Array{T}(undef, dims)
-    # td = Array{T}(
-    #     undef,
-    #     NTuple{length(sizefd),Int}(ifelse(i == 1, stepsperperiod, val) for (i,val) in enumerate(sizefd)),
-    # )
 
     # make the irfft plan
     irfftplan = FFTW.plan_irfft(fd,stepsperperiod,1:length(size(fd))-1; flags=FFTW.ESTIMATE, timelimit=Inf)
@@ -996,9 +1000,9 @@ fd
 
 # output
 3×2 Matrix{ComplexF64}:
-  0.586589+0.0im   0.586589+0.0im
- -0.413411+0.0im  -0.413411+0.0im
- -0.413411+0.0im  -0.413411+0.0im
+  0.856732+0.0im   0.856732+0.0im
+ -0.143268+0.0im  -0.143268+0.0im
+ -0.143268+0.0im  -0.143268+0.0im
 ```
 """
 function applynl!(fd::Array{Complex{T}}, td::Array{T}, f, irfftplan,

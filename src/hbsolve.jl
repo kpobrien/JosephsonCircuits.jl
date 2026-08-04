@@ -266,7 +266,11 @@ and [`hblinsolve`](@ref).
 function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
     circuit, circuitdefs;dc::Bool = false, threewavemixing::Bool = false,
-    fourwavemixing::Bool = true, maxintermodorder=Inf, iterations = 1000,
+    fourwavemixing::Bool = true, maxpumpintermodorder=Inf,
+    maxmodulationintermodorder=Inf,
+    maxpumpharmonics::NTuple{N,Number} = Npumpharmonics,
+    maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
+    iterations = 1000,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4, x0 = nothing,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
     sorting = :number, returnS::Bool = true, returnSnoise::Bool = false,
@@ -282,9 +286,10 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     # calculate the Frequencies struct
     freq = removeconjfreqs(
         truncfreqs(
-            calcfreqsrdft(Npumpharmonics),
-            dc=dc, odd=fourwavemixing, even=threewavemixing,
-            maxintermodorder=maxintermodorder,
+            calcfreqsrdft(Npumpharmonics); dc = dc, odd = fourwavemixing,
+            even = threewavemixing,
+            maxintermodorder = maxpumpintermodorder,
+            maxharmonics = maxpumpharmonics,
         )
     )
 
@@ -310,9 +315,9 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
 
     # generate the signal modes
     signalfreq =truncfreqs(
-        calcfreqsdft(Nmodulationharmonics),
-        dc=true, odd=threewavemixing, even=fourwavemixing,
-        maxintermodorder=maxintermodorder,
+        calcfreqsdft(Nmodulationharmonics); dc = true, odd = threewavemixing,
+        even = fourwavemixing, maxintermodorder = maxmodulationintermodorder,
+        maxharmonics = maxmodulationharmonics,
     )
 
     # solve the linearized problem
@@ -474,7 +479,8 @@ true
 """
 function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     nonlinear = nothing, symfreqvar = nothing, threewavemixing::Bool = false,
-    fourwavemixing::Bool = true, maxintermodorder = Inf,
+    fourwavemixing::Bool = true,
+    maxharmonics = Nmodulationharmonics, maxintermodorder = Inf,
     nbatches::Integer = Base.Threads.nthreads(), sorting = :number,
     returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
     returnCM::Bool = true, returnnodeflux::Bool = false,
@@ -494,9 +500,9 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
 
     # generate the signal modes
     signalfreq =truncfreqs(
-        calcfreqsdft(Nmodulationharmonics),
-        dc=true, odd=threewavemixing, even=fourwavemixing, 
-            maxintermodorder=maxintermodorder,
+        calcfreqsdft(Nmodulationharmonics); dc = true, odd = threewavemixing,
+        even = fourwavemixing, maxintermodorder = maxintermodorder,
+        maxharmonics = maxharmonics,
     )
 
 return hblinsolve(w, psc, cg, circuitdefs, signalfreq; nonlinear = nonlinear,
@@ -1410,18 +1416,19 @@ true
 """
 function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     circuit, circuitdefs; iterations = 1000,
+    maxharmonics::NTuple{N,Int} = Nharmonics,
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, x0 = nothing, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4, symfreqvar = nothing,
-    sorting= :number, keyedarrays::Bool = true,
+    sorting = :number, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
     factorization = KLUfactorization()) where {N}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
         truncfreqs(
-            calcfreqsrdft(Nharmonics),
-            dc=dc, odd=odd, even=even, maxintermodorder=maxintermodorder,
+            calcfreqsrdft(Nharmonics); dc = dc, odd = odd, even = even,
+            maxintermodorder = maxintermodorder, maxharmonics = maxharmonics,
         )
     )
 
@@ -1436,7 +1443,7 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     cg = calccircuitgraph(psc)
 
     # calculate the numeric matrices
-    nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+    nm = numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
