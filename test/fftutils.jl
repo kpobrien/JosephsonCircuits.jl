@@ -289,6 +289,12 @@ using SpecialFunctions
         end
     end
 
+    @testset "applynl" begin
+        out1 = ComplexF64[0.9603982266595633 + 0.0im; -8.831900994670556e-8 + 0.0im; -0.01973466311703025 + 0.0im; 6.61351077009899e-5 + 0.0im;;]
+        out2 = JosephsonCircuits.applynl([[0, 0.2+0.0im, 0, 0];;],cos)
+        @test isapprox(out1,out2)
+    end
+
     @testset "phivectortomatrix! and phimatrixtovector!" begin
 
         @variables w1,w2

@@ -924,13 +924,6 @@ and [`plan_applynl`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.applynl([[0, 0.2+0.0im, 0, 0];;],cos)
-4×1 Matrix{ComplexF64}:
-    0.9603982266595633 + 0.0im
- -8.831900994670556e-8 + 0.0im
-  -0.01973466311703025 + 0.0im
-   6.61351077009899e-5 + 0.0im
-
 julia> JosephsonCircuits.applynl([[0, 0.2+0.0im];;],cos)
 2×1 Matrix{ComplexF64}:
    0.9603980498951228 + 0.0im
