@@ -163,13 +163,13 @@ end
 """
     linesearch(f, fp, dfdalpha, alphamin)
 
-Quadratic linesearch based on Nocedal and Wright, chapter 3 section 5. `f` is
+Return the fitted minimum of a function of alpha from [0,1] as
+(alpha at which minimum occurs, minimum fitted value of function) from `f`,
 the value at the first point alpha=0.0, `fp` is the value at the second point,
-alpha=1.0, `dfdalpha` is the derivative at the first point, and `alphamin` is
-the minimum value of `dfdalpha` below which we will take a full step. The
-linesearch will return the fitted minimum of the function with respect to
-alpha as (alpha at which minimum occurs, minimum value of function).
+alpha=1.0, `dfdalpha`, the derivative at the first point, and `alphamin`,
+the minimum value of `dfdalpha` below which we will take a full step.
 
+Quadratic linesearch based on Nocedal and Wright, chapter 3 section 5. 
 """
 function linesearch(f, fp, dfdalpha, alphamin)
 
@@ -181,24 +181,35 @@ function linesearch(f, fp, dfdalpha, alphamin)
     alpha1 = -dfdalpha/(2*a)
     f1fit = -dfdalpha*dfdalpha/(4*a) + f
 
-    if isnan(f) || isnan(fp)
+    if isnan(f)
         error(lazy"NaN in nonlinear solver.")
     end
 
+    if !isfinite(fp)
+        # the residual at the full step overflowed, so the full step is too
+        # large. return a reduced step
+        return 0.5, f
+    end
+
+    # if the fitted values in (0,1) are larger than the final point `fp` then
+    # take a full step.
     if f1fit > fp
         return 1.0, fp
+
     # if the fitted alpha overshoots the size of the interval (from 0 to 1),
-    # then set alpha to 1 and make a full length step.
+    # or is negative then set alpha to 1 and make a full length step.
     elseif alpha1 > 1.0 || alpha1 <= 0.0
         return 1.0, fp
-    # if we aren't making sufficient progress, take a step
-    # switch to using Armijo rule
+    
+    # if the fitted step is below the minimum step, take the minimum step
     elseif alpha1 <= alphamin
-        return 1.0, fp
-    # if a is zero, alpha1 will be NaN
-    # take a full step
+        return alphamin, f1fit
+    
+    # if a is zero, alpha1 will be NaN. take a full step
     elseif abs2(a) == 0 
         return 1.0, fp
+    
+    # if none of the above special cases then return the step from the fit
     else
         return alpha1, f1fit
     end
