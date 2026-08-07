@@ -184,7 +184,7 @@ function linesearch(f, fp, dfdalpha, alphamin)
     # if the function at alpha=0 is NaN there isn't much we can do since
     # that is required for the algorithm.
     if isnan(f)
-        throw(ArgumentError(lazy"NaN in nonlinear solver."))
+        throw(ErrorException(lazy"NaN in nonlinear solver."))
     end
 
     if !isfinite(fp)

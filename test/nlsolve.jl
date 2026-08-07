@@ -16,7 +16,7 @@ using Test
     @testset verbose=true "linesearch error" begin
 
         @test_throws(
-            ArgumentError("NaN in nonlinear solver."),
+            ErrorException("NaN in nonlinear solver."),
             JosephsonCircuits.linesearch(NaN,0.0,-0.02,0.0)
         )
 
