@@ -3,6 +3,68 @@ using Test
 
 @testset verbose=true "hbsolve" begin
 
+
+    @testset "hbsolve-hbnlsolve comparison" begin
+
+        @variables R Cc Lj Cj
+        circuit = [
+            ("P1","1","0",1),
+            ("R1","1","0",R),
+            ("C1","1","2",Cc),
+            ("Lj1","2","0",Lj),
+            ("C2","2","0",Cj)]
+
+        for tandelta in [0,1e-3]
+            
+            circuitdefs = Dict(
+                Lj =>1000.0e-12,
+                Cc => 100.0e-15,
+                Cj => 1000.0e-15/(1+im*tandelta),
+                R => 50.0)
+            
+            ws = 2*pi*4.74*1e9
+            wp = 2*pi*4.75001*1e9
+            Ip = 0.00565e-6
+            Is = 1e-14
+
+            # linearized simulation
+            sources = [(mode=(1,),port=1,current=Ip)]
+            Npumpharmonics = (10,)
+            Nmodulationharmonics = (10,)
+            sol1 = hbsolve(ws, (wp,), sources, Nmodulationharmonics,
+                Npumpharmonics, circuit, circuitdefs, ftol = 1e-15)
+            S1ss = sol1.linearized.S((0,),1,(0,),1,1)
+            S1is = sol1.linearized.S((-2,),1,(0,),1,1)
+
+            # nonlinear simulation with (pump,signal) order
+            w = (wp,ws)
+            Nharmonics = (10,10)
+            sources = [(mode=(1,0),port=1,current=Ip),(mode=(0,1),port=1,current=Is)]
+            sol2 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = 1e-15)
+            S2ss = sol2.S((0,1),1,(0,1),1)
+            S2is = sol2.S((2,-1),1,(0,1),1)
+
+            # nonlinear simulation with (signal,pump) order
+            w = (ws,wp)
+            Nharmonics = (10,10)
+            sources = [(mode=(0,1),port=1,current=Ip),(mode=(1,0),port=1,current=Is)]
+            sol3 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = 1e-15)
+            S3ss = sol3.S((1,0),1,(1,0),1)
+            S3is = sol3.S((1,-2),1,(1,0),1)
+            
+            @test(isapprox(S1ss,S2ss))
+            # conjugate the idler from this simulation since it has a positive
+            # frequency  wi = 2wp - ws where wp > ws. it has a negative
+            # frequency in the linearized simulation wi = ws - 2wp.
+            @test(isapprox(S1is,conj(S2is)))
+            @test(isapprox(S1ss,S3ss))
+            # no need to conjugate the idler here since both have negative
+            # frequencies.
+            @test(isapprox(S1is,S3is))
+        end
+
+    end
+
     @testset "hbsolve lossless new syntax" begin
 
         @variables Rleft Cc Lj Cj w L1

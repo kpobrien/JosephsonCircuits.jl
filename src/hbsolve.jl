@@ -1643,6 +1643,15 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     Gnm = freqsubst(Gnmcopy, wmodes, symfreqvar)
     invLnm = freqsubst(invLnmcopy, wmodes, symfreqvar)
 
+
+    # take the complex conjugate of the terms associated with modes with
+    # negative frequencies. this is the same operation hblinsolve performs
+    # with sparseaddconjsubst!. these matrices are used in both the residual
+    # and the Jacobian in calcfj2!.
+    conjnegfreq!(Cnm, wmodes)
+    conjnegfreq!(Gnm, wmodes)
+    conjnegfreq!(invLnm, wmodes)
+
     # scale the matrices for numerical reasons
     rmul!(Cnm,Lmean)
     rmul!(Gnm,Lmean)
@@ -1787,8 +1796,12 @@ function calcfj2!(F,
         for i in eachindex(AoLjbmvectorview)
             AoLjbmvectorview[i] = AoLjbmvectorview[i] * (Lmean/Ljbm.nzval[i])
         end
-        # TODO: for multi-tone harmonic balance this needs conjugates (when any
-        # of the frequencies are negative)
+        # we assume invLnm, Gnm, and Cnm have conjugated for any negative
+        # frequency outside of this function using conjnegfreq!. negative
+        # frequencies cannot occur in single tone harmonic balance (one
+        # dimensional RDFT due to conjugate symmetry), but can occur in
+        # multi-tone harmonic balance (multi-dimensional RDFT) due to the
+        # relative phases between the tones.
         F .= Rbnmt*AoLjbmvector .+ invLnm*nodeflux .+ im*Gnm*wmodesm*nodeflux .- Cnm*wmodes2m*nodeflux .- bnm
 
     end
@@ -1819,8 +1832,12 @@ function calcfj2!(F,
         # the code below adds the sparse matrices together with minimal
         # memory allocations and without changing the sparsity structure.
         fill!(J, 0)
-        # TODO: for multi-tone harmonic balance this needs conjugates (when 
-        # any of the frequencies are negative)
+        # we assume invLnm, Gnm, and Cnm have conjugated for any negative
+        # frequency outside of this function using conjnegfreq!. negative
+        # frequencies cannot occur in single tone harmonic balance (one
+        # dimensional RDFT due to conjugate symmetry), but can occur in
+        # multi-tone harmonic balance (multi-dimensional RDFT) due to the
+        # relative phases between the tones.
         sparseadd!(J, AoLjnm, AoLjnmindexmap)
         sparseadd!(J, invLnm, invLnmindexmap)
         sparseadd!(J, im, Gnm, wmodesm, Gnmindexmap)
