@@ -7,16 +7,17 @@ using Test
     @testset verbose=true "linesearch" begin
         @test(JosephsonCircuits.linesearch(0.0,-0.22,-0.02,0.0) == (1.0, -0.22))
         @test(JosephsonCircuits.linesearch(0.0,0.2,0.0,0.0) == (1.0, 0.2))
-        @test(JosephsonCircuits.linesearch(0.0,0.18000000000000002,-0.02,0.1) == (1.0, 0.18000000000000002))
+        @test(JosephsonCircuits.linesearch(0.0,0.18000000000000002,-0.02,0.1) == (0.1, 4.336808689942018e-19))
         @test(JosephsonCircuits.linesearch(0.1,0.1,0.0,0.0) == (1.0, 0.1))
         @test(JosephsonCircuits.linesearch(0.0,0.0,-0.2,0.0) == (0.5, -0.05000000000000001))
+        @test(JosephsonCircuits.linesearch(0.1,NaN,-0.02,0.0) == (0.5, 0.1))
     end
 
     @testset verbose=true "linesearch error" begin
 
         @test_throws(
-            ErrorException("NaN in nonlinear solver."),
-            JosephsonCircuits.linesearch(0.0,NaN,-0.02,0.0)
+            ArgumentError("NaN in nonlinear solver."),
+            JosephsonCircuits.linesearch(NaN,0.0,-0.02,0.0)
         )
 
     end

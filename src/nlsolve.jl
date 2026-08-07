@@ -181,8 +181,10 @@ function linesearch(f, fp, dfdalpha, alphamin)
     alpha1 = -dfdalpha/(2*a)
     f1fit = -dfdalpha*dfdalpha/(4*a) + f
 
+    # if the function at alpha=0 is NaN there isn't much we can do since
+    # that is required for the algorithm.
     if isnan(f)
-        error(lazy"NaN in nonlinear solver.")
+        throw(ArgumentError(lazy"NaN in nonlinear solver."))
     end
 
     if !isfinite(fp)
@@ -202,8 +204,9 @@ function linesearch(f, fp, dfdalpha, alphamin)
         return 1.0, fp
     
     # if the fitted step is below the minimum step, take the minimum step
+    # and return the fitted function value at that step.
     elseif alpha1 <= alphamin
-        return alphamin, f1fit
+        return alphamin, a*alphamin^2+dfdalpha*alphamin+f
     
     # if a is zero, alpha1 will be NaN. take a full step
     elseif abs2(a) == 0 
