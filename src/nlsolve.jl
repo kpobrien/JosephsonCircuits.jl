@@ -221,10 +221,11 @@ end
 """
     nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         x::Vector{T}; iterations=1000, ftol=1e-8, switchofflinesearchtol = 1e-5,
-        alphamin = 1e-4,factorization = KLUfactorization())
+        alphamin = 1e-4, factorization = KLUfactorization(),
+        andersondepth::Integer = 5)
 
 A simple nonlinear solver using Newton's method with linesearch based on
-Nocedal and Wright, chapter 3 section 5.
+Nocedal and Wright, chapter 3 section 5, combined with Anderson acceleration.
 
 This solver attempts to find x such that f(x) == 0, where f is a
 nonlinear function with Jacobian J.
@@ -236,15 +237,29 @@ A few points to note:
     sometimes result in a SingularException, which we catch, then create a
     new factorization object.
 
+Returns `true` if the iterations converged and `false` otherwise.
+
 # Arguments
 - `fj!`: a function to compute a vector-valued objective function and
 its Jacobian.
-- `F`: matrix for holding intermediate results. Initial values may be
-  overwritten and can be bogus values.
+- `F`: vector for holding intermediate results.
 - `J`: sparse matrix with with the desired sparsity structure of the
-  Jacobian. Initial values may be overwritten and can be bogus values,
-  as long as the sparsity structure is correct.
-- `x`: initial guess for x.
+  Jacobian.
+- `x`: initial values for x.
+
+# Keywords
+- `iterations = 1000`: the maximum number of iterations.
+- `ftol = 1e-8`: the tolerance on the residual norm below which the
+  iterations are considered converged.
+- `switchofflinesearchtol = 1e-5`: the relative residual norm below which
+  the linesearch is switched off and full Newton steps are taken.
+- `alphamin = 1e-4`: the minimum linesearch step size.
+- `factorization = KLUfactorization()`: the matrix factorization to use
+  for the linear solves.
+- `andersondepth::Integer = 5`: the depth of the Anderson acceleration of the
+  Newton fixed point iteration, the maximum number of previous iterates
+  used for the extrapolation. Values less than one disable the
+  acceleration.
 
 # Examples
 ```jldoctest
@@ -273,8 +288,9 @@ true
 ```
 """
 function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
-    x::Vector{T}; iterations=1000, ftol=1e-8, switchofflinesearchtol = 1e-5,
-    alphamin = 1e-4,factorization = KLUfactorization()) where T
+    x::Vector{T}; iterations::Integer = 1000, ftol = 1e-8,
+    switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+    factorization = KLUfactorization(), andersondepth::Integer = 5) where T
 
     if size(J,1) != size(J,2)
         throw(DimensionMismatch(lazy"The Jacobian `J` matrix must be square."))
@@ -292,34 +308,48 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     tryfactorize!(cache,factorization,J)
 
     deltax = copy(x)
+    # reusable buffer for trial points, to avoid allocating a new vector
+    # at every trial evaluation
+    xtrial = copy(x)
 
-    # Nsamples = 100
-    # samples = Float64[]
-    fmin = Float64[]
-    fvals = Float64[]
-    fpvals = Float64[]
-    dfdalphavals = Float64[]
-    alphas = Float64[]
-    normF = Float64[]
-    alpha1 = 0.0
+    # working arrays and history for Anderson acceleration. the Newton
+    # update deltax = -J \\ F is the residual of the fixed point map
+    # G(x) = x + deltax, so the history of iterates and updates is
+    # available at no extra cost. the extrapolation coefficients are
+    # constrained to be real because for the harmonic balance quasi-Newton
+    # map the error operator is antilinear (it involves complex
+    # conjugation), so complex coefficients cannot cancel the error modes;
+    # real coefficients correspond to Anderson acceleration of the
+    # equivalent real system.
+    if andersondepth > 0
+        xanderson = copy(x)
+        fanderson = copy(deltax)
+        Fanderson = copy(F)
+        xcandidate = copy(x)
+        andersonready = false
+        deltaxhistory = Vector{typeof(x)}(undef, 0)
+        deltafhistory = Vector{typeof(x)}(undef, 0)
+        # buffers for the small least squares problem for the
+        # extrapolation coefficients
+        gram = Matrix{Float64}(undef, andersondepth, andersondepth)
+        rhs = Vector{Float64}(undef, andersondepth)
+    end
 
     # perform Newton's method with linesearch based on Nocedal and Wright
     # chapter 3 section 5.
-    for n in 1:iterations
+    converged = false
+    Ffresh = false
+    updatenorm = Inf
+    for _ in 1:iterations
 
-        if alpha1 == 1.0
-            # if alpha was 1, we don't need to update the function 
-            # because we have already calculated that in the last
-            # loop. just update the jacobian. since we set alpha1=0
-            # before the loop, this will never be called on the first
-            # iteration.
+        if Ffresh
+            # the residual F was evaluated at the current x at the end of
+            # the previous iteration, so only the Jacobian needs updating.
             fj!(nothing, J, x)
         else
             # update the residual function and the Jacobian
             fj!(F, J, x)
         end
-
-        push!(normF, norm(F))
 
         # factor the Jacobian
         tryfactorize!(cache,factorization,J)
@@ -338,41 +368,140 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         dfdalpha = real(dot(F, J, deltax))
 
         # evaluate the function at the trial point
-        fj!(F, nothing, x+deltax)
+        @. xtrial = x + deltax
+        fj!(F, nothing, xtrial)
 
         fp = real(0.5*dot(F,F))
 
         # calculate the step size based on the last point, the trial point, and
         # derivative at the first point.
-        alpha1, f1fit = linesearch(f,fp,dfdalpha,alphamin)
+        alpha1, _ = linesearch(f,fp,dfdalpha,alphamin)
 
         # switch to newton once the norm is small enough
         normx = norm(x)
         if normx > 0 && sqrt(fp)/normx <= switchofflinesearchtol && sqrt(f)/normx <= switchofflinesearchtol
             alpha1 = 1.0
-            # println("norm(F)/norm(phi): ",sqrt(fp)/norm(x))
         end
 
-        # update x
-        x .+= deltax*alpha1
-        # push!(alphas,alpha1)
+        # Anderson acceleration: extrapolate through the history of
+        # iterates and fixed point residuals, and accept the extrapolated
+        # iterate only if it reduces the norm of the residual, so the
+        # accelerated iteration is never less robust than the damped
+        # iteration.
+        andersonaccepted = false
+        if andersondepth > 0
+            if andersonready
+                # reuse the oldest history vectors when the history is full,
+                # to avoid allocating new ones at every iteration
+                if length(deltaxhistory) >= andersondepth
+                    deltaxnew = popfirst!(deltaxhistory)
+                    deltafnew = popfirst!(deltafhistory)
+                else
+                    deltaxnew = similar(x)
+                    deltafnew = similar(x)
+                end
+                @. deltaxnew = x - xanderson
+                @. deltafnew = deltax - fanderson
+                push!(deltaxhistory, deltaxnew)
+                push!(deltafhistory, deltafnew)
+            end
+            copyto!(xanderson, x)
+            copyto!(fanderson, deltax)
+            andersonready = true
+            m = length(deltafhistory)
+            if m > 0
+                # solve the small least squares problem for the real
+                # extrapolation coefficients with regularized normal
+                # equations
+                for i in 1:m
+                    for j in i:m
+                        gram[i, j] = real(dot(deltafhistory[i], deltafhistory[j]))
+                        gram[j, i] = gram[i, j]
+                    end
+                    rhs[i] = real(dot(deltafhistory[i], deltax))
+                end
+                gramscale = 0.0
+                for i in 1:m
+                    gramscale = max(gramscale, gram[i, i])
+                end
+                for i in 1:m
+                    gram[i, i] += 1e-12*gramscale
+                end
+                gamma = try
+                    view(gram, 1:m, 1:m) \ view(rhs, 1:m)
+                catch
+                    nothing
+                end
+                if !isnothing(gamma) && all(isfinite, gamma)
+                    @. xcandidate = x + deltax
+                    for j in 1:m
+                        axpy!(-gamma[j], deltaxhistory[j], xcandidate)
+                        axpy!(-gamma[j], deltafhistory[j], xcandidate)
+                    end
+                    fj!(Fanderson, nothing, xcandidate)
+                    normFanderson = norm(Fanderson)
+                    if isfinite(normFanderson) && normFanderson < 0.9*sqrt(2*f)
+                        andersonupdate = 0.0
+                        for i in eachindex(x)
+                            andersonupdate += abs2(xcandidate[i] - x[i])
+                        end
+                        andersonupdate = sqrt(andersonupdate)
+                        copyto!(x, xcandidate)
+                        copyto!(F, Fanderson)
+                        andersonaccepted = true
+                        # the size of the accepted extrapolation, used by
+                        # the common convergence test below
+                        updatenorm = andersonupdate
+                    end
+                end
+            end
+        end
 
-        if norm(F,Inf) <= ftol || ( norm(x) > 0 && norm(F)/norm(x) < ftol)
-            # terminate iterations if infinity norm or relative norm are less
-            # than ftol. check that norm(x) is greater than zero to avoid
-            # divide by zero errors. 
-            # println("converged to: infinity norm of : ",norm(F,Inf)," after ",n," iterations")
-            # println("norm(F)/norm(phi): ",norm(F)/norm(x))
+        # update x, verifying sufficient decrease of the objective at the
+        # chosen step and backtracking when the quadratic interpolation
+        # fails, so that the iteration never takes a step which increases
+        # the residual when a smaller acceptable step exists. the
+        # directional derivative of the objective along the Newton update
+        # is dfdalpha, so the Armijo sufficient decrease condition is
+        # falpha <= f + c*alpha*dfdalpha with a small constant c.
+        if !andersonaccepted
+            if alpha1 == 1.0
+                # the residual at the full step is already in F
+                falpha = fp
+            else
+                @. xtrial = x + deltax*alpha1
+                fj!(F, nothing, xtrial)
+                falpha = real(0.5*dot(F,F))
+            end
+            backtracks = 0
+            while !(isfinite(falpha) && falpha <= f + 1e-4*alpha1*dfdalpha) &&
+                    alpha1 > alphamin && backtracks < 30
+                alpha1 = max(alpha1/2, alphamin)
+                @. xtrial = x + deltax*alpha1
+                fj!(F, nothing, xtrial)
+                falpha = real(0.5*dot(F,F))
+                backtracks += 1
+            end
+            @. x += deltax*alpha1
+            # the size of the accepted update, used by the common
+            # convergence test below
+            updatenorm = norm(deltax)*abs(alpha1)
+        end
+        # every path leaves F evaluated at the updated x
+        Ffresh = true
+
+        if norm(F,Inf) <= ftol || ( norm(x) > 0 && norm(F)/norm(x) < ftol && updatenorm <= sqrt(ftol)*norm(x))
+            # terminate iterations if the infinity norm is less than ftol, or
+            # if the relative norm is less than ftol and the Newton update is
+            # small relative to the solution. check that norm(x) is greater
+            # than zero to avoid divide by zero errors. the relative norm
+            # test alone can pass spuriously when the norm of the solution
+            # diverges while the residual stays bounded, so also require that
+            # the Newton updates are small (ie we are near the solution).
+            converged = true
             break
         end
-
-        if n == iterations
-            @warn string(lazy"Solver did not converge after maximum iterations of ", n,".")
-            println(lazy"norm(F)/norm(x): ", norm(F)/norm(x))
-            println(lazy"Infinity norm: ", norm(F,Inf))
-            # error(" ")
-            # @show alphas
-        end
     end
-    return nothing
+
+    return converged
 end

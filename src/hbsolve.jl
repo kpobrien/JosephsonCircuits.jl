@@ -212,6 +212,10 @@ and [`hblinsolve`](@ref).
     from Newton with linesearch to only Newton. For easily converging
     functions, setting this to zero can speed up simulations.
 - `alphamin = 1e-4`: the minimum step size relative to 1 for the linesearch.
+- `andersondepth::Integer = 5`: the depth of the Anderson acceleration of the
+  Newton fixed point iteration, the maximum number of previous iterates
+  used for the extrapolation. Values less than one disable the
+  acceleration.
 - `symfreqvar = nothing`: the symbolic frequency variable, eg `w`.
 - `nbatches = Base.Threads.nthreads()`: the number of batches to split the
     signal frequencies into for multi-threading. Set to 1 for singled threaded
@@ -271,7 +275,8 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     maxpumpharmonics::NTuple{N,Number} = Npumpharmonics,
     maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
     iterations = 1000,
-    ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4, x0 = nothing,
+    ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+    andersondepth::Integer = 5, x0 = nothing,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
     sorting = :number, returnS::Bool = true, returnSnoise::Bool = false,
     returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
@@ -310,8 +315,9 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     nonlinear = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
-        sensitivitynames = sensitivitynames, factorization = factorization)
+        andersondepth = andersondepth, symfreqvar = symfreqvar,
+        keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
+        factorization = factorization)
 
     # generate the signal modes
     signalfreq =truncfreqs(
@@ -1358,6 +1364,10 @@ equations about the operating point found with `hbnlsolve`.
 - `alphamin = 1e-4`: the function tolerance at which we switch
     from Newton with linesearch to only Newton. For easily converging
     functions, setting this to zero can speed up simulations.
+- `andersondepth::Integer = 5`: the depth of the Anderson acceleration of the
+  Newton fixed point iteration, the maximum number of previous iterates
+  used for the extrapolation. Values less than one disable the
+  acceleration.
 - `symfreqvar = nothing`: the symbolic frequency variable, eg `w`.
 - `sorting = :number`: sort the nodes by:
     `:name`: Sort the vector of strings. This always works but leads
@@ -1419,10 +1429,12 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     maxharmonics::NTuple{N,Int} = Nharmonics,
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, x0 = nothing, ftol = 1e-8,
-    switchofflinesearchtol = 1e-5, alphamin = 1e-4, symfreqvar = nothing,
-    sorting = :number, keyedarrays::Bool = true,
-    sensitivitynames::Vector{String} = String[],
-    factorization = KLUfactorization()) where {N}
+    switchofflinesearchtol = 1e-5, alphamin = 1e-4,
+    andersondepth::Integer = 5, symfreqvar = nothing, sorting = :number,
+    keyedarrays::Bool = true, sensitivitynames::Vector{String} = String[],
+    factorization = KLUfactorization(),
+    # debugJacobian = false,
+    ) where {N}
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -1448,9 +1460,11 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
-        sensitivitynames = sensitivitynames,
-        factorization = factorization)
+        andersondepth = andersondepth, symfreqvar = symfreqvar,
+        keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
+        factorization = factorization,
+        # debugJacobian = debugJacobian,
+        )
 end
 
 """
@@ -1521,18 +1535,11 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     indices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    symfreqvar = nothing, keyedarrays::Bool = true,
-    sensitivitynames::Vector{String} = String[],
-    factorization = KLUfactorization())
-
-# function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
-#     indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
-#     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
-#     ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-#     symfreqvar = nothing, keyedarrays::Bool = true,
-#     sensitivitynames::Vector{String} = String[],
-#     factorization = KLUfactorization()) where {N}
-
+    andersondepth::Integer = 5, symfreqvar = nothing,
+    keyedarrays::Bool = true, sensitivitynames::Vector{String} = String[],
+    factorization = KLUfactorization(),
+    # debugJacobian = false,
+    )
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
     Nt = frequencies.Nt
@@ -1698,14 +1705,18 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 
     # # use this for debugging purposes to return the function and the
     # # Jacobian
-    # fj!(F,J,x)
-    # return (F,J,x)
-
+    # if debugJacobian
+    #     return (F,J,x,fj!)
+    # end
     # solve the nonlinear system
-    nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
+    converged = nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol,
-        alphamin = alphamin, factorization = factorization)
+        alphamin = alphamin, andersondepth = andersondepth,
+        factorization = factorization)
 
+    if !converged
+        @warn string(lazy"Solver did not converge.")
+    end
     nodeflux = x
 
     # calculate the scattering parameters for the pump

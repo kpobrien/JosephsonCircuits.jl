@@ -174,7 +174,7 @@ function warmup()
     Npumpharmonics = (4,)
 
     return hbsolve(ws, wp, sources, Nmodulationharmonics,
-        Npumpharmonics, circuit, circuitdefs)
+        Npumpharmonics, circuit, circuitdefs;ftol=1e-12)
 end
 
 
@@ -201,7 +201,7 @@ function warmupsyms()
     Npumpharmonics = (4,)
 
     return hbsolve(ws, wp, sources, Nmodulationharmonics,
-        Npumpharmonics, circuit, circuitdefs)
+        Npumpharmonics, circuit, circuitdefs;ftol=1e-12)
 end
 
 function warmupparse()

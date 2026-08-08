@@ -32,7 +32,7 @@ using Test
             Npumpharmonics = (10,)
             Nmodulationharmonics = (10,)
             sol1 = hbsolve(ws, (wp,), sources, Nmodulationharmonics,
-                Npumpharmonics, circuit, circuitdefs, ftol = 1e-15)
+                Npumpharmonics, circuit, circuitdefs, ftol = 1e-17)
             S1ss = sol1.linearized.S((0,),1,(0,),1,1)
             S1is = sol1.linearized.S((-2,),1,(0,),1,1)
 
@@ -40,7 +40,7 @@ using Test
             w = (wp,ws)
             Nharmonics = (10,10)
             sources = [(mode=(1,0),port=1,current=Ip),(mode=(0,1),port=1,current=Is)]
-            sol2 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = 1e-15)
+            sol2 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = 1e-17)
             S2ss = sol2.S((0,1),1,(0,1),1)
             S2is = sol2.S((2,-1),1,(0,1),1)
 
@@ -48,7 +48,7 @@ using Test
             w = (ws,wp)
             Nharmonics = (10,10)
             sources = [(mode=(0,1),port=1,current=Ip),(mode=(1,0),port=1,current=Is)]
-            sol3 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = 1e-15)
+            sol3 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = 1e-17)
             S3ss = sol3.S((1,0),1,(1,0),1)
             S3is = sol3.S((1,-2),1,(1,0),1)
             
@@ -263,7 +263,7 @@ using Test
         sources = ((mode=(1,),port=1,current=Ip),)
 
         @test_warn(
-            "Solver did not converge after maximum iterations of 1.",
+            "Solver did not converge.",
             hbnlsolve(w,Nharmonics,sources,circuit,circuitdefs,iterations=1)
         )
     end
