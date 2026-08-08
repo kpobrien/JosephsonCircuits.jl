@@ -1709,12 +1709,12 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     #     return (F,J,x,fj!)
     # end
     # solve the nonlinear system
-    converged = nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
+    info = nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol,
         alphamin = alphamin, andersondepth = andersondepth,
         factorization = factorization)
 
-    if !converged
+    if !info.converged
         @warn string(lazy"Solver did not converge.")
     end
     nodeflux = x

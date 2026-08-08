@@ -219,6 +219,39 @@ function linesearch(f, fp, dfdalpha, alphamin)
 end
 
 """
+    IterationInfo(label, parameter, regularization, converged, iterations,
+        normresidual, alpha, backtracks, andersonaccepted)
+
+Diagnostics recorded for a call of [`nlsolve!`](@ref).
+
+# Fields
+- `label`: the solver stage this invocation belongs to.
+- `parameter`: the continuation parameter of the stage (the source scale
+    or the damping coefficient, depending on the stage), or NaN.
+- `regularization`: the diagonal regularization of the Jacobian, if any.
+- `converged`: whether the iterations converged.
+- `iterations`: the number of Newton iterations performed.
+- `normresidual`: the norm of the residual at the start of each iteration.
+- `alpha`: the accepted step size for each iteration, or NaN for
+    iterations where an Anderson extrapolation was accepted instead of a
+    Newton step.
+- `backtracks`: the number of linesearch backtracks for each iteration.
+- `andersonaccepted`: whether an Anderson extrapolation was accepted for
+    each iteration.
+"""
+struct IterationInfo
+    label::String
+    parameter::Float64
+    regularization::Float64
+    converged::Bool
+    iterations::Int
+    normresidual::Vector{Float64}
+    alpha::Vector{Float64}
+    backtracks::Vector{Int}
+    andersonaccepted::Vector{Bool}
+end
+
+"""
     nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         x::Vector{T}; iterations=1000, ftol=1e-8, switchofflinesearchtol = 1e-5,
         alphamin = 1e-4, factorization = KLUfactorization(),
@@ -290,7 +323,8 @@ true
 function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     x::Vector{T}; iterations::Integer = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    factorization = KLUfactorization(), andersondepth::Integer = 5) where T
+    factorization = KLUfactorization(), label = "quasi-Newton",
+    andersondepth::Integer = 5) where T
 
     if size(J,1) != size(J,2)
         throw(DimensionMismatch(lazy"The Jacobian `J` matrix must be square."))
@@ -335,6 +369,13 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         rhs = Vector{Float64}(undef, andersondepth)
     end
 
+    # diagnostic info
+    normF = Float64[]
+    alphas = Float64[]
+    backtrackrecord = Int[]
+    andersonrecord = Bool[]
+
+
     # perform Newton's method with linesearch based on Nocedal and Wright
     # chapter 3 section 5.
     converged = false
@@ -350,6 +391,8 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
             # update the residual function and the Jacobian
             fj!(F, J, x)
         end
+
+        push!(normF, norm(F))
 
         # factor the Jacobian
         tryfactorize!(cache,factorization,J)
@@ -452,6 +495,9 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
                         # the size of the accepted extrapolation, used by
                         # the common convergence test below
                         updatenorm = andersonupdate
+                        push!(alphas, NaN)
+                        push!(backtrackrecord, 0)
+                        push!(andersonrecord, true)
                     end
                 end
             end
@@ -482,6 +528,9 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
                 falpha = real(0.5*dot(F,F))
                 backtracks += 1
             end
+            push!(alphas, alpha1)
+            push!(backtrackrecord, backtracks)
+            push!(andersonrecord, false)
             @. x += deltax*alpha1
             # the size of the accepted update, used by the common
             # convergence test below
@@ -503,5 +552,6 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         end
     end
 
-    return converged
+    return IterationInfo(label, NaN, 0.0, converged, length(alphas),
+        normF, alphas, backtrackrecord, andersonrecord)
 end
