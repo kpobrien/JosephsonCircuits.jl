@@ -24,6 +24,8 @@ A simple structure to hold the nonlinear harmonic balance solutions.
     pump case.
 - `S`: the scattering matrix relating inputs and outputs for each combination
     of port and frequency.
+- `solverinfo`: diagnostics describing the nonlinear solution process.
+    See [`SolverInfo`](@ref).
 """
 struct NonlinearHB
     w
@@ -39,6 +41,15 @@ struct NonlinearHB
     ports
     modes
     S
+    solverinfo
+end
+
+# backwards compatible constructor without the solver diagnostics
+function NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
+    Nbranches, nodes, ports, modes, S)
+    return NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm,
+        Nmodes, Nbranches, nodes, ports, modes, S,
+        SolverInfo(IterationInfo[], NaN, NaN, true, NaN))
 end
 
 """
@@ -140,6 +151,37 @@ solutions.
 struct HB
     nonlinear
     linearized
+end
+
+"""
+    SolverInfo(stages, initialresidual, finalresidual, converged,
+        sourcefold)
+
+Diagnostics describing the nonlinear solution process of
+[`hbnlsolve`](@ref).
+
+# Fields
+- `stages`: a vector of [`IterationInfo`](@ref), one for each invocation
+    of the nonlinear solver, in the order they ran. The labels record
+    which solver stages ran and, for `method = :sourcestepping`, the
+    parameters record the source scale of each continuation point.
+- `initialresidual`: the norm of the residual at the initial value.
+- `finalresidual`: the norm of the residual at the returned solution.
+- `converged`: whether the solver reported convergence.
+- `sourcefold`: the source scale at which the source stepping detected a
+    fold in the branch of solutions, or NaN if no fold was detected. A
+    fold is recorded even when the subsequent extrapolated jump over it
+    succeeds; when the solve also failed, a finite value suggests that
+    no solution exists on the branch at the full source amplitudes, for
+    example because the sources exceed a self-oscillation threshold. The
+    labels of `stages` record which continuation stage stalled.
+"""
+struct SolverInfo
+    stages
+    initialresidual
+    finalresidual
+    converged
+    sourcefold
 end
 
 
@@ -1703,6 +1745,19 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         return nothing
     end
 
+
+    # the norm of the residual at the initial value, for the diagnostics
+    fj!(F, nothing, x)
+    normF0 = norm(F)
+
+    # diagnostics for each invocation of the nonlinear solver, stored in
+    # the output so the solution process can be assessed after the run
+    solverstages = IterationInfo[]
+
+    # the source scale at which the source stepping detected a fold in
+    # the branch of solutions, if any
+    sourcefold = Ref(NaN)
+
     # # use this for debugging purposes to return the function and the
     # # Jacobian
     # if debugJacobian
@@ -1714,10 +1769,26 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         alphamin = alphamin, andersondepth = andersondepth,
         factorization = factorization)
 
+    push!(solverstages, IterationInfo(info.label, 1.0,
+        info.regularization, info.converged, info.iterations,
+        info.normresidual, info.alpha, info.backtracks,
+        info.andersonaccepted))
+
     if !info.converged
         @warn string(lazy"Solver did not converge.")
     end
+
     nodeflux = x
+    converged = info.converged
+
+    # the norm of the residual at the returned solution, for the
+    # diagnostics
+    fj!(F, nothing, nodeflux)
+    normFfinal = norm(F)
+
+    # assemble the stored diagnostics of the solution process
+    solverinfo = SolverInfo(solverstages, normF0, normFfinal, converged,
+        sourcefold[])
 
     # calculate the scattering parameters for the pump
     Nports = length(portindices)
@@ -1746,7 +1817,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     end
 
     return NonlinearHB(w, frequencies, nodefluxout, Rbnm, Ljb, Lb, Ljbm,
-        Nmodes, Nbranches, nodenames, portnumbers, modes, Sout)
+        Nmodes, Nbranches, nodenames, portnumbers, modes, Sout, solverinfo)
 
 end
 
