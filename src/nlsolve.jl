@@ -293,6 +293,14 @@ its Jacobian.
   Newton fixed point iteration, the maximum number of previous iterates
   used for the extrapolation. Values less than one disable the
   acceleration.
+- `stalliterations::Integer = 0`: when positive, give up when the best
+  residual norm of the most recent half of a window of this many
+  iterations has improved by less than ten percent over the best of the
+  half window before it, so a solve converging too slowly to finish
+  within any reasonable budget hands control back to any fallbacks
+  quickly instead of exhausting the iteration budget. A solve converging
+  at a constant rate r is abandoned when r^(stalliterations/2) > 0.9.
+  Off by default.
 
 # Examples
 ```jldoctest
@@ -324,7 +332,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     x::Vector{T}; iterations::Integer = 1000, ftol = 1e-8,
     switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     factorization = KLUfactorization(), label = "quasi-Newton",
-    andersondepth::Integer = 5) where T
+    andersondepth::Integer = 5, stalliterations::Integer = 0) where T
 
     if size(J,1) != size(J,2)
         throw(DimensionMismatch(lazy"The Jacobian `J` matrix must be square."))
@@ -393,6 +401,27 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         end
 
         push!(normF, norm(F))
+
+        # when stalliterations is positive, give up when the best
+        # residual norm of the most recent half window has improved by
+        # less than ten percent over the best of the half window before
+        # it, so a solve converging too slowly to finish within any
+        # reasonable budget hands control back to any fallbacks (such as
+        # the retreat of a continuation) quickly instead of exhausting
+        # the iteration budget. comparing the minima of two half windows
+        # is robust both to the non-monotonic residual of the Anderson
+        # accelerated iteration and to slow monotone convergence, for
+        # which comparing the current residual against the window
+        # minimum would always report a stall. a solve converging at a
+        # constant rate r is abandoned when r^(stalliterations/2) > 0.9.
+        if stalliterations > 0 && length(normF) > stalliterations
+            half = stalliterations ÷ 2
+            recentmin = minimum(@view normF[end-half+1:end])
+            oldermin = minimum(@view normF[end-stalliterations+1:end-half])
+            if recentmin > 0.9*oldermin
+                break
+            end
+        end
 
         # factor the Jacobian
         tryfactorize!(cache,factorization,J)

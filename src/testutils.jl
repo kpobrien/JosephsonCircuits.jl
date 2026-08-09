@@ -130,6 +130,10 @@ compare(x::JosephsonCircuits.AbstractSparseVector,y::JosephsonCircuits.AbstractS
 compare(x::JosephsonCircuits.SparseMatrixCSC{Nothing, Int64},y::JosephsonCircuits.SparseMatrixCSC{Nothing, Int64}) = true
 compare(x::JosephsonCircuits.HB,y::JosephsonCircuits.HB) = comparestruct(x,y)
 compare(x::JosephsonCircuits.NonlinearHB,y::JosephsonCircuits.NonlinearHB) = comparestruct(x,y)
+# the solver diagnostics depend on the details of the solution process
+# such as the solver method and the iteration counts, so they are not
+# compared when comparing solutions
+compare(x::JosephsonCircuits.SolverInfo,y::JosephsonCircuits.SolverInfo) = true
 compare(x::JosephsonCircuits.LinearizedHB,y::JosephsonCircuits.LinearizedHB) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CircuitMatrices,y::JosephsonCircuits.CircuitMatrices) = comparestruct(x,y)
 compare(x::JosephsonCircuits.ParsedSortedCircuit,y::JosephsonCircuits.ParsedSortedCircuit) = comparestruct(x,y)
