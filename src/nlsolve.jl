@@ -161,60 +161,76 @@ function trysolve!(x,factorization,b)
 end
 
 """
-    linesearch(f, fp, dfdalpha, alphamin)
+    linesearch(ϕ0, ϕ1, dϕdα, αmin)
 
-Return the fitted minimum of a function of alpha from [0,1] as
-(alpha at which minimum occurs, minimum fitted value of function) from `f`,
-the value at the first point alpha=0.0, `fp` is the value at the second point,
-alpha=1.0, `dfdalpha`, the derivative at the first point, and `alphamin`,
-the minimum value of `dfdalpha` below which we will take a full step.
+Return a tuple containing the proposed step and estimated function value
+(αfit,ϕfit) that minimizes a quadratic function fitted to
+`ϕ(α) = f(xₖ + α pₖ)` in the range `[αmin, 1]`. The fitting processes uses the
+values at `α = 0`, `α = 1`, and the derivative at the first point
+`dϕ(α)/dα|α = 0`. If the full step `α = 1` satisfies the Armijo
+sufficient-decrease condition `ϕ(1) <= ϕ(0) + c1 dϕ(α)/dα|α = 0`, then the
+full step is returned without fitting. By default `c1 = 1e-4`.
 
-Quadratic linesearch based on Nocedal and Wright, chapter 3 section 5. 
+Quadratic linesearch based on Nocedal and Wright, chapter 3 section 5.
+
+# Arguments
+-`ϕ0`: `ϕ(0)`, the value of the function at `α = 0`.
+-`ϕ1`: `ϕ(1)`, the value of the function at `α = 1`.
+-`dϕdα0`:  `dϕ(α)/dα|α=0`, the derivative of the function with respect to `α`
+    at `α = 0`.
+-`αmin`: the minimum value of `α` to return.
 """
-function linesearch(f, fp, dfdalpha, alphamin)
+function linesearch(ϕ0, ϕ1, dϕdα0, αmin; c1 = 1e-4)
 
-    # coefficients of the quadratic equation a*alpha^2+b*alpha+c to interpolate
-    # f vs alpha
-    a = -dfdalpha + fp - f
-    # b = dfdalpha
-    # c = f
-    alpha1 = -dfdalpha/(2*a)
-    f1fit = -dfdalpha*dfdalpha/(4*a) + f
+    # first check the Armijo sufficient decrease condition.
+    # if satified, return the full step
+    if isfinite(ϕ0) && isfinite(ϕ1) && isfinite(dϕdα0) &&
+        ϕ1 <= ϕ0+c1*dϕdα0
+        return one(ϕ0), ϕ1
+    end
 
     # if the function at alpha=0 is NaN there isn't much we can do since
     # that is required for the algorithm.
-    if isnan(f)
+    if !isfinite(ϕ0)
         throw(ErrorException(lazy"NaN in nonlinear solver."))
     end
 
-    if !isfinite(fp)
+    if !isfinite(ϕ1)
         # the residual at the full step overflowed, so the full step is too
         # large. return a reduced step
-        return 0.5, f
+        return 0.5*one(ϕ0), ϕ0
     end
 
-    # if the fitted values in (0,1) are larger than the final point `fp` then
-    # take a full step.
-    if f1fit > fp
-        return 1.0, fp
+    # coefficients of the quadratic equation ϕ(α) = a α² + b α + c to
+    # interpolate ϕ(α) vs α.
+    a = -dϕdα0 - ϕ0 + ϕ1
+    # b = dϕdα0
+    # c = ϕ0
+    αfit = -dϕdα0/(2*a)
+    ϕfit = -dϕdα0*dϕdα0/(4*a) + ϕ0
+
+    # if a is zero, alpha1 will be NaN. take a full step
+    if iszero(abs2(a))
+        return one(ϕ0), ϕ1
+    
+    # if the fitted minimum function value `ϕfit` in [0,1] is larger than the
+    # final point `ϕ1` then take a full step.
+    elseif ϕfit > ϕ1
+        return one(ϕ0), ϕ1
 
     # if the fitted alpha overshoots the size of the interval (from 0 to 1),
     # or is negative then set alpha to 1 and make a full length step.
-    elseif alpha1 > 1.0 || alpha1 <= 0.0
-        return 1.0, fp
+    elseif αfit > one(αfit) || αfit <= zero(αfit)
+        return one(ϕ0), ϕ1
     
     # if the fitted step is below the minimum step, take the minimum step
     # and return the fitted function value at that step.
-    elseif alpha1 <= alphamin
-        return alphamin, a*alphamin^2+dfdalpha*alphamin+f
-    
-    # if a is zero, alpha1 will be NaN. take a full step
-    elseif abs2(a) == 0 
-        return 1.0, fp
+    elseif αfit <= αmin
+        return αmin, a*αmin*αmin+dϕdα0*αmin+ϕ0
     
     # if none of the above special cases then return the step from the fit
     else
-        return alpha1, f1fit
+        return αfit, ϕfit
     end
 end
 
