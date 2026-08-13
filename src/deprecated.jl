@@ -55,7 +55,6 @@ end
 # the other modes can be found by inspecting the contents of `modes`.
 function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
-    switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
     returnCM::Bool = true, returnnodeflux::Bool = false,
@@ -117,7 +116,6 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     # solve the nonlinear problem
     nonlinear = hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = nothing, ftol = ftol,
-        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames, factorization = factorization)
 

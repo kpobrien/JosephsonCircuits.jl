@@ -297,7 +297,7 @@ using Test
         wp=2*pi*5.0*1e9
         Npumpmodes = 1
         @test_throws(
-            ErrorException("NaN in nonlinear solver."),
+            ArgumentError("`dϕ0dα` = NaN must be finite and negative."),
             hbnlsolve((wp,),(Npumpmodes,),[(mode=(1,),port=1,current=Ip),],
                 circuit,circuitdefs;dc=true,odd=true,even=false))
     end

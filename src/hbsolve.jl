@@ -190,8 +190,7 @@ end
         Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
         circuit, circuitdefs;dc = false, threewavemixing = false,
         fourwavemixing = true, maxintermodorder=Inf, iterations = 1000,
-        ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-        symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
+        ftol = 1e-8, symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
         sorting = :number, returnS = true, returnSnoise = false, returnQE = true,
         returnCM = true, returnnodeflux = false, returnvoltage = false,
         returnnodefluxadjoint = false, returnvoltageadjoint = false,
@@ -250,10 +249,6 @@ and [`hblinsolve`](@ref).
     returns an error.
 - `ftol = 1e-8`: the function tolerance defined we considered converged,
     defined as norm(F)/norm(x) < ftol or norm(F,Inf) <= ftol.
-- `switchofflinesearchtol = 1e-5`: the function tolerance at which we switch
-    from Newton with linesearch to only Newton. For easily converging
-    functions, setting this to zero can speed up simulations.
-- `alphamin = 1e-4`: the minimum step size relative to 1 for the linesearch.
 - `andersondepth::Integer = 5`: the depth of the Anderson acceleration of the
   Newton fixed point iteration, the maximum number of previous iterates
   used for the extrapolation. Values less than one disable the
@@ -317,8 +312,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     maxpumpharmonics::NTuple{N,Number} = Npumpharmonics,
     maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
     iterations = 1000,
-    ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    andersondepth::Integer = 5, x0 = nothing,
+    ftol = 1e-8, andersondepth::Integer = 5, x0 = nothing,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
     sorting = :number, returnS::Bool = true, returnSnoise::Bool = false,
     returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
@@ -356,7 +350,6 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     # solve the nonlinear problem
     nonlinear = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
-        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         andersondepth = andersondepth, symfreqvar = symfreqvar,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
         factorization = factorization)
@@ -1351,8 +1344,7 @@ end
     hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         circuit, circuitdefs; iterations = 1000,
         maxintermodorder = Inf, dc = false, odd = true, even = false,
-        x0 = nothing, ftol = 1e-8, switchofflinesearchtol = 1e-5,
-        alphamin = 1e-4, symfreqvar = nothing, sorting= :number)
+        x0 = nothing, ftol = 1e-8, symfreqvar = nothing, sorting= :number)
 
 Harmonic balance solver supporting an arbitrary number of large signals
 (strong tones or pumps) and arbitrary numbers of ports, sources, and drives
@@ -1402,10 +1394,6 @@ equations about the operating point found with `hbnlsolve`.
 - `x0 = nothing`: initial value for the nodeflux.
 - `ftol = 1e-8`: the function tolerance defined we considered converged,
     defined as norm(F)/norm(x) < ftol or norm(F,Inf) <= ftol.
-- `switchofflinesearchtol = 1e-5`:
-- `alphamin = 1e-4`: the function tolerance at which we switch
-    from Newton with linesearch to only Newton. For easily converging
-    functions, setting this to zero can speed up simulations.
 - `andersondepth::Integer = 5`: the depth of the Anderson acceleration of the
   Newton fixed point iteration, the maximum number of previous iterates
   used for the extrapolation. Values less than one disable the
@@ -1471,7 +1459,6 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     maxharmonics::NTuple{N,Int} = Nharmonics,
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, x0 = nothing, ftol = 1e-8,
-    switchofflinesearchtol = 1e-5, alphamin = 1e-4,
     andersondepth::Integer = 5, symfreqvar = nothing, sorting = :number,
     keyedarrays::Bool = true, sensitivitynames::Vector{String} = String[],
     factorization = KLUfactorization(),
@@ -1501,7 +1488,6 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
 
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
-        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         andersondepth = andersondepth, symfreqvar = symfreqvar,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
         factorization = factorization,
@@ -1513,8 +1499,7 @@ end
     hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
         indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
         nm::CircuitMatrices; iterations = 1000, x0 = nothing,
-        ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-        symfreqvar = nothing)
+        ftol = 1e-8, symfreqvar = nothing)
 
 New version of the nonlinear harmonic balance solver suitable for arbitrary
 numbers of ports, sources, and drives including direct current (zero frequency)
@@ -1576,8 +1561,7 @@ true
 function hbnlsolve(w, sources, frequencies::Frequencies,
     indices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
-    ftol = 1e-8, switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-    andersondepth::Integer = 5, symfreqvar = nothing,
+    ftol = 1e-8, andersondepth::Integer = 5, symfreqvar = nothing,
     keyedarrays::Bool = true, sensitivitynames::Vector{String} = String[],
     factorization = KLUfactorization(),
     # debugJacobian = false,
@@ -1765,8 +1749,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # end
     # solve the nonlinear system
     info = nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
-        switchofflinesearchtol = switchofflinesearchtol,
-        alphamin = alphamin, andersondepth = andersondepth,
+        andersondepth = andersondepth,
         factorization = factorization)
 
     push!(solverstages, IterationInfo(info.label, 1.0,

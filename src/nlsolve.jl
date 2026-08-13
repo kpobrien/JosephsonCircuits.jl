@@ -161,7 +161,7 @@ function trysolve!(x,factorization,b)
 end
 
 """
-    linesearch(ϕ0, ϕ1, dϕdα, αmin)
+    linesearch(ϕ0, ϕ1, dϕdα, αmin; c1 = 1e-4)
 
 Return a tuple containing the proposed step and estimated function value
 (αfit,ϕfit) that minimizes a quadratic function fitted to
@@ -180,58 +180,245 @@ Quadratic linesearch based on Nocedal and Wright, chapter 3 section 5.
     at `α = 0`.
 -`αmin`: the minimum value of `α` to return.
 """
-function linesearch(ϕ0, ϕ1, dϕdα0, αmin; c1 = 1e-4)
+function linesearch(ϕ0, ϕ1, dϕ0dα, αmin; c1 = 1e-4)
+    αtrial, ϕtrial, measured = quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = c1, safeguard = αmin)
+    return αtrial, ϕtrial
+end
 
-    # first check the Armijo sufficient decrease condition.
-    # if satified, return the full step
-    if isfinite(ϕ0) && isfinite(ϕ1) && isfinite(dϕdα0) &&
-        ϕ1 <= ϕ0+c1*dϕdα0
-        return one(ϕ0), ϕ1
+"""
+    quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard = 0.1)
+
+Return a tuple containing the proposed step and the estimated function value
+(αfit,ϕfit) that minimizes a quadratic function fitted to
+`ϕ(α) = f(xₖ + α pₖ)` in the range `[0, 1]`. The fitting process uses the
+values at `α = 0`, `α = 1`, and the derivative at the first point
+`dϕ(α)/dα|α = 0`. If the full step `α = 1` satisfies the Armijo
+sufficient-decrease condition `ϕ(1) <= ϕ(0) + c1 dϕ(α)/dα|α = 0`, then the
+full step is returned without fitting. By default `c1 = 1e-4`.
+
+Quadratic linesearch based on Nocedal and Wright, chapter 3 section 5.
+
+# Arguments
+-`ϕ0`: `ϕ(0)`, the value of the function at `α = 0`.
+-`ϕ1`: `ϕ(1)`, the value of the function at `α = 1`.
+-`dϕ0dα`:  `dϕ(α)/dα|α=0`, the derivative of the function with respect to `α`
+    at `α = 0`.
+
+# Keywords
+- `c1 = 1e-4`: the constant in the Armijo sufficient-decrease check which
+     is typically (heuristicaly) defined to be 1e-4,
+    `ϕ(1) <= ϕ(0) + c1 dϕ(α)/dα|α = 0`.
+- `safeguard = 0.1`: the smallest value we allow the step to take. This
+    protects against large (eg. order of magnitude) reductions in the step
+    size without an additional function evaluation, which would occur outside
+    of this function.
+
+# Returns
+- `αtrial`: `αtrial` is the trial step predicted to minimize the merit function based
+    on quadratic interpolation.
+- `ϕtrial`: `ϕtrial` is either the predicted or measured value of the merit
+    function at the trial step above. If `measured = false`, then the
+    linesearch function needs to evaluate the trial point to verify that
+    Armijo sufficient-decrease condition is satisfied before accepting the
+    step.
+- `measured`: `true` if the returned `ϕtrial` has been measured and `false` if it
+    is an estimate value based on a fit.
+"""
+function quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard = 0.1)
+    T = float(promote_type(typeof(ϕ0),typeof(ϕ1),typeof(dϕ0dα)))
+    ϕ0, ϕ1, dϕ0dα = T(ϕ0), T(ϕ1), T(dϕ0dα)
+    safeguard = T(safeguard)
+    c1 = T(c1)
+
+    # check that safeguard is in (0,0.5)
+    if !(zero(T) < safeguard < one(T)/2)
+        throw(ArgumentError(lazy"`safeguard` = $(safeguard) must be in (0,0.5)."))
     end
 
-    # if the function at alpha=0 is NaN there isn't much we can do since
-    # that is required for the algorithm.
+    # check that c1 is in (0,1)
+    if !(zero(T) < c1 < one(T))
+        throw(ArgumentError(lazy"`c1` = $(c1) must be in (0,1)."))
+    end
+
+    # if the function at alpha=0 is finite there isn't much we can do since
+    # ϕ0 is required for the algorithm.
     if !isfinite(ϕ0)
-        throw(ErrorException(lazy"NaN in nonlinear solver."))
+        throw(ArgumentError(lazy"`ϕ0` = $(ϕ0) must be finite."))
+    end
+
+    # check that the slope is negative.
+    if !isfinite(dϕ0dα) || dϕ0dα >= zero(T)
+        throw(ArgumentError(lazy"`dϕ0dα` = $(dϕ0dα) must be finite and negative."))
+    end
+
+    # check the Armijo sufficient decrease condition.
+    # if satified, return the full step.
+    if isfinite(ϕ1) && ϕ1 <= muladd(c1,dϕ0dα,ϕ0)
+        return one(T), ϕ1, true
     end
 
     if !isfinite(ϕ1)
         # the residual at the full step overflowed, so the full step is too
-        # large. return a reduced step
-        return 0.5*one(ϕ0), ϕ0
+        # large. halve the step. Estimate the function value from a linear
+        # fit.
+        return one(T)/2, muladd(one(T)/2,dϕ0dα,ϕ0), false
     end
 
     # coefficients of the quadratic equation ϕ(α) = a α² + b α + c to
-    # interpolate ϕ(α) vs α.
-    a = -dϕdα0 - ϕ0 + ϕ1
-    # b = dϕdα0
-    # c = ϕ0
-    αfit = -dϕdα0/(2*a)
-    ϕfit = -dϕdα0*dϕdα0/(4*a) + ϕ0
+    # interpolate ϕ(α) vs α. dϕ0dα is negative so be careful to subtract the
+    # two ϕ's first to minimize loss of precision.
+    a = (ϕ1-ϕ0)-dϕ0dα
+    b = dϕ0dα
+    c = ϕ0
 
-    # if a is zero, alpha1 will be NaN. take a full step
-    if iszero(abs2(a))
-        return one(ϕ0), ϕ1
-    
-    # if the fitted minimum function value `ϕfit` in [0,1] is larger than the
-    # final point `ϕ1` then take a full step.
-    elseif ϕfit > ϕ1
-        return one(ϕ0), ϕ1
+    # compute the fitted value of alpha and phi. clamp it such that if the
+    # fitted step is below the minimum step, take the minimum step and return
+    # the fitted function value at that step. clamp to 0.5 on the upper side
+    # in case floating point errors push it above 1/(2*(1-c1)) ≈ 0.5 for
+    # c1 = 1e-4.
+    αtrial = clamp(-(b/2)/a, safeguard, one(T) / 2)
+    ϕtrial = muladd(αtrial, muladd(a, αtrial, b), c)
 
-    # if the fitted alpha overshoots the size of the interval (from 0 to 1),
-    # or is negative then set alpha to 1 and make a full length step.
-    elseif αfit > one(αfit) || αfit <= zero(αfit)
-        return one(ϕ0), ϕ1
-    
-    # if the fitted step is below the minimum step, take the minimum step
-    # and return the fitted function value at that step.
-    elseif αfit <= αmin
-        return αmin, a*αmin*αmin+dϕdα0*αmin+ϕ0
-    
-    # if none of the above special cases then return the step from the fit
-    else
-        return αfit, ϕfit
+    return αtrial, ϕtrial, false
+end
+
+"""
+    cubic_trial_step(α0, α1, ϕ0, ϕα0, ϕα1, dϕ0dα; c1 = 1e-4,
+        safeguard_low = 0.1, safeguard_high = 0.5)
+
+Return a tuple containing the proposed step and the estimated function value
+(αfit,ϕfit) that minimizes a cubic function fitted to
+`ϕ(α) = f(xₖ + α pₖ)` in the range `[0, ϕkm1]`. The fitting process uses the
+values at `α = 0`, `α = αkm1`, `α = αk`, and the derivative at the first point
+`dϕ(α)/dα|α = 0`. If the full step `α = αkm1` satisfies the Armijo
+sufficient-decrease condition `ϕ(1) <= ϕ(0) + c1 dϕ(α)/dα|α = 0`, then the
+full step is returned without fitting. By default `c1 = 1e-4`.
+
+Quadratic linesearch based on Nocedal and Wright, chapter 3 section 5.
+
+# Arguments
+-`α0`: the step `α = α0`.
+-`α1`: the step `α = α1`.
+-`ϕ0`: the value of the function at `α = 0`.
+-`ϕα0`: `ϕ(α0)`, the value of the merit function at `α = α0`.
+-`ϕα1`: `ϕ(α1)`, the value of the function at `α = α1`.
+-`dϕ0dα`: `dϕ(α)/dα|α=0`, the derivative of the function with respect to `α`
+    at `α = 0`.
+
+# Keywords
+- `c1 = 1e-4`: the constant in the Armijo sufficient-decrease check which
+     is typically (heuristicaly) defined to be 1e-4,
+    `ϕ(1) <= ϕ(0) + c1 dϕ(α)/dα|α = 0`.
+- `safeguard = 0.1`: the smallest value we allow the step to take. This
+    protects against large (eg. order of magnitude) reductions in the step
+    size without an additional function evaluation, which would occur outside
+    of this function.
+
+# Returns
+- `αtrial`: `αtrial` is the trial step predicted to minimize the merit
+    function based on cubic interpolation.
+- `ϕtrial`: `ϕtrial` is either the predicted or measured value of the merit
+    function at the trial step above. If `measured = false`, then the
+    linesearch function needs to evaluate the trial point to verify that
+    Armijo sufficient-decrease condition is satisfied before accepting the
+    step.
+- `measured`: `true` if the returned `ϕtrial` has been measured and `false` if
+    it is an estimate value based on a fit.
+"""
+function cubic_trial_step(α0, α1, ϕ0, ϕα0, ϕα1, dϕ0dα; c1 = 1e-4,
+    safeguard_low = 0.1, safeguard_high = 0.5)
+    T = float(promote_type(typeof(α0),typeof(α1),typeof(ϕ0),typeof(ϕα0),typeof(ϕα1),typeof(dϕ0dα)))
+    α0, α1 = T(α0), T(α1)
+    ϕ0, ϕα0, ϕα1, dϕ0dα = T(ϕ0), T(ϕα0), T(ϕα1), T(dϕ0dα)
+    safeguard_low = T(safeguard_low)
+    safeguard_high = T(safeguard_high)
+    c1 = T(c1)
+
+    # check safeguard_low
+    if !(zero(T) < safeguard_low < safeguard_high)
+        throw(ArgumentError(lazy"`safeguard_low` = $(safeguard_low) must satisfy `0 < safeguard_low < safeguard_high`."))
     end
+
+    # check safeguard_high
+    if !(safeguard_high < one(T))
+        throw(ArgumentError(lazy"`safeguard_high` = $(safeguard_high) must satisfy `safeguard_low < safeguard_high < 1`."))
+    end
+
+    # check that c1 is in (0,1)
+    if !(zero(T) < c1 < one(T))
+        throw(ArgumentError(lazy"`c1` = $(c1) must be in (0,1)."))
+    end
+
+    # if the function at alpha=0 is finite there isn't much we can do since
+    # ϕ0 is required for the algorithm.
+    if !isfinite(ϕ0)
+        throw(ArgumentError(lazy"`ϕ0` = $(ϕ0) must be finite."))
+    end
+
+    # finite older trial step function value ϕα0 is required for the cubic
+    # fit. we should screen out non-finite values before this function. 
+    if !isfinite(ϕα0)
+        throw(ArgumentError(lazy"`ϕα0` = $(ϕα0) must be finite."))
+    end
+
+    # check that the slope is negative.
+    if !isfinite(dϕ0dα) || dϕ0dα >= zero(T)
+        throw(ArgumentError(lazy"`dϕ0dα` = $(dϕ0dα) must be finite and negative."))
+    end
+
+    # the steps must be ordered as described below. this isn't strictly
+    # necessary for the fitting, but since the intended use is of this
+    # function is for a backtracking linesearch, we will enforce that the
+    # most recent trial step is smaller than the previous one.
+    if !(α1 < α0 <= one(T))
+        throw(ArgumentError(lazy"`α0` = $(α0) must satisfy `α1 < α0 <= 1`."))
+    end
+    if !(zero(T) < α1)
+        throw(ArgumentError(lazy"`α1` = $(α1) must satisfy `0 < α1 < α0`."))
+    end
+
+    # check the Armijo sufficient decrease condition for α1.
+    # if satified, return the proposed step α1.
+    if isfinite(ϕα1) && ϕα1 <= muladd(c1*α1,dϕ0dα,ϕ0)
+        return α1, ϕα1, true
+    end
+
+    fallback = safeguard_high*α1
+    if !isfinite(ϕα1)
+        # the residual at the full step overflowed, so the full step is too
+        # large. propose safeguard_high*α1. Estimate the function value from
+        # a linear fit.
+        return fallback, muladd(fallback,dϕ0dα,ϕ0), false
+    end
+
+    # scaled coefficients of the cubic equation ϕ(α) = a α³ + b α² + c α + d
+    # to interpolate ϕ(α) vs α.
+    r0 = muladd(-α0,dϕ0dα,ϕα0 - ϕ0)/(α0*α0)
+    r1 = muladd(-α1,dϕ0dα,ϕα1 - ϕ0)/(α1*α1)
+    delta = α1-α0
+    a = (r1-r0)/delta
+    b = (α1*r0-α0*r1)/delta
+    disc = muladd(b,b,-3*a*dϕ0dα)
+    if disc < zero(T) || !isfinite(disc)
+        α = fallback
+    else
+        s = sqrt(disc)
+        if b >= zero(T)
+            α = -dϕ0dα/(b+s)
+        else
+            α = ((s-b)/3)/a
+        end
+
+        if !isfinite(α)
+            α = fallback
+        end
+    end
+
+    # clamp the returned trial step to be in the range
+    # [α1*safeguard_low,α1*safeguard_high]
+    αtrial = clamp(α,α1*safeguard_low,α1*safeguard_high)
+    ϕtrial = muladd(αtrial,muladd(αtrial,muladd(αtrial,a,b),dϕ0dα),ϕ0)
+    return αtrial, ϕtrial, false
 end
 
 """
