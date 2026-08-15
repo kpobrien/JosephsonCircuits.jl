@@ -514,13 +514,13 @@ residual should be provided with the kwarg `Fbest`. The initial value of
 satisfying the sufficient-decrease condition or the residuals of the best
 found point if the line search is successful.
 
-[`quadratic_trial_step!`](@ref) performs a quadratic interpolation on the
+[`quadratic_trial_step`](@ref) performs a quadratic interpolation on the
 full-step data to estimate the trial step `α` at which the minimum of the
 merit function occurs. The full step data consists of the merit function value
 `ϕ0` and derivative `dϕ0dα` at the starting point `α=0` and the merit function
 value `ϕfullstep` at the full step `α=1`. If `ϕfullstep` is not provided by
-the user, then it is computed before calling [`quadratic_trial_step!`](@ref)).
-If [`quadratic_trial_step!`](@ref) returns a full step with the `measured`
+the user, then it is computed before calling [`quadratic_trial_step`](@ref)).
+If [`quadratic_trial_step`](@ref) returns a full step with the `measured`
 Boolean set to true, then we know it has already passed the Armijo
 sufficient-decrease condition `ϕα <= ϕ0 + c1*α*dϕ0dα` and can be used as the
 step. Return this step `α` and exit the function.
