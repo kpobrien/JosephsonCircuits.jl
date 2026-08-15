@@ -526,7 +526,7 @@ sufficient-decrease condition `ϕα <= ϕ0 + c1*α*dϕ0dα` and can be used as t
 step. Return this step `α` and exit the function.
 
 Otherwise loop over proposed trial step evaluations and cubic interpolations
-with [`cubic_trial_step!`](@ref). Once a successful trial step is identified
+with [`cubic_trial_step`](@ref). Once a successful trial step is identified
 return that or return the best identified once `maxbacktracks` is reached.
 
 This function always leaves`xcandidate == x(α)` and `F` holds the residual
