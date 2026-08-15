@@ -37,4 +37,37 @@ using Test
         )
     end
 
+    @testset "hbnlsolve switchofflinesearchtol and alphamin kwarg deprecation" begin
+        # define the circuit components
+        circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int}},1}(undef,0)
+
+        # port on the left side
+        push!(circuit,("P1","1","0",1))
+        push!(circuit,("R1","1","0",:Rleft))
+        push!(circuit,("C1","1","2",:Cc)) 
+        push!(circuit,("Lj1","2","0",:Lj)) 
+        push!(circuit,("C2","2","0",:Cj))
+
+        circuitdefs = Dict{Symbol,Complex{Float64}}(
+            :Lj =>1000.0e-12,
+            :Cc => 100.0e-15,
+            :Cj => 1000.0e-15,
+            :Rleft => 50.0,
+        )
+
+        ws = 2*pi*(4.5:0.5:5.0)*1e9
+        wp = (2*pi*4.75001*1e9,)
+        sources = [(mode=(1,),port=1,current=0.00565e-6)]
+        Nmodulationharmonics = (2,)
+        Npumpharmonics = (4,)
+
+        @test_logs((:warn,lazy"The `switchofflinesearchtol` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions."),
+            JosephsonCircuits.hbnlsolve(wp, Npumpharmonics, sources, circuit,
+                circuitdefs;switchofflinesearchtol = 1),
+        )
+        @test_logs((:warn,lazy"The `alphamin` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions."),
+            JosephsonCircuits.hbnlsolve(wp, Npumpharmonics, sources, circuit, circuitdefs;alphamin = 0.1),
+        )
+    end
+
 end

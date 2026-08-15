@@ -311,8 +311,8 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     maxmodulationintermodorder=Inf,
     maxpumpharmonics::NTuple{N,Number} = Npumpharmonics,
     maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
-    iterations = 1000,
-    ftol = 1e-8, andersondepth::Integer = 5, x0 = nothing,
+    iterations = 1000, ftol = 1e-8, switchofflinesearchtol = nothing,
+    alphamin = nothing, andersondepth::Integer = 5, x0 = nothing,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
     sorting = :number, returnS::Bool = true, returnSnoise::Bool = false,
     returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
@@ -350,6 +350,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     # solve the nonlinear problem
     nonlinear = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
+        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         andersondepth = andersondepth, symfreqvar = symfreqvar,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
         factorization = factorization)
@@ -1459,10 +1460,11 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     maxharmonics::NTuple{N,Int} = Nharmonics,
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, x0 = nothing, ftol = 1e-8,
+    switchofflinesearchtol = nothing, alphamin = nothing,
     andersondepth::Integer = 5, symfreqvar = nothing, sorting = :number,
     keyedarrays::Bool = true, sensitivitynames::Vector{String} = String[],
     factorization = KLUfactorization(),
-    # debugJacobian = false,
+    debugJacobian = false,
     ) where {N}
 
     # calculate the frequency struct
@@ -1488,10 +1490,11 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
 
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
+        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         andersondepth = andersondepth, symfreqvar = symfreqvar,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
         factorization = factorization,
-        # debugJacobian = debugJacobian,
+        debugJacobian = debugJacobian,
         )
 end
 
@@ -1561,11 +1564,22 @@ true
 function hbnlsolve(w, sources, frequencies::Frequencies,
     indices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
-    ftol = 1e-8, andersondepth::Integer = 5, symfreqvar = nothing,
+    ftol = 1e-8, switchofflinesearchtol = nothing, alphamin = nothing,
+    andersondepth::Integer = 5, symfreqvar = nothing,
     keyedarrays::Bool = true, sensitivitynames::Vector{String} = String[],
     factorization = KLUfactorization(),
-    # debugJacobian = false,
+    debugJacobian = false,
     )
+
+    # deprecation warnings for switchofflinesearchtol and alphamin.
+    if !isnothing(switchofflinesearchtol)
+        Base.depwarn(lazy"The `switchofflinesearchtol` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions.", :hbnlsolve; force=true)
+    end
+
+    if !isnothing(alphamin)
+        Base.depwarn(lazy"The `alphamin` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions.", :hbnlsolve; force=true)
+    end
+
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
     Nt = frequencies.Nt
@@ -1744,13 +1758,12 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 
     # # use this for debugging purposes to return the function and the
     # # Jacobian
-    # if debugJacobian
-    #     return (F,J,x,fj!)
-    # end
+    if debugJacobian
+        return (F,J,x,fj!)
+    end
     # solve the nonlinear system
     info = nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
-        andersondepth = andersondepth,
-        factorization = factorization)
+        andersondepth = andersondepth, factorization = factorization)
 
     push!(solverstages, IterationInfo(info.label, 1.0,
         info.regularization, info.converged, info.iterations,

@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using LinearAlgebra
 using Test
 
 @testset verbose=true "hbsolve" begin
@@ -296,10 +297,23 @@ using Test
         Ip = 1.0e-6
         wp=2*pi*5.0*1e9
         Npumpmodes = 1
+
+        # # as of 2023-09-17 1.9.3 and older throws the first error and
+        # # 1.10.0-beta2 throws the second error
+        # @test_throws(
+        #     str -> isequal("SingularException(0)",str) || 
+        #     isequal("Unknown KLU error code: 2",str) ||
+        #     isequal("SingularException: matrix is singular; factorization failed. Zero pivot found at index 0",str),
+        #     JosephsonCircuits.hbnlsolve((wp,),(Npumpmodes,),[(mode=(1,),port=1,current=Ip),],
+        #         circuit,circuitdefs;dc=true,odd=true,even=false)
+        # )
+
         @test_throws(
-            ArgumentError("`dϕ0dα` = NaN must be finite and negative."),
-            hbnlsolve((wp,),(Npumpmodes,),[(mode=(1,),port=1,current=Ip),],
-                circuit,circuitdefs;dc=true,odd=true,even=false))
+            LinearAlgebra.SingularException(0),
+            JosephsonCircuits.hbnlsolve((wp,),(Npumpmodes,),[(mode=(1,),port=1,current=Ip),],
+                circuit,circuitdefs;dc=true,odd=true,even=false)
+        )
+
     end
 
     @testset "calcsources errors" begin
