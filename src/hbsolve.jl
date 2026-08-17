@@ -1592,6 +1592,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     conjtargetindices = indices.conjtargetindices
     Amatrixmodes = indices.hbmatmodes
     Amatrixindices = indices.hbmatindices
+    Amatrixconjindices = indices.hbconjmatindices
 
     # generate the frequencies of the modes
     Nmodes = length(modes)
@@ -1673,6 +1674,27 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # instability when i used AoLjbm here instead of AoLjbmcopy. 
     AoLjnmcopy = transpose(Rbnm)*AoLjbmcopy*Rbnm;
 
+    # this is for the conjugate terms
+
+    # initializing this with zeros seems to cause problems
+    # ideally i should initialize the vector of ones then convert to the
+    # matrix.
+    AoLjbmconjindices, conjconjindicessorted = calcAoLjbmindices(Amatrixconjindices,
+        Ljb, Nmodes, Nbranches, Nfreq)
+
+    # right now i redo the calculation of AoLjbmindices, conjindicessorted in
+    # calcAoLjbm2
+    AoLjbmconj = calcAoLjbm2(Amatrix, Amatrixconjindices, Ljb, Lmean, Nmodes,
+        Nbranches)
+    AoLjbmconjcopy = calcAoLjbm2(Amatrix, Amatrixconjindices, Ljb, Lmean, Nmodes,
+        Nbranches)
+
+    # convert to a sparse node matrix. Note: I was having problems with type 
+    # instability when i used AoLjbm here instead of AoLjbmcopy. 
+    AoLjnmconjcopy = transpose(Rbnm)*AoLjbmconjcopy*Rbnm;
+
+    # end section for conjugate terms
+
     x = if isnothing(x0)
         zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
     else
@@ -1729,19 +1751,46 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     Gnmindexmap = sparseaddmap(J, Gnm)
     Cnmindexmap = sparseaddmap(J, Cnm)
 
+
+    # this section is for conjugate terms
+
+    Jconj = AoLjnmconjcopy
+
+    # make the arrays and datastructures we need for
+    # the non-allocating sparse matrix multiplication.
+    AoLjbmconjRbnm = AoLjbmconjcopy*Rbnm
+    xbAoLjbmconjRbnm = fill(false, size(AoLjbmconjcopy, 1))
+    AoLjnmconj = Rbnmt*AoLjbmconjRbnm
+    xbAoLjnmconj = fill(false, size(Rbnmt, 1))
+
+    # make the index maps so we can add the sparse matrices together without
+    # memory allocations. 
+    AoLjnmconjindexmap = sparseaddmap(Jconj, AoLjnmconj)
+
+
     # build the function and Jacobian for solving the nonlinear system
-    function fj!(F, J, x)
-        calcfj2!(F, J, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
+    function fjjconj!(F, J, Jconj, x)
+        calcfjjconj!(F, J, Jconj, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
             Cnm, Gnm, bnm, Ljb, Ljbm, Nmodes,
-            Nbranches, Lmean, AoLjbmvector, AoLjbm,
-            AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap,
-            AoLjbmindices, conjindicessorted,
-            freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
+            Nbranches, Lmean, AoLjbmvector,
+            AoLjbm, AoLjnmindexmap, AoLjbmindices, conjindicessorted,
             AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
+            AoLjbmconj, 
+            AoLjnmconjindexmap, AoLjbmconjindices, conjconjindicessorted,
+            AoLjnmconj, xbAoLjnmconj, AoLjbmconjRbnm, xbAoLjbmconjRbnm,
+            invLnmindexmap, Gnmindexmap, Cnmindexmap,
+            freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
             phimatrixtd, irfftplan, rfftplan,
         )
         return nothing
     end
+
+    function fj!(F, J, x)
+        return fjjconj!(F, J, nothing, x)
+    end
+
+    # end section for conjugate terms
+
 
 
     # the norm of the residual at the initial value, for the diagnostics
@@ -1759,7 +1808,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # # use this for debugging purposes to return the function and the
     # # Jacobian
     if debugJacobian
-        return (F,J,x,fj!)
+        return (F,J,Jconj,x,fj!,fjjconj!)
     end
     # solve the nonlinear system
     info = nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
@@ -1818,17 +1867,9 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 end
 
 """
-    calcfj2!(F,J,phin,wmodesm,wmodes2m,Rbnm,invLnm,Cnm,Gnm,bm,Ljb,Ljbindices,
-        Ljbindicesm,Nmodes,Lmean,AoLjbm)
-        
-Calculate the residual and the Jacobian. These are calculated with one
-function in order to reuse as much as possible.
-
-Leave off the type signatures on F and J because the solver will pass
-`nothing` if it only wants to calculate F or J.
-"""
-function calcfj2!(F,
+    calcfjjconj!(F,
         J,
+        Jconj,
         nodeflux::AbstractVector,
         wmodesm::AbstractMatrix,
         wmodes2m::AbstractMatrix,
@@ -1844,10 +1885,46 @@ function calcfj2!(F,
         Nbranches::Int,
         Lmean,
         AoLjbmvector::AbstractVector,
-        AoLjbm, AoLjnmindexmap, invLnmindexmap, Gnmindexmap, Cnmindexmap,
-        AoLjbmindices, conjindicessorted,
-        freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
+        AoLjbm, AoLjnmindexmap, AoLjbmindices, conjindicessorted,
         AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
+        AoLjbmconj, AoLjnmconjindexmap, AoLjbmconjindices, conjconjindicessorted,
+        AoLjnmconj, xbAoLjnmconj, AoLjbmconjRbnm, xbAoLjbmconjRbnm,
+        invLnmindexmap, Gnmindexmap, Cnmindexmap,
+        freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
+        phimatrixtd, irfftplan, rfftplan,
+        )
+        
+Calculate the residual and the Jacobian. These are calculated with one
+function in order to reuse as much as possible.
+
+Leave off the type signatures on F, J, and Jconj because the solver will pass
+`nothing` if it only wants to calculate F, J, Jconj, or some subset.
+"""
+function calcfjjconj!(F,
+        J,
+        Jconj,
+        nodeflux::AbstractVector,
+        wmodesm::AbstractMatrix,
+        wmodes2m::AbstractMatrix,
+        Rbnm::AbstractMatrix,
+        Rbnmt::AbstractMatrix,
+        invLnm::AbstractMatrix,
+        Cnm::AbstractMatrix,
+        Gnm::AbstractMatrix,
+        bnm::AbstractVector,
+        Ljb::SparseVector,
+        Ljbm::SparseVector,
+        Nmodes::Int,
+        Nbranches::Int,
+        Lmean,
+        AoLjbmvector::AbstractVector,
+        AoLjbm, AoLjnmindexmap, AoLjbmindices, conjindicessorted,
+        AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
+        AoLjbmconj,
+        AoLjnmconjindexmap, AoLjbmconjindices, conjconjindicessorted,
+        AoLjnmconj, xbAoLjnmconj, AoLjbmconjRbnm, xbAoLjbmconjRbnm,
+        invLnmindexmap, Gnmindexmap, Cnmindexmap,
+        freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
         phimatrixtd, irfftplan, rfftplan,
         )
 
@@ -1884,8 +1961,8 @@ function calcfj2!(F,
 
     end
 
-    #calculate the Jacobian
-    if !isnothing(J)
+    # do the work common to the Jacobian and conjugate Jacobian
+    if !isnothing(J) || !isnothing(Jconj)
 
         # turn the phivector into a matrix again because applynl! overwrites
         # the frequency domain data
@@ -1894,6 +1971,12 @@ function calcfj2!(F,
 
         # apply a cosinusoidal nonlinearity when evaluating the Jacobian
         applynl!(phimatrix, phimatrixtd, cos, irfftplan, rfftplan)
+
+    end
+
+
+    #calculate the Jacobian
+    if !isnothing(J)
 
         # calculate  AoLjbm
         updateAoLjbm2!(AoLjbm, phimatrix, AoLjbmindices, conjindicessorted,
@@ -1921,8 +2004,33 @@ function calcfj2!(F,
         sparseadd!(J, im, Gnm, wmodesm, Gnmindexmap)
         sparseadd!(J, -1, Cnm, wmodes2m, Cnmindexmap)
     end
+
+    #calculate the conjugate part of the Jacobian
+    if !isnothing(Jconj)
+
+        # calculate  AoLjbm
+        updateAoLjbm2!(AoLjbmconj, phimatrix, AoLjbmconjindices, conjconjindicessorted,
+            Ljb, Lmean)
+
+        # convert to a sparse node matrix
+        # AoLjnm = Rbnmt*AoLjbm*Rbnm
+        # non allocating sparse matrix multiplication
+        spmatmul!(AoLjbmconjRbnm, AoLjbmconj, Rbnm, xbAoLjbmconjRbnm)
+        spmatmul!(AoLjnmconj, Rbnmt, AoLjbmconjRbnm, xbAoLjnmconj)
+
+        # calculate the Jacobian. If J is sparse, keep it sparse. 
+        # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
+        # the code below adds the sparse matrices together with minimal
+        # memory allocations and without changing the sparsity structure.
+        fill!(Jconj, 0)
+        sparseadd!(Jconj, AoLjnmconj, AoLjnmconjindexmap)
+
+    end
+
     return nothing
 end
+
+
 
 """
     calcAoLjbmindices(Amatrixindices, Ljb::SparseVector, Nmodes, Nbranches,

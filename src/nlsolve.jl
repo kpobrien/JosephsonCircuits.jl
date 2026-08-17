@@ -1,4 +1,78 @@
 
+"""
+    IterationInfo(label, parameter, regularization, converged, iterations,
+        normresidual, alpha, backtracks, andersonaccepted)
+
+Diagnostics recorded for a call of [`nlsolve!`](@ref).
+
+# Fields
+- `label`: the solver stage this invocation belongs to.
+- `parameter`: the continuation parameter of the stage (the source scale
+    or the damping coefficient, depending on the stage), or NaN.
+- `regularization`: the diagonal regularization of the Jacobian, if any.
+- `converged`: whether the iterations converged.
+- `iterations`: the number of Newton iterations performed.
+- `normresidual`: the norm of the residual at the start of each iteration.
+- `alpha`: the accepted step size for each iteration, or NaN for
+    iterations where an Anderson extrapolation was accepted instead of a
+    Newton step.
+- `backtracks`: the number of linesearch backtracks for each iteration.
+- `andersonaccepted`: whether an Anderson extrapolation was accepted for
+    each iteration.
+"""
+struct IterationInfo
+    label::String
+    parameter::Float64
+    regularization::Float64
+    converged::Bool
+    iterations::Int
+    normresidual::Vector{Float64}
+    alpha::Vector{Float64}
+    backtracks::Vector{Int}
+    andersonaccepted::Vector{Bool}
+end
+
+"""
+    AndersonState(x::AbstractVector, depth::Integer)
+
+Preallocated state for Anderson acceleration of the Newton fixed point
+iteration `G(x) = x + deltax`: the difference history, the previous
+iterate/update pair it is built from, the assembled correction vector, and the
+buffers for the extrapolation least squares problem.
+
+The history lives in fixed n×depth matrices with circular column indexing.
+[`andersonhistory!`](@ref) overwrites one column per recorded step and updates
+the indices. All access to the history columns is through age-ordered indices,
+so results are independent of the physical column layout.
+"""
+mutable struct AndersonState{T, RT}
+    depth::Int
+    historyready::Bool
+    histcount::Int
+    histpos::Int
+    xprev::Vector{T}
+    deltaxprev::Vector{T}
+    correction::Vector{T}
+    deltaxhistory::Matrix{T}
+    deltafhistory::Matrix{T}
+    agecols::Vector{Int}
+    gram::Matrix{RT}
+    gammabuf::Vector{RT}
+end
+
+function AndersonState(x::AbstractVector{T}, depth::Integer) where T
+    if depth < 1
+        throw(ArgumentError(lazy"`depth` = $(depth) must be positive."))
+    end
+    n = length(x)
+    RT = real(T)
+    return AndersonState{T, RT}(depth, false, 0, 1,
+        copy(x), copy(x), similar(x, n),
+        Matrix{T}(undef, n, depth), Matrix{T}(undef, n, depth),
+        Vector{Int}(undef, depth),
+        Matrix{RT}(undef, depth, depth), Vector{RT}(undef, depth))
+end
+
 
 """
     Factorization(outofplace,inplace,kwargs)
@@ -407,39 +481,6 @@ function cubic_trial_step(α0, α1, ϕ0, ϕα0, ϕα1, dϕ0dα; c1 = 1e-4,
 end
 
 """
-    IterationInfo(label, parameter, regularization, converged, iterations,
-        normresidual, alpha, backtracks, andersonaccepted)
-
-Diagnostics recorded for a call of [`nlsolve!`](@ref).
-
-# Fields
-- `label`: the solver stage this invocation belongs to.
-- `parameter`: the continuation parameter of the stage (the source scale
-    or the damping coefficient, depending on the stage), or NaN.
-- `regularization`: the diagonal regularization of the Jacobian, if any.
-- `converged`: whether the iterations converged.
-- `iterations`: the number of Newton iterations performed.
-- `normresidual`: the norm of the residual at the start of each iteration.
-- `alpha`: the accepted step size for each iteration, or NaN for
-    iterations where an Anderson extrapolation was accepted instead of a
-    Newton step.
-- `backtracks`: the number of linesearch backtracks for each iteration.
-- `andersonaccepted`: whether an Anderson extrapolation was accepted for
-    each iteration.
-"""
-struct IterationInfo
-    label::String
-    parameter::Float64
-    regularization::Float64
-    converged::Bool
-    iterations::Int
-    normresidual::Vector{Float64}
-    alpha::Vector{Float64}
-    backtracks::Vector{Int}
-    andersonaccepted::Vector{Bool}
-end
-
-"""
     linesearchtrialpoint!(xcandidate, x, α, deltax, beta, correction)
 
 Overwrite `xcandidate` with the line search trial points on the curvilinear
@@ -653,47 +694,6 @@ function backtracking_linesearch!(f!, F::AbstractVector,
     return bestα, bestϕ, false, backtracks
 end
 
-
-"""
-    AndersonState(x::AbstractVector, depth::Integer)
-
-Preallocated state for Anderson acceleration of the Newton fixed point
-iteration `G(x) = x + deltax`: the difference history, the previous
-iterate/update pair it is built from, the assembled correction vector, and the
-buffers for the extrapolation least squares problem.
-
-The history lives in fixed n×depth matrices with circular column indexing.
-[`andersonhistory!`](@ref) overwrites one column per recorded step and updates
-the indices. All access to the history columns is through age-ordered indices,
-so results are independent of the physical column layout.
-"""
-mutable struct AndersonState{T, RT}
-    depth::Int
-    historyready::Bool
-    histcount::Int
-    histpos::Int
-    xprev::Vector{T}
-    deltaxprev::Vector{T}
-    correction::Vector{T}
-    deltaxhistory::Matrix{T}
-    deltafhistory::Matrix{T}
-    agecols::Vector{Int}
-    gram::Matrix{RT}
-    gammabuf::Vector{RT}
-end
-
-function AndersonState(x::AbstractVector{T}, depth::Integer) where T
-    if depth < 1
-        throw(ArgumentError(lazy"`depth` = $(depth) must be positive."))
-    end
-    n = length(x)
-    RT = real(T)
-    return AndersonState{T, RT}(depth, false, 0, 1,
-        copy(x), copy(x), similar(x, n),
-        Matrix{T}(undef, n, depth), Matrix{T}(undef, n, depth),
-        Vector{Int}(undef, depth),
-        Matrix{RT}(undef, depth, depth), Vector{RT}(undef, depth))
-end
 
 """
     andersonhistory!(s::AndersonState, x, deltax)

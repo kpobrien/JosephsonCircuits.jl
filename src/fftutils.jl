@@ -28,11 +28,19 @@ end
     FourierIndices(conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}},
         vectomatmap::Vector{Int}, conjsourceindices::Vector{Int},
         conjtargetindices::Vector{Int}, hbmatmodes::Matrix{NTuple{N, Int}},
-        hbmatindices::Matrix{Int})
+        hbmatindices::Matrix{Int}, hbconjmatmodes::Matrix{NTuple{N, Int}},
+        hbconjmatindices::Matrix{Int})
 
 A simple structure to hold time and frequency domain information for the
 signals, particularly the indices for converting between the node flux vectors
-and matrices. See also [`fourierindices`](@ref).
+and matrices. The `hbmatmodes` and `hbmatindices` matrices are built from the
+differences of the modes and describe the coupling between the modes (the
+derivative of the residual with respect to the node fluxes), while the
+`hbconjmatmodes` and `hbconjmatindices` matrices are built from the sums of
+the modes, aliased back onto the sampled grid, and describe the coupling
+between the modes and the complex conjugates of the modes (the derivative of
+the residual with respect to the complex conjugates of the node fluxes). See
+also [`fourierindices`](@ref).
 """
 struct FourierIndices{N}
     conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}
@@ -41,6 +49,8 @@ struct FourierIndices{N}
     conjtargetindices::Vector{Int}
     hbmatmodes::Matrix{NTuple{N, Int}}
     hbmatindices::Matrix{Int}
+    hbconjmatmodes::Matrix{NTuple{N, Int}}
+    hbconjmatindices::Matrix{Int}
 end
 
 """
@@ -57,6 +67,7 @@ function fourierindices(freq::Frequencies)
     conjsymdict = conjsym(freq)
     freqindexmap, conjsourceindices, conjtargetindices = calcphiindices(freq,conjsymdict)
     Amatrixmodes, Amatrixindices = hbmatind(freq)
+    Amatrixconjmodes, Amatrixconjindices = hbconjmatind(freq)
 
     return FourierIndices(
         conjsymdict,
@@ -65,6 +76,8 @@ function fourierindices(freq::Frequencies)
         conjtargetindices,
         Amatrixmodes,
         Amatrixindices,
+        Amatrixconjmodes,
+        Amatrixconjindices,
     )
 end
 
@@ -1139,4 +1152,159 @@ function hbmatind(frequencies::Frequencies{N},
     end
 
     return Amatrixmodes, Amatrixindices
+end
+
+
+"""
+    aliasmode(mode::NTuple{N,Int}, Nt::NTuple{N,Int})
+
+Alias the mode `mode` back onto the sampled grid with `Nt` time domain
+samples along each dimension, returning the canonical stored mode and
+whether the stored element is the complex conjugate of the requested
+mode. The first dimension is the RDFT dimension of a real signal, which
+stores only the modes from 0 to Nt[1] ÷ 2; a mode which aliases onto the
+other half of that dimension is stored as the complex conjugate at the
+negated mode. The other dimensions are full DFT dimensions whose stored
+modes range from -(Nt[d]-1) ÷ 2 - iseven(Nt[d]) to (Nt[d]-1) ÷ 2.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.aliasmode((3,), (8,))
+((3,), false)
+
+julia> JosephsonCircuits.aliasmode((5,), (8,))
+((3,), true)
+
+julia> JosephsonCircuits.aliasmode((8,), (8,))
+((0,), false)
+
+julia> JosephsonCircuits.aliasmode((1, 3), (8, 4))
+((1, -1), false)
+```
+"""
+function aliasmode(mode::NTuple{N,Int}, Nt::NTuple{N,Int}) where N
+    # wrap each dimension onto the sampled grid 0:Nt-1
+    w1 = mod(mode[1], Nt[1])
+    # the first dimension is the RDFT dimension of a real signal, which
+    # stores only the modes from 0 to Nt[1] ÷ 2. a mode on the other half
+    # of that dimension is stored as the complex conjugate at the negated
+    # mode.
+    conjflag = w1 > Nt[1] ÷ 2
+    m = conjflag ? ntuple(d -> -mode[d], Val(N)) : mode
+    # represent the full DFT dimensions with the signed modes used by the
+    # frequency structures, where the wrapped indices above Nt ÷ 2 are
+    # the negative modes.
+    s = ntuple(Val(N)) do d
+        wd = mod(m[d], Nt[d])
+        if d == 1 || 2*wd <= Nt[d] - 1
+            wd
+        else
+            wd - Nt[d]
+        end
+    end
+    return s, conjflag
+end
+
+"""
+    selfconjmodes(frequencies::Frequencies)
+
+Return a vector of booleans indicating which of the modes of `frequencies`
+are their own complex conjugates on the sampled grid, which is the case
+when twice the mode aliases to zero along every dimension. The Fourier
+coefficients of a real signal at those modes, such as dc, are purely
+real.
+
+# Examples
+```jldoctest
+julia> freq = JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsrdft((3,));dc=true,odd=true,even=true));JosephsonCircuits.selfconjmodes(freq)
+4-element Vector{Bool}:
+ 1
+ 0
+ 0
+ 0
+```
+"""
+function selfconjmodes(frequencies::Frequencies)
+    Nt = frequencies.Nt
+    return [all(d -> mod(2*m[d], Nt[d]) == 0, 1:length(Nt))
+        for m in frequencies.modes]
+end
+
+"""
+    hbconjmatind(truncfrequencies::Frequencies{N})
+
+Returns a matrix describing which indices of the frequency domain matrix
+(from the RFFT) to pull out and use in the conjugate harmonic balance
+matrix, which is built from the sums of the modes, aliased back onto the
+sampled grid, and describes the coupling between the modes and the
+complex conjugates of the modes (the derivative of the residual with
+respect to the complex conjugates of the node fluxes). A negative index
+means we take the complex conjugate of that element. A zero index means
+that term is not present, so skip it. See also [`hbmatind`](@ref).
+
+# Examples
+```jldoctest
+julia> freq = JosephsonCircuits.calcfreqsrdft((3,));JosephsonCircuits.hbconjmatind(JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(freq;dc=true,odd=true,even=true,maxintermodorder=2)))[2]
+4×4 Matrix{Int64}:
+ 1   2   3   4
+ 2   3   4  -4
+ 3   4  -4  -3
+ 4  -4  -3  -2
+```
+"""
+function hbconjmatind(truncfrequencies::Frequencies{N}) where N
+    frequencies = calcfreqs(truncfrequencies.Nharmonics,
+        truncfrequencies.Nw, truncfrequencies.Nt)
+    return hbconjmatind(frequencies, truncfrequencies)
+end
+
+"""
+    hbconjmatind(frequencies::Frequencies{N},
+        truncfrequencies::Frequencies{N})
+
+Returns a matrix describing which indices of the frequency domain matrix
+(from the RFFT) to pull out and use in the conjugate harmonic balance
+matrix, which is built from the sums of the modes
+`truncfrequencies.modes[i] + truncfrequencies.modes[j]`, aliased back
+onto the sampled grid described by `frequencies`. A negative index means
+we take the complex conjugate of that element. A zero index means that
+term is not present, so skip it. See also [`hbmatind`](@ref).
+"""
+function hbconjmatind(frequencies::Frequencies{N},
+    truncfrequencies::Frequencies{N}) where N
+
+    modes = frequencies.modes
+    truncmodes = truncfrequencies.modes
+    Nt = frequencies.Nt
+
+    # the coupling between the modes and the complex conjugates of the
+    # modes involves the sums of the modes, aliased back onto the sampled
+    # grid.
+    Amatrixconjmodes = Matrix{NTuple{N,Int}}(undef, length(truncmodes),
+        length(truncmodes))
+    for i in 1:length(truncmodes)
+        for j in 1:length(truncmodes)
+            mode = NTuple{N,Int}(truncmodes[i][k]+truncmodes[j][k] for k in 1:length(truncmodes[i]))
+            Amatrixconjmodes[i,j] = mode
+        end
+    end
+
+    # find the keys that are in the rfft matrix and their locations
+    modesdict = Dict{eltype(modes),Int}()
+    for (i,mode) in enumerate(modes)
+        modesdict[mode] = i
+    end
+
+    # find where in the dft matrix we should pull these modes from, after
+    # aliasing them back onto the sampled grid. to do this, we use the
+    # un-truncated frequencies struct.
+    Amatrixconjindices = zeros(Int,length(truncmodes),length(truncmodes))
+    for (i,mode) in enumerate(Amatrixconjmodes)
+        aliasedmode, conjflag = aliasmode(mode, Nt)
+        if haskey(modesdict, aliasedmode)
+            Amatrixconjindices[i] = conjflag ? -modesdict[aliasedmode] : modesdict[aliasedmode]
+        end
+    end
+
+    return Amatrixconjmodes, Amatrixconjindices
 end
