@@ -249,10 +249,10 @@ and [`hblinsolve`](@ref).
     returns an error.
 - `ftol = 1e-8`: the function tolerance defined we considered converged,
     defined as norm(F)/norm(x) < ftol or norm(F,Inf) <= ftol.
-- `andersondepth::Integer = 5`: the depth of the Anderson acceleration of the
-  Newton fixed point iteration, the maximum number of previous iterates
-  used for the extrapolation. Values less than one disable the
-  acceleration.
+- `andersondepth::Integer = method == :newton ? 0 : 5`: the depth of the
+    Anderson acceleration of the Newton fixed point iteration, the maximum
+    number of previous iterates used for the extrapolation. Values less than
+    one disable the acceleration.
 - `symfreqvar = nothing`: the symbolic frequency variable, eg `w`.
 - `nbatches = Base.Threads.nthreads()`: the number of batches to split the
     signal frequencies into for multi-threading. Set to 1 for singled threaded
@@ -312,8 +312,9 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     maxpumpharmonics::NTuple{N,Number} = Npumpharmonics,
     maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
     iterations = 1000, ftol = 1e-8, switchofflinesearchtol = nothing,
-    alphamin = nothing, andersondepth::Integer = 5, x0 = nothing,
-    symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
+    alphamin = nothing, method = :quasinewton,
+    andersondepth::Integer = method == :newton ? 0 : 5,
+    x0 = nothing, symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
     sorting = :number, returnS::Bool = true, returnSnoise::Bool = false,
     returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
     returnvoltage::Bool = false, returnnodefluxadjoint::Bool = false,
@@ -351,9 +352,9 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     nonlinear = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        andersondepth = andersondepth, symfreqvar = symfreqvar,
-        keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
-        factorization = factorization)
+        method = method, andersondepth = andersondepth,
+        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+        sensitivitynames = sensitivitynames, factorization = factorization)
 
     # generate the signal modes
     signalfreq =truncfreqs(
@@ -1395,10 +1396,10 @@ equations about the operating point found with `hbnlsolve`.
 - `x0 = nothing`: initial value for the nodeflux.
 - `ftol = 1e-8`: the function tolerance defined we considered converged,
     defined as norm(F)/norm(x) < ftol or norm(F,Inf) <= ftol.
-- `andersondepth::Integer = 5`: the depth of the Anderson acceleration of the
-  Newton fixed point iteration, the maximum number of previous iterates
-  used for the extrapolation. Values less than one disable the
-  acceleration.
+- `andersondepth::Integer = method == :newton ? 0 : 5`: the depth of the
+    Anderson acceleration of the Newton fixed point iteration, the maximum
+    number of previous iterates used for the extrapolation. Values less than
+    one disable the acceleration.
 - `symfreqvar = nothing`: the symbolic frequency variable, eg `w`.
 - `sorting = :number`: sort the nodes by:
     `:name`: Sort the vector of strings. This always works but leads
@@ -1461,10 +1462,10 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, x0 = nothing, ftol = 1e-8,
     switchofflinesearchtol = nothing, alphamin = nothing,
-    andersondepth::Integer = 5, symfreqvar = nothing, sorting = :number,
-    keyedarrays::Bool = true, sensitivitynames::Vector{String} = String[],
-    factorization = KLUfactorization(),
-    debugJacobian = false,
+    method = :quasinewton, andersondepth::Integer = method == :newton ? 0 : 5,
+    symfreqvar = nothing, sorting = :number, keyedarrays::Bool = true,
+    sensitivitynames::Vector{String} = String[],
+    factorization = KLUfactorization(), debugJacobian = false,
     ) where {N}
 
     # calculate the frequency struct
@@ -1491,9 +1492,9 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        andersondepth = andersondepth, symfreqvar = symfreqvar,
-        keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
-        factorization = factorization,
+        method = method, andersondepth = andersondepth,
+        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+        sensitivitynames = sensitivitynames, factorization = factorization,
         debugJacobian = debugJacobian,
         )
 end
@@ -1565,10 +1566,10 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     indices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = nothing, alphamin = nothing,
-    andersondepth::Integer = 5, symfreqvar = nothing,
-    keyedarrays::Bool = true, sensitivitynames::Vector{String} = String[],
-    factorization = KLUfactorization(),
-    debugJacobian = false,
+    method = :quasinewton, andersondepth::Integer = method == :newton ? 0 : 5,
+    symfreqvar = nothing, keyedarrays::Bool = true,
+    sensitivitynames::Vector{String} = String[],
+    factorization = KLUfactorization(), debugJacobian = false,
     )
 
     # deprecation warnings for switchofflinesearchtol and alphamin.
@@ -1735,7 +1736,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # structural zeros which would change the sparsity structure).
     # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
     # J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm*wmodesm), - Cnm*wmodes2m)
-    J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnmcopy, invLnm), im*Gnm), -Cnm)
+    Jx = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnmcopy, invLnm), im*Gnm), -Cnm)
 
     # make the arrays and datastructures we need for
     # the non-allocating sparse matrix multiplication.
@@ -1746,15 +1747,15 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 
     # make the index maps so we can add the sparse matrices together without
     # memory allocations. 
-    AoLjnmindexmap = sparseaddmap(J, AoLjnm)
-    invLnmindexmap = sparseaddmap(J, invLnm)
-    Gnmindexmap = sparseaddmap(J, Gnm)
-    Cnmindexmap = sparseaddmap(J, Cnm)
+    AoLjnmindexmap = sparseaddmap(Jx, AoLjnm)
+    invLnmindexmap = sparseaddmap(Jx, invLnm)
+    Gnmindexmap = sparseaddmap(Jx, Gnm)
+    Cnmindexmap = sparseaddmap(Jx, Cnm)
 
 
     # this section is for conjugate terms
 
-    Jconj = AoLjnmconjcopy
+    Jxconj = AoLjnmconjcopy
 
     # make the arrays and datastructures we need for
     # the non-allocating sparse matrix multiplication.
@@ -1765,12 +1766,12 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 
     # make the index maps so we can add the sparse matrices together without
     # memory allocations. 
-    AoLjnmconjindexmap = sparseaddmap(Jconj, AoLjnmconj)
+    AoLjnmconjindexmap = sparseaddmap(Jxconj, AoLjnmconj)
 
 
     # build the function and Jacobian for solving the nonlinear system
-    function fjjconj!(F, J, Jconj, x)
-        calcfjjconj!(F, J, Jconj, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
+    function fjjconj!(F, Jx, Jxconj, x)
+        calcfjjconj!(F, Jx, Jxconj, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
             Cnm, Gnm, bnm, Ljb, Ljbm, Nmodes,
             Nbranches, Lmean, AoLjbmvector,
             AoLjbm, AoLjnmindexmap, AoLjbmindices, conjindicessorted,
@@ -1785,17 +1786,61 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         return nothing
     end
 
-    function fj!(F, J, x)
-        return fjjconj!(F, J, nothing, x)
+    function fj!(F, Jx, x)
+        return fjjconj!(F, Jx, nothing, x)
     end
 
     # end section for conjugate terms
 
+    # use method=:quasinewton for complex
+    # and method=:newton for real
+    # should be able to use the same solver. turn on or off anderson
+    # 
+
+    modelayout = ModeLayout(selfconjmodes(frequencies),size(Jx,1));
+    Jr = complex_to_real_sum(Jx,Jxconj,modelayout,modelayout)
+    Fr = complex_to_real(F,modelayout.isreal)
+    xr = complex_to_real(x,modelayout.isreal)
+
+    # x = real_to_complex(xr,modelayout.isreal)
+
+    function fjreal!(Fr, Jr, xr)
+
+        # make sure to compute everything we need to do the conversions
+        # outside of the function and only use the in-place conversion
+        # functions inside of here.
+
+        # convert Fr, Jr, xr to complex
+        # oh, i think i only need to convert xr to complex x
+        real_to_complex!(x,xr,modelayout.isreal)
+
+        if !isnothing(Fr) && !isnothing(Jr)
+            # evaluate the complex function and Jacobian
+            fjjconj!(F, Jx, Jxconj, x)
+
+            # convert F, Jx, Jxconj to Fr, Jr. convert x to xr later
+            complex_to_real!(Fr,F,modelayout.isreal)
+            # make sure to zero the self conjugate (eg. DC) columns
+            complex_to_real_sum!(Jr,Jx,Jxconj,modelayout,modelayout;realcolscale_b=0)
+
+        elseif !isnothing(Fr)
+            # evaluate the complex function only
+            fjjconj!(F, nothing, nothing, x)
+            complex_to_real!(Fr,F,modelayout.isreal)
+        elseif !isnothing(Jr)
+            # evaluate the complex function and Jacobian
+            fjjconj!(nothing, Jx, Jxconj, x)
+
+            # make sure to zero the self conjugate (eg. DC) columns
+            complex_to_real_sum!(Jr,Jx,Jxconj,modelayout,modelayout;realcolscale_b=0)
+        end
+
+        # convert x to xr
+        complex_to_real!(xr,x,modelayout.isreal)
+        return nothing
+    end
 
 
-    # the norm of the residual at the initial value, for the diagnostics
-    fj!(F, nothing, x)
-    normF0 = norm(F)
 
     # diagnostics for each invocation of the nonlinear solver, stored in
     # the output so the solution process can be assessed after the run
@@ -1808,11 +1853,28 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # # use this for debugging purposes to return the function and the
     # # Jacobian
     if debugJacobian
-        return (F,J,Jconj,x,fj!,fjjconj!)
+        return (F=F,Jx=Jx,Jxconj=Jxconj,x=x,Fr=Fr,Jr=Jr,xr=xr,fj=fj!,
+            fjjconj=fjjconj!,fjreal=fjreal!)
     end
+
     # solve the nonlinear system
-    info = nlsolve!(fj!, F, J, x; iterations = iterations, ftol = ftol,
-        andersondepth = andersondepth, factorization = factorization)
+    info = if method == :quasinewton
+
+        nlsolve!(fj!, F, Jx,x; iterations = iterations, ftol = ftol,
+            andersondepth = andersondepth, factorization = factorization)
+
+    elseif method == :newton
+
+        # solve the real nonlinear system then convert back to complex
+        info = nlsolve!(fjreal!, Fr, Jr,xr; iterations = iterations, ftol = ftol,
+            andersondepth = andersondepth, factorization = factorization)
+        real_to_complex!(x,xr,modelayout.isreal)
+        real_to_complex!(F,Fr,modelayout.isreal)
+        info
+    else
+        throw(ArgumentError("Method $(method) is not defined."))
+    end
+
 
     push!(solverstages, IterationInfo(info.label, 1.0,
         info.regularization, info.converged, info.iterations,
@@ -1826,10 +1888,12 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     nodeflux = x
     converged = info.converged
 
+    # the norm of the residual at the initial value, for the diagnostics
+    normF0 = info.normresidual[1]
     # the norm of the residual at the returned solution, for the
     # diagnostics
-    fj!(F, nothing, nodeflux)
-    normFfinal = norm(F)
+    normFfinal = info.normresidual[end]
+
 
     # assemble the stored diagnostics of the solution process
     solverinfo = SolverInfo(solverstages, normF0, normFfinal, converged,
@@ -1868,8 +1932,8 @@ end
 
 """
     calcfjjconj!(F,
-        J,
-        Jconj,
+        Jx,
+        Jxconj,
         nodeflux::AbstractVector,
         wmodesm::AbstractMatrix,
         wmodes2m::AbstractMatrix,
@@ -1901,8 +1965,8 @@ Leave off the type signatures on F, J, and Jconj because the solver will pass
 `nothing` if it only wants to calculate F, J, Jconj, or some subset.
 """
 function calcfjjconj!(F,
-        J,
-        Jconj,
+        Jx,
+        Jxconj,
         nodeflux::AbstractVector,
         wmodesm::AbstractMatrix,
         wmodes2m::AbstractMatrix,
@@ -1962,7 +2026,7 @@ function calcfjjconj!(F,
     end
 
     # do the work common to the Jacobian and conjugate Jacobian
-    if !isnothing(J) || !isnothing(Jconj)
+    if !isnothing(Jx) || !isnothing(Jxconj)
 
         # turn the phivector into a matrix again because applynl! overwrites
         # the frequency domain data
@@ -1976,7 +2040,7 @@ function calcfjjconj!(F,
 
 
     #calculate the Jacobian
-    if !isnothing(J)
+    if !isnothing(Jx)
 
         # calculate  AoLjbm
         updateAoLjbm2!(AoLjbm, phimatrix, AoLjbmindices, conjindicessorted,
@@ -1989,24 +2053,24 @@ function calcfjjconj!(F,
         spmatmul!(AoLjnm, Rbnmt, AoLjbmRbnm, xbAoLjnm)
 
         # calculate the Jacobian. If J is sparse, keep it sparse. 
-        # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
+        # Jx .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
         # the code below adds the sparse matrices together with minimal
         # memory allocations and without changing the sparsity structure.
-        fill!(J, 0)
+        fill!(Jx, 0)
         # we assume invLnm, Gnm, and Cnm have conjugated for any negative
         # frequency outside of this function using conjnegfreq!. negative
         # frequencies cannot occur in single tone harmonic balance (one
         # dimensional RDFT due to conjugate symmetry), but can occur in
         # multi-tone harmonic balance (multi-dimensional RDFT) due to the
         # relative phases between the tones.
-        sparseadd!(J, AoLjnm, AoLjnmindexmap)
-        sparseadd!(J, invLnm, invLnmindexmap)
-        sparseadd!(J, im, Gnm, wmodesm, Gnmindexmap)
-        sparseadd!(J, -1, Cnm, wmodes2m, Cnmindexmap)
+        sparseadd!(Jx, AoLjnm, AoLjnmindexmap)
+        sparseadd!(Jx, invLnm, invLnmindexmap)
+        sparseadd!(Jx, im, Gnm, wmodesm, Gnmindexmap)
+        sparseadd!(Jx, -1, Cnm, wmodes2m, Cnmindexmap)
     end
 
     #calculate the conjugate part of the Jacobian
-    if !isnothing(Jconj)
+    if !isnothing(Jxconj)
 
         # calculate  AoLjbm
         updateAoLjbm2!(AoLjbmconj, phimatrix, AoLjbmconjindices, conjconjindicessorted,
@@ -2022,8 +2086,8 @@ function calcfjjconj!(F,
         # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
         # the code below adds the sparse matrices together with minimal
         # memory allocations and without changing the sparsity structure.
-        fill!(Jconj, 0)
-        sparseadd!(Jconj, AoLjnmconj, AoLjnmconjindexmap)
+        fill!(Jxconj, 0)
+        sparseadd!(Jxconj, AoLjnmconj, AoLjnmconjindexmap)
 
     end
 
