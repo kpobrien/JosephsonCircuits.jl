@@ -1082,15 +1082,15 @@ julia> freq = JosephsonCircuits.calcfreqsrdft((2,2));JosephsonCircuits.hbmatind(
  14   13   -5  11   10   0    1
 ```
 """
-function hbmatind(truncfrequencies::Frequencies{N}) where N
+function hbmatind(truncfrequencies::Frequencies{N}; alias::Bool = false) where N
     frequencies = calcfreqs(truncfrequencies.Nharmonics,
         truncfrequencies.Nw, truncfrequencies.Nt)
-    return hbmatind(frequencies, truncfrequencies)
+    return hbmatind(frequencies, truncfrequencies; alias = alias)
 end
 
 """
     hbmatind(frequencies::Frequencies{N},
-        truncfrequencies::Frequencies{N})
+        truncfrequencies::Frequencies{N}; alias::Bool = false)
 
 Returns a matrix describing which indices of the frequency domain matrix
 (from the RFFT or FFT) to pull out and use in the harmonic balance matrix.
@@ -1115,12 +1115,29 @@ JosephsonCircuits.hbmatind(pumpfreq, signalfreq)[2]
  -5   0  1  -3
  -3  -5  3   1
 ```
+```jldoctest
+pumpfreq = JosephsonCircuits.truncfreqs(
+    JosephsonCircuits.calcfreqsrdft((4,)))
+signalfreq = JosephsonCircuits.truncfreqs(
+    JosephsonCircuits.calcfreqsdft((4,));
+    dc=false,odd=true,even=false,maxintermodorder=2,
+)
+JosephsonCircuits.hbmatind(pumpfreq, signalfreq;alias = true)[2]
+
+# output
+4×4 Matrix{Int64}:
+  1  -3  5   3
+  3   1  0   5
+ -5   0  1  -3
+ -3  -5  3   1
+```
 """
 function hbmatind(frequencies::Frequencies{N},
-    truncfrequencies::Frequencies{N}) where N
+    truncfrequencies::Frequencies{N}; alias::Bool = false) where N
 
     modes = frequencies.modes
     truncmodes = truncfrequencies.modes
+    Nt = frequencies.Nt
 
     # this is calculating the frequency domain input output relations
     # first calculate this in terms of the modes
@@ -1143,11 +1160,21 @@ function hbmatind(frequencies::Frequencies{N},
     # these modes. to do these, we use the un-truncated frequencies struct.
     Amatrixindices = zeros(Int,length(truncmodes),length(truncmodes))
     for (i,mode) in enumerate(Amatrixmodes)
-        conjmode = NTuple{N}(-m for m in mode)
-        if haskey(modesdict,mode)
-            Amatrixindices[i] = modesdict[mode]
-        elseif haskey(modesdict,conjmode)
-            Amatrixindices[i] = -modesdict[conjmode]
+        # if the alias flag is true, then for modes that fall outside the grid
+        # we take the corresponding mode from inside the grid due to the
+        # periodicity of the rdft.
+        if alias
+            aliasedmode, conjflag = aliasmode(mode, Nt)
+            if haskey(modesdict, aliasedmode)
+                Amatrixindices[i] = conjflag ? -modesdict[aliasedmode] : modesdict[aliasedmode]
+            end
+        else
+            conjmode = NTuple{N}(-m for m in mode)
+            if haskey(modesdict,mode)
+                Amatrixindices[i] = modesdict[mode]
+            elseif haskey(modesdict,conjmode)
+                Amatrixindices[i] = -modesdict[conjmode]
+            end
         end
     end
 
