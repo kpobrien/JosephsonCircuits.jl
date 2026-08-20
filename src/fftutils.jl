@@ -1126,10 +1126,10 @@ JosephsonCircuits.hbmatind(pumpfreq, signalfreq;alias = true)[2]
 
 # output
 4×4 Matrix{Int64}:
-  1  -3  5   3
-  3   1  0   5
- -5   0  1  -3
- -3  -5  3   1
+  1  -3   5   3
+  3   1  -4   5
+ -5   4   1  -3
+ -3  -5   3   1
 ```
 """
 function hbmatind(frequencies::Frequencies{N},
