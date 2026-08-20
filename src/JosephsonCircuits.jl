@@ -107,6 +107,8 @@ include("unwrap.jl")
 
 include("quantumoptics.jl")
 
+include("realcomplexconv.jl")
+
 # These are deprecated functions
 include("deprecated.jl")
 

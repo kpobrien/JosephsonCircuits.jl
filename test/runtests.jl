@@ -57,6 +57,8 @@ using JosephsonCircuits
 
     include("qesparams.jl")
 
+    include("realcomplexconv.jl")
+
     include("spiceraw.jl")
 
     include("spiceutils.jl")
