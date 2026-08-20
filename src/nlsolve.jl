@@ -88,7 +88,14 @@ struct Factorization
 end
 
 function KLUfactorization(;kwargs...)
-    return Factorization(KLU.klu,KLU.klu!,kwargs)
+    # return Factorization(KLU.klu,KLU.klu!,kwargs)
+    return Factorization(KLU.klu,klunzval!,kwargs)
+end
+
+# this directly uses the nzvals without checking the sparse matrix so should
+# be slightly faster.
+function klunzval!(F,A;kwargs...)
+    return KLU.klu!(F,A.nzval;kwargs...)
 end
 
 function LUfactorization(;kwargs...)

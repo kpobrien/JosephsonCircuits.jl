@@ -158,10 +158,10 @@ using Test
             J1 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,2)
             cache = JosephsonCircuits.FactorizationCache()
             JosephsonCircuits.tryfactorize!(cache,factorization,J1)
-            J3 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,3)
+            J3 = JosephsonCircuits.sparse([1, 1, 2],[1, 2, 1],[1.3, 0.5, 0.1],2,2)
 
             @test_throws(
-                ArgumentError("Sizes of K and S must match."),
+                DimensionMismatch(""),
                 JosephsonCircuits.tryfactorize!(cache,factorization,J3),
             )
         end
