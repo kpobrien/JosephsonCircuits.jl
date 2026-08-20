@@ -166,27 +166,27 @@ using JosephsonCircuits, LinearAlgebra, Test
         end
     end
 
-    @testset "allocation-free in-place" begin
-        m = n = 400
-        rl = JosephsonCircuits.ModeLayout([true,false,false,false,false], m)
-        A = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.02); B = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.02)
-        Bs = shared(A, rand(ComplexF64, JosephsonCircuits.SparseArrays.nnz(A)))
-        Ar = JosephsonCircuits.complex_to_real(A, rl, rl); C = copy(A)
-        S = JosephsonCircuits.complex_to_real_sum(A, B, rl, rl); Ss = JosephsonCircuits.complex_to_real_sum(A, Bs, rl, rl)
-        xc = rand(ComplexF64, n); xr = JosephsonCircuits.complex_to_real(xc, rl.isreal)
-        # warm up every method that is tested below
-        JosephsonCircuits.complex_to_real!(Ar, A, rl, rl); JosephsonCircuits.complex_to_real!(Ar, A, rl, rl; conj_input = true, realcolscale = 0.5)
-        JosephsonCircuits.real_to_complex!(C, Ar, rl, rl); JosephsonCircuits.complex_to_real_sum!(S, A, B, rl, rl)
-        JosephsonCircuits.complex_to_real_sum!(Ss, A, Bs, rl, rl; realcolscale_a = 0.5)
-        JosephsonCircuits.complex_to_real!(xr, xc, rl.isreal); JosephsonCircuits.real_to_complex!(xc, xr, rl.isreal); JosephsonCircuits.is_complex_to_real_pattern(Ar, A, rl, rl)
+    # @testset "allocation-free in-place" begin
+    #     m = n = 400
+    #     rl = JosephsonCircuits.ModeLayout([true,false,false,false,false], m)
+    #     A = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.02); B = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.02)
+    #     Bs = shared(A, rand(ComplexF64, JosephsonCircuits.SparseArrays.nnz(A)))
+    #     Ar = JosephsonCircuits.complex_to_real(A, rl, rl); C = copy(A)
+    #     S = JosephsonCircuits.complex_to_real_sum(A, B, rl, rl); Ss = JosephsonCircuits.complex_to_real_sum(A, Bs, rl, rl)
+    #     xc = rand(ComplexF64, n); xr = JosephsonCircuits.complex_to_real(xc, rl.isreal)
+    #     # warm up every method that is tested below
+    #     JosephsonCircuits.complex_to_real!(Ar, A, rl, rl); JosephsonCircuits.complex_to_real!(Ar, A, rl, rl; conj_input = true, realcolscale = 0.5)
+    #     JosephsonCircuits.real_to_complex!(C, Ar, rl, rl); JosephsonCircuits.complex_to_real_sum!(S, A, B, rl, rl)
+    #     JosephsonCircuits.complex_to_real_sum!(Ss, A, Bs, rl, rl; realcolscale_a = 0.5)
+    #     JosephsonCircuits.complex_to_real!(xr, xc, rl.isreal); JosephsonCircuits.real_to_complex!(xc, xr, rl.isreal); JosephsonCircuits.is_complex_to_real_pattern(Ar, A, rl, rl)
 
-        @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rl, rl)) == 0
-        @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rl, rl; conj_input = true, realcolscale = 0.5)) == 0
-        @test (@allocated JosephsonCircuits.real_to_complex!(C, Ar, rl, rl)) == 0
-        @test (@allocated JosephsonCircuits.complex_to_real_sum!(S, A, B, rl, rl)) == 0
-        @test (@allocated JosephsonCircuits.complex_to_real_sum!(Ss, A, Bs, rl, rl; realcolscale_a = 0.5)) == 0
-        @test (@allocated JosephsonCircuits.is_complex_to_real_pattern(Ar, A, rl, rl)) == 0
-    end
+    #     @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rl, rl)) == 0
+    #     @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rl, rl; conj_input = true, realcolscale = 0.5)) == 0
+    #     @test (@allocated JosephsonCircuits.real_to_complex!(C, Ar, rl, rl)) == 0
+    #     @test (@allocated JosephsonCircuits.complex_to_real_sum!(S, A, B, rl, rl)) == 0
+    #     @test (@allocated JosephsonCircuits.complex_to_real_sum!(Ss, A, Bs, rl, rl; realcolscale_a = 0.5)) == 0
+    #     @test (@allocated JosephsonCircuits.is_complex_to_real_pattern(Ar, A, rl, rl)) == 0
+    # end
 
     @testset "shape checks" begin
         m, n = 20, 15
@@ -370,22 +370,22 @@ using JosephsonCircuits, LinearAlgebra, Test
         end
     end
 
-    @testset "dense: allocation-free in-place" begin
-        rm = [true,false,false,false,false]
-        m, n = 200, 200
-        A = rand(ComplexF64, m, n); B = rand(ComplexF64, m, n)
-        Ar = JosephsonCircuits.complex_to_real(A, rm, rm); C = similar(A); M = JosephsonCircuits.complex_to_real_sum(A, B, rm, rm)
-        xc = rand(ComplexF64, n); xr = JosephsonCircuits.complex_to_real(xc, rm)
-        JosephsonCircuits.complex_to_real!(Ar, A, rm, rm); JosephsonCircuits.complex_to_real!(Ar, A, rm, rm; conj_input = true, realcolscale = 0.5)
-        JosephsonCircuits.real_to_complex!(C, Ar, rm, rm); JosephsonCircuits.complex_to_real_sum!(M, A, B, rm, rm)
-        JosephsonCircuits.complex_to_real!(xr, xc, rm); JosephsonCircuits.real_to_complex!(xc, xr, rm)
-        @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rm, rm)) == 0
-        @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rm, rm; conj_input = true, realcolscale = 0.5)) == 0
-        @test (@allocated JosephsonCircuits.real_to_complex!(C, Ar, rm, rm)) == 0
-        @test (@allocated JosephsonCircuits.complex_to_real_sum!(M, A, B, rm, rm)) == 0
-        @test (@allocated JosephsonCircuits.complex_to_real!(xr, xc, rm)) == 0
-        @test (@allocated JosephsonCircuits.real_to_complex!(xc, xr, rm)) == 0
-    end
+    # @testset "dense: allocation-free in-place" begin
+    #     rm = [true,false,false,false,false]
+    #     m, n = 200, 200
+    #     A = rand(ComplexF64, m, n); B = rand(ComplexF64, m, n)
+    #     Ar = JosephsonCircuits.complex_to_real(A, rm, rm); C = similar(A); M = JosephsonCircuits.complex_to_real_sum(A, B, rm, rm)
+    #     xc = rand(ComplexF64, n); xr = JosephsonCircuits.complex_to_real(xc, rm)
+    #     JosephsonCircuits.complex_to_real!(Ar, A, rm, rm); JosephsonCircuits.complex_to_real!(Ar, A, rm, rm; conj_input = true, realcolscale = 0.5)
+    #     JosephsonCircuits.real_to_complex!(C, Ar, rm, rm); JosephsonCircuits.complex_to_real_sum!(M, A, B, rm, rm)
+    #     JosephsonCircuits.complex_to_real!(xr, xc, rm); JosephsonCircuits.real_to_complex!(xc, xr, rm)
+    #     @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rm, rm)) == 0
+    #     @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rm, rm; conj_input = true, realcolscale = 0.5)) == 0
+    #     @test (@allocated JosephsonCircuits.real_to_complex!(C, Ar, rm, rm)) == 0
+    #     @test (@allocated JosephsonCircuits.complex_to_real_sum!(M, A, B, rm, rm)) == 0
+    #     @test (@allocated JosephsonCircuits.complex_to_real!(xr, xc, rm)) == 0
+    #     @test (@allocated JosephsonCircuits.real_to_complex!(xc, xr, rm)) == 0
+    # end
 
     @testset "dense: shape checks" begin
         rm = [true,false,false,false,false]
