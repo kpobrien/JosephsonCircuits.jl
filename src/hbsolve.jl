@@ -204,6 +204,20 @@ Calls the harmonic balance solvers, [`hbnlsolve`](@ref) and
 and for both three and four wave mixing processes. See also [`hbnlsolve`](@ref)
 and [`hblinsolve`](@ref).
 
+The system is solved in a modified nodal analysis formulation in the node
+flux basis: resistors with constant real values and mutually coupled
+inductor branches are assigned auxiliary branch current variables (keeping
+the system matrix bounded as coupling coefficients approach one), and one
+gauge fixing equation per floating inductive/Josephson subnetwork and
+zero-frequency mode makes circuits with no inductive path to ground
+exactly solvable in the nonlinear solve. The nonlinear system is
+nondimensionalized by the scale `Z0/w0` (see [`calcsolverscale`](@ref)),
+making `ftol` independent of the unit system. The
+linearized solve throws an informative `ArgumentError` when any signal plus
+pump mode frequency total is (numerically) zero; estimate DC limits from a
+sequence of decreasing nonzero frequencies. All returned quantities contain
+only the node coordinates. See `src/mna.jl`.
+
 # Arguments
 - `ws`: the angular frequency or frequencies of the signal in Hz such as
     2\\*pi\\*5.0e9 or 2\\*pi\\*(4.5:0.001:5.0)\\*1e9.
@@ -249,6 +263,18 @@ and [`hblinsolve`](@ref).
     returns an error.
 - `ftol = 1e-8`: the function tolerance defined we considered converged,
     defined as norm(F)/norm(x) < ftol or norm(F,Inf) <= ftol.
+- `method = :quasinewton`: the nonlinear solution method. `:quasinewton`
+    iterates with the complex holomorphic Jacobian `Jx` only, an
+    approximation to the exact Jacobian. `:newton` solves the equivalent real
+    system with the exact real Jacobian, which restores quadratic convergence
+    near the solution, including for multi-tone problems: its mode coupling
+    indices include the couplings which alias back onto the sampled grid,
+    matching the cyclic Fourier transforms of the residual, and the
+    assembled Jacobian agrees with the matrix-free Jacobian-vector product
+    of `HBSystem` to machine precision. Both Jacobians are assembled
+    directly from the Fourier coefficients of `cos(phi(t))` with precomputed
+    plans (see [`plancomplexjacobian`](@ref) and
+    [`planrealjacobian`](@ref)).
 - `andersondepth::Integer = method == :newton ? 0 : 5`: the depth of the
     Anderson acceleration of the Newton fixed point iteration, the maximum
     number of previous iterates used for the extrapolation. Values less than
@@ -721,22 +747,29 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     end
 
 
+    # the flux basis represents voltages as v = im*w*phi, which is
+    # degenerate at exactly zero total frequency; scattering parameters at
+    # DC are the w -> 0 limit. detect signal plus pump-mode totals which
+    # are zero or cancel to within the accumulated roundoff of the
+    # contributing terms.
+    all(isfinite, w) || throw(ArgumentError("All signal frequencies must be finite."))
+    let wpumptuple = isnothing(nonlinear) ? (0.0,) : nonlinear.w
+        for wi in w
+            for (mi, wm) in enumerate(wpumpmodes)
+                mode = signalfreq.modes[mi]
+                terms = vcat(float(real(wi)),
+                    [float(real(mode[j]*wpumptuple[j])) for j in eachindex(wpumptuple)])
+                if isnumericallyzero(wi + wm, terms)
+                    throw(ArgumentError("hblinsolve cannot evaluate a mode at (numerically) zero total frequency (signal frequency plus pump mode frequency, here signal $(wi/(2*pi)) Hz with mode $(mode)) because the node flux basis represents voltages as v = im*w*phi. Zero-frequency small-signal analysis is not supported; to estimate a DC limit, evaluate a sequence of decreasing nonzero frequencies and verify that the requested network parameters converge. For frequency independent resistive networks the result at any nonzero frequency equals the DC limit."))
+                end
+            end
+        end
+    end
+
     # this is the first signal frequency. we will use it for various setup tasks
     wmodes = w[1] .+ wpumpmodes
     wmodesm = Diagonal(repeat(wmodes,outer=psc.Nnodes-1));
     wmodes2m = Diagonal(repeat(wmodes.^2,outer=psc.Nnodes-1));
-
-    Nfreq = prod(signalfreq.Nw)
-
-    AoLjbmindices, conjindicessorted = calcAoLjbmindices(
-        Amatrixindices, signalnm.Ljb, Nsignalmodes, cg.Nbranches, Nfreq
-    )
-
-    AoLjbm = calcAoLjbm2(phimatrix, 
-        Amatrixindices, signalnm.Ljb, 1, Nsignalmodes, cg.Nbranches
-    )
-
-    AoLjnm = signalnm.Rbnm'*AoLjbm*signalnm.Rbnm
 
     # extract the elements we need
     Nnodes = psc.Nnodes
@@ -753,6 +786,62 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     Cnm = signalnm.Cnm
     Gnm = signalnm.Gnm
     invLnm = signalnm.invLnm
+
+    #error if any component value contains symbolic variables which were not
+    # assigned numerical values in circuitdefs (values depending only on the
+    # symbolic frequency variable are ok).
+    checkcomponentvaluesdefined(psc.componentnames, signalnm.vvn,
+        symfreqvar)
+
+    # set up the modified nodal analysis (MNA), which assigns auxiliary branch
+    # current variables to the resistors with constant real values and to the
+    # mutually coupled inductor branches (whose inverse inductance entries
+    # would otherwise diverge as the coupling coefficient approaches one).
+    # eliminating the auxiliary variables recovers the nodal equations. no
+    # gauge fixing equations are needed because modes at (numerically) zero
+    # total frequency are not permitted.
+    checkstaticstiffnessvalues(psc.componenttypes, signalnm.vvn)
+    mnaindices = mnaresistorindices(psc.componenttypes, signalnm.vvn)
+    coupledbranches = mnacoupledbranches(signalnm.Mb)
+    Nauxmnar = length(mnaindices)*Nsignalmodes
+    Nauxmna = Nauxmnar + length(coupledbranches)*Nsignalmodes
+    Nnodalmna = (psc.Nnodes-1)*Nsignalmodes
+    Amna0, AmnaG = calcAmnasplit(mnaindices, psc.nodeindices, signalnm.vvn,
+        Nsignalmodes, psc.Nnodes)
+    Amna0 = mnapad(Amna0, length(coupledbranches)*Nsignalmodes)
+    AmnaG = mnapad(AmnaG, length(coupledbranches)*Nsignalmodes)
+    if !isempty(coupledbranches)
+        # the coupled inductor branches: recompute the inverse inductance
+        # matrix from the uncoupled inductors only and add the branch flux
+        # constitutive equations and Kirchhoff current law couplings, with
+        # unscaled branch currents as the auxiliary variables (Lscale = 1),
+        # matching the unscaled matrices of the linearized solver.
+        invLnm = calcinvLn(mnadropbranches(signalnm.Lb, coupledbranches),
+            cg.Rbn, Nsignalmodes)
+        AmnaL = calcAmnaind(coupledbranches, signalnm.Lb, signalnm.Mb,
+            cg.Rbn, Nsignalmodes, Nnodalmna + Nauxmnar,
+            Nnodalmna + Nauxmna, 1)
+        Amna0 = spaddkeepzeros(Amna0, AmnaL)
+    end
+    if !isempty(mnaindices)
+        Gnmp = calcGn(psc.componenttypes[mnaindices],
+            psc.nodeindices[:, mnaindices], signalnm.vvn[mnaindices],
+            Nsignalmodes, psc.Nnodes)
+        Gnm = mnasubtractpromoted(Gnm, Gnmp)
+    end
+    if Nauxmna > 0
+        Cnm = mnapad(Cnm, Nauxmna)
+        Gnm = mnapad(Gnm, Nauxmna)
+        invLnm = mnapad(invLnm, Nauxmna)
+        wmodesm = Diagonal(repeat(wmodes,
+            outer = (Nnodalmna + Nauxmna) ÷ Nsignalmodes))
+        wmodes2m = Diagonal(repeat(wmodes.^2,
+            outer = (Nnodalmna + Nauxmna) ÷ Nsignalmodes))
+    end
+    # the incidence matrix used for the sparsity structure and the pump
+    # modulation contribution gains empty columns for the auxiliary
+    # variables; the nodal Rbnm is kept for the source assembly.
+    Rbnmmna = hcat(Rbnm, spzeros(eltype(Rbnm), size(Rbnm,1), Nauxmna))
     portindices = signalnm.portindices
     portnumbers = signalnm.portnumbers
     portimpedanceindices = signalnm.portimpedanceindices
@@ -783,6 +872,9 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # calculate the source terms in the node basis
     bnm = transpose(Rbnm)*bbm
+    if Nauxmna > 0
+        bnm = vcat(bnm, zeros(eltype(bnm), Nauxmna, size(bnm, 2)))
+    end
     # return bnm
     # if there is a symbolic frequency variable, then we need to redo the noise
     # port calculation because calcnoiseportimpedanceindices() can't tell if a
@@ -806,36 +898,29 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     Cnmcopy = freqsubst(Cnm,wmodes,symfreqvar)
     Gnmcopy = freqsubst(Gnm,wmodes,symfreqvar)
     invLnmcopy = freqsubst(invLnm,wmodes,symfreqvar)
-    # Asparse = (AoLjnm + invLnmcopy + Gnmcopy + Cnmcopy)
-    Asparse = spaddkeepzeros(
-        spaddkeepzeros(
-            spaddkeepzeros(AoLjnm,invLnmcopy),Gnmcopy),Cnmcopy)
 
-    # make the index maps so we can efficiently add the sparse matrices
-    # together without allocations or changing the sparsity structure. 
-    Cnmindexmap = sparseaddmap(Asparse,Cnmcopy)
-    Gnmindexmap = sparseaddmap(Asparse,Gnmcopy)
-    invLnmindexmap = sparseaddmap(Asparse,invLnmcopy)
-    AoLjnmindexmap = sparseaddmap(Asparse,AoLjnm)
+    # Build the linearized system object: the sparsity structure of the
+    # system matrix Asparse = (AoLjnm + invLnmcopy + Gnmcopy + Cnmcopy) with
+    # stored numerical zeros, a plan for scattering the Josephson (pump
+    # modulation) contribution AoLjnm = Rbnm'*AoLjbm*Rbnm into it directly
+    # from the Fourier coefficients of cos(phi(t)) of the pump, index maps
+    # for the frequency dependent linear terms, and the precomputed pump
+    # modulation contribution and its complex conjugate. This shares the
+    # machinery used for the Jacobians of the nonlinear system, see
+    # HBLinearizedSystem and plancomplexjacobian. The per-frequency system
+    # matrices are assembled from this object with assemblesystemmatrix!.
+    lsys = HBLinearizedSystem(Amatrixindices, signalnm.Ljb, Rbnmmna,
+        Nsignalmodes, cg.Nbranches, phimatrix, invLnmcopy, Gnmcopy, Cnmcopy,
+        invLnm, Gnm, Cnm, invLnmfreqsubstindices, Gnmfreqsubstindices,
+        Cnmfreqsubstindices, Amna0, AmnaG, symfreqvar, wpumpmodes, Nnodes)
+    Asparse = lsys.Asparse
 
     portimpedances = [vvn[i] for i in portimpedanceindices]
     noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
 
-    # solve for Asparse once so we have something reasonable to
-    # factorize.
-    fill!(Asparse.nzval, zero(eltype(Asparse.nzval)))
-    sparseadd!(Asparse, 1, AoLjnm, AoLjnmindexmap)
-
-    # take the complex conjugate of the negative frequency terms in
-    # the capacitance and conductance matrices. substitute in the symbolic
-    # frequency variable if present.
-    sparseaddconjsubst!(Asparse, -1, Cnm, wmodes2m, Cnmindexmap,
-        real.(wmodesm) .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
-    sparseaddconjsubst!(Asparse, im, Gnm, wmodesm, Gnmindexmap,
-        real.(wmodesm) .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
-    sparseaddconjsubst!(Asparse, 1, invLnm,
-        Diagonal(ones(size(invLnm,1))), invLnmindexmap, real.(wmodesm) .< 0,
-        wmodesm, invLnmfreqsubstindices, symfreqvar)
+    # assemble Asparse once at the first frequency so we have something
+    # reasonable to factorize.
+    assemblesystemmatrix!(Asparse, lsys, wmodesm, wmodes2m)
 
 
     # make arrays for the voltages, node fluxes, scattering parameters,
@@ -945,10 +1030,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     batches = Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
     Threads.@sync for batch in batches
         Base.Threads.@spawn hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity, Zsensitivityadjoint,
-            QE, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, Asparse,
-            AoLjnm, invLnm, Cnm, Gnm, bnm,
-            AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
-            Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
+            QE, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint,
+            lsys, bnm,
             portindices, portimpedanceindices, noiseportimpedanceindices, sensitivityindices,
             portimpedances, noiseportimpedances, nodeindices, componenttypes,
             w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batch, factorization)
@@ -1089,29 +1172,27 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 end
 
 """
-    hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage, Asparse,
-        AoLjnm, invLnm, Cnm, Gnm, bnm,
-        AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
-        Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
+    hblinsolve_inner!(S, Snoise, QE, CM, nodeflux, voltage,
+        lsys, bnm,
         portindices, portimpedanceindices, noiseportimpedanceindices,
         portimpedances, noiseportimpedances, nodeindices, componenttypes,
         w, indices, wp, Nmodes, Nnodes, symfreqvar, wi, factorization)
 
 Solve the linearized harmonic balance problem for a subset of the frequencies
-given by `wi`. This function is thread safe in that different frequencies can
-be computed in parallel on separate threads.
+given by `wi`, assembling the per-frequency system matrices from the
+[`HBLinearizedSystem`](@ref) `lsys` with [`assemblesystemmatrix!`](@ref).
+This function is thread safe in that different frequencies can be computed
+in parallel on separate threads; `lsys` is only read.
 """
 function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
     Zsensitivityadjoint, QE, CM, nodeflux, nodefluxadjoint, voltage,
-    voltageadjoint, Asparse, AoLjnm, invLnm, Cnm, Gnm, bnm,
-    AoLjnmindexmap, invLnmindexmap, Cnmindexmap, Gnmindexmap,
-    Cnmfreqsubstindices, Gnmfreqsubstindices, invLnmfreqsubstindices,
+    voltageadjoint, lsys, bnm,
     portindices, portimpedanceindices, noiseportimpedanceindices,
     sensitivityindices, portimpedances, noiseportimpedances, nodeindices,
     componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization)
 
     Nports = length(portindices)
-    phin = zeros(Complex{Float64}, Nmodes*(Nnodes-1), Nmodes*Nports)
+    phin = zeros(Complex{Float64}, size(lsys.Asparse,1), Nmodes*Nports)
     # inputwave = Diagonal(zeros(Complex{Float64}, Nports*Nmodes))
     inputwave = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
     outputwave = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
@@ -1122,13 +1203,9 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
     sensitivityoutputvoltage = zeros(Complex{Float64},
         length(sensitivityindices)*Nmodes, Nports*Nmodes)
 
-    # operate on a copy of Asparse because it may be modified by multiple
-    # threads at the same time.
-    Asparsecopy = copy(Asparse)
-
-    # calculate the conjugate of AoLjnm
-    AoLjnmconj = copy(AoLjnm)
-    conj!(AoLjnmconj.nzval)
+    # operate on a copy of the system matrix because it is modified per
+    # frequency, potentially by multiple threads at the same time.
+    Asparsecopy = copy(lsys.Asparse)
 
     # if using the KLU factorization and sparse solver then make a 
     # factorization for the sparsity pattern.
@@ -1199,26 +1276,19 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
         ws = w[i]
         # wmodes = calcw(ws,indices,wp);
         wmodes = ws .+ wpumpmodes
-        wmodesm = Diagonal(repeat(wmodes, outer = Nnodes-1));
-        wmodes2m = Diagonal(repeat(wmodes.^2, outer = Nnodes-1));
+        # the repeat count covers the auxiliary variables of the modified
+        # nodal analysis augmentation as well as the node fluxes.
+        wouter = size(lsys.Asparse,1) ÷ length(wmodes)
+        wmodesm = Diagonal(repeat(wmodes, outer = wouter));
+        wmodes2m = Diagonal(repeat(wmodes.^2, outer = wouter));
 
-        # perform the operation below in a way that doesn't allocate
-        # significant memory, plus take the conjugates mentioned below.
-        # Asparsecopy = (AoLjnm + invLnm - im.*Gnm*wmodesm - Cnm*wmodes2m)
-
-        fill!(Asparsecopy.nzval, zero(eltype(Asparsecopy.nzval)))
-        sparseadd!(Asparsecopy, 1, AoLjnm, AoLjnmindexmap)
-
-        # take the complex conjugate of the negative frequency terms in
-        # the capacitance and conductance matrices. substitute in the symbolic
-        # frequency variable if present.
-        sparseaddconjsubst!(Asparsecopy, -1, Cnm, wmodes2m, Cnmindexmap,
-            real.(wmodesm) .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
-        sparseaddconjsubst!(Asparsecopy, im, Gnm, wmodesm, Gnmindexmap,
-            real.(wmodesm) .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
-        sparseaddconjsubst!(Asparsecopy, 1, invLnm,
-            Diagonal(ones(size(invLnm,1))), invLnmindexmap, real.(wmodesm) .< 0,
-            wmodesm, invLnmfreqsubstindices, symfreqvar)
+        # assemble the linearized system matrix at this frequency,
+        # Asparsecopy = (AoLjnm + invLnm + im.*Gnm*wmodesm - Cnm*wmodes2m),
+        # in a way that doesn't allocate significant memory, taking the
+        # complex conjugates of the negative frequency mode entries of the
+        # linear term matrices and substituting any symbolic frequency
+        # variables.
+        assemblesystemmatrix!(Asparsecopy, lsys, wmodesm, wmodes2m)
 
         # factor the sparse matrix
         # factorklu!(cache, Asparsecopy)
@@ -1231,12 +1301,13 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
         # of node voltage so node voltage is derivative of node flux which can
         # be accomplished in the frequency domain by multiplying by j*w.
         if !isempty(voltage)
-            voltage[:,:,i] .= im*wmodesm*phin
+            @views voltage[:,:,i] .= im .* wmodesm.diag[1:size(voltage,1)] .* phin[1:size(voltage,1),:]
         end
 
-        # copy the nodeflux for output
+        # copy the nodeflux for output. the auxiliary variables of the
+        # modified nodal analysis augmentation are internal.
         if !isempty(nodeflux)
-            copy!(view(nodeflux,:,:,i),phin)
+            copy!(view(nodeflux,:,:,i), view(phin, 1:size(nodeflux,1), :))
         end
 
         # calculate the scattering parameters
@@ -1263,21 +1334,10 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
 
         if (Nnoiseports > 0 || !isempty(nodefluxadjoint) || !isempty(voltageadjoint) || !isempty(Zsensitivityadjoint) || !isempty(Zadjoint)) && (!isempty(Snoise) || !isempty(QE) || !isempty(CM) || !isempty(nodefluxadjoint) || !isempty(voltageadjoint) || !isempty(Zsensitivityadjoint) || !isempty(Zadjoint))
 
-            # solve the nonlinear system with the complex conjugate of the pump
-            # modulation matrix
-            fill!(Asparsecopy.nzval, zero(eltype(Asparsecopy.nzval)))
-            sparseadd!(Asparsecopy, 1, AoLjnmconj, AoLjnmindexmap)
-
-            # take the complex conjugate of the negative frequency terms in
-            # the capacitance and conductance matrices. substitute in the symbolic
-            # frequency variable if present. 
-            sparseaddconjsubst!(Asparsecopy, -1, Cnm, wmodes2m, Cnmindexmap,
-                real.(wmodesm) .< 0, wmodesm, Cnmfreqsubstindices, symfreqvar)
-            sparseaddconjsubst!(Asparsecopy, im, Gnm, wmodesm, Gnmindexmap,
-                real.(wmodesm) .< 0, wmodesm, Gnmfreqsubstindices, symfreqvar)
-            sparseaddconjsubst!(Asparsecopy, 1, invLnm,
-                Diagonal(ones(size(invLnm,1))),invLnmindexmap, real.(wmodesm) .< 0,
-                wmodesm, invLnmfreqsubstindices, symfreqvar)
+            # solve the linear system with the complex conjugate of the
+            # pump modulation matrix
+            assemblesystemmatrix!(Asparsecopy, lsys, wmodesm, wmodes2m;
+                conjugatepump = true)
 
             # factor the sparse matrix
             tryfactorize!(cache, factorization, Asparsecopy)
@@ -1287,11 +1347,11 @@ function hblinsolve_inner!(S, Snoise, Ssensitivity, Z, Zadjoint, Zsensitivity,
 
             # copy the nodeflux adjoint for output
             if !isempty(nodefluxadjoint)
-                copy!(view(nodefluxadjoint,:,:,i), phin)
+                copy!(view(nodefluxadjoint,:,:,i), view(phin, 1:size(nodefluxadjoint,1), :))
             end
 
             if !isempty(voltageadjoint)
-                copy!(view(voltageadjoint,:,:,i), im*wmodesm*phin)
+                @views voltageadjoint[:,:,i] .= im .* wmodesm.diag[1:size(voltageadjoint,1)] .* phin[1:size(voltageadjoint,1),:]
             end
 
             # calculate the noise scattering parameters
@@ -1354,6 +1414,30 @@ including direct current (zero frequency) or flux pumping using a current
 source and a mutual inductor. Use `hblinsolve` to linearize the system of
 equations about the operating point found with `hbnlsolve`.
 
+The system is solved in a modified nodal analysis (MNA) formulation in the
+node flux basis: resistors with constant real values (including complex
+storage with zero imaginary part) and mutually coupled inductor branches
+are assigned auxiliary branch current variables with their constitutive
+relations kept as explicit equations, which is algebraically equivalent to
+the nodal formulation wherever the latter is well posed. Promoting the
+coupled inductors keeps the system matrix entries bounded as the coupling
+coefficient approaches one, where the nodal inverse inductance entries
+diverge as `1/(1-k^2)`. The system is nondimensionalized by the solver
+inductance scale `Z0/w0` (see [`calcsolverscale`](@ref)), the geometric
+mean port impedance over the geometric mean nonzero drive frequency, so
+the residual tolerance `ftol` is independent of the unit system and the
+auxiliary variables have magnitudes comparable to the node fluxes. One gauge fixing equation per floating
+inductive/Josephson subnetwork and zero-frequency mode makes circuits
+which are structurally singular at DC in a purely nodal formulation
+(nodes or subnetworks with no inductive path to ground) exactly solvable
+without workaround inductors; if the net direct current injected into
+such a subnetwork is nonzero, no periodic solution exists and an
+`ArgumentError` is thrown. The reported residual norms are those of the
+augmented system, a supplied `x0` may have either the node flux length or
+the augmented length, and the returned structure contains only the node
+fluxes and the original incidence matrix. Commensurate drive frequencies
+whose retained intermodulation products reach (numerically) zero
+frequency are rejected with an `ArgumentError`. See `src/mna.jl`.
 # Arguments
 - `w::NTuple{N,Number}`: a tuple containing the angular frequencies of the
     strong tones (or pumps) such as (2\\*pi\\*5.0e9,) for a single tone at 5
@@ -1396,6 +1480,18 @@ equations about the operating point found with `hbnlsolve`.
 - `x0 = nothing`: initial value for the nodeflux.
 - `ftol = 1e-8`: the function tolerance defined we considered converged,
     defined as norm(F)/norm(x) < ftol or norm(F,Inf) <= ftol.
+- `method = :quasinewton`: the nonlinear solution method. `:quasinewton`
+    iterates with the complex holomorphic Jacobian `Jx` only, an
+    approximation to the exact Jacobian. `:newton` solves the equivalent real
+    system with the exact real Jacobian, which restores quadratic convergence
+    near the solution, including for multi-tone problems: its mode coupling
+    indices include the couplings which alias back onto the sampled grid,
+    matching the cyclic Fourier transforms of the residual, and the
+    assembled Jacobian agrees with the matrix-free Jacobian-vector product
+    of `HBSystem` to machine precision. Both Jacobians are assembled
+    directly from the Fourier coefficients of `cos(phi(t))` with precomputed
+    plans (see [`plancomplexjacobian`](@ref) and
+    [`planrealjacobian`](@ref)).
 - `andersondepth::Integer = method == :newton ? 0 : 5`: the depth of the
     Anderson acceleration of the Newton fixed point iteration, the maximum
     number of previous iterates used for the extrapolation. Values less than
@@ -1561,6 +1657,10 @@ isapprox(out.nodeflux[:],
 # output
 true
 ```
+
+The system is solved in a modified nodal analysis formulation in the node
+flux basis; see the primary [`hbnlsolve`](@ref) docstring and `src/mna.jl`
+for details.
 """
 function hbnlsolve(w, sources, frequencies::Frequencies,
     indices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
@@ -1581,6 +1681,19 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         Base.depwarn(lazy"The `alphamin` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions.", :hbnlsolve; force=true)
     end
 
+    # reject non-finite physical inputs before mode construction and
+    # source assembly: the frequency canonicalization and source
+    # compatibility diagnostics compare against bounds built from these
+    # values, and non-finite inputs would otherwise reach them (an
+    # infinite value compares as within an infinite bound, and a NaN
+    # silently fails every comparison) or fail later without explanation.
+    all(isfinite, w) || throw(ArgumentError("All drive frequencies must be finite."))
+    for source in sources
+        if !isfinite(abs(source[:current]))
+            throw(ArgumentError("All source currents must be finite."))
+        end
+    end
+
     Nharmonics = frequencies.Nharmonics
     Nw = frequencies.Nw
     Nt = frequencies.Nt
@@ -1594,10 +1707,50 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     Amatrixmodes = indices.hbmatmodes
     Amatrixindices = indices.hbmatindices
     Amatrixconjindices = indices.hbconjmatindices
+    # The harmonic balance residual is computed with cyclic Fourier
+    # transforms, so its exact Jacobian couples modes whose differences
+    # alias back onto the sampled grid; hbmatind with `alias = true`
+    # includes those couplings (the sum couplings of hbconjmatind always
+    # alias). The exact real Jacobian of method = :newton is assembled from
+    # the aliased difference indices, so it is the exact derivative of the
+    # residual for multi-tone problems as well; this was established with
+    # the matrix-free Jacobian-vector products of HBSystem as the ground
+    # truth, which the assembled Jacobian matches to machine precision. The
+    # complex holomorphic Jacobian of method = :quasinewton deliberately
+    # keeps the truncated (non-aliased) indices: it is an approximation to
+    # the exact Jacobian either way, the truncation does not change its
+    # iteration counts in practice, and the aliased couplings would densify
+    # it and slow its factorization.
+    Amatrixindicesaliased = hbmatind(frequencies; alias = true)[2]
 
     # generate the frequencies of the modes
     Nmodes = length(modes)
     wmodes = calcmodefreqs(w,modes)
+
+    # only the all-zero mode tuple may represent zero frequency: its
+    # frequency is exactly 0.0 by construction, which makes the exact
+    # iszero classification in the gauge fixing and source compatibility
+    # machinery sound. any other retained tuple whose physical frequency
+    # cancels to zero, or to within roundoff of the magnitudes being
+    # combined (commensurate drive frequencies), would duplicate the DC
+    # coordinate with different conjugacy assumptions and produce
+    # vanishing capacitor and resistor stamps, so it is rejected with an
+    # explanation rather than allowed to form a (nearly) singular system.
+    for m in 1:Nmodes
+        if any(!iszero, modes[m])
+            terms = [float(real(modes[m][j]*w[j])) for j in eachindex(w)]
+            if isnumericallyzero(wmodes[m], terms)
+                throw(ArgumentError("The mode tuple $(modes[m]) has a "*
+                    "(numerically) zero physical frequency for the drive "*
+                    "frequencies $(w./(2*pi)) Hz, so it would duplicate "*
+                    "the DC coordinate: the drive frequencies are "*
+                    "commensurate at the retained intermodulation order. "*
+                    "Choose incommensurate drive frequencies (for example "*
+                    "by a small offset) or reduce the number of "*
+                    "harmonics."))
+            end
+        end
+    end
 
     # extract the elements we need
     Nnodes = psc.Nnodes
@@ -1624,6 +1777,24 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     else
         nm.Lmean
     end
+    # fail immediately, with the actual cause, if any component value
+    # contains symbolic variables which were not assigned numerical values
+    # in circuitdefs (values depending only on the symbolic frequency
+    # variable are frequency dependent components and are accepted).
+    checkcomponentvaluesdefined(componentnames, vvn, symfreqvar)
+
+    # nondimensionalize the system with the solver inductance scale Z0/w0
+    # (see calcsolverscale) instead of the mean inductance: the scaled
+    # entries are then of order one for circuits driven near their
+    # characteristic impedance and frequency, the auxiliary branch currents
+    # of the modified nodal analysis formulation have magnitudes comparable
+    # to the node fluxes even in circuits without inductors, and the
+    # residual tolerance ftol is independent of the unit system. The scale
+    # multiplies rows only, so the node fluxes and all physical outputs are
+    # unchanged. The local name Lmean is kept for continuity with the
+    # matrix and plan interfaces.
+    Lmean = calcsolverscale(w, componenttypes, vvn, portimpedanceindices,
+        Lmean)
     Lb = nm.Lb
 
     # find the indices associated with the components for which we will
@@ -1656,45 +1827,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # the plans.
     phimatrixtd, irfftplan, rfftplan = plan_applynl(phimatrix)
 
-    # initializing this with zeros seems to cause problems
-    # ideally i should initialize the vector of ones then convert to the
-    # matrix.
-    Amatrix = rand(Complex{Float64}, Nwtuple)
-    Nfreq = prod(size(Amatrix)[1:end-1])
-    AoLjbmindices, conjindicessorted = calcAoLjbmindices(Amatrixindices,
-        Ljb, Nmodes, Nbranches, Nfreq)
-
-    # right now i redo the calculation of AoLjbmindices, conjindicessorted in
-    # calcAoLjbm2
-    AoLjbm = calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes,
-        Nbranches)
-    AoLjbmcopy = calcAoLjbm2(Amatrix, Amatrixindices, Ljb, Lmean, Nmodes,
-        Nbranches)
-
-    # convert to a sparse node matrix. Note: I was having problems with type 
-    # instability when i used AoLjbm here instead of AoLjbmcopy. 
-    AoLjnmcopy = transpose(Rbnm)*AoLjbmcopy*Rbnm;
-
-    # this is for the conjugate terms
-
-    # initializing this with zeros seems to cause problems
-    # ideally i should initialize the vector of ones then convert to the
-    # matrix.
-    AoLjbmconjindices, conjconjindicessorted = calcAoLjbmindices(Amatrixconjindices,
-        Ljb, Nmodes, Nbranches, Nfreq)
-
-    # right now i redo the calculation of AoLjbmindices, conjindicessorted in
-    # calcAoLjbm2
-    AoLjbmconj = calcAoLjbm2(Amatrix, Amatrixconjindices, Ljb, Lmean, Nmodes,
-        Nbranches)
-    AoLjbmconjcopy = calcAoLjbm2(Amatrix, Amatrixconjindices, Ljb, Lmean, Nmodes,
-        Nbranches)
-
-    # convert to a sparse node matrix. Note: I was having problems with type 
-    # instability when i used AoLjbm here instead of AoLjbmcopy. 
-    AoLjnmconjcopy = transpose(Rbnm)*AoLjbmconjcopy*Rbnm;
-
-    # end section for conjugate terms
+    # the number of frequency entries per Josephson junction in phimatrix
+    Nfreq = prod(Nwtuple[1:end-1])
 
     x = if isnothing(x0)
         zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
@@ -1711,6 +1845,20 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # defined symbolically.
     Cnm = freqsubst(Cnmcopy, wmodes, symfreqvar)
     Gnm = freqsubst(Gnmcopy, wmodes, symfreqvar)
+    # Inductor branches which participate in mutual coupling are promoted
+    # to auxiliary branch current variables by the modified nodal analysis
+    # formulation below, instead of being eliminated through the inverse of
+    # the branch inductance matrix: the inverse inductance entries of the
+    # nodal formulation diverge as 1/(1-k^2) as the coupling coefficient k
+    # approaches one, while the branch inductance entries of the promoted
+    # constitutive equations remain bounded. The inverse inductance matrix
+    # is therefore recomputed from the uncoupled inductors only.
+    Mb = nm.Mb
+    coupledbranches = mnacoupledbranches(Mb)
+    if !isempty(coupledbranches)
+        invLnmcopy = calcinvLn(mnadropbranches(Lb, coupledbranches),
+            cg.Rbn, Nmodes)
+    end
     invLnm = freqsubst(invLnmcopy, wmodes, symfreqvar)
 
 
@@ -1727,120 +1875,154 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     rmul!(Gnm,Lmean)
     rmul!(invLnm,Lmean)
 
-    # Calculate an initial Jacobian in order to create the factorization object.
-    # This need to have the same sparsity structure as the actual Jacobian. If
-    # the numerical values are vastly different from the actual Jacobian this
-    # can cause a singular value error in klu! when we attempt to reuse the
-    # symbolic factorization. We perform the sparse matrix addition keeping
-    # numerical zeros (the usual sparse matrix addition converts these to
-    # structural zeros which would change the sparsity structure).
-    # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
-    # J = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnm, invLnm), im*Gnm*wmodesm), - Cnm*wmodes2m)
-    Jx = spaddkeepzeros(spaddkeepzeros(spaddkeepzeros(AoLjnmcopy, invLnm), im*Gnm), -Cnm)
+    # Set up the modified nodal analysis (MNA) formulation, which assigns
+    # auxiliary branch current variables to the resistors, keeping their
+    # constitutive relations as explicit equations, and adds one gauge
+    # fixing equation per floating component of the static flux-stiffness
+    # graph and zero-frequency mode. Eliminating the auxiliary variables
+    # recovers the nodal equations exactly, so the results are identical
+    # whenever the nodal formulation is well posed. Because the MNA
+    # equations are linear, the whole augmentation reduces to padding the
+    # incidence matrix with empty columns and folding the constant matrix
+    # Amna into the static linear term, after which the plan machinery,
+    # HBSystem, and the solvers operate on the augmented system unchanged.
+    # See mna.jl for details.
+    Rbnmout = Rbnm
+    Nnodal = (Nnodes-1)*Nmodes
+    # reject inductor and junction values for which the static
+    # classification and the matrix stamps are ill defined
+    checkstaticstiffnessvalues(componenttypes, vvn)
+    mnaindices = mnaresistorindices(componenttypes, vvn)
+    Nauxr = length(mnaindices)*Nmodes
+    Naux = Nauxr + length(coupledbranches)*Nmodes
+    # remove the promoted resistors from the conductance matrix, applying
+    # the same conjugation and scaling as for Gnm above.
+    if !isempty(mnaindices)
+        Gnmp = calcGn(componenttypes[mnaindices],
+            nodeindices[:, mnaindices], vvn[mnaindices], Nmodes, Nnodes)
+        conjnegfreq!(Gnmp, wmodes)
+        rmul!(Gnmp, Lmean)
+        Gnm = mnasubtractpromoted(Gnm, Gnmp)
+    end
+    # gauge fixing is based on the connected components of the static
+    # flux-stiffness graph (edges are inductors and Josephson junctions),
+    # which handles floating inductive and Josephson subnetworks as well
+    # as individually isolated nodes. before adding the gauge equations,
+    # check that the net direct current injected into each floating
+    # component is zero, because otherwise no periodic solution exists and
+    # the gauge equation would silently absorb the incompatible source
+    # into the flux reference.
+    floatingcomponents = calcstaticfluxcomponents(componenttypes,
+        nodeindices, vvn, Nnodes)
+    checkdcsourcecompatibility(floatingcomponents, bnm, wmodes, Nmodes,
+        nodenames)
+    gaugeindices = calcdcgaugeindices(floatingcomponents, wmodes, Nmodes)
+    Amna = calcAmna(mnaindices, nodeindices, vvn, gaugeindices, wmodes,
+        Nmodes, Nnodes, Lmean)
+    # pad with the coupled inductor auxiliary variables and add their
+    # constitutive equations and Kirchhoff current law couplings, which are
+    # real and frequency independent (see calcAmnaind).
+    Amna = mnapad(Amna, length(coupledbranches)*Nmodes)
+    AmnaL = calcAmnaind(coupledbranches, Lb, Mb, cg.Rbn, Nmodes,
+        Nnodal + Nauxr, Nnodal + Naux, Lmean)
+    Amna = spaddkeepzeros(Amna, AmnaL)
+    # pad the system matrices and vectors with the auxiliary variables.
+    # the incidence matrix gains empty columns so the branch fluxes and
+    # the Josephson junction terms are unaffected, and the constant MNA
+    # equations are folded into the static linear term, which is added
+    # with unit coefficient and is its own contribution to the Jacobian.
+    Rbnm = hcat(Rbnm, spzeros(eltype(Rbnm), size(Rbnm,1), Naux))
+    Rbnmt = sparse(transpose(Rbnm))
+    invLnm = spaddkeepzeros(mnapad(invLnm, Naux), Amna)
+    Cnm = mnapad(Cnm, Naux)
+    Gnm = mnapad(Gnm, Naux)
+    bnm = vcat(bnm, zeros(eltype(bnm), Naux))
+    wmodesm = Diagonal(repeat(wmodes,
+        outer = Nnodes-1+length(mnaindices)+length(coupledbranches)))
+    wmodes2m = Diagonal(repeat(wmodes.^2,
+        outer = Nnodes-1+length(mnaindices)+length(coupledbranches)))
+    if length(x) == Nnodal
+        # accept a nodal initial guess, materializing keyed arrays or
+        # other array types into a plain vector. transform it into the
+        # selected gauge (a physically irrelevant common DC shift of a
+        # floating component would otherwise enter the gauge fixing rows)
+        # and initialize the auxiliary currents consistently with the node
+        # fluxes, so the initial augmented residual equals the initial
+        # nodal Kirchhoff current law residual.
+        x = vcat(Vector{Complex{Float64}}(vec(x)),
+            zeros(Complex{Float64}, Naux))
+        mnagaugenormalize!(x, floatingcomponents, wmodes, Nmodes)
+        mnainitialauxall!(x, Amna, Nnodal, Nauxr, coupledbranches, Lb, Mb,
+            cg.Rbn, Nmodes, Lmean)
+    elseif length(x) == Nnodal + Naux
+        # accept a full augmented state, with the layout documented in
+        # calcAmna, applying the same gauge normalization and reconciling
+        # the auxiliary currents with the constitutive relations.
+        x = Vector{Complex{Float64}}(vec(x))
+        mnagaugenormalize!(x, floatingcomponents, wmodes, Nmodes)
+        mnainitialauxall!(x, Amna, Nnodal, Nauxr, coupledbranches, Lb, Mb,
+            cg.Rbn, Nmodes, Lmean)
+    else
+        throw(DimensionMismatch(lazy"The initial value x0 has length $(length(x)) but the solver expects $(Nnodal) node flux unknowns, optionally followed by $(Naux) auxiliary current unknowns."))
+    end
+    F = zeros(Complex{Float64}, Nnodal + Naux)
 
-    # make the arrays and datastructures we need for
-    # the non-allocating sparse matrix multiplication.
-    AoLjbmRbnm = AoLjbmcopy*Rbnm
-    xbAoLjbmRbnm = fill(false, size(AoLjbmcopy, 1))
-    AoLjnm = Rbnmt*AoLjbmRbnm
-    xbAoLjnm = fill(false, size(Rbnmt, 1))
+    modelayout = ModeLayout(selfconjmodes(frequencies), Nnodal + Naux)
+    Fr = complex_to_real(F, modelayout.isreal)
+    xr = complex_to_real(x, modelayout.isreal)
 
-    # make the index maps so we can add the sparse matrices together without
-    # memory allocations. 
-    AoLjnmindexmap = sparseaddmap(Jx, AoLjnm)
-    invLnmindexmap = sparseaddmap(Jx, invLnm)
-    Gnmindexmap = sparseaddmap(Jx, Gnm)
-    Cnmindexmap = sparseaddmap(Jx, Cnm)
-
-
-    # this section is for conjugate terms
-
-    Jxconj = AoLjnmconjcopy
-
-    # make the arrays and datastructures we need for
-    # the non-allocating sparse matrix multiplication.
-    AoLjbmconjRbnm = AoLjbmconjcopy*Rbnm
-    xbAoLjbmconjRbnm = fill(false, size(AoLjbmconjcopy, 1))
-    AoLjnmconj = Rbnmt*AoLjbmconjRbnm
-    xbAoLjnmconj = fill(false, size(Rbnmt, 1))
-
-    # make the index maps so we can add the sparse matrices together without
-    # memory allocations. 
-    AoLjnmconjindexmap = sparseaddmap(Jxconj, AoLjnmconj)
-
-
-    # build the function and Jacobian for solving the nonlinear system
-    function fjjconj!(F, Jx, Jxconj, x)
-        calcfjjconj!(F, Jx, Jxconj, x, wmodesm, wmodes2m, Rbnm, Rbnmt, invLnm,
-            Cnm, Gnm, bnm, Ljb, Ljbm, Nmodes,
-            Nbranches, Lmean, AoLjbmvector,
-            AoLjbm, AoLjnmindexmap, AoLjbmindices, conjindicessorted,
-            AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
-            AoLjbmconj, 
-            AoLjnmconjindexmap, AoLjbmconjindices, conjconjindicessorted,
-            AoLjnmconj, xbAoLjnmconj, AoLjbmconjRbnm, xbAoLjbmconjRbnm,
-            invLnmindexmap, Gnmindexmap, Cnmindexmap,
-            freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
-            phimatrixtd, irfftplan, rfftplan,
-        )
-        return nothing
+    # Build the Jacobian matrix and precomputed assembly plan for the chosen
+    # method. The plans map the Fourier coefficients of cos(phi(t)) and the
+    # frequency dependent linear term matrices directly into the nonzeros of
+    # the Jacobian, so no complex branch matrices, incidence matrix
+    # multiplications, or real conversions are performed while iterating.
+    # Only the machinery for the chosen method is built, unless the debug
+    # output is requested, in which case both are built so they can be
+    # compared.
+    Jx, complexjacobianplan = if method == :quasinewton || debugJacobian
+        plancomplexjacobian(Amatrixindices, Ljb, Lmean, Rbnm, Nmodes,
+            Nbranches, Nfreq, invLnm, Gnm, Cnm)
+    else
+        nothing, nothing
     end
 
+    Jr, realjacobianplan = if method == :newton || debugJacobian
+        planrealjacobian(Amatrixindicesaliased, Amatrixconjindices, Ljb,
+            Lmean,
+            Rbnm, Nmodes, Nbranches, Nfreq, invLnm, Gnm, Cnm, modelayout,
+            modelayout)
+    else
+        nothing, nothing
+    end
+
+    # the unified evaluation object for the nonlinear system: the residual,
+    # the matrix-free Jacobian-vector and Hessian-vector products, and the
+    # assembled Jacobians are all evaluated through it, in the complex or
+    # the equivalent real representation.
+    sys = HBSystem(Rbnm, Rbnmt, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
+        Ljb, Ljbm, Lmean, freqindexmap, conjsourceindices,
+        conjtargetindices, phimatrix, phimatrixtd, irfftplan, rfftplan,
+        modelayout, realjacobianplan, complexjacobianplan)
+
+    # the residual and the complex (holomorphic) Jacobian, an approximation
+    # to the exact Jacobian, for method == :quasinewton
     function fj!(F, Jx, x)
-        return fjjconj!(F, Jx, nothing, x)
-    end
-
-    # end section for conjugate terms
-
-    # use method=:quasinewton for complex
-    # and method=:newton for real
-    # should be able to use the same solver. turn on or off anderson
-    # 
-
-    modelayout = ModeLayout(selfconjmodes(frequencies),size(Jx,1));
-    Jr = complex_to_real_sum(Jx,Jxconj,modelayout,modelayout)
-    Fr = complex_to_real(F,modelayout.isreal)
-    xr = complex_to_real(x,modelayout.isreal)
-
-    # x = real_to_complex(xr,modelayout.isreal)
-
-    function fjreal!(Fr, Jr, xr)
-
-        # make sure to compute everything we need to do the conversions
-        # outside of the function and only use the in-place conversion
-        # functions inside of here.
-
-        # convert Fr, Jr, xr to complex
-        # oh, i think i only need to convert xr to complex x
-        real_to_complex!(x,xr,modelayout.isreal)
-
-        if !isnothing(Fr) && !isnothing(Jr)
-            # evaluate the complex function and Jacobian
-            fjjconj!(F, Jx, Jxconj, x)
-
-            # convert F, Jx, Jxconj to Fr, Jr. convert x to xr later
-            complex_to_real!(Fr,F,modelayout.isreal)
-            # make sure to zero the self conjugate (eg. DC) columns
-            complex_to_real_sum!(Jr,Jx,Jxconj,modelayout,modelayout;realcolscale_b=0)
-
-        elseif !isnothing(Fr)
-            # evaluate the complex function only
-            fjjconj!(F, nothing, nothing, x)
-            complex_to_real!(Fr,F,modelayout.isreal)
-        elseif !isnothing(Jr)
-            # evaluate the complex function and Jacobian
-            fjjconj!(nothing, Jx, Jxconj, x)
-
-            # make sure to zero the self conjugate (eg. DC) columns
-            complex_to_real_sum!(Jr,Jx,Jxconj,modelayout,modelayout;realcolscale_b=0)
-        end
-
-        # convert x to xr
-        complex_to_real!(xr,x,modelayout.isreal)
+        setpoint!(sys, x)
+        isnothing(F) || residual!(F, sys)
+        isnothing(Jx) || jacobian!(Jx, sys)
         return nothing
     end
 
-
+    # the residual and the exact Jacobian of the equivalent real system, for
+    # method == :newton
+    function fjreal!(Fr, Jr, xr)
+        setpoint!(sys, xr)
+        isnothing(Fr) || residual!(Fr, sys)
+        isnothing(Jr) || jacobian!(Jr, sys)
+        # write back the canonical real representation of the point
+        complex_to_real!(xr, sys.x, modelayout.isreal)
+        return nothing
+    end
 
     # diagnostics for each invocation of the nonlinear solver, stored in
     # the output so the solution process can be assessed after the run
@@ -1850,11 +2032,26 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # the branch of solutions, if any
     sourcefold = Ref(NaN)
 
-    # # use this for debugging purposes to return the function and the
-    # # Jacobian
+    # use this for debugging purposes to return the residual and Jacobian
+    # functions along with the ingredients from which the Jacobians are
+    # assembled, so reference implementations can be constructed, eg. in the
+    # tests.
     if debugJacobian
-        return (F=F,Jx=Jx,Jxconj=Jxconj,x=x,Fr=Fr,Jr=Jr,xr=xr,fj=fj!,
-            fjjconj=fjjconj!,fjreal=fjreal!)
+        return (F=F, x=x, Fr=Fr, xr=xr, Jx=Jx, Jr=Jr, fj=fj!, fjreal=fjreal!,
+            sys=sys, Nnodal=Nnodal, mnaindices=mnaindices,
+            gaugeindices=gaugeindices, floatingcomponents=floatingcomponents,
+            coupledbranches=coupledbranches,
+            complexjacobianplan=complexjacobianplan,
+            realjacobianplan=realjacobianplan, phimatrix=phimatrix,
+            cosphimatrix=(x -> (setpoint!(sys, x);
+                JosephsonCircuits._updatecosphimatrix!(sys);
+                sys.phimatrix)), modelayout=modelayout,
+            Amatrixindices=Amatrixindices,
+            Amatrixindicesaliased=Amatrixindicesaliased,
+            Amatrixconjindices=Amatrixconjindices, Ljb=Ljb, Ljbm=Ljbm,
+            Lmean=Lmean, Rbnm=Rbnm, invLnm=invLnm, Gnm=Gnm, Cnm=Cnm,
+            wmodesm=wmodesm, wmodes2m=wmodes2m, Nmodes=Nmodes,
+            Nbranches=Nbranches, Nfreq=Nfreq)
     end
 
     # solve the nonlinear system
@@ -1865,9 +2062,11 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 
     elseif method == :newton
 
-        # solve the real nonlinear system then convert back to complex
-        info = nlsolve!(fjreal!, Fr, Jr,xr; iterations = iterations, ftol = ftol,
-            andersondepth = andersondepth, factorization = factorization)
+        # solve the equivalent real nonlinear system with the exact real
+        # Jacobian then convert back to complex
+        info = nlsolve!(fjreal!, Fr, Jr, xr; iterations = iterations,
+            ftol = ftol, andersondepth = andersondepth,
+            factorization = factorization)
         real_to_complex!(x,xr,modelayout.isreal)
         real_to_complex!(F,Fr,modelayout.isreal)
         info
@@ -1885,8 +2084,29 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         @warn string(lazy"Solver did not converge.")
     end
 
-    nodeflux = x
     converged = info.converged
+
+    # validate the original, ungauged Kirchhoff current law equations
+    # directly by reconstructing their residuals from the augmented
+    # residual and the state (the gauge fixing equations add x[g] to the
+    # augmented residual of each gauge row g). the acceptance policy,
+    # including its block-relative infinity-norm tolerance and its
+    # rejection of non-finite residuals, is implemented and unit tested in
+    # mnavalidatekcl.
+    if converged && !isempty(gaugeindices)
+        setpoint!(sys, x)
+        residual!(F, sys)
+        kclok, normkcl, kcltol = mnavalidatekcl(F, x, gaugeindices,
+            Nnodal, bnm, ftol)
+        if !kclok
+            @warn "The original (ungauged) Kirchhoff current law equations are violated beyond the solver resolution at the returned solution, indicating that a gauge fixing equation absorbed an incompatibility, such as a net direct current injected into a floating subnetwork, into the arbitrary flux reference. Marking the solution as not converged." normkcl kcltol
+            converged = false
+        end
+    end
+
+    # remove the auxiliary variables so the output contains only the node
+    # fluxes
+    nodeflux = x[1:Nnodal]
 
     # the norm of the residual at the initial value, for the diagnostics
     normF0 = info.normresidual[1]
@@ -1906,7 +2126,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     outputwave = zeros(Complex{Float64}, Nports*Nmodes)
     portimpedances = [vvn[i] for i in portimpedanceindices]
     if !isempty(S)
-        calcinputoutput!(inputwave, outputwave, nodeflux, bnm/Lmean,
+        calcinputoutput!(inputwave, outputwave, nodeflux,
+            bnm[1:Nnodal]/Lmean,
             portimpedanceindices, portimpedanceindices, portimpedances,
             portimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
         calcscatteringmatrix!(S, inputwave, outputwave)
@@ -1925,176 +2146,10 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         S
     end
 
-    return NonlinearHB(w, frequencies, nodefluxout, Rbnm, Ljb, Lb, Ljbm,
+    return NonlinearHB(w, frequencies, nodefluxout, Rbnmout, Ljb, Lb, Ljbm,
         Nmodes, Nbranches, nodenames, portnumbers, modes, Sout, solverinfo)
 
 end
-
-"""
-    calcfjjconj!(F,
-        Jx,
-        Jxconj,
-        nodeflux::AbstractVector,
-        wmodesm::AbstractMatrix,
-        wmodes2m::AbstractMatrix,
-        Rbnm::AbstractMatrix,
-        Rbnmt::AbstractMatrix,
-        invLnm::AbstractMatrix,
-        Cnm::AbstractMatrix,
-        Gnm::AbstractMatrix,
-        bnm::AbstractVector,
-        Ljb::SparseVector,
-        Ljbm::SparseVector,
-        Nmodes::Int,
-        Nbranches::Int,
-        Lmean,
-        AoLjbmvector::AbstractVector,
-        AoLjbm, AoLjnmindexmap, AoLjbmindices, conjindicessorted,
-        AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
-        AoLjbmconj, AoLjnmconjindexmap, AoLjbmconjindices, conjconjindicessorted,
-        AoLjnmconj, xbAoLjnmconj, AoLjbmconjRbnm, xbAoLjbmconjRbnm,
-        invLnmindexmap, Gnmindexmap, Cnmindexmap,
-        freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
-        phimatrixtd, irfftplan, rfftplan,
-        )
-        
-Calculate the residual and the Jacobian. These are calculated with one
-function in order to reuse as much as possible.
-
-Leave off the type signatures on F, J, and Jconj because the solver will pass
-`nothing` if it only wants to calculate F, J, Jconj, or some subset.
-"""
-function calcfjjconj!(F,
-        Jx,
-        Jxconj,
-        nodeflux::AbstractVector,
-        wmodesm::AbstractMatrix,
-        wmodes2m::AbstractMatrix,
-        Rbnm::AbstractMatrix,
-        Rbnmt::AbstractMatrix,
-        invLnm::AbstractMatrix,
-        Cnm::AbstractMatrix,
-        Gnm::AbstractMatrix,
-        bnm::AbstractVector,
-        Ljb::SparseVector,
-        Ljbm::SparseVector,
-        Nmodes::Int,
-        Nbranches::Int,
-        Lmean,
-        AoLjbmvector::AbstractVector,
-        AoLjbm, AoLjnmindexmap, AoLjbmindices, conjindicessorted,
-        AoLjnm, xbAoLjnm, AoLjbmRbnm, xbAoLjbmRbnm,
-        AoLjbmconj,
-        AoLjnmconjindexmap, AoLjbmconjindices, conjconjindicessorted,
-        AoLjnmconj, xbAoLjnmconj, AoLjbmconjRbnm, xbAoLjbmconjRbnm,
-        invLnmindexmap, Gnmindexmap, Cnmindexmap,
-        freqindexmap, conjsourceindices, conjtargetindices, phimatrix,
-        phimatrixtd, irfftplan, rfftplan,
-        )
-
-    # convert from a node flux to a branch flux
-    phib = Rbnm*nodeflux
-
-    if !isnothing(F)
-
-        # convert the branch flux vector to a matrix with the terms arranged
-        # in the correct way for the inverse rfft including the appropriate
-        # complex conjugates.
-        phivectortomatrix!(phib[Ljbm.nzind], phimatrix, freqindexmap,
-            conjsourceindices, conjtargetindices, length(Ljb.nzval))
-
-        # apply the sinusoidal nonlinearity when evaluaing the function
-        applynl!(phimatrix, phimatrixtd, sin, irfftplan, rfftplan)
-
-        # convert the sinphimatrix to a vector
-        fill!(AoLjbmvector, 0)
-        AoLjbmvectorview = view(AoLjbmvector, Ljbm.nzind)
-        phimatrixtovector!(AoLjbmvectorview, phimatrix, freqindexmap,
-            conjsourceindices, conjtargetindices, length(Ljb.nzval))
-
-        for i in eachindex(AoLjbmvectorview)
-            AoLjbmvectorview[i] = AoLjbmvectorview[i] * (Lmean/Ljbm.nzval[i])
-        end
-        # we assume invLnm, Gnm, and Cnm have conjugated for any negative
-        # frequency outside of this function using conjnegfreq!. negative
-        # frequencies cannot occur in single tone harmonic balance (one
-        # dimensional RDFT due to conjugate symmetry), but can occur in
-        # multi-tone harmonic balance (multi-dimensional RDFT) due to the
-        # relative phases between the tones.
-        F .= Rbnmt*AoLjbmvector .+ invLnm*nodeflux .+ im*Gnm*wmodesm*nodeflux .- Cnm*wmodes2m*nodeflux .- bnm
-
-    end
-
-    # do the work common to the Jacobian and conjugate Jacobian
-    if !isnothing(Jx) || !isnothing(Jxconj)
-
-        # turn the phivector into a matrix again because applynl! overwrites
-        # the frequency domain data
-        phivectortomatrix!(phib[Ljbm.nzind], phimatrix, freqindexmap,
-            conjsourceindices, conjtargetindices, length(Ljb.nzval))
-
-        # apply a cosinusoidal nonlinearity when evaluating the Jacobian
-        applynl!(phimatrix, phimatrixtd, cos, irfftplan, rfftplan)
-
-    end
-
-
-    #calculate the Jacobian
-    if !isnothing(Jx)
-
-        # calculate  AoLjbm
-        updateAoLjbm2!(AoLjbm, phimatrix, AoLjbmindices, conjindicessorted,
-            Ljb, Lmean)
-
-        # convert to a sparse node matrix
-        # AoLjnm = Rbnmt*AoLjbm*Rbnm
-        # non allocating sparse matrix multiplication
-        spmatmul!(AoLjbmRbnm, AoLjbm, Rbnm, xbAoLjbmRbnm)
-        spmatmul!(AoLjnm, Rbnmt, AoLjbmRbnm, xbAoLjnm)
-
-        # calculate the Jacobian. If J is sparse, keep it sparse. 
-        # Jx .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
-        # the code below adds the sparse matrices together with minimal
-        # memory allocations and without changing the sparsity structure.
-        fill!(Jx, 0)
-        # we assume invLnm, Gnm, and Cnm have conjugated for any negative
-        # frequency outside of this function using conjnegfreq!. negative
-        # frequencies cannot occur in single tone harmonic balance (one
-        # dimensional RDFT due to conjugate symmetry), but can occur in
-        # multi-tone harmonic balance (multi-dimensional RDFT) due to the
-        # relative phases between the tones.
-        sparseadd!(Jx, AoLjnm, AoLjnmindexmap)
-        sparseadd!(Jx, invLnm, invLnmindexmap)
-        sparseadd!(Jx, im, Gnm, wmodesm, Gnmindexmap)
-        sparseadd!(Jx, -1, Cnm, wmodes2m, Cnmindexmap)
-    end
-
-    #calculate the conjugate part of the Jacobian
-    if !isnothing(Jxconj)
-
-        # calculate  AoLjbm
-        updateAoLjbm2!(AoLjbmconj, phimatrix, AoLjbmconjindices, conjconjindicessorted,
-            Ljb, Lmean)
-
-        # convert to a sparse node matrix
-        # AoLjnm = Rbnmt*AoLjbm*Rbnm
-        # non allocating sparse matrix multiplication
-        spmatmul!(AoLjbmconjRbnm, AoLjbmconj, Rbnm, xbAoLjbmconjRbnm)
-        spmatmul!(AoLjnmconj, Rbnmt, AoLjbmconjRbnm, xbAoLjnmconj)
-
-        # calculate the Jacobian. If J is sparse, keep it sparse. 
-        # J .= AoLjnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
-        # the code below adds the sparse matrices together with minimal
-        # memory allocations and without changing the sparsity structure.
-        fill!(Jxconj, 0)
-        sparseadd!(Jxconj, AoLjnmconj, AoLjnmconjindexmap)
-
-    end
-
-    return nothing
-end
-
-
 
 """
     calcAoLjbmindices(Amatrixindices, Ljb::SparseVector, Nmodes, Nbranches,

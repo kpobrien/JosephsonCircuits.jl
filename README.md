@@ -6,7 +6,7 @@
 )](https://github.com/kpobrien/JosephsonCircuits.jl/actions?query=workflow) [![PkgEval](https://juliaci.github.io/NanosoldierReports/pkgeval_badges/J/JosephsonCircuits.svg)](https://juliaci.github.io/NanosoldierReports/pkgeval_badges/J/JosephsonCircuits.html) [![Stable docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://josephsoncircuits.org/stable)
  [![Dev docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://josephsoncircuits.org/dev)
 
-[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) simulates the frequency domain behavior using a variant [1] of nodal analysis [2] and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
+[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) simulates the frequency domain behavior using a modified nodal analysis formulation in the flux basis [1,2], with resistors and mutually coupled inductors assigned auxiliary branch currents and floating inductive or Josephson subnetworks gauge fixed at DC, so nodes do not require an inductive path to ground) and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
 
 Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by capacitors with an imaginary capacitance or frequency dependent resistors. 
 
@@ -247,8 +247,6 @@ using Plots
 circuit = [
     ("P1","1","0",1),
     ("R1","1","0",R),
-    # a very large inductor so the DC node flux of this node isn't floating
-    ("L0","1","0",Lg), 
     ("C1","1","2",Cc),
     ("L1","2","3",Lr),
     ("C2","2","0",Cr),
@@ -267,7 +265,6 @@ circuit = [
 circuitdefs = Dict(
     Lj =>219.63e-12,
     Lr =>0.4264e-9,
-    Lg =>100.0e-9,
     Cc => 16.0e-15,
     Cj => 10.0e-15, 
     Cr => 0.4e-12,
@@ -408,8 +405,6 @@ l=10e-3
 circuit = [
     ("P1","1","0",1),
     ("R1","1","0",R),
-    # a very large inductor so the DC node flux of this node isn't floating
-    ("L0","1","0",Lg), 
     ("C1","1","2",Cc),
     ("L1","2","3",Lr),
     ("C2","2","0",Cr),
@@ -434,7 +429,6 @@ circuitdefs = Dict(
     Cj => 10.0e-15, 
     Lr =>0.4264e-9*1.25,
     Cr => 0.4e-12*1.25,
-    Lg => 100.0e-9,
     Cc => 0.048e-12,
     R => 50.0, 
     Ll => 34e-12, 
@@ -1044,7 +1038,7 @@ build_circuit()
 
 circuitdefs = Dict(
     kappa => 0.999,
-    Lg => 20.0e-9, # inductance to ground, required for solver
+    Lg => 20.0e-9, # inductance to ground. no longer required for the solver
     Rport => 50.0,
     C => capacitance,
     Lj => junction_inductance,

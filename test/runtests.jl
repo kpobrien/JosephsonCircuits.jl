@@ -59,6 +59,14 @@ using JosephsonCircuits
 
     include("realcomplexconv.jl")
 
+    include("complexjacobian.jl")
+
+    include("realjacobian.jl")
+
+    include("hbsystem.jl")
+
+    include("mna.jl")
+
     include("spiceraw.jl")
 
     include("spiceutils.jl")

@@ -303,8 +303,14 @@ using Test
 
     end
 
-    @testset "hbnlsolve simple testcase error" begin
+    @testset "hbnlsolve simple testcase dc" begin
 
+        # a port and resistor with no inductive path to ground used to make
+        # the nodal system matrix structurally singular when a DC mode was
+        # included, producing a NaN in the line search under the previous
+        # solver and a SingularException under the current one. with the
+        # modified nodal analysis formulation the DC node flux is gauge
+        # fixed and the circuit solves exactly.
         circuit = [("P1","1","0",1),("R1","1","0",50.0)]
         circuitdefs = Dict()
         Idc = 50e-5
@@ -312,22 +318,74 @@ using Test
         wp=2*pi*5.0*1e9
         Npumpmodes = 1
 
-        # # as of 2023-09-17 1.9.3 and older throws the first error and
-        # # 1.10.0-beta2 throws the second error
-        # @test_throws(
-        #     str -> isequal("SingularException(0)",str) || 
-        #     isequal("Unknown KLU error code: 2",str) ||
-        #     isequal("SingularException: matrix is singular; factorization failed. Zero pivot found at index 0",str),
-        #     JosephsonCircuits.hbnlsolve((wp,),(Npumpmodes,),[(mode=(1,),port=1,current=Ip),],
-        #         circuit,circuitdefs;dc=true,odd=true,even=false)
-        # )
+        out = JosephsonCircuits.hbnlsolve(
+            (wp,),
+            (Npumpmodes,),
+            [
+                (mode=(1,),port=1,current=Ip),
+            ],
+            circuit,circuitdefs;dc=true,odd=true,even=false)
+        @test out.solverinfo.converged
+        @test isapprox(out.nodeflux[1], 0.0, atol = 1e-15)
+        @test isapprox(im*out.nodeflux[2]*wp*JosephsonCircuits.phi0/(50),Ip)
+    end
 
-        @test_throws(
-            LinearAlgebra.SingularException(0),
-            JosephsonCircuits.hbnlsolve((wp,),(Npumpmodes,),[(mode=(1,),port=1,current=Ip),],
-                circuit,circuitdefs;dc=true,odd=true,even=false)
-        )
+    @testset "undefined symbolic component values" begin
 
+        # forgetting to assign a value to a symbolic variable in
+        # circuitdefs fails immediately with an ArgumentError naming the
+        # component and the undefined variable, instead of a downstream
+        # error about the symbolic frequency variable.
+        @variables Rv Ccv Ljv Cjv
+        circuit = [("P1","1","0",1),("R1","1","0",Rv),("C1","1","2",Ccv),
+            ("Lj1","2","0",Ljv),("C2","2","0",Cjv)]
+        circuitdefs = Dict(Ljv=>1000.0e-12, Cjv=>1000.0e-15, Rv=>50.0)
+        wp = (2*pi*4.75001*1e9,)
+        sources = [(mode=(1,),port=1,current=0.00565e-6)]
+        err = try
+            JosephsonCircuits.hbsolve(2*pi*(4.5:0.1:5.0)*1e9, wp, sources,
+                (2,), (2,), circuit, circuitdefs)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("C1", sprint(showerror, err))
+        @test occursin("Ccv", sprint(showerror, err))
+        @test occursin("circuitdefs", sprint(showerror, err))
+
+        # the same check protects hblinsolve directly
+        err2 = try
+            JosephsonCircuits.hblinsolve(2*pi*(4.5:0.1:5.0)*1e9, circuit,
+                circuitdefs)
+            nothing
+        catch e
+            e
+        end
+        @test err2 isa ArgumentError
+        @test occursin("Ccv", sprint(showerror, err2))
+
+        # frequency dependent values through symfreqvar are accepted, and
+        # a value mixing symfreqvar with an undefined variable is rejected
+        # naming both the component and the variable
+        @variables wsym Rundef
+        c2 = [("P1","1","0",1),("R1","1","0",50.0 + 0.0*wsym),
+            ("C1","1","0",100.0e-15),("L1","1","0",1.0e-9)]
+        out = JosephsonCircuits.hbnlsolve(wp, (1,), sources, c2, Dict();
+            symfreqvar = wsym)
+        @test out.solverinfo.converged
+        c3 = [("P1","1","0",1),("R1","1","0",Rundef/(1 + wsym*1e-12)),
+            ("C1","1","0",100.0e-15),("L1","1","0",1.0e-9)]
+        err3 = try
+            JosephsonCircuits.hbnlsolve(wp, (1,), sources, c3, Dict();
+                symfreqvar = wsym)
+            nothing
+        catch e
+            e
+        end
+        @test err3 isa ArgumentError
+        @test occursin("Rundef", sprint(showerror, err3))
+        @test occursin("R1", sprint(showerror, err3))
     end
 
     @testset "calcsources errors" begin

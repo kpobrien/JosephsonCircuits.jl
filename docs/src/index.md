@@ -6,7 +6,7 @@
 )](https://github.com/kpobrien/JosephsonCircuits.jl/actions?query=workflow) [![PkgEval](https://juliaci.github.io/NanosoldierReports/pkgeval_badges/J/JosephsonCircuits.svg)](https://juliaci.github.io/NanosoldierReports/pkgeval_badges/J/JosephsonCircuits.html) [![Stable docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://josephsoncircuits.org/stable)
  [![Dev docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://josephsoncircuits.org/dev)
 
-[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) simulates the frequency domain behavior using a variant [1] of nodal analysis [2] and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
+[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) simulates the frequency domain behavior using a modified nodal analysis formulation in the flux basis [1,2], with resistors and mutually coupled inductors assigned auxiliary branch currents and floating inductive or Josephson subnetworks gauge fixed at DC, so nodes do not require an inductive path to ground) and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
 
 Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by capacitors with an imaginary capacitance or frequency dependent resistors. 
 
@@ -22,7 +22,7 @@ As detailed in [6], we find excellent agreement with [Keysight ADS](https://www.
 
 # Installation:
 
-To install the latest release of the package, [install Julia using Juliaup](https://github.com/JuliaLang/juliaup), start Julia, and enter the following command:
+To install the latest release of the package, install Julia using [Juliaup](https://github.com/JuliaLang/juliaup), start Julia, and enter the following command:
 ```
 using Pkg
 Pkg.add("JosephsonCircuits")
@@ -49,8 +49,19 @@ Then check that you are running the latest version of the package with:
 Pkg.status()
 ```
 
+Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores. This can be done with the command line argument `--threads` or by setting the environmental variable `JULIA_NUM_THREADS`. See the [Julia documentation](https://docs.julialang.org/en/v1/manual/multi-threading) for the more details. Verify you are using the desired number of threads by running:
+```
+Threads.nthreads()
+```
+For context, the simulation times reported for the examples below use 16 threads on an AMD Ryzen 9 9950X system running Linux.
+
+The examples can be run in the command line (REPL) after starting Julia or you can run them in a Jupyter notebook with [IJulia](https://github.com/JuliaLang/IJulia.jl) or in Visual Studio Code with the [Julia extension](https://code.visualstudio.com/docs/languages/julia).
+
 # Usage:
-Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions described by the Josephson inductance `Lj`, mutual inductors described by the mutual coupling coefficient `K`, and resistors `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format), docstrings, and examples below for usage. Run the harmonic balance analysis using `hbnlsolve` to solve a nonlinear system at one operating point, `hblinsolve` to solve a linear (or linearized) system at one or more frequencies, or `hbsolve` to run both analyses. Add a question mark `?` in front of a function to access the docstring.
+Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions described by the Josephson inductance `Lj`, mutual inductors described by the mutual coupling coefficient `K`, and resistors `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format), docstrings, and examples below for usage. Run the harmonic balance analysis using [`hbnlsolve`](https://josephsoncircuits.org/stable/reference/#JosephsonCircuits.hbnlsolve-Union{Tuple{K},%20Tuple{N},%20Tuple{NTuple{N,%20Number},%20Any,%20JosephsonCircuits.Frequencies{N},%20JosephsonCircuits.FourierIndices{N},%20JosephsonCircuits.ParsedSortedCircuit,%20JosephsonCircuits.CircuitGraph,%20JosephsonCircuits.CircuitMatrices}}%20where%20{N,%20K}) to solve a nonlinear system at one operating point, [`hblinsolve`](https://josephsoncircuits.org/dev/reference/#JosephsonCircuits.hblinsolve-Union{Tuple{K},%20Tuple{Any,%20Any,%20Any}}%20where%20K) to solve a linear (or linearized) system at one or more frequencies, or [`hbsolve`](https://josephsoncircuits.org/dev/reference/#JosephsonCircuits.hbsolve-Union{Tuple{K},%20Tuple{M},%20Tuple{N},%20Tuple{Any,%20NTuple{N,%20Number},%20Vector,%20NTuple{M,%20Int64},%20NTuple{N,%20Int64},%20Any,%20Any}}%20where%20{N,%20M,%20K}) to run both analyses. Add a question mark `?` in front of a function to access the docstring. For example, type (don't copy-paste) the following to see the documentation for `hbsolve`:
+```
+?hbsolve
+```
 
 # Examples:
 ## Josephson parametric amplifier (JPA)
@@ -134,6 +145,11 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 
 
 ## Double-pumped Josephson parametric amplifier (JPA)
+
+<details>
+
+<summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -179,11 +195,18 @@ plot(
     ylabel="S11 (dB)",
 )
 ```
+
+</details>
+
+
 ```
   0.182720 seconds (12.70 k allocations: 713.087 MiB)
 ```
 
 and compare with WRspice
+<details>
+
+<summary>Code</summary>
 
 ```julia
 using XicTools_jll
@@ -200,6 +223,9 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     seriestype=:scatter)
 ```
 
+</details>
+
+
 ```
  15.782862 seconds (32.80 k allocations: 509.192 MiB, 0.39% gc time)
 ```
@@ -209,6 +235,10 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 ## Flux-pumped Josephson parametric amplifier (JPA)
 Circuit and parameters from [here](https://doi.org/10.1063/1.2964182
 ). Please note that three wave mixing (3WM) and flux-biasing are relatively untested, so you may encounter bugs. Please file issues or PRs.
+<details>
+
+<summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -217,8 +247,6 @@ using Plots
 circuit = [
     ("P1","1","0",1),
     ("R1","1","0",R),
-    # a very large inductor so the DC node flux of this node isn't floating
-    ("L0","1","0",Lg), 
     ("C1","1","2",Cc),
     ("L1","2","3",Lr),
     ("C2","2","0",Cr),
@@ -237,7 +265,6 @@ circuit = [
 circuitdefs = Dict(
     Lj =>219.63e-12,
     Lr =>0.4264e-9,
-    Lg =>100.0e-9,
     Cc => 16.0e-15,
     Cj => 10.0e-15, 
     Cr => 0.4e-12,
@@ -276,11 +303,18 @@ plot(
 )
 ```
 
+</details>
+
+
 ```
   0.015623 seconds (22.07 k allocations: 80.082 MiB)
 ```
 
 and compare with WRspice
+<details>
+
+<summary>Code</summary>
+
 ```julia
 using XicTools_jll
 
@@ -299,6 +333,9 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     seriestype=:scatter)
 ```
 
+</details>
+
+
 ```
 283.557011 seconds (26.76 k allocations: 7.205 GiB, 0.66% gc time)
 ```
@@ -306,6 +343,10 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 ![Flux pumped JPA simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/jpa_flux_pumped_WRspice.png)
 
 Simulate the JPA frequency as a function of DC bias current:
+<details>
+
+<summary>Code</summary>
+
 ```julia
 ws = 2*pi*(8.0:0.01:11.0)*1e9
 currentvals = (-20:0.1:20)*1e-5
@@ -336,6 +377,9 @@ plot(
 )
 ```
 
+</details>
+
+
 ```
 0.219279 seconds (3.27 M allocations: 639.981 MiB, 20.84% gc time)
 ```
@@ -343,9 +387,198 @@ plot(
 ![JPA frequency vs DC bias current](https://qce.mit.edu/JosephsonCircuits.jl/jpa_vs_bias_current.png)
 
 
+## SNAIL Parametric Amplifier
+Circuit parameters from [here](https://doi.org/10.1103/PhysRevApplied.10.054020). Notice that the resonance frequency is similar for pump-on and pump-off, indicating it is operating near the Kerr-free point.
+<details>
+
+<summary>Code</summary>
+
+```julia
+using JosephsonCircuits
+using Plots
+
+@variables R Cc Cj Lj Cr Lr Ll Ldc K Lg
+alpha = 0.29
+Z0 = 50
+w0 = 2*pi*8e9
+l=10e-3
+circuit = [
+    ("P1","1","0",1),
+    ("R1","1","0",R),
+    ("C1","1","2",Cc),
+    ("L1","2","3",Lr),
+    ("C2","2","0",Cr),
+    ("Lj1","3","0",Lj/alpha),
+    ("Cj1","3","0",Cj/alpha),
+    ("L2","3","4",Ll),
+    ("Lj2","4","5",Lj),
+    ("Cj2","4","5",Cj),
+    ("Lj3","5","6",Lj),
+    ("Cj3","5","6",Cj),
+    ("Lj4","6","0",Lj),
+    ("Cj4","6","0",Cj),
+    ("L3","7","0",Ldc), 
+    ("K1","L2","L3",K),
+    # a port with a very large resistor so we can apply the bias across the port
+    ("P2","7","0",2),
+    ("R2","7","0",1000.0),
+] 
+
+circuitdefs = Dict(
+    Lj => 60e-12,
+    Cj => 10.0e-15, 
+    Lr =>0.4264e-9*1.25,
+    Cr => 0.4e-12*1.25,
+    Cc => 0.048e-12,
+    R => 50.0, 
+    Ll => 34e-12, 
+    K => 0.999, # the inverse inductance matrix for K=1.0 diverges, so set K<1.0
+    Ldc => 0.74e-12,
+)
+
+# ws = 2*pi*(9.7:0.0001:9.8)*1e9
+# ws = 2*pi*(5.0:0.001:11)*1e9
+ws = 2*pi*(7.8:0.001:8.2)*1e9
+wp = (2*pi*16.00*1e9,)
+Ip = 4.4e-6
+# Idc = 140.3e-6
+Idc = 0.000159
+# add the DC bias and pump to port 2
+sourcespumpon = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=Ip)]
+sourcespumpoff = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=0.0)]
+Npumpharmonics = (16,)
+Nmodulationharmonics = (8,)
+@time jpapumpon = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
+@time jpapumpoff = hbsolve(ws, wp, sourcespumpoff, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
+
+p1 = plot(
+    jpapumpon.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        jpapumpon.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+    label="pump on",
+)
+
+plot!(
+    jpapumpoff.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        jpapumpoff.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    label="pump off",
+)
+
+p2 = plot(
+    jpapumpon.linearized.w/(2*pi*1e9),
+    angle.(
+        jpapumpon.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    ),
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+    label="pump on",
+)
+
+plot!(
+    jpapumpoff.linearized.w/(2*pi*1e9),
+    angle.(
+        jpapumpoff.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    ),
+    label="pump off",
+)
+plot(p1,p2,layout=(2,1))
+```
+
+</details>
+
+
+```
+  0.010345 seconds (16.74 k allocations: 40.025 MiB)
+  0.011252 seconds (16.68 k allocations: 39.985 MiB)
+```
+
+![SNAIL parametric amplifier simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/snail.png)
+
+
+and compare with WRspice
+<details>
+
+<summary>Code</summary>
+
+```julia
+using XicTools_jll
+
+# simulate the JPA in WRSPICE
+wswrspice=2*pi*(7.8:0.005:8.2)*1e9
+n = JosephsonCircuits.exportnetlist(circuit,circuitdefs);
+input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,[0.0,wp[1]],[Idc,2*Ip],[(0,1)],[(0,7),(0,7)];trise=10e-9,tstop=600e-9);
+
+@time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
+S11,S21=JosephsonCircuits.wrspice_calcS_paramp(output,wswrspice,n.Nnodes);
+
+# plot the output
+plot(
+    jpapumpon.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        jpapumpon.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+    label="JosephsonCircuits.jl",
+)
+
+plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
+    label="WRspice",
+    seriestype=:scatter)
+```
+
+</details>
+
+```
+2067.364975 seconds (149.73 k allocations: 29.873 GiB, 0.01% gc time)
+```
+
+![SNAIL parametric amplifier simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/snail_WRspice.png)
+
+
 ## Josephson traveling wave parametric amplifier (JTWPA)
 
 Circuit parameters from [here](https://www.science.org/doi/10.1126/science.aaa8525).
+<details>
+
+<summary>Code</summary>
 
 ```julia
 using JosephsonCircuits
@@ -472,6 +705,9 @@ p4=plot(ws/(2*pi*1e9),
 plot(p1, p2, p3, p4, layout = (2, 2))
 ```
 
+</details>
+
+
 ```
   2.959010 seconds (257.75 k allocations: 2.392 GiB, 0.21% gc time)
 ```
@@ -482,6 +718,10 @@ plot(p1, p2, p3, p4, layout = (2, 2))
 ## Floquet JTWPA
 
 Circuit parameters from [here](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306).
+<details>
+
+<summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -607,6 +847,9 @@ p4=plot(ws/(2*pi*1e9),
 plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
+</details>
+
+
 ```
   2.079267 seconds (456.63 k allocations: 1.997 GiB, 0.48% gc time)
 ```
@@ -617,6 +860,10 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 ## Floquet JTWPA with dissipation
 
 Dissipation due to capacitors with dielectric loss, parameterized by a loss tangent. Run the above code block to define the circuit then run the following:
+<details>
+
+<summary>Code</summary>
+
 ```julia
 results = []
 tandeltas = [1.0e-6,1.0e-3, 2.0e-3, 3.0e-3]
@@ -679,6 +926,9 @@ end
 plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
+</details>
+
+
 ```
   3.815835 seconds (470.00 k allocations: 2.303 GiB, 0.22% gc time)
   3.800166 seconds (470.59 k allocations: 2.310 GiB, 0.29% gc time)
@@ -690,6 +940,10 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 
 ## Flux-Driven Josephson Traveling-Wave Parametric Amplifier (JTWPA)
 Circuit and parameters from [here](https://doi.org/10.1103/PhysRevApplied.12.044051). Please note that three wave mixing (3WM) and flux-biasing are relatively untested, so you may encounter bugs. Please file issues or PRs.
+<details>
+
+<summary>Code</summary>
+
 ```julia
 using JosephsonCircuits
 using Plots
@@ -784,7 +1038,7 @@ build_circuit()
 
 circuitdefs = Dict(
     kappa => 0.999,
-    Lg => 20.0e-9, # inductance to ground, required for solver
+    Lg => 20.0e-9, # inductance to ground. no longer required for the solver
     Rport => 50.0,
     C => capacitance,
     Lj => junction_inductance,
@@ -857,16 +1111,404 @@ p4=plot(sol.linearized.w/(2*pi*1e9),
 plot(p1, p2, p3, p4, layout = (2, 2))
 ```
 
+</details>
+
+
 ```
  28.342059 seconds (1.59 M allocations: 1.637 GiB, 0.35% gc time)
 ```
 
 ![Flux driven TWPA simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/twpa_flux_driven.png)
 
+## Impedance-engineered JPA
+Circuit parameters of the lumped-element snake amplifier (LESA) from [here](https://arxiv.org/abs/2408.07861).
 
-# Performance tips:
+<details>
 
-Simulations of the linearized system can be effectively parallelized, so we suggest starting Julia with the number of threads equal to the number of physical cores. See the [Julia documentation](https://docs.julialang.org/en/v1/manual/multi-threading) for the procedure. Check how many threads you are using by calling `Threads.nthreads()`. For context, the simulation times reported for the examples above use 16 threads on an AMD Ryzen 9 7950X system running Linux.
+<summary>Code</summary>
+
+Utility functions
+```julia
+using JosephsonCircuits, Plots
+
+function calc_Lsnake(N,L1,L2,LJ,delta0)
+   return N/2*((L1+L2)*LJ+L1*L2*cos(delta0))/(LJ+(4*L1+L2)*cos(delta0))
+end
+
+"""
+    add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+
+Add a `snake` a tunable inductor made of two rf-SQUID arrays 
+in parallel as detailed in arXiv:2209.07757 and PhysRevLett.109.137003
+to the netlist contained in `circuit`. See also [`add_snake_squid!`](@ref).
+
+            <-----------Nstages------ ... -->
+             stage
+            <----->start_node+skip_nodes+2
+start_node o--Lj--o--L2--o--Lj- ... -o--L2--o
+           |      |      |           |      |
+           L1     L1     L1          L1     L1
+           |      |      |           |      |
+           o--L2--o--Lj--o--L2- ...  o--Lj--o end_node
+start_node     start_node
++skip_nodes+1  +skip_nodes+3
+
+# Arguments
+- `circuit`: Vector of tuples containing the netlist.
+- `start_node`: The first node of the transmission line.
+- `skip_nodes`: The number of nodes to skip before the device.
+- `L1`: Inductor of the inductance from upper to lower.
+- `L2`: Inductance of the upper/lower inductor.
+- `Lj`: Inductance of the Josephson junction.
+- `Nstages`: The number of stages (JJs) in the snake.
+
+# Returns
+- `end_node`: The last node of the transmission line.
+- `skip_nodes`: The number of nodes to skip after end_node. Always 0.
+"""
+function add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    # add examples, fix behavior for skip_nodes
+    # check that returned end_node skip_node behavior correct
+    
+    # add the SNAKE
+    j=start_node+skip_nodes
+    # add the first stage outside of the loop
+    # so we can keep the same pattern in the array
+    
+    # L1 linear inductor at the start of the stage
+    push!(circuit,("L$(start_node)_$(j+1)","$(start_node)","$(j+1)",L1))    
+    # the L1 linear inductor at the end of the stage
+    push!(circuit,("L$(j+2)_$(j+3)","$(j+2)","$(j+3)",L1))
+    # the JJ
+    push!(circuit,("Lj$(start_node)_$(j+2)","$(start_node)","$(j+2)",Lj))
+    # then L2
+    push!(circuit,("L$(j+1)_$(j+3)","$(j+1)","$(j+3)",L2))
+    # increase the current node number by 2
+    # since each cell adds 2 nodes
+    j+=2
+    for i in 2:Nstages
+        # the L1 linear inductor at the end of the stage
+        push!(circuit,("L$(j+2)_$(j+3)","$(j+2)","$(j+3)",L1))
+
+        # JJ and L1 swap places
+        if !iszero(mod(i,2)) # first cell and every odd cell
+            # JJ is first
+            push!(circuit,("Lj$(j)_$(j+2)","$(j)","$(j+2)",Lj))
+            # then L2
+            push!(circuit,("L$(j+1)_$(j+3)","$(j+1)","$(j+3)",L2))
+        else
+            # inductor is first
+            push!(circuit,("L$(j)_$(j+2)","$(j)","$(j+2)",L2))
+            # then JJ
+            push!(circuit,("Lj$(j+1)_$(j+3)","$(j+1)","$(j+3)",Lj))
+        end
+        # increase the current node number by 2
+        # since each cell adds 2 nodes
+        j+=2
+    end
+    skip_nodes = 0
+    end_node = j+1
+    return (end_node,skip_nodes)
+end
+
+"""
+    add_snake_squid!(circuit,start_node,skip_nodes,L1,L2,L3,Lj,Lb,K,R,Nstages)
+    
+Add a SQUID made of four `snakes` (tunable inductors made of two rf-SQUID arrays 
+in parallel) as detailed in arXiv:2209.07757 and PhysRevLett.109.137003
+to the netlist contained in `circuit`. See also [`add_snake!`](@ref).
+    
+     start_node o
+                |
+                |
+---snake-------------------snake---
+|                 -               |
+L3               ---              L3
+|                 |               |
+---snake--|       R     |--snake---
+          |       |     |
+          |  Port o     |
+          |       |     |
+          Lb  K   Lb    |
+          |       |     |
+          |       Lb  K Lb
+          |       |     |
+         ---     ---   ---
+          -       -     -
+
+# Arguments
+- `circuit`: Vector of tuples containing the netlist.
+- `start_node`: The first node of the transmission line.
+- `skip_nodes`: The number of nodes to skip before the device.
+- `L1`: Inductance of the inductor from upper to lower
+    branch of snake.
+- `L2`: Inductance of the upper/lower inductor.
+- `L3`: Inductance in series between the snakes.
+- `Lj`: Inductance of the Josephson junction.
+- `Lb`: Inductance of inductors on the bias lines.
+- `K`: Mutual inductance between the bias line to the SQUID
+- `R`: Resistance of the bias port.
+- `Nstages`: The number of stages (JJs) in the snake. The
+    snake SQUID will have 4*Nstages JJs.
+
+# Returns
+- `end_node`: The last node of the transmission line.
+- `skip_nodes`: The number of nodes to skip after end_node. Always 0.
+"""
+function add_snake_squid!(circuit,start_node,skip_nodes,L1,L2,L3,Lj,Lb,K,R,Nstages)
+    # add examples, fix behavior for skip_nodes
+    # check that returned end_node skip_node behavior correct
+    
+    # first snake
+    # start_node = 1
+    # skip_nodes = 0
+    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    j = end_node
+    
+    # linear inductor in between the snakes
+    push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L3))
+    j+=1
+    
+    # second snake
+    start_node = j
+    skip_nodes = 0
+    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    j = end_node
+    
+    # add the coupling to bias inductors Lb1
+    push!(circuit,("L$(j)_$(0)","$(j)","0",Lb))
+    push!(circuit,("Kb1","L$(j)_$(0)","Lb1",K))
+    j+=1
+    
+    # add the second arm of the snake
+    # third snake
+    start_node = 1
+    skip_nodes = j-start_node-1
+    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    j = end_node
+    
+    # linear inductor in between the snakes
+    push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L3))
+    j+=1
+    
+    # fourth snake
+    start_node = j
+    skip_nodes = 0
+    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    j = end_node
+
+    # add the coupling to bias inductors Lb2
+    push!(circuit,("L$(j)_$(0)","$(j)","0",Lb))
+    push!(circuit,("Kb2","L$(j)_$(0)","Lb2",K))
+    j+=1
+    
+    # bias across this port
+    push!(circuit,("P2","$(j)","$(0)",2))
+    push!(circuit,("R$(j)_$(0)","$(j)","$(0)",R))
+            
+    # add the two bias inductors
+    push!(circuit,("Lb1","$(j)","$(j+1)",Lb))
+    push!(circuit,("Lb2","$(j+1)","0",Lb))
+
+    end_node = j+1
+    skip_nodes = 0
+    return (end_node,skip_nodes)
+
+end
+
+"""
+    add_tline!(circuit,start_node,skip_nodes,theta,w0,wc,Z0)
+
+Add an LC ladder that approximates a transmission line to the netlist
+contained in `circuit`. The transmission line starts and ends with
+half an inductor.
+    
+start_node       start_node+skip_nodes+1
+          o--L/2--o- ... --L--- ... ---L/2--o
+                  |           |
+                  C           C
+                  |           |
+          o--------- ... ------- ... -------o
+                          Ncells-1
+# Arguments
+- `circuit`: Vector of tuples containing the netlist.
+- `start_node`: The first node of the transmission line.
+- `skip_nodes`: The number of nodes to skip before the second
+    node of the transmission line.
+- `theta`: The phase angle of the transmission line at frequency w0.
+- `Z0`: The characteristic impedance.
+- `w0`: The frequency at which the phase angle is defined.
+- `wc`: The cutoff frequency of the LC ladder. This should likely
+    be much higher than w0. This determines the number of cells
+    in the transmission line.
+
+# Returns
+- `end_node`: The last node of the transmission line.
+- `skip_nodes`: The number of nodes to skip after end_node. Always 0.
+"""
+function add_tline!(circuit,start_node,skip_nodes,theta,w0,wc,Z0)
+    # add examples, fix behavior for skip_nodes
+    # check that returned end_node skip_node behavior correct
+
+    # based on the cutoff frequency, operating frequency, and phase shift
+    # estimate the number of cells required.
+    # round up
+    Ncells = ceil(theta*wc/(2*w0))
+
+    # based on the rounded number of cells, revise the cutoff frequency
+    # and compute the capacitance and inductance per unit cell
+    wc = Ncells*2*w0/theta
+        
+    # inductance and capacitance per cell
+    L = 2*Z0/wc
+    C = 2/(wc*Z0)
+
+
+    j = start_node
+    for i = 1:Ncells
+        if i == 1
+            # start with half an inductor
+            push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L/2))
+            j+=1
+        end
+        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",C))
+        if i == Ncells
+            # end with half an inductor
+            push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L/2))
+        else
+            push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L))
+        end
+        # increment the index
+        j+=1
+    end
+    end_node = j
+    skip_nodes = 0
+    return (end_node,skip_nodes)
+end
+```
+
+LESA simulation
+```julia
+@variables R Lj L1 L2 L3 Lb K Lg C1 PLCC PLCL L22 C6 C7
+Nstages_snake = 10
+
+circuit = Tuple{String,String,String,Num}[]
+
+
+# add X1, a snake squid
+start_node = 1
+skip_nodes = 0
+end_node, skip_nodes = add_snake_squid!(circuit,start_node,skip_nodes,L1,L2,L3,Lj,Lb,K,R,Nstages_snake)
+j = end_node
+# and add C1, a capacitor to ground
+push!(circuit,("C$(start_node)_$(0)","$(start_node)","$(0)",C1))
+# add C6, a series capacitor
+push!(circuit,("C$(start_node)_$(j+1)","$(start_node)","$(j+1)",C6))
+j+=1
+
+# add PLC1, a parallel LC capacitor to ground
+push!(circuit,("C$(j)_$(0)","$(j)","$(0)",PLCC))
+push!(circuit,("L$(j)_$(0)","$(j)","$(0)",PLCL))
+# add C7, a series capacitor
+push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",C7))
+j+=1
+
+# end
+Z0 = 50.0
+w0 = 2*pi*4.9e9
+wc = 2*pi*150e9
+theta = 32.6*pi/180
+start_node = j
+skip_nodes = 0
+end_node, skip_nodes = add_tline!(circuit,start_node,skip_nodes,theta,w0,wc,Z0)
+j = end_node
+
+push!(circuit,("L$(j)_$(0)","$(j)","$(0)",L22))
+push!(circuit,("P1","$(j)","$(0)",1))
+push!(circuit,("R1","$(j)","$(0)",R))
+
+circuitdefs = Dict(
+    Lj => JosephsonCircuits.IctoLj(16e-6),
+    L1 => 2.6e-12,
+    L2 => 8.0e-12,
+    L3 => 5e-12,
+    Lg => 100.0e-9,
+    L22 => 1.320e-9,
+    C1 => 6.607e-12,
+    C6 => 0.743e-12,
+    C7 => 0.265e-12,
+    PLCC => 0.654e-12,
+    PLCL => 0.650e-9,
+    R => 50.0, 
+    Lb => 60e-12, 
+    K => 0.5*50/sqrt(60*60),
+)
+
+# ws = 2*pi*(1:0.01:10.0)*1e9
+ws = 2*pi*(4.0:0.01:5.8)*1e9
+wp = (2*pi*9.8001*1e9,)
+Ip = 0.247e-3
+Idc = 0.686e-3
+# add the DC bias and pump to port 2
+sourcespumpon = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=Ip)]
+Npumpharmonics = (8,)
+Nmodulationharmonics = (4,)
+@time sol = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
+    Npumpharmonics, circuit, circuitdefs, dc = true, threewavemixing=true,fourwavemixing=true,
+        switchofflinesearchtol=0.0,alphamin=1e-7,iterations=200,
+)
+
+plot(
+    sol.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        sol.linearized.S(
+            outputmode=(0,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ),
+    )),
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+    label="signal",
+    linewidth=2,
+    ylim=(-10,30),
+#     ylim=(19,22),
+#     xlim=(4.69,4.71),
+)
+
+plot!(
+    sol.linearized.w/(2*pi*1e9),
+    10*log10.(abs2.(
+        sol.linearized.S(
+            outputmode=(-1,),
+            outputport=1,
+            inputmode=(0,),
+            inputport=1,
+            freqindex=:
+        ).*sqrt.(abs.((wp.-sol.linearized.w)./sol.linearized.w)), # convert from photon number to power
+    )),
+    linewidth=2,
+    xlabel="Frequency (GHz)",
+    ylabel="Gain (dB)",
+    label="idler",
+)
+
+```
+
+</details>
+
+```
+  0.081631 seconds (34.78 k allocations: 67.609 MiB, 48.06% gc time)
+```
+
+![lumped-element snake amplifier (LESA) with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/lesa.png)
+
+
+# Contributing:
+
+We welcome contributions in the form of issues/bug reports or pull requests. This project uses the [MIT open source license](https://opensource.org/license/MIT). You retain the copyright to any code you contribute.
 
 # References:
 

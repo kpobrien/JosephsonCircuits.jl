@@ -82,6 +82,7 @@ include("parseinput.jl")
 include("graphproc.jl")
 include("capindmat.jl")
 include("matutils.jl")
+include("mna.jl")
 
 include("networkparamconversion.jl")
 include("networks.jl")
@@ -108,6 +109,9 @@ include("unwrap.jl")
 include("quantumoptics.jl")
 
 include("realcomplexconv.jl")
+include("complexjacobian.jl")
+include("realjacobian.jl")
+include("hbsystem.jl")
 
 # These are deprecated functions
 include("deprecated.jl")

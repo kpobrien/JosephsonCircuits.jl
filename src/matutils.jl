@@ -1078,6 +1078,57 @@ function checkissymbolic(a)
 end
 
 """
+    checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector,
+        symfreqvar)
+
+Check that every circuit component value is numeric, or symbolic only
+through the symbolic frequency variable `symfreqvar`. A value which is
+symbolic in any other variable indicates a variable which was not assigned
+a numerical value in the circuit definitions dictionary `circuitdefs`, and
+an informative `ArgumentError` is thrown naming the components and the
+undefined variables. Values which depend only on `symfreqvar` describe
+frequency dependent components and are resolved per frequency by
+[`freqsubst`](@ref), so they are accepted; a value which mixes `symfreqvar`
+with undefined variables is still rejected. Called by [`hbnlsolve`](@ref)
+and [`hblinsolve`](@ref) before any computation, so a forgotten entry in
+`circuitdefs` fails immediately with the actual cause instead of a
+downstream error about the symbolic frequency variable.
+
+# Examples
+```jldoctest
+julia> @variables w;JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, 1/(w*50.0)], w)
+
+julia> @variables w R2;try JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, JosephsonCircuits.Symbolics.value(R2)], w) catch e; occursin("R1 has the value R2", sprint(showerror, e)) end
+true
+```
+"""
+function checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector,
+    symfreqvar)
+    messages = String[]
+    for i in eachindex(vvn)
+        if checkissymbolic(vvn[i])
+            undefined = [v for v in Symbolics.get_variables(vvn[i])
+                if isnothing(symfreqvar) || !isequal(v, symfreqvar)]
+            if !isempty(undefined)
+                push!(messages, string("The component ", componentnames[i],
+                    " has the value ", vvn[i],
+                    ", which contains the symbolic variables [",
+                    join(string.(undefined), ", "), "] that were not "*
+                    "assigned numerical values."))
+            end
+        end
+    end
+    if !isempty(messages)
+        throw(ArgumentError(join(messages, " ")*" Add the missing "*
+            "variables to the circuit definitions dictionary "*
+            "circuitdefs. If a variable represents the frequency of a "*
+            "frequency dependent component, pass it as the symfreqvar "*
+            "keyword argument instead."))
+    end
+    return nothing
+end
+
+"""
     checkissymbolic(a::Num)
 
 Check if `a` is a symbolic variable.
@@ -1148,11 +1199,13 @@ function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
         for j in A.colptr[i]:(A.colptr[i+1]-1)
             if checkissymbolic(A.nzval[j])
                 if isnothing(symfreqvar)
-                    error(lazy"Set symfreqvar equal to the symbolic variable representing frequency.")
+                    error(lazy"The matrix contains the symbolic value $(A.nzval[j]). If this represents a frequency dependent component, set symfreqvar equal to the symbolic variable representing frequency. If it contains variables which should have numerical values, add them to the circuit definitions dictionary circuitdefs.")
                 else
-                    # println(valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1])))
-                    # println(typeof(valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))))
-                    nzval[j] = valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
+                    substituted = valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
+                    if checkissymbolic(substituted)
+                        error(lazy"The matrix entry $(A.nzval[j]) is still symbolic ($(substituted)) after substituting the symbolic frequency variable $(symfreqvar). Add the remaining variables to the circuit definitions dictionary circuitdefs.")
+                    end
+                    nzval[j] = substituted
                 end
             else
                 nzval[j] = A.nzval[j]
