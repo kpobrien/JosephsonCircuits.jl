@@ -163,8 +163,9 @@ end
             rfftplan)
 
         # the modified nodal analysis augmentation of the promoted resistor
-        mnaindices = JosephsonCircuits.mnaresistorindices(
-            psc.componenttypes, signalnm.vvn)
+        mnaindices = JosephsonCircuits.mnaportresistorindices(
+            psc.componenttypes, psc.nodeindices,
+            psc.mutualinductorbranchnames, signalnm.vvn)
         @test length(mnaindices) == 1
         Nauxmna = length(mnaindices)*Nsignalmodes
         Amna0, AmnaG = JosephsonCircuits.calcAmnasplit(mnaindices,

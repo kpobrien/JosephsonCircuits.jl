@@ -50,34 +50,49 @@ mnaresistance(value::Real) = value
 mnaresistance(value::Complex) = real(value)
 
 """
-    mnaresistorindices(componenttypes::Vector{Symbol}, vvn::Vector)
+    mnaportresistorindices(componenttypes::Vector{Symbol},
+        nodeindices::Matrix{Int}, mutualinductorbranchnames::Vector,
+        vvn::Vector)
 
-Return the indices of the components which will be assigned auxiliary branch
-current variables for MNA, as decided by [`ismnaresistance`](@ref).
+Return the sorted indices of the resistors which are promoted to auxiliary
+branch current variables for MNA: the port resistors (resistors sharing a
+branch with a port, see [`calcportimpedanceindices`](@ref)) whose value is
+accepted by [`ismnaresistance`](@ref). All other resistors remain as node
+conductances. Eliminating the auxiliary variable of a promoted resistor
+recovers its conductance stamp exactly, so the two forms are algebraically
+equivalent wherever the nodal form is well posed, and leaving the interior
+resistors in the conductance matrix keeps the augmented system small. The
+port resistors are promoted so their branch currents are explicit solver
+unknowns; the hybrid form of their constitutive equations is the stamp
+which generalizes to elements a conductance cannot express, such as
+voltage sources and scattering parameter blocks.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.mnaresistorindices([:P,:R,:C,:Lj,:R],[1,50.0,1e-12,1e-9,25.0])
-2-element Vector{Int64}:
- 2
- 5
-
-julia> JosephsonCircuits.mnaresistorindices([:P,:R,:C,:Lj],Any[1,50.0+0.0im,1e-12,1e-9])
+julia> JosephsonCircuits.mnaportresistorindices([:P,:R,:C,:Lj,:R],[2 2 2 3 3;1 1 3 1 1],[],[1,50.0,1e-12,1e-9,25.0])
 1-element Vector{Int64}:
  2
 
-julia> JosephsonCircuits.mnaresistorindices([:P,:C,:Lj],[1,1e-12,1e-9])
+julia> JosephsonCircuits.mnaportresistorindices([:P,:R,:C,:Lj],[2 2 2 3;1 1 3 1],[],Any[1,50.0+0.0im,1e-12,1e-9])
+1-element Vector{Int64}:
+ 2
+
+julia> JosephsonCircuits.mnaportresistorindices([:R,:C,:Lj],[2 2 3;1 3 1],[],[50.0,1e-12,1e-9])
 Int64[]
 ```
 """
-function mnaresistorindices(componenttypes::Vector{Symbol}, vvn::Vector)
+function mnaportresistorindices(componenttypes::Vector{Symbol},
+    nodeindices::Matrix{Int}, mutualinductorbranchnames::Vector,
+    vvn::Vector)
+    portimpedanceindices = calcportimpedanceindices(componenttypes,
+        nodeindices, mutualinductorbranchnames, vvn)
     mnaindices = Int[]
-    for i in eachindex(componenttypes)
-        if componenttypes[i] == :R && ismnaresistance(vvn[i])
+    for i in portimpedanceindices
+        if ismnaresistance(vvn[i])
             push!(mnaindices, i)
         end
     end
-    return mnaindices
+    return sort!(mnaindices)
 end
 
 """

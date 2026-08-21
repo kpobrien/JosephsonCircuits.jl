@@ -281,10 +281,10 @@ using Test
 
     @testset "hbnlsolve mna mixed numeric and symbolic resistors" begin
 
-        # a numeric resistor is promoted while a symbolic frequency
-        # dependent resistor is left in the conductance matrix. this
-        # exercises the partial promotion path where the promoted subset is
-        # subtracted from Gnm.
+        # the numeric port resistor is promoted while the symbolic
+        # frequency dependent interior resistor is left in the conductance
+        # matrix. this exercises the partial promotion path where the
+        # promoted subset is subtracted from Gnm.
         @variables w
         circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64,Num}}[]
         push!(circuit,("P1","1","0",1))
@@ -302,10 +302,10 @@ using Test
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
-        # only the numeric resistor is promoted
-        @test JosephsonCircuits.mnaresistorindices(
-            [:P,:R,:C,:Lj,:C,:R], Any[1, 50.0, 1e-13, 1e-9, 1e-12,
-                1.0e6 + 1e-3*w]) == [2]
+        # only the numeric port resistor is promoted
+        @test JosephsonCircuits.mnaportresistorindices(
+            [:P,:R,:C,:Lj,:C,:R], [2 2 2 3 3 3; 1 1 3 1 1 1], [],
+            Any[1, 50.0, 1e-13, 1e-9, 1e-12, 1.0e6 + 1e-3*w]) == [2]
 
         out = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
             ftol = 1e-12, symfreqvar = w)
@@ -453,12 +453,12 @@ using Test
             atol = 1e-12)
     end
 
-    @testset "hbnlsolve mna parallel promoted resistors" begin
+    @testset "hbnlsolve mna parallel interior resistors" begin
 
-        # several parallel promoted resistors on the same node pair are
-        # physically identical to a single resistor of the parallel value,
-        # and exercise multiple auxiliary currents sharing one nodal stamp
-        # with NR/(Nnodes-1) > 1.
+        # several parallel resistors on the same interior node pair are
+        # physically identical to a single resistor of the parallel value.
+        # interior resistors are not promoted, so these exercise the nodal
+        # conductance stamps alongside the promoted port resistor.
         function circuitwith(rs)
             circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
             push!(circuit,("P1","1","0",1))
@@ -486,8 +486,9 @@ using Test
         @test isapprox(Vector(many.nodeflux[:]), Vector(one_.nodeflux[:]),
             atol = 1e-9)
 
-        # a symbolic resistor in parallel with a promoted numeric resistor
-        # on an internal node pair converges with partial promotion
+        # a symbolic resistor in parallel with a numeric resistor on an
+        # internal node pair converges, with both in the conductance matrix
+        # and only the port resistor promoted
         @variables w
         cmix = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64,Num}}[]
         push!(cmix,("P1","1","0",1))
@@ -875,19 +876,26 @@ using Test
                 0.9955599960987674], atol = 1e-6)
     end
 
-    @testset "mnaresistorindices" begin
-        @test JosephsonCircuits.mnaresistorindices(
-            [:P,:R,:C,:Lj,:R],[1,50.0,1e-12,1e-9,25.0]) == [2,5]
-        @test JosephsonCircuits.mnaresistorindices(
-            [:P,:C,:Lj],[1,1e-12,1e-9]) == Int[]
-        # complex storage of a real resistance is promoted
-        @test JosephsonCircuits.mnaresistorindices(
-            [:R],Complex{Float64}[50.0]) == [1]
-        # nonzero imaginary part, zero, non-finite, and symbolic values are
-        # not promoted and remain in the conductance matrix
+    @testset "mnaportresistorindices" begin
+        # only resistors sharing a branch with a port are promoted; the
+        # interior resistor stays in the conductance matrix
+        @test JosephsonCircuits.mnaportresistorindices(
+            [:P,:R,:C,:Lj,:R],[2 2 2 3 3;1 1 3 1 1],[],
+            [1,50.0,1e-12,1e-9,25.0]) == [2]
+        # no ports, no promotion
+        @test JosephsonCircuits.mnaportresistorindices(
+            [:R,:C,:Lj],[2 2 3;1 3 1],[],[50.0,1e-12,1e-9]) == Int[]
+        # complex storage of a real resistance at a port is promoted; the
+        # port node order may be reversed relative to the resistor
+        @test JosephsonCircuits.mnaportresistorindices(
+            [:P,:R],[2 1;1 2],[],Any[1,Complex{Float64}(50.0)]) == [2]
+        # nonzero imaginary part and symbolic values at a port are not
+        # promoted and remain in the conductance matrix
         @variables Rsym
-        @test JosephsonCircuits.mnaresistorindices(
-            [:R,:R,:R,:R,:R],Any[50.0+1.0im,0.0,Inf,NaN,Rsym]) == Int[]
+        @test JosephsonCircuits.mnaportresistorindices(
+            [:P,:R],[2 2;1 1],[],Any[1,50.0+1.0im]) == Int[]
+        @test JosephsonCircuits.mnaportresistorindices(
+            [:P,:R],[2 2;1 1],[],Any[1,Rsym]) == Int[]
     end
 
     @testset "calcstaticfluxcomponents and calcdcgaugeindices" begin
@@ -938,7 +946,9 @@ using Test
         Lmean = 1e-9
         Nnodal = (Nnodes-1)*Nmodes
 
-        mnaindices = JosephsonCircuits.mnaresistorindices(componenttypes, vvn)
+        # promote the resistor by explicit index: calcAmna stamps whatever
+        # index set it is given, independent of the promotion policy
+        mnaindices = [1]
         Amna = JosephsonCircuits.calcAmna(mnaindices, nodeindices, vvn,
             Int[], wmodes, Nmodes, Nnodes, Lmean)
 
@@ -1137,8 +1147,9 @@ end
         w0 = 2pi*5e9
         wmodes = [-w0 + 2pi*4e9, 2pi*1e5, w0 + 2pi*4e9]
         Nnodal = (Nnodes-1)*Nmodes
-        mnaindices = JosephsonCircuits.mnaresistorindices(componenttypes, vvn)
-        @test mnaindices == [1, 2]
+        # promote both resistors by explicit index, independent of the
+        # promotion policy
+        mnaindices = [1, 2]
         Amna0, AmnaG = JosephsonCircuits.calcAmnasplit(mnaindices,
             nodeindices, vvn, Nmodes, Nnodes)
         Ntot = size(Amna0, 1)

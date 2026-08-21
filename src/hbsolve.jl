@@ -794,14 +794,15 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         symfreqvar)
 
     # set up the modified nodal analysis (MNA), which assigns auxiliary branch
-    # current variables to the resistors with constant real values and to the
+    # current variables to the port resistors with constant real values and to the
     # mutually coupled inductor branches (whose inverse inductance entries
     # would otherwise diverge as the coupling coefficient approaches one).
     # eliminating the auxiliary variables recovers the nodal equations. no
     # gauge fixing equations are needed because modes at (numerically) zero
     # total frequency are not permitted.
     checkstaticstiffnessvalues(psc.componenttypes, signalnm.vvn)
-    mnaindices = mnaresistorindices(psc.componenttypes, signalnm.vvn)
+    mnaindices = mnaportresistorindices(psc.componenttypes, psc.nodeindices,
+        psc.mutualinductorbranchnames, signalnm.vvn)
     coupledbranches = mnacoupledbranches(signalnm.Mb)
     Nauxmnar = length(mnaindices)*Nsignalmodes
     Nauxmna = Nauxmnar + length(coupledbranches)*Nsignalmodes
@@ -1871,7 +1872,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     rmul!(invLnm,Lmean)
 
     # Set up the modified nodal analysis (MNA) formulation, which assigns
-    # auxiliary branch current variables to the resistors, keeping their
+    # auxiliary branch current variables to the port resistors, keeping their
     # constitutive relations as explicit equations, and adds one gauge
     # fixing equation per floating component of the static flux-stiffness
     # graph and zero-frequency mode. Eliminating the auxiliary variables
@@ -1887,7 +1888,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # reject inductor and junction values for which the static
     # classification and the matrix stamps are ill defined
     checkstaticstiffnessvalues(componenttypes, vvn)
-    mnaindices = mnaresistorindices(componenttypes, vvn)
+    mnaindices = mnaportresistorindices(componenttypes, nodeindices,
+        psc.mutualinductorbranchnames, vvn)
     Nauxr = length(mnaindices)*Nmodes
     Naux = Nauxr + length(coupledbranches)*Nmodes
     # remove the promoted resistors from the conductance matrix, applying
