@@ -811,13 +811,11 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     Amna0 = mnapad(Amna0, length(coupledbranches)*Nsignalmodes)
     AmnaG = mnapad(AmnaG, length(coupledbranches)*Nsignalmodes)
     if !isempty(coupledbranches)
-        # the coupled inductor branches: recompute the inverse inductance
-        # matrix from the uncoupled inductors only and add the branch flux
+        # the coupled inductor branches: numericmatrices already excludes
+        # them from the inverse inductance matrix; add the branch flux
         # constitutive equations and Kirchhoff current law couplings, with
         # unscaled branch currents as the auxiliary variables (Lscale = 1),
         # matching the unscaled matrices of the linearized solver.
-        invLnm = calcinvLn(mnadropbranches(signalnm.Lb, coupledbranches),
-            cg.Rbn, Nsignalmodes)
         AmnaL = calcAmnaind(coupledbranches, signalnm.Lb, signalnm.Mb,
             cg.Rbn, Nsignalmodes, Nnodalmna + Nauxmnar,
             Nnodalmna + Nauxmna, 1)
@@ -1850,15 +1848,12 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # formulation below, instead of being eliminated through the inverse of
     # the branch inductance matrix: the inverse inductance entries of the
     # nodal formulation diverge as 1/(1-k^2) as the coupling coefficient k
-    # approaches one, while the branch inductance entries of the promoted
-    # constitutive equations remain bounded. The inverse inductance matrix
-    # is therefore recomputed from the uncoupled inductors only.
+    # approaches one (and do not exist at |k| = 1), while the branch
+    # inductance entries of the promoted constitutive equations remain
+    # bounded. numericmatrices already excludes the coupled branches from
+    # the inverse inductance matrix.
     Mb = nm.Mb
     coupledbranches = mnacoupledbranches(Mb)
-    if !isempty(coupledbranches)
-        invLnmcopy = calcinvLn(mnadropbranches(Lb, coupledbranches),
-            cg.Rbn, Nmodes)
-    end
     invLnm = freqsubst(invLnmcopy, wmodes, symfreqvar)
 
 

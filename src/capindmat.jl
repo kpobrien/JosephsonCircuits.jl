@@ -26,7 +26,9 @@ inductances. See also [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
 - `Ljbm::SparseVector`: vector of branch Josephson junction inductances with
     each element duplicated Nmodes times.
 - `Mb::SparseMatrixCSC`: the mutual inductance matrix in the branch basis.
-- `invLnm::SparseMatrixCSC`: the inverse inductance matrix in the node basis
+- `invLnm::SparseMatrixCSC`: the inverse inductance matrix in the node basis,
+    excluding the mutually coupled inductor branches, which the solvers
+    represent with auxiliary branch current variables (see mna.jl)
     with each element duplicated along the diagonal Nmodes times.
 - `Rbnm::SparseMatrixCSC{Int, Int}`: incidence matrix to convert between the
     node and branch bases.
@@ -216,7 +218,24 @@ function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
 
     # inverse nodal inductance matrix from branch inductance vector and branch
     # inductance matrix
-    invLnm = calcinvLn(Lb, Mb, cg.Rbn, Nmodes)
+    # A branch which participates in mutual coupling must host exactly one
+    # inductor: multiple inductors on a branch are combined into a single
+    # branch inductance before the coupling is applied, which
+    # misrepresents the coupled system.
+    checkcoupledbranchinductors(psc.componentnames, psc.componenttypes,
+        psc.nodeindices, cg.edge2indexdict, Mb)
+
+    # Inductor branches which participate in mutual coupling are
+    # represented in the solvers by auxiliary branch current variables of
+    # the modified nodal analysis formulation, with their un-inverted
+    # branch inductance matrix as explicit constitutive equations (see
+    # mna.jl), so they are excluded from the inverse inductance matrix
+    # here. This also keeps the matrix defined for perfectly coupled
+    # (|k| = 1) pairs, whose branch inductance matrix is singular and
+    # cannot be inverted; the MNA system remains well posed for physically
+    # well determined configurations.
+    invLnm = calcinvLn(mnadropbranches(Lb, mnacoupledbranches(Mb)),
+        cg.Rbn, Nmodes)
 
     # expand the size of the incidence matrix
     Rbnm = diagrepeat(cg.Rbn, Nmodes)

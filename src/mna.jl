@@ -95,7 +95,17 @@ static stiffness; a symbolic element whose zero-frequency stiffness vanishes
 or diverges will break this function. Resistors and capacitors contribute no
 edges because they provide no static flux stiffness in the node flux basis.
 Mutual inductances also contribute no edges because they couple branch fluxes
-without providing a galvanic connection.
+without providing a galvanic connection. With the coupled branches
+represented by auxiliary branch current variables (see
+[`calcAmnaind`](@ref)), a singular coupling matrix (a perfectly coupled
+pair, `|k| = 1`) does not add flux null directions: the constitutive
+equations constrain the branch fluxes rather than freeing them, so this
+graph classification of the flux gauge freedom remains sound. Any
+degeneracies which exist at perfect coupling live in the branch current
+space (a branch current combination which the surrounding circuit leaves
+physically undetermined) and produce a singular system caught at
+factorization. Mutual coupling between inductors sharing a single branch
+is rejected up front (see [`mnacoupledbranches`](@ref)).
 
 The DC flux of each returned "floating" component is defined only up to a
 common shift (a gauge degree of freedom). The modified nodal analysis
@@ -748,7 +758,18 @@ where the inverse inductance entries of the nodal formulation diverge as
 `1/(1-k^2)`.
 """
 function mnacoupledbranches(Mb::SparseMatrixCSC)
-    I, J, _ = findnz(Mb)
+    I, J, V = findnz(Mb)
+    for k in eachindex(I)
+        if I[k] == J[k] && !iszero(V[k])
+            throw(ArgumentError("Mutual coupling between inductors which "*
+                "share the same branch (the same pair of nodes) is not "*
+                "supported: the parallel inductors are combined into a "*
+                "single branch inductance before the coupling is applied, "*
+                "which silently misrepresents the coupled pair. Route one "*
+                "of the coupled inductors through an intermediate node so "*
+                "the two inductors occupy distinct branches."))
+        end
+    end
     return sort(unique(vcat(I, J)))
 end
 
@@ -788,8 +809,14 @@ entries are real and frequency independent. Eliminating the auxiliary
 variables recovers exactly the coupled part of the nodal inverse inductance
 stamp, `Lscale*Rbn'*inv(L)*Rbn` (unit tested as a Schur complement
 identity), so the formulation is algebraically equivalent to the nodal one
-wherever the branch inductance matrix is invertible, while its entries
-remain bounded as the coupling coefficient approaches one.
+wherever the branch inductance matrix is invertible. Its entries remain
+bounded as the coupling coefficient approaches one, and unlike the nodal
+formulation it remains well posed at perfect coupling (|k| = 1) whenever
+the surrounding circuit determines the branch currents. Coupling between
+inductors sharing a single branch is rejected with an informative error
+(see [`mnacoupledbranches`](@ref)); a coupling matrix which leaves some
+branch current combination physically undetermined would produce a
+singular system caught at factorization.
 """
 function calcAmnaind(coupledbranches::Vector{Int}, Lb::SparseVector,
     Mb::SparseMatrixCSC, Rbn::SparseMatrixCSC, Nmodes::Int,
@@ -852,7 +879,11 @@ Initialize the auxiliary branch current variables of the mutually coupled
 inductors consistently with the node fluxes in `x`, by solving the small
 dense branch inductance system `(L/Lscale)*u = Rbn*phi` over the coupled
 branches, which zeros their constitutive rows exactly. If the branch
-inductance matrix is singular the auxiliary variables are left unchanged.
+inductance matrix is singular (a perfectly coupled pair, `|k| = 1`) the
+auxiliary variables are left unchanged: the full system can still be well
+posed and solvable in that case, because the constitutive equations use
+the un-inverted branch inductance matrix, so only this warm start
+refinement is skipped.
 """
 function mnainitialauxind!(x::AbstractVector, coupledbranches::Vector{Int},
     Lb::SparseVector, Mb::SparseMatrixCSC, Rbn::SparseMatrixCSC,
@@ -922,4 +953,65 @@ function mnainitialauxall!(x::AbstractVector, Amna::SparseMatrixCSC,
     mnainitialauxind!(x, coupledbranches, Lb, Mb, Rbn, Nmodes,
         Nnodal + Nauxr, Lscale)
     return x
+end
+
+"""
+    checkcoupledbranchinductors(componentnames::Vector,
+        componenttypes::Vector{Symbol}, nodeindices::Matrix,
+        edge2indexdict::Dict, Mb::SparseMatrixCSC)
+
+Check that no branch which participates in mutual inductive coupling hosts
+more than one inductor. Inductors which share a branch (the same pair of
+nodes) are combined into a single branch inductance by reciprocal sum
+before the mutual coupling is applied - exact for uncoupled parallel
+inductors, which share the same branch flux, but a misrepresentation as
+soon as any inductor on the branch is mutually coupled: the correct
+effective mutual coupling of the merged branch differs from the stamped
+one (for an uncoupled `L2` sharing a branch with a coupled `L1`, by the
+current division factor `L2/(L1+L2)`). An informative `ArgumentError`
+naming the inductors is thrown, directing the user to route the inductors
+through intermediate nodes so each mutually coupled inductor occupies its
+own branch. Called by [`numericmatrices`](@ref) so both solvers and direct
+users of the circuit matrices are protected; see also
+[`mnacoupledbranches`](@ref), which rejects coupling between two inductors
+on the same branch (a diagonal mutual inductance entry).
+"""
+function checkcoupledbranchinductors(componentnames::Vector,
+    componenttypes::Vector{Symbol}, nodeindices::Matrix,
+    edge2indexdict::Dict, Mb::SparseMatrixCSC)
+
+    I, J, V = findnz(Mb)
+    coupled = Set{Int}()
+    for k in eachindex(I)
+        if !iszero(V[k])
+            push!(coupled, I[k])
+            push!(coupled, J[k])
+        end
+    end
+    isempty(coupled) && return nothing
+    counts = Dict{Int,Int}()
+    for i in eachindex(componenttypes)
+        if componenttypes[i] == :L
+            b = edge2indexdict[(nodeindices[1,i], nodeindices[2,i])]
+            if b in coupled
+                counts[b] = get(counts, b, 0) + 1
+            end
+        end
+    end
+    for (b, c) in counts
+        if c > 1
+            offending = [componentnames[i] for i in eachindex(componenttypes)
+                if componenttypes[i] == :L &&
+                edge2indexdict[(nodeindices[1,i], nodeindices[2,i])] == b]
+            throw(ArgumentError("The inductors "*join(offending, ", ")*
+                " share the same branch (the same pair of nodes), and at "*
+                "least one inductor on that branch participates in mutual "*
+                "coupling. Inductors on a shared branch are combined into "*
+                "a single branch inductance before the mutual coupling is "*
+                "applied, which misrepresents the coupled system. Route "*
+                "the inductors through intermediate nodes so each "*
+                "mutually coupled inductor occupies its own branch."))
+        end
+    end
+    return nothing
 end

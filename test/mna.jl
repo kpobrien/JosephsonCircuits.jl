@@ -793,21 +793,25 @@ using Test
 
     @testset "perfectly coupled inductors" begin
         # a perfectly coupled inductor pair (|k| = 1) makes the branch
-        # inductance matrix singular. individual element validation cannot
-        # detect this; the assembled matrix fails exactly as before this
-        # patch series. the pinned exception type is tied to the current
-        # KLU-based factorization backend and may legitimately change with
-        # a different backend; an informative package-owned error from a
-        # null-space analysis of the assembled static operator is noted as
-        # future work in the PR description.
+        # inductance matrix singular, so its inverse does not exist. the
+        # modified nodal analysis promotion keeps the branch inductance
+        # matrix un-inverted, so the system remains well posed whenever
+        # the surrounding circuit determines the branch currents.
         cir = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
         push!(cir,("P1","1","0",1)); push!(cir,("R1","1","0",:R))
         push!(cir,("L1","1","0",:L)); push!(cir,("L2","2","0",:L))
         push!(cir,("K1","L1","L2",:K)); push!(cir,("C1","2","0",:C))
         push!(cir,("Lj1","2","0",:Lj))
         d = Dict(:R=>50.0,:L=>1e-9,:K=>1.0,:C=>1e-12,:Lj=>1e-9)
-        @test_throws JosephsonCircuits.LinearAlgebra.SingularException hbnlsolve(
-            (2*pi*5.0001e9,),(4,),[(mode=(1,),port=1,current=1e-6)],cir,d)
+        # this previously threw a SingularException from the inverse of the
+        # singular branch inductance matrix in numericmatrices. with the
+        # coupled branches excluded from the inverse inductance matrix and
+        # represented by auxiliary branch currents with the un-inverted
+        # branch inductance matrix, the perfectly coupled pair is well
+        # posed and solves.
+        outk = hbnlsolve((2*pi*5.0001e9,),(4,),
+            [(mode=(1,),port=1,current=1e-6)],cir,d)
+        @test outk.solverinfo.converged
     end
 
     @testset "hbnlsolve large auxiliary scale acceptance" begin
@@ -1472,6 +1476,115 @@ end
             @test all(abs.(S) .<= 1 + 1e-6)
         end
 
+        # perfect coupling (k = 1 exactly): the nodal inverse inductance
+        # does not exist, but the promoted formulation keeps the branch
+        # inductance matrix un-inverted and the system remains well posed.
+        # the flux biased rf-SQUID scalar equation still holds, and the
+        # solution is continuous with the k -> 1 limit.
+        phi0 = JosephsonCircuits.phi0
+        L1 = 300.0e-12
+        Lj1v = 500.0e-12
+        ck1 = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
+        push!(ck1,("P1","1","0",1))
+        push!(ck1,("R1","1","0",:Rl))
+        push!(ck1,("L1","1","0",:Ll))
+        push!(ck1,("Lj1","1","0",:Lj))
+        push!(ck1,("C1","1","0",:Cs))
+        push!(ck1,("L2","2","0",:Ll))
+        push!(ck1,("P2","2","0",2))
+        push!(ck1,("R2","2","0",:Rl))
+        push!(ck1,("K1","L1","L2",:K1))
+        dk1 = Dict(:Rl=>50.0, :Ll=>L1, :Lj=>Lj1v, :Cs=>100.0e-15, :K1=>1.0)
+        Iflux = 2.0e-6
+        outk1 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (2,),
+            [(mode=(0,),port=2,current=Iflux)], ck1, dk1;
+            dc = true, odd = true, even = false, ftol = 1e-12)
+        @test outk1.solverinfo.converged
+        phik1 = real(outk1.nodeflux[1])
+        @test isapprox(phi0*phik1 + (L1*phi0/Lj1v)*sin(phik1), L1*Iflux,
+            rtol = 1e-10)
+        # linearized solve at k = 1
+        ws = 2*pi*(4.5:0.25:5.0)*1e9
+        hbk1 = JosephsonCircuits.hbsolve(ws, (2*pi*4.75001*1e9,),
+            [(mode=(1,),port=1,current=1.0e-6),
+             (mode=(1,),port=2,current=20.0e-6)], (2,), (4,), ck1, dk1)
+        @test all(isfinite, hbk1.linearized.S)
+
+        # mutual coupling between inductors sharing a single branch is
+        # rejected with an informative error, because the parallel
+        # inductors are combined into one branch inductance before the
+        # coupling is applied, which silently misrepresents the pair
+        csame = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
+        push!(csame,("P1","1","0",1))
+        push!(csame,("R1","1","0",:Rl))
+        push!(csame,("L1","1","0",:Ll))
+        push!(csame,("L2","1","0",:Ll))
+        push!(csame,("C1","1","0",:Cs))
+        push!(csame,("K1","L1","L2",:K1))
+        errsb = try
+            JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (1,),
+                [(mode=(1,),port=1,current=1.0e-6)], csame,
+                Dict(:Rl=>50.0, :Ll=>L1, :Cs=>100.0e-15, :K1=>0.5))
+            nothing
+        catch e
+            e
+        end
+        @test errsb isa ArgumentError
+        @test occursin("same branch", sprint(showerror, errsb))
+
+        # an uncoupled inductor sharing a branch with a coupled inductor
+        # is also rejected: the merged branch inductance misrepresents the
+        # effective mutual coupling (by the current division factor)
+        cmixed = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
+        push!(cmixed,("P1","1","0",1))
+        push!(cmixed,("R1","1","0",:Rl))
+        push!(cmixed,("L1","1","0",:Ll))
+        push!(cmixed,("L2","1","0",:Ll))
+        push!(cmixed,("L3","2","0",:Ll))
+        push!(cmixed,("P2","2","0",2))
+        push!(cmixed,("R2","2","0",:Rl))
+        push!(cmixed,("C1","1","0",:Cs))
+        push!(cmixed,("K1","L1","L3",:K1))
+        errmx = try
+            JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (1,),
+                [(mode=(1,),port=1,current=1.0e-6)], cmixed,
+                Dict(:Rl=>50.0, :Ll=>L1, :Cs=>100.0e-15, :K1=>0.5))
+            nothing
+        catch e
+            e
+        end
+        @test errmx isa ArgumentError
+        @test occursin("L1", sprint(showerror, errmx))
+        @test occursin("L2", sprint(showerror, errmx))
+        @test occursin("mutual", sprint(showerror, errmx))
+
+        # uncoupled parallel inductors on a shared branch remain supported
+        # and combine by reciprocal sum: two 2L inductors in parallel are
+        # equivalent to a single inductor L
+        function parcircuit(split::Bool)
+            c = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
+            push!(c,("P1","1","0",1))
+            push!(c,("R1","1","0",:Rl))
+            if split
+                push!(c,("L1","1","0",:L2x))
+                push!(c,("L2","1","0",:L2x))
+            else
+                push!(c,("L1","1","0",:Lx))
+            end
+            push!(c,("Lj1","1","0",:Lj))
+            push!(c,("C1","1","0",:Cs))
+            return c
+        end
+        dp = Dict(:Rl=>50.0, :Lx=>L1, :L2x=>2*L1, :Lj=>Lj1v, :Cs=>100.0e-15)
+        o1 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (2,),
+            [(mode=(1,),port=1,current=2.0e-6)], parcircuit(true), dp;
+            ftol = 1e-12)
+        o2 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (2,),
+            [(mode=(1,),port=1,current=2.0e-6)], parcircuit(false), dp;
+            ftol = 1e-12)
+        @test o1.solverinfo.converged && o2.solverinfo.converged
+        @test isapprox(o1.nodeflux[:], o2.nodeflux[:], atol = 1e-10)
+
         # the flux-pumping regression: a floating loop biased through a
         # mutual inductor at dc still solves with a coupled branch promoted
         circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
@@ -1490,6 +1603,112 @@ end
             [(mode=(1,),port=1,current=1.0e-6)], circuit, circuitdefs;
             dc = true, odd = true, even = true, ftol = 1e-10)
         @test out.solverinfo.converged
+    end
+
+    @testset "junction and inductor on a shared branch" begin
+
+        # a Josephson junction and a linear inductor between the same two
+        # nodes share a branch flux, and their currents add in the
+        # Kirchhoff current law equations: the physical parallel
+        # combination (an rf-SQUID). These tests lock the correctness of
+        # this configuration, including with dc and microwave currents
+        # simultaneously and with the shared inductor promoted as a
+        # mutually coupled branch.
+        phi0 = JosephsonCircuits.phi0
+        L = 300.0e-12
+        Lj = 500.0e-12
+        C = 100.0e-15
+        Rl = 50.0
+        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
+        push!(circuit,("P1","1","0",1))
+        push!(circuit,("R1","1","0",:Rl))
+        push!(circuit,("L1","1","0",:Ll))
+        push!(circuit,("Lj1","1","0",:Lj))
+        push!(circuit,("C1","1","0",:Cs))
+        circuitdefs = Dict(:Rl=>Rl, :Ll=>L, :Lj=>Lj, :Cs=>C)
+
+        # dc bias: the node flux satisfies the scalar rf-SQUID equation
+        # Idc = (phi0/L)*phi + (phi0/Lj)*sin(phi)
+        Idc = 1.0e-6
+        out = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (1,),
+            [(mode=(0,),port=1,current=Idc)], circuit, circuitdefs;
+            dc = true, odd = true, even = false, ftol = 1e-12)
+        @test out.solverinfo.converged
+        phidc = real(out.nodeflux[1])
+        @test isapprox(phi0*phidc/L + phi0*sin(phidc)/Lj, Idc,
+            rtol = 1e-10)
+
+        # linearized about the dc bias: S11 equals the lossless resonator
+        # with the parallel effective inductance
+        # Leff = 1/(1/L + cos(phidc)/Lj), with the port resistor as the
+        # scattering reference
+        ws = 2*pi*(3.03:0.5:7.9)*1e9
+        hb = JosephsonCircuits.hbsolve(ws, (2*pi*5.0e9,),
+            [(mode=(0,),port=1,current=Idc)], (1,), (1,), circuit,
+            circuitdefs; dc = true, threewavemixing = true,
+            fourwavemixing = false)
+        # linearize the analytic model about the operating point hbsolve
+        # itself found, so the comparison is self consistent with its
+        # convergence tolerance
+        phidclin = real(hb.nonlinear.nodeflux[1])
+        Leff = 1/(1/L + cos(phidclin)/Lj)
+        for (i, w) in enumerate(ws)
+            ZLC = 1/(1/(im*w*Leff) + im*w*C)
+            S11a = (ZLC - Rl)/(ZLC + Rl)
+            @test isapprox(hb.linearized.S[1,1,1,1,i], S11a, atol = 1e-12)
+        end
+
+        # simultaneous dc and weak microwave drive: the fundamental
+        # response matches the linear response at the effective inductance
+        # to first order
+        Irf = 5.0e-9
+        out2 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (4,),
+            [(mode=(0,),port=1,current=Idc),
+             (mode=(1,),port=1,current=Irf)], circuit, circuitdefs;
+            dc = true, odd = true, even = true, ftol = 1e-12)
+        @test out2.solverinfo.converged
+        w = 2*pi*5.0e9
+        Z = 1/(1/Rl + 1/(im*w*Leff) + im*w*C)
+        @test isapprox(im*w*out2.nodeflux[2]*phi0, Irf*Z, rtol = 1e-4)
+
+        # the shared inductor promoted as a mutually coupled branch: a
+        # flux-biased rf-SQUID satisfies
+        # phi0*phi + (L1*phi0/Lj)*sin(phi) - M*Iflux = 0, since the dc
+        # flux line current is the full drive (resistors carry no direct
+        # current in the periodic steady state)
+        k = 0.6
+        M = k*L
+        circuit2 = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
+        push!(circuit2,("P1","1","0",1))
+        push!(circuit2,("R1","1","0",:Rl))
+        push!(circuit2,("L1","1","0",:Ll))
+        push!(circuit2,("Lj1","1","0",:Lj))
+        push!(circuit2,("C1","1","0",:Cs))
+        push!(circuit2,("L2","2","0",:Ll))
+        push!(circuit2,("P2","2","0",2))
+        push!(circuit2,("R2","2","0",:Rl))
+        push!(circuit2,("K1","L1","L2",:K1))
+        circuitdefs2 = Dict(:Rl=>Rl, :Ll=>L, :Lj=>Lj, :Cs=>C, :K1=>k)
+        Iflux = 2.0e-6
+        out3 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (2,),
+            [(mode=(0,),port=2,current=Iflux)], circuit2, circuitdefs2;
+            dc = true, odd = true, even = false, ftol = 1e-12)
+        @test out3.solverinfo.converged
+        phif = real(out3.nodeflux[1])
+        @test isapprox(phi0*phif + (L*phi0/Lj)*sin(phif), M*Iflux,
+            rtol = 1e-10)
+
+        # two junctions on the same branch are rejected (an existing
+        # conservative guard in the branch vector construction)
+        circuit3 = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
+        push!(circuit3,("P1","1","0",1))
+        push!(circuit3,("R1","1","0",:Rl))
+        push!(circuit3,("Lj1","1","0",:Lj))
+        push!(circuit3,("Lj2","1","0",:Lj))
+        push!(circuit3,("C1","1","0",:Cs))
+        @test_throws Exception JosephsonCircuits.hbnlsolve((2*pi*5.0e9,),
+            (1,), [(mode=(1,),port=1,current=1.0e-6)], circuit3,
+            circuitdefs)
     end
 
 end
