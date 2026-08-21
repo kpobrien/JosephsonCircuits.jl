@@ -127,44 +127,6 @@ using JosephsonCircuits, LinearAlgebra, Test
         end
     end
 
-    @testset "complex_to_real_sum" begin
-        for (rmask, cmask, mmul, nmul, p) in CASES
-            m, n = length(rmask)*mmul, length(cmask)*nmul
-            rl, cl = JosephsonCircuits.ModeLayout(rmask, m), JosephsonCircuits.ModeLayout(cmask, n)
-            A = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, p)
-            B = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, p)
-            xc = canon(rand(ComplexF64, n), cl)
-            M = JosephsonCircuits.complex_to_real_sum(A, B, rl, cl)
-            @test M == JosephsonCircuits.complex_to_real(A, rl, cl) + JosephsonCircuits.complex_to_real(B, rl, cl; conj_input = true)
-            @test M * JosephsonCircuits.complex_to_real(xc, cl.isreal) ≈ JosephsonCircuits.complex_to_real(A*xc + B*conj(xc), rl.isreal)
-            # degenerate cases collapse to the single-matrix forms
-            @test JosephsonCircuits.complex_to_real_sum(A, JosephsonCircuits.SparseArrays.spzeros(ComplexF64, m, n), rl, cl) == JosephsonCircuits.complex_to_real(A, rl, cl)
-            @test JosephsonCircuits.complex_to_real_sum(JosephsonCircuits.SparseArrays.spzeros(ComplexF64, m, n), B, rl, cl) ==
-                  JosephsonCircuits.complex_to_real(B, rl, cl; conj_input = true)
-            # in-place, merge path
-            S = JosephsonCircuits.complex_to_real_sum(A, B, rl, cl); fill!(JosephsonCircuits.SparseArrays.nonzeros(S), 0)
-            @test JosephsonCircuits.complex_to_real_sum!(S, A, B, rl, cl) == M
-            # in-place, shared-pattern fast path
-            Bs = shared(A, rand(ComplexF64, JosephsonCircuits.SparseArrays.nnz(A)))
-            Ms = JosephsonCircuits.complex_to_real_sum(A, Bs, rl, cl); fill!(JosephsonCircuits.SparseArrays.nonzeros(Ms), 0)
-            @test JosephsonCircuits.complex_to_real_sum!(Ms, A, Bs, rl, cl) ==
-                  JosephsonCircuits.complex_to_real(A, rl, cl) + JosephsonCircuits.complex_to_real(Bs, rl, cl; conj_input = true)
-            # both paths agree on the same inputs
-            Bc = copy(Bs)                              # same pattern, not the same arrays
-            @test JosephsonCircuits.complex_to_real_sum!(copy(Ms), A, Bc, rl, cl) == JosephsonCircuits.complex_to_real_sum!(copy(Ms), A, Bs, rl, cl)
-            # independent scales
-            kw = (realrowscale_a = 0.5, realcolscale_a = 0.25,
-                  realrowscale_b = 2.0, realcolscale_b = 0.0)
-            ref = complex_to_real_ref(A, rl, cl; rs = 0.5, cs = 0.25) +
-                  complex_to_real_ref(B, rl, cl; conj_input = true, rs = 2.0, cs = 0.0)
-            @test JosephsonCircuits.complex_to_real_sum(A, B, rl, cl; kw...) == ref
-            @test JosephsonCircuits.complex_to_real_sum!(copy(S), A, B, rl, cl; kw...) == ref
-            @test JosephsonCircuits.complex_to_real_sum!(copy(Ms), A, Bs, rl, cl; kw...) ==
-                  complex_to_real_ref(A, rl, cl; rs = 0.5, cs = 0.25) +
-                  complex_to_real_ref(Bs, rl, cl; conj_input = true, rs = 2.0, cs = 0.0)
-            @test JosephsonCircuits.SparseArrays.nnz(JosephsonCircuits.complex_to_real_sum(A, B, rl, cl; kw...)) == JosephsonCircuits.SparseArrays.nnz(M)   # zero scale keeps structure
-        end
-    end
 
     # @testset "allocation-free in-place" begin
     #     m = n = 400
@@ -172,19 +134,14 @@ using JosephsonCircuits, LinearAlgebra, Test
     #     A = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.02); B = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.02)
     #     Bs = shared(A, rand(ComplexF64, JosephsonCircuits.SparseArrays.nnz(A)))
     #     Ar = JosephsonCircuits.complex_to_real(A, rl, rl); C = copy(A)
-    #     S = JosephsonCircuits.complex_to_real_sum(A, B, rl, rl); Ss = JosephsonCircuits.complex_to_real_sum(A, Bs, rl, rl)
     #     xc = rand(ComplexF64, n); xr = JosephsonCircuits.complex_to_real(xc, rl.isreal)
     #     # warm up every method that is tested below
     #     JosephsonCircuits.complex_to_real!(Ar, A, rl, rl); JosephsonCircuits.complex_to_real!(Ar, A, rl, rl; conj_input = true, realcolscale = 0.5)
-    #     JosephsonCircuits.real_to_complex!(C, Ar, rl, rl); JosephsonCircuits.complex_to_real_sum!(S, A, B, rl, rl)
-    #     JosephsonCircuits.complex_to_real_sum!(Ss, A, Bs, rl, rl; realcolscale_a = 0.5)
     #     JosephsonCircuits.complex_to_real!(xr, xc, rl.isreal); JosephsonCircuits.real_to_complex!(xc, xr, rl.isreal); JosephsonCircuits.is_complex_to_real_pattern(Ar, A, rl, rl)
 
     #     @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rl, rl)) == 0
     #     @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rl, rl; conj_input = true, realcolscale = 0.5)) == 0
     #     @test (@allocated JosephsonCircuits.real_to_complex!(C, Ar, rl, rl)) == 0
-    #     @test (@allocated JosephsonCircuits.complex_to_real_sum!(S, A, B, rl, rl)) == 0
-    #     @test (@allocated JosephsonCircuits.complex_to_real_sum!(Ss, A, Bs, rl, rl; realcolscale_a = 0.5)) == 0
     #     @test (@allocated JosephsonCircuits.is_complex_to_real_pattern(Ar, A, rl, rl)) == 0
     # end
 
@@ -197,7 +154,6 @@ using JosephsonCircuits, LinearAlgebra, Test
         @test_throws DimensionMismatch JosephsonCircuits.complex_to_real!(JosephsonCircuits.SparseArrays.spzeros(rl.rdim+1, cl.rdim), A, rl, cl)
         @test_throws DimensionMismatch JosephsonCircuits.real_to_complex!(A, JosephsonCircuits.SparseArrays.spzeros(rl.rdim, cl.rdim+2), rl, cl)
         @test_throws DimensionMismatch JosephsonCircuits.real_to_complex(JosephsonCircuits.SparseArrays.spzeros(rl.rdim, cl.rdim+2), rl, cl)
-        @test_throws DimensionMismatch JosephsonCircuits.complex_to_real_sum(A, JosephsonCircuits.SparseArrays.sprand(ComplexF64, m-1, n, 0.2), rl, cl)
         @test !JosephsonCircuits.is_complex_to_real_pattern(JosephsonCircuits.complex_to_real(A + JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.2), rl, cl), A, rl, cl)
         @test !JosephsonCircuits.is_complex_to_real_pattern(JosephsonCircuits.complex_to_real(A, rl, cl), A + JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.2), rl, cl)
     end
@@ -214,9 +170,6 @@ using JosephsonCircuits, LinearAlgebra, Test
                   JosephsonCircuits.complex_to_real(A, rl, cl; conj_input = true, realcolscale = 0.5)
             @test JosephsonCircuits.complex_to_real!(JosephsonCircuits.complex_to_real(A, mask), A, mask; realrowscale = 2) ==
                   JosephsonCircuits.complex_to_real(A, rl, cl; realrowscale = 2)
-            @test JosephsonCircuits.complex_to_real_sum(A, B, mask) == JosephsonCircuits.complex_to_real_sum(A, B, rl, cl)
-            @test JosephsonCircuits.complex_to_real_sum!(JosephsonCircuits.complex_to_real_sum(A, B, mask), A, B, mask; realcolscale_b = 0) ==
-                  JosephsonCircuits.complex_to_real_sum(A, B, rl, cl; realcolscale_b = 0)
             Ar = JosephsonCircuits.complex_to_real(A, mask)
             @test JosephsonCircuits.real_to_complex(Ar, mask) == JosephsonCircuits.real_to_complex(Ar, rl, cl)
             @test JosephsonCircuits.real_to_complex!(copy(A), Ar, mask) == JosephsonCircuits.real_to_complex(Ar, rl, cl)
@@ -346,43 +299,17 @@ using JosephsonCircuits, LinearAlgebra, Test
         end
     end
 
-    @testset "dense: complex_to_real_sum" begin
-        for (rm, cm, mmul, nmul) in DCASES
-            m, n = length(rm)*mmul, length(cm)*nmul
-            A = rand(ComplexF64, m, n)
-            B = rand(ComplexF64, m, n)
-            xc = dcanon(rand(ComplexF64, n), cm)
-            M = JosephsonCircuits.complex_to_real_sum(A, B, rm, cm)
-            @test M == JosephsonCircuits.complex_to_real(A, rm, cm) + JosephsonCircuits.complex_to_real(B, rm, cm; conj_input = true)
-            @test M * JosephsonCircuits.complex_to_real(xc, cm) ≈ JosephsonCircuits.complex_to_real(A*xc + B*conj(xc), rm)
-            @test JosephsonCircuits.complex_to_real_sum(A, zeros(ComplexF64, m, n), rm, cm) == JosephsonCircuits.complex_to_real(A, rm, cm)
-            @test JosephsonCircuits.complex_to_real_sum(zeros(ComplexF64, m, n), B, rm, cm) ==
-                  JosephsonCircuits.complex_to_real(B, rm, cm; conj_input = true)
-            S = fill(NaN, size(M))
-            @test JosephsonCircuits.complex_to_real_sum!(S, A, B, rm, cm) == M
-            kw = (realrowscale_a = 0.5, realcolscale_a = 0.25,
-                  realrowscale_b = 2.0, realcolscale_b = 0.0)
-            @test JosephsonCircuits.complex_to_real_sum(A, B, rm, cm; kw...) ==
-                  dref(A, rm, cm; rs = 0.5, cs = 0.25) +
-                  dref(B, rm, cm; conj_input = true, rs = 2.0, cs = 0.0)
-            @test JosephsonCircuits.complex_to_real_sum(A, B, rm, cm; realcolscale_a = 0) ==
-                  JosephsonCircuits.complex_to_real(A, rm, cm; realcolscale = 0) + JosephsonCircuits.complex_to_real(B, rm, cm; conj_input = true)
-        end
-    end
 
     # @testset "dense: allocation-free in-place" begin
     #     rm = [true,false,false,false,false]
     #     m, n = 200, 200
     #     A = rand(ComplexF64, m, n); B = rand(ComplexF64, m, n)
-    #     Ar = JosephsonCircuits.complex_to_real(A, rm, rm); C = similar(A); M = JosephsonCircuits.complex_to_real_sum(A, B, rm, rm)
     #     xc = rand(ComplexF64, n); xr = JosephsonCircuits.complex_to_real(xc, rm)
     #     JosephsonCircuits.complex_to_real!(Ar, A, rm, rm); JosephsonCircuits.complex_to_real!(Ar, A, rm, rm; conj_input = true, realcolscale = 0.5)
-    #     JosephsonCircuits.real_to_complex!(C, Ar, rm, rm); JosephsonCircuits.complex_to_real_sum!(M, A, B, rm, rm)
     #     JosephsonCircuits.complex_to_real!(xr, xc, rm); JosephsonCircuits.real_to_complex!(xc, xr, rm)
     #     @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rm, rm)) == 0
     #     @test (@allocated JosephsonCircuits.complex_to_real!(Ar, A, rm, rm; conj_input = true, realcolscale = 0.5)) == 0
     #     @test (@allocated JosephsonCircuits.real_to_complex!(C, Ar, rm, rm)) == 0
-    #     @test (@allocated JosephsonCircuits.complex_to_real_sum!(M, A, B, rm, rm)) == 0
     #     @test (@allocated JosephsonCircuits.complex_to_real!(xr, xc, rm)) == 0
     #     @test (@allocated JosephsonCircuits.real_to_complex!(xc, xr, rm)) == 0
     # end
@@ -393,7 +320,6 @@ using JosephsonCircuits, LinearAlgebra, Test
         A = rand(ComplexF64, m, n)
         @test_throws DimensionMismatch JosephsonCircuits.complex_to_real(A, rm, [true,false])          # 15 % 2 != 0
         @test_throws DimensionMismatch JosephsonCircuits.complex_to_real!(zeros(JosephsonCircuits.realdim(m,rm)+1, JosephsonCircuits.realdim(n,rm)), A, rm, rm)
-        @test_throws DimensionMismatch JosephsonCircuits.complex_to_real_sum(A, rand(ComplexF64, m-5, n), rm, rm)
         @test_throws DimensionMismatch JosephsonCircuits.real_to_complex!(A, zeros(JosephsonCircuits.realdim(m,rm), JosephsonCircuits.realdim(n,rm)+3), rm, rm)
         # views work
         Abig = rand(ComplexF64, m+4, n+4)

@@ -18,8 +18,8 @@ exist because the row and/or column mode is self-conjugate:
     k22[k] : (r0+1, c0+1) receives +real(v), 0 unless both modes are complex
 
 where `v` is the (scaled) value of the nonzero of `M`. This reproduces the
-holomorphic `[re -im; im re]` block structure applied by
-[`complex_to_real!`](@ref) and [`complex_to_real_sum!`](@ref).
+holomorphic `[re -im; im re]` block structure of the equivalent real form
+of a complex linear operator (see [`complex_to_real!`](@ref)).
 
 See [`realsparseaddmap`](@ref) and [`realsparseadd!`](@ref).
 """
@@ -36,15 +36,19 @@ end
 Fully precomputed assembly plan for constructing the real Jacobian of the
 harmonic balance nonlinear system directly, without forming the complex
 Jacobians `Jx` (holomorphic part) and `Jxconj` (non-holomorphic part) and
-converting them with [`complex_to_real_sum!`](@ref).
+converting them to the equivalent real form (the `[re -im; im re]` blocks
+of the holomorphic part plus the `[re im; im -re]` blocks of the
+non-holomorphic part, with the self-conjugate rows and columns collapsed
+to their real representatives).
 
 The nonlinear (Josephson) part of the Jacobian is a fixed linear map from the
 real and imaginary parts of the Fourier coefficients of `cos(phi(t))` stored
 in `phimatrix` into slots of `nonzeros(Jr)`. That map, which folds together
-the branch matrix update ([`updateAoLjbm2!`](@ref)), the incidence matrix
-triple product `Rbnm'*AoLjbm*Rbnm` (and likewise for the non-holomorphic
-branch matrix `AoLjbmconj`), and the complex-to-real conversion
-([`complex_to_real_sum!`](@ref)), is stored as two flat scatter lists:
+the scatter of the mode coupling coefficients into the Josephson branch
+matrices `AoLjbm` and `AoLjbmconj` (following the difference and sum mode
+coupling index matrices), the incidence matrix triple products
+`Rbnm'*AoLjbm*Rbnm`, and the complex-to-real block conversion, is stored
+as two flat scatter lists:
 
     nonzeros(Jr)[redest[k]] += recoef[k]*real(phimatrix[resrc[k]])
     nonzeros(Jr)[imdest[k]] += imcoef[k]*imag(phimatrix[imsrc[k]])
@@ -133,8 +137,8 @@ Add the real form of the holomorphic term `c*M` (or `c*M*D` with `D` a
 diagonal matrix on the complex column axis, eg. a matrix of mode frequencies)
 to the real sparse matrix `Jr` in place using a precomputed
 [`RealHolomorphicIndexMap`](@ref). This is the real-destination analogue of
-[`sparseadd!`](@ref) and reproduces the holomorphic block structure applied by
-[`complex_to_real_sum!`](@ref).
+[`sparseadd!`](@ref) and reproduces the holomorphic `[re -im; im re]` block
+structure of the equivalent real form.
 """
 function realsparseadd!(Jr::SparseMatrixCSC{T}, c::Number, M::SparseMatrixCSC,
     indexmap::RealHolomorphicIndexMap) where {T<:Real}
@@ -182,7 +186,7 @@ end
 # contribution to a real block of widths (wr, wc). `conjpart` selects the
 # non-holomorphic (Jxconj-like) contribution, which is dropped for
 # self-conjugate (eg. DC) columns (realcolscale_b = 0 in the
-# complex_to_real_sum! call it reproduces).
+# historical complex-to-real conversion it reproduces).
 @inline function countjjentries(wr, wc, conjpart::Bool)
     if conjpart && wc == 1
         return 0, 0
@@ -207,7 +211,9 @@ end
 
     if conjpart && wc == 1
         # the non-holomorphic contribution to self-conjugate (eg. DC) columns
-        # is dropped (realcolscale_b = 0 in the complex_to_real_sum! call).
+        # is dropped (the non-holomorphic contribution to a self-conjugate
+        # column is folded into the holomorphic one, matching the historical
+        # convention).
         return kre, kim
     end
 
@@ -252,14 +258,15 @@ end
         cl::ModeLayout)
 
 Build the real Jacobian sparse matrix `Jr` (with the same sparsity structure
-[`complex_to_real_sum!`](@ref) would produce from `Jx` and `Jxconj`, including
+the complex-to-real block conversion would produce from `Jx` and `Jxconj`
+(the equivalent real form of `x -> Jx*x + Jxconj*conj(x)`), including
 stored numerical zeros) and a [`RealJacobianPlan`](@ref) for assembling it
 directly with [`assemblerealjacobian!`](@ref).
 
 The plan folds together, at build time, the maps from the Fourier coefficients
 of `cos(phi(t))` to the Josephson branch matrices `AoLjbm` and `AoLjbmconj`
 (`Amatrixindices` and `Amatrixconjindices`, with negative entries denoting
-complex conjugation, as in [`calcAoLjbmindices`](@ref)), the incidence matrix
+complex conjugation and zeros denoting dropped couplings), the incidence matrix
 triple products `Rbnm'*AoLjbm*Rbnm` and `Rbnm'*AoLjbmconj*Rbnm`, and the
 complex-to-real conversion including the special handling of self-conjugate
 (eg. DC) modes. The frequency dependent linear terms `invLnm`, `Gnm` and `Cnm`
@@ -469,10 +476,12 @@ Assemble the real Jacobian `Jr` in place from the Fourier coefficients of
 
 in the real representation, equivalent to assembling the complex Jacobians
 `Jx = Rbnm'*AoLjbm*Rbnm + invLnm + im*Gnm*wmodesm - Cnm*wmodes2m` and
-`Jxconj = Rbnm'*AoLjbmconj*Rbnm` and converting them with
-[`complex_to_real_sum!`](@ref) with `realcolscale_b=0`, but with no complex
-intermediate matrices, no sparse matrix multiplications, and a single flat
-scatter loop for the nonlinear part.
+`Jxconj = Rbnm'*AoLjbmconj*Rbnm` and converting the pair to the equivalent
+real form of `x -> Jx*x + Jxconj*conj(x)` (dropping the non-holomorphic
+contribution to the self-conjugate columns, which the residual absorbs into
+the holomorphic part), but with no complex intermediate matrices, no sparse
+matrix multiplications, and a single flat scatter loop for the nonlinear
+part.
 """
 function assemblerealjacobian!(Jr::SparseMatrixCSC, plan::RealJacobianPlan,
     phimatrix::Array, invLnm::SparseMatrixCSC, Gnm::SparseMatrixCSC,

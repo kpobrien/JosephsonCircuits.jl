@@ -109,11 +109,6 @@ complex_to_real(A::AbstractMatrix{<:Complex}, mask::AbstractVector{Bool}; kw...)
     complex_to_real(A, mask, mask; kw...)
 complex_to_real!(Ar::AbstractMatrix{<:Real}, A::AbstractMatrix{<:Complex},
          mask::AbstractVector{Bool}; kw...) = complex_to_real!(Ar, A, mask, mask; kw...)
-complex_to_real_sum(A::AbstractMatrix{<:Complex}, B::AbstractMatrix{<:Complex},
-            mask::AbstractVector{Bool}; kw...) = complex_to_real_sum(A, B, mask, mask; kw...)
-complex_to_real_sum!(Ar::AbstractMatrix{<:Real}, A::AbstractMatrix{<:Complex},
-             B::AbstractMatrix{<:Complex}, mask::AbstractVector{Bool}; kw...) =
-    complex_to_real_sum!(Ar, A, B, mask, mask; kw...)
 real_to_complex(Ar::AbstractMatrix{<:Real}, mask::AbstractVector{Bool}; kw...) =
     real_to_complex(Ar, mask, mask; kw...)
 real_to_complex!(A::AbstractMatrix{<:Complex}, Ar::AbstractMatrix{<:Real},
@@ -244,60 +239,7 @@ complex_to_real(A::AbstractMatrix{Complex{T}}, rmask::AbstractVector{Bool},
     complex_to_real!(Matrix{T}(undef, realdim(size(A,1), rmask), realdim(size(A,2), cmask)),
              A, rmask, cmask; kw...)
 
-"""
-    complex_to_real_sum!(Ar, A, B, rmask, cmask; realrowscale_a=1, realcolscale_a=1,
-                 realrowscale_b=1, realcolscale_b=1) -> Ar
 
-In-place real form of the general real-linear operator `x -> A*x + B*conj(x)`.
-The first column of each block holds `a+b` and the second `im*(a-b)`, with `a`
-and `b` the two entries after their own scales. The result is not in the image
-of `complex_to_real`, so `real_to_complex` cannot invert it.
-"""
-function complex_to_real_sum!(Ar::AbstractMatrix{T}, A::AbstractMatrix{Complex{T}},
-                      B::AbstractMatrix{Complex{T}}, rmask::AbstractVector{Bool},
-                      cmask::AbstractVector{Bool}; realrowscale_a = one(T),
-                      realcolscale_a = one(T), realrowscale_b = one(T),
-                      realcolscale_b = one(T)) where {T<:Real}
-    m, n = size(A)
-    size(B) == (m, n) || throw(DimensionMismatch("A is $(size(A)), B is $(size(B))"))
-    _checkshape(Ar, m, n, rmask, cmask)
-    nr, nc = length(rmask), length(cmask)
-    rsa, csa = T(realrowscale_a), T(realcolscale_a)
-    rsb, csb = T(realrowscale_b), T(realcolscale_b)
-    c0, tc = 1, 1
-    @inbounds for j in 1:n
-        creal = cmask[tc]
-        cfa = creal ? csa : one(T)
-        cfb = creal ? csb : one(T)
-        r0, tr = 1, 1
-        for i in 1:m
-            wr = 2 - rmask[tr]
-            a = A[i,j] * (cfa * ifelse(wr == 1, rsa, one(T)))
-            b = B[i,j] * (cfb * ifelse(wr == 1, rsb, one(T)))
-            s = a + b
-            Ar[r0, c0]      = real(s)
-            Ar[r0+wr-1, c0] = ifelse(wr == 2, imag(s), real(s))
-            if !creal
-                d = a - b
-                Ar[r0, c0+1]      = -imag(d)
-                Ar[r0+wr-1, c0+1] = ifelse(wr == 2, real(d), -imag(d))
-            end
-            r0 += wr
-            tr = _next(tr, nr)
-        end
-        c0 += creal ? 1 : 2
-        tc = _next(tc, nc)
-    end
-    return Ar
-end
-
-"""
-    complex_to_real_sum(A, B, rmask, cmask; four realscale keywords) -> Matrix{T}
-"""
-complex_to_real_sum(A::AbstractMatrix{Complex{T}}, B::AbstractMatrix{Complex{T}},
-            rmask::AbstractVector{Bool}, cmask::AbstractVector{Bool}; kw...) where {T<:Real} =
-    complex_to_real_sum!(Matrix{T}(undef, realdim(size(A,1), rmask), realdim(size(A,2), cmask)),
-                 A, B, rmask, cmask; kw...)
 
 #  real -> complex
 
@@ -379,18 +321,6 @@ function complex_to_real!(Ar::SparseMatrixCSC{T}, A::SparseMatrixCSC{Complex{T}}
     return complex_to_real!(Ar, A, rl, cl; kw...)
 end
 
-function complex_to_real_sum(A::SparseMatrixCSC{Complex{T},Ti}, B::SparseMatrixCSC{Complex{T}},
-                     mask::AbstractVector{Bool}, ::Type{Tj} = Ti; kw...) where {T<:Real,Ti,Tj<:Integer}
-    rl, cl = _layouts(mask, size(A)...)
-    return complex_to_real_sum(A, B, rl, cl, Tj; kw...)
-end
-
-function complex_to_real_sum!(Ar::SparseMatrixCSC{T}, A::SparseMatrixCSC{Complex{T}},
-                      B::SparseMatrixCSC{Complex{T}}, mask::AbstractVector{Bool};
-                      kw...) where {T<:Real}
-    rl, cl = _layouts(mask, size(A)...)
-    return complex_to_real_sum!(Ar, A, B, rl, cl; kw...)
-end
 
 function real_to_complex(Ar::SparseMatrixCSC{T,Ti}, mask::AbstractVector{Bool},
                     ::Type{Tj} = Ti; kw...) where {T<:Real,Ti,Tj<:Integer}
@@ -521,153 +451,6 @@ function complex_to_real!(Ar::SparseMatrixCSC{T}, A::SparseMatrixCSC{Complex{T}}
     return Ar
 end
 
-"""
-    complex_to_real_sum(A, B, rowlayout, collayout, ::Type{Tj}=Ti;
-                realrowscale_a=1, realcolscale_a=1,
-                realrowscale_b=1, realcolscale_b=1) -> SparseMatrixCSC{T,Tj}
-
-Real form of the general real-linear operator `x -> A*x + B*conj(x)`, allocated
-with the union pattern of `A` and `B`. Equal to `complex_to_real(A, ...) + complex_to_real(B,
-...; conj_input=true)` but built in one pass. The two matrices take independent
-scales. The result is not in the image of `complex_to_real`, so `real_to_complex` cannot
-invert it.
-"""
-function complex_to_real_sum(A::SparseMatrixCSC{Complex{T},Ti}, B::SparseMatrixCSC{Complex{T}},
-                     rl::ModeLayout, cl::ModeLayout, ::Type{Tj} = Ti;
-                     realrowscale_a = one(T), realcolscale_a = one(T),
-                     realrowscale_b = one(T), realcolscale_b = one(T)) where {T<:Real,Ti,Tj<:Integer}
-    _checkdims(A, rl, cl)
-    size(A) == size(B) || throw(DimensionMismatch("A is $(size(A)), B is $(size(B))"))
-    n = size(A, 2)
-    Ap, Ai, Av = SparseArrays.getcolptr(A), rowvals(A), nonzeros(A)
-    Bp, Bi, Bv = SparseArrays.getcolptr(B), rowvals(B), nonzeros(B)
-    rptr, cptr = rl.ptr, cl.ptr
-    rsa, csa = T(realrowscale_a), T(realcolscale_a)
-    rsb, csb = T(realrowscale_b), T(realcolscale_b)
-
-    heights = Vector{Int}(undef, n)
-    total = 0
-    @inbounds for j in 1:n
-        ka, kb, kae, kbe = Ap[j], Bp[j], Ap[j+1], Bp[j+1]
-        S = 0
-        while ka < kae || kb < kbe
-            ia = ka < kae ? Int(Ai[ka]) : typemax(Int)
-            ib = kb < kbe ? Int(Bi[kb]) : typemax(Int)
-            i  = min(ia, ib)
-            ka += ia <= ib
-            kb += ib <= ia
-            S += rptr[i+1] - rptr[i]
-        end
-        heights[j] = S
-        total += (cptr[j+1] - cptr[j]) * S
-    end
-
-    colptr = Vector{Tj}(undef, cl.rdim + 1)
-    rowval = Vector{Tj}(undef, total)
-    nzval  = Vector{T}(undef, total)
-    colptr[1] = 1
-    base = 1
-    @inbounds for j in 1:n
-        c0  = cptr[j]
-        wc  = cptr[j+1] - c0
-        cfa = _colfac(csa, wc)
-        cfb = _colfac(csb, wc)
-        S   = heights[j]
-        k, k2 = base, base + S
-        ka, kb, kae, kbe = Ap[j], Bp[j], Ap[j+1], Bp[j+1]
-        while ka < kae || kb < kbe
-            ia = ka < kae ? Int(Ai[ka]) : typemax(Int)
-            ib = kb < kbe ? Int(Bi[kb]) : typemax(Int)
-            i  = min(ia, ib)
-            r0 = rptr[i]
-            wr = rptr[i+1] - r0
-            a = zero(Complex{T});  b = zero(Complex{T})
-            if ia <= ib
-                a = Av[ka] * (cfa * _rowfac(rsa, wr));  ka += 1
-            end
-            if ib <= ia
-                b = Bv[kb] * (cfb * _rowfac(rsb, wr));  kb += 1
-            end
-            s = a + b
-            d = a - b
-            rowval[k]      = r0
-            rowval[k+wr-1] = ifelse(wr == 2, r0 + one(r0), r0)
-            nzval[k]       = real(s)
-            nzval[k+wr-1]  = ifelse(wr == 2, imag(s), real(s))
-            if wc == 2
-                nzval[k2]      = -imag(d)
-                nzval[k2+wr-1] = ifelse(wr == 2, real(d), -imag(d))
-                k2 += wr
-            end
-            k += wr
-        end
-        colptr[c0+1] = base + S
-        if wc == 2
-            copyto!(rowval, base + S, rowval, base, S)
-            colptr[c0+2] = base + 2S
-        end
-        base += wc * S
-    end
-    return SparseMatrixCSC{T,Tj}(rl.rdim, cl.rdim, colptr, rowval, nzval)
-end
-
-"""
-    complex_to_real_sum!(Ar, A, B, rowlayout, collayout; four realscale keywords) -> Ar
-
-In-place fused sum. `Ar` must already have the pattern `complex_to_real_sum` produces
-(the doubled union pattern). Only shapes are verified (not the full sparsity
-structure).
-
-"""
-function complex_to_real_sum!(Ar::SparseMatrixCSC{T}, A::SparseMatrixCSC{Complex{T}},
-                      B::SparseMatrixCSC{Complex{T}}, rl::ModeLayout, cl::ModeLayout;
-                      realrowscale_a = one(T), realcolscale_a = one(T),
-                      realrowscale_b = one(T), realcolscale_b = one(T)) where {T<:Real}
-    _checkdims(A, rl, cl)
-    size(A) == size(B) || throw(DimensionMismatch("A is $(size(A)), B is $(size(B))"))
-    _checkdest(Ar, rl, cl)
-    Ap, Ai, Av = SparseArrays.getcolptr(A), rowvals(A), nonzeros(A)
-    Bp, Bi, Bv = SparseArrays.getcolptr(B), rowvals(B), nonzeros(B)
-    Rp, Rv = SparseArrays.getcolptr(Ar), nonzeros(Ar)
-    rw, cptr = rl.w, cl.ptr
-    rsa, csa = T(realrowscale_a), T(realcolscale_a)
-    rsb, csb = T(realrowscale_b), T(realcolscale_b)
-    # identical patterns
-    shared = (Ai === Bi) & (Ap === Bp)
-
-    @inbounds for j in 1:size(A, 2)
-        c0  = cptr[j]
-        wc  = cptr[j+1] - c0
-        cfa = _colfac(csa, wc)
-        cfb = _colfac(csb, wc)
-        k   = Rp[c0]
-        k2  = wc == 2 ? Rp[c0+1] : k
-        ka, kb, kae, kbe = Ap[j], Bp[j], Ap[j+1], Bp[j+1]
-        if shared
-            for idx in ka:kae-1
-                wr = _rowwidth(rw, Ai[idx])
-                a = Av[idx] * (cfa * _rowfac(rsa, wr))
-                b = Bv[idx] * (cfb * _rowfac(rsb, wr))
-                k, k2 = _writepair!(Rv, k, k2, wr, wc, a + b, a - b)
-            end
-        else
-            while ka < kae || kb < kbe
-                ia = ka < kae ? Int(Ai[ka]) : typemax(Int)
-                ib = kb < kbe ? Int(Bi[kb]) : typemax(Int)
-                wr = _rowwidth(rw, min(ia, ib))
-                a = zero(Complex{T});  b = zero(Complex{T})
-                if ia <= ib
-                    a = Av[ka] * (cfa * _rowfac(rsa, wr));  ka += 1
-                end
-                if ib <= ia
-                    b = Bv[kb] * (cfb * _rowfac(rsb, wr));  kb += 1
-                end
-                k, k2 = _writepair!(Rv, k, k2, wr, wc, a + b, a - b)
-            end
-        end
-    end
-    return Ar
-end
 
 # write one block: `s` into the first column, im*`d` into the second if present
 @inline function _writepair!(Rv::Vector{T}, k, k2, wr, wc, s, d) where {T}

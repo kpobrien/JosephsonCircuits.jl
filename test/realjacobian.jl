@@ -3,54 +3,10 @@ using LinearAlgebra
 using SparseArrays
 using Test
 
-# Reference construction of the exact real Jacobian at the complex nodeflux
-# x, by assembling the complex Jacobians Jx (holomorphic) and Jxconj
-# (non-holomorphic) with the Josephson branch matrices and the incidence
-# matrix triple products, then converting them to real form with
-# complex_to_real_sum, zeroing the non-holomorphic contribution to the
-# self-conjugate (eg. DC) columns. This reproduces the construction
-# hbnlsolve used for method=:newton before the real Jacobian was assembled
-# directly with a precomputed plan, except that the difference couplings use
-# the aliased mode coupling indices (hbmatind with alias = true), which the
-# plan also uses, so the assembled Jacobian is the exact derivative of the
-# residual for multi-tone problems as well. Kept as an independent check.
-function realjacobianreference(d, x)
-    d.cosphimatrix(x)
-    Am = copy(d.phimatrix)
-    AoLjbm = JosephsonCircuits.calcAoLjbm2(Am, d.Amatrixindicesaliased, d.Ljb,
-        d.Lmean, d.Nmodes, d.Nbranches)
-    AoLjbmconj = JosephsonCircuits.calcAoLjbm2(Am, d.Amatrixconjindices,
-        d.Ljb, d.Lmean, d.Nmodes, d.Nbranches)
-    Rbnmt = sparse(transpose(d.Rbnm))
-    Jx = Matrix(Rbnmt*AoLjbm*d.Rbnm .+ d.invLnm .+ im*d.Gnm*d.wmodesm .-
-        d.Cnm*d.wmodes2m)
-    Jxconj = Matrix(Rbnmt*AoLjbmconj*d.Rbnm)
-    return JosephsonCircuits.complex_to_real_sum(Jx, Jxconj,
-        d.modelayout.isreal, d.modelayout.isreal; realcolscale_b=0)
-end
-
-# Reference sparsity structure of the real Jacobian (including stored
-# numerical zeros), from a random, everywhere nonzero, coefficient matrix,
-# reproducing the construction from the complex Jacobian sparsity structures.
-function realjacobianreferencepattern(d)
-    Am = rand(Complex{Float64}, size(d.phimatrix))
-    AoLjbm = JosephsonCircuits.calcAoLjbm2(Am, d.Amatrixindicesaliased, d.Ljb,
-        d.Lmean, d.Nmodes, d.Nbranches)
-    AoLjbmconj = JosephsonCircuits.calcAoLjbm2(Am, d.Amatrixconjindices,
-        d.Ljb, d.Lmean, d.Nmodes, d.Nbranches)
-    Rbnmt = sparse(transpose(d.Rbnm))
-    Jx = JosephsonCircuits.spaddkeepzeros(
-        JosephsonCircuits.spaddkeepzeros(
-            JosephsonCircuits.spaddkeepzeros(Rbnmt*AoLjbm*d.Rbnm,
-                d.invLnm), im*d.Gnm), -d.Cnm)
-    Jxconj = Rbnmt*AoLjbmconj*d.Rbnm
-    return JosephsonCircuits.complex_to_real_sum(Jx, Jxconj, d.modelayout,
-        d.modelayout)
-end
 
 @testset verbose=true "realjacobian" begin
 
-    @testset "plan assembled Jr equals reference" begin
+    @testset "plan assembled Jr matches the matrix-free Jacobian" begin
 
         @variables Rleft Cc Lj Cj
         circuit = Tuple{String,String,String,Num}[]
@@ -79,30 +35,28 @@ end
             d = JosephsonCircuits.hbnlsolve(wp, Nharmonics, sources, circuit,
                 circuitdefs; debugJacobian=true)
 
-            # the sparsity structure (including stored zeros) should match
-            # the reference construction so the KLU symbolic factorization
-            # behaves the same.
-            Jrpat = realjacobianreferencepattern(d)
-            @test SparseArrays.getcolptr(d.Jr) == SparseArrays.getcolptr(Jrpat)
-            @test rowvals(d.Jr) == rowvals(Jrpat)
-
-            # the assembled Jacobian should agree with the reference at
-            # random points, for combined and Jacobian-only evaluations
+            # the assembled Jacobian is validated against the exact
+            # matrix-free Jacobian-vector product of HBSystem (which itself
+            # matches finite differences of the residual, see
+            # test/hbsystem.jl), for combined and Jacobian-only
+            # evaluations, at random points.
+            nr = length(d.xr)
+            Jvr = zeros(nr)
             for trial in 1:3
-                xr = 0.5*randn(length(d.xr))
-                x = JosephsonCircuits.real_to_complex(xr,
-                    d.modelayout.isreal)
+                xr = 0.5*randn(nr)
                 Fr = similar(d.Fr)
                 d.fjreal(Fr, d.Jr, copy(xr))
-                Jrref = realjacobianreference(d, x)
-                @test isapprox(Matrix(d.Jr), Jrref, atol = 1e-12,
-                    rtol = 1e-12)
+                Jr1 = copy(d.Jr)
+                d.fjreal(nothing, d.Jr, copy(xr))
+                @test Jr1 == d.Jr
+                JosephsonCircuits.setpoint!(d.sys, xr)
+                for vtrial in 1:5
+                    vr = randn(nr)
+                    JosephsonCircuits.jacobianvectorproduct!(Jvr, d.sys, vr)
+                    @test isapprox(Jvr, d.Jr*vr, atol = 1e-11,
+                        norm = v->maximum(abs,v))
+                end
             end
-            xr = 0.5*randn(length(d.xr))
-            x = JosephsonCircuits.real_to_complex(xr, d.modelayout.isreal)
-            d.fjreal(nothing, d.Jr, copy(xr))
-            @test isapprox(Matrix(d.Jr), realjacobianreference(d, x),
-                atol = 1e-12, rtol = 1e-12)
         end
     end
 
@@ -203,16 +157,18 @@ end
         d = JosephsonCircuits.hbnlsolve((2*pi*5.0*1e9,), (8,), sources,
             circuit, circuitdefs; debugJacobian=true)
 
-        Jrpat = realjacobianreferencepattern(d)
-        @test SparseArrays.getcolptr(d.Jr) == SparseArrays.getcolptr(Jrpat)
-        @test rowvals(d.Jr) == rowvals(Jrpat)
-
+        nr = length(d.xr)
+        Jvr = zeros(nr)
         for trial in 1:3
-            xr = 0.3*randn(length(d.xr))
-            x = JosephsonCircuits.real_to_complex(xr, d.modelayout.isreal)
+            xr = 0.3*randn(nr)
             d.fjreal(nothing, d.Jr, copy(xr))
-            @test isapprox(Matrix(d.Jr), realjacobianreference(d, x),
-                atol = 1e-12, rtol = 1e-12)
+            JosephsonCircuits.setpoint!(d.sys, xr)
+            for vtrial in 1:5
+                vr = randn(nr)
+                JosephsonCircuits.jacobianvectorproduct!(Jvr, d.sys, vr)
+                @test isapprox(Jvr, d.Jr*vr, atol = 1e-11,
+                    norm = v->maximum(abs,v))
+            end
         end
 
         # solutions from the two methods should agree closely

@@ -208,10 +208,13 @@ matrices each iteration.
 
 The nonlinear (Josephson) part of the Jacobian is a fixed linear map from the
 Fourier coefficients of `cos(phi(t))` stored in `phimatrix` into slots of
-`nonzeros(Jx)`. That map, which folds together the branch matrix update
-([`updateAoLjbm2!`](@ref)) and the incidence matrix triple product
-`Rbnm'*AoLjbm*Rbnm` ([`spmatmul!`](@ref)), is stored as two flat scatter
-lists, one for the plain and one for the complex conjugated coefficients:
+`nonzeros(Jx)`. That map, which folds together the scatter of the mode coupling
+coefficients into the Josephson branch matrix `AoLjbm` (following
+`Amatrixindices`, with negative entries denoting complex conjugation and
+zeros denoting dropped couplings, scaled by `Lmean/Lj`) and the incidence
+matrix triple product `Rbnm'*AoLjbm*Rbnm` ([`spmatmul!`](@ref)), is stored
+as two flat scatter lists, one for the plain and one for the complex
+conjugated coefficients:
 
     nonzeros(Jx)[dest[k]] += coef[k]*phimatrix[src[k]]
     nonzeros(Jx)[cdest[k]] += ccoef[k]*conj(phimatrix[csrc[k]])
@@ -311,8 +314,8 @@ matrices would produce, including stored numerical zeros) and a
 
 The plan folds together, at build time, the map from the Fourier coefficients
 of `cos(phi(t))` to the Josephson branch matrix `AoLjbm` (`Amatrixindices`,
-with negative entries denoting complex conjugation, as in
-[`calcAoLjbmindices`](@ref)) and the incidence matrix triple product
+with negative entries denoting complex conjugation and zeros denoting
+dropped couplings) and the incidence matrix triple product
 `Rbnm'*AoLjbm*Rbnm`. The frequency dependent linear terms `invLnm`, `Gnm` and
 `Cnm` are stored as [`sparseaddmap`](@ref) index maps and scattered at
 assembly time so the mode frequencies may change between assemblies.

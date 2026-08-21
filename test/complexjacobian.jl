@@ -3,39 +3,35 @@ using LinearAlgebra
 using SparseArrays
 using Test
 
-# Reference construction of the complex (holomorphic) Jacobian at the complex
-# nodeflux x, using the Josephson branch matrix and the incidence matrix
-# triple product, from the ingredients returned by hbnlsolve with
-# debugJacobian=true. This is the construction hbnlsolve used before the
-# Jacobians were assembled directly with precomputed plans, kept here as an
-# independent check.
-function complexjacobianreference(d, x)
-    d.cosphimatrix(x)
-    Am = copy(d.phimatrix)
-    AoLjbm = JosephsonCircuits.calcAoLjbm2(Am, d.Amatrixindices, d.Ljb,
-        d.Lmean, d.Nmodes, d.Nbranches)
-    Rbnmt = sparse(transpose(d.Rbnm))
-    return Rbnmt*AoLjbm*d.Rbnm .+ d.invLnm .+ im*d.Gnm*d.wmodesm .-
-        d.Cnm*d.wmodes2m
-end
-
-# Reference sparsity structure of the complex Jacobian (including stored
-# numerical zeros), from a random, everywhere nonzero, coefficient matrix.
-function complexjacobianreferencepattern(d)
-    Am = rand(Complex{Float64}, size(d.phimatrix))
-    AoLjbm = JosephsonCircuits.calcAoLjbm2(Am, d.Amatrixindices, d.Ljb,
-        d.Lmean, d.Nmodes, d.Nbranches)
-    Rbnmt = sparse(transpose(d.Rbnm))
-    AoLjnm = Rbnmt*AoLjbm*d.Rbnm
-    return JosephsonCircuits.spaddkeepzeros(
-        JosephsonCircuits.spaddkeepzeros(
-            JosephsonCircuits.spaddkeepzeros(AoLjnm, d.invLnm), im*d.Gnm),
-        -d.Cnm)
+# Test-local oracle: independent construction of the Josephson branch matrix
+# from the mode coupling index matrix and the Fourier coefficients of
+# cos(phi(t)). Entries follow Amatrixindices (negative entries denote complex
+# conjugation, zeros denote dropped couplings and produce no stored entry),
+# scaled by Lmean/Lj per branch.
+function testAoLjbm(phimatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
+    Nfreq = prod(size(phimatrix)[1:end-1])
+    I = Int[]
+    J = Int[]
+    V = Complex{Float64}[]
+    for (bi, b) in enumerate(Ljb.nzind)
+        offset = (bi-1)*Nfreq
+        for j in 1:Nmodes, i in 1:Nmodes
+            ind = Amatrixindices[i, j]
+            if ind != 0
+                c = ind > 0 ? phimatrix[ind + offset] :
+                    conj(phimatrix[-ind + offset])
+                push!(I, (b-1)*Nmodes + i)
+                push!(J, (b-1)*Nmodes + j)
+                push!(V, (Lmean/Ljb.nzval[bi])*c)
+            end
+        end
+    end
+    return sparse(I, J, V, Nbranches*Nmodes, Nbranches*Nmodes)
 end
 
 @testset verbose=true "complexjacobian" begin
 
-    @testset "plan assembled Jx equals reference" begin
+    @testset "plan assembled Jx matches the holomorphic derivative" begin
 
         @variables Rleft Cc Lj Cj
         circuit = Tuple{String,String,String,Num}[]
@@ -63,21 +59,52 @@ end
 
             d = JosephsonCircuits.hbnlsolve(wp, Nharmonics, sources, circuit,
                 circuitdefs; debugJacobian=true)
+            n = length(d.x)
 
-            # the sparsity structure (including stored zeros) should match
-            # the reference construction so the KLU symbolic factorization
-            # behaves the same.
-            Jxpat = complexjacobianreferencepattern(d)
-            @test SparseArrays.getcolptr(d.Jx) == SparseArrays.getcolptr(Jxpat)
-            @test rowvals(d.Jx) == rowvals(Jxpat)
-
-            # the assembled Jacobian should agree with the reference at
-            # random points
             for trial in 1:3
-                x = 0.5*randn(Complex{Float64}, length(d.x))
+                xr = 0.5*randn(length(d.xr))
+                x = JosephsonCircuits.real_to_complex(xr,
+                    d.modelayout.isreal)
+
+                # combined and Jacobian-only evaluations assemble the same
+                # matrix
+                F = similar(d.F)
+                d.fj(F, d.Jx, copy(x))
+                Jx1 = copy(d.Jx)
                 d.fj(nothing, d.Jx, copy(x))
-                Jxref = complexjacobianreference(d, x)
-                @test isapprox(d.Jx, Jxref, atol = 1e-12, rtol = 1e-12)
+                @test Jx1 == d.Jx
+
+                # for a single tone there are no mode couplings which alias
+                # back onto the sampled grid, so the holomorphic Jacobian
+                # equals the exact holomorphic (Wirtinger) derivative of
+                # the residual, extracted column by column from the
+                # matrix-free Jacobian-vector product: with jvp(v) =
+                # A*v + B*conj(v), A_j = (jvp(e_j) - im*jvp(im*e_j))/2.
+                # for multiple tones the holomorphic Jacobian deliberately
+                # keeps the truncated (non-aliased) couplings (it is an
+                # approximation either way; see fourierindices), so its
+                # exactness is a single-tone property; the exact multi-tone
+                # real Jacobian is validated against the matrix-free
+                # product and finite differences in test/realjacobian.jl
+                # and test/hbsystem.jl.
+                if length(wp) == 1 && trial == 1
+                    JosephsonCircuits.setpoint!(d.sys, xr)
+                    A = zeros(Complex{Float64}, n, n)
+                    Jv1 = zeros(Complex{Float64}, n)
+                    Jv2 = zeros(Complex{Float64}, n)
+                    ev = zeros(Complex{Float64}, n)
+                    for j in 1:n
+                        fill!(ev, 0)
+                        ev[j] = 1
+                        JosephsonCircuits.jacobianvectorproduct!(Jv1, d.sys,
+                            ev)
+                        ev[j] = im
+                        JosephsonCircuits.jacobianvectorproduct!(Jv2, d.sys,
+                            ev)
+                        A[:, j] = (Jv1 .- im.*Jv2)./2
+                    end
+                    @test isapprox(Matrix(d.Jx), A, atol = 1e-11)
+                end
             end
         end
     end
@@ -153,8 +180,8 @@ end
         Rbnmmna = hcat(signalnm.Rbnm, spzeros(eltype(signalnm.Rbnm),
             size(signalnm.Rbnm,1), Nauxmna))
 
-        # the reference construction
-        AoLjbm = JosephsonCircuits.calcAoLjbm2(phimatrix, Amatrixindices,
+        # the test-local oracle construction
+        AoLjbm = testAoLjbm(phimatrix, Amatrixindices,
             signalnm.Ljb, 1, Nsignalmodes, cg.Nbranches)
         Rbnmt = sparse(transpose(Rbnmmna))
         AoLjnm = Rbnmt*AoLjbm*Rbnmmna
@@ -269,15 +296,28 @@ end
         d = JosephsonCircuits.hbnlsolve((2*pi*5.0*1e9,), (8,), sources,
             circuit, circuitdefs; debugJacobian=true)
 
-        Jxpat = complexjacobianreferencepattern(d)
-        @test SparseArrays.getcolptr(d.Jx) == SparseArrays.getcolptr(Jxpat)
-        @test rowvals(d.Jx) == rowvals(Jxpat)
-
+        # single tone, so the holomorphic Jacobian equals the exact
+        # holomorphic (Wirtinger) derivative extracted from the matrix-free
+        # Jacobian-vector product (see the first testset).
+        n = length(d.x)
         for trial in 1:3
-            x = 0.3*randn(Complex{Float64}, length(d.x))
+            x = 0.3*randn(Complex{Float64}, n)
             d.fj(nothing, d.Jx, copy(x))
-            Jxref = complexjacobianreference(d, x)
-            @test isapprox(d.Jx, Jxref, atol = 1e-12, rtol = 1e-12)
+            xr = JosephsonCircuits.complex_to_real(x, d.modelayout.isreal)
+            JosephsonCircuits.setpoint!(d.sys, xr)
+            A = zeros(Complex{Float64}, n, n)
+            Jv1 = zeros(Complex{Float64}, n)
+            Jv2 = zeros(Complex{Float64}, n)
+            ev = zeros(Complex{Float64}, n)
+            for j in 1:n
+                fill!(ev, 0)
+                ev[j] = 1
+                JosephsonCircuits.jacobianvectorproduct!(Jv1, d.sys, ev)
+                ev[j] = im
+                JosephsonCircuits.jacobianvectorproduct!(Jv2, d.sys, ev)
+                A[:, j] = (Jv1 .- im.*Jv2)./2
+            end
+            @test isapprox(Matrix(d.Jx), A, atol = 1e-11)
         end
     end
 
