@@ -360,6 +360,10 @@ function calcscatteringmatrix!(S, inputwave::Vector, outputwave::Vector)
     return nothing
 end
 
+"""
+    calcportvoltage(key1, key2, phin, wmodes, Nmodes, j, k)
+
+"""
 function calcportvoltage(key1, key2, phin, wmodes, Nmodes, j, k)
 
     # calculate the branch fluxes at the ports from the node flux array phin
@@ -379,6 +383,10 @@ function calcportvoltage(key1, key2, phin, wmodes, Nmodes, j, k)
     return portvoltage
 end
 
+"""
+    calcsourcecurrent(key1, key2, bnm, Nmodes, j, k)
+
+"""
 function calcsourcecurrent(key1, key2, bnm, Nmodes, j, k)
 
     if key1 == 1
