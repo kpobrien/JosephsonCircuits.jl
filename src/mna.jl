@@ -261,8 +261,16 @@ function isnumericallyzero(value, terms)
         "must be finite."))
     all(isfinite, terms) || throw(ArgumentError("Every contributing "*
         "frequency term must be finite."))
-    scale = sum(abs, terms)
-    n = max(1, 2*length(terms) - 1)
+    return isnumericallyzero(value, sum(abs, terms), length(terms))
+end
+
+# the core of the criterion from a precomputed magnitude sum and term
+# count, so callers checking many combinations against the same terms (the
+# per signal frequency, per mode validation of hblinsolve) can precompute
+# the scale once instead of materializing a term vector per combination.
+# this is the single definition of the tolerance.
+function isnumericallyzero(value, scale::Real, nterms::Integer)
+    n = max(1, 2*nterms - 1)
     epsT = eps(one(float(real(scale))))
     gamma = n*epsT/(1 - n*epsT)
     return abs(value) <= 4*gamma*scale
@@ -372,6 +380,55 @@ function checkdcsourcecompatibility(floatingcomponents::Vector{Vector{Int}},
 end
 
 """
+    mnaaugmentation(mnaindices::Vector{Int}, nodeindices::Matrix{Int},
+        vvn::Vector, Nmodes::Int, Nnodes::Int)
+
+The structural triplets of the modified nodal analysis augmentation, the
+single definition of the augmented rows and columns shared by both solvers.
+Returns `(I0, J0, V0, IG, JG, VG, Ntot)`: `(I0, J0, V0)` are the frequency
+independent entries — the Kirchhoff current law contributions of the
+auxiliary branch currents and the `-1` diagonal of the constitutive
+equations — and `(IG, JG, VG)` are the conductance entries of the
+constitutive equations, one per (promoted resistor, terminal, mode), which
+acquire the mode frequency of their row (times the solver scale on the
+nonlinear side) when assembled. [`calcAmna`](@ref) bakes the frequency, the
+scale, and the gauge fixing rows in for [`hbnlsolve`](@ref);
+[`calcAmnasplit`](@ref) returns the two parts separately for the per
+frequency assembly of [`hblinsolve`](@ref). The values accepted by
+[`ismnaresistance`](@ref) are real, so `1/mnaresistance(value)` here agrees
+with the node conductance stamps.
+"""
+function mnaaugmentation(mnaindices::Vector{Int}, nodeindices::Matrix{Int},
+    vvn::Vector, Nmodes::Int, Nnodes::Int)
+
+    Nnodal = (Nnodes-1)*Nmodes
+    Ntot = Nnodal + length(mnaindices)*Nmodes
+    I0 = Int[]; J0 = Int[]; V0 = Complex{Float64}[]
+    IG = Int[]; JG = Int[]; VG = Complex{Float64}[]
+    for (r, ci) in enumerate(mnaindices)
+        # nodeindices is "one indexed" so 1 is the ground node
+        p1 = nodeindices[1, ci] - 1
+        p2 = nodeindices[2, ci] - 1
+        g = 1/mnaresistance(vvn[ci])
+        for m in 1:Nmodes
+            auxindex = Nnodal + (r-1)*Nmodes + m
+            # Kirchhoff current law contributions of the branch current, and
+            # the conductance entries of the constitutive equation
+            if p1 > 0
+                push!(I0, (p1-1)*Nmodes + m); push!(J0, auxindex); push!(V0, 1)
+                push!(IG, auxindex); push!(JG, (p1-1)*Nmodes + m); push!(VG, g)
+            end
+            if p2 > 0
+                push!(I0, (p2-1)*Nmodes + m); push!(J0, auxindex); push!(V0, -1)
+                push!(IG, auxindex); push!(JG, (p2-1)*Nmodes + m); push!(VG, -g)
+            end
+            push!(I0, auxindex); push!(J0, auxindex); push!(V0, -1)
+        end
+    end
+    return I0, J0, V0, IG, JG, VG, Ntot
+end
+
+"""
     calcAmna(mnaindices::Vector{Int}, nodeindices::Matrix{Int}, vvn::Vector,
         gaugeindices::Vector{Int}, wmodes::Vector, Nmodes::Int, Nnodes::Int,
         Lmean)
@@ -422,51 +479,25 @@ function calcAmna(mnaindices::Vector{Int}, nodeindices::Matrix{Int},
     vvn::Vector, gaugeindices::Vector{Int}, wmodes::Vector, Nmodes::Int,
     Nnodes::Int, Lmean)
 
-    Nnodal = (Nnodes-1)*Nmodes
-    Naux = length(mnaindices)*Nmodes
-    Ntot = Nnodal + Naux
+    I0, J0, V0, IG, JG, VG, Ntot = mnaaugmentation(mnaindices, nodeindices,
+        vvn, Nmodes, Nnodes)
 
-    I = Int[]
-    J = Int[]
-    V = Complex{Float64}[]
-
-    for (r, ci) in enumerate(mnaindices)
-        # nodeindices is "one indexed" so 1 is the ground node
-        p1 = nodeindices[1, ci] - 1
-        p2 = nodeindices[2, ci] - 1
-        g = 1/mnaresistance(vvn[ci])
-        for m in 1:Nmodes
-            auxindex = Nnodal + (r-1)*Nmodes + m
-            # Kirchhoff current law contributions of the branch current
-            if p1 > 0
-                push!(I, (p1-1)*Nmodes + m); push!(J, auxindex); push!(V, 1)
-            end
-            if p2 > 0
-                push!(I, (p2-1)*Nmodes + m); push!(J, auxindex); push!(V, -1)
-            end
-            # constitutive equation. the signed mode frequency is used, which
-            # is consistent with taking the complex conjugate of the entries
-            # for modes with negative frequencies as conjnegfreq! does for
-            # the conductance matrix.
-            if p1 > 0
-                push!(I, auxindex); push!(J, (p1-1)*Nmodes + m)
-                push!(V, im*wmodes[m]*Lmean*g)
-            end
-            if p2 > 0
-                push!(I, auxindex); push!(J, (p2-1)*Nmodes + m)
-                push!(V, -im*wmodes[m]*Lmean*g)
-            end
-            push!(I, auxindex); push!(J, auxindex); push!(V, -1)
-        end
+    # bake the mode frequency of each constitutive equation row and the
+    # solver scale into the conductance entries. the signed mode frequency
+    # is used, which is consistent with taking the complex conjugate of the
+    # entries for modes with negative frequencies as conjnegfreq! does for
+    # the conductance matrix.
+    for k in eachindex(VG)
+        VG[k] *= im*wmodes[(IG[k]-1) % Nmodes + 1]*Lmean
     end
 
     # gauge fixing equations, one per floating component of the static
     # flux-stiffness graph and zero-frequency mode
     for c in gaugeindices
-        push!(I, c); push!(J, c); push!(V, 1)
+        push!(I0, c); push!(J0, c); push!(V0, 1)
     end
 
-    return sparse(I, J, V, Ntot, Ntot)
+    return sparse(vcat(I0, IG), vcat(J0, JG), vcat(V0, VG), Ntot, Ntot)
 end
 
 """
@@ -662,28 +693,8 @@ zero total frequency; see [`isnumericallyzero`](@ref).
 function calcAmnasplit(mnaindices::Vector{Int}, nodeindices::Matrix{Int},
     vvn::Vector, Nmodes::Int, Nnodes::Int)
 
-    Nnodal = (Nnodes-1)*Nmodes
-    Ntot = Nnodal + length(mnaindices)*Nmodes
-    I0 = Int[]; J0 = Int[]; V0 = Complex{Float64}[]
-    IG = Int[]; JG = Int[]; VG = Complex{Float64}[]
-    for (r, ci) in enumerate(mnaindices)
-        # nodeindices is "one indexed" so 1 is the ground node
-        p1 = nodeindices[1, ci] - 1
-        p2 = nodeindices[2, ci] - 1
-        g = 1/vvn[ci]
-        for m in 1:Nmodes
-            auxindex = Nnodal + (r-1)*Nmodes + m
-            if p1 > 0
-                push!(I0, (p1-1)*Nmodes + m); push!(J0, auxindex); push!(V0, 1)
-                push!(IG, auxindex); push!(JG, (p1-1)*Nmodes + m); push!(VG, g)
-            end
-            if p2 > 0
-                push!(I0, (p2-1)*Nmodes + m); push!(J0, auxindex); push!(V0, -1)
-                push!(IG, auxindex); push!(JG, (p2-1)*Nmodes + m); push!(VG, -g)
-            end
-            push!(I0, auxindex); push!(J0, auxindex); push!(V0, -1)
-        end
-    end
+    I0, J0, V0, IG, JG, VG, Ntot = mnaaugmentation(mnaindices, nodeindices,
+        vvn, Nmodes, Nnodes)
     return (sparse(I0, J0, V0, Ntot, Ntot), sparse(IG, JG, VG, Ntot, Ntot))
 end
 

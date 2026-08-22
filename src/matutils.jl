@@ -763,6 +763,52 @@ end
 
 """
     sparseaddconjsubst!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
+        indexmap, wmodes::AbstractVector, power::Integer,
+        freqsubstindices::Vector, symfreqvar)
+
+Perform `A += c*As*Ad` with `Ad` the implicit diagonal whose entry in column
+`i` is the signed mode frequency of that column raised to `power`,
+`wmodes[(i-1) % length(wmodes) + 1]^power`, with the mode index fastest over
+the nodes and any auxiliary variables. The stored value of `As` is complex
+conjugated in every column whose mode frequency is negative, and
+`symfreqvar` is substituted by the mode frequency in any symbolic entries.
+
+This is the operation of the `Diagonal` based method below with the
+frequency, conjugation flag, and substitution diagonals computed from the
+column index instead of materialized, which would be three system sized
+allocations at every call, at every signal frequency, in the assembly loop
+of [`hblinsolve`](@ref).
+"""
+function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
+    As::SparseMatrixCSC, indexmap, wmodes::AbstractVector, power::Integer,
+    freqsubstindices::Vector, symfreqvar)
+
+    if nnz(A) < nnz(As)
+        throw(DimensionMismatch(lazy"As cannot have more nonzero elements than A"))
+    end
+
+    if nnz(As) != length(indexmap)
+        throw(DimensionMismatch(lazy"The indexmap must be the same length as As"))
+    end
+
+    if size(A) != size(As)
+        throw(DimensionMismatch(lazy"A and As must be the same size."))
+    end
+
+    Nmodes = length(wmodes)
+    for i in 1:length(As.colptr)-1
+        wm = wmodes[(i-1) % Nmodes + 1]
+        Ad = power == 0 ? one(wm) : power == 1 ? wm : wm^power
+        for j in As.colptr[i]:(As.colptr[i+1]-1)
+            tmp = valuetonumber(As.nzval[j], symfreqvar => wm)
+            A.nzval[indexmap[j]] += c*Ad*modevalue(tmp, wm)
+        end
+    end
+    return A
+end
+
+"""
+    sparseaddconjsubst!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
         Ad::Diagonal, indexmap, conjflag::Diagonal, wmodesm::Diagonal,
         freqsubstindices::Vector, symfreqvar)
 
@@ -954,6 +1000,19 @@ function sparseaddmap_innerloop(A::SparseMatrixCSC, B::SparseMatrixCSC,
 end
 
 """
+    modevalue(v, w)
+
+The value a linear term matrix entry contributes in a column belonging to a
+mode with (signed) frequency `w`: the stored value for the non negative
+frequency modes and its complex conjugate for the negative frequency modes.
+This is the single definition of the negative frequency conjugation
+convention, used by [`conjnegfreq!`](@ref) (which bakes it into a matrix),
+by [`sparseaddconjsubst!`](@ref) (which applies it during assembly), and by
+`sensitivitystampvalue` (which applies it to the sensitivity stamps).
+"""
+@inline modevalue(v, w) = real(w) < 0 ? conj(v) : v
+
+"""
     conjnegfreq(A, wmodes)
 
 Take the complex conjugate of any element of `A` which would be negative when
@@ -1005,12 +1064,11 @@ function conjnegfreq!(A::SparseMatrixCSC, wmodes::Vector)
     end
 
     @inbounds for i in 1:length(A.colptr)-1
+        wm = wmodes[((i-1) % length(wmodes)) + 1]
         for j in A.colptr[i]:(A.colptr[i+1]-1)
-          if wmodes[((i-1) % length(wmodes)) + 1] < 0
-            A.nzval[j] = conj(A.nzval[j])
-          end
+            A.nzval[j] = modevalue(A.nzval[j], wm)
         end
-      end
+    end
     return A
 end
 

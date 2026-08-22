@@ -186,6 +186,35 @@ function nodevariabletokeyed(nodevariable, outputmodes, nodenames, inputmodes,
 end
 
 """
+    Ssensitivitytokeyed(Ssensitivity, outputmodes, outputportnumbers,
+        inputmodes, inputportnumbers, components, w)
+
+Return the scattering parameter sensitivity array as a keyed array with axes
+(outputmode, outputport, inputmode, inputport, component, freqindex).
+"""
+function Ssensitivitytokeyed(Ssensitivity, outputmodes, outputportnumbers,
+    inputmodes, inputportnumbers, components, w)
+
+    return AxisKeys.KeyedArray(
+        reshape(
+            Ssensitivity,
+            length(outputmodes),
+            length(outputportnumbers),
+            length(inputmodes),
+            length(inputportnumbers),
+            length(components),
+            length(w),
+        ),
+        outputmode = outputmodes,
+        outputport = outputportnumbers,
+        inputmode = inputmodes,
+        inputport = inputportnumbers,
+        component = components,
+        freqindex = 1:length(w),
+    )
+end
+
+"""
     Snoisetokeyed(Snoise, inputmodes, components, outputmodes,
         outputportnumbers, w)
 

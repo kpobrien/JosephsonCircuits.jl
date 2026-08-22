@@ -160,6 +160,26 @@ function calcinputoutputnoise!(inputwave, outputwave, phin, bnm,
 end
 
 """
+    portwavescale(portimpedance, w)
+
+The scale factor of the Kurokawa power waves at a port with impedance
+`portimpedance` and (signed) mode frequency `w`, in units of
+sqrt(photons/second) rather than sqrt(power):
+`1/sqrt(real(Z))/sqrt(abs(w))`, and zero at zero frequency, where the wave
+normalization is singular. This is the single definition used by the
+scattering parameter calculation ([`calcinputoutput_inner!`](@ref)) and by
+the sensitivity scaling ([`calcsensitivityscaling!`](@ref)), so the two
+cannot drift apart.
+"""
+@inline function portwavescale(portimpedance, w)
+    kval = 1/sqrt(Complex(real(portimpedance)))
+    if w == 0
+        return zero(kval)
+    end
+    return kval/sqrt(abs(w))
+end
+
+"""
     calcinputoutput_inner!(inputwave, outputwave, phin, bnm, inputportindices,
         outputportindices, inputportimpedances, outputportimpedances,
         nodeindices, componenttypes, wmodes, symfreqvar, nosource)
@@ -194,28 +214,20 @@ function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputporti
 
     for i in 1:Ninputports
         for j in 1:Nmodes
+            # the port impedance and the wave scale depend on the port and
+            # the mode, not on the drive column, so they are computed once
+            # per (port, mode) rather than once per solution.
+            portimpedance = calcimpedance(
+                inputportimpedances[i],
+                componenttypes[inputportindices[i]],
+                wmodes[j],symfreqvar)
+            kval = portwavescale(portimpedance, wmodes[j])
             for k in 1:Nsolutions
 
                 sourcecurrent = calcsourcecurrent(
                     nodeindices[1,inputportindices[i]],
                     nodeindices[2,inputportindices[i]],
                     bnm,Nmodes,j,k)
-
-                # calculate the port impedance
-                portimpedance = calcimpedance(
-                    inputportimpedances[i],
-                    componenttypes[inputportindices[i]],
-                    wmodes[j],symfreqvar)
-
-                # calculate the scaling factor for the waves
-                kval = 1 / sqrt(Complex(real(portimpedance)))
-
-                # this will give NaN for DC, so set kval=0 in that case
-                if wmodes[j] == 0
-                    kval = 0
-                else
-                    kval *= 1 /sqrt(abs(wmodes[j]))
-                end
 
                 # calculate the input and output power waves as defined in (except in
                 # units of sqrt(photons/second) instead of sqrt(power)
@@ -230,6 +242,14 @@ function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputporti
     # loop over output branches and modes to define outputwaves
     for i in 1:Noutputports
         for j in 1:Nmodes
+            # the port impedance and the wave scale depend on the port and
+            # the mode, not on the drive column, so they are computed once
+            # per (port, mode) rather than once per solution.
+            portimpedance = calcimpedance(
+                outputportimpedances[i],
+                componenttypes[outputportindices[i]],
+                wmodes[j],symfreqvar)
+            kval = portwavescale(portimpedance, wmodes[j])
             for k in 1:Nsolutions
 
                 sourcecurrent = calcsourcecurrent(
@@ -244,28 +264,11 @@ function calcinputoutput_inner!(inputwave, outputwave, nodeflux, bnm, inputporti
                     wmodes,
                     Nmodes,j,k)
 
-                # calculate the port impedance
-                portimpedance = calcimpedance(
-                    outputportimpedances[i],
-                    componenttypes[outputportindices[i]],
-                    wmodes[j],symfreqvar)
-
                 # calculate the current flowing through the port
                 if nosource
                     portcurrent = - portvoltage / portimpedance
                 else
                     portcurrent = sourcecurrent - portvoltage / portimpedance
-                end
-
-                # calculate the scaling factor for the waves
-                kval = 1 / sqrt(Complex(real(portimpedance)))
-
-                # convert from sqrt(power) to sqrt(photons/second)
-                # this will give NaN for DC, so set kval=0 in that case
-                if wmodes[j] == 0
-                    kval = 0
-                else
-                    kval *= 1 /sqrt(abs(wmodes[j]))
                 end
 
                 # calculate the input and output power waves as defined in
@@ -489,162 +492,6 @@ function calcimpedance(c, type, w, symfreqvar)
     else
         error(lazy"Unknown component type")
     end
-end
-
-"""
-    calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
-        bnm, inputportindices, outputportindices, nodeindices, wmodes)
-
-Calculate the elements of the Z matrix.
-
-# Examples
-```jldoctest
-inputwave = JosephsonCircuits.LinearAlgebra.Diagonal(ComplexF64[0])
-outputwave = ComplexF64[0;;]
-bnm = ComplexF64[-1; 1;;]
-portimpedanceindices = [2]
-portimpedances = ComplexF64[50.0 + 0.0im]
-nodeindices = [2 2 2 2 3; 3 3 1 1 1]
-componenttypes = [:P, :R, :L, :C, :C]
-wmodes = [1]
-phin = ComplexF64[-50/(im*wmodes[1]);50/(im*wmodes[1]);;]
-symfreqvar = nothing
-JosephsonCircuits.calcinputcurrentoutputvoltage!(inputwave,outputwave,phin,bnm,portimpedanceindices,
-    portimpedanceindices,nodeindices,wmodes)
-println(outputwave)
-
-# output
-ComplexF64[-100.0 + 0.0im;;]
-```
-"""
-function calcinputcurrentoutputvoltage!(inputcurrent, outputvoltage, nodeflux,
-    bnm, inputportindices, outputportindices, nodeindices, wmodes)
-
-    # check the size of inputwave
-
-    # check the size of outputwave
-
-    # check the sizes of all of the inputs
-
-    # loop over input branches and modes to define inputwaves
-    Ninputports = length(inputportindices)
-    Noutputports = length(outputportindices)
-    Nsolutions = size(nodeflux,2)
-    Nmodes = length(wmodes)
-
-    for i in 1:Ninputports
-        for j in 1:Nmodes
-            for k in 1:Nsolutions
-
-                sourcecurrent = calcsourcecurrent(
-                    nodeindices[1,inputportindices[i]],
-                    nodeindices[2,inputportindices[i]],
-                    bnm,Nmodes,j,k)
-
-                # this will give NaN for DC, so set kval=0 in that case
-                # if wmodes[j] == 0
-                    # inputcurrent[(i-1)*Nmodes+j,k] = 0
-                # else
-                # inputcurrent[(i-1)*Nmodes+j,k] = sign(wmodes[j])*sourcecurrent/sqrt(abs(wmodes[j]))
-                # inputcurrent[(i-1)*Nmodes+j,k] = sourcecurrent
-                inputcurrent[(i-1)*Nmodes+j,k] = sourcecurrent/sqrt(abs(wmodes[j]))
-                # end
-            end
-        end
-    end
-
-    # loop over output branches and modes to define outputwaves
-    for i in 1:Noutputports
-        for j in 1:Nmodes
-            for k in 1:Nsolutions
-
-                portvoltage = calcportvoltage(
-                    nodeindices[1,outputportindices[i]],
-                    nodeindices[2,outputportindices[i]],
-                    nodeflux,
-                    wmodes,
-                    Nmodes,j,k)
-
-                # convert from sqrt(power) to sqrt(photons/second)
-                # this will give NaN for DC, so set kval=0 in that case
-                # if wmodes[j] == 0
-                    # outputvoltage[(i-1)*Nmodes+j,k] = 0
-                # else
-                # outputvoltage[(i-1)*Nmodes+j,k] =  portvoltage
-                outputvoltage[(i-1)*Nmodes+j,k] =  portvoltage/sqrt(abs(wmodes[j]))
-                # outputvoltage[(i-1)*Nmodes+j,k] =  sign(wmodes[j])*portvoltage/sqrt(abs(wmodes[j]))
-                # end
-            end
-        end
-    end
- 
-    return nothing
-end
-
-"""
-    calcdZdroZ2(sensitivityindices, componenttypes, componentvalues, wmodes,
-        symfreqvar)
-
-Calculate 1/Z^2 times the derivative of Z with respect to parameter scaling
-the value of the circuit component. For example:
-```
-Zc = 1/(im*w*Cg*r)
-1/Zc^2*dZc/dr|_{r=1} = -im*Cg*w
-
-Zl = im*w*Lj*r
-1/Zl^2*dZl/dr =1/(im*Lj*r^2*w)|_{r=1} = 1/(im*Lj*w)
-
-Zr = R*r
-1/Zr^2*dZr/dr|_{r=1} = 1/(r^2*R) = 1/R
-```
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.calcdZdroZ2([1],[:R], [50.0], [1.0],nothing)
-1-element Vector{ComplexF64}:
- 0.02 + 0.0im
-
-julia> JosephsonCircuits.calcdZdroZ2([1],[:C], [2.0], [1.0],nothing)
-1-element Vector{ComplexF64}:
- 0.0 - 2.0im
-
-julia> JosephsonCircuits.calcdZdroZ2([1],[:L], [2.0], [1.0],nothing)
-1-element Vector{ComplexF64}:
- 0.0 - 0.5im
-```
-"""
-function calcdZdroZ2(sensitivityindices, componenttypes, componentvalues,
-    wmodes, symfreqvar)
-
-    # make a vector of zeros with length of 
-    # length(sensitivityindices)*length(wmodes)
-    dZdroZ2 = zeros(Complex{Float64},length(sensitivityindices)*length(wmodes))
-
-    Nmodes = length(wmodes)
-
-    # inside of the loop, loop over frequencies
-    for i in eachindex(sensitivityindices)
-        index = sensitivityindices[i]
-        type = componenttypes[index]
-        if type == :C
-            for j in eachindex(wmodes)
-                dZdroZ2[(i-1)*Nmodes+j] = -im*wmodes[j]*componentvalues[index]
-            end
-
-        elseif type == :L || type == :Lj
-            for j in eachindex(wmodes)
-                dZdroZ2[(i-1)*Nmodes+j] = 1/(im*wmodes[j]*componentvalues[index])
-            end
-
-        elseif type == :R
-            for j in eachindex(wmodes)
-                dZdroZ2[(i-1)*Nmodes+j] = 1/componentvalues[index]
-            end
-        else
-            throw(ArgumentError(lazy"Unknown component."))
-        end
-    end
-    return dZdroZ2
 end
 
 """

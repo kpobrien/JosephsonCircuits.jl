@@ -37,12 +37,6 @@ using Test
         end
     end
 
-    @testset "calcdZdroZ2" begin
-        @test_throws(
-            ArgumentError("Unknown component."),
-            JosephsonCircuits.calcdZdroZ2([1],[:K], [2.0], [1.0],nothing))
-    end
-
     @testset "calccm! errors" begin
         begin
             cm=Float64[0,0]

@@ -1000,9 +1000,6 @@ end
         S22 = (-a + b/Z0 - c*Z0 + d)/den
         return S11, S12, S21, S22
     end
-    abcdtoZ(A) = (A[1,1]/A[2,1], (A[1,1]*A[2,2]-A[1,2]*A[2,1])/A[2,1],
-        1/A[2,1], A[2,2]/A[2,1])
-
     @testset "hblinsolve analytic linear network" begin
         circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
         push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
@@ -1041,11 +1038,10 @@ end
             inputport=1,freqindex=1), 0.5, atol = 1e-10)
     end
 
-    @testset "hblinsolve mna internal resistor and Z parameters" begin
+    @testset "hblinsolve mna internal resistor" begin
         # an internal damping resistor between two non-port nodes is
         # promoted along with the port resistors, exercising the auxiliary
-        # current Kirchhoff couplings away from the ports, and the Z
-        # parameter path reads node rows of the taller solution matrix.
+        # current Kirchhoff couplings away from the ports.
         circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
         push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",:Rleft))
         push!(circuit,("C1","1","2",:Cc)); push!(circuit,("L2","2","0",:L2))
@@ -1055,8 +1051,7 @@ end
         circuitdefs = Dict(:Rleft => 50.0, :Cc => 30.0e-15, :L2 => 1.2e-9,
             :C2 => 0.9e-12, :Rint => 700.0)
         ws = collect(2*pi*(3.0:0.2:7.0)*1e9)
-        out = hblinsolve(ws, circuit, circuitdefs; returnZ = true,
-            returnSnoise = true)
+        out = hblinsolve(ws, circuit, circuitdefs; returnSnoise = true)
         elements = [
             (:series, w -> 1/(im*w*circuitdefs[:Cc])),
             (:shunt, w -> 1/(im*w*circuitdefs[:L2]) + im*w*circuitdefs[:C2]),
@@ -1067,19 +1062,10 @@ end
         for (i, w) in enumerate(ws)
             A = abcdchain(elements, w)
             S11, S12, S21, S22 = abcdtoS(A, 50.0)
-            # the Z parameters include the port shunt resistors as circuit
-            # elements, while the S parameters use them as references
-            AZ = abcdchain(vcat([(:shunt, w -> 1/circuitdefs[:Rleft])],
-                elements, [(:shunt, w -> 1/circuitdefs[:Rleft])]), w)
-            Z11, Z12, Z21, Z22 = abcdtoZ(AZ)
             @test isapprox(out.S(outputmode=(0,),outputport=1,
                 inputmode=(0,),inputport=1,freqindex=i), S11, atol = 1e-10)
             @test isapprox(out.S(outputmode=(0,),outputport=2,
                 inputmode=(0,),inputport=1,freqindex=i), S21, atol = 1e-10)
-            @test isapprox(out.Z(outputmode=(0,),outputport=1,
-                inputmode=(0,),inputport=1,freqindex=i), Z11, rtol = 1e-10)
-            @test isapprox(out.Z(outputmode=(0,),outputport=2,
-                inputmode=(0,),inputport=1,freqindex=i), Z21, rtol = 1e-10)
         end
         # the internal resistor contributes the only noise component; the
         # port resistors are the scattering parameter references. the
@@ -1297,9 +1283,7 @@ end
         @test size(plain.voltage, 1) == 4
 
         adj = hblinsolve(ws, circuit, circuitdefs; keyedarrays = false,
-            returnZ = true, returnZadjoint = true,
             returnnodefluxadjoint = true, returnvoltageadjoint = true)
-        @test all(isfinite, adj.Zadjoint)
         @test all(isfinite, adj.nodefluxadjoint)
         @test all(isfinite, adj.voltageadjoint)
         @test size(adj.nodefluxadjoint, 1) == 4
@@ -1311,12 +1295,10 @@ end
         # the output paths through the augmented solution matrix; the
         # sensitivity semantics themselves are upstream functionality.
         sens = hblinsolve(ws, circuit, circuitdefs; keyedarrays = false,
-            sensitivitynames = ["R4"], returnSsensitivity = true,
-            returnZsensitivity = true, returnZsensitivityadjoint = true)
+            sensitivitynames = ["R4"], returnSsensitivity = true)
         @test all(isfinite, sens.Ssensitivity)
-        @test all(isfinite, sens.Zsensitivity)
-        @test all(isfinite, sens.Zsensitivityadjoint)
-        @test size(sens.Ssensitivity, 1) == 1
+        @test size(sens.Ssensitivity)[1:2] == size(sens.S)[1:2]
+        @test size(sens.Ssensitivity, 3) == 1
     end
 
     @testset "hblinsolve noise port symmetry" begin

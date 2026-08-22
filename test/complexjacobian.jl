@@ -262,10 +262,13 @@ end
                     wmodesm, JosephsonCircuits.sparseaddmap(Aref, AmnaG),
                     real.(wmodesm) .< 0, wmodesm, Int[], nothing)
 
-                # the shared assembly, both entry points
+                # the shared assembly, both entry points. the reference
+                # above uses the Diagonal based sparseaddconjsubst! method,
+                # so this also checks the mode indexed method the assembly
+                # uses against it.
                 A2 = copy(Asparse)
-                JosephsonCircuits.assemblesystemmatrix!(A2, lsys, wmodesm,
-                    wmodes2m; conjugatepump = conjugatepump)
+                JosephsonCircuits.assemblesystemmatrix!(A2, lsys, wmodes;
+                    conjugatepump = conjugatepump)
                 @test isapprox(A2, Aref, atol = 1e-14)
                 A3 = copy(Asparse)
                 JosephsonCircuits.assemblesystemmatrix!(A3, lsys, ws;

@@ -242,6 +242,25 @@ function trysolve!(x,factorization,b)
 end
 
 """
+    trysolvetranspose!(x,factorization,b)
+
+Solve the transposed linear system `transpose(A)*x = b` using an existing
+factorization of `A`, without refactorizing. The non-conjugating transpose is
+used, not the adjoint. Sparse LU factorizations support this directly with a
+pair of triangular solves against the stored factors (`klu_tsolve` for KLU), so
+an adjoint solve costs a solve rather than a factorization. As in
+[`trysolve!`](@ref), fall back to `\\\\` for factorizations which do not support
+`ldiv!` with a transposed factorization.
+
+Used by [`hblinsolve`](@ref) to obtain the solutions of the transposed
+linearized system, which are the adjoint solutions required by the noise,
+quantum efficiency, and sensitivity calculations.
+"""
+function trysolvetranspose!(x,factorization,b)
+    return trysolve!(x,transpose(factorization),b)
+end
+
+"""
     quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard = 0.1)
 
 Return a tuple `(αfit, ϕfit, measured)` with the proposed step `αfit`, the

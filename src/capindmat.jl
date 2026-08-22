@@ -184,11 +184,19 @@ function numericmatrices(circuit::AbstractVector, circuitdefs::Dict; Nmodes::Int
 end
 
 function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
-    circuitdefs; Nmodes::Int = 1)
+    circuitdefs::Dict; Nmodes::Int = 1)
 
     # convert as many values as we can to numerical values using definitions
     # from circuitdefs
     vvn = componentvaluestonumber(psc.componentvalues, circuitdefs)
+    return numericmatrices(psc, cg, vvn; Nmodes = Nmodes)
+end
+
+# the same, from already resolved component values, so a second call at a
+# different mode count (the signal grid of hblinsolve after the pump grid
+# of hbnlsolve) does not redo the symbolic value resolution.
+function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
+    vvn::AbstractVector; Nmodes::Int = 1)
     
     # capacitance matrix
     Cnm = calcCn(psc.componenttypes, psc.nodeindices, vvn, Nmodes, psc.Nnodes)

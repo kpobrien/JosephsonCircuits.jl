@@ -141,6 +141,58 @@ function applyfft!(fd::Array{Complex{T}}, td::Array{T}, rfftplan) where T
     return fd
 end
 
+"""
+    plan_applyffttranspose(fd::Array{Complex{T}}, td::Array{T})
+
+Create the padded work array and the complex transform plan for
+[`applyffttranspose!`](@ref), the transpose of [`applyfft!`](@ref) on the
+same grid. The plan is created with `FFTW.UNALIGNED` so it can be executed
+against per-thread work arrays allocated elsewhere.
+"""
+function plan_applyffttranspose(fd::Array{Complex{T}}, td::Array{T}) where T
+    padded = zeros(Complex{T}, size(td))
+    fftplan = FFTW.plan_fft(padded, 1:ndims(td)-1;
+        flags = FFTW.ESTIMATE | FFTW.UNALIGNED, timelimit = Inf)
+    return fftplan
+end
+
+"""
+    applyffttranspose!(alpha::Array{Complex{T}}, P::Array{Complex{T}},
+        padded::Array{Complex{T}}, fftplan)
+
+Apply the transpose of [`applyfft!`](@ref): given a covector `P` on the
+stored frequency domain coefficients, compute the covector `alpha` on the
+time domain samples such that `sum(alpha .* td) == sum(P .* applyfft(td))`
+for every real time domain array `td`, exactly, including the truncated
+first dimension of the real transform.
+
+This is a forward transform again, not a new kernel: the discrete Fourier
+matrix is symmetric, so the transpose of the transform which produces the
+stored coefficients is the full complex transform of those coefficients
+zero padded along the first dimension (the only dimension the real
+transform truncates; [`applyfft!`](@ref) stores only its non negative
+harmonics), with the same `1/prod(Nt)` normalization. `padded` is a work
+array the size of the time domain grid and `alpha` may not alias it. The
+last dimension, the Josephson junction index, is not transformed, exactly
+as in [`applyfft!`](@ref).
+
+Used by the reverse order sensitivity contraction to transpose the map from
+the time domain samples to the Fourier coefficients of `cos(phi(t))`,
+through the same transform plans and normalization which define the forward
+map, for any number of tones.
+"""
+function applyffttranspose!(alpha::Array{Complex{T}}, P::Array{Complex{T}},
+    padded::Array{Complex{T}}, fftplan) where T
+    fill!(padded, 0)
+    padded[CartesianIndices(P)] .= P
+    mul!(alpha, fftplan, padded)
+    invnormalization = 1/prod(size(padded)[1:end-1])
+    @inbounds for i in eachindex(alpha)
+        alpha[i] = alpha[i]*invnormalization
+    end
+    return alpha
+end
+
 # out .= f.(src), specialized behind a function barrier
 function _applypointwise!(out::Array{T}, f::F, src::Array{T}) where {T,F}
     @inbounds for i in eachindex(out)
@@ -351,6 +403,32 @@ function hessianvectorproduct!(Hvwr::AbstractVector{<:Real},
 end
 
 """
+    cosdirectionalderivative!(dcos::Array, sys::HBSystem, v::AbstractVector)
+
+Evaluate the directional derivative, along `v`, of the Fourier coefficients
+of `cos(phi_b(t))` of the Josephson junction branch fluxes at the point set
+with [`setpoint!`](@ref), in place. Those coefficients parameterize the pump
+modulation of the linearized harmonic balance system (see
+[`HBLinearizedSystem`](@ref)), so this is what propagates a shift of the pump
+operating point into the linearized system matrix. The derivative has the
+coefficients of `-sin.(A*x).*(A*v)`, computed on the same time grid and with
+the same normalization as the residual, so no separate transform convention
+is introduced. Shares the cached time domain sine with
+[`hessianvectorproduct!`](@ref), of which this is the first half.
+"""
+function cosdirectionalderivative!(dcos::Array, sys::HBSystem,
+    v::AbstractVector{<:Complex})
+    _ensuresin!(sys)
+    _branchtimedomain!(sys.dirtd, sys, v)
+    _multiplyintowork!(sys.worktd, sys.sintd, sys.dirtd)
+    applyfft!(dcos, sys.worktd, sys.rfftplan)
+    @inbounds for i in eachindex(dcos)
+        dcos[i] = -dcos[i]
+    end
+    return dcos
+end
+
+"""
     jacobian!(J::SparseMatrixCSC, sys::HBSystem)
 
 Assemble the Jacobian of the harmonic balance nonlinear system at the point
@@ -423,7 +501,7 @@ exactly; since the pump modulation contribution is precomputed, assembling
 at a frequency costs about the same as one matrix-vector product would, and
 every product thereafter is a plain sparse matrix-vector product.
 """
-struct HBLinearizedSystem
+struct HBLinearizedSystem{TinvL,TG,TC,TAG}
     # sparsity structure of the system matrix, with the pump modulation
     # contribution in its values. per-frequency assembly operates on copies
     # sharing this structure, so this object can be shared across threads.
@@ -439,9 +517,9 @@ struct HBLinearizedSystem
     # the frequency dependent linear term matrices (possibly containing
     # symbolic frequency variables), their index maps into Asparse, and
     # the indices of their symbolic entries
-    invLnm
-    Gnm
-    Cnm
+    invLnm::TinvL
+    Gnm::TG
+    Cnm::TC
     invLnmindexmap::Vector{Int}
     Gnmindexmap::Vector{Int}
     Cnmindexmap::Vector{Int}
@@ -453,16 +531,16 @@ struct HBLinearizedSystem
     # conductances of the constitutive equations (added per frequency as
     # im*AmnaG*wmodesm), their index maps, and the indices of any symbolic
     # entries of AmnaG. empty matrices when no resistors are promoted.
-    Amna0
-    AmnaG
+    Amna0::SparseMatrixCSC{Complex{Float64},Int}
+    AmnaG::TAG
     Amna0indexmap::Vector{Int}
     AmnaGindexmap::Vector{Int}
-    AmnaGfreqsubstindices
+    AmnaGfreqsubstindices::Vector{Int}
     # the symbolic frequency variable, or nothing
     symfreqvar
     # the pump mode frequency offsets of the signal modes, and the numbers
     # of modes and nodes, for computing the mode frequency matrices
-    wpumpmodes
+    wpumpmodes::Vector{Float64}
     Nmodes::Int
     Nnodes::Int
 end
@@ -530,24 +608,58 @@ end
 
 """
     assemblesystemmatrix!(A::SparseMatrixCSC, lsys::HBLinearizedSystem,
-        wmodesm::Diagonal, wmodes2m::Diagonal; conjugatepump::Bool = false)
+        wmodes::AbstractVector; conjugatepump::Bool = false)
     assemblesystemmatrix!(A::SparseMatrixCSC, lsys::HBLinearizedSystem,
         ws::Number; conjugatepump::Bool = false)
 
 Assemble the linearized harmonic balance system matrix into `A`, which must
 share the sparsity structure of `lsys.Asparse`, either from the mode
-frequency matrices `wmodesm` and `wmodes2m` or at the signal frequency `ws`
-(from which the mode frequency matrices are computed as
-`wmodes = ws .+ lsys.wpumpmodes`). With `conjugatepump = true` the complex
+frequency vector `wmodes` or at the signal frequency `ws` (from which the
+mode frequencies are computed as `wmodes = ws .+ lsys.wpumpmodes`). The
+frequency scaling, the negative frequency conjugation, and any symbolic
+frequency substitution are applied per column from the mode index, without
+materializing system sized diagonals. With `conjugatepump = true` the complex
 conjugate of the pump modulation contribution is used, which is the adjoint
 system solved for the noise and quantum efficiency calculations. The
 negative frequency mode entries of the linear term matrices are conjugated
 and any symbolic frequency variables substituted, exactly as in the
 per-frequency loop of [`hblinsolve`](@ref), which calls this function.
 Returns `A`.
+
+The conjugated pump system is a diagonal similarity transformation of the
+transposed forward system,
+
+    A(conjugate pump) = D*transpose(A(pump))*inv(D),
+
+with `D` diagonal, equal to one on every node flux row and, on the auxiliary
+branch current rows of the modified nodal analysis augmentation, equal to the
+assembled conductance entry `im*w_m/R_r` of the constitutive equation of the
+corresponding promoted resistor and mode. (The promoted resistances are
+constant and real by construction, see [`mnaportresistorindices`](@ref), so
+the negative frequency conjugation of `sparseaddconjsubst!`, which acts on
+the stored conductance and not on the frequency factor, is trivial here.)
+Nothing else contributes: the
+auxiliary rows of the promoted coupled inductors are already symmetric (see
+[`calcAmnaind`](@ref)); the linear term matrices are symmetric and mode
+diagonal, so the column indexed frequency scaling and conjugation of
+`sparseaddconjsubst!` are symmetric under transposition; and the transpose of
+the pump modulation contribution exchanges the mode pair, mapping each
+difference harmonic to its complex conjugate, which is the same as
+conjugating the pump.
+
+Because the source terms of [`hblinsolve`](@ref) are supported on the node
+flux rows, `inv(D)` acts trivially on them and the solutions of the two
+systems agree exactly in the node flux rows, which are the only rows the
+noise, quantum efficiency, commutation relation, and adjoint node flux,
+voltage and impedance outputs read. [`hblinsolve`](@ref) therefore obtains
+its adjoint solutions with [`trysolvetranspose!`](@ref) on the factorization
+of the forward system, rather than assembling and factorizing this matrix
+with `conjugatepump = true` at every signal frequency. The conjugated pump
+assembly is retained as the independent construction that equivalence is
+tested against.
 """
 function assemblesystemmatrix!(A::SparseMatrixCSC,
-    lsys::HBLinearizedSystem, wmodesm::Diagonal, wmodes2m::Diagonal;
+    lsys::HBLinearizedSystem, wmodes::AbstractVector;
     conjugatepump::Bool = false)
 
     # the pump modulation contribution, precomputed
@@ -559,36 +671,28 @@ function assemblesystemmatrix!(A::SparseMatrixCSC,
 
     # take the complex conjugate of the negative frequency terms in
     # the capacitance and conductance matrices. substitute in the symbolic
-    # frequency variable if present.
-    sparseaddconjsubst!(A, -1, lsys.Cnm, wmodes2m, lsys.Cnmindexmap,
-        real.(wmodesm) .< 0, wmodesm, lsys.Cnmfreqsubstindices,
-        lsys.symfreqvar)
-    sparseaddconjsubst!(A, im, lsys.Gnm, wmodesm, lsys.Gnmindexmap,
-        real.(wmodesm) .< 0, wmodesm, lsys.Gnmfreqsubstindices,
-        lsys.symfreqvar)
-    sparseaddconjsubst!(A, 1, lsys.invLnm,
-        Diagonal(ones(size(lsys.invLnm, 1))), lsys.invLnmindexmap,
-        real.(wmodesm) .< 0, wmodesm, lsys.invLnmfreqsubstindices,
-        lsys.symfreqvar)
+    # frequency variable if present. the frequency scaling of each term is
+    # the per column mode frequency raised to the given power.
+    sparseaddconjsubst!(A, -1, lsys.Cnm, lsys.Cnmindexmap, wmodes, 2,
+        lsys.Cnmfreqsubstindices, lsys.symfreqvar)
+    sparseaddconjsubst!(A, im, lsys.Gnm, lsys.Gnmindexmap, wmodes, 1,
+        lsys.Gnmfreqsubstindices, lsys.symfreqvar)
+    sparseaddconjsubst!(A, 1, lsys.invLnm, lsys.invLnmindexmap, wmodes, 0,
+        lsys.invLnmfreqsubstindices, lsys.symfreqvar)
 
     # the modified nodal analysis augmentation of the promoted resistors:
     # the frequency independent entries and the conductances of the
     # constitutive equations, the latter with the same per-mode frequency
     # scaling and negative frequency conjugation as the conductance matrix.
     sparseadd!(A, 1, lsys.Amna0, lsys.Amna0indexmap)
-    sparseaddconjsubst!(A, im, lsys.AmnaG, wmodesm, lsys.AmnaGindexmap,
-        real.(wmodesm) .< 0, wmodesm, lsys.AmnaGfreqsubstindices,
-        lsys.symfreqvar)
+    sparseaddconjsubst!(A, im, lsys.AmnaG, lsys.AmnaGindexmap, wmodes, 1,
+        lsys.AmnaGfreqsubstindices, lsys.symfreqvar)
 
     return A
 end
 
 function assemblesystemmatrix!(A::SparseMatrixCSC,
     lsys::HBLinearizedSystem, ws::Number; conjugatepump::Bool = false)
-    wmodes = ws .+ lsys.wpumpmodes
-    outer = size(lsys.Asparse, 1) ÷ length(wmodes)
-    wmodesm = Diagonal(repeat(wmodes, outer = outer))
-    wmodes2m = Diagonal(repeat(wmodes.^2, outer = outer))
-    return assemblesystemmatrix!(A, lsys, wmodesm, wmodes2m;
+    return assemblesystemmatrix!(A, lsys, ws .+ lsys.wpumpmodes;
         conjugatepump = conjugatepump)
 end

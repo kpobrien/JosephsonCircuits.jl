@@ -1,5 +1,6 @@
 using JosephsonCircuits
 using LinearAlgebra
+using SparseArrays
 using Test
 
 @testset verbose=true "nlsolve" begin
@@ -177,6 +178,25 @@ using Test
         A[1,1] = 1.1
         JosephsonCircuits.tryfactorize!(cache, fact, A)
         @test cache.factorization !== nothing
+    end
+
+    # the transposed solve helper solves the transposed system on an
+    # existing factorization, for each of the supported factorizations
+    @testset "trysolvetranspose!" begin
+        A = sparse([1,2,3,1,2,3], [1,1,2,3,3,3],
+            Complex{Float64}[2.0, 1.0, 3.0, im, 4.0, 1.0], 3, 3)
+        b = Complex{Float64}[1.0, 2.0, 3.0]
+        x = zeros(Complex{Float64}, 3)
+        for f in (JosephsonCircuits.KLUfactorization(),
+                JosephsonCircuits.LUfactorization())
+            cache = JosephsonCircuits.FactorizationCache()
+            JosephsonCircuits.tryfactorize!(cache, f, A)
+            fill!(x, 0)
+            JosephsonCircuits.trysolvetranspose!(x, cache.factorization, b)
+            @test isapprox(transpose(A)*x, b, rtol = 1e-10)
+            # the non-conjugating transpose, not the adjoint
+            @test !isapprox(adjoint(A)*x, b, rtol = 1e-10)
+        end
     end
 
 end

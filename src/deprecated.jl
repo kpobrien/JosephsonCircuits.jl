@@ -37,8 +37,6 @@ end
 #         returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
 #         returnvoltageadjoint = false, keyedarrays::Bool = false,
 #         sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
-#         returnZ = false, returnZadjoint = false,
-#         returnZsensitivity = false, returnZsensitivityadjoint = false,
 #         factorization = KLUfactorization())
 
 # Calls the new harmonic balance solvers, [`hbnlsolve`](@ref) and
@@ -61,9 +59,9 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     returnvoltage::Bool = false, returnnodefluxadjoint::Bool = false,
     returnvoltageadjoint::Bool = false, keyedarrays::Bool = false,
     sensitivitynames::Vector{String} = String[],
-    returnSsensitivity::Bool = false, returnZ::Bool = false,
-    returnZadjoint::Bool = false, returnZsensitivity::Bool = false,
-    returnZsensitivityadjoint::Bool = false,
+    returnSsensitivity::Bool = false, returnZ = nothing,
+    returnZadjoint = nothing, returnZsensitivity = nothing,
+    returnZsensitivityadjoint = nothing,
     factorization = KLUfactorization())
 
     Base.depwarn(lazy"""
@@ -144,9 +142,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         returnvoltage = returnvoltage,
         returnvoltageadjoint = returnvoltageadjoint,
         keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
-        returnSsensitivity = returnSsensitivity,
-        returnZ = returnZ, returnZadjoint = returnZadjoint,
-        returnZsensitivity = returnZsensitivity,
+        returnSsensitivity = returnSsensitivity, returnZ = returnZ,
+        returnZadjoint = returnZadjoint, returnZsensitivity = returnZsensitivity,
         returnZsensitivityadjoint = returnZsensitivityadjoint,
         factorization = factorization)
 
