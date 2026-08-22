@@ -211,4 +211,31 @@ using Test
         @test_throws ArgumentError JosephsonCircuits.jacobian!(d.Jx, sys)
     end
 
+
+    @testset "applyffttranspose! bilinear transpose property" begin
+        # the defining property, <alpha, td> == <P, applyfft(td)> under the
+        # non conjugating bilinear pairing, on randomized data over one,
+        # two and three tone grids (odd first dimension, as plan_applynl
+        # builds), including a singleton trailing tone dimension. this pins
+        # the transpose against the forward transform it claims to
+        # transpose, for every grid shape the reverse contraction can see.
+        for Nw in ((5,), (5,4), (4,3,3), (5,1))
+            NLj = 2
+            fd = zeros(Complex{Float64}, Nw..., NLj)
+            td, irfftplan, rfftplan = JosephsonCircuits.plan_applynl(fd)
+            fftplan = JosephsonCircuits.plan_applyffttranspose(fd, td)
+            padded = zeros(Complex{Float64}, size(td))
+            alpha = zeros(Complex{Float64}, size(td))
+            for trial in 1:3
+                td .= randn.()
+                JosephsonCircuits.applyfft!(fd, td, rfftplan)
+                P = randn(Complex{Float64}, size(fd))
+                JosephsonCircuits.applyffttranspose!(alpha, P, padded,
+                    fftplan)
+                lhs = sum(P .* fd)
+                rhs = sum(alpha .* td)
+                @test isapprox(lhs, rhs, rtol = 1e-12)
+            end
+        end
+    end
 end
