@@ -123,6 +123,21 @@ end
 # applynl! is the composition with a pointwise function between the halves.
 # NOTE: the multidimensional real Fourier transform may destroy its input,
 # so only pass workspaces to applyfft!.
+
+"""
+    applyifft!(td::Array{T}, fd::Array{Complex{T}}, irfftplan) where T
+
+applyfft! and applyifft! and the two halves of applynl!, so linear operations
+can be interleaved with the pointwise time domain nonlinearities. applyifft!
+computes the physical time domain signal from the frequency domain
+coefficients and applyfft! the inverse, with the same normalization convention
+as applynl!, of which applynl! is the composition with a pointwise function
+between the halves.
+
+NOTE: the multidimensional real Fourier transform may destroy its input, so
+only pass workspaces to applyfft!.
+
+"""
 function applyifft!(td::Array{T}, fd::Array{Complex{T}}, irfftplan) where T
     mul!(td, irfftplan, fd)
     normalization = prod(size(td)[1:end-1])
@@ -132,6 +147,20 @@ function applyifft!(td::Array{T}, fd::Array{Complex{T}}, irfftplan) where T
     return td
 end
 
+"""
+    applyfft!(fd::Array{Complex{T}}, td::Array{T}, rfftplan) where T
+
+applyfft! and applyifft! and the two halves of applynl!, so linear operations
+can be interleaved with the pointwise time domain nonlinearities. applyifft!
+computes the physical time domain signal from the frequency domain
+coefficients and applyfft! the inverse, with the same normalization convention
+as applynl!, of which applynl! is the composition with a pointwise function
+between the halves.
+
+NOTE: the multidimensional real Fourier transform may destroy its input, so
+only pass workspaces to applyfft!.
+
+"""
 function applyfft!(fd::Array{Complex{T}}, td::Array{T}, rfftplan) where T
     mul!(fd, rfftplan, td)
     invnormalization = 1/prod(size(td)[1:end-1])
