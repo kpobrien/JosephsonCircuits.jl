@@ -3238,7 +3238,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # the matrix free real Jacobian
         jvpreal!(Jvr, vr) = jacobianvectorproduct!(Jvr, sys, vr)
 
-        # currently uses the real Jacobian as a pre-conditioner (not ideal).
+        # the assembled exact real Jacobian serves as the right
+        # preconditioner, refreshed lazily by nlsolvekrylov!
         info = nlsolvekrylov!(fjreal!, jvpreal!, Fr, Jr, xr;
             iterations = iterations, ftol = ftol,
             factorization = factorization)
