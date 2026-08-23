@@ -199,4 +199,51 @@ using Test
         end
     end
 
+    @testset "anderson correction solves the real least squares problem" begin
+        # the coefficients are constrained real because the harmonic balance
+        # error operator is antilinear, so the reference is least squares on
+        # the stacked real and imaginary parts. The correction is computed
+        # through a thin QR rather than the Gram matrix, which would square
+        # the condition number exactly when the history is near collinear.
+        for T in (Float64, ComplexF64)
+            for (n, depth, m) in ((40,5,5), (40,5,3), (30,4,4))
+                s = JosephsonCircuits.AndersonState(zeros(T,n), depth)
+                s.histcount = m
+                s.histpos = m == depth ? 1 : m+1
+                s.historyready = true
+                for k in 1:m
+                    s.deltafhistory[:,k] .= randn(T,n)
+                    s.deltaxhistory[:,k] .= randn(T,n)
+                end
+                dx = randn(T,n)
+                @test JosephsonCircuits.andersoncorrection!(s, dx)
+                A = s.deltafhistory[:,1:m]
+                Ar = T <: Complex ? [real(A); imag(A)] : A
+                br = T <: Complex ? [real(dx); imag(dx)] : dx
+                g = Ar \ br
+                ref = zeros(T,n)
+                for j in 1:m
+                    ref .+= g[j].*s.deltaxhistory[:,j] .+ g[j].*s.deltafhistory[:,j]
+                end
+                @test isapprox(s.correction, ref; rtol = 1e-8)
+            end
+        end
+    end
+
+    @testset "anderson truncates a rank deficient history" begin
+        n = 30
+        s = JosephsonCircuits.AndersonState(zeros(n), 4)
+        s.histcount = 4; s.histpos = 1; s.historyready = true
+        c1 = randn(n); c2 = randn(n)
+        s.deltafhistory[:,1] .= c1
+        s.deltafhistory[:,2] .= c2
+        s.deltafhistory[:,3] .= 2 .*c1 .- 3 .*c2   # exactly dependent
+        s.deltafhistory[:,4] .= randn(n)
+        for k in 1:4
+            s.deltaxhistory[:,k] .= randn(n)
+        end
+        @test JosephsonCircuits.andersoncorrection!(s, randn(n))
+        @test all(isfinite, s.correction)
+    end
+
 end

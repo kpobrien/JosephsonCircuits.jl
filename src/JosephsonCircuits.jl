@@ -89,6 +89,7 @@ include("networks.jl")
 include("networkconnection.jl")
 
 include("nlsolve.jl")
+include("krylov.jl")
 include("fftutils.jl")
 include("qesparams.jl")
 include("keyedarrayutils.jl")

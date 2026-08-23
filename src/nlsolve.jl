@@ -56,6 +56,7 @@ mutable struct AndersonState{T, RT}
     deltaxhistory::Matrix{T}
     deltafhistory::Matrix{T}
     agecols::Vector{Int}
+    qrQ::Matrix{T}
     gram::Matrix{RT}
     gammabuf::Vector{RT}
 end
@@ -70,6 +71,7 @@ function AndersonState(x::AbstractVector{T}, depth::Integer) where T
         copy(x), copy(x), similar(x, n),
         Matrix{T}(undef, n, depth), Matrix{T}(undef, n, depth),
         Vector{Int}(undef, depth),
+        Matrix{T}(undef, n, depth),
         Matrix{RT}(undef, depth, depth), Vector{RT}(undef, depth))
 end
 
@@ -764,7 +766,7 @@ coefficients correspond to Anderson acceleration of the equivalent real
 system.
 """
 function andersoncorrection!(s::AndersonState{T}, deltax::AbstractVector;
-    ridge = 1e-12) where T
+    rtol = eps(real(T))^(3//4)) where T
     s.histcount > 0 || return false
     m = s.histcount
     # age-ordered column indices (oldest first): when the buffer is full
@@ -775,41 +777,66 @@ function andersoncorrection!(s::AndersonState{T}, deltax::AbstractVector;
             (s.histpos + k - 1 > s.depth ?
                 s.histpos + k - 1 - s.depth : s.histpos + k - 1)
     end
-    for i in 1:m
-        ci = s.agecols[i]
-        for j in i:m
-            s.gram[i, j] = real(dot(view(s.deltafhistory, :, ci),
-                view(s.deltafhistory, :, s.agecols[j])))
-            s.gram[j, i] = s.gram[i, j]
+    # Thin QR of the age-ordered history ΔF by modified Gram-Schmidt, in the
+    # real inner product real(dot(a, b)), which is the Euclidean inner product
+    # of the stacked real and imaginary parts.
+    #
+    # A column whose norm collapses after orthogonalization is linearly
+    # dependent on the older ones and carries no new direction. Rather than
+    # regularizing it back to invertibility, truncate the history there and
+    # keep the well conditioned leading columns; `rtol` is relative to the
+    # largest norm seen, so the test is scale free.
+    Q = s.qrQ
+    R = s.gram
+    rank = 0
+    maxnorm = zero(real(T))
+    for j in 1:m
+        qj = view(Q, :, j)
+        copyto!(qj, view(s.deltafhistory, :, s.agecols[j]))
+        # two passes of modified Gram-Schmidt: one pass can lose orthogonality
+        # on the near-dependent histories this is meant to handle. the
+        # coefficients from both passes accumulate into the same R entry
+        for i in 1:rank
+            R[i, j] = zero(real(T))
         end
-        s.gammabuf[i] = real(dot(view(s.deltafhistory, :, ci), deltax))
-    end
-    gramscale = 0.0
-    for i in 1:m
-        gramscale = max(gramscale, s.gram[i, i])
-    end
-    for i in 1:m
-        s.gram[i, i] += ridge*gramscale
-    end
-    # factor the Gram matrix, solver the linear system, and overwrite
-    # `gammabuf` with the coefficients. if `lu!` errors, `gamma` is set to
-    # nothing, the function returns `false` and the Gram matrix and `gammabuf`
-    # should be discarded.
-    gamma = try
-        LUf = lu!(view(s.gram, 1:m, 1:m))
-        ldiv!(LUf, view(s.gammabuf, 1:m))
-        view(s.gammabuf, 1:m)
-    catch e
-        # only catch numerical errors from the solve
-        if e isa LinearAlgebra.SingularException ||
-                e isa LinearAlgebra.ZeroPivotException ||
-                e isa LinearAlgebra.LAPACKException
-            nothing
-        else
-            rethrow()
+        for _ in 1:2
+            for i in 1:rank
+                qi = view(Q, :, i)
+                c = real(dot(qi, qj))
+                R[i, j] += c
+                axpy!(-c, qi, qj)
+            end
         end
+        nrm = norm(qj)
+        maxnorm = max(maxnorm, nrm)
+        if nrm <= rtol*maxnorm || !isfinite(nrm)
+            break
+        end
+        rank += 1
+        R[rank, j] = nrm
+        rmul!(qj, inv(nrm))
     end
-    if !isnothing(gamma) && all(isfinite, gamma)
+    rank > 0 || return false
+    m = rank
+
+    # the least squares right hand side in the orthonormal basis
+    for i in 1:m
+        s.gammabuf[i] = real(dot(view(Q, :, i), deltax))
+    end
+
+    # back substitute R*gamma = Q'*deltax
+    gamma = view(s.gammabuf, 1:m)
+    for i in m:-1:1
+        acc = gamma[i]
+        for k in i+1:m
+            acc -= R[i, k]*gamma[k]
+        end
+        if iszero(R[i, i]) || !isfinite(acc)
+            return false
+        end
+        gamma[i] = acc/R[i, i]
+    end
+    if all(isfinite, gamma)
         fill!(s.correction, zero(T))
         for j in 1:m
             axpy!(gamma[j], view(s.deltaxhistory, :, s.agecols[j]), s.correction)
@@ -856,11 +883,6 @@ The motivation is an iteration costs a Jacobian evaluation, factorization, and
 a linear solve which for a typical device like a TWPA take an order of
 magnitude more time than a residual evaluation, so extra residual evaluations
 are worth it if it results in a better path (which they appear to).
-
-so the plain
-search's extra evaluations are far cheaper than the extra iterations a wrong
-single-path choice costs; racing both and comparing delivered points chooses
-by measurement, per iteration.
 
 If both searches fail, the better best-effort point is returned and
 `accepted` is false. `Fatx` preserves the residual at `x` across the
@@ -1073,10 +1095,10 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     # Jacobian and therefore does not accept the combined fj! interface
     residual!(Fv, xv) = fj!(Fv, nothing, xv)
 
-    # run the fast comparison. on a stall (failure-counter or no-decrease exit,
-    # not reaching )
-    # restart once from the initial point in curved priority — the
-    # robust structure — on a fresh trajectory. see the docstring.
+
+    # run the fast comparison first. on a stall (the failure-counter or
+    # no-decrease exit) restart once from the initial point with curved
+    # priority on a fresh trajectory.
     curvedpriority = false
     stalled = false
 
@@ -1099,18 +1121,20 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
             backtrackfailures = 0
         end
 
-        # evaluate the residual and Jacobian at the (initial or restarted)
-        # point and factor the Jacobian
-        fj!(F, J, x)
-        tryfactorize!(cache, factorization, J)
-
-        # the residual norm at the initial point; every later entry of normF
-        # is pushed immediately after a step is accepted, so convergence is
-        # decided on each fresh residual before the Jacobian is refreshed and
-        # no Jacobian is ever evaluated at a final point
+        # evaluate the residual at the (initial or restarted) point and decide
+        # convergence before touching the Jacobian. the residual norm at the
+        # initial point; every later entry of normF is pushed immediately
+        # after a step is accepted, so convergence is decided on each fresh
+        # residual before the Jacobian is refreshed and no Jacobian is ever
+        # evaluated at a final point
+        residual!(F, x)
         push!(normF, norm(F))
         if normF[end] <= ftol
             converged = true
+        else
+            # only a point from which a step will be taken needs a Jacobian.
+            fj!(nothing, J, x)
+            tryfactorize!(cache, factorization, J)
         end
 
         # perform Newton's method with linesearch based on Nocedal and Wright
@@ -1145,14 +1169,21 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
             # claim, not the true directional derivative
             dϕ0dα = real(dot(F, J, deltax))
 
-            # validate before the Armijo tests below, which would otherwise
-            # run with an invalid slope (the trial-step helpers validate too,
-            # but only on their paths)
-            if !isfinite(ϕ0)
-                throw(ArgumentError(lazy"`ϕ0` = $(ϕ0) must be finite."))
-            end
-            if !isfinite(dϕ0dα) || dϕ0dα >= zero(dϕ0dα)
-                throw(ArgumentError(lazy"`dϕ0dα` = $(dϕ0dα) must be finite and negative."))
+            # check before the Armijo tests below, which would otherwise run
+            # with an invalid slope (the trial-step helpers validate too, but
+            # only on their paths).
+            #
+            # a non-finite merit, or a search direction which is not a descent
+            # direction, is a numerical outcome of this solve rather than a
+            # caller error: `deltax` comes from a factorization of `J`, and for
+            # `method = :quasinewton` that `J` is only an approximation, so it
+            # can propose a direction the true merit does not decrease along.
+            # treat it as a stall, which stops this attempt and lets the robust
+            # retry below run on a fresh trajectory, instead of throwing out of
+            # the middle of the solve and discarding a usable best point.
+            if !isfinite(ϕ0) || !isfinite(dϕ0dα) || dϕ0dα >= zero(dϕ0dα)
+                stalled = true
+                break
             end
 
             # whether this iteration escalated the search policy (set below

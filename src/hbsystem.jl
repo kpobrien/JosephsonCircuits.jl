@@ -36,47 +36,51 @@ The fields are intentionally loosely typed; all performance critical loops
 are behind function barriers which specialize on the concrete argument
 types.
 """
-struct HBSystem
+struct HBSystem{N,TR,TRt,TinvL,TG,TC,TWm,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ}
     # linear term matrices and source vector (complex representation, scaled
     # by Lmean, conjugated for negative frequency modes with conjnegfreq!)
-    Rbnm
-    Rbnmt
-    invLnm
-    Gnm
-    Cnm
-    wmodesm
-    wmodes2m
-    bnm
+    Rbnm::TR
+    Rbnmt::TRt
+    invLnm::TinvL
+    Gnm::TG
+    Cnm::TC
+    wmodesm::TWm
+    wmodes2m::TWm
+    bnm::Tb
     # Josephson junction data
-    Ljb
-    Ljbm
-    Lmean
+    Ljb::TLjb
+    Ljbm::TLjbm
+    Lmean::TLm
     # frequency domain packing and Fourier transform plans
-    freqindexmap
-    conjsourceindices
-    conjtargetindices
-    irfftplan
-    rfftplan
-    # real representation layout
-    modelayout
+    freqindexmap::Vector{Int}
+    conjsourceindices::Vector{Int}
+    conjtargetindices::Vector{Int}
+    irfftplan::TIP
+    rfftplan::TFP
+    # real mode layout
+    modelayout::ModeLayout{Int}
     # optional precomputed Jacobian assembly plans
-    realjacobianplan
-    complexjacobianplan
+    realjacobianplan::TRJ
+    complexjacobianplan::TCJ
     # the current point (set with setpoint!)
     x::Vector{Complex{Float64}}
     # cached time domain branch fluxes and pointwise nonlinearities at the
-    # current point, with validity flags
-    phitd
-    sintd
-    costd
+    # current point
+    phitd::Array{Float64,N}
+    sintd::Array{Float64,N}
+    costd::Array{Float64,N}
     sincurrent::Base.RefValue{Bool}
     coscurrent::Base.RefValue{Bool}
     # workspaces
-    phimatrix
-    dirtd
-    dirtd2
-    worktd
+    phimatrix::Array{Complex{Float64},N}
+    dirtd::Array{Float64,N}
+    dirtd2::Array{Float64,N}
+    worktd::Array{Float64,N}
     AoLjbmvector::Vector{Complex{Float64}}
+    # branch fluxes Rbnm*z and their gather onto the Josephson branches,
+    # preallocated so _branchtimedomain! does not allocate per call
+    workb::Vector{Complex{Float64}}
+    workljb::Vector{Complex{Float64}}
     workn1::Vector{Complex{Float64}}
     workn2::Vector{Complex{Float64}}
     workv::Vector{Complex{Float64}}
@@ -111,18 +115,13 @@ function HBSystem(Rbnm, Rbnmt, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
         Ref(false), Ref(false),
         phimatrix, similar(phimatrixtd), similar(phimatrixtd), phimatrixtd,
         zeros(Complex{Float64}, size(Rbnm, 1)),
+        zeros(Complex{Float64}, size(Rbnm, 1)),
+        zeros(Complex{Float64}, length(Ljbm.nzind)),
         zeros(Complex{Float64}, n), zeros(Complex{Float64}, n),
         zeros(Complex{Float64}, n), zeros(Complex{Float64}, n),
         zeros(Complex{Float64}, n))
 end
 
-# the two halves of applynl!, so linear operations can be interleaved with
-# the pointwise time domain nonlinearities. applyifft! computes the physical
-# time domain signal from the frequency domain coefficients and applyfft!
-# the inverse, with the same normalization convention as applynl!, of which
-# applynl! is the composition with a pointwise function between the halves.
-# NOTE: the multidimensional real Fourier transform may destroy its input,
-# so only pass workspaces to applyfft!.
 
 """
     applyifft!(td::Array{T}, fd::Array{Complex{T}}, irfftplan) where T
@@ -134,9 +133,7 @@ coefficients and applyfft! the inverse, with the same normalization convention
 as applynl!, of which applynl! is the composition with a pointwise function
 between the halves.
 
-NOTE: the multidimensional real Fourier transform may destroy its input, so
-only pass workspaces to applyfft!.
-
+NOTE: `applyifft!` may overwrite `fd`.
 """
 function applyifft!(td::Array{T}, fd::Array{Complex{T}}, irfftplan) where T
     mul!(td, irfftplan, fd)
@@ -157,9 +154,7 @@ coefficients and applyfft! the inverse, with the same normalization convention
 as applynl!, of which applynl! is the composition with a pointwise function
 between the halves.
 
-NOTE: the multidimensional real Fourier transform may destroy its input, so
-only pass workspaces to applyfft!.
-
+NOTE: `applyifft!` may overwrite `td`.
 """
 function applyfft!(fd::Array{Complex{T}}, td::Array{T}, rfftplan) where T
     mul!(fd, rfftplan, td)
@@ -233,9 +228,21 @@ end
 # compute the physical time domain branch fluxes on the Josephson junctions
 # for the complex vector z (a point or a direction) into td, using
 # sys.phimatrix as the frequency domain workspace.
+# gather the Josephson branch entries of a branch vector.
+function _gatherbranches!(dest::Vector{Complex{Float64}},
+    src::Vector{Complex{Float64}}, nzind::AbstractVector{<:Integer})
+    @inbounds for i in eachindex(nzind)
+        dest[i] = src[nzind[i]]
+    end
+    return dest
+end
+
 function _branchtimedomain!(td, sys::HBSystem, z::AbstractVector)
-    phib = sys.Rbnm*z
-    phivectortomatrix!(phib[sys.Ljbm.nzind], sys.phimatrix,
+    # Rbnm*z into a preallocated branch vector, then gather the Josephson
+    # branches into a preallocated buffer.
+    mul!(sys.workb, sys.Rbnm, z)
+    workljb = _gatherbranches!(sys.workljb, sys.workb, sys.Ljbm.nzind)
+    phivectortomatrix!(workljb, sys.phimatrix,
         sys.freqindexmap, sys.conjsourceindices, sys.conjtargetindices,
         length(sys.Ljb.nzval))
     applyifft!(td, sys.phimatrix, sys.irfftplan)

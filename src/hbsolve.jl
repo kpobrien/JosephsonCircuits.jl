@@ -173,18 +173,13 @@ Diagnostics describing the nonlinear solution process of
 # Fields
 - `stages`: a vector of [`IterationInfo`](@ref), one for each invocation
     of the nonlinear solver, in the order they ran. The labels record
-    which solver stages ran and, for `method = :sourcestepping`, the
-    parameters record the source scale of each continuation point.
+    which solver stages ran.
 - `initialresidual`: the norm of the residual at the initial value.
 - `finalresidual`: the norm of the residual at the returned solution.
 - `converged`: whether the solver reported convergence.
-- `sourcefold`: the source scale at which the source stepping detected a
-    fold in the branch of solutions, or NaN if no fold was detected. A
-    fold is recorded even when the subsequent extrapolated jump over it
-    succeeds; when the solve also failed, a finite value suggests that
-    no solution exists on the branch at the full source amplitudes, for
-    example because the sources exceed a self-oscillation threshold. The
-    labels of `stages` record which continuation stage stalled.
+- `sourcefold`: reserved for source stepping continuation, which is not
+    currently implemented, and always `NaN`. It is retained so the field
+    layout of this struct does not change; do not depend on it.
 """
 struct SolverInfo
     stages
@@ -271,20 +266,13 @@ only the node coordinates. See `src/mna.jl`.
     truncation of the discrete Fourier space.
 - `iterations = 1000`: the number of iterations before the nonlinear solver
     returns an error.
-- `ftol = 1e-8`: the function tolerance defined we considered converged,
-    defined as norm(F)/norm(x) < ftol or norm(F,Inf) <= ftol.
-- `method = :quasinewton`: the nonlinear solution method. `:quasinewton`
-    iterates with the complex holomorphic Jacobian `Jx` only, an
-    approximation to the exact Jacobian. `:newton` solves the equivalent real
-    system with the exact real Jacobian, which restores quadratic convergence
-    near the solution, including for multi-tone problems: its mode coupling
-    indices include the couplings which alias back onto the sampled grid,
-    matching the cyclic Fourier transforms of the residual, and the
-    assembled Jacobian agrees with the matrix-free Jacobian-vector product
-    of `HBSystem` to machine precision. Both Jacobians are assembled
-    directly from the Fourier coefficients of `cos(phi(t))` with precomputed
-    plans (see [`plancomplexjacobian`](@ref) and
-    [`planrealjacobian`](@ref)).
+- `ftol = 1e-8`: the residual tolerance `norm(F) <= ftol` at which the
+    nonlinear solution is considered converged. `F` is  is scaled by `Z0/w0`.
+    Aee [`calcsolverscale`](@ref)).
+- `method = :quasinewton`: the nonlinear solver. `:quasinewton`
+    uses the complex holomorphic Jacobian `Jx` only, an approximation to the
+    full Jacobian. `:newton` solves the equivalent real system with the full
+    Jacobian. `:newtonkrylov` uses the matrix-free real Jacobian.
 - `andersondepth::Integer = method == :newton ? 0 : 5`: the depth of the
     Anderson acceleration of the Newton fixed point iteration, the maximum
     number of previous iterates used for the extrapolation. Values less than
@@ -843,13 +831,17 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         calcmodefreqs(nonlinear.w,signalfreq.modes)
     end
 
-
-    # the flux basis represents voltages as v = im*w*phi, which is
-    # degenerate at exactly zero total frequency; scattering parameters at
-    # DC are the w -> 0 limit. detect signal plus pump-mode totals which
-    # are zero or cancel to within the accumulated roundoff of the
-    # contributing terms.
-    all(isfinite, w) || throw(ArgumentError("All signal frequencies must be finite."))
+    if !all(isfinite, w)
+        throw(ArgumentError("All signal frequencies must be finite."))
+    end
+    # make sure the signal frequency vector or iterator isn't empty.
+    if isempty(w)
+        throw(ArgumentError("At least one signal frequency is required."))
+    end
+    # make sure there is at least one batch.
+    if nbatches < 1
+        throw(ArgumentError(lazy"`nbatches` = $(nbatches) must be at least 1."))
+    end
     # the nonlinear solution's fields are untyped, so convert the pump
     # frequencies to a concrete tuple here: everything below is per
     # (frequency, mode) and would box every value otherwise.
@@ -1154,7 +1146,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # impedance term depends on S itself, so S is computed whenever the
     # sensitivities are requested even if it is not returned.
     outputarrays = LinearizedArrays(;
-        requestS = returnS || returnQE || returnSsensitivity,
+        requestS = returnS,
         requestSnoise = returnSnoise,
         requestSsensitivity = returnSsensitivity,
         requestQE = returnQE, requestCM = returnCM,
@@ -1188,16 +1180,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # calculate the `ideal` quantum efficiency based on the gain assuming an
     # ideal two mode amplifier
-    QEideal = if returnQE
-        # calculate the ideal quantum efficiency.
-        zeros(Float64,size(outputarrays.S))
-    else
-        zeros(Float64,0,0,0)
-    end
-    if returnQE
-        # calculate the ideal quantum efficiency.
-        calcqeideal!(QEideal,outputarrays.S)
-    end
+    QEideal = outputarrays.QEideal
 
     # turn all of the array outputs into keyed arrays if the
     # keyedarrays = true
@@ -1310,6 +1293,7 @@ struct LinearizedArrays
     Snoise::Array{Complex{Float64},3}
     Ssensitivity::Array{Complex{Float64},4}
     QE::Array{Float64,3}
+    QEideal::Array{Float64,3}
     CM::Array{Float64,2}
     nodeflux::Array{Complex{Float64},3}
     nodefluxadjoint::Array{Complex{Float64},3}
@@ -1334,6 +1318,7 @@ function LinearizedArrays(; requestS::Bool, requestSnoise::Bool,
             Nfrequencies),
         za(requestSsensitivity, Complex{Float64}, NPM, NPM, Ncomponents,
             Nfrequencies),
+        za(requestQE, Float64, NPM, NPM, Nfrequencies),
         za(requestQE, Float64, NPM, NPM, Nfrequencies),
         za(requestCM, Float64, NPM, Nfrequencies),
         za(requestnodeflux, Complex{Float64}, Nnodal, NPM, Nfrequencies),
@@ -1497,8 +1482,9 @@ function hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
             copy!(view(arrays.nodeflux,:,:,i), view(phin, 1:size(arrays.nodeflux,1), :))
         end
 
-        # calculate the scattering parameters
-        if !isempty(arrays.S) || !isempty(arrays.QE) || !isempty(arrays.CM)
+        # calculate the scattering parameters.
+        if !isempty(arrays.S) || !isempty(arrays.QE) || !isempty(arrays.QEideal) ||
+                !isempty(arrays.CM) || !isempty(arrays.Ssensitivity)
             calcinputoutput!(inputwave, outputwave, phin, bnm,
                 portimpedanceindices, portimpedanceindices, portimpedances,
                 portimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
@@ -1598,6 +1584,11 @@ function hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
             if !isempty(arrays.CM)
                 calccm!(view(arrays.CM,:,i), Sview, wmodes)
             end
+        end
+
+        # calculate the ideal QE
+        if !isempty(arrays.QEideal)
+            calcqeideal!(view(arrays.QEideal,:,:,i), Sview)
         end
     end
     return nothing
@@ -2655,20 +2646,13 @@ frequency are rejected with an `ArgumentError`. See `src/mna.jl`.
 - `odd = true`: include odd terms in the harmonic balance analysis.
 - `even = false`: include even terms in the harmonic balance analysis.
 - `x0 = nothing`: initial value for the nodeflux.
-- `ftol = 1e-8`: the function tolerance defined we considered converged,
-    defined as norm(F)/norm(x) < ftol or norm(F,Inf) <= ftol.
-- `method = :quasinewton`: the nonlinear solution method. `:quasinewton`
-    iterates with the complex holomorphic Jacobian `Jx` only, an
-    approximation to the exact Jacobian. `:newton` solves the equivalent real
-    system with the exact real Jacobian, which restores quadratic convergence
-    near the solution, including for multi-tone problems: its mode coupling
-    indices include the couplings which alias back onto the sampled grid,
-    matching the cyclic Fourier transforms of the residual, and the
-    assembled Jacobian agrees with the matrix-free Jacobian-vector product
-    of `HBSystem` to machine precision. Both Jacobians are assembled
-    directly from the Fourier coefficients of `cos(phi(t))` with precomputed
-    plans (see [`plancomplexjacobian`](@ref) and
-    [`planrealjacobian`](@ref)).
+- `ftol = 1e-8`: the residual tolerance `norm(F) <= ftol` at which the
+    nonlinear solution is considered converged. `F` is  is scaled by `Z0/w0`.
+    Aee [`calcsolverscale`](@ref)).
+- `method = :quasinewton`: the nonlinear solver. `:quasinewton`
+    uses the complex holomorphic Jacobian `Jx` only, an approximation to the
+    full Jacobian. `:newton` solves the equivalent real system with the full
+    Jacobian. `:newtonkrylov` uses the matrix-free real Jacobian.
 - `andersondepth::Integer = method == :newton ? 0 : 5`: the depth of the
     Anderson acceleration of the Newton fixed point iteration, the maximum
     number of previous iterates used for the extrapolation. Values less than
@@ -3164,7 +3148,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         nothing, nothing
     end
 
-    Jr, realjacobianplan = if method == :newton || debugJacobian ||
+    Jr, realjacobianplan = if method == :newton || method == :newtonkrylov || debugJacobian ||
             returnoperatingpoint
         planrealjacobian(Amatrixindicesaliased, Amatrixconjindices, Ljb,
             Lmean,
@@ -3245,6 +3229,18 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # Jacobian then convert back to complex
         info = nlsolve!(fjreal!, Fr, Jr, xr; iterations = iterations,
             ftol = ftol, andersondepth = andersondepth,
+            factorization = factorization)
+        real_to_complex!(x,xr,modelayout.isreal)
+        real_to_complex!(F,Fr,modelayout.isreal)
+        info
+    elseif method == :newtonkrylov
+
+        # the matrix free real Jacobian
+        jvpreal!(Jvr, vr) = jacobianvectorproduct!(Jvr, sys, vr)
+
+        # currently uses the real Jacobian as a pre-conditioner (not ideal).
+        info = nlsolvekrylov!(fjreal!, jvpreal!, Fr, Jr, xr;
+            iterations = iterations, ftol = ftol,
             factorization = factorization)
         real_to_complex!(x,xr,modelayout.isreal)
         real_to_complex!(F,Fr,modelayout.isreal)

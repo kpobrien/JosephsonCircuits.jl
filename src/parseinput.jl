@@ -623,12 +623,12 @@ function calcnodesorting(uniquenodevector::Vector{String};
         throw(ArgumentError(lazy"No ground node found in netlist."))
     end
 
-    # if the ground index is not the first after sorting, make it first and
-    # increment earlier node indices
+    # if the ground index is not the first after sorting, move it to the front
+    # and shift the nodes which sorted before it back by one
     if uniquenodevectorsortindices[1] != groundnodeindex
-        for i = 2:groundnodeindex
-            j = groundnodeindex-i+2
-            uniquenodevectorsortindices[j]= uniquenodevectorsortindices[j-1]
+        groundpos = findfirst(==(groundnodeindex), uniquenodevectorsortindices)
+        for j = groundpos:-1:2
+            uniquenodevectorsortindices[j] = uniquenodevectorsortindices[j-1]
         end
         uniquenodevectorsortindices[1] = groundnodeindex
     end

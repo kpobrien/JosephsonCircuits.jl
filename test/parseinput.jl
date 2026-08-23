@@ -144,6 +144,47 @@ using Test
         )
     end
 
+    @testset "calcnodesorting negative node names" begin
+        # the returned indices must always be a permutation with ground first.
+        # ground's index in the input is not in general its position in the
+        # sorting permutation, and using one for the other duplicated an index
+        # and dropped another whenever ground did not sort first, which happens
+        # as soon as any node name is a negative number.
+        function isgroundfirstperm(nodes, indices)
+            sort(indices) == collect(1:length(nodes)) && nodes[indices][1] == "0"
+        end
+
+        # smallest failing case: ground first in the input, one negative node
+        @test JosephsonCircuits.calcnodesorting(["0","-2"];sorting=:number) == [1,2]
+        @test JosephsonCircuits.calcnodesorting(["0","-1"];sorting=:name) == [1,2]
+
+        # ground neither first in the input nor first after sorting
+        @test JosephsonCircuits.calcnodesorting(["-2","-1","5","0"];sorting=:number) ==
+            [4,1,2,3]
+
+        for sorting in (:number, :name, :none)
+            for nodes in (["0","-2"], ["0","-1","2"], ["-2","-1","5","0"],
+                    ["-1","0","3","-4"], ["0","-3","-1","1","2"], ["3","-1","0"])
+                indices = JosephsonCircuits.calcnodesorting(copy(nodes);sorting=sorting)
+                @test isgroundfirstperm(nodes, indices)
+            end
+        end
+
+        # the non-ground nodes must still be in the requested order
+        @test ["-2","-1","5","0"][
+            JosephsonCircuits.calcnodesorting(["-2","-1","5","0"];sorting=:number)] ==
+            ["0","-2","-1","5"]
+
+        # a negative node name must survive parsing rather than being silently
+        # renamed to ground, which is what the corrupted permutation did
+        @variables R Cc Lj Cj
+        circuit = [("P1","0","-1",1),("R1","0","-1",R),("C1","-1","2",Cc),
+            ("Lj1","2","0",Lj),("C2","2","0",Cj)]
+        psc = JosephsonCircuits.parsesortcircuit(circuit;sorting=:number)
+        @test psc.nodenames == ["0","-1","2"]
+        @test length(unique(psc.nodenames)) == length(psc.nodenames)
+    end
+
     @testset "calcvaluetype" begin
         @test_throws(
             DimensionMismatch("componenttypes and componentvalues should have the same length"),

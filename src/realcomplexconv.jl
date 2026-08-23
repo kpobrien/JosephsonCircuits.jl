@@ -503,17 +503,40 @@ function real_to_complex(Ar::SparseMatrixCSC{T,Ti}, rl::ModeLayout, cl::ModeLayo
         c0 = cptr[j]
         wc = cptr[j+1] - c0
         k2 = wc == 2 ? Rp[c0+1] : Rp[c0]
+        # the end of the paired column, used to bound the lockstep cursor `k2`
+        k2end = wc == 2 ? Rp[c0+2] : Rp[c0+1]
         for k in Rp[c0]:Rp[c0+1]-1
             r = Ri[k]
+            if wc == 2
+                # the two real columns of a complex column carry the same row
+                # pattern, so the partner entry must sit at the matching offset
+                # of the second column. without this check a shorter or
+                # differently patterned second column makes `Rv[k2]` read past
+                # the column, or past the end of `Rv` entirely, which
+                # `@inbounds` does not catch.
+                (k2 < k2end && Ri[k2] == r) || throw(ArgumentError(
+                    lazy"the two real columns of complex column $(j) do not share a row pattern; `Ar` is not a pattern produced by `complex_to_real`."))
+            end
             if isfirst[r]
                 t += 1
                 rowval[t] = rinv[r]
                 nzval[t]  = Complex(Rv[k], wc == 2 ? qs * Rv[k2] : zero(T))
             else
+                # the imaginary part of a complex row mode is folded into the
+                # entry written for that mode's first real slot, so that slot
+                # must already be stored in this column. if it is not, `t`
+                # either still refers to a previous mode or is zero, and
+                # writing here would silently corrupt an unrelated entry or
+                # write out of bounds (`@inbounds` elides the check).
+                (t >= 1 && rowval[t] == rinv[r]) || throw(ArgumentError(
+                    lazy"the second real slot of the mode at row $(rinv[r]) of column $(j) is stored but the first is not; `Ar` is not a pattern produced by `complex_to_real`."))
                 nzval[t] = Complex(real(nzval[t]), Rv[k])
             end
             k2 += 1
         end
+        # the paired column must not carry entries the first one lacks
+        wc == 2 && k2 != k2end && throw(ArgumentError(
+            lazy"the two real columns of complex column $(j) do not share a row pattern; `Ar` is not a pattern produced by `complex_to_real`."))
         colptr[j+1] = t + 1
     end
     return SparseMatrixCSC{Complex{T},Tj}(rl.dim, cl.dim, colptr, rowval, nzval)

@@ -326,4 +326,24 @@ using JosephsonCircuits, LinearAlgebra, Test
         @test JosephsonCircuits.complex_to_real(view(Abig, 1:m, 1:n), rm, rm) == JosephsonCircuits.complex_to_real(Abig[1:m, 1:n], rm, rm)
     end
 
+    @testset "real_to_complex rejects an incomplete row mode" begin
+        # `complex_to_real` always stores both real slots of a complex row
+        # mode. If a caller passes a pattern where the second slot is stored
+        # but the first is not, the imaginary part has no entry to be folded
+        # into: the write used to land on an unrelated earlier entry, or on
+        # index 0 of a zero-length nzval, which `@inbounds` did not catch.
+        mask = [false, false]
+        Ar = JosephsonCircuits.SparseArrays.sparse([2], [1], [1.0], 4, 4)
+        @test_throws ArgumentError JosephsonCircuits.real_to_complex(Ar, mask)
+
+        # the second slot of the second row mode, with the first absent
+        Ar2 = JosephsonCircuits.SparseArrays.sparse([1, 4], [1, 1], [1.0, 2.0], 4, 4)
+        @test_throws ArgumentError JosephsonCircuits.real_to_complex(Ar2, mask)
+
+        # a well formed pattern still round trips
+        A = JosephsonCircuits.SparseArrays.sparse([1, 2], [1, 2], ComplexF64[1.0+2.0im, 3.0-1.0im], 2, 2)
+        Arok = JosephsonCircuits.complex_to_real(A, mask)
+        @test JosephsonCircuits.real_to_complex(Arok, mask) == A
+    end
+
 end

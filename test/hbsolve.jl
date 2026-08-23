@@ -8,6 +8,8 @@ using Test
 
     @testset "hbsolve-hbnlsolve comparison" begin
 
+        ftol = 5e-17
+
         @variables R Cc Lj Cj
         circuit = [
             ("P1","1","0",1),
@@ -34,7 +36,7 @@ using Test
             Npumpharmonics = (10,)
             Nmodulationharmonics = (10,)
             sol1 = hbsolve(ws, (wp,), sources, Nmodulationharmonics,
-                Npumpharmonics, circuit, circuitdefs, ftol = 1e-16)
+                Npumpharmonics, circuit, circuitdefs, ftol = ftol)
             S1ss = sol1.linearized.S((0,),1,(0,),1,1)
             S1is = sol1.linearized.S((-2,),1,(0,),1,1)
 
@@ -42,7 +44,7 @@ using Test
             w = (wp,ws)
             Nharmonics = (10,10)
             sources = [(mode=(1,0),port=1,current=Ip),(mode=(0,1),port=1,current=Is)]
-            sol2 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = 1e-16)
+            sol2 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = ftol)
             S2ss = sol2.S((0,1),1,(0,1),1)
             S2is = sol2.S((2,-1),1,(0,1),1)
 
@@ -50,7 +52,7 @@ using Test
             w = (ws,wp)
             Nharmonics = (10,10)
             sources = [(mode=(0,1),port=1,current=Ip),(mode=(1,0),port=1,current=Is)]
-            sol3 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = 1e-16)
+            sol3 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = ftol)
             S3ss = sol3.S((1,0),1,(1,0),1)
             S3is = sol3.S((1,-2),1,(1,0),1)
             
@@ -1080,5 +1082,45 @@ using Test
         end
     end
 
+    @testset "outputs do not depend on whether S is retained" begin
+        # requestS used to be forced true by returnQE and returnSsensitivity,
+        # so the scattering cube survived the frequency loop even when the
+        # caller never asked for it. Everything now consumes the per frequency
+        # view instead, and these outputs must be unchanged either way.
+        @variables R1v R2v C1v L1v C2v Ljv
+        circuit = Tuple{String,String,String,Num}[]
+        push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",R1v))
+        push!(circuit,("C1","1","2",C1v)); push!(circuit,("Lj1","2","0",Ljv))
+        push!(circuit,("C2","2","0",C2v)); push!(circuit,("P2","2","0",2))
+        push!(circuit,("R2","2","0",R2v))
+        defs = Dict(R1v=>50.0, R2v=>50.0, C1v=>100e-15, Ljv=>1000e-12,
+            C2v=>200e-15)
+        ws = 2*pi*[4.5e9, 5.0e9]
+        wp = (2*pi*4.75001*1e9,)
+        sources = [(mode=(1,),port=1,current=0.00565e-6)]
+
+        withS = hbsolve(ws, wp, sources, (4,), (4,), circuit, defs;
+            keyedarrays=false, returnS=true, returnQE=true, returnCM=true)
+        withoutS = hbsolve(ws, wp, sources, (4,), (4,), circuit, defs;
+            keyedarrays=false, returnS=false, returnQE=true, returnCM=true)
+
+        @test isempty(withoutS.linearized.S)
+        @test !isempty(withoutS.linearized.QE)
+        @test withoutS.linearized.QE == withS.linearized.QE
+        @test withoutS.linearized.QEideal == withS.linearized.QEideal
+        @test withoutS.linearized.CM == withS.linearized.CM
+
+        # the sensitivity scaling reads the per frequency scattering matrix,
+        # so it must still be computed when only the sensitivities are asked
+        # for and S itself is not returned
+        names = ["C1","C2","R1"]
+        sensS = hblinsolve(ws, circuit, defs; keyedarrays=false,
+            sensitivitynames=names, returnSsensitivity=true, returnS=true)
+        sensnoS = hblinsolve(ws, circuit, defs; keyedarrays=false,
+            sensitivitynames=names, returnSsensitivity=true, returnS=false)
+        @test isempty(sensnoS.S)
+        @test !isempty(sensnoS.Ssensitivity)
+        @test sensnoS.Ssensitivity == sensS.Ssensitivity
+    end
 
 end

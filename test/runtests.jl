@@ -10,7 +10,7 @@ using JosephsonCircuits
     if !occursin("DEV", string(VERSION))
         @testset verbose=true "Code quality (Aqua.jl)" begin
             using Aqua
-            Aqua.test_all(JosephsonCircuits; ambiguities = false, persistent_tasks=false)
+            Aqua.test_all(JosephsonCircuits; ambiguities = true, persistent_tasks=false)
         end
 
         @testset verbose = true "Doctests (Documenter.jl)" begin
@@ -52,6 +52,8 @@ using JosephsonCircuits
     include("matutils.jl")
 
     include("nlsolve.jl")
+
+    include("krylov.jl")
 
     include("parseinput.jl")
 
