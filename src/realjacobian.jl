@@ -48,12 +48,15 @@ the scatter of the mode coupling coefficients into the Josephson branch
 matrices `AoLjbm` and `AoLjbmconj` (following the difference and sum mode
 coupling index matrices), the incidence matrix triple products
 `Rbnm'*AoLjbm*Rbnm`, and the complex-to-real block conversion, is stored
-as two flat scatter lists:
+as two segmented gather lists ([`segmentscatterbydest`](@ref)), so that
+nonzero `q` of `Jr` is
 
-    nonzeros(Jr)[redest[k]] += recoef[k]*real(phimatrix[resrc[k]])
-    nonzeros(Jr)[imdest[k]] += imcoef[k]*imag(phimatrix[imsrc[k]])
+    sum(recoef[t]*real(phimatrix[resrc[t]]) for t in reseg[q]:reseg[q+1]-1) +
+    sum(imcoef[t]*imag(phimatrix[imsrc[t]]) for t in imseg[q]:imseg[q+1]-1)
 
-with any complex conjugation folded into the sign of `imcoef`. Both the
+with any complex conjugation folded into the sign of `imcoef`. One work item
+owns one nonzero and reduces its own segments, so the assembly needs no
+accumulation into shared slots and no atomics. Both the
 holomorphic and non-holomorphic (conjugate) Josephson contributions appear in
 these lists; the non-holomorphic contribution to self-conjugate (eg. DC)
 columns is dropped at plan time, reproducing the `realcolscale_b=0` behavior
@@ -68,11 +71,11 @@ mirroring [`sparseadd!`](@ref) in the complex code path. This keeps the plan
 valid when the frequencies change between assemblies.
 """
 struct RealJacobianPlan{Ti<:Integer,T<:Real}
-    # nonlinear (Josephson) part: scatter from phimatrix
-    redest::Vector{Ti}
+    # nonlinear (Josephson) part: segmented gather from phimatrix
+    reseg::Vector{Ti}
     resrc::Vector{Ti}
     recoef::Vector{T}
-    imdest::Vector{Ti}
+    imseg::Vector{Ti}
     imsrc::Vector{Ti}
     imcoef::Vector{T}
     # frequency dependent linear part: index maps into nonzeros(Jr)
@@ -389,7 +392,7 @@ function planrealjacobian(Amatrixindices::Matrix, Amatrixconjindices::Matrix,
     srcmax = Nfreq * length(Ljb.nzval)
     Ti = (nnz(Jr) <= typemax(Int32) && srcmax <= typemax(Int32)) ? Int32 : Int
 
-    redest, resrc, recoef, imdest, imsrc, imcoef = fillscatterlists(Ti, T,
+    reseg, resrc, recoef, imseg, imsrc, imcoef = fillscatterlists(Ti, T,
         Jr, Amatrixindices, Amatrixconjindices, Ljb, Lmean, nodesandsigns,
         rl, cl, Nmodes, Nfreq, nre, nim)
 
@@ -398,7 +401,7 @@ function planrealjacobian(Amatrixindices::Matrix, Amatrixconjindices::Matrix,
     Gnmindexmap = realsparseaddmap(Jr, Gnm, rl, cl, Ti)
     Cnmindexmap = realsparseaddmap(Jr, Cnm, rl, cl, Ti)
 
-    plan = RealJacobianPlan(redest, resrc, recoef, imdest, imsrc, imcoef,
+    plan = RealJacobianPlan(reseg, resrc, recoef, imseg, imsrc, imcoef,
         invLnmindexmap, Gnmindexmap, Cnmindexmap)
 
     return Jr, plan
@@ -454,13 +457,14 @@ function fillscatterlists(::Type{Ti}, ::Type{T}, Jr::SparseMatrixCSC,
     (kre == nre + 1 && kim == nim + 1) || throw(ErrorException(
         "internal error: scatter entry count mismatch in planrealjacobian."))
 
-    # sort the scatter lists by destination for memory locality when
-    # assembling. the destinations are indices into nonzeros(Jr) so a stable
-    # counting sort is O(entries + nnz(Jr)).
-    redest, resrc, recoef = sortscatterbydest(redest, resrc, recoef, nnz(Jr))
-    imdest, imsrc, imcoef = sortscatterbydest(imdest, imsrc, imcoef, nnz(Jr))
+    # group the contributions into contiguous segments by destination, which
+    # turns the assembly into a gather. the destinations are indices into
+    # nonzeros(Jr) so a stable counting sort is O(entries + nnz(Jr)), and it
+    # produces the segment pointer as its prefix sum.
+    reseg, resrc, recoef = segmentscatterbydest(redest, resrc, recoef, nnz(Jr))
+    imseg, imsrc, imcoef = segmentscatterbydest(imdest, imsrc, imcoef, nnz(Jr))
 
-    return redest, resrc, recoef, imdest, imsrc, imcoef
+    return reseg, resrc, recoef, imseg, imsrc, imcoef
 end
 
 """
@@ -480,24 +484,28 @@ in the real representation, equivalent to assembling the complex Jacobians
 real form of `x -> Jx*x + Jxconj*conj(x)` (dropping the non-holomorphic
 contribution to the self-conjugate columns, which the residual absorbs into
 the holomorphic part), but with no complex intermediate matrices, no sparse
-matrix multiplications, and a single flat scatter loop for the nonlinear
-part.
+matrix multiplications, and a single gather loop for the nonlinear part.
 """
 function assemblerealjacobian!(Jr::SparseMatrixCSC, plan::RealJacobianPlan,
     phimatrix::Array, invLnm::SparseMatrixCSC, Gnm::SparseMatrixCSC,
     Cnm::SparseMatrixCSC, wmodesm::Diagonal, wmodes2m::Diagonal)
 
     Jrnz = nonzeros(Jr)
-    fill!(Jrnz, 0)
 
-    # nonlinear (Josephson) part: direct scatter from phimatrix
-    redest, resrc, recoef = plan.redest, plan.resrc, plan.recoef
-    @inbounds for k in eachindex(redest)
-        Jrnz[redest[k]] += recoef[k] * real(phimatrix[resrc[k]])
-    end
-    imdest, imsrc, imcoef = plan.imdest, plan.imsrc, plan.imcoef
-    @inbounds for k in eachindex(imdest)
-        Jrnz[imdest[k]] += imcoef[k] * imag(phimatrix[imsrc[k]])
+    # nonlinear (Josephson) part: a segmented gather from phimatrix, which
+    # writes every nonzero, so no zeroing pass is needed
+    reseg, resrc, recoef = plan.reseg, plan.resrc, plan.recoef
+    imseg, imsrc, imcoef = plan.imseg, plan.imsrc, plan.imcoef
+    T = eltype(Jrnz)
+    @inbounds for q in eachindex(Jrnz)
+        acc = zero(T)
+        for t in reseg[q]:reseg[q+1]-1
+            acc += recoef[t] * real(phimatrix[resrc[t]])
+        end
+        for t in imseg[q]:imseg[q+1]-1
+            acc += imcoef[t] * imag(phimatrix[imsrc[t]])
+        end
+        Jrnz[q] = acc
     end
 
     # frequency dependent linear part

@@ -202,7 +202,7 @@ end
         keyedarrays = true, sensitivitynames::Vector{String} = String[],
         sensitivityoperatingpoint = true, sensitivitymode = :auto,
         returnSsensitivity = false,
-        factorization = KLUfactorization()) where {N,M}
+        factorization = nothing, backend = CPU()) where {N,M}
 
 Calls the harmonic balance solvers, [`hbnlsolve`](@ref) and
 [`hblinsolve`](@ref), which work for an arbitrary number of modes and ports,
@@ -269,11 +269,11 @@ only the node coordinates. See `src/mna.jl`.
 - `ftol = 1e-8`: the residual tolerance `norm(F) <= ftol` at which the
     nonlinear solution is considered converged. `F` is  is scaled by `Z0/w0`.
     Aee [`calcsolverscale`](@ref)).
-- `method = :quasinewton`: the nonlinear solver. `:quasinewton`
+- `method = :newtonkrylov`: the nonlinear solver. `:quasinewton`
     uses the complex holomorphic Jacobian `Jx` only, an approximation to the
     full Jacobian. `:newton` solves the equivalent real system with the full
     Jacobian. `:newtonkrylov` uses the matrix-free real Jacobian.
-- `andersondepth::Integer = method == :newton ? 0 : 5`: the depth of the
+- `andersondepth::Integer = method == :quasinewton ? 5 : 0`: the depth of the
     Anderson acceleration of the Newton fixed point iteration, the maximum
     number of previous iterates used for the extrapolation. Values less than
     one disable the acceleration.
@@ -349,8 +349,8 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     maxpumpharmonics::NTuple{N,Number} = Npumpharmonics,
     maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
     iterations = 1000, ftol = 1e-8, switchofflinesearchtol = nothing,
-    alphamin = nothing, method = :quasinewton,
-    andersondepth::Integer = method == :newton ? 0 : 5,
+    alphamin = nothing, method = :newtonkrylov,
+    andersondepth::Integer = method == :quasinewton ? 5 : 0,
     x0 = nothing, symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
     sorting = :number, returnS::Bool = true, returnSnoise::Bool = false,
     returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
@@ -362,7 +362,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    factorization = KLUfactorization()) where {N,M}
+    factorization = nothing, backend = CPU()) where {N,M}
 
     # calculate the Frequencies struct
     freq = removeconjfreqs(
@@ -396,7 +396,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         sensitivitynames = sensitivitynames,
         returnoperatingpoint = sensitivityoperatingpoint &&
             returnSsensitivity && !isempty(nm.Ljb.nzind),
-        factorization = factorization)
+        factorization = factorization, backend = backend)
 
     # the derivative of the harmonic balance residual with respect to each
     # component value, for total (operating point inclusive) sensitivities.
@@ -444,7 +444,11 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
         returnZsensitivityadjoint = returnZsensitivityadjoint,
-        factorization = factorization)
+        # the linearized sweep is a host solve of complex matrices, so it
+        # keeps the host default when the factorization was left to the
+        # backend. An explicit one is still honored for both solves.
+        factorization = isnothing(factorization) ? KLUfactorization() :
+            factorization)
 
     return HB(nonlinear, linearized)
 end
@@ -798,7 +802,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
         # create an array to hold the time domain data for the RFFT. also generate
         # the plans.
-        phimatrixtd, irfftplan, rfftplan = plan_applynl(phimatrix)
+        phimatrixtd, irfftplan, rfftplan = plan_applynl(phimatrix, CPU())
 
         # convert the branch flux vector to a matrix with the terms arranged
         # in the correct way for the inverse rfft including the appropriate
@@ -1922,7 +1926,9 @@ function residualjosephsonterm!(out, sys, j::Integer)
             selectdim(sys.phimatrix, ndims(sys.phimatrix), i) .= 0
         end
     end
-    _nonlinearterm!(out, sys)
+    # the Josephson contribution alone, without the linear term
+    applybackwardterm!(out, sys.nonlineartermplan, sys.phimatrix, sys.x;
+        addlinearterm = false)
     return out
 end
 
@@ -2182,15 +2188,20 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
             # the transpose of the Josephson scatter
             fill!(P, 0)
             fill!(Q, 0)
-            @inbounds for e in eachindex(plan.dest)
-                p = plan.dest[e]
-                P[plan.src[e]] += plan.coef[e]*
-                    phinadjoint[rev.nzrow[p],a]*phin[rev.nzcol[p],b]
+            # the plan holds the contributions grouped by destination, so
+            # the destination is the outer loop variable and its two
+            # covector lookups are loop invariant across its segment
+            @inbounds for p in 1:length(plan.seg)-1
+                w = phinadjoint[rev.nzrow[p],a]*phin[rev.nzcol[p],b]
+                for e in plan.seg[p]:plan.seg[p+1]-1
+                    P[plan.src[e]] += plan.coef[e]*w
+                end
             end
-            @inbounds for e in eachindex(plan.cdest)
-                p = plan.cdest[e]
-                Q[plan.csrc[e]] += plan.ccoef[e]*
-                    phinadjoint[rev.nzrow[p],a]*phin[rev.nzcol[p],b]
+            @inbounds for p in 1:length(plan.cseg)-1
+                w = phinadjoint[rev.nzrow[p],a]*phin[rev.nzcol[p],b]
+                for e in plan.cseg[p]:plan.cseg[p+1]-1
+                    Q[plan.csrc[e]] += plan.ccoef[e]*w
+                end
             end
 
             # the transpose of the cos directional derivative: a forward
@@ -2570,6 +2581,7 @@ function calcSsensitivity!(Ssensitivity, stamps, dAop, dA, dAphin, phin,
     return nothing
 end
 
+
 """
     hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         circuit, circuitdefs; iterations = 1000,
@@ -2649,11 +2661,11 @@ frequency are rejected with an `ArgumentError`. See `src/mna.jl`.
 - `ftol = 1e-8`: the residual tolerance `norm(F) <= ftol` at which the
     nonlinear solution is considered converged. `F` is  is scaled by `Z0/w0`.
     Aee [`calcsolverscale`](@ref)).
-- `method = :quasinewton`: the nonlinear solver. `:quasinewton`
+- `method = :newtonkrylov`: the nonlinear solver. `:quasinewton`
     uses the complex holomorphic Jacobian `Jx` only, an approximation to the
     full Jacobian. `:newton` solves the equivalent real system with the full
     Jacobian. `:newtonkrylov` uses the matrix-free real Jacobian.
-- `andersondepth::Integer = method == :newton ? 0 : 5`: the depth of the
+- `andersondepth::Integer = method == :quasinewton ? 5 : 0`: the depth of the
     Anderson acceleration of the Newton fixed point iteration, the maximum
     number of previous iterates used for the extrapolation. Values less than
     one disable the acceleration.
@@ -2719,11 +2731,14 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, x0 = nothing, ftol = 1e-8,
     switchofflinesearchtol = nothing, alphamin = nothing,
-    method = :quasinewton, andersondepth::Integer = method == :newton ? 0 : 5,
+    method = :newtonkrylov, andersondepth::Integer = method == :quasinewton ? 5 : 0,
     symfreqvar = nothing, sorting = :number, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
     returnoperatingpoint::Bool = false,
-    factorization = KLUfactorization(), debugJacobian = false,
+    krylovcouplingmodes = :none,
+    krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
+    krylovkwargs::NamedTuple = (;),
+    factorization = nothing, backend = CPU(), debugJacobian = false,
     ) where {N}
 
     # calculate the frequency struct
@@ -2754,7 +2769,11 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames,
         returnoperatingpoint = returnoperatingpoint,
-        factorization = factorization, debugJacobian = debugJacobian,
+        krylovcouplingmodes = krylovcouplingmodes,
+        krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
+        krylovkwargs = krylovkwargs,
+        factorization = factorization, backend = backend,
+        debugJacobian = debugJacobian,
         )
 end
 
@@ -2829,12 +2848,27 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     indices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = nothing, alphamin = nothing,
-    method = :quasinewton, andersondepth::Integer = method == :newton ? 0 : 5,
+    method = :newtonkrylov, andersondepth::Integer = method == :quasinewton ? 5 : 0,
     symfreqvar = nothing, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
     returnoperatingpoint::Bool = false,
-    factorization = KLUfactorization(), debugJacobian = false,
+    krylovcouplingmodes = :none,
+    krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
+    krylovkwargs::NamedTuple = (;),
+    factorization = nothing, backend = CPU(), debugJacobian = false,
     )
+
+    # the factorization defaults to the one matching the backend: KLU on the
+    # host, cuDSS on a device, where a host factorization could not be applied
+    # to the device vectors of the Krylov iteration anyway. An explicit
+    # factorization is always honored.
+    factorization = if !isnothing(factorization)
+        factorization
+    elseif backend isa CPU
+        KLUfactorization()
+    else
+        CUDSSFactorization()
+    end
 
     # deprecation warnings for switchofflinesearchtol and alphamin.
     if !isnothing(switchofflinesearchtol)
@@ -2985,11 +3019,13 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 
     # create an array to hold the frequency domain data for the
     # fourier transform
-    phimatrix = zeros(Complex{Float64}, Nwtuple)
+    # on the backend: the time domain array and every workspace of the system
+    # derive from it with similar, so they follow it there.
+    phimatrix = tobackend(backend, zeros(Complex{Float64}, Nwtuple))
 
     # create an array to hold the time domain data for the RFFT. also generate
-    # the plans.
-    phimatrixtd, irfftplan, rfftplan = plan_applynl(phimatrix)
+    # the plans, which come from the package extension on a device backend.
+    phimatrixtd, irfftplan, rfftplan = plan_applynl(phimatrix, backend)
 
     # the number of frequency entries per Josephson junction in phimatrix
     Nfreq = prod(Nwtuple[1:end-1])
@@ -3000,11 +3036,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         copy(x0)
     end
     F = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
-    AoLjbmvector = zeros(Complex{Float64}, Nbranches*Nmodes)
-
-    # make a sparse transpose (improves multiplication speed slightly)
-    Rbnmt = sparse(transpose(Rbnm))
-
     # substitute in the mode frequencies for components which have frequency
     # defined symbolically.
     Cnm = freqsubst(Cnmcopy, wmodes, symfreqvar)
@@ -3094,7 +3125,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # equations are folded into the static linear term, which is added
     # with unit coefficient and is its own contribution to the Jacobian.
     Rbnm = hcat(Rbnm, spzeros(eltype(Rbnm), size(Rbnm,1), Naux))
-    Rbnmt = sparse(transpose(Rbnm))
     invLnm = spaddkeepzeros(mnapad(invLnm, Naux), Amna)
     Cnm = mnapad(Cnm, Naux)
     Gnm = mnapad(Gnm, Naux)
@@ -3148,7 +3178,14 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         nothing, nothing
     end
 
-    Jr, realjacobianplan = if method == :newton || method == :newtonkrylov || debugJacobian ||
+    # method = :newtonkrylov deliberately does not appear here. Its steps come
+    # from the matrix-free Jacobian-vector product and its preconditioner
+    # builds and assembles its own, much sparser, restricted plan, so neither
+    # the full Jacobian nor its plan is ever used. On a multi-tone problem
+    # that plan is the single largest object in the solve (millions of stored
+    # entries), so not building it is a substantial saving in both time and
+    # memory.
+    Jr, realjacobianplan = if method == :newton || debugJacobian ||
             returnoperatingpoint
         planrealjacobian(Amatrixindicesaliased, Amatrixconjindices, Ljb,
             Lmean,
@@ -3162,10 +3199,20 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # the matrix-free Jacobian-vector and Hessian-vector products, and the
     # assembled Jacobians are all evaluated through it, in the complex or
     # the equivalent real representation.
-    sys = HBSystem(Rbnm, Rbnmt, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
-        Ljb, Ljbm, Lmean, freqindexmap, conjsourceindices,
+    # the real form of the linear term is needed exactly when the solve
+    # applies the real representation entry points. That is stated directly
+    # rather than derived from realjacobianplan: :newtonkrylov solves in the
+    # real representation but takes its preconditioner from a
+    # ModeCouplingPreconditioner, which builds its own restricted plan, so it
+    # needs no full realjacobianplan and the two conditions are not the same.
+    # method = :quasinewton stays in the complex representation and skips it.
+    realrepresentation = method == :newton || method == :newtonkrylov ||
+        debugJacobian || returnoperatingpoint
+    sys = HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
+        Ljb, Ljbm, Lmean, Nbranches, freqindexmap, conjsourceindices,
         conjtargetindices, phimatrix, phimatrixtd, irfftplan, rfftplan,
-        modelayout, realjacobianplan, complexjacobianplan)
+        modelayout, realjacobianplan, complexjacobianplan, backend;
+        realbackward = realrepresentation)
 
     # the residual and the complex (holomorphic) Jacobian, an approximation
     # to the exact Jacobian, for method == :quasinewton
@@ -3182,8 +3229,10 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         setpoint!(sys, xr)
         isnothing(Fr) || residual!(Fr, sys)
         isnothing(Jr) || jacobian!(Jr, sys)
-        # write back the canonical real representation of the point
-        complex_to_real!(xr, sys.x, modelayout.isreal)
+        # write back the canonical real representation of the point. through
+        # the plan rather than complex_to_real!, whose serial cursor over a
+        # BitVector is host only; the two agree on CPU().
+        applycomplextoreal!(xr, sys.nonlineartermplan, sys.x)
         return nothing
     end
 
@@ -3238,11 +3287,82 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # the matrix free real Jacobian
         jvpreal!(Jvr, vr) = jacobianvectorproduct!(Jvr, sys, vr)
 
-        # the assembled exact real Jacobian serves as the right
-        # preconditioner, refreshed lazily by nlsolvekrylov!
-        info = nlsolvekrylov!(fjreal!, jvpreal!, Fr, Jr, xr;
-            iterations = iterations, ftol = ftol,
+        # The right preconditioner is the Jacobian materialized on a
+        # coarser frequency grid: the mode coupling is kept in full only on
+        # the modes where the linear circuit responds strongly (measured,
+        # see modesoftness) and reduced to the mode diagonal elsewhere, so
+        # its factorization is a fraction of the full Jacobian's. The setup
+        # above was done once, on the user's harmonic selection; the coarse
+        # grid exists only inside the preconditioner, so the residual, the
+        # Jacobian-vector product and the solution are always those of the
+        # requested truncation.
+        # `krylovrecycle > 0` wraps the base preconditioner in a recycled
+        # deflation subspace (see RecyclingPreconditioner). The intended
+        # pairing is with `krylovcouplingmodes = :none`: a batch of small
+        # per mode factorizations plus dense level 2 BLAS, which needs no
+        # large sparse factorization and is the part of this solver that
+        # ports to a GPU.
+        #
+        # The default is the mode block diagonal, whose factorization is a
+        # batch of small independent per mode solves rather than one large
+        # sparse factorization. On a strongly pumped line the block diagonal
+        # alone stalls; what rescues it is escalation, which grows the base
+        # only on repeated linear failures and in practice fires once or
+        # twice. Measured on a two tone line, this is the only configuration
+        # whose standing improves with problem size: at 288 cells it is 3.72 s
+        # against 8.19 s for mode selection and 5.48 s for the direct solve,
+        # having been the slower of the two at 128 cells.
+        #
+        # `krylovrecycle > 0` additionally wraps the base in a recycled
+        # deflation subspace. It also rescues the block diagonal, and needs no
+        # sparse factorization at all, which makes it the natural fit for a
+        # GPU; but it is a second answer to the same problem and measured a
+        # net loss against escalation at 192 cells and above, so it is off by
+        # default. `krylovcouplingmodes = 12, krylovrecycle = 0` recovers the
+        # earlier frequency based mode selection, which is still the fastest
+        # option on moderately sized lines.
+        base = ModeCouplingPreconditioner(sys, Amatrixindicesaliased,
+            Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches, Nfreq,
+            invLnm, Gnm, Cnm, modelayout;
+            couplingmodes = krylovcouplingmodes,
             factorization = factorization)
+
+        pc = if krylovrecycle > 0
+            RecyclingPreconditioner(base, jvpreal!, length(xr);
+                kmax = krylovrecycle, kharvest = krylovharvest)
+        else
+            base
+        end
+
+        # Defaults tuned for this preconditioner, overridable through
+        # `krylovkwargs`. The preconditioner is refreshed eagerly, which the
+        # generic default does not do: rebuilding the block diagonal costs a
+        # fraction of a full factorization, while a preconditioner frozen at
+        # zero flux is stale immediately, because at zero flux the Jacobian
+        # has no harmonic coupling at all.
+        #
+        # The restart settings are the generic ones. They used to be
+        # overridden to a single long cycle, because a restarted GMRES really
+        # did stall against a preconditioner which retained mode coupling.
+        # That is not true of the block diagonal: a short Krylov space
+        # measured as fast or faster (at 288 cells, 2.74 s and 165 Arnoldi
+        # steps at a restart length of 30, against 3.20 s and 458 at 120) and
+        # the basis costs a quarter of the memory, which matters because `V`
+        # is `krylovrestart + 1` vectors of the system dimension.
+        krylovdefaults = (; krylovrefreshiterations = 1)
+
+        # the Krylov workspaces are allocated `similar` to the vectors handed
+        # in, so handing in device vectors is what puts the whole iteration on
+        # the device. On CPU() tobackend adopts them and these are no-ops.
+        xrb = tobackend(backend, xr)
+        Frb = tobackend(backend, Fr)
+        info = nlsolvekrylov!(fjreal!, jvpreal!, Frb, xrb, pc;
+            iterations = iterations, ftol = ftol,
+            merge(krylovdefaults, krylovkwargs)...)
+        # back to the host for the complex representation returned to the
+        # caller, whose conversion walks a BitVector serially
+        copyto!(xr, tohost(xrb))
+        copyto!(Fr, tohost(Frb))
         real_to_complex!(x,xr,modelayout.isreal)
         real_to_complex!(F,Fr,modelayout.isreal)
         info
@@ -3254,7 +3374,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     push!(solverstages, IterationInfo(info.label, 1.0,
         info.regularization, info.converged, info.iterations,
         info.normresidual, info.alpha, info.backtracks,
-        info.andersonaccepted))
+        info.andersonaccepted, info.krylov))
 
     if !info.converged
         @warn string(lazy"Solver did not converge.")

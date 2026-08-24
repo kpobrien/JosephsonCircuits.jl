@@ -9,6 +9,7 @@ FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 FastInterpolations = "9ea80cae-fc13-4c00-8066-6eaedb12f34b"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
 KLU = "ef3ab10e-7fda-4108-b977-705223b18434"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
@@ -21,12 +22,23 @@ Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 Touchstone = "af4736ee-1570-4274-b14c-898d17d80b75"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
+
+[extensions]
+JosephsonCircuitsCUDAExt = "CUDA"
+JosephsonCircuitsCUDSSExt = ["CUDA", "CUDSS"]
+
 [compat]
 AxisKeys = "0.2"
+CUDA = "5, 6"
+CUDSS = "0.4, 0.5, 0.6, 0.7, 0.8"
 FFTW = "1"
 FastInterpolations = "0.4"
 Graphs = "1"
 KLU = "0.6"
+KernelAbstractions = "0.9"
 LinearAlgebra = "1"
 OrderedCollections = "1,2"
 PrecompileTools = "1"

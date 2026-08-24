@@ -195,14 +195,65 @@ using Test
         end
     end
 
+    @testset "the backend kwarg reaches the solver" begin
+        # CPU() is the default, so naming it explicitly must change nothing.
+        # This is what checks the kwarg is threaded through both hbnlsolve
+        # methods rather than silently ignored.
+        args = ((2*pi*4.75001*1e9,), (8,),
+                [(mode=(1,),port=1,current=0.00565e-6)], circuitjpa,
+                circuitdefsjpa)
+        for m in (:quasinewton, :newtonkrylov)
+            a = JosephsonCircuits.hbnlsolve(args...; method = m)
+            b = JosephsonCircuits.hbnlsolve(args...; method = m,
+                backend = JosephsonCircuits.CPU())
+            @test a.nodeflux == b.nodeflux
+            @test a.solverinfo.converged && b.solverinfo.converged
+        end
+    end
+
+    @testset "both source vectors are on the backend" begin
+        # the complex representation residual subtracts sys.bnm from a vector
+        # which lives on the backend, so bnm has to be moved there the way
+        # bnmr already was. on CPU() tobackend adopts an Array, so the only
+        # host-visible consequence is that a non-Array argument is
+        # materialized -- which is exactly what distinguishes a moved field
+        # from one stored as handed in.
+        d = JosephsonCircuits.hbnlsolve((2*pi*4.75001*1e9,), (2,),
+            [(mode=(1,),port=1,current=0.00565e-6)], circuitjpa,
+            circuitdefsjpa; debugJacobian=true)
+        mk = bnm -> JosephsonCircuits.HBSystem(d.sys.Rbnm,
+            d.sys.invLnm, d.sys.Gnm, d.sys.Cnm, d.sys.wmodesm,
+            d.sys.wmodes2m, bnm, d.sys.Ljb, d.sys.Ljbm, d.sys.Lmean,
+            d.Nbranches, d.sys.freqindexmap, d.sys.conjsourceindices,
+            d.sys.conjtargetindices, copy(d.sys.phimatrix),
+            copy(d.sys.worktd), d.sys.irfftplan, d.sys.rfftplan,
+            d.sys.modelayout, nothing, nothing)
+
+        sys = mk(view(d.sys.bnm, :))
+        @test sys.bnm isa Array
+        @test sys.bnm == d.sys.bnm
+        # the two representations of the source agree on where they live
+        @test JosephsonCircuits.KernelAbstractions.get_backend(sys.bnm) ===
+            JosephsonCircuits.KernelAbstractions.get_backend(sys.bnmr)
+
+        # and the residual is unchanged by the move
+        sysa = mk(copy(d.sys.bnm))
+        F1 = zeros(ComplexF64, length(d.x)); F2 = similar(F1)
+        JosephsonCircuits.setpoint!(sysa, copy(d.x))
+        JosephsonCircuits.residual!(F1, sysa)
+        JosephsonCircuits.setpoint!(d.sys, copy(d.x))
+        JosephsonCircuits.residual!(F2, d.sys)
+        @test F1 == F2
+    end
+
     @testset "jacobian! without a plan throws" begin
         d = JosephsonCircuits.hbnlsolve((2*pi*4.75001*1e9,), (2,),
             [(mode=(1,),port=1,current=0.00565e-6)], circuitjpa,
             circuitdefsjpa; debugJacobian=true)
-        sys = JosephsonCircuits.HBSystem(d.sys.Rbnm, d.sys.Rbnmt,
+        sys = JosephsonCircuits.HBSystem(d.sys.Rbnm,
             d.sys.invLnm, d.sys.Gnm, d.sys.Cnm, d.sys.wmodesm,
             d.sys.wmodes2m, d.sys.bnm, d.sys.Ljb, d.sys.Ljbm, d.sys.Lmean,
-            d.sys.freqindexmap, d.sys.conjsourceindices,
+            d.Nbranches, d.sys.freqindexmap, d.sys.conjsourceindices,
             d.sys.conjtargetindices, copy(d.sys.phimatrix),
             copy(d.sys.worktd), d.sys.irfftplan, d.sys.rfftplan,
             d.sys.modelayout, nothing, nothing)

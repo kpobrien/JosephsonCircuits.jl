@@ -19,6 +19,14 @@ Diagnostics recorded for a call of [`nlsolve!`](@ref).
 - `backtracks`: the number of linesearch backtracks for each iteration.
 - `andersonaccepted`: whether an Anderson extrapolation was accepted for
     each iteration.
+- `krylov`: a `KrylovSolveInfo` record for every linear solve performed by
+    [`nlsolvekrylov!`](@ref), with one entry per GMRES call rather than per
+    Newton step, so that retries and rescues are visible. Empty for the direct
+    solvers, which take each step from a factorization.
+
+The nine argument constructor leaves `krylov` empty, so the direct solvers
+construct an `IterationInfo` without mentioning a field which does not apply
+to them.
 """
 struct IterationInfo
     label::String
@@ -30,6 +38,13 @@ struct IterationInfo
     alpha::Vector{Float64}
     backtracks::Vector{Int}
     andersonaccepted::Vector{Bool}
+    krylov::Vector
+end
+
+function IterationInfo(label, parameter, regularization, converged,
+    iterations, normresidual, alpha, backtracks, andersonaccepted)
+    return IterationInfo(label, parameter, regularization, converged,
+        iterations, normresidual, alpha, backtracks, andersonaccepted, [])
 end
 
 """
@@ -98,6 +113,18 @@ end
 # be slightly faster.
 function klunzval!(F,A;kwargs...)
     return KLU.klu!(F,A.nzval;kwargs...)
+end
+
+"""
+    cudssbatchedfactorization(layout::BatchedBlockLayout; kwargs...)
+
+A batched cuDSS [`Factorization`](@ref). Defined by the CUDSS extension; see
+[`CUDSSFactorization`](@ref). Without CUDSS.jl and CUDA.jl loaded this raises
+an informative error.
+"""
+function cudssbatchedfactorization(layout; kwargs...)
+    throw(ArgumentError(
+        "cudssbatchedfactorization requires CUDSS.jl and CUDA.jl to be loaded."))
 end
 
 function LUfactorization(;kwargs...)

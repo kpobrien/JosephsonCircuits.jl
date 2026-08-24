@@ -55,6 +55,10 @@ using JosephsonCircuits
 
     include("krylov.jl")
 
+    include("batchedblocks.jl")
+
+    include("modepreconditioner.jl")
+
     include("parseinput.jl")
 
     include("qesparams.jl")
@@ -65,6 +69,7 @@ using JosephsonCircuits
 
     include("realjacobian.jl")
 
+    include("nonlinearterm.jl")
     include("hbsystem.jl")
 
     include("mna.jl")

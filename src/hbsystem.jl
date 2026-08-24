@@ -34,18 +34,31 @@ transforms and the linear term each.
 
 The fields are intentionally loosely typed; all performance critical loops
 are behind function barriers which specialize on the concrete argument
-types.
+types. The workspaces of the residual and the matrix-free products are
+parameterized on their array types rather than fixed to `Array`, so they can
+live on whichever KernelAbstractions backend the system was built for.
 """
-struct HBSystem{N,TR,TRt,TinvL,TG,TC,TWm,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ}
+struct HBSystem{TR,TinvL,TG,TC,TWm,TK,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ,TNP,TVC,TVR,TAC,TAR}
     # linear term matrices and source vector (complex representation, scaled
     # by Lmean, conjugated for negative frequency modes with conjnegfreq!)
     Rbnm::TR
-    Rbnmt::TRt
     invLnm::TinvL
     Gnm::TG
     Cnm::TC
     wmodesm::TWm
     wmodes2m::TWm
+    # the frequency dependent linear terms collapsed into a single matrix,
+    # K = invLnm + im*Gnm*wmodesm - Cnm*wmodes2m. The mode frequencies are
+    # fixed for the lifetime of the system, so this is formed once here
+    # rather than at every residual and Jacobian-vector product. The
+    # individual matrices are retained because the Jacobian assembly plans
+    # scatter them separately, with the current frequencies, at assembly
+    # time.
+    Knm::TK
+    # the source vector, on the backend: the complex representation residual
+    # subtracts it from a vector which lives there, so it cannot stay on the
+    # host the way it was handed in. bnmr below is the same vector in the
+    # real representation and moves with it.
     bnm::Tb
     # Josephson junction data
     Ljb::TLjb
@@ -62,69 +75,106 @@ struct HBSystem{N,TR,TRt,TinvL,TG,TC,TWm,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ}
     # optional precomputed Jacobian assembly plans
     realjacobianplan::TRJ
     complexjacobianplan::TCJ
-    # the current point (set with setpoint!)
-    x::Vector{Complex{Float64}}
+    # the precomputed, device-generic plan for the two linear maps which
+    # surround the pointwise time domain nonlinearity, used by the real
+    # representation entry points
+    nonlineartermplan::TNP
+    # the source vector in the equivalent real representation, formed once
+    # so the residual subtracts it as a plain vector operation
+    bnmr::TVR
+    # the current point (set with setpoint!), in both representations
+    x::TVC
+    xr::TVR
     # cached time domain branch fluxes and pointwise nonlinearities at the
     # current point
-    phitd::Array{Float64,N}
-    sintd::Array{Float64,N}
-    costd::Array{Float64,N}
+    phitd::TAR
+    sintd::TAR
+    costd::TAR
     sincurrent::Base.RefValue{Bool}
     coscurrent::Base.RefValue{Bool}
     # workspaces
-    phimatrix::Array{Complex{Float64},N}
-    dirtd::Array{Float64,N}
-    dirtd2::Array{Float64,N}
-    worktd::Array{Float64,N}
-    AoLjbmvector::Vector{Complex{Float64}}
-    # branch fluxes Rbnm*z and their gather onto the Josephson branches,
-    # preallocated so _branchtimedomain! does not allocate per call
-    workb::Vector{Complex{Float64}}
-    workljb::Vector{Complex{Float64}}
-    workn1::Vector{Complex{Float64}}
-    workn2::Vector{Complex{Float64}}
-    workv::Vector{Complex{Float64}}
-    workw::Vector{Complex{Float64}}
-    workF::Vector{Complex{Float64}}
+    phimatrix::TAC
+    dirtd::TAR
+    dirtd2::TAR
+    worktd::TAR
 end
 
 """
-    HBSystem(Rbnm, Rbnmt, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm, Ljb,
-        Ljbm, Lmean, freqindexmap, conjsourceindices, conjtargetindices,
+    HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm, Ljb,
+        Ljbm, Lmean, Nbranches, freqindexmap, conjsourceindices, conjtargetindices,
         phimatrix, phimatrixtd, irfftplan, rfftplan, modelayout,
-        realjacobianplan, complexjacobianplan)
+        realjacobianplan, complexjacobianplan, backend = CPU())
 
 Construct an [`HBSystem`](@ref) from the ingredients assembled by
 [`hbnlsolve`](@ref), allocating the workspaces. `phimatrix` and
 `phimatrixtd` are adopted as the frequency domain and one of the time domain
 workspaces. `realjacobianplan` and `complexjacobianplan` may be `nothing`,
 in which case the corresponding [`jacobian!`](@ref) method is unavailable.
+`backend` is the KernelAbstractions backend on which the index mapped
+kernels run and on which the plan and the workspaces of the residual and the
+matrix-free products are allocated; `CPU()` is the default and the reference.
+`phimatrix` and `phimatrixtd` are adopted as given, so pass them already on
+the backend, and the time domain workspaces derived from them with `similar`
+follow.
 """
-function HBSystem(Rbnm, Rbnmt, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
-    Ljb, Ljbm, Lmean, freqindexmap, conjsourceindices, conjtargetindices,
+function HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
+    Ljb, Ljbm, Lmean, Nbranches, freqindexmap, conjsourceindices, conjtargetindices,
     phimatrix, phimatrixtd, irfftplan, rfftplan, modelayout,
-    realjacobianplan, complexjacobianplan)
+    realjacobianplan, complexjacobianplan, backend = CPU();
+    realbackward::Bool = true)
 
     n = size(Rbnm, 2)
-    return HBSystem(Rbnm, Rbnmt, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
-        Ljb, Ljbm, Lmean, freqindexmap, conjsourceindices,
+    # collapse the frequency dependent linear terms into a single matrix. the
+    # mode frequencies do not change for the lifetime of the system, so the
+    # three sparse products and the two diagonal scalings are done once here
+    # instead of at every evaluation.
+    Knm = linearterm(invLnm, Gnm, Cnm, wmodesm, wmodes2m)
+    # the index maps of the two linear maps which surround the pointwise time
+    # domain nonlinearity, built once here. with realbackward = false the real
+    # form of the linear term is left out, for a caller which only applies the
+    # complex representation entry points.
+    nonlineartermplan = plannonlinearterm(Rbnm, Ljb, Lmean, Nbranches,
+        freqindexmap, conjsourceindices, conjtargetindices, phimatrix, Knm,
+        modelayout, backend; realbackward = realbackward)
+    # both representations of the source vector move to the backend. the real
+    # one already did; the complex one did not, so `residual!` on a complex
+    # vector broadcast a device array against a host one. `complex_to_real`
+    # below reads the host argument, which `tobackend` does not modify.
+    return HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, Knm,
+        tobackend(backend, bnm), Ljb, Ljbm, Lmean, freqindexmap, conjsourceindices,
         conjtargetindices, irfftplan, rfftplan, modelayout,
-        realjacobianplan, complexjacobianplan,
-        zeros(Complex{Float64}, n),
+        realjacobianplan, complexjacobianplan, nonlineartermplan,
+        tobackend(backend, complex_to_real(bnm, modelayout.isreal)),
+        tobackend(backend, zeros(Complex{Float64}, n)),
+        tobackend(backend, zeros(Float64, modelayout.rdim)),
         similar(phimatrixtd), similar(phimatrixtd), similar(phimatrixtd),
         Ref(false), Ref(false),
-        phimatrix, similar(phimatrixtd), similar(phimatrixtd), phimatrixtd,
-        zeros(Complex{Float64}, size(Rbnm, 1)),
-        zeros(Complex{Float64}, size(Rbnm, 1)),
-        zeros(Complex{Float64}, length(Ljbm.nzind)),
-        zeros(Complex{Float64}, n), zeros(Complex{Float64}, n),
-        zeros(Complex{Float64}, n), zeros(Complex{Float64}, n),
-        zeros(Complex{Float64}, n))
+        phimatrix, similar(phimatrixtd), similar(phimatrixtd), phimatrixtd)
 end
 
 
 """
-    applyifft!(td::Array{T}, fd::Array{Complex{T}}, irfftplan) where T
+    linearterm(invLnm, Gnm, Cnm, wmodesm::Diagonal, wmodes2m::Diagonal)
+
+Collapse the frequency dependent linear terms of the harmonic balance system
+into the single sparse matrix
+
+    K = invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
+
+so that applying them is one gather over the entries of an output row rather
+than three sparse matrix-vector products and two diagonal scalings through
+two temporaries. The mode frequency diagonals are fixed for the lifetime of
+an [`HBSystem`](@ref), so this is formed once when the system is constructed
+and handed to [`plannonlinearterm`](@ref), which stores it transposed in both
+representations.
+"""
+function linearterm(invLnm, Gnm, Cnm, wmodesm::Diagonal, wmodes2m::Diagonal)
+    K = invLnm + im*(Gnm*wmodesm) - Cnm*wmodes2m
+    return SparseMatrixCSC{Complex{Float64},Int}(K)
+end
+
+"""
+    applyifft!(td::AbstractArray{T}, fd::AbstractArray{Complex{T}}, irfftplan)
 
 applyfft! and applyifft! and the two halves of applynl!, so linear operations
 can be interleaved with the pointwise time domain nonlinearities. applyifft!
@@ -135,17 +185,17 @@ between the halves.
 
 NOTE: `applyifft!` may overwrite `fd`.
 """
-function applyifft!(td::Array{T}, fd::Array{Complex{T}}, irfftplan) where T
+function applyifft!(td::AbstractArray{T}, fd::AbstractArray{Complex{T}},
+    irfftplan) where T
     mul!(td, irfftplan, fd)
     normalization = prod(size(td)[1:end-1])
-    @inbounds for i in eachindex(td)
-        td[i] = td[i]*normalization
-    end
+    # broadcasting keeps this device generic
+    td .*= normalization
     return td
 end
 
 """
-    applyfft!(fd::Array{Complex{T}}, td::Array{T}, rfftplan) where T
+    applyfft!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T}, rfftplan)
 
 applyfft! and applyifft! and the two halves of applynl!, so linear operations
 can be interleaved with the pointwise time domain nonlinearities. applyifft!
@@ -156,12 +206,12 @@ between the halves.
 
 NOTE: `applyifft!` may overwrite `td`.
 """
-function applyfft!(fd::Array{Complex{T}}, td::Array{T}, rfftplan) where T
+function applyfft!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
+    rfftplan) where T
     mul!(fd, rfftplan, td)
     invnormalization = 1/prod(size(td)[1:end-1])
-    @inbounds for i in eachindex(fd)
-        fd[i] = fd[i]*invnormalization
-    end
+    # broadcasting keeps this device generic
+    fd .*= invnormalization
     return fd
 end
 
@@ -218,70 +268,9 @@ function applyffttranspose!(alpha::Array{Complex{T}}, P::Array{Complex{T}},
 end
 
 # out .= f.(src), specialized behind a function barrier
-function _applypointwise!(out::Array{T}, f::F, src::Array{T}) where {T,F}
-    @inbounds for i in eachindex(out)
-        out[i] = f(src[i])
-    end
-    return out
-end
-
-# compute the physical time domain branch fluxes on the Josephson junctions
-# for the complex vector z (a point or a direction) into td, using
-# sys.phimatrix as the frequency domain workspace.
-# gather the Josephson branch entries of a branch vector.
-function _gatherbranches!(dest::Vector{Complex{Float64}},
-    src::Vector{Complex{Float64}}, nzind::AbstractVector{<:Integer})
-    @inbounds for i in eachindex(nzind)
-        dest[i] = src[nzind[i]]
-    end
-    return dest
-end
-
-function _branchtimedomain!(td, sys::HBSystem, z::AbstractVector)
-    # Rbnm*z into a preallocated branch vector, then gather the Josephson
-    # branches into a preallocated buffer.
-    mul!(sys.workb, sys.Rbnm, z)
-    workljb = _gatherbranches!(sys.workljb, sys.workb, sys.Ljbm.nzind)
-    phivectortomatrix!(workljb, sys.phimatrix,
-        sys.freqindexmap, sys.conjsourceindices, sys.conjtargetindices,
-        length(sys.Ljb.nzval))
-    applyifft!(td, sys.phimatrix, sys.irfftplan)
-    return td
-end
-
-# pack the frequency domain coefficients in sys.phimatrix into the branch
-# vector, scale by Lmean/Lj, and apply the transpose incidence matrix:
-# out .= Rbnmt*(Lmean/Lj .* pack(phimatrix)). this is the linear map B.
-function _nonlinearterm!(out::AbstractVector, sys::HBSystem)
-    fill!(sys.AoLjbmvector, 0)
-    AoLjbmvectorview = view(sys.AoLjbmvector, sys.Ljbm.nzind)
-    phimatrixtovector!(AoLjbmvectorview, sys.phimatrix, sys.freqindexmap,
-        sys.conjsourceindices, sys.conjtargetindices,
-        length(sys.Ljb.nzval))
-    _scalebranchvector!(AoLjbmvectorview, sys.Lmean, sys.Ljbm)
-    mul!(out, sys.Rbnmt, sys.AoLjbmvector)
-    return out
-end
-
-function _scalebranchvector!(v, Lmean, Ljbm::SparseVector)
-    for i in eachindex(v)
-        v[i] = v[i]*(Lmean/Ljbm.nzval[i])
-    end
-    return v
-end
-
-# out .+= invLnm*z + im*Gnm*wmodesm*z - Cnm*wmodes2m*z, the frequency
-# dependent linear terms K applied to z, without allocations.
-function _addlinearterm!(out::AbstractVector, sys::HBSystem,
-    z::AbstractVector)
-    mul!(sys.workn1, sys.wmodesm, z)
-    mul!(sys.workn2, sys.Gnm, sys.workn1)
-    @. out += im*sys.workn2
-    mul!(sys.workn1, sys.wmodes2m, z)
-    mul!(sys.workn2, sys.Cnm, sys.workn1)
-    @. out -= sys.workn2
-    mul!(sys.workn2, sys.invLnm, z)
-    @. out += sys.workn2
+function _applypointwise!(out::AbstractArray{T}, f::F,
+    src::AbstractArray{T}) where {T,F}
+    out .= f.(src)
     return out
 end
 
@@ -314,16 +303,25 @@ representation, dispatched on the element type. Returns `sys`.
 """
 function setpoint!(sys::HBSystem, x::AbstractVector{<:Complex})
     copyto!(sys.x, x)
+    applycomplextoreal!(sys.xr, sys.nonlineartermplan, sys.x)
     return _setpoint!(sys)
 end
 
 function setpoint!(sys::HBSystem, xr::AbstractVector{<:Real})
-    real_to_complex!(sys.x, xr, sys.modelayout.isreal)
-    return _setpoint!(sys)
+    copyto!(sys.xr, xr)
+    applyrealtocomplex!(sys.x, sys.nonlineartermplan, sys.xr)
+    # the time domain branch fluxes come from the forward map of the plan,
+    # which reads the real representation directly
+    applyforwardterm!(sys.phimatrix, sys.nonlineartermplan, sys.xr)
+    applyifft!(sys.phitd, sys.phimatrix, sys.irfftplan)
+    sys.sincurrent[] = false
+    sys.coscurrent[] = false
+    return sys
 end
 
 function _setpoint!(sys::HBSystem)
-    _branchtimedomain!(sys.phitd, sys, sys.x)
+    applyforwardterm!(sys.phimatrix, sys.nonlineartermplan, sys.x)
+    applyifft!(sys.phitd, sys.phimatrix, sys.irfftplan)
     sys.sincurrent[] = false
     sys.coscurrent[] = false
     return sys
@@ -341,15 +339,19 @@ function residual!(F::AbstractVector{<:Complex}, sys::HBSystem)
     _ensuresin!(sys)
     copyto!(sys.worktd, sys.sintd)
     applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
-    _nonlinearterm!(F, sys)
-    _addlinearterm!(F, sys, sys.x)
+    applybackwardterm!(F, sys.nonlineartermplan, sys.phimatrix, sys.x)
     @. F -= sys.bnm
     return F
 end
 
 function residual!(Fr::AbstractVector{<:Real}, sys::HBSystem)
-    residual!(sys.workF, sys)
-    complex_to_real!(Fr, sys.workF, sys.modelayout.isreal)
+    _ensuresin!(sys)
+    copyto!(sys.worktd, sys.sintd)
+    applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
+    # the backward map of the plan writes the node vector in the real
+    # representation and adds the linear term in the same pass
+    applybackwardterm!(Fr, sys.nonlineartermplan, sys.phimatrix, sys.xr)
+    Fr .-= sys.bnmr
     return Fr
 end
 
@@ -371,36 +373,37 @@ Krylov methods.
 function jacobianvectorproduct!(Jv::AbstractVector{<:Complex},
     sys::HBSystem, v::AbstractVector{<:Complex})
     _ensurecos!(sys)
-    _branchtimedomain!(sys.dirtd, sys, v)
+    plan = sys.nonlineartermplan
+    applyforwardterm!(sys.phimatrix, plan, v)
+    applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
     _multiplyintowork!(sys.worktd, sys.costd, sys.dirtd)
     applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
-    _nonlinearterm!(Jv, sys)
-    _addlinearterm!(Jv, sys, v)
+    applybackwardterm!(Jv, plan, sys.phimatrix, v)
     return Jv
 end
 
 function jacobianvectorproduct!(Jvr::AbstractVector{<:Real},
     sys::HBSystem, vr::AbstractVector{<:Real})
-    real_to_complex!(sys.workv, vr, sys.modelayout.isreal)
-    jacobianvectorproduct!(sys.workF, sys, sys.workv)
-    complex_to_real!(Jvr, sys.workF, sys.modelayout.isreal)
+    _ensurecos!(sys)
+    plan = sys.nonlineartermplan
+    applyforwardterm!(sys.phimatrix, plan, vr)
+    applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
+    _multiplyintowork!(sys.worktd, sys.costd, sys.dirtd)
+    applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
+    applybackwardterm!(Jvr, plan, sys.phimatrix, vr)
     return Jvr
 end
 
 # out .= a .* b and out .= -a .* b .* c behind function barriers
-function _multiplyintowork!(out::Array{T}, a::Array{T},
-    b::Array{T}) where T
-    @inbounds for i in eachindex(out)
-        out[i] = a[i]*b[i]
-    end
+function _multiplyintowork!(out::AbstractArray{T}, a::AbstractArray{T},
+    b::AbstractArray{T}) where T
+    out .= a .* b
     return out
 end
 
-function _multiplyintowork!(out::Array{T}, a::Array{T}, b::Array{T},
-    c::Array{T}) where T
-    @inbounds for i in eachindex(out)
-        out[i] = -a[i]*b[i]*c[i]
-    end
+function _multiplyintowork!(out::AbstractArray{T}, a::AbstractArray{T},
+    b::AbstractArray{T}, c::AbstractArray{T}) where T
+    out .= .-a .* b .* c
     return out
 end
 
@@ -421,20 +424,30 @@ function hessianvectorproduct!(Hvw::AbstractVector{<:Complex},
     sys::HBSystem, v::AbstractVector{<:Complex},
     w::AbstractVector{<:Complex})
     _ensuresin!(sys)
-    _branchtimedomain!(sys.dirtd, sys, v)
-    _branchtimedomain!(sys.dirtd2, sys, w)
+    plan = sys.nonlineartermplan
+    applyforwardterm!(sys.phimatrix, plan, v)
+    applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
+    applyforwardterm!(sys.phimatrix, plan, w)
+    applyifft!(sys.dirtd2, sys.phimatrix, sys.irfftplan)
     _multiplyintowork!(sys.worktd, sys.sintd, sys.dirtd, sys.dirtd2)
     applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
-    _nonlinearterm!(Hvw, sys)
+    # the linear terms are linear in x so they do not contribute
+    applybackwardterm!(Hvw, plan, sys.phimatrix, v; addlinearterm = false)
     return Hvw
 end
 
 function hessianvectorproduct!(Hvwr::AbstractVector{<:Real},
     sys::HBSystem, vr::AbstractVector{<:Real}, wr::AbstractVector{<:Real})
-    real_to_complex!(sys.workv, vr, sys.modelayout.isreal)
-    real_to_complex!(sys.workw, wr, sys.modelayout.isreal)
-    hessianvectorproduct!(sys.workF, sys, sys.workv, sys.workw)
-    complex_to_real!(Hvwr, sys.workF, sys.modelayout.isreal)
+    _ensuresin!(sys)
+    plan = sys.nonlineartermplan
+    applyforwardterm!(sys.phimatrix, plan, vr)
+    applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
+    applyforwardterm!(sys.phimatrix, plan, wr)
+    applyifft!(sys.dirtd2, sys.phimatrix, sys.irfftplan)
+    _multiplyintowork!(sys.worktd, sys.sintd, sys.dirtd, sys.dirtd2)
+    applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
+    # the linear terms are linear in x so they do not contribute
+    applybackwardterm!(Hvwr, plan, sys.phimatrix, vr; addlinearterm = false)
     return Hvwr
 end
 
@@ -455,7 +468,8 @@ is introduced. Shares the cached time domain sine with
 function cosdirectionalderivative!(dcos::Array, sys::HBSystem,
     v::AbstractVector{<:Complex})
     _ensuresin!(sys)
-    _branchtimedomain!(sys.dirtd, sys, v)
+    applyforwardterm!(sys.phimatrix, sys.nonlineartermplan, v)
+    applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
     _multiplyintowork!(sys.worktd, sys.sintd, sys.dirtd)
     applyfft!(dcos, sys.worktd, sys.rfftplan)
     @inbounds for i in eachindex(dcos)
@@ -463,6 +477,16 @@ function cosdirectionalderivative!(dcos::Array, sys::HBSystem,
     end
     return dcos
 end
+
+"""
+    tohost(x::AbstractArray)
+
+The array on the host, for the host loops which cannot read a device array.
+Returns `x` itself when it is already an `Array`, so nothing about the CPU
+path changes; anything else is copied back with `Array`.
+"""
+tohost(x::Array) = x
+tohost(x::AbstractArray) = Array(x)
 
 """
     jacobian!(J::SparseMatrixCSC, sys::HBSystem)
@@ -480,7 +504,7 @@ function jacobian!(Jx::SparseMatrixCSC{<:Complex}, sys::HBSystem)
     isnothing(sys.complexjacobianplan) && throw(ArgumentError(
         "no complex Jacobian plan was provided to this HBSystem."))
     _updatecosphimatrix!(sys)
-    assemblecomplexjacobian!(Jx, sys.complexjacobianplan, sys.phimatrix,
+    assemblecomplexjacobian!(Jx, sys.complexjacobianplan, tohost(sys.phimatrix),
         sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm, sys.wmodes2m)
     return Jx
 end
@@ -488,9 +512,30 @@ end
 function jacobian!(Jr::SparseMatrixCSC{<:Real}, sys::HBSystem)
     isnothing(sys.realjacobianplan) && throw(ArgumentError(
         "no real Jacobian plan was provided to this HBSystem."))
+    return jacobian!(Jr, sys.realjacobianplan, sys)
+end
+
+"""
+    jacobian!(Jr::SparseMatrixCSC, plan::RealJacobianPlan, sys::HBSystem)
+
+Assemble the real Jacobian described by `plan` at the point set with
+[`setpoint!`](@ref), in place. This is the method [`jacobian!`](@ref)`(Jr, sys)`
+delegates to with the plan stored in `sys`; taking the plan explicitly lets a
+*different* plan, built over the same system, be assembled from the same Fourier
+coefficients of `cos(phi(t))` and the same linear term matrices. That is how
+[`ModeCouplingPreconditioner`](@ref) materializes the Jacobian restricted to a
+coarser frequency grid, at the cost of the restricted assembly alone and with no
+reference to the full Jacobian.
+"""
+function jacobian!(Jr::SparseMatrixCSC{<:Real}, plan::RealJacobianPlan,
+    sys::HBSystem)
     _updatecosphimatrix!(sys)
-    assemblerealjacobian!(Jr, sys.realjacobianplan, sys.phimatrix,
-        sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm, sys.wmodes2m)
+    # the assembly is host loops writing a host sparse matrix, so on a device
+    # backend the coefficients it reads come back first. this is the one host
+    # round trip left on the device path, and it is on the preconditioner
+    # refresh rather than in the Krylov iteration.
+    assemblerealjacobian!(Jr, plan, tohost(sys.phimatrix), sys.invLnm,
+        sys.Gnm, sys.Cnm, sys.wmodesm, sys.wmodes2m)
     return Jr
 end
 

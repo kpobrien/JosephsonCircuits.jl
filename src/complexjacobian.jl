@@ -60,35 +60,53 @@ function branchnodesandsigns(Rbnm::SparseMatrixCSC, Nmodes::Integer,
     return nodesandsigns
 end
 
-# stable counting sort of the parallel vectors (dest, src, coef) by dest,
-# where the destinations are in 1:nbins, returning newly allocated sorted
-# vectors. O(length + nbins), replacing an O(n log n) sortperm for the
-# typically large scatter lists.
-function sortscatterbydest(dest::Vector{Ti}, src::Vector{Ti},
+"""
+    segmentscatterbydest(dest::Vector{Ti}, src::Vector{Ti}, coef::Vector{T},
+        nbins::Integer)
+
+Group the parallel vectors `(dest, src, coef)`, whose destinations lie in
+`1:nbins`, into contiguous segments by destination, returning
+`(seg, src, coef)` where the contributions to destination `q` are
+`seg[q]:seg[q+1]-1`. This is the compressed sparse row form of the scatter,
+so the assembly it describes is a gather: one work item owns destination `q`
+and reduces its own segment, with no accumulation into a shared slot and
+therefore no atomics.
+
+A stable counting sort by destination, `O(length + nbins)`, which produces
+the segment pointer as the prefix sum it needs anyway. The destination
+vector is not returned because a gather over `seg` never reads it, which is
+why this form is smaller than the scatter it replaces: there are typically
+several contributions per destination, so `dest` is the longest array in the
+plan.
+"""
+function segmentscatterbydest(dest::Vector{Ti}, src::Vector{Ti},
     coef::Vector{T}, nbins::Integer) where {Ti<:Integer,T}
 
-    isempty(dest) && return dest, src, coef
-    count = zeros(Int, nbins + 1)
+    count = zeros(Ti, nbins + 1)
     @inbounds for d in dest
         count[d+1] += 1
     end
-    # exclusive prefix sum: count[d] = first output position for bin d
+    # prefix sum: count[q] is the first output position of destination q, and
+    # count[nbins+1] is one past the last, which is exactly the segment
+    # pointer the gather needs
     count[1] = 1
     @inbounds for d in 1:nbins
         count[d+1] += count[d]
     end
-    dest2 = similar(dest)
+    isempty(dest) && return count, src, coef
+    seg = copy(count)
     src2 = similar(src)
     coef2 = similar(coef)
+    # the permutation destroys count, which is why the pointer is copied out
+    # of it first
     @inbounds for k in eachindex(dest)
         d = dest[k]
         p = count[d]
         count[d] = p + 1
-        dest2[p] = d
         src2[p] = src[k]
         coef2[p] = coef[k]
     end
-    return dest2, src2, coef2
+    return seg, src2, coef2
 end
 
 """
@@ -213,11 +231,15 @@ coefficients into the Josephson branch matrix `AoLjbm` (following
 `Amatrixindices`, with negative entries denoting complex conjugation and
 zeros denoting dropped couplings, scaled by `Lmean/Lj`) and the incidence
 matrix triple product `Rbnm'*AoLjbm*Rbnm` ([`spmatmul!`](@ref)), is stored
-as two flat scatter lists, one for the plain and one for the complex
-conjugated coefficients:
+as two segmented gather lists ([`segmentscatterbydest`](@ref)), one for the
+plain and one for the complex conjugated coefficients, so that nonzero `q`
+of `Jx` is
 
-    nonzeros(Jx)[dest[k]] += coef[k]*phimatrix[src[k]]
-    nonzeros(Jx)[cdest[k]] += ccoef[k]*conj(phimatrix[csrc[k]])
+    sum(coef[t]*phimatrix[src[t]] for t in seg[q]:seg[q+1]-1) +
+    sum(ccoef[t]*conj(phimatrix[csrc[t]]) for t in cseg[q]:cseg[q+1]-1)
+
+One work item owns one nonzero and reduces its own segments, so the assembly
+needs no accumulation into shared slots and no atomics.
 
 The frequency dependent linear terms are not baked into the plan. Instead the
 plan stores [`sparseaddmap`](@ref) index maps for `invLnm`, `Gnm` and `Cnm`
@@ -230,12 +252,12 @@ and, for the analogous plan for the exact real Jacobian,
 [`RealJacobianPlan`](@ref).
 """
 struct ComplexJacobianPlan{Ti<:Integer,T<:Real}
-    # nonlinear (Josephson) part: scatter from phimatrix
-    dest::Vector{Ti}
+    # nonlinear (Josephson) part: segmented gather from phimatrix
+    seg::Vector{Ti}
     src::Vector{Ti}
     coef::Vector{T}
     # as above but with the source coefficient complex conjugated
-    cdest::Vector{Ti}
+    cseg::Vector{Ti}
     csrc::Vector{Ti}
     ccoef::Vector{T}
     # frequency dependent linear part: index maps into nonzeros(Jx)
@@ -291,13 +313,14 @@ function fillcomplexscatterlists(::Type{Ti}, ::Type{T}, Jx::SparseMatrixCSC,
     (kplain == nplain + 1 && kconj == nconj + 1) || throw(ErrorException(
         "internal error: scatter entry count mismatch in plancomplexjacobian."))
 
-    # sort the scatter lists by destination for memory locality when
-    # assembling. the destinations are indices into nonzeros(Jx) so a stable
-    # counting sort is O(entries + nnz(Jx)).
-    dest, src, coef = sortscatterbydest(dest, src, coef, nnz(Jx))
-    cdest, csrc, ccoef = sortscatterbydest(cdest, csrc, ccoef, nnz(Jx))
+    # group the contributions into contiguous segments by destination, which
+    # turns the assembly into a gather. the destinations are indices into
+    # nonzeros(Jx) so a stable counting sort is O(entries + nnz(Jx)), and it
+    # produces the segment pointer as its prefix sum.
+    seg, src, coef = segmentscatterbydest(dest, src, coef, nnz(Jx))
+    cseg, csrc, ccoef = segmentscatterbydest(cdest, csrc, ccoef, nnz(Jx))
 
-    return dest, src, coef, cdest, csrc, ccoef
+    return seg, src, coef, cseg, csrc, ccoef
 end
 
 """
@@ -384,7 +407,7 @@ function plancomplexjacobian(Amatrixindices::Matrix, Ljb::SparseVector,
     srcmax = Nfreq * length(Ljb.nzval)
     Ti = (nnz(Jx) <= typemax(Int32) && srcmax <= typemax(Int32)) ? Int32 : Int
 
-    dest, src, coef, cdest, csrc, ccoef = fillcomplexscatterlists(Ti, T, Jx,
+    seg, src, coef, cseg, csrc, ccoef = fillcomplexscatterlists(Ti, T, Jx,
         Amatrixindices, Ljb, Lmean, nodesandsigns, Nmodes, Nfreq, nplain,
         nconj)
 
@@ -393,7 +416,7 @@ function plancomplexjacobian(Amatrixindices::Matrix, Ljb::SparseVector,
     Gnmindexmap = sparseaddmap(Jx, Gnm)
     Cnmindexmap = sparseaddmap(Jx, Cnm)
 
-    plan = ComplexJacobianPlan(dest, src, coef, cdest, csrc, ccoef,
+    plan = ComplexJacobianPlan(seg, src, coef, cseg, csrc, ccoef,
         invLnmindexmap, Gnmindexmap, Cnmindexmap)
 
     return Jx, plan
@@ -421,9 +444,9 @@ function assemblecomplexjacobian!(Jx::SparseMatrixCSC,
     wmodes2m::Diagonal)
 
     Jxnz = nonzeros(Jx)
-    fill!(Jxnz, 0)
 
-    # nonlinear (Josephson) part: direct scatter from phimatrix
+    # nonlinear (Josephson) part: a segmented gather from phimatrix, which
+    # writes every nonzero, so no zeroing pass is needed
     addjosephsonterm!(Jxnz, plan, phimatrix)
 
     # frequency dependent linear part
@@ -438,37 +461,36 @@ end
     addjosephsonterm!(nzval::AbstractVector, plan::ComplexJacobianPlan,
         phimatrix::Array, conjugate::Bool = false)
 
-Add the Josephson (nonlinear) contribution `Rbnm'*AoLjbm*Rbnm` to the
+Write the Josephson (nonlinear) contribution `Rbnm'*AoLjbm*Rbnm` into the
 nonzero value vector `nzval`, which must be aligned with the sparsity
-structure the [`ComplexJacobianPlan`](@ref) was built for, by scattering the
-Fourier coefficients of `cos(phi(t))` in `phimatrix` through the plan. With
-`conjugate = true` the elementwise complex conjugate of the contribution is
-added instead, as needed for the adjoint of the linearized harmonic balance
-system. Used by [`assemblecomplexjacobian!`](@ref) for the Jacobian of the
+structure the [`ComplexJacobianPlan`](@ref) was built for, by gathering the
+Fourier coefficients of `cos(phi(t))` in `phimatrix` through the plan. Every
+entry of `nzval` is written, so the destination need not be zeroed first.
+With `conjugate = true` the elementwise complex conjugate of the contribution
+is written instead, as needed for the adjoint of the linearized harmonic
+balance system. Used by [`assemblecomplexjacobian!`](@ref) for the Jacobian of the
 nonlinear system and by [`hblinsolve`](@ref) for the pump modulation term of
 the linearized system, so the two constructions share the same machinery.
 """
 function addjosephsonterm!(nzval::AbstractVector, plan::ComplexJacobianPlan,
     phimatrix::Array, conjugate::Bool = false)
 
-    dest, src, coef = plan.dest, plan.src, plan.coef
-    cdest, csrc, ccoef = plan.cdest, plan.csrc, plan.ccoef
-    if conjugate
-        # conj(sum) = sum of conjugated terms: the plain coefficients are
-        # conjugated and the conjugated coefficients are not.
-        @inbounds for k in eachindex(dest)
-            nzval[dest[k]] += coef[k] * conj(phimatrix[src[k]])
+    seg, src, coef = plan.seg, plan.src, plan.coef
+    cseg, csrc, ccoef = plan.cseg, plan.csrc, plan.ccoef
+    # conj(sum) = sum of conjugated terms: with conjugate = true the plain
+    # coefficients are conjugated and the conjugated ones are not
+    T = eltype(nzval)
+    @inbounds for q in eachindex(nzval)
+        acc = zero(T)
+        for t in seg[q]:seg[q+1]-1
+            v = phimatrix[src[t]]
+            acc += coef[t] * (conjugate ? conj(v) : v)
         end
-        @inbounds for k in eachindex(cdest)
-            nzval[cdest[k]] += ccoef[k] * phimatrix[csrc[k]]
+        for t in cseg[q]:cseg[q+1]-1
+            v = phimatrix[csrc[t]]
+            acc += ccoef[t] * (conjugate ? v : conj(v))
         end
-    else
-        @inbounds for k in eachindex(dest)
-            nzval[dest[k]] += coef[k] * phimatrix[src[k]]
-        end
-        @inbounds for k in eachindex(cdest)
-            nzval[cdest[k]] += ccoef[k] * conj(phimatrix[csrc[k]])
-        end
+        nzval[q] = acc
     end
     return nzval
 end

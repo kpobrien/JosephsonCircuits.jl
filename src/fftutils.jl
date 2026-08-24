@@ -961,31 +961,59 @@ function applynl(fd::Array{Complex{Float64}}, f)
 end
 
 """
-    plan_applynl(fd::Array{Complex{T}})
+    plan_applynl(fd::AbstractArray{Complex{T}}, backend::Backend = CPU())
 
 Creates an empty time domain data array and the inverse and forward plans
 for the RFFT of an array of frequency domain data. See also [`applynl!`](@ref).
 
 """
-function plan_applynl(fd::Array{Complex{T}}) where T
+function plan_applynl(fd::AbstractArray{Complex{T}},
+    backend::Backend = CPU()) where T
 
     #choose the number of time points based on the number of fourier
     #coefficients
     sizefd = size(fd)
     stepsperperiod = 2*sizefd[1]-1
 
-    # generate the time domain array with the appropriate dimensions
-    # changed to prevent boxing of stepsperperiod.
+    # generate the time domain array with the appropriate dimensions, on the
+    # same device as the frequency domain array. changed to prevent boxing of
+    # stepsperperiod.
     dims = (stepsperperiod, sizefd[2:end]...)
-    td = Array{T}(undef, dims)
+    td = similar(fd, T, dims)
 
-    # make the irfft plan
-    irfftplan = FFTW.plan_irfft(fd,stepsperperiod,1:length(size(fd))-1; flags=FFTW.ESTIMATE, timelimit=Inf)
-
-    # make the rfft plan
-    rfftplan = FFTW.plan_rfft(td,1:length(size(fd))-1; flags=FFTW.ESTIMATE, timelimit=Inf)
+    irfftplan, rfftplan = fftplans(fd, td, stepsperperiod, backend)
 
     return td, irfftplan, rfftplan
+end
+
+"""
+    fftplans(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
+        stepsperperiod::Int, backend::Backend)
+
+Create the inverse real transform plan from the frequency domain array `fd`
+to the time domain array `td`, and the forward plan back, on the given
+KernelAbstractions backend. The transform runs over all but the last
+dimension, the last being the Josephson junction index.
+
+The `CPU()` method uses FFTW. A device backend supplies its own method, which
+is the only thing the residual and the matrix-free products need that the
+core package cannot provide without taking on the device dependency: every
+other step of those is either a plain array operation or a kernel of
+[`NonlinearTermPlan`](@ref). Load the package extension for the device (for
+CUDA, `using CUDA`) to get its method.
+"""
+function fftplans(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
+    stepsperperiod::Int, backend::CPU) where T
+    dims = 1:length(size(fd))-1
+    irfftplan = FFTW.plan_irfft(fd, stepsperperiod, dims;
+        flags = FFTW.ESTIMATE, timelimit = Inf)
+    rfftplan = FFTW.plan_rfft(td, dims; flags = FFTW.ESTIMATE, timelimit = Inf)
+    return irfftplan, rfftplan
+end
+
+function fftplans(fd::AbstractArray, td::AbstractArray, stepsperperiod::Int,
+    backend::Backend)
+    throw(ArgumentError(lazy"no real transform plans are defined for the backend $(backend). Load the package extension for the device (for CUDA, `using CUDA`) or use the CPU() backend."))
 end
 
 """
@@ -1011,7 +1039,7 @@ fd
  -0.143268+0.0im  -0.143268+0.0im
 ```
 """
-function applynl!(fd::Array{Complex{T}}, td::Array{T}, f, irfftplan,
+function applynl!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T}, f, irfftplan,
     rfftplan) where T
 
     #transform to the time domain
@@ -1021,18 +1049,14 @@ function applynl!(fd::Array{Complex{T}}, td::Array{T}, f, irfftplan,
     normalization = prod(size(td)[1:end-1])
     invnormalization = 1/normalization
 
-    #apply the nonlinear function
-    for i in eachindex(td)
-        td[i] = f(td[i]*normalization)
-    end
+    # apply the nonlinear function. broadcasting keeps this device generic
+    td .= f.(td .* normalization)
 
     # transform to the frequency domain
     mul!(fd, rfftplan, td)
 
     # normalize
-    for i in eachindex(fd)
-        fd[i] = fd[i]*invnormalization
-    end
+    fd .*= invnormalization
 
     return nothing
 end

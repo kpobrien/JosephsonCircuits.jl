@@ -155,3 +155,112 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Test
     end
 
 end
+
+@testset "gmres! singular, breakdown and validation" begin
+    # A = 0 with a nonzero right hand side is an unhappy breakdown: the
+    # Krylov space is invariant on the first step but the residual is not
+    # reducible in it. The solver must not report success, must not call it
+    # lucky, and must not spend its whole cycle budget rebuilding the same
+    # useless space.
+    A = zeros(3, 3)
+    b = [1.0, 2.0, 3.0]
+    x = zeros(3)
+    ws = JosephsonCircuits.GMRESWorkspace(3, 3, Float64)
+    out = JosephsonCircuits.gmres!(x, (w, v) -> mul!(w, A, v), b, ws;
+        rtol = 1e-8, maxrestarts = 5)
+    @test !out.converged
+    @test out.reason != :converged
+    @test out.iterations <= 2          # not one wasted cycle per restart
+    @test out.residual ≈ norm(b)
+    @test all(isfinite, x)
+
+    # a rank deficient, inconsistent system must not amplify a tiny
+    # triangular pivot into a spurious solution component
+    A2 = [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 0.0]
+    b2 = [1.0, 1.0, 1.0]
+    x2 = zeros(3)
+    ws2 = JosephsonCircuits.GMRESWorkspace(3, 3, Float64)
+    out2 = JosephsonCircuits.gmres!(x2, (w, v) -> mul!(w, A2, v), b2, ws2;
+        rtol = 1e-8, maxrestarts = 3)
+    @test !out2.converged
+    @test all(isfinite, x2)
+    @test norm(x2) < 10                # not the 1e16 a raw divide produces
+    # and it is at least as good as the zero step
+    @test norm(b2 - A2*x2) <= norm(b2)
+
+    # non-finite tolerances must be rejected rather than reporting a
+    # convergence which did not happen
+    A3 = [1.0 0.0; 0.0 1.0]
+    b3 = [1.0, 1.0]
+    x3 = zeros(2)
+    ws3 = JosephsonCircuits.GMRESWorkspace(2, 2, Float64)
+    @test_throws ArgumentError JosephsonCircuits.gmres!(x3,
+        (w, v) -> mul!(w, A3, v), b3, ws3; rtol = Inf)
+    @test_throws ArgumentError JosephsonCircuits.gmres!(x3,
+        (w, v) -> mul!(w, A3, v), b3, ws3; atol = NaN)
+
+    # a zero right hand side with initialzero = false must measure the warm
+    # start rather than discard it
+    A4 = [2.0 0.0; 0.0 3.0]
+    b4 = [0.0, 0.0]
+    x4 = [7.0, -4.0]
+    ws4 = JosephsonCircuits.GMRESWorkspace(2, 2, Float64)
+    out4 = JosephsonCircuits.gmres!(x4, (w, v) -> mul!(w, A4, v), b4, ws4;
+        rtol = 1e-10, initialzero = false)
+    @test out4.converged
+    @test norm(A4*x4 - b4) <= 1e-10
+
+    # the reported termination reason and cycle count are present and
+    # consistent with convergence
+    A5 = Diagonal(exp10.(range(-1, 0, length = 20)))
+    b5 = ones(20)
+    x5 = zeros(20)
+    ws5 = JosephsonCircuits.GMRESWorkspace(20, 20, Float64)
+    out5 = JosephsonCircuits.gmres!(x5, (w, v) -> mul!(w, A5, v), b5, ws5;
+        rtol = 1e-10, maxrestarts = 3)
+    @test out5.converged
+    @test out5.reason == :converged
+    @test out5.cycles >= 1
+end
+
+@testset "nlsolvekrylov! forcing terms and parameter validation" begin
+    # a small nonlinear system preconditioned by its own exact Jacobian,
+    # wrapped in the minimal AbstractPreconditioner interface
+    mutable struct ExactP <: JosephsonCircuits.AbstractPreconditioner
+        J::Matrix{Float64}
+        F::Any
+    end
+    JosephsonCircuits.updatepreconditioner!(pc::ExactP, x::AbstractVector) =
+        (pc.J .= [2x[1] 0.0; 0.0 3x[2]^2]; pc.F = lu(pc.J); pc)
+    JosephsonCircuits.applypreconditioner!(z::AbstractVector, pc::ExactP,
+        r::AbstractVector) = ldiv!(z, pc.F, r)
+
+    xpt = [1.0, 1.0]
+    fj!(F, J, x) = begin
+        copyto!(xpt, x)
+        isnothing(F) || (F .= [x[1]^2 - 2, x[2]^3 - 3])
+        nothing
+    end
+    jvp!(y, v) = (y .= [2*xpt[1]*v[1], 3*xpt[2]^2*v[2]])
+
+    # the initial forcing term and the upper clamp are separate parameters
+    for (rtol0, rtolmax) in ((0.3, 0.9), (0.9, 0.9), (0.01, 0.5))
+        x = [1.0, 1.0]
+        F = zeros(2)
+        info = JosephsonCircuits.nlsolvekrylov!(fj!, jvp!, F, x,
+            ExactP(zeros(2, 2), nothing); ftol = 1e-10,
+            krylovrtol0 = rtol0, krylovrtolmax = rtolmax)
+        @test info.converged
+        @test isapprox(x, [sqrt(2), cbrt(3)]; rtol = 1e-6)
+        @test length(info.krylov) >= info.iterations
+    end
+
+    # the Choice 2 parameters are only defined on their proper ranges
+    for bad in ((; krylovgamma = 0.0), (; krylovgamma = 1.5),
+                (; krylovalpha = 1.0), (; krylovalpha = 3.0),
+                (; krylovrtol0 = 0.99, krylovrtolmax = 0.5),
+                (; krylovrefreshrate = 0.0), (; krylovstagnation = 1.5))
+        @test_throws ArgumentError JosephsonCircuits.nlsolvekrylov!(fj!, jvp!,
+            zeros(2), [1.0, 1.0], ExactP(zeros(2, 2), nothing); bad...)
+    end
+end
