@@ -401,6 +401,45 @@ function calcsourcecurrent(key1, key2, bnm, Nmodes, j, k)
     return sourcecurrent
 end
 
+# """
+#     IMPEDANCE_R, IMPEDANCE_C, IMPEDANCE_L
+
+# The component types [`impedance`](@ref) knows, as integers.
+
+# A kernel cannot carry a `Symbol`, so the shared impedance is written against
+# these and [`impedancecode`](@ref) maps a component type to one at the boundary.
+# """
+const IMPEDANCE_R, IMPEDANCE_C, IMPEDANCE_L = Int32(1), Int32(2), Int32(3)
+
+"""
+    impedancecode(type)
+
+The [`impedance`](@ref) code of a component type, or an error for a type which
+has no impedance.
+"""
+function impedancecode(type)
+    type === :R && return IMPEDANCE_R
+    type === :C && return IMPEDANCE_C
+    type === :L && return IMPEDANCE_L
+    error(lazy"Unknown component type")
+end
+
+"""
+    impedance(c, code::Integer, w)
+
+The impedance of a component of value `c` and type `code` at frequency `w`,
+conjugating the stored value at a negative frequency.
+
+The single implementation, called by [`calcimpedance`](@ref) on the host and
+directly from the kernels which compute power waves on a backend.
+"""
+@inline function impedance(c, code::Integer, w)
+    cc = real(w) >= 0 ? c : conj(c)
+    code == IMPEDANCE_R && return cc + 0.0im
+    code == IMPEDANCE_C && return 1/(im*w*cc)
+    return im*w*cc
+end
+
 """
     calcimpedance(c::Union{Integer,T,Complex{T}}, type, w, symfreqvar,
         ) where {T<:AbstractFloat}
@@ -429,28 +468,7 @@ julia> JosephsonCircuits.calcimpedance(30.0,:R,-1.0,nothing)
 """
 function calcimpedance(c::Union{T,Complex{T}}, type, w, symfreqvar,
     ) where {T<:Union{AbstractFloat,Integer}}
-
-    if type == :R
-        if real(w) >= 0
-            return c+0.0im
-        else
-            return conj(c)+0.0im
-        end
-    elseif type == :C
-        if real(w) >= 0
-            return 1/(im*w*c)
-        else
-            return 1/(im*w*conj(c))
-        end
-    elseif type == :L
-        if real(w) >= 0
-            return (im*w*c)
-        else
-            return (im*w*conj(c))
-        end
-    else
-        error(lazy"Unknown component type")
-    end
+    return impedance(c, impedancecode(type), w)
 end
 
 
@@ -788,6 +806,66 @@ function calccm!(cm, S, Snoise, w)
     return cm
 end
 
+"""
+    NoiseReduction
+
+The noise scattering matrix reduced to what the quantum efficiency and the
+commutation relations read of it.
+
+Both consume `Snoise` only through a sum over the noise index: the quantum
+efficiency through `sum(abs2, Snoise[:,i])` and the commutation relations
+through the same sum weighted by the sign of each noise index's mode
+frequency. On a circuit whose loss is spread along the line that is a
+reduction of thousands of rows to one number per port mode, so when the noise
+scattering parameters are not themselves an output there is no reason to form
+the matrix on the host at all.
+
+Passed to [`calcqe!`](@ref) and [`calccm!`](@ref) in place of the matrix.
+"""
+struct NoiseReduction{V}
+    denom::V
+    signed::V
+end
+
+"""
+    calccm!(cm, S, noise::NoiseReduction, w)
+
+The commutation relations from the scattering matrix and the reduction of the
+noise scattering matrix, rather than the matrix itself.
+
+`calccm!(cm, S, Snoise, w)` reads `Snoise` only as the sum of `abs2` over each
+row weighted by the sign of the mode frequency of the column, so a caller
+which has that sum already passes it here. See [`NoiseReduction`](@ref).
+
+The scattering matrix's own contribution is left to `calccm!(cm, S, w)`, so
+this shares that method's summation, compensated where the commutation
+relations are real, rather than repeating it.
+"""
+function calccm!(cm, S, noise::NoiseReduction, w)
+    return calccmreduced!(cm, S, noise, w)
+end
+
+# the same, for the real commutation relations, whose own method would
+# otherwise be neither more nor less specific than the one above
+function calccm!(cm::AbstractArray{T}, S, noise::NoiseReduction,
+    w) where {T<:AbstractFloat}
+    return calccmreduced!(cm, S, noise, w)
+end
+
+function calccmreduced!(cm, S, noise::NoiseReduction, w)
+
+    if size(S,1) != length(noise.signed)
+        throw(DimensionMismatch(lazy"First dimension of the scattering parameter matrix must equal the length of the noise reduction."))
+    end
+
+    calccm!(cm, S, w)
+    @inbounds for i in eachindex(cm)
+        cm[i] += noise.signed[i]
+    end
+
+    return cm
+end
+
 
 """
     calcqe(S::AbstractArray)
@@ -925,6 +1003,45 @@ function calcqe!(qe, S, Snoise)
         end
     end
 
+    return qe
+end
+
+"""
+    calcqe!(qe, S, noise::NoiseReduction)
+
+The quantum efficiency from the scattering matrix and the reduction of the
+noise scattering matrix, rather than the matrix itself.
+
+`calcqe!(qe, S, Snoise)` reads `Snoise` only as `sum(abs2, Snoise[i,:])` per
+row, so a caller which has that sum already, as one computed on a backend has,
+passes it here and never forms the matrix. See [`NoiseReduction`](@ref).
+"""
+function calcqe!(qe, S, noise::NoiseReduction)
+
+    if size(qe) != size(S)
+        throw(DimensionMismatch(lazy"Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
+    end
+
+    if size(S,1) != length(noise.denom)
+        throw(DimensionMismatch(lazy"First dimension of the scattering parameter matrix must equal the length of the noise reduction."))
+    end
+
+    denom = zeros(eltype(qe),size(S,1))
+    @inbounds for j in 1:size(S,2)
+        for i in 1:size(S,1)
+            denom[i] += abs2(S[i,j])
+        end
+    end
+
+    @inbounds for i in 1:size(S,1)
+        denom[i] += noise.denom[i]
+    end
+
+    @inbounds for j in 1:size(S,2)
+        for i in 1:size(S,1)
+            qe[i,j] = abs2(S[i,j]) / denom[i]
+        end
+    end
     return qe
 end
 

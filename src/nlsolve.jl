@@ -60,18 +60,22 @@ The history lives in fixed n×depth matrices with circular column indexing.
 the indices. All access to the history columns is through age-ordered indices,
 so results are independent of the physical column layout.
 """
-mutable struct AndersonState{T, RT}
+mutable struct AndersonState{T, RT, V, M}
     depth::Int
     historyready::Bool
     histcount::Int
     histpos::Int
-    xprev::Vector{T}
-    deltaxprev::Vector{T}
-    correction::Vector{T}
-    deltaxhistory::Matrix{T}
-    deltafhistory::Matrix{T}
+    # the vectors and the history follow the iterate onto whatever backend it
+    # lives on; the Gram matrix and the coefficients are depth by depth and
+    # depth long, and stay on the host, where the back substitution that reads
+    # them element by element belongs
+    xprev::V
+    deltaxprev::V
+    correction::V
+    deltaxhistory::M
+    deltafhistory::M
     agecols::Vector{Int}
-    qrQ::Matrix{T}
+    qrQ::M
     gram::Matrix{RT}
     gammabuf::Vector{RT}
 end
@@ -82,19 +86,29 @@ function AndersonState(x::AbstractVector{T}, depth::Integer) where T
     end
     n = length(x)
     RT = real(T)
-    return AndersonState{T, RT}(depth, false, 0, 1,
+    return AndersonState{T, RT, typeof(similar(x, n)),
+        typeof(similar(x, n, depth))}(depth, false, 0, 1,
         copy(x), copy(x), similar(x, n),
-        Matrix{T}(undef, n, depth), Matrix{T}(undef, n, depth),
+        similar(x, n, depth), similar(x, n, depth),
         Vector{Int}(undef, depth),
-        Matrix{T}(undef, n, depth),
+        similar(x, n, depth),
         Matrix{RT}(undef, depth, depth), Vector{RT}(undef, depth))
 end
 
 
 """
     Factorization(outofplace,inplace,kwargs)
+    Factorization(outofplace,inplace,kwargs,batched)
 
 A structure to hold the factorizations and their keyword arguments.
+
+`batched`, when it is not `nothing`, is a function of a
+[`BatchedBlockLayout`](@ref) returning the form of this factorization which
+treats the matrix as a uniform batch of diagonal blocks: one symbolic analysis
+for the pattern every block shares, then a batched numeric factorization. It is
+consulted by [`batchedfactorization`](@ref), which is the only place that knows
+whether a particular matrix really is such a batch. A factorization with no
+batched form leaves it `nothing` and is used unchanged.
 
 ```
 """
@@ -102,7 +116,11 @@ struct Factorization
     factorize
     factorize!
     kwargs
+    batched
 end
+
+Factorization(factorize, factorize!, kwargs) =
+    Factorization(factorize, factorize!, kwargs, nothing)
 
 function KLUfactorization(;kwargs...)
     # return Factorization(KLU.klu,KLU.klu!,kwargs)
@@ -987,6 +1005,30 @@ function dualsearch!(f!, F::AbstractVector,
 end
 
 """
+    solveonbackend!(fj!, F, J, x, backend; kwargs...)
+
+Solve the nonlinear system on the backend its Jacobian and factorization live
+on, returning the iteration information and writing the converged state back
+into the host vectors `F` and `x`.
+
+The state has to go where the Jacobian is, so that the assembly, the linear
+solve and the line search all stay on one side. On `CPU()` `tobackend` adopts
+the caller's vectors and the copies back are between an array and itself, so
+this is exactly [`nlsolve!`](@ref).
+"""
+function solveonbackend!(fj!::Function, F::AbstractVector, J,
+    x::AbstractVector, backend; kwargs...)
+
+    xb = tobackend(backend, x)
+    Fb = tobackend(backend, F)
+    info = nlsolve!(fj!, Fb, J, xb; kwargs...)
+    copyto!(x, tohost(xb))
+    copyto!(F, tohost(Fb))
+    return info
+end
+
+
+"""
     nlsolve!(fj!, F, J, x; kwargs...)
 
 Newton's method with Anderson acceleration, designed for quasi-Newton problems
@@ -1040,7 +1082,7 @@ evaluations after each iteration's first), and `andersonrecord` (true
 when the taken step lies on the curved path).
 """
 function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
-    x::Vector{T}; iterations = 1000, ftol = 1e-8,
+    x::AbstractVector{T}; iterations = 1000, ftol = 1e-8,
     factorization = KLUfactorization(), label = "",
     c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5,
     maxbacktracks::Integer = 10, maxbacktrackfailures::Integer = 2,

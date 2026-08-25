@@ -335,6 +335,11 @@ only the node coordinates. See `src/mna.jl`.
     is held fixed unless `sensitivityoperatingpoint = true`.
 - `factorization = KLUfactorization()`: the type of factorization to use for
     the nonlinear and the linearized simulations.
+- `backend = CPU()`: the backend both solves run on. The nonlinear solve
+    assembles, factorizes and iterates there; the linearized sweep solves its
+    signal frequencies there in batches which share a sparsity pattern, and
+    falls back to the host for the requests it cannot serve there (see
+    [`hblinsolve`](@ref)).
 
 # Returns
 - `HB`: A simple structure to hold the harmonic balance solutions. See
@@ -444,11 +449,14 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
         returnZsensitivityadjoint = returnZsensitivityadjoint,
-        # the linearized sweep is a host solve of complex matrices, so it
-        # keeps the host default when the factorization was left to the
-        # backend. An explicit one is still honored for both solves.
+        # the linearized sweep solves its frequencies on the backend when it
+        # can (see hblinsolve), and falls back to the host otherwise, so it
+        # takes the backend as well. The host factorization stays the default
+        # because that fallback is a host solve of complex matrices; an
+        # explicit one is still honored for both solves.
         factorization = isnothing(factorization) ? KLUfactorization() :
-            factorization)
+            factorization,
+        backend = backend)
 
     return HB(nonlinear, linearized)
 end
@@ -466,7 +474,7 @@ end
         sensitivitynames::Vector{String} = String[],
         sensitivitynodeflux = nothing, sensitivityresidual = nothing,
         sensitivitymode = :auto, returnSsensitivity = false,
-        factorization = KLUfactorization())
+        factorization = KLUfactorization(), backend = CPU())
 
 Harmonic balance solver supporting an arbitrary number of small signals (weak
 tones) linearized around `nonlinear`, the solution of the nonlinear system
@@ -560,6 +568,13 @@ consisting of an arbitrary number of large signals (strong tones) from
     is held fixed unless `sensitivityoperatingpoint = true`.
 - `factorization = KLUfactorization()`: the type of factorization to use for
     the nonlinear and the linearized simulations.
+- `backend = CPU()`: the backend the frequency sweep is solved on. On a device
+    backend the system matrices of a batch of signal frequencies, which share
+    one sparsity pattern, are assembled by one kernel and factorized and solved
+    as a uniform batch. Falls back to the host when the component values depend
+    on the symbolic frequency variable, or when an output requires the adjoint
+    (transposed) solve: the noise scattering parameters, the scattering
+    parameter sensitivities, or the adjoint node outputs.
 
 # Returns
 - `LinearizedHB`: A simple structure to hold the harmonic balance solutions.
@@ -635,7 +650,7 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    factorization = KLUfactorization())
+    factorization = KLUfactorization(), backend = CPU())
 
     # parse and sort the circuit
     psc = parsesortcircuit(circuit, sorting = sorting)
@@ -665,7 +680,7 @@ return hblinsolve(w, psc, cg, circuitdefs, signalfreq; nonlinear = nonlinear,
         returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
         returnZsensitivityadjoint = returnZsensitivityadjoint,
-        factorization = factorization)
+        factorization = factorization, backend = backend)
 end
 
 """
@@ -759,7 +774,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    factorization = KLUfactorization(), debuglsys = false)
+    factorization = KLUfactorization(), backend = CPU(), debuglsys = false)
 
 
     # deprecation warnings for  `returnZ`, `returnZadjoint`,
@@ -1171,15 +1186,105 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # we want to reuse the factorization object and other input arrays. 
     # perform array allocations and factorization "nbatches" times.
     # parallelize using tasks
-    batches = Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
-    Threads.@sync for batch in batches
-        Base.Threads.@spawn hblinsolve_inner!(outputarrays,
-            (stamps = sensitivitystamps, dAop = sensitivitydAop,
-                reverse = sensitivityreverse),
-            lsys, bnm,
-            portindices, portimpedanceindices, noiseportimpedanceindices,
-            portimpedances, noiseportimpedances, nodeindices, componenttypes,
-            w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batch, factorization)
+    # On a backend the sweep is solved there instead: the system matrices of
+    # a batch of frequencies share one sparsity pattern, so they are assembled
+    # by one kernel and factorized and solved by cuDSS as a uniform batch. The
+    # frequency loop and every output it computes are the host ones, with only
+    # the solve replaced, so both paths compute their outputs identically.
+    #
+    # It falls back to the host when the component values depend on the
+    # symbolic frequency variable, so the assembly is not a constant quadratic
+    # in the signal frequency.
+    sensitivitytuple = (stamps = sensitivitystamps, dAop = sensitivitydAop,
+        reverse = sensitivityreverse)
+    usedevice = !(backend isa CPU) && cansweepondevice(lsys)
+    if usedevice
+        # what each direction's solutions are read for decides whether the
+        # whole solution comes back or only some of its rows. The scattering
+        # parameters read the forward solution at the port rows and the
+        # adjoint one at the noise port rows; the node flux, voltage and
+        # sensitivity outputs read all of both.
+        fullforward = !isempty(outputarrays.nodeflux) ||
+            !isempty(outputarrays.voltage) ||
+            !isempty(outputarrays.Ssensitivity)
+        fulladjoint = !isempty(outputarrays.nodefluxadjoint) ||
+            !isempty(outputarrays.voltageadjoint) ||
+            !isempty(outputarrays.Ssensitivity)
+        # The noise scattering parameters are computed where the adjoint
+        # solution is, so they ask nothing of the host copy. When they are its
+        # only reader, which is the usual case on a lossy line, the adjoint
+        # solution is never copied back at all.
+        devicenoiseplan = if !isempty(noiseportimpedanceindices) &&
+                (!isempty(outputarrays.Snoise) || !isempty(outputarrays.QE) ||
+                 !isempty(outputarrays.CM))
+            plandevicenoise(nodeindices, componenttypes,
+                noiseportimpedanceindices, noiseportimpedances,
+                Nsignalmodes, backend)
+        else
+            nothing
+        end
+        adjointspec = if needsadjointsolve(outputarrays,
+                noiseportimpedanceindices)
+            (full = fulladjoint,
+                rows = isnothing(devicenoiseplan) ?
+                    portsolutionrows(nodeindices, noiseportimpedanceindices,
+                        Nsignalmodes) : Int[])
+        else
+            nothing
+        end
+        solutions = devicesolutions(lsys, bnm, w, backend,
+            (full = fullforward, rows = portsolutionrows(nodeindices,
+                portimpedanceindices, Nsignalmodes)),
+            adjointspec)
+        # One pass over the whole sweep, so the frequency loop's buffers are
+        # made once; the callbacks solve the batch a frequency belongs to when
+        # they first reach it. Splitting the loop across threads was measured
+        # and it loses: a batch holds about a dozen frequencies, so each
+        # thread would remake those buffers for a frequency or two of work.
+        # The device solves a batch of frequencies, then the host computes
+        # their outputs, reusing one set of scratch across every batch.
+        #
+        # Spreading those outputs across workers was tried and it loses. The
+        # host work here is about a quarter of the call, not the half a
+        # measurement which also counted the plans, the cuDSS analysis and the
+        # output arrays had suggested; and giving each worker its own scratch
+        # costs more in working set than the parallelism wins, because the
+        # solution buffer alone is the size of the state of the whole circuit.
+        # Measured on a thirteen mode travelling wave amplifier, the outputs
+        # took 0.132 s on one worker and 0.189 s on eight.
+        ws = LinearizedWorkspace(outputarrays, sensitivitytuple, lsys,
+            Nports, Nsignalmodes, length(noiseportimpedanceindices),
+            length(wpumpmodes), factorization; assembles = false)
+        noisecb = isnothing(devicenoiseplan) ? nothing :
+            devicenoise(devicenoiseplan, solutions.adjointdevice,
+                size(bnm, 2), wpumpmodes, w, !isempty(outputarrays.Snoise))
+        nb = solutions.batchsize
+        for lo in 1:nb:length(w)
+            hi = min(lo + nb - 1, length(w))
+            solutions.solvebatch!(lo)
+            hblinsolve_inner!(ws, outputarrays, sensitivitytuple, lsys, bnm,
+                portindices, portimpedanceindices, noiseportimpedanceindices,
+                portimpedances, noiseportimpedances, nodeindices,
+                componenttypes, w, wpumpmodes, Nsignalmodes, Nnodes,
+                symfreqvar, lo:hi, factorization;
+                presolved = solutions.forward,
+                presolvedadjoint = solutions.adjoint,
+                presolvednoise = noisecb)
+        end
+    else
+        batches = Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
+        Threads.@sync for batch in batches
+            Base.Threads.@spawn hblinsolve_inner!(
+                LinearizedWorkspace(outputarrays, sensitivitytuple, lsys,
+                    Nports, Nsignalmodes, length(noiseportimpedanceindices),
+                    length(wpumpmodes), factorization),
+                outputarrays, sensitivitytuple,
+                lsys, bnm,
+                portindices, portimpedanceindices, noiseportimpedanceindices,
+                portimpedances, noiseportimpedances, nodeindices, componenttypes,
+                w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batch,
+                factorization)
+        end
     end
 
     # calculate the `ideal` quantum efficiency based on the gain assuming an
@@ -1334,6 +1439,89 @@ function LinearizedArrays(; requestS::Bool, requestSnoise::Bool,
 end
 
 """
+    LinearizedWorkspace
+
+The scratch of one worker's pass over a range of signal frequencies in
+[`hblinsolve_inner!`](@ref).
+
+There are fourteen buffers here, the largest of them the size of the solution
+and of the system matrix, so making them is not free. They are a separate
+object so that a worker can be given one once and reuse it across every range
+it is handed, rather than remaking them per call. That is what lets the device
+path hand out a batch of frequencies at a time and still keep the host work
+parallel: without it, each worker would remake all of this for the frequency
+or two of a batch that fell to it, which was measured and cost more than the
+parallelism won.
+"""
+struct LinearizedWorkspace{TA,TC,TR}
+    phin::Matrix{Complex{Float64}}
+    inputwave::Matrix{Complex{Float64}}
+    outputwave::Matrix{Complex{Float64}}
+    noiseoutputwave::Matrix{Complex{Float64}}
+    phinforward::Matrix{Complex{Float64}}
+    dAsparse::TA
+    dAphin::Matrix{Complex{Float64}}
+    sensitivitycontraction::Matrix{Complex{Float64}}
+    sensitivitycache::TC
+    sensitivityrevbufs::TR
+    sensitivitygamma::Vector{Complex{Float64}}
+    sensitivitybeta::Vector{Complex{Float64}}
+    wmodes::Vector{Float64}
+    Asparsecopy::SparseMatrixCSC{Complex{Float64},Int}
+    cache::FactorizationCache
+    Sworking::Matrix{Complex{Float64}}
+    Snoiseworking::Matrix{Complex{Float64}}
+end
+
+"""
+    LinearizedWorkspace(arrays::LinearizedArrays, sensitivity, lsys, Nports,
+        Nmodes, Nnoiseports, Nwpumpmodes, factorization; assembles::Bool = true)
+
+Make the scratch of one worker. `assembles` is false when the solutions are
+supplied from elsewhere and nothing writes into a copy of the system matrix,
+which on a large problem is the biggest allocation here.
+"""
+function LinearizedWorkspace(arrays::LinearizedArrays, sensitivity, lsys,
+    Nports::Integer, Nmodes::Integer, Nnoiseports::Integer,
+    Nwpumpmodes::Integer, factorization; assembles::Bool = true)
+
+    n = size(lsys.Asparse, 1)
+    np = Nports*Nmodes
+    cplx(a, b) = zeros(Complex{Float64}, a, b)
+    wantssensitivity = !isempty(arrays.Ssensitivity)
+    # the forward solution, which the adjoint solve overwrites, the derivative
+    # of the system matrix with respect to one component, and the contraction.
+    # The operating point contribution is dense on the sparsity structure of
+    # the system matrix, so it needs a matrix and a product; the stamps of the
+    # individual components do not.
+    wantsop = wantssensitivity && !isempty(sensitivity.dAop)
+    phinforward = wantssensitivity ? cplx(n, np) : cplx(0, 0)
+    # one factorization of the pump Jacobian per worker: a sparse
+    # factorization is not safe to solve against from several threads at once
+    sensitivitycache = if isnothing(sensitivity.reverse)
+        nothing
+    else
+        c = FactorizationCache()
+        tryfactorize!(c, factorization, sensitivity.reverse.op.jacobian)
+        c
+    end
+    return LinearizedWorkspace(
+        cplx(n, np), cplx(np, np), cplx(np, np), cplx(Nnoiseports*Nmodes, np),
+        phinforward,
+        wantsop ? copy(lsys.Asparse) : lsys.Asparse,
+        wantsop ? cplx(size(phinforward)...) : cplx(0, 0),
+        cplx(np, np), sensitivitycache,
+        isnothing(sensitivity.reverse) ? nothing :
+            ReverseSensitivityBuffers(sensitivity.reverse, np),
+        zeros(Complex{Float64}, np), zeros(Complex{Float64}, np),
+        zeros(Float64, Nwpumpmodes),
+        # a copy of the system matrix, because it is modified per frequency,
+        # potentially by several workers at once
+        assembles ? copy(lsys.Asparse) : lsys.Asparse,
+        FactorizationCache(), cplx(np, np), cplx(Nnoiseports*Nmodes, np))
+end
+
+"""
     hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
         portindices, portimpedanceindices, noiseportimpedanceindices,
         portimpedances, noiseportimpedances, nodeindices, componenttypes,
@@ -1354,81 +1542,44 @@ function is thread safe in that different frequencies can be computed in
 parallel on separate threads; `lsys`, `arrays` (through disjoint per
 frequency views) and `sensitivity` are shared.
 """
-function hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
+function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
+    sensitivity, lsys, bnm,
     portindices, portimpedanceindices, noiseportimpedanceindices,
     portimpedances, noiseportimpedances, nodeindices,
-    componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization)
+    componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization;
+    presolved = nothing, presolvedadjoint = nothing,
+    presolvednoise = nothing)
+
+    # `presolved` replaces the assemble, factorize and solve of each frequency
+    # with a callback which fills the solution some other way, and
+    # `presolvedadjoint` likewise replaces the transposed solve. That is how
+    # the device sweep hands back solutions it computed a batch at a time (see
+    # [`devicesolutions`](@ref)). Everything downstream of the solve is
+    # unchanged, so the two paths compute their outputs identically.
+    isnothing(presolved) || !isnothing(presolvedadjoint) ||
+        !needsadjointsolve(arrays, noiseportimpedanceindices) ||
+        throw(ArgumentError(
+            "a supplied solution needs a supplied adjoint solution too: the transposed solve otherwise needs the factorization of the forward system, which a supplied solution does not carry."))
 
     Nports = length(portindices)
-    phin = zeros(Complex{Float64}, size(lsys.Asparse,1), Nmodes*Nports)
-    # inputwave = Diagonal(zeros(Complex{Float64}, Nports*Nmodes))
-    inputwave = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
-    outputwave = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
-
     Nnoiseports = length(noiseportimpedanceindices)
-    noiseoutputwave = zeros(Complex{Float64}, Nnoiseports*Nmodes,
-        Nports*Nmodes)
-    # buffers for the scattering parameter sensitivities: the forward
-    # solution, which the adjoint solve overwrites, the derivative of the
-    # system matrix with respect to one component, and the contraction.
-    phinforward = if !isempty(arrays.Ssensitivity)
-        zeros(Complex{Float64}, size(lsys.Asparse,1), Nmodes*Nports)
-    else
-        zeros(Complex{Float64}, 0, 0)
-    end
-    # the operating point contribution is dense on the sparsity structure of
-    # the system matrix, so it needs a matrix and a product; the stamps of
-    # the individual components do not.
-    dAsparse = if !isempty(arrays.Ssensitivity) && !isempty(sensitivity.dAop)
-        copy(lsys.Asparse)
-    else
-        lsys.Asparse
-    end
-    dAphin = if !isempty(arrays.Ssensitivity) && !isempty(sensitivity.dAop)
-        zeros(Complex{Float64}, size(phinforward)...)
-    else
-        zeros(Complex{Float64}, 0, 0)
-    end
-    sensitivitycontraction = zeros(Complex{Float64}, Nports*Nmodes,
-        Nports*Nmodes)
-    # one factorization of the pump Jacobian per batch: a sparse
-    # factorization is not safe to solve against from several threads at
-    # once.
-    sensitivitycache = if isnothing(sensitivity.reverse)
-        nothing
-    else
-        c = FactorizationCache()
-        tryfactorize!(c, factorization, sensitivity.reverse.op.jacobian)
-        c
-    end
-    # the mutable work arrays of the reverse contraction, one set per batch,
-    # so nothing is allocated inside the frequency loop
-    sensitivityrevbufs = if isnothing(sensitivity.reverse)
-        nothing
-    else
-        ReverseSensitivityBuffers(sensitivity.reverse, Nports*Nmodes)
-    end
-    sensitivitygamma = zeros(Complex{Float64}, Nports*Nmodes)
-    sensitivitybeta = zeros(Complex{Float64}, Nports*Nmodes)
-
-    # the mode frequencies of the current signal frequency, refilled in
-    # place per frequency rather than broadcast into a fresh vector.
-    wmodes = zeros(Float64, length(wpumpmodes))
-
-    # operate on a copy of the system matrix because it is modified per
-    # frequency, potentially by multiple threads at the same time.
-    Asparsecopy = copy(lsys.Asparse)
-
-    # if using the KLU factorization and sparse solver then make a 
-    # factorization for the sparsity pattern.
-    cache = FactorizationCache()
-
-    # working matrices which stand in for the outputs that are computed but
-    # not stored; when the output is stored, a per frequency view is used
-    # instead.
-    Sworking = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
-    Snoiseworking = zeros(Complex{Float64}, Nnoiseports*Nmodes,
-        Nports*Nmodes)
+    phin = ws.phin
+    inputwave = ws.inputwave
+    outputwave = ws.outputwave
+    noiseoutputwave = ws.noiseoutputwave
+    phinforward = ws.phinforward
+    dAsparse = ws.dAsparse
+    dAphin = ws.dAphin
+    sensitivitycontraction = ws.sensitivitycontraction
+    sensitivitycache = ws.sensitivitycache
+    sensitivityrevbufs = ws.sensitivityrevbufs
+    sensitivitygamma = ws.sensitivitygamma
+    sensitivitybeta = ws.sensitivitybeta
+    wmodes = ws.wmodes
+    Asparsecopy = ws.Asparsecopy
+    cache = ws.cache
+    Sworking = ws.Sworking
+    Snoiseworking = ws.Snoiseworking
 
     # whether the transposed (adjoint) system must be solved at each
     # frequency: for the sensitivities always, and otherwise when a
@@ -1436,11 +1587,7 @@ function hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
     # the quantum efficiency, the commutation relations, or the adjoint
     # node outputs) is requested together with a source of it. This does
     # not depend on the frequency.
-    needsadjoint = !isempty(arrays.Ssensitivity) ||
-        ((Nnoiseports > 0 || !isempty(arrays.nodefluxadjoint) ||
-            !isempty(arrays.voltageadjoint)) &&
-        (!isempty(arrays.Snoise) || !isempty(arrays.QE) || !isempty(arrays.CM) ||
-            !isempty(arrays.nodefluxadjoint) || !isempty(arrays.voltageadjoint)))
+    needsadjoint = needsadjointsolve(arrays, noiseportimpedanceindices)
 
     # loop over the frequencies
     for i in wi
@@ -1458,14 +1605,18 @@ function hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
         # significant memory, taking the complex conjugates of the negative
         # frequency mode entries of the linear term matrices and
         # substituting any symbolic frequency variables.
-        assemblesystemmatrix!(Asparsecopy, lsys, wmodes)
+        if isnothing(presolved)
+            assemblesystemmatrix!(Asparsecopy, lsys, wmodes)
 
-        # factor the sparse matrix
-        # factorklu!(cache, Asparsecopy)
-        tryfactorize!(cache, factorization, Asparsecopy)
+            # factor the sparse matrix
+            # factorklu!(cache, Asparsecopy)
+            tryfactorize!(cache, factorization, Asparsecopy)
 
-        # solve the linear system
-        trysolve!(phin, cache.factorization, bnm)
+            # solve the linear system
+            trysolve!(phin, cache.factorization, bnm)
+        else
+            presolved(i, phin)
+        end
 
         # convert to node voltages. node flux is defined as the time integral
         # of node voltage so node voltage is derivative of node flux which can
@@ -1526,7 +1677,11 @@ function hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
             # internal. Solving the transposed system therefore gives the same
             # answers while replacing an assembly and a factorization at every
             # signal frequency with a pair of triangular solves.
-            trysolvetranspose!(phin, cache.factorization, bnm)
+            if isnothing(presolvedadjoint)
+                trysolvetranspose!(phin, cache.factorization, bnm)
+            else
+                presolvedadjoint(i, phin)
+            end
 
             # copy the nodeflux adjoint for output
             if !isempty(arrays.nodefluxadjoint)
@@ -1543,13 +1698,22 @@ function hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
                 end
             end
 
-            # calculate the noise scattering parameters
+            # calculate the noise scattering parameters. `presolvednoise`
+            # computes them where the adjoint solution was computed and
+            # returns only what the quantum efficiency and the commutation
+            # relations read of them, which is a vector rather than a matrix
+            # with a row per noise port mode.
+            noiseterm = transpose(Snoiseview)
             if !isempty(arrays.Snoise)  || !isempty(arrays.QE) || !isempty(arrays.CM)
-                calcinputoutputnoise!(inputwave, noiseoutputwave, phin, bnm,
-                    portimpedanceindices, noiseportimpedanceindices,
-                    portimpedances, noiseportimpedances, nodeindices,
-                    componenttypes, wmodes, symfreqvar)
-                calcscatteringmatrix!(Snoiseview, inputwave, noiseoutputwave)
+                if isnothing(presolvednoise)
+                    calcinputoutputnoise!(inputwave, noiseoutputwave, phin, bnm,
+                        portimpedanceindices, noiseportimpedanceindices,
+                        portimpedances, noiseportimpedances, nodeindices,
+                        componenttypes, wmodes, symfreqvar)
+                    calcscatteringmatrix!(Snoiseview, inputwave, noiseoutputwave)
+                else
+                    noiseterm = presolvednoise(i, inputwave, Snoiseview)
+                end
             end
 
             # calculate the scattering parameter sensitivities. phin now
@@ -1571,12 +1735,12 @@ function hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
 
             # calculate the quantum efficiency
             if !isempty(arrays.QE)
-                calcqe!(view(arrays.QE,:,:,i), Sview, transpose(Snoiseview))
+                calcqe!(view(arrays.QE,:,:,i), Sview, noiseterm)
             end
 
             # calculate the commutation relations (Manley-Rowe relations)
             if !isempty(arrays.CM)
-                calccm!(view(arrays.CM,:,i), Sview, transpose(Snoiseview), wmodes)
+                calccm!(view(arrays.CM,:,i), Sview, noiseterm, wmodes)
             end
         else
             # calculate the quantum efficiency
@@ -2181,6 +2345,7 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
     # pairs are accumulated as the columns of G and pushed through the
     # factorization in one multi right hand side call, which amortizes the
     # per-call overhead of the sparse triangular solves over the chunk.
+    wcov = zeros(eltype(P), plan.josephson.n)
     pairs = vec(CartesianIndices((NPM, NPM)))
     for chunk in Iterators.partition(eachindex(pairs), size(G, 2))
         for (col, pi) in enumerate(chunk)
@@ -2188,21 +2353,13 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
             # the transpose of the Josephson scatter
             fill!(P, 0)
             fill!(Q, 0)
-            # the plan holds the contributions grouped by destination, so
-            # the destination is the outer loop variable and its two
-            # covector lookups are loop invariant across its segment
-            @inbounds for p in 1:length(plan.seg)-1
-                w = phinadjoint[rev.nzrow[p],a]*phin[rev.nzcol[p],b]
-                for e in plan.seg[p]:plan.seg[p+1]-1
-                    P[plan.src[e]] += plan.coef[e]*w
-                end
+            # the covector per destination, then the transpose of the
+            # Josephson map applied to it. The plain and conjugated halves
+            # separate by the sign of the mode coupling index.
+            @inbounds for p in eachindex(wcov)
+                wcov[p] = phinadjoint[rev.nzrow[p],a]*phin[rev.nzcol[p],b]
             end
-            @inbounds for p in 1:length(plan.cseg)-1
-                w = phinadjoint[rev.nzrow[p],a]*phin[rev.nzcol[p],b]
-                for e in plan.cseg[p]:plan.cseg[p+1]-1
-                    Q[plan.csrc[e]] += plan.ccoef[e]*w
-                end
-            end
+            josephsonadjoint!(P, Q, plan.josephson, wcov)
 
             # the transpose of the cos directional derivative: a forward
             # transform of the zero padded coefficients through the plan of
@@ -2738,7 +2895,8 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     krylovcouplingmodes = :none,
     krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
     krylovkwargs::NamedTuple = (;),
-    factorization = nothing, backend = CPU(), debugJacobian = false,
+    factorization = nothing, backend = CPU(),
+    precision::Type{<:AbstractFloat} = Float64, debugJacobian = false,
     ) where {N}
 
     # calculate the frequency struct
@@ -2773,7 +2931,7 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
         krylovkwargs = krylovkwargs,
         factorization = factorization, backend = backend,
-        debugJacobian = debugJacobian,
+        precision = precision, debugJacobian = debugJacobian,
         )
 end
 
@@ -2855,7 +3013,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     krylovcouplingmodes = :none,
     krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
     krylovkwargs::NamedTuple = (;),
-    factorization = nothing, backend = CPU(), debugJacobian = false,
+    factorization = nothing, backend = CPU(),
+    precision::Type{<:AbstractFloat} = Float64, debugJacobian = false,
     )
 
     # the factorization defaults to the one matching the backend: KLU on the
@@ -3021,7 +3180,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # fourier transform
     # on the backend: the time domain array and every workspace of the system
     # derive from it with similar, so they follow it there.
-    phimatrix = tobackend(backend, zeros(Complex{Float64}, Nwtuple))
+    phimatrix = tobackend(backend, zeros(Complex{precision}, Nwtuple))
 
     # create an array to hold the time domain data for the RFFT. also generate
     # the plans, which come from the package extension on a device backend.
@@ -3171,11 +3330,33 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # Only the machinery for the chosen method is built, unless the debug
     # output is requested, in which case both are built so they can be
     # compared.
+    # the complex Jacobian, as :newton's real one below: on a backend the
+    # structure is stored transposed, because a device factorization is
+    # compressed by rows, and the values live on the backend too. The host
+    # `Jx` is still built either way, because `debugJacobian` compares
+    # against it and the sensitivity calculation reads its structure.
     Jx, complexjacobianplan = if method == :quasinewton || debugJacobian
         plancomplexjacobian(Amatrixindices, Ljb, Lmean, Rbnm, Nmodes,
             Nbranches, Nfreq, invLnm, Gnm, Cnm)
     else
         nothing, nothing
+    end
+    devicex = method == :quasinewton && !(backend isa CPU)
+    Jxb, complexjacobianplan = if devicex
+        Jxt = sparse(transpose(Jx))
+        nodesandsignsx = branchnodesandsigns(Rbnm, Nmodes, Nbranches)
+        cjp = planstructurecomplexjacobian(Jxt, Float64, Amatrixindices, Ljb,
+            Lmean, nodesandsignsx, invLnm, Gnm, Cnm, wmodesm, wmodes2m,
+            Nmodes, Nfreq, backend; transposed = true)
+        # the pattern goes to the backend as well, so the sparse products of
+        # the line search read it there rather than from the host
+        patt = DeviceSparsePattern(
+            tobackend(backend, SparseArrays.getcolptr(Jxt)),
+            tobackend(backend, rowvals(Jxt)), size(Jxt, 1), size(Jxt, 2))
+        DeviceValuedSparseMatrix(patt,
+            tobackend(backend, zeros(eltype(Jx), nnz(Jxt)))), cjp
+    else
+        Jx, complexjacobianplan
     end
 
     # method = :newtonkrylov deliberately does not appear here. Its steps come
@@ -3187,10 +3368,20 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # memory.
     Jr, realjacobianplan = if method == :newton || debugJacobian ||
             returnoperatingpoint
-        planrealjacobian(Amatrixindicesaliased, Amatrixconjindices, Ljb,
-            Lmean,
-            Rbnm, Nmodes, Nbranches, Nfreq, invLnm, Gnm, Cnm, modelayout,
-            modelayout)
+        # on a backend the structure is built there, transposed, because a
+        # device factorization is compressed by rows, and the assembly writes
+        # its values there too; on a host it is the matrix KLU factorizes
+        devicej = !(backend isa CPU)
+        Jrs, nodesandsigns = realjacobianstructure(Amatrixindicesaliased,
+            Amatrixconjindices, Ljb, Rbnm, Nmodes, Nbranches, invLnm, Gnm,
+            Cnm, modelayout, modelayout, Float64;
+            transposed = devicej, backend = backend)
+        rjp = planstructurerealjacobian(Jrs, Float64, Amatrixindicesaliased,
+            Amatrixconjindices, Ljb, Lmean, nodesandsigns, invLnm, Gnm, Cnm,
+            wmodesm, wmodes2m, modelayout, modelayout, Nmodes, Nfreq,
+            backend; transposed = devicej)
+        (devicej ? DeviceValuedSparseMatrix(Jrs,
+            tobackend(backend, zeros(Float64, nnz(Jrs)))) : Jrs), rjp
     else
         nothing, nothing
     end
@@ -3249,7 +3440,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # assembled, so reference implementations can be constructed, eg. in the
     # tests.
     if debugJacobian
-        return (F=F, x=x, Fr=Fr, xr=xr, Jx=Jx, Jr=Jr, fj=fj!, fjreal=fjreal!,
+        return (F=F, x=x, Fr=Fr, xr=xr, Jx=Jxb, Jr=Jr, fj=fj!, fjreal=fjreal!,
             sys=sys, Nnodal=Nnodal, mnaindices=mnaindices,
             gaugeindices=gaugeindices, floatingcomponents=floatingcomponents,
             coupledbranches=coupledbranches,
@@ -3269,16 +3460,17 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # solve the nonlinear system
     info = if method == :quasinewton
 
-        nlsolve!(fj!, F, Jx,x; iterations = iterations, ftol = ftol,
-            andersondepth = andersondepth, factorization = factorization)
+        solveonbackend!(fj!, F, Jxb, x, backend; iterations = iterations,
+            ftol = ftol, andersondepth = andersondepth,
+            factorization = factorization)
 
     elseif method == :newton
 
         # solve the equivalent real nonlinear system with the exact real
         # Jacobian then convert back to complex
-        info = nlsolve!(fjreal!, Fr, Jr, xr; iterations = iterations,
-            ftol = ftol, andersondepth = andersondepth,
-            factorization = factorization)
+        info = solveonbackend!(fjreal!, Fr, Jr, xr, backend;
+            iterations = iterations, ftol = ftol,
+            andersondepth = andersondepth, factorization = factorization)
         real_to_complex!(x,xr,modelayout.isreal)
         real_to_complex!(F,Fr,modelayout.isreal)
         info
@@ -3325,7 +3517,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches, Nfreq,
             invLnm, Gnm, Cnm, modelayout;
             couplingmodes = krylovcouplingmodes,
-            factorization = factorization)
+            factorization = factorization, precision = precision)
 
         pc = if krylovrecycle > 0
             RecyclingPreconditioner(base, jvpreal!, length(xr);
@@ -3354,8 +3546,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # the Krylov workspaces are allocated `similar` to the vectors handed
         # in, so handing in device vectors is what puts the whole iteration on
         # the device. On CPU() tobackend adopts them and these are no-ops.
-        xrb = tobackend(backend, xr)
-        Frb = tobackend(backend, Fr)
+        xrb = tobackend(backend, convert(Vector{precision}, xr))
+        Frb = tobackend(backend, convert(Vector{precision}, Fr))
         info = nlsolvekrylov!(fjreal!, jvpreal!, Frb, xrb, pc;
             iterations = iterations, ftol = ftol,
             merge(krylovdefaults, krylovkwargs)...)

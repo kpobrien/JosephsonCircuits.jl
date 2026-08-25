@@ -51,7 +51,7 @@ using Test
 
         for S in (Int[], [1], [1, 3], collect(1:Nmodes))
             keep = JosephsonCircuits.modecouplingmask(Nmodes, S)
-            P, plan = JosephsonCircuits.planrealjacobian(
+            P, plan = JosephsonCircuits.structurejacobian(d,
                 JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixindicesaliased, keep),
                 JosephsonCircuits.restrictmodecoupling(
@@ -182,7 +182,7 @@ using Test
         ms = modeslot(d.modelayout)
         for S in (Int[], [1], collect(1:Nmodes))
             keep = JosephsonCircuits.modecouplingmask(Nmodes, S)
-            P, plan = JosephsonCircuits.planrealjacobian(
+            P, plan = JosephsonCircuits.structurejacobian(d,
                 JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixindicesaliased, keep),
                 JosephsonCircuits.restrictmodecoupling(

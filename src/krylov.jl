@@ -464,6 +464,48 @@ function harvest!(pc::RecyclingPreconditioner{TI,TJ,T}, ws::GMRESWorkspace,
 end
 
 """
+    norm2(v::AbstractVector)
+
+The Euclidean norm of `v`, formed through the inner product.
+
+`LinearAlgebra.norm` scales its argument before squaring so that an entry
+cannot overflow or underflow on its way to the sum. That guard is not free
+on a device: cuBLAS routes a Float64 vector to a scaled `nrm2` kernel which
+runs at a small fraction of memory bandwidth, measured at 22.9 us against
+2.7 us for a `dot` product of the same 51,200 element vector on an RTX 4090,
+and it is the largest single device kernel of a double precision solve. In
+single precision cuBLAS selects a different kernel and the gap is gone.
+
+The substitution is made only where it pays and only where it is safe, which
+is the same place: `Float64`.
+
+- In double precision cuBLAS routes `norm` to a scaled `nrm2` kernel that runs
+  at well under a tenth of memory bandwidth, measured at 55.6 us against
+  14.5 us for `sqrt(dot(v, v))` on a 51,200 element device vector, and it was
+  the largest single device kernel of a double precision solve.
+- In single precision cuBLAS selects a different kernel and the two are within
+  20% of each other, so there is nothing to win. Single precision is also
+  where the exponent range is narrowest and the guard is worth the most.
+
+So `Float32` keeps `norm` and everything else goes through the inner product,
+and the change is confined to the precision where the trade is favorable in
+both directions. Anything not covered by the `AbstractFloat` method -- complex
+vectors, other element types -- falls back to `norm` as well.
+
+The vectors this is applied to are carried at the scale of the harmonic
+balance residual of a nondimensionalized system, which runs from a few units
+down to the solver tolerance. Squaring that stays far inside the double
+precision exponent: overflow would need an entry above 1e154 and underflow to
+zero an entry below 1e-162.
+
+This is deliberately not exported and not used outside the Krylov solver.
+Anything whose scale is not controlled should keep using `norm`.
+"""
+norm2(v::AbstractVector{<:AbstractFloat}) = sqrt(dot(v, v))
+norm2(v::AbstractVector{Float32}) = norm(v)
+norm2(v::AbstractVector) = norm(v)
+
+"""
     gmres_orthogonalize!(w, V, H, hd, c, j)
 
 Orthogonalize `w` against the first `j` Arnoldi basis vectors (the columns of
@@ -487,7 +529,7 @@ this form usable on a device.
 function gmres_orthogonalize!(w::AbstractVector{T}, V::AbstractMatrix{T},
     H::AbstractMatrix{T}, hd::AbstractVector{T}, c::AbstractVector{T},
     j::Integer) where {T<:AbstractFloat}
-    normw0 = norm(w)
+    normw0 = norm2(w)
     if j > 0
         Vj = view(V, :, 1:j)
         # the projections are formed in buffers allocated like `V`, so on a
@@ -516,7 +558,7 @@ function gmres_orthogonalize!(w::AbstractVector{T}, V::AbstractMatrix{T},
         # `H` stores rows 1:j of column j contiguously from (j-1)*size(H,1)+1.
         copyto!(H, (j-1)*size(H,1)+1, hd, 1, j)
     end
-    hsub = norm(w)
+    hsub = norm2(w)
     H[j+1, j] = hsub
     return hsub, normw0
 end

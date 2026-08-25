@@ -68,6 +68,8 @@ using JosephsonCircuits
     include("complexjacobian.jl")
 
     include("realjacobian.jl")
+    include("structureassembly.jl")
+    include("devicelinsolve.jl")
 
     include("nonlinearterm.jl")
     include("hbsystem.jl")

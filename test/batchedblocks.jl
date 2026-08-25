@@ -76,7 +76,7 @@ using Test
         blockof = JosephsonCircuits.modeslotindex(d.modelayout)
 
         keep = JosephsonCircuits.modecouplingmask(Nmodes, Int[])
-        P, plan = JosephsonCircuits.planrealjacobian(
+        P, plan = JosephsonCircuits.structurejacobian(d,
             JosephsonCircuits.restrictmodecoupling(d.Amatrixindicesaliased, keep),
             JosephsonCircuits.restrictmodecoupling(d.Amatrixconjindices, keep),
             d.Ljb, d.Lmean, d.Rbnm, Nmodes, d.Nbranches, d.Nfreq,
@@ -119,7 +119,7 @@ using Test
         # a preconditioner with retained coupling is not block diagonal, so
         # the batched path correctly declines it
         keep2 = JosephsonCircuits.modecouplingmask(Nmodes, [1, 2])
-        P2, plan2 = JosephsonCircuits.planrealjacobian(
+        P2, plan2 = JosephsonCircuits.structurejacobian(d,
             JosephsonCircuits.restrictmodecoupling(d.Amatrixindicesaliased, keep2),
             JosephsonCircuits.restrictmodecoupling(d.Amatrixconjindices, keep2),
             d.Ljb, d.Lmean, d.Rbnm, Nmodes, d.Nbranches, d.Nfreq,
@@ -151,7 +151,7 @@ using Test
         Nmodes = d.Nmodes
         blockof = JosephsonCircuits.modeslotindex(d.modelayout)
         keep = JosephsonCircuits.modecouplingmask(Nmodes, Int[])
-        P, plan = JosephsonCircuits.planrealjacobian(
+        P, plan = JosephsonCircuits.structurejacobian(d,
             JosephsonCircuits.restrictmodecoupling(d.Amatrixindicesaliased, keep),
             JosephsonCircuits.restrictmodecoupling(d.Amatrixconjindices, keep),
             d.Ljb, d.Lmean, d.Rbnm, Nmodes, d.Nbranches, d.Nfreq,
@@ -179,7 +179,7 @@ using Test
 
     @testset "factorization routing" begin
         A = sparse([2.0 0.0; 0.0 3.0])
-        gpu = JosephsonCircuits.CUDSSFactorization()
+        gpu = JosephsonCircuits.CUDSSFactorization(batched = true)
         cpu = JosephsonCircuits.KLUfactorization()
 
         # no GPU factorization supplied: the ordinary CPU path, which is the
@@ -195,6 +195,14 @@ using Test
         # extension loaded reports what is missing rather than a MethodError
         @test_throws ArgumentError JosephsonCircuits.batchedfactorization(
             A, [1,2], 2, gpu, cpu)
+
+        # a factorization with no batched form is used unchanged even when the
+        # matrix is a uniform batch, which is what makes the batch opt-in: the
+        # default cuDSS factorization measured slower batched than whole
+        plain = JosephsonCircuits.CUDSSFactorization()
+        @test isnothing(plain.batched)
+        @test JosephsonCircuits.batchedfactorization(A, [1,2], 2, plain, cpu) === plain
+        @test JosephsonCircuits.batchedfactorization(A, [1,2], 2, cpu, cpu) === cpu
 
         # and the unloaded GPU factorization is constructible and errors clearly
         @test_throws ArgumentError gpu.factorize(A)
@@ -232,6 +240,28 @@ using Test
         # every slot is written exactly once, which is what makes the scatter
         # safe to run as one work item per slot with no atomics
         @test sort(vec(layout.slots)) == 1:6
+
+        # the shared pattern, and the row major index map a device solver
+        # wants: the values it selects are the row major values of each block
+        pat = JosephsonCircuits.blockpattern(layout)
+        @test size(pat) == (layout.blocksize, layout.blocksize)
+        @test nnz(pat) == size(layout.nzindex, 1)
+        rowmajor = JosephsonCircuits.blockrowmajorindex(layout)
+        @test size(rowmajor) == size(layout.nzindex)
+        @test sort(vec(rowmajor)) == sort(vec(layout.nzindex))
+        for b in 1:layout.nblocks
+            blk = JosephsonCircuits.blockmatrix(A, layout, b)
+            @test nonzeros(A)[rowmajor[:, b]] ==
+                nonzeros(JosephsonCircuits.SparseArrays.sparse(transpose(blk)))
+        end
+
+        # the generic gather, which the batched path uses for both the right
+        # hand sides and the values
+        got = zeros(size(rowmajor))
+        JosephsonCircuits.gathervalues!(got, nonzeros(A), rowmajor)
+        @test got == nonzeros(A)[rowmajor]
+        @test_throws DimensionMismatch JosephsonCircuits.gathervalues!(
+            zeros(1, 1), nonzeros(A), rowmajor)
 
         JosephsonCircuits.gatherblocks!(rhs, v, moved)
         @test_throws DimensionMismatch JosephsonCircuits.gatherblocks!(

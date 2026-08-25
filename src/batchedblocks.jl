@@ -165,6 +165,31 @@ end
 end
 
 """
+    gathervalues!(dest::AbstractArray, src::AbstractVector,
+        index::AbstractArray)
+
+`dest[k] = src[index[k]]` for every `k`, as a KernelAbstractions kernel on the
+backend of `dest`, which `src` and `index` must share.
+
+This is the one operation the batched path needs on the hot path, in two
+guises: gathering a Krylov vector into per block right hand sides, where
+`index` is `layout.slots`, and gathering the assembled values of the full
+matrix into the batch's value array, where it is
+[`blockrowmajorindex`](@ref). Both are permutations or injections, so no
+element is written twice and no atomic is needed.
+"""
+function gathervalues!(dest::AbstractArray, src::AbstractVector,
+    index::AbstractArray)
+    size(dest) == size(index) || throw(DimensionMismatch(
+        lazy"`dest` is $(size(dest)) but the index is $(size(index))."))
+    backend = KernelAbstractions.get_backend(dest)
+    kernel! = gatherblockskernel!(backend)
+    kernel!(dest, src, index; ndrange = length(index))
+    KernelAbstractions.synchronize(backend)
+    return dest
+end
+
+"""
     gatherblocks!(rhs::AbstractMatrix, v::AbstractVector,
         layout::BatchedBlockLayout)
 
@@ -178,14 +203,7 @@ hot path of a device solve rather than in its setup.
 """
 function gatherblocks!(rhs::AbstractMatrix, v::AbstractVector,
     layout::BatchedBlockLayout)
-    slots = layout.slots
-    size(rhs) == size(slots) || throw(DimensionMismatch(
-        lazy"`rhs` is $(size(rhs)) but the layout needs $(size(slots))."))
-    backend = KernelAbstractions.get_backend(rhs)
-    kernel! = gatherblockskernel!(backend)
-    kernel!(rhs, v, slots; ndrange = length(slots))
-    KernelAbstractions.synchronize(backend)
-    return rhs
+    return gathervalues!(rhs, v, layout.slots)
 end
 
 """
@@ -220,6 +238,36 @@ function tobackend(backend::Backend, layout::BatchedBlockLayout)
     return BatchedBlockLayout(layout.nblocks, layout.blocksize,
         tobackend(backend, layout.slots), layout.nzindex, layout.colptr,
         layout.rowval)
+end
+
+"""
+    blockpattern(layout::BatchedBlockLayout)
+
+The sparsity pattern every block of the batch shares, as a sparse matrix whose
+stored values are all zero. The batch is uniform precisely because there is
+only one of these, so a batched solver analyzes this matrix once and reuses the
+result for every block and every Newton step.
+"""
+function blockpattern(layout::BatchedBlockLayout)
+    return SparseMatrixCSC(layout.blocksize, layout.blocksize,
+        copy(layout.colptr), copy(layout.rowval),
+        zeros(length(layout.rowval)))
+end
+
+"""
+    blockrowmajorindex(layout::BatchedBlockLayout)
+
+`blocknnz` by `nblocks`, mapping a stored entry of one block *in row major
+order* to its index in `nonzeros` of the full matrix.
+
+`layout.nzindex` is the same map for column major order, which is how a host
+`SparseMatrixCSC` stores its values. A device sparse matrix is compressed by
+rows, so a batch handed to a device solver wants this one instead. Composing
+the two permutations once, here, is what lets the per Newton step gather be a
+single indexed copy rather than a gather followed by a permutation.
+"""
+function blockrowmajorindex(layout::BatchedBlockLayout)
+    return layout.nzindex[cscvaluepermutation(blockpattern(layout)), :]
 end
 
 """

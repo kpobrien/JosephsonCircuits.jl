@@ -7,6 +7,7 @@ import FFTW
 import KLU
 import KernelAbstractions
 import KernelAbstractions: @kernel, @index, @Const, CPU, Backend
+import Atomix
 import UUIDs
 import Symbolics: Sym, Num, @variables, @syms, @register_symbolic, @wrapped
 import Symbolics
@@ -113,11 +114,13 @@ include("quantumoptics.jl")
 
 include("realcomplexconv.jl")
 include("complexjacobian.jl")
-include("realjacobian.jl")
+include("devicepattern.jl")
+include("structureassembly.jl")
 include("nonlinearterm.jl")
 include("hbsystem.jl")
 include("batchedblocks.jl")
 include("cudss.jl")
+include("devicelinsolve.jl")
 include("modepreconditioner.jl")
 
 # These are deprecated functions

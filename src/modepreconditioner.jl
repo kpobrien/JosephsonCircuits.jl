@@ -133,28 +133,42 @@ strongly pumped device the block diagonal alone stalls, and
 [`escalatepreconditioner!`](@ref) is the safety net.
 
 # Fields
-- `P`: the restricted Jacobian, in the real representation.
-- `plan`: its [`RealJacobianPlan`](@ref).
+- `P`: the restricted Jacobian's sparsity structure. A `SparseMatrixCSC` on
+    the host, and on a backend a [`DeviceSparsePattern`](@ref) of the
+    transpose, which is the row major structure a device sparse matrix wants.
 - `sys`: the [`HBSystem`](@ref) the Jacobian is assembled from.
 - `cache`: the [`FactorizationCache`](@ref) holding the factorization of `P`.
-- `factorization`: the [`Factorization`](@ref) used to factorize `P`.
-- `couplingmodes`: the modes whose coupling is retained in full.
+- `basefactorization`: the [`Factorization`](@ref) the caller asked for.
+- `factorization`: the one actually used for the current `P`, which is the
+    batched form of `basefactorization` while `P` is the mode block diagonal
+    and that form exists. It is reselected whenever `P` is rebuilt, because
+    escalation destroys the batch structure.
+- `couplingmodes`: the modes whose coupling is retained in full, or a mask of
+    the retained couplings when one was given directly.
 - `updates`: the number of times the factorization has been rebuilt.
 - `escalations`: the number of times the coupling set has been grown.
 """
 mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
-    P::SparseMatrixCSC{Float64,Int}
-    plan::RealJacobianPlan
+    # loosely typed, like the device half below: on a backend `P` is a
+    # `DeviceSparsePattern` rather than a host sparse matrix
+    P
     const sys::TS
     const cache::FactorizationCache
-    const factorization::Factorization
+    const basefactorization::Factorization
+    factorization::Factorization
     # rebuilds (P, plan) for a coupling set, closing over the plan ingredients
     # so the set can be grown after construction
     const build::TB
     const Nmodes::Int
-    couplingmodes::Vector{Int}
+    couplingmodes
     updates::Int
     escalations::Int
+    # the assembly and the values it writes. Loosely typed, as the rest of
+    # this struct is, because they are rebuilt on escalation and the concrete
+    # index type may change with the size of the escalated Jacobian. On a host
+    # `nzval` aliases the stored values of `P`.
+    deviceplan
+    nzval
 end
 
 """
@@ -177,13 +191,51 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     Rbnm::SparseMatrixCSC, Nmodes::Integer, Nbranches::Integer,
     Nfreq::Integer, invLnm::SparseMatrixCSC, Gnm::SparseMatrixCSC,
     Cnm::SparseMatrixCSC, layout::ModeLayout; couplingmodes = :none,
-    factorization = KLUfactorization())
+    factorization = KLUfactorization(),
+    precision::Union{Nothing,Type{<:AbstractFloat}} = nothing)
 
-    build(S) = planrealjacobian(
-        restrictmodecoupling(Amatrixindices, modecouplingmask(Nmodes, S)),
-        restrictmodecoupling(Amatrixconjindices, modecouplingmask(Nmodes, S)),
-        Ljb, Lmean, Rbnm, Nmodes, Nbranches, Nfreq, invLnm, Gnm, Cnm,
-        layout, layout)
+    # On a device backend the Jacobian is built transposed, because its
+    # stored order is then the row major order a device sparse matrix and a
+    # device direct solver want. Producing it that way costs nothing and
+    # removes the permutation, the index the assembly kernel would go through
+    # to apply it, and the loss of coalescing that indirection caused.
+    # On a device backend there is no segmented gather at all: the assembly
+    # reads the circuit's structure directly, so what is built here is the
+    # sparsity structure and the linear term index maps, both cheap. The
+    # Jacobian is
+    # built transposed at the same time, because its stored order is then the
+    # row major order a device sparse matrix and a device direct solver want.
+    # One path, on every backend. The two differ only in orientation and in
+    # what the factorization is handed: a device sparse matrix is compressed by
+    # rows, so there the Jacobian is built transposed and its values live on the
+    # backend, while a host factorization wants the matrix itself and the
+    # assembly writes straight into its stored values.
+    function build(S)
+        keep = S isa AbstractMatrix{Bool} ? S : modecouplingmask(Nmodes, S)
+        Ami = restrictmodecoupling(Amatrixindices, keep)
+        Amc = restrictmodecoupling(Amatrixconjindices, keep)
+        backend = sys.nonlineartermplan.backend
+        transposed = !(backend isa CPU)
+        Tv = isnothing(precision) ?
+            real(promote_type(typeof(Lmean),
+                isempty(Ljb.nzval) ? typeof(Lmean) : real(eltype(Ljb)))) :
+            precision
+
+        P, nodesandsigns = realjacobianstructure(Ami, Amc, Ljb, Rbnm, Nmodes,
+            Nbranches, invLnm, Gnm, Cnm, layout, layout, Tv;
+            transposed = transposed, backend = backend)
+
+        # the linear term ingredients come from the system rather than from the
+        # constructor arguments, so the precomputed contribution is by
+        # construction the one the assembly would have scattered
+        dp = planstructurerealjacobian(P, Tv, Ami, Amc, Ljb, Lmean,
+            nodesandsigns, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
+            sys.wmodes2m, layout, layout, Nmodes, Nfreq, backend;
+            transposed = transposed)
+        # on a host the assembly writes into the matrix that will be factorized
+        nzval = transposed ? tobackend(backend, zeros(Tv, nnz(P))) : nonzeros(P)
+        return P, dp, nzval
+    end
 
     S = if couplingmodes === :none
         Int[]
@@ -191,14 +243,40 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         collect(1:Nmodes)
     elseif couplingmodes isa AbstractVector{<:Integer}
         sort!(unique(Vector{Int}(couplingmodes)))
+    elseif couplingmodes isa AbstractMatrix{Bool}
+        size(couplingmodes) == (Nmodes, Nmodes) || throw(DimensionMismatch(
+            lazy"a `couplingmodes` mask is $(size(couplingmodes)) but there are $(Nmodes) modes."))
+        couplingmodes
     else
         throw(ArgumentError(
-            lazy"`couplingmodes` = $(couplingmodes) must be `:none`, `:all`, or a vector of mode indices."))
+            lazy"`couplingmodes` = $(couplingmodes) must be `:none`, `:all`, a vector of mode indices, or an Nmodes x Nmodes Bool mask."))
     end
 
-    P, plan = build(S)
-    return ModeCouplingPreconditioner(P, plan, sys, FactorizationCache(),
-        factorization, build, Int(Nmodes), S, 0, 0)
+    P, dp, nzval = build(S)
+    return ModeCouplingPreconditioner(P, sys, FactorizationCache(),
+        factorization, selectfactorization(factorization, P, S, layout, Nmodes),
+        build, Int(Nmodes), S, 0, 0, dp, nzval)
+end
+
+# The factorization to use for a freshly built `P`. The mode block diagonal is
+# a uniform batch of one block per mode whenever every mode contributes the
+# same number of real slots, and a batched direct solver then analyzes one
+# block instead of the whole block diagonal and factorizes the batch in
+# parallel. Only the empty coupling set can be such a batch: retaining any
+# coupling couples modes by construction, and escalation goes straight to the
+# full Jacobian, so the two cases skip `blockdiagonallayout` rather than pay a
+# walk over every stored entry to be told what is already known.
+function selectfactorization(factorization::Factorization, P, S,
+    layout::ModeLayout, Nmodes::Integer)
+    (S isa Vector{Int} && isempty(S)) || return factorization
+    isnothing(factorization.batched) && return factorization
+    # discovering the block layout is a walk over the stored entries of a host
+    # matrix, and on a backend the structure is not one. The batched path is
+    # off by default anyway, having measured slower than handing cuDSS the
+    # whole block diagonal.
+    P isa SparseMatrixCSC || return factorization
+    return batchedfactorization(P, modeslotindex(layout), Nmodes,
+        factorization, factorization)
 end
 
 """
@@ -227,9 +305,14 @@ same deficiency by measuring the directions rather than enlarging the
 factorization.
 """
 function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
-    length(pc.couplingmodes) >= pc.Nmodes && return false
+    pc.couplingmodes isa Vector{Int} &&
+        length(pc.couplingmodes) >= pc.Nmodes && return false
+    pc.couplingmodes isa AbstractMatrix{Bool} && all(pc.couplingmodes) && return false
     S = collect(1:pc.Nmodes)
-    pc.P, pc.plan = pc.build(S)
+    pc.P, pc.deviceplan, pc.nzval = pc.build(S)
+    # the full Jacobian couples every mode, so whatever batch structure the
+    # block diagonal had is gone and the caller's own factorization applies
+    pc.factorization = pc.basefactorization
     pc.couplingmodes = S
     pc.escalations += 1
     # the cache holds a symbolic factorization of the previous sparsity
@@ -241,8 +324,15 @@ end
 function updatepreconditioner!(pc::ModeCouplingPreconditioner,
     x::AbstractVector)
     setpoint!(pc.sys, x)
-    jacobian!(pc.P, pc.plan, pc.sys)
-    tryfactorize!(pc.cache, pc.factorization, pc.P)
+    # the Fourier coefficients are already on the backend, the assembly runs
+    # there, and it writes the order the factorization stores, so on a device
+    # nothing crosses to the host: no copy of phimatrix, no serial assembly
+    # loop, and no permutation of the values on their way back down.
+    _updatecosphimatrix!(pc.sys)
+    assemblerealjacobian!(pc.nzval, pc.deviceplan, pc.sys.phimatrix)
+    A = pc.P isa SparseMatrixCSC ? pc.P :
+        DeviceValuedSparseMatrix(pc.P, pc.nzval)
+    tryfactorize!(pc.cache, pc.factorization, A)
     pc.updates += 1
     return pc
 end

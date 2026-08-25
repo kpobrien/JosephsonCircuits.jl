@@ -142,3 +142,30 @@ compare(x::JosephsonCircuits.CircuitGraph,y::JosephsonCircuits.CircuitGraph) = c
 compare(x::JosephsonCircuits.Frequencies,y::JosephsonCircuits.Frequencies) = comparestruct(x,y)
 compare(x::JosephsonCircuits.PassiveNetwork,y::JosephsonCircuits.PassiveNetwork) = comparestruct(x,y)
 compare(x::String,y::String) = isequal(x,y)
+
+"""
+    structurejacobian(d, Amatrixindices, Amatrixconjindices, Ljb, Lmean, Rbnm,
+        Nmodes, Nbranches, Nfreq, invLnm, Gnm, Cnm, rl, cl)
+
+The sparsity structure of a real Jacobian restricted to a given mode coupling,
+and a [`StructureRealJacobianPlan`](@ref) for it, taking the linear term
+ingredients from the system `d.sys` so the assembly is the one the solver would
+perform.
+
+A convenience for the tests, which build a Jacobian for a mask and assemble it
+at a point. `d` is the named tuple `hbnlsolve(...; debugJacobian = true)`
+returns.
+"""
+function structurejacobian(d, Amatrixindices::Matrix,
+    Amatrixconjindices::Matrix, Ljb, Lmean, Rbnm, Nmodes, Nbranches, Nfreq,
+    invLnm, Gnm, Cnm, rl, cl)
+
+    P, nodesandsigns = realjacobianstructure(Amatrixindices,
+        Amatrixconjindices, Ljb, Rbnm, Nmodes, Nbranches, invLnm, Gnm, Cnm,
+        rl, cl)
+    plan = planstructurerealjacobian(P, eltype(P), Amatrixindices,
+        Amatrixconjindices, Ljb, Lmean, nodesandsigns, d.sys.invLnm,
+        d.sys.Gnm, d.sys.Cnm, d.sys.wmodesm, d.sys.wmodes2m, rl, cl, Nmodes,
+        Nfreq, CPU(); transposed = false)
+    return P, plan
+end

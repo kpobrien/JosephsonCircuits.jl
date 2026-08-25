@@ -348,7 +348,10 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lmean,
     Ti = (nslots <= typemax(Int32) && nc <= typemax(Int32) &&
         nnz(Knm) <= typemax(Int32) && size(Rbnm, 1) <= typemax(Int32)) ?
         Int32 : Int
-    T = Float64
+    # the working precision of the plan follows the frequency domain array it
+    # is built around, so a system whose phimatrix is Complex{Float32} carries
+    # Float32 incidence entries, branch coefficients and linear term.
+    T = real(eltype(phimatrix))
 
     # invert the frequency index map so a conjugate symmetry target can be
     # traced back to the entry of the branch flux vector which feeds its

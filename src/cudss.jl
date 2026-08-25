@@ -25,7 +25,7 @@ function cscvaluepermutation(A::SparseMatrixCSC)
 end
 
 """
-    CUDSSFactorization(; batched = true, kwargs...)
+    CUDSSFactorization(; batched = false, kwargs...)
 
 A [`Factorization`](@ref) backed by NVIDIA's cuDSS direct sparse solver, for
 use on a GPU.
@@ -40,30 +40,46 @@ refactorization reusing the analysis), which is exactly the split cuDSS wants.
 That split is what makes this worth doing. The symbolic analysis depends only
 on the circuit topology and the retained mode coupling, neither of which
 changes across Newton steps, while the values change at every step. On a two
-tone travelling wave amplifier with 288 cells the mode block diagonal
-preconditioner takes about 16 ms to factorize from scratch and about 1.4 ms to
-refactorize, so the analysis is roughly 92% of the cost and is paid once.
+tone travelling wave amplifier the mode block diagonal preconditioner takes
+about 72 ms to analyze and factorize from scratch and about 0.44 ms to
+refactorize, so the analysis is roughly 99% of the cost and is paid once.
 
-With `batched = true` the mode block diagonal is handed to cuDSS as a *uniform
-batch*: one analysis for the pattern shared by every mode block, then a batched
+`batched = true` offers the mode block diagonal to cuDSS as a *uniform batch*
+instead: one analysis for the pattern every mode block shares, then a batched
 numeric refactorization. See [`BatchedBlockLayout`](@ref) for the structure and
-[`blockdiagonallayout`](@ref) for the conditions. When the matrix is not a
-uniform batch, which happens whenever mode coupling is retained or the
-truncation includes a self-conjugate mode such as dc, the batch is declined and
-the unbatched cuDSS path is used instead. Set `batched = false` to force that.
+[`blockdiagonallayout`](@ref) for the conditions, which
+[`batchedfactorization`](@ref) checks; when they do not hold, the unbatched
+path is used anyway.
 
-!!! warning
-    This has never been executed. It is written from the cuDSS and CUDSS.jl
-    documentation, on a machine with no GPU, and no part of the device path has
-    been run even once. The layout it depends on is tested, the extension is
-    not. Treat the first run as debugging, not as a benchmark. cuDSS is also
-    distributed as a preview, so its API may move.
+!!! note "Why the batch is off by default"
+    It was measured and it loses. cuDSS does not need to be told that a block
+    diagonal matrix is a batch: given the whole matrix it discovers the
+    independent blocks and works on them together, and given the blocks
+    separately it works through them one at a time. On a two tone line with 30
+    mode blocks of 4504 rows, one solve against the whole block diagonal is
+    165 us against 5920 us for the batch, and a refactorization is 0.44 ms
+    against 10.7 ms; the batched cost grows linearly in the number of blocks
+    up to twelve and then jumps by a factor of forty and stays flat, which is
+    a fallback inside the library rather than a load. The batch does win the
+    symbolic analysis, 12 ms against 72 ms, because it analyzes one block
+    rather than all thirty, but that is paid once and the per step losses
+    swamp it: end to end the batch turned a 3.16 s solve into 5.63 s.
+
+    Kept, off, because it is cheap to re-measure against a later cuDSS, and
+    because the analysis result points somewhere useful: the saving is in the
+    reordering, which the unbatched path could have too by analyzing one block
+    and handing the replicated permutation to the whole matrix as
+    `"user_perm"`.
 """
-function CUDSSFactorization(; batched::Bool = true, kwargs...)
+function CUDSSFactorization(; batched::Bool = false, kwargs...)
     return Factorization(
-        (A; kws...) -> _cudss_factorize(A; batched = batched, kws...),
+        (A; kws...) -> _cudss_factorize(A; kws...),
         (F, A; kws...) -> _cudss_factorize!(F, A; kws...),
-        kwargs)
+        kwargs,
+        # the batched form, for a caller which has established that its matrix
+        # is a uniform batch. `nothing` disables the batched path entirely.
+        batched ? (layout -> cudssbatchedfactorization(layout; kwargs...)) :
+            nothing)
 end
 
 # Overridden by the CUDSS extension. The error names the missing packages
@@ -76,6 +92,41 @@ end
 function _cudss_factorize!(F, A; kwargs...)
     throw(ArgumentError(
         "CUDSSFactorization requires CUDSS.jl and CUDA.jl to be loaded."))
+end
+
+"""
+    uniformbatchlimit(nrhs::Integer)
+
+The largest uniform batch of systems which cuDSS solves correctly with `nrhs`
+right hand sides each.
+
+!!! warning "This works around a wrong answer, not a failure"
+    cuDSS 0.7 (through CUDSS.jl 0.8.0) returns silently wrong solutions from a
+    uniform batch of sixteen or more systems once each has six or more right
+    hand sides. Every system of the batch comes back wrong, by order one, while
+    `cudss_get(solver, "info")` reports success and `"lu_nnz"` is unchanged, so
+    nothing downstream can detect it. Measured on a 15372 row complex matrix:
+    a batch of fifteen is correct to 5e-12 with twelve right hand sides and a
+    batch of sixteen is wrong by a relative 1.4; with one or two right hand
+    sides batches of 128 and 20 are correct.
+
+    The cap costs nothing. Batching a frequency sweep saturates by about
+    twelve systems anyway, so the limit sits above the useful range: on that
+    same matrix a sweep took 0.0768 s at a batch of eight, 0.0723 s at twelve
+    and 0.0730 s at fifteen.
+"""
+uniformbatchlimit(nrhs::Integer) = nrhs >= 6 ? 15 : 128
+
+# Overridden by the CUDSS extension: a uniform batch of systems sharing one
+# sparsity pattern, analyzed once and then refactorized and solved as a batch.
+function _cudss_sweep(rowptr, colind, nzval, X, B; kwargs...)
+    throw(ArgumentError(
+        "solving a frequency sweep on a device requires CUDSS.jl and CUDA.jl to be loaded. Run `using CUDA, CUDSS` before calling the solver, or leave `backend` at its default."))
+end
+
+function _cudss_sweepsolve!(S)
+    throw(ArgumentError(
+        "solving a frequency sweep on a device requires CUDSS.jl and CUDA.jl to be loaded."))
 end
 
 """
@@ -104,7 +155,10 @@ function batchedfactorization(A::SparseMatrixCSC, blockof, nblocks,
     cpu::Factorization = KLUfactorization())
 
     isnothing(gpu) && return cpu
+    # a factorization with no batched form is used unchanged, and asking for
+    # the layout would be a waste: it is a walk over every stored entry.
+    isnothing(gpu.batched) && return gpu
     layout = blockdiagonallayout(A, blockof, nblocks)
     isnothing(layout) && return gpu
-    return cudssbatchedfactorization(layout)
+    return gpu.batched(layout)
 end

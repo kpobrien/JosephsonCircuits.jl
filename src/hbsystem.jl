@@ -124,11 +124,18 @@ function HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
     realbackward::Bool = true)
 
     n = size(Rbnm, 2)
+    # the working precision of everything the residual and the matrix-free
+    # products touch is the one of the frequency domain array handed in, so
+    # allocating `phimatrix` as Complex{Float32} carries the whole evaluation
+    # path to Float32. The host side linear term matrices are left as they
+    # were: they are only read by the assembled Jacobian plans, which run on
+    # the host and write into a matrix of their own element type.
+    TF = real(eltype(phimatrix))
     # collapse the frequency dependent linear terms into a single matrix. the
     # mode frequencies do not change for the lifetime of the system, so the
     # three sparse products and the two diagonal scalings are done once here
     # instead of at every evaluation.
-    Knm = linearterm(invLnm, Gnm, Cnm, wmodesm, wmodes2m)
+    Knm = linearterm(invLnm, Gnm, Cnm, wmodesm, wmodes2m, TF)
     # the index maps of the two linear maps which surround the pointwise time
     # domain nonlinearity, built once here. with realbackward = false the real
     # form of the linear term is left out, for a caller which only applies the
@@ -141,12 +148,14 @@ function HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
     # vector broadcast a device array against a host one. `complex_to_real`
     # below reads the host argument, which `tobackend` does not modify.
     return HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, Knm,
-        tobackend(backend, bnm), Ljb, Ljbm, Lmean, freqindexmap, conjsourceindices,
+        tobackend(backend, convert(Vector{Complex{TF}}, bnm)),
+        Ljb, Ljbm, Lmean, freqindexmap, conjsourceindices,
         conjtargetindices, irfftplan, rfftplan, modelayout,
         realjacobianplan, complexjacobianplan, nonlineartermplan,
-        tobackend(backend, complex_to_real(bnm, modelayout.isreal)),
-        tobackend(backend, zeros(Complex{Float64}, n)),
-        tobackend(backend, zeros(Float64, modelayout.rdim)),
+        tobackend(backend, convert(Vector{TF},
+            complex_to_real(bnm, modelayout.isreal))),
+        tobackend(backend, zeros(Complex{TF}, n)),
+        tobackend(backend, zeros(TF, modelayout.rdim)),
         similar(phimatrixtd), similar(phimatrixtd), similar(phimatrixtd),
         Ref(false), Ref(false),
         phimatrix, similar(phimatrixtd), similar(phimatrixtd), phimatrixtd)
@@ -168,9 +177,10 @@ an [`HBSystem`](@ref), so this is formed once when the system is constructed
 and handed to [`plannonlinearterm`](@ref), which stores it transposed in both
 representations.
 """
-function linearterm(invLnm, Gnm, Cnm, wmodesm::Diagonal, wmodes2m::Diagonal)
+function linearterm(invLnm, Gnm, Cnm, wmodesm::Diagonal, wmodes2m::Diagonal,
+    ::Type{T} = Float64) where {T<:AbstractFloat}
     K = invLnm + im*(Gnm*wmodesm) - Cnm*wmodes2m
-    return SparseMatrixCSC{Complex{Float64},Int}(K)
+    return SparseMatrixCSC{Complex{T},Int}(K)
 end
 
 """
@@ -516,27 +526,58 @@ function jacobian!(Jr::SparseMatrixCSC{<:Real}, sys::HBSystem)
 end
 
 """
-    jacobian!(Jr::SparseMatrixCSC, plan::RealJacobianPlan, sys::HBSystem)
+    jacobian!(Jr::SparseMatrixCSC, plan::StructureRealJacobianPlan,
+        sys::HBSystem)
 
 Assemble the real Jacobian described by `plan` at the point set with
 [`setpoint!`](@ref), in place. This is the method [`jacobian!`](@ref)`(Jr, sys)`
 delegates to with the plan stored in `sys`; taking the plan explicitly lets a
 *different* plan, built over the same system, be assembled from the same Fourier
-coefficients of `cos(phi(t))` and the same linear term matrices. That is how
-[`ModeCouplingPreconditioner`](@ref) materializes the Jacobian restricted to a
-coarser frequency grid, at the cost of the restricted assembly alone and with no
-reference to the full Jacobian.
+coefficients of `cos(phi(t))` and the same linear term matrices.
 """
-function jacobian!(Jr::SparseMatrixCSC{<:Real}, plan::RealJacobianPlan,
-    sys::HBSystem)
+function jacobian!(Jr::SparseMatrixCSC{<:Real},
+    plan::StructureRealJacobianPlan, sys::HBSystem)
     _updatecosphimatrix!(sys)
-    # the assembly is host loops writing a host sparse matrix, so on a device
-    # backend the coefficients it reads come back first. this is the one host
-    # round trip left on the device path, and it is on the preconditioner
-    # refresh rather than in the Krylov iteration.
-    assemblerealjacobian!(Jr, plan, tohost(sys.phimatrix), sys.invLnm,
-        sys.Gnm, sys.Cnm, sys.wmodesm, sys.wmodes2m)
+    # the assembly writes a host sparse matrix, so on a device backend the
+    # coefficients it reads come back first. This is the one host round trip
+    # left on this path, and it is the exact Jacobian of the direct solve
+    # rather than anything in the Krylov iteration.
+    assemblerealjacobian!(nonzeros(Jr), plan, tohost(sys.phimatrix))
     return Jr
+end
+
+"""
+    jacobian!(A::DeviceValuedSparseMatrix, plan::StructureRealJacobianPlan,
+        sys::HBSystem)
+
+Assemble the real Jacobian into the device values of `A`. Nothing crosses to
+the host: the coefficients are already on the backend and the assembly runs
+there.
+"""
+function jacobian!(A::DeviceValuedSparseMatrix,
+    plan::StructureRealJacobianPlan, sys::HBSystem)
+    _updatecosphimatrix!(sys)
+    assemblerealjacobian!(A.nzval, plan, sys.phimatrix)
+    return A
+end
+
+function jacobian!(A::DeviceValuedSparseMatrix, sys::HBSystem)
+    isnothing(sys.realjacobianplan) && throw(ArgumentError(
+        "no real Jacobian plan was provided to this HBSystem."))
+    return jacobian!(A, sys.realjacobianplan, sys)
+end
+
+function jacobian!(A::DeviceValuedSparseMatrix{<:Complex},
+    plan::StructureComplexJacobianPlan, sys::HBSystem)
+    _updatecosphimatrix!(sys)
+    assemblecomplexjacobian!(A.nzval, plan, sys.phimatrix)
+    return A
+end
+
+function jacobian!(A::DeviceValuedSparseMatrix{<:Complex}, sys::HBSystem)
+    isnothing(sys.complexjacobianplan) && throw(ArgumentError(
+        "no complex Jacobian plan was provided to this HBSystem."))
+    return jacobian!(A, sys.complexjacobianplan, sys)
 end
 
 # update sys.phimatrix with the Fourier coefficients of cos.(A*x) at the

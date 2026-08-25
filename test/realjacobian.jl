@@ -179,33 +179,6 @@ using Test
         @test isapprox(sol_qn.nodeflux[:], sol_n.nodeflux[:], atol=1e-10)
     end
 
-    @testset "realsparseadd! matches complex_to_real" begin
 
-        # random complex sparse matrix, mixed real/complex modes
-        Nmodes = 3
-        Nnodes = 4
-        dim = Nmodes*Nnodes
-        isrealmask = [true, false, false]
-        rl = JosephsonCircuits.ModeLayout(isrealmask, dim)
-
-        M = sprand(ComplexF64, dim, dim, 0.4)
-        # real form of the holomorphic map x -> M*x
-        Mr = JosephsonCircuits.complex_to_real(M, isrealmask)
-
-        # destination with the pattern of Mr
-        Jr = copy(Mr)
-        fill!(nonzeros(Jr), 0)
-        indexmap = JosephsonCircuits.realsparseaddmap(Jr, M, rl, rl)
-        JosephsonCircuits.realsparseadd!(Jr, 1, M, indexmap)
-        @test isapprox(Jr, Mr, atol=1e-15)
-
-        # with a scalar factor and a diagonal
-        D = JosephsonCircuits.LinearAlgebra.Diagonal(randn(dim))
-        Mr2 = JosephsonCircuits.complex_to_real(sparse((im*2.0)*M*D), isrealmask)
-        fill!(nonzeros(Jr), 0)
-        JosephsonCircuits.realsparseadd!(Jr, im*2.0, M, D, indexmap)
-        # patterns can differ (M*D may drop entries) so compare densely
-        @test isapprox(Matrix(Jr), Matrix(Mr2), atol=1e-13)
-    end
 
 end
