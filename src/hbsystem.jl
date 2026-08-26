@@ -204,6 +204,12 @@ function applyifft!(td::AbstractArray{T}, fd::AbstractArray{Complex{T}},
     return td
 end
 
+# a system with no Josephson junctions has nothing to transform, and
+# `plan_applynl` gives it no plan; both arrays are empty, so this is the
+# identity rather than a special case of the transform
+applyifft!(td::AbstractArray{T}, ::AbstractArray{Complex{T}},
+    ::Nothing) where T = td
+
 """
     applyfft!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T}, rfftplan)
 
@@ -224,6 +230,11 @@ function applyfft!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
     fd .*= invnormalization
     return fd
 end
+
+# the counterpart of the `applyifft!` method above, for a system with no
+# junctions and so no plan
+applyfft!(fd::AbstractArray{Complex{T}}, ::AbstractArray{T},
+    ::Nothing) where T = fd
 
 """
     plan_applyffttranspose(fd::Array{Complex{T}}, td::Array{T})
@@ -474,6 +485,10 @@ coefficients of `-sin.(A*x).*(A*v)`, computed on the same time grid and with
 the same normalization as the residual, so no separate transform convention
 is introduced. Shares the cached time domain sine with
 [`hessianvectorproduct!`](@ref), of which this is the first half.
+
+`dcos` is a host array, and so therefore is `sys`: the only caller is the
+sensitivity contraction, and an [`HBOperatingPoint`](@ref) holds a host
+system whichever backend solved for it.
 """
 function cosdirectionalderivative!(dcos::Array, sys::HBSystem,
     v::AbstractVector{<:Complex})
@@ -752,8 +767,9 @@ mode frequencies are computed as `wmodes = ws .+ lsys.wpumpmodes`). The
 frequency scaling, the negative frequency conjugation, and any symbolic
 frequency substitution are applied per column from the mode index, without
 materializing system sized diagonals. With `conjugatepump = true` the complex
-conjugate of the pump modulation contribution is used, which is the adjoint
-system solved for the noise and quantum efficiency calculations. The
+conjugate of the pump modulation contribution is used, which for a circuit
+without scattering blocks is a similarity transformation of the transposed
+system, as below. The
 negative frequency mode entries of the linear term matrices are conjugated
 and any symbolic frequency variables substituted, exactly as in the
 per-frequency loop of [`hblinsolve`](@ref), which calls this function.
@@ -771,25 +787,27 @@ corresponding promoted resistor and mode. (The promoted resistances are
 constant and real by construction, see [`mnaportresistorindices`](@ref), so
 the negative frequency conjugation of `sparseaddconjsubst!`, which acts on
 the stored conductance and not on the frequency factor, is trivial here.)
-Nothing else contributes: the
+Nothing else contributes, so long as the circuit has no scattering blocks: the
 auxiliary rows of the promoted coupled inductors are already symmetric (see
 [`calcAmnaind`](@ref)); the linear term matrices are symmetric and mode
 diagonal, so the column indexed frequency scaling and conjugation of
 `sparseaddconjsubst!` are symmetric under transposition; and the transpose of
 the pump modulation contribution exchanges the mode pair, mapping each
 difference harmonic to its complex conjugate, which is the same as
-conjugating the pump.
+conjugating the pump. The hybrid rows of a [`ScatteringBlock`](@ref) do break
+it: their constant Kirchhoff couplings and frequency dependent constitutive
+entries exchange under transposition, and no diagonal `D` undoes that, so with
+blocks the two are different matrices.
 
-Because the source terms of [`hblinsolve`](@ref) are supported on the node
-flux rows, `inv(D)` acts trivially on them and the solutions of the two
-systems agree exactly in the node flux rows, which are the only rows the
-noise, quantum efficiency, commutation relation, and adjoint node flux,
-voltage and impedance outputs read. [`hblinsolve`](@ref) therefore obtains
-its adjoint solutions with [`trysolvetranspose!`](@ref) on the factorization
-of the forward system, rather than assembling and factorizing this matrix
-with `conjugatepump = true` at every signal frequency. The conjugated pump
-assembly is retained as the independent construction that equivalence is
-tested against.
+The adjoint solutions the noise, quantum efficiency, commutation relation and
+adjoint node output calculations read are in every case the solutions of the
+*transposed* system: by the adjoint identity, the response at an output port
+to a source anywhere in the circuit is that source contracted against the
+transposed solution driven at the port. [`hblinsolve`](@ref) obtains them with
+[`trysolvetranspose!`](@ref) on the factorization of the forward system, which
+costs a pair of triangular solves rather than an assembly and a factorization
+at every signal frequency. Where the similarity holds, the conjugated pump
+assembly is the independent construction that equivalence is tested against.
 """
 function assemblesystemmatrix!(A::SparseMatrixCSC,
     lsys::HBLinearizedSystem, wmodes::AbstractVector;

@@ -532,7 +532,7 @@ export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
 export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
     Inductor, Capacitor, Resistor, CurrentSource, VoltageSource, Port,
     MutualInductor, JosephsonJunction, NonlinearInductor, PolynomialCPR,
-    ScatteringBlock, GaussianChannel, TransmissionLine, Passive,
+    ScatteringBlock, GaussianChannel, TransmissionLine, Passive, Lossless,
     ThermalEquilibrium, NoiseCovariance, ConjugateSymmetry, Native,
     elaborate, ElaboratedCircuit, quadraturetransform,
     ComponentNotSupportedError

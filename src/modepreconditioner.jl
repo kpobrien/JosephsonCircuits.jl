@@ -33,9 +33,9 @@ per mode and no coupling at all).
 The upper triangle `A_SE` is the part which is dropped. That choice, rather
 than the transposed one, is what makes the stiffness of `E` useful: the error
 of the preconditioned operator carries a factor of the stiff shell's inverse,
-which is small precisely because those modes are stiff. See
-[`selectcouplingmodes`](@ref) for how the set is chosen, and
-[`modesoftness`](@ref) for the measurement it is chosen from.
+which is small precisely because those modes are stiff. Which modes go in `S`
+is the caller's, not chosen here: see the `couplingmodes` argument of
+[`ModeCouplingPreconditioner`](@ref).
 
 # Examples
 ```jldoctest
@@ -73,10 +73,10 @@ by `keep` set to zero.
 
 This is the whole of the coarse frequency grid transformation. A zero entry of
 these matrices already means "this coupling falls outside the retained grid and
-is dropped", which [`planrealjacobian`](@ref) honors when it builds the
-sparsity structure (through [`activemoderows`](@ref)) and when it emits the
-scatter lists. Zeroing entries therefore produces a Jacobian assembly plan for
-the mode restricted operator directly: the restricted Jacobian is *materialized*
+is dropped", which [`planstructurerealjacobian`](@ref) honors when it builds
+the sparsity structure (through [`activemoderows`](@ref)) and when it assembles
+the values. Zeroing entries therefore produces a Jacobian assembly plan for the
+mode restricted operator directly: the restricted Jacobian is *materialized*
 with the restricted structure rather than assembled in full and masked
 afterwards, so the saving is realized in the sparsity, the fill in, and the
 factorization, not just in the arithmetic.
@@ -180,7 +180,7 @@ end
         couplingmodes = :none, factorization = KLUfactorization())
 
 Build a [`ModeCouplingPreconditioner`](@ref) from the same ingredients
-[`planrealjacobian`](@ref) takes. `couplingmodes` may be
+[`planstructurerealjacobian`](@ref) takes. `couplingmodes` may be
 
 - `:none` (the default): the mode block diagonal,
 - `:all`: the full Jacobian, which is an exact preconditioner,

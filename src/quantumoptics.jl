@@ -251,7 +251,7 @@ function is_symplectic_pair(S)
 end
 
 """
-    isorthogonal_symplectic_block(M) -> Bool
+    is_orthogonal_symplectic_block(M) -> Bool
 
 Return `true` if the matrix `M` is orthogonal symplectic,
 `M ∈ Sp(2n, ℝ) ∩ O(2n) ≅ U(n)`, with block operator order and `false`
@@ -3892,13 +3892,15 @@ function blockdiag(A::AbstractMatrix, B::AbstractMatrix)
 end
 
 """
-    A_B_to_symplectic(A, B; rtol=1e-12, atol=0.0, tol_block=1e-10, check=true)
+    A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix; atol = 0,
+        rtol = ...)
 
-Given A (2n×2n) and B (2n×4n) such that A*Ω*A' + B*ΩE*B' = Ω,
-construct C (4n×2n), D (4n×4n) so that S = [A B; C D] is symplectic
-with respect to Ωtot = Ω ⊕ ΩE.
+Given `A` (2n×2n) and `B` (2n×4n) such that `A*Ω*A' + B*ΩE*B' = Ω`, return the
+symplectic matrix `S = [A B; C D]` with respect to `Ωtot = Ω ⊕ ΩE`, in pair
+operator order.
 
-Returns (C, D).
+`C` (4n×2n) and `D` (4n×4n) are constructed here; `atol` and `rtol` are the
+tolerances of the rank decisions that construction makes.
 
 """
 function A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix;

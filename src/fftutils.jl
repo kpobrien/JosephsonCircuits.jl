@@ -981,7 +981,17 @@ function plan_applynl(fd::AbstractArray{Complex{T}},
     dims = (stepsperperiod, sizefd[2:end]...)
     td = similar(fd, T, dims)
 
-    irfftplan, rfftplan = fftplans(fd, td, stepsperperiod, backend)
+    # A system with no Josephson junctions has an empty batch dimension and
+    # nothing to transform. FFTW plans that; cuFFT rejects it as an invalid
+    # transform size, so a linear circuit driven through the nonlinear solver
+    # failed on a backend and not on the host. There is no transform to apply
+    # either, so the plan is `nothing` and applying it is the identity (see
+    # [`applyifft!`](@ref)).
+    irfftplan, rfftplan = if isempty(fd)
+        (nothing, nothing)
+    else
+        fftplans(fd, td, stepsperperiod, backend)
+    end
 
     return td, irfftplan, rfftplan
 end
@@ -1060,6 +1070,11 @@ function applynl!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T}, f, irfftp
 
     return nothing
 end
+
+# with no Josephson junctions there is nothing to transform and no plan; see
+# [`plan_applynl`](@ref)
+applynl!(fd::AbstractArray{Complex{T}}, ::AbstractArray{T}, f, ::Nothing,
+    ::Nothing) where T = fd
 
 """
     hbmatind(truncfrequencies::Frequencies{N})

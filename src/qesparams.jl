@@ -160,6 +160,110 @@ function calcinputoutputnoise!(inputwave, outputwave, phin, bnm,
 end
 
 """
+    thermaloccupation(w, temperature)
+
+The factor `2*nbar + 1 = coth(hbar*abs(w)/(2*k*T))` by which a mode at
+angular frequency `w` in thermal equilibrium at `temperature` in Kelvin
+exceeds its vacuum noise, and `1` at zero temperature or zero frequency.
+
+This is the whole of the temperature dependence of the noise. A dissipative
+element adds noise whose covariance is its vacuum covariance times this,
+which in the Gaussian channel picture scales the `Y` of the map without
+touching its `X`.
+
+Zero frequency returns one rather than diverging: the wave normalization of
+a noise channel is already zero there (see [`portwavescale`](@ref)), so the
+factor multiplies nothing.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.thermaloccupation(2*pi*5e9, 0.0)
+1.0
+
+julia> round(JosephsonCircuits.thermaloccupation(2*pi*5e9, 0.1), digits=5)
+1.19962
+
+julia> round(JosephsonCircuits.thermaloccupation(2*pi*5e9, 1.0), digits=4)
+8.3746
+```
+"""
+function thermaloccupation(w, temperature)
+    (iszero(temperature) || iszero(w)) && return one(Float64)
+    x = reduced_planck_constant*abs(w)/(2*boltzmann_constant*temperature)
+    return coth(x)
+end
+
+"""
+    calcnoisecovariance!(Cnoise, Snoise, occupation)
+
+The added noise covariance at the output ports,
+
+    Cnoise[i,i'] = sum_c occupation[c] Snoise[c,i] conj(Snoise[c,i'])
+
+which is the `Y` of the Gaussian channel whose `X` is the scattering matrix:
+the map takes an input covariance to `X sigma X' + Y`. `Snoise` describes the
+transformation and `occupation` the state of each channel, so this is where
+the two meet and where a temperature shows up.
+
+In the normalization of the rest of these outputs a vacuum channel counts as
+one, so at zero temperature the diagonal is `sum(abs2, Snoise[:,i])`, which
+is exactly the noise term in the denominator of [`calcqe!`](@ref).
+"""
+function calcnoisecovariance!(Cnoise::AbstractMatrix, Snoise::AbstractMatrix,
+    occupation = nothing)
+    np = size(Snoise, 2)
+    if size(Cnoise) != (np, np)
+        throw(DimensionMismatch(lazy"`Cnoise` has size $(size(Cnoise)) but the $(np) output port modes need ($(np), $(np))."))
+    end
+    fill!(Cnoise, zero(eltype(Cnoise)))
+    @inbounds for c in axes(Snoise, 1)
+        f = isnothing(occupation) ? 1.0 : occupation[c]
+        iszero(f) && continue
+        for ip in 1:np
+            a = f*Snoise[c, ip]
+            for iq in 1:np
+                Cnoise[ip, iq] += a*conj(Snoise[c, iq])
+            end
+        end
+    end
+    return Cnoise
+end
+
+"""
+    noiseoccupation!(occupation, temperatures, wmodes, Nmodes)
+
+Fill `occupation` with `2*nbar + 1` for each row of the noise scattering
+matrix, whose rows run over the noise channels with the modes innermost.
+
+This is what a channel's vacuum share of the noise is multiplied by to get
+the noise it actually carries. It is applied where the noise power is asked
+for, by [`calcqe!`](@ref) and by the noise covariance, and never to
+`Snoise` itself, which is a scattering matrix and does not depend on
+temperature. The commutation relations, which are a statement about the
+transformation rather than about the state of anything, therefore do not see
+it at all.
+
+`temperatures` is one temperature per noise channel, in the order
+[`noisechannelnames`](@ref) gives them. `nothing`, and every temperature
+being zero, both give all ones.
+"""
+noiseoccupation!(occupation::AbstractVector, ::Nothing, wmodes,
+    Nmodes::Integer) = fill!(occupation, 1.0)
+function noiseoccupation!(occupation::AbstractVector, temperatures, wmodes,
+    Nmodes::Integer)
+    if length(occupation) != length(temperatures)*Nmodes
+        throw(DimensionMismatch(lazy"`occupation` has length $(length(occupation)) but $(length(temperatures)) channels of $(Nmodes) modes need $(length(temperatures)*Nmodes)."))
+    end
+    @inbounds for c in eachindex(temperatures)
+        for m in 1:Nmodes
+            occupation[(c-1)*Nmodes + m] =
+                thermaloccupation(wmodes[m], temperatures[c])
+        end
+    end
+    return occupation
+end
+
+"""
     portwavescale(portimpedance, w)
 
 The scale factor of the Kurokawa power waves at a port with impedance
@@ -813,9 +917,11 @@ The noise scattering matrix reduced to what the quantum efficiency and the
 commutation relations read of it.
 
 Both consume `Snoise` only through a sum over the noise index: the quantum
-efficiency through `sum(abs2, Snoise[:,i])` and the commutation relations
-through the same sum weighted by the sign of each noise index's mode
-frequency. On a circuit whose loss is spread along the line that is a
+efficiency through `sum(abs2, Snoise[:,i])` weighted by the occupation of
+each channel, and the commutation relations through the same sum weighted by
+the sign of each noise index's mode frequency instead. The occupation enters
+the first and not the second, which is why they are separate sums and why
+the commutation relations do not depend on temperature. On a circuit whose loss is spread along the line that is a
 reduction of thousands of rows to one number per port mode, so when the noise
 scattering parameters are not themselves an output there is no reason to form
 the matrix on the host at all.
@@ -973,7 +1079,7 @@ julia> qe=Float64[1 2;3 4];JosephsonCircuits.calcqe!(qe,[1 2;3 4],[1 2 3;4 5 6])
  0.0882353  0.156863
 ```
 """
-function calcqe!(qe, S, Snoise)
+function calcqe!(qe, S, Snoise, occupation = nothing)
 
     if size(qe) != size(S)
         throw(DimensionMismatch(lazy"Dimensions of quantum efficiency and scattering parameter matrices must be equal."))
@@ -991,9 +1097,14 @@ function calcqe!(qe, S, Snoise)
         end
     end
 
+    # each noise channel contributes the noise it actually carries, which is
+    # its vacuum share times the occupation of the channel. `Snoise` is a
+    # scattering matrix and does not depend on temperature; the occupation
+    # is applied here, where the noise power is what is being asked for.
     @inbounds for j in 1:size(Snoise,2)
+        f = isnothing(occupation) ? one(eltype(denom)) : occupation[j]
         for i in 1:size(Snoise,1)
-            denom[i] += abs2(Snoise[i,j])
+            denom[i] += f*abs2(Snoise[i,j])
         end
     end
 
@@ -1016,6 +1127,10 @@ noise scattering matrix, rather than the matrix itself.
 row, so a caller which has that sum already, as one computed on a backend has,
 passes it here and never forms the matrix. See [`NoiseReduction`](@ref).
 """
+# the reduction's `denom` already carries the occupation, applied on the
+# backend where it was summed, so the occupation is not applied again here
+calcqe!(qe, S, noise::NoiseReduction, occupation) = calcqe!(qe, S, noise)
+
 function calcqe!(qe, S, noise::NoiseReduction)
 
     if size(qe) != size(S)

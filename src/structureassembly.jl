@@ -1,19 +1,19 @@
-# Assembling the real Jacobian from the circuit's structure, with no plan.
+# Assembling the real Jacobian from the circuit's structure.
 #
 # The Josephson part of the Jacobian is the incidence triple product
 # `Rbnm' * AoLjbm * Rbnm`, where `AoLjbm` is block diagonal in branches: one
-# dense mode block per junction. [`planrealjacobian`](@ref) precomputes that
-# product as a segmented gather, one entry per contribution, which on a two
-# tone line is 57.6 million entries costing 0.43 s to build and 1.0 GB to read
-# at every assembly.
+# dense mode block per junction. Precomputing that product as a gather with one
+# entry per contribution is what an assembly plan would ordinarily do, and on a
+# two tone line that is 57.6 million entries costing 0.43 s to build and 1.0 GB
+# to read at every assembly.
 #
 # The triple product itself is tiny. A junction touches two nodes, so it
 # deposits its mode block at four ordered node pairs with signs: 7996 entries
-# for a circuit with 2000 junctions. What the plan stores is the *forward* map,
-# contribution to destination. Reading it backwards -- destination to
-# contributions -- needs only that table, because an output entry names the
-# node pair and the mode pair it belongs to, and the junctions incident on a
-# node pair are what contribute to it.
+# for a circuit with 2000 junctions. That table is enough on its own, because
+# it can be read backwards, from destination to contributions: an output entry
+# names the node pair and the mode pair it belongs to, and the junctions
+# incident on a node pair are exactly what contribute to it. So the assembly
+# here stores the structure and no gather at all.
 
 """
     junctionpairtable(::Type{Ti}, ::Type{T}, Ljb::SparseVector, nodesandsigns,
@@ -26,9 +26,9 @@ the product of the two incidence signs.
 This is the whole of the incidence triple product, and it has one entry per
 (junction, node, node) triple: four per junction for a two terminal one.
 
-The entries of a pair are ordered by junction index, because that is the order
-the assembly must sum them in to agree with [`fillscatterlists`](@ref), whose
-outer loop is over junctions.
+The entries of a pair are ordered by junction index, which fixes the order the
+assembly sums them in. That order is part of the result, because floating
+point addition is not associative.
 """
 function junctionpairtable(::Type{Ti}, ::Type{T}, Ljb::SparseVector,
     nodesandsigns, Nnodes::Integer) where {Ti<:Integer,T<:Real}
@@ -171,9 +171,8 @@ circuit's structure.
 The work item decodes the entry it owns into the node pair and mode pair it
 belongs to, looks up the junctions incident on that node pair, and sums their
 contributions. The two passes are the real part contributions and then the
-imaginary part ones, and the linear term is added last, because that is the
-order [`assemblerealjacobian!`](@ref) sums its two segment lists and its
-`lin` in, and floating point addition is not associative.
+imaginary part ones, and the linear term is added last. Floating point
+addition is not associative, so that order is part of the result.
 """
 @kernel function structureassemblykernel!(nzval, @Const(colptr), @Const(rowval),
         @Const(lin), @Const(phimatrix), @Const(pairptr), @Const(pairrow),
@@ -249,10 +248,10 @@ end
         backend)
 
 Build a [`StructureRealJacobianPlan`](@ref) for the transposed real Jacobian
-`Jt`. Nothing here is proportional to the number of contributions, and nothing
-needs a [`RealJacobianPlan`](@ref): the constant linear term is gathered on
-`backend` by [`linearcontributionkernel!`](@ref) rather than scattered through
-index maps on the host.
+`Jt`. Nothing here is proportional to the number of contributions: what is
+stored is [`junctionpairtable`](@ref), whose size is set by the circuit rather
+than by the mode count, and the constant linear term, which is gathered on
+`backend` by [`linearcontributionkernel!`](@ref).
 """
 function planstructurerealjacobian(Jt, ::Type{T},
     Amatrixindices::Matrix, Amatrixconjindices::Matrix,
@@ -364,14 +363,14 @@ The constant frequency dependent contribution to each stored entry of the
 Jacobian: `invLnm + im*Gnm*wmodesm - Cnm*wmodes2m`, in the real
 representation.
 
-[`realsparseadd!`](@ref) computes the same thing by scattering each stored
-entry of the three matrices through a precomputed index map, which costs a map
-per matrix, a pass over a Jacobian sized array per matrix, and, on a device, an
-upload of the result. Each stored entry of the Jacobian takes at most one
-entry from each of the three, so it can be gathered instead: decode the entry
-into the complex position it belongs to and look that position up. The three
-are summed in the order `realsparseadd!` is called in, because floating point
-addition is not associative.
+Scattering each stored entry of the three matrices into the Jacobian through a
+precomputed index map costs a map per matrix, a pass over a Jacobian sized
+array per matrix, and, on a device, an upload of the result. Each stored entry
+of the Jacobian takes at most one entry from each of the three, so it is
+gathered instead: decode the entry into the complex position it belongs to and
+look that position up in each. The three are summed in the order `invLnm`,
+`Gnm`, `Cnm`, because floating point addition is not associative and the order
+is part of the result.
 """
 @kernel function linearcontributionkernel!(lin, @Const(colptr), @Const(rowval),
         @Const(rlinv), @Const(rlptr), @Const(clinv), @Const(clptr),

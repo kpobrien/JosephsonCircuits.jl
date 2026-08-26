@@ -438,3 +438,25 @@ using SpecialFunctions
     end
 
 end
+
+@testset "a system with nothing to transform" begin
+    # The batch dimension of the frequency domain array is the Josephson
+    # junction count, so a linear circuit has none. FFTW plans a transform of
+    # no batches and cuFFT rejects it as an invalid size, which made the
+    # nonlinear solver fail on a backend and not on the host. There is
+    # nothing to transform either way, so no plan is made and applying one is
+    # the identity.
+    empty = zeros(Complex{Float64}, 3, 0)
+    td, irfftplan, rfftplan = JosephsonCircuits.plan_applynl(empty)
+    @test size(td) == (5, 0)
+    @test isnothing(irfftplan) && isnothing(rfftplan)
+    @test JosephsonCircuits.applyifft!(td, empty, irfftplan) === td
+    @test JosephsonCircuits.applyfft!(empty, td, rfftplan) === empty
+    @test JosephsonCircuits.applynl!(empty, td, cos, irfftplan,
+        rfftplan) === empty
+    # a non-empty one still gets its plans
+    full = zeros(Complex{Float64}, 3, 2)
+    td2, ip2, rp2 = JosephsonCircuits.plan_applynl(full)
+    @test !isnothing(ip2) && !isnothing(rp2)
+    @test size(td2) == (5, 2)
+end

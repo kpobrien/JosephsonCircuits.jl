@@ -39,18 +39,16 @@ end
 #         sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
 #         factorization = KLUfactorization())
 
-# Calls the new harmonic balance solvers, [`hbnlsolve`](@ref) and
-# [`hblinsolve`](@ref), which work for an arbitrary number of modes and ports),
-# using an identical syntax to [`hbsolveold`](@ref), which only supports four
-# wave mixing processes involving single strong tone and an arbitrary number of
-# tone in the linearized solver. This function is primarily for testing the new
-# solvers and is now deprecated.
+# Calls the harmonic balance solvers [`hbnlsolve`](@ref) and
+# [`hblinsolve`](@ref), which work for an arbitrary number of modes and ports,
+# through the older positional syntax which supported only four wave mixing
+# with a single strong tone. This method is deprecated; call [`hbsolve`](@ref)
+# with the current signature instead.
 
-# This function attempts to mimic [`hbsolveold`](@ref), but with the difference:
-# The outputs of the linearized harmonic balance solver [`hblinsolve`](@ref) may
-# not have the same ordering of signal modes as in [`hblinsolveold`](@ref). In
-# [`hblinsolve`](@ref) the signal mode is always at index 1 and the location of
-# the other modes can be found by inspecting the contents of `modes`.
+# The outputs of [`hblinsolve`](@ref) may not order the signal modes the way
+# the older solver did. In [`hblinsolve`](@ref) the signal mode is always at
+# index 1 and the location of the other modes can be found by inspecting the
+# contents of `modes`.
 function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,

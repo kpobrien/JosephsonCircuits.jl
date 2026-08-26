@@ -1506,6 +1506,110 @@ plot!(
 ![lumped-element snake amplifier (LESA) with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/lesa.png)
 
 
+## Scattering parameter blocks
+
+A [`ScatteringBlock`](@ref) is a multiport component given by its scattering parameters instead of by lumped elements. It is the way to put a measured or externally modeled component -- a filter, a coupler, a length of line, an isolator -- into a circuit alongside the junctions, and unlike a lumped element it may be lossy and it may be non-reciprocal.
+
+The data may be a constant matrix, a callable of angular frequency, tabulated data, a callable of one entry at a time, or a Touchstone file, from which the reference impedance is also read:
+
+```julia
+using JosephsonCircuits
+
+# an ideal lossless through
+ScatteringBlock([0.0 1.0; 1.0 0.0])
+
+# a callable of angular frequency returning a matrix
+ScatteringBlock(w -> fill((1 - im*w*1e-12*50.0)/(1 + im*w*1e-12*50.0), 1, 1);
+    nports = 1, grounded = true)
+
+# tabulated data, interpolated in frequency
+freqs = 2*pi*collect(range(1e9, 10e9, length = 64))
+values = [(p == q ? 0.1 : 0.9)*cis(-w*1e-11) for p in 1:2, q in 1:2, w in freqs]
+ScatteringBlock((freqs, values); nports = 2)
+
+# a callable of (port, port, angular frequency) returning one entry, which is
+# the form a GPU can evaluate
+ScatteringBlock((p, q, w) -> p == q ? complex(0.1) : complex(0.9);
+    nports = 2, form = :entry)
+
+# a Touchstone file
+ScatteringBlock("device.s2p")
+```
+
+Each port `p` of a block has a signal terminal `(:instance, p, 1)` and a reference terminal `(:instance, p, 2)`, so ports may float or be differential. With `grounded = true` the reference terminals are tied to ground and `(:instance, p)` addresses the signal terminal of port `p`.
+
+A dissipative block adds the vacuum noise its loss requires, so the noise scattering parameters, the quantum efficiency and the commutation relations account for it. Here the JPA of the first example is written with its shunt capacitor as a one port block, and a lossy two port is inserted between the port and the resonator. This example and the one after it are run when this page is built, so the numbers below them are this code's own output:
+
+```@example blocks
+using JosephsonCircuits
+
+Z0 = 50.0
+
+# a shunt capacitance as the scattering parameters of a one port:
+# S11 = (Z - Z0)/(Z + Z0) with Z = 1/(im*w*C)
+capS(C) = w -> fill((1 - im*w*C*Z0)/(1 + im*w*C*Z0), 1, 1)
+
+# a matched reciprocal two port which passes a fraction `a` of the wave
+# amplitude and absorbs the rest
+attenuator(a) = ComplexF64[0 a; a 0]
+
+# the JPA of the first example, with its shunt capacitor written as a
+# scattering block and `input` inserted between the port and the resonator
+function jpa(input)
+    Circuit(
+        Any[:p1 => Port(1), :r1 => Resistor(Z0), :att => input,
+            :cc => Capacitor(100.0e-15),
+            :jj => JosephsonJunction(1000.0e-12),
+            :cj => ScatteringBlock(capS(1000.0e-15); nports = 1,
+                grounded = true)],
+        Any[((:p1,1), (:r1,1), (:att,1,1)),
+            ((:att,2,1), (:cc,1)),
+            ((:cc,2), (:jj,1), (:cj,1)),
+            ((:att,1,2), (:att,2,2), (:jj,2), (:r1,2), (:p1,2), Ground)])
+end
+
+ws = 2*pi*(4.5:0.001:5.0)*1e9
+wp = (2*pi*4.75001*1e9,)
+Ip = 0.00565e-6
+S11(sol) = sol.linearized.S(outputmode=(0,), outputport=1, inputmode=(0,),
+    inputport=1, freqindex=:)
+
+# the loss the attenuator adds is 1 - a^2. The pump passes through it too, so
+# it is scaled by 1/a to hold the pump reaching the junction roughly fixed and
+# keep the gain comparable from row to row.
+for a in (1.0, 0.95, 0.9, 0.8)
+    sol = hbsolve(ws, wp, [(mode=(1,), port=1, current=Ip/a)], (8,), (16,),
+        jpa(ScatteringBlock(attenuator(a))))
+    i = argmax(abs2.(S11(sol)))
+    gain = 10*log10(abs2(S11(sol)[i]))
+    qe = sol.linearized.QE(outputmode=(0,), outputport=1, inputmode=(0,),
+        inputport=1, freqindex=:)[i]
+    qeideal = sol.linearized.QEideal(outputmode=(0,), outputport=1,
+        inputmode=(0,), inputport=1, freqindex=:)[i]
+    cm = sol.linearized.CM(outputmode=(0,), outputport=1, freqindex=:)[i]
+    println("loss ", rpad(round(1-a^2, digits=2), 6),
+        " gain ", rpad(string(round(gain, digits=2), " dB"), 10),
+        " QE/QEideal ", rpad(round(qe/qeideal, digits=4), 8),
+        " CM ", round(cm, digits=12))
+end
+```
+
+The quantum efficiency falls away from the quantum limit as the loss grows, while the commutation relations stay at one. That second number is the check on the first: it is `|S|^2 + |Snoise|^2` summed over the modes, and it comes back to one only if the noise the block adds is exactly the amount its loss requires.
+
+A lossless block is the element it describes and nothing more. `attenuator(1.0)` is an ideal through, so with it the circuit above is the fully lumped JPA of the first example, and the two agree to the last few digits:
+
+```@example blocks
+lumped = Circuit(
+    Any[:p1 => Port(1), :r1 => Resistor(Z0), :cc => Capacitor(100.0e-15),
+        :jj => JosephsonJunction(1000.0e-12), :cj => Capacitor(1000.0e-15)],
+    Any[((:p1,1), (:r1,1), (:cc,1)), ((:cc,2), (:jj,1), (:cj,1)),
+        ((:jj,2), (:cj,2), (:r1,2), (:p1,2), Ground)])
+
+solve(c) = hbsolve(ws, wp, [(mode=(1,), port=1, current=Ip)], (8,), (16,), c)
+maximum(abs, S11(solve(lumped)) .- S11(solve(jpa(ScatteringBlock(attenuator(1.0))))))
+```
+
+
 # Contributing:
 
 We welcome contributions in the form of issues/bug reports or pull requests. This project uses the [MIT open source license](https://opensource.org/license/MIT). You retain the copyright to any code you contribute.

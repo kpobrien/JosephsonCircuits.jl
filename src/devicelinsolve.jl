@@ -120,11 +120,9 @@ Build a [`FrequencySweepPlan`](@ref) for `lsys` on `backend`, together with the
 compressed sparse row structure a device direct solver factorizes, as
 `(plan, rowptr, colind)`.
 
-With `conjugatepump` the plan describes the system assembled from the
-conjugated pump modulation contribution, which is the adjoint system when
-scattering blocks are present. With `adjoint` the structure and the
-coefficients describe the transpose of the system matrix instead, whose solutions are the adjoint ones the noise,
-quantum efficiency and sensitivity calculations need. That transpose is free
+With `adjoint` the structure and the coefficients describe the transpose of
+the system matrix, whose solutions are the adjoint ones the noise, quantum
+efficiency and sensitivity calculations need. That transpose is free
 to form: compressed sparse row of the transpose is compressed sparse column of
 the matrix, which is how the host holds it, so the adjoint plan is the same
 coefficients in their original order against the original structure.
@@ -136,19 +134,15 @@ the forward system cannot be reused the way the host reuses them with
 [`trysolvetranspose!`](@ref).
 """
 function planfrequencysweep(lsys::HBLinearizedSystem, backend;
-    adjoint::Bool = false, conjugatepump::Bool = false)
+    adjoint::Bool = false)
     cansweepondevice(lsys) || throw(ArgumentError(
         "the linearized system's component values depend on the symbolic frequency variable, so its assembly is not a constant quadratic in the signal frequency."))
     A = lsys.Asparse
     n = size(A, 1)
     nz = nnz(A)
 
-    # the four coefficients, in the stored order of A. `conjugatepump`
-    # takes the conjugated pump modulation contribution instead, which is
-    # the adjoint system a circuit with scattering blocks needs: their
-    # hybrid rows break the diagonal similarity which otherwise lets the
-    # adjoint come from a transposed solve of the forward factors.
-    cst = copy(conjugatepump ? lsys.AoLjnmconjnzval : lsys.AoLjnmnzval)
+    # the four coefficients, in the stored order of A
+    cst = copy(lsys.AoLjnmnzval)
     scattercoefficient!(cst, lsys.Amna0, lsys.Amna0indexmap)
     kinvL = zeros(Complex{Float64}, nz)
     scattercoefficient!(kinvL, lsys.invLnm, lsys.invLnmindexmap)
@@ -267,21 +261,26 @@ function gatherportrows!(out::AbstractArray{<:Any,3}, X::AbstractArray{<:Any,3},
 end
 
 """
-    needsadjointsolve(arrays::LinearizedArrays, noiseportimpedanceindices)
+    needsadjointsolve(arrays::LinearizedArrays,
+        noiseportimpedanceindices, noiseplan = nothing)
 
 Whether the transposed (adjoint) linearized system must be solved at each
 signal frequency: for the scattering parameter sensitivities always, and
 otherwise when a consumer of the adjoint solution (the noise scattering
 parameters, the quantum efficiency, the commutation relations, or the adjoint
-node outputs) is requested together with a source of it.
+node outputs) is requested together with a source of it. The dissipative
+scattering blocks of a [`ScatteringNoisePlan`](@ref) are such a source, as
+the lumped noise ports are.
 
 This does not depend on the frequency, and both the host loop and the device
 sweep test it, the latter because it has no factorization to solve the
 transposed system against.
 """
-function needsadjointsolve(arrays::LinearizedArrays, noiseportimpedanceindices)
+function needsadjointsolve(arrays::LinearizedArrays,
+    noiseportimpedanceindices, noiseplan = nothing)
     isempty(arrays.Ssensitivity) || return true
     hassource = !isempty(noiseportimpedanceindices) ||
+        !isnothing(noiseplan) ||
         !isempty(arrays.nodefluxadjoint) || !isempty(arrays.voltageadjoint)
     hasconsumer = !isempty(arrays.Snoise) || !isempty(arrays.QE) ||
         !isempty(arrays.CM) || !isempty(arrays.nodefluxadjoint) ||
@@ -296,12 +295,19 @@ end
 Callbacks which fill the solutions of the linearized system at a signal
 frequency, computing them on `backend` a batch of frequencies at a time.
 
-Returns `(batchsize, solvebatch!, forward, adjoint, adjointdevice)`.
+Returns
+`(batchsize, solvebatch!, providers, forward, adjoint, adjointdevice)`.
 `solvebatch!(lo)` solves the batch of frequencies beginning at index `lo` and
 stages its solutions on the host; `forward` and `adjoint` then fill the
 solution of any frequency of that batch, in the form
 [`hblinsolve_inner!`](@ref) takes as `presolved` and `presolvedadjoint`, with
-`adjoint` `nothing` when none was asked for.
+`adjoint` `nothing` when none was asked for. `adjointdevice` hands out the
+adjoint solution of a frequency where it was computed, for the noise
+scattering parameters, which are formed there rather than brought back (see
+[`devicenoise`](@ref)). `providers` is the [`DeviceProviders`](@ref) the
+scattering blocks are evaluated through, or `nothing` when there are none or
+they cannot be evaluated on `backend`; the noise channels of the dissipative
+blocks are read through the same one.
 
 The split is what keeps the host work parallel. `solvebatch!` is the only part
 which touches the device; once it has returned, its batch's frequencies can be
@@ -338,15 +344,10 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     # the right hand sides do not depend on the frequency, and are the same for
     # both directions, but cuDSS wants one set per system of the batch
     bhost = convert(Matrix{T}, bnm)
-    # With scattering blocks the adjoint system is the conjugated pump one
-    # rather than the transpose: their hybrid rows break the diagonal
-    # similarity between the two. It has the same orientation as the forward
-    # system, so both directions store their values the same way.
     hasscattering = !isnothing(lsys.scattering)
     function newbatch(isadjoint)
-        adj = isadjoint && !hasscattering
         plan, rowptr, colind = planfrequencysweep(lsys, backend;
-            adjoint = adj, conjugatepump = isadjoint && hasscattering)
+            adjoint = isadjoint)
         nzval = KernelAbstractions.allocate(backend, T, nzA, nb)
         X = KernelAbstractions.allocate(backend, T, n, nrhs, nb)
         B = KernelAbstractions.allocate(backend, T, n, nrhs, nb)
@@ -360,15 +361,21 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     end
 
     # One set of scattering values serves both directions: the contribution
-    # does not depend on which pump the system was assembled from, and with
-    # scattering blocks the adjoint has the same orientation as the forward
-    # system, so the destinations are the same as well. Evaluating the
-    # providers once instead of once per direction halves that work whenever
-    # the adjoint is needed.
+    # does not depend on the direction the system is assembled in, only the
+    # destinations it is scattered to do. Evaluating the providers once
+    # instead of once per direction halves that work whenever the adjoint is
+    # needed; the adjoint's view shares the values and differs only in where
+    # they land.
     scatstamps = plandevicescattering(lsys.scattering,
         hasscattering ? sweepdestinations(lsys.Asparse,
             lsys.scattering.Aindex, false) : Int[],
         nzA, nb, backend, lsys.Nmodes)
+    scatstampsadjoint = if hasscattering && !isnothing(adjoint)
+        transposedestinations(scatstamps, sweepdestinations(lsys.Asparse,
+            lsys.scattering.Aindex, true), backend)
+    else
+        scatstamps
+    end
     # when every block's data is tabulated or constant the values are
     # computed on the backend and the host does nothing per frequency; a
     # callable provider is an arbitrary Julia function, so those stay on the
@@ -418,9 +425,9 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
         return hi
     end
 
-    function runbatch!(slot, b, stage)
+    function runbatch!(slot, b, stage, stamps)
         assemblesweep!(b.nzval, b.plan, wsdev)
-        isnothing(scatstamps) || applyscatteringstamps!(b.nzval, scatstamps)
+        isnothing(stamps) || applyscatteringstamps!(b.nzval, stamps)
         if isnothing(sweeps[slot])
             sweeps[slot] = _cudss_sweep(b.rowptr, b.colind, b.nzval, b.X, b.B)
         end
@@ -450,8 +457,8 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
                     lo, k)
             end
         end
-        runbatch!(1, fwd, fstage)
-        isnothing(adj) || runbatch!(2, adj, astage)
+        runbatch!(1, fwd, fstage, scatstamps)
+        isnothing(adj) || runbatch!(2, adj, astage, scatstampsadjoint)
         batchlo[] = lo
         return nothing
     end
@@ -474,12 +481,11 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
         return phin
     end
 
-    # `adjointdevice` hands out the adjoint solution where it was computed,
-    # for the noise scattering parameters, which are reduced there rather than
-    # brought back (see [`devicenoise`](@ref)). It is a read of the solved
-    # batch, so several workers may hold different frequencies of it at once.
+    # `adjointdevice` is a read of the solved batch, so several workers may
+    # hold different frequencies of it at once.
     return (batchsize = nb,
         solvebatch! = solvebatch!,
+        providers = scatproviders,
         forward = (i, phin) -> fillsolution!(phin, fstage, i),
         adjoint = isnothing(adj) ? nothing :
             (i, phin) -> fillsolution!(phin, astage, i),
@@ -575,11 +581,21 @@ function plandevicenoise(nodeindices, componenttypes,
 end
 
 """
-    devicenoise(plan::DeviceNoisePlan, adjointsolution, nrhs, wpumpmodes, w,
-        keepmatrix)
+    devicenoise(plan::DeviceNoisePlan, blockplan, providers,
+        adjointsolution, nrhs, wpumpmodes, w, keepmatrix)
 
 A callback which computes the noise scattering parameters of a signal
 frequency from the adjoint solutions on the backend.
+
+`temperatures` is one temperature per noise channel, or `nothing`; the waves
+of a warm channel are scaled where they are computed, so nothing downstream
+of this knows about temperature.
+
+`blockplan` is the [`DeviceBlockNoisePlan`](@ref) of the dissipative
+scattering blocks, or `nothing` when there are none; their channels follow
+the noise ports of the lumped components in the rows, as they do on the
+host, and are evaluated through the same [`DeviceProviders`](@ref)
+`providers` the stamps are.
 
 Returned in the form [`hblinsolve_inner!`](@ref) takes as `presolvednoise`:
 called with the frequency index, its input waves and the destination for the
@@ -595,12 +611,15 @@ sweep, while what is read of it is one number per port mode.
 of the input waves, which is a dense matrix the size of the scattering matrix
 and so is inverted on the host.
 """
-function devicenoise(plan::DeviceNoisePlan, adjointsolution, nrhs::Integer,
-    wpumpmodes, w, keepmatrix::Bool)
+function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
+    adjointsolution, nrhs::Integer, wpumpmodes, w, keepmatrix::Bool,
+    temperatures = nothing)
 
     backend = plan.backend
     T = Complex{Float64}
-    nrows = plan.nnoise*plan.nmodes
+    lumpedrows = plan.nnoise*plan.nmodes
+    nrows = lumpedrows +
+        (isnothing(blockplan) ? 0 : blockplan.nchannels*plan.nmodes)
     out = KernelAbstractions.allocate(backend, T, nrows, nrhs)
     Snoise = KernelAbstractions.allocate(backend, T, nrows, nrhs)
     invinput = KernelAbstractions.allocate(backend, T, nrhs, nrhs)
@@ -617,33 +636,314 @@ function devicenoise(plan::DeviceNoisePlan, adjointsolution, nrhs::Integer,
     signed = zeros(Float64, nrhs)
     wmodes = zeros(Float64, plan.nmodes)
     reduction = NoiseReduction(denom, signed)
+    # the thermal scale of each row, when any channel is warm. It depends on
+    # the mode frequencies, so it is rebuilt per signal frequency and sent;
+    # it is one row per channel mode, which is small beside the waves.
+    # the occupation of each channel mode, when any channel is warm. It goes
+    # into the sum the quantum efficiency reads and not the one the
+    # commutation relations read, which is the whole of the temperature
+    # dependence and is why they stay at one.
+    warm = !isnothing(temperatures) && !all(iszero, temperatures)
+    occupationhost = warm ? zeros(Float64, nrows) : Float64[]
+    occupationd = warm ? KernelAbstractions.allocate(backend, Float64, nrows) :
+        KernelAbstractions.allocate(backend, Float64, 0)
+    # the added noise covariance, when it is asked for, is formed here rather
+    # than by bringing the noise scattering matrix home: it is one product of
+    # the matrix with itself and comes back as a port mode square.
+    Cwork = KernelAbstractions.allocate(backend, T, nrows, nrhs)
+    Cdev = KernelAbstractions.allocate(backend, T, nrhs, nrhs)
+    Chost = Matrix{T}(undef, nrhs, nrhs)
 
-    return function(i, inputwave, Snoiseview)
+    return function(i, inputwave, Snoiseview, Cnoiseview = nothing)
         @inbounds for m in eachindex(wmodes)
             wmodes[m] = w[i] + wpumpmodes[m]
         end
         copyto!(wmodesd, wmodes)
-        noiseoutputwavekernel!(backend, 64)(out, adjointsolution(i),
-            plan.node1, plan.node2, plan.values, plan.codes, wmodesd,
-            plan.nmodes, plan.nnoise, nrhs;
-            ndrange = nrows*nrhs)
+        if lumpedrows > 0
+            noiseoutputwavekernel!(backend, 64)(out, adjointsolution(i),
+                plan.node1, plan.node2, plan.values, plan.codes, wmodesd,
+                plan.nmodes, plan.nnoise, nrhs;
+                ndrange = lumpedrows*nrhs)
+        end
+        if !isnothing(blockplan)
+            # the factor of each block's covariance at each mode frequency,
+            # then the contraction of the adjoint solution against it
+            if isnothing(providers.funcs)
+                blocknoisefactorkernel!(backend, 64)(blockplan.factors,
+                    blockplan.blockindex, blockplan.factoroff,
+                    providers.nports, providers.freqoff, providers.nfreq,
+                    providers.freqs, providers.valoff, providers.vals,
+                    providers.conjsym, providers.extrapcode, wmodesd,
+                    plan.nmodes, blockplan.nentries;
+                    ndrange = blockplan.nentries*plan.nmodes)
+            else
+                blocknoiseentryfactorkernel!(backend, 64)(blockplan.factors,
+                    blockplan.blockindex, blockplan.factoroff,
+                    providers.nports, providers.funcs, providers.conjsym,
+                    wmodesd, plan.nmodes, blockplan.nentries;
+                    ndrange = blockplan.nentries*plan.nmodes)
+            end
+            KernelAbstractions.synchronize(backend)
+            blocknoisecontractkernel!(backend, 64)(out, adjointsolution(i),
+                blockplan.factors, blockplan.blockindex, blockplan.factoroff,
+                blockplan.auxbase, providers.nports, blockplan.channelentry,
+                blockplan.channellocal, wmodesd, plan.nmodes,
+                blockplan.nchannels, lumpedrows, nrhs;
+                ndrange = blockplan.nchannels*plan.nmodes*nrhs)
+        end
         KernelAbstractions.synchronize(backend)
         copyto!(invinput, inv(Matrix{T}(inputwave)))
         mul!(Snoise, out, invinput)
-        absq .= abs2.(Snoise)
-        sum!(denomd, absq)
         modesignkernel!(backend, 64)(signs, wmodesd, plan.nmodes;
             ndrange = nrows)
         KernelAbstractions.synchronize(backend)
-        absq .*= signs
+        # the same two passes and two reductions as at zero temperature, with
+        # the occupation folded into the one the quantum efficiency reads
+        if warm
+            noiseoccupation!(occupationhost, temperatures, wmodes,
+                plan.nmodes)
+            copyto!(occupationd, occupationhost)
+            absq .= abs2.(Snoise) .* occupationd
+        else
+            absq .= abs2.(Snoise)
+        end
+        sum!(denomd, absq)
+        absq .= abs2.(Snoise) .* signs
         sum!(signedd, absq)
         KernelAbstractions.synchronize(backend)
         copyto!(denom, vec(Array(denomd)))
         copyto!(signed, vec(Array(signedd)))
         keepmatrix && isempty(Snoiseview) == false && copyto!(Snoiseview,
             Array(Snoise))
+        if !isnothing(Cnoiseview)
+            # Cnoise[i,j] = sum_c occupation[c] Snoise[c,i] conj(Snoise[c,j])
+            if warm
+                Cwork .= occupationd .* conj.(Snoise)
+            else
+                Cwork .= conj.(Snoise)
+            end
+            mul!(Cdev, transpose(Snoise), Cwork)
+            KernelAbstractions.synchronize(backend)
+            copyto!(Chost, Cdev)
+            copyto!(Cnoiseview, Chost)
+        end
         return reduction
     end
+end
+
+"""
+    blocknoisefactorkernel!
+
+The factor `L` of the vacuum noise covariance `I - S S'` of each dissipative
+scattering block at each mode frequency, one work item per (block, mode),
+from tabulated or constant scattering data.
+
+The factorization is [`psdcholesky!`](@ref), which the host path runs too, so
+the two agree on the channels themselves and not only on the sums over them.
+Its covariance is built from `2 n^3` interpolations rather than caching the
+`n^2` scattering parameters, because a work item has nowhere to cache them
+and a block has few ports.
+"""
+@kernel function blocknoisefactorkernel!(L, @Const(blockindex),
+        @Const(factoroff), @Const(nports), @Const(freqoff), @Const(nfreq),
+        @Const(freqs), @Const(valoff), @Const(vals), @Const(conjsym),
+        @Const(extrapcode), @Const(wmodes), Nmodes, nentries)
+    gid = @index(Global)
+    @inbounds begin
+        g = gid - 1
+        m = g % Nmodes + 1
+        e = g ÷ Nmodes + 1
+        bi = Int(blockindex[e])
+        n = Int(nports[bi])
+        off = Int(factoroff[e]) + (m-1)*n*n
+        T = eltype(L)
+        wm = wmodes[m]
+        if iszero(wm)
+            # the wave normalization is singular at zero frequency, where the
+            # lumped noise ports are zero too
+            for j in 1:n*n
+                L[off + j] = zero(T)
+            end
+        else
+            isconj = conjsym[bi] != 0
+            wq = isconj ? abs(wm) : wm
+            neg = isconj && wm < 0
+            fo = Int(freqoff[bi]); nf = Int(nfreq[bi]); vo = Int(valoff[bi])
+            ec = extrapcode[bi]
+            for c in 1:n
+                for p in c:n
+                    acc = p == c ? one(T) : zero(T)
+                    for l in 1:n
+                        spl = tableentry(freqs, vals, fo, nf, vo, n, p, l,
+                            wq, ec)
+                        scl = tableentry(freqs, vals, fo, nf, vo, n, c, l,
+                            wq, ec)
+                        if neg
+                            spl = conj(spl); scl = conj(scl)
+                        end
+                        acc -= spl*conj(scl)
+                    end
+                    L[off + (c-1)*n + p] = acc
+                end
+            end
+            psdcholesky!(L, off, n)
+        end
+    end
+end
+
+# the same, for blocks whose scattering parameters come from a callable of the
+# `:entry` form
+@kernel function blocknoiseentryfactorkernel!(L, @Const(blockindex),
+        @Const(factoroff), @Const(nports), @Const(funcs), @Const(conjsym),
+        @Const(wmodes), Nmodes, nentries)
+    gid = @index(Global)
+    @inbounds begin
+        g = gid - 1
+        m = g % Nmodes + 1
+        e = g ÷ Nmodes + 1
+        bi = Int(blockindex[e])
+        n = Int(nports[bi])
+        off = Int(factoroff[e]) + (m-1)*n*n
+        T = eltype(L)
+        wm = wmodes[m]
+        if iszero(wm)
+            for j in 1:n*n
+                L[off + j] = zero(T)
+            end
+        else
+            isconj = conjsym[bi] != 0
+            wq = isconj ? abs(wm) : wm
+            neg = isconj && wm < 0
+            f = funcs[bi]
+            for c in 1:n
+                for p in c:n
+                    acc = p == c ? one(T) : zero(T)
+                    for l in 1:n
+                        spl = T(f(p, l, wq))
+                        scl = T(f(c, l, wq))
+                        if neg
+                            spl = conj(spl); scl = conj(scl)
+                        end
+                        acc -= spl*conj(scl)
+                    end
+                    L[off + (c-1)*n + p] = acc
+                end
+            end
+            psdcholesky!(L, off, n)
+        end
+    end
+end
+
+"""
+    blocknoisecontractkernel!
+
+The noise output waves of the scattering block channels, one work item per
+(channel, mode, right hand side).
+
+The noise a block adds is a source in its auxiliary port current rows, so by
+the adjoint identity its contribution at an output port is that source
+contracted against those same rows of the adjoint solution:
+`sqrt(abs(w)) sum_p L[p,c] i[p]`. Nothing else of the solution is read, which
+is why the adjoint solutions of a circuit with dissipative blocks need not
+come back from the backend at all.
+"""
+@kernel function blocknoisecontractkernel!(out, @Const(phin), @Const(L),
+        @Const(blockindex), @Const(factoroff), @Const(auxbase),
+        @Const(nports), @Const(channelentry), @Const(channellocal),
+        @Const(wmodes), Nmodes, nchannels, rowoffset, nrhs)
+    gid = @index(Global)
+    @inbounds begin
+        g = gid - 1
+        m = g % Nmodes + 1
+        ch = (g ÷ Nmodes) % nchannels + 1
+        k = g ÷ (Nmodes*nchannels) + 1
+        e = Int(channelentry[ch]); c = Int(channellocal[ch])
+        bi = Int(blockindex[e])
+        n = Int(nports[bi])
+        off = Int(factoroff[e]) + (m-1)*n*n
+        ab = Int(auxbase[e])
+        acc = zero(eltype(out))
+        for p in 1:n
+            acc += L[off + (c-1)*n + p]*phin[ab + (p-1)*Nmodes + m, k]
+        end
+        out[rowoffset + (ch-1)*Nmodes + m, k] = sqrt(abs(wmodes[m]))*acc
+    end
+end
+
+"""
+    DeviceBlockNoisePlan
+
+The vacuum noise channels of the dissipative scattering blocks, on a backend.
+
+Where the host path reads the auxiliary port current rows of an adjoint
+solution it has brought back, this describes the same channels as flat
+tables, so [`blocknoisefactorkernel!`](@ref) and
+[`blocknoisecontractkernel!`](@ref) can form them where the solution already
+is. The scattering data itself comes from the [`DeviceProviders`](@ref) the
+stamps are evaluated through, so this holds only what those do not: which
+block each entry is, where its auxiliary rows and its factor live, and which
+entry each channel belongs to.
+"""
+struct DeviceBlockNoisePlan{VI,VC,B}
+    blockindex::VI
+    factoroff::VI
+    auxbase::VI
+    channelentry::VI
+    channellocal::VI
+    factors::VC
+    nentries::Int
+    nchannels::Int
+    nmodes::Int
+    backend::B
+end
+
+"""
+    withfactors(bp::DeviceBlockNoisePlan)
+
+A copy of the plan with scratch of its own for the covariance factors,
+sharing everything else, so that several workers can form the noise channels
+of different signal frequencies at once. The factors are written by
+[`blocknoisefactorkernel!`](@ref) and read by
+[`blocknoisecontractkernel!`](@ref) at one frequency, so they cannot be
+shared; the tables which say where each block is can be.
+"""
+function withfactors(bp::DeviceBlockNoisePlan)
+    return DeviceBlockNoisePlan(bp.blockindex, bp.factoroff, bp.auxbase,
+        bp.channelentry, bp.channellocal, similar(bp.factors), bp.nentries,
+        bp.nchannels, bp.nmodes, bp.backend)
+end
+
+"""
+    plandeviceblocknoise(ssys, noiseplan, Nmodes, backend)
+
+Build a [`DeviceBlockNoisePlan`](@ref) from a
+[`ScatteringNoisePlan`](@ref), or `nothing` when there is none.
+"""
+plandeviceblocknoise(ssys, ::Nothing, Nmodes, backend) = nothing
+function plandeviceblocknoise(ssys, noiseplan::ScatteringNoisePlan,
+    Nmodes::Integer, backend)
+
+    ne = length(noiseplan.blockindices)
+    blockindex = Int32[bi for bi in noiseplan.blockindices]
+    auxbase = Int32[ssys.blocks[bi].auxbase for bi in noiseplan.blockindices]
+    factoroff = Vector{Int32}(undef, ne)
+    channelentry = Vector{Int32}(undef, noiseplan.Nchannels)
+    channellocal = Vector{Int32}(undef, noiseplan.Nchannels)
+    off = 0
+    for (e, bi) in enumerate(noiseplan.blockindices)
+        n = ssys.blocks[bi].block.nports
+        factoroff[e] = off
+        off += n*n*Nmodes
+        for c in 1:n
+            channelentry[noiseplan.channelbase[e] + c] = e
+            channellocal[noiseplan.channelbase[e] + c] = c
+        end
+    end
+    factors = KernelAbstractions.allocate(backend, Complex{Float64}, off)
+    return DeviceBlockNoisePlan(tobackend(backend, blockindex),
+        tobackend(backend, factoroff), tobackend(backend, auxbase),
+        tobackend(backend, channelentry), tobackend(backend, channellocal),
+        factors, ne, noiseplan.Nchannels, Int(Nmodes), backend)
 end
 
 # ---------------------------------------------------------------------------
@@ -694,11 +994,11 @@ through its own provider, an arbitrary callable or an interpolation of
 tabulated data, so its values have to be computed on the host. What is left
 is a gather-add into the stored entries, which is this.
 
-One of these serves both directions of a sweep. The contribution does not
-depend on which pump the system was assembled from, and with scattering
-blocks present the adjoint system has the same orientation as the forward
-one, so its destinations are the same too: the values are computed and sent
-once and the kernel is run against each direction's stored values.
+The values serve both directions of a sweep: a block's contribution does not
+depend on the direction the system is assembled in, only on where in that
+system's stored order each scalar lands. So they are computed and sent once,
+and the adjoint direction gets a second view of them with its own
+destinations (see [`transposedestinations`](@ref)).
 
 The values are computed on the host, because a callable provider is an
 arbitrary Julia function. A block whose data is tabulated or constant needs
@@ -733,6 +1033,23 @@ function plandevicescattering(ssys, Aindexcsr::AbstractVector{Int},
     return DeviceScatteringStamps(ssys,
         tobackend(backend, convert(Vector{Ti}, Aindexcsr)), values, host,
         zeros(Float64, Nmodes), ScatteringWorkspace(), backend, Int(nzA))
+end
+
+"""
+    transposedestinations(st::DeviceScatteringStamps, Aindexcsr, backend)
+
+A view of the same scattering stamp values with different destinations, for
+the transposed (adjoint) system: the contribution of a block does not depend
+on the direction the system is assembled in, only on where in the stored
+order of that system each scalar lands. Sharing `values` is what lets the
+providers be evaluated once for both directions.
+"""
+function transposedestinations(st::DeviceScatteringStamps,
+    Aindexcsr::AbstractVector{Int}, backend)
+    Ti = eltype(st.index)
+    return DeviceScatteringStamps(st.ssys,
+        tobackend(backend, convert(Vector{Ti}, Aindexcsr)), st.values,
+        st.host, st.wmodes, st.work, backend, st.nzA)
 end
 
 # compute the values of the batch beginning at `lo` into host buffer `buf`.
@@ -963,10 +1280,6 @@ struct DeviceProviders{VI,VZ,VR,VC,VF,B}
     strict::Vector{Bool}
     conjhost::Vector{Bool}
     names::Vector{String}
-    # whether the unitarity of a callable's data has been looked at yet; a
-    # table is scanned when the plan is built, but a callable has to be
-    # evaluated somewhere first
-    losschecked::Base.RefValue{Bool}
     ssys::Any
     backend::B
 end
@@ -1041,21 +1354,6 @@ function copymatrix!(dest::Vector{Complex{Float64}}, off::Int,
     return nothing
 end
 
-# whether any column of a stored table deviates from unitarity
-function tableislossy(vals::Vector{Complex{Float64}}, off::Int, n::Int,
-    nf::Int)
-    @inbounds for k in 1:nf
-        for q in 1:n
-            acc = 0.0
-            for l in 1:n
-                acc += abs2(vals[off + (k-1)*n*n + (q-1)*n + l])
-            end
-            abs(acc - 1) > 1e-6 && return true
-        end
-    end
-    return false
-end
-
 """
     plandeviceproviders(ssys, nbatch, backend, wpumpmodes, scale)
 
@@ -1097,7 +1395,6 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     strict = Vector{Bool}(undef, nb)
     conjhost = Vector{Bool}(undef, nb)
     names = String[sb.name for sb in ssys.blocks]
-    lossy = false
     zi = 0; fi = 0; vi = 0
     for (bi, sb) in enumerate(ssys.blocks)
         blk = sb.block
@@ -1141,15 +1438,6 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
         end
         conjhost[bi] = !(blk.negative_frequency isa Native)
         conjsym[bi] = conjhost[bi] ? Int8(1) : Int8(0)
-        # loss is a property of the stored data, so it is found once here
-        # rather than at every frequency. Once any block is dissipative there
-        # is nothing more to learn, so the scan stops.
-        if istable && !lossy
-            lossy = tableislossy(vals, Int(valoff[bi]), n, Int(nfreq[bi]))
-        end
-    end
-    if lossy && !Threads.atomic_xchg!(ssys.warnedlossy, true)
-        @warn "A scattering block of this circuit is dissipative. Its deterministic response is included, but the thermal noise of dissipative scattering blocks is not yet included in the noise and quantum efficiency calculations." maxlog=1
     end
 
     d(x) = tobackend(backend, x)
@@ -1162,8 +1450,7 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
         d(Int32.(ssys.pindex)), d(Int32.(ssys.qindex)), d(Int8.(ssys.coeff)),
         d(Int8.(ssys.sign)), d(collect(Float64, wpumpmodes)),
         d(zeros(Float64, nbatch)), zeros(Float64, nbatch), Float64(scale),
-        ncontrib, ranges, strict, conjhost, names, Ref(istable), ssys,
-        backend)
+        ncontrib, ranges, strict, conjhost, names, ssys, backend)
 end
 
 # a kernel cannot raise, so a block whose data must not be extrapolated has
@@ -1222,7 +1509,6 @@ function stagedeviceproviders!(values::AbstractMatrix, dp::DeviceProviders,
             dp.vals, dp.conjsym, dp.extrapcode, dp.wpump, dp.ws, dp.scale,
             dp.ncontrib; ndrange = length(values))
     else
-        checkcallableloss(dp)
         deviceentrykernel!(dp.backend, 64)(values, dp.modeindex,
             dp.blockindex, dp.pindex, dp.qindex, dp.coeff, dp.sgn,
             dp.zrefoff, dp.zref, dp.funcs, dp.conjsym, dp.wpump, dp.ws,
@@ -1232,36 +1518,3 @@ function stagedeviceproviders!(values::AbstractMatrix, dp::DeviceProviders,
     return values
 end
 
-# A table is scanned for loss when the plan is built. A callable has to be
-# evaluated somewhere first, so it is looked at once, on the host, at the
-# frequencies of the batch which reaches it first. That is real data at real
-# frequencies rather than a guess, and it costs one evaluation per block.
-function checkcallableloss(dp::DeviceProviders)
-    dp.losschecked[] && return nothing
-    dp.losschecked[] = true
-    ssys = dp.ssys
-    wp = Array(dp.wpump)
-    lossy = false
-    for sb in ssys.blocks
-        n = sb.block.nports
-        f = sb.block.provider.f
-        for m in eachindex(wp)
-            w = dp.wshost[1] + wp[m]
-            iszero(w) && continue
-            wq = (sb.block.negative_frequency isa Native) ? w : abs(w)
-            for q in 1:n
-                acc = 0.0
-                for l in 1:n
-                    acc += abs2(f(l, q, wq))
-                end
-                abs(acc - 1) > 1e-6 && (lossy = true; break)
-            end
-            lossy && break
-        end
-        lossy && break
-    end
-    if lossy && !Threads.atomic_xchg!(ssys.warnedlossy, true)
-        @warn "A scattering block of this circuit is dissipative. Its deterministic response is included, but the thermal noise of dissipative scattering blocks is not yet included in the noise and quantum efficiency calculations." maxlog=1
-    end
-    return nothing
-end

@@ -67,8 +67,9 @@ end
     deviceexpandrealpattern(outerptr, outerrowval, outerlayout::ModeLayout,
         innerlayout::ModeLayout, n::Integer, backend)
 
-As [`expandrealpattern`](@ref), built on `backend` and returned there as a
-[`DeviceSparsePattern`](@ref).
+Expand a complex sparsity structure into the structure of its real
+representation, where each complex entry becomes a two by two real block, and
+return it on `backend` as a [`DeviceSparsePattern`](@ref).
 
 The number of real entries a complex index contributes is the same for every
 one of its real columns, so the column pointer is a gather of per index counts
@@ -209,8 +210,10 @@ end
     devicecomplexjacobianpattern(n, Nmodes, adjacency, activem1,
         linearmatrices, backend)
 
-As [`complexjacobianpattern`](@ref), built on `backend` and returned there as
-a [`DeviceSparsePattern`](@ref).
+The sparsity structure of the complex Jacobian, from the node `adjacency`, the
+mode couplings `activem1` which survive the frequency grid, and the structures
+of the constant linear term `linearmatrices`, built on `backend` and returned
+there as a [`DeviceSparsePattern`](@ref).
 """
 function devicecomplexjacobianpattern(n::Integer, Nmodes::Integer, adjacency,
     activem1, linearmatrices, backend)
@@ -317,20 +320,17 @@ end
 Group `dest` into contiguous segments by value, writing the segment pointer
 into `seg` and, into `perm`, the positions of `dest` ordered by segment.
 
-This is the device form of [`segmentscatterbydest`](@ref), and it is a
-permutation rather than a copy: the caller gathers whatever payload it has
-through `perm`, which keeps this independent of how many arrays travel with
-the destinations.
+The result is a permutation rather than a copy: the caller gathers whatever
+payload it has through `perm`, which keeps this independent of how many arrays
+travel with the destinations.
 
-The host version is a stable counting sort, and stability is what makes the
-assembly reproducible: it fixes the order in which the contributions to one
-entry are added, and floating point addition is not associative. A device
-histogram with an atomic cursor is not stable, so the order is restored
-afterwards by sorting each segment. That is cheap because the segments are
-tiny -- 28.8 million contributions over 21.7 million entries is an average of
-1.33 -- and it is why this is not done with a general sort, which measured
-0.315 s on 28.8 million keys, as much as the host counting sort it would
-replace.
+The grouping must be stable, because it fixes the order in which the
+contributions to one entry are added and floating point addition is not
+associative. A histogram with an atomic cursor is not stable, so the order the
+positions were emitted in is restored afterwards by sorting each segment. That
+is cheap because the segments are tiny -- 28.8 million contributions over 21.7
+million entries is an average of 1.33 -- and it is why this is not done with a
+general sort, which measured 0.315 s on 28.8 million keys.
 """
 function segmentbydest!(seg::AbstractVector, perm::AbstractVector,
     dest::AbstractVector, backend)
@@ -420,11 +420,11 @@ The structure is held as the **transpose**, because the compressed columns of
 the transpose are the compressed rows of this matrix: `patterntranspose` is
 therefore a row pointer and a column index array already, and a device sparse
 matrix can be built from it with no conversion at all. That is also the form
-[`planrealjacobian`](@ref) produces directly when asked for it with
+[`realjacobianstructure`](@ref) produces directly when asked for it with
 `transposed = true`, which is why nothing here permutes anything.
 
 `patterntranspose` carries the sparsity structure only; its stored values are
-whatever they were last set to and must not be read. Use [`nonzeros`](@ref) to
+whatever they were last set to and must not be read. Use `nonzeros` to
 reach the device values, and [`rowpointer`](@ref) and
 [`columnindices`](@ref) to reach the structure.
 
@@ -463,6 +463,37 @@ Base.size(A::DeviceValuedSparseMatrix) = reverse(size(A.patterntranspose))
 Base.size(A::DeviceValuedSparseMatrix, d::Integer) = size(A)[d]
 SparseArrays.nnz(A::DeviceValuedSparseMatrix) = nnz(A.patterntranspose)
 SparseArrays.nonzeros(A::DeviceValuedSparseMatrix) = A.nzval
+
+"""
+    hostsparse(A::DeviceValuedSparseMatrix)
+    hostsparse(A::SparseMatrixCSC)
+
+Bring a matrix whose values live on a backend home as an ordinary
+`SparseMatrixCSC`, copying both the structure and the values. A host matrix
+is returned unchanged.
+
+The structure is held as the transpose (see
+[`DeviceValuedSparseMatrix`](@ref)), so this is a copy back followed by a
+sparse transpose rather than a reinterpretation. Both are proportional to the
+number of stored entries of the one matrix, which is why this is worth doing
+for something retained once, such as the real Jacobian of a pump operating
+point, and not for something produced per signal frequency, such as a
+solution of the linearized system.
+"""
+hostsparse(A::SparseMatrixCSC) = A
+function hostsparse(A::DeviceValuedSparseMatrix)
+    p = A.patterntranspose
+    colptr, rowval = if p isa SparseMatrixCSC
+        (p.colptr, rowvals(p))
+    else
+        (Array(p.colptr), Array(p.rowval))
+    end
+    m, n = size(p)
+    # the stored transpose, as a host matrix, and then the matrix itself
+    At = SparseMatrixCSC(m, n, convert(Vector{Int}, colptr),
+        convert(Vector{Int}, rowval), Array(A.nzval))
+    return SparseMatrixCSC(transpose(At))
+end
 
 # reading an entry would read the stale host values, so refuse rather than
 # return something wrong

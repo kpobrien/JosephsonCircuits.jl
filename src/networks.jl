@@ -1169,7 +1169,7 @@ function maxwell_to_mutual(Cmaxwell::AbstractMatrix)
 end
 
 """
-    maxwell_to_mutual(Cmutual::AbstractMatrix)
+    mutual_to_maxwell(Cmutual::AbstractMatrix)
 
 Return the Maxwell capacitance matrix from the mutual capacitance matrix
 `Cmutual`.
@@ -1359,7 +1359,7 @@ function coupling_to_even_odd(couplingdB, Z0)
 end
 
 """
-    Z_canonical_coupled_line_circuit(i::Int,  Z0e, Z0o, thetae, thetao)
+    Z_canonical_coupled_line_circuits(i::Int, Z0e, Z0o, thetae, thetao)
 
 Return the impedance matrix for the `i`'th canonical coupled line circuit, as
 a function of the even mode phase delay `thetae` in radians, the odd mode

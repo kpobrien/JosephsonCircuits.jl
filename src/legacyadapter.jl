@@ -194,6 +194,7 @@ function parsesortcircuit(elab::ElaboratedCircuit; sorting::Symbol = :name)
     uniquenodedict = Dict{String,Int}()
     uniquenodevector = String[]
 
+    componenttemperatures = Dict{Int,Float64}()
     couplingnames = Dict{Int,Tuple{String,String}}()
     for (k, i1, i2) in elab.couplings
         couplingnames[k] = (elab.instancepaths[i1], elab.instancepaths[i2])
@@ -216,6 +217,10 @@ function parsesortcircuit(elab::ElaboratedCircuit; sorting::Symbol = :name)
                 push!(componentnames, path * "/port" * string(p))
                 push!(componenttypes, :S)
                 push!(componentvalues, ScatteringStamp(def, p))
+                if def.noise isa ThermalEquilibrium
+                    componenttemperatures[length(componentnames)] =
+                        Float64(def.noise.temperature)
+                end
                 push!(nodeindexvector, processnode(uniquenodedict,
                     uniquenodevector, elab.netnames[terminals[2*p-1]]))
                 push!(nodeindexvector, processnode(uniquenodedict,
@@ -227,6 +232,10 @@ function parsesortcircuit(elab::ElaboratedCircuit; sorting::Symbol = :name)
         push!(componentnames, path)
         push!(componenttypes, typesymbol)
         push!(componentvalues, value)
+        # a component which states its temperature keeps it; the rest take
+        # the one the analysis is run at
+        t = componenttemperature(def)
+        isnothing(t) || (componenttemperatures[length(componentnames)] = t)
         if typesymbol == :K
             l1, l2 = couplingnames[i]
             push!(mutualinductorbranchnames, l1)
@@ -261,8 +270,16 @@ function parsesortcircuit(elab::ElaboratedCircuit; sorting::Symbol = :name)
     return ParsedSortedCircuit(nodeindices, nodenames,
         mutualinductorbranchnames, componentnames, componenttypes,
         tightenvalues(componentvalues), componentnamedict,
-        length(uniquenodevector))
+        length(uniquenodevector), componenttemperatures)
 end
+
+# the temperature a component states, or `nothing`. Only the components which
+# can dissipate carry one; a scattering block states its temperature through
+# its noise model instead (see [`ThermalEquilibrium`](@ref)).
+componenttemperature(def::Resistor) = def.temperature
+componenttemperature(def::Capacitor) = def.temperature
+componenttemperature(def::Inductor) = def.temperature
+componenttemperature(def) = nothing
 
 function parsesortcircuit(circuit::Circuit; sorting::Symbol = :name)
     return parsesortcircuit(elaborate(circuit); sorting = sorting)

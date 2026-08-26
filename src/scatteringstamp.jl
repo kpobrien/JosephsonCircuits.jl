@@ -54,8 +54,7 @@ HybridWorkspace() = HybridWorkspace(Int[], Float64[],
         [work::HybridWorkspace])
 
 The hybrid (wave to modified nodal analysis) coefficients `B` and `C` of a
-scattering block at the signed frequencies `ws`, and whether the block is
-dissipative, as `(B, C, lossy)`.
+scattering block at the signed frequencies `ws`.
 
 The constitutive equation of the block is `B(w) phi' = C(w) i` with
 `B = R^(-1/2)(I-S)` and `C = R^(1/2)(I+S)`; nothing is inverted, so a block
@@ -87,9 +86,6 @@ flux basis carries no DC voltage, and direct currents flow only through the
 inductive branches of the static flux stiffness graph, so a scattering
 block carries no direct current, consistent with the treatment of
 resistors.
-
-Returns `(B, C, lossy)` where `lossy` indicates whether the scattering data
-deviates from unitarity (has loss) at any evaluated frequency.
 
 Pass a [`HybridWorkspace`](@ref) to reuse its scratch across calls.
 """
@@ -143,21 +139,8 @@ function evaluatehybrid!(B::AbstractArray{Complex{Float64},3},
             end
         end
     end
-    lossy = false
     for (kk, i) in enumerate(nonzeroindices)
         for q in 1:n
-            # unitarity deviation indicates dissipation, whose thermal
-            # noise is not yet included in the noise and quantum efficiency
-            # calculations
-            if !lossy
-                colnorm = zero(Float64)
-                for l in 1:n
-                    colnorm += abs2(S[l,q,kk])
-                end
-                if abs(colnorm - 1) > 1e-6
-                    lossy = true
-                end
-            end
             for p in 1:n
                 B[p,q,i] = -rinv2[p]*S[p,q,kk]
                 C[p,q,i] = r2[p]*S[p,q,kk]
@@ -168,7 +151,7 @@ function evaluatehybrid!(B::AbstractArray{Complex{Float64},3},
             C[p,p,i] += r2[p]
         end
     end
-    return B, C, lossy
+    return B, C
 end
 
 
@@ -231,7 +214,6 @@ struct ScatteringStampSystem
     Nmodes::Int
     Nauxports::Int
     scale::Float64
-    warnedlossy::Threads.Atomic{Bool}
 end
 
 """
@@ -376,8 +358,7 @@ function scatteringstampsystem(psc::ParsedSortedCircuit, Nmodes::Integer;
 
     return ScatteringStampSystem(blocks, kcl, pattern, patternindex,
         copy(patternindex), blockindex, pindex, qindex, coeff, sign,
-        modeindex, Int(Nmodes), auxbase - auxoffset, Float64(scale),
-        Threads.Atomic{Bool}(false))
+        modeindex, Int(Nmodes), auxbase - auxoffset, Float64(scale))
 end
 
 """
@@ -462,10 +443,6 @@ the complex conjugate data exactly as the conjugation of the conductance
 matrix does for resistors). The destination indices must have been set with
 [`setscatteringindexmap!`](@ref). Thread safe: evaluation buffers are local
 to the call and blocks are read only.
-
-Warns once when any block has loss, because the thermal noise of
-dissipative scattering blocks is not yet included in the noise and quantum
-efficiency calculations; the deterministic response is unaffected.
 """
 function assemblescattering!(A::SparseMatrixCSC,
     ssys::ScatteringStampSystem, wmodes::AbstractVector,
@@ -493,12 +470,8 @@ host, because it evaluates each block through its provider, which may be an
 arbitrary callable or an interpolation of tabulated data. What is left is a
 gather-add of these values into the stored entries, which is where the two
 backends part company: the host adds them here, and a device adds them with
-a kernel (see `devicescatteringstamps`). Splitting it this way is what lets
-both backends stamp identical values.
-
-Warns once when any block has loss, because the thermal noise of dissipative
-scattering blocks is not yet included in the noise and quantum efficiency
-calculations; the deterministic response is unaffected.
+a kernel (see [`DeviceScatteringStamps`](@ref)). Splitting it this way is
+what lets both backends stamp identical values.
 """
 function scatteringvalues!(values::AbstractVector,
     ssys::ScatteringStampSystem, wmodes::AbstractVector)
@@ -520,11 +493,7 @@ function scatteringvalues!(values::AbstractVector,
     Bs = work.Bs
     Cs = work.Cs
     for (bi, sb) in enumerate(ssys.blocks)
-        _, _, lossy = evaluatehybrid!(Bs[bi], Cs[bi], sb.block, wmodes,
-            work.hybrid)
-        if lossy && !Threads.atomic_xchg!(ssys.warnedlossy, true)
-            @warn "The scattering block at $(sb.name) is dissipative. Its deterministic response is included, but the thermal noise of dissipative scattering blocks is not yet included in the noise and quantum efficiency calculations." maxlog=1
-        end
+        evaluatehybrid!(Bs[bi], Cs[bi], sb.block, wmodes, work.hybrid)
     end
 
     @inbounds for c in eachindex(ssys.Aindex)
@@ -570,4 +539,428 @@ function scatteringlinearterm(psc::ParsedSortedCircuit,
     copyto!(ssys.Aindex, ssys.patternindex)
     assemblescattering!(Snm, ssys, wmodes)
     return spaddkeepzeros(Snm, ssys.kcl)
+end
+
+# === the vacuum noise of dissipative blocks ===
+
+"""
+    ScatteringNoisePlan
+
+The vacuum noise channels of the dissipative [`ScatteringBlock`](@ref)
+components of a circuit: which blocks of a [`ScatteringStampSystem`](@ref)
+carry noise and where their channels sit in the rows of the noise
+scattering matrix.
+
+A block which absorbs must add noise, or its output would violate the
+commutation relations. In the wave domain its constitutive equation is
+`b = S a + n` with an added noise wave whose vacuum covariance is
+`I - S S'`, and in the hybrid stamp
+
+    im*w_m*scale*B(w_m) phi - C(w_m) i = 2 n
+
+that noise is a source in the auxiliary port current rows. A block with `n`
+ports therefore carries `n` noise channels, one per eigenvector of
+`I - S S'`; those of a lossless block are identically zero, so only blocks
+which are not [`provablylossless`](@ref) are given channels.
+
+The channels of the blocks follow the noise ports of the dissipative
+lumped components in the rows of `Snoise`, with the same
+channel-major-mode-minor ordering.
+"""
+struct ScatteringNoisePlan
+    # index into the blocks of the stamp system, and the 0 based channel
+    # offset of each, in channel (not row) units
+    blockindices::Vector{Int}
+    channelbase::Vector{Int}
+    Nchannels::Int
+    Nmodes::Int
+end
+
+"""
+    planscatteringnoise(ssys)
+
+The [`ScatteringNoisePlan`](@ref) of a [`ScatteringStampSystem`](@ref), or
+`nothing` when the circuit has no scattering blocks or all of them are
+[`provablylossless`](@ref).
+
+The noise models which carry a covariance the analysis derives from the
+scattering data are supported: [`Passive`](@ref) and
+[`ThermalEquilibrium`](@ref), which differ only in the temperature the
+channels are at, and [`Lossless`](@ref), which declares there are none. A
+[`NoiseCovariance`](@ref) gives the covariance outright and is not lowered
+into a circuit.
+"""
+planscatteringnoise(::Nothing) = nothing
+function planscatteringnoise(ssys::ScatteringStampSystem)
+    blockindices = Int[]
+    channelbase = Int[]
+    nch = 0
+    for (bi, sb) in enumerate(ssys.blocks)
+        checknoisemodel(sb.block, sb.name)
+        # a block asserted lossless, or shown to be, adds nothing
+        sb.block.noise isa Lossless && continue
+        provablylossless(sb.block) && continue
+        push!(blockindices, bi)
+        push!(channelbase, nch)
+        nch += sb.block.nports
+    end
+    isempty(blockindices) && return nothing
+    return ScatteringNoisePlan(blockindices, channelbase, nch, ssys.Nmodes)
+end
+
+# the noise models other than Passive() are part of the component API but
+# not yet of the noise calculation; silently ignoring one would return a
+# quantum efficiency computed from a different block than the user asked
+# for, so they are an error at the point the noise is planned rather than a
+# warning
+function checknoisemodel(block::ScatteringBlock, name)
+    noise = block.noise
+    if noise isa Passive || noise isa Lossless ||
+            noise isa ThermalEquilibrium
+        return nothing
+    end
+    throw(ArgumentError(lazy"The scattering block at $(name) has the noise model $(noise), which the noise and quantum efficiency calculations do not yet support. Use Passive(), Lossless(), or ThermalEquilibrium(T), or request no noise outputs."))
+end
+checknoisemodel(block, name) = nothing
+
+"""
+    scatteringnoisenames(plan::ScatteringNoisePlan,
+        ssys::ScatteringStampSystem)
+
+The name of each noise channel of the plan, for labelling the rows of a
+keyed noise scattering matrix. A block with more than one port has one
+channel per port, distinguished by a channel number, because the
+eigenvectors of `I - S S'` mix the ports and no single port owns a channel.
+"""
+function scatteringnoisenames(plan::ScatteringNoisePlan,
+    ssys::ScatteringStampSystem)
+    names = Vector{String}(undef, plan.Nchannels)
+    for (e, bi) in enumerate(plan.blockindices)
+        sb = ssys.blocks[bi]
+        n = sb.block.nports
+        for c in 1:n
+            names[plan.channelbase[e]+c] = n == 1 ? sb.name :
+                string(sb.name, "#", c)
+        end
+    end
+    return names
+end
+
+"""
+    noisecovariance!(L, off, n, S, soff)
+
+The vacuum noise covariance `I - S S'` of an `n` port block, into the length
+`n*n` column major block of `L` at `off`, from the scattering matrix in the
+same layout at `soff` in `S`.
+
+Only the lower triangle is written, which is all
+[`psdcholesky!`](@ref) reads: the covariance is Hermitian.
+"""
+@inline function noisecovariance!(L, off::Integer, n::Integer, S, soff::Integer)
+    T = eltype(L)
+    @inbounds for c in 1:n
+        for p in c:n
+            acc = p == c ? one(T) : zero(T)
+            for l in 1:n
+                acc -= S[soff + (l-1)*n + p]*conj(S[soff + (l-1)*n + c])
+            end
+            L[off + (c-1)*n + p] = acc
+        end
+    end
+    return nothing
+end
+
+"""
+    psdcholesky!(L, off, n)
+
+Overwrite the length `n*n` column major block of `L` at `off`, whose lower
+triangle holds a Hermitian positive semidefinite matrix `V`, with a lower
+triangular factor satisfying `L L' = V`.
+
+The noise covariance of a block which is transparent in some direction, such
+as a series element, is singular, and rounding can make that of a lossless
+block slightly indefinite, so this is not a plain Cholesky factorization: a
+pivot which is not positive is taken as zero, which for a positive
+semidefinite matrix means its whole column is zero and there is nothing to
+divide by. The strict upper triangle held the covariance and is zeroed, so
+the result is the factor and nothing else.
+
+Any factor of the covariance describes the same noise: the channels are
+defined only up to a unitary mixing among them, and the quantum efficiency
+and the commutation relations read only sums over them. A triangular factor
+is chosen over an eigendecomposition because it is a few lines of arithmetic
+with no iteration, so the host and a kernel can share it and agree to the
+last bit.
+"""
+@inline function psdcholesky!(L, off::Integer, n::Integer)
+    @inbounds for c in 1:n
+        d = real(L[off + (c-1)*n + c])
+        for l in 1:c-1
+            d -= abs2(L[off + (l-1)*n + c])
+        end
+        if d > 0
+            r = sqrt(d)
+            L[off + (c-1)*n + c] = r
+            for p in c+1:n
+                acc = L[off + (c-1)*n + p]
+                for l in 1:c-1
+                    acc -= L[off + (l-1)*n + p]*conj(L[off + (l-1)*n + c])
+                end
+                L[off + (c-1)*n + p] = acc/r
+            end
+        else
+            for p in c:n
+                L[off + (c-1)*n + p] = 0
+            end
+        end
+    end
+    @inbounds for c in 2:n
+        for p in 1:c-1
+            L[off + (c-1)*n + p] = 0
+        end
+    end
+    return nothing
+end
+
+"""
+    checklosslessblocks(ssys::ScatteringStampSystem, w, wpumpmodes;
+        atol = 1e-6, nsamples = 32)
+
+Check the blocks of `ssys` which declare [`Lossless`](@ref) against the
+frequencies the sweep will solve at, and throw if one of them dissipates
+there.
+
+A block whose data is stored is held to the declaration when it is
+constructed. A callable cannot be, which is what the declaration is for, so
+this is the one check available: evaluate it at up to `nsamples` of the
+signal frequencies, at every pump mode, and see. Sampling can show that a
+block dissipates and can never show that it does not, so this catches a
+declaration which is wrong at a frequency it looked at and makes no promise
+about the rest. It is bounded rather than exhaustive because an exhaustive
+pass would cost a share of what the declaration saves.
+"""
+function checklosslessblocks(ssys::Union{Nothing,ScatteringStampSystem}, w,
+    wpumpmodes; atol::Real = 1e-6, nsamples::Integer = 32)
+
+    isnothing(ssys) && return nothing
+    any(sb -> sb.block.noise isa Lossless &&
+        !provablylossless(sb.block), ssys.blocks) || return nothing
+    nw = length(w)
+    step = max(1, cld(nw, nsamples))
+    ws = Float64[]
+    for i in 1:step:nw
+        for m in wpumpmodes
+            push!(ws, w[i] + m)
+        end
+    end
+    isempty(ws) && return nothing
+    work = HybridWorkspace()
+    for sb in ssys.blocks
+        (sb.block.noise isa Lossless && !provablylossless(sb.block)) || continue
+        checkoneblocklossless(sb.block, sb.name, ws, atol, work)
+    end
+    return nothing
+end
+
+# behind a function barrier: the block is stored untyped
+function checkoneblocklossless(block::ScatteringBlock, name, ws, atol, work)
+    n = block.nports
+    S = Array{Complex{Float64},3}(undef, n, n, length(ws))
+    evaluatescattering!(S, block, ws, work.absws)
+    worst = 0.0
+    worstw = 0.0
+    for k in eachindex(ws)
+        iszero(ws[k]) && continue
+        d = unitaritydeviation(view(S, :, :, k))
+        if d > worst
+            worst = d
+            worstw = ws[k]
+        end
+    end
+    if worst > atol
+        throw(ArgumentError(lazy"the scattering block at $(name) declares noise = Lossless(), but at $(worstw) rad/s the largest absolute entry of I - S*S' is $(worst). A block which dissipates must carry the noise its loss requires; use the default Passive() noise model."))
+    end
+    return nothing
+end
+
+"""
+    ScatteringNoiseWorkspace()
+
+The scratch of [`scatteringnoisewaves!`](@ref): the scattering parameters
+at the mode frequencies, the noise covariance and its factor, the port
+Norton currents, and the buffer of unsigned frequencies. Reused across
+frequencies by one worker.
+"""
+mutable struct ScatteringNoiseWorkspace
+    S::Array{Complex{Float64},3}
+    # the covariance and its factor, flat and column major, so that the
+    # factorization is the one the kernel runs
+    L::Vector{Complex{Float64}}
+    absws::Vector{Float64}
+end
+
+function ScatteringNoiseWorkspace()
+    return ScatteringNoiseWorkspace(
+        Array{Complex{Float64},3}(undef, 0, 0, 0),
+        Complex{Float64}[], Float64[])
+end
+
+# the node flux of a terminal in the adjoint solution, which is zero at
+# ground because ground carries no row
+@inline function terminalflux(phi::AbstractMatrix, node::Integer,
+    m::Integer, Nmodes::Integer, k::Integer)
+    node == 1 && return zero(eltype(phi))
+    return @inbounds phi[(node-2)*Nmodes + m, k]
+end
+
+"""
+    scatteringnoisewaves!(noiseoutputwave, plan::ScatteringNoisePlan,
+        ssys::ScatteringStampSystem, phiadj, wmodes, rowoffset,
+        work = ScatteringNoiseWorkspace())
+
+Write the noise output waves of the scattering block channels of `plan`
+into the rows of `noiseoutputwave` after `rowoffset`, from the adjoint
+solution `phiadj` at the mode frequencies `wmodes`.
+
+The noise wave `n` of a block enters its constitutive equation as a source
+in the auxiliary port current rows, so by the adjoint identity its
+contribution to the output is that source contracted against those same rows
+of the adjoint solution, weighted by the factor `L` of the vacuum covariance
+`L L' = I - S S'`:
+
+    noiseoutputwave[channel c] = sqrt(abs(w)) sum_p L[p,c] i[p]
+
+`phiadj` must be the solution of the *transposed* system, which is what
+[`hblinsolve`](@ref) solves for its adjoint. The conjugated pump system,
+which is the same matrix for a circuit without blocks, is not: it agrees with
+the transposed system in the node flux rows and not in the auxiliary port
+current rows, and on a non reciprocal block the two differ by the direction
+the block transmits in, so contracting it would give a block which emits its
+noise backwards.
+
+The channel of a mode whose frequency is zero is zero, matching the wave
+normalization of the lumped noise ports, which is singular there.
+"""
+function scatteringnoisewaves!(noiseoutputwave::AbstractMatrix,
+    plan::ScatteringNoisePlan, ssys::ScatteringStampSystem,
+    phiadj::AbstractMatrix, wmodes::AbstractVector, rowoffset::Integer,
+    work::ScatteringNoiseWorkspace = ScatteringNoiseWorkspace())
+
+    Nmodes = plan.Nmodes
+    if length(wmodes) != Nmodes
+        throw(DimensionMismatch(lazy"scatteringnoisewaves! received $(length(wmodes)) mode frequencies but the plan was built for $(Nmodes) modes."))
+    end
+    if size(noiseoutputwave,1) < rowoffset + plan.Nchannels*Nmodes
+        throw(DimensionMismatch(lazy"`noiseoutputwave` has $(size(noiseoutputwave,1)) rows but the scattering block channels need $(rowoffset + plan.Nchannels*Nmodes)."))
+    end
+    for (e, bi) in enumerate(plan.blockindices)
+        sb = ssys.blocks[bi]
+        # the block is stored untyped, so the per port and per mode work
+        # goes behind a function barrier
+        blocknoisewaves!(noiseoutputwave, sb.block, sb, wmodes, phiadj,
+            rowoffset + plan.channelbase[e]*Nmodes, Nmodes, work)
+    end
+    return noiseoutputwave
+end
+
+function blocknoisewaves!(noiseoutputwave::AbstractMatrix,
+    block::ScatteringBlock, sb::StampedScatteringBlock,
+    wmodes::AbstractVector, phiadj::AbstractMatrix, rowoffset::Integer,
+    Nmodes::Integer, work::ScatteringNoiseWorkspace)
+
+    n = block.nports
+    nrhs = size(phiadj, 2)
+    if size(work.S) != (n, n, Nmodes)
+        work.S = Array{Complex{Float64},3}(undef, n, n, Nmodes)
+        resize!(work.L, n*n)
+    end
+    S = work.S
+    L = work.L
+    evaluatescattering!(S, block, wmodes, work.absws)
+    for m in 1:Nmodes
+        if iszero(wmodes[m])
+            for c in 1:n
+                for k in 1:nrhs
+                    noiseoutputwave[rowoffset + (c-1)*Nmodes + m, k] = 0
+                end
+            end
+            continue
+        end
+        # the vacuum covariance of the added noise wave and its factor,
+        # `L L' = I - S S'`, in the flat layout the kernel of the device
+        # path uses so that the two compute the same channels
+        noisecovariance!(L, 0, n, S, (m-1)*n*n)
+        psdcholesky!(L, 0, n)
+        # the noise wave enters the constitutive equation as the source
+        # `2n` of the auxiliary port current rows, in the sqrt(power)
+        # normalization of the hybrid stamp; `sqrt(abs(w))` carries it to
+        # the sqrt(photons/second) normalization the outputs are in
+        kw = sqrt(abs(wmodes[m]))
+        @inbounds for k in 1:nrhs
+            for c in 1:n
+                acc = zero(Complex{Float64})
+                for p in 1:n
+                    acc += L[(c-1)*n + p]*
+                        phiadj[sb.auxbase + (p-1)*Nmodes + m, k]
+                end
+                noiseoutputwave[rowoffset + (c-1)*Nmodes + m, k] = kw*acc
+            end
+        end
+    end
+    return noiseoutputwave
+end
+
+"""
+    noisechanneltemperatures(psc::ParsedSortedCircuit,
+        noiseportimpedanceindices, noiseplan, ssys, temperature)
+
+The temperature of each row of the noise scattering matrix, in the order
+[`noisechannelnames`](@ref) gives them.
+
+`temperature` is the analysis default, which every dissipative element takes
+unless it states one of its own. A lumped component states it as
+`Resistor(R; temperature = T)` and a [`ScatteringBlock`](@ref) as
+`noise = ThermalEquilibrium(T)`, both of which are recorded by
+[`parsesortcircuit`](@ref) as it lowers the circuit. Only the typed circuit
+format carries them; a netlist of tuples states none and everything in it
+takes the default.
+
+A block with a [`NoiseCovariance`](@ref) is left alone entirely: its
+covariance is given rather than derived, and scaling something the caller
+supplied by a temperature would be modifying an answer they already know.
+"""
+function noisechanneltemperatures(psc, noiseportimpedanceindices, noiseplan,
+    ssys, temperature)
+
+    stated = psc.componenttemperatures
+    ts = Float64[get(stated, i, Float64(temperature))
+        for i in noiseportimpedanceindices]
+    isnothing(noiseplan) && return ts
+    # a block's ports lower to consecutive :S components, and its noise model
+    # was recorded against the first of them
+    index = psc.componentnamedict
+    for (e, bi) in enumerate(noiseplan.blockindices)
+        sb = ssys.blocks[bi]
+        i = get(index, sb.name, 0)
+        t = iszero(i) ? Float64(temperature) :
+            get(stated, i, Float64(temperature))
+        for _ in 1:sb.block.nports
+            push!(ts, t)
+        end
+    end
+    return ts
+end
+
+"""
+    noisechannelnames(componentnames, noiseportimpedanceindices, noiseplan,
+        ssys)
+
+The name of each row of the noise scattering matrix: the dissipative lumped
+components first, then the channels of the dissipative scattering blocks.
+"""
+function noisechannelnames(componentnames, noiseportimpedanceindices,
+    noiseplan, ssys)
+    names = String[String(componentnames[i]) for i in noiseportimpedanceindices]
+    isnothing(noiseplan) && return names
+    return vcat(names, scatteringnoisenames(noiseplan, ssys))
 end

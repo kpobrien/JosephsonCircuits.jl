@@ -139,3 +139,33 @@ end
         end
     end
 end
+
+@testset "hostsparse brings a device valued matrix home" begin
+    # A DeviceValuedSparseMatrix holds its structure as the transpose,
+    # because compressed sparse row of the transpose is compressed sparse
+    # column of the matrix, which is the layout a device direct solver wants.
+    # Bringing it home is therefore a copy back plus a sparse transpose, and
+    # getting that wrong would transpose the Jacobian a pump operating point
+    # retains. The struct is generic over where its parts live, so this runs
+    # the same arithmetic the device path does without a device.
+    using SparseArrays
+    for (m, n) in ((5, 5), (4, 7), (7, 4), (1, 3))
+        A = sprandn(m, n, 0.4)
+        # a non-symmetric structure, or a transpose would go unnoticed
+        At = SparseMatrixCSC(transpose(A))
+        dv = JosephsonCircuits.DeviceValuedSparseMatrix(At, nonzeros(At))
+        @test size(dv) == (m, n)
+        @test nnz(dv) == nnz(A)
+        B = JosephsonCircuits.hostsparse(dv)
+        @test B isa SparseMatrixCSC{Float64,Int}
+        @test B == A
+        @test B.colptr == A.colptr && B.rowval == A.rowval
+    end
+    # a host matrix is returned as it is
+    A = sprandn(6, 6, 0.3)
+    @test JosephsonCircuits.hostsparse(A) === A
+    # and reading an entry of the device valued form is still refused
+    At = SparseMatrixCSC(transpose(A))
+    dv = JosephsonCircuits.DeviceValuedSparseMatrix(At, nonzeros(At))
+    @test_throws ArgumentError dv[1, 1]
+end

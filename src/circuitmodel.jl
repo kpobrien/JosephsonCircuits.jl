@@ -26,53 +26,89 @@ Base.showerror(io::IO, e::ComponentNotSupportedError) = print(io,
 # === lumped linear components ===
 
 """
-    Inductor(L)
+    Inductor(L; temperature = nothing)
 
 A two terminal linear inductor with inductance `L` in Henries. Terminals are
 `1` and `2` with orientation from terminal 1 to terminal 2. The value may be
 a number or a symbolic variable.
 
+`temperature` is the physical temperature in Kelvin, which sets the noise a
+lossy instance adds; a lossless one adds none. `nothing`, the default, takes
+the temperature the analysis is run at.
+
 # Examples
 ```jldoctest
 julia> Inductor(1e-9)
-Inductor{Float64}(1.0e-9)
+Inductor{Float64}(1.0e-9, nothing)
+
+julia> Inductor(1e-9; temperature = 4.0).temperature
+4.0
 ```
 """
 struct Inductor{T} <: AbstractComponent
     L::T
+    # the physical temperature in Kelvin, or `nothing` to take the one the
+    # analysis is run at. Only a dissipative instance adds noise, so this is
+    # read only where it does.
+    temperature::Union{Nothing,Float64}
 end
+Inductor(L; temperature = nothing) = Inductor(L, temperature)
 
 """
-    Capacitor(C)
+    Capacitor(C; temperature = nothing)
 
 A two terminal linear capacitor with capacitance `C` in Farads. Terminals are
 `1` and `2`. The value may be a number or a symbolic variable.
 
+`temperature` is the physical temperature in Kelvin, which sets the noise a
+lossy instance adds; a lossless one adds none. `nothing`, the default, takes
+the temperature the analysis is run at.
+
 # Examples
 ```jldoctest
 julia> Capacitor(100e-15)
-Capacitor{Float64}(1.0e-13)
+Capacitor{Float64}(1.0e-13, nothing)
+
+julia> Capacitor(100e-15; temperature = 4.0).temperature
+4.0
 ```
 """
 struct Capacitor{T} <: AbstractComponent
     C::T
+    # the physical temperature in Kelvin, or `nothing` to take the one the
+    # analysis is run at. Only a dissipative instance adds noise, so this is
+    # read only where it does.
+    temperature::Union{Nothing,Float64}
 end
+Capacitor(C; temperature = nothing) = Capacitor(C, temperature)
 
 """
-    Resistor(R)
+    Resistor(R; temperature = nothing)
 
 A two terminal linear resistor with resistance `R` in Ohms. Terminals are `1`
 and `2`. The value may be a number or a symbolic variable.
 
+`temperature` is the physical temperature in Kelvin, which sets the noise a
+dissipative instance adds. `nothing`, the default, takes the temperature the
+analysis is run at.
+
 # Examples
 ```jldoctest
 julia> Resistor(50.0)
-Resistor{Float64}(50.0)
+Resistor{Float64}(50.0, nothing)
+
+julia> Resistor(50.0; temperature = 4.0).temperature
+4.0
 ```
 """
 struct Resistor{T} <: AbstractComponent
     R::T
+    # the physical temperature in Kelvin, or `nothing` to take the one the
+    # analysis is run at. Only a dissipative instance adds noise, so this is
+    # read only where it does.
+    temperature::Union{Nothing,Float64}
 end
+Resistor(R; temperature = nothing) = Resistor(R, temperature)
 
 # === sources and analysis ports ===
 
@@ -583,19 +619,53 @@ struct Native end
     Passive()
 
 The default noise model for a [`ScatteringBlock`](@ref): the block is a
-passive deterministic network with no locally specified noise. Temperature
-dependent thermal noise is supplied at analysis time, keeping temperature
-out of shared component definitions.
+passive network with no locally specified noise, so what it adds is set by
+what it absorbs and by the temperature the analysis is run at. A dissipative
+block adds noise of covariance `I - S S'` (see
+[`ScatteringNoisePlan`](@ref)), scaled by the thermal factor of the
+`temperature` or `temperatures` given to the analysis, which default to zero
+temperature and so to the vacuum covariance itself.
+
+Saying nothing here is what keeps temperature out of a component definition
+which several analyses share. [`ThermalEquilibrium`](@ref) is how a block
+states its own temperature instead.
 """
 struct Passive end
+
+"""
+    Lossless()
+
+A noise model for a [`ScatteringBlock`](@ref) whose scattering matrix is
+unitary at every frequency, so that it absorbs nothing and adds no noise.
+
+The default [`Passive`](@ref) gives a block noise channels unless its data
+can be shown to be unitary, which is possible for a constant matrix and for a
+table and not for a callable, whose values away from any sampled frequency
+are unknown. A lossless callable therefore carries channels which are
+identically zero: on a five hundred cell line that was measured at a third of
+the run time on the host and half of it on a backend, spent computing zeros.
+This is how to say so and get them back.
+
+Where the data can be checked it is, at construction, so asserting this of a
+constant or tabulated block which is not unitary is an error. For a callable
+it cannot be checked and is taken on trust: asserting it of a block which
+does absorb omits noise the block should add, and the quantum efficiency and
+the commutation relations will be wrong by that much.
+"""
+struct Lossless end
 
 """
     ThermalEquilibrium(temperature)
 
 A noise model for a passive [`ScatteringBlock`](@ref) in thermal equilibrium
-at the common physical temperature `temperature` in Kelvin. The added noise
-covariance is determined from the scattering data and the temperature by the
-passive thermal channel relation Y(ω) = ν_T(ω) R(I - S(ω) S(ω)').
+at the physical temperature `temperature` in Kelvin. The added noise
+covariance is the vacuum covariance `I - S S'` scaled by
+`coth(hbar*w/(2*k*T))`, the factor by which a mode at that temperature
+exceeds its vacuum noise.
+
+This states the block's temperature where the block is defined, so it
+overrides both the `temperature` and the `temperatures` arguments of the
+analysis. `ThermalEquilibrium(0)` is [`Passive`](@ref).
 """
 struct ThermalEquilibrium{T}
     temperature::T
@@ -649,12 +719,17 @@ Each port `p` has terminals `1` (signal) and `2` (reference), addressed as
 signal terminal of port `p`; explicitly connecting a reference terminal of a
 grounded block is an error.
 
-`noise` is [`Passive`](@ref) (default), [`ThermalEquilibrium`](@ref), or
-[`NoiseCovariance`](@ref). `negative_frequency` is
-[`ConjugateSymmetry`](@ref) (default) or [`Native`](@ref). Passivity of
-constant and tabulated scattering data is validated at construction with
-absolute tolerance `atol` unless the noise model is a `NoiseCovariance`,
-which permits active blocks.
+`noise` is [`Passive`](@ref) (default), [`Lossless`](@ref),
+[`ThermalEquilibrium`](@ref), or [`NoiseCovariance`](@ref). A dissipative
+block adds noise, which the noise scattering parameters, the quantum
+efficiency and the commutation relations account for; of the four models they
+support `Passive` and `Lossless` only, and a `NoiseCovariance` block does not
+lower into a circuit at all. `Lossless` is how a callable which is unitary
+says so, since unlike stored data it cannot be checked.
+`negative_frequency` is [`ConjugateSymmetry`](@ref) (default) or
+[`Native`](@ref). Passivity of constant and tabulated scattering data is
+validated at construction with absolute tolerance `atol` unless the noise
+model is a `NoiseCovariance`, which permits active blocks.
 
 # Examples
 ```jldoctest
@@ -695,6 +770,7 @@ function ScatteringBlock(S; nports = nothing, zref = 50.0,
     if !(noise isa NoiseCovariance)
         checkpassive(provider; atol = atol)
     end
+    checklossless(noise, provider)
     checknoise(noise, n)
     return ScatteringBlock(provider, n, zrefvec, grounded, noise,
         negative_frequency)
@@ -789,6 +865,78 @@ function checkpassive(p::TabulatedMatrixProvider; atol = 1e-8)
     return nothing
 end
 checkpassive(p::AbstractMatrixProvider; atol = 1e-8) = nothing
+
+"""
+    unitaritydeviation(S::AbstractMatrix)
+
+The largest absolute entry of `I - S S'`, which is zero for a lossless
+(unitary) scattering matrix. Unlike [`passivitymargin`](@ref) this sees
+gain as well as loss, so it is the quantity a lossless test compares
+against a tolerance.
+"""
+function unitaritydeviation(S::AbstractMatrix)
+    n = size(S,1)
+    worst = 0.0
+    for q in 1:n
+        for p in 1:n
+            acc = p == q ? one(Complex{Float64}) : zero(Complex{Float64})
+            for l in 1:n
+                acc -= S[p,l]*conj(S[q,l])
+            end
+            worst = max(worst, abs(acc))
+        end
+    end
+    return worst
+end
+
+"""
+    provablylossless(provider::AbstractMatrixProvider; atol = 1e-10)
+    provablylossless(block::ScatteringBlock; atol = 1e-10)
+
+Whether the scattering data can be shown to be unitary at every frequency
+from the data alone, which is possible for a constant matrix and for a
+table and is not for a callable, whose values away from any sampled
+frequency are unknown.
+
+A block which is not provably lossless carries vacuum noise channels
+([`ScatteringNoisePlan`](@ref)), and those of a block which is in fact
+lossless are identically zero. A `false` here therefore costs work and
+never correctness, which is why the fallback is `false`.
+"""
+provablylossless(p::AbstractMatrixProvider; atol = 1e-10) = false
+provablylossless(p::ConstantMatrixProvider; atol = 1e-10) =
+    unitaritydeviation(p.A) <= atol
+function provablylossless(p::TabulatedMatrixProvider; atol = 1e-10)
+    for k in axes(p.values,3)
+        unitaritydeviation(view(p.values,:,:,k)) <= atol || return false
+    end
+    return true
+end
+provablylossless(b::ScatteringBlock; atol = 1e-10) =
+    provablylossless(b.provider; atol = atol)
+
+# `Lossless` is an assertion about every frequency, which a constant matrix
+# and a table can be held to and a callable cannot
+function checklossless(noise::Lossless, provider)
+    if provider isa CallableMatrixProvider
+        return nothing
+    end
+    if !provablylossless(provider)
+        throw(ArgumentError("noise = Lossless() says the scattering matrix is unitary at every frequency, but this block's data is not: the largest absolute entry of I - S*S' over it is $(worstunitaritydeviation(provider)). Use the default Passive() noise model, which gives a dissipative block the noise its loss requires."))
+    end
+    return nothing
+end
+checklossless(noise, provider) = nothing
+
+# the worst deviation over stored data, for the message above
+worstunitaritydeviation(p::ConstantMatrixProvider) = unitaritydeviation(p.A)
+function worstunitaritydeviation(p::TabulatedMatrixProvider)
+    worst = 0.0
+    for k in axes(p.values,3)
+        worst = max(worst, unitaritydeviation(view(p.values,:,:,k)))
+    end
+    return worst
+end
 
 """
     evaluatescattering!(dest::AbstractArray{Complex{Float64},3},

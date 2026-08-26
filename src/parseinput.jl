@@ -33,7 +33,19 @@ struct ParsedSortedCircuit
     componentvalues::Vector
     componentnamedict::Dict{String, Int}
     Nnodes::Int
+    # the physical temperature of the components which state one, by index.
+    # Only the typed circuit format carries temperatures; a netlist of tuples
+    # leaves this empty and every dissipative component takes the temperature
+    # the analysis is run at.
+    componenttemperatures::Dict{Int,Float64}
 end
+
+# a circuit which states no temperatures, which is every netlist of tuples
+ParsedSortedCircuit(nodeindices, nodenames, mutualinductorbranchnames,
+    componentnames, componenttypes, componentvalues, componentnamedict,
+    Nnodes) = ParsedSortedCircuit(nodeindices, nodenames,
+        mutualinductorbranchnames, componentnames, componenttypes,
+        componentvalues, componentnamedict, Nnodes, Dict{Int,Float64}())
 
 """
     parsesortcircuit(circuit; sorting = :name)
