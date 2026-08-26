@@ -61,6 +61,10 @@ using JosephsonCircuits
 
     include("parseinput.jl")
 
+    include("circuit.jl")
+
+    include("scatteringstamp.jl")
+
     include("qesparams.jl")
 
     include("realcomplexconv.jl")

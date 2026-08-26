@@ -665,6 +665,9 @@ struct HBLinearizedSystem{TinvL,TG,TC,TAG}
     wpumpmodes::Vector{Float64}
     Nmodes::Int
     Nnodes::Int
+    # the multiport admittance contribution of the scattering block
+    # components (see ScatteringStampSystem), or nothing
+    scattering
 end
 
 """
@@ -690,13 +693,17 @@ function HBLinearizedSystem(Amatrixindices::Matrix, Ljb::SparseVector,
     Gnmcopy::SparseMatrixCSC, Cnmcopy::SparseMatrixCSC, invLnm, Gnm, Cnm,
     invLnmfreqsubstindices, Gnmfreqsubstindices, Cnmfreqsubstindices,
     Amna0::SparseMatrixCSC, AmnaG::SparseMatrixCSC,
-    symfreqvar, wpumpmodes, Nnodes::Integer)
+    symfreqvar, wpumpmodes, Nnodes::Integer; scattering = nothing)
 
     # the sparsity structure must contain the modified nodal analysis
     # augmentation as well, so merge its entries into the numeric copies
     # used only for the structure. the source index stride is the size of
     # the pump frequency grid, the leading dimensions of phimatrix.
     invLnmpattern = spaddkeepzeros(spaddkeepzeros(invLnmcopy, Amna0), AmnaG)
+    if !isnothing(scattering)
+        # the scattering block contribution shares the structure
+        invLnmpattern = spaddkeepzeros(invLnmpattern, scattering.pattern)
+    end
     Asparse, complexjacobianplan = plancomplexjacobian(Amatrixindices, Ljb,
         1, Rbnm, Nmodes, Nbranches, prod(size(phimatrix)[1:end-1]),
         invLnmpattern, Gnmcopy, Cnmcopy)
@@ -709,6 +716,9 @@ function HBLinearizedSystem(Amatrixindices::Matrix, Ljb::SparseVector,
     Amna0indexmap = sparseaddmap(Asparse, Amna0)
     AmnaGindexmap = sparseaddmap(Asparse, AmnaG)
     AmnaGfreqsubstindices = symbolicindices(AmnaG)
+    if !isnothing(scattering)
+        setscatteringindexmap!(scattering, Asparse)
+    end
 
     # assemble the pump modulation contribution and its complex conjugate
     # (for the adjoint system) once, so resetting the system matrix at each
@@ -725,7 +735,8 @@ function HBLinearizedSystem(Amatrixindices::Matrix, Ljb::SparseVector,
         AoLjnmconjnzval, invLnm, Gnm, Cnm, invLnmindexmap, Gnmindexmap,
         Cnmindexmap, invLnmfreqsubstindices, Gnmfreqsubstindices,
         Cnmfreqsubstindices, Amna0, AmnaG, Amna0indexmap, AmnaGindexmap,
-        AmnaGfreqsubstindices, symfreqvar, wpumpmodes, Nmodes, Nnodes)
+        AmnaGfreqsubstindices, symfreqvar, wpumpmodes, Nmodes, Nnodes,
+        scattering)
 end
 
 """
@@ -809,6 +820,13 @@ function assemblesystemmatrix!(A::SparseMatrixCSC,
     sparseadd!(A, 1, lsys.Amna0, lsys.Amna0indexmap)
     sparseaddconjsubst!(A, im, lsys.AmnaG, lsys.AmnaGindexmap, wmodes, 1,
         lsys.AmnaGfreqsubstindices, lsys.symfreqvar)
+
+    # the multiport admittance contribution of the scattering block
+    # components: sign * im * w_m * Y[p,q](w_m) per contribution, the
+    # frequency dependent generalization of the conductance term
+    if !isnothing(lsys.scattering)
+        assemblescattering!(A, lsys.scattering, wmodes)
+    end
 
     return A
 end

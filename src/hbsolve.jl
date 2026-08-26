@@ -922,12 +922,16 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         psc.mutualinductorbranchnames, signalnm.vvn)
     coupledbranches = mnacoupledbranches(signalnm.Mb)
     Nauxmnar = length(mnaindices)*Nsignalmodes
-    Nauxmna = Nauxmnar + length(coupledbranches)*Nsignalmodes
+    Nauxscattering = countscatteringports(psc)*Nsignalmodes
+    Nauxmna = Nauxmnar + length(coupledbranches)*Nsignalmodes +
+        Nauxscattering
     Nnodalmna = (psc.Nnodes-1)*Nsignalmodes
     Amna0, AmnaG = calcAmnasplit(mnaindices, psc.nodeindices, signalnm.vvn,
         Nsignalmodes, psc.Nnodes)
-    Amna0 = mnapad(Amna0, length(coupledbranches)*Nsignalmodes)
-    AmnaG = mnapad(AmnaG, length(coupledbranches)*Nsignalmodes)
+    Amna0 = mnapad(Amna0, length(coupledbranches)*Nsignalmodes +
+        Nauxscattering)
+    AmnaG = mnapad(AmnaG, length(coupledbranches)*Nsignalmodes +
+        Nauxscattering)
     if !isempty(coupledbranches)
         # the coupled inductor branches: numericmatrices already excludes
         # them from the inverse inductance matrix; add the branch flux
@@ -965,6 +969,9 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     sensitivityindices = zeros(Int,length(sensitivitynames))
     for i in eachindex(sensitivitynames)
         sensitivityindices[i] = componentnamedict[sensitivitynames[i]]
+        if componenttypes[sensitivityindices[i]] == :S
+            throw(ArgumentError(lazy"Sensitivities with respect to scattering block components are not supported; got $(sensitivitynames[i])."))
+        end
     end
 
     # calculate the source currents
@@ -1021,10 +1028,25 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # machinery used for the Jacobians of the nonlinear system, see
     # HBLinearizedSystem and plancomplexjacobian. The per-frequency system
     # matrices are assembled from this object with assemblesystemmatrix!.
+    # the hybrid (wave to modified nodal analysis) contribution of the
+    # scattering block components: constant Kirchhoff current law couplings
+    # of the auxiliary port currents (folded into the constant augmentation
+    # matrix) and the frequency dependent constitutive equations, assembled
+    # per frequency alongside the conductance term
+    ssys = scatteringstampsystem(psc, Nsignalmodes;
+        auxoffset = Nnodalmna + Nauxmna - Nauxscattering,
+        Ntotal = Nnodalmna + Nauxmna, scale = 1.0)
+    if !isnothing(ssys)
+        if returnSsensitivity
+            throw(ArgumentError("component sensitivities are not yet supported together with scattering blocks: the reverse contraction reuses the transposed forward factorization, which the hybrid scattering stamps invalidate."))
+        end
+        Amna0 = spaddkeepzeros(Amna0, ssys.kcl)
+    end
     lsys = HBLinearizedSystem(Amatrixindices, signalnm.Ljb, Rbnmmna,
         Nsignalmodes, cg.Nbranches, phimatrix, invLnmcopy, Gnmcopy, Cnmcopy,
         invLnm, Gnm, Cnm, invLnmfreqsubstindices, Gnmfreqsubstindices,
-        Cnmfreqsubstindices, Amna0, AmnaG, symfreqvar, wpumpmodes, Nnodes)
+        Cnmfreqsubstindices, Amna0, AmnaG, symfreqvar, wpumpmodes, Nnodes;
+        scattering = ssys)
     Asparse = lsys.Asparse
 
     portimpedances = [vvn[i] for i in portimpedanceindices]
@@ -1471,6 +1493,12 @@ struct LinearizedWorkspace{TA,TC,TR}
     cache::FactorizationCache
     Sworking::Matrix{Complex{Float64}}
     Snoiseworking::Matrix{Complex{Float64}}
+    # the adjoint (conjugated pump) system copy and factorization cache,
+    # allocated when the system has scattering blocks: their hybrid rows
+    # break the diagonal similarity that otherwise lets the adjoint reuse
+    # the transposed forward factorization
+    Asparseadjoint::Union{Nothing,SparseMatrixCSC{Complex{Float64},Int}}
+    adjointcache::Union{Nothing,FactorizationCache}
 end
 
 """
@@ -1518,7 +1546,9 @@ function LinearizedWorkspace(arrays::LinearizedArrays, sensitivity, lsys,
         # a copy of the system matrix, because it is modified per frequency,
         # potentially by several workers at once
         assembles ? copy(lsys.Asparse) : lsys.Asparse,
-        FactorizationCache(), cplx(np, np), cplx(Nnoiseports*Nmodes, np))
+        FactorizationCache(), cplx(np, np), cplx(Nnoiseports*Nmodes, np),
+        isnothing(lsys.scattering) ? nothing : copy(lsys.Asparse),
+        isnothing(lsys.scattering) ? nothing : FactorizationCache())
 end
 
 """
@@ -1580,6 +1610,8 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     cache = ws.cache
     Sworking = ws.Sworking
     Snoiseworking = ws.Snoiseworking
+    Asparseadjoint = ws.Asparseadjoint
+    adjointcache = ws.adjointcache
 
     # whether the transposed (adjoint) system must be solved at each
     # frequency: for the sensitivities always, and otherwise when a
@@ -1678,7 +1710,24 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
             # answers while replacing an assembly and a factorization at every
             # signal frequency with a pair of triangular solves.
             if isnothing(presolvedadjoint)
-                trysolvetranspose!(phin, cache.factorization, bnm)
+                if isnothing(lsys.scattering)
+                    trysolvetranspose!(phin, cache.factorization, bnm)
+                else
+                    # the hybrid scattering rows break the diagonal
+                    # similarity between the transposed forward system and
+                    # the conjugated pump system (their constant Kirchhoff
+                    # couplings and frequency dependent constitutive
+                    # entries exchange under transposition), so assemble
+                    # and factorize the adjoint system independently. This
+                    # is the construction the similarity shortcut is tested
+                    # against, and is also correct for non reciprocal
+                    # blocks.
+                    assemblesystemmatrix!(Asparseadjoint, lsys, wmodes;
+                        conjugatepump = true)
+                    tryfactorize!(adjointcache, factorization,
+                        Asparseadjoint)
+                    trysolve!(phin, adjointcache.factorization, bnm)
+                end
             else
                 presolvedadjoint(i, phin)
             end
@@ -3159,6 +3208,9 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     sensitivityindices = zeros(Int,length(sensitivitynames))
     for i in eachindex(sensitivitynames)
         sensitivityindices[i] = componentnamedict[sensitivitynames[i]]
+        if componenttypes[sensitivityindices[i]] == :S
+            throw(ArgumentError(lazy"Sensitivities with respect to scattering block components are not supported; got $(sensitivitynames[i])."))
+        end
     end
 
     # calculate the diagonal frequency matrices
@@ -3226,6 +3278,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     rmul!(Gnm,Lmean)
     rmul!(invLnm,Lmean)
 
+
     # Set up the modified nodal analysis (MNA) formulation, which assigns
     # auxiliary branch current variables to the port resistors, keeping their
     # constitutive relations as explicit equations, and adds one gauge
@@ -3246,7 +3299,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     mnaindices = mnaportresistorindices(componenttypes, nodeindices,
         psc.mutualinductorbranchnames, vvn)
     Nauxr = length(mnaindices)*Nmodes
-    Naux = Nauxr + length(coupledbranches)*Nmodes
+    Nauxscattering = countscatteringports(psc)*Nmodes
+    Naux = Nauxr + length(coupledbranches)*Nmodes + Nauxscattering
     # remove the promoted resistors from the conductance matrix, applying
     # the same conjugation and scaling as for Gnm above.
     if !isempty(mnaindices)
@@ -3274,10 +3328,29 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # pad with the coupled inductor auxiliary variables and add their
     # constitutive equations and Kirchhoff current law couplings, which are
     # real and frequency independent (see calcAmnaind).
-    Amna = mnapad(Amna, length(coupledbranches)*Nmodes)
+    Amna = mnapad(Amna, length(coupledbranches)*Nmodes + Nauxscattering)
     AmnaL = calcAmnaind(coupledbranches, Lb, Mb, cg.Rbn, Nmodes,
         Nnodal + Nauxr, Nnodal + Naux, Lmean)
     Amna = spaddkeepzeros(Amna, AmnaL)
+    # the hybrid (wave to modified nodal analysis) contribution of the
+    # scattering block components: the pump mode frequencies are fixed, so
+    # the constitutive equations im*w_m*Lmean*B(w_m)*phi - C(w_m)*i = 0 and
+    # the Kirchhoff current law couplings of the auxiliary port currents
+    # form a constant matrix, folded into the augmentation exactly like the
+    # promoted resistor equations (same signed frequency conjugation
+    # convention and Lmean scaling; see scatteringlinearterm). The
+    # residual, Jacobian, and solver machinery operate on the augmented
+    # system unchanged.
+    if Nauxscattering > 0
+        # The pump mode frequencies are fixed, so this is a constant matrix
+        # folded into the augmentation before the solve begins, exactly as
+        # the promoted resistor equations are. Nothing about it is per
+        # iteration, so it needs nothing of the backend: the augmented
+        # system it produces is what every backend already solves.
+        Amna = spaddkeepzeros(Amna, scatteringlinearterm(psc, wmodes,
+            Nmodes; auxoffset = Nnodal + Naux - Nauxscattering,
+            Ntotal = Nnodal + Naux, scale = Lmean))
+    end
     # pad the system matrices and vectors with the auxiliary variables.
     # the incidence matrix gains empty columns so the branch fluxes and
     # the Josephson junction terms are unaffected, and the constant MNA
@@ -3289,9 +3362,11 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     Gnm = mnapad(Gnm, Naux)
     bnm = vcat(bnm, zeros(eltype(bnm), Naux))
     wmodesm = Diagonal(repeat(wmodes,
-        outer = Nnodes-1+length(mnaindices)+length(coupledbranches)))
+        outer = Nnodes-1+length(mnaindices)+length(coupledbranches)+
+            countscatteringports(psc)))
     wmodes2m = Diagonal(repeat(wmodes.^2,
-        outer = Nnodes-1+length(mnaindices)+length(coupledbranches)))
+        outer = Nnodes-1+length(mnaindices)+length(coupledbranches)+
+            countscatteringports(psc)))
     if length(x) == Nnodal
         # accept a nodal initial guess, materializing keyed arrays or
         # other array types into a plain vector. transform it into the

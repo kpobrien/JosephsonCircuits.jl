@@ -82,6 +82,16 @@ const boltzmann_constant = 1.380649e-23
 # then circuit is solved using the harmonic balance method, and postprocessed
 # to determine the scattering parameters and quantum efficiency. 
 include("parseinput.jl")
+
+# The typed circuit representation: component models, Circuit/Interface,
+# hierarchy elaboration, scattering parameter stamps for the solvers, and
+# the legacy tuple netlist adapters.
+include("circuitmodel.jl")
+include("circuit.jl")
+include("elaborate.jl")
+include("scatteringstamp.jl")
+include("legacyadapter.jl")
+
 include("graphproc.jl")
 include("capindmat.jl")
 include("matutils.jl")
@@ -517,6 +527,15 @@ end
 export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
     @variables, @register_symbolic, Num, Symbolics, connectS, solveS
+
+# the typed circuit representation
+export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
+    Inductor, Capacitor, Resistor, CurrentSource, VoltageSource, Port,
+    MutualInductor, JosephsonJunction, NonlinearInductor, PolynomialCPR,
+    ScatteringBlock, GaussianChannel, TransmissionLine, Passive,
+    ThermalEquilibrium, NoiseCovariance, ConjugateSymmetry, Native,
+    elaborate, ElaboratedCircuit, quadraturetransform,
+    ComponentNotSupportedError
 
 
 # the below precompile directives are to help the compiler perform type inference
