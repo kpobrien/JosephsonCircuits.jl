@@ -780,13 +780,10 @@ transposed forward system,
 
     A(conjugate pump) = D*transpose(A(pump))*inv(D),
 
-with `D` diagonal, equal to one on every node flux row and, on the auxiliary
-branch current rows of the modified nodal analysis augmentation, equal to the
-assembled conductance entry `im*w_m/R_r` of the constitutive equation of the
-corresponding promoted resistor and mode. (The promoted resistances are
-constant and real by construction, see [`mnaportresistorindices`](@ref), so
-the negative frequency conjugation of `sparseaddconjsubst!`, which acts on
-the stored conductance and not on the frequency factor, is trivial here.)
+with `D` diagonal, equal to one on every node flux row. (Historically `D`
+also carried the constitutive-equation conductance of promoted port
+resistors on their auxiliary rows; port resistors are no longer promoted,
+so no such rows exist.)
 Nothing else contributes, so long as the circuit has no scattering blocks: the
 auxiliary rows of the promoted coupled inductors are already symmetric (see
 [`calcAmnaind`](@ref)); the linear term matrices are symmetric and mode

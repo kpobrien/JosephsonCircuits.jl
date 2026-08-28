@@ -183,7 +183,11 @@ using Test
             push!(J, (node-1)*Nmodes + m)
             push!(V, 1.0)
         end
-        Rbnm3 = sparse(I, J, V, size(sys.Rbnm,1), size(sys.Rbnm,2))
+        # the column count must cover the three fake node blocks even when
+        # the system itself has fewer columns (nothing is promoted, so
+        # there are no auxiliary columns to borrow)
+        Rbnm3 = sparse(I, J, V, size(sys.Rbnm,1),
+            max(size(sys.Rbnm,2), 3*Nmodes))
         @test_throws ArgumentError JosephsonCircuits.plannonlinearterm(
             Rbnm3, sys.Ljb, sys.Lmean, Nbranches, sys.freqindexmap,
             sys.conjsourceindices, sys.conjtargetindices, sys.phimatrix,

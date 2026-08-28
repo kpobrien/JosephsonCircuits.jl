@@ -302,11 +302,6 @@ using Test
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
-        # only the numeric port resistor is promoted
-        @test JosephsonCircuits.mnaportresistorindices(
-            [:P,:R,:C,:Lj,:C,:R], [2 2 2 3 3 3; 1 1 3 1 1 1], [],
-            Any[1, 50.0, 1e-13, 1e-9, 1e-12, 1.0e6 + 1e-3*w]) == [2]
-
         out = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
             ftol = 1e-12, symfreqvar = w)
         @test out.solverinfo.converged
@@ -375,18 +370,6 @@ using Test
         # the gauge fixed flux is zero in the returned solution
         @test abs(shifted.nodeflux[dcindex]) <= 1e-12
 
-        # a full augmented initial state (node fluxes followed by
-        # auxiliary currents, mode index fastest) is accepted; the
-        # auxiliary currents are reconciled with the constitutive
-        # relations, so even inconsistent values converge
-        Naux = Nmodes  # one promoted resistor
-        xaug = vcat(Vector(ref.nodeflux[:]),
-            fill(complex(1e3), Naux))
-        aug = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true, x0 = xaug)
-        @test aug.solverinfo.converged
-        @test isapprox(Vector(ref.nodeflux[:]), Vector(aug.nodeflux[:]),
-            atol = 1e-9)
     end
 
     @testset "hbnlsolve mna near balanced incompatible dc source" begin
@@ -705,10 +688,9 @@ using Test
 
     @testset "debugJacobian with the MNA formulation" begin
         # the debug early return provides the augmented residual, Jacobian,
-        # state, and assembly closure. with a promoted resistor and a DC
-        # gauge row present, the dimensions include the auxiliary
-        # coordinates and the constant MNA structure is in place after one
-        # evaluation.
+        # state, and assembly closure. with a DC gauge row present the
+        # constant MNA structure is in place after one evaluation; no
+        # components are promoted, so there are no auxiliary coordinates.
         circuit, circuitdefs = jpacircuit()
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
@@ -718,13 +700,13 @@ using Test
         Ntot = length(x)
         @test length(F) == Ntot
         @test size(J) == (Ntot, Ntot)
-        # one promoted resistor and two non-ground nodes: three blocks of
-        # Nmodes entries each
-        @test Ntot % 3 == 0
-        Nmodes = Ntot ÷ 3
+        # two non-ground nodes and no promoted components: the system is
+        # purely nodal (port resistors stay as node conductances)
+        @test Ntot % 2 == 0
+        Nmodes = Ntot ÷ 2
         Nnodal = 2*Nmodes
         @test d.Nnodal == Nnodal
-        @test length(d.mnaindices) == 1
+        @test isempty(d.mnaindices)
         @test length(d.gaugeindices) == 1
         # evaluate the closure at the zero state to fill the true residual
         # and Jacobian
@@ -735,10 +717,6 @@ using Test
         # DC coordinate of node 1: an exact one on the diagonal, since all
         # other contributions to that entry vanish at zero frequency
         @test J[1,1] == 1
-        # the constitutive rows carry an exact minus one on the diagonal
-        for m in 1:Nmodes
-            @test J[Nnodal+m, Nnodal+m] == -1
-        end
         # the real Jacobian of the equivalent real system carries the same
         # augmented structure through the shared plan machinery
         Fr = copy(d.Fr)
@@ -874,28 +852,6 @@ using Test
                 outputport=1, inputmode=(0,), inputport=1)),
             [0.9955631849311455, 0.8687783963970223, 0.8686637478305292,
                 0.9955599960987674], atol = 1e-6)
-    end
-
-    @testset "mnaportresistorindices" begin
-        # only resistors sharing a branch with a port are promoted; the
-        # interior resistor stays in the conductance matrix
-        @test JosephsonCircuits.mnaportresistorindices(
-            [:P,:R,:C,:Lj,:R],[2 2 2 3 3;1 1 3 1 1],[],
-            [1,50.0,1e-12,1e-9,25.0]) == [2]
-        # no ports, no promotion
-        @test JosephsonCircuits.mnaportresistorindices(
-            [:R,:C,:Lj],[2 2 3;1 3 1],[],[50.0,1e-12,1e-9]) == Int[]
-        # complex storage of a real resistance at a port is promoted; the
-        # port node order may be reversed relative to the resistor
-        @test JosephsonCircuits.mnaportresistorindices(
-            [:P,:R],[2 1;1 2],[],Any[1,Complex{Float64}(50.0)]) == [2]
-        # nonzero imaginary part and symbolic values at a port are not
-        # promoted and remain in the conductance matrix
-        @variables Rsym
-        @test JosephsonCircuits.mnaportresistorindices(
-            [:P,:R],[2 2;1 1],[],Any[1,50.0+1.0im]) == Int[]
-        @test JosephsonCircuits.mnaportresistorindices(
-            [:P,:R],[2 2;1 1],[],Any[1,Rsym]) == Int[]
     end
 
     @testset "calcstaticfluxcomponents and calcdcgaugeindices" begin

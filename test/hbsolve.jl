@@ -540,9 +540,11 @@ using Test
                         norm = v->maximum(abs,v))
                     @test isapprox(xconj, D*xtrans, rtol = 1e-8,
                         norm = v->maximum(abs,v))
-                    # the auxiliary rows really are different, so the node flux
-                    # agreement above is not vacuous
-                    if d.Nauxmna > 0
+                    # with no promoted components there are no asymmetric
+                    # auxiliary rows; if promoted elements (e.g. voltage
+                    # sources) are ever added, their rows differ under the
+                    # similarity and this guard reactivates
+                    if d.Nauxmnar > 0
                         aux = (d.Nnodalmna+1):(d.Nnodalmna+d.Nauxmnar)
                         @test !isapprox(xconj[aux,:], xtrans[aux,:])
                     end

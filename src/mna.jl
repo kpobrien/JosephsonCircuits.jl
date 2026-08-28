@@ -50,52 +50,6 @@ mnaresistance(value::Real) = value
 mnaresistance(value::Complex) = real(value)
 
 """
-    mnaportresistorindices(componenttypes::Vector{Symbol},
-        nodeindices::Matrix{Int}, mutualinductorbranchnames::Vector,
-        vvn::Vector)
-
-Return the sorted indices of the resistors which are promoted to auxiliary
-branch current variables for MNA: the port resistors (resistors sharing a
-branch with a port, see [`calcportimpedanceindices`](@ref)) whose value is
-accepted by [`ismnaresistance`](@ref). All other resistors remain as node
-conductances. Eliminating the auxiliary variable of a promoted resistor
-recovers its conductance stamp exactly, so the two forms are algebraically
-equivalent wherever the nodal form is well posed, and leaving the interior
-resistors in the conductance matrix keeps the augmented system small. The
-port resistors are promoted so their branch currents are explicit solver
-unknowns; the hybrid form of their constitutive equations is the stamp
-which generalizes to elements a conductance cannot express, such as
-voltage sources and scattering parameter blocks.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.mnaportresistorindices([:P,:R,:C,:Lj,:R],[2 2 2 3 3;1 1 3 1 1],[],[1,50.0,1e-12,1e-9,25.0])
-1-element Vector{Int64}:
- 2
-
-julia> JosephsonCircuits.mnaportresistorindices([:P,:R,:C,:Lj],[2 2 2 3;1 1 3 1],[],Any[1,50.0+0.0im,1e-12,1e-9])
-1-element Vector{Int64}:
- 2
-
-julia> JosephsonCircuits.mnaportresistorindices([:R,:C,:Lj],[2 2 3;1 3 1],[],[50.0,1e-12,1e-9])
-Int64[]
-```
-"""
-function mnaportresistorindices(componenttypes::Vector{Symbol},
-    nodeindices::Matrix{Int}, mutualinductorbranchnames::Vector,
-    vvn::Vector)
-    portimpedanceindices = calcportimpedanceindices(componenttypes,
-        nodeindices, mutualinductorbranchnames, vvn)
-    mnaindices = Int[]
-    for i in portimpedanceindices
-        if ismnaresistance(vvn[i])
-            push!(mnaindices, i)
-        end
-    end
-    return sort!(mnaindices)
-end
-
-"""
     calcstaticfluxcomponents(componenttypes::Vector{Symbol},
         nodeindices::Matrix{Int}, vvn::Vector, Nnodes::Int)
 
@@ -500,43 +454,6 @@ function calcAmna(mnaindices::Vector{Int}, nodeindices::Matrix{Int},
     return sparse(vcat(I0, IG), vcat(J0, JG), vcat(V0, VG), Ntot, Ntot)
 end
 
-"""
-    mnasubtractpromoted(Gnm::SparseMatrixCSC, Gnmp::SparseMatrixCSC)
-
-Return a copy of the conductance matrix `Gnm` with the stamp `Gnmp` of the
-promoted resistors subtracted from `Gnmp`. Every stored entry of `Gnmp` is
-also a stored entry of `Gnm` because the promoted resistors are a subset of
-the resistors stamped into `Gnm`, so the sparsity structure is unchanged.
-Unlike the generic sparse subtraction, this works when `Gnm` has a
-non-concrete element type, which occurs when the circuit also contains
-symbolic (frequency dependent) resistors.
-"""
-function mnasubtractpromoted(Gnm::SparseMatrixCSC, Gnmp::SparseMatrixCSC)
-    G = copy(Gnm)
-    rows = rowvals(G)
-    vals = nonzeros(G)
-    I, J, V = findnz(Gnmp)
-    for k in eachindex(I)
-        # locate the entry within the existing structure of G and assert
-        # its presence rather than allowing a silent structural insertion
-        found = false
-        for p in nzrange(G, J[k])
-            if rows[p] == I[k]
-                vals[p] -= V[k]
-                found = true
-                break
-            end
-        end
-        if !found
-            throw(ArgumentError("The stamp of a promoted resistor at "*
-                "position ($(I[k]), $(J[k])) is not present in the "*
-                "conductance matrix structure. This indicates an "*
-                "inconsistency between the resistor stamps and their "*
-                "promoted subset."))
-        end
-    end
-    return G
-end
 
 """
     mnapad(A::SparseMatrixCSC, Naux::Int)

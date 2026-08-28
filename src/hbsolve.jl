@@ -1038,8 +1038,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # gauge fixing equations are needed because modes at (numerically) zero
     # total frequency are not permitted.
     checkstaticstiffnessvalues(psc.componenttypes, signalnm.vvn)
-    mnaindices = mnaportresistorindices(psc.componenttypes, psc.nodeindices,
-        psc.mutualinductorbranchnames, signalnm.vvn)
+    # no promoted components; see the matching comment in hbnlsolve
+    mnaindices = Int[]
     coupledbranches = mnacoupledbranches(signalnm.Mb)
     Nauxmnar = length(mnaindices)*Nsignalmodes
     Nauxscattering = countscatteringports(psc)*Nsignalmodes
@@ -1062,12 +1062,6 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
             cg.Rbn, Nsignalmodes, Nnodalmna + Nauxmnar,
             Nnodalmna + Nauxmna, 1)
         Amna0 = spaddkeepzeros(Amna0, AmnaL)
-    end
-    if !isempty(mnaindices)
-        Gnmp = calcGn(psc.componenttypes[mnaindices],
-            psc.nodeindices[:, mnaindices], signalnm.vvn[mnaindices],
-            Nsignalmodes, psc.Nnodes)
-        Gnm = mnasubtractpromoted(Gnm, Gnmp)
     end
     if Nauxmna > 0
         Cnm = mnapad(Cnm, Nauxmna)
@@ -2076,7 +2070,7 @@ classification repeats linear searches per component, which becomes
 quadratic over a large sensitivity set.
 """
 function componentlookups(mnaindices, coupledbranches, Ljb)
-    return (mnaordinal = Dict(idx => r for (r, idx) in enumerate(mnaindices)),
+    return (
         coupled = Set(coupledbranches),
         junctionordinal = Dict(b => j for (j, b) in enumerate(Ljb.nzind)))
 end
@@ -2096,9 +2090,6 @@ conventions agree by construction. Returns one of
 - `(:C, M)`: the component's capacitance matrix,
 - `(:G, M)`: the component's conductance matrix, for a resistor which is not
     promoted by the modified nodal analysis formulation,
-- `(:Gpromoted, r)`: the ordinal `r` of a promoted resistor within
-    `mnaindices`, whose conductance appears only in its constitutive
-    equation rows of the caller's augmentation,
 - `(:Lj, j)`: the ordinal `j` of a Josephson junction within the junction
     branch vector `nm.Ljb`,
 - `(:invL, M)`: the component's inverse inductance matrix.
@@ -2129,13 +2120,8 @@ function componentstamp(idx::Integer, psc::ParsedSortedCircuit,
         return (:C, calcCn(componenttypes[[idx]], nodeindices[:,[idx]],
             vvn[[idx]], Nmodes, Nnodes))
     elseif componenttype == :R
-        r = get(lookups.mnaordinal, idx, nothing)
-        if isnothing(r)
-            return (:G, calcGn(componenttypes[[idx]], nodeindices[:,[idx]],
-                vvn[[idx]], Nmodes, Nnodes))
-        else
-            return (:Gpromoted, r)
-        end
+        return (:G, calcGn(componenttypes[[idx]], nodeindices[:,[idx]],
+            vvn[[idx]], Nmodes, Nnodes))
     elseif componenttype == :L
         b = cg.edge2indexdict[(n1, n2)]
         if b in lookups.coupled
@@ -2276,24 +2262,6 @@ function calcresidualsensitivity(op::HBOperatingPoint,
                 scale = power == 0 ? c*xc : power == 1 ? c*w*xc : c*w^2*xc
                 for pp in nzrange(Ms, col)
                     pushentry!(rows[pp], comp, vals[pp]*scale)
-                end
-            end
-        elseif kind == :Gpromoted
-            # a promoted resistor appears only in the conductance entries
-            # of its constitutive equations, which are the auxiliary rows
-            # of that resistor with node flux columns.
-            rowlo = op.Nnodal + (info-1)*Nmodes + 1
-            rowhi = op.Nnodal + info*Nmodes
-            rows = rowvals(op.Amna)
-            vals = nonzeros(op.Amna)
-            for col in 1:op.Nnodal
-                xc = x[col]
-                iszero(xc) && continue
-                for pp in nzrange(op.Amna, col)
-                    r = rows[pp]
-                    if rowlo <= r <= rowhi
-                        pushentry!(r, comp, -vals[pp]*xc)
-                    end
                 end
             end
         else # :Lj
@@ -2787,13 +2755,6 @@ function calcsensitivitystamps(sensitivityindices, psc::ParsedSortedCircuit,
             stamps[k] = tripletstamp(:C, mnapadto(info, Ntot), portindex)
         elseif kind == :G
             stamps[k] = tripletstamp(:G, mnapadto(info, Ntot), portindex)
-        elseif kind == :Gpromoted
-            # the promoted resistors keep their constitutive equations as
-            # explicit rows, so the conductance appears there instead.
-            M = maskrowscolumns(lsys.AmnaG,
-                Nnodalmna+(info-1)*Nmodes+1, Nnodalmna+info*Nmodes,
-                1, size(lsys.AmnaG, 2))
-            stamps[k] = tripletstamp(:G, M, portindex)
         elseif kind == :invL
             stamps[k] = tripletstamp(:invL, mnapadto(info, Ntot), portindex)
         else # :Lj
@@ -3907,20 +3868,17 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # reject inductor and junction values for which the static
     # classification and the matrix stamps are ill defined
     checkstaticstiffnessvalues(componenttypes, vvn)
-    mnaindices = mnaportresistorindices(componenttypes, nodeindices,
-        psc.mutualinductorbranchnames, vvn)
+    # No components are promoted to auxiliary branch currents here: port
+    # resistors stay as node conductances (the two forms are algebraically
+    # identical, the wave extraction is nodal, and the augmented system is
+    # smaller without them). The list remains as the hook for elements a
+    # conductance cannot express, such as voltage sources, should they be
+    # added; the augmentation machinery (mnaaugmentation, calcAmna) is
+    # shared with the gauge equations and stays.
+    mnaindices = Int[]
     Nauxr = length(mnaindices)*Nmodes
     Nauxscattering = countscatteringports(psc)*Nmodes
     Naux = Nauxr + length(coupledbranches)*Nmodes + Nauxscattering
-    # remove the promoted resistors from the conductance matrix, applying
-    # the same conjugation and scaling as for Gnm above.
-    if !isempty(mnaindices)
-        Gnmp = calcGn(componenttypes[mnaindices],
-            nodeindices[:, mnaindices], vvn[mnaindices], Nmodes, Nnodes)
-        conjnegfreq!(Gnmp, wmodes)
-        rmul!(Gnmp, Lmean)
-        Gnm = mnasubtractpromoted(Gnm, Gnmp)
-    end
     # gauge fixing is based on the connected components of the static
     # flux-stiffness graph (edges are inductors and Josephson junctions),
     # which handles floating inductive and Josephson subnetworks as well

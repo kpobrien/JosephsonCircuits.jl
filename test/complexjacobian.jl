@@ -162,20 +162,14 @@ end
         JosephsonCircuits.applynl!(phimatrix, phimatrixtd, cos, irfftplan,
             rfftplan)
 
-        # the modified nodal analysis augmentation of the promoted resistor
-        mnaindices = JosephsonCircuits.mnaportresistorindices(
-            psc.componenttypes, psc.nodeindices,
-            psc.mutualinductorbranchnames, signalnm.vvn)
-        @test length(mnaindices) == 1
+        # no promoted components: port resistors stay as node
+        # conductances, and the augmentation machinery is exercised with
+        # an empty promoted set
+        mnaindices = Int[]
         Nauxmna = length(mnaindices)*Nsignalmodes
         Amna0, AmnaG = JosephsonCircuits.calcAmnasplit(mnaindices,
             psc.nodeindices, signalnm.vvn, Nsignalmodes, psc.Nnodes)
-        Gnmp = JosephsonCircuits.calcGn(psc.componenttypes[mnaindices],
-            psc.nodeindices[:, mnaindices], signalnm.vvn[mnaindices],
-            Nsignalmodes, psc.Nnodes)
-        Gnmsub = JosephsonCircuits.mnapad(
-            JosephsonCircuits.mnasubtractpromoted(signalnm.Gnm, Gnmp),
-            Nauxmna)
+        Gnmsub = JosephsonCircuits.mnapad(signalnm.Gnm, Nauxmna)
         invLnmp = JosephsonCircuits.mnapad(signalnm.invLnm, Nauxmna)
         Cnmp = JosephsonCircuits.mnapad(signalnm.Cnm, Nauxmna)
         Rbnmmna = hcat(signalnm.Rbnm, spzeros(eltype(signalnm.Rbnm),
