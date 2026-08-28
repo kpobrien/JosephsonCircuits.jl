@@ -187,9 +187,13 @@ Diagnostics describing the nonlinear solution process of
 [`hbnlsolve`](@ref).
 
 # Fields
-- `stages`: a vector of [`IterationInfo`](@ref), one for each invocation
-    of the nonlinear solver, in the order they ran. The labels record
-    which solver stages ran.
+- `stages`: a vector of per-stage records (subtypes of
+    `AbstractStageInfo`), one for each invocation of the nonlinear solver,
+    in the order they ran. The direct and Krylov solvers push
+    [`IterationInfo`](@ref); `method = :staged` pushes one
+    [`StagedStageInfo`](@ref) per attempted continuation stage, each
+    carrying its inner solver records. Every record has `label`,
+    `converged` and `iterations` fields; the rest is method specific.
 - `initialresidual`: the norm of the residual at the initial value.
 - `finalresidual`: the norm of the residual at the returned solution.
 - `converged`: whether the solver reported convergence.
@@ -289,6 +293,15 @@ only the node coordinates. See `src/mna.jl`.
     uses the complex holomorphic Jacobian `Jx` only, an approximation to the
     full Jacobian. `:newton` solves the equivalent real system with the full
     Jacobian. `:newtonkrylov` uses the matrix-free real Jacobian.
+    `:staged` solves the nonlinear stage by [`stagedhbnlsolve`](@ref):
+    source continuation on an adaptively grown harmonic grid, for strongly
+    driven operating points the direct methods cannot reach from a cold
+    start; a fold (self oscillation threshold) below the requested drive is
+    reported as an error with the bracketed drive fraction.
+- `stagedkwargs::NamedTuple = (;)`: options for `method = :staged`; see
+    [`stagedhbnlsolve`](@ref).
+- `krylovcouplingmodes = :none`: forwarded to `hbnlsolve`; see there.
+- `krylovkwargs::NamedTuple = (;)`: forwarded to `hbnlsolve`; see there.
 - `andersondepth::Integer = method == :quasinewton ? 5 : 0`: the depth of the
     Anderson acceleration of the Newton fixed point iteration, the maximum
     number of previous iterates used for the extrapolation. Values less than
@@ -414,7 +427,10 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    factorization = nothing, backend = CPU()) where {N,M}
+    krylovcouplingmodes = :none, krylovkwargs::NamedTuple = (;),
+    stagedkwargs::NamedTuple = (;),
+    factorization = nothing, backend = CPU(),
+    precision::Type{<:AbstractFloat} = Float64) where {N,M}
 
     # calculate the Frequencies struct
     freq = removeconjfreqs(
@@ -439,16 +455,39 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     # calculate the numeric matrices
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
-    # solve the nonlinear problem
-    nonlinear = hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
-        iterations = iterations, x0 = x0, ftol = ftol,
-        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        method = method, andersondepth = andersondepth,
-        symfreqvar = symfreqvar, keyedarrays = keyedarrays,
-        sensitivitynames = sensitivitynames,
-        returnoperatingpoint = sensitivityoperatingpoint &&
-            returnSsensitivity && !isempty(nm.Ljb.nzind),
-        factorization = factorization, backend = backend)
+
+    # solve the nonlinear problem. `:staged` goes through the source
+    # continuation driver, which re-derives its truncations from the same
+    # arguments the pump truncation above was built from and manages its own
+    # warm starts; every other method solves the assembled system directly.
+    nonlinear = if method === :staged
+        stagedhbnlsolve(wp, Npumpharmonics, sources, circuit, circuitdefs;
+            iterations = iterations, ftol = ftol,
+            maxharmonics = maxpumpharmonics,
+            maxintermodorder = maxpumpintermodorder,
+            dc = dc, odd = fourwavemixing, even = threewavemixing,
+            symfreqvar = symfreqvar, sorting = sorting,
+            keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
+            returnoperatingpoint = sensitivityoperatingpoint &&
+                returnSsensitivity && !isempty(nm.Ljb.nzind),
+            krylovcouplingmodes = krylovcouplingmodes,
+            krylovkwargs = krylovkwargs, factorization = factorization,
+            backend = backend, precision = precision, stagedkwargs...)
+    else
+        hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
+            iterations = iterations, x0 = x0, ftol = ftol,
+            switchofflinesearchtol = switchofflinesearchtol,
+            alphamin = alphamin,
+            method = method, andersondepth = andersondepth,
+            krylovcouplingmodes = krylovcouplingmodes,
+            krylovkwargs = krylovkwargs,
+                symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+            sensitivitynames = sensitivitynames,
+            returnoperatingpoint = sensitivityoperatingpoint &&
+                returnSsensitivity && !isempty(nm.Ljb.nzind),
+            factorization = factorization, backend = backend,
+            precision = precision)
+    end
 
     # the derivative of the harmonic balance residual with respect to each
     # component value, for total (operating point inclusive) sensitivities.
@@ -2969,6 +3008,333 @@ end
 
 
 """
+    StagedStageInfo
+
+One attempted stage of [`stagedhbnlsolve`](@ref), stored in
+`solverinfo.stages` of the returned solution -- every attempt appears, in
+the order it ran, including stalled steps and growth retreats, so the
+whole continuation walk can be examined afterwards.
+
+# Fields
+- `label`: `"staged"`.
+- `converged`: whether this attempt's inner solve converged.
+- `iterations`: total inner Newton iterations of the attempt.
+- `grid`: the harmonic truncation the attempt solved on.
+- `sfrom`: the last accepted drive fraction before the attempt.
+- `starget`: the drive fraction the attempt targeted.
+- `ds`: `starget - sfrom` (negative for a growth retreat).
+- `action`: `:advance` (drive step on the current grid), `:grow` (first
+    solve on a larger grid after carrying a converged point up), or
+    `:final` (the full-drive solve on the finest grid).
+- `accepted`: whether the attempt's result was kept as the new operating
+    point (a stalled attempt is recorded but not accepted).
+- `seconds`: wall time of the attempt, including the stage's system
+    assembly.
+- `finalresidual`: the residual norm the attempt ended at.
+- `inner`: the inner solver's own stage records ([`IterationInfo`](@ref)),
+    with their Krylov linear-solve diagnostics when the inner method is
+    `:newtonkrylov`.
+"""
+struct StagedStageInfo <: AbstractStageInfo
+    label::String
+    converged::Bool
+    iterations::Int
+    grid::Tuple
+    sfrom::Float64
+    starget::Float64
+    ds::Float64
+    action::Symbol
+    accepted::Bool
+    seconds::Float64
+    finalresidual::Float64
+    inner::Vector
+end
+
+function Base.show(io::IO, ::MIME"text/plain", r::StagedStageInfo)
+    print(io, "StagedStageInfo: grid=", r.grid, " s ", round(r.sfrom, digits = 4),
+        " -> ", round(r.starget, digits = 4), " ", r.action,
+        r.accepted ? " accepted" : " stalled",
+        " newton=", r.iterations,
+        " |F|=", round(r.finalresidual, sigdigits = 2),
+        " (", round(r.seconds, digits = 2), " s)")
+end
+
+"""
+    defaultgridladder(Nharmonics::NTuple{N,Int})
+
+The default coarse-to-fine harmonic grid ladder for [`stagedhbnlsolve`](@ref):
+repeated halving of every dimension down to two harmonics, finest last.
+"""
+function defaultgridladder(Nharmonics::NTuple{N,Int}) where {N}
+    grids = [Nharmonics]
+    g = Nharmonics
+    while any(x -> x > 2, g)
+        g = map(x -> max(2, cld(x, 2)), g)
+        g == grids[end] && break
+        push!(grids, g)
+    end
+    return reverse(grids)
+end
+
+# embed a converged solution into a larger grid's initial guess by matching
+# mode tuples; modes the small grid does not carry start at zero
+function stagedembed(out, bigmodes)
+    small = reshape(Array(out.nodeflux), out.Nmodes, :)
+    pos = Dict(m => i for (i, m) in enumerate(bigmodes))
+    X = zeros(ComplexF64, length(bigmodes), size(small, 2))
+    for (i, m) in enumerate(out.modes)
+        haskey(pos, m) && (X[pos[m], :] = small[i, :])
+    end
+    return vec(X)
+end
+
+"""
+    stagedhbnlsolve(w, Nharmonics, sources, circuit, circuitdefs; kwargs...)
+
+Source continuation on an adaptively grown harmonic grid, reached through
+`hbnlsolve(...; method = :staged)`.
+
+Near a critical drive the Newton basin is small and the iteration count
+large, so those iterations are spent where they are cheap: the drive is
+climbed in warm started steps on a small harmonic truncation, and each
+larger grid is warm started from the last by matching mode tuples. The
+schedule is adaptive in both directions because every truncation has its own
+solvability boundary, and the boundaries are not monotone in the grid
+(measured: the (2,2) truncation of a 64 junction RPM at strong two tone
+drive converges at 98.4% of the drive while (4,2) does not): a stalled drive
+step is first halved, a stall at the minimum step grows the grid at the
+current converged drive, and a carried point that fails to reconverge after
+growth retreats the drive on the new grid until it converges. Interior
+points converge only to `interiorftol` under a small iteration budget --
+they exist to keep the iterate inside the basin -- and the single expensive
+solve, the finest grid at full drive, starts inside the basin and gets the
+caller's `ftol` and `iterations`.
+
+A point carried to the finest grid at full drive that stalls there without
+ever having converged on that grid is not diagnosed as a fold: the drive is
+retreated on the finest grid and climbed back, exactly as a mid-ladder
+growth retreats, since the stalled drive value was established on different
+physics. Only a stall from a point converged on the finest grid itself
+brackets a fold: between the
+last converged drive fraction and the stalled one the solution branch ends
+(the self oscillation threshold), and the error says so, with the bracket.
+Distinguishing that from a merely hard problem is something no cold started
+method can do. Measured on a 128 junction RPM at equal 1.6 uA two tone
+drive -- reported "unreachable" by every direct method -- the walk brackets
+the fold at 91.9-93.4% of the drive: the operating point does not exist.
+
+# Keywords (through `stagedkwargs`)
+- `grids = defaultgridladder(Nharmonics)`: the coarse-to-fine ladder;
+    finest entry must equal `Nharmonics`.
+- `s0 = 0.5`: the first drive fraction attempted.
+- `smin = 0.02`: the minimum drive step; a stall below it grows the grid.
+- `interiorftol = 1e-7`, `interioriterations = 60`: tolerance and Newton
+    budget of the interior points. The budget is deliberately small: a
+    stalled probe is evident within tens of iterations, and interior stalls
+    are the pure overhead of the walk (measured accepted interior points
+    take 4-24 iterations, 51 near a pole).
+- `innermethod = :newtonkrylov`: the solver for every stage.
+- `interiorescalation = false`: whether interior stage solves may escalate
+    their preconditioner to the full Jacobian. Off by default: an interior
+    probe exists only to produce a cheap warm start, escalating inside one
+    pays a full factorization for a throwaway point, and at high tone
+    counts that factorization may not fit in memory at all (measured: a
+    527 mode three tone grid ran out of 30 GB the moment an interior probe
+    escalated, while the whole staged walk to that point took 19 seconds).
+    A probe that fails without escalation is simply a stall, which the
+    schedule answers with a smaller step. The final solve keeps the
+    caller's escalation behavior.
+- `maxattempts = 60`: bound on the total number of stage solves.
+- `verbose = false`: print one line per stage solve.
+"""
+function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
+    sources, circuit, circuitdefs;
+    grids::Vector{NTuple{N,Int}} = defaultgridladder(Nharmonics),
+    s0 = 0.5, smin = 0.02, interiorftol = 1e-7,
+    interioriterations::Integer = 60, innermethod::Symbol = :newtonkrylov,
+    interiorescalation::Bool = false,
+    maxattempts::Integer = 60, verbose::Bool = false,
+    iterations = 1000, maxharmonics::NTuple{N,Number} = Nharmonics,
+    maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
+    even::Bool = false, ftol = 1e-8, symfreqvar = nothing,
+    sorting = :number, keyedarrays::Bool = true,
+    sensitivitynames::Vector{String} = String[],
+    returnoperatingpoint::Bool = false, krylovcouplingmodes = :none,
+    krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
+    krylovkwargs::NamedTuple = (;), factorization = nothing,
+    backend = CPU(), precision::Type{<:AbstractFloat} = Float64) where {N}
+
+    isempty(grids) && throw(ArgumentError("`grids` must not be empty."))
+    grids[end] == Nharmonics || throw(ArgumentError(
+        lazy"the finest grid $(grids[end]) must equal `Nharmonics` = $(Nharmonics)."))
+    0 < s0 <= 1 || throw(ArgumentError(lazy"`s0` = $(s0) must be in (0, 1]."))
+    innermethod === :staged && throw(ArgumentError(
+        "`innermethod` must be a non-staged method."))
+
+    modesof(grid) = removeconjfreqs(truncfreqs(calcfreqsrdft(grid);
+        dc = dc, odd = odd, even = even,
+        maxintermodorder = maxintermodorder,
+        maxharmonics = map(min, maxharmonics, grid))).modes
+    scaled(s) = [(mode = t.mode, port = t.port, current = s*t.current)
+        for t in sources]
+    solve(grid, s, x0, final) = hbnlsolve(w, grid, scaled(s), circuit,
+        circuitdefs; dc = dc, odd = odd, even = even,
+        maxintermodorder = maxintermodorder,
+        maxharmonics = map(min, maxharmonics, grid),
+        method = innermethod, x0 = x0, symfreqvar = symfreqvar,
+        sorting = sorting,
+        keyedarrays = final ? keyedarrays : false,
+        sensitivitynames = final ? sensitivitynames : String[],
+        returnoperatingpoint = final ? returnoperatingpoint : false,
+        krylovcouplingmodes = krylovcouplingmodes,
+        krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
+        krylovkwargs = (final || interiorescalation) ? krylovkwargs :
+            merge((; krylovescalate = typemax(Int)), krylovkwargs),
+        factorization = factorization,
+        backend = backend, precision = precision,
+        ftol = final ? ftol : interiorftol,
+        iterations = final ? iterations : interioriterations)
+
+    gi = 1
+    s = 0.0             # last converged drive fraction on the current grid
+    ds = s0
+    x = nothing         # its solution, in the raw nodeflux layout
+    out = nothing
+    attempts = 0
+    stagerecords = AbstractStageInfo[]
+    pendinggrow = false
+    record = function (cand, grid, sfrom, starget, action, accepted, secs)
+        si = cand.solverinfo
+        push!(stagerecords, StagedStageInfo("staged", si.converged,
+            sum(st -> st.iterations, si.stages; init = 0), grid,
+            Float64(sfrom), Float64(starget), Float64(starget - sfrom),
+            action, accepted, secs, Float64(si.finalresidual), si.stages))
+        return nothing
+    end
+    while true
+        attempts += 1
+        attempts > maxattempts && error(
+            lazy"the staged schedule did not converge in `maxattempts` = $(maxattempts) stage solves; last converged drive fraction $(s) on grid $(grids[gi]).")
+        starget = min(1.0, s + ds)
+        final = gi == length(grids) && starget >= 1.0
+        t0 = time_ns()
+        cand = solve(grids[gi], starget, x, final)
+        ok = cand.solverinfo.converged
+        # the first solve after carrying a full-drive point to a larger
+        # grid is a growth, not a drive advance
+        record(cand, grids[gi], s, starget,
+            final ? :final : (pendinggrow ? :grow : :advance), ok,
+            (time_ns() - t0)/1e9)
+        ok && (pendinggrow = false)
+        if verbose
+            st = cand.solverinfo.stages[end]
+            println("staged: grid=", grids[gi], " s=", round(starget, digits = 4),
+                " newton=", st.iterations,
+                " |F|=", round(cand.solverinfo.finalresidual, sigdigits = 2),
+                ok ? "" : " STALL")
+        end
+        if ok
+            out = cand
+            s = starget
+            final && break
+            if s >= 1.0
+                # full drive reached on a coarse grid: grow
+                x = stagedembed(out, modesof(grids[gi+1]))
+                gi += 1
+                pendinggrow = true
+            else
+                x = vec(reshape(Array(out.nodeflux), out.Nmodes, :))
+                ds = min(2*ds, 1.0 - s)
+            end
+        elseif starget - s > smin
+            # the effective step, not `ds`: a target capped at full drive
+            # must not be re-attempted identically while `ds` halves above
+            # the cap
+            ds = (starget - s)/2
+        elseif gi < length(grids)
+            # the current grid's own pole: grow at the converged drive,
+            # retreating the drive on the new grid if the carried point does
+            # not reconverge there (the boundaries are not monotone)
+            isnothing(x) && error(
+                "the first stage stalled at its first drive step; lower `s0`.")
+            bigmodes = modesof(grids[gi+1])
+            bigx = stagedembed(out, bigmodes)
+            gi += 1
+            reconverged = false
+            for f in (1.0, 0.9, 0.8, 0.65, 0.5)
+                t0 = time_ns()
+                re = solve(grids[gi], f*s, bigx, false)
+                record(re, grids[gi], s, f*s, :grow,
+                    re.solverinfo.converged, (time_ns() - t0)/1e9)
+                verbose && println("staged: grow -> ", grids[gi], " at s=",
+                    round(f*s, digits = 4), " |F|=",
+                    round(re.solverinfo.finalresidual, sigdigits = 2),
+                    re.solverinfo.converged ? "" : " STALL")
+                if re.solverinfo.converged
+                    out = re
+                    s = f*s
+                    x = vec(reshape(Array(out.nodeflux), out.Nmodes, :))
+                    reconverged = true
+                    break
+                end
+            end
+            reconverged || error(
+                lazy"the carried point did not reconverge on grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid.")
+            ds = s0/2
+        elseif pendinggrow
+            # The stalled point was CARRIED to the finest grid from a
+            # coarser one and has never converged here, so a fold diagnosis
+            # would rest on a drive value established on different physics.
+            # Retreat the drive on the finest grid and walk back up, exactly
+            # as a mid-ladder growth retreats on its new grid; only a stall
+            # from a point converged on the finest grid itself brackets a
+            # fold.
+            isnothing(x) && error(
+                "the first stage stalled at its first drive step; lower `s0`.")
+            reconverged = false
+            for f in (0.9, 0.8, 0.65, 0.5)
+                t0 = time_ns()
+                re = solve(grids[gi], f*s, x, false)
+                record(re, grids[gi], s, f*s, :grow,
+                    re.solverinfo.converged, (time_ns() - t0)/1e9)
+                verbose && println("staged: retreat on ", grids[gi], " at s=",
+                    round(f*s, digits = 4), " |F|=",
+                    round(re.solverinfo.finalresidual, sigdigits = 2),
+                    re.solverinfo.converged ? "" : " STALL")
+                if re.solverinfo.converged
+                    out = re
+                    s = f*s
+                    x = vec(reshape(Array(out.nodeflux), out.Nmodes, :))
+                    reconverged = true
+                    break
+                end
+            end
+            reconverged || error(
+                lazy"the carried point did not reconverge on the finest grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid.")
+            pendinggrow = false
+            ds = s0/2
+        else
+            error(lazy"no harmonic balance solution was found at the requested drive: the source continuation converged at $(round(s, digits = 4)) of the requested amplitudes on the finest grid $(grids[end]) and stalled at $(round(starget, digits = 4)). The solution branch ends between them (a fold, the self oscillation threshold); the operating point does not exist at full drive.")
+        end
+    end
+    # the returned diagnostics are the whole walk: one StagedStageInfo per
+    # attempt, each carrying its inner solver records, in place of just the
+    # final solve's stages
+    si = out.solverinfo
+    F0 = try
+        stagerecords[1].inner[1].normresidual[1]
+    catch
+        si.initialresidual
+    end
+    newsi = SolverInfo(stagerecords, F0, si.finalresidual, si.converged,
+        si.sourcefold)
+    vals = Any[getfield(out, f) for f in fieldnames(typeof(out))]
+    vals[findfirst(==(:solverinfo), fieldnames(typeof(out)))] = newsi
+    out = typeof(out)(vals...)
+    return out
+end
+
+"""
     hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         circuit, circuitdefs; iterations = 1000,
         maxintermodorder = Inf, dc = false, odd = true, even = false,
@@ -3051,6 +3417,18 @@ frequency are rejected with an `ArgumentError`. See `src/mna.jl`.
     uses the complex holomorphic Jacobian `Jx` only, an approximation to the
     full Jacobian. `:newton` solves the equivalent real system with the full
     Jacobian. `:newtonkrylov` uses the matrix-free real Jacobian.
+    `:staged` runs [`stagedhbnlsolve`](@ref): source continuation on an
+    adaptively grown harmonic grid, spending the many Newton iterations a
+    near critical drive needs on small cheap truncations and warm starting
+    each larger grid from the last, with `:newtonkrylov` solving every
+    stage. It is the strategy for operating points the direct methods fail
+    outright, and the one that distinguishes a hard operating point from a
+    nonexistent one: a stall on the finest grid with the minimum drive step
+    brackets a fold -- the self oscillation threshold -- and errors with
+    the bracketed drive fraction rather than returning garbage.
+- `stagedkwargs::NamedTuple = (;)`: options for `method = :staged`; see
+    [`stagedhbnlsolve`](@ref) (`grids`, `s0`, `smin`, `interiorftol`,
+    `interioriterations`, `innermethod`, `verbose`).
 - `andersondepth::Integer = method == :quasinewton ? 5 : 0`: the depth of the
     Anderson acceleration of the Newton fixed point iteration, the maximum
     number of previous iterates used for the extrapolation. Values less than
@@ -3124,9 +3502,24 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     krylovcouplingmodes = :none,
     krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
     krylovkwargs::NamedTuple = (;),
+    stagedkwargs::NamedTuple = (;),
     factorization = nothing, backend = CPU(),
     precision::Type{<:AbstractFloat} = Float64, debugJacobian = false,
     ) where {N}
+
+    if method === :staged
+        return stagedhbnlsolve(w, Nharmonics, sources, circuit, circuitdefs;
+            iterations = iterations, maxharmonics = maxharmonics,
+            maxintermodorder = maxintermodorder, dc = dc, odd = odd,
+            even = even, ftol = ftol, symfreqvar = symfreqvar,
+            sorting = sorting, keyedarrays = keyedarrays,
+            sensitivitynames = sensitivitynames,
+            returnoperatingpoint = returnoperatingpoint,
+            krylovcouplingmodes = krylovcouplingmodes,
+            krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
+            krylovkwargs = krylovkwargs, factorization = factorization,
+            backend = backend, precision = precision, stagedkwargs...)
+    end
 
     # calculate the frequency struct
     freq = removeconjfreqs(
@@ -3148,6 +3541,7 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
 
     # calculate the numeric matrices
     nm = numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+
 
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = x0, ftol = ftol,
@@ -3704,7 +4098,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             cosphimatrix=(x -> (setpoint!(sys, x);
                 JosephsonCircuits._updatecosphimatrix!(sys);
                 sys.phimatrix)), modelayout=modelayout,
-            Amatrixindices=Amatrixindices,
+            Amatrixindices=Amatrixindices, Amatrixmodes=Amatrixmodes,
+            modes=modes,
             Amatrixindicesaliased=Amatrixindicesaliased,
             Amatrixconjindices=Amatrixconjindices, Ljb=Ljb, Ljbm=Ljbm,
             Lmean=Lmean, Rbnm=Rbnm, invLnm=invLnm, Gnm=Gnm, Cnm=Cnm,
@@ -3755,7 +4150,21 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # sparse factorization. On a strongly pumped line the block diagonal
         # alone stalls; what rescues it is escalation, which grows the base
         # only on repeated linear failures and in practice fires once or
-        # twice. Measured on a two tone line, this is the only configuration
+        # twice.
+        #
+        # `krylovcouplingmodes = :band => p` restricts the retained coupling by
+        # harmonic *offset* rather than by column (see `modebandmask`). That is
+        # the restriction the Toeplitz structure of the nonlinear term asks for,
+        # and at equal fill it is not close: on an eight mode chain driven to
+        # max|phi| = 1.9 rad a bandwidth of one converges a Newton path in 118
+        # GMRES iterations where a two column selection storing the same number
+        # of nonzeros fails to converge in 1051. Its fill grows linearly in the
+        # mode count where the full Jacobian's grows quadratically, so it
+        # overtakes the full factorization once there are enough modes: measured
+        # on a fixed circuit at max|phi| ~ 1.75 rad, the ratio of banded to full
+        # total solve time is 1.28 at 8 modes, 0.75 at 16, 0.61 at 24 and 0.31
+        # at 32, while the bandwidth that wins stays at one. It escalates by one
+        # offset at a time rather than jumping to the full operator. Measured on a two tone line, this is the only configuration
         # whose standing improves with problem size: at 288 cells it is 3.72 s
         # against 8.19 s for mode selection and 5.48 s for the direct solve,
         # having been the slower of the two at 128 cells.
@@ -3772,10 +4181,21 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches, Nfreq,
             invLnm, Gnm, Cnm, modelayout;
             couplingmodes = krylovcouplingmodes,
-            factorization = factorization, precision = precision)
+            factorization = factorization, precision = precision,
+            Amatrixmodes = Amatrixmodes)
 
+        # the Krylov workspaces are allocated `similar` to the vectors handed
+        # in, so handing in device vectors is what puts the whole iteration on
+        # the device. On CPU() tobackend adopts them and these are no-ops.
+        xrb = tobackend(backend, convert(Vector{precision}, xr))
+        Frb = tobackend(backend, convert(Vector{precision}, Fr))
+
+        # built from the vector rather than from its length, so the deflation
+        # subspace lives where the iteration does. The `n::Integer` method
+        # allocates on the host, which on a device backend leaves the whole
+        # recycling path handing host arrays to device kernels.
         pc = if krylovrecycle > 0
-            RecyclingPreconditioner(base, jvpreal!, length(xr);
+            RecyclingPreconditioner(base, jvpreal!, xrb;
                 kmax = krylovrecycle, kharvest = krylovharvest)
         else
             base
@@ -3788,21 +4208,28 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # zero flux is stale immediately, because at zero flux the Jacobian
         # has no harmonic coupling at all.
         #
-        # The restart settings are the generic ones. They used to be
-        # overridden to a single long cycle, because a restarted GMRES really
-        # did stall against a preconditioner which retained mode coupling.
-        # That is not true of the block diagonal: a short Krylov space
-        # measured as fast or faster (at 288 cells, 2.74 s and 165 Arnoldi
-        # steps at a restart length of 30, against 3.20 s and 458 at 120) and
-        # the basis costs a quarter of the memory, which matters because `V`
-        # is `krylovrestart + 1` vectors of the system dimension.
-        krylovdefaults = (; krylovrefreshiterations = 1)
+        # The restart length cannot be set independently of the
+        # preconditioner. A restricted but not diagonal preconditioner leaves
+        # a small number of directions which the Krylov space must resolve
+        # before a restart discards the progress made on them, and until it
+        # can, the iteration count is pinned and does not respond to the
+        # preconditioner at all. Measured on a two tone grid of 74 modes, a
+        # banded preconditioner needs 1441 iterations without converging at a
+        # restart of 30, 60 and 120, and converges in 216 at 240; the block
+        # diagonal converges at none of them.
+        #
+        # The block diagonal has the same problem in a milder form, and it is
+        # the reason this solver escalates to the full Jacobian: a short
+        # Krylov space cannot resolve the near null directions the block
+        # diagonal leaves, the linear solve stalls, and escalation is what
+        # rescues it. A long cycle attacks the stall directly and so is the
+        # cheaper answer where it works -- the basis is `krylovrestart + 1`
+        # vectors of the system dimension, which is cheap next to the sparse
+        # factorization escalation would build. The default is therefore a
+        # long cycle for every preconditioner, restricted or not. An explicit
+        # `krylovkwargs.krylovrestart` always wins.
+        krylovdefaults = (; krylovrefreshiterations = 1, krylovrestart = 400)
 
-        # the Krylov workspaces are allocated `similar` to the vectors handed
-        # in, so handing in device vectors is what puts the whole iteration on
-        # the device. On CPU() tobackend adopts them and these are no-ops.
-        xrb = tobackend(backend, convert(Vector{precision}, xr))
-        Frb = tobackend(backend, convert(Vector{precision}, Fr))
         info = nlsolvekrylov!(fjreal!, jvpreal!, Frb, xrb, pc;
             iterations = iterations, ftol = ftol,
             merge(krylovdefaults, krylovkwargs)...)
@@ -3838,7 +4265,14 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # mnavalidatekcl.
     if converged && !isempty(gaugeindices)
         setpoint!(sys, x)
-        residual!(F, sys)
+        # `sys` holds its state wherever the backend put it, while `F` and `x`
+        # are host vectors, so the residual is evaluated into a buffer like the
+        # system's own state and copied back for the host side validation.
+        # Evaluating straight into `F` launches the backward term kernel with a
+        # host array argument, which does not compile.
+        Fgauge = similar(sys.x)
+        residual!(Fgauge, sys)
+        copyto!(F, Fgauge)
         kclok, normkcl, kcltol = mnavalidatekcl(F, x, gaugeindices,
             Nnodal, bnm, ftol)
         if !kclok

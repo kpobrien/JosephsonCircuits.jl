@@ -59,6 +59,9 @@ using JosephsonCircuits
 
     include("modepreconditioner.jl")
 
+
+    include("stagedsolve.jl")
+
     include("parseinput.jl")
 
     include("circuit.jl")

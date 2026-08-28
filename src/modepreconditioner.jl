@@ -1,5 +1,221 @@
 
 """
+    cosphibandwidths(sys::HBSystem, Amatrixindices::Matrix,
+        Amatrixmodes::AbstractMatrix, Nfreq::Integer, Nbranches::Integer;
+        tol = 1e-2)
+
+The per-tone harmonic bandwidth of the Josephson coupling at the current point,
+as the tuple of the largest offset in each tone which carries a coefficient of
+`cos(phi(t))` above `tol` relative to the largest.
+
+This is the bandwidth [`modebandmask`](@ref) should be given, measured rather
+than guessed, and it costs nothing beyond the Fourier coefficients
+[`updatepreconditioner!`](@ref) already computes: the assembly reads
+`phimatrix[abs(ind) + Nfreq*(b-1)]` for `ind = Amatrixindices[m1,m2]`, and this
+reads the same entries and records how far from the diagonal they stay
+significant.
+
+The measurement is per tone, and that anisotropy is the point. Jacobi-Anger
+gives the coefficient at a multi-tone offset `m` as a product over the tones,
+`chat_m ~ prod_k J_{m_k}(delta_k)`, with `delta_k` the phase amplitude tone `k`
+contributes. Its support is therefore a *rectangle* whose sides are set by each
+`delta_k` separately, not a ball: a strongly pumped tone earns a wide bandwidth
+and a weak one collapses to zero, because `J_n(delta)` falls off super
+geometrically once `n` exceeds `delta`. Keeping a ball instead spends fill on
+offsets in the weak tones which carry nothing, and the difference is large. On a
+two tone chain with a 5 percent second drive and 74 modes, the measured
+rectangle `(2,0)` converges where the ball of any radius does not, at four
+percent of the full Jacobian's stored entries.
+
+A tone whose grid is short enough that offsets alias will report a large
+bandwidth. That is not a failure: the aliased coupling is really there, and a
+bandwidth which saturates that tone's grid costs nothing extra because the grid
+had no room to be truncated in the first place.
+"""
+function cosphibandwidths(sys, Amatrixindices::Matrix,
+    Amatrixmodes::AbstractMatrix, Nfreq::Integer = 0, Nbranches::Integer = 0;
+    tol = 1e-2, budget = 0.25)
+
+    _updatecosphimatrix!(sys)
+    cm = tohost(sys.phimatrix)
+    Ntones = length(first(Amatrixmodes))
+    # The coefficient array's own shape, not the caller's Nfreq: it is
+    # `(frequency dims..., branch)` and multi-tone leaves it multidimensional,
+    # so the frequency stride is everything but the last dimension. This is the
+    # linear index the assembly kernel itself uses,
+    # `phimatrix[abs(ind) + nfreq*(b-1)]`.
+    nb = size(cm)[end]
+    nfreq = length(cm) ÷ nb
+
+    mag(ind) = begin
+        a = abs(ind)
+        (1 <= a <= nfreq) || return 0.0
+        m = 0.0
+        for b in 1:nb
+            m = max(m, abs(cm[a + nfreq*(b - 1)]))
+        end
+        m
+    end
+
+    # marginal weight of each per-tone offset magnitude, and the total
+    maxoff = zeros(Int, Ntones)
+    for o in Amatrixmodes, k in 1:Ntones
+        maxoff[k] = max(maxoff[k], abs(o[k]))
+    end
+    w = [zeros(Float64, maxoff[k] + 1) for k in 1:Ntones]
+    total = 0.0
+    for i in axes(Amatrixindices, 1), j in axes(Amatrixindices, 2)
+        ind = Int(Amatrixindices[i, j])
+        ind == 0 && continue
+        m = mag(ind)
+        m == 0.0 && continue
+        total += m
+        o = Amatrixmodes[i, j]
+        for k in 1:Ntones
+            w[k][abs(o[k]) + 1] += m
+        end
+    end
+    total > 0 || return ntuple(_ -> 0, Ntones)
+
+    # smallest per-tone bandwidth whose discarded marginal tail is within `tol`.
+    # This sets the *shape*: a tone which contributes little phase amplitude has
+    # a tail that is already negligible at zero and collapses to a diagonal,
+    # which is the anisotropy the Jacobi-Anger product predicts.
+    p = zeros(Int, Ntones)
+    for k in 1:Ntones
+        pk = maxoff[k]
+        for cand in 0:maxoff[k]
+            tail = sum(@view w[k][cand+2:end])
+            if tail <= tol*total
+                pk = cand
+                break
+            end
+        end
+        p[k] = pk
+    end
+
+    # `tol` alone chooses the bandwidth which makes the preconditioner accurate,
+    # and under strong drive that is the whole Jacobian: the coefficients decay,
+    # but from a diagonal which is no longer dominant, so the tail stays above
+    # any useful tolerance out to the edge of the grid. A preconditioner does
+    # not need to be accurate, it needs to be worth its fill, so the *size* is
+    # then capped by a budget on the fraction of coupling blocks retained. The
+    # widest tone is trimmed first, which preserves the shape the tail chose.
+    keptfraction(q) = count(modebandmask(Amatrixmodes,
+        NTuple{Ntones,Int}(q))) / length(Amatrixmodes)
+    while keptfraction(p) > budget && any(>(0), p)
+        k = argmax(p)
+        p[k] -= 1
+    end
+
+    # Snap each bandwidth down onto an offset the grid actually realizes. A
+    # tone whose harmonics are all odd realizes only even offsets, so a
+    # bandwidth of one there keeps exactly what zero keeps; reporting one would
+    # claim a coupling the mask does not contain, and would make the escalation
+    # step of `escalatepreconditioner!` a no-op for a whole increment.
+    realized = [sort!(unique(abs(o[k]) for o in Amatrixmodes)) for k in 1:Ntones]
+    for k in 1:Ntones
+        idx = searchsortedlast(realized[k], p[k])
+        p[k] = idx >= 1 ? realized[k][idx] : 0
+    end
+    return NTuple{Ntones,Int}(p)
+end
+
+"""
+    modebandmask(Amatrixmodes::AbstractMatrix, p)
+
+Return the `Nmodes` x `Nmodes` boolean matrix of mode coupling blocks retained
+by a *bandwidth* restriction on the harmonic offset: the block coupling column
+mode `m2` into row mode `m1` is kept when the offset between them,
+`Amatrixmodes[m1, m2] = modes[m1] .- modes[m2]`, is within `p`.
+
+This is the restriction the structure of the Jacobian asks for. Multiplication
+by `cos(phi(t))` is a convolution in the harmonic index, so the nonlinear part
+of the Jacobian is block Toeplitz in the offset `m1 - m2`: every block shares
+the junction incidence sparsity and they differ only by the Fourier coefficient
+of `cos(phi(t))` at that offset. Those coefficients are Bessel-like in the
+junction phase amplitude and fall off quickly once the offset exceeds it, so
+truncating by offset keeps the large blocks and drops the small ones.
+
+Truncating by *column*, as [`modecouplingmask`](@ref) does, cuts across the
+Toeplitz structure instead: a retained column keeps one large block and a whole
+column of small ones, and drops large blocks elsewhere. Measured at equal fill
+the difference is not marginal. On an eight mode, eight junction chain driven to
+`max|phi| = 1.9` rad, a bandwidth of one converges the linear solves of a Newton
+path in 118 GMRES iterations while a two column selection with the same number
+of stored nonzeros fails to converge in 1051.
+
+`p` may be
+
+- an `Integer`: the number of offset *shells* retained beyond the diagonal,
+  where a shell is one distinct value of the total intermodulation order
+  `sum(abs, offset)` that the retained mode set actually realizes, or
+- an `NTuple{N,Integer}`: an absolute per-tone bound, `abs.(offset) .<= p`, for
+  a grid whose coupling is anisotropic, eg. a strong pump and a weak second
+  tone.
+
+Counting shells rather than bounding the raw offset matters, because the offsets
+a mode set realizes are not the integers. With the usual odd-harmonic-only
+truncation every mode difference is even, so `sum(abs, offset) <= 1` retains
+exactly what `<= 0` does and a raw bound of one would silently be the block
+diagonal. A shell count is also the quantity the coupling decays in: the Fourier
+coefficients of `cos(phi(t))` live on the harmonic lattice of `phi`, and the
+shells are the lattice distances that lattice actually has.
+
+`p = 0` is the mode block diagonal and a `p` large enough to cover the grid is
+the full Jacobian, so the bandwidth is a graded ladder between the two rather
+than the jump [`escalatepreconditioner!`](@ref) had to make when the only
+alternatives were a column set and the whole operator.
+
+# Examples
+```jldoctest
+julia> modes = [(-1,), (0,), (1,)];
+
+julia> A = [modes[i] .- modes[j] for i in 1:3, j in 1:3];
+
+julia> JosephsonCircuits.modebandmask(A, 0)
+3×3 Matrix{Bool}:
+ 1  0  0
+ 0  1  0
+ 0  0  1
+
+julia> JosephsonCircuits.modebandmask(A, 1)
+3×3 Matrix{Bool}:
+ 1  1  0
+ 1  1  1
+ 0  1  1
+```
+"""
+function modebandmask(Amatrixmodes::AbstractMatrix, p)
+    return [_withinband(Amatrixmodes[i, j], p, _shells(Amatrixmodes, p))
+        for i in axes(Amatrixmodes, 1), j in axes(Amatrixmodes, 2)]
+end
+
+# The distinct total intermodulation orders the retained mode set realizes,
+# sorted. Only needed for an Integer bandwidth.
+_shells(Amatrixmodes, ::NTuple) = nothing
+function _shells(Amatrixmodes::AbstractMatrix, ::Integer)
+    return sort!(unique(sum(abs, Amatrixmodes[i, j])
+        for i in axes(Amatrixmodes, 1), j in axes(Amatrixmodes, 2)))
+end
+_shells(Amatrixmodes, p) = throw(ArgumentError(
+    lazy"the bandwidth `p` = $(p) must be an Integer or a tuple of Integers."))
+
+# `p` shells of offset beyond the diagonal
+function _withinband(offset, p::Integer, shells)
+    p >= 0 || throw(ArgumentError(lazy"the bandwidth `p` = $(p) must be nonnegative."))
+    cutoff = shells[min(p + 1, length(shells))]
+    return sum(abs, offset) <= cutoff
+end
+_withinband(offset, p::Integer) = sum(abs, offset) <= p
+# per tone bound
+function _withinband(offset, p::NTuple{N,Integer}, shells) where N
+    length(offset) == N || throw(DimensionMismatch(
+        lazy"the offset has $(length(offset)) tones but the bandwidth has $(N)."))
+    return all(abs(offset[k]) <= p[k] for k in 1:N)
+end
+
+"""
     modecouplingmask(Nmodes::Integer, couplingmodes)
 
 Return the `Nmodes` x `Nmodes` boolean matrix of mode coupling blocks retained
@@ -143,8 +359,12 @@ strongly pumped device the block diagonal alone stalls, and
     batched form of `basefactorization` while `P` is the mode block diagonal
     and that form exists. It is reselected whenever `P` is rebuilt, because
     escalation destroys the batch structure.
-- `couplingmodes`: the modes whose coupling is retained in full, or a mask of
-    the retained couplings when one was given directly.
+- `Amatrixmodes`: the harmonic offset `modes[m1] .- modes[m2]` of every mode
+    pair, or `nothing`. Needed by `:band` and by its escalation.
+- `couplingmodes`: the modes whose coupling is retained in full, `:band => p`
+    for a bandwidth restriction on the harmonic offset (see
+    [`modebandmask`](@ref)), or a mask of the retained couplings when one was
+    given directly.
 - `updates`: the number of times the factorization has been rebuilt.
 - `escalations`: the number of times the coupling set has been grown.
 """
@@ -160,6 +380,16 @@ mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
     # so the set can be grown after construction
     const build::TB
     const Nmodes::Int
+    # the harmonic offset of every mode pair, `modes[m1] .- modes[m2]`, kept so
+    # a bandwidth restriction can be rebuilt and stepped after construction.
+    # `nothing` when the caller did not supply it, which disables `:band`.
+    const Amatrixmodes
+    # ingredients of the `:auto` bandwidth measurement, `nothing` when the
+    # caller did not ask for it
+    const autoindices
+    const autotol
+    const autoNfreq::Int
+    const autoNbranches::Int
     couplingmodes
     updates::Int
     escalations::Int
@@ -184,7 +414,14 @@ Build a [`ModeCouplingPreconditioner`](@ref) from the same ingredients
 
 - `:none` (the default): the mode block diagonal,
 - `:all`: the full Jacobian, which is an exact preconditioner,
-- an `AbstractVector{<:Integer}`: exactly these mode indices.
+- an `AbstractVector{<:Integer}`: exactly these mode indices,
+- `:band => p`: every coupling whose harmonic offset is within `p`, which
+    requires `Amatrixmodes` and is usually the best of these (see
+    [`modebandmask`](@ref)),
+- `:auto` or `:auto => tol`: a `:band` whose per-tone bandwidth is measured from
+    the Fourier coefficients of `cos(phi(t))` at every point and widened when
+    the drive demands it (see [`cosphibandwidths`](@ref)). Starts at the block
+    diagonal, so nothing is paid until it is needed.
 """
 function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     Amatrixconjindices::Matrix, Ljb::SparseVector, Lmean,
@@ -192,7 +429,24 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     Nfreq::Integer, invLnm::SparseMatrixCSC, Gnm::SparseMatrixCSC,
     Cnm::SparseMatrixCSC, layout::ModeLayout; couplingmodes = :none,
     factorization = KLUfactorization(),
-    precision::Union{Nothing,Type{<:AbstractFloat}} = nothing)
+    precision::Union{Nothing,Type{<:AbstractFloat}} = nothing,
+    Amatrixmodes = nothing)
+
+    # `:auto` measures the per tone bandwidth at every point and rebuilds when
+    # it grows. It starts from the block diagonal, so the first factorization is
+    # the cheap one and the structure widens only as the drive demands.
+    autotol = if couplingmodes === :auto
+        1e-2
+    elseif couplingmodes isa Pair && couplingmodes.first === :auto
+        couplingmodes.second
+    else
+        nothing
+    end
+    if !isnothing(autotol)
+        isnothing(Amatrixmodes) && throw(ArgumentError(
+            "`couplingmodes = :auto` needs the mode offsets; pass `Amatrixmodes`."))
+        couplingmodes = :band => ntuple(_ -> 0, length(first(Amatrixmodes)))
+    end
 
     # On a device backend the Jacobian is built transposed, because its
     # stored order is then the row major order a device sparse matrix and a
@@ -211,7 +465,15 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     # backend, while a host factorization wants the matrix itself and the
     # assembly writes straight into its stored values.
     function build(S)
-        keep = S isa AbstractMatrix{Bool} ? S : modecouplingmask(Nmodes, S)
+        keep = if S isa AbstractMatrix{Bool}
+            S
+        elseif S isa Pair && S.first === :band
+            isnothing(Amatrixmodes) && throw(ArgumentError(
+                "`couplingmodes = :band => p` needs the mode offsets; pass `Amatrixmodes`."))
+            modebandmask(Amatrixmodes, S.second)
+        else
+            modecouplingmask(Nmodes, S)
+        end
         Ami = restrictmodecoupling(Amatrixindices, keep)
         Amc = restrictmodecoupling(Amatrixconjindices, keep)
         backend = sys.nonlineartermplan.backend
@@ -241,6 +503,8 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         Int[]
     elseif couplingmodes === :all
         collect(1:Nmodes)
+    elseif couplingmodes isa Pair && couplingmodes.first === :band
+        couplingmodes
     elseif couplingmodes isa AbstractVector{<:Integer}
         sort!(unique(Vector{Int}(couplingmodes)))
     elseif couplingmodes isa AbstractMatrix{Bool}
@@ -249,13 +513,15 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         couplingmodes
     else
         throw(ArgumentError(
-            lazy"`couplingmodes` = $(couplingmodes) must be `:none`, `:all`, a vector of mode indices, or an Nmodes x Nmodes Bool mask."))
+            lazy"`couplingmodes` = $(couplingmodes) must be `:none`, `:all`, `:band => p`, a vector of mode indices, or an Nmodes x Nmodes Bool mask."))
     end
 
     P, dp, nzval = build(S)
     return ModeCouplingPreconditioner(P, sys, FactorizationCache(),
         factorization, selectfactorization(factorization, P, S, layout, Nmodes),
-        build, Int(Nmodes), S, 0, 0, dp, nzval)
+        build, Int(Nmodes), Amatrixmodes, isnothing(autotol) ? nothing :
+        Amatrixindices, autotol, Int(Nfreq), Int(Nbranches), S, 0, 0, dp,
+        nzval)
 end
 
 # The factorization to use for a freshly built `P`. The mode block diagonal is
@@ -308,9 +574,21 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
     pc.couplingmodes isa Vector{Int} &&
         length(pc.couplingmodes) >= pc.Nmodes && return false
     pc.couplingmodes isa AbstractMatrix{Bool} && all(pc.couplingmodes) && return false
-    S = collect(1:pc.Nmodes)
+    # a bandwidth escalates by one offset at a time. The jump straight to the
+    # full Jacobian below exists because no per mode score identified *which*
+    # modes carried the deficiency; a bandwidth is not a choice of modes, so
+    # the graded step is available and is what is taken here. It stops when the
+    # band covers the grid, at which point it is already the full Jacobian.
+    S = if pc.couplingmodes isa Pair && pc.couplingmodes.first === :band
+        p = pc.couplingmodes.second
+        next = p isa Integer ? p + 1 : map(x -> x + 1, p)
+        all(modebandmask(pc.Amatrixmodes, next)) ? collect(1:pc.Nmodes) :
+            (:band => next)
+    else
+        collect(1:pc.Nmodes)
+    end
     pc.P, pc.deviceplan, pc.nzval = pc.build(S)
-    # the full Jacobian couples every mode, so whatever batch structure the
+    # any retained coupling couples modes, so whatever batch structure the
     # block diagonal had is gone and the caller's own factorization applies
     pc.factorization = pc.basefactorization
     pc.couplingmodes = S
@@ -321,9 +599,39 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
     return true
 end
 
+# the coupling set is the full one: every mode retained, or a mask with no
+# zero. `:band` never reports exact even when wide, because escalation
+# replaces a covering band by the full set before it stops growing.
+function isexactpreconditioner(pc::ModeCouplingPreconditioner)
+    pc.couplingmodes isa Vector{Int} &&
+        length(pc.couplingmodes) >= pc.Nmodes && return true
+    pc.couplingmodes isa AbstractMatrix{Bool} && all(pc.couplingmodes) &&
+        return true
+    pc.couplingmodes === :all && return true
+    return false
+end
+
 function updatepreconditioner!(pc::ModeCouplingPreconditioner,
     x::AbstractVector)
     setpoint!(pc.sys, x)
+    # `:auto` remeasures the bandwidth here, where the Fourier coefficients are
+    # about to be computed anyway, and rebuilds only when it has grown. The
+    # bandwidth is never reduced: the structure would have to be rebuilt and
+    # refactorized symbolically to save fill the solve has already paid for, and
+    # the drive generally widens the coupling as the Newton iteration proceeds.
+    if !isnothing(pc.autotol)
+        want = cosphibandwidths(pc.sys, pc.autoindices, pc.Amatrixmodes;
+            tol = pc.autotol)
+        have = pc.couplingmodes isa Pair && pc.couplingmodes.second isa NTuple ?
+            pc.couplingmodes.second : ntuple(_ -> 0, length(want))
+        grown = map(max, want, have)
+        if grown != have
+            pc.couplingmodes = :band => grown
+            pc.P, pc.deviceplan, pc.nzval = pc.build(pc.couplingmodes)
+            pc.factorization = pc.basefactorization
+            pc.cache.factorization = nothing
+        end
+    end
     # the Fourier coefficients are already on the backend, the assembly runs
     # there, and it writes the order the factorization stores, so on a device
     # nothing crosses to the host: no copy of phimatrix, no serial assembly

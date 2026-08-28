@@ -1,5 +1,20 @@
 
 """
+    AbstractStageInfo
+
+The supertype of every per-stage diagnostic record stored in the `stages`
+vector of a `SolverInfo`. Each solver contributes its own concrete record
+type instead of adding fields to a shared struct: [`IterationInfo`](@ref)
+for the Newton family (with the Krylov linear-solve records where the
+solver is `nlsolvekrylov!`), `StagedStageInfo` for the source continuation
+driver, and future methods add their own. Every record follows three field
+conventions so generic reporting works across methods -- `label::String`,
+`converged::Bool` and `iterations::Int` -- and everything else belongs to
+the record type itself.
+"""
+abstract type AbstractStageInfo end
+
+"""
     IterationInfo(label, parameter, regularization, converged, iterations,
         normresidual, alpha, backtracks, andersonaccepted)
 
@@ -28,7 +43,7 @@ The nine argument constructor leaves `krylov` empty, so the direct solvers
 construct an `IterationInfo` without mentioning a field which does not apply
 to them.
 """
-struct IterationInfo
+struct IterationInfo <: AbstractStageInfo
     label::String
     parameter::Float64
     regularization::Float64

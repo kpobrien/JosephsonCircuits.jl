@@ -224,6 +224,15 @@ implementations must derive the usable Arnoldi dimension from
 harvest!(pc::AbstractPreconditioner, ::GMRESWorkspace, ::NamedTuple) = pc
 
 """
+    isexactpreconditioner(pc::AbstractPreconditioner)
+
+Whether `pc` currently applies the exact Jacobian, so that a deflation or
+composition layered on top of it can contribute nothing. `false` for any
+preconditioner that does not say otherwise.
+"""
+isexactpreconditioner(::AbstractPreconditioner) = false
+
+"""
     RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!, n::Integer;
         kmax = 40, kharvest = 8)
 
@@ -277,8 +286,13 @@ mutable struct RecyclingPreconditioner{TI,TJ,T<:AbstractFloat,TM<:AbstractMatrix
     U::TM
     Z::TM
     W::TM
-    # the k x k projected inverse and its two work vectors, which are small
-    Ginv::Matrix{T}
+    # the k x k projected inverse and its two work vectors, which are small.
+    # `Ginv` lives with the basis rather than on the host: the apply
+    # multiplies it against `a` and `b`, which are device resident, so keeping
+    # it on the host would mix the two in a `mul!`. Only the dense
+    # factorizations that *build* it run on the host; see
+    # `_rebuilddeflation!`.
+    Ginv::TM
     a::TV
     b::TV
     const kmax::Int
@@ -290,14 +304,14 @@ end
 
 function RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
     n::Integer; kmax::Integer = 20, kharvest::Integer = 8,
-    escalateafter::Integer = 3, T::Type{<:AbstractFloat} = Float64)
+    escalateafter::Integer = 1, T::Type{<:AbstractFloat} = Float64)
     return RecyclingPreconditioner(inner, jvp!, Vector{T}(undef, n);
         kmax = kmax, kharvest = kharvest, escalateafter = escalateafter)
 end
 
 """
     RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
-        b::AbstractVector; kmax = 20, kharvest = 8, escalateafter = 3)
+        b::AbstractVector; kmax = 20, kharvest = 8, escalateafter = 1)
 
 Build the deflation wrapper on a system whose vectors are like `b`. The
 deflation subspace and the two blocks derived from it are allocated with
@@ -308,24 +322,32 @@ host, where it is formed by a dense factorization of a matrix no larger than
 """
 function RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
     b::AbstractVector{T}; kmax::Integer = 20, kharvest::Integer = 8,
-    escalateafter::Integer = 3) where {T<:AbstractFloat}
+    escalateafter::Integer = 1) where {T<:AbstractFloat}
     kmax >= 1 || throw(ArgumentError(lazy"`kmax` = $(kmax) must be at least 1."))
     1 <= kharvest <= kmax || throw(ArgumentError(
         lazy"`kharvest` = $(kharvest) must satisfy 1 <= kharvest <= kmax = $(kmax)."))
     n = length(b)
     return RecyclingPreconditioner(inner, jvp!, similar(b, n, 0),
-        similar(b, n, 0), similar(b, n, 0), zeros(T, 0, 0),
+        similar(b, n, 0), similar(b, n, 0), similar(b, 0, 0),
         similar(b, 0), similar(b, 0),
         Int(kmax), Int(kharvest), Int(escalateafter), 0, 0)
 end
 
 # Escalating the base and recycling are two answers to the same problem, and
-# escalating is by far the more expensive one: it rebuilds the assembly plan
-# and the factorization for a larger mode set. Recycling is given
-# `escalateafter` chances to absorb the deficiency first, after which the base
-# is grown as a genuine last resort. Measured on a 128 cell two tone line, a
-# single premature escalation cost more than the whole rest of the solve
-# (3.25 s against 1.36 s).
+# `escalateafter` lets recycling defer the base's escalation to absorb the
+# deficiency itself. The default is 1 -- no deferral. It used to be 3, from a
+# measurement in the restart-30 era where a failed linear solve cost at most
+# ~120 iterations and a premature escalation cost more than the rest of the
+# solve (3.25 s against 1.36 s at 128 cells). At the current restart of 400
+# with 4 cycles, one deferred escalation costs up to 1600 Arnoldi iterations,
+# and the deferral only pays if the deflation improves between failures.
+# Measured on a strongly driven 64 junction RPM line it does not: three
+# consecutive deferred solves achieved residual ratios of 0.38, 0.84 and 0.99
+# -- monotonically worse -- and the deferral tripled the total linear
+# iteration count (2306 to 6384) before escalating anyway. When the deflation
+# genuinely absorbs the deficiency (128 junctions, kmax = 40), every solve
+# converges and no escalation request ever arrives, so no deferral is needed
+# for recycling to win.
 function escalatepreconditioner!(pc::RecyclingPreconditioner)
     pc.escalationrequests += 1
     pc.escalationrequests >= pc.escalateafter || return false
@@ -335,9 +357,31 @@ end
 
 function updatepreconditioner!(pc::RecyclingPreconditioner, x::AbstractVector)
     updatepreconditioner!(pc.inner, x)
+    # Against an exact inner the correction is identically zero: Y = J*P^-1*U
+    # = U, so W = Z - P^-1*Y = 0. Rebuilding it anyway costs 2k inner solves
+    # and k Jacobian products per Newton step for nothing, which after an
+    # escalation to the full Jacobian -- where every linear solve takes one
+    # iteration -- is the dominant cost of the whole step. The subspace `U` is
+    # kept, in case the base is ever rebuilt restricted again.
+    if isexactpreconditioner(pc.inner)
+        n = size(pc.U, 1)
+        pc.Z = similar(pc.U, n, 0); pc.W = similar(pc.U, n, 0)
+        pc.Ginv = similar(pc.U, 0, 0)
+        pc.a = similar(pc.U, 0); pc.b = similar(pc.U, 0)
+        return pc
+    end
     _rebuilddeflation!(pc)
     return pc
 end
+
+# A small dense matrix built on the host, moved to wherever `proto` lives.
+# `eigen`, `svd` and `cholesky` are scalar indexed dense kernels, so the k x k
+# projected quantities are brought across, factorized on the host and the
+# result sent back. This is the same split `GMRESWorkspace` makes for the
+# Hessenberg and the Givens rotations, and for the same reason: what crosses
+# is k x k once per rebuild, not anything of the system dimension.
+_hostbuilt(proto::AbstractMatrix, A::AbstractMatrix) =
+    copyto!(similar(proto, size(A)...), A)
 
 # rebuild Z, W and inv(G) at the current point. Y = J*Z is recomputed rather
 # than carried over from the previous step's Arnoldi: the free but stale
@@ -348,30 +392,42 @@ function _rebuilddeflation!(pc::RecyclingPreconditioner{TI,TJ,T}) where {TI,TJ,T
     n = size(pc.U, 1)
     if k == 0
         pc.Z = similar(pc.U, n, 0); pc.W = similar(pc.U, n, 0)
-        pc.Ginv = zeros(T, 0, 0)
+        pc.Ginv = similar(pc.U, 0, 0)
         pc.a = similar(pc.U, 0); pc.b = similar(pc.U, 0)
         return pc
     end
     Z = similar(pc.U)
     Y = similar(pc.U)
+    # the base solve and the product are handed contiguous vectors rather than
+    # column views: a device direct solver wants a vector it can bind a
+    # descriptor to, and a strided view falls through to a scalar kernel
+    cin = similar(pc.U, n)
+    cout = similar(pc.U, n)
     for j in 1:k
-        applypreconditioner!(view(Z, :, j), pc.inner, view(pc.U, :, j))
+        copyto!(cin, view(pc.U, :, j))
+        applypreconditioner!(cout, pc.inner, cin)
+        copyto!(view(Z, :, j), cout)
     end
     for j in 1:k
-        pc.jvp!(view(Y, :, j), view(Z, :, j))
+        copyto!(cin, view(Z, :, j))
+        pc.jvp!(cout, cin)
+        copyto!(view(Y, :, j), cout)
     end
     if k > pc.kmax
         # keep the subspace the operator shrinks most
-        C = eigen(Symmetric(Y'*Y)).vectors[:, 1:pc.kmax]
+        C = _hostbuilt(pc.U,
+            eigen(Symmetric(Array(Y'*Y))).vectors[:, 1:pc.kmax])
         pc.U = pc.U*C; Z = Z*C; Y = Y*C; k = pc.kmax
     end
-    G = Z'*Y
-    F = svd(G)
+    F = svd(Array(Z'*Y))
     tol = eps(T)^(3//4)*maximum(F.S; init = zero(T))
-    pc.Ginv = F.V*Diagonal([s > tol ? inv(s) : zero(T) for s in F.S])*F.U'
+    pc.Ginv = _hostbuilt(pc.U,
+        F.V*Diagonal([s > tol ? inv(s) : zero(T) for s in F.S])*F.U')
     B = similar(Y)
     for j in 1:k
-        applypreconditioner!(view(B, :, j), pc.inner, view(Y, :, j))
+        copyto!(cin, view(Y, :, j))
+        applypreconditioner!(cout, pc.inner, cin)
+        copyto!(view(B, :, j), cout)
     end
     pc.Z = Z
     pc.W = Z .- B
@@ -409,9 +465,18 @@ function _choleskyqr2!(A::AbstractMatrix{T}) where {T<:AbstractFloat}
     k = size(A, 2)
     k == 0 && return 0
     for _ in 1:2
-        F = cholesky(Symmetric(A'*A), check = false)
+        # The gram matrix is formed where `A` lives and factorized on the
+        # host. The k x k triangular factor is inverted there and applied as a
+        # gemm rather than sent back for a triangular solve, because a
+        # `rdiv!` against a device resident `UpperTriangular` falls through to
+        # a generic scalar kernel. Inverting is the less stable of the two,
+        # which costs nothing here: the second CholeskyQR pass is what fixes
+        # the squared condition number either way, and a block too ill
+        # conditioned for that already returns -1 to the Householder fallback.
+        F = cholesky(Symmetric(Array(A'*A)), check = false)
         issuccess(F) || return -1
-        rdiv!(A, F.U)
+        Rinv = _hostbuilt(A, Matrix(inv(F.U)))
+        copyto!(A, A*Rinv)
     end
     return k
 end
@@ -421,7 +486,8 @@ end
 # again all level 3 BLAS. Columns whose norm collapses under the projection
 # were already in the span of `U` and are dropped rather than orthogonalized
 # into noise.
-function _orthappend(U::Matrix{T}, Unew::Matrix{T}) where {T<:AbstractFloat}
+function _orthappend(U::AbstractMatrix{T},
+    Unew::AbstractMatrix{T}) where {T<:AbstractFloat}
     before = [norm(view(Unew, :, j)) for j in axes(Unew, 2)]
     if size(U, 2) > 0
         for _ in 1:2
@@ -438,13 +504,17 @@ function _orthappend(U::Matrix{T}, Unew::Matrix{T}) where {T<:AbstractFloat}
     isempty(kept) && return U
     B = Unew[:, kept]
     if _choleskyqr2!(B) < 0
-        B = Matrix(qr(B).Q)[:, 1:length(kept)]
+        # the Householder fallback is host only, and is reached only when the
+        # block was too ill conditioned for CholeskyQR2
+        B = _hostbuilt(U, Matrix(qr(Array(B)).Q)[:, 1:length(kept)])
     end
     return size(U, 2) > 0 ? hcat(U, B) : B
 end
 
 function harvest!(pc::RecyclingPreconditioner{TI,TJ,T}, ws::GMRESWorkspace,
     out::NamedTuple) where {TI,TJ,T}
+    # nothing to deflate against an exact inner; see updatepreconditioner!
+    isexactpreconditioner(pc.inner) && return pc
     # the workspace holds only the final cycle, so the usable Arnoldi
     # dimension is what that cycle built, not the total across restarts
     m = size(ws.H, 2)
@@ -454,7 +524,9 @@ function harvest!(pc::RecyclingPreconditioner{TI,TJ,T}, ws::GMRESWorkspace,
     # right singular vectors of the rectangular Hessenberg with the smallest
     # singular values, lifted through the Arnoldi basis
     F = svd(Matrix(view(ws.H, 1:j+1, 1:j)))
-    C = view(F.V, :, size(F.V, 2)-pc.kharvest+1:size(F.V, 2))
+    # `ws.H` is host resident, so the right singular vectors are built there
+    # and moved to the basis before lifting them through it
+    C = _hostbuilt(ws.V, F.V[:, size(F.V, 2)-pc.kharvest+1:size(F.V, 2)])
     Unew = view(ws.V, :, 1:j)*C
     U = _orthappend(pc.U, Unew)
     # guard only; the rebuild trims to kmax by quality on the next update
