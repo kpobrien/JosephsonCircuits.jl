@@ -3096,8 +3096,10 @@ Source continuation on an adaptively grown harmonic grid, reached through
 
 Near a critical drive the Newton basin is small and the iteration count
 large, so those iterations are spent where they are cheap: the drive is
-climbed in warm started steps on a small harmonic truncation, and each
-larger grid is warm started from the last by matching mode tuples. The
+climbed in warm started steps with only a small set of harmonics retained
+as unknowns (the nonlinearity is always evaluated on the full transform
+grid; see `grids` below), and each larger retained set is warm started
+from the last by matching mode tuples. The
 schedule is adaptive in both directions because every truncation has its own
 solvability boundary, and the boundaries are not monotone in the grid
 (measured: the (2,2) truncation of a 64 junction RPM at strong two tone
@@ -3124,8 +3126,15 @@ drive -- reported "unreachable" by every direct method -- the walk brackets
 the fold at 91.9-93.4% of the drive: the operating point does not exist.
 
 # Keywords (through `stagedkwargs`)
-- `grids = defaultgridladder(Nharmonics)`: the coarse-to-fine ladder;
-    finest entry must equal `Nharmonics`.
+- `grids = defaultgridladder(Nharmonics)`: the coarse-to-fine ladder of
+    RETAINED harmonic caps; the finest entry must equal `Nharmonics`.
+    Every stage evaluates the nonlinearity on the full `Nharmonics` rdft
+    transform grid -- the transform sets the aliasing of the nonlinear
+    products and costs only N*log(N) -- and the ladder controls
+    `maxharmonics`, which modes are retained as unknowns, so the linear
+    solves are what shrink. Stages therefore share one alias-consistent
+    grid, and a stage's solvability boundary reflects the physics rather
+    than the aliasing artifacts of a small transform.
 - `s0 = 0.5`: the first drive fraction attempted.
 - `smin = 0.02`: the minimum drive step; a stall below it grows the grid.
 - `interiorftol = 1e-7`, `interioriterations = 60`: tolerance and Newton
@@ -3171,13 +3180,20 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
     innermethod === :staged && throw(ArgumentError(
         "`innermethod` must be a non-staged method."))
 
-    modesof(grid) = removeconjfreqs(truncfreqs(calcfreqsrdft(grid);
+    # Every stage shares the FULL rdft box `Nharmonics`: the transform
+    # grid sets the aliasing of the nonlinear products and costs only
+    # N*log(N), so shrinking it with the stage would make each stage's
+    # solvability boundary reflect its own aliasing artifacts rather than
+    # the physics. The ladder controls `maxharmonics` -- which modes are
+    # RETAINED as unknowns -- so the linear solves stay small while every
+    # stage evaluates cos(phi(t)) on the same alias-consistent grid.
+    modesof(grid) = removeconjfreqs(truncfreqs(calcfreqsrdft(Nharmonics);
         dc = dc, odd = odd, even = even,
         maxintermodorder = maxintermodorder,
         maxharmonics = map(min, maxharmonics, grid))).modes
     scaled(s) = [(mode = t.mode, port = t.port, current = s*t.current)
         for t in sources]
-    solve(grid, s, x0, final) = hbnlsolve(w, grid, scaled(s), circuit,
+    solve(grid, s, x0, final) = hbnlsolve(w, Nharmonics, scaled(s), circuit,
         circuitdefs; dc = dc, odd = odd, even = even,
         maxintermodorder = maxintermodorder,
         maxharmonics = map(min, maxharmonics, grid),
@@ -3314,7 +3330,28 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
             pendinggrow = false
             ds = s0/2
         else
-            error(lazy"no harmonic balance solution was found at the requested drive: the source continuation converged at $(round(s, digits = 4)) of the requested amplitudes on the finest grid $(grids[end]) and stalled at $(round(starget, digits = 4)). The solution branch ends between them (a fold, the self oscillation threshold); the operating point does not exist at full drive.")
+            # The continuation branch ends between s and starget. Before
+            # declaring the operating point nonexistent, attempt the
+            # requested drive directly from the last converged point:
+            # coexisting branches are common in this regime, and the end of
+            # the *continuation* branch does not preclude a solution at
+            # full drive on another branch reachable by a plain damped
+            # solve from here. One bounded attempt; its record appears in
+            # the diagnostics either way.
+            if starget < 1.0 && !isnothing(x)
+                t0 = time_ns()
+                jump = solve(grids[gi], 1.0, x, true)
+                record(jump, grids[gi], s, 1.0, :final,
+                    jump.solverinfo.converged, (time_ns() - t0)/1e9)
+                verbose && println("staged: branch-end jump to s=1.0 |F|=",
+                    round(jump.solverinfo.finalresidual, sigdigits = 2),
+                    jump.solverinfo.converged ? "" : " STALL")
+                if jump.solverinfo.converged
+                    out = jump
+                    break
+                end
+            end
+            error(lazy"no harmonic balance solution was found at the requested drive: the source continuation converged at $(round(s, digits = 4)) of the requested amplitudes on the finest grid $(grids[end]) and stalled at $(round(starget, digits = 4)), so the solution branch ends between them (a fold, the self oscillation threshold), and a direct solve at full drive from the last converged point also failed. No operating point at the requested drive is reachable from below.")
         end
     end
     # the returned diagnostics are the whole walk: one StagedStageInfo per
