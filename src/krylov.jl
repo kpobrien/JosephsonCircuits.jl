@@ -94,6 +94,20 @@ struct KrylovSolveInfo
     backtracks::Int
     armijo::Bool
     time::Float64
+    # The preconditioner at the time of this solve. `escalated` alone cannot
+    # distinguish an escalation which was never requested from one which was
+    # requested and refused, and the difference between those two is the
+    # whole of the behaviour below.
+    escalationrequested::Bool
+    # the width of the deflation subspace and how many times it has been
+    # rebuilt: the only visible sign of what recycling costs
+    deflationsize::Int
+    deflationrebuilds::Int
+    # wall time applying the preconditioner. A configuration which takes more
+    # iterations in less time is running against a weaker and cheaper
+    # preconditioner, which an iteration count alone cannot distinguish from
+    # one which is simply worse.
+    precondtime::Float64
 end
 
 function Base.show(io::IO, ::MIME"text/plain", k::KrylovSolveInfo)
@@ -103,7 +117,9 @@ function Base.show(io::IO, ::MIME"text/plain", k::KrylovSolveInfo)
         " achieved=", round(k.residualratio, sigdigits = 2),
         " its=", k.iterations, "/", k.cycles, " ", k.reason,
         k.refreshed ? " refreshed" : "",
-        k.escalated ? " escalated" : "",
+        k.escalated ? " escalated" :
+            (k.escalationrequested ? " escalation-refused" : ""),
+        k.deflationsize > 0 ? " deflation=$(k.deflationsize)" : "",
         k.stagnated ? " stagnated" : "",
         " slope=", round(k.slope, sigdigits = 2),
         " alpha=", round(k.alpha, sigdigits = 2),
@@ -124,13 +140,26 @@ krylovtotaliterations(records) = sum(k -> k.iterations, records; init = 0)
 function _withstep(k::KrylovSolveInfo, slope, alpha, backtracks, armijo)
     return KrylovSolveInfo(k.iteration, k.role, k.normF, k.forcing,
         k.residualratio, k.iterations, k.cycles, k.reason, k.refreshed,
-        k.escalated, k.stagnated, slope, alpha, backtracks, armijo, k.time)
+        k.escalated, k.stagnated, slope, alpha, backtracks, armijo, k.time,
+        k.escalationrequested, k.deflationsize, k.deflationrebuilds,
+        k.precondtime)
 end
 
 function _withescalated(k::KrylovSolveInfo)
     return KrylovSolveInfo(k.iteration, k.role, k.normF, k.forcing,
         k.residualratio, k.iterations, k.cycles, k.reason, k.refreshed,
-        true, k.stagnated, k.slope, k.alpha, k.backtracks, k.armijo, k.time)
+        true, k.stagnated, k.slope, k.alpha, k.backtracks, k.armijo, k.time,
+        k.escalationrequested, k.deflationsize, k.deflationrebuilds,
+        k.precondtime)
+end
+
+# an escalation which the preconditioner refused: the request happened, the
+# strengthening did not
+function _withescalationrefused(k::KrylovSolveInfo)
+    return KrylovSolveInfo(k.iteration, k.role, k.normF, k.forcing,
+        k.residualratio, k.iterations, k.cycles, k.reason, k.refreshed,
+        k.escalated, k.stagnated, k.slope, k.alpha, k.backtracks, k.armijo,
+        k.time, true, k.deflationsize, k.deflationrebuilds, k.precondtime)
 end
 
 
@@ -145,6 +174,37 @@ returns `false`, which is correct for any preconditioner that is already exact
 or has no cheaper/costlier settings.
 """
 escalatepreconditioner!(::AbstractPreconditioner) = false
+
+"""
+    deflationsize(pc)
+
+The number of vectors in the deflation subspace, zero for a preconditioner
+which does not recycle.
+"""
+deflationsize(::AbstractPreconditioner) = 0
+
+"""
+    deflationrebuilds(pc)
+
+How many times the deflation subspace has been rebuilt.
+"""
+deflationrebuilds(::AbstractPreconditioner) = 0
+
+"""
+    escalationrefusals(pc)
+
+How many escalation requests were absorbed without being passed on.
+"""
+escalationrefusals(::AbstractPreconditioner) = 0
+
+"""
+    preconditionerlevel(pc)
+
+How many modes the preconditioner couples, as a measure of its strength, or
+`-1` when that is not meaningful. Reported so an escalation can be checked
+to have taken effect rather than merely to have been requested.
+"""
+preconditionerlevel(::AbstractPreconditioner) = -1
 
 """
     GMRESWorkspace{T<:AbstractFloat}
@@ -300,6 +360,8 @@ mutable struct RecyclingPreconditioner{TI,TJ,T<:AbstractFloat,TM<:AbstractMatrix
     const escalateafter::Int
     escalationrequests::Int
     rebuilds::Int
+    # escalation requests absorbed without being passed to `inner`
+    refusals::Int
 end
 
 function RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
@@ -330,7 +392,7 @@ function RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
     return RecyclingPreconditioner(inner, jvp!, similar(b, n, 0),
         similar(b, n, 0), similar(b, n, 0), similar(b, 0, 0),
         similar(b, 0), similar(b, 0),
-        Int(kmax), Int(kharvest), Int(escalateafter), 0, 0)
+        Int(kmax), Int(kharvest), Int(escalateafter), 0, 0, 0)
 end
 
 # Escalating the base and recycling are two answers to the same problem, and
@@ -349,11 +411,35 @@ end
 # converges and no escalation request ever arrives, so no deferral is needed
 # for recycling to win.
 function escalatepreconditioner!(pc::RecyclingPreconditioner)
+    # Withholding an escalation is only defensible when there is a deflation
+    # subspace which might cover the deficiency instead. While `U` is empty
+    # the recycling has nothing to absorb it with, so the throttle delays a
+    # real remedy for a mechanism which is not running.
+    #
+    # The delay is expensive. On a two tone travelling wave amplifier the
+    # first escalation takes the mode coupling preconditioner from block
+    # diagonal to fully coupled, after which every Newton step converges in
+    # one Krylov iteration. Absorbing the first two requests left five Newton
+    # steps solving against the unescalated preconditioner, reaching relative
+    # residuals of 0.46, 0.48, 0.79, 0.89 and 0.93 and spending 324
+    # iterations to do it.
+    if size(pc.U, 2) == 0
+        pc.escalationrequests = 0
+        return escalatepreconditioner!(pc.inner)
+    end
     pc.escalationrequests += 1
-    pc.escalationrequests >= pc.escalateafter || return false
+    if pc.escalationrequests < pc.escalateafter
+        pc.refusals += 1
+        return false
+    end
     pc.escalationrequests = 0
     return escalatepreconditioner!(pc.inner)
 end
+
+deflationsize(pc::RecyclingPreconditioner) = size(pc.U, 2)
+deflationrebuilds(pc::RecyclingPreconditioner) = pc.rebuilds
+escalationrefusals(pc::RecyclingPreconditioner) = pc.refusals
+preconditionerlevel(pc::RecyclingPreconditioner) = preconditionerlevel(pc.inner)
 
 function updatepreconditioner!(pc::RecyclingPreconditioner, x::AbstractVector)
     updatepreconditioner!(pc.inner, x)
@@ -779,6 +865,7 @@ function gmres!(x::AbstractVector{T}, Aop!, b::AbstractVector{T},
     maxrestarts::Integer = 10, initialzero::Bool = true) where {T<:AbstractFloat}
 
     n = length(b)
+    precondtime = 0.0
     length(x) == n || throw(DimensionMismatch(
         lazy"`x` has length $(length(x)) but `b` has length $(n)."))
     size(ws.V, 1) == n || throw(DimensionMismatch(
@@ -845,7 +932,9 @@ function gmres!(x::AbstractVector{T}, Aop!, b::AbstractVector{T},
             if isnothing(Mop!)
                 @views copyto!(z, V[:, j])
             else
+                tpc = time()
                 @views Mop!(z, V[:, j])
+                precondtime += time() - tpc
             end
             Aop!(w, z)
 
@@ -906,7 +995,8 @@ function gmres!(x::AbstractVector{T}, Aop!, b::AbstractVector{T},
         :iterationlimit
     end
     return (iterations = totaliterations, residual = resnorm,
-        converged = converged, cycles = cycles, reason = reason)
+        converged = converged, cycles = cycles, reason = reason,
+        precondtime = precondtime)
 end
 
 """
@@ -1102,7 +1192,8 @@ function nlsolvekrylov!(fj!::Function, jvp!::Function, F::AbstractVector{T},
             push!(krylovrecord, KrylovSolveInfo(n, role, normF[end], forcing,
                 normF[end] > 0 ? o.residual/normF[end] : NaN, o.iterations,
                 o.cycles, o.reason, refreshedbefore, false, stag, NaN, NaN,
-                0, false, time() - tstart))
+                0, false, time() - tstart, false, deflationsize(pc),
+                deflationrebuilds(pc), get(o, :precondtime, NaN)))
             return nothing
         end
         stagnated = !out.converged &&
@@ -1154,6 +1245,8 @@ function nlsolvekrylov!(fj!::Function, jvp!::Function, F::AbstractVector{T},
                 if escalatepreconditioner!(pc)
                     refresh = true
                     krylovrecord[end] = _withescalated(krylovrecord[end])
+                else
+                    krylovrecord[end] = _withescalationrefused(krylovrecord[end])
                 end
                 linearfailures = 0
             end
