@@ -109,6 +109,10 @@ include("keyedarrayutils.jl")
 
 # new mult-tone harmonic balance solver code
 include("hbsolve.jl")
+include("hblinsolve.jl")
+include("sensitivities.jl")
+include("stagedsolve.jl")
+include("hbnlsolve.jl")
 
 # These are for exporting SPICE netlists and running simulations in
 # WRSPICE or Xyce. 
@@ -128,6 +132,8 @@ include("devicepattern.jl")
 include("structureassembly.jl")
 include("nonlinearterm.jl")
 include("hbsystem.jl")
+include("nonlineartermtranspose.jl")
+include("hbnonlinearproblem.jl")
 include("batchedblocks.jl")
 include("cudss.jl")
 include("devicelinsolve.jl")
@@ -526,7 +532,11 @@ end
 
 export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
-    @variables, @register_symbolic, Num, Symbolics, connectS, solveS
+    @variables, @register_symbolic, Num, Symbolics, connectS, solveS,
+    hbnonlinearproblem, JacobianOperator, preconditioner, hbresidual!,
+    hbjvp!, hbvjp!, hbjacobian!, hbd2F!, hbd3F!, hbdFdp!, jacobianprototype,
+    setdrive!, drivenresidual!, NewtonKrylov, Newton, QuasiNewton,
+    ExternalSolver, InternalGMRES, KrylovJL
 
 # the typed circuit representation
 export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,

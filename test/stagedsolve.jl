@@ -1,14 +1,8 @@
+isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"))
 using JosephsonCircuits, Test, LinearAlgebra
 
 @testset "method = :staged" begin
-    circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-    push!(circuit, ("P1","1","0",1)); push!(circuit, ("R1","1","0",:R))
-    for i in 1:4
-        push!(circuit, ("Lj$(i)","$(i)","$(i+1)",:Lj))
-        push!(circuit, ("C$(i)","$(i)","0",:Cg))
-    end
-    push!(circuit, ("C5","5","0",:Cg)); push!(circuit, ("R2","5","0",:R))
-    defs = Dict{Symbol,Complex{Float64}}(:Lj=>100e-12, :Cg=>40e-15, :R=>50.0)
+    circuit, defs = testchaincircuit()
     w1 = 2*pi*5.0e9; w2 = 2*pi*1.19e9
     src = [(mode=(1,0), port=1, current=1.0e-6),
            (mode=(0,1), port=1, current=0.5e-6)]

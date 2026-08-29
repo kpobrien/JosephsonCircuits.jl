@@ -26,10 +26,14 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 [weakdeps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
+Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
+SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
 
 [extensions]
 JosephsonCircuitsCUDAExt = "CUDA"
 JosephsonCircuitsCUDSSExt = ["CUDA", "CUDSS"]
+JosephsonCircuitsKrylovExt = "Krylov"
+JosephsonCircuitsSciMLBaseExt = "SciMLBase"
 
 [compat]
 Atomix = "0.1, 1"
@@ -40,6 +44,8 @@ FFTW = "1"
 FastInterpolations = "0.4"
 Graphs = "1"
 KLU = "0.6"
+Krylov = "0.9, 0.10"
+SciMLBase = "2"
 KernelAbstractions = "0.9"
 LinearAlgebra = "1"
 OrderedCollections = "1,2"

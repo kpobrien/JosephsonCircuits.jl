@@ -21,19 +21,14 @@ end
 using JosephsonCircuits, CUDA, CUDSS, Test, LinearAlgebra
 CUDA.functional() || error("CUDA is not functional on this machine; the GPU test suite needs a working CUDA device.")
 
+isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
+
 # Device/host parity of everything the CUDA and CUDSS extensions cover:
 # the same solves on CUDABackend() and CPU() must agree to solver
 # tolerance. The circuits are small so the suite is dominated by one-time
 # GPU compilation, not by the solves.
 @testset verbose = true "GPU device/host parity" begin
-    circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-    push!(circuit, ("P1","1","0",1)); push!(circuit, ("R1","1","0",:R))
-    for i in 1:4
-        push!(circuit, ("Lj$(i)","$(i)","$(i+1)",:Lj))
-        push!(circuit, ("C$(i)","$(i)","0",:Cg))
-    end
-    push!(circuit, ("C5","5","0",:Cg)); push!(circuit, ("R2","5","0",:R))
-    defs = Dict{Symbol,Complex{Float64}}(:Lj=>100e-12, :Cg=>40e-15, :R=>50.0)
+    circuit, defs = testchaincircuit()
     w1 = 2*pi*5.0e9; w2 = 2*pi*1.19e9
     src1 = [(mode=(1,), port=1, current=2.0e-6)]
     src2 = [(mode=(1,0), port=1, current=1.0e-6),

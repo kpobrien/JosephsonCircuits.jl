@@ -1,5 +1,39 @@
 
 """
+    FunctionOperator(f!, n)
+
+Wraps an in-place product `f!(y, v)` as a `mul!`-able operator of dimension
+`n`, so the Krylov machinery can be written against `mul!` alone while
+still accepting a bare closure.
+"""
+struct FunctionOperator{F}
+    f!::F
+    n::Int
+end
+Base.size(A::FunctionOperator) = (A.n, A.n)
+Base.size(A::FunctionOperator, i::Integer) = A.n
+Base.eltype(::FunctionOperator) = Float64
+LinearAlgebra.mul!(y::AbstractVector, A::FunctionOperator, v::AbstractVector) =
+    (A.f!(y, v); y)
+
+"""
+    asoperator(A, n)
+
+`A` itself when it is already `mul!`-able, and a [`FunctionOperator`](@ref)
+when it is a bare in-place product.
+
+The Krylov solvers of this package apply the Jacobian through `mul!`, which
+is the interface every external linear algebra package in the ecosystem
+consumes. Normalizing here means a `JacobianOperator` can be handed
+straight through with no wrapper, while the older closure form keeps
+working.
+"""
+asoperator(f::Function, n::Integer) = FunctionOperator(f, Int(n))
+asoperator(A, ::Integer) = A
+
+
+
+"""
     AbstractPreconditioner
 
 Supertype of the preconditioners of [`nlsolvekrylov!`](@ref). A preconditioner
@@ -161,6 +195,49 @@ function _withescalationrefused(k::KrylovSolveInfo)
         k.escalated, k.stagnated, k.slope, k.alpha, k.backtracks, k.armijo,
         k.time, true, k.deflationsize, k.deflationrebuilds, k.precondtime)
 end
+
+
+"""
+    LinearAlgebra.ldiv!(z, pc::AbstractPreconditioner, r)
+    LinearAlgebra.ldiv!(pc::AbstractPreconditioner, r)
+    pc \\ r
+
+Apply the inverse of the preconditioner, forwarding to
+[`applypreconditioner!`](@ref).
+
+`ldiv!` is the de facto interface every external Krylov package consumes:
+`Pl`/`Pr` in LinearSolve.jl and IterativeSolvers.jl, `M`/`N` in Krylov.jl,
+`Pl` in BifurcationKit's linear solvers. The domain knowledge of this
+solver lives in the preconditioner, so defining `ldiv!` is what makes
+[`ModeCouplingPreconditioner`](@ref) and [`RecyclingPreconditioner`](@ref)
+reusable outside the package without an adapter.
+"""
+LinearAlgebra.ldiv!(z::AbstractVector, pc::AbstractPreconditioner,
+    r::AbstractVector) = applypreconditioner!(z, pc, r)
+
+function LinearAlgebra.ldiv!(pc::AbstractPreconditioner, r::AbstractVector)
+    z = applypreconditioner!(similar(r), pc, r)
+    copyto!(r, z)
+    return r
+end
+
+Base.:\(pc::AbstractPreconditioner, r::AbstractVector) =
+    applypreconditioner!(similar(r), pc, r)
+
+"""
+    LinearAlgebra.mul!(z, pc::AbstractPreconditioner, r)
+
+Apply the inverse of the preconditioner, spelled as a multiplication.
+
+The two conventions in the ecosystem disagree. LinearSolve.jl and
+IterativeSolvers.jl take a preconditioner and *divide* by it, so they call
+`ldiv!`. Krylov.jl takes `M` and `N` to be operators which already
+represent the inverse and *multiplies*, so it calls `mul!`. Supporting both
+is what lets the same preconditioner object be handed to either without an
+adapter, which is the whole point of shipping it as an object.
+"""
+LinearAlgebra.mul!(z::AbstractVector, pc::AbstractPreconditioner,
+    r::AbstractVector) = applypreconditioner!(z, pc, r)
 
 
 """
@@ -824,7 +901,7 @@ end
     gmres!(x, Aop!, b, ws::GMRESWorkspace; Mop! = nothing, rtol = 1e-6,
         atol = 0.0, maxrestarts = 10, initialzero = true)
 
-Solve `A*x = b` with restarted GMRES, where `Aop!(w, v)` computes `w = A*v` and
+Solve `A*x = b` with restarted GMRES, where `mul!(w, Aop, v)` computes `w = A*v` and
 the optional `Mop!(z, v)` applies a preconditioner `z = M \\ v`. The matrix `A`
 is never formed; only its action is required, which is what makes this usable
 with the matrix-free [`jacobianvectorproduct!`](@ref).
@@ -860,11 +937,13 @@ the first, so the Arnoldi work is capped at `maxrestarts*m` steps.
 Allocation free after the workspace is built, apart from whatever `Aop!` and
 `Mop!` themselves allocate.
 """
-function gmres!(x::AbstractVector{T}, Aop!, b::AbstractVector{T},
+function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
     ws::GMRESWorkspace{T}; Mop! = nothing, rtol = 1e-6, atol = 0.0,
     maxrestarts::Integer = 10, initialzero::Bool = true) where {T<:AbstractFloat}
 
     n = length(b)
+    # a bare in-place product is accepted alongside any `mul!`-able operator
+    Aop = asoperator(Aop_, n)
     precondtime = 0.0
     length(x) == n || throw(DimensionMismatch(
         lazy"`x` has length $(length(x)) but `b` has length $(n)."))
@@ -894,7 +973,7 @@ function gmres!(x::AbstractVector{T}, Aop!, b::AbstractVector{T},
             return (iterations = 0, residual = zero(T), converged = true,
                 reason = :converged)
         end
-        Aop!(w, x)
+        mul!(w, Aop, x)
         resnorm = norm(w)
         if resnorm <= atol
             return (iterations = 0, residual = resnorm, converged = true,
@@ -907,7 +986,7 @@ function gmres!(x::AbstractVector{T}, Aop!, b::AbstractVector{T},
         fill!(x, zero(T))
         copyto!(w, b)
     else
-        Aop!(w, x)
+        mul!(w, Aop, x)
         @. w = b - w
     end
     resnorm = norm(w)
@@ -936,7 +1015,7 @@ function gmres!(x::AbstractVector{T}, Aop!, b::AbstractVector{T},
                 @views Mop!(z, V[:, j])
                 precondtime += time() - tpc
             end
-            Aop!(w, z)
+            mul!(w, Aop, z)
 
             hsub, normw0 = gmres_orthogonalize!(w, V, H, ws.hd, ws.cd, j)
             resnorm = gmres_applyrotations!(H, cs, sn, s, j)
@@ -966,7 +1045,7 @@ function gmres!(x::AbstractVector{T}, Aop!, b::AbstractVector{T},
 
         # recompute the residual explicitly for the next cycle so restarts
         # cannot drift from the recurrence estimate
-        Aop!(w, x)
+        mul!(w, Aop, x)
         @. w = b - w
         previous = beta
         resnorm = norm(w)
@@ -998,6 +1077,69 @@ function gmres!(x::AbstractVector{T}, Aop!, b::AbstractVector{T},
         converged = converged, cycles = cycles, reason = reason,
         precondtime = precondtime)
 end
+
+abstract type AbstractHBLinearSolver end
+
+"""
+    InternalGMRES()
+
+The restarted GMRES of this package, with Givens rotations, the recycling
+subspace harvest and the preconditioner escalation the solver was built
+around. The default, and the only solver supporting deflation recycling,
+because `harvest!` reads the Arnoldi basis out of the internal workspace.
+"""
+struct InternalGMRES <: AbstractHBLinearSolver end
+
+"""
+    KrylovJL(method::Symbol = :gmres; kwargs...)
+
+Solve the Newton step with Krylov.jl: `:gmres`, `:fgmres`, `:bicgstab`,
+`:dqgmres` or any other solver taking an operator and a right hand side.
+Requires Krylov.jl to be loaded; the method lives in the package extension.
+
+Only the linear solve changes. The forcing term, the line search, the
+preconditioner escalation and the stagnation handling are untouched, and
+the mode coupling preconditioner is passed through unchanged because it is
+applied by `ldiv!`, which is what Krylov.jl's `N` argument consumes.
+Deflation recycling is unavailable, since it depends on the internal
+workspace.
+"""
+struct KrylovJL{K} <: AbstractHBLinearSolver
+    method::Symbol
+    kwargs::K
+end
+KrylovJL(method::Symbol = :gmres; kwargs...) = KrylovJL(method, kwargs)
+
+"""
+    hblinearsolve!(ls, deltax, jvp!, F, ws, Mop!; rtol, atol, maxrestarts)
+
+Solve for the Newton step and return the output named tuple `gmres!`
+produces: `converged`, `residual`, `iterations`, `cycles`, `reason`.
+`jvp!(y, v)` applies the Jacobian and `Mop!(z, r)` the preconditioner, both
+in place.
+
+This is the one part of the Newton-Krylov loop with nothing harmonic
+balance specific about it: an operator, a right hand side, a preconditioner
+and a tolerance. Putting it behind an interface lets an external Krylov
+library be substituted without touching anything else.
+"""
+function hblinearsolve!(::InternalGMRES, deltax, jvp!, F, ws, Mop!;
+        rtol, atol, maxrestarts)
+    return gmres!(deltax, jvp!, F, ws; Mop! = Mop!, rtol = rtol,
+        atol = atol, maxrestarts = maxrestarts)
+end
+
+hblinearsolve!(ls::AbstractHBLinearSolver, args...; kwargs...) =
+    throw(ArgumentError(lazy"no hblinearsolve! method for $(typeof(ls)); "*
+        "KrylovJL requires Krylov.jl to be loaded."))
+
+"""
+    supportsrecycling(ls)
+
+Whether the solver exposes an Arnoldi basis for [`harvest!`](@ref).
+"""
+supportsrecycling(::AbstractHBLinearSolver) = false
+supportsrecycling(::InternalGMRES) = true
 
 """
     nlsolvekrylov!(fj!, jvp!, F, x, pc::AbstractPreconditioner; kwargs...)
@@ -1044,25 +1186,37 @@ solver is kept simple.
   fractions of the previous trial.
 - `maxbacktracks = 10`: trial-point budget per line search.
 - `maxbacktrackfailures = 2`: consecutive-failure stall threshold.
-- `krylovrestart = 30`: GMRES restart length.
+- `krylovrestart = 400`: GMRES restart length. A long cycle is the tuned
+  default: the block diagonal preconditioner leaves a few near-null
+  directions a short Krylov space cannot resolve, the linear solve stalls,
+  and escalation to the full Jacobian is what rescues it -- a long cycle
+  attacks the stall directly and the basis (`krylovrestart + 1` vectors of
+  the system dimension) is cheap next to the sparse factorization
+  escalation would build.
 - `krylovmaxrestarts = 4`: GMRES restart budget per solve.
-- `krylovrefreshiterations = 10`: GMRES iteration count above which the
-  preconditioner is considered stale and refreshed before the next step.
-- `krylovrtolmin = 1e-10`, `krylovrtolmax = 1e-2`: clamp of the forcing
-  sequence.
+- `krylovrefreshiterations = 1`: GMRES iteration count above which the
+  preconditioner is considered stale and refreshed before the next step;
+  the tuned default refreshes eagerly.
+- `krylovrtolmin = 1e-10`, `krylovrtolmax = 0.9`, `krylovrtol0 = 0.3`:
+  clamp and initial value of the forcing sequence.
 - `krylovgamma = 0.9`, `krylovalpha = (1 + sqrt(5))/2`: Eisenstat-Walker
   forcing parameters.
+
+These are the values `hbnlsolve` runs with: the signature is the single
+source of truth for the tuned defaults, so a direct caller gets the same
+solver the package uses.
 
 Returns an [`IterationInfo`](@ref) with the same per-iteration diagnostics
 as [`nlsolve!`](@ref); the `andersonaccepted` record is always false.
 """
-function nlsolvekrylov!(fj!::Function, jvp!::Function, F::AbstractVector{T},
+function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     x::AbstractVector{T}, pc::AbstractPreconditioner; iterations = 1000, ftol = 1e-8,
+    linearsolver::AbstractHBLinearSolver = InternalGMRES(),
     label = "",
     c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5,
     maxbacktracks::Integer = 10, maxbacktrackfailures::Integer = 2,
-    krylovrestart::Integer = 30, krylovmaxrestarts::Integer = 4,
-    krylovrefreshiterations::Integer = 5, krylovrtolmin = 1e-10,
+    krylovrestart::Integer = 400, krylovmaxrestarts::Integer = 4,
+    krylovrefreshiterations::Integer = 1, krylovrtolmin = 1e-10,
     krylovrtolmax = 0.9, krylovrtol0 = 0.3, krylovgamma = 0.9,
     krylovalpha = (1 + sqrt(5))/2,
     krylovstagnation = 0.9, krylovescalate::Integer = 1,
@@ -1070,6 +1224,10 @@ function nlsolvekrylov!(fj!::Function, jvp!::Function, F::AbstractVector{T},
 
     length(F) == length(x) || throw(DimensionMismatch(
         lazy"The residual `F` has length $(length(F)) but the point `x` has length $(length(x))."))
+
+    # a bare in-place product is normalized to a `mul!`-able operator once,
+    # so the loop below and the pluggable linear solver see one interface
+    jvp = asoperator(jvp!, length(x))
 
     # validate every option before the first residual evaluation, with the
     # same bounds and rationale as nlsolve!
@@ -1184,9 +1342,10 @@ function nlsolvekrylov!(fj!::Function, jvp!::Function, F::AbstractVector{T},
             krylovrtol0
         end
 
-        out = gmres!(deltax, jvp!, F, ws; Mop! = Mop!, rtol = forcing,
-            atol = gmresatol, maxrestarts = krylovmaxrestarts)
-        harvest!(pc, ws, out)
+        out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
+            rtol = forcing, atol = gmresatol,
+            maxrestarts = krylovmaxrestarts)
+        supportsrecycling(linearsolver) && harvest!(pc, ws, out)
         # one record per GMRES call; the step outcome is filled in later
         function record!(o, role, refreshedbefore, stag)
             push!(krylovrecord, KrylovSolveInfo(n, role, normF[end], forcing,
@@ -1212,10 +1371,10 @@ function nlsolvekrylov!(fj!::Function, jvp!::Function, F::AbstractVector{T},
             # preconditioner too crude for the problem rather than one that
             # is merely stale.
             refreshpreconditioner!()
-            out = gmres!(deltax, jvp!, F, ws; Mop! = Mop!,
+            out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
                 rtol = forcing, atol = gmresatol,
                 maxrestarts = krylovmaxrestarts)
-            harvest!(pc, ws, out)
+            supportsrecycling(linearsolver) && harvest!(pc, ws, out)
             stagnated = !out.converged &&
                 out.residual > krylovstagnation*normF[end]
             record!(out, :retry, true, stagnated)
@@ -1270,7 +1429,7 @@ function nlsolvekrylov!(fj!::Function, jvp!::Function, F::AbstractVector{T},
         # product rather than the model claim dot(F, J, deltax) used by
         # nlsolve!
         ϕ0 = merit(F)
-        jvp!(Jv, deltax)
+        mul!(Jv, jvp, deltax)
         dϕ0dα = real(dot(F, Jv))
         if !isfinite(ϕ0) || !isfinite(dϕ0dα) || dϕ0dα >= zero(dϕ0dα)
             # not a descent direction: rebuild the preconditioner and solve
@@ -1283,11 +1442,12 @@ function nlsolvekrylov!(fj!::Function, jvp!::Function, F::AbstractVector{T},
             # steepest descent direction -J'F of the merit function is the
             # last resort before declaring the iteration stalled.
             refreshpreconditioner!()
-            out = gmres!(deltax, jvp!, F, ws; Mop! = Mop!, rtol = forcing,
-                atol = gmresatol, maxrestarts = krylovmaxrestarts)
+            out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
+                rtol = forcing, atol = gmresatol,
+                maxrestarts = krylovmaxrestarts)
             record!(out, :rescue, true, false)
             rmul!(deltax, -1)
-            jvp!(Jv, deltax)
+            mul!(Jv, jvp, deltax)
             dϕ0dα = real(dot(F, Jv))
             if !isfinite(ϕ0) || !isfinite(dϕ0dα) || dϕ0dα >= zero(dϕ0dα)
                 break

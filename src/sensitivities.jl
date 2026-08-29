@@ -1,0 +1,948 @@
+# =========================================================================
+# Sensitivities of the scattering parameters to component values.
+# =========================================================================
+
+"""
+    HBOperatingPoint(sys, x, jacobian, modelayout, Nnodal, Lmean, wmodes,
+        Amna, mnaindices, coupledbranches, Nmodes, Nnodes)
+
+The converged pump operating point of [`hbnlsolve`](@ref) together with
+everything needed to propagate a component perturbation through it: the
+[`HBSystem`](@ref) evaluation object, the converged augmented state, the
+exact Jacobian of the equivalent real system assembled there, and the
+scaled matrices and layout of the augmented system.
+
+Requested with `returnoperatingpoint = true`. The Jacobian is the exact
+Jacobian of the equivalent real system, assembled with
+[`assemblerealjacobian!`](@ref), rather than the complex holomorphic
+Jacobian of the `:quasinewton` method, which is only an approximation: the
+harmonic balance residual is not complex differentiable, so the implicit
+function theorem does not hold with the holomorphic Jacobian, while in the
+real representation it applies directly.
+"""
+struct HBOperatingPoint
+    # the HBSystem evaluation object and the ModeLayout; untyped because
+    # hbsolve.jl is included before hbsystem.jl and realcomplexconv.jl
+    sys
+    x::Vector{Complex{Float64}}
+    jacobian::SparseMatrixCSC{Float64,Int}
+    modelayout
+    Nnodal::Int
+    Lmean::Complex{Float64}
+    wmodes::Vector{Float64}
+    Amna::SparseMatrixCSC
+    mnaindices::Vector{Int}
+    coupledbranches::Vector{Int}
+    Nmodes::Int
+    Nnodes::Int
+end
+
+"""
+    componentlookups(mnaindices, coupledbranches, Ljb)
+
+Constant time lookups for [`componentstamp`](@ref), built once per stamp
+table rather than searched per component: the ordinal of a promoted
+resistor within `mnaindices`, the set of mutually coupled branches, and the
+ordinal of a junction branch within `Ljb.nzind`. Without these the
+classification repeats linear searches per component, which becomes
+quadratic over a large sensitivity set.
+"""
+function componentlookups(mnaindices, coupledbranches, Ljb)
+    return (
+        coupled = Set(coupledbranches),
+        junctionordinal = Dict(b => j for (j, b) in enumerate(Ljb.nzind)))
+end
+
+"""
+    componentstamp(idx::Integer, psc::ParsedSortedCircuit, cg::CircuitGraph,
+        nm::CircuitMatrices, lookups, Nmodes::Integer, Nnodes::Integer)
+
+Classify the component at index `idx` for sensitivity analysis and build its
+raw one-component matrix, without any solver scaling, negative frequency
+conjugation, or padding, which the callers apply for their own grids. The
+component matrices are built with the same functions which build the system
+matrices, [`calcCn`](@ref), [`calcGn`](@ref), [`calcLb`](@ref) and
+[`calcinvLn`](@ref), applied to the single component, so the node and mode
+conventions agree by construction. Returns one of
+
+- `(:C, M)`: the component's capacitance matrix,
+- `(:G, M)`: the component's conductance matrix, for a resistor which is not
+    promoted by the modified nodal analysis formulation,
+- `(:Lj, j)`: the ordinal `j` of a Josephson junction within the junction
+    branch vector `nm.Ljb`,
+- `(:invL, M)`: the component's inverse inductance matrix.
+
+This is the single definition of which components are supported: `:C`, `:L`,
+`:R` and `:Lj` with numeric values. Mutually coupled inductors and
+components with symbolic (frequency dependent) values throw, with the same
+message from both the fixed operating point stamps
+([`calcsensitivitystamps`](@ref)) and the residual derivatives
+([`calcresidualsensitivity`](@ref)). `lookups` are the constant time
+tables of [`componentlookups`](@ref).
+"""
+function componentstamp(idx::Integer, psc::ParsedSortedCircuit,
+    cg::CircuitGraph, nm::CircuitMatrices, lookups,
+    Nmodes::Integer, Nnodes::Integer)
+
+    componenttypes = psc.componenttypes
+    nodeindices = psc.nodeindices
+    vvn = nm.vvn
+    componenttype = componenttypes[idx]
+    value = vvn[idx]
+    if !(value isa Number)
+        throw(ArgumentError(lazy"Sensitivities require a numeric component value, but the value of $(psc.componentnames[idx]) is $(value). Components with symbolic frequency dependent values are not supported."))
+    end
+    n1 = nodeindices[1, idx]
+    n2 = nodeindices[2, idx]
+    if componenttype == :C
+        return (:C, calcCn(componenttypes[[idx]], nodeindices[:,[idx]],
+            vvn[[idx]], Nmodes, Nnodes))
+    elseif componenttype == :R
+        return (:G, calcGn(componenttypes[[idx]], nodeindices[:,[idx]],
+            vvn[[idx]], Nmodes, Nnodes))
+    elseif componenttype == :L
+        b = cg.edge2indexdict[(n1, n2)]
+        if b in lookups.coupled
+            throw(ArgumentError(lazy"Sensitivities are not supported for the mutually coupled inductor $(psc.componentnames[idx])."))
+        end
+        Lb = calcLb(componenttypes[[idx]], nodeindices[:,[idx]],
+            vvn[[idx]], cg.edge2indexdict, 1, cg.Nbranches)
+        return (:invL, calcinvLn(Lb, cg.Rbn, Nmodes))
+    elseif componenttype == :Lj
+        b = cg.edge2indexdict[(n1, n2)]
+        j = get(lookups.junctionordinal, b, nothing)
+        if isnothing(j)
+            throw(ArgumentError(lazy"The Josephson junction $(psc.componentnames[idx]) was not found in the branch inductance vector."))
+        end
+        return (:Lj, j)
+    else
+        throw(ArgumentError(lazy"Sensitivities are only supported for C, L, R, and Lj components, not $(componenttype), the type of $(psc.componentnames[idx])."))
+    end
+end
+
+"""
+    calcresidualsensitivity(op::HBOperatingPoint, psc, cg, nm,
+        sensitivityindices)
+
+Calculate the derivative of the harmonic balance residual with respect to a
+relative (logarithmic) perturbation of each component value, at the
+operating point. Combined with the implicit function theorem applied to
+`F(x, r) = 0` in the equivalent real representation,
+
+    dx/dr = -inv(J)*(dF/dr),
+
+with `J` the exact real Jacobian retained by [`hbnlsolve`](@ref), this gives
+the derivative of the operating point itself
+(see [`calcnodefluxsensitivity`](@ref)). Returns a sparse matrix whose
+columns are `dF/dr` for each component, in the real representation of the
+augmented residual: each component touches only its own rows (its nodes and
+modes, a promoted resistor's constitutive rows, or a junction branch's
+Kirchhoff rows), so the storage scales with the touched entries rather than
+with `Nstate*Ncomponents`.
+
+The residual is affine in `C`, `1/R` and `1/L`, so those parameter
+derivatives are that component's own contribution to the linear term applied
+to the converged state, with a sign, built from the shared classification of
+[`componentstamp`](@ref) with the same nondimensionalization and negative
+frequency conjugation the solver applies. The Josephson junction term is
+the residual's own sine contribution restricted to that junction.
+
+Note that the auxiliary branch currents of the modified nodal analysis
+formulation are scaled by the solver scale (see [`calcsolverscale`](@ref)),
+which itself depends on the port impedances, so for a port resistor the
+auxiliary rows of the returned derivative differ from a finite difference of
+a re-solve by that change of normalization. The node flux rows, which are
+the physical quantity and the only rows the linearized system depends on,
+are unaffected.
+"""
+function calcresidualsensitivity(op::HBOperatingPoint,
+    psc::ParsedSortedCircuit, cg::CircuitGraph, nm::CircuitMatrices,
+    sensitivityindices)
+
+    if isnothing(op.jacobian)
+        throw(ArgumentError("The operating point does not contain a Jacobian."))
+    end
+    # evaluate at the operating point regardless of what the shared
+    # evaluation object was last used for: the Josephson term below reads
+    # the cached time domain branch fluxes.
+    setpoint!(op.sys, op.x)
+    Ntot = length(op.x)
+    Nmodes = op.Nmodes
+    Nnodes = op.Nnodes
+    wmodes = op.wmodes
+
+    # the component's own matrix, nondimensionalized, negative frequency
+    # conjugated and padded exactly as hbnlsolve does with the full matrices
+    function scaledpadded(M)
+        Ms = SparseMatrixCSC{Complex{Float64},Int}(copy(M))
+        conjnegfreq!(Ms, wmodes)
+        rmul!(Ms, op.Lmean)
+        return mnapadto(Ms, Ntot)
+    end
+
+    # The residual derivatives are sparse by nature: each component touches
+    # only its own rows of the state (its nodes and modes, one promoted
+    # resistor's constitutive rows, or one junction branch's Kirchhoff
+    # rows), so they are accumulated as triplets of the real representation
+    # and returned as a sparse matrix. The dense alternative peaks at
+    # O(Nstate*Ncomponents) memory, which is exactly the many component
+    # regime the reverse contraction order exists for. Duplicate triplets
+    # (a component matrix with several entries in one row) are summed by
+    # sparse, and the real representation is linear, so per entry
+    # realification distributes over the sums.
+    isrealmode = op.modelayout.isreal
+    nmd = length(isrealmode)
+    # the offset of complex entry r in the real representation (one real
+    # row for the self conjugate modes, a real and an imaginary row
+    # otherwise), matching complex_to_real! with the default scale.
+    realindexmap = zeros(Int, Ntot)
+    k = 1
+    for j in eachindex(realindexmap)
+        realindexmap[j] = k
+        k += isrealmode[(j-1) % nmd + 1] ? 1 : 2
+    end
+    Nreal = realdim(Ntot, isrealmode)
+    Ir = Int[]; Jc = Int[]; Vr = Float64[]
+    function pushentry!(r, comp, v)
+        kr = realindexmap[r]
+        push!(Ir, kr); push!(Jc, comp); push!(Vr, real(v))
+        if !isrealmode[(r-1) % nmd + 1]
+            push!(Ir, kr+1); push!(Jc, comp); push!(Vr, imag(v))
+        end
+        return nothing
+    end
+
+    # work vector and branch support for the Josephson terms, which are
+    # evaluated through the full residual machinery and then read off on
+    # the Kirchhoff rows of that junction's branch only.
+    cwork = Complex{Float64}[]
+    branchsupport = Vector{Tuple{Int,Int}}[]
+
+    x = op.x
+    Nm = length(wmodes)
+    lookups = componentlookups(op.mnaindices, op.coupledbranches,
+        op.sys.Ljb)
+    for (comp, idx) in enumerate(sensitivityindices)
+        kind, info = componentstamp(idx, psc, cg, nm, lookups,
+            Nmodes, Nnodes)
+        if kind == :C || kind == :G || kind == :invL
+            # dF_comp = c * Ms * Diagonal(w.^power) * x, accumulated per
+            # stored entry of the component's own (tiny) matrix.
+            Ms = scaledpadded(info)
+            c, power = kind == :C ? (-1.0 + 0im, 2) :
+                kind == :G ? (0.0 - 1im, 1) : (-1.0 + 0im, 0)
+            rows = rowvals(Ms)
+            vals = nonzeros(Ms)
+            for col in axes(Ms, 2)
+                xc = x[col]
+                iszero(xc) && continue
+                w = wmodes[(col-1) % Nm + 1]
+                scale = power == 0 ? c*xc : power == 1 ? c*w*xc : c*w^2*xc
+                for pp in nzrange(Ms, col)
+                    pushentry!(rows[pp], comp, vals[pp]*scale)
+                end
+            end
+        else # :Lj
+            if isempty(cwork)
+                cwork = zeros(Complex{Float64}, Ntot)
+                branchsupport = branchnodesandsigns(op.sys.Rbnm, Nmodes,
+                    size(op.sys.Rbnm, 1) ÷ Nmodes)
+            end
+            residualjosephsonterm!(cwork, op.sys, info)
+            branch = op.sys.Ljb.nzind[info]
+            for (node, _) in branchsupport[branch]
+                for m in 1:Nmodes
+                    r = (node-1)*Nmodes + m
+                    pushentry!(r, comp, -cwork[r])
+                end
+            end
+        end
+    end
+    return sparse(Ir, Jc, Vr, Nreal, length(sensitivityindices))
+end
+
+"""
+    calcnodefluxsensitivity(op::HBOperatingPoint, dFr::AbstractMatrix;
+        factorization = KLUfactorization())
+
+Solve `dx/dr = -inv(J)*(dF/dr)` for the residual sensitivities `dFr` of
+[`calcresidualsensitivity`](@ref), with one factorization of the exact real
+Jacobian of the operating point. Returns a matrix whose columns are `dx/dr`
+for each component, in the complex representation of the augmented state.
+"""
+function calcnodefluxsensitivity(op::HBOperatingPoint, dFr::AbstractMatrix;
+    factorization = KLUfactorization())
+
+    Ntot = length(op.x)
+    cache = FactorizationCache()
+    tryfactorize!(cache, factorization, op.jacobian)
+    # dFr is sparse from construction; the factorization wants a dense
+    # right hand side, so densify one column at a time rather than the
+    # whole state by component matrix.
+    rhs = zeros(Float64, size(dFr, 1))
+    dxr = zeros(Float64, size(dFr, 1))
+    dx = zeros(Complex{Float64}, Ntot, size(dFr, 2))
+    for k in axes(dx, 2)
+        rhs .= view(dFr, :, k)
+        trysolve!(dxr, cache.factorization, rhs)
+        rmul!(dxr, -1)
+        real_to_complex!(view(dx,:,k), dxr, op.modelayout.isreal)
+    end
+    return dx
+end
+
+# the Josephson contribution of the residual, restricted to junction j: the
+# node vector of the Fourier coefficients of sin(phi_b(t))/Lj of that
+# junction alone, which is the derivative of the residual with respect to
+# minus the logarithm of that junction inductance.
+function residualjosephsonterm!(out, sys, j::Integer)
+    _ensuresin!(sys)
+    copyto!(sys.worktd, sys.sintd)
+    applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
+    for i in axes(sys.phimatrix, ndims(sys.phimatrix))
+        if i != j
+            selectdim(sys.phimatrix, ndims(sys.phimatrix), i) .= 0
+        end
+    end
+    # the Josephson contribution alone, without the linear term
+    applybackwardterm!(out, sys.nonlineartermplan, sys.phimatrix, sys.x;
+        addlinearterm = false)
+    return out
+end
+
+# the entries of M in the given row and column ranges, with every other entry
+# dropped, keeping the size of M.
+function maskrowscolumns(M::SparseMatrixCSC, firstrow::Integer,
+    lastrow::Integer, firstcol::Integer, lastcol::Integer)
+    I, J, V = findnz(M)
+    keep = (firstrow .<= I .<= lastrow) .& (firstcol .<= J .<= lastcol)
+    return SparseMatrixCSC{Complex{Float64},Int}(sparse(I[keep], J[keep],
+        Complex{Float64}.(V[keep]), size(M,1), size(M,2)))
+end
+
+
+
+
+"""
+    ReverseSensitivity(op, dFr, T, Em, nzrow, nzcol, realindexmap,
+        branchnodes)
+
+Everything the reverse mode contraction of [`calcSsensitivityreverse!`](@ref)
+needs, precomputed once and shared read only across the signal frequencies.
+"""
+struct ReverseSensitivity
+    op::HBOperatingPoint
+    # the residual derivatives, sparse: each component touches only its own
+    # nodes, so the inner product per component is over a handful of entries
+    # rather than over the whole state.
+    dFr::SparseMatrixCSC{Float64,Int}
+    T::Matrix{Float64}
+    # the transpose of the frequency to time domain map is a forward
+    # transform again (the discrete Fourier matrix is symmetric), executed
+    # with this plan by applyffttranspose! against per-thread work arrays.
+    fftplan
+    nzrow::Vector{Int}
+    nzcol::Vector{Int}
+    realindexmap::Vector{Int}
+    branchnodes
+end
+
+"""
+    ReverseSensitivityBuffers(rev::ReverseSensitivity)
+
+The mutable work arrays of one invocation of
+[`calcSsensitivityreverse!`](@ref), allocated once per batch of signal
+frequencies rather than at every frequency. Each thread of
+[`hblinsolve`](@ref) owns its own set; the [`ReverseSensitivity`](@ref)
+itself is shared read only.
+"""
+struct ReverseSensitivityBuffers
+    P::Vector{Complex{Float64}}
+    Q::Vector{Complex{Float64}}
+    # the output functional covectors of a chunk of output pairs, and their
+    # solutions through the transposed pump Jacobian, batched so the sparse
+    # solver amortizes its per-call overhead over many right hand sides.
+    G::Matrix{Complex{Float64}}
+    Psi::Matrix{Complex{Float64}}
+    eta::Matrix{Complex{Float64}}
+    c::Matrix{Complex{Float64}}
+    # the zero padded input and the single output grid of the transposed
+    # transform: the holomorphic and antiholomorphic halves are folded into
+    # eta one after the other, so their transforms need not coexist.
+    padded::Array{Complex{Float64}}
+    tgrid::Array{Complex{Float64}}
+end
+
+# the byte budget of the two nr x chunk complex right hand side and
+# solution buffers of one frequency batch of the reverse contraction
+# (together they cost 32*nr*chunk bytes, so at this budget a pump system of
+# nr = 8000 real unknowns gets a chunk of about 128 columns, and a system a
+# hundred times larger degrades gracefully toward single column solves).
+# batching amortizes the per-call overhead of the sparse triangular solves,
+# measured about 3x for tens of right hand sides, and the budget rather
+# than a fixed column count keeps the per batch memory bounded for large
+# pump systems; nbatches controls how many batches (and therefore budgets)
+# are active at once.
+const REVERSESENSITIVITYCHUNKBYTES = 32*2^20
+
+function ReverseSensitivityBuffers(rev::ReverseSensitivity, NPM::Integer)
+    sys = rev.op.sys
+    NLj = size(sys.phimatrix)[end]
+    NF = length(sys.phimatrix)
+    nr = size(rev.op.jacobian, 1)
+    chunk = clamp(REVERSESENSITIVITYCHUNKBYTES ÷ (32*nr), 1, NPM^2)
+    return ReverseSensitivityBuffers(
+        zeros(Complex{Float64}, NF), zeros(Complex{Float64}, NF),
+        zeros(Complex{Float64}, nr, chunk),
+        zeros(Complex{Float64}, nr, chunk),
+        zeros(Complex{Float64}, size(rev.T, 1), NLj),
+        zeros(Complex{Float64}, size(rev.T, 2), NLj),
+        zeros(Complex{Float64}, size(sys.phitd)),
+        zeros(Complex{Float64}, size(sys.phitd)))
+end
+
+"""
+    calcbranchtimedomainmap(sys, Nmodes, NLj)
+
+The matrix of the map from the branch fluxes of one Josephson junction to its
+physical time domain branch flux, with the real and the imaginary part of
+each mode as separate columns. The map is the same for every junction,
+because the packing and the inverse transform act on each junction
+independently, so it is built once by transforming unit branch fluxes with
+[`phivectortomatrix!`](@ref) and `applyifft!`, which keeps the conjugate mode
+bookkeeping inside the functions which define it. This is the transpose of
+the linear map from the unknowns to the time domain branch fluxes, restricted
+to one junction.
+"""
+function calcbranchtimedomainmap(sys, Nmodes::Integer, NLj::Integer)
+    branch = sys.Ljb.nzind[1]
+    Nbranches = size(sys.Rbnm, 1) ÷ Nmodes
+    T = zeros(Float64, length(sys.phitd) ÷ NLj, 2*Nmodes)
+    fd = similar(sys.phimatrix)
+    td = similar(sys.phitd)
+    tdflat = reshape(td, :, NLj)
+    bv = zeros(Complex{Float64}, Nbranches*Nmodes)
+    for m in 1:Nmodes
+        for (q, part) in enumerate((one(Complex{Float64}), im))
+            fill!(bv, 0)
+            bv[(branch-1)*Nmodes+m] = part
+            fill!(fd, 0)
+            phivectortomatrix!(bv[sys.Ljbm.nzind], fd, sys.freqindexmap,
+                sys.conjsourceindices, sys.conjtargetindices, NLj)
+            applyifft!(td, fd, sys.irfftplan)
+            T[:, 2*(m-1)+q] .= view(tdflat, :, 1)
+        end
+    end
+    return T
+end
+
+"""
+    ReverseSensitivity(op::HBOperatingPoint, lsys, dFr)
+
+Precompute the reverse mode contraction data: the branch flux map
+([`calcbranchtimedomainmap`](@ref)), the transform of the pump harmonic grid,
+the row and the column of each nonzero of the linearized system matrix, and
+the offset of each entry of the augmented state in its real representation.
+"""
+function ReverseSensitivity(op::HBOperatingPoint, lsys, dFr)
+    # the operating point, and therefore the branch flux map and the
+    # incidence lists, live on the pump mode grid, not the signal mode grid
+    Nmodes = op.Nmodes
+    sys = op.sys
+    # the per-frequency contraction reads the cached time domain sine of the
+    # branch fluxes, so pin it to the operating point here, in this serial
+    # constructor: the threads of hblinsolve only read it, and updating a
+    # shared cache from them would be a race. without this the cache would
+    # hold whatever point the shared evaluation object was last used at.
+    setpoint!(sys, op.x)
+    _ensuresin!(sys)
+    NLj = size(sys.phimatrix)[end]
+    A = lsys.Asparse
+    nzrow = zeros(Int, nnz(A))
+    nzcol = zeros(Int, nnz(A))
+    rows = rowvals(A)
+    for j in axes(A, 2)
+        for p in nzrange(A, j)
+            nzrow[p] = rows[p]
+            nzcol[p] = j
+        end
+    end
+    # the offset of complex entry j in the real representation. note that
+    # isreal is indexed by mode, not by entry of the augmented state.
+    isrealmode = op.modelayout.isreal
+    nmd = length(isrealmode)
+    realindexmap = zeros(Int, length(op.x))
+    k = 1
+    for j in eachindex(realindexmap)
+        realindexmap[j] = k
+        k += isrealmode[(j-1) % nmd + 1] ? 1 : 2
+    end
+    Nbranches = size(sys.Rbnm, 1) ÷ Nmodes
+    return ReverseSensitivity(op, SparseMatrixCSC{Float64,Int}(dFr),
+        calcbranchtimedomainmap(sys, Nmodes, NLj),
+        plan_applyffttranspose(sys.phimatrix, sys.phitd), nzrow, nzcol,
+        realindexmap, branchnodesandsigns(sys.Rbnm, Nmodes, Nbranches))
+end
+
+"""
+    calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity, lsys,
+        phin, phinadjoint, gamma, beta, cache,
+        bufs::ReverseSensitivityBuffers)
+
+Add the contribution of the shift of the pump operating point to the
+scattering parameter sensitivities, contracting in the reverse order so that
+the cost per component is a sparse inner product rather than a product
+against a matrix which is dense on the sparsity structure of the linearized
+system.
+
+For each pair of output and input port modes `(a,b)`, the transpose of the
+Josephson scatter of [`addjosephsonterm!`](@ref) gives
+
+    transpose(lam_a)*dAop_k*phi_b
+        = sum_s P[s]*dcos_k[s] + Q[s]*conj(dcos_k[s]),
+
+with `P` and `Q` accumulated over the scatter lists of the plan. Since
+`dcos_k` is the directional derivative of the Fourier coefficients of
+`cos(phi_b(t))` along the operating point shift
+([`cosdirectionalderivative!`](@ref)), that is a linear functional of the
+shift, and with
+
+    alpha = Em*P,  gam = conj(Em)*Q,  eta = -sin(phi_b(t)).*(alpha + gam)
+
+its covector is the transpose of the branch flux map applied to `eta`.
+Finally the implicit function theorem gives `dx_k = -inv(J)*dF_k`, so pushing
+that covector through the transposed Jacobian once per output pair leaves a
+sparse inner product with `dF_k` for each component. The cost per signal
+frequency is `(Nports*Nmodes)^2` transposed solves, independent of the number
+of components, instead of one product against the full sparsity structure per
+component. The solves are batched into multi right hand side calls whose
+column count is set by the `REVERSESENSITIVITYCHUNKBYTES` budget, which
+amortizes the per-call overhead of the sparse triangular solves while
+keeping the per batch work matrices memory bounded.
+
+The transform of the pump harmonic grid is applied one dimension at a time,
+so this supports any number of pump tones.
+"""
+function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
+    lsys, phin, phinadjoint, gamma, beta, cache,
+    bufs::ReverseSensitivityBuffers)
+
+    op = rev.op
+    # the pump mode count: the operating point shift lives on the pump grid
+    Nmodes = op.Nmodes
+    sys = op.sys
+    plan = lsys.complexjacobianplan
+    NPM = size(phin, 2)
+    NLj = size(sys.phimatrix)[end]
+    Ncomponents = size(rev.dFr, 2)
+    isrealmode = op.modelayout.isreal
+    nmd = length(isrealmode)
+
+    # the cached time domain sine of the pump branch fluxes, pinned to the
+    # operating point by the ReverseSensitivity constructor and read only
+    # here.
+    sintd = reshape(sys.sintd, :, NLj)
+    P = bufs.P
+    Q = bufs.Q
+    G = bufs.G
+    Psi = bufs.Psi
+    eta = bufs.eta
+    c = bufs.c
+    padded = bufs.padded
+    tgrid = bufs.tgrid
+    wsize = size(sys.phimatrix)
+    dFrows = rowvals(rev.dFr)
+    dFvals = nonzeros(rev.dFr)
+
+    # The output pairs are independent, so their solves through the
+    # transposed pump Jacobian are batched: the covectors of a chunk of
+    # pairs are accumulated as the columns of G and pushed through the
+    # factorization in one multi right hand side call, which amortizes the
+    # per-call overhead of the sparse triangular solves over the chunk.
+    wcov = zeros(eltype(P), plan.josephson.n)
+    pairs = vec(CartesianIndices((NPM, NPM)))
+    for chunk in Iterators.partition(eachindex(pairs), size(G, 2))
+        for (col, pi) in enumerate(chunk)
+            a, b = Tuple(pairs[pi])
+            # the transpose of the Josephson scatter
+            fill!(P, 0)
+            fill!(Q, 0)
+            # the covector per destination, then the transpose of the
+            # Josephson map applied to it. The plain and conjugated halves
+            # separate by the sign of the mode coupling index.
+            @inbounds for p in eachindex(wcov)
+                wcov[p] = phinadjoint[rev.nzrow[p],a]*phin[rev.nzcol[p],b]
+            end
+            josephsonadjoint!(P, Q, plan.josephson, wcov)
+
+            # the transpose of the cos directional derivative: a forward
+            # transform of the zero padded coefficients through the plan of
+            # the operating point grid (the transform matrix is symmetric),
+            # and the antiholomorphic half by conjugating around the same
+            # transform. the two halves are folded into eta one after the
+            # other through the same output grid.
+            applyffttranspose!(tgrid, reshape(P, wsize), padded, rev.fftplan)
+            tf = reshape(tgrid, :, NLj)
+            @inbounds for i in eachindex(eta)
+                eta[i] = -sintd[i]*tf[i]
+            end
+            @inbounds for i in eachindex(Q)
+                Q[i] = conj(Q[i])
+            end
+            applyffttranspose!(tgrid, reshape(Q, wsize), padded, rev.fftplan)
+            @inbounds for i in eachindex(eta)
+                eta[i] -= sintd[i]*conj(tf[i])
+            end
+            mul!(c, transpose(rev.T), eta)
+
+            # the transpose of the branch flux map, into the real
+            # representation of the augmented state, as one column of G
+            g = view(G, :, col)
+            fill!(g, 0)
+            @inbounds for (jj, branch) in enumerate(sys.Ljb.nzind)
+                for m in 1:Nmodes
+                    cre = c[2*(m-1)+1, jj]
+                    cim = c[2*(m-1)+2, jj]
+                    holo = (cre - im*cim)/2
+                    anti = (cre + im*cim)/2
+                    for (node, sgn) in rev.branchnodes[branch]
+                        j = (node-1)*Nmodes + m
+                        k = rev.realindexmap[j]
+                        g[k] += sgn*(holo + anti)
+                        if !isrealmode[(j-1) % nmd + 1]
+                            g[k+1] += sgn*im*(holo - anti)
+                        end
+                    end
+                end
+            end
+        end
+
+        # through the transposed Jacobian once for the whole chunk
+        ncols = length(chunk)
+        Gc = view(G, :, 1:ncols)
+        Psic = view(Psi, :, 1:ncols)
+        trysolvetranspose!(Psic, cache.factorization, Gc)
+
+        # the sparse inner products with the residual derivatives
+        for (col, pi) in enumerate(chunk)
+            a, b = Tuple(pairs[pi])
+            @inbounds for k in 1:Ncomponents
+                acc = zero(Complex{Float64})
+                for r in nzrange(rev.dFr, k)
+                    acc += Psi[dFrows[r], col]*dFvals[r]
+                end
+                Ssensitivity[a,b,k] += gamma[a]*beta[b]*acc
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    calcoperatingpointstamps(op::HBOperatingPoint, lsys, dx)
+
+Calculate the contribution of a shift of the pump operating point to the
+derivative of the linearized system matrix, for each column of `dx`. The
+linearized system matrix depends on the operating point only through the
+Fourier coefficients of `cos(phi_b(t))` of the Josephson junction branch
+fluxes, so the contribution is the directional derivative of those
+coefficients along the operating point shift
+([`cosdirectionalderivative!`](@ref)) scattered into the system matrix
+through the same plan which assembles it ([`addjosephsonterm!`](@ref)), so
+the mode coupling and its truncation agree exactly. Returns a vector of
+nonzero value vectors aligned with the sparsity structure of the system
+matrix, which are frequency independent.
+"""
+function calcoperatingpointstamps(op::HBOperatingPoint, lsys, dx)
+    setpoint!(op.sys, op.x)
+    dcos = similar(op.sys.phimatrix)
+    stamps = Vector{Vector{Complex{Float64}}}(undef, size(dx,2))
+    for k in axes(dx, 2)
+        cosdirectionalderivative!(dcos, op.sys,
+            Vector{Complex{Float64}}(view(dx,:,k)))
+        nzval = zeros(Complex{Float64}, nnz(lsys.Asparse))
+        addjosephsonterm!(nzval, lsys.complexjacobianplan, dcos)
+        stamps[k] = nzval
+    end
+    return stamps
+end
+
+"""
+    SensitivityStamp(kind, M, indexmap, freqsubstindices, nzval, portindex)
+
+The derivative of the linearized harmonic balance system matrix with respect
+to a relative (logarithmic) perturbation of one component value, `p -> r*p`
+evaluated at `r = 1`. The system matrix is affine in `C`, `1/R`, `1/L` and
+`1/Lj`, so the derivative is that component's own contribution to the system
+matrix, with a sign: positive for the capacitance and negative for the
+quantities which enter inversely.
+
+`kind` selects how the stamp is assembled at each signal frequency, mirroring
+[`assemblesystemmatrix!`](@ref):
+
+- `:C`: `-M*wmodes2m`, the component's capacitance matrix,
+- `:G`: `-im*M*wmodesm`, the component's conductance matrix, either the nodal
+    stamp or, for a resistor promoted by the modified nodal analysis
+    formulation, the conductances of its constitutive equations,
+- `:invL`: `-M`, the component's inverse inductance matrix,
+- `:Lj`: the constant nonzero values `nzval`, the negative of the pump
+    modulated Josephson contribution of that junction alone.
+
+`indexmap` maps the nonzeros of `M` into the nonzeros of the system matrix
+and `freqsubstindices` locates any symbolic entries. `portindex` is the
+index of the port whose impedance this component is, or zero, which selects
+the additional wave normalization term of [`calcSsensitivity!`](@ref).
+"""
+struct SensitivityStamp
+    kind::Symbol
+    rows::Vector{Int}
+    cols::Vector{Int}
+    vals::Vector{Complex{Float64}}
+    portindex::Int
+end
+"""
+    calcsensitivitystamps(sensitivityindices, psc, cg, nm, lsys, phimatrix,
+        mnaindices, coupledbranches, Nnodalmna, Nmodes, Nnodes)
+
+Build the [`SensitivityStamp`](@ref) of each component in
+`sensitivityindices`. The classification and the raw one-component matrices
+come from [`componentstamp`](@ref), which is shared with the residual
+derivatives of [`calcresidualsensitivity`](@ref), so the two grids cannot
+disagree on which components are supported or how they are built. The
+Josephson junction stamp is the pump modulated contribution of that
+junction alone, obtained by scattering the Fourier coefficients of
+`cos(phi(t))` of that junction through the same plan
+([`addjosephsonterm!`](@ref)) which assembles the system matrix, so the mode
+coupling and its truncation agree exactly.
+"""
+function calcsensitivitystamps(sensitivityindices, psc::ParsedSortedCircuit,
+    cg::CircuitGraph, nm::CircuitMatrices, lsys,
+    phimatrix, mnaindices, coupledbranches, Nnodalmna, Nmodes, Nnodes)
+
+    Ntot = size(lsys.Asparse, 1)
+    stamps = Vector{SensitivityStamp}(undef, length(sensitivityindices))
+    lookups = componentlookups(mnaindices, coupledbranches, nm.Ljb)
+    portordinal = Dict(idx => p
+        for (p, idx) in enumerate(nm.portimpedanceindices))
+
+    for (k, idx) in enumerate(sensitivityindices)
+        portindex = get(portordinal, idx, 0)
+        kind, info = componentstamp(idx, psc, cg, nm, lookups,
+            Nmodes, Nnodes)
+        if kind == :C
+            stamps[k] = tripletstamp(:C, mnapadto(info, Ntot), portindex)
+        elseif kind == :G
+            stamps[k] = tripletstamp(:G, mnapadto(info, Ntot), portindex)
+        elseif kind == :invL
+            stamps[k] = tripletstamp(:invL, mnapadto(info, Ntot), portindex)
+        else # :Lj
+            # the contribution of this junction alone, by zeroing the Fourier
+            # coefficients of every other junction before the scatter.
+            onejunction = zero(phimatrix)
+            selectdim(onejunction, ndims(onejunction), info) .=
+                selectdim(phimatrix, ndims(phimatrix), info)
+            nzval = zeros(Complex{Float64}, nnz(lsys.Asparse))
+            addjosephsonterm!(nzval, lsys.complexjacobianplan, onejunction)
+            rmul!(nzval, -1)
+            stamps[k] = tripletstamp(:Lj,
+                SparseMatrixCSC(size(lsys.Asparse,1), size(lsys.Asparse,2),
+                    copy(lsys.Asparse.colptr), copy(lsys.Asparse.rowval),
+                    nzval), portindex)
+        end
+    end
+    return stamps
+end
+
+# pad a matrix with empty rows and columns for the auxiliary variables of the
+# modified nodal analysis formulation, and convert to the element type of the
+# system matrix.
+function mnapadto(M::SparseMatrixCSC, Ntot::Integer)
+    padded = size(M,1) == Ntot ? M : mnapad(M, Ntot - size(M,1))
+    return SparseMatrixCSC{Complex{Float64},Int}(padded)
+end
+
+# convert a component matrix to the compact triplet form of a
+# SensitivityStamp, dropping structural zeros. The stamps of the individual
+# components are extremely sparse compared with the system matrix (a
+# capacitor to ground touches one node), so the contraction is driven by
+# these entries rather than by the sparsity structure of the system matrix.
+function tripletstamp(kind::Symbol, M::SparseMatrixCSC, portindex::Integer)
+    I, J, V = findnz(M)
+    keep = .!iszero.(V)
+    return SensitivityStamp(kind, I[keep], J[keep],
+        Complex{Float64}.(V[keep]), portindex)
+end
+
+"""
+    sensitivitystampvalue(stamp::SensitivityStamp, t::Integer, wmodes,
+        Nmodes)
+
+The value of entry `t` of the derivative of the linearized harmonic balance
+system matrix with respect to a relative perturbation of the component of
+`stamp`, at the mode frequencies `wmodes`. Applies the same per mode
+frequency scaling and negative frequency mode conjugation as
+[`assemblesystemmatrix!`](@ref), which are indexed by the column.
+"""
+@inline function sensitivitystampvalue(stamp::SensitivityStamp, t::Integer,
+    wmodes, Nmodes)
+
+    stamp.kind == :Lj && return stamp.vals[t]
+    m = (stamp.cols[t] - 1) % Nmodes + 1
+    w = wmodes[m]
+    v = modevalue(stamp.vals[t], w)
+    if stamp.kind == :C
+        return -v*w^2
+    elseif stamp.kind == :G
+        return -im*v*w
+    else
+        return -v
+    end
+end
+
+"""
+    calcsensitivityscaling!(gamma, beta, inputwave, bnm,
+        portimpedanceindices, portimpedances, componenttypes, nodeindices,
+        wmodes, Nmodes)
+
+Calculate the scalars which convert the derivative of the node fluxes into
+the derivative of the scattering parameters. Writing the output wave of
+[`calcinputoutput!`](@ref) as a linear functional of the node fluxes, the
+part which depends on them is
+`(1/2)*kval*(1 + conj(Z)/Z)*im*w_n*(phi_n1 - phi_n2)`, and the scattering
+parameters divide by the input wave, so
+
+    dS[(j,n),(i,m)] = gamma[(j,n)]*beta[(i,m)]
+                      *(dphi[node1,(j,n)] - dphi[node2,(j,n)])
+
+with `gamma = (1/2)*kval*(1 + conj(Z)/Z)*im*w_n/s_{(j,n)}` and
+`beta = 1/inputwave[(i,m),(i,m)]`. The node flux difference is contracted
+with the adjoint solution by [`calcSsensitivity!`](@ref), which is why the
+`im*w_n` factor of the port voltage is folded into `gamma` here: it is
+exactly the factor relating the adjoint source vector to the source vector
+of the forward problem.
+
+`s_{(j,n)}` is the source current of the port's own unit drive
+([`calcsourcecurrent`](@ref) on the diagonal), `±1` depending on whether the
+canonical orientation of the port branch in the incidence matrix agrees with
+the node order of the port component. The adjoint solution is the solve
+against the source columns of `bnm`, which carry the canonical branch
+orientation, while the output functional differences the node fluxes in the
+component node order, so their ratio enters the contraction. Without it the
+sensitivities of any output at a port written with its nodes in the opposite
+order of the branch orientation would have the wrong sign, even though the
+scattering parameters themselves, which use `s` consistently in both the
+input and the output waves, would be correct.
+"""
+function calcsensitivityscaling!(gamma, beta, inputwave, bnm,
+    portimpedanceindices, portimpedances, componenttypes, nodeindices,
+    wmodes, Nmodes)
+
+    for i in eachindex(portimpedanceindices)
+        for j in 1:Nmodes
+            row = (i-1)*Nmodes + j
+            portimpedance = calcimpedance(portimpedances[i],
+                componenttypes[portimpedanceindices[i]], wmodes[j], nothing)
+            kval = portwavescale(portimpedance, wmodes[j])
+            # the orientation of the port branch relative to the node order
+            # of the port component, from the source current of the port's
+            # own unit drive.
+            sourcecurrent = calcsourcecurrent(
+                nodeindices[1,portimpedanceindices[i]],
+                nodeindices[2,portimpedanceindices[i]], bnm, Nmodes, j, row)
+            gamma[row] = iszero(sourcecurrent) ? 0 :
+                1/2*kval*(1 + conj(portimpedance)/portimpedance)*
+                im*wmodes[j]/sourcecurrent
+            beta[row] = iszero(inputwave[row,row]) ? 0 :
+                1/inputwave[row,row]
+        end
+    end
+    return nothing
+end
+
+"""
+    calcSsensitivity!(Ssensitivity, stamps, dA, dAphin, phin, phinadjoint,
+        S, gamma, beta, wmodes, Nmodes, symfreqvar)
+
+Calculate the derivative of the scattering matrix with respect to a relative
+(logarithmic) perturbation of each component value, `p -> r*p` evaluated at
+`r = 1`, at the pump operating point, with the adjoint method. Overwrites
+`Ssensitivity`.
+
+Differentiating the linearized system `A*phi = b`, whose source terms do not
+depend on any component value, gives `dphi = -inv(A)*dA*phi`, so with the
+adjoint solutions `lam` of the transposed system driven by the output
+functionals of [`calcsensitivityscaling!`](@ref),
+
+    dS[(j,n),(i,m)] = -gamma[(j,n)]*beta[(i,m)]
+                      *transpose(lam[:,(j,n)])*dA*phi[:,(i,m)].
+
+The adjoint source vectors are the source vectors of the forward problem
+scaled by `im*w_n`, which is folded into `gamma`, so `phinadjoint`, the
+solution of the transposed system already computed for the noise and quantum
+efficiency calculations, is used directly.
+
+When the perturbed component is itself a port impedance the wave
+normalization of [`calcinputoutput!`](@ref) moves as well, contributing the
+additional closed form term `-(1/2)*(P*(S+I) + (S+I)*P)` with `P` the
+projector onto that port, which is exact for constant real port impedances.
+"""
+function calcSsensitivity!(Ssensitivity, stamps, dAop, dA, dAphin, phin,
+    phinadjoint, S, gamma, beta, contraction, wmodes, Nmodes, symfreqvar)
+
+    NPM = size(phin, 2)
+    for (k, stamp) in enumerate(stamps)
+        # the component's own contribution, driven by the entries of its
+        # stamp rather than by the sparsity structure of the system matrix,
+        # of which the stamp of a single component is a tiny part.
+        fill!(contraction, 0)
+        @inbounds for t in eachindex(stamp.rows)
+            i = stamp.rows[t]
+            j = stamp.cols[t]
+            v = sensitivitystampvalue(stamp, t, wmodes, Nmodes)
+            iszero(v) && continue
+            for b in 1:NPM
+                vphi = v*phin[j,b]
+                iszero(vphi) && continue
+                for a in 1:NPM
+                    contraction[a,b] += phinadjoint[i,a]*vphi
+                end
+            end
+        end
+
+        # the contribution of the shift of the pump operating point, which is
+        # frequency independent but dense on the sparsity structure of the
+        # system matrix, so it goes through a sparse matrix vector product.
+        if !isempty(dAop)
+            copyto!(nonzeros(dA), dAop[k])
+            mul!(dAphin, dA, phin)
+            mul!(contraction, transpose(phinadjoint), dAphin, 1, 1)
+        end
+
+        for b in 1:NPM
+            for a in 1:NPM
+                Ssensitivity[a,b,k] = -gamma[a]*beta[b]*contraction[a,b]
+            end
+        end
+
+        # the wave normalization term when the component is a port impedance
+        if stamp.portindex > 0
+            p = stamp.portindex
+            for b in 1:NPM
+                for a in 1:NPM
+                    sI = S[a,b] + (a == b ? 1 : 0)
+                    correction = zero(Complex{Float64})
+                    if (a-1) ÷ Nmodes + 1 == p
+                        correction += sI/2
+                    end
+                    if (b-1) ÷ Nmodes + 1 == p
+                        correction += sI/2
+                    end
+                    Ssensitivity[a,b,k] -= correction
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+

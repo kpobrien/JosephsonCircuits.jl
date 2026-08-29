@@ -1,25 +1,13 @@
 using JosephsonCircuits
 using JosephsonCircuits.Symbolics: @variables, Num
 using Test
+isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"))
 
 @testset verbose=true "mna" begin
 
     # a JPA-like circuit used by several testsets below
-    function jpacircuit()
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc))
-        push!(circuit,("Lj1","2","0",:Lj))
-        push!(circuit,("C2","2","0",:Cj))
-        circuitdefs = Dict(
-            :Lj =>1000.0e-12,
-            :Cc => 100.0e-15,
-            :Cj => 1000.0e-15,
-            :Rleft => 50.0,
-        )
-        return circuit, circuitdefs
-    end
+    # the canonical JPA lives in testcircuits.jl, shared across test files
+    jpacircuit() = testjpacircuit()
 
     @testset "hbnlsolve nodal reference values" begin
 

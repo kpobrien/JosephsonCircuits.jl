@@ -1,0 +1,12 @@
+[deps]
+JosephsonCircuits = "23a5dba6-321f-4fcf-be1e-689e290df087"
+Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+Krylov = "0.9, 0.10"
+SciMLBase = "2"

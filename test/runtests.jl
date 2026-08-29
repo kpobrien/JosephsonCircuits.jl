@@ -3,6 +3,8 @@ using Documenter
 using Test
 using JosephsonCircuits
 
+include("testcircuits.jl")
+
 
 @testset verbose = true "JosephsonCircuits" begin
 
@@ -58,6 +60,8 @@ using JosephsonCircuits
     include("batchedblocks.jl")
 
     include("modepreconditioner.jl")
+
+    include("hbnonlinearproblem.jl")
 
 
     include("stagedsolve.jl")
