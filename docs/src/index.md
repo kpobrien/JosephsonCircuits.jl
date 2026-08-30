@@ -122,7 +122,6 @@ plot(
 
 ![JPA simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/jpa.png)
 
-
 Compare with WRspice. Please note that on Linux you can install the [XicTools_jll](https://github.com/JuliaBinaryWrappers/XicTools_jll.jl/) package which provides WRspice for x86_64. For other operating systems and platforms, you can install WRspice yourself and substitute `XicTools_jll.wrspice()` with `JosephsonCircuits.wrspice_cmd()` which will attempt to provide the path to your WRspice executable. 
 
 ```julia
@@ -146,7 +145,6 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 ```
 
 ![JPA simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/jpa_WRspice.png)
-
 
 ## JPA with a frequency dependent environmental impedance
 Any component value can be a function of frequency: `FrequencyDependent`
@@ -204,10 +202,6 @@ plot(ws/(2*pi*1e9), [gain(ideal) gain(cable)],
 
 ## Double-pumped Josephson parametric amplifier (JPA)
 
-<details>
-
-<summary>Code</summary>
-
 ```julia
 using JosephsonCircuits
 using Plots
@@ -258,17 +252,11 @@ plot(
 )
 ```
 
-</details>
-
-
 ```
   0.182720 seconds (12.70 k allocations: 713.087 MiB)
 ```
 
 and compare with WRspice
-<details>
-
-<summary>Code</summary>
 
 ```julia
 using XicTools_jll
@@ -285,9 +273,6 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     seriestype=:scatter)
 ```
 
-</details>
-
-
 ```
  15.782862 seconds (32.80 k allocations: 509.192 MiB, 0.39% gc time)
 ```
@@ -297,9 +282,6 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 ## Flux-pumped Josephson parametric amplifier (JPA)
 Circuit and parameters from [here](https://doi.org/10.1063/1.2964182
 ). Please note that three wave mixing (3WM) and flux-biasing are relatively untested, so you may encounter bugs. Please file issues or PRs.
-<details>
-
-<summary>Code</summary>
 
 ```julia
 using JosephsonCircuits
@@ -363,17 +345,11 @@ plot(
 )
 ```
 
-</details>
-
-
 ```
   0.015623 seconds (22.07 k allocations: 80.082 MiB)
 ```
 
 and compare with WRspice
-<details>
-
-<summary>Code</summary>
 
 ```julia
 using XicTools_jll
@@ -393,9 +369,6 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     seriestype=:scatter)
 ```
 
-</details>
-
-
 ```
 283.557011 seconds (26.76 k allocations: 7.205 GiB, 0.66% gc time)
 ```
@@ -403,9 +376,6 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 ![Flux pumped JPA simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/jpa_flux_pumped_WRspice.png)
 
 Simulate the JPA frequency as a function of DC bias current:
-<details>
-
-<summary>Code</summary>
 
 ```julia
 ws = 2*pi*(8.0:0.01:11.0)*1e9
@@ -437,21 +407,14 @@ plot(
 )
 ```
 
-</details>
-
-
 ```
 0.219279 seconds (3.27 M allocations: 639.981 MiB, 20.84% gc time)
 ```
 
 ![JPA frequency vs DC bias current](https://qce.mit.edu/JosephsonCircuits.jl/jpa_vs_bias_current.png)
 
-
 ## SNAIL Parametric Amplifier
 Circuit parameters from [here](https://doi.org/10.1103/PhysRevApplied.10.054020). Notice that the resonance frequency is similar for pump-on and pump-off, indicating it is operating near the Kerr-free point.
-<details>
-
-<summary>Code</summary>
 
 ```julia
 using JosephsonCircuits
@@ -573,9 +536,6 @@ plot!(
 plot(p1,p2,layout=(2,1))
 ```
 
-</details>
-
-
 ```
   0.010345 seconds (16.74 k allocations: 40.025 MiB)
   0.011252 seconds (16.68 k allocations: 39.985 MiB)
@@ -583,11 +543,7 @@ plot(p1,p2,layout=(2,1))
 
 ![SNAIL parametric amplifier simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/snail.png)
 
-
 and compare with WRspice
-<details>
-
-<summary>Code</summary>
 
 ```julia
 using XicTools_jll
@@ -622,21 +578,15 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
     seriestype=:scatter)
 ```
 
-</details>
-
 ```
 2067.364975 seconds (149.73 k allocations: 29.873 GiB, 0.01% gc time)
 ```
 
 ![SNAIL parametric amplifier simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/snail_WRspice.png)
 
-
 ## Josephson traveling wave parametric amplifier (JTWPA)
 
 Circuit parameters from [here](https://www.science.org/doi/10.1126/science.aaa8525).
-<details>
-
-<summary>Code</summary>
 
 ```julia
 using JosephsonCircuits
@@ -763,22 +713,15 @@ p4=plot(ws/(2*pi*1e9),
 plot(p1, p2, p3, p4, layout = (2, 2))
 ```
 
-</details>
-
-
 ```
   2.959010 seconds (257.75 k allocations: 2.392 GiB, 0.21% gc time)
 ```
 
 ![JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/uniform.png)
 
-
 ## Floquet JTWPA
 
 Circuit parameters from [here](https://journals.aps.org/prxquantum/abstract/10.1103/PRXQuantum.3.020306).
-<details>
-
-<summary>Code</summary>
 
 ```julia
 using JosephsonCircuits
@@ -899,22 +842,15 @@ p4=plot(ws/(2*pi*1e9),
 plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
-</details>
-
-
 ```
   2.079267 seconds (456.63 k allocations: 1.997 GiB, 0.48% gc time)
 ```
 
 ![Floquet JTWPA simulation](https://qce.mit.edu/JosephsonCircuits.jl/floquet.png)
 
-
 ## Floquet JTWPA with dissipation
 
 Dissipation due to capacitors with dielectric loss, parameterized by a loss tangent. Run the above code block to define the circuit then run the following:
-<details>
-
-<summary>Code</summary>
 
 ```julia
 results = []
@@ -975,9 +911,6 @@ end
 plot(p1, p2, p3,p4,layout = (2, 2))
 ```
 
-</details>
-
-
 ```
   3.815835 seconds (470.00 k allocations: 2.303 GiB, 0.22% gc time)
   3.800166 seconds (470.59 k allocations: 2.310 GiB, 0.29% gc time)
@@ -989,10 +922,6 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 
 ## Impedance-engineered JPA
 Circuit parameters of the lumped-element snake amplifier (LESA) from [here](https://arxiv.org/abs/2408.07861). The device is built from hierarchical subcircuits -- a snake stage, a snake, and the four-snake flux-biased SQUID -- and its matching network ends in an ideal transmission line expressed directly as a frequency dependent scattering parameter block rather than a discretized LC ladder.
-
-<details>
-
-<summary>Code</summary>
 
 Utility functions
 ```julia
@@ -1200,21 +1129,14 @@ plot!(
 
 ```
 
-</details>
-
 ```
   0.081631 seconds (34.78 k allocations: 67.609 MiB, 48.06% gc time)
 ```
 
 ![lumped-element snake amplifier (LESA) with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/lesa.png)
 
-
 ## Design parameter sensitivities
 The derivative of the scattering parameters with respect to the design parameters of a circuit builder, computed with the adjoint method from a single solve rather than by re-solving per parameter. The builder is an ordinary function from named parameters to a circuit; every component value which depends on a parameter contributes through the chain rule, including derived values.
-
-<details>
-
-<summary>Code</summary>
 
 ```julia
 using JosephsonCircuits
@@ -1249,14 +1171,8 @@ plot(ws/(2*pi*1e9),
     ylabel="dG/dln(p) (dB)")
 ```
 
-</details>
-
 ## Sensitivity to frequency dependent scattering parameters
 A [`ScatteringParameters`](https://josephsoncircuits.org/stable/reference/) constructed inside the builder is differentiated like any component value: here a matched transmission line section in front of the amplifier, with the derivative of the gain with respect to the line length. The default is central finite differences through the block's scattering function; this example supplies the analytic derivative through the `derivatives` keyword instead. A block hoisted out of the builder (measured Touchstone data, say) is treated as parameter independent and costs nothing.
-
-<details>
-
-<summary>Code</summary>
 
 ```julia
 using JosephsonCircuits
@@ -1297,8 +1213,6 @@ plot(ws/(2*pi*1e9),
     ylabel="dG/dln(p) (dB)")
 ```
 
-</details>
-
 # Contributing:
 
 We welcome contributions in the form of issues/bug reports or pull requests. This project uses the [MIT open source license](https://opensource.org/license/MIT). You retain the copyright to any code you contribute.
@@ -1311,7 +1225,6 @@ We welcome contributions in the form of issues/bug reports or pull requests. Thi
 4. Jos&#233; Carlos Pedro, David E. Root, Jianjun Xu, and Lu&#237;s C&#243;timos Nunes. "Nonlinear Circuit Simulation and Modeling: Fundamentals for Microwave Design" The Cambridge RF and Microwave Engineering Series, [Cambridge University Press (2018)](https://www.cambridge.org/core/books/nonlinear-circuit-simulation-and-modeling/1705F3B449B4313A2BE890599DAC0E38)
 5. David E. Root, Jan Verspecht, Jason Horn, and Mihai Marcu. "X-Parameters: Characterization, Modeling, and Design of Nonlinear RF and Microwave Components" The Cambridge RF and microwave engineering series, [Cambridge University Press (2013)](https://www.cambridge.org/sb/academic/subjects/engineering/rf-and-microwave-engineering/x-parameters-characterization-modeling-and-design-nonlinear-rf-and-microwave-components)
 6. Kaidong Peng, Rick Poore, Philip Krantz, David E. Root, and Kevin P. O'Brien "X-parameter based design and simulation of Josephson traveling-wave parametric amplifiers for quantum computing applications" [IEEE International Conference on Quantum Computing & Engineering (QCE22) (2022)](http://arxiv.org/abs/2211.05328)
-
 
 # Philosophy:
 

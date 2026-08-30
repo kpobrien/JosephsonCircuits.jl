@@ -168,18 +168,16 @@ _sh(c::Constant,cs)=(push!(cs,c.val); Hole(length(cs)))
 _sh(u::Unary,cs)=Unary(u.f,_sh(u.a,cs))
 _sh(b::Binary,cs)=Binary(b.f,_sh(b.a,cs),_sh(b.b,cs))
 
-"""
-    substituteparams(expr, d)
-
-Replace the parameters named in `d` by their values, leaving the rest free.
-
-Because the smart constructors fold constants, an expression whose leaves
-all resolve collapses to a `Constant`, and one which still depends on a
-free parameter -- the symbolic frequency variable, resolved later per mode
-by `freqsubst` -- comes back as a `CircuitValue`. That is what lets a
-frequency dependent component value survive `valuetonumber` and be
-evaluated once per mode afterwards.
-"""
+#     substituteparams(expr, d)
+#
+# Replace the parameters named in `d` by their values, leaving the rest free.
+#
+# Because the smart constructors fold constants, an expression whose leaves
+# all resolve collapses to a `Constant`, and one which still depends on a
+# free parameter -- the symbolic frequency variable, resolved later per mode
+# by `freqsubst` -- comes back as a `CircuitValue`. That is what lets a
+# frequency dependent component value survive `valuetonumber` and be
+# evaluated once per mode afterwards.
 substituteparams(c::Constant, d) = c
 substituteparams(h::Hole, d) = h
 substituteparams(p::Provider, d) = p
@@ -192,14 +190,12 @@ substituteparams(b::Binary, d) =
 evaluate(c::Constant,d)=c.val; evaluate(q::Parameter,d)=d[q.name]
 evaluate(::Provider,d)=error("a frequency dependent value cannot be evaluated without a frequency; it is resolved per mode by freqsubst")
 
-"""
-    evalproviders(expr, w)
-
-Replace every frequency-dependent provider leaf by its value at the
-signed frequency `w`. The constant-folding constructors collapse the
-result, so an expression whose only unresolved leaves were providers
-comes back a `Constant`.
-"""
+#     evalproviders(expr, w)
+#
+# Replace every frequency-dependent provider leaf by its value at the
+# signed frequency `w`. The constant-folding constructors collapse the
+# result, so an expression whose only unresolved leaves were providers
+# comes back a `Constant`.
 evalproviders(c::Constant, w) = c
 evalproviders(h::Hole, w) = h
 evalproviders(q::Parameter, w) = q
@@ -241,22 +237,20 @@ end
 _narrow(v::Vector{ComplexF64}) =
     all(iszero, imag.(v)) ? Vector{Float64}(real.(v)) : v
 
-"""
-    ParameterMap(values, names)
-
-A compiled map from a vector of design parameter values to the numeric
-component values of a circuit.
-
-Component values which do not depend on a design parameter are resolved
-once, at construction. The rest are grouped by the *shape* of their
-expression -- the expression with every numeric literal replaced by a hole
--- so a Floquet weighted line, whose thousands of component values differ
-only in a per cell weight, compiles to a handful of shapes rather than
-thousands of separate expressions. One function is generated per shape and
-evaluated in a tight loop over its literals.
-
-Apply with [`bind!`](@ref).
-"""
+#     ParameterMap(values, names)
+#
+# A compiled map from a vector of design parameter values to the numeric
+# component values of a circuit.
+#
+# Component values which do not depend on a design parameter are resolved
+# once, at construction. The rest are grouped by the *shape* of their
+# expression -- the expression with every numeric literal replaced by a hole
+# -- so a Floquet weighted line, whose thousands of component values differ
+# only in a per cell weight, compiles to a handful of shapes rather than
+# thousands of separate expressions. One function is generated per shape and
+# evaluated in a tight loop over its literals.
+#
+# Apply with [`bind!`](@ref).
 struct ParameterMap
     constant::AbstractVector
     fns::Vector{Any}
@@ -293,14 +287,12 @@ function ParameterMap(values::AbstractVector, names::Vector{Symbol})
     ParameterMap(_narrow(constant),fns,cs,tg,names,length(fns))
 end
 
-"""
-    JacobianMap(values, names)
-
-The exact Jacobian of the component values with respect to the design
-parameters, as one compiled [`ParameterMap`](@ref) per parameter. Costs
-one bind per parameter to evaluate, is allocation free, needs no AD
-package, and is exact for complex component values.
-"""
+#     JacobianMap(values, names)
+#
+# The exact Jacobian of the component values with respect to the design
+# parameters, as one compiled [`ParameterMap`](@ref) per parameter. Costs
+# one bind per parameter to evaluate, is allocation free, needs no AD
+# package, and is exact for complex component values.
 struct JacobianMap
     maps::Vector{ParameterMap}
     names::Vector{Symbol}
@@ -326,11 +318,9 @@ function jacobian!(J::AbstractMatrix, jm::JacobianMap, p::AbstractVector)
     return J
 end
 
-"""
-    bind!(out, m::ParameterMap, p)
-
-Write the component values for the design parameter vector `p` into `out`.
-"""
+#     bind!(out, m::ParameterMap, p)
+#
+# Write the component values for the design parameter vector `p` into `out`.
 function bind!(out::AbstractVector, m::ParameterMap, p::AbstractVector)
     copyto!(out, m.constant)
     @inbounds for g in eachindex(m.fns)
