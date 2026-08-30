@@ -71,19 +71,23 @@ A driven nonlinear LC resonator.
 using JosephsonCircuits
 using Plots
 
-@variables R Cc Lj Cj
-circuit = [
-    ("P1","1","0",1),
-    ("R1","1","0",R),
-    ("C1","1","2",Cc),
-    ("Lj1","2","0",Lj),
-    ("C2","2","0",Cj)]
+R = 50.0
+Cc = 100.0e-15
+Lj = 1000.0e-12
+Cj = 1000.0e-15
 
-circuitdefs = Dict(
-    Lj =>1000.0e-12,
-    Cc => 100.0e-15,
-    Cj => 1000.0e-15,
-    R => 50.0)
+# the components, then the connections between their terminals; the last
+# group is the ground net
+circuit = Circuit(
+    [:p1 => Port(1),
+     :r1 => Resistor(R),
+     :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj),
+     :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.75001*1e9,)
@@ -93,7 +97,7 @@ Npumpharmonics = (16,)
 Nmodulationharmonics = (8,)
 
 @time jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
-    Npumpharmonics, circuit, circuitdefs)
+    Npumpharmonics, circuit)
 
 plot(
     jpa.linearized.w/(2*pi*1e9),
@@ -125,7 +129,7 @@ Compare with WRspice. Please note that on Linux you can install the [XicTools_jl
 using XicTools_jll
 
 wswrspice=2*pi*(4.5:0.01:5.0)*1e9
-n = JosephsonCircuits.exportnetlist(circuit,circuitdefs);
+n = JosephsonCircuits.exportnetlist(circuit);
 input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,wp[1],2*Ip,(0,1),(0,1));
 
 @time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
@@ -144,6 +148,60 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 ![JPA simulation with JosephsonCircuits.jl and WRspice](https://qce.mit.edu/JosephsonCircuits.jl/jpa_WRspice.png)
 
 
+## JPA with a frequency dependent environmental impedance
+Any component value can be a function of frequency: `FrequencyDependent`
+wraps an arbitrary Julia closure of the signed mode frequency in radians per
+second, and both the nonlinear pump solve and the linearized sweep evaluate
+it at their own mode frequencies. Here the JPA of the first example sees its
+environment through five centimeters of slightly mismatched cable -- a 50 ohm
+line terminated by a 40 ohm source -- so the port resistor becomes the
+complex input impedance of that line. The transformed environment reshapes
+the gain and moves the peak, and because the pump harmonics feel it too, the
+operating point itself shifts, not just the readout. A physical impedance
+obeys `Z(-w) = conj(Z(w))`, which this law satisfies automatically because
+`tan` is odd and the constants are real.
+
+```julia
+using JosephsonCircuits
+using Plots
+
+Cc = 100.0e-15
+Lj = 1000.0e-12
+Cj = 1000.0e-15
+
+# the input impedance of a mismatched cable between source and amplifier
+Z0 = 50.0    # cable characteristic impedance, ohms
+ZL = 40.0    # source impedance, ohms
+len = 0.05   # cable length, meters
+vp = 2.0e8   # cable phase velocity, meters per second
+Zenv(w) = Z0*(ZL + im*Z0*tan(w*len/vp))/(Z0 + im*ZL*tan(w*len/vp))
+
+amplifier(Zr) = Circuit(
+    [:p1 => Port(1),
+     :r1 => Resistor(Zr),
+     :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj),
+     :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+
+ws = 2*pi*(4.5:0.001:5.0)*1e9
+wp = (2*pi*4.75001*1e9,)
+sources = [(mode=(1,), port=1, current=0.00565e-6)]
+
+@time ideal = hbsolve(ws, wp, sources, (8,), (16,), amplifier(50.0))
+@time cable = hbsolve(ws, wp, sources, (8,), (16,),
+    amplifier(FrequencyDependent(Zenv)))
+
+gain(sol) = 10*log10.(abs2.(sol.linearized.S(outputmode=(0,),
+    outputport=1, inputmode=(0,), inputport=1, freqindex=:)))
+plot(ws/(2*pi*1e9), [gain(ideal) gain(cable)],
+    label=["ideal 50 ohm environment" "through mismatched cable"],
+    xlabel="Frequency (GHz)", ylabel="Gain (dB)")
+```
+
 ## Double-pumped Josephson parametric amplifier (JPA)
 
 <details>
@@ -154,19 +212,23 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 using JosephsonCircuits
 using Plots
 
-@variables R Cc Lj Cj
-circuit = [
-    ("P1","1","0",1),
-    ("R1","1","0",R),
-    ("C1","1","2",Cc),
-    ("Lj1","2","0",Lj),
-    ("C2","2","0",Cj)]
+R = 50.0
+Cc = 100.0e-15
+Lj = 1000.0e-12
+Cj = 1000.0e-15
 
-circuitdefs = Dict(
-    Lj =>1000.0e-12,
-    Cc => 100.0e-15,
-    Cj => 1000.0e-15,
-    R => 50.0)
+# the components, then the connections between their terminals; the last
+# group is the ground net
+circuit = Circuit(
+    [:p1 => Port(1),
+     :r1 => Resistor(R),
+     :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj),
+     :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.65001*1e9,2*pi*4.85001*1e9)
@@ -177,7 +239,7 @@ Npumpharmonics = (8,8)
 Nmodulationharmonics = (8,8)
 
 @time jpa = hbsolve(ws, wp, sources, Nmodulationharmonics,
-    Npumpharmonics, circuit, circuitdefs);
+    Npumpharmonics, circuit);
 
 plot(
     jpa.linearized.w/(2*pi*1e9),
@@ -212,7 +274,7 @@ and compare with WRspice
 using XicTools_jll
 
 wswrspice=2*pi*(4.5:0.01:5.0)*1e9
-n = JosephsonCircuits.exportnetlist(circuit,circuitdefs);
+n = JosephsonCircuits.exportnetlist(circuit);
 input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,[wp[1],wp[2]],[2*Ip,2*Ip],(0,1),[(0,1),(0,1)]);
 
 @time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
@@ -243,36 +305,34 @@ Circuit and parameters from [here](https://doi.org/10.1063/1.2964182
 using JosephsonCircuits
 using Plots
 
-@variables R Cc Cj Lj Cr Lr Ll Ldc K Lg
-circuit = [
-    ("P1","1","0",1),
-    ("R1","1","0",R),
-    ("C1","1","2",Cc),
-    ("L1","2","3",Lr),
-    ("C2","2","0",Cr),
-    ("Lj1","3","0",Lj),
-    ("Cj1","3","0",Cj),
-    ("L2","3","4",Ll),
-    ("Lj2","4","0",Lj),
-    ("Cj2","4","0",Cj),
-    ("L3","5","0",Ldc), 
-    ("K1","L2","L3",K),
-    # a port with a very large resistor so we can apply the bias across the port
-    ("P2","5","0",2),
-    ("R2","5","0",1000.0),
-] 
+R = 50.0
+Cc = 16.0e-15
+Cj = 10.0e-15
+Lj = 219.63e-12
+Cr = 0.4e-12
+Lr = 0.4264e-9
+Ll = 34e-12
+Ldc = 0.74e-12
+K = 0.999 # the inverse inductance matrix for K=1.0 diverges, so set K<1.0
 
-circuitdefs = Dict(
-    Lj =>219.63e-12,
-    Lr =>0.4264e-9,
-    Cc => 16.0e-15,
-    Cj => 10.0e-15, 
-    Cr => 0.4e-12,
-    R => 50.0, 
-    Ll => 34e-12, 
-    K => 0.999, # the inverse inductance matrix for K=1.0 diverges, so set K<1.0
-    Ldc => 0.74e-12,
-)
+circuit = Circuit(
+    [:p1 => Port(1), :r1 => Resistor(R),
+     :cc => Capacitor(Cc),
+     :lr => Inductor(Lr), :cr => Capacitor(Cr),
+     :jj1 => JosephsonJunction(Lj), :cj1 => Capacitor(Cj),
+     :ll => Inductor(Ll),
+     :jj2 => JosephsonJunction(Lj), :cj2 => Capacitor(Cj),
+     :ldc => Inductor(Ldc),
+     :k1 => MutualInductor(K, :ll, :ldc),
+     # a port with a very large resistor so we can apply the bias across it
+     :p2 => Port(2), :r2 => Resistor(1000.0), :gnd => Ground()],
+    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+     [(:cc, 2), (:lr, 1), (:cr, 1)],
+     [(:lr, 2), (:jj1, 1), (:cj1, 1), (:ll, 1)],
+     [(:ll, 2), (:jj2, 1), (:cj2, 1)],
+     [(:ldc, 1), (:p2, 1), (:r2, 1)],
+     [(:p1, 2), (:r1, 2), (:cr, 2), (:jj1, 2), (:cj1, 2), (:jj2, 2),
+      (:cj2, 2), (:ldc, 2), (:p2, 2), (:r2, 2), (:gnd, 1)]])
 
 ws = 2*pi*(9.7:0.0001:9.8)*1e9
 wp = (2*pi*19.50*1e9,)
@@ -283,7 +343,7 @@ sourcespumpon = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=Ip)]
 Npumpharmonics = (16,)
 Nmodulationharmonics = (8,)
 @time jpapumpon = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
-    Npumpharmonics, circuit, circuitdefs, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
+    Npumpharmonics, circuit, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
 
 
 plot(
@@ -320,7 +380,7 @@ using XicTools_jll
 
 # simulate the JPA in WRSPICE
 wswrspice=2*pi*(9.7:0.005:9.8)*1e9
-n = JosephsonCircuits.exportnetlist(circuit,circuitdefs);
+n = JosephsonCircuits.exportnetlist(circuit);
 input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,[0.0,wp[1]],[Idc,2*Ip],[(0,1)],[(0,5),(0,5)];trise=10e-9,tstop=600e-9);
 
 # @time output = JosephsonCircuits.spice_run(input,JosephsonCircuits.wrspice_cmd());
@@ -362,7 +422,7 @@ Nmodulationharmonics = (1,)
           (mode=(1,),port=2,current=Ip),
       ]
     sol = hbsolve(ws,wp,sources,Nmodulationharmonics, Npumpharmonics,
-        circuit, circuitdefs;dc=true,threewavemixing=true,fourwavemixing=true)
+        circuit;dc=true,threewavemixing=true,fourwavemixing=true)
     outvals[:,k]=sol.linearized.S((0,),1,(0,),1,:)
 end
 
@@ -397,44 +457,42 @@ Circuit parameters from [here](https://doi.org/10.1103/PhysRevApplied.10.054020)
 using JosephsonCircuits
 using Plots
 
-@variables R Cc Cj Lj Cr Lr Ll Ldc K Lg
+R = 50.0
+Cc = 0.048e-12
+Cj = 10.0e-15
+Lj = 60e-12
+Cr = 0.4e-12*1.25
+Lr = 0.4264e-9*1.25
+Ll = 34e-12
+Ldc = 0.74e-12
+K = 0.999 # the inverse inductance matrix for K=1.0 diverges, so set K<1.0
+
 alpha = 0.29
 Z0 = 50
 w0 = 2*pi*8e9
 l=10e-3
-circuit = [
-    ("P1","1","0",1),
-    ("R1","1","0",R),
-    ("C1","1","2",Cc),
-    ("L1","2","3",Lr),
-    ("C2","2","0",Cr),
-    ("Lj1","3","0",Lj/alpha),
-    ("Cj1","3","0",Cj/alpha),
-    ("L2","3","4",Ll),
-    ("Lj2","4","5",Lj),
-    ("Cj2","4","5",Cj),
-    ("Lj3","5","6",Lj),
-    ("Cj3","5","6",Cj),
-    ("Lj4","6","0",Lj),
-    ("Cj4","6","0",Cj),
-    ("L3","7","0",Ldc), 
-    ("K1","L2","L3",K),
-    # a port with a very large resistor so we can apply the bias across the port
-    ("P2","7","0",2),
-    ("R2","7","0",1000.0),
-] 
-
-circuitdefs = Dict(
-    Lj => 60e-12,
-    Cj => 10.0e-15, 
-    Lr =>0.4264e-9*1.25,
-    Cr => 0.4e-12*1.25,
-    Cc => 0.048e-12,
-    R => 50.0, 
-    Ll => 34e-12, 
-    K => 0.999, # the inverse inductance matrix for K=1.0 diverges, so set K<1.0
-    Ldc => 0.74e-12,
-)
+circuit = Circuit(
+    [:p1 => Port(1), :r1 => Resistor(R),
+     :cc => Capacitor(Cc),
+     :lr => Inductor(Lr), :cr => Capacitor(Cr),
+     :jj1 => JosephsonJunction(Lj/alpha), :cj1 => Capacitor(Cj/alpha),
+     :ll => Inductor(Ll),
+     :jj2 => JosephsonJunction(Lj), :cj2 => Capacitor(Cj),
+     :jj3 => JosephsonJunction(Lj), :cj3 => Capacitor(Cj),
+     :jj4 => JosephsonJunction(Lj), :cj4 => Capacitor(Cj),
+     :ldc => Inductor(Ldc),
+     :k1 => MutualInductor(K, :ll, :ldc),
+     # a port with a very large resistor so we can apply the bias across it
+     :p2 => Port(2), :r2 => Resistor(1000.0), :gnd => Ground()],
+    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+     [(:cc, 2), (:lr, 1), (:cr, 1)],
+     [(:lr, 2), (:jj1, 1), (:cj1, 1), (:ll, 1)],
+     [(:ll, 2), (:jj2, 1), (:cj2, 1)],
+     [(:jj2, 2), (:cj2, 2), (:jj3, 1), (:cj3, 1)],
+     [(:jj3, 2), (:cj3, 2), (:jj4, 1), (:cj4, 1)],
+     [(:ldc, 1), (:p2, 1), (:r2, 1)],
+     [(:p1, 2), (:r1, 2), (:cr, 2), (:jj1, 2), (:cj1, 2), (:jj4, 2),
+      (:cj4, 2), (:ldc, 2), (:p2, 2), (:r2, 2), (:gnd, 1)]])
 
 # ws = 2*pi*(9.7:0.0001:9.8)*1e9
 # ws = 2*pi*(5.0:0.001:11)*1e9
@@ -449,9 +507,9 @@ sourcespumpoff = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=0.0)]
 Npumpharmonics = (16,)
 Nmodulationharmonics = (8,)
 @time jpapumpon = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
-    Npumpharmonics, circuit, circuitdefs, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
+    Npumpharmonics, circuit, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
 @time jpapumpoff = hbsolve(ws, wp, sourcespumpoff, Nmodulationharmonics,
-    Npumpharmonics, circuit, circuitdefs, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
+    Npumpharmonics, circuit, dc = true, threewavemixing=true,fourwavemixing=true) # enable dc and three wave mixing
 
 p1 = plot(
     jpapumpon.linearized.w/(2*pi*1e9),
@@ -536,7 +594,7 @@ using XicTools_jll
 
 # simulate the JPA in WRSPICE
 wswrspice=2*pi*(7.8:0.005:8.2)*1e9
-n = JosephsonCircuits.exportnetlist(circuit,circuitdefs);
+n = JosephsonCircuits.exportnetlist(circuit);
 input = JosephsonCircuits.wrspice_input_paramp(n.netlist,wswrspice,[0.0,wp[1]],[Idc,2*Ip],[(0,1)],[(0,7),(0,7)];trise=10e-9,tstop=600e-9);
 
 @time output = JosephsonCircuits.spice_run(input,XicTools_jll.wrspice());
@@ -584,65 +642,65 @@ Circuit parameters from [here](https://www.science.org/doi/10.1126/science.aaa85
 using JosephsonCircuits
 using Plots
 
-@variables Rleft Rright Cg Lj Cj Cc Cr Lr
-circuit = Tuple{String,String,String,Num}[]
+Rleft = 50.0
+Rright = 50.0
+Cg = 45.0e-15
+Lj = IctoLj(3.4e-6)
+Cj = 55e-15
+Cc = 30.0e-15
+Cr = 2.8153e-12
+Lr = 1.70e-10
 
-# port on the input side
-push!(circuit,("P$(1)_$(0)","1","0",1))
-push!(circuit,("R$(1)_$(0)","1","0",Rleft))
-Nj=2048
+# one unit cell of the line: a junction with its shunt capacitance and
+# the capacitance to ground at its input, exposed through pins 1 and 2
+jjcell(Lj, Cj, Cg) = Circuit(
+    [:jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
+     :cg => Capacitor(Cg), :gnd => Ground()],
+    [[(:jj, 1), (:cj, 1), (:cg, 1)],
+     [(:jj, 2), (:cj, 2)],
+     [(:cg, 2), (:gnd, 1)]];
+    pins = [1 => (:jj, 1), 2 => (:jj, 2)])
+
+# a cell whose capacitance to ground is split to couple a phase matching
+# resonator
+pmrcell(Lj, Cj, Cg, Cc, Cr, Lr) = Circuit(
+    [:jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
+     :cg => Capacitor(Cg - Cc), :cc => Capacitor(Cc),
+     :cr => Capacitor(Cr), :lr => Inductor(Lr), :gnd => Ground()],
+    [[(:jj, 1), (:cj, 1), (:cg, 1), (:cc, 1)],
+     [(:jj, 2), (:cj, 2)],
+     [(:cc, 2), (:cr, 1), (:lr, 1)],
+     [(:cg, 2), (:cr, 2), (:lr, 2), (:gnd, 1)]];
+    pins = [1 => (:jj, 1), 2 => (:jj, 2)])
+
+Nj = 2048
 pmrpitch = 4
-#first half cap to ground
-push!(circuit,("C$(1)_$(0)","1","0",Cg/2))
-#middle caps and jj's
-push!(circuit,("Lj$(1)_$(2)","1","2",Lj)) 
-push!(circuit,("C$(1)_$(2)","1","2",Cj)) 
 
-j=2
-for i = 2:Nj-1
-    
-    if mod(i,pmrpitch) == pmrpitch÷2
-
-        # make the jj cell with modified capacitance to ground
-        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg-Cc))
-        push!(circuit,("Lj$(j)_$(j+2)","$(j)","$(j+2)",Lj))
-
-        push!(circuit,("C$(j)_$(j+2)","$(j)","$(j+2)",Cj))
-        
-        #make the pmr
-        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cc))
-        push!(circuit,("C$(j+1)_$(0)","$(j+1)","$(0)",Cr))
-        push!(circuit,("L$(j+1)_$(0)","$(j+1)","$(0)",Lr))
-        
-        # increment the index
-        j+=1
+# instance the cells and chain them
+components = Any[:p1 => Port(1), :r1 => Resistor(Rleft), :gnd => Ground()]
+for i in 1:Nj-1
+    cell = if i == 1
+        jjcell(Lj, Cj, Cg/2)             # half cap to ground at the input
+    elseif mod(i, pmrpitch) == pmrpitch÷2
+        pmrcell(Lj, Cj, Cg, Cc, Cr, Lr)
     else
-        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg))
-        push!(circuit,("Lj$(j)_$(j+1)","$(j)","$(j+1)",Lj))
-        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cj))
+        jjcell(Lj, Cj, Cg)
     end
-    
-    # increment the index
-    j+=1
-
+    push!(components, Symbol(:cell, i) => cell)
 end
+push!(components, :cend => Capacitor(Cg/2))
+push!(components, :r2 => Resistor(Rright))
+push!(components, :p2 => Port(2))
 
-#last jj
-push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg/2))
-push!(circuit,("R$(j)_$(0)","$(j)","$(0)",Rright))
-# port on the output side
-push!(circuit,("P$(j)_$(0)","$(j)","$(0)",2))
+connections = [[(Symbol(:cell, i), 2), (Symbol(:cell, i+1), 1)]
+    for i in 1:Nj-2]
+push!(connections, [(:p1, 1), (:r1, 1), (:cell1, 1)])
+push!(connections,
+    [(Symbol(:cell, Nj-1), 2), (:cend, 1), (:r2, 1), (:p2, 1)])
+push!(connections,
+    [(:p1, 2), (:r1, 2), (:cend, 2), (:r2, 2), (:p2, 2), (:gnd, 1)])
 
-circuitdefs = Dict(
-    Lj => IctoLj(3.4e-6),
-    Cg => 45.0e-15,
-    Cc => 30.0e-15,
-    Cr =>  2.8153e-12,
-    Lr => 1.70e-10,
-    Cj => 55e-15,
-    Rleft => 50.0,
-    Rright => 50.0,
-)
+circuit = Circuit(components, connections)
 
 ws=2*pi*(1.0:0.1:14)*1e9
 wp=(2*pi*7.12*1e9,)
@@ -652,7 +710,7 @@ Npumpharmonics = (20,)
 Nmodulationharmonics = (10,)
 
 @time rpm = hbsolve(ws, wp, sources, Nmodulationharmonics,
-    Npumpharmonics, circuit, circuitdefs)
+    Npumpharmonics, circuit)
 
 p1=plot(ws/(2*pi*1e9),
     10*log10.(abs2.(rpm.linearized.S(
@@ -726,70 +784,64 @@ Circuit parameters from [here](https://journals.aps.org/prxquantum/abstract/10.1
 using JosephsonCircuits
 using Plots
 
-@variables Rleft Rright Lj Cg Cc Cr Lr Cj
+# a circuit builder: an ordinary function from design parameters to a
+# numeric circuit, so parameter changes (like the dielectric loss below)
+# are just calls with different keyword arguments
+function floquetcircuit(; Rleft = 50.0, Rright = 50.0, Lj = IctoLj(1.75e-6),
+    Cg = 76.6e-15, Cc = 40.0e-15, Cr = 1.533e-12, Lr = 2.47e-10, Cj = 40e-15,
+    Nj = 2000, pmrpitch = 8, weightwidth = 745)
 
-weightwidth = 745
-weight = (n,Nnodes,weightwidth) -> exp(-(n - Nnodes/2)^2/(weightwidth)^2)
-Nj=2000
-pmrpitch = 8
+    weight = (n,Nnodes,weightwidth) -> exp(-(n - Nnodes/2)^2/(weightwidth)^2)
 
-# define the circuit components
-circuit = Tuple{String,String,String,Num}[]
+    # the same unit cells as the uniform line, with the junction and
+    # capacitance values weighted per cell
+    jjcell(Lj, Cj, Cg) = Circuit(
+        [:jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
+         :cg => Capacitor(Cg), :gnd => Ground()],
+        [[(:jj, 1), (:cj, 1), (:cg, 1)],
+         [(:jj, 2), (:cj, 2)],
+         [(:cg, 2), (:gnd, 1)]];
+        pins = [1 => (:jj, 1), 2 => (:jj, 2)])
+    pmrcell(Lj, Cj, Cg, Cc, Cr, Lr) = Circuit(
+        [:jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
+         :cg => Capacitor(Cg - Cc), :cc => Capacitor(Cc),
+         :cr => Capacitor(Cr), :lr => Inductor(Lr), :gnd => Ground()],
+        [[(:jj, 1), (:cj, 1), (:cg, 1), (:cc, 1)],
+         [(:jj, 2), (:cj, 2)],
+         [(:cc, 2), (:cr, 1), (:lr, 1)],
+         [(:cg, 2), (:cr, 2), (:lr, 2), (:gnd, 1)]];
+        pins = [1 => (:jj, 1), 2 => (:jj, 2)])
 
-# port on the left side
-push!(circuit,("P$(1)_$(0)","1","0",1))
-push!(circuit,("R$(1)_$(0)","1","0",Rleft))
-
-#first half cap to ground
-push!(circuit,("C$(1)_$(0)","1","0",Cg/2*weight(1-0.5,Nj,weightwidth)))
-#middle caps and jj's
-push!(circuit,("Lj$(1)_$(2)","1","2",Lj*weight(1,Nj,weightwidth))) 
-push!(circuit,("C$(1)_$(2)","1","2",Cj/weight(1,Nj,weightwidth))) 
-    
-j=2
-for i = 2:Nj-1
-    
-    if mod(i,pmrpitch) == pmrpitch÷2
-
-        # make the jj cell with modified capacitance to ground
-        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",(Cg-Cc)*weight(i-0.5,Nj,weightwidth)))
-        push!(circuit,("Lj$(j)_$(j+2)","$(j)","$(j+2)",Lj*weight(i,Nj,weightwidth)))
-
-        push!(circuit,("C$(j)_$(j+2)","$(j)","$(j+2)",Cj/weight(i,Nj,weightwidth)))
-        
-        #make the pmr
-        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cc*weight(i-0.5,Nj,weightwidth)))
-        push!(circuit,("C$(j+1)_$(0)","$(j+1)","$(0)",Cr))
-        push!(circuit,("L$(j+1)_$(0)","$(j+1)","$(0)",Lr))
-        
-        # increment the index
-        j+=1
-    else
-        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg*weight(i-0.5,Nj,weightwidth)))
-        push!(circuit,("Lj$(j)_$(j+1)","$(j)","$(j+1)",Lj*weight(i,Nj,weightwidth)))
-        push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cj/weight(i,Nj,weightwidth)))
+    components = Any[:p1 => Port(1), :r1 => Resistor(Rleft), :gnd => Ground()]
+    for i in 1:Nj-1
+        wj = weight(i, Nj, weightwidth)
+        wg = weight(i - 0.5, Nj, weightwidth)
+        cell = if i == 1
+            jjcell(Lj*wj, Cj/wj, Cg/2*wg)
+        elseif mod(i, pmrpitch) == pmrpitch÷2
+            pmrcell(Lj*wj, Cj/wj, Cg*wg, Cc*wg, Cr, Lr)
+        else
+            jjcell(Lj*wj, Cj/wj, Cg*wg)
+        end
+        push!(components, Symbol(:cell, i) => cell)
     end
-    
-    # increment the index
-    j+=1
+    push!(components,
+        :cend => Capacitor(Cg/2*weight(Nj - 0.5, Nj, weightwidth)))
+    push!(components, :r2 => Resistor(Rright))
+    push!(components, :p2 => Port(2))
 
+    connections = [[(Symbol(:cell, i), 2), (Symbol(:cell, i+1), 1)]
+        for i in 1:Nj-2]
+    push!(connections, [(:p1, 1), (:r1, 1), (:cell1, 1)])
+    push!(connections,
+        [(Symbol(:cell, Nj-1), 2), (:cend, 1), (:r2, 1), (:p2, 1)])
+    push!(connections,
+        [(:p1, 2), (:r1, 2), (:cend, 2), (:r2, 2), (:p2, 2), (:gnd, 1)])
+
+    return Circuit(components, connections)
 end
 
-#last jj
-push!(circuit,("C$(j)_$(0)","$(j)","$(0)",Cg/2*weight(Nj-0.5,Nj,weightwidth)))
-push!(circuit,("R$(j)_$(0)","$(j)","$(0)",Rright))
-push!(circuit,("P$(j)_$(0)","$(j)","$(0)",2))
-
-circuitdefs = Dict(
-    Rleft => 50.0,
-    Rright => 50.0,
-    Lj => IctoLj(1.75e-6),
-    Cg => 76.6e-15,
-    Cc => 40.0e-15,
-    Cr =>  1.533e-12,
-    Lr => 2.47e-10,
-    Cj => 40e-15,
-)  
+circuit = floquetcircuit()
 
 ws=2*pi*(1.0:0.1:14)*1e9
 wp=(2*pi*7.9*1e9,)
@@ -799,7 +851,7 @@ Npumpharmonics = (20,)
 Nmodulationharmonics = (10,)
 
 @time floquet = hbsolve(ws, wp, sources, Nmodulationharmonics,
-    Npumpharmonics, circuit, circuitdefs)
+    Npumpharmonics, circuit)
 
 p1=plot(ws/(2*pi*1e9),
     10*log10.(abs2.(floquet.linearized.S((0,),2,(0,),1,:))),
@@ -868,16 +920,13 @@ Dissipation due to capacitors with dielectric loss, parameterized by a loss tang
 results = []
 tandeltas = [1.0e-6,1.0e-3, 2.0e-3, 3.0e-3]
 for tandelta in tandeltas
-    circuitdefs = Dict(
-        Rleft => 50,
-        Rright => 50,
-        Lj => IctoLj(1.75e-6),
-        Cg => 76.6e-15/(1+im*tandelta),
-        Cc => 40.0e-15/(1+im*tandelta),
-        Cr => 1.533e-12/(1+im*tandelta),
-        Lr => 2.47e-10,
-        Cj => 40e-15,
-    )  
+    # dielectric loss enters through complex capacitances, so build the
+    # circuit again with lossy values
+    lossycircuit = floquetcircuit(
+        Cg = 76.6e-15/(1+im*tandelta),
+        Cc = 40.0e-15/(1+im*tandelta),
+        Cr = 1.533e-12/(1+im*tandelta),
+    )
     wp=(2*pi*7.9*1e9,)
     ws=2*pi*(1.0:0.1:14)*1e9
     Ip=1.1e-6*(1+125*tandelta)
@@ -885,7 +934,7 @@ for tandelta in tandeltas
     Npumpharmonics = (20,)
     Nmodulationharmonics = (10,)
     @time floquet = hbsolve(ws, wp, sources, Nmodulationharmonics,
-        Npumpharmonics, circuit, circuitdefs)
+        Npumpharmonics, lossycircuit)
     push!(results,floquet)
 end
 
@@ -938,190 +987,8 @@ plot(p1, p2, p3,p4,layout = (2, 2))
 
 ![Floquet JTWPA simulation with loss](https://qce.mit.edu/JosephsonCircuits.jl/floquetlossy.png)
 
-## Flux-Driven Josephson Traveling-Wave Parametric Amplifier (JTWPA)
-Circuit and parameters from [here](https://doi.org/10.1103/PhysRevApplied.12.044051). Please note that three wave mixing (3WM) and flux-biasing are relatively untested, so you may encounter bugs. Please file issues or PRs.
-<details>
-
-<summary>Code</summary>
-
-```julia
-using JosephsonCircuits
-using Plots
-
-const magnetic_flux_quantum = 2.0678338484619295e-15
-const reduced_magnetic_flux_quantum = magnetic_flux_quantum / (2*pi)
-
-@variables Rport C Cj Lj Lpump Cpump kappa Lg Lsmall
-
-
-# From Section V. POSSIBLE CIRCUIT DESIGN
-cutoff_frequency = 46e9 # [Hz]
-transmission_line_impedance = 50.0
-
-capacitance = 1 / (2 * pi * cutoff_frequency * transmission_line_impedance) # equation (51) [H]
-junction_inductance = transmission_line_impedance / (2 * pi * cutoff_frequency) # L = L', equation (52) [F]
-critical_current = reduced_magnetic_flux_quantum / junction_inductance
-
-critical_current_density = 3e6 # Typical value mentioned in paper [A/m^2]
-jj_area = critical_current / critical_current_density # [m^2]
-jj_cap_density = 50 * 1e-15 / (1e-6)^2 # Typical [F/m^2]
-jj_capacitance = jj_cap_density * jj_area
-
-nr_cells = 500
-modulation_parameter = 0.06
-
-coupling = 0.02 # = M / L', equation (8)
-mutual_inductance = coupling * junction_inductance
-# Add small linear inductance in dc-SQUID loop to couple pump line inductance with
-linear_squid_loop_inductance = mutual_inductance^2 / junction_inductance
-
-# in order to reduce critical current of dc squid to critical current of junction
-optimal_dc_flux = magnetic_flux_quantum / 3
-Idc = optimal_dc_flux / mutual_inductance
-Ip = modulation_parameter * Idc
-
-pump_line_inductance = 1.1 * junction_inductance
-
-pump_frequency = 20e9 # [Hz]
-frequency_detuning = range(-0.5, 1.5, 500)
-signal_frequency = pump_frequency / 2 .* (frequency_detuning .+ 1)
-
-circuit = Tuple{String,String,String,Num}[]
-entry = (elem, n1, n2, value) -> push!(circuit, ("$(elem)$(n1)_$(n2)", "$n1", "$n2", value))
-
-function build_circuit()
-    node = 1
-
-    node_p1 = node # P1: Start of transmission line
-    entry("P", node_p1, 0, 1)
-    entry("R", node_p1, 0, Rport)
-
-    node_p3 = node+1 # P3: Start of pump line
-    entry("P", node_p3, 0, 3)
-    entry("R", node_p3, 0, Rport)
-
-    for cell_index in 1:nr_cells
-        if cell_index == 1
-            entry("C", node, 0, C/2)
-        else
-            entry("C", node, 0, C)
-        end
-        entry("Lj_a", node, node+3, Lj)
-        entry("Cj_a", node, node+3, Cj)
-        entry("L", node, node+2, Lsmall)
-        entry("Lj_b", node+2, node+3, Lj)
-        entry("Cj_b", node+2, node+3, Cj)
-
-        entry("L", node+1, node+4, Lpump)
-        if cell_index == 1
-            entry("C", node+1, 0, Cpump/2)
-        else
-            entry("C", node+1, 0, Cpump)
-        end
-        push!(circuit, ("K$(node)", "L$(node)_$(node+2)", "L$(node+1)_$(node+4)", kappa))
-
-        node += 3
-    end
-
-    entry("C", node, 0, C/2)
-    entry("P", node, 0, 2) # P2: End of transmission line
-    entry("R", node, 0, Rport)
-
-    entry("C", node+1, 0, Cpump/2)
-    entry("P", node+1, 0, 4) # P4: End of pump line
-    entry("R", node+1, 0, Rport)
-    entry("L", node+1, 0, Lg)
-
-end
-
-build_circuit()
-
-circuitdefs = Dict(
-    kappa => 0.999,
-    Lg => 20.0e-9, # inductance to ground. no longer required for the solver
-    Rport => 50.0,
-    C => capacitance,
-    Lj => junction_inductance,
-    Lpump => pump_line_inductance,
-    Cpump => pump_line_inductance / transmission_line_impedance^2,
-    Lsmall => linear_squid_loop_inductance,
-    Cj => jj_capacitance,
-)
-
-ws = 2*pi*signal_frequency
-wp = (2*pi*pump_frequency,)
-
-# add the DC bias and pump to port 3
-sourcespumpon = [(mode=(0,),port=3,current=Idc),(mode=(1,),port=3,current=Ip)]
-Npumpharmonics = (8,)
-Nmodulationharmonics = (4,)
-@time sol = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
-    Npumpharmonics, circuit, circuitdefs;
-    dc = true, threewavemixing=true,fourwavemixing=true,
-    switchofflinesearchtol=0.0,alphamin=1e-7,iterations=200) # enable dc and three wave mixing
-
-p1=plot(sol.linearized.w/(2*pi*1e9),
-    10*log10.(abs2.(sol.linearized.S(
-            outputmode=(0,),
-            outputport=2,
-            inputmode=(0,),
-            inputport=1,
-            freqindex=:),
-    )),
-    ylim=(-40,30),label="S21",
-    xlabel="Signal Frequency (GHz)",
-    legend=:bottomright,
-    title="Scattering Parameters",
-    ylabel="dB");
-
-plot!(sol.linearized.w/(2*pi*1e9),
-    10*log10.(abs2.(sol.linearized.S((0,),1,(0,),2,:))),
-    label="S12",
-    );
-
-plot!(sol.linearized.w/(2*pi*1e9),
-    10*log10.(abs2.(sol.linearized.S((0,),1,(0,),1,:))),
-    label="S11",
-    );
-
-plot!(sol.linearized.w/(2*pi*1e9),
-    10*log10.(abs2.(sol.linearized.S((0,),2,(0,),2,:))),
-    label="S22",
-    );
-
-p2=plot(sol.linearized.w/(2*pi*1e9),
-    sol.linearized.QE((0,),2,(0,),1,:)./sol.linearized.QEideal((0,),2,(0,),1,:),
-    ylim=(0,1.05),
-    title="Quantum efficiency",legend=false,
-    ylabel="QE/QE_ideal",xlabel="Signal Frequency (GHz)");
-
-p3=plot(sol.linearized.w/(2*pi*1e9),
-    10*log10.(abs2.(sol.linearized.S(:,2,(0,),1,:)')),
-    ylim=(-40,30),
-    xlabel="Signal Frequency (GHz)",
-    legend=false,
-    title="All idlers",
-    ylabel="dB");
-
-p4=plot(sol.linearized.w/(2*pi*1e9),
-    1 .- sol.linearized.CM((0,),2,:),
-    legend=false,title="Commutation \n relation error",
-    ylabel="Commutation \n relation error",xlabel="Signal Frequency (GHz)");
-
-plot(p1, p2, p3, p4, layout = (2, 2))
-```
-
-</details>
-
-
-```
- 28.342059 seconds (1.59 M allocations: 1.637 GiB, 0.35% gc time)
-```
-
-![Flux driven TWPA simulation with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/twpa_flux_driven.png)
-
 ## Impedance-engineered JPA
-Circuit parameters of the lumped-element snake amplifier (LESA) from [here](https://arxiv.org/abs/2408.07861).
+Circuit parameters of the lumped-element snake amplifier (LESA) from [here](https://arxiv.org/abs/2408.07861). The device is built from hierarchical subcircuits -- a snake stage, a snake, and the four-snake flux-biased SQUID -- and its matching network ends in an ideal transmission line expressed directly as a frequency dependent scattering parameter block rather than a discretized LC ladder.
 
 <details>
 
@@ -1136,313 +1003,149 @@ function calc_Lsnake(N,L1,L2,LJ,delta0)
 end
 
 """
-    add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
+    snakestage(L1, L2, Lj, odd)
 
-Add a `snake` a tunable inductor made of two rf-SQUID arrays 
-in parallel as detailed in arXiv:2209.07757 and PhysRevLett.109.137003
-to the netlist contained in `circuit`. See also [`add_snake_squid!`](@ref).
-
-            <-----------Nstages------ ... -->
-             stage
-            <----->start_node+skip_nodes+2
-start_node o--Lj--o--L2--o--Lj- ... -o--L2--o
-           |      |      |           |      |
-           L1     L1     L1          L1     L1
-           |      |      |           |      |
-           o--L2--o--Lj--o--L2- ...  o--Lj--o end_node
-start_node     start_node
-+skip_nodes+1  +skip_nodes+3
-
-# Arguments
-- `circuit`: Vector of tuples containing the netlist.
-- `start_node`: The first node of the transmission line.
-- `skip_nodes`: The number of nodes to skip before the device.
-- `L1`: Inductor of the inductance from upper to lower.
-- `L2`: Inductance of the upper/lower inductor.
-- `Lj`: Inductance of the Josephson junction.
-- `Nstages`: The number of stages (JJs) in the snake.
-
-# Returns
-- `end_node`: The last node of the transmission line.
-- `skip_nodes`: The number of nodes to skip after end_node. Always 0.
+One stage of a `snake`: the two arms of the stage -- a Josephson junction
+on one and a linear inductor `L2` on the other, swapping arms on
+alternating stages -- and the `L1` rung tying the arm outputs together.
+Pins 1 and 2 are the arm inputs, pins 3 and 4 the arm outputs.
 """
-function add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
-    # add examples, fix behavior for skip_nodes
-    # check that returned end_node skip_node behavior correct
-    
-    # add the SNAKE
-    j=start_node+skip_nodes
-    # add the first stage outside of the loop
-    # so we can keep the same pattern in the array
-    
-    # L1 linear inductor at the start of the stage
-    push!(circuit,("L$(start_node)_$(j+1)","$(start_node)","$(j+1)",L1))    
-    # the L1 linear inductor at the end of the stage
-    push!(circuit,("L$(j+2)_$(j+3)","$(j+2)","$(j+3)",L1))
-    # the JJ
-    push!(circuit,("Lj$(start_node)_$(j+2)","$(start_node)","$(j+2)",Lj))
-    # then L2
-    push!(circuit,("L$(j+1)_$(j+3)","$(j+1)","$(j+3)",L2))
-    # increase the current node number by 2
-    # since each cell adds 2 nodes
-    j+=2
-    for i in 2:Nstages
-        # the L1 linear inductor at the end of the stage
-        push!(circuit,("L$(j+2)_$(j+3)","$(j+2)","$(j+3)",L1))
+snakestage(L1, L2, Lj, odd) = Circuit(
+    [:u => odd ? JosephsonJunction(Lj) : Inductor(L2),
+     :l => odd ? Inductor(L2) : JosephsonJunction(Lj),
+     :rung => Inductor(L1)],
+    [[(:u, 2), (:rung, 1)], [(:l, 2), (:rung, 2)]];
+    pins = [1 => (:u, 1), 2 => (:l, 1), 3 => (:u, 2), 4 => (:l, 2)])
 
-        # JJ and L1 swap places
-        if !iszero(mod(i,2)) # first cell and every odd cell
-            # JJ is first
-            push!(circuit,("Lj$(j)_$(j+2)","$(j)","$(j+2)",Lj))
-            # then L2
-            push!(circuit,("L$(j+1)_$(j+3)","$(j+1)","$(j+3)",L2))
-        else
-            # inductor is first
-            push!(circuit,("L$(j)_$(j+2)","$(j)","$(j+2)",L2))
-            # then JJ
-            push!(circuit,("Lj$(j+1)_$(j+3)","$(j+1)","$(j+3)",Lj))
-        end
-        # increase the current node number by 2
-        # since each cell adds 2 nodes
-        j+=2
+"""
+    snake(L1, L2, Lj, Nstages)
+
+A `snake`, a tunable inductor made of two rf-SQUID arrays in parallel as
+detailed in arXiv:2209.07757 and PhysRevLett.109.137003: an `L1` rung
+across the input, then `Nstages` chained stages.
+
+       <---------Nstages----- ... --->
+    1 o--Lj--o--L2--o--Lj- ... -o--L2--o
+      |      |      |           |      |
+      L1     L1     L1          L1     L1
+      |      |      |           |      |
+      o--L2--o--Lj--o--L2- ...  o--Lj--o 2
+
+Pin 1 is the start of the upper arm and pin 2 the end of the lower arm.
+"""
+function snake(L1, L2, Lj, Nstages)
+    components = Any[:rung0 => Inductor(L1)]
+    for i in 1:Nstages
+        push!(components,
+            Symbol(:stage, i) => snakestage(L1, L2, Lj, isodd(i)))
     end
-    skip_nodes = 0
-    end_node = j+1
-    return (end_node,skip_nodes)
+    connections = [[(:rung0, 1), (:stage1, 1)],
+        [(:rung0, 2), (:stage1, 2)]]
+    for i in 1:Nstages-1
+        push!(connections,
+            [(Symbol(:stage, i), 3), (Symbol(:stage, i+1), 1)])
+        push!(connections,
+            [(Symbol(:stage, i), 4), (Symbol(:stage, i+1), 2)])
+    end
+    return Circuit(components, connections;
+        pins = [1 => (:stage1, 1), 2 => (Symbol(:stage, Nstages), 4)])
 end
 
 """
-    add_snake_squid!(circuit,start_node,skip_nodes,L1,L2,L3,Lj,Lb,K,R,Nstages)
-    
-Add a SQUID made of four `snakes` (tunable inductors made of two rf-SQUID arrays 
-in parallel) as detailed in arXiv:2209.07757 and PhysRevLett.109.137003
-to the netlist contained in `circuit`. See also [`add_snake!`](@ref).
-    
-     start_node o
-                |
-                |
----snake-------------------snake---
-|                 -               |
-L3               ---              L3
-|                 |               |
----snake--|       R     |--snake---
-          |       |     |
-          |  Port o     |
-          |       |     |
-          Lb  K   Lb    |
-          |       |     |
-          |       Lb  K Lb
-          |       |     |
-         ---     ---   ---
-          -       -     -
+    snakesquid(L1, L2, L3, Lj, Lb, K, R, Nstages)
 
-# Arguments
-- `circuit`: Vector of tuples containing the netlist.
-- `start_node`: The first node of the transmission line.
-- `skip_nodes`: The number of nodes to skip before the device.
-- `L1`: Inductance of the inductor from upper to lower
-    branch of snake.
-- `L2`: Inductance of the upper/lower inductor.
-- `L3`: Inductance in series between the snakes.
-- `Lj`: Inductance of the Josephson junction.
-- `Lb`: Inductance of inductors on the bias lines.
-- `K`: Mutual inductance between the bias line to the SQUID
-- `R`: Resistance of the bias port.
-- `Nstages`: The number of stages (JJs) in the snake. The
-    snake SQUID will have 4*Nstages JJs.
+A SQUID made of four `snakes`, flux biased through a port: two arms in
+parallel from the single signal pin, each arm two snakes in series
+through `L3`, each arm ending in an inductor `Lb` to ground which is
+mutually coupled (coefficient `K`) to one of the two bias inductors in
+series across the bias port.
 
-# Returns
-- `end_node`: The last node of the transmission line.
-- `skip_nodes`: The number of nodes to skip after end_node. Always 0.
+    pin 1 o---snake---L3---snake---Lb---gnd   (K to Lb1)
+          |
+          o---snake---L3---snake---Lb---gnd   (K to Lb2)
+
+    Port 2 o--R--gnd, with Lb1 and Lb2 in series across it
 """
-function add_snake_squid!(circuit,start_node,skip_nodes,L1,L2,L3,Lj,Lb,K,R,Nstages)
-    # add examples, fix behavior for skip_nodes
-    # check that returned end_node skip_node behavior correct
-    
-    # first snake
-    # start_node = 1
-    # skip_nodes = 0
-    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
-    j = end_node
-    
-    # linear inductor in between the snakes
-    push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L3))
-    j+=1
-    
-    # second snake
-    start_node = j
-    skip_nodes = 0
-    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
-    j = end_node
-    
-    # add the coupling to bias inductors Lb1
-    push!(circuit,("L$(j)_$(0)","$(j)","0",Lb))
-    push!(circuit,("Kb1","L$(j)_$(0)","Lb1",K))
-    j+=1
-    
-    # add the second arm of the snake
-    # third snake
-    start_node = 1
-    skip_nodes = j-start_node-1
-    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
-    j = end_node
-    
-    # linear inductor in between the snakes
-    push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L3))
-    j+=1
-    
-    # fourth snake
-    start_node = j
-    skip_nodes = 0
-    end_node,skip_nodes = add_snake!(circuit,start_node,skip_nodes,L1,L2,Lj,Nstages)
-    j = end_node
-
-    # add the coupling to bias inductors Lb2
-    push!(circuit,("L$(j)_$(0)","$(j)","0",Lb))
-    push!(circuit,("Kb2","L$(j)_$(0)","Lb2",K))
-    j+=1
-    
-    # bias across this port
-    push!(circuit,("P2","$(j)","$(0)",2))
-    push!(circuit,("R$(j)_$(0)","$(j)","$(0)",R))
-            
-    # add the two bias inductors
-    push!(circuit,("Lb1","$(j)","$(j+1)",Lb))
-    push!(circuit,("Lb2","$(j+1)","0",Lb))
-
-    end_node = j+1
-    skip_nodes = 0
-    return (end_node,skip_nodes)
-
+function snakesquid(L1, L2, L3, Lj, Lb, K, R, Nstages)
+    components = Any[
+        :a1 => snake(L1, L2, Lj, Nstages), :l3a => Inductor(L3),
+        :a2 => snake(L1, L2, Lj, Nstages), :lba => Inductor(Lb),
+        :b1 => snake(L1, L2, Lj, Nstages), :l3b => Inductor(L3),
+        :b2 => snake(L1, L2, Lj, Nstages), :lbb => Inductor(Lb),
+        :kb1 => MutualInductor(K, :lba, :lb1),
+        :kb2 => MutualInductor(K, :lbb, :lb2),
+        :p2 => Port(2), :r2 => Resistor(R),
+        :lb1 => Inductor(Lb), :lb2 => Inductor(Lb),
+        :gnd => Ground()]
+    connections = [
+        [(:a1, 1), (:b1, 1)],
+        [(:a1, 2), (:l3a, 1)], [(:l3a, 2), (:a2, 1)],
+        [(:a2, 2), (:lba, 1)],
+        [(:b1, 2), (:l3b, 1)], [(:l3b, 2), (:b2, 1)],
+        [(:b2, 2), (:lbb, 1)],
+        [(:p2, 1), (:r2, 1), (:lb1, 1)],
+        [(:lb1, 2), (:lb2, 1)],
+        [(:lba, 2), (:lbb, 2), (:lb2, 2), (:p2, 2), (:r2, 2), (:gnd, 1)]]
+    return Circuit(components, connections; pins = [1 => (:a1, 1)])
 end
 
 """
-    add_tline!(circuit,start_node,skip_nodes,theta,w0,wc,Z0)
+    tline(theta, w0, Z0)
 
-Add an LC ladder that approximates a transmission line to the netlist
-contained in `circuit`. The transmission line starts and ends with
-half an inductor.
-    
-start_node       start_node+skip_nodes+1
-          o--L/2--o- ... --L--- ... ---L/2--o
-                  |           |
-                  C           C
-                  |           |
-          o--------- ... ------- ... -------o
-                          Ncells-1
-# Arguments
-- `circuit`: Vector of tuples containing the netlist.
-- `start_node`: The first node of the transmission line.
-- `skip_nodes`: The number of nodes to skip before the second
-    node of the transmission line.
-- `theta`: The phase angle of the transmission line at frequency w0.
-- `Z0`: The characteristic impedance.
-- `w0`: The frequency at which the phase angle is defined.
-- `wc`: The cutoff frequency of the LC ladder. This should likely
-    be much higher than w0. This determines the number of cells
-    in the transmission line.
-
-# Returns
-- `end_node`: The last node of the transmission line.
-- `skip_nodes`: The number of nodes to skip after end_node. Always 0.
+An ideal transmission line with electrical length `theta` at frequency
+`w0` and characteristic impedance `Z0`, as a two port scattering
+parameter block: the exact line response, in place of a discretized LC
+ladder approximation. The scattering matrix is assembled at each
+requested frequency from the ABCD parameters of a line of electrical
+length `theta*w/w0`.
 """
-function add_tline!(circuit,start_node,skip_nodes,theta,w0,wc,Z0)
-    # add examples, fix behavior for skip_nodes
-    # check that returned end_node skip_node behavior correct
-
-    # based on the cutoff frequency, operating frequency, and phase shift
-    # estimate the number of cells required.
-    # round up
-    Ncells = ceil(theta*wc/(2*w0))
-
-    # based on the rounded number of cells, revise the cutoff frequency
-    # and compute the capacitance and inductance per unit cell
-    wc = Ncells*2*w0/theta
-        
-    # inductance and capacitance per cell
-    L = 2*Z0/wc
-    C = 2/(wc*Z0)
-
-
-    j = start_node
-    for i = 1:Ncells
-        if i == 1
-            # start with half an inductor
-            push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L/2))
-            j+=1
-        end
-        push!(circuit,("C$(j)_$(0)","$(j)","$(0)",C))
-        if i == Ncells
-            # end with half an inductor
-            push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L/2))
-        else
-            push!(circuit,("L$(j)_$(j+1)","$(j)","$(j+1)",L))
-        end
-        # increment the index
-        j+=1
-    end
-    end_node = j
-    skip_nodes = 0
-    return (end_node,skip_nodes)
+function tline(theta, w0, Z0)
+    S!(dest, w) = JosephsonCircuits.ABCDtoS!(
+        JosephsonCircuits.ABCD_tline!(dest, Z0, theta*w/w0), Z0)
+    return ScatteringParameters(S!; nports = 2, zref = Z0, form = :inplace,
+        noise = Lossless())
 end
 ```
 
 LESA simulation
 ```julia
-@variables R Lj L1 L2 L3 Lb K Lg C1 PLCC PLCL L22 C6 C7
+R = 50.0
+Lj = JosephsonCircuits.IctoLj(16e-6)
+L1 = 2.6e-12
+L2 = 8.0e-12
+L3 = 5e-12
+Lb = 60e-12
+K = 0.5*50/sqrt(60*60)
+C1 = 6.607e-12
+C6 = 0.743e-12
+C7 = 0.265e-12
+PLCC = 0.654e-12
+PLCL = 0.650e-9
+L22 = 1.320e-9
+
 Nstages_snake = 10
 
-circuit = Tuple{String,String,String,Num}[]
-
-
-# add X1, a snake squid
-start_node = 1
-skip_nodes = 0
-end_node, skip_nodes = add_snake_squid!(circuit,start_node,skip_nodes,L1,L2,L3,Lj,Lb,K,R,Nstages_snake)
-j = end_node
-# and add C1, a capacitor to ground
-push!(circuit,("C$(start_node)_$(0)","$(start_node)","$(0)",C1))
-# add C6, a series capacitor
-push!(circuit,("C$(start_node)_$(j+1)","$(start_node)","$(j+1)",C6))
-j+=1
-
-# add PLC1, a parallel LC capacitor to ground
-push!(circuit,("C$(j)_$(0)","$(j)","$(0)",PLCC))
-push!(circuit,("L$(j)_$(0)","$(j)","$(0)",PLCL))
-# add C7, a series capacitor
-push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",C7))
-j+=1
-
-# end
 Z0 = 50.0
 w0 = 2*pi*4.9e9
-wc = 2*pi*150e9
 theta = 32.6*pi/180
-start_node = j
-skip_nodes = 0
-end_node, skip_nodes = add_tline!(circuit,start_node,skip_nodes,theta,w0,wc,Z0)
-j = end_node
 
-push!(circuit,("L$(j)_$(0)","$(j)","$(0)",L22))
-push!(circuit,("P1","$(j)","$(0)",1))
-push!(circuit,("R1","$(j)","$(0)",R))
-
-circuitdefs = Dict(
-    Lj => JosephsonCircuits.IctoLj(16e-6),
-    L1 => 2.6e-12,
-    L2 => 8.0e-12,
-    L3 => 5e-12,
-    Lg => 100.0e-9,
-    L22 => 1.320e-9,
-    C1 => 6.607e-12,
-    C6 => 0.743e-12,
-    C7 => 0.265e-12,
-    PLCC => 0.654e-12,
-    PLCL => 0.650e-9,
-    R => 50.0, 
-    Lb => 60e-12, 
-    K => 0.5*50/sqrt(60*60),
-)
+# the snake SQUID X1 shunts the signal node; C6, the parallel LC, C7 and
+# the transmission line -- a scattering parameter block with the exact
+# line response -- form the impedance matching network to the port
+circuit = Circuit(
+    [:x1 => snakesquid(L1, L2, L3, Lj, Lb, K, R, Nstages_snake),
+     :c1 => Capacitor(C1), :c6 => Capacitor(C6),
+     :plcc => Capacitor(PLCC), :plcl => Inductor(PLCL),
+     :c7 => Capacitor(C7),
+     :tl => tline(theta, w0, Z0),
+     :l22 => Inductor(L22), :p1 => Port(1), :r1 => Resistor(R),
+     :gnd => Ground()],
+    [[(:x1, 1), (:c1, 1), (:c6, 1)],
+     [(:c6, 2), (:plcc, 1), (:plcl, 1), (:c7, 1)],
+     [(:c7, 2), (:tl, 1)],
+     [(:tl, 2), (:l22, 1), (:p1, 1), (:r1, 1)],
+     [(:c1, 2), (:plcc, 2), (:plcl, 2), (:l22, 2), (:p1, 2), (:r1, 2),
+      (:gnd, 1)]])
 
 # ws = 2*pi*(1:0.01:10.0)*1e9
 ws = 2*pi*(4.0:0.01:5.8)*1e9
@@ -1454,8 +1157,8 @@ sourcespumpon = [(mode=(0,),port=2,current=Idc),(mode=(1,),port=2,current=Ip)]
 Npumpharmonics = (8,)
 Nmodulationharmonics = (4,)
 @time sol = hbsolve(ws, wp, sourcespumpon, Nmodulationharmonics,
-    Npumpharmonics, circuit, circuitdefs, dc = true, threewavemixing=true,fourwavemixing=true,
-        switchofflinesearchtol=0.0,alphamin=1e-7,iterations=200,
+    Npumpharmonics, circuit, dc = true, threewavemixing=true,fourwavemixing=true,
+        iterations=200,
 )
 
 plot(
@@ -1506,109 +1209,95 @@ plot!(
 ![lumped-element snake amplifier (LESA) with JosephsonCircuits.jl](https://qce.mit.edu/JosephsonCircuits.jl/lesa.png)
 
 
-## Scattering parameter blocks
+## Design parameter sensitivities
+The derivative of the scattering parameters with respect to the design parameters of a circuit builder, computed with the adjoint method from a single solve rather than by re-solving per parameter. The builder is an ordinary function from named parameters to a circuit; every component value which depends on a parameter contributes through the chain rule, including derived values.
 
-A [`ScatteringBlock`](@ref) is a multiport component given by its scattering parameters instead of by lumped elements. It is the way to put a measured or externally modeled component -- a filter, a coupler, a length of line, an isolator -- into a circuit alongside the junctions, and unlike a lumped element it may be lossy and it may be non-reciprocal.
+<details>
 
-The data may be a constant matrix, a callable of angular frequency, tabulated data, a callable of one entry at a time, or a Touchstone file, from which the reference impedance is also read:
+<summary>Code</summary>
 
 ```julia
 using JosephsonCircuits
+using Plots
 
-# an ideal lossless through
-ScatteringBlock([0.0 1.0; 1.0 0.0])
+makejpa(; Lj, Cc, Cj) = Circuit(
+    [:p1 => Port(1), :r1 => Resistor(50.0), :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 
-# a callable of angular frequency returning a matrix
-ScatteringBlock(w -> fill((1 - im*w*1e-12*50.0)/(1 + im*w*1e-12*50.0), 1, 1);
-    nports = 1, grounded = true)
-
-# tabulated data, interpolated in frequency
-freqs = 2*pi*collect(range(1e9, 10e9, length = 64))
-values = [(p == q ? 0.1 : 0.9)*cis(-w*1e-11) for p in 1:2, q in 1:2, w in freqs]
-ScatteringBlock((freqs, values); nports = 2)
-
-# a callable of (port, port, angular frequency) returning one entry, which is
-# the form a GPU can evaluate
-ScatteringBlock((p, q, w) -> p == q ? complex(0.1) : complex(0.9);
-    nports = 2, form = :entry)
-
-# a Touchstone file
-ScatteringBlock("device.s2p")
-```
-
-Each port `p` of a block has a signal terminal `(:instance, p, 1)` and a reference terminal `(:instance, p, 2)`, so ports may float or be differential. With `grounded = true` the reference terminals are tied to ground and `(:instance, p)` addresses the signal terminal of port `p`.
-
-A dissipative block adds the vacuum noise its loss requires, so the noise scattering parameters, the quantum efficiency and the commutation relations account for it. Here the JPA of the first example is written with its shunt capacitor as a one port block, and a lossy two port is inserted between the port and the resonator. This example and the one after it are run when this page is built, so the numbers below them are this code's own output:
-
-```@example blocks
-using JosephsonCircuits
-
-Z0 = 50.0
-
-# a shunt capacitance as the scattering parameters of a one port:
-# S11 = (Z - Z0)/(Z + Z0) with Z = 1/(im*w*C)
-capS(C) = w -> fill((1 - im*w*C*Z0)/(1 + im*w*C*Z0), 1, 1)
-
-# a matched reciprocal two port which passes a fraction `a` of the wave
-# amplitude and absorbs the rest
-attenuator(a) = ComplexF64[0 a; a 0]
-
-# the JPA of the first example, with its shunt capacitor written as a
-# scattering block and `input` inserted between the port and the resonator
-function jpa(input)
-    Circuit(
-        Any[:p1 => Port(1), :r1 => Resistor(Z0), :att => input,
-            :cc => Capacitor(100.0e-15),
-            :jj => JosephsonJunction(1000.0e-12),
-            :cj => ScatteringBlock(capS(1000.0e-15); nports = 1,
-                grounded = true)],
-        Any[((:p1,1), (:r1,1), (:att,1,1)),
-            ((:att,2,1), (:cc,1)),
-            ((:cc,2), (:jj,1), (:cj,1)),
-            ((:att,1,2), (:att,2,2), (:jj,2), (:r1,2), (:p1,2), Ground)])
-end
-
+p = (Lj = 1000.0e-12, Cc = 100.0e-15, Cj = 1000.0e-15)
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.75001*1e9,)
-Ip = 0.00565e-6
-S11(sol) = sol.linearized.S(outputmode=(0,), outputport=1, inputmode=(0,),
-    inputport=1, freqindex=:)
+sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
-# the loss the attenuator adds is 1 - a^2. The pump passes through it too, so
-# it is scaled by 1/a to hold the pump reaching the junction roughly fixed and
-# keep the gain comparable from row to row.
-for a in (1.0, 0.95, 0.9, 0.8)
-    sol = hbsolve(ws, wp, [(mode=(1,), port=1, current=Ip/a)], (8,), (16,),
-        jpa(ScatteringBlock(attenuator(a))))
-    i = argmax(abs2.(S11(sol)))
-    gain = 10*log10(abs2(S11(sol)[i]))
-    qe = sol.linearized.QE(outputmode=(0,), outputport=1, inputmode=(0,),
-        inputport=1, freqindex=:)[i]
-    qeideal = sol.linearized.QEideal(outputmode=(0,), outputport=1,
-        inputmode=(0,), inputport=1, freqindex=:)[i]
-    cm = sol.linearized.CM(outputmode=(0,), outputport=1, freqindex=:)[i]
-    println("loss ", rpad(round(1-a^2, digits=2), 6),
-        " gain ", rpad(string(round(gain, digits=2), " dB"), 10),
-        " QE/QEideal ", rpad(round(qe/qeideal, digits=4), 8),
-        " CM ", round(cm, digits=12))
+@time r = designsensitivities(makejpa, p, ws, wp, sources, (8,), (16,))
+
+# the derivative of the gain in dB with respect to each parameter,
+# dG/dp = (20/log(10))*real(conj(S)*dS/dp)/abs2(S), scaled by the
+# parameter value so the three curves share units: dB of gain per
+# fractional change of the parameter
+S = r.out.linearized.S((0,),1,(0,),1,:)
+plot(ws/(2*pi*1e9),
+    [getproperty(p, q).*(20/log(10)).*
+     real.(conj.(S).*r.dSdp((0,),1,(0,),1,q,:))./abs2.(S)
+     for q in keys(p)],
+    label=["Lj" "Cc" "Cj"],
+    xlabel="Frequency (GHz)",
+    ylabel="dG/dln(p) (dB)")
+```
+
+</details>
+
+## Sensitivity to frequency dependent scattering parameters
+A [`ScatteringParameters`](https://josephsoncircuits.org/stable/reference/) constructed inside the builder is differentiated like any component value: here a matched transmission line section in front of the amplifier, with the derivative of the gain with respect to the line length. The default is central finite differences through the block's scattering function; this example supplies the analytic derivative through the `derivatives` keyword instead. A block hoisted out of the builder (measured Touchstone data, say) is treated as parameter independent and costs nothing.
+
+<details>
+
+<summary>Code</summary>
+
+```julia
+using JosephsonCircuits
+using Plots
+
+vphase = 1.2e8 # the phase velocity of the line in m/s
+function maketline(; len, Lj)
+    # a matched, lossless transmission line: S21 = exp(-im*w*len/vphase)
+    tlineS(w) = (t = exp(-im*w*len/vphase); [0 t; t 0])
+    # the analytic derivative of S with respect to the length
+    dSdlen(w) = (d = -im*w/vphase*exp(-im*w*len/vphase); [0 d; d 0])
+    line = ScatteringParameters(tlineS; nports = 2, noise = Lossless(),
+        derivatives = (len = dSdlen,))
+    return Circuit(
+        [:p1 => Port(1), :r1 => Resistor(50.0), :tl => line,
+         :cc => Capacitor(100.0e-15), :jj => JosephsonJunction(Lj),
+         :c2 => Capacitor(1000.0e-15), :gnd => Ground()],
+        [[(:p1, 1), (:r1, 1), (:tl, 1)],
+         [(:tl, 2), (:cc, 1)],
+         [(:cc, 2), (:jj, 1), (:c2, 1)],
+         [(:jj, 2), (:c2, 2), (:r1, 2), (:p1, 2), (:gnd, 1)]])
 end
+
+p = (len = 2.0e-3, Lj = 1000.0e-12)
+ws = 2*pi*(4.5:0.001:5.0)*1e9
+wp = (2*pi*4.75001*1e9,)
+sources = [(mode=(1,),port=1,current=0.00565e-6)]
+
+@time r = designsensitivities(maketline, p, ws, wp, sources, (8,), (16,))
+
+S = r.out.linearized.S((0,),1,(0,),1,:)
+plot(ws/(2*pi*1e9),
+    [getproperty(p, q).*(20/log(10)).*
+     real.(conj.(S).*r.dSdp((0,),1,(0,),1,q,:))./abs2.(S)
+     for q in keys(p)],
+    label=["line length" "Lj"],
+    xlabel="Frequency (GHz)",
+    ylabel="dG/dln(p) (dB)")
 ```
 
-The quantum efficiency falls away from the quantum limit as the loss grows, while the commutation relations stay at one. That second number is the check on the first: it is `|S|^2 + |Snoise|^2` summed over the modes, and it comes back to one only if the noise the block adds is exactly the amount its loss requires.
-
-A lossless block is the element it describes and nothing more. `attenuator(1.0)` is an ideal through, so with it the circuit above is the fully lumped JPA of the first example, and the two agree to the last few digits:
-
-```@example blocks
-lumped = Circuit(
-    Any[:p1 => Port(1), :r1 => Resistor(Z0), :cc => Capacitor(100.0e-15),
-        :jj => JosephsonJunction(1000.0e-12), :cj => Capacitor(1000.0e-15)],
-    Any[((:p1,1), (:r1,1), (:cc,1)), ((:cc,2), (:jj,1), (:cj,1)),
-        ((:jj,2), (:cj,2), (:r1,2), (:p1,2), Ground)])
-
-solve(c) = hbsolve(ws, wp, [(mode=(1,), port=1, current=Ip)], (8,), (16,), c)
-maximum(abs, S11(solve(lumped)) .- S11(solve(jpa(ScatteringBlock(attenuator(1.0))))))
-```
-
+</details>
 
 # Contributing:
 

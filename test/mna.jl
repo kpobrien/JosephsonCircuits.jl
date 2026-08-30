@@ -1,5 +1,6 @@
+using Symbolics
 using JosephsonCircuits
-using JosephsonCircuits.Symbolics: @variables, Num
+using Symbolics: @variables, Num
 using Test
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"))
 

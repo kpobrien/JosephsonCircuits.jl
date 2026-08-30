@@ -12,9 +12,18 @@
 import Pkg
 Pkg.activate(@__DIR__)
 let pkgpath = normpath(joinpath(@__DIR__, "..", ".."))
-    deps = Pkg.project().dependencies
-    haskey(deps, "JosephsonCircuits") ||
-        Pkg.develop(Pkg.PackageSpec(path = pkgpath))
+    # Develop the package on first run, and RE-develop if the manifest has
+    # drifted to a registered version instead of this checkout (having the
+    # name in the project is not enough).
+    manifest = joinpath(@__DIR__, "Manifest.toml")
+    devved = isfile(manifest) && let
+        entry = get(get(Pkg.TOML.parsefile(manifest), "deps", Dict()),
+            "JosephsonCircuits", nothing)
+        entry !== nothing && haskey(entry[1], "path") &&
+            rstrip(normpath(joinpath(@__DIR__, entry[1]["path"])), '/') ==
+            rstrip(pkgpath, '/')
+    end
+    devved || Pkg.develop(Pkg.PackageSpec(path = pkgpath))
     Pkg.instantiate()
 end
 

@@ -17,10 +17,15 @@ include("testcircuits.jl")
 
         @testset verbose = true "Doctests (Documenter.jl)" begin
             using Documenter
+            # Load the symbolic packages into Main as well as the doctest
+            # sandbox: array element types print module-qualified when the
+            # type is not visible from Main, so without this `Num[...]`
+            # doctests render as `Symbolics.Num[...]` and fail.
+            using Symbolics, SymbolicUtils
 
             DocMeta.setdocmeta!(JosephsonCircuits, 
                 :DocTestSetup,
-                :(using JosephsonCircuits);
+                :(using JosephsonCircuits; using Symbolics; using SymbolicUtils);
                 recursive=true)
             makedocs(
                 remotes = nothing,
@@ -62,6 +67,8 @@ include("testcircuits.jl")
     include("modepreconditioner.jl")
 
     include("hbnonlinearproblem.jl")
+
+    include("builders.jl")
 
 
     include("stagedsolve.jl")

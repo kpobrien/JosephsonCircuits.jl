@@ -1,3 +1,4 @@
+using Symbolics
 using JosephsonCircuits
 using Test
 
@@ -341,7 +342,7 @@ using Test
             wmodes = [-1,2];
             A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
             @test_throws(
-                str -> occursin("set symfreqvar equal to the symbolic variable representing frequency", str),
+                str -> occursin("use FrequencyDependent", str),
                 JosephsonCircuits.freqsubst(A,wmodes,nothing)
             )
         end

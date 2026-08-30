@@ -23,15 +23,15 @@ using Test
     end
 
     @testset verbose=true "warmupparse" begin
-        @variables Ipump Rleft Cc Lj Cj w L1
-        out1 = JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["1", "0", "2"], String[], ["P1", "R1", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Num[1, Rleft, Cc, Lj, Cj], Dict("C1" => 3, "C2" => 5, "R1" => 2, "P1" => 1, "Lj1" => 4), 3)
+        JosephsonCircuits.CircuitValues.@params Ipump Rleft Cc Lj Cj w L1
+        out1 = JosephsonCircuits.ParsedCircuit([1, 2, 1, 2, 1, 3, 3, 2, 3, 2], ["1", "0", "2"], String[], ["P1", "R1", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Any[1, Rleft, Cc, Lj, Cj], Dict("C1" => 3, "C2" => 5, "R1" => 2, "P1" => 1, "Lj1" => 4), 3)
         out2 = JosephsonCircuits.warmupparse()
         @test JosephsonCircuits.compare(out1,out2)
     end
 
     @testset verbose=true "warmupparsesort" begin
-        @variables Ipump Rleft Cc Lj Cj w L1
-        out1 = JosephsonCircuits.ParsedSortedCircuit([2 2 2 3 3; 1 1 3 1 1], ["0", "1", "2"], String[], ["P1", "R1", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Num[1, Rleft, Cc, Lj, Cj], Dict("C1" => 3, "C2" => 5, "R1" => 2, "P1" => 1, "Lj1" => 4), 3)
+        JosephsonCircuits.CircuitValues.@params Ipump Rleft Cc Lj Cj w L1
+        out1 = JosephsonCircuits.ParsedSortedCircuit([2 2 2 3 3; 1 1 3 1 1], ["0", "1", "2"], String[], ["P1", "R1", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Any[1, Rleft, Cc, Lj, Cj], Dict("C1" => 3, "C2" => 5, "R1" => 2, "P1" => 1, "Lj1" => 4), 3)
         out2 = JosephsonCircuits.warmupparsesort()
         @test JosephsonCircuits.compare(out1,out2)
     end

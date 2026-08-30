@@ -1,3 +1,4 @@
+using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays
@@ -387,6 +388,29 @@ using Test
         @test err3 isa ArgumentError
         @test occursin("Rundef", sprint(showerror, err3))
         @test occursin("R1", sprint(showerror, err3))
+    end
+
+    @testset "FrequencyDependent matches symfreqvar" begin
+        # the same frequency law spelled two ways: a Symbolics expression in
+        # the symbolic frequency variable, and a plain Julia closure through
+        # FrequencyDependent. The scattering parameters must agree to
+        # roundoff.
+        wp = (2*pi*4.75001*1e9,)
+        ws = 2*pi*(4.5:0.1:5.0)*1e9
+        sources = [(mode=(1,),port=1,current=0.00565e-6)]
+        @variables wsym
+        law(w) = 50.0*(1 + (w/1e11)^2)
+        csym = [("P1","1","0",1),("R1","1","0",law(wsym)),
+            ("C1","1","2",100.0e-15),("Lj1","2","0",1000.0e-12),
+            ("C2","2","0",1000.0e-15)]
+        cfun = [("P1","1","0",1),
+            ("R1","1","0",FrequencyDependent(law)),
+            ("C1","1","2",100.0e-15),("Lj1","2","0",1000.0e-12),
+            ("C2","2","0",1000.0e-15)]
+        Ssym = hbsolve(ws, wp, sources, (2,), (8,), csym, Dict();
+            symfreqvar = wsym).linearized.S
+        Sfun = hbsolve(ws, wp, sources, (2,), (8,), cfun).linearized.S
+        @test isapprox(Array(Ssym), Array(Sfun), rtol = 1e-12)
     end
 
     @testset "calcsources errors" begin

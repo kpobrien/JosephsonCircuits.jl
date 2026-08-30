@@ -1,3 +1,7 @@
+# unwrap a wrapped symbolic value; the Symbolics extension adds the `Num`
+# method
+unwrapvalue(value) = value
+
 
 # === legacy tuple netlist -> Circuit ===
 
@@ -41,7 +45,7 @@ function legacycomponent(typesymbol::Symbol, name, node1, node2, value)
 end
 
 function legacyportnumber(name, value)
-    v = value isa Symbolics.Num ? Symbolics.value(value) : value
+    v = unwrapvalue(value)
     if v isa Integer
         return Int(v)
     elseif v isa Real && isinteger(v)
@@ -170,12 +174,12 @@ keyed array behavior with hierarchical keys such as "cell37/net2"; circuits
 constructed by the legacy tuple adapter round trip exactly.
 
 Only components supported by the current solvers can be lowered. Each port
-of a passive [`ScatteringBlock`](@ref) lowers to one `:S` component whose
+of a passive [`ScatteringParameters`](@ref) lowers to one `:S` component whose
 two nodes are the signal and reference terminals of the port and whose
 value is a [`ScatteringStamp`](@ref) sharing the block definition; the
 solvers stamp the multiport admittance of the block at every mode
 frequency. A [`GaussianChannel`](@ref), a non-sinusoidal
-[`NonlinearInductor`](@ref), or a `ScatteringBlock` with an arbitrary noise
+[`NonlinearInductor`](@ref), or a `ScatteringParameters` with an arbitrary noise
 covariance raises a [`ComponentNotSupportedError`](@ref) naming the
 instance. The default `sorting` is `:name` because automatic
 hierarchical net names are not integers; see [`sortnodes`](@ref).
@@ -203,14 +207,14 @@ function parsesortcircuit(elab::ElaboratedCircuit; sorting::Symbol = :name)
     for i in 1:N
         def = instancedefinition(elab, i)
         path = elab.instancepaths[i]
-        if def isa ScatteringBlock
+        if def isa ScatteringParameters
             # each port lowers to one :S component whose two nodes are the
             # signal and reference terminals of the port, carrying the
             # shared block definition and the port index; the solvers
             # reassemble the multiport admittance coupling from the shared
             # identity (see ScatteringStampSystem).
             if def.noise isa NoiseCovariance
-                throw(ComponentNotSupportedError(lazy"the ScatteringBlock at $(path) has an arbitrary noise covariance, which permits active blocks; the solver supports passive scattering blocks (noise = Passive() or ThermalEquilibrium). It parsed, validated, and elaborated successfully."))
+                throw(ComponentNotSupportedError(lazy"the ScatteringParameters at $(path) has an arbitrary noise covariance, which permits active blocks; the solver supports passive scattering blocks (noise = Passive() or ThermalEquilibrium). It parsed, validated, and elaborated successfully."))
             end
             terminals = instanceterminals(elab, i)
             for p in 1:def.nports

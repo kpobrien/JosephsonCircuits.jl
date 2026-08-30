@@ -586,7 +586,7 @@ function matrixprovider(f, ::Type{T}; n = nothing, form::Symbol = :matrix,
         throw(ArgumentError(lazy"Unknown form $(repr(form)). Supported: :matrix (f(w) returns an n by n matrix), :inplace (f(dest, w) writes one), :entry (f(p, q, w) returns S[p,q])."))
     end
     if isnothing(n)
-        throw(ArgumentError("The matrix dimension cannot be inferred from a callable provider; pass the dimension explicitly (nports for a ScatteringBlock, nmodes for a GaussianChannel)."))
+        throw(ArgumentError("The matrix dimension cannot be inferred from a callable provider; pass the dimension explicitly (nports for a ScatteringParameters, nmodes for a GaussianChannel)."))
     end
     return CallableMatrixProvider(f, n, form)
 end
@@ -618,7 +618,7 @@ struct Native end
 """
     Passive()
 
-The default noise model for a [`ScatteringBlock`](@ref): the block is a
+The default noise model for a [`ScatteringParameters`](@ref): the block is a
 passive network with no locally specified noise, so what it adds is set by
 what it absorbs and by the temperature the analysis is run at. A dissipative
 block adds noise of covariance `I - S S'` (see
@@ -635,7 +635,7 @@ struct Passive end
 """
     Lossless()
 
-A noise model for a [`ScatteringBlock`](@ref) whose scattering matrix is
+A noise model for a [`ScatteringParameters`](@ref) whose scattering matrix is
 unitary at every frequency, so that it absorbs nothing and adds no noise.
 
 The default [`Passive`](@ref) gives a block noise channels unless its data
@@ -657,7 +657,7 @@ struct Lossless end
 """
     ThermalEquilibrium(temperature)
 
-A noise model for a passive [`ScatteringBlock`](@ref) in thermal equilibrium
+A noise model for a passive [`ScatteringParameters`](@ref) in thermal equilibrium
 at the physical temperature `temperature` in Kelvin. The added noise
 covariance is the vacuum covariance `I - S S'` scaled by
 `coth(hbar*w/(2*k*T))`, the factor by which a mode at that temperature
@@ -675,7 +675,7 @@ end
     NoiseCovariance(V; interpolation = :linear, extrapolation = :error)
 
 An arbitrary user specified noise covariance for a
-[`ScatteringBlock`](@ref). `V` may be a matrix, a callable of angular
+[`ScatteringParameters`](@ref). `V` may be a matrix, a callable of angular
 frequency, or a tuple `(frequencies, values)` of tabulated data, following
 the same provider forms as the scattering data. Constant and tabulated
 covariances are validated for Hermitian symmetry at construction.
@@ -693,7 +693,7 @@ end
 # === scattering block ===
 
 """
-    ScatteringBlock(S; nports = nothing, zref = 50.0, grounded = false,
+    ScatteringParameters(S; nports = nothing, zref = 50.0, grounded = true,
         noise = Passive(), negative_frequency = ConjugateSymmetry(),
         interpolation = :linear, extrapolation = :error, atol = 1e-8)
 
@@ -712,12 +712,13 @@ reference impedance; no renormalization of the data is ever performed when
 stamping, and conversion to analysis reference impedances happens only in
 the wave domain at analysis boundaries.
 
-Each port `p` has terminals `1` (signal) and `2` (reference), addressed as
-`(:instance, p, t)`; ports may be floating or differential. With
-`grounded = true` every reference terminal is automatically tied to
-[`Ground`](@ref) and `(:instance, p)` in a connection group addresses the
-signal terminal of port `p`; explicitly connecting a reference terminal of a
-grounded block is an error.
+With the default `grounded = true` every reference terminal is
+automatically tied to [`Ground`](@ref) and `(:instance, p)` in a connection
+group addresses the signal terminal of port `p`; explicitly connecting a
+reference terminal of a grounded block is an error. With
+`grounded = false` each port `p` has terminals `1` (signal) and `2`
+(reference), addressed as `(:instance, p, t)`, and ports may be floating
+or differential.
 
 `noise` is [`Passive`](@ref) (default), [`Lossless`](@ref),
 [`ThermalEquilibrium`](@ref), or [`NoiseCovariance`](@ref). A dissipative
@@ -731,26 +732,46 @@ says so, since unlike stored data it cannot be checked.
 validated at construction with absolute tolerance `atol` unless the noise
 model is a `NoiseCovariance`, which permits active blocks.
 
+`derivatives` supplies analytic derivatives of the scattering matrix with
+respect to design parameters, for [`designsensitivities`](@ref): a named
+tuple keyed by parameter name whose values are accepted in the same forms
+as `S` (a matrix, a callable of angular frequency, or tabulated data). A
+parameter the block depends on but has no entry for is differentiated by
+central finite differences through `S` instead. A derivative is not a
+scattering matrix and is never passivity checked.
+
 # Examples
 ```jldoctest
-julia> ScatteringBlock([0 1;1 0]).nports
+julia> ScatteringParameters([0 1;1 0]).nports
 2
 ```
 """
-struct ScatteringBlock{P,N,NF} <: AbstractComponent
+struct ScatteringParameters{P,N,NF,D} <: AbstractComponent
     provider::P
     nports::Int
     zref::Vector{Float64}
     grounded::Bool
     noise::N
     negative_frequency::NF
+    # analytic dS/dtheta providers keyed by design parameter name, for
+    # [`designsensitivities`](@ref); empty when derivatives come from
+    # finite differences through `provider`
+    derivatives::D
 end
 
-function ScatteringBlock(S; nports = nothing, zref = 50.0,
-        grounded::Bool = false, noise = Passive(),
+# a block with no analytic derivatives, which is every block constructed
+# before the `derivatives` keyword existed
+ScatteringParameters(provider, nports::Int, zref::Vector{Float64},
+    grounded::Bool, noise, negative_frequency) =
+    ScatteringParameters(provider, nports, zref, grounded, noise,
+        negative_frequency, NamedTuple())
+
+function ScatteringParameters(S; nports = nothing, zref = 50.0,
+        grounded::Bool = true, noise = Passive(),
         negative_frequency = ConjugateSymmetry(),
         interpolation::Symbol = :linear, extrapolation::Symbol = :error,
         form::Symbol = :matrix,
+        derivatives::NamedTuple = NamedTuple(),
         atol::Real = 1e-8)
     if S isa AbstractString
         return touchstonescatteringblock(S; nports = nports, zref = zref,
@@ -772,8 +793,13 @@ function ScatteringBlock(S; nports = nothing, zref = 50.0,
     end
     checklossless(noise, provider)
     checknoise(noise, n)
-    return ScatteringBlock(provider, n, zrefvec, grounded, noise,
-        negative_frequency)
+    dprov = NamedTuple(k => begin
+            dp = matrixprovider(v, Complex{Float64}; n = n, form = form)
+            providersize(dp) == n || throw(DimensionMismatch(lazy"the derivative for parameter $(k) has dimension $(providersize(dp)) but the block has $(n) ports."))
+            dp
+        end for (k, v) in pairs(derivatives))
+    return ScatteringParameters(provider, n, zrefvec, grounded, noise,
+        negative_frequency, dprov)
 end
 
 function zrefvector(zref, n::Int)
@@ -891,7 +917,7 @@ end
 
 """
     provablylossless(provider::AbstractMatrixProvider; atol = 1e-10)
-    provablylossless(block::ScatteringBlock; atol = 1e-10)
+    provablylossless(block::ScatteringParameters; atol = 1e-10)
 
 Whether the scattering data can be shown to be unitary at every frequency
 from the data alone, which is possible for a constant matrix and for a
@@ -912,7 +938,7 @@ function provablylossless(p::TabulatedMatrixProvider; atol = 1e-10)
     end
     return true
 end
-provablylossless(b::ScatteringBlock; atol = 1e-10) =
+provablylossless(b::ScatteringParameters; atol = 1e-10) =
     provablylossless(b.provider; atol = atol)
 
 # `Lossless` is an assertion about every frequency, which a constant matrix
@@ -940,14 +966,14 @@ end
 
 """
     evaluatescattering!(dest::AbstractArray{Complex{Float64},3},
-        block::ScatteringBlock, ws::AbstractVector)
+        block::ScatteringParameters, ws::AbstractVector)
 
 Evaluate the scattering parameters of `block` at the signed angular
 frequencies `ws`, applying the negative frequency rule of the block, and
 write the matrix at frequency `ws[i]` into `dest[:,:,i]`.
 """
 function evaluatescattering!(dest::AbstractArray{Complex{Float64},3},
-        block::ScatteringBlock, ws::AbstractVector,
+        block::ScatteringParameters, ws::AbstractVector,
         absbuffer::Union{Nothing,Vector{Float64}} = nothing)
     if block.negative_frequency isa Native
         evaluateprovider!(dest, block.provider, ws)
@@ -1003,7 +1029,7 @@ function touchstonescatteringblock(path::AbstractString; nports, zref,
         checkpassive(provider; atol = atol)
     end
     checknoise(noise, n)
-    return ScatteringBlock(provider, n, filezref, grounded, noise,
+    return ScatteringParameters(provider, n, filezref, grounded, noise,
         negative_frequency)
 end
 
@@ -1035,12 +1061,12 @@ function evaluateprovider!(dest::AbstractArray{T,3},
 end
 
 """
-    TransmissionLine(Z0, len; vp = speed_of_light, grounded = false,
+    TransmissionLine(Z0, len; vp = speed_of_light, grounded = true,
         noise = Passive())
 
 An ideal lossless transmission line of characteristic impedance `Z0` Ohms,
 length `len` meters, and phase velocity `vp` meters per second, as a two
-port [`ScatteringBlock`](@ref) referenced to `Z0` with an analytic provider
+port [`ScatteringParameters`](@ref) referenced to `Z0` with an analytic provider
 which is exact at any frequency ([`Native`](@ref) signed frequency
 evaluation).
 
@@ -1051,12 +1077,12 @@ julia> TransmissionLine(50.0, 1e-3).nports
 ```
 """
 function TransmissionLine(Z0, len; vp = speed_of_light,
-        grounded::Bool = false, noise = Passive())
+        grounded::Bool = true, noise = Passive())
     if !(Z0 > 0) || !(len >= 0) || !(vp > 0)
         throw(ArgumentError("TransmissionLine requires Z0 > 0, len >= 0, and vp > 0."))
     end
     provider = TransmissionLineProvider(Float64(Z0), Float64(len)/Float64(vp))
-    return ScatteringBlock(provider, 2, fill(Float64(Z0), 2), grounded,
+    return ScatteringParameters(provider, 2, fill(Float64(Z0), 2), grounded,
         noise, Native())
 end
 
@@ -1117,7 +1143,7 @@ end
 
 """
     GaussianChannel(X, Y; nmodes = nothing, displacement = nothing,
-        grounded = false, interpolation = :linear, extrapolation = :error,
+        grounded = true, interpolation = :linear, extrapolation = :error,
         atol = 1e-8)
 
 An arbitrary Gaussian bosonic channel in the canonical real quadrature
@@ -1157,7 +1183,7 @@ struct GaussianChannel{PX,PY,D} <: AbstractComponent
 end
 
 function GaussianChannel(X, Y; nmodes = nothing, displacement = nothing,
-        grounded::Bool = false, interpolation::Symbol = :linear,
+        grounded::Bool = true, interpolation::Symbol = :linear,
         extrapolation::Symbol = :error, atol::Real = 1e-8)
     n2 = isnothing(nmodes) ? nothing : 2*nmodes
     Xp = matrixprovider(X, Float64; n = n2, interpolation = interpolation,

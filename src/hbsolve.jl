@@ -81,7 +81,7 @@ output which was not requested is an empty array.
     dissipative elements and outputs at the physical ports, for each
     combination of port and frequency. The channels are the dissipative
     lumped components first, then one per port of each dissipative
-    [`ScatteringBlock`](@ref). Being a scattering matrix it describes a
+    [`ScatteringParameters`](@ref). Being a scattering matrix it describes a
     transformation and does not depend on temperature.
 - `Cnoise`: the added noise covariance at the output ports,
     `sum_c occupation[c] Snoise[c,i] conj(Snoise[c,j])`, returned only when
@@ -386,7 +386,7 @@ $(_DOC_SORTING)
     at a port is had by tracing that port out and assuming one there.
     A component may state its own temperature instead, and then takes that:
     a lumped one as `Resistor(R; temperature = T)`, a
-    [`ScatteringBlock`](@ref) as `noise = ThermalEquilibrium(T)`. Only the
+    [`ScatteringParameters`](@ref) as `noise = ThermalEquilibrium(T)`. Only the
     typed circuit format carries those; a netlist of tuples states none, and
     everything in it takes this default. A block with a
     [`NoiseCovariance`](@ref) takes no temperature at all: its covariance is
@@ -394,7 +394,7 @@ $(_DOC_SORTING)
     caller already has.
 - `sensitivitynames::Vector{String} = String[]`: the component names for which
     to calculate sensitivities. Supported component types are C, L, R and Lj
-    with numeric values. A circuit may contain a [`ScatteringBlock`](@ref)
+    with numeric values. A circuit may contain a [`ScatteringParameters`](@ref)
     while the sensitivity is taken with respect to its lumped components; a
     block itself has no scalar value to perturb, so naming one is an error.
 - `sensitivitymode = :auto`: the order in which the contribution of the pump
@@ -450,6 +450,11 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
     temperature = 0.0, returnCnoise::Bool = false,
     sensitivitynames::Vector{String} = String[],
+    sensitivitypairs::AbstractVector =
+        Tuple{String,Int,Complex{Float64}}[],
+    sensitivityblockpairs::AbstractVector = Tuple{String,Int,Any}[],
+    nsensitivityparameters::Integer = 0,
+    sensitivitylabels::Union{Nothing,Vector{String}} = nothing,
     sensitivityoperatingpoint::Bool = true,
     sensitivitymode::Symbol = :auto,
     returnSsensitivity::Bool = false, returnZ = nothing,
@@ -531,9 +536,30 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     # is identically zero and the fixed component stamps are already the
     # total derivative: skip the residual derivatives entirely.
     sensitivityresidual = if sensitivityoperatingpoint && returnSsensitivity &&
-            !isempty(sensitivitynames) && !isempty(nm.Ljb.nzind)
-        calcresidualsensitivity(nonlinear.operatingpoint, psc, cg, nm,
-            [psc.componentnamedict[name] for name in sensitivitynames])
+            (!isempty(sensitivitynames) || !isempty(sensitivitypairs) ||
+             !isempty(sensitivityblockpairs)) &&
+            !isempty(nm.Ljb.nzind)
+        cols = if isempty(sensitivitypairs) && isempty(sensitivityblockpairs)
+            calcresidualsensitivity(nonlinear.operatingpoint, psc, cg, nm,
+                [psc.componentnamedict[name] for name in sensitivitynames])
+        elseif isempty(sensitivitypairs)
+            nothing
+        else
+            # per-pair columns with the design parameter direction folded
+            # in; hblinsolve merges them per parameter with the stamps
+            calcresidualsensitivity(nonlinear.operatingpoint, psc, cg, nm,
+                [psc.componentnamedict[String(t[1])]
+                 for t in sensitivitypairs],
+                [Complex{Float64}(t[3]) for t in sensitivitypairs])
+        end
+        # the scattering block pairs contribute their own columns, after
+        # the lumped ones, matching the pair order of hblinsolve
+        if !isempty(sensitivityblockpairs)
+            blockcols = calcblockresidualsensitivity(
+                nonlinear.operatingpoint, psc, sensitivityblockpairs)
+            cols = isnothing(cols) ? blockcols : hcat(cols, blockcols)
+        end
+        cols
     else
         nothing
     end
@@ -558,6 +584,10 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         returnvoltageadjoint = returnvoltageadjoint, 
         keyedarrays = keyedarrays, temperature = temperature,
         returnCnoise = returnCnoise, sensitivitynames = sensitivitynames,
+        sensitivitypairs = sensitivitypairs,
+        sensitivityblockpairs = sensitivityblockpairs,
+        nsensitivityparameters = nsensitivityparameters,
+        sensitivitylabels = sensitivitylabels,
         sensitivityresidual = sensitivityresidual,
         sensitivitymode = sensitivitymode,
         returnSsensitivity = returnSsensitivity, returnZ = returnZ,
@@ -574,5 +604,14 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         backend = backend)
 
     return HB(nonlinear, linearized)
+end
+
+# A fully numeric circuit (such as the output of a circuit builder) needs no
+# component definitions, so `circuitdefs` is optional.
+function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
+    Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
+    circuit; kwargs...) where {N,M}
+    return hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
+        circuit, Dict{Any,Any}(); kwargs...)
 end
 

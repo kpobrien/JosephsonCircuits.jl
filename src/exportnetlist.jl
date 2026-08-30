@@ -41,7 +41,7 @@ function export_netlist!(io::IO, circuit::AbstractVector, circuitdefs::Dict)
             if j > 1
                 write(io," ")
             end
-            write(io,string(JosephsonCircuits.Symbolics.substitute(cj,circuitdefs)))
+            write(io,string(substitutedefs(cj,circuitdefs)))
         end
         write(io,"\n")
     end
@@ -54,7 +54,11 @@ Import the netlist from the IOBuffer or IOStream `io` and return a vector of
 tuples representing the circuit.
 """
 function import_netlist(filename)
-    circuit = Tuple{String,String,String,Num}[]
+    # the value field is a number when the netlist holds a literal and a
+    # `CircuitValue` when it holds an expression, so the tuple is
+    # heterogeneous. Pass your own vector to `import_netlist!` to pin a
+    # narrower element type.
+    circuit = Tuple{String,String,String,Any}[]
     open(filename, "r") do io
         import_netlist!(io, circuit)
     end
@@ -69,8 +73,8 @@ Import the netlist from the IOBuffer or IOStream `io` to the vector of tuples
 
 # Examples
 ```jldoctest
-julia> io = IOBuffer();circuit1=[("P","1","0",1),("R","1","0",50.0)];JosephsonCircuits.export_netlist!(io,circuit1,Dict());circuit2 = Tuple{String,String,String,Num}[];JosephsonCircuits.import_netlist!(io,circuit2);circuit2
-2-element Vector{Tuple{String, String, String, Num}}:
+julia> io = IOBuffer();circuit1=[("P","1","0",1),("R","1","0",50.0)];JosephsonCircuits.export_netlist!(io,circuit1,Dict());circuit2 = Tuple{String,String,String,Any}[];JosephsonCircuits.import_netlist!(io,circuit2);circuit2
+2-element Vector{Tuple{String, String, String, Any}}:
  ("P", "1", "0", 1.0)
  ("R", "1", "0", 50.0)
 ```
@@ -86,8 +90,8 @@ function import_netlist!(io::IO, circuit::AbstractVector)
             parse(Float64,split_line[4])
         catch
             # https://docs.sciml.ai/Symbolics/stable/manual/parsing/
-            # JosephsonCircuits.Symbolics.parse_expr_to_symbolic(Meta.parse(split_line[4]),Main)
-            JosephsonCircuits.Symbolics.parse_expr_to_symbolic(Meta.parse(split_line[4]),@__MODULE__)
+            # Symbolics.parse_expr_to_symbolic(Meta.parse(split_line[4]),Main)
+            parsecomponentvalue(split_line[4])
         end
         push!(circuit,(split_line[1],split_line[2],split_line[3],value))
     end
@@ -583,14 +587,24 @@ C2 2 0 2000.0f
 """
 function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
         jj::Bool = true)
+    return exportnetlist(parsesortcircuit(circuit, sorting=:number),
+        circuitdefs; port = port, jj = jj)
+end
+
+# a typed circuit lowers through its own parse; it is fully numeric, so it
+# needs no definitions
+function exportnetlist(circuit::Circuit; port::Int = 1, jj::Bool = true)
+    return exportnetlist(parsesortcircuit(circuit), Dict();
+        port = port, jj = jj)
+end
+
+function exportnetlist(psc::ParsedSortedCircuit,circuitdefs::Dict;
+        port::Int = 1, jj::Bool = true)
 
     # set these to 1 for now, but i should consider how or whether to handle
     # multi-port devices.
     portnodes = 1
     portcurrent = 1
-
-    # parse and sort the circuit
-    psc = parsesortcircuit(circuit, sorting=:number)
 
     # calculate the circuit graph
     cg = calccircuitgraph(psc)
@@ -703,4 +717,10 @@ function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
     end
 
     return  (netlist=join(netlist,"\n"),portnodes=portnodes,port=port,portcurrent=portcurrent,Nnodes = Nnodes)
+end
+
+# A fully numeric circuit (such as the output of a circuit builder) needs no
+# component definitions, so `circuitdefs` is optional.
+function exportnetlist(circuit::Vector; kwargs...)
+    return exportnetlist(circuit, Dict(); kwargs...)
 end

@@ -201,6 +201,12 @@ function flattencircuit!(st::FlattenState, c::Circuit, path::String,
         if def isa Circuit
             instwires[i] = flattencircuit!(st, def, joinpath_(path, id),
                 depth + 1)
+        elseif def isa GroundType
+            # a declared ground instance is the reference net, not a device:
+            # it flattens to no instance, and every reference to its
+            # terminal already resolved to the ground sentinel at parse
+            # time, so its wire list is never consulted
+            instwires[i] = Int[]
         else
             n = nterminals(def)
             w = Vector{Int}(undef, n)

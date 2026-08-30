@@ -601,23 +601,28 @@ julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:L,-2.0,w)
 ```
 """
 function calcimpedance(c, type, w, symfreqvar)
+    # substitutefreq evaluates FrequencyDependent provider leaves at the
+    # signed mode frequency whether or not a symbolic frequency variable
+    # is in use, and substitutes symfreqvar when one is; on a plain
+    # number it is the identity
+    v = substitutefreq(c, symfreqvar, w)
     if type == :R
         if w >= 0
-            return valuetonumber(c,symfreqvar => w)+0.0im
+            return v+0.0im
         else
-            return conj(valuetonumber(c,symfreqvar => w))+0.0im
+            return conj(v)+0.0im
         end
     elseif type == :C
         if w >= 0
-            return 1/(im*w*valuetonumber(c,symfreqvar => w))
+            return 1/(im*w*v)
         else
-            return 1/(im*w*conj(valuetonumber(c,symfreqvar => w)))
+            return 1/(im*w*conj(v))
         end
     elseif type == :L
         if w >= 0
-            return (im*w*valuetonumber(c,symfreqvar => w))
+            return (im*w*v)
         else
-            return (im*w*conj(valuetonumber(c,symfreqvar => w)))
+            return (im*w*conj(v))
         end
     else
         error(lazy"Unknown component type")

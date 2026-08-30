@@ -800,7 +800,7 @@ function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
         wm = wmodes[(i-1) % Nmodes + 1]
         Ad = power == 0 ? one(wm) : power == 1 ? wm : wm^power
         for j in As.colptr[i]:(As.colptr[i+1]-1)
-            tmp = valuetonumber(As.nzval[j], symfreqvar => wm)
+            tmp = substitutefreq(As.nzval[j], symfreqvar, wm)
             A.nzval[indexmap[j]] += c*Ad*modevalue(tmp, wm)
         end
     end
@@ -892,7 +892,7 @@ function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
 
             # i don't notice a difference between these two. so i think i 
             # should remove the freqsubstindices functionality. 
-            tmp = valuetonumber(As.nzval[j],symfreqvar=>wmodesm[i,i])
+            tmp = substitutefreq(As.nzval[j], symfreqvar, wmodesm[i,i])
             # tmp = As.nzval[j]
 
 
@@ -1132,8 +1132,50 @@ false
 ```
 """
 function checkissymbolic(a)
-    return a isa Symbolics.SymbolicT
+    return a isa CircuitValue || a isa FrequencyDependent
 end
+
+"""
+    circuitvariables(a)
+
+The free parameters of a component value. Returns an empty collection for
+a numeric value. The Symbolics extension adds a method for `Num`.
+"""
+circuitvariables(a) = Symbol[]
+
+"""
+    substitutefreq(value, symfreqvar, w)
+
+Substitute the symbolic frequency variable. The core has no symbolic
+frequency support, so this is the identity; the Symbolics extension adds
+the `Num` method.
+"""
+substitutefreq(value, symfreqvar, w) = value
+function substitutefreq(value::CircuitValue, symfreqvar, w)
+    v = CircuitValues.evalproviders(value, w)
+    isnothing(symfreqvar) && return v isa CircuitValues.Constant ?
+        (iszero(imag(v.val)) ? real(v.val) : v.val) : v
+    return valuetonumber(v, Dict(symfreqvar => w))
+end
+substitutefreq(value::FrequencyDependent, symfreqvar, w) = value.f(w)
+
+"""
+    substitutedefs(value, circuitdefs)
+
+Substitute the circuit definitions into a component value for printing.
+
+Mirrors `Symbolics.substitute`, which is the identity on a value that
+carries no free parameters. Mapping this to `valuetonumber` instead is
+wrong: that resolves a bare `Symbol` or `String` against the definitions
+dictionary and throws for a component name, which is not a value at all.
+"""
+substitutedefs(value, circuitdefs) = value
+substitutedefs(value::CircuitValue, circuitdefs) =
+    valuetonumber(value, circuitdefs)
+# return Parameter objects, not bare Symbols, so a comparison against
+# `symfreqvar` (which the user passes as a Parameter) succeeds
+circuitvariables(a::CircuitValue) =
+    [CircuitValues.Parameter(n) for n in sort!(collect(CircuitValues.parameters(a)))]
 
 """
     checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector,
@@ -1156,7 +1198,7 @@ downstream error about the symbolic frequency variable.
 ```jldoctest
 julia> @variables w;JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, 1/(w*50.0)], w)
 
-julia> @variables w R2;try JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, JosephsonCircuits.Symbolics.value(R2)], w) catch e; occursin("R1 has the value R2", sprint(showerror, e)) end
+julia> R2, w = JosephsonCircuits.@params R2 w;try JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, R2], w) catch e; occursin("R1 has the value", sprint(showerror, e)) end
 true
 ```
 """
@@ -1165,7 +1207,7 @@ function checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector,
     messages = String[]
     for i in eachindex(vvn)
         if checkissymbolic(vvn[i])
-            undefined = [v for v in Symbolics.get_variables(vvn[i])
+            undefined = [v for v in circuitvariables(vvn[i])
                 if isnothing(symfreqvar) || !isequal(v, symfreqvar)]
             if !isempty(undefined)
                 push!(messages, string("The component ", componentnames[i],
@@ -1197,9 +1239,7 @@ julia> @variables w;JosephsonCircuits.checkissymbolic(w)
 true
 ```
 """
-function checkissymbolic(a::Symbolics.Num)
-    return !(Symbolics.value(a) isa Number)
-end
+# the `Num` method lives in the Symbolics extension
 
 """
     freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
@@ -1256,15 +1296,19 @@ function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
     @inbounds for i in 1:length(A.colptr)-1
         for j in A.colptr[i]:(A.colptr[i+1]-1)
             if checkissymbolic(A.nzval[j])
-                if isnothing(symfreqvar)
-                    error(lazy"The matrix contains the symbolic value $(A.nzval[j]). If this represents a frequency dependent component, set symfreqvar equal to the symbolic variable representing frequency. If it contains variables which should have numerical values, add them to the circuit definitions dictionary circuitdefs.")
-                else
-                    substituted = valuetonumber(A.nzval[j],Dict(symfreqvar=>wmodes[((i-1) % length(wmodes)) + 1]))
-                    if checkissymbolic(substituted)
-                        error(lazy"The matrix entry $(A.nzval[j]) is still symbolic ($(substituted)) after substituting the symbolic frequency variable $(symfreqvar). Add the remaining variables to the circuit definitions dictionary circuitdefs.")
+                # `substitutefreq` evaluates FrequencyDependent provider
+                # leaves at the mode frequency whether or not a symbolic
+                # frequency variable is in use, and substitutes
+                # `symfreqvar` when one is.
+                substituted = substitutefreq(A.nzval[j], symfreqvar,
+                    wmodes[((i-1) % length(wmodes)) + 1])
+                if checkissymbolic(substituted)
+                    if isnothing(symfreqvar)
+                        error(lazy"The matrix contains the symbolic value $(A.nzval[j]). If this represents a frequency dependent component, use FrequencyDependent (or set symfreqvar to the symbolic frequency variable). If it contains variables which should have numerical values, add them to the circuit definitions dictionary circuitdefs.")
                     end
-                    nzval[j] = substituted
+                    error(lazy"The matrix entry $(A.nzval[j]) is still symbolic ($(substituted)) after substituting the symbolic frequency variable $(symfreqvar). Add the remaining variables to the circuit definitions dictionary circuitdefs.")
                 end
+                nzval[j] = substituted
             else
                 nzval[j] = A.nzval[j]
             end

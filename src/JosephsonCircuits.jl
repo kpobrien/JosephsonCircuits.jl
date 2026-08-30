@@ -9,9 +9,7 @@ import KernelAbstractions
 import KernelAbstractions: @kernel, @index, @Const, CPU, Backend
 import Atomix
 import UUIDs
-import Symbolics: Sym, Num, @variables, @syms, @register_symbolic, @wrapped
-import Symbolics
-import SymbolicUtils
+import RuntimeGeneratedFunctions
 import AxisKeys
 import PrecompileTools
 import OrderedCollections
@@ -81,6 +79,10 @@ const boltzmann_constant = 1.380649e-23
 # capacitance, inverse inductance, and other matrices are calculated, then
 # then circuit is solved using the harmonic balance method, and postprocessed
 # to determine the scattering parameters and quantum efficiency. 
+include("circuitvalue.jl")
+using .CircuitValues
+const CircuitValue = CircuitValues.CircuitValue
+
 include("parseinput.jl")
 
 # The typed circuit representation: component models, Circuit/Interface,
@@ -113,6 +115,8 @@ include("hblinsolve.jl")
 include("sensitivities.jl")
 include("stagedsolve.jl")
 include("hbnlsolve.jl")
+include("designsensitivities.jl")
+include("hbcache.jl")
 
 # These are for exporting SPICE netlists and running simulations in
 # WRSPICE or Xyce. 
@@ -212,8 +216,8 @@ end
 
 function warmupsyms()
 
-    @variables R Cc Lj Cj
-    circuit = Tuple{String,String,String,Num}[
+    @params R Cc Lj Cj
+    circuit = Tuple{String,String,String,Any}[
         ("P1","1","0",1),
         ("R1","1","0",R),
         ("C1","1","2",Cc),
@@ -238,9 +242,9 @@ end
 
 function warmupparse()
 
-    @variables Rleft Cc Lj Cj w L1
+    @params Rleft Cc Lj Cj w L1
     # define the circuit components
-    circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
+    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
@@ -263,9 +267,9 @@ end
 
 function warmupparsesort()
 
-    @variables Rleft Cc Lj Cj w L1
+    @params Rleft Cc Lj Cj w L1
     # define the circuit components
-    circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
+    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
@@ -288,9 +292,9 @@ end
 
 function warmupnumericmatrices()
 
-    @variables Rleft Cc Lj Cj w L1
+    @params Rleft Cc Lj Cj w L1
     # define the circuit components
-    circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
+    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
@@ -313,9 +317,9 @@ end
 
 function warmuphblinsolve()
 
-    @variables Rleft Cc Lj Cj w L1
+    @params Rleft Cc Lj Cj w L1
     # define the circuit components
-    circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
+    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
@@ -338,9 +342,9 @@ end
 
 function warmupvvn()
 
-    @variables Rleft Cc Lj Cj w L1
+    @params Rleft Cc Lj Cj w L1
     # define the circuit components
-    circuit = Array{Tuple{String,String,String,Num},1}(undef,0)
+    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
 
     # port on the left side
     push!(circuit,("P1","1","0",1))
@@ -530,9 +534,19 @@ function warmupconnect()
     return true
 end
 
-export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
+export hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
-    @variables, @register_symbolic, Num, Symbolics, connectS, solveS,
+    connectS, solveS
+
+# The CircuitValues expression type is INTERNAL: it is the lowering target
+# of the Symbolics extension and the representation of parameterized
+# netlist-file expressions. Users parameterize circuits with ordinary
+# Julia functions (builders) and numbers; there is deliberately no public
+# symbolic-looking parameter type, whose closed operator set would be a
+# confusing boundary. `@params` is used by internal warmup code only.
+import .CircuitValues: @params
+export FrequencyDependent, designsensitivities, designjacobian,
+    hbcache, hbsolve!,
     hbnonlinearproblem, JacobianOperator, preconditioner, hbresidual!,
     hbjvp!, hbvjp!, hbjacobian!, hbd2F!, hbd3F!, hbdFdp!, jacobianprototype,
     setdrive!, drivenresidual!, NewtonKrylov, Newton, QuasiNewton,
@@ -542,7 +556,7 @@ export @syms, hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
 export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
     Inductor, Capacitor, Resistor, CurrentSource, VoltageSource, Port,
     MutualInductor, JosephsonJunction, NonlinearInductor, PolynomialCPR,
-    ScatteringBlock, GaussianChannel, TransmissionLine, Passive, Lossless,
+    ScatteringParameters, GaussianChannel, TransmissionLine, Passive, Lossless,
     ThermalEquilibrium, NoiseCovariance, ConjugateSymmetry, Native,
     elaborate, ElaboratedCircuit, quadraturetransform,
     ComponentNotSupportedError
@@ -562,7 +576,11 @@ export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
 PrecompileTools.@compile_workload begin
     warmup()
     warmupsyms()
-    warmupnetwork()
+    # warmupnetwork() is deliberately NOT part of the workload: it costs
+    # about 20 seconds of precompile time (a third of the total) compiling
+    # every network-parameter conversion for every input shape, while a
+    # cold first call of one conversion costs a quarter of a second. The
+    # function itself is kept as a manual probe and for the test suite.
     warmupconnect()
 end
 

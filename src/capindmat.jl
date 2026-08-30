@@ -72,7 +72,7 @@ See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref)
 [`calcportimpedanceindices`](@ref), and [`calcnoiseportimpedanceindices`](@ref).
 
 # Examples
-```jldoctest
+```julia
 @variables Ipump Rleft Cc Lj Cj
 circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
 push!(circuit,("P1","1","0",1))
@@ -84,7 +84,7 @@ push!(circuit,("C2","2","0",Cj))
 JosephsonCircuits.testshow(stdout,symbolicmatrices(circuit))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
 ```
 """
 function symbolicmatrices(circuit::AbstractVector; Nmodes::Int = 1,
@@ -104,7 +104,7 @@ See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref)
 [`calcportimpedanceindices`](@ref), and [`calcnoiseportimpedanceindices`](@ref).
 
 # Examples
-```jldoctest
+```julia
 @variables Ipump Rleft Cc Lj Cj
 circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
 push!(circuit,("P1","1","0",1))
@@ -118,7 +118,7 @@ cg = JosephsonCircuits.calccircuitgraph(psc)
 JosephsonCircuits.testshow(stdout,symbolicmatrices(psc,cg))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymbolicUtils.SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
 ```
 """
 function symbolicmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph;
@@ -138,7 +138,7 @@ See also [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
 [`calcnoiseportimpedanceindices`](@ref).
 
 # Examples
-```jldoctest
+```julia
 @variables Ipump Rleft Cc Lj Cj
 circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
 push!(circuit,("P1","1","0",1))
@@ -153,7 +153,7 @@ JosephsonCircuits.testshow(stdout,numericmatrices(circuit,circuitdefs))
 # output
 JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
 ```
-```jldoctest
+```julia
 @variables Ipump Rleft Cc Lj Cj
 circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
 push!(circuit,("P1","1","0",1))
@@ -806,7 +806,7 @@ function calcinvLn_inner(Lb::SparseVector, Mb::SparseMatrixCSC,
         # efficiency reasons.
         # calculate the symbolic inductance matrix
         # if eltype(valuecomponenttypes) <: Symbolic
-        if eltype(valuecomponenttypes) <: Num || eltype(valuecomponenttypes) <: Symbolics.SymbolicT
+        if issymbolicvaluetype(eltype(valuecomponenttypes))
 
             # take a subset of the arrays
             Mbs = Mb[Lb.nzind,Lb.nzind]
@@ -842,13 +842,20 @@ function calcinvLn_inner(Lb::SparseVector, Mb::SparseMatrixCSC,
             # println(eltype(valuecomponenttypes)
             # println("type: ",eltype(valuecomponenttypes) <: Symbolic)
 
-            L = Array{Num,2}(undef,size(Lsparse))
+            # the dense symbolic matrix the symbolic solve needs. Its
+            # element type comes from the component values rather than being
+            # hardcoded to a Symbolics type, so this works for any symbolic
+            # value representation.
+            L = Array{eltype(valuecomponenttypes),2}(undef,size(Lsparse))
             fill!(L,0)
 
             for i = 1:length(Lsparse.colptr)-1
                 for j in Lsparse.colptr[i]:(Lsparse.colptr[i+1]-1)
                     # L[Lsparse.rowval[j],i] = Lsparse.nzval[j]
-                    L[Lsparse.rowval[j],i] = Num(Lsparse.nzval[j])
+                    # convert through the value element type rather than a
+                    # hardcoded Symbolics type
+                    L[Lsparse.rowval[j],i] =
+                        convert(eltype(valuecomponenttypes), Lsparse.nzval[j])
                 end
             end
 
@@ -878,9 +885,21 @@ end
 # Symbolics is needed for calculating the inverse inductance matrix if there
 # are mutual inductors. For large systems with many mutual inductors this may
 # result in very large equations so is not recommended. 
+"""
+    issymbolicvaluetype(::Type)
+
+Whether a component value element type carries free parameters, and so
+needs the symbolic inverse inductance path. The Symbolics extension adds a
+method for `Num`.
+"""
+issymbolicvaluetype(::Type{T}) where {T} = T <: CircuitValue
+
 function calcsymbolicinvLn(L,Lb,Rbn)
-    s =  sparse(transpose(Rbn[Lb.nzind,:])*(Symbolics.sym_lu(Matrix(L))\ Matrix(Rbn[Lb.nzind,:])))
-    return SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,s.nzval)
+    throw(ArgumentError(
+        "the symbolic inverse inductance matrix of a circuit with mutual "*
+        "inductors requires a symbolic linear solve, which lives in the "*
+        "Symbolics extension. Run `using Symbolics` to enable it, or pass "*
+        "numeric component values."))
     # return SparseMatrixCSC(s.m, s.n, s.colptr, s.rowval,Symbolics.value.(s.nzval))
 end
 

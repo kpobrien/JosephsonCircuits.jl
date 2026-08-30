@@ -107,6 +107,19 @@ function newsolver(Agpu, ::Type{Tv}, n::Integer,
     x = CUDA.zeros(Tv, n)
     b = CUDA.zeros(Tv, n)
     solver = CudssSolver(Agpu, "G", 'F')
+    # An ideal short scattering block has S = -1, so its constitutive
+    # coefficient C = R^(1/2)(I + S) is exactly zero: the block's auxiliary
+    # port current appears with a zero diagonal, a pure constraint row.
+    # Host KLU pivots through that structure; cuDSS with its defaults
+    # produces a factorization whose preconditioned residual *grows*
+    # (measured 3700x on a 2048 cell line of block capacitors), which
+    # stalls the Newton-Krylov solve. Perturbing zero pivots and cleaning
+    # up with two iterative refinement steps makes the device factorization
+    # follow the host path exactly (same iteration count, same final
+    # residual). The perturbation is far below the O(1) scaled Jacobian
+    # entries, so well-pivoted systems are unaffected.
+    CUDSS.cudss_set(solver, "pivot_epsilon", 1e-8)
+    CUDSS.cudss_set(solver, "ir_n_steps", 2)
     xdesc = CudssMatrix(x)
     bdesc = CudssMatrix(b)
     cudss("analysis", solver, xdesc, bdesc)

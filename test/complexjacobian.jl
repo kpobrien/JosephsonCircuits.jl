@@ -1,3 +1,4 @@
+using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays

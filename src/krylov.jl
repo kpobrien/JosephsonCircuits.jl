@@ -1291,6 +1291,20 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # consecutive linear solves which failed to reach the forcing tolerance,
     # which trigger an escalation of the preconditioner
     linearfailures = 0
+    # Slope-aware safeguard on the forcing sequence. The Eisenstat-Walker
+    # term reads only the residual reduction, which makes a crawl
+    # self-perpetuating: a loose solve gives a weak direction, the line
+    # search accepts a short step, the residual barely falls, and the loose
+    # forcing is reproduced -- measured as tens of outer iterations at
+    # alpha ~ 0.2-0.4 with normalized slopes of -0.5 to -0.7 on a line of
+    # scattering block capacitors. The inexact Newton bound
+    # |slope| >= 1 - eta ties the direction quality to the forcing
+    # directly, so when a step comes back weak (a backtracked line search
+    # or a shallow slope) the cap tightens by a factor of four, and it
+    # relaxes by a factor of two once full steps resume. Well behaved
+    # problems take full steps at slope ~ -1 from the start and never feel
+    # the cap.
+    forcingcap = krylovrtolmax
 
     Mop!(zv, vv) = applypreconditioner!(zv, pc, vv)
     # residual-only adapter for the linesearch, which never needs the
@@ -1330,7 +1344,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         # Eisenstat-Walker choice 2 forcing term from the last accepted
         # step, at its clamp maximum before any step has been taken
         forcing = if length(normF) >= 2 && normF[end-1] > 0
-            clamp(krylovgamma*(normF[end]/normF[end-1])^krylovalpha,
+            clamp(min(krylovgamma*(normF[end]/normF[end-1])^krylovalpha,
+                    forcingcap),
                 krylovrtolmin, krylovrtolmax)
         else
             # the *initial* forcing term, which is a separate quantity from
@@ -1485,6 +1500,18 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         # actually taken. a retry at the same point is not a new outer
         # iteration and must not walk the forcing sequence forward
         forcingprev = forcing
+        # step quality read by the slope-aware forcing cap: the normalized
+        # slope of the merit along the step, and whether the line search
+        # took the full step
+        stepslope = normF[end] > 0 ? dϕ0dα/normF[end]^2 : -one(ϕ0)
+        if alpha1 < one(alpha1) || stepslope > -0.9
+            # the cap floor stays well above the forcing clamp minimum: a
+            # near-exact solve costs a long Krylov cycle per step, and the
+            # direction quality it buys beyond this point is marginal
+            forcingcap = max(1e-2, forcingcap/4)
+        else
+            forcingcap = min(krylovrtolmax, 2*forcingcap)
+        end
 
         # accept the trial point: F already holds the residual there (the
         # linesearch postcondition), and convergence is decided on it now,

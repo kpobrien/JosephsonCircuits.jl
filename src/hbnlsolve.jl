@@ -204,6 +204,14 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         )
 end
 
+# A fully numeric circuit (such as the output of a circuit builder) needs no
+# component definitions, so `circuitdefs` is optional.
+function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
+    circuit; kwargs...) where {N}
+    return hbnlsolve(w, Nharmonics, sources, circuit, Dict{Any,Any}();
+        kwargs...)
+end
+
 """
     hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
         indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,

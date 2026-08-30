@@ -1,3 +1,4 @@
+using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using Test
@@ -11,7 +12,7 @@ using Test
         C = 300e-15
         Z0 = 50.0
         f(w) = fill((1 - im*w*C*Z0)/(1 + im*w*C*Z0), 1, 1)
-        blk = ScatteringBlock(f; nports = 1, grounded = true)
+        blk = ScatteringParameters(f; nports = 1, grounded = true)
         ws = [0.0, 2*pi*5e9, -2*pi*5e9]
         B = zeros(Complex{Float64}, 1, 1, 3)
         Cm = zeros(Complex{Float64}, 1, 1, 3)
@@ -23,7 +24,7 @@ using Test
         @test isapprox(B[1,1,3]/Cm[1,1,3], conj(B[1,1,2]/Cm[1,1,2]);
             rtol = 1e-12)
         # an ideal short: B = 2/sqrt(Z0) forces v = 0, C = 0
-        short = ScatteringBlock(w -> fill(-1.0 + 0.0im, 1, 1);
+        short = ScatteringParameters(w -> fill(-1.0 + 0.0im, 1, 1);
             nports = 1, grounded = true)
         JosephsonCircuits.evaluatehybrid!(B, Cm, short,
             [2*pi*5e9, 0.0, 2*pi*1e9])
@@ -31,7 +32,7 @@ using Test
         @test Cm[1,1,1] == 0
         # a lossy attenuator stamps its own coefficients, dissipation and
         # all; what its loss costs in noise is planned elsewhere
-        att = ScatteringBlock([0.0 0.5; 0.5 0.0])
+        att = ScatteringParameters([0.0 0.5; 0.5 0.0])
         B2 = zeros(Complex{Float64}, 2, 2, 1)
         C2m = zeros(Complex{Float64}, 2, 2, 1)
         JosephsonCircuits.evaluatehybrid!(B2, C2m, att, [2*pi*5e9])
@@ -64,7 +65,7 @@ using Test
         lumped = jpacircuit(Capacitor(C2))
         # a grounded one port block has a single scalar terminal, so wrap
         # the connection endpoints accordingly: rebuild with the block
-        blk = ScatteringBlock(capS(C2, 50.0); nports = 1, grounded = true)
+        blk = ScatteringParameters(capS(C2, 50.0); nports = 1, grounded = true)
         stamped = Circuit(
             [:p1 => Port(1), :r1 => Resistor(50.0),
              :cc => Capacitor(100.0e-15),
@@ -103,7 +104,7 @@ using Test
             z = 1/(im*w*Cc*Z0)
             return [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)]
         end
-        blk = ScatteringBlock(seriesS; nports = 2)
+        blk = ScatteringParameters(seriesS; nports = 2, grounded = false)
         lumped = jpacircuit(Capacitor(1000.0e-15))
         stamped = Circuit(
             [:p1 => Port(1), :r1 => Resistor(50.0),
@@ -136,7 +137,7 @@ using Test
             [:p1 => Port(1), :r1 => Resistor(50.0),
              :cc => Capacitor(100.0e-15),
              :jj => JosephsonJunction(1000.0e-12),
-             :c2 => ScatteringBlock((wgrid, Sgrid); grounded = true,
+             :c2 => ScatteringParameters((wgrid, Sgrid); grounded = true,
                  extrapolation = extrapolation)],
             [((:p1, 1), (:r1, 1), (:cc, 1)),
              ((:cc, 2), (:jj, 1), (:c2, 1)),
@@ -159,7 +160,7 @@ using Test
             [:p1 => Port(1), :r1 => Resistor(50.0),
              :cc => Capacitor(100.0e-15),
              :jj => JosephsonJunction(1000.0e-12),
-             :c2 => ScatteringBlock((wshort, Sshort); grounded = true)],
+             :c2 => ScatteringParameters((wshort, Sshort); grounded = true)],
             [((:p1, 1), (:r1, 1), (:cc, 1)),
              ((:cc, 2), (:jj, 1), (:c2, 1)),
              ((:jj, 2), (:r1, 2), (:p1, 2), Ground)],
@@ -181,7 +182,7 @@ using Test
         # scattering blocks (single scalar terminal, reference auto-tied)
         function twpa(lumped::Bool)
             shuntfor(C) = lumped ? Capacitor(C) :
-                ScatteringBlock(capS(C, 50.0); nports = 1, grounded = true)
+                ScatteringParameters(capS(C, 50.0); nports = 1, grounded = true)
             components = Any[:p1 => Port(1), :r1 => Resistor(50.0),
                 :cin => shuntfor(Cg/2)]
             connections = Any[]
@@ -237,7 +238,7 @@ using Test
         len = 3e-3
         tau = len/JosephsonCircuits.speed_of_light
         tl = TransmissionLine(Z0, len; grounded = true)
-        stub1 = ScatteringBlock(w -> fill(exp(-2*im*w*tau), 1, 1);
+        stub1 = ScatteringParameters(w -> fill(exp(-2*im*w*tau), 1, 1);
             nports = 1, grounded = true, negative_frequency = Native())
         function stubcircuit(stub, extra...)
             components = Any[:p1 => Port(1), :r1 => Resistor(50.0),
@@ -305,7 +306,7 @@ using Test
             [:p1 => Port(1), :r1 => Resistor(50.0),
              :cc => Capacitor(100.0e-15),
              :jj => JosephsonJunction(1000.0e-12),
-             :c2 => ScatteringBlock(capS(C2, 50.0); nports = 1,
+             :c2 => ScatteringParameters(capS(C2, 50.0); nports = 1,
                  grounded = true)],
             [((:p1, 1), (:r1, 1), (:cc, 1)),
              ((:cc, 2), (:jj, 1), (:c2, 1)),
@@ -320,7 +321,7 @@ using Test
         # the commutation relations
         lossy = Circuit(
             [:p1 => Port(1), :r1 => Resistor(50.0),
-             :att => ScatteringBlock([0.0 0.5; 0.5 0.0]; grounded = true),
+             :att => ScatteringParameters([0.0 0.5; 0.5 0.0]; grounded = true),
              :rt => Resistor(50.0)],
             [((:p1, 1), (:r1, 1), (:att, 1)),
              ((:att, 2), (:rt, 1)),
@@ -342,7 +343,7 @@ using Test
         capval(w) = (1 - im*w*Cval*50.0)/(1 + im*w*Cval*50.0)
         for (lbl, scale) in (("lossless", 1.0), ("lossy", 0.85))
             tab = reshape([scale*capval(w) for w in ftab], 1, 1, :)
-            blk = ScatteringBlock((ftab, tab); nports = 1, grounded = true,
+            blk = ScatteringParameters((ftab, tab); nports = 1, grounded = true,
                 extrapolation = :constant)
             circuit = Circuit(
                 Any[:p1 => Port(1), :r1 => Resistor(50.0),
@@ -391,7 +392,7 @@ using Test
 
         # a callable provider is not something a kernel can evaluate, and
         # must be recognised as such rather than silently mis-evaluated
-        cb = ScatteringBlock(capS(Cval, 50.0); nports = 1, grounded = true)
+        cb = ScatteringParameters(capS(Cval, 50.0); nports = 1, grounded = true)
         ccircuit = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(50.0),
                 :cc => Capacitor(100.0e-15),
@@ -418,11 +419,11 @@ using Test
         # only one which lets a callable block be evaluated on a backend.
         # All three must give exactly the same answer.
         Cval = 1000.0e-15
-        ret = ScatteringBlock(capS(Cval, 50.0); nports = 1, grounded = true)
-        inp = ScatteringBlock((d, w) -> (d[1,1] =
+        ret = ScatteringParameters(capS(Cval, 50.0); nports = 1, grounded = true)
+        inp = ScatteringParameters((d, w) -> (d[1,1] =
                 (1 - im*w*Cval*50.0)/(1 + im*w*Cval*50.0); d);
             nports = 1, grounded = true, form = :inplace)
-        ent = ScatteringBlock((p, q, w) ->
+        ent = ScatteringParameters((p, q, w) ->
                 (1 - im*w*Cval*50.0)/(1 + im*w*Cval*50.0);
             nports = 1, grounded = true, form = :entry)
         wtest = 2*pi*[0.0, 4.13e9, -5.27e9]
@@ -452,12 +453,12 @@ using Test
         # the form says how a function is called, so it belongs to a
         # callable; anything else is a mistake worth naming rather than a
         # missing method, and an unknown form likewise
-        @test_throws ArgumentError ScatteringBlock([0.0 0.5; 0.5 0.0];
+        @test_throws ArgumentError ScatteringParameters([0.0 0.5; 0.5 0.0];
             form = :entry)
-        @test_throws ArgumentError ScatteringBlock(
+        @test_throws ArgumentError ScatteringParameters(
             ([1.0e9, 2.0e9], zeros(ComplexF64,1,1,2)); nports = 1,
             grounded = true, form = :inplace)
-        @test_throws ArgumentError ScatteringBlock(capS(Cval, 50.0);
+        @test_throws ArgumentError ScatteringParameters(capS(Cval, 50.0);
             nports = 1, grounded = true, form = :elementwise)
     end
 
@@ -469,7 +470,7 @@ using Test
         # back to the host.
         Cval = 1000.0e-15
         mkentry(C) = (p, q, w) -> (1 - im*w*C*50.0)/(1 + im*w*C*50.0)
-        blk = ScatteringBlock(mkentry(Cval); nports = 1, grounded = true,
+        blk = ScatteringParameters(mkentry(Cval); nports = 1, grounded = true,
             form = :entry)
         circuit = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(50.0),
@@ -520,7 +521,8 @@ using Test
         # rather than a no-op. A one port block cannot see that at all.
         mkasym(a) = (p, q, w) -> (p == q ? 0.1*a : (p < q ? 0.2*a : 0.7*a)) *
             (1 - im*w*1e-12*50.0)/(1 + im*w*1e-12*50.0)
-        two = ScatteringBlock(mkasym(1.0); nports = 2, form = :entry)
+        two = ScatteringParameters(mkasym(1.0); nports = 2, grounded = false,
+            form = :entry)
         tcircuit = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(50.0), :cc => two,
                 :jj => JosephsonJunction(1000.0e-12),
@@ -562,7 +564,7 @@ using Test
         # a closure which captures something that is not a number cannot live
         # in a device array, so it stays on the host
         buf = [1.0]
-        heavy = ScatteringBlock((p, q, w) ->
+        heavy = ScatteringParameters((p, q, w) ->
                 (1 - im*w*buf[1]*1e-12*50.0)/(1 + im*w*buf[1]*1e-12*50.0);
             nports = 1, grounded = true, form = :entry)
         hcircuit = Circuit(
@@ -593,11 +595,11 @@ using Test
         # solution driven at the port.
         a = 0.7
         for (lbl, blk) in (
-                ("constant", ScatteringBlock(ComplexF64[0 0; a 0];
-                    nports = 2)),
-                ("entry", ScatteringBlock((p, q, w) ->
+                ("constant", ScatteringParameters(ComplexF64[0 0; a 0];
+                    nports = 2, grounded = false)),
+                ("entry", ScatteringParameters((p, q, w) ->
                         (p == 2 && q == 1) ? complex(a) : complex(0.0);
-                    nports = 2, form = :entry)))
+                    nports = 2, grounded = false, form = :entry)))
             circuit = Circuit(
                 Any[:p1 => Port(1), :r1 => Resistor(50.0), :iso => blk,
                     :jj => JosephsonJunction(1000.0e-12),
@@ -711,9 +713,9 @@ using Test
         Cval = 1000.0e-15
         lossyS(C, Z0, a) = w -> fill(a*(1 - im*w*C*Z0)/(1 + im*w*C*Z0), 1, 1)
         for (lbl, blk) in (
-                ("lossless", ScatteringBlock(capS(Cval, 50.0); nports = 1,
+                ("lossless", ScatteringParameters(capS(Cval, 50.0); nports = 1,
                     grounded = true)),
-                ("lossy", ScatteringBlock(lossyS(Cval, 50.0, 0.85);
+                ("lossy", ScatteringParameters(lossyS(Cval, 50.0, 0.85);
                     nports = 1, grounded = true)))
             circuit = Circuit(
                 Any[:p1 => Port(1), :r1 => Resistor(50.0),
@@ -787,7 +789,7 @@ using Test
         # every loss level, from lossless through fully absorbing to a sign
         # reversed reflection
         for Sv in (1.0, 0.99, 0.9, 0.7, 0.5, 0.0, -0.5, -0.9)
-            blk = ScatteringBlock(fill(complex(Sv), 1, 1); grounded = true)
+            blk = ScatteringParameters(fill(complex(Sv), 1, 1); grounded = true)
             out = hblinsolve(wsn, oneport(blk); keyedarrays = false,
                 returnSnoise = true, returnCM = true)
             @test isapprox(out.CM[1,1], 1.0; atol = 1e-13)
@@ -813,7 +815,7 @@ using Test
                     ((:l1,2), (:r1,2), (:p1,2), (:x,2), Ground)]);
             keyedarrays = false, returnSnoise = true)
         for zr in (50.0, 200.0, 377.0)
-            blk = ScatteringBlock(fill(complex((R-zr)/(R+zr)), 1, 1);
+            blk = ScatteringParameters(fill(complex((R-zr)/(R+zr)), 1, 1);
                 zref = zr, grounded = true)
             out = hblinsolve(wsn, oneport(blk); keyedarrays = false,
                 returnSnoise = true)
@@ -843,7 +845,8 @@ using Test
             a = hblinsolve(wsn, twoportR(Resistor(R)); keyedarrays = false,
                 returnSnoise = true)
             b = hblinsolve(wsn,
-                twoportB(ScatteringBlock(ComplexF64[sd so; so sd]));
+                twoportB(ScatteringParameters(ComplexF64[sd so; so sd];
+                    grounded = false));
                 keyedarrays = false, returnSnoise = true, returnCM = true)
             # the series element is transparent in one direction, so I - S is
             # singular and only a formulation which never inverts it works
@@ -859,7 +862,7 @@ using Test
         # forward solution. A reciprocal block cannot see either mistake.
         for a in (1.0, 0.8, 0.5, 0.2)
             for Siso in (ComplexF64[0 0; a 0], ComplexF64[0 a; 0 0])
-                out = hblinsolve(wsn, twoportB(ScatteringBlock(Siso));
+                out = hblinsolve(wsn, twoportB(ScatteringParameters(Siso; grounded = false));
                     keyedarrays = false, returnCM = true)
                 @test isapprox(out.CM[1,1], 1.0; atol = 1e-12)
                 @test isapprox(out.CM[2,1], 1.0; atol = 1e-12)
@@ -873,7 +876,7 @@ using Test
                    ComplexF64[0.1+0.4im 0.2; 0.7im 0.3])
             V = I - Sm*Sm'
             @test !isapprox(V, transpose(V))
-            out = hblinsolve(wsn, twoportB(ScatteringBlock(Sm));
+            out = hblinsolve(wsn, twoportB(ScatteringParameters(Sm; grounded = false));
                 keyedarrays = false, returnCM = true)
             @test isapprox(out.CM[1,1], 1.0; atol = 1e-12)
             @test isapprox(out.CM[2,1], 1.0; atol = 1e-12)
@@ -887,25 +890,27 @@ using Test
         # costs work and never correctness.
         Z0 = 50.0
         @test JosephsonCircuits.provablylossless(
-            ScatteringBlock(ComplexF64[0 1; 1 0]))
+            ScatteringParameters(ComplexF64[0 1; 1 0]))
         @test !JosephsonCircuits.provablylossless(
-            ScatteringBlock(ComplexF64[0 0.5; 0.5 0]))
+            ScatteringParameters(ComplexF64[0 0.5; 0.5 0]))
         ftab = 2*pi*collect(range(1e9, 10e9, length = 8))
         unit = reshape([complex(cis(w*1e-11)) for w in ftab], 1, 1, :)
         @test JosephsonCircuits.provablylossless(
-            ScatteringBlock((ftab, unit); nports = 1, grounded = true))
+            ScatteringParameters((ftab, unit); nports = 1, grounded = true))
         @test !JosephsonCircuits.provablylossless(
-            ScatteringBlock((ftab, 0.9*unit); nports = 1, grounded = true))
+            ScatteringParameters((ftab, 0.9*unit); nports = 1, grounded = true))
         @test !JosephsonCircuits.provablylossless(
-            ScatteringBlock(w -> fill(complex(1.0), 1, 1); nports = 1,
+            ScatteringParameters(w -> fill(complex(1.0), 1, 1); nports = 1,
                 grounded = true))
 
         # the rows of Snoise: the dissipative lumped components first, then
         # one channel per port of each block which carries them
         c = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(50.0),
-                :lossless => ScatteringBlock(ComplexF64[0 1; 1 0]),
-                :att => ScatteringBlock(ComplexF64[0 0.5; 0.5 0]),
+                :lossless => ScatteringParameters(ComplexF64[0 1; 1 0];
+                    grounded = false),
+                :att => ScatteringParameters(ComplexF64[0 0.5; 0.5 0];
+                    grounded = false),
                 :rt => Resistor(75.0)],
             Any[((:p1,1), (:r1,1), (:lossless,1,1)),
                 ((:lossless,2,1), (:att,1,1)),
@@ -931,7 +936,7 @@ using Test
         mk2(f, noise) = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(Z0),
                 :cc => Capacitor(100.0e-15),
-                :x => ScatteringBlock(f; nports = 1, grounded = true,
+                :x => ScatteringParameters(f; nports = 1, grounded = true,
                     noise = noise)],
             Any[((:p1,1), (:r1,1), (:cc,1)), ((:cc,2), (:x,1)),
                 ((:r1,2), (:p1,2), Ground)])
@@ -939,7 +944,7 @@ using Test
             Any[:p1 => Port(1), :r1 => Resistor(Z0),
                 :cc => Capacitor(100.0e-15),
                 :jj => JosephsonJunction(1000.0e-12),
-                :cj => ScatteringBlock(capf; nports = 1, grounded = true,
+                :cj => ScatteringParameters(capf; nports = 1, grounded = true,
                     noise = noise)],
             Any[((:p1,1), (:r1,1), (:cc,1)),
                 ((:cc,2), (:jj,1), (:cj,1)),
@@ -963,13 +968,13 @@ using Test
         @test isapprox(a.CM, b.CM; atol = 1e-12)
 
         # where the data can be checked, the assertion is held to it
-        @test_throws ArgumentError ScatteringBlock(ComplexF64[0 0.5; 0.5 0];
+        @test_throws ArgumentError ScatteringParameters(ComplexF64[0 0.5; 0.5 0];
             noise = Lossless())
-        @test_throws ArgumentError ScatteringBlock(
+        @test_throws ArgumentError ScatteringParameters(
             (2*pi*[1e9, 2e9], reshape(ComplexF64[0.9, 0.9], 1, 1, :));
             nports = 1, grounded = true, noise = Lossless())
         # and unitary stored data is accepted
-        @test ScatteringBlock(ComplexF64[0 1; 1 0];
+        @test ScatteringParameters(ComplexF64[0 1; 1 0];
             noise = Lossless()).nports == 2
 
         # a callable cannot be held to the declaration when it is built, so
@@ -998,7 +1003,7 @@ using Test
         # frequencies which differ by the pump.
         c = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(50.0),
-                :x => ScatteringBlock(ComplexF64[0 0; 0.8 0]),
+                :x => ScatteringParameters(ComplexF64[0 0; 0.8 0]; grounded = false),
                 :c1 => Capacitor(100.0e-15),
                 :jj => JosephsonJunction(1.0e-6),
                 :cj => Capacitor(100.0e-15)],
@@ -1067,12 +1072,13 @@ using Test
         for (lbl, blk) in (
                 # a constant matrix is stored as a one point table, so it and
                 # the tabulated block share the interpolating kernel
-                ("constant", ScatteringBlock(ComplexF64[0.3im 0; 0.8 0.2])),
-                ("tabulated", ScatteringBlock((ftab, tabvals); nports = 2,
-                    extrapolation = :constant)),
-                ("entry callable", ScatteringBlock(
+                ("constant", ScatteringParameters(ComplexF64[0.3im 0; 0.8 0.2];
+                    grounded = false)),
+                ("tabulated", ScatteringParameters((ftab, tabvals); nports = 2,
+                    grounded = false, extrapolation = :constant)),
+                ("entry callable", ScatteringParameters(
                     (p, q, w) -> p == q ? complex(0.2) : complex(0.6);
-                    nports = 2, form = :entry)))
+                    nports = 2, grounded = false, form = :entry)))
             circuit = Circuit(
                 Any[:p1 => Port(1), :r1 => Resistor(50.0), :x => blk,
                     :l1 => Inductor(1000.0e-12), :p2 => Port(2),
@@ -1176,10 +1182,10 @@ using Test
         for a in (1.0, 0.85)   # lossless, then dissipative
             f = symS(1000.0e-15, a)
             native = hbsolve(wsn, wpn, srcn, (4,), (8,),
-                oneport(ScatteringBlock(f; nports = 1, grounded = true,
+                oneport(ScatteringParameters(f; nports = 1, grounded = true,
                     negative_frequency = Native())); returnSnoise = true)
             conj = hbsolve(wsn, wpn, srcn, (4,), (8,),
-                oneport(ScatteringBlock(f; nports = 1, grounded = true));
+                oneport(ScatteringParameters(f; nports = 1, grounded = true));
                 returnSnoise = true)
             @test native.linearized.S == conj.linearized.S
             @test native.linearized.Snoise == conj.linearized.Snoise
@@ -1197,7 +1203,7 @@ using Test
         asym(w0, kappa, a) = w -> fill(complex(a/(1 + im*(w - w0)/kappa)), 1, 1)
         for a in (1.0, 0.85)
             out = hbsolve(wsn, wpn, srcn, (4,), (8,),
-                oneport(ScatteringBlock(asym(2*pi*5.2e9, 2*pi*1e9, a);
+                oneport(ScatteringParameters(asym(2*pi*5.2e9, 2*pi*1e9, a);
                     nports = 1, grounded = true,
                     negative_frequency = Native())); returnSnoise = true)
             @test all(x -> isapprox(abs(x), 1.0; atol = 1e-12),
@@ -1217,7 +1223,7 @@ using Test
         fourport(S) = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(50.0), :p2 => Port(2),
                 :r2 => Resistor(50.0), :l1 => Inductor(1000.0e-12),
-                :x => ScatteringBlock(S; grounded = true),
+                :x => ScatteringParameters(S; grounded = true),
                 :ct => Capacitor(300.0e-15), :rt => Resistor(75.0)],
             Any[((:p1,1), (:r1,1), (:x,1)),
                 ((:x,2), (:l1,1), (:p2,1), (:r2,1)),
@@ -1229,7 +1235,7 @@ using Test
         threeport(S) = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(50.0), :p2 => Port(2),
                 :r2 => Resistor(50.0), :l1 => Inductor(1000.0e-12),
-                :x => ScatteringBlock(S; grounded = true),
+                :x => ScatteringParameters(S; grounded = true),
                 :rt => Resistor(50.0)],
             Any[((:p1,1), (:r1,1), (:x,1)),
                 ((:x,2), (:l1,1), (:p2,1), (:r2,1)),
@@ -1316,7 +1322,7 @@ using Test
         blockjpa(Cc) = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(Z0), :cc => Capacitor(Cc),
                 :jj => JosephsonJunction(1000.0e-12),
-                :c2 => ScatteringBlock(capS(1000.0e-15, Z0); nports = 1,
+                :c2 => ScatteringParameters(capS(1000.0e-15, Z0); nports = 1,
                     grounded = true)],
             Any[((:p1,1), (:r1,1), (:cc,1)),
                 ((:cc,2), (:jj,1), (:c2,1)),
@@ -1383,9 +1389,9 @@ using Test
         # symptom, so hblinsolve warns about it; this is the condition it
         # warns on.
         Z0 = 50.0
-        matrixform = ScatteringBlock(w -> fill(complex(0.5), 1, 1);
+        matrixform = ScatteringParameters(w -> fill(complex(0.5), 1, 1);
             nports = 1, grounded = true)
-        entryform = ScatteringBlock((p, q, w) -> complex(0.5); nports = 1,
+        entryform = ScatteringParameters((p, q, w) -> complex(0.5); nports = 1,
             grounded = true, form = :entry)
         for (blk, ok) in ((matrixform, false), (entryform, true))
             circuit = Circuit(
@@ -1427,7 +1433,7 @@ using Test
         mk(rT, bT) = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(Z0),
                 :cc => Capacitor(100.0e-15), :l1 => Inductor(1000.0e-12),
-                :x => ScatteringBlock(fill(complex(0.5), 1, 1);
+                :x => ScatteringParameters(fill(complex(0.5), 1, 1);
                     grounded = true,
                     noise = isnothing(bT) ? Passive() : ThermalEquilibrium(bT)),
                 :cl => Capacitor(200.0e-15),
@@ -1511,7 +1517,8 @@ using Test
         wsc = [w0]
         mkc(bT) = Circuit(
             Any[:p1 => Port(1), :r1 => Resistor(Z0),
-                :x => ScatteringBlock(ComplexF64[0.2 0.6; 0.6 0.2];
+                :x => ScatteringParameters(ComplexF64[0.2 0.6; 0.6 0.2];
+                    grounded = false,
                     noise = isnothing(bT) ? Passive() : ThermalEquilibrium(bT)),
                 :l1 => Inductor(1000.0e-12), :p2 => Port(2),
                 :r2 => Resistor(Z0), :cl => Capacitor(200.0e-15),
@@ -1569,7 +1576,7 @@ using Test
 
     @testset "unsupported cases still error clearly" begin
         # arbitrary noise covariance permits active blocks: not supported
-        active = ScatteringBlock([0.0 2.0; 2.0 0.0];
+        active = ScatteringParameters([0.0 2.0; 2.0 0.0];
             noise = NoiseCovariance([1.0 0.0; 0.0 1.0]), grounded = true)
         c = Circuit([:a => active, :r => Resistor(50.0), :p => Port(1)],
             [((:p, 1), (:r, 1), (:a, 1)), ((:a, 2), Ground),
@@ -1584,7 +1591,7 @@ using Test
             [:p1 => Port(1), :r1 => Resistor(50.0),
              :cc => Capacitor(100.0e-15),
              :jj => JosephsonJunction(1000.0e-12),
-             :c2 => ScatteringBlock(capS(C2, 50.0); nports = 1,
+             :c2 => ScatteringParameters(capS(C2, 50.0); nports = 1,
                  grounded = true)],
             [((:p1, 1), (:r1, 1), (:cc, 1)),
              ((:cc, 2), (:jj, 1), (:c2, 1)),

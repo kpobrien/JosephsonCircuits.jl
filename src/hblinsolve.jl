@@ -86,7 +86,7 @@ $(_DOC_SORTING)
     at a port is had by tracing that port out and assuming one there.
     A component may state its own temperature instead, and then takes that:
     a lumped one as `Resistor(R; temperature = T)`, a
-    [`ScatteringBlock`](@ref) as `noise = ThermalEquilibrium(T)`. Only the
+    [`ScatteringParameters`](@ref) as `noise = ThermalEquilibrium(T)`. Only the
     typed circuit format carries those; a netlist of tuples states none, and
     everything in it takes this default. A block with a
     [`NoiseCovariance`](@ref) takes no temperature at all: its covariance is
@@ -94,7 +94,7 @@ $(_DOC_SORTING)
     caller already has.
 - `sensitivitynames::Vector{String} = String[]`: the component names for which
     to calculate sensitivities. Supported component types are C, L, R and Lj
-    with numeric values. A circuit may contain a [`ScatteringBlock`](@ref)
+    with numeric values. A circuit may contain a [`ScatteringParameters`](@ref)
     while the sensitivity is taken with respect to its lumped components; a
     block itself has no scalar value to perturb, so naming one is an error.
 - `sensitivitynodeflux = nothing`: the derivatives of the pump operating
@@ -249,6 +249,12 @@ return hblinsolve(w, psc, cg, circuitdefs, signalfreq; nonlinear = nonlinear,
         factorization = factorization, backend = backend)
 end
 
+# A fully numeric circuit (such as the output of a circuit builder) needs no
+# component definitions, so `circuitdefs` is optional.
+function hblinsolve(w, circuit; kwargs...)
+    return hblinsolve(w, circuit, Dict{Any,Any}(); kwargs...)
+end
+
 """
     hblinsolve(w, psc::ParsedSortedCircuit,
         cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N};
@@ -336,6 +342,11 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
     temperature = 0.0, returnCnoise::Bool = false,
     sensitivitynames::Vector{String} = String[],
+    sensitivitypairs::AbstractVector =
+        Tuple{String,Int,Complex{Float64}}[],
+    sensitivityblockpairs::AbstractVector = Tuple{String,Int,Any}[],
+    nsensitivityparameters::Integer = 0,
+    sensitivitylabels::Union{Nothing,Vector{String}} = nothing,
     sensitivitynodeflux = nothing, sensitivityresidual = nothing,
     sensitivitymode::Symbol = :auto,
     returnSsensitivity::Bool = false, returnZ = nothing,
@@ -525,14 +536,61 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     vvn = signalnm.vvn
     modes = signalfreq.modes
 
+    # Design parameter sensitivities: the caller names physical parameters
+    # rather than components, through the pair list (componentindex,
+    # parameterindex, alpha) with alpha = (dc/dtheta)/c the direction of the
+    # component value under the parameter. Every component whose value
+    # depends on a parameter contributes to that parameter's derivative;
+    # the stamps of one parameter merge into one contraction.
+    Nlumpedpairs = length(sensitivitypairs)
+    if !isempty(sensitivitypairs) || !isempty(sensitivityblockpairs)
+        isempty(sensitivitynames) || throw(ArgumentError(
+            "pass either sensitivitynames or sensitivitypairs, not both"))
+        nsensitivityparameters > 0 || throw(ArgumentError(
+            "sensitivitypairs requires nsensitivityparameters"))
+        # pairs are keyed by component name because the parse sorts the
+        # circuit, so positional indices from the caller would not survive.
+        # A scattering block pair is keyed by its first port's component.
+        sensitivitynames = vcat(
+            String[String(t[1]) for t in sensitivitypairs],
+            String[String(t[1]) for t in sensitivityblockpairs])
+    end
+
     # find the indices associated with the components for which we will
     # calculate sensitivities
     sensitivityindices = zeros(Int,length(sensitivitynames))
     for i in eachindex(sensitivitynames)
         sensitivityindices[i] = componentnamedict[sensitivitynames[i]]
-        if componenttypes[sensitivityindices[i]] == :S
-            throw(ArgumentError(lazy"Sensitivities with respect to scattering block components are not supported; got $(sensitivitynames[i])."))
+        # entries past the lumped pairs are the block pairs; in the legacy
+        # sensitivitynames path there are none
+        blocktail = !isempty(sensitivityblockpairs) && i > Nlumpedpairs
+        if componenttypes[sensitivityindices[i]] == :S && !blocktail
+            throw(ArgumentError(lazy"Sensitivities with respect to scattering block components require a block derivative; got $(sensitivitynames[i]) as a plain component."))
         end
+        if blocktail && componenttypes[sensitivityindices[i]] != :S
+            throw(ArgumentError(lazy"The block pair component $(sensitivitynames[i]) is not a scattering block port."))
+        end
+    end
+
+    # the grouping of the pairs into merged stamps, and the design parameter
+    # slot each group accumulates into. Computed here, before the residual
+    # derivative columns and the operating point solves, because both must
+    # be merged with the same grouping as the stamps. Each scattering block
+    # pair is its own group: its stamp values are rebuilt per frequency and
+    # cannot concatenate with anything.
+    stampgrouping, stampslots = if isempty(sensitivitypairs) &&
+            isempty(sensitivityblockpairs)
+        Vector{Int}[], Int[]
+    else
+        g, sl = parametergrouping(sensitivitypairs,
+            view(sensitivityindices, 1:Nlumpedpairs), componenttypes,
+            Dict(idx => p
+                for (p, idx) in enumerate(signalnm.portimpedanceindices)))
+        for (bi, bp) in enumerate(sensitivityblockpairs)
+            push!(g, [Nlumpedpairs + bi])
+            push!(sl, Int(bp[2]))
+        end
+        g, sl
     end
 
     # calculate the source currents
@@ -565,7 +623,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         calcnoiseportimpedanceindices(
             componenttypes, nodeindices,
             mutualinductorbranchnames,
-            Symbolics.substitute.(vvn, symfreqvar => wmodes[1]))
+            substitutefreq.(vvn, symfreqvar, wmodes[1]))
     end
 
     # find the indices at which there are symbolic variables so we can
@@ -634,12 +692,42 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     # precompute the derivative of the linearized system matrix with respect
     # to a relative perturbation of each component in sensitivitynames.
-    sensitivitystamps = if returnSsensitivity
-        calcsensitivitystamps(sensitivityindices, psc, cg, signalnm, lsys,
-            phimatrix, mnaindices, coupledbranches, Nnodalmna, Nsignalmodes,
-            Nnodes)
+    sensitivitystamps, sensitivityblockentries = if returnSsensitivity
+        st = calcsensitivitystamps(
+            sensitivityindices[1:(isempty(sensitivityblockpairs) ?
+                end : Nlumpedpairs)],
+            psc, cg, signalnm, lsys, phimatrix, mnaindices,
+            coupledbranches, Nnodalmna, Nsignalmodes, Nnodes)
+        if !isempty(sensitivitypairs)
+            st = [reparameterize(st[k], sensitivitypairs[k][3],
+                sensitivitypairs[k][2]) for k in eachindex(st)]
+        end
+        entries = Tuple{Int,Any,Any}[]
+        if !isempty(sensitivityblockpairs)
+            isnothing(ssys) && throw(ArgumentError(
+                "the circuit has no scattering blocks to take a block sensitivity of"))
+            for (bi, bp) in enumerate(sensitivityblockpairs)
+                targetdef = psc.componentvalues[
+                    sensitivityindices[Nlumpedpairs + bi]].block
+                dsys, zsys = derivativestampsystems(ssys, targetdef, bp[3])
+                push!(st, blocksensitivitystamp(ssys, Int(bp[2])))
+                push!(entries, (0, dsys, zsys))
+            end
+        end
+        if !isempty(stampgrouping)
+            st = mergestamps(st, stampgrouping)
+            # locate each block pair's stamp in the merged vector: block
+            # groups are the singletons pointing past the lumped pairs
+            for (gi, g) in enumerate(stampgrouping)
+                if length(g) == 1 && g[1] > Nlumpedpairs
+                    bi = g[1] - Nlumpedpairs
+                    entries[bi] = (gi, entries[bi][2], entries[bi][3])
+                end
+            end
+        end
+        st, entries
     else
-        SensitivityStamp[]
+        SensitivityStamp[], Tuple{Int,Any,Any}[]
     end
 
     # the contribution of the shift of the pump operating point, when the
@@ -685,6 +773,19 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
                 size(sensitivityresidual) != (size(op.jacobian, 1), length(sensitivitynames))
             throw(DimensionMismatch(lazy"sensitivityresidual must be (real Jacobian rows) x (number of sensitivity components) = ($(size(op.jacobian, 1)), $(length(sensitivitynames))), got $(size(sensitivityresidual))."))
         end
+        if !isempty(sensitivitypairs) && !isnothing(sensitivitynodeflux)
+            throw(ArgumentError("sensitivitynodeflux is per component and cannot be combined with sensitivitypairs; supply sensitivityresidual (or neither) instead."))
+        end
+    end
+    # The residual derivative columns are per pair; the stamps of one group
+    # merge into one contraction, so the columns must merge with the same
+    # grouping before anything is sized or solved from them. Summing is
+    # right because the residual is linear in each component's contribution.
+    if !isnothing(sensitivityresidual) && !isempty(stampgrouping) &&
+            length(stampgrouping) != size(sensitivityresidual, 2)
+        sensitivityresidual = hcat(
+            [sum(sensitivityresidual[:, g], dims = 2)
+             for g in stampgrouping]...)
     end
     # Without Josephson junctions the linearized system matrix does not
     # depend on the operating point, so the contribution is identically
@@ -700,6 +801,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         false
     elseif sensitivitymode == :reverse
         isnothing(sensitivityresidual) && throw(ArgumentError("The reverse mode sensitivity contraction requires the residual derivatives of calcresidualsensitivity."))
+        isempty(sensitivityblockpairs) || throw(ArgumentError("The reverse mode sensitivity contraction does not support scattering block parameters; use sensitivitymode = :forward."))
         true
     else # :auto
         # The forward order costs one product against the sparsity structure
@@ -720,7 +822,8 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         # is what makes one constant serviceable across that spread.
         Ncomponents = isnothing(sensitivityresidual) ?
             size(sensitivitynodeflux, 2) : size(sensitivityresidual, 2)
-        !isnothing(sensitivityresidual) && Ncomponents >
+        !isnothing(sensitivityresidual) &&
+            isempty(sensitivityblockpairs) && Ncomponents >
             8*(length(signalnm.portindices)*Nsignalmodes)^2
     end
 
@@ -742,7 +845,9 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
 
     sensitivityreverse = if usereverse
         ReverseSensitivity(nonlinear.operatingpoint, lsys,
-            sensitivityresidual)
+            sensitivityresidual,
+            isempty(stampslots) ? collect(1:size(sensitivityresidual, 2)) :
+                stampslots)
     else
         nothing
     end
@@ -784,7 +889,9 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         requestvoltageadjoint = returnvoltageadjoint,
         Nports = Nports, Nmodes = Nsignalmodes,
         Nnoisechannels = Nnoisechannels,
-        Ncomponents = length(sensitivitynames), Nnodes = Nnodes,
+        Ncomponents = isempty(sensitivitypairs) ?
+            length(sensitivitynames) : nsensitivityparameters,
+        Nnodes = Nnodes,
         Nfrequencies = length(w))
 
     # generate the mode indices and find the signal index
@@ -805,8 +912,13 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # symbolic frequency variable, so the assembly is not a constant quadratic
     # in the signal frequency.
     sensitivitytuple = (stamps = sensitivitystamps, dAop = sensitivitydAop,
-        reverse = sensitivityreverse)
-    usedevice = !(backend isa CPU) && cansweepondevice(lsys)
+        reverse = sensitivityreverse,
+        blockentries = sensitivityblockentries,
+        patternindex = isempty(sensitivityblockentries) ? Int[] :
+            ssys.patternindex)
+    # the block sensitivity stamps are rebuilt per frequency on the host
+    usedevice = !(backend isa CPU) && cansweepondevice(lsys) &&
+        isempty(sensitivityblockentries)
     if usedevice
         # what each direction's solutions are read for decides whether the
         # whole solution comes back or only some of its rows. The scattering
@@ -834,7 +946,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         wantsnoise = !isempty(outputarrays.Snoise) ||
             !isempty(outputarrays.QE) || !isempty(outputarrays.CM)
         if wantsnoise && !blocknoiseondevice
-            @warn "A scattering block of this circuit has scattering parameters which cannot be evaluated on the backend, so its noise channels are formed on the host and the whole adjoint solution is copied back at every frequency, which is the largest transfer in the sweep. Give the block's data as a constant matrix, as tabulated data, or as a callable of one entry at a time (`ScatteringBlock(f; nports, form = :entry)`) to keep the noise on the backend." maxlog=1
+            @warn "A scattering block of this circuit has scattering parameters which cannot be evaluated on the backend, so its noise channels are formed on the host and the whole adjoint solution is copied back at every frequency, which is the largest transfer in the sweep. Give the block's data as a constant matrix, as tabulated data, or as a callable of one entry at a time (`ScatteringParameters(f; nports, form = :entry)`) to keep the noise on the backend." maxlog=1
         end
         devicenoiseplan = if wantsnoise && blocknoiseondevice &&
                 (!isempty(noiseportimpedanceindices) || !isnothing(noiseplan))
@@ -985,8 +1097,10 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # if keyword argument keyedarrays = true then generate keyed arrays
     # for Ssensitivity
     Ssensitivityout = if returnSsensitivity && keyedarrays
-        Ssensitivitytokeyed(outputarrays.Ssensitivity, modes, portnumbers, modes,
-            portnumbers, sensitivitynames, w)
+        Ssensitivitytokeyed(outputarrays.Ssensitivity, modes, portnumbers,
+            modes, portnumbers,
+            isnothing(sensitivitylabels) ? sensitivitynames :
+                sensitivitylabels, w)
     else
         outputarrays.Ssensitivity
     end
@@ -1150,6 +1264,8 @@ struct LinearizedWorkspace{TA,TC,TR}
     scatteringnoisework::ScatteringNoiseWorkspace
     # the occupation of each noise channel mode, rebuilt per frequency
     occupation::Vector{Float64}
+    # this worker's private scattering block sensitivity state, or nothing
+    blocksens::Any
 end
 
 """
@@ -1201,7 +1317,10 @@ function LinearizedWorkspace(arrays::LinearizedArrays, sensitivity, lsys,
         assembles ? copy(lsys.Asparse) : lsys.Asparse,
         FactorizationCache(), cplx(np, np), cplx(Nnoisechannels*Nmodes, np),
         ScatteringNoiseWorkspace(),
-        zeros(Float64, Nnoisechannels*Nmodes))
+        zeros(Float64, Nnoisechannels*Nmodes),
+        isempty(sensitivity.blockentries) ? nothing :
+            WorkerBlockSensitivity(sensitivity.stamps,
+                sensitivity.blockentries, sensitivity.patternindex))
 end
 
 """
@@ -1275,6 +1394,10 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     # not depend on the frequency.
     needsadjoint = needsadjointsolve(arrays, noiseportimpedanceindices,
         noiseplan)
+
+    # this worker's private scattering block sensitivity state; bound
+    # before the loop because `ws` is rebound to the signal frequency there
+    blocksens = ws.blocksens
 
     # loop over the frequencies
     for i in wi
@@ -1418,8 +1541,17 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
             # holds the solution of the transposed system, which is the
             # adjoint solution the contraction needs.
             if !isempty(arrays.Ssensitivity)
+                # a scattering block stamp depends on the signal frequency
+                # through S itself, so each worker rebuilds its private
+                # copy here rather than rescaling a constant
+                stamps = if isnothing(blocksens)
+                    sensitivity.stamps
+                else
+                    refreshblockstamps!(blocksens, wmodes)
+                    blocksens.stamps
+                end
                 calcSsensitivity!(view(arrays.Ssensitivity,:,:,:,i),
-                    sensitivity.stamps, sensitivity.dAop, dAsparse, dAphin,
+                    stamps, sensitivity.dAop, dAsparse, dAphin,
                     phinforward, phin, Sview, sensitivitygamma,
                     sensitivitybeta, sensitivitycontraction, wmodes,
                     Nmodes, symfreqvar)

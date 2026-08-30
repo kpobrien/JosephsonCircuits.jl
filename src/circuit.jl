@@ -12,8 +12,26 @@ struct GroundType end
 The distinguished global electrical reference. `Ground` may appear as an
 endpoint in any connection group, and as the negative pin of an interface
 port. The ground net is always named "0".
+
+For uniformity with ordinary components, ground may also be declared in the
+components list and referenced through its single terminal:
+
+```julia
+Circuit([:r1 => Resistor(50.0), :gnd => Ground()],
+    [[(:r1, 1)], [(:r1, 2), (:gnd, 1)]])
+```
+
+`Ground()` and `Ground` are the same object, so both spellings work in both
+positions. A ground instance is sugar for the reference net rather than a
+device: every reference to its terminal resolves to the global ground net,
+however many instances are declared and at whatever level of the hierarchy,
+and it contributes no flattened component.
 """
 const Ground = GroundType()
+
+# `Ground()` constructs like a component model but is the same singleton, so
+# the sentinel and component spellings cannot diverge.
+(::GroundType)() = Ground
 
 Base.show(io::IO, ::GroundType) = print(io, "Ground")
 
@@ -99,6 +117,9 @@ ports = [1 => (1, 3), 2 => (2, 3)]
 
 The parent circuit physically binds pins; connecting port to port with pair
 syntax is shorthand which expands to the pin connections.
+
+The explicit call is optional: `Circuit(components, connections;
+pins = ..., ports = ...)` constructs the same interface through keywords.
 """
 struct Interface{P,W}
     pins::P
@@ -107,7 +128,8 @@ end
 Interface(; pins, ports = nothing) = Interface(pins, ports)
 
 """
-    Circuit(components, connections, interface = nothing; validate = true)
+    Circuit(components, connections, interface = nothing;
+        pins = nothing, ports = nothing, validate = true)
 
 The public typed circuit representation.
 
@@ -118,6 +140,11 @@ The public typed circuit representation.
   bonds), and [`Net`](@ref) entries.
 - `interface` optionally exposes pins and ports so that the circuit can be
   used as a component inside another circuit.
+
+The `pins` and `ports` keywords are sugar for the positional interface:
+`Circuit(components, connections; pins = ..., ports = ...)` is
+`Circuit(components, connections, Interface(pins = ..., ports = ...))`.
+Give the interface one way or the other, not both.
 
 The constructor validates identifiers, endpoint references, connector
 namespaces, and the interface, so that errors point at the construction
@@ -132,6 +159,7 @@ object. Use [`elaborate`](@ref) to flatten the hierarchy.
 | `(:inst, k)` | scalar terminal or pin `k` in a group; port `k` in a pair |
 | `(:inst, p, t)` | terminal `t` (1 signal, 2 reference) of port `p` |
 | `Ground` | the global reference net "0" |
+| `(:gnd, 1)` with `:gnd => Ground()` | the same reference net, component style |
 | `PortRef`/`PinRef` | explicit namespace selection |
 
 In a group every endpoint is scalar. In a pair `a => b`, endpoints resolve
@@ -142,14 +170,19 @@ endpoints sugar for a two element group. A key which exists both as a pin
 and as a port of a subcircuit is an error in a pair and requires `PortRef`
 or `PinRef`.
 
+Connection groups may be written as tuples or vectors of endpoints.
+Vectors are recommended for large or generated groups: a vector is one
+type whatever its length, where every distinct tuple shape is a separate
+type for the compiler to specialize on.
+
 # Examples
 ```julia
 circuit = Circuit(
     [:l1 => Inductor(1e-9), :c1 => Capacitor(100e-15), :p1 => Port(1),
      :r1 => Resistor(50.0)],
-    [((:p1, 1), (:r1, 1), (:l1, 1)),
-     ((:l1, 2), (:c1, 1)),
-     ((:c1, 2), (:r1, 2), (:p1, 2), Ground)],
+    [[(:p1, 1), (:r1, 1), (:l1, 1)],
+     [(:l1, 2), (:c1, 1)],
+     [(:c1, 2), (:r1, 2), (:p1, 2), Ground]],
 )
 ```
 """
@@ -158,7 +191,16 @@ struct Circuit{C,K,I} <: AbstractComponent
     connections::K
     interface::I
     function Circuit(components, connections, interface = nothing;
-            validate::Bool = true)
+            pins = nothing, ports = nothing, validate::Bool = true)
+        if !isnothing(pins) || !isnothing(ports)
+            if !isnothing(interface)
+                throw(ArgumentError("Give the interface either positionally or through the pins/ports keywords, not both."))
+            end
+            if isnothing(pins)
+                throw(ArgumentError("The ports keyword requires pins: ports group pin keys into two terminal views. Pass pins as well."))
+            end
+            interface = Interface(pins, ports)
+        end
         if validate
             parsecircuitlevel(components, connections, interface)
         end
@@ -191,10 +233,12 @@ end
     nterminals(component)
 
 The number of scalar electrical terminals of a component model. Two
-terminal lumped components have 2; a [`ScatteringBlock`](@ref) has two per
+terminal lumped components have 2; a [`ScatteringParameters`](@ref) has two per
 port; a hierarchical [`Circuit`](@ref) has one per interface pin; a
-[`MutualInductor`](@ref) has none because it couples branches, not nets.
+[`MutualInductor`](@ref) has none because it couples branches, not nets; a
+[`Ground`](@ref) instance has one, which is the reference net itself.
 """
+nterminals(::GroundType) = 1
 nterminals(::Inductor) = 2
 nterminals(::Capacitor) = 2
 nterminals(::Resistor) = 2
@@ -203,7 +247,7 @@ nterminals(::VoltageSource) = 2
 nterminals(::Port) = 2
 nterminals(::NonlinearInductor) = 2
 nterminals(::MutualInductor) = 0
-nterminals(c::ScatteringBlock) = 2*c.nports
+nterminals(c::ScatteringParameters) = 2*c.nports
 nterminals(c::GaussianChannel) = 2*c.nmodes
 function nterminals(c::Circuit)
     if isnothing(c.interface)
@@ -219,15 +263,15 @@ nterminals(c) = throw(ArgumentError(lazy"$(typeof(c)) is not a known component m
 Whether the component exposes bundled two terminal port views addressable
 in pair connections.
 """
-hasports(c::ScatteringBlock) = true
+hasports(c::ScatteringParameters) = true
 hasports(c::GaussianChannel) = true
 hasports(c::Circuit) = !isnothing(c.interface) && !isnothing(c.interface.ports)
 hasports(c) = false
 
-componentnports(c::ScatteringBlock) = c.nports
+componentnports(c::ScatteringParameters) = c.nports
 componentnports(c::GaussianChannel) = c.nmodes
 
-isgrounded(c::ScatteringBlock) = c.grounded
+isgrounded(c::ScatteringParameters) = c.grounded
 isgrounded(c::GaussianChannel) = c.grounded
 
 # === component table ===
@@ -296,7 +340,7 @@ function scalarterminal(def::MutualInductor, id, k)
     throw(ArgumentError(lazy"The mutual inductor $(id) couples two inductor branches and has no terminals; it must not appear in connections."))
 end
 
-function scalarterminal(def::Union{ScatteringBlock,GaussianChannel}, id, k)
+function scalarterminal(def::Union{ScatteringParameters,GaussianChannel}, id, k)
     if isgrounded(def)
         if !(k isa Integer) || !(1 <= k <= componentnports(def))
             throw(ArgumentError(lazy"The grounded multiport $(id) has ports 1:$(componentnports(def)); got $(k)."))
@@ -321,7 +365,7 @@ function portterminal(def, id, p, t)
     throw(ArgumentError(lazy"The instance $(id) has no ports; address its terminals as ($(repr(id)), terminal)."))
 end
 
-function portterminal(def::Union{ScatteringBlock,GaussianChannel}, id, p, t)
+function portterminal(def::Union{ScatteringParameters,GaussianChannel}, id, p, t)
     np = componentnports(def)
     if !(p isa Integer) || !(1 <= p <= np)
         throw(ArgumentError(lazy"The multiport $(id) has ports 1:$(np); got port $(p)."))
@@ -343,7 +387,7 @@ function portview(def, id, p)
     throw(ArgumentError(lazy"The instance $(id) exposes no ports, so $(p) cannot be used as a port in a pair connection."))
 end
 
-function portview(def::Union{ScatteringBlock,GaussianChannel}, id, p)
+function portview(def::Union{ScatteringParameters,GaussianChannel}, id, p)
     np = componentnports(def)
     if !(p isa Integer) || !(1 <= p <= np)
         throw(ArgumentError(lazy"The multiport $(id) has ports 1:$(np); got port $(p)."))
@@ -400,12 +444,17 @@ function resolvescalar(table::ComponentTable, ep, context::AbstractString)
         return Ground
     elseif ep isa PinRef
         i = instanceindex(table, ep.instance, context)
-        return (i, scalarterminal(table.defs[i], ep.instance, ep.key))
+        t = scalarterminal(table.defs[i], ep.instance, ep.key)
+        # a declared ground instance is the reference net, not a device:
+        # its terminal is the ground sentinel, so every downstream rule
+        # (net naming, interface pin restrictions) applies uniformly
+        return table.defs[i] isa GroundType ? Ground : (i, t)
     elseif ep isa PortRef
         throw(ArgumentError(lazy"A PortRef is a two terminal port view and cannot be a member of a scalar connection group ($(context)). Use the port in a pair connection or address its terminals individually."))
     elseif ep isa Tuple && length(ep) == 2
         i = instanceindex(table, ep[1], context)
-        return (i, scalarterminal(table.defs[i], ep[1], ep[2]))
+        t = scalarterminal(table.defs[i], ep[1], ep[2])
+        return table.defs[i] isa GroundType ? Ground : (i, t)
     elseif ep isa Tuple && length(ep) == 3
         i = instanceindex(table, ep[1], context)
         return (i, portterminal(table.defs[i], ep[1], ep[2], ep[3]))
@@ -603,7 +652,7 @@ end
 function parsegroundties(table::ComponentTable)
     ties = Tuple{Int,Int}[]
     for (i, def) in enumerate(table.defs)
-        if (def isa ScatteringBlock || def isa GaussianChannel) && isgrounded(def)
+        if (def isa ScatteringParameters || def isa GaussianChannel) && isgrounded(def)
             for p in 1:componentnports(def)
                 push!(ties, (i, 2*(p-1) + 2))
             end

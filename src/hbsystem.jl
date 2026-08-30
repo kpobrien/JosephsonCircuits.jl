@@ -791,7 +791,7 @@ diagonal, so the column indexed frequency scaling and conjugation of
 `sparseaddconjsubst!` are symmetric under transposition; and the transpose of
 the pump modulation contribution exchanges the mode pair, mapping each
 difference harmonic to its complex conjugate, which is the same as
-conjugating the pump. The hybrid rows of a [`ScatteringBlock`](@ref) do break
+conjugating the pump. The hybrid rows of a [`ScatteringParameters`](@ref) do break
 it: their constant Kirchhoff couplings and frequency dependent constitutive
 entries exchange under transposition, and no diagonal `D` undoes that, so with
 blocks the two are different matrices.

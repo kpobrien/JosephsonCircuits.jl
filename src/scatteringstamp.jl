@@ -4,7 +4,7 @@
 """
     ScatteringStamp(block, port)
 
-The value carried by one port of a [`ScatteringBlock`](@ref) lowered into a
+The value carried by one port of a [`ScatteringParameters`](@ref) lowered into a
 [`ParsedSortedCircuit`](@ref): the shared block definition and the port
 index. Each port of an n-port block lowers to one `:S` component whose two
 nodes are the signal and reference terminals of that port, so the two node
@@ -50,7 +50,7 @@ HybridWorkspace() = HybridWorkspace(Int[], Float64[],
     Float64[])
 
 """
-    evaluatehybrid!(B, C, block::ScatteringBlock, ws::AbstractVector,
+    evaluatehybrid!(B, C, block::ScatteringParameters, ws::AbstractVector,
         [work::HybridWorkspace])
 
 The hybrid (wave to modified nodal analysis) coefficients `B` and `C` of a
@@ -61,7 +61,7 @@ The constitutive equation of the block is `B(w) phi' = C(w) i` with
 whose `I+S` is singular somewhere stamps exactly. At exactly zero frequency
 the rows become `i = 0`, consistent with resistors in the node flux basis.
 
-        C::AbstractArray{Complex{Float64},3}, block::ScatteringBlock,
+        C::AbstractArray{Complex{Float64},3}, block::ScatteringParameters,
         ws::AbstractVector)
 
 Evaluate the coefficient matrices of the hybrid (wave to modified nodal
@@ -90,13 +90,13 @@ resistors.
 Pass a [`HybridWorkspace`](@ref) to reuse its scratch across calls.
 """
 function evaluatehybrid!(B::AbstractArray{Complex{Float64},3},
-    C::AbstractArray{Complex{Float64},3}, block::ScatteringBlock,
+    C::AbstractArray{Complex{Float64},3}, block::ScatteringParameters,
     ws::AbstractVector)
     return evaluatehybrid!(B, C, block, ws, HybridWorkspace())
 end
 
 function evaluatehybrid!(B::AbstractArray{Complex{Float64},3},
-    C::AbstractArray{Complex{Float64},3}, block::ScatteringBlock,
+    C::AbstractArray{Complex{Float64},3}, block::ScatteringParameters,
     ws::AbstractVector, work::HybridWorkspace)
 
     n = block.nports
@@ -160,7 +160,7 @@ end
 # one scattering block with its port terminal nodes in the parsed circuit
 # and the position of its auxiliary port current variables
 struct StampedScatteringBlock
-    block::Any            # the shared ScatteringBlock definition
+    block::Any            # the shared ScatteringParameters definition
     signalnodes::Vector{Int}
     refnodes::Vector{Int}
     auxbase::Int          # aux index of port p mode m: auxbase+(p-1)*Nmodes+m
@@ -170,7 +170,7 @@ end
 """
     ScatteringStampSystem
 
-The contribution of the [`ScatteringBlock`](@ref) components of a parsed
+The contribution of the [`ScatteringParameters`](@ref) components of a parsed
 circuit to the harmonic balance system matrix, as hybrid (wave to modified
 nodal analysis) stamps: one auxiliary port current variable per port and
 mode, the constant Kirchhoff current law couplings `kcl` of those currents
@@ -239,7 +239,7 @@ hasscattering(psc::ParsedSortedCircuit) = any(==(:S), psc.componenttypes)
 Collect the `:S` components of the parsed circuit into a
 [`ScatteringStampSystem`](@ref), or return `nothing` when there are none.
 Ports are grouped into blocks by the identity of the shared
-[`ScatteringBlock`](@ref) definition, so instances sharing a definition
+[`ScatteringParameters`](@ref) definition, so instances sharing a definition
 share its data; every port of each block must appear exactly once. The
 auxiliary port current variables occupy the `countscatteringports(psc) *
 Nmodes` indices starting after `auxoffset` of the `Ntotal` dimensional
@@ -546,7 +546,7 @@ end
 """
     ScatteringNoisePlan
 
-The vacuum noise channels of the dissipative [`ScatteringBlock`](@ref)
+The vacuum noise channels of the dissipative [`ScatteringParameters`](@ref)
 components of a circuit: which blocks of a [`ScatteringStampSystem`](@ref)
 carry noise and where their channels sit in the rows of the noise
 scattering matrix.
@@ -613,7 +613,7 @@ end
 # quantum efficiency computed from a different block than the user asked
 # for, so they are an error at the point the noise is planned rather than a
 # warning
-function checknoisemodel(block::ScatteringBlock, name)
+function checknoisemodel(block::ScatteringParameters, name)
     noise = block.noise
     if noise isa Passive || noise isa Lossless ||
             noise isa ThermalEquilibrium
@@ -763,7 +763,7 @@ function checklosslessblocks(ssys::Union{Nothing,ScatteringStampSystem}, w,
 end
 
 # behind a function barrier: the block is stored untyped
-function checkoneblocklossless(block::ScatteringBlock, name, ws, atol, work)
+function checkoneblocklossless(block::ScatteringParameters, name, ws, atol, work)
     n = block.nports
     S = Array{Complex{Float64},3}(undef, n, n, length(ws))
     evaluatescattering!(S, block, ws, work.absws)
@@ -864,7 +864,7 @@ function scatteringnoisewaves!(noiseoutputwave::AbstractMatrix,
 end
 
 function blocknoisewaves!(noiseoutputwave::AbstractMatrix,
-    block::ScatteringBlock, sb::StampedScatteringBlock,
+    block::ScatteringParameters, sb::StampedScatteringBlock,
     wmodes::AbstractVector, phiadj::AbstractMatrix, rowoffset::Integer,
     Nmodes::Integer, work::ScatteringNoiseWorkspace)
 
@@ -919,7 +919,7 @@ The temperature of each row of the noise scattering matrix, in the order
 
 `temperature` is the analysis default, which every dissipative element takes
 unless it states one of its own. A lumped component states it as
-`Resistor(R; temperature = T)` and a [`ScatteringBlock`](@ref) as
+`Resistor(R; temperature = T)` and a [`ScatteringParameters`](@ref) as
 `noise = ThermalEquilibrium(T)`, both of which are recorded by
 [`parsesortcircuit`](@ref) as it lowers the circuit. Only the typed circuit
 format carries them; a netlist of tuples states none and everything in it

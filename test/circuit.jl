@@ -1,3 +1,4 @@
+using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using Test
@@ -272,9 +273,136 @@ using Test
         @test repr(rshow) == "Circuit(2 components, 2 connections, 2 pins, 1 ports)"
     end
 
+    @testset "ground as a component" begin
+        # `Ground()` is the same singleton as `Ground`, so the sentinel and
+        # component spellings cannot diverge
+        @test Ground() === Ground
+
+        # a declared ground instance referenced through its terminal is
+        # equivalent to the bare sentinel, down to identical parse output
+        mk(g) = Circuit(
+            Any[:p1 => Port(1), :r1 => Resistor(50.0),
+                :cc => Capacitor(100e-15), :jj => JosephsonJunction(1e-9),
+                :cj => Capacitor(100e-15),
+                (g ? [:gnd => Ground()] : [])...],
+            [((:p1, 1), (:r1, 1), (:cc, 1)),
+             ((:cc, 2), (:jj, 1), (:cj, 1)),
+             g ? ((:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)) :
+                 ((:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), Ground)])
+        @test JosephsonCircuits.comparestruct(
+            parsesortcircuit(mk(false)), parsesortcircuit(mk(true)))
+
+        # the ground instance flattens to no component
+        elab = JosephsonCircuits.elaborate(mk(true))
+        @test JosephsonCircuits.ninstances(elab) == 5
+        @test !any(d -> d isa JosephsonCircuits.GroundType, elab.definitions)
+
+        # pair syntax, PinRef, and both definition spellings
+        cpair = Circuit(
+            [:r1 => Resistor(50.0), :p1 => Port(1),
+             :g1 => Ground, :g2 => Ground()],
+            [((:p1, 1), (:r1, 1)), (:p1, 2) => (:g1, 1),
+             (JosephsonCircuits.PinRef(:r1, 2),
+              JosephsonCircuits.PinRef(:g2, 1))])
+        @test JosephsonCircuits.nnets(JosephsonCircuits.elaborate(cpair)) == 2
+
+        # a subcircuit may ground itself through its own ground instance,
+        # and every instance shares the one global reference net
+        sub = Circuit(
+            [:l => Inductor(1e-9), :c => Capacitor(1e-13), :gnd => Ground()],
+            [((:l, 2), (:c, 1)), ((:c, 2), (:gnd, 1))],
+            Interface(pins = [1 => (:l, 1)]))
+        top = Circuit(
+            [:p1 => Port(1), :r1 => Resistor(50.0), :s1 => sub, :s2 => sub,
+             :gnd => Ground()],
+            [((:p1, 1), (:r1, 1), (:s1, 1), (:s2, 1)),
+             ((:p1, 2), (:r1, 2), (:gnd, 1))])
+        etop = JosephsonCircuits.elaborate(top)
+        @test JosephsonCircuits.ninstances(etop) == 6
+        capnets = [JosephsonCircuits.instanceterminals(etop, i)[2]
+                   for i in 1:JosephsonCircuits.ninstances(etop)
+                   if JosephsonCircuits.instancedefinition(etop, i) isa Capacitor]
+        @test all(==(1), capnets)
+
+        # a ground instance has exactly one terminal and no ports
+        @test_throws ArgumentError Circuit(
+            [:r => Resistor(50.0), :gnd => Ground()],
+            [((:r, 1), (:gnd, 2)), ((:r, 2),)])
+        @test_throws ArgumentError Circuit(
+            [:r => Resistor(50.0), :gnd => Ground()],
+            [((:r, 1), (:gnd, 1, 1)), ((:r, 2),)])
+        # an interface pin may not map to ground through an instance either
+        @test_throws ArgumentError Circuit(
+            [:l => Inductor(1e-9), :gnd => Ground()],
+            [((:l, 2), (:gnd, 1))],
+            Interface(pins = [1 => (:l, 1), 2 => (:gnd, 1)]))
+        # a mutual inductor may not couple a ground instance
+        @test_throws ArgumentError Circuit(
+            [:l1 => Inductor(1e-9), :gnd => Ground(),
+             :k => MutualInductor(0.5, :l1, :gnd)],
+            [((:l1, 1),), ((:l1, 2), (:gnd, 1))])
+    end
+
+    @testset "interface through pins/ports keywords" begin
+        comps = [:jj => JosephsonJunction(1e-9), :cj => Capacitor(40e-15),
+                 :cg => Capacitor(76.6e-15)]
+        conns = [((:jj, 1), (:cj, 1), (:cg, 1)), ((:jj, 2), (:cj, 2)),
+                 ((:cg, 2), Ground)]
+        thepins = [1 => (:jj, 1), 2 => (:jj, 2)]
+        cpos = Circuit(comps, conns, Interface(pins = thepins))
+        ckw = Circuit(comps, conns; pins = thepins)
+        @test ckw.interface isa Interface
+        @test isequal(cpos.interface.pins, ckw.interface.pins)
+
+        # identical as a subcircuit
+        mkt(sub) = Circuit(
+            [:p => Port(1), :r => Resistor(50.0), :s => sub],
+            [((:p, 1), (:r, 1), (:s, 1)), ((:p, 2), (:r, 2), (:s, 2), Ground)])
+        e1 = JosephsonCircuits.elaborate(mkt(cpos))
+        e2 = JosephsonCircuits.elaborate(mkt(ckw))
+        @test e1.terminalnets == e2.terminalnets
+        @test e1.netnames == e2.netnames
+
+        # ports keyword
+        cports = Circuit([:l => Inductor(1e-9)], [((:l, 1),), ((:l, 2),)];
+            pins = [1 => (:l, 1), 2 => (:l, 2)], ports = [1 => (1, 2)])
+        @test JosephsonCircuits.hasports(cports)
+
+        # positional interface and keywords are mutually exclusive
+        @test_throws ArgumentError Circuit(comps, conns,
+            Interface(pins = thepins); pins = thepins)
+        # ports require pins, as in Interface
+        @test_throws ArgumentError Circuit(
+            [:l => Inductor(1e-9)], [((:l, 1),), ((:l, 2),)];
+            ports = [1 => (1, 2)])
+    end
+
+    @testset "vector connection groups" begin
+        # groups written as vectors of endpoints are equivalent to tuple
+        # groups; with the ground instance spelling the connections are a
+        # fully concrete vector of vectors of tuples
+        comps = [:p1 => Port(1), :r1 => Resistor(50.0),
+                 :cc => Capacitor(100e-15), :jj => JosephsonJunction(1e-9),
+                 :cj => Capacitor(40e-15), :gnd => Ground()]
+        ctup = Circuit(comps,
+            [((:p1, 1), (:r1, 1), (:cc, 1)),
+             ((:cc, 2), (:jj, 1), (:cj, 1)),
+             ((:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), Ground)])
+        vconns = [[(:p1, 1), (:r1, 1), (:cc, 1)],
+                  [(:cc, 2), (:jj, 1), (:cj, 1)],
+                  [(:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]]
+        @test vconns isa Vector{Vector{Tuple{Symbol,Int}}}
+        cvec = Circuit(comps, vconns)
+        @test JosephsonCircuits.comparestruct(
+            parsesortcircuit(ctup), parsesortcircuit(cvec))
+    end
+
     @testset "scattering block endpoint rules" begin
         S = [0.0 1.0; 1.0 0.0]
-        blk = ScatteringBlock(S)
+        # grounded is the default; a floating block asks for it explicitly
+        @test ScatteringParameters(S).grounded
+        @test TransmissionLine(50.0, 1e-3).grounded
+        blk = ScatteringParameters(S; grounded = false)
         @test blk.nports == 2
         @test JosephsonCircuits.nterminals(blk) == 4
         # floating block: bare (inst, p) in a group is an error
@@ -286,7 +414,7 @@ using Test
              ((:b, 2, 1), (:b, 2, 2), Ground)])
         @test JosephsonCircuits.ninstances(elaborate(cfl)) == 2
 
-        gblk = ScatteringBlock(S; grounded = true)
+        gblk = ScatteringParameters(S; grounded = true)
         # grounded block: (inst, p) is the signal terminal
         cg = Circuit([:b => gblk, :l => Inductor(1e-9)],
             [((:b, 1), (:l, 1)), ((:l, 2), Ground), ((:b, 2), Ground)])
@@ -312,7 +440,7 @@ using Test
     @testset "matrix providers and evaluation" begin
         # constant provider with conjugate symmetry
         S = [0.0 0.8im; 0.8im 0.0]
-        blk = ScatteringBlock(S)
+        blk = ScatteringParameters(S)
         ws = [-2*pi*5e9, 2*pi*5e9]
         dest = zeros(Complex{Float64}, 2, 2, 2)
         JosephsonCircuits.evaluatescattering!(dest, blk, ws)
@@ -323,53 +451,53 @@ using Test
         freqs = [1.0, 2.0, 3.0]
         vals = zeros(Complex{Float64}, 1, 1, 3)
         vals[1,1,:] .= [0.1, 0.3, 0.5]
-        tblk = ScatteringBlock((freqs, vals))
+        tblk = ScatteringParameters((freqs, vals))
         d = zeros(Complex{Float64}, 1, 1, 1)
         JosephsonCircuits.evaluatescattering!(d, tblk, [1.5])
         @test d[1,1,1] ≈ 0.2
         @test_throws ArgumentError JosephsonCircuits.evaluatescattering!(
             d, tblk, [4.0])
-        tconst = ScatteringBlock((freqs, vals); extrapolation = :constant)
+        tconst = ScatteringParameters((freqs, vals); extrapolation = :constant)
         JosephsonCircuits.evaluatescattering!(d, tconst, [4.0])
         @test d[1,1,1] ≈ 0.5
-        tlin = ScatteringBlock((freqs, vals); extrapolation = :linear)
+        tlin = ScatteringParameters((freqs, vals); extrapolation = :linear)
         JosephsonCircuits.evaluatescattering!(d, tlin, [4.0])
         @test d[1,1,1] ≈ 0.7
         # strictly increasing frequencies required
-        @test_throws ArgumentError ScatteringBlock(([2.0, 1.0],
+        @test_throws ArgumentError ScatteringParameters(([2.0, 1.0],
             vals[:,:,1:2]))
 
         # callable provider requires nports
         f(w) = [0.0 exp(-im*w*1e-12); exp(-im*w*1e-12) 0.0]
-        @test_throws ArgumentError ScatteringBlock(f)
-        cblk = ScatteringBlock(f; nports = 2)
+        @test_throws ArgumentError ScatteringParameters(f)
+        cblk = ScatteringParameters(f; nports = 2)
         d2 = zeros(Complex{Float64}, 2, 2, 1)
         JosephsonCircuits.evaluatescattering!(d2, cblk, [2*pi*5e9])
         @test d2[2,1,1] ≈ exp(-im*2*pi*5e9*1e-12)
 
         # passivity validation
-        @test_throws ArgumentError ScatteringBlock([0.0 2.0; 2.0 0.0])
-        active = ScatteringBlock([0.0 2.0; 2.0 0.0];
+        @test_throws ArgumentError ScatteringParameters([0.0 2.0; 2.0 0.0])
+        active = ScatteringParameters([0.0 2.0; 2.0 0.0];
             noise = NoiseCovariance([1.0 0.0; 0.0 1.0]))
         @test active.nports == 2
         # noise covariance must be Hermitian
-        @test_throws ArgumentError ScatteringBlock([0.0 2.0; 2.0 0.0];
+        @test_throws ArgumentError ScatteringParameters([0.0 2.0; 2.0 0.0];
             noise = NoiseCovariance([1.0 1.0; 0.0 1.0]))
         # thermal equilibrium noise model carries the temperature
-        blkT = ScatteringBlock(S; noise = ThermalEquilibrium(20e-3))
+        blkT = ScatteringParameters(S; noise = ThermalEquilibrium(20e-3))
         @test blkT.noise.temperature == 20e-3
 
         # reference impedance handling
-        @test ScatteringBlock(S; zref = 30.0).zref == [30.0, 30.0]
-        @test ScatteringBlock(S; zref = [50.0, 75.0]).zref == [50.0, 75.0]
-        @test_throws DimensionMismatch ScatteringBlock(S; zref = [50.0])
-        @test_throws ArgumentError ScatteringBlock(S; zref = -50.0)
+        @test ScatteringParameters(S; zref = 30.0).zref == [30.0, 30.0]
+        @test ScatteringParameters(S; zref = [50.0, 75.0]).zref == [50.0, 75.0]
+        @test_throws DimensionMismatch ScatteringParameters(S; zref = [50.0])
+        @test_throws ArgumentError ScatteringParameters(S; zref = -50.0)
     end
 
     @testset "transmission line" begin
         Z0, len = 50.0, 1e-3
         tl = TransmissionLine(Z0, len)
-        @test tl isa ScatteringBlock
+        @test tl isa ScatteringParameters
         @test tl.zref == [Z0, Z0]
         @test tl.negative_frequency isa Native
         w = 2*pi*5e9
@@ -505,13 +633,13 @@ using Test
             write(io, "1.0 0.0 0.0 0.5 0.0 0.5 0.0 0.0 0.0\n")
             write(io, "2.0 0.0 0.0 0.5 0.0 0.5 0.0 0.0 0.0\n")
         end
-        blk = ScatteringBlock(path)
+        blk = ScatteringParameters(path)
         @test blk.nports == 2
         @test blk.zref == [50.0, 50.0]
         d = zeros(Complex{Float64}, 2, 2, 1)
         JosephsonCircuits.evaluatescattering!(d, blk, [2*pi*1.5e9])
         @test d[2,1,1] ≈ 0.5
         # a conflicting explicit zref is an error
-        @test_throws ArgumentError ScatteringBlock(path; zref = 30.0)
+        @test_throws ArgumentError ScatteringParameters(path; zref = 30.0)
     end
 end

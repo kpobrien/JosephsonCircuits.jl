@@ -1,3 +1,4 @@
+using Symbolics
 using JosephsonCircuits
 using Test
 
@@ -33,7 +34,10 @@ using Test
             filename = joinpath(path,"JosephsonCircuits-"* string(JosephsonCircuits.UUIDs.uuid1()) * ".net")
 
             # write the netlist
-            @variables R1
+            # the netlist importer parses component values into the
+            # package's own expression type, so the round trip is checked
+            # against that rather than against a Symbolics variable
+            R1, = JosephsonCircuits.@params R1
             circuit1 = [("P","1","0",1),("R","1","0",R1)]
             JosephsonCircuits.export_netlist(filename, circuit1)
 
@@ -49,7 +53,7 @@ using Test
 
     @testset "import_netlist! errors" begin
         io = IOBuffer("P 1 1")
-        circuit2 = Tuple{String,String,String,Num}[];
+        circuit2 = Tuple{String,String,String,Any}[];
         
         @test_throws(
             ErrorException("each line should have component name, node1, node2, component value"),

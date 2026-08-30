@@ -1145,9 +1145,9 @@ Zfun(w,R) = ifelse(w>10,R,100*R);
 out=JosephsonCircuits.componentvaluestonumber([R,Zfun(w,R)],Dict(R=>50));
 println(out)
 # evaluate with w = 2
-println(JosephsonCircuits.Symbolics.value.(JosephsonCircuits.Symbolics.substitute.(out,(Dict(w=>2),);fold=Val(true))))
+println(Symbolics.value.(Symbolics.substitute.(out,(Dict(w=>2),);fold=Val(true))))
 # evaluate with w = 11
-println(JosephsonCircuits.Symbolics.value.(JosephsonCircuits.Symbolics.substitute.(out,(Dict(w=>11),);fold=Val(true))))
+println(Symbolics.value.(Symbolics.substitute.(out,(Dict(w=>11),);fold=Val(true))))
 
 # output
 Any[50, Zfun(w, 50)]
@@ -1205,13 +1205,47 @@ julia> @variables Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e
 4.0e-12
 ```
 """
-function valuetonumber(value::Symbolics.Num,circuitdefs)
-    # for Num types unwrap helps speed up
-    # their evaluation and evalutes to a number. 
-    # update for Symbolics v7: need a call to Symbolics.value to get the value
-    # and fold=Val(true) to evaluate functions of symbolic variables
-    return Symbolics.value(Symbolics.substitute(value,circuitdefs;fold=Val(true)))
+# the circuit definitions arrive either as a dictionary or, from the per
+# mode frequency substitution in `sparseaddconjsubst!`, as a single
+# `symfreqvar => w` pair. `Symbolics.substitute` accepts both, so this must
+# too.
+_definitionpairs(d::AbstractDict) = pairs(d)
+_definitionpairs(d::Pair) = (d,)
+_definitionpairs(d) = d
+
+# a frequency dependent value lowers to a provider leaf and survives to
+# be resolved per mode by freqsubst
+valuetonumber(value::FrequencyDependent, circuitdefs) =
+    CircuitValues.Provider(value.f)
+
+function valuetonumber(value::CircuitValue, circuitdefs)
+    d = Dict{Symbol,ComplexF64}()
+    for (k,v) in _definitionpairs(circuitdefs)
+        key = k isa CircuitValues.Parameter ? k.name : Symbol(k)
+        d[key] = ComplexF64(v)
+    end
+    # substitute what is defined and leave the rest free. A component value
+    # which still depends on the symbolic frequency variable comes back as a
+    # CircuitValue and is resolved per mode later by `freqsubst`.
+    out = CircuitValues.substituteparams(value, d)
+    out isa CircuitValues.Constant || return out
+    return iszero(imag(out.val)) ? real(out.val) : out.val
 end
+
+"""
+    parsecomponentvalue(s::AbstractString)
+
+Parse a SPICE netlist component value into a number or a `CircuitValue`.
+Replaces `Symbolics.parse_expr_to_symbolic`; unlike it, this does not
+evaluate into a module, so a netlist cannot introduce arbitrary code.
+"""
+function parsecomponentvalue(s::AbstractString)
+    v = tryparse(Float64, s)
+    isnothing(v) || return v
+    return CircuitValues.fromexpr(Meta.parse(s))
+end
+
+# the `Num` methods live in the Symbolics extension
 
 # """
 #     valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
@@ -1248,9 +1282,7 @@ julia> @syms Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,L
 4.0e-12
 ```
 """
-function valuetonumber(value::Symbolics.SymbolicT, circuitdefs)
-    return Symbolics.value(Symbolics.substitute(value, circuitdefs;fold=Val(true)))
-end
+# the `SymbolicT` method lives in the Symbolics extension
 
 """
     valuetonumber(value, circuitdefs)

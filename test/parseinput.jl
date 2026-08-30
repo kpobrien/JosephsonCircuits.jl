@@ -1,3 +1,4 @@
+using Symbolics
 using JosephsonCircuits
 using Test
 
@@ -328,15 +329,15 @@ using Test
     # fixed and then we can revise valuetonumber
 
         @variables Lj1
-        @test(JosephsonCircuits.Symbolics.evaluate(Lj1,Dict(Lj1=>3.0e-12))==3.0e-12)
+        @test(Symbolics.evaluate(Lj1,Dict(Lj1=>3.0e-12))==3.0e-12)
 
         @variables Lj1::Complex
-        @test(JosephsonCircuits.Symbolics.evaluate(Lj1,Dict(Lj1=>3.0e-12))==3.0e-12,broken=true)
+        @test(Symbolics.evaluate(Lj1,Dict(Lj1=>3.0e-12))==3.0e-12,broken=true)
 
         @variables Lj1 Lj2
-        @test(JosephsonCircuits.Symbolics.evaluate(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12)) == 4.0e-12)
+        @test(Symbolics.evaluate(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12)) == 4.0e-12)
 
         @variables Lj1::Complex Lj2::Complex
-        @test(JosephsonCircuits.Symbolics.evaluate(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12)) == 4.0e-12,broken=true)
+        @test(Symbolics.evaluate(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12)) == 4.0e-12,broken=true)
     end
 end

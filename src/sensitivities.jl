@@ -157,7 +157,9 @@ are unaffected.
 """
 function calcresidualsensitivity(op::HBOperatingPoint,
     psc::ParsedSortedCircuit, cg::CircuitGraph, nm::CircuitMatrices,
-    sensitivityindices)
+    sensitivityindices,
+    alphas::AbstractVector = ones(Complex{Float64},
+        length(sensitivityindices)))
 
     if isnothing(op.jacobian)
         throw(ArgumentError("The operating point does not contain a Jacobian."))
@@ -173,8 +175,12 @@ function calcresidualsensitivity(op::HBOperatingPoint,
 
     # the component's own matrix, nondimensionalized, negative frequency
     # conjugated and padded exactly as hbnlsolve does with the full matrices
-    function scaledpadded(M)
+    function scaledpadded(M, alpha = one(Complex{Float64}))
         Ms = SparseMatrixCSC{Complex{Float64},Int}(copy(M))
+        # the design parameter rescale is a direction in component value
+        # space, so it multiplies the stored value before the negative
+        # frequency conjugation, exactly as in `reparameterize`
+        isone(alpha) || rmul!(Ms, alpha)
         conjnegfreq!(Ms, wmodes)
         rmul!(Ms, op.Lmean)
         return mnapadto(Ms, Ntot)
@@ -228,7 +234,7 @@ function calcresidualsensitivity(op::HBOperatingPoint,
         if kind == :C || kind == :G || kind == :invL
             # dF_comp = c * Ms * Diagonal(w.^power) * x, accumulated per
             # stored entry of the component's own (tiny) matrix.
-            Ms = scaledpadded(info)
+            Ms = scaledpadded(info, alphas[comp])
             c, power = kind == :C ? (-1.0 + 0im, 2) :
                 kind == :G ? (0.0 - 1im, 1) : (-1.0 + 0im, 0)
             rows = rowvals(Ms)
@@ -253,7 +259,7 @@ function calcresidualsensitivity(op::HBOperatingPoint,
             for (node, _) in branchsupport[branch]
                 for m in 1:Nmodes
                     r = (node-1)*Nmodes + m
-                    pushentry!(r, comp, -cwork[r])
+                    pushentry!(r, comp, -cwork[r]*alphas[comp])
                 end
             end
         end
@@ -345,6 +351,9 @@ struct ReverseSensitivity
     nzcol::Vector{Int}
     realindexmap::Vector{Int}
     branchnodes
+    # the output slot of each residual derivative column: the design
+    # parameter it belongs to, or its own index in the relative form
+    slots::Vector{Int}
 end
 
 """
@@ -444,7 +453,8 @@ Precompute the reverse mode contraction data: the branch flux map
 the row and the column of each nonzero of the linearized system matrix, and
 the offset of each entry of the augmented state in its real representation.
 """
-function ReverseSensitivity(op::HBOperatingPoint, lsys, dFr)
+function ReverseSensitivity(op::HBOperatingPoint, lsys, dFr,
+        slots::Vector{Int} = collect(1:size(dFr, 2)))
     # the operating point, and therefore the branch flux map and the
     # incidence lists, live on the pump mode grid, not the signal mode grid
     Nmodes = op.Nmodes
@@ -481,7 +491,8 @@ function ReverseSensitivity(op::HBOperatingPoint, lsys, dFr)
     return ReverseSensitivity(op, SparseMatrixCSC{Float64,Int}(dFr),
         calcbranchtimedomainmap(sys, Nmodes, NLj),
         plan_applyffttranspose(sys.phimatrix, sys.phitd), nzrow, nzcol,
-        realindexmap, branchnodesandsigns(sys.Rbnm, Nmodes, Nbranches))
+        realindexmap, branchnodesandsigns(sys.Rbnm, Nmodes, Nbranches),
+        slots)
 end
 
 """
@@ -631,7 +642,7 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
                 for r in nzrange(rev.dFr, k)
                     acc += Psi[dFrows[r], col]*dFvals[r]
                 end
-                Ssensitivity[a,b,k] += gamma[a]*beta[b]*acc
+                Ssensitivity[a,b,rev.slots[k]] += gamma[a]*beta[b]*acc
             end
         end
     end
@@ -692,6 +703,11 @@ quantities which enter inversely.
 and `freqsubstindices` locates any symbolic entries. `portindex` is the
 index of the port whose impedance this component is, or zero, which selects
 the additional wave normalization term of [`calcSsensitivity!`](@ref).
+
+`parameter` is the design parameter this stamp contributes to, or zero for
+the legacy relative form where every component is its own output slot.
+`portscale` is `(dZport/dtheta)/Zport` for a port impedance stamp, one for
+the relative form.
 """
 struct SensitivityStamp
     kind::Symbol
@@ -699,6 +715,310 @@ struct SensitivityStamp
     cols::Vector{Int}
     vals::Vector{Complex{Float64}}
     portindex::Int
+    parameter::Int
+    portscale::Complex{Float64}
+end
+
+# the relative form is the special case dc/dtheta = c, one output slot per
+# component
+SensitivityStamp(kind, rows, cols, vals, portindex) =
+    SensitivityStamp(kind, rows, cols, vals, portindex, 0,
+        one(Complex{Float64}))
+
+"""
+    reparameterize(stamp::SensitivityStamp, alpha, parameter)
+
+The same stamp expressed as the derivative with respect to a real design
+parameter rather than a relative perturbation of the component value.
+
+A component's contribution to the system matrix is linear in its value `c`,
+and the negative frequency conjugation is applied to the *stored* value at
+contraction time ([`sensitivitystampvalue`](@ref)), so
+
+    d/dtheta modevalue(c, w) = modevalue(dc/dtheta, w),
+
+and the stamp for `theta` is the stamp for `c` rescaled by
+`alpha = (dc/dtheta)/c`. Nothing else changes: the sparsity, the kind and
+the frequency scaling are all properties of the component, not of the
+parameterization.
+
+This is what makes the real parameter form correct for complex component
+values, where the relative form is not. A relative perturbation moves `c`
+along itself, so `dS/dr` is a single complex number which cannot resolve
+the two real directions of a complex `c`; carrying `dc/dtheta` as the
+direction resolves them, because a real `theta` which rotates `c` in the
+complex plane produces a `dc/dtheta` which is not parallel to `c`.
+"""
+function reparameterize(stamp::SensitivityStamp, alpha::Number,
+        parameter::Integer)
+    return SensitivityStamp(stamp.kind, stamp.rows, stamp.cols,
+        stamp.vals .* alpha, stamp.portindex, parameter,
+        Complex{Float64}(alpha))
+end
+
+# =====================================================================
+# Scattering block design parameter sensitivities.
+#
+# A block's contribution to the system matrix is the hybrid stamp of
+# B = R^(-1/2)(I - S) and C = R^(1/2)(I + S), affine in S, and the
+# assembly is linear in B and C, so the derivative of the stamped values
+# with respect to a parameter is the assembly run with S replaced by
+# dS/dtheta minus the assembly with S replaced by zero: the subtraction
+# removes the identity parts of B and C and cancels the zero frequency
+# rows, which do not depend on S. The stamp values depend on the signal
+# frequency through S itself, so unlike the lumped stamps they are
+# rebuilt at every frequency -- by each worker into its own buffers,
+# because the workers of hblinsolve run concurrently.
+# =====================================================================
+
+"""
+    zeroscatteringblock(b::ScatteringParameters)
+
+A block with the same ports, reference impedances and conventions whose
+scattering matrix is identically zero. Constructed directly rather than
+through the public constructor: it needs no passivity check.
+"""
+zeroscatteringblock(b) = ScatteringParameters(
+    ConstantMatrixProvider(zeros(Complex{Float64}, b.nports, b.nports)),
+    b.nports, b.zref, b.grounded, b.noise, b.negative_frequency)
+
+"""
+    derivativestampsystems(ssys, targetdef, dblock)
+
+The pair of provider-swapped stamp systems whose value difference is the
+derivative of the block contribution with respect to a parameter of the
+block `targetdef`: the first evaluates `dblock` (the block whose S is
+dS/dtheta) in place of the target and zero for every other block, the
+second zero for all. Everything else -- the sparsity, the contribution
+lists, the auxiliary layout -- is shared with `ssys` by construction.
+"""
+function derivativestampsystems(ssys, targetdef, dblock)
+    swap(pick) = ScatteringStampSystem(
+        [StampedScatteringBlock(pick(sb.block), sb.signalnodes, sb.refnodes,
+             sb.auxbase, sb.name) for sb in ssys.blocks],
+        ssys.kcl, ssys.pattern, ssys.patternindex, ssys.Aindex,
+        ssys.blockindex, ssys.pindex, ssys.qindex, ssys.coeff, ssys.sign,
+        ssys.modeindex, ssys.Nmodes, ssys.Nauxports, ssys.scale)
+    dsys = swap(b -> b === targetdef ? dblock : zeroscatteringblock(b))
+    zsys = swap(zeroscatteringblock)
+    return dsys, zsys
+end
+
+"""
+    blockstampvals!(vals, dsys, zsys, wmodes, workd, workz, dbuf, zbuf,
+        patternindex)
+
+Overwrite `vals` (in the nonzero order of the stamp pattern) with the
+derivative of the block contribution at the signed mode frequencies
+`wmodes`: the values of the dS system minus the values of the zero system,
+scattered through `patternindex`.
+"""
+function blockstampvals!(vals, dsys, zsys, wmodes, workd, workz, dbuf,
+        zbuf, patternindex)
+    scatteringvalues!(dbuf, dsys, wmodes, workd)
+    scatteringvalues!(zbuf, zsys, wmodes, workz)
+    fill!(vals, 0)
+    @inbounds for c in eachindex(patternindex)
+        vals[patternindex[c]] += dbuf[c] - zbuf[c]
+    end
+    return vals
+end
+
+"""
+    WorkerBlockSensitivity
+
+One worker's private state for the scattering block sensitivity stamps:
+its own copy of the stamp vector (the lumped stamps are shared read only,
+the `:S` stamps' values are private because they are rebuilt at every
+signal frequency), the provider-swapped systems, and the evaluation
+scratch.
+"""
+struct WorkerBlockSensitivity
+    stamps::Vector{SensitivityStamp}
+    # (index into stamps, dsys, zsys), one per block parameter pair
+    entries::Vector{Tuple{Int,Any,Any}}
+    patternindex::Vector{Int}
+    workd::ScatteringWorkspace
+    workz::ScatteringWorkspace
+    dbuf::Vector{Complex{Float64}}
+    zbuf::Vector{Complex{Float64}}
+end
+
+function WorkerBlockSensitivity(stamps::Vector{SensitivityStamp},
+        blockentries, patternindex)
+    private = SensitivityStamp[st.kind == :S ?
+        SensitivityStamp(st.kind, st.rows, st.cols, copy(st.vals),
+            st.portindex, st.parameter, st.portscale) : st
+        for st in stamps]
+    m = length(patternindex)
+    return WorkerBlockSensitivity(private, collect(blockentries),
+        collect(Int, patternindex), ScatteringWorkspace(),
+        ScatteringWorkspace(), Vector{Complex{Float64}}(undef, m),
+        Vector{Complex{Float64}}(undef, m))
+end
+
+"""
+    refreshblockstamps!(wbs::WorkerBlockSensitivity, wmodes)
+
+Rebuild this worker's `:S` stamp values at the signed mode frequencies
+`wmodes`.
+"""
+function refreshblockstamps!(wbs::WorkerBlockSensitivity, wmodes)
+    for (idx, dsys, zsys) in wbs.entries
+        blockstampvals!(wbs.stamps[idx].vals, dsys, zsys, wmodes,
+            wbs.workd, wbs.workz, wbs.dbuf, wbs.zbuf, wbs.patternindex)
+    end
+    return wbs
+end
+
+"""
+    blocksensitivitystamp(ssys, parameter)
+
+The [`SensitivityStamp`](@ref) skeleton of a scattering block parameter:
+the triplet positions of the frequency dependent block pattern with zero
+values, which each worker fills at each signal frequency
+([`refreshblockstamps!`](@ref)). Kind `:S` carries no further frequency
+scaling, exactly as `:Lj` does.
+"""
+function blocksensitivitystamp(ssys, parameter::Integer)
+    rows, cols, _ = findnz(ssys.pattern)
+    return SensitivityStamp(:S, rows, cols,
+        zeros(Complex{Float64}, length(rows)), 0, Int(parameter),
+        one(Complex{Float64}))
+end
+
+"""
+    calcblockresidualsensitivity(op::HBOperatingPoint, psc, blockpairs)
+
+The derivative of the harmonic balance residual with respect to each
+scattering block design parameter of `blockpairs = [(firstportname,
+parameterindex, derivativeblock)]`, at the operating point, in the real
+representation of the augmented residual (one column per pair, matching
+the columns [`calcresidualsensitivity`](@ref) produces for lumped pairs).
+
+A block enters the nonlinear system as a constant matrix folded into the
+inverse inductance augmentation, so it moves the pump operating point and
+its residual derivative is `+dA_block/dtheta` applied to the converged
+state: the linear term enters the residual with a plus sign, and unlike
+the lumped `:invL` case -- whose minus encodes `d(1/L)/d(ln L) = -1/L`,
+the derivative of the component law, not a residual sign -- the block
+derivative is computed directly. The derivative
+matrix comes from the same affine subtraction as the linearized stamps,
+on a stamp system rebuilt for the pump mode grid with the geometry the
+operating point already determines: the augmented dimension is the state
+length and the block auxiliary variables occupy its tail.
+"""
+function calcblockresidualsensitivity(op::HBOperatingPoint,
+        psc::ParsedSortedCircuit, blockpairs::AbstractVector)
+    Ntot = length(op.x)
+    Nmodes = op.Nmodes
+    Nsc = countscatteringports(psc)*Nmodes
+    pumpssys = scatteringstampsystem(psc, Nmodes;
+        auxoffset = Ntot - Nsc, Ntotal = Ntot, scale = real(op.Lmean))
+    isnothing(pumpssys) && throw(ArgumentError(
+        "the circuit has no scattering blocks to take a block sensitivity of"))
+
+    # the offset of complex entry r in the real representation, matching
+    # complex_to_real! with the default scale (see calcresidualsensitivity)
+    isrealmode = op.modelayout.isreal
+    nmd = length(isrealmode)
+    realindexmap = zeros(Int, Ntot)
+    k = 1
+    for j in eachindex(realindexmap)
+        realindexmap[j] = k
+        k += isrealmode[(j-1) % nmd + 1] ? 1 : 2
+    end
+    Nreal = realdim(Ntot, isrealmode)
+
+    dFr = zeros(Float64, Nreal, length(blockpairs))
+    work = ScatteringWorkspace()
+    workz = ScatteringWorkspace()
+    m = length(pumpssys.patternindex)
+    dbuf = Vector{Complex{Float64}}(undef, m)
+    zbuf = Vector{Complex{Float64}}(undef, m)
+    dA = copy(pumpssys.pattern)
+    for (col, bp) in enumerate(blockpairs)
+        idx = psc.componentnamedict[String(bp[1])]
+        targetdef = psc.componentvalues[idx].block
+        dsys, zsys = derivativestampsystems(pumpssys, targetdef, bp[3])
+        blockstampvals!(nonzeros(dA), dsys, zsys, op.wmodes, work, workz,
+            dbuf, zbuf, pumpssys.patternindex)
+        dAx = dA*op.x
+        for r in eachindex(dAx)
+            iszero(dAx[r]) && continue
+            v = dAx[r]
+            kr = realindexmap[r]
+            dFr[kr, col] += real(v)
+            if !isrealmode[(r-1) % nmd + 1]
+                dFr[kr+1, col] += imag(v)
+            end
+        end
+    end
+    return SparseMatrixCSC{Float64,Int}(sparse(dFr))
+end
+
+"""
+    parametergrouping(pairs, componentindices, componenttypes, portordinal)
+
+The grouping of the sensitivity pairs `(componentname, parameterindex,
+alpha)` into merged stamps: pairs which share a stamp kind, a design
+parameter and a port ordinal merge into one contraction.
+`componentindices[i]` is the parsed circuit index of pair `i`. Returns
+`(grouping, slots)`, the pair indices of each group and the design
+parameter each group accumulates into.
+
+Computed from the parsed circuit alone, before any stamp exists, because
+the residual derivative columns and the operating point solves must be
+merged with the same grouping as the stamps, and both are needed earlier
+than the stamps are built.
+"""
+function parametergrouping(pairs, componentindices, componenttypes,
+        portordinal)
+    kindof(t) = t == :C ? :C : t == :R ? :G : t == :L ? :invL :
+        t == :Lj ? :Lj : t
+    groups = Dict{Tuple{Symbol,Int,Int},Int}()
+    grouping = Vector{Int}[]
+    slots = Int[]
+    for i in eachindex(pairs)
+        ci = componentindices[i]
+        pj = pairs[i][2]
+        key = (kindof(componenttypes[ci]), pj, get(portordinal, ci, 0))
+        g = get!(groups, key) do
+            push!(grouping, Int[])
+            push!(slots, pj)
+            length(grouping)
+        end
+        push!(grouping[g], i)
+    end
+    return grouping, slots
+end
+
+"""
+    mergestamps(stamps, grouping)
+
+Concatenate the stamps of each group of `grouping` into one. A design
+parameter typically touches many components -- a single junction
+inductance across a two thousand cell line -- and the contraction cost is
+per stamp, so merging turns one contraction per component into one per
+parameter (and kind). The grouping comes from
+[`parametergrouping`](@ref), so it is the same one applied to the residual
+derivative columns.
+"""
+function mergestamps(stamps::AbstractVector{SensitivityStamp}, grouping)
+    out = SensitivityStamp[]
+    for idx in grouping
+        if length(idx) == 1
+            push!(out, stamps[idx[1]])
+        else
+            push!(out, SensitivityStamp(stamps[idx[1]].kind,
+                vcat((stamps[i].rows for i in idx)...),
+                vcat((stamps[i].cols for i in idx)...),
+                vcat((stamps[i].vals for i in idx)...),
+                stamps[idx[1]].portindex, stamps[idx[1]].parameter,
+                stamps[idx[1]].portscale))
+        end
+    end
+    return out
 end
 """
     calcsensitivitystamps(sensitivityindices, psc, cg, nm, lsys, phimatrix,
@@ -786,7 +1106,7 @@ frequency scaling and negative frequency mode conjugation as
 @inline function sensitivitystampvalue(stamp::SensitivityStamp, t::Integer,
     wmodes, Nmodes)
 
-    stamp.kind == :Lj && return stamp.vals[t]
+    (stamp.kind == :Lj || stamp.kind == :S) && return stamp.vals[t]
     m = (stamp.cols[t] - 1) % Nmodes + 1
     w = wmodes[m]
     v = modevalue(stamp.vals[t], w)
@@ -890,7 +1210,12 @@ function calcSsensitivity!(Ssensitivity, stamps, dAop, dA, dAphin, phin,
     phinadjoint, S, gamma, beta, contraction, wmodes, Nmodes, symfreqvar)
 
     NPM = size(phin, 2)
+    fill!(Ssensitivity, 0)
     for (k, stamp) in enumerate(stamps)
+        # a stamp declares which output slot it accumulates into: the design
+        # parameter it belongs to, or its own index in the legacy relative
+        # form where every component is its own parameter
+        slot = stamp.parameter == 0 ? k : stamp.parameter
         # the component's own contribution, driven by the entries of its
         # stamp rather than by the sparsity structure of the system matrix,
         # of which the stamp of a single component is a tiny part.
@@ -920,7 +1245,7 @@ function calcSsensitivity!(Ssensitivity, stamps, dAop, dA, dAphin, phin,
 
         for b in 1:NPM
             for a in 1:NPM
-                Ssensitivity[a,b,k] = -gamma[a]*beta[b]*contraction[a,b]
+                Ssensitivity[a,b,slot] += -gamma[a]*beta[b]*contraction[a,b]
             end
         end
 
@@ -937,7 +1262,7 @@ function calcSsensitivity!(Ssensitivity, stamps, dAop, dA, dAphin, phin,
                     if (b-1) ÷ Nmodes + 1 == p
                         correction += sI/2
                     end
-                    Ssensitivity[a,b,k] -= correction
+                    Ssensitivity[a,b,slot] -= correction*stamp.portscale
                 end
             end
         end
