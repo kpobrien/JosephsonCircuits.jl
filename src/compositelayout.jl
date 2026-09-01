@@ -268,13 +268,31 @@ struct DCPinning
     cols::Vector{Int}      # the coordinate each replaced row fixes at zero
 end
 
-# The workspaces a canonical evaluation needs: one internal state to scatter
-# into, one internal residual (or product) to gather out of, and the
-# transport rows when the direct current block is explicit.
-#
-# `nnodaldc` splits the `phidc` block. Its first entries are the zero
-# frequency flux of each node, which the transport coupling drives; any
-# after them belong to auxiliary branch currents, which it does not.
+"""
+    CanonicalWork
+
+The workspaces a canonical evaluation needs: one internal state to scatter
+into, one internal residual (or product) to gather out of, and the transport
+rows when the direct current block is explicit.
+
+# Fields
+- `layout`: the [`CompositeLayout`](@ref) the canonical state is written in.
+- `xint`, `Fint`: the internal state and residual the harmonic system reads
+    and writes, which the scatter and the gather move between.
+- `transport`: the transport rows, or `nothing` when there is no explicit
+    block.
+- `blockrows`: the scattering blocks' own zero frequency rows, or `nothing`.
+- `dwork`: the resistor current the coupling drives into the nodes.
+- `nnodaldc`: where the `phidc` block splits. Its first entries are the zero
+    frequency flux of each node, which the transport coupling drives; any
+    after them belong to auxiliary branch currents, which it does not.
+- `pinning`: the reference rows, or `nothing`. See [`DCPinning`](@ref).
+- `dcindex`, `dclocal`: the canonical positions of the direct current
+    unknowns, and the same positions local to the window.
+- `blocklocal`: canonical position to window position, for the blocks.
+- `Fwindow`, `uwindow`: host buffers for the window.
+- `update`: the block in its matrix form, where the state lives.
+"""
 struct CanonicalWork{T,V<:AbstractVector{T},L<:CompositeLayout,TR,BR}
     layout::L
     xint::V

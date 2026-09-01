@@ -7,6 +7,9 @@ SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
+[sources]
+JosephsonCircuits = {path = "/home/kevin/src/JosephsonCircuits.jl/"}
+
 [compat]
 Krylov = "0.9, 0.10"
-SciMLBase = "2"
+SciMLBase = "3"

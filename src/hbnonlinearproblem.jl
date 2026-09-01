@@ -117,6 +117,35 @@ function DCAugmentation(work, jint)
         zeros(Float64, N))
 end
 
+"""
+    HBNonlinearProblem
+
+The harmonic balance system as a nonlinear problem: the residual, its exact
+derivatives and the pieces a preconditioner reads, with the unknowns a plain
+real vector so that a solver written elsewhere can drive it.
+
+Build one with [`hbnonlinearproblem`](@ref). `length(p)` is the number of
+unknowns; [`hbresidual!`](@ref), [`hbjvp!`](@ref), [`hbjacobian!`](@ref) and
+[`hbvjp!`](@ref) evaluate at any point, and [`setdrive!`](@ref) scales the
+drive for continuation.
+
+When the circuit injects direct current the unknowns are the canonical state
+rather than the harmonic one, and `augmentation` carries the block which
+makes the difference. [`isaugmented`](@ref) says which, and every entry
+point above routes through the block when it is there, so a caller does not
+have to know. See [`DCAugmentation`](@ref).
+
+# Fields
+- `sys`: the harmonic balance system the residual is evaluated on.
+- `modelayout`: the layout relating the real unknowns to the complex modes.
+- `u0`: the point the problem was built at.
+- `jacobian`: the assembled Jacobian, or `nothing` when none was asked for.
+- `parts`: the pieces a preconditioner needs.
+- `bnm0`: the drive as built, which `setdrive!` scales.
+- `tplan`: the transposed gather maps the vector-Jacobian product walks.
+- `Pwork`, `Qwork`, `betawork`, `dirtd3`: transform workspaces.
+- `augmentation`: the direct current block, or `nothing`.
+"""
 struct HBNonlinearProblem{S,ML,J,X,B,TP,FD,TD,A}
     sys::S
     modelayout::ML

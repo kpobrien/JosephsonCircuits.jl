@@ -1225,8 +1225,8 @@ zero frequency source. Nothing about the periodic solve changes, and a
 circuit with no direct current drive pays nothing.
 
 `hbnlsolve` returns the result as `dcnodevoltage`, in volts, indexed like
-the node list with ground first and identically zero. It is `nothing` when
-no direct current is drawn. It is not the same thing as the zero frequency
+`nodeflux`: ground is excluded, so the first entry is the first real node.
+It is `nothing` when no direct current is drawn. It is not the same thing as the zero frequency
 entry of `nodeflux`, which remains the static periodic flux that sets
 inductor currents and junction phases.
 
@@ -1246,7 +1246,7 @@ sol = hbnlsolve((2*pi*5e9,), (1,), [(mode = (0,), port = 1, current = Idc)],
     circuit; dc = true, odd = true, keyedarrays = false)
 
 # the port environment in parallel with the load, so V = I*(50 || 150)
-(sol.dcnodevoltage[2], Idc*inv(1/50.0 + 1/150.0))
+(sol.dcnodevoltage[1], Idc*inv(1/50.0 + 1/150.0))
 ```
 
 An inductor or a junction across a resistor shorts it at DC, so the resistor
