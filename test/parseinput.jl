@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using Test
@@ -700,19 +699,18 @@ using Test
     end
 
     @testset "symbolic values through the typed path" begin
-        @variables Lj Cc Cj
-        circuit = Tuple{String,String,String,Num}[
+        circuit = Tuple{String,String,String,Any}[
             ("P1","1","0",1),
             ("R1","1","0",50.0),
-            ("C1","1","2",Cc),
-            ("Lj1","2","0",Lj),
-            ("C2","2","0",Cj),
+            ("C1","1","2",:Cc),
+            ("Lj1","2","0",:Lj),
+            ("C2","2","0",:Cj),
         ]
-        circuitdefs = Dict(Lj => 1000e-12, Cc => 100e-15, Cj => 1000e-15)
+        circuitdefs = Dict(:Lj => 1000e-12, :Cc => 100e-15, :Cj => 1000e-15)
         native = Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :c1 => Capacitor(Cc),
-             :jj => NonlinearInductor(Lj, sin, cos),
-             :c2 => Capacitor(Cj)],
+            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :c1 => Capacitor(:Cc),
+             :jj => NonlinearInductor(:Lj, sin, cos),
+             :c2 => Capacitor(:Cj)],
             [((:p1, 1), (:r1, 1), (:c1, 1)),
              ((:c1, 2), (:jj, 1), (:c2, 1)),
              ((:jj, 2), (:c2, 2), (:r1, 2), (:p1, 2), Ground)],
@@ -781,9 +779,8 @@ using Test
 
         # a negative node name must survive parsing rather than being silently
         # renamed to ground, which is what the corrupted permutation did
-        @variables R Cc Lj Cj
-        circuit = [("P1","0","-1",1),("R1","0","-1",R),("C1","-1","2",Cc),
-            ("Lj1","2","0",Lj),("C2","2","0",Cj)]
+        circuit = [("P1","0","-1",1),("R1","0","-1",:R),("C1","-1","2",:Cc),
+            ("Lj1","2","0",:Lj),("C2","2","0",:Cj)]
         psc = JosephsonCircuits.compile(circuit;sorting=:number)
         @test psc.nodenames == ["0","-1","2"]
         @test length(unique(psc.nodenames)) == length(psc.nodenames)

@@ -537,16 +537,6 @@ end
 # === the solver front end ===
 
 """
-    compilable(circuit)
-
-Whether a circuit can take the compiled path. A netlist of tuples and an
-already parsed circuit cannot, and take the original one.
-"""
-compilable(::Union{Circuit,ElaboratedCircuit}) = true
-compilable(::AbstractVector) = true
-compilable(x) = false
-
-"""
     preparecircuit(circuit, circuitdefs; sorting = :name, Nmodes = 1)
 
 Everything the solvers need from a circuit: the compiled circuit, its graph,

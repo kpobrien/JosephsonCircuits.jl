@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using Test
@@ -31,8 +30,8 @@ using Test
     end
 
     @testset "legacy tuple round trip" begin
-        @variables Ipump Rleft Cc Lj Cj
-        circuit = Tuple{String,String,String,Num}[
+        JosephsonCircuits.@params Ipump Rleft Cc Lj Cj
+        circuit = Tuple{String,String,String,Any}[
             ("P1","1","0",1),
             ("I1","1","0",Ipump),
             ("R1","1","0",Rleft),
@@ -55,9 +54,10 @@ using Test
 
         # the value vector is narrowed from Vector{Any} to the tightest
         # element type the netlist admits. Every entry is a quantity, so
-        # that is the symbolic type here; it used to be `Real`, the join of
+        # that is the parameter type here; it used to be `Real`, the join of
         # a quantity with the port number the port slot carried
-        @test eltype(psc.componentvalues) === Num
+        @test eltype(psc.componentvalues) ===
+            JosephsonCircuits.CircuitValues.Parameter
 
         # node "0" is ground and sorts first, so it is node index 1
         @test psc.nodenames == ["0","1","2"]
@@ -69,8 +69,8 @@ using Test
     end
 
     @testset "legacy round trip with mutual inductors" begin
-        @variables Ipump Rleft L1v L2v C2v
-        circuit = Tuple{String,String,String,Num}[
+        JosephsonCircuits.@params Ipump Rleft L1v L2v C2v
+        circuit = Tuple{String,String,String,Any}[
             ("P1","1","0",1),
             ("I1","1","0",Ipump),
             ("R1","1","0",Rleft),

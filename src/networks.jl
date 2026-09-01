@@ -1153,11 +1153,6 @@ and ground.
 
 # Examples
 ```jldoctest
-julia> @variables C11, C12, C21, C22;C = [C11 C12;C21 C22];JosephsonCircuits.maxwell_to_mutual(C)
-2×2 Matrix{Num}:
- C11 + C12       -C12
-      -C21  C21 + C22
-
 julia> C = [1.0 -0.1;-0.1 2.0];JosephsonCircuits.maxwell_to_mutual(C)
 2×2 Matrix{Float64}:
  0.9  0.1
@@ -1184,11 +1179,6 @@ and ground.
 
 # Examples
 ```jldoctest
-julia> @variables Cg, Cm;C = [Cg Cm;Cm Cg];JosephsonCircuits.mutual_to_maxwell(C)
-2×2 Matrix{Num}:
- Cg + Cm      -Cm
-     -Cm  Cg + Cm
-
 julia> C = [0.9 0.1;0.1 1.9];JosephsonCircuits.mutual_to_maxwell(C)
 2×2 Matrix{Float64}:
   1.0  -0.1
@@ -1207,9 +1197,8 @@ the inductance matrix `L` and the Maxwell capacitance matrix `Cmaxwell`.
 
 # Examples
 ```jldoctest
-@variables C11, C12, L11, L12
-C = [C11 C12;C12 C11]
-L = [L11 L12;L12 L11]
+C = [1.0e-12 1.0e-13;1.0e-13 1.0e-12]
+L = [1.0e-9 1.0e-10;1.0e-10 1.0e-9]
 Zeven, Zodd, neven, nodd = JosephsonCircuits.maxwell_to_even_odd(L,C)
 @show Zeven
 @show Zodd
@@ -1218,10 +1207,10 @@ Zeven, Zodd, neven, nodd = JosephsonCircuits.maxwell_to_even_odd(L,C)
 ;
 
 # output
-Zeven = sqrt((L11 + L12) / (C11 + C12))
-Zodd = sqrt((L11 - L12) / (C11 - C12))
-neven = 2.99792458e8sqrt((C11 + C12)*(L11 + L12))
-nodd = 2.99792458e8sqrt((C11 - C12)*(L11 - L12))
+Zeven = 31.622776601683796
+Zodd = 31.622776601683796
+neven = 0.010428296918824038
+nodd = 0.008532242933583305
 ```
 """
 function maxwell_to_even_odd(L, Cmaxwell)
@@ -1249,9 +1238,8 @@ the inductance matrix `L` and the mutual capacitance matrix `Cmutual`.
 
 # Examples
 ```jldoctest
-@variables Cg, Cm, Ls, Lm
-C = [Cg Cm; Cm Cg]
-L = [Ls Lm; Lm Ls]
+C = [1.0e-12 1.0e-13; 1.0e-13 1.0e-12]
+L = [1.0e-9 1.0e-10; 1.0e-10 1.0e-9]
 Zeven, Zodd, neven, nodd = JosephsonCircuits.mutual_to_even_odd(L,C)
 @show Zeven
 @show Zodd
@@ -1260,10 +1248,10 @@ Zeven, Zodd, neven, nodd = JosephsonCircuits.mutual_to_even_odd(L,C)
 ;
 
 # output
-Zeven = sqrt((Lm + Ls) / Cg)
-Zodd = sqrt((-Lm + Ls) / (Cg + 2Cm))
-neven = 2.99792458e8sqrt(Cg*(Lm + Ls))
-nodd = 2.99792458e8sqrt((Cg + 2Cm)*(-Lm + Ls))
+Zeven = 33.166247903554
+Zodd = 27.386127875258307
+neven = 0.0099429909816438
+nodd = 0.009852185508991206
 ```
 """
 function mutual_to_even_odd(L, Cmutual)
@@ -1417,10 +1405,10 @@ in Ohms, and the odd mode characteristic impedance `Z0o` in Ohms.
 ```
 # Examples
 ```jldoctest
-julia> @variables θe, θo, Ze, Zo;JosephsonCircuits.Z_canonical_coupled_line_circuits(3,Ze,Zo,θe,θo)
-2×2 Matrix{Complex{Num}}:
- -0.5(Ze*cot(θe) + Zo*cot(θo))*im  -0.5(Ze*csc(θe) - Zo*csc(θo))*im
- -0.5(Ze*csc(θe) - Zo*csc(θo))*im  -0.5(Ze*cot(θe) + Zo*cot(θo))*im
+julia> JosephsonCircuits.Z_canonical_coupled_line_circuits(3,50.0,30.0,pi/4,pi/3)
+2×2 Matrix{ComplexF64}:
+ 0.0-33.6603im  0.0-18.0348im
+ 0.0-18.0348im  0.0-33.6603im
 ```
 # References
 E. M. T. Jones, "Coupled-Strip-Transmission-Line Filters and Directional
@@ -1512,17 +1500,17 @@ capacitance matrices and the values are the capacitance matrices.
 
 # Examples
 ```jldoctest
-julia> @variables C11, C12, C13, C21, C22, C23, C31, C32, C33;JosephsonCircuits.maxwell_combine(3, Dict((1,2)=>[C11 C12;C21 C22],(1,3)=>[C11 C13;C31 C33],(2,3)=>[C22 C23;C32 C33]))
-3×3 Matrix{Num}:
- C11  C12  C13
- C21  C22  C23
- C31  C32  C33
+julia> JosephsonCircuits.maxwell_combine(3, Dict((1,2)=>[1.0 2.0;4.0 5.0],(1,3)=>[1.0 3.0;7.0 9.0],(2,3)=>[5.0 6.0;8.0 9.0]))
+3×3 Matrix{Float64}:
+ 1.0  2.0  3.0
+ 4.0  5.0  6.0
+ 7.0  8.0  9.0
 
-julia> @variables C11, C12, C13, C21, C22, C23, C31, C32, C33;JosephsonCircuits.maxwell_combine(3, Dict((1,2,3)=>[C11 C12 C13;C21 C22 C23; C31 C32 C33]))
-3×3 Matrix{Num}:
- C11  C12  C13
- C21  C22  C23
- C31  C32  C33
+julia> JosephsonCircuits.maxwell_combine(3, Dict((1,2,3)=>[1.0 2.0 3.0;4.0 5.0 6.0;7.0 8.0 9.0]))
+3×3 Matrix{Float64}:
+ 1.0  2.0  3.0
+ 4.0  5.0  6.0
+ 7.0  8.0  9.0
 ```
 """
 function maxwell_combine(n::Int, d::Dict{NTuple{N, Int}, T}) where {N,T<:AbstractMatrix}

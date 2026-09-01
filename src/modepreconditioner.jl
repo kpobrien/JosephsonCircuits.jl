@@ -599,16 +599,6 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
     return true
 end
 
-# the number of modes the current coupling set ties together, `-1` for a
-# banded restriction, whose strength is not a mode count (see the generic
-# `preconditionerlevel` docstring in krylov.jl)
-function preconditionerlevel(pc::ModeCouplingPreconditioner)
-    cm = pc.couplingmodes
-    cm isa Vector{Int} && return length(cm)
-    cm isa AbstractMatrix{Bool} && return count(cm)
-    return -1
-end
-
 # the coupling set is the full one: every mode retained, or a mask with no
 # zero. `:band` never reports exact even when wide, because escalation
 # replaces a covering band by the full set before it stops growing.

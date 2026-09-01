@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using Test
 
@@ -109,8 +108,8 @@ using Test
 
     @testset "componentdictionaries" begin
         begin
-            @variables Ipump Rleft L1 K1 L2 C2 C3
-            circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+            JosephsonCircuits.@params Ipump Rleft L1 K1 L2 C2 C3
+            circuit = Vector{Tuple{String,String,String,Any}}(undef,0)
             push!(circuit,("P1","1","0",1))
             push!(circuit,("I1","1","0",Ipump))
             push!(circuit,("R1","1","0",Rleft))
@@ -127,8 +126,8 @@ using Test
         end
 
         begin
-            @variables Ipump Rleft L1 K1 K2 L2 C2 C3
-            circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
+            JosephsonCircuits.@params Ipump Rleft L1 K1 K2 L2 C2 C3
+            circuit = Vector{Tuple{String,String,String,Any}}(undef,0)
             push!(circuit,("P1","1","0",1))
             push!(circuit,("I1","1","0",Ipump))
             push!(circuit,("R1","1","0",Rleft))
@@ -180,7 +179,7 @@ using Test
         end
 
         begin
-            @variables R Cc Lj Cj
+            JosephsonCircuits.@params R Cc Lj Cj
             circuit = [
                 ("P1","1","0",1),
                 ("R1","1","0",R),

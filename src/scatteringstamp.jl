@@ -1,22 +1,4 @@
 
-# === lowering value for scattering blocks ===
-
-"""
-    ScatteringStamp(block, port)
-
-The value carried by one port of a [`ScatteringParameters`](@ref) lowered into a
-[`CompiledCircuit`](@ref): the shared block definition and the port
-index. Each port of an n-port block lowers to one `:S` component whose two
-nodes are the signal and reference terminals of that port, so the two node
-per component layout of the parsed circuit is preserved; all ports of one
-block share the block object by identity, which is how the solver
-reassembles the full multiport coupling.
-"""
-struct ScatteringStamp{B}
-    block::B
-    port::Int
-end
-
 # === hybrid wave to modified nodal analysis coefficients ===
 
 """
@@ -765,14 +747,6 @@ function ScatteringNoiseWorkspace()
     return ScatteringNoiseWorkspace(
         Array{Complex{Float64},3}(undef, 0, 0, 0),
         Complex{Float64}[], Float64[])
-end
-
-# the node flux of a terminal in the adjoint solution, which is zero at
-# ground because ground carries no row
-@inline function terminalflux(phi::AbstractMatrix, node::Integer,
-    m::Integer, Nmodes::Integer, k::Integer)
-    node == 1 && return zero(eltype(phi))
-    return @inbounds phi[(node-2)*Nmodes + m, k]
 end
 
 """

@@ -9,7 +9,6 @@ import KernelAbstractions
 import KernelAbstractions: @kernel, @index, @Const, CPU, Backend
 import Atomix
 import UUIDs
-import RuntimeGeneratedFunctions
 import AxisKeys
 import PrecompileTools
 import OrderedCollections
@@ -19,7 +18,6 @@ import FastInterpolations
 
 using LinearAlgebra
 using SparseArrays
-using Printf
 using Touchstone
 
 # define the zero for symbolic numbers so that we can view the sparse arrays

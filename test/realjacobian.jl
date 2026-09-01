@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays
@@ -9,8 +8,8 @@ using Test
 
     @testset "plan assembled Jr matches the matrix-free Jacobian" begin
 
-        @variables Rleft Cc Lj Cj
-        circuit = Tuple{String,String,String,Num}[]
+        JosephsonCircuits.@params Rleft Cc Lj Cj
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",Rleft))
         push!(circuit,("C1","1","2",Cc))
@@ -63,8 +62,8 @@ using Test
 
     @testset "real Jacobian matches finite differences" begin
 
-        @variables Rleft Cc Lj Cj
-        circuit = Tuple{String,String,String,Num}[]
+        JosephsonCircuits.@params Rleft Cc Lj Cj
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",Rleft))
         push!(circuit,("C1","1","2",Cc))
@@ -106,8 +105,8 @@ using Test
         # construction without aliasing was not exact here, with an error
         # proportional to the drive amplitude.)
 
-        @variables Rleft Cc Lj Cj
-        circuit = Tuple{String,String,String,Num}[]
+        JosephsonCircuits.@params Rleft Cc Lj Cj
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",Rleft))
         push!(circuit,("C1","1","2",Cc))
@@ -140,9 +139,9 @@ using Test
 
         # Josephson junctions between pairs of ungrounded nodes exercise all
         # four incidence matrix scatter targets of the direct assembly.
-        @variables Ljx Cg Cjx Rl
+        JosephsonCircuits.@params Ljx Cg Cjx Rl
         Ncells = 5
-        circuit = Tuple{String,String,String,Num}[]
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit, ("P1","1","0",1))
         push!(circuit, ("R1","1","0",Rl))
         for i in 1:Ncells

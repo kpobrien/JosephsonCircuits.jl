@@ -593,22 +593,22 @@ end
 
 # Examples
 ```jldoctest
-julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:R,2.0,w)
+julia> JosephsonCircuits.@params w;JosephsonCircuits.calcimpedance(30*w,:R,2.0,w)
 60.0 + 0.0im
 
-julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:C,2.0,w)
+julia> JosephsonCircuits.@params w;JosephsonCircuits.calcimpedance(30*w,:C,2.0,w)
 0.0 - 0.008333333333333333im
 
-julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:L,2.0,w)
+julia> JosephsonCircuits.@params w;JosephsonCircuits.calcimpedance(30*w,:L,2.0,w)
 0.0 + 120.0im
 
-julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:R,-2.0,w)
+julia> JosephsonCircuits.@params w;JosephsonCircuits.calcimpedance(30*w,:R,-2.0,w)
 -60.0 + 0.0im
 
-julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:C,-2.0,w)
+julia> JosephsonCircuits.@params w;JosephsonCircuits.calcimpedance(30*w,:C,-2.0,w)
 0.0 - 0.008333333333333333im
 
-julia> @variables w;JosephsonCircuits.calcimpedance(30*w,:L,-2.0,w)
+julia> JosephsonCircuits.@params w;JosephsonCircuits.calcimpedance(30*w,:L,-2.0,w)
 0.0 + 120.0im
 ```
 """
@@ -733,14 +733,6 @@ end
 
 Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Overwrites cm with output.
-
-# # Examples
-# ```jldoctest
-# julia> @variables a b;cm=Num[0,0];JosephsonCircuits.calccm!(cm,[a b; b a],[-1,1]);cm
-# 2-element Vector{Num}:
-#  -abs2(a) + abs2(b)
-#   abs2(a) - abs2(b)
-# ```
 """
 function calccm!(cm, S, w)
 
@@ -880,14 +872,6 @@ end
 
 Calculate the bosonic commutation relations for a scattering matrix S in the
 field ladder operator basis. Overwrites cm with output.
-
-# # Examples
-# ```jldoctest
-# julia> @variables a b c d an bn cn dn;cm = Num[0, 0];JosephsonCircuits.calccm!(cm,Num[a b; c d],[an bn; cn dn],[1, -1]);cm
-# 2-element Vector{Num}:
-#  -abs2(bn) + abs2(a) - abs2(b) + abs2(an)
-#   abs2(c) - abs2(dn) - abs2(d) + abs2(cn)
-# ```
 """
 function calccm!(cm, S, Snoise, w)
 

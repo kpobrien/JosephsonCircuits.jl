@@ -813,17 +813,9 @@ function findgroundnodeindex(uniquenodevector::Vector{String})
     # groundnodeindex = 0
     for i in eachindex(uniquenodevector)
         if uniquenodevector[i] == "0"
-            # groundnodeindex = i
             return i
-            # break
         end
     end
-
-    # if groundnodeindex == 0
-    #     throw(ArgumentError("No ground node found in netlist."))
-    # end
-
-    # return groundnodeindex
     return 0
 end
 

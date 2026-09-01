@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using Test
@@ -404,25 +403,6 @@ using Test
             X,
         )
 
-        # complex symbolic input
-        @variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex
-        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
-        w = [1,-1]
-        @test isequal(
-            JosephsonCircuits.ladder_to_scattering_pair(
-                JosephsonCircuits.scattering_to_ladder_pair(S,w),w),
-            S,
-        )
-
-        # real symbolic input
-        @variables S11 S12 S13 S14 S21 S22 S23 S24 S31 S32 S33 S34 S41 S42 S43 S44
-        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
-        w = [1,-1]
-        @test isequal(
-            JosephsonCircuits.ladder_to_scattering_pair(
-                JosephsonCircuits.scattering_to_ladder_pair(S,w),w),
-            Complex.(S),
-        )
 
         # error 1
         @test_throws(
@@ -468,25 +448,6 @@ using Test
             X,
         )
 
-        # complex symbolic input
-        @variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex
-        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
-        w = [1,-1]
-        @test isequal(
-            JosephsonCircuits.ladder_to_scattering_block(
-                JosephsonCircuits.scattering_to_ladder_block(S,w),w),
-            S,
-        )
-
-        # real symbolic input
-        @variables S11 S12 S13 S14 S21 S22 S23 S24 S31 S32 S33 S34 S41 S42 S43 S44
-        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
-        w = [1,-1]
-        @test isequal(
-            JosephsonCircuits.ladder_to_scattering_block(
-                JosephsonCircuits.scattering_to_ladder_block(S,w),w),
-            Complex.(S),
-        )
 
         # error 1
         @test_throws(
@@ -536,25 +497,6 @@ using Test
             X,
         )
 
-        # complex symbolic input
-        @variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex
-        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
-        w = [1,-1]
-        @test isequal(
-            JosephsonCircuits.quadrature_to_scattering_pair(
-                JosephsonCircuits.scattering_to_quadrature_pair(S,w),w),
-            S,
-        )
-
-        # real symbolic input
-        @variables S11 S12 S13 S14 S21 S22 S23 S24 S31 S32 S33 S34 S41 S42 S43 S44
-        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
-        w = [1,-1]
-        @test isequal(
-            JosephsonCircuits.quadrature_to_scattering_pair(
-                JosephsonCircuits.scattering_to_quadrature_pair(S,w),w),
-            Complex.(S),
-        )
 
     end
 
@@ -588,25 +530,6 @@ using Test
             X,
         )
 
-        # complex symbolic input
-        @variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex
-        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
-        w = [1,-1]
-        @test isequal(
-            JosephsonCircuits.quadrature_to_scattering_block(
-                JosephsonCircuits.scattering_to_quadrature_block(S,w),w),
-            S,
-        )
-
-        # real symbolic input
-        @variables S11 S12 S13 S14 S21 S22 S23 S24 S31 S32 S33 S34 S41 S42 S43 S44
-        S = [S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44]
-        w = [1,-1]
-        @test isequal(
-            JosephsonCircuits.quadrature_to_scattering_block(
-                JosephsonCircuits.scattering_to_quadrature_block(S,w),w),
-            Complex.(S),
-        )
 
     end
 

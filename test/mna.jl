@@ -1,6 +1,4 @@
-using Symbolics
 using JosephsonCircuits
-using Symbolics: @variables, Num
 using Test
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"))
 
@@ -279,8 +277,8 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
         # frequency dependent interior resistor is left in the conductance
         # matrix. this exercises the partial promotion path where the
         # promoted subset is subtracted from Gnm.
-        @variables w
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64,Num}}[]
+        JosephsonCircuits.@params w
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",:Rleft))
         push!(circuit,("C1","1","2",:Cc))
@@ -418,8 +416,8 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
         # a floating node whose only resistor is symbolic exercises the
         # gauge fixing equations with no promoted resistors (Naux == 0),
         # so gauge correctness is not entangled with resistor promotion.
-        @variables w
-        circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64,Num}}[]
+        JosephsonCircuits.@params w
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",50.0 + 1e-12*w))
         push!(circuit,("C1","1","2",:Cc))
@@ -472,8 +470,8 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
         # a symbolic resistor in parallel with a numeric resistor on an
         # internal node pair converges, with both in the conductance matrix
         # and only the port resistor promoted
-        @variables w
-        cmix = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64,Num}}[]
+        JosephsonCircuits.@params w
+        cmix = Tuple{String,String,String,Any}[]
         push!(cmix,("P1","1","0",1))
         push!(cmix,("R1","1","0",complex(50.0)))
         push!(cmix,("C1","1","2",:Cc))
@@ -598,7 +596,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
         @test_throws ArgumentError JosephsonCircuits.checkstaticstiffnessvalues(
             [:P,:R,:L], Any[1, 50.0, Inf])
         # finite and symbolic values are accepted
-        @variables Lsym
+        JosephsonCircuits.@params Lsym
         @test isnothing(JosephsonCircuits.checkstaticstiffnessvalues(
             [:P,:R,:L,:L], Any[1, 50.0, 1e-9, Lsym]))
 
@@ -877,7 +875,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
         @test JosephsonCircuits.calcstaticfluxcomponents(
             [:P,:R,:L],[2 2 2;1 1 1],Any[1,50.0,Inf],2) == [[2]]
         # symbolic values are conservatively assumed to provide stiffness
-        @variables Lsym
+        JosephsonCircuits.@params Lsym
         @test JosephsonCircuits.calcstaticfluxcomponents(
             [:P,:R,:L],[2 2 2;1 1 1],Any[1,50.0,Lsym],2) == Vector{Int64}[]
         # one gauge per floating component and zero-frequency mode
@@ -1181,8 +1179,8 @@ end
         end
 
         # a symbolic frequency dependent resistor across the resonator
-        @variables w
-        circuit2 = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64,Num}}[]
+        JosephsonCircuits.@params w
+        circuit2 = Tuple{String,String,String,Any}[]
         push!(circuit2,("P1","1","0",1)); push!(circuit2,("R1","1","0",complex(50.0)))
         push!(circuit2,("C1","1","2",:Cc)); push!(circuit2,("L2","2","0",:L2))
         push!(circuit2,("C2","2","0",:C2))

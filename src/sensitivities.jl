@@ -538,16 +538,6 @@ function residualjosephsonterm!(out, sys, j::Integer)
     return out
 end
 
-# the entries of M in the given row and column ranges, with every other entry
-# dropped, keeping the size of M.
-function maskrowscolumns(M::SparseMatrixCSC, firstrow::Integer,
-    lastrow::Integer, firstcol::Integer, lastcol::Integer)
-    I, J, V = findnz(M)
-    keep = (firstrow .<= I .<= lastrow) .& (firstcol .<= J .<= lastcol)
-    return SparseMatrixCSC{Complex{Float64},Int}(sparse(I[keep], J[keep],
-        Complex{Float64}.(V[keep]), size(M,1), size(M,2)))
-end
-
 
 
 

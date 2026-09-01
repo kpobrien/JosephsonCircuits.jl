@@ -1080,12 +1080,6 @@ symbolic variables.
 
 # Examples
 ```jldoctest
-julia> @variables w;A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,1.0,3*w+1]);println(A.nzval);JosephsonCircuits.symbolicindices(A)
-Num[w, 1 + 3w, 1.0]
-2-element Vector{Int64}:
- 1
- 2
-
 julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,1.0,2+3im]);JosephsonCircuits.symbolicindices(A)
 Int64[]
 ```
@@ -1119,12 +1113,14 @@ end
 """
     checkissymbolic(a)
 
-Check if `a` is a symbolic variable. Define a function to do this because a
-different function call is required for `@syms` vs `@variables`.
+Check if `a` is a symbolic variable. Define a function to do this because
+the test depends on which representation the value came from: the core
+answers for `CircuitValue` and `FrequencyDependent`, and the Symbolics
+extension adds the methods for its own wrappers.
 
 # Examples
 ```jldoctest
-julia> @variables w;JosephsonCircuits.checkissymbolic(w)
+julia> JosephsonCircuits.@params w;JosephsonCircuits.checkissymbolic(w)
 true
 
 julia> JosephsonCircuits.checkissymbolic(1.0)
@@ -1196,7 +1192,7 @@ downstream error about the symbolic frequency variable.
 
 # Examples
 ```jldoctest
-julia> @variables w;JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, 1/(w*50.0)], w)
+julia> JosephsonCircuits.@params w;JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, 1/(w*50.0)], w)
 
 julia> R2, w = JosephsonCircuits.@params R2 w;try JosephsonCircuits.checkcomponentvaluesdefined(["P1","R1"], Any[1, R2], w) catch e; occursin("R1 has the value", sprint(showerror, e)) end
 true
@@ -1228,18 +1224,8 @@ function checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector,
     return nothing
 end
 
-"""
-    checkissymbolic(a::Num)
-
-Check if `a` is a symbolic variable.
-
-# Examples
-```jldoctest
-julia> @variables w;JosephsonCircuits.checkissymbolic(w)
-true
-```
-"""
-# the `Num` method lives in the Symbolics extension
+# the `Num` method lives in the Symbolics extension, which documents it
+# there: a docstring here would attach to whatever follows it
 
 """
     freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
@@ -1250,7 +1236,7 @@ a sparse matrix with type `Complex{Float64}`.
 
 # Examples
 ```jldoctest
-@variables w
+JosephsonCircuits.@params w
 wmodes = [-1,2];
 A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
 JosephsonCircuits.freqsubst(A,wmodes,w)
@@ -1487,10 +1473,10 @@ Return true if pivoting during LU decomposition.
 
 # Examples
 ```jldoctest
-julia> @variables A21;JosephsonCircuits.pivot_rows(0,A21)
+julia> JosephsonCircuits.pivot_rows(0,:A21)
 true
 
-julia> @variables A11 A21;JosephsonCircuits.pivot_rows(A11,A21)
+julia> JosephsonCircuits.pivot_rows(1,:A21)
 false
 ```
 """

@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using Test

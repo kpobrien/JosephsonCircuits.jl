@@ -28,13 +28,12 @@ for more explanation.
 
 # Examples
 ```jldoctest
-@variables Ipump Rleft L Lj Cj
 circuit = Circuit(
-    [:p1 => Port(1; Z0 = Rleft),
-     :i1 => CurrentSource(Ipump),
-     :l1 => Inductor(L),
-     :jj => JosephsonJunction(Lj),
-     :cj => Capacitor(Cj),
+    [:p1 => Port(1; Z0 = :Rleft),
+     :i1 => CurrentSource(:Ipump),
+     :l1 => Inductor(:L),
+     :jj => JosephsonJunction(:Lj),
+     :cj => Capacitor(:Cj),
      :gnd => Ground()],
     [[(:p1, 1), (:i1, 1), (:l1, 1)],
      [(:l1, 2), (:jj, 1), (:cj, 1)],

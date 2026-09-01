@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays
@@ -20,23 +19,23 @@ const CPU = JosephsonCircuits.CPU
     # a modified nodal analysis augmentation from the promoted port resistors,
     # and every linear term matrix populated.
     function buildcase(Nmod, wp, Npump)
-        @variables Rleft Rright Cg Lj Cj
-        circuit = Tuple{String,String,String,Num}[]
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1_0","1","0",1))
-        push!(circuit,("R1_0","1","0",Rleft))
-        push!(circuit,("C1_0","1","0",Cg/2))
-        push!(circuit,("Lj1_2","1","2",Lj))
-        push!(circuit,("C1_2","1","2",Cj))
+        push!(circuit,("R1_0","1","0",:Rleft))
+        push!(circuit,("C1_0","1","0",:Cghalf))
+        push!(circuit,("Lj1_2","1","2",:Lj))
+        push!(circuit,("C1_2","1","2",:Cj))
         for j in 2:8
-            push!(circuit,("C$(j)_0","$(j)","0",Cg))
-            push!(circuit,("Lj$(j)_$(j+1)","$(j)","$(j+1)",Lj))
-            push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",Cj))
+            push!(circuit,("C$(j)_0","$(j)","0",:Cg))
+            push!(circuit,("Lj$(j)_$(j+1)","$(j)","$(j+1)",:Lj))
+            push!(circuit,("C$(j)_$(j+1)","$(j)","$(j+1)",:Cj))
         end
-        push!(circuit,("C9_0","9","0",Cg/2))
-        push!(circuit,("R9_0","9","0",Rright))
+        push!(circuit,("C9_0","9","0",:Cghalf))
+        push!(circuit,("R9_0","9","0",:Rright))
         push!(circuit,("P9_0","9","0",2))
-        circuitdefs = Dict(Lj => JosephsonCircuits.IctoLj(1e-6), Cg => 45e-15,
-            Cj => 55e-15, Rleft => 50.0, Rright => 50.0)
+        circuitdefs = Dict(:Lj => JosephsonCircuits.IctoLj(1e-6), :Cg => 45e-15,
+            :Cghalf => 45e-15/2, :Cj => 55e-15, :Rleft => 50.0,
+            :Rright => 50.0)
         nl = JosephsonCircuits.hbnlsolve(wp, Npump,
             [(mode=ntuple(i->i==1 ? 1 : 0, length(wp)), port=1, current=1e-6)],
             circuit, circuitdefs; keyedarrays=false)
@@ -97,8 +96,8 @@ const CPU = JosephsonCircuits.CPU
     end
 
     @testset "the sweep assembly rejects a symbolic frequency" begin
-        @variables w Rleft Cc Lj Cj
-        circuit = Tuple{String,String,String,Num}[]
+        JosephsonCircuits.@params w Rleft Cc Lj Cj
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",Rleft))
         push!(circuit,("C1","1","2",Cc*(1+1e-18*w)))

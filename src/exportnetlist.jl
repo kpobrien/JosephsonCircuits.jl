@@ -150,17 +150,15 @@ where order does not matter, the nodes are sorted.
 
 # Examples
 ```jldoctest
-@variables R Cc L1 L2 Cj1 Cj2 I1 V1
-@variables Ipump Rleft L1 K1 K2 L2 C2 C3
 circuit = Circuit(
-    [:p1 => Port(1; Z0 = Rleft),
-     :i1 => CurrentSource(Ipump),
-     :l1 => Inductor(L1),
-     :l2 => Inductor(L2),
-     :k1 => MutualInductor(K1, :l1, :l2),
-     :k2 => MutualInductor(K2, :l1, :l2),
-     :c2 => Capacitor(C2),
-     :c3 => Capacitor(C3),
+    [:p1 => Port(1; Z0 = :Rleft),
+     :i1 => CurrentSource(:Ipump),
+     :l1 => Inductor(:L1),
+     :l2 => Inductor(:L2),
+     :k1 => MutualInductor(:K1, :l1, :l2),
+     :k2 => MutualInductor(:K2, :l1, :l2),
+     :c2 => Capacitor(:C2),
+     :c3 => Capacitor(:C3),
      :gnd => Ground()],
     [[(:p1, 1), (:i1, 1), (:l1, 1)],
      [(:l2, 1), (:c2, 1), (:c3, 1)],
@@ -448,22 +446,21 @@ end
 
 # Examples
 ```jldoctest
-@variables R Cc Lj Cj I
 circuit = Circuit(
-    [:P1 => Port(1; Z0 = R),
-     :C1 => Capacitor(Cc),
-     :Lj1 => JosephsonJunction(Lj),
-     :C2 => Capacitor(Cj),
+    [:P1 => Port(1; Z0 = :R),
+     :C1 => Capacitor(:Cc),
+     :Lj1 => JosephsonJunction(:Lj),
+     :C2 => Capacitor(:Cj),
      :gnd => Ground()],
     [Net("1", [(:P1, 1), (:C1, 1)]),
      Net("2", [(:C1, 2), (:Lj1, 1), (:C2, 1)]),
      Net("0", [(:P1, 2), (:Lj1, 2), (:C2, 2), (:gnd, 1)])])
 
 circuitdefs = Dict(
-    Lj =>1000.0e-12,
-    Cc => 100.0e-15,
-    Cj => 1000.0e-15,
-    R => 50.0)
+    :Lj =>1000.0e-12,
+    :Cc => 100.0e-15,
+    :Cj => 1000.0e-15,
+    :R => 50.0)
 
 println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = true).netlist)
 println("")
@@ -484,15 +481,14 @@ Lj1 2 0 1000.0000000000001p
 C2 2 0 1000.0f
 ```
 ```jldoctest
-@variables R Cc L1 L2 Cj1 Cj2 I1 V1
 circuit = Circuit(
-    [:P1 => Port(1; Z0 = R),
-     :C1 => Capacitor(Cc),
-     :L1 => Inductor(L1),
-     :L2 => Inductor(L2),
-     :C2 => Capacitor(Cj1),
-     :C3 => Capacitor(Cj2),
-     :I1 => CurrentSource(I1),
+    [:P1 => Port(1; Z0 = :R),
+     :C1 => Capacitor(:Cc),
+     :L1 => Inductor(:L1),
+     :L2 => Inductor(:L2),
+     :C2 => Capacitor(:Cj1),
+     :C3 => Capacitor(:Cj2),
+     :I1 => CurrentSource(:I1),
      :gnd => Ground()],
     [Net("1", [(:P1, 1), (:C1, 1)]),
      Net("2", [(:C1, 2), (:L1, 1), (:L2, 1), (:C2, 1), (:C3, 1), (:I1, 1)]),
@@ -500,13 +496,13 @@ circuit = Circuit(
       (:gnd, 1)])])
 
 circuitdefs = Dict(
-    L1 =>2000.0e-12,
-    L2 =>2000.0e-12,
-    Cc => 100.0e-15,
-    Cj1 => 500.0e-15,
-    Cj2 => 500.0e-15,
-    R => 50.0,
-    I1 =>0.1)
+    :L1 =>2000.0e-12,
+    :L2 =>2000.0e-12,
+    :Cc => 100.0e-15,
+    :Cj1 => 500.0e-15,
+    :Cj2 => 500.0e-15,
+    :R => 50.0,
+    :I1 =>0.1)
 
 println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = true).netlist)
 println("")
@@ -526,28 +522,27 @@ L1 2 0 1000.0000000000001p
 C2 2 0 1000.0f
 ```
 ```jldoctest
-@variables Rleft L1 K1 L2 C2 C3 Lj1
 circuit = Circuit(
-    [:P1 => Port(1; Z0 = Rleft),
-     :L1 => Inductor(L1),
-     :Lj1 => JosephsonJunction(Lj1),
-     :L2 => Inductor(L2),
-     :K1 => MutualInductor(K1, :L1, :L2),
-     :C2 => Capacitor(C2),
-     :C3 => Capacitor(C3),
+    [:P1 => Port(1; Z0 = :Rleft),
+     :L1 => Inductor(:L1),
+     :Lj1 => JosephsonJunction(:Lj1),
+     :L2 => Inductor(:L2),
+     :K1 => MutualInductor(:K1, :L1, :L2),
+     :C2 => Capacitor(:C2),
+     :C3 => Capacitor(:C3),
      :gnd => Ground()],
     [Net("1", [(:P1, 1), (:L1, 1)]),
      Net("2", [(:Lj1, 1), (:L2, 1), (:C2, 1), (:C3, 1)]),
      Net("0", [(:P1, 2), (:L1, 2), (:Lj1, 2), (:L2, 2), (:C2, 2), (:C3, 2),
       (:gnd, 1)])])
 circuitdefs = Dict(
-    Rleft => 50.0,
-    L1 => 1000.0e-12,
-    Lj1 => 1000.0e-12,
-    K1 => 0.1,
-    L2 => 1000.0e-12,
-    C2 => 1000.0e-15,
-    C3 => 1000.0e-15)
+    :Rleft => 50.0,
+    :L1 => 1000.0e-12,
+    :Lj1 => 1000.0e-12,
+    :K1 => 0.1,
+    :L2 => 1000.0e-12,
+    :C2 => 1000.0e-15,
+    :C3 => 1000.0e-15)
 
 println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = true).netlist)
 println("")
@@ -572,28 +567,27 @@ K1 L1 L2 0.1
 C2 2 0 2000.0f
 ```
 ```jldoctest
-@variables Rleft L1 K1 L2 C2 C3 Lj1
 circuit = Circuit(
-    [:P1 => Port(1; Z0 = Rleft),
-     :L1 => Inductor(L1),
-     :Lj1 => JosephsonJunction(Lj1),
-     :L2 => Inductor(L2),
-     :K1 => MutualInductor(K1, :L2, :L1),
-     :C2 => Capacitor(C2),
-     :C3 => Capacitor(C3),
+    [:P1 => Port(1; Z0 = :Rleft),
+     :L1 => Inductor(:L1),
+     :Lj1 => JosephsonJunction(:Lj1),
+     :L2 => Inductor(:L2),
+     :K1 => MutualInductor(:K1, :L2, :L1),
+     :C2 => Capacitor(:C2),
+     :C3 => Capacitor(:C3),
      :gnd => Ground()],
     [Net("1", [(:P1, 1), (:L1, 1)]),
      Net("2", [(:Lj1, 1), (:L2, 1), (:C2, 1), (:C3, 1)]),
      Net("0", [(:P1, 2), (:L1, 2), (:Lj1, 2), (:L2, 2), (:C2, 2), (:C3, 2),
       (:gnd, 1)])])
 circuitdefs = Dict(
-    Rleft => 50.0,
-    L1 => 1000.0e-12,
-    Lj1 => 1000.0e-12,
-    K1 => 0.1,
-    L2 => 1000.0e-12,
-    C2 => 1000.0e-15,
-    C3 => 1000.0e-15)
+    :Rleft => 50.0,
+    :L1 => 1000.0e-12,
+    :Lj1 => 1000.0e-12,
+    :K1 => 0.1,
+    :L2 => 1000.0e-12,
+    :C2 => 1000.0e-15,
+    :C3 => 1000.0e-15)
 
 println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = true).netlist)
 println("")

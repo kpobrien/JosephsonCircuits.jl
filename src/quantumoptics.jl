@@ -979,21 +979,20 @@ Return a `2n` length vector `p` which permutes the block operator ordering
 
 # Examples
 ```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-r = [x1, x2, x3, x4, p1, p2, p3, p4]
+r = [:x1, :x2, :x3, :x4, :p1, :p2, :p3, :p4]
 p = JosephsonCircuits.block_to_pair_perm(4)
 r[p]
 
 # output
-8-element Vector{Num}:
- x1
- p1
- x2
- p2
- x3
- p3
- x4
- p4
+8-element Vector{Symbol}:
+ :x1
+ :p1
+ :x2
+ :p2
+ :x3
+ :p3
+ :x4
+ :p4
 ```
 """
 function block_to_pair_perm(n::Integer)
@@ -1016,21 +1015,20 @@ ordering `r = [x_1,p_1,...,x_n,p_n]` to the block operator ordering
 
 # Examples
 ```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-r = [x1, p1, x2, p2, x3, p3, x4, p4]
+r = [:x1, :p1, :x2, :p2, :x3, :p3, :x4, :p4]
 p = JosephsonCircuits.pair_to_block_perm(4)
 r[p]
 
 # output
-8-element Vector{Num}:
- x1
- x2
- x3
- x4
- p1
- p2
- p3
- p4
+8-element Vector{Symbol}:
+ :x1
+ :x2
+ :x3
+ :x4
+ :p1
+ :p2
+ :p3
+ :p4
 ```
 """
 function pair_to_block_perm(n::Integer)
@@ -1079,21 +1077,20 @@ end
 
 # Examples
 ```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-r = [x1, x2, x3, x4, p1, p2, p3, p4]
+r = [:x1, :x2, :x3, :x4, :p1, :p2, :p3, :p4]
 JosephsonCircuits.block_to_pair(r)
 
 # output
-8-element Vector{Num}:
- x1
- p1
- x2
- p2
- x3
- p3
- x4
- p4
- ```
+8-element Vector{Symbol}:
+ :x1
+ :p1
+ :x2
+ :p2
+ :x3
+ :p3
+ :x4
+ :p4
+```
 """
 function block_to_pair(r::AbstractVector)
     p = block_to_pair_perm(length(r) ÷ 2)
@@ -1103,23 +1100,6 @@ end
 """
     block_to_pair2(r::AbstractVector)
 
-# Examples
-```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-r = [x1, x2, x3, x4, p1, p2, p3, p4]
-JosephsonCircuits.block_to_pair2(r)
-
-# output
-8-element Vector{Num}:
- x1
- p1
- x2
- p2
- x3
- p3
- x4
- p4
-```
 """
 function block_to_pair2(r::AbstractVector)
     R = R_block_to_pair(length(r) ÷ 2)
@@ -1181,20 +1161,19 @@ end
 
 # Examples
 ```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-r = [x1, p1, x2, p2, x3, p3, x4, p4]
+r = [:x1, :p1, :x2, :p2, :x3, :p3, :x4, :p4]
 JosephsonCircuits.pair_to_block(r)
 
 # output
-8-element Vector{Num}:
- x1
- x2
- x3
- x4
- p1
- p2
- p3
- p4
+8-element Vector{Symbol}:
+ :x1
+ :x2
+ :x3
+ :x4
+ :p1
+ :p2
+ :p3
+ :p4
 ```
 """
 function pair_to_block(r::AbstractVector)
@@ -1205,23 +1184,6 @@ end
 """
     pair_to_block2(r::AbstractVector)
 
-# Examples
-```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-r = [x1, p1, x2, p2, x3, p3, x4, p4]
-JosephsonCircuits.pair_to_block2(r)
-
-# output
-8-element Vector{Num}:
- x1
- x2
- x3
- x4
- p1
- p2
- p3
- p4
-```
 """
 function pair_to_block2(r::AbstractVector)
     R = R_pair_to_block(length(r) ÷ 2)
@@ -1265,23 +1227,6 @@ end
 """
     ladder_to_quadrature_pair(r::AbstractVector)
 
-# Examples
-```jldoctest
-@variables a1 a2 a3 a4 adag1 adag2 adag3 adag4
-r = [a1, adag1, a2, adag2, a3, adag3, a4, adag4]
-JosephsonCircuits.ladder_to_quadrature_pair(r)
-
-# output
-8-element Vector{Complex{Num}}:
-   0.7071067811865475a1 + 0.7071067811865475adag1
- (-0.7071067811865475a1 + 0.7071067811865475adag1)*im
-   0.7071067811865475a2 + 0.7071067811865475adag2
- (-0.7071067811865475a2 + 0.7071067811865475adag2)*im
-   0.7071067811865475a3 + 0.7071067811865475adag3
- (-0.7071067811865475a3 + 0.7071067811865475adag3)*im
-   0.7071067811865475a4 + 0.7071067811865475adag4
- (-0.7071067811865475a4 + 0.7071067811865475adag4)*im
-```
 """
 function ladder_to_quadrature_pair(r::AbstractVector)
     R = R_ladder_to_quadrature_pair(length(r) ÷ 2)
@@ -1318,23 +1263,6 @@ end
 """
     quadrature_to_ladder_pair(r::AbstractVector)
 
-# Examples
-```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-r = [x1, p1, x2, p2, x3, p3, x4, p4]
-JosephsonCircuits.quadrature_to_ladder_pair(r)
-
-# output
-8-element Vector{Complex{Num}}:
- 0.7071067811865475x1 + 0.7071067811865475im*p1
- 0.7071067811865475x1 - 0.7071067811865475im*p1
- 0.7071067811865475x2 + 0.7071067811865475im*p2
- 0.7071067811865475x2 - 0.7071067811865475im*p2
- 0.7071067811865475x3 + 0.7071067811865475im*p3
- 0.7071067811865475x3 - 0.7071067811865475im*p3
- 0.7071067811865475x4 + 0.7071067811865475im*p4
- 0.7071067811865475x4 - 0.7071067811865475im*p4
-```
 """
 function quadrature_to_ladder_pair(r::AbstractVector)
     R = R_quadrature_to_ladder_pair(length(r) ÷ 2)
@@ -1369,24 +1297,6 @@ end
 
 """
     ladder_to_quadrature_block(r::AbstractVector)
-
-# Examples
-```jldoctest
-@variables a1 a2 a3 a4 adag1 adag2 adag3 adag4
-r = [a1, a2, a3, a4, adag1, adag2, adag3, adag4]
-JosephsonCircuits.ladder_to_quadrature_block(r)
-
-# output
-8-element Vector{Complex{Num}}:
-   0.7071067811865475a1 + 0.7071067811865475adag1
-   0.7071067811865475a2 + 0.7071067811865475adag2
-   0.7071067811865475a3 + 0.7071067811865475adag3
-   0.7071067811865475a4 + 0.7071067811865475adag4
- (-0.7071067811865475a1 + 0.7071067811865475adag1)*im
- (-0.7071067811865475a2 + 0.7071067811865475adag2)*im
- (-0.7071067811865475a3 + 0.7071067811865475adag3)*im
- (-0.7071067811865475a4 + 0.7071067811865475adag4)*im
-```
 
 """
 function ladder_to_quadrature_block(r::AbstractVector)
@@ -1424,23 +1334,6 @@ end
 """
     quadrature_to_ladder_block(r::AbstractVector)
 
-# Examples
-```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-r = [x1, x2, x3, x4, p1, p2, p3, p4]
-JosephsonCircuits.quadrature_to_ladder_block(r)
-
-# output
-8-element Vector{Complex{Num}}:
- 0.7071067811865475x1 + 0.7071067811865475im*p1
- 0.7071067811865475x2 + 0.7071067811865475im*p2
- 0.7071067811865475x3 + 0.7071067811865475im*p3
- 0.7071067811865475x4 + 0.7071067811865475im*p4
- 0.7071067811865475x1 - 0.7071067811865475im*p1
- 0.7071067811865475x2 - 0.7071067811865475im*p2
- 0.7071067811865475x3 - 0.7071067811865475im*p3
- 0.7071067811865475x4 - 0.7071067811865475im*p4
-```
 """
 function quadrature_to_ladder_block(r::AbstractVector)
     R = R_quadrature_to_ladder_block(length(r) ÷ 2)
@@ -1461,22 +1354,6 @@ end
 """
     scattering_to_quadrature_pair(S_scattering::AbstractVector{Complex{T}}, w) where {T}
 
-# Examples
-```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-JosephsonCircuits.scattering_to_quadrature_pair(JosephsonCircuits.quadrature_to_ladder_pair([x1,p1,x2,p2,x3,p3,x4,p4])[[1,3,6,8]],[1,1,-1,-1])
-
-# output
-8-element Vector{Num}:
- x1
- p1
- x2
- p2
- x3
- p3
- x4
- p4
-```
 """
 function scattering_to_quadrature_pair(S_scattering::AbstractVector{Complex{T}}, w) where {T}
     # the symplectic matrix is real so if the type of `S_scattering` is
@@ -1530,22 +1407,6 @@ end
 """
     scattering_to_quadrature_block(S_scattering::AbstractVector{Complex{T}}, w) where {T}
 
-# Examples
-```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-JosephsonCircuits.scattering_to_quadrature_block(JosephsonCircuits.quadrature_to_ladder_pair([x1,p1,x2,p2,x3,p3,x4,p4])[[1,3,6,8]],[1,1,-1,-1])
-
-# output
-8-element Vector{Num}:
- x1
- x2
- x3
- x4
- p1
- p2
- p3
- p4
-```
 """
 function scattering_to_quadrature_block(S_scattering::AbstractVector{Complex{T}}, w) where {T}
     # the symplectic matrix is real so if the type of `S_scattering` is
@@ -1599,22 +1460,6 @@ end
 """
     scattering_to_ladder_pair(S_scattering::AbstractVector, w)
 
-# Examples
-```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-JosephsonCircuits.scattering_to_ladder_pair(JosephsonCircuits.quadrature_to_ladder_pair([x1,p1,x2,p2,x3,p3,x4,p4])[[1,3,6,8]],[1,1,-1,-1])
-
-# output
-8-element Vector{Complex{Num}}:
- 0.7071067811865475x1 + 0.7071067811865475im*p1
- 0.7071067811865475x1 - 0.7071067811865475im*p1
- 0.7071067811865475x2 + 0.7071067811865475im*p2
- 0.7071067811865475x2 - 0.7071067811865475im*p2
- 0.7071067811865475x3 + 0.7071067811865475im*p3
- 0.7071067811865475x3 - 0.7071067811865475im*p3
- 0.7071067811865475x4 + 0.7071067811865475im*p4
- 0.7071067811865475x4 - 0.7071067811865475im*p4
-```
 """
 function scattering_to_ladder_pair(S_scattering::AbstractVector, w)
     n = length(S_scattering)
@@ -1661,22 +1506,6 @@ end
 
     scattering_to_ladder_block(S_scattering::AbstractVector, w)
 
-# Examples
-```jldoctest
-@variables x1 x2 x3 x4 p1 p2 p3 p4
-JosephsonCircuits.scattering_to_ladder_block(JosephsonCircuits.quadrature_to_ladder_pair([x1,p1,x2,p2,x3,p3,x4,p4])[[1,3,6,8]],[1,1,-1,-1])
-
-# output
-8-element Vector{Complex{Num}}:
- 0.7071067811865475x1 + 0.7071067811865475im*p1
- 0.7071067811865475x2 + 0.7071067811865475im*p2
- 0.7071067811865475x3 + 0.7071067811865475im*p3
- 0.7071067811865475x4 + 0.7071067811865475im*p4
- 0.7071067811865475x1 - 0.7071067811865475im*p1
- 0.7071067811865475x2 - 0.7071067811865475im*p2
- 0.7071067811865475x3 - 0.7071067811865475im*p3
- 0.7071067811865475x4 - 0.7071067811865475im*p4
-```
 """
 function scattering_to_ladder_block(S_scattering::AbstractVector, w)
     n = length(S_scattering)
@@ -1722,22 +1551,6 @@ end
 """
     scattering_to_ladder_pair(S_scattering::AbstractMatrix, w)
 
-# Examples
-```jldoctest
-@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex;
-JosephsonCircuits.scattering_to_ladder_pair([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1])
-
-# output
-8×8 Matrix{Complex{Num}}:
- S11            0               …            0               S14
-   0  real(S11) - im*imag(S11)     real(S14) - im*imag(S14)    0
-   0  real(S21) - im*imag(S21)     real(S24) - im*imag(S24)    0
- S21            0                            0               S24
- S31            0                            0               S34
-   0  real(S31) - im*imag(S31)  …  real(S34) - im*imag(S34)    0
-   0  real(S41) - im*imag(S41)     real(S44) - im*imag(S44)    0
- S41            0                            0               S44
-```
 """
 function scattering_to_ladder_pair(S_scattering::AbstractMatrix, w)
     n, m = size(S_scattering)
@@ -1899,22 +1712,6 @@ end
 """
     scattering_to_ladder_block(S_scattering::AbstractMatrix, w)
 
-# Examples
-```jldoctest
-@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex;
-JosephsonCircuits.scattering_to_ladder_block([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1])
-
-# output
-8×8 Matrix{Complex{Num}}:
- S11            0               S13  …  S12            0               S14
-   0  real(S22) - im*imag(S22)    0       0  real(S23) - im*imag(S23)    0
- S31            0               S33     S32            0               S34
-   0  real(S42) - im*imag(S42)    0       0  real(S43) - im*imag(S43)    0
-   0  real(S12) - im*imag(S12)    0       0  real(S13) - im*imag(S13)    0
- S21            0               S23  …  S22            0               S24
-   0  real(S32) - im*imag(S32)    0       0  real(S33) - im*imag(S33)    0
- S41            0               S43     S42            0               S44
-```
 """
 function scattering_to_ladder_block(S_scattering::AbstractMatrix, w)
     n, m = size(S_scattering)
@@ -2111,22 +1908,6 @@ end
 """
     scattering_to_quadrature_pair(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
 
-# Examples
-```jldoctest
-@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex;
-JosephsonCircuits.scattering_to_quadrature_pair([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1])
-
-# output
-8×8 Matrix{Num}:
-  real(S11)  -imag(S11)   real(S12)  …  -imag(S13)   real(S14)   imag(S14)
-  imag(S11)   real(S11)   imag(S12)      real(S13)   imag(S14)  -real(S14)
-  real(S21)  -imag(S21)   real(S22)     -imag(S23)   real(S24)   imag(S24)
- -imag(S21)  -real(S21)  -imag(S22)     -real(S23)  -imag(S24)   real(S24)
-  real(S31)  -imag(S31)   real(S32)     -imag(S33)   real(S34)   imag(S34)
-  imag(S31)   real(S31)   imag(S32)  …   real(S33)   imag(S34)  -real(S34)
-  real(S41)  -imag(S41)   real(S42)     -imag(S43)   real(S44)   imag(S44)
- -imag(S41)  -real(S41)  -imag(S42)     -real(S43)  -imag(S44)   real(S44)
-```
 """
 function scattering_to_quadrature_pair(S_scattering::AbstractMatrix{T}, w) where {T}
     n, m = size(S_scattering)
@@ -2288,22 +2069,6 @@ end
 """
     scattering_to_quadrature_block(S_scattering::AbstractMatrix{Complex{T}}, w) where {T}
 
-# Examples
-```jldoctest
-@variables S11::Complex S12::Complex S13::Complex S14::Complex S21::Complex S22::Complex S23::Complex S24::Complex S31::Complex S32::Complex S33::Complex S34::Complex S41::Complex S42::Complex S43::Complex S44::Complex;
-JosephsonCircuits.scattering_to_quadrature_block([S11 S12 S13 S14;S21 S22 S23 S24;S31 S32 S33 S34;S41 S42 S43 S44],[1,-1])
-
-# output
-8×8 Matrix{Num}:
-  real(S11)   real(S12)   real(S13)  …   imag(S12)  -imag(S13)   imag(S14)
-  real(S21)   real(S22)   real(S23)      imag(S22)  -imag(S23)   imag(S24)
-  real(S31)   real(S32)   real(S33)      imag(S32)  -imag(S33)   imag(S34)
-  real(S41)   real(S42)   real(S43)      imag(S42)  -imag(S43)   imag(S44)
-  imag(S11)   imag(S12)   imag(S13)     -real(S12)   real(S13)  -real(S14)
- -imag(S21)  -imag(S22)  -imag(S23)  …   real(S22)  -real(S23)   real(S24)
-  imag(S31)   imag(S32)   imag(S33)     -real(S32)   real(S33)  -real(S34)
- -imag(S41)  -imag(S42)  -imag(S43)      real(S42)  -real(S43)   real(S44)
-```
 """
 function scattering_to_quadrature_block(S_scattering::AbstractMatrix{T}, w) where {T}
     n, m = size(S_scattering)
@@ -2677,20 +2442,19 @@ end
 
 # Examples
 ```jldoctest
-@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
-S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+S = [:S11 :S12 :S13 :S14 :S15 :S16 :S17 :S18; :S21 :S22 :S23 :S24 :S25 :S26 :S27 :S28; :S31 :S32 :S33 :S34 :S35 :S36 :S37 :S38; :S41 :S42 :S43 :S44 :S45 :S46 :S47 :S48; :S51 :S52 :S53 :S54 :S55 :S56 :S57 :S58; :S61 :S62 :S63 :S64 :S65 :S66 :S67 :S68; :S71 :S72 :S73 :S74 :S75 :S76 :S77 :S78; :S81 :S82 :S83 :S84 :S85 :S86 :S87 :S88]
 JosephsonCircuits.modes_ports_to_ports_modes_scattering(S,2)
 
 # output
-8×8 Matrix{Num}:
- S11  S13  S15  S17  S12  S14  S16  S18
- S31  S33  S35  S37  S32  S34  S36  S38
- S51  S53  S55  S57  S52  S54  S56  S58
- S71  S73  S75  S77  S72  S74  S76  S78
- S21  S23  S25  S27  S22  S24  S26  S28
- S41  S43  S45  S47  S42  S44  S46  S48
- S61  S63  S65  S67  S62  S64  S66  S68
- S81  S83  S85  S87  S82  S84  S86  S88
+8×8 Matrix{Symbol}:
+ :S11  :S13  :S15  :S17  :S12  :S14  :S16  :S18
+ :S31  :S33  :S35  :S37  :S32  :S34  :S36  :S38
+ :S51  :S53  :S55  :S57  :S52  :S54  :S56  :S58
+ :S71  :S73  :S75  :S77  :S72  :S74  :S76  :S78
+ :S21  :S23  :S25  :S27  :S22  :S24  :S26  :S28
+ :S41  :S43  :S45  :S47  :S42  :S44  :S46  :S48
+ :S61  :S63  :S65  :S67  :S62  :S64  :S66  :S68
+ :S81  :S83  :S85  :S87  :S82  :S84  :S86  :S88
 ```
 """
 function modes_ports_to_ports_modes_scattering(S::AbstractMatrix, Nmodes::Int)
@@ -2709,20 +2473,19 @@ end
 
 # Examples
 ```jldoctest
-@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
-S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+S = [:S11 :S12 :S13 :S14 :S15 :S16 :S17 :S18; :S21 :S22 :S23 :S24 :S25 :S26 :S27 :S28; :S31 :S32 :S33 :S34 :S35 :S36 :S37 :S38; :S41 :S42 :S43 :S44 :S45 :S46 :S47 :S48; :S51 :S52 :S53 :S54 :S55 :S56 :S57 :S58; :S61 :S62 :S63 :S64 :S65 :S66 :S67 :S68; :S71 :S72 :S73 :S74 :S75 :S76 :S77 :S78; :S81 :S82 :S83 :S84 :S85 :S86 :S87 :S88]
 JosephsonCircuits.ports_modes_to_modes_ports_scattering(S,2)
 
 # output
-8×8 Matrix{Num}:
- S11  S15  S12  S16  S13  S17  S14  S18
- S51  S55  S52  S56  S53  S57  S54  S58
- S21  S25  S22  S26  S23  S27  S24  S28
- S61  S65  S62  S66  S63  S67  S64  S68
- S31  S35  S32  S36  S33  S37  S34  S38
- S71  S75  S72  S76  S73  S77  S74  S78
- S41  S45  S42  S46  S43  S47  S44  S48
- S81  S85  S82  S86  S83  S87  S84  S88
+8×8 Matrix{Symbol}:
+ :S11  :S15  :S12  :S16  :S13  :S17  :S14  :S18
+ :S51  :S55  :S52  :S56  :S53  :S57  :S54  :S58
+ :S21  :S25  :S22  :S26  :S23  :S27  :S24  :S28
+ :S61  :S65  :S62  :S66  :S63  :S67  :S64  :S68
+ :S31  :S35  :S32  :S36  :S33  :S37  :S34  :S38
+ :S71  :S75  :S72  :S76  :S73  :S77  :S74  :S78
+ :S41  :S45  :S42  :S46  :S43  :S47  :S44  :S48
+ :S81  :S85  :S82  :S86  :S83  :S87  :S84  :S88
 ```
 """
 function ports_modes_to_modes_ports_scattering(S::AbstractMatrix, Nmodes::Int)
@@ -2741,20 +2504,19 @@ end
 
 # Examples
 ```jldoctest
-@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
-S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+S = [:S11 :S12 :S13 :S14 :S15 :S16 :S17 :S18; :S21 :S22 :S23 :S24 :S25 :S26 :S27 :S28; :S31 :S32 :S33 :S34 :S35 :S36 :S37 :S38; :S41 :S42 :S43 :S44 :S45 :S46 :S47 :S48; :S51 :S52 :S53 :S54 :S55 :S56 :S57 :S58; :S61 :S62 :S63 :S64 :S65 :S66 :S67 :S68; :S71 :S72 :S73 :S74 :S75 :S76 :S77 :S78; :S81 :S82 :S83 :S84 :S85 :S86 :S87 :S88]
 JosephsonCircuits.ports_modes_to_modes_ports_pair(S,2)
 
 # output
-8×8 Matrix{Num}:
- S11  S12  S15  S16  S13  S14  S17  S18
- S21  S22  S25  S26  S23  S24  S27  S28
- S51  S52  S55  S56  S53  S54  S57  S58
- S61  S62  S65  S66  S63  S64  S67  S68
- S31  S32  S35  S36  S33  S34  S37  S38
- S41  S42  S45  S46  S43  S44  S47  S48
- S71  S72  S75  S76  S73  S74  S77  S78
- S81  S82  S85  S86  S83  S84  S87  S88
+8×8 Matrix{Symbol}:
+ :S11  :S12  :S15  :S16  :S13  :S14  :S17  :S18
+ :S21  :S22  :S25  :S26  :S23  :S24  :S27  :S28
+ :S51  :S52  :S55  :S56  :S53  :S54  :S57  :S58
+ :S61  :S62  :S65  :S66  :S63  :S64  :S67  :S68
+ :S31  :S32  :S35  :S36  :S33  :S34  :S37  :S38
+ :S41  :S42  :S45  :S46  :S43  :S44  :S47  :S48
+ :S71  :S72  :S75  :S76  :S73  :S74  :S77  :S78
+ :S81  :S82  :S85  :S86  :S83  :S84  :S87  :S88
 ```
 """
 function ports_modes_to_modes_ports_pair(S::AbstractMatrix, Nmodes::Int)
@@ -2773,20 +2535,19 @@ end
 
 # Examples
 ```jldoctest
-@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
-S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+S = [:S11 :S12 :S13 :S14 :S15 :S16 :S17 :S18; :S21 :S22 :S23 :S24 :S25 :S26 :S27 :S28; :S31 :S32 :S33 :S34 :S35 :S36 :S37 :S38; :S41 :S42 :S43 :S44 :S45 :S46 :S47 :S48; :S51 :S52 :S53 :S54 :S55 :S56 :S57 :S58; :S61 :S62 :S63 :S64 :S65 :S66 :S67 :S68; :S71 :S72 :S73 :S74 :S75 :S76 :S77 :S78; :S81 :S82 :S83 :S84 :S85 :S86 :S87 :S88]
 JosephsonCircuits.modes_ports_to_ports_modes_pair(S,2)
 
 # output
-8×8 Matrix{Num}:
- S11  S12  S15  S16  S13  S14  S17  S18
- S21  S22  S25  S26  S23  S24  S27  S28
- S51  S52  S55  S56  S53  S54  S57  S58
- S61  S62  S65  S66  S63  S64  S67  S68
- S31  S32  S35  S36  S33  S34  S37  S38
- S41  S42  S45  S46  S43  S44  S47  S48
- S71  S72  S75  S76  S73  S74  S77  S78
- S81  S82  S85  S86  S83  S84  S87  S88
+8×8 Matrix{Symbol}:
+ :S11  :S12  :S15  :S16  :S13  :S14  :S17  :S18
+ :S21  :S22  :S25  :S26  :S23  :S24  :S27  :S28
+ :S51  :S52  :S55  :S56  :S53  :S54  :S57  :S58
+ :S61  :S62  :S65  :S66  :S63  :S64  :S67  :S68
+ :S31  :S32  :S35  :S36  :S33  :S34  :S37  :S38
+ :S41  :S42  :S45  :S46  :S43  :S44  :S47  :S48
+ :S71  :S72  :S75  :S76  :S73  :S74  :S77  :S78
+ :S81  :S82  :S85  :S86  :S83  :S84  :S87  :S88
 ```
 """
 function modes_ports_to_ports_modes_pair(S::AbstractMatrix, Nmodes::Int)
@@ -2805,20 +2566,19 @@ end
 
 # Examples
 ```jldoctest
-@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
-S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+S = [:S11 :S12 :S13 :S14 :S15 :S16 :S17 :S18; :S21 :S22 :S23 :S24 :S25 :S26 :S27 :S28; :S31 :S32 :S33 :S34 :S35 :S36 :S37 :S38; :S41 :S42 :S43 :S44 :S45 :S46 :S47 :S48; :S51 :S52 :S53 :S54 :S55 :S56 :S57 :S58; :S61 :S62 :S63 :S64 :S65 :S66 :S67 :S68; :S71 :S72 :S73 :S74 :S75 :S76 :S77 :S78; :S81 :S82 :S83 :S84 :S85 :S86 :S87 :S88]
 JosephsonCircuits.ports_modes_to_modes_ports_block(S,2)
 
 # output
-8×8 Matrix{Num}:
- S11  S13  S12  S14  S15  S17  S16  S18
- S31  S33  S32  S34  S35  S37  S36  S38
- S21  S23  S22  S24  S25  S27  S26  S28
- S41  S43  S42  S44  S45  S47  S46  S48
- S51  S53  S52  S54  S55  S57  S56  S58
- S71  S73  S72  S74  S75  S77  S76  S78
- S61  S63  S62  S64  S65  S67  S66  S68
- S81  S83  S82  S84  S85  S87  S86  S88
+8×8 Matrix{Symbol}:
+ :S11  :S13  :S12  :S14  :S15  :S17  :S16  :S18
+ :S31  :S33  :S32  :S34  :S35  :S37  :S36  :S38
+ :S21  :S23  :S22  :S24  :S25  :S27  :S26  :S28
+ :S41  :S43  :S42  :S44  :S45  :S47  :S46  :S48
+ :S51  :S53  :S52  :S54  :S55  :S57  :S56  :S58
+ :S71  :S73  :S72  :S74  :S75  :S77  :S76  :S78
+ :S61  :S63  :S62  :S64  :S65  :S67  :S66  :S68
+ :S81  :S83  :S82  :S84  :S85  :S87  :S86  :S88
 ```
 """
 function ports_modes_to_modes_ports_block(S::AbstractMatrix, Nmodes::Int)
@@ -2837,20 +2597,19 @@ end
 
 # Examples
 ```jldoctest
-@variables S11 S12 S13 S14 S15 S16 S17 S18 S21 S22 S23 S24 S25 S26 S27 S28 S31 S32 S33 S34 S35 S36 S37 S38 S41 S42 S43 S44 S45 S46 S47 S48 S51 S52 S53 S54 S55 S56 S57 S58 S61 S62 S63 S64 S65 S66 S67 S68 S71 S72 S73 S74 S75 S76 S77 S78 S81 S82 S83 S84 S85 S86 S87 S88
-S = [S11 S12 S13 S14 S15 S16 S17 S18; S21 S22 S23 S24 S25 S26 S27 S28; S31 S32 S33 S34 S35 S36 S37 S38; S41 S42 S43 S44 S45 S46 S47 S48; S51 S52 S53 S54 S55 S56 S57 S58; S61 S62 S63 S64 S65 S66 S67 S68; S71 S72 S73 S74 S75 S76 S77 S78; S81 S82 S83 S84 S85 S86 S87 S88]
+S = [:S11 :S12 :S13 :S14 :S15 :S16 :S17 :S18; :S21 :S22 :S23 :S24 :S25 :S26 :S27 :S28; :S31 :S32 :S33 :S34 :S35 :S36 :S37 :S38; :S41 :S42 :S43 :S44 :S45 :S46 :S47 :S48; :S51 :S52 :S53 :S54 :S55 :S56 :S57 :S58; :S61 :S62 :S63 :S64 :S65 :S66 :S67 :S68; :S71 :S72 :S73 :S74 :S75 :S76 :S77 :S78; :S81 :S82 :S83 :S84 :S85 :S86 :S87 :S88]
 JosephsonCircuits.modes_ports_to_ports_modes_block(S,2)
 
 # output
-8×8 Matrix{Num}:
- S11  S13  S12  S14  S15  S17  S16  S18
- S31  S33  S32  S34  S35  S37  S36  S38
- S21  S23  S22  S24  S25  S27  S26  S28
- S41  S43  S42  S44  S45  S47  S46  S48
- S51  S53  S52  S54  S55  S57  S56  S58
- S71  S73  S72  S74  S75  S77  S76  S78
- S61  S63  S62  S64  S65  S67  S66  S68
- S81  S83  S82  S84  S85  S87  S86  S88
+8×8 Matrix{Symbol}:
+ :S11  :S13  :S12  :S14  :S15  :S17  :S16  :S18
+ :S31  :S33  :S32  :S34  :S35  :S37  :S36  :S38
+ :S21  :S23  :S22  :S24  :S25  :S27  :S26  :S28
+ :S41  :S43  :S42  :S44  :S45  :S47  :S46  :S48
+ :S51  :S53  :S52  :S54  :S55  :S57  :S56  :S58
+ :S71  :S73  :S72  :S74  :S75  :S77  :S76  :S78
+ :S61  :S63  :S62  :S64  :S65  :S67  :S66  :S68
+ :S81  :S83  :S82  :S84  :S85  :S87  :S86  :S88
 ```
 """
 function modes_ports_to_ports_modes_block(S::AbstractMatrix, Nmodes::Int)

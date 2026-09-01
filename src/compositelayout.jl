@@ -741,18 +741,15 @@ function applypreconditioner!(z::AbstractVector, pc::CanonicalPreconditioner,
 end
 
 # The rest of the preconditioner interface is delegated rather than
-# inherited. Its defaults are inert -- no escalation, no deflation, an
-# unknown level -- so a wrapper which does not forward them silently turns
-# escalation off, and on a case hard enough to need the full Jacobian that
-# is the difference between converging and stalling with an O(1e-2)
-# residual. It does not look like a layout bug when it happens.
+# inherited. Its defaults are inert -- no escalation, no deflation -- so a
+# wrapper which does not forward them silently turns escalation off, and on
+# a case hard enough to need the full Jacobian that is the difference
+# between converging and stalling with an O(1e-2) residual. It does not look
+# like a layout bug when it happens.
 escalatepreconditioner!(pc::CanonicalPreconditioner) =
     escalatepreconditioner!(pc.inner)
 deflationsize(pc::CanonicalPreconditioner) = deflationsize(pc.inner)
 deflationrebuilds(pc::CanonicalPreconditioner) = deflationrebuilds(pc.inner)
-escalationrefusals(pc::CanonicalPreconditioner) = escalationrefusals(pc.inner)
-preconditionerlevel(pc::CanonicalPreconditioner) =
-    preconditionerlevel(pc.inner)
 
 """
     dcsubsystemrhs(work::CanonicalWork)

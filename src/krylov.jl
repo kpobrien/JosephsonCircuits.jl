@@ -268,22 +268,6 @@ How many times the deflation subspace has been rebuilt.
 deflationrebuilds(::AbstractPreconditioner) = 0
 
 """
-    escalationrefusals(pc)
-
-How many escalation requests were absorbed without being passed on.
-"""
-escalationrefusals(::AbstractPreconditioner) = 0
-
-"""
-    preconditionerlevel(pc)
-
-How many modes the preconditioner couples, as a measure of its strength, or
-`-1` when that is not meaningful. Reported so an escalation can be checked
-to have taken effect rather than merely to have been requested.
-"""
-preconditionerlevel(::AbstractPreconditioner) = -1
-
-"""
     GMRESWorkspace{T<:AbstractFloat}
 
 Preallocated storage for [`gmres!`](@ref) with a restart length of `m` on a
@@ -437,8 +421,6 @@ mutable struct RecyclingPreconditioner{TI,TJ,T<:AbstractFloat,TM<:AbstractMatrix
     const escalateafter::Int
     escalationrequests::Int
     rebuilds::Int
-    # escalation requests absorbed without being passed to `inner`
-    refusals::Int
 end
 
 function RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
@@ -469,7 +451,7 @@ function RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
     return RecyclingPreconditioner(inner, jvp!, similar(b, n, 0),
         similar(b, n, 0), similar(b, n, 0), similar(b, 0, 0),
         similar(b, 0), similar(b, 0),
-        Int(kmax), Int(kharvest), Int(escalateafter), 0, 0, 0)
+        Int(kmax), Int(kharvest), Int(escalateafter), 0, 0)
 end
 
 # Escalating the base and recycling are two answers to the same problem, and
@@ -506,7 +488,6 @@ function escalatepreconditioner!(pc::RecyclingPreconditioner)
     end
     pc.escalationrequests += 1
     if pc.escalationrequests < pc.escalateafter
-        pc.refusals += 1
         return false
     end
     pc.escalationrequests = 0
@@ -515,8 +496,6 @@ end
 
 deflationsize(pc::RecyclingPreconditioner) = size(pc.U, 2)
 deflationrebuilds(pc::RecyclingPreconditioner) = pc.rebuilds
-escalationrefusals(pc::RecyclingPreconditioner) = pc.refusals
-preconditionerlevel(pc::RecyclingPreconditioner) = preconditionerlevel(pc.inner)
 
 function updatepreconditioner!(pc::RecyclingPreconditioner, x::AbstractVector)
     updatepreconditioner!(pc.inner, x)

@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays
@@ -6,8 +5,8 @@ using Test
 
 @testset verbose=true "hbsystem" begin
 
-    @variables Rleft Cc Lj Cj
-    circuitjpa = Tuple{String,String,String,Num}[]
+    JosephsonCircuits.@params Rleft Cc Lj Cj
+    circuitjpa = Tuple{String,String,String,Any}[]
     push!(circuitjpa,("P1","1","0",1))
     push!(circuitjpa,("R1","1","0",Rleft))
     push!(circuitjpa,("C1","1","2",Cc))
@@ -19,9 +18,9 @@ using Test
     # single-tone and two-tone (the latter has self-conjugate modes and
     # negative frequencies from the multi-dimensional RDFT), and a chain
     # with junctions between pairs of ungrounded nodes.
-    @variables Ljx Cg Cjx Rl
+    JosephsonCircuits.@params Ljx Cg Cjx Rl
     Ncells = 4
-    circuitchain = Tuple{String,String,String,Num}[]
+    circuitchain = Tuple{String,String,String,Any}[]
     push!(circuitchain, ("P1","1","0",1))
     push!(circuitchain, ("R1","1","0",Rl))
     for i in 1:Ncells
@@ -35,8 +34,8 @@ using Test
 
     # a circuit with mutually coupled inductors, which are promoted to
     # auxiliary branch currents by the modified nodal analysis formulation
-    @variables Lla Llb Kab Rl2
-    circuitmutual = Tuple{String,String,String,Num}[]
+    JosephsonCircuits.@params Lla Llb Kab Rl2
+    circuitmutual = Tuple{String,String,String,Any}[]
     push!(circuitmutual, ("P1","1","0",1))
     push!(circuitmutual, ("R1","1","0",Rl2))
     push!(circuitmutual, ("C1","1","2",Cc))

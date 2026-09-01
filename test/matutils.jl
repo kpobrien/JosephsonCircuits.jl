@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using Test
 
@@ -338,7 +337,7 @@ using Test
 
     @testset "freqsubst" begin
         begin
-            @variables w
+            JosephsonCircuits.@params w
             wmodes = [-1,2];
             A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
             @test_throws(
@@ -348,7 +347,7 @@ using Test
         end
 
         begin
-            @variables w
+            JosephsonCircuits.@params w
             wmodes = [-1,1,2];
             A = JosephsonCircuits.diagrepeat(JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [w,2*w,3*w],2,2),2);
             @test_throws(

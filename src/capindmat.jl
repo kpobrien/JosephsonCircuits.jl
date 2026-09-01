@@ -151,36 +151,34 @@ See also [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
 
 # Examples
 ```julia
-@variables Ipump Rleft Cc Lj Cj
 circuit = Circuit(
-    [:p1 => Port(1; Z0 = Rleft),
-     :i1 => CurrentSource(Ipump),
-     :cc => Capacitor(Cc),
-     :jj => JosephsonJunction(Lj),
-     :cj => Capacitor(Cj),
+    [:p1 => Port(1; Z0 = :Rleft),
+     :i1 => CurrentSource(:Ipump),
+     :cc => Capacitor(:Cc),
+     :jj => JosephsonJunction(:Lj),
+     :cj => Capacitor(:Cj),
      :gnd => Ground()],
     [[(:p1, 1), (:i1, 1), (:cc, 1)],
      [(:cc, 2), (:jj, 1), (:cj, 1)],
      [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
-circuitdefs = Dict(Lj =>1000.0e-12,Cc => 100.0e-15,Cj => 1000.0e-15,Rleft => 50.0,Ipump => 1.0e-8)
+circuitdefs = Dict(:Lj => 1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15, :Rleft => 50.0, :Ipump => 1.0e-8)
 JosephsonCircuits.testshow(stdout,numericmatrices(circuit,circuitdefs))
 
 # output
 JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], 1.0e-9, Real[1, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
 ```
 ```julia
-@variables Ipump Rleft Cc Lj Cj
 circuit = Circuit(
-    [:p1 => Port(1; Z0 = Rleft),
-     :i1 => CurrentSource(Ipump),
-     :cc => Capacitor(Cc),
-     :jj => JosephsonJunction(Lj),
-     :cj => Capacitor(Cj),
+    [:p1 => Port(1; Z0 = :Rleft),
+     :i1 => CurrentSource(:Ipump),
+     :cc => Capacitor(:Cc),
+     :jj => JosephsonJunction(:Lj),
+     :cj => Capacitor(:Cj),
      :gnd => Ground()],
     [[(:p1, 1), (:i1, 1), (:cc, 1)],
      [(:cc, 2), (:jj, 1), (:cj, 1)],
      [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
-circuitdefs = Dict(Lj =>1000.0e-12,Cc => 100.0e-15,Cj => 1000.0e-15,Rleft => 50.0,Ipump => 1.0e-8)
+circuitdefs = Dict(:Lj => 1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15, :Rleft => 50.0, :Ipump => 1.0e-8)
 psc = JosephsonCircuits.compile(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
 JosephsonCircuits.testshow(stdout,numericmatrices(psc, cg, circuitdefs))
@@ -309,19 +307,18 @@ JosephsonCircuits.testshow(stdout,Ib)
 sparsevec([1], [1.0e-9], 2)
 ```
 ```jldoctest
-@variables I1 C1 L1 C2
 Nmodes = 1
 Nbranches = 2
 componenttypes = [:I,:C,:L,:C]
 nodeindices = [2 0 3 3; 1 0 1 1]
-componentvalues = [I1, C1, L1, C2]
+componentvalues = [1.0, 2.0e-12, 3.0e-9, 4.0e-12]
 componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Ib = JosephsonCircuits.calcIb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
 JosephsonCircuits.testshow(stdout,Ib)
 
 # output
-sparsevec([1], Num[I1], 2)
+sparsevec([1], [1.0], 2)
 ```
 """
 function calcIb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
@@ -355,19 +352,18 @@ JosephsonCircuits.testshow(stdout,Vb)
 sparsevec([1], [1.0e-9], 2)
 ```
 ```jldoctest
-@variables V1 C1 L1 C2
 Nmodes = 1
 Nbranches = 2
 componenttypes = [:V,:C,:L,:C]
 nodeindices = [2 0 3 3; 1 0 1 1]
-componentvalues = [V1, C1, L1, C2]
+componentvalues = [1.0, 2.0e-12, 3.0e-9, 4.0e-12]
 componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Vb = JosephsonCircuits.calcVb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
 JosephsonCircuits.testshow(stdout,Vb)
 
 # output
-sparsevec([1], Num[V1], 2)
+sparsevec([1], [1.0], 2)
 ```
 """
 function calcVb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
@@ -401,19 +397,18 @@ JosephsonCircuits.testshow(stdout,Lb)
 sparsevec([1, 2], [1.0e-9, 4.0e-9], 2)
 ```
 ```jldoctest
-@variables L1 K1 L2 C1
 Nmodes = 1
 Nbranches = 2
 componenttypes = [:L,:K,:L,:C]
 nodeindices = [2 0 3 3; 1 0 1 1]
-componentvalues = [L1, K1, L2, C1]
+componentvalues = [1.0e-9, 0.1, 4.0e-9, 2.0e-12]
 componentnamedict = Dict{Symbol, Int}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Lb = JosephsonCircuits.calcLb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
 JosephsonCircuits.testshow(stdout,Lb)
 
 # output
-sparsevec([1, 2], Num[L1, L2], 2)
+sparsevec([1, 2], [1.0e-9, 4.0e-9], 2)
 ```
 """
 function calcLb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
@@ -447,19 +442,18 @@ JosephsonCircuits.testshow(stdout,Ljb)
 sparsevec([1, 2], [1.0e-9, 4.0e-9], 2)
 ```
 ```jldoctest
-@variables Lj1 K1 Lj2 C1
 Nmodes = 1
 Nbranches = 2
 componenttypes = [:Lj,:K,:Lj,:C]
 nodeindices = [2 0 3 3; 1 0 1 1]
-componentvalues = [Lj1, K1, Lj2, C1]
+componentvalues = [1.0e-9, 0.1, 4.0e-9, 2.0e-12]
 componentnamedict = Dict{Symbol, Int}(:C1 => 4,:Lj2 => 3,:Lj1 => 1,:K1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
 Ljb = JosephsonCircuits.calcLjb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
 JosephsonCircuits.testshow(stdout,Ljb)
 
 # output
-sparsevec([1, 2], Num[Lj1, Lj2], 2)
+sparsevec([1, 2], [1.0e-9, 4.0e-9], 2)
 ```
 """
 function calcLjb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
@@ -545,25 +539,6 @@ Mb = JosephsonCircuits.calcMb(componenttypes,nodeindices,componentvalues,compone
 2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
   ⋅           2.82843e-10
  2.82843e-10   ⋅ 
-```
-```jldoctest
-@variables L1 L2 K1 C1
-Nmodes = 2
-Nbranches = 2
-componenttypes = [:L,:K,:L,:C]
-nodeindices = [2 0 3 3; 1 0 1 1]
-componentvalues = [L1, K1, L2, C1]
-componentnamedict = Dict{Symbol, Int}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
-edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
-mutualinductorbranchnames = [ :L1, :L2]
-Mb = JosephsonCircuits.calcMb(componenttypes,nodeindices,componentvalues,componentnamedict,mutualinductorbranchnames,edge2indexdict,Nmodes,Nbranches)
-
-# output
-4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
-              ⋅               ⋅  K1*sqrt(L1*L2)               ⋅
-              ⋅               ⋅               ⋅  K1*sqrt(L1*L2)
- K1*sqrt(L1*L2)               ⋅               ⋅               ⋅
-              ⋅  K1*sqrt(L1*L2)               ⋅               ⋅
 ```
 """
 function calcMb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
@@ -680,32 +655,6 @@ JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes)
   ⋅     2.5e8
 ```
 ```jldoctest
-@variables L1 L2
-Nmodes = 1
-Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2])
-Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
-JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes)
-
-# output
-2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 2 stored entries:
- 1 / L1       ⋅
-      ⋅  1 / L2
-```
-```jldoctest
-@variables L1 L2
-Nmodes = 2
-Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2])
-Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
-JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes)
-
-# output
-4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
- 1 / L1       ⋅       ⋅       ⋅
-      ⋅  1 / L1       ⋅       ⋅
-      ⋅       ⋅  1 / L2       ⋅
-      ⋅       ⋅       ⋅  1 / L2
-```
-```jldoctest
 Nmodes = 1
 Lb = JosephsonCircuits.SparseArrays.sparsevec([],Nothing[])
 Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
@@ -714,16 +663,6 @@ JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes).nzval
 # output
 Nothing[]
 ```
-```jldoctest
-@syms L1 L2
-Nmodes = 1
-Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2])
-Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
-JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes).nzval
-# output
-2-element Vector{Any}:
- 1 / L1
- 1 / L2
 """
 function calcinvLn(Lb::SparseVector, Rbn::SparseMatrixCSC, Nmodes)
     if nnz(Lb)>0
@@ -766,39 +705,6 @@ JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes)
    ⋅          1.04167e9    ⋅         -1.04167e8
  -1.04167e8    ⋅          2.60417e8    ⋅ 
    ⋅         -1.04167e8    ⋅          2.60417e8
-```
-```jldoctest
-@variables L1 L2 Lm
-Nmodes = 1
-Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2]);
-Mb = JosephsonCircuits.SparseArrays.sparse([2,1], [1,2], [Lm,Lm]);
-Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1.0,1.0])
-println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
-
-# output
-sparse([1, 2, 1, 2], [1, 1, 2, 2], Num[(1.0 + (Lm^2) / (L1*(L2 + (-(Lm^2)) / L1))) / L1, (-Lm) / (L1*(L2 + (-(Lm^2)) / L1)), (-Lm) / (L1*(L2 + (-(Lm^2)) / L1)), 1 / (L2 + (-(Lm^2)) / L1)], 2, 2)
-```
-```jldoctest
-@variables L1 L2
-Nmodes = 1
-Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2]);
-Mb = JosephsonCircuits.SparseArrays.sparse([], [], Nothing[]);
-Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
-println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
-
-# output
-sparse([1, 2], [1, 2], Num[1 / L1, 1 / L2], 2, 2)
-```
-```jldoctest
-@syms L1 L2 Lm
-Nmodes = 1
-Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[L1,L2]);
-Mb = JosephsonCircuits.SparseArrays.sparse([2,1], [1,2], [Lm,Lm]);
-Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1.0,1.0])
-println(JosephsonCircuits.calcinvLn(Lb,Mb,Rbn,Nmodes))
-
-# output
-sparse([1, 2, 1, 2], [1, 1, 2, 2], Num[(1.0 + (Lm^2) / (L1*(L2 + (-(Lm^2)) / L1))) / L1, (-Lm) / (L1*(L2 + (-(Lm^2)) / L1)), (-Lm) / (L1*(L2 + (-(Lm^2)) / L1)), 1 / (L2 + (-(Lm^2)) / L1)], 2, 2)
 ```
 """
 function calcinvLn(Lb::SparseVector, Mb::SparseMatrixCSC,
@@ -932,9 +838,6 @@ Return the mean of the linear and Josephson inductors.
 ```jldoctest
 julia> JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[10,4,5,1])
 2.5
-
-julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L1, C1, Lj1])
-(L1 + Lj1) / 2
 ```
 """
 function calcLmean(componenttypes::Vector{Symbol}, componentvalues::Vector)
@@ -952,9 +855,6 @@ return type is Nothing.
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.calcLmean_inner([:R,:C,:C,:P],[10,4,5,1],Nothing[])
-0
-
-julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean_inner([:R,:C,:C,:C],[R1, L1, C1, Lj1],Nothing[])
 0
 ```
 """
@@ -976,9 +876,6 @@ julia> JosephsonCircuits.calcLmean_inner([:R,:L,:C,:Lj],[10,4,5,1],Float64[])
 
 julia> JosephsonCircuits.calcLmean_inner([:R,:C,:C,:C],[10,4,5,1],Float64[])
 0.0
-
-julia> @variables R1 L1 C1 Lj1;JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[R1, L1, C1, Lj1])
-(L1 + Lj1) / 2
 ```
 """
 function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
@@ -1049,23 +946,6 @@ julia> JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[1.0,0.1,2.0],2,3)
    ⋅    1.1    ⋅   -0.1
  -0.1    ⋅    2.1    ⋅ 
    ⋅   -0.1    ⋅    2.1
-
-julia> @variables Cg1 Cg2;JosephsonCircuits.calcCn([:C,:C],[2 3;1 1],[Cg1,Cg2],1,3)
-2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 2 stored entries:
- Cg1    ⋅
-   ⋅  Cg2
-
-julia> @variables Cg1 Cc Cg2;JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[Cg1, Cc, Cg1],1,3)
-2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
- Cc + Cg1       -Cc
-      -Cc  Cc + Cg1
-
-julia> @variables Cg1 Cc Cg2;JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[Cg1, Cc, Cg1],2,3)
-4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 8 stored entries:
- Cc + Cg1         ⋅       -Cc         ⋅
-        ⋅  Cc + Cg1         ⋅       -Cc
-      -Cc         ⋅  Cc + Cg1         ⋅
-        ⋅       -Cc         ⋅  Cc + Cg1
 ```
 """
 function calcCn(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
@@ -1112,23 +992,6 @@ julia> JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[1.0,100.0,2.0],2,3)
    ⋅     1.01    ⋅    -0.01
  -0.01    ⋅     0.51    ⋅ 
    ⋅    -0.01    ⋅     0.51
-
-julia> @variables Rg1 Rg2;JosephsonCircuits.calcGn([:R,:R],[2 3;1 1],[Rg1,Rg2],1,3)
-2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 2 stored entries:
- 1 / Rg1        ⋅
-       ⋅  1 / Rg2
-
-julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],1,3)
-2×2 SparseArrays.SparseMatrixCSC{Num, Int64} with 4 stored entries:
- 1 / Rc + 1 / Rg1           -1 / Rc
-          -1 / Rc  1 / Rc + 1 / Rg2
-
-julia> @variables Rg1 Rc Rg2;JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[Rg1,Rc,Rg2],2,3)
-4×4 SparseArrays.SparseMatrixCSC{Num, Int64} with 8 stored entries:
- 1 / Rc + 1 / Rg1                 ⋅           -1 / Rc                 ⋅
-                ⋅  1 / Rc + 1 / Rg1                 ⋅           -1 / Rc
-          -1 / Rc                 ⋅  1 / Rc + 1 / Rg2                 ⋅
-                ⋅           -1 / Rc                 ⋅  1 / Rc + 1 / Rg2
 ```
 """
 function calcGn(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
@@ -1312,9 +1175,6 @@ Float64[]
 
 julia> JosephsonCircuits.calcvaluetype([:R,:C,:R],[1,2,3+0.0im],[:R])
 ComplexF64[]
-
-julia> @variables R1 C1 R2;JosephsonCircuits.calcvaluetype([:R,:C,:R],[R1,C1,R2],[:R])
-Num[]
 ```
 """
 function calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,

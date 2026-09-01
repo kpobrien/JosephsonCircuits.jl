@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays
@@ -34,8 +33,8 @@ end
 
     @testset "plan assembled Jx matches the holomorphic derivative" begin
 
-        @variables Rleft Cc Lj Cj
-        circuit = Tuple{String,String,String,Num}[]
+        JosephsonCircuits.@params Rleft Cc Lj Cj
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",Rleft))
         push!(circuit,("C1","1","2",Cc))
@@ -120,8 +119,8 @@ end
         # (pump modulation) contribution, and the full per-frequency
         # assembly against the reference construction from the branch
         # matrices, the incidence matrix products, and the MNA stamps.
-        @variables Rleft Cc Lj Cj
-        circuit = Tuple{String,String,String,Num}[]
+        JosephsonCircuits.@params Rleft Cc Lj Cj
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",Rleft))
         push!(circuit,("C1","1","2",Cc))
@@ -277,9 +276,9 @@ end
 
         # Josephson junctions between pairs of ungrounded nodes exercise all
         # four incidence matrix scatter targets of the direct assembly.
-        @variables Ljx Cg Cjx Rl
+        JosephsonCircuits.@params Ljx Cg Cjx Rl
         Ncells = 5
-        circuit = Tuple{String,String,String,Num}[]
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit, ("P1","1","0",1))
         push!(circuit, ("R1","1","0",Rl))
         for i in 1:Ncells

@@ -455,15 +455,6 @@ and a vector of tuples containing the mixing products and harmonics.
 
 # Examples
 ```jldoctest
-julia> @variables wp1 wp2;JosephsonCircuits.calcmodefreqs((wp1, wp2),[(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)])
-6-element Vector{Num}:
-          0
-        wp1
-       2wp1
-        wp2
-  wp1 + wp2
- 2wp1 + wp2
-
 julia> JosephsonCircuits.calcmodefreqs((1., 1.1),[(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)])
 6-element Vector{Float64}:
  0.0
@@ -490,38 +481,6 @@ Create a vector or array containing the mixing products for visualization
 purposes.
 
 # Examples
-```jldoctest
-@variables wp1
-w = (wp1,)
-freq = JosephsonCircuits.truncfreqs(
-    JosephsonCircuits.calcfreqsrdft((3,)),
-        dc=true, odd=true, even=true, maxintermodorder=Inf,
-)
-JosephsonCircuits.visualizefreqs(w,freq)
-
-# output
-4-element Vector{Num}:
-    0
-  wp1
- 2wp1
- 3wp1
-```
-```jldoctest
-@variables wp1,wp2
-w = (wp1,wp2)
-freq = JosephsonCircuits.truncfreqs(
-    JosephsonCircuits.calcfreqsrdft((3,3)),
-        dc=true, odd=true, even=true, maxintermodorder=3,
-)
-JosephsonCircuits.visualizefreqs(w,freq)
-
-# output
-4×7 Matrix{Num}:
-    0         wp2        2wp2  3wp2  -3wp2       -2wp2        -wp2
-  wp1   wp1 + wp2  wp1 + 2wp2     0      0  wp1 - 2wp2   wp1 - wp2
- 2wp1  2wp1 + wp2           0     0      0           0  2wp1 - wp2
- 3wp1           0           0     0      0           0           0
-```
 ```jldoctest
 w = (1.1,1.2)
 freq = JosephsonCircuits.truncfreqs(

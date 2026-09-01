@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using Test
 using SpecialFunctions
@@ -297,9 +296,6 @@ using SpecialFunctions
     end
 
     @testset "phivectortomatrix! and phimatrixtovector!" begin
-
-        @variables w1,w2
-        w = (w1,w2)
 
         # test whether vector -> matrix -> vector gives the same result
         Nharmonics = (4,3)

@@ -22,8 +22,9 @@
 Parse a builder output -- a legacy tuple netlist or a typed
 [`Circuit`](@ref) -- into `(names, values)` in the solver's sorted
 component order, so the names returned to the caller are the names the
-solver uses. A [`ScatteringParameters`](@ref) port appears with its
-`ScatteringStamp` as the value; every other value must be numeric.
+solver uses. A [`ScatteringParameters`](@ref) block appears once, named by
+its instance path and carrying its definition as the value; every other
+value must be numeric.
 
 Analysis ports are not among them. A port occupies a slot in the flat table
 whose value is the port *number*, which is a label and not a quantity, so

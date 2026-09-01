@@ -452,20 +452,6 @@ function complex_to_real!(Ar::SparseMatrixCSC{T}, A::SparseMatrixCSC{Complex{T}}
 end
 
 
-# write one block: `s` into the first column, im*`d` into the second if present
-@inline function _writepair!(Rv::Vector{T}, k, k2, wr, wc, s, d) where {T}
-    @inbounds begin
-        Rv[k]      = real(s)
-        Rv[k+wr-1] = ifelse(wr == 2, imag(s), real(s))
-        if wc == 2
-            Rv[k2]      = -imag(d)
-            Rv[k2+wr-1] = ifelse(wr == 2, real(d), -imag(d))
-            k2 += wr
-        end
-    end
-    return k + wr, k2
-end
-
 #  real -> complex
 
 """

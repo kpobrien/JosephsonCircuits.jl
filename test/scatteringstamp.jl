@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using Test
@@ -1480,11 +1479,10 @@ using Test
 
         # a netlist of tuples states no temperatures, so everything in one
         # takes the analysis default; that format is unchanged
-        @variables Rp Cc Lj Cj
-        legacy = [("P1","1","0",1), ("R1","1","0",Rp), ("C1","1","2",Cc),
-                  ("Lj1","2","0",Lj), ("C2","2","0",Cj), ("R2","2","0",2.0e4)]
-        defs = Dict(Lj => 1000.0e-12, Cc => 100.0e-15, Cj => 1000.0e-15,
-            Rp => 50.0)
+        legacy = [("P1","1","0",1), ("R1","1","0",:Rp), ("C1","1","2",:Cc),
+                  ("Lj1","2","0",:Lj), ("C2","2","0",:Cj), ("R2","2","0",2.0e4)]
+        defs = Dict(:Lj => 1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15,
+            :Rp => 50.0)
         lcold = hblinsolve(wst, legacy, defs; keyedarrays = false,
             returnCM = true, returnQE = true)
         lwarm = hblinsolve(wst, legacy, defs; keyedarrays = false,

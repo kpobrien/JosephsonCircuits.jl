@@ -681,9 +681,15 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         # the same answer, to what single precision can hold
         @test isapprox(only(a.dcnodevoltage), only(b.dcnodevoltage);
             rtol = 1e-6)
-        # and it stops where single precision runs out rather than earlier
+        # and it stops where single precision runs out rather than at the
+        # tolerance it was handed. The two are an order of magnitude apart --
+        # `rtol` would accept a relative residual of 1e-6 and the arithmetic
+        # reaches a few times `eps(Float32)` -- so the bound sits between
+        # them rather than at one ulp, which is not a quantity a residual
+        # summed over the modes lands on exactly and which fell on either
+        # side of the line depending on the platform's arithmetic.
         r = b.solverinfo.finalresidual/b.solverinfo.initialresidual
-        @test r <= eps(Float32)
+        @test r <= 4*eps(Float32)
     end
 
     # The preconditioner solves the direct current subsystem exactly and

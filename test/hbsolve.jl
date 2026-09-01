@@ -1,4 +1,3 @@
-using Symbolics
 using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays
@@ -11,7 +10,7 @@ using Test
 
         ftol = 5e-17
 
-        @variables R Cc Lj Cj
+        JosephsonCircuits.@params R Cc Lj Cj
         circuit = [
             ("P1","1","0",1),
             ("R1","1","0",R),
@@ -72,8 +71,8 @@ using Test
 
     @testset "hbsolve method comparison" begin
 
-        @variables Rleft Cc Lj Cj w L1
-        circuit = Tuple{String,String,String,Num}[]
+        JosephsonCircuits.@params Rleft Cc Lj Cj w L1
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",Rleft))
         push!(circuit,("C1","1","2",Cc)) 
@@ -119,7 +118,7 @@ using Test
             atol = 1e-6)
 
         # test some uncommon options
-        @variables w
+        JosephsonCircuits.@params w
         result = hbsolve(ws, wp, sources, Nmodulationharmonics,
             Npumpharmonics, circuit, circuitdefs, ftol=1e-12, symfreqvar = w,
             returnS=false, returnSnoise=true, returnQE=false,
@@ -191,7 +190,7 @@ using Test
 
     @testset verbose=true "hbsolve return flags" begin
 
-        @variables R Cc Lj Cj
+        JosephsonCircuits.@params R Cc Lj Cj
         circuit = [
             ("P1","1","0",1),
             ("R1","1","0",R),
@@ -256,8 +255,8 @@ using Test
 
     @testset verbose=true "hbnlsolve lossless error" begin
 
-        @variables Rleft Cc Lj Cj w L1
-        circuit = Tuple{String,String,String,Num}[]
+        JosephsonCircuits.@params Rleft Cc Lj Cj w L1
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",Rleft))
         push!(circuit,("C1","1","2",Cc)) 
@@ -338,7 +337,7 @@ using Test
         # circuitdefs fails immediately with an ArgumentError naming the
         # component and the undefined variable, instead of a downstream
         # error about the symbolic frequency variable.
-        @variables Rv Ccv Ljv Cjv
+        JosephsonCircuits.@params Rv Ccv Ljv Cjv
         circuit = [("P1","1","0",1),("R1","1","0",Rv),("C1","1","2",Ccv),
             ("Lj1","2","0",Ljv),("C2","2","0",Cjv)]
         circuitdefs = Dict(Ljv=>1000.0e-12, Cjv=>1000.0e-15, Rv=>50.0)
@@ -370,7 +369,7 @@ using Test
         # frequency dependent values through symfreqvar are accepted, and
         # a value mixing symfreqvar with an undefined variable is rejected
         # naming both the component and the variable
-        @variables wsym Rundef
+        JosephsonCircuits.@params wsym Rundef
         c2 = [("P1","1","0",1),("R1","1","0",50.0 + 0.0*wsym),
             ("C1","1","0",100.0e-15),("L1","1","0",1.0e-9)]
         out = JosephsonCircuits.hbnlsolve(wp, (1,), sources, c2, Dict();
@@ -391,14 +390,14 @@ using Test
     end
 
     @testset "FrequencyDependent matches symfreqvar" begin
-        # the same frequency law spelled two ways: a Symbolics expression in
-        # the symbolic frequency variable, and a plain Julia closure through
+        # the same frequency law spelled two ways: an expression in the
+        # symbolic frequency variable, and a plain Julia closure through
         # FrequencyDependent. The scattering parameters must agree to
         # roundoff.
         wp = (2*pi*4.75001*1e9,)
         ws = 2*pi*(4.5:0.1:5.0)*1e9
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
-        @variables wsym
+        JosephsonCircuits.@params wsym
         law(w) = 50.0*(1 + (w/1e11)^2)
         csym = [("P1","1","0",1),("R1","1","0",law(wsym)),
             ("C1","1","2",100.0e-15),("Lj1","2","0",1000.0e-12),
@@ -452,10 +451,10 @@ using Test
     # equivalence of the two solve strategies.
     @testset verbose=true "hblinsolve adjoint solve" begin
 
-        @variables Rleft Rright Cc Lj Cj Lla Llb Kab
+        JosephsonCircuits.@params Rleft Rright Cc Lj Cj Lla Llb Kab
 
         # a JPA: one port, so one promoted port resistor
-        circuitjpa = Tuple{String,String,String,Num}[]
+        circuitjpa = Tuple{String,String,String,Any}[]
         push!(circuitjpa,("P1","1","0",1))
         push!(circuitjpa,("R1","1","0",Rleft))
         push!(circuitjpa,("C1","1","2",Cc))
@@ -472,7 +471,7 @@ using Test
         # two ports and a mutually coupled inductor pair, which is promoted to
         # auxiliary branch currents as well. exercises both auxiliary blocks at
         # once, with the coupling coefficient close to one.
-        circuitmutual = Tuple{String,String,String,Num}[]
+        circuitmutual = Tuple{String,String,String,Any}[]
         push!(circuitmutual,("P1","1","0",1))
         push!(circuitmutual,("R1","1","0",Rleft))
         push!(circuitmutual,("C1","1","2",Cc))
@@ -604,8 +603,8 @@ using Test
         # the component values of the linearized solve.
 
         @testset "linear network" begin
-            @variables R1v R2v R3v C1v L1v C2v
-            circuit = Tuple{String,String,String,Num}[]
+            JosephsonCircuits.@params R1v R2v R3v C1v L1v C2v
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",R1v))
             push!(circuit,("C1","1","2",C1v)); push!(circuit,("L1","2","0",L1v))
             push!(circuit,("C2","2","0",C2v)); push!(circuit,("P2","2","0",2))
@@ -635,8 +634,8 @@ using Test
         end
 
         @testset "pumped junction" begin
-            @variables Rl Cc Lj Cj
-            circuit = Tuple{String,String,String,Num}[]
+            JosephsonCircuits.@params Rl Cc Lj Cj
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
             push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
             push!(circuit,("C2","2","0",Cj))
@@ -693,8 +692,8 @@ using Test
             # which the pump is re-solved. At this operating point the
             # operating point contribution is comparable to or larger than the
             # frozen pump term, so the two must differ substantially.
-            @variables Rl Cc Lj Cj
-            circuit = Tuple{String,String,String,Num}[]
+            JosephsonCircuits.@params Rl Cc Lj Cj
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
             push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
             push!(circuit,("C2","2","0",Cj))
@@ -756,9 +755,9 @@ using Test
             # pair instead of contracting each component against the full
             # sparsity structure of the linearized system, so its cost is
             # independent of the number of components. The two must agree.
-            @variables Rl Ljx Cg Cjx Cg1v
+            JosephsonCircuits.@params Rl Ljx Cg Cjx Cg1v
             Ncells = 3
-            circuit = Tuple{String,String,String,Num}[]
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
             for i in 1:Ncells
                 push!(circuit,("Lj$(i)","$(i)","$(i+1)",Ljx))
@@ -832,8 +831,8 @@ using Test
             # malformed low level inputs must be rejected at the boundary,
             # not discovered as out of bounds indexing inside the
             # contractions (the contraction loops are @inbounds).
-            @variables Rl Cc Lj Cj
-            circuit = Tuple{String,String,String,Num}[]
+            JosephsonCircuits.@params Rl Cc Lj Cj
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
             push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
             push!(circuit,("C2","2","0",Cj))
@@ -888,8 +887,8 @@ using Test
             # fixed operating point sensitivity, in every contraction mode,
             # and the (formerly junction shaped) operating point machinery
             # must not be constructed at all.
-            @variables Rl Ll Cs
-            circuit = Tuple{String,String,String,Num}[]
+            JosephsonCircuits.@params Rl Ll Cs
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
             push!(circuit,("L1","1","2",Ll)); push!(circuit,("C1","2","0",Cs))
             push!(circuit,("P2","2","0",2)); push!(circuit,("R2","2","0",Rl))
@@ -928,8 +927,8 @@ using Test
             # transposed transform on a grid with a dc harmonic. the bias is
             # well below the junction critical current so the finite
             # difference re-solves stay on the same solution branch.
-            @variables Rl Ll Lj Cj
-            circuit = Tuple{String,String,String,Num}[]
+            JosephsonCircuits.@params Rl Ll Lj Cj
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
             push!(circuit,("L1","1","2",Ll)); push!(circuit,("Lj1","2","0",Lj))
             push!(circuit,("C2","2","0",Cj))
@@ -974,8 +973,8 @@ using Test
             # directly after those waves are formed and be independent of
             # which other outputs are requested, including when S itself is
             # not returned.
-            @variables Rl Cc Lj Cj
-            circuit = Tuple{String,String,String,Num}[]
+            JosephsonCircuits.@params Rl Cc Lj Cj
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
             push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
             push!(circuit,("C2","2","0",Cj))
@@ -1002,9 +1001,9 @@ using Test
             # functional differences the node fluxes in the node order of the
             # port component. Writing a port with its nodes in the opposite
             # order must not flip the sign of the sensitivities.
-            @variables R1v R2v C1v L1v C2v
+            JosephsonCircuits.@params R1v R2v C1v L1v C2v
             for reversed in (false, true)
-                circuit = Tuple{String,String,String,Num}[]
+                circuit = Tuple{String,String,String,Any}[]
                 push!(circuit,("P1","1","0",1))
                 push!(circuit,("R1","1","0",R1v))
                 push!(circuit,("C1","1","2",C1v))
@@ -1042,8 +1041,8 @@ using Test
             # shift, in a circuit which also contains a mutually coupled
             # inductor pair, so the operating point augmentation includes the
             # coupled inductor auxiliary variables as well.
-            @variables Rl Rr Cc Lj Cj Lla Llb Kab
-            circuit = Tuple{String,String,String,Num}[]
+            JosephsonCircuits.@params Rl Rr Cc Lj Cj Lla Llb Kab
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
             push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
             push!(circuit,("C2","2","0",Cj))
@@ -1073,8 +1072,8 @@ using Test
         @testset "sensitivity mode validation" begin
             # an unknown contraction order is rejected even when no operating
             # point derivatives are in play
-            @variables Rl Cc Lj Cj
-            circuit = Tuple{String,String,String,Num}[]
+            JosephsonCircuits.@params Rl Cc Lj Cj
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
             push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
             push!(circuit,("C2","2","0",Cj))
@@ -1085,8 +1084,8 @@ using Test
         end
 
         @testset "unsupported components" begin
-            @variables Rl Cc Lj Cj Lla Llb Kab
-            circuit = Tuple{String,String,String,Num}[]
+            JosephsonCircuits.@params Rl Cc Lj Cj Lla Llb Kab
+            circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
             push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
             push!(circuit,("C2","2","0",Cj))
@@ -1113,8 +1112,8 @@ using Test
         # so the scattering cube survived the frequency loop even when the
         # caller never asked for it. Everything now consumes the per frequency
         # view instead, and these outputs must be unchanged either way.
-        @variables R1v R2v C1v L1v C2v Ljv
-        circuit = Tuple{String,String,String,Num}[]
+        JosephsonCircuits.@params R1v R2v C1v L1v C2v Ljv
+        circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",R1v))
         push!(circuit,("C1","1","2",C1v)); push!(circuit,("Lj1","2","0",Ljv))
         push!(circuit,("C2","2","0",C2v)); push!(circuit,("P2","2","0",2))
