@@ -1132,9 +1132,11 @@ noise scattering matrix, rather than the matrix itself.
 row, so a caller which has that sum already, as one computed on a backend has,
 passes it here and never forms the matrix. See [`NoiseReduction`](@ref).
 """
-# the reduction's `denom` already carries the occupation, applied on the
-# backend where it was summed, so the occupation is not applied again here
-calcqe!(qe, S, noise::NoiseReduction, occupation) = calcqe!(qe, S, noise)
+function calcqe!(qe, S, noise::NoiseReduction, occupation)
+    # the reduction's `denom` already carries the occupation, applied on the
+    # backend where it was summed, so it is not applied again here
+    return calcqe!(qe, S, noise)
+end
 
 function calcqe!(qe, S, noise::NoiseReduction)
 

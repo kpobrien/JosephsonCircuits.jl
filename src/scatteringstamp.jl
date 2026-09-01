@@ -5,7 +5,7 @@
     ScatteringStamp(block, port)
 
 The value carried by one port of a [`ScatteringParameters`](@ref) lowered into a
-[`ParsedSortedCircuit`](@ref): the shared block definition and the port
+[`CompiledCircuit`](@ref): the shared block definition and the port
 index. Each port of an n-port block lowers to one `:S` component whose two
 nodes are the signal and reference terminals of that port, so the two node
 per component layout of the parsed circuit is preserved; all ports of one
@@ -217,23 +217,23 @@ struct ScatteringStampSystem
 end
 
 """
-    countscatteringports(psc::ParsedSortedCircuit)
+    countscatteringports(psc::CompiledCircuit)
 
 The total number of scattering block ports (`:S` components) of the parsed
 circuit, which is the number of auxiliary port current variables per mode.
 """
-countscatteringports(psc::ParsedSortedCircuit) = count(==(:S),
+countscatteringports(psc::CompiledCircuit) = count(==(:S),
     psc.componenttypes)
 
 """
-    hasscattering(psc::ParsedSortedCircuit)
+    hasscattering(psc::CompiledCircuit)
 
 Whether the parsed circuit contains scattering block components.
 """
-hasscattering(psc::ParsedSortedCircuit) = any(==(:S), psc.componenttypes)
+hasscattering(psc::CompiledCircuit) = any(==(:S), psc.componenttypes)
 
 """
-    scatteringstampsystem(psc::ParsedSortedCircuit, Nmodes::Integer;
+    scatteringstampsystem(psc::CompiledCircuit, Nmodes::Integer;
         auxoffset::Integer, Ntotal::Integer, scale::Real = 1.0)
 
 Collect the `:S` components of the parsed circuit into a
@@ -247,12 +247,19 @@ system, and `scale` multiplies the stamped `B` entries (`Lmean` in the
 scaled nonlinear solver, one in the linearized solver), mirroring the
 constitutive equations of the promoted port resistors.
 """
-function scatteringstampsystem(psc::ParsedSortedCircuit, Nmodes::Integer;
+function scatteringstampsystem(psc::CompiledCircuit, Nmodes::Integer;
     auxoffset::Integer, Ntotal::Integer, scale::Real = 1.0)
 
-    blockofdef = IdDict{Any,Int}()
     blocks = StampedScatteringBlock[]
     auxbase = auxoffset
+    # One block instance per run of port entries, not one per distinct block
+    # object. Grouping by object identity merged two instances of one shared
+    # definition into a single block, which is a thing a user has every
+    # reason to write -- elaboration deduplicates definitions by identity
+    # precisely so that a definition can be shared -- and which failed with
+    # a complaint that a port appeared twice. The entries of one instance
+    # are emitted consecutively and its first is port 1, which is what
+    # separates one instance from the next.
     for (i, type) in enumerate(psc.componenttypes)
         type == :S || continue
         stamp = psc.componentvalues[i]
@@ -260,15 +267,16 @@ function scatteringstampsystem(psc::ParsedSortedCircuit, Nmodes::Integer;
             throw(ArgumentError(lazy"The component $(psc.componentnames[i]) has type :S but its value is a $(typeof(stamp)) rather than a ScatteringStamp."))
         end
         block = stamp.block
-        bi = get!(blockofdef, block) do
+        p = stamp.port
+        if p == 1
             n = block.nports
             push!(blocks, StampedScatteringBlock(block, zeros(Int, n),
                 zeros(Int, n), auxbase, psc.componentnames[i]))
             auxbase += n*Nmodes
-            length(blocks)
+        elseif isempty(blocks)
+            throw(ArgumentError(lazy"The component $(psc.componentnames[i]) is port $(p) of a scattering block whose port 1 does not precede it; every port of a block must lower to one :S component."))
         end
-        sb = blocks[bi]
-        p = stamp.port
+        sb = blocks[end]
         if !(1 <= p <= sb.block.nports)
             throw(ArgumentError(lazy"The component $(psc.componentnames[i]) references port $(p) of a $(sb.block.nports) port scattering block."))
         end
@@ -288,6 +296,18 @@ function scatteringstampsystem(psc::ParsedSortedCircuit, Nmodes::Integer;
             throw(ArgumentError(lazy"The ports $(missingports) of the scattering block at $(sb.name) are missing from the parsed circuit; every port of a block must lower to one :S component."))
         end
     end
+    return scatteringstampsystem(blocks, Nmodes, Ntotal, scale)
+end
+
+# Everything past the point where the blocks and their terminals are known,
+# which is the same whether they were recovered from per port entries or
+# taken from the compiled circuit.
+function scatteringstampsystem(blocks::Vector{StampedScatteringBlock},
+    Nmodes::Integer, Ntotal::Integer, scale::Real)
+
+    # how many auxiliary port currents the blocks occupy in total: each has
+    # one per port per mode, laid out consecutively from its own base
+    naux = sum(sb -> sb.block.nports*Nmodes, blocks)
 
     # the constant Kirchhoff current law couplings: the port current of
     # port p enters the signal node and leaves the reference node, exactly
@@ -358,7 +378,7 @@ function scatteringstampsystem(psc::ParsedSortedCircuit, Nmodes::Integer;
 
     return ScatteringStampSystem(blocks, kcl, pattern, patternindex,
         copy(patternindex), blockindex, pindex, qindex, coeff, sign,
-        modeindex, Int(Nmodes), auxbase - auxoffset, Float64(scale))
+        modeindex, Int(Nmodes), naux, Float64(scale))
 end
 
 """
@@ -511,7 +531,7 @@ function scatteringvalues!(values::AbstractVector,
 end
 
 """
-    scatteringlinearterm(psc::ParsedSortedCircuit, wmodes::AbstractVector,
+    scatteringlinearterm(psc::CompiledCircuit, wmodes::AbstractVector,
         Nmodes::Integer; auxoffset::Integer, Ntotal::Integer,
         scale::Real = 1.0)
 
@@ -524,12 +544,17 @@ is folded into the frequency independent linear term alongside the
 augmentation matrix of the promoted resistors, so the residual, Jacobian,
 and solver machinery operate on the augmented system unchanged.
 """
-function scatteringlinearterm(psc::ParsedSortedCircuit,
+function scatteringlinearterm(psc::CompiledCircuit,
     wmodes::AbstractVector, Nmodes::Integer; auxoffset::Integer,
-    Ntotal::Integer, scale::Real = 1.0)
+    Ntotal::Integer, scale::Real = 1.0, blocks = nothing)
 
-    ssys = scatteringstampsystem(psc, Nmodes; auxoffset = auxoffset,
-        Ntotal = Ntotal, scale = scale)
+    # the compiled blocks when the caller has them, which needs no
+    # regrouping of the per port entries
+    ssys = isnothing(blocks) ?
+        scatteringstampsystem(psc, Nmodes; auxoffset = auxoffset,
+            Ntotal = Ntotal, scale = scale) :
+        scatteringstampsystem(blocks, Nmodes; auxoffset = auxoffset,
+            Ntotal = Ntotal, scale = scale)
     if isnothing(ssys)
         return nothing
     end
@@ -911,7 +936,7 @@ function blocknoisewaves!(noiseoutputwave::AbstractMatrix,
 end
 
 """
-    noisechanneltemperatures(psc::ParsedSortedCircuit,
+    noisechanneltemperatures(psc::CompiledCircuit,
         noiseportimpedanceindices, noiseplan, ssys, temperature)
 
 The temperature of each row of the noise scattering matrix, in the order
@@ -921,7 +946,7 @@ The temperature of each row of the noise scattering matrix, in the order
 unless it states one of its own. A lumped component states it as
 `Resistor(R; temperature = T)` and a [`ScatteringParameters`](@ref) as
 `noise = ThermalEquilibrium(T)`, both of which are recorded by
-[`parsesortcircuit`](@ref) as it lowers the circuit. Only the typed circuit
+[`compile`](@ref) as it lowers the circuit. Only the typed circuit
 format carries them; a netlist of tuples states none and everything in it
 takes the default.
 

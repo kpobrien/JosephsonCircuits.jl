@@ -73,9 +73,15 @@ include("testcircuits.jl")
 
     include("stagedsolve.jl")
 
+    include("circuitvalue.jl")
+
+    include("circuitmodel.jl")
+
     include("parseinput.jl")
 
-    include("circuit.jl")
+    include("circuitbind.jl")
+
+    include("legacyadapter.jl")
 
     include("scatteringstamp.jl")
 
@@ -93,6 +99,7 @@ include("testcircuits.jl")
     include("hbsystem.jl")
 
     include("mna.jl")
+    include("dcconductance.jl")
 
     include("spiceraw.jl")
 

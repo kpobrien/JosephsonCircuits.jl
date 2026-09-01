@@ -146,16 +146,20 @@ $(_DOC_SORTING)
 
 # Examples
 ```jldoctest
-circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-push!(circuit,("P1","1","0",1))
-push!(circuit,("R1","1","0",:Rleft))
-push!(circuit,("L1","1","0",:Lm)) 
-push!(circuit,("K1","L1","L2",:K1))
-push!(circuit,("C1","1","2",:Cc)) 
-push!(circuit,("L2","2","3",:Lm)) 
-push!(circuit,("Lj3","3","0",:Lj)) 
-push!(circuit,("Lj4","2","0",:Lj)) 
-push!(circuit,("C2","2","0",:Cj))
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = :Rleft),
+     :l1 => Inductor(:Lm),
+     :l2 => Inductor(:Lm),
+     :k1 => MutualInductor(:K1, :l1, :l2),
+     :cc => Capacitor(:Cc),
+     :jj3 => JosephsonJunction(:Lj),
+     :jj4 => JosephsonJunction(:Lj),
+     :cj => Capacitor(:Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:l1, 1), (:cc, 1)],
+     [(:cc, 2), (:l2, 1), (:jj4, 1), (:cj, 1)],
+     [(:l2, 2), (:jj3, 1)],
+     [(:p1, 2), (:l1, 2), (:jj3, 2), (:jj4, 2), (:cj, 2), (:gnd, 1)]])
 circuitdefs = Dict{Symbol,Complex{Float64}}(
     :Lj =>2000e-12,
     :Lm =>10e-12,
@@ -217,11 +221,13 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     returnZsensitivityadjoint = nothing,
     factorization = KLUfactorization(), backend = CPU())
 
-    # parse and sort the circuit
-    psc = parsesortcircuit(circuit, sorting = sorting)
-
-    # calculate the circuit graph
-    cg = calccircuitgraph(psc)
+    # parse, graph, and compile; a typed circuit takes the compiled path.
+    # The matrices are not assembled here: this analysis has only the signal
+    # grid, and that is built below at its own mode count.
+    psc = compile(circuit; sorting = sorting)
+    # the loop enumeration is quadratic in the number of inductive loops and
+    # nothing here reads it
+    cg = calccircuitgraph(psc; loops = false)
 
     # generate the signal modes
     signalfreq =truncfreqs(
@@ -230,7 +236,8 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
         maxharmonics = maxharmonics,
     )
 
-return hblinsolve(w, psc, cg, circuitdefs, signalfreq; nonlinear = nonlinear,
+return hblinsolve(w, psc, cg, circuitdefs, signalfreq;
+        nonlinear = nonlinear,
         symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
         returnCM = returnCM, returnnodeflux = returnnodeflux,
@@ -256,7 +263,7 @@ function hblinsolve(w, circuit; kwargs...)
 end
 
 """
-    hblinsolve(w, psc::ParsedSortedCircuit,
+    hblinsolve(w, psc::CompiledCircuit,
         cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N};
         nonlinear=nothing, symfreqvar=nothing,
         nbatches::Integer = Base.Threads.nthreads(), sorting = :number,
@@ -271,16 +278,20 @@ of an arbitrary number of large signals (strong tones).
 
 # Examples
 ```jldoctest
-circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-push!(circuit,("P1","1","0",1))
-push!(circuit,("R1","1","0",:Rleft))
-push!(circuit,("L1","1","0",:Lm)) 
-push!(circuit,("K1","L1","L2",:K1))
-push!(circuit,("C1","1","2",:Cc)) 
-push!(circuit,("L2","2","3",:Lm)) 
-push!(circuit,("Lj3","3","0",:Lj)) 
-push!(circuit,("Lj4","2","0",:Lj)) 
-push!(circuit,("C2","2","0",:Cj))
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = :Rleft),
+     :l1 => Inductor(:Lm),
+     :l2 => Inductor(:Lm),
+     :k1 => MutualInductor(:K1, :l1, :l2),
+     :cc => Capacitor(:Cc),
+     :jj3 => JosephsonJunction(:Lj),
+     :jj4 => JosephsonJunction(:Lj),
+     :cj => Capacitor(:Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:l1, 1), (:cc, 1)],
+     [(:cc, 2), (:l2, 1), (:jj4, 1), (:cj, 1)],
+     [(:l2, 2), (:jj3, 1)],
+     [(:p1, 2), (:l1, 2), (:jj3, 2), (:jj4, 2), (:cj, 2), (:gnd, 1)]])
 circuitdefs = Dict{Symbol,Complex{Float64}}(
     :Lj =>2000e-12,
     :Lm =>10e-12,
@@ -308,7 +319,7 @@ frequencies = JosephsonCircuits.removeconjfreqs(
 )
 fi = JosephsonCircuits.fourierindices(frequencies)
 Nmodes = length(frequencies.modes)
-psc = JosephsonCircuits.parsesortcircuit(circuit)
+psc = JosephsonCircuits.compile(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
 nm = JosephsonCircuits.numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 nonlinear = hbnlsolve(
@@ -333,7 +344,7 @@ isapprox(linearized.nodeflux,
 true
 ```
 """
-function hblinsolve(w, psc::ParsedSortedCircuit,
+function hblinsolve(w, psc::CompiledCircuit,
     cg::CircuitGraph, circuitdefs, signalfreq::Frequencies; nonlinear = nothing,
     symfreqvar = nothing, nbatches::Integer = Base.Threads.nthreads(),
     returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
@@ -363,8 +374,10 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     end
 
     Nsignalmodes = length(signalfreq.modes)
-    # calculate the numeric matrices
-    signalnm = numericmatrices(psc, cg, circuitdefs, Nmodes = Nsignalmodes)
+    # calculate the numeric matrices. The signal grid has a different mode
+    # count from the pump grid, so it assembles its own, the same way the
+    # pump did.
+    signalnm = assemblegrid(psc, cg, circuitdefs, Nsignalmodes)
 
     if isnothing(nonlinear)
 
@@ -614,16 +627,16 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
         bnm = vcat(bnm, zeros(eltype(bnm), Nauxmna, size(bnm, 2)))
     end
     # return bnm
-    # if there is a symbolic frequency variable, then we need to redo the noise
-    # port calculation because calcnoiseportimpedanceindices() can't tell if a
-    # symbolic expression is complex. 
+    # a lossy capacitor or inductor is a noise channel only if its value has
+    # a nonzero imaginary part, which is not decidable for a symbolic
+    # expression, so with a symbolic frequency variable the channels are
+    # found again on the values substituted at the first mode frequency.
+    # Which resistor belongs to a port is a role rather than a value, so
+    # that half of the answer does not depend on the substitution.
     noiseportimpedanceindices = if isnothing(symfreqvar)
         signalnm.noiseportimpedanceindices
     else
-        calcnoiseportimpedanceindices(
-            componenttypes, nodeindices,
-            mutualinductorbranchnames,
-            substitutefreq.(vvn, symfreqvar, wmodes[1]))
+        noiseindices(psc, substitutefreq.(vvn, symfreqvar, wmodes[1]))
     end
 
     # find the indices at which there are symbolic variables so we can
@@ -652,7 +665,7 @@ function hblinsolve(w, psc::ParsedSortedCircuit,
     # of the auxiliary port currents (folded into the constant augmentation
     # matrix) and the frequency dependent constitutive equations, assembled
     # per frequency alongside the conductance term
-    ssys = scatteringstampsystem(psc, Nsignalmodes;
+    ssys = scatteringstampsystem(psc.scatteringblocks, Nsignalmodes;
         auxoffset = Nnodalmna + Nauxmna - Nauxscattering,
         Ntotal = Nnodalmna + Nauxmna, scale = 1.0)
     if !isnothing(ssys)
@@ -1603,3 +1616,16 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     return nothing
 end
 
+"""
+    hblinsolve(w, circuit::Circuit, circuitdefs = Dict{Symbol,Number}();
+        sorting = :name, keyword arguments...)
+
+Linearized harmonic balance solution of a typed [`Circuit`](@ref); see
+[`hbsolve`](@ref).
+"""
+function hblinsolve(w, circuit::Circuit,
+        circuitdefs::AbstractDict = Dict{Symbol,Number}();
+        sorting::Symbol = :name, kwargs...)
+    return hblinsolve(w, compile(circuit; sorting = sorting), circuitdefs;
+        kwargs...)
+end

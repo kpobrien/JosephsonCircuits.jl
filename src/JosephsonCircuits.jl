@@ -79,25 +79,27 @@ const boltzmann_constant = 1.380649e-23
 # capacitance, inverse inductance, and other matrices are calculated, then
 # then circuit is solved using the harmonic balance method, and postprocessed
 # to determine the scattering parameters and quantum efficiency. 
+# How a component value is written and how it becomes a number.
 include("circuitvalue.jl")
-using .CircuitValues
-const CircuitValue = CircuitValues.CircuitValue
 
+# What each component is: the models, their noise, and the matrix providers
+# a scattering block reads its parameters from.
+include("circuitmodel.jl")
+
+# The input path: Circuit -> elaborate -> compile.
 include("parseinput.jl")
 
-# The typed circuit representation: component models, Circuit/Interface,
-# hierarchy elaboration, scattering parameter stamps for the solvers, and
-# the legacy tuple netlist adapters.
-include("circuitmodel.jl")
-include("circuit.jl")
-include("elaborate.jl")
+# Scattering parameter stamps for the solvers, and the legacy tuple netlist
+# adapted into a Circuit.
 include("scatteringstamp.jl")
 include("legacyadapter.jl")
 
 include("graphproc.jl")
 include("capindmat.jl")
 include("matutils.jl")
+include("circuitbind.jl")
 include("mna.jl")
+include("dcconductance.jl")
 
 include("networkparamconversion.jl")
 include("networks.jl")
@@ -184,20 +186,32 @@ function IctoLj(Ic)
     return LjtoIc(Ic)
 end
 
+# The circuit the warmups share: a Josephson parametric amplifier whose port
+# carries its own reference impedance. Written in the typed format because
+# that is the input path worth precompiling; the legacy tuple netlist is
+# adapted into a `Circuit` anyway and is not expected to see much use.
+function warmupcircuit(Rleft, Cc, Lj, Cj)
+    return Circuit(
+        ["P1" => Port(1; Z0 = Rleft), "C1" => Capacitor(Cc),
+         "Lj1" => JosephsonJunction(Lj), "C2" => Capacitor(Cj)],
+        [Net("1", [("P1",1), ("C1",1)]),
+         Net("2", [("C1",2), ("Lj1",1), ("C2",1)]),
+         Net("0", [("P1",2), ("Lj1",2), ("C2",2), Ground])])
+end
+
+# the values the warmups solve at, as a symbol keyed dictionary
+warmupdefs(Rleft, Cc, Lj, Cj) = Dict(
+    Lj => 1000.0e-12,
+    Cc => 100.0e-15,
+    Cj => 1000.0e-15,
+    Rleft => 50.0,
+)
+
 function warmup()
 
-    # define the circuit components
-    circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int}},1}(undef,0)
-
-    # port on the left side
-    push!(circuit,("P1","1","0",1))
-    push!(circuit,("R1","1","0",:Rleft))
-    push!(circuit,("C1","1","2",:Cc)) 
-    push!(circuit,("Lj1","2","0",:Lj)) 
-    push!(circuit,("C2","2","0",:Cj))
-
+    circuit = warmupcircuit(:Rleft, :Cc, :Lj, :Cj)
     circuitdefs = Dict{Symbol,Complex{Float64}}(
-        :Lj =>1000.0e-12,
+        :Lj => 1000.0e-12,
         :Cc => 100.0e-15,
         :Cj => 1000.0e-15,
         :Rleft => 50.0,
@@ -217,18 +231,8 @@ end
 function warmupsyms()
 
     @params R Cc Lj Cj
-    circuit = Tuple{String,String,String,Any}[
-        ("P1","1","0",1),
-        ("R1","1","0",R),
-        ("C1","1","2",Cc),
-        ("Lj1","2","0",Lj),
-        ("C2","2","0",Cj)]
-
-    circuitdefs = Dict(
-        Lj =>1000.0e-12,
-        Cc => 100.0e-15,
-        Cj => 1000.0e-15,
-        R => 50.0)
+    circuit = warmupcircuit(R, Cc, Lj, Cj)
+    circuitdefs = warmupdefs(R, Cc, Lj, Cj)
 
     ws = 2*pi*(4.5:0.5:5.0)*1e9
     wp = (2*pi*4.75001*1e9,)
@@ -240,131 +244,34 @@ function warmupsyms()
         Npumpharmonics, circuit, circuitdefs;ftol=1e-12)
 end
 
-function warmupparse()
+function warmupcompile()
 
-    @params Rleft Cc Lj Cj w L1
-    # define the circuit components
-    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
-
-    # port on the left side
-    push!(circuit,("P1","1","0",1))
-    # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
-    push!(circuit,("R1","1","0",Rleft))
-
-    push!(circuit,("C1","1","2",Cc)) 
-    push!(circuit,("Lj1","2","0",Lj)) 
-    push!(circuit,("C2","2","0",Cj))
-
-    circuitdefs = Dict(
-        Lj =>1000.0e-12,
-        Cc => 100.0e-15,
-        Cj => 1000.0e-15,
-        Rleft => 50.0,
-    )
-
-    return parsecircuit(circuit)
-end
-
-function warmupparsesort()
-
-    @params Rleft Cc Lj Cj w L1
-    # define the circuit components
-    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
-
-    # port on the left side
-    push!(circuit,("P1","1","0",1))
-    # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
-    push!(circuit,("R1","1","0",Rleft))
-
-    push!(circuit,("C1","1","2",Cc)) 
-    push!(circuit,("Lj1","2","0",Lj)) 
-    push!(circuit,("C2","2","0",Cj))
-
-    circuitdefs = Dict(
-        Lj =>1000.0e-12,
-        Cc => 100.0e-15,
-        Cj => 1000.0e-15,
-        Rleft => 50.0,
-    )
-
-    return parsesortcircuit(circuit)
+    @params Rleft Cc Lj Cj
+    return compile(warmupcircuit(Rleft, Cc, Lj, Cj))
 end
 
 function warmupnumericmatrices()
 
-    @params Rleft Cc Lj Cj w L1
-    # define the circuit components
-    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
-
-    # port on the left side
-    push!(circuit,("P1","1","0",1))
-    # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
-    push!(circuit,("R1","1","0",Rleft))
-
-    push!(circuit,("C1","1","2",Cc)) 
-    push!(circuit,("Lj1","2","0",Lj)) 
-    push!(circuit,("C2","2","0",Cj))
-
-    circuitdefs = Dict(
-        Lj =>1000.0e-12,
-        Cc => 100.0e-15,
-        Cj => 1000.0e-15,
-        Rleft => 50.0,
-    )
-
-    return numericmatrices(circuit,circuitdefs)
+    @params Rleft Cc Lj Cj
+    circuit = warmupcircuit(Rleft, Cc, Lj, Cj)
+    return numericmatrices(circuit, warmupdefs(Rleft, Cc, Lj, Cj))
 end
 
 function warmuphblinsolve()
 
-    @params Rleft Cc Lj Cj w L1
-    # define the circuit components
-    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
-
-    # port on the left side
-    push!(circuit,("P1","1","0",1))
-    # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
-    push!(circuit,("R1","1","0",Rleft))
-
-    push!(circuit,("C1","1","2",Cc)) 
-    push!(circuit,("Lj1","2","0",Lj)) 
-    push!(circuit,("C2","2","0",Cj))
-
-    circuitdefs = Dict(
-        Lj =>1000.0e-12,
-        Cc => 100.0e-15,
-        Cj => 1000.0e-15,
-        Rleft => 50.0,
-    )
-
-    return hblinsolve(2*pi*(4.5:0.1:5.0)*1e9,circuit,circuitdefs)
+    @params Rleft Cc Lj Cj
+    circuit = warmupcircuit(Rleft, Cc, Lj, Cj)
+    return hblinsolve(2*pi*(4.5:0.1:5.0)*1e9, circuit,
+        warmupdefs(Rleft, Cc, Lj, Cj))
 end
 
 function warmupvvn()
 
-    @params Rleft Cc Lj Cj w L1
-    # define the circuit components
-    circuit = Array{Tuple{String,String,String,Any},1}(undef,0)
+    @params Rleft Cc Lj Cj
+    psc = compile(warmupcircuit(Rleft, Cc, Lj, Cj); sorting = :number)
 
-    # port on the left side
-    push!(circuit,("P1","1","0",1))
-    # push!(circuit,("R1","1","0",Rleft*w/(w+1)))
-    push!(circuit,("R1","1","0",Rleft))
-
-    push!(circuit,("C1","1","2",Cc)) 
-    push!(circuit,("Lj1","2","0",Lj)) 
-    push!(circuit,("C2","2","0",Cj))
-
-    circuitdefs = Dict(
-        Lj =>1000.0e-12,
-        Cc => 100.0e-15,
-        Cj => 1000.0e-15,
-        Rleft => 50.0,
-    )
-
-    psc = parsesortcircuit(circuit,sorting=:number)
-
-    return componentvaluestonumber(psc.componentvalues,circuitdefs)
+    return componentvaluestonumber(psc.componentvalues,
+        warmupdefs(Rleft, Cc, Lj, Cj))
 end
 
 function warmupnetwork()
@@ -534,7 +441,7 @@ function warmupconnect()
     return true
 end
 
-export hbsolve, hbnlsolve, hblinsolve, parsecircuit, parsesortcircuit,
+export hbsolve, hbnlsolve, hblinsolve, compile,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
     connectS, solveS
 

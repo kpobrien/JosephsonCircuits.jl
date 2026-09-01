@@ -229,7 +229,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
                     derivatives = (theta = dS,)) :
                 ScatteringParameters(seriesS; nports = 2, grounded = false)
             return Circuit(
-                [:p1 => Port(1), :r1 => Resistor(50.0), :cc => blk,
+                [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :cc => blk,
                  :jj => JosephsonJunction(Lj),
                  :c2 => Capacitor(1000.0e-15)],
                 [((:p1, 1), (:r1, 1), (:cc, 1, 1)),
@@ -268,7 +268,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
             [z/(z+2) 2/(z+2); 2/(z+2) z/(z+2)])
         hoisted = ScatteringParameters(fixedS; nports = 2, grounded = false)
         makehoist(; Lj) = Circuit(
-            [:p1 => Port(1), :r1 => Resistor(50.0), :cc => hoisted,
+            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :cc => hoisted,
              :jj => JosephsonJunction(Lj), :c2 => Capacitor(1000.0e-15)],
             [((:p1, 1), (:r1, 1), (:cc, 1, 1)),
              ((:cc, 2, 1), (:jj, 1), (:c2, 1)),

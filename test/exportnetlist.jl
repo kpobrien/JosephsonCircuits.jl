@@ -119,7 +119,7 @@ using Test
             push!(circuit,("L2","2","0",L2))
             push!(circuit,("C2","2","0",C2))
             push!(circuit,("C3","2","0",C3))
-            psc = parsesortcircuit(circuit)
+            psc = compile(circuit)
             countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.componenttypes,psc.nodeindices,psc.componentnamedict,psc.mutualinductorbranchnames)
 
             @test isequal(countdict,Dict((:L, 1, 3) => 1, (:K, 4, 6) => 1, (:R, 1, 2) => 1, (:I, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:L, 1, 2) => 1))
@@ -138,7 +138,7 @@ using Test
             push!(circuit,("L2","2","0",L2))
             push!(circuit,("C2","2","0",C2))
             push!(circuit,("C3","2","0",C3))
-            psc = parsesortcircuit(circuit)
+            psc = compile(circuit)
             countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.componenttypes,psc.nodeindices,psc.componentnamedict,psc.mutualinductorbranchnames)
 
             @test isequal(countdict,Dict((:L, 1, 3) => 1, (:K, 4, 7) => 2, (:R, 1, 2) => 1, (:I, 1, 2) => 1, (:P, 1, 2) => 1, (:C, 1, 3) => 2, (:L, 1, 2) => 1))
@@ -193,7 +193,7 @@ using Test
                 Cc => 100.0e-15,
                 Cj => 1000.0e-15,
                 R => 50.0)
-            psc = parsesortcircuit(circuit)
+            psc = compile(circuit)
             vvn = JosephsonCircuits.componentvaluestonumber(psc.componentvalues,circuitdefs)
             countdict, indexdict = JosephsonCircuits.componentdictionaries(psc.componenttypes,psc.nodeindices,psc.componentnamedict,psc.mutualinductorbranchnames)
             @test_throws(
@@ -203,4 +203,38 @@ using Test
                 )
         end
     end
+
+    @testset "SPICE element names" begin
+        JC = JosephsonCircuits
+        # SPICE takes an element's type from the first character of its name
+        # and does not accept "/" in one, so a hierarchical instance path is
+        # not a name it can read
+        @test JC.spicename("R1", 'R') == "R1"
+        @test JC.spicename("r1", 'R') == "r1"      # SPICE is case insensitive
+        @test JC.spicename("foo", 'R') == "Rfoo"
+        @test JC.spicename("p1/termination", 'R') == "Rp1_termination"
+        @test JC.spicename("Lj1", 'B') == "B1"     # the legacy junction name
+        @test JC.spicename("jj", 'B') == "Bjj"
+
+        # a legacy netlist is written exactly as it was
+        legacy = [("P1","1","0",1), ("R1","1","0",50.0), ("C1","1","2",100e-15),
+                  ("Lj1","2","0",1e-9), ("C2","2","0",1e-12)]
+        lines = split(JC.exportnetlist(legacy, Dict{Any,Any}()).netlist, "\n")
+        @test any(startswith("R1 "), lines)
+        @test any(startswith("C1 "), lines)
+        @test any(startswith("B1 "), lines)
+
+        # and a typed circuit is now readable, where its instance paths used
+        # to be written out verbatim
+        c = Circuit([:p1 => Port(1; termination = nothing),
+                     :foo => Resistor(50.0), :bar => Capacitor(100e-15),
+                     :baz => Inductor(1e-9)],
+            [[(:p1,1),(:foo,1),(:bar,1),(:baz,1)],
+             [(:p1,2),(:foo,2),(:bar,2),(:baz,2), Ground]])
+        tlines = split(JC.exportnetlist(c).netlist, "\n")
+        @test any(startswith("Rfoo "), tlines)
+        @test any(startswith("Cbar "), tlines)
+        @test any(startswith("Lbaz "), tlines)
+    end
+
 end

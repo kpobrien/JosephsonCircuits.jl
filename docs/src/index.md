@@ -58,7 +58,7 @@ For context, the simulation times reported for the examples below use 16 threads
 The examples can be run in the command line (REPL) after starting Julia or you can run them in a Jupyter notebook with [IJulia](https://github.com/JuliaLang/IJulia.jl) or in Visual Studio Code with the [Julia extension](https://code.visualstudio.com/docs/languages/julia).
 
 # Usage:
-Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions described by the Josephson inductance `Lj`, mutual inductors described by the mutual coupling coefficient `K`, and resistors `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format), docstrings, and examples below for usage. Run the harmonic balance analysis using [`hbnlsolve`](https://josephsoncircuits.org/stable/reference/#JosephsonCircuits.hbnlsolve-Union{Tuple{K},%20Tuple{N},%20Tuple{NTuple{N,%20Number},%20Any,%20JosephsonCircuits.Frequencies{N},%20JosephsonCircuits.FourierIndices{N},%20JosephsonCircuits.ParsedSortedCircuit,%20JosephsonCircuits.CircuitGraph,%20JosephsonCircuits.CircuitMatrices}}%20where%20{N,%20K}) to solve a nonlinear system at one operating point, [`hblinsolve`](https://josephsoncircuits.org/dev/reference/#JosephsonCircuits.hblinsolve-Union{Tuple{K},%20Tuple{Any,%20Any,%20Any}}%20where%20K) to solve a linear (or linearized) system at one or more frequencies, or [`hbsolve`](https://josephsoncircuits.org/dev/reference/#JosephsonCircuits.hbsolve-Union{Tuple{K},%20Tuple{M},%20Tuple{N},%20Tuple{Any,%20NTuple{N,%20Number},%20Vector,%20NTuple{M,%20Int64},%20NTuple{N,%20Int64},%20Any,%20Any}}%20where%20{N,%20M,%20K}) to run both analyses. Add a question mark `?` in front of a function to access the docstring. For example, type (don't copy-paste) the following to see the documentation for `hbsolve`:
+Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions described by the Josephson inductance `Lj`, mutual inductors described by the mutual coupling coefficient `K`, and resistors `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format), docstrings, and examples below for usage. Run the harmonic balance analysis using [`hbnlsolve`](https://josephsoncircuits.org/stable/reference/#JosephsonCircuits.hbnlsolve-Union{Tuple{K},%20Tuple{N},%20Tuple{NTuple{N,%20Number},%20Any,%20JosephsonCircuits.Frequencies{N},%20JosephsonCircuits.FourierIndices{N},%20JosephsonCircuits.CompiledCircuit,%20JosephsonCircuits.CircuitGraph,%20JosephsonCircuits.CircuitMatrices}}%20where%20{N,%20K}) to solve a nonlinear system at one operating point, [`hblinsolve`](https://josephsoncircuits.org/dev/reference/#JosephsonCircuits.hblinsolve-Union{Tuple{K},%20Tuple{Any,%20Any,%20Any}}%20where%20K) to solve a linear (or linearized) system at one or more frequencies, or [`hbsolve`](https://josephsoncircuits.org/dev/reference/#JosephsonCircuits.hbsolve-Union{Tuple{K},%20Tuple{M},%20Tuple{N},%20Tuple{Any,%20NTuple{N,%20Number},%20Vector,%20NTuple{M,%20Int64},%20NTuple{N,%20Int64},%20Any,%20Any}}%20where%20{N,%20M,%20K}) to run both analyses. Add a question mark `?` in front of a function to access the docstring. For example, type (don't copy-paste) the following to see the documentation for `hbsolve`:
 ```
 ?hbsolve
 ```
@@ -79,15 +79,14 @@ Cj = 1000.0e-15
 # the components, then the connections between their terminals; the last
 # group is the ground net
 circuit = Circuit(
-    [:p1 => Port(1),
-     :r1 => Resistor(R),
+    [:p1 => Port(1; Z0 = R),
      :cc => Capacitor(Cc),
      :jj => JosephsonJunction(Lj),
      :cj => Capacitor(Cj),
      :gnd => Ground()],
-    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+    [[(:p1, 1), (:cc, 1)],
      [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.75001*1e9,)
@@ -175,15 +174,14 @@ vp = 2.0e8   # cable phase velocity, meters per second
 Zenv(w) = Z0*(ZL + im*Z0*tan(w*len/vp))/(Z0 + im*ZL*tan(w*len/vp))
 
 amplifier(Zr) = Circuit(
-    [:p1 => Port(1),
-     :r1 => Resistor(Zr),
+    [:p1 => Port(1; Z0 = Zr),
      :cc => Capacitor(Cc),
      :jj => JosephsonJunction(Lj),
      :cj => Capacitor(Cj),
      :gnd => Ground()],
-    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+    [[(:p1, 1), (:cc, 1)],
      [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.75001*1e9,)
@@ -214,15 +212,14 @@ Cj = 1000.0e-15
 # the components, then the connections between their terminals; the last
 # group is the ground net
 circuit = Circuit(
-    [:p1 => Port(1),
-     :r1 => Resistor(R),
+    [:p1 => Port(1; Z0 = R),
      :cc => Capacitor(Cc),
      :jj => JosephsonJunction(Lj),
      :cj => Capacitor(Cj),
      :gnd => Ground()],
-    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+    [[(:p1, 1), (:cc, 1)],
      [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.65001*1e9,2*pi*4.85001*1e9)
@@ -298,7 +295,7 @@ Ldc = 0.74e-12
 K = 0.999 # the inverse inductance matrix for K=1.0 diverges, so set K<1.0
 
 circuit = Circuit(
-    [:p1 => Port(1), :r1 => Resistor(R),
+    [:p1 => Port(1; Z0 = R),
      :cc => Capacitor(Cc),
      :lr => Inductor(Lr), :cr => Capacitor(Cr),
      :jj1 => JosephsonJunction(Lj), :cj1 => Capacitor(Cj),
@@ -306,15 +303,15 @@ circuit = Circuit(
      :jj2 => JosephsonJunction(Lj), :cj2 => Capacitor(Cj),
      :ldc => Inductor(Ldc),
      :k1 => MutualInductor(K, :ll, :ldc),
-     # a port with a very large resistor so we can apply the bias across it
-     :p2 => Port(2), :r2 => Resistor(1000.0), :gnd => Ground()],
-    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+     # a high impedance port, so the bias may be applied across it
+     :p2 => Port(2; Z0 = 1000.0), :gnd => Ground()],
+    [[(:p1, 1), (:cc, 1)],
      [(:cc, 2), (:lr, 1), (:cr, 1)],
      [(:lr, 2), (:jj1, 1), (:cj1, 1), (:ll, 1)],
      [(:ll, 2), (:jj2, 1), (:cj2, 1)],
-     [(:ldc, 1), (:p2, 1), (:r2, 1)],
-     [(:p1, 2), (:r1, 2), (:cr, 2), (:jj1, 2), (:cj1, 2), (:jj2, 2),
-      (:cj2, 2), (:ldc, 2), (:p2, 2), (:r2, 2), (:gnd, 1)]])
+     [(:ldc, 1), (:p2, 1)],
+     [(:p1, 2), (:cr, 2), (:jj1, 2), (:cj1, 2), (:jj2, 2),
+      (:cj2, 2), (:ldc, 2), (:p2, 2), (:gnd, 1)]])
 
 ws = 2*pi*(9.7:0.0001:9.8)*1e9
 wp = (2*pi*19.50*1e9,)
@@ -435,7 +432,7 @@ Z0 = 50
 w0 = 2*pi*8e9
 l=10e-3
 circuit = Circuit(
-    [:p1 => Port(1), :r1 => Resistor(R),
+    [:p1 => Port(1; Z0 = R),
      :cc => Capacitor(Cc),
      :lr => Inductor(Lr), :cr => Capacitor(Cr),
      :jj1 => JosephsonJunction(Lj/alpha), :cj1 => Capacitor(Cj/alpha),
@@ -445,17 +442,17 @@ circuit = Circuit(
      :jj4 => JosephsonJunction(Lj), :cj4 => Capacitor(Cj),
      :ldc => Inductor(Ldc),
      :k1 => MutualInductor(K, :ll, :ldc),
-     # a port with a very large resistor so we can apply the bias across it
-     :p2 => Port(2), :r2 => Resistor(1000.0), :gnd => Ground()],
-    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+     # a high impedance port, so the bias may be applied across it
+     :p2 => Port(2; Z0 = 1000.0), :gnd => Ground()],
+    [[(:p1, 1), (:cc, 1)],
      [(:cc, 2), (:lr, 1), (:cr, 1)],
      [(:lr, 2), (:jj1, 1), (:cj1, 1), (:ll, 1)],
      [(:ll, 2), (:jj2, 1), (:cj2, 1)],
      [(:jj2, 2), (:cj2, 2), (:jj3, 1), (:cj3, 1)],
      [(:jj3, 2), (:cj3, 2), (:jj4, 1), (:cj4, 1)],
-     [(:ldc, 1), (:p2, 1), (:r2, 1)],
-     [(:p1, 2), (:r1, 2), (:cr, 2), (:jj1, 2), (:cj1, 2), (:jj4, 2),
-      (:cj4, 2), (:ldc, 2), (:p2, 2), (:r2, 2), (:gnd, 1)]])
+     [(:ldc, 1), (:p2, 1)],
+     [(:p1, 2), (:cr, 2), (:jj1, 2), (:cj1, 2), (:jj4, 2),
+      (:cj4, 2), (:ldc, 2), (:p2, 2), (:gnd, 1)]])
 
 # ws = 2*pi*(9.7:0.0001:9.8)*1e9
 # ws = 2*pi*(5.0:0.001:11)*1e9
@@ -627,7 +624,7 @@ Nj = 2048
 pmrpitch = 4
 
 # instance the cells and chain them
-components = Any[:p1 => Port(1), :r1 => Resistor(Rleft), :gnd => Ground()]
+components = Any[:p1 => Port(1; Z0 = Rleft), :gnd => Ground()]
 for i in 1:Nj-1
     cell = if i == 1
         jjcell(Lj, Cj, Cg/2)             # half cap to ground at the input
@@ -639,16 +636,15 @@ for i in 1:Nj-1
     push!(components, Symbol(:cell, i) => cell)
 end
 push!(components, :cend => Capacitor(Cg/2))
-push!(components, :r2 => Resistor(Rright))
-push!(components, :p2 => Port(2))
+push!(components, :p2 => Port(2; Z0 = Rright))
 
 connections = [[(Symbol(:cell, i), 2), (Symbol(:cell, i+1), 1)]
     for i in 1:Nj-2]
-push!(connections, [(:p1, 1), (:r1, 1), (:cell1, 1)])
+push!(connections, [(:p1, 1), (:cell1, 1)])
 push!(connections,
-    [(Symbol(:cell, Nj-1), 2), (:cend, 1), (:r2, 1), (:p2, 1)])
+    [(Symbol(:cell, Nj-1), 2), (:cend, 1), (:p2, 1)])
 push!(connections,
-    [(:p1, 2), (:r1, 2), (:cend, 2), (:r2, 2), (:p2, 2), (:gnd, 1)])
+    [(:p1, 2), (:cend, 2), (:p2, 2), (:gnd, 1)])
 
 circuit = Circuit(components, connections)
 
@@ -755,7 +751,7 @@ function floquetcircuit(; Rleft = 50.0, Rright = 50.0, Lj = IctoLj(1.75e-6),
          [(:cg, 2), (:cr, 2), (:lr, 2), (:gnd, 1)]];
         pins = [1 => (:jj, 1), 2 => (:jj, 2)])
 
-    components = Any[:p1 => Port(1), :r1 => Resistor(Rleft), :gnd => Ground()]
+    components = Any[:p1 => Port(1; Z0 = Rleft), :gnd => Ground()]
     for i in 1:Nj-1
         wj = weight(i, Nj, weightwidth)
         wg = weight(i - 0.5, Nj, weightwidth)
@@ -770,16 +766,15 @@ function floquetcircuit(; Rleft = 50.0, Rright = 50.0, Lj = IctoLj(1.75e-6),
     end
     push!(components,
         :cend => Capacitor(Cg/2*weight(Nj - 0.5, Nj, weightwidth)))
-    push!(components, :r2 => Resistor(Rright))
-    push!(components, :p2 => Port(2))
+    push!(components, :p2 => Port(2; Z0 = Rright))
 
     connections = [[(Symbol(:cell, i), 2), (Symbol(:cell, i+1), 1)]
         for i in 1:Nj-2]
-    push!(connections, [(:p1, 1), (:r1, 1), (:cell1, 1)])
+    push!(connections, [(:p1, 1), (:cell1, 1)])
     push!(connections,
-        [(Symbol(:cell, Nj-1), 2), (:cend, 1), (:r2, 1), (:p2, 1)])
+        [(Symbol(:cell, Nj-1), 2), (:cend, 1), (:p2, 1)])
     push!(connections,
-        [(:p1, 2), (:r1, 2), (:cend, 2), (:r2, 2), (:p2, 2), (:gnd, 1)])
+        [(:p1, 2), (:cend, 2), (:p2, 2), (:gnd, 1)])
 
     return Circuit(components, connections)
 end
@@ -1003,7 +998,7 @@ function snakesquid(L1, L2, L3, Lj, Lb, K, R, Nstages)
         :b2 => snake(L1, L2, Lj, Nstages), :lbb => Inductor(Lb),
         :kb1 => MutualInductor(K, :lba, :lb1),
         :kb2 => MutualInductor(K, :lbb, :lb2),
-        :p2 => Port(2), :r2 => Resistor(R),
+        :p2 => Port(2; Z0 = R),
         :lb1 => Inductor(Lb), :lb2 => Inductor(Lb),
         :gnd => Ground()]
     connections = [
@@ -1012,9 +1007,9 @@ function snakesquid(L1, L2, L3, Lj, Lb, K, R, Nstages)
         [(:a2, 2), (:lba, 1)],
         [(:b1, 2), (:l3b, 1)], [(:l3b, 2), (:b2, 1)],
         [(:b2, 2), (:lbb, 1)],
-        [(:p2, 1), (:r2, 1), (:lb1, 1)],
+        [(:p2, 1), (:lb1, 1)],
         [(:lb1, 2), (:lb2, 1)],
-        [(:lba, 2), (:lbb, 2), (:lb2, 2), (:p2, 2), (:r2, 2), (:gnd, 1)]]
+        [(:lba, 2), (:lbb, 2), (:lb2, 2), (:p2, 2), (:gnd, 1)]]
     return Circuit(components, connections; pins = [1 => (:a1, 1)])
 end
 
@@ -1067,14 +1062,13 @@ circuit = Circuit(
      :plcc => Capacitor(PLCC), :plcl => Inductor(PLCL),
      :c7 => Capacitor(C7),
      :tl => tline(theta, w0, Z0),
-     :l22 => Inductor(L22), :p1 => Port(1), :r1 => Resistor(R),
+     :l22 => Inductor(L22), :p1 => Port(1; Z0 = R),
      :gnd => Ground()],
     [[(:x1, 1), (:c1, 1), (:c6, 1)],
      [(:c6, 2), (:plcc, 1), (:plcl, 1), (:c7, 1)],
      [(:c7, 2), (:tl, 1)],
-     [(:tl, 2), (:l22, 1), (:p1, 1), (:r1, 1)],
-     [(:c1, 2), (:plcc, 2), (:plcl, 2), (:l22, 2), (:p1, 2), (:r1, 2),
-      (:gnd, 1)]])
+     [(:tl, 2), (:l22, 1), (:p1, 1)],
+     [(:c1, 2), (:plcc, 2), (:plcl, 2), (:l22, 2), (:p1, 2), (:gnd, 1)]])
 
 # ws = 2*pi*(1:0.01:10.0)*1e9
 ws = 2*pi*(4.0:0.01:5.8)*1e9
@@ -1143,12 +1137,12 @@ using JosephsonCircuits
 using Plots
 
 makejpa(; Lj, Cc, Cj) = Circuit(
-    [:p1 => Port(1), :r1 => Resistor(50.0), :cc => Capacitor(Cc),
+    [:p1 => Port(1), :cc => Capacitor(Cc),
      :jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
      :gnd => Ground()],
-    [[(:p1, 1), (:r1, 1), (:cc, 1)],
+    [[(:p1, 1), (:cc, 1)],
      [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:r1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 
 p = (Lj = 1000.0e-12, Cc = 100.0e-15, Cj = 1000.0e-15)
 ws = 2*pi*(4.5:0.001:5.0)*1e9
@@ -1187,13 +1181,13 @@ function maketline(; len, Lj)
     line = ScatteringParameters(tlineS; nports = 2, noise = Lossless(),
         derivatives = (len = dSdlen,))
     return Circuit(
-        [:p1 => Port(1), :r1 => Resistor(50.0), :tl => line,
+        [:p1 => Port(1), :tl => line,
          :cc => Capacitor(100.0e-15), :jj => JosephsonJunction(Lj),
          :c2 => Capacitor(1000.0e-15), :gnd => Ground()],
-        [[(:p1, 1), (:r1, 1), (:tl, 1)],
+        [[(:p1, 1), (:tl, 1)],
          [(:tl, 2), (:cc, 1)],
          [(:cc, 2), (:jj, 1), (:c2, 1)],
-         [(:jj, 2), (:c2, 2), (:r1, 2), (:p1, 2), (:gnd, 1)]])
+         [(:jj, 2), (:c2, 2), (:p1, 2), (:gnd, 1)]])
 end
 
 p = (len = 2.0e-3, Lj = 1000.0e-12)
@@ -1212,6 +1206,68 @@ plot(ws/(2*pi*1e9),
     xlabel="Frequency (GHz)",
     ylabel="dG/dln(p) (dB)")
 ```
+
+## Direct current
+
+The harmonic balance state is periodic node flux, and a voltage is its time
+derivative, so a mode of frequency `w` has `V = i*w*phi0*phi`. At zero
+frequency that is zero, which is right for a capacitor and wrong for a
+resistor: a resistor would be an open circuit at DC and a current source
+driving one could not develop `I*R`.
+
+The solver carries the missing coordinate, the average node voltage,
+separately. A finite inductor or a zero-voltage Josephson junction has zero
+average voltage across it, so the average voltage is constant on each
+connected group of inductors and junctions, and the direct current problem
+reduces to those coordinates alone. It is linear in them, so it is solved
+once before the nonlinear solve and its resistor current folded into the
+zero frequency source. Nothing about the periodic solve changes, and a
+circuit with no direct current drive pays nothing.
+
+`hbnlsolve` returns the result as `dcnodevoltage`, in volts, indexed like
+the node list with ground first and identically zero. It is `nothing` when
+no direct current is drawn. It is not the same thing as the zero frequency
+entry of `nodeflux`, which remains the static periodic flux that sets
+inductor currents and junction phases.
+
+```@example dc
+using JosephsonCircuits
+
+# a current source into a resistor, with a capacitor which carries no
+# direct current and an amplifier which is not driven here
+Idc = 1.0e-6
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = 50.0), :rl => Resistor(150.0),
+     :c1 => Capacitor(1.0e-12)],
+    [[(:p1, 1), (:rl, 1), (:c1, 1)],
+     [(:p1, 2), (:rl, 2), (:c1, 2), Ground]])
+
+sol = hbnlsolve((2*pi*5e9,), (1,), [(mode = (0,), port = 1, current = Idc)],
+    circuit; dc = true, odd = true, keyedarrays = false)
+
+# the port environment in parallel with the load, so V = I*(50 || 150)
+(sol.dcnodevoltage[2], Idc*inv(1/50.0 + 1/150.0))
+```
+
+An inductor or a junction across a resistor shorts it at DC, so the resistor
+then carries no direct current however hard it is driven; that is the
+physical answer rather than a limitation. A resistor between two groups
+carries current between them, so their average voltages differ by `I*R`.
+
+Two things are refused rather than approximated. A component whose
+conductance at zero frequency is not finite and real has no direct current
+behaviour to use -- a frequency dependent resistance whose limit at DC is
+complex or unbounded, for instance -- and is reported with the entry named.
+And a direct current with nowhere to go, injected into a group of nodes
+which no resistor, inductor or junction connects to anything else, has no
+bounded solution and is reported as such before the solve starts.
+
+Scattering blocks do not yet carry direct current: a block is an open
+circuit at DC, as it was before. Supporting them needs the explicit direct
+current network rather than this elimination, because a short or a
+transmission line through a block constrains voltages instead of conducting
+between them.
+
 
 # Contributing:
 

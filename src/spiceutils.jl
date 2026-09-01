@@ -11,12 +11,15 @@ the signal angular frequency is swept over `ws` with pump angular frequency
 ```
 using JosephsonCircuits
 using Plots
-circuit = [
-    ("P1","1","0",1),
-    ("R1","1","0",:R),
-    ("C1","1","2",:Cc),
-    ("Lj1","2","0",:Lj),
-    ("C2","2","0",:Cj)]
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = :R),
+     :cc => Capacitor(:Cc),
+     :jj => JosephsonJunction(:Lj),
+     :cj => Capacitor(:Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 circuitdefs = Dict(
     :Lj =>1000.0e-12,
     :Cc => 100.0e-15,

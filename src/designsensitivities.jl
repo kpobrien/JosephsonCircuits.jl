@@ -26,7 +26,7 @@ solver uses. A [`ScatteringParameters`](@ref) port appears with its
 `ScatteringStamp` as the value; every other value must be numeric.
 """
 function designparse(circuit)
-    psc = parsesortcircuit(circuit)
+    psc = compile(circuit)
     vals = Vector{Any}(undef, length(psc.componentvalues))
     for (i, v) in enumerate(psc.componentvalues)
         if v isa Number || v isa ScatteringStamp

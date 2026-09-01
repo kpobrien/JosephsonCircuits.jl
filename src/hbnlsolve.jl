@@ -91,16 +91,20 @@ $(_DOC_SORTING)
 
 # Examples
 ```jldoctest
-circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-push!(circuit,("P1","1","0",1))
-push!(circuit,("R1","1","0",:Rleft))
-push!(circuit,("L1","1","0",:Lm)) 
-push!(circuit,("K1","L1","L2",:K1))
-push!(circuit,("C1","1","2",:Cc)) 
-push!(circuit,("L2","2","3",:Lm)) 
-push!(circuit,("Lj3","3","0",:Lj)) 
-push!(circuit,("Lj4","2","0",:Lj)) 
-push!(circuit,("C2","2","0",:Cj))
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = :Rleft),
+     :l1 => Inductor(:Lm),
+     :l2 => Inductor(:Lm),
+     :k1 => MutualInductor(:K1, :l1, :l2),
+     :cc => Capacitor(:Cc),
+     :jj3 => JosephsonJunction(:Lj),
+     :jj4 => JosephsonJunction(:Lj),
+     :cj => Capacitor(:Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:l1, 1), (:cc, 1)],
+     [(:cc, 2), (:l2, 1), (:jj4, 1), (:cj, 1)],
+     [(:l2, 2), (:jj3, 1)],
+     [(:p1, 2), (:l1, 2), (:jj3, 2), (:jj4, 2), (:cj, 2), (:gnd, 1)]])
 circuitdefs = Dict{Symbol,Complex{Float64}}(
     :Lj =>2000e-12,
     :Lm =>10e-12,
@@ -177,14 +181,9 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
 
     Nmodes = length(freq.modes)
 
-    # parse and sort the circuit
-    psc = parsesortcircuit(circuit, sorting = sorting)
-
-    # calculate the circuit graph
-    cg = calccircuitgraph(psc)
-
-    # calculate the numeric matrices
-    nm = numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+    # parse, graph, and assemble; a typed circuit takes the compiled path
+    psc, cg, nm = preparecircuit(circuit, circuitdefs;
+        sorting = sorting, Nmodes = Nmodes)
 
 
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
@@ -214,7 +213,7 @@ end
 
 """
     hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
-        indices::FourierIndices{N}, psc::ParsedSortedCircuit, cg::CircuitGraph,
+        indices::FourierIndices{N}, psc::CompiledCircuit, cg::CircuitGraph,
         nm::CircuitMatrices; iterations = 1000, x0 = nothing,
         ftol = 1e-8, symfreqvar = nothing)
 
@@ -224,16 +223,20 @@ or flux pumping using a current source and a mutual inductor.
 
 # Examples
 ```jldoctest
-circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
-push!(circuit,("P1","1","0",1))
-push!(circuit,("R1","1","0",:Rleft))
-push!(circuit,("L1","1","0",:Lm)) 
-push!(circuit,("K1","L1","L2",:K1))
-push!(circuit,("C1","1","2",:Cc)) 
-push!(circuit,("L2","2","3",:Lm)) 
-push!(circuit,("Lj3","3","0",:Lj)) 
-push!(circuit,("Lj4","2","0",:Lj)) 
-push!(circuit,("C2","2","0",:Cj))
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = :Rleft),
+     :l1 => Inductor(:Lm),
+     :l2 => Inductor(:Lm),
+     :k1 => MutualInductor(:K1, :l1, :l2),
+     :cc => Capacitor(:Cc),
+     :jj3 => JosephsonJunction(:Lj),
+     :jj4 => JosephsonJunction(:Lj),
+     :cj => Capacitor(:Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:l1, 1), (:cc, 1)],
+     [(:cc, 2), (:l2, 1), (:jj4, 1), (:cj, 1)],
+     [(:l2, 2), (:jj3, 1)],
+     [(:p1, 2), (:l1, 2), (:jj3, 2), (:jj4, 2), (:cj, 2), (:gnd, 1)]])
 circuitdefs = Dict{Symbol,Complex{Float64}}(
     :Lj =>2000e-12,
     :Lm =>10e-12,
@@ -256,7 +259,7 @@ frequencies = JosephsonCircuits.removeconjfreqs(
 )
 fi = JosephsonCircuits.fourierindices(frequencies)
 Nmodes = length(frequencies.modes)
-psc = JosephsonCircuits.parsesortcircuit(circuit)
+psc = JosephsonCircuits.compile(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
 nm = JosephsonCircuits.numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
@@ -280,7 +283,7 @@ flux basis; see the primary [`hbnlsolve`](@ref) docstring and `src/mna.jl`
 for details.
 """
 function hbnlsolve(w, sources, frequencies::Frequencies,
-    indices::FourierIndices, psc::ParsedSortedCircuit, cg::CircuitGraph,
+    indices::FourierIndices, psc::CompiledCircuit, cg::CircuitGraph,
     nm::CircuitMatrices; iterations = 1000, x0 = nothing,
     ftol = 1e-8, switchofflinesearchtol = nothing, alphamin = nothing,
     method = :newtonkrylov, andersondepth::Integer = method == :quasinewton ? 5 : 0,
@@ -556,8 +559,27 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # into the flux reference.
     floatingcomponents = calcstaticfluxcomponents(componenttypes,
         nodeindices, vvn, Nnodes)
+
+    # Direct current through resistors. The zero frequency mode of a
+    # periodic flux carries no voltage, so a resistor is an open circuit at
+    # DC. The missing coordinate is the average voltage, constant on each
+    # static flux component because an inductor or zero-voltage junction is
+    # a short there. For linear conductances and prescribed current sources
+    # that block does not depend on the nonlinear state, so it is solved
+    # here and its resistor current subtracted from the zero frequency
+    # source: an exact elimination. `bnmsource` is kept because the port and
+    # scattering outputs need the current which was applied, not the
+    # corrected one.
+    bnmsource = bnm
+    dcplan = dcconductanceplan(floatingcomponents, Gnm, wmodes, Nmodes,
+        Nnodes)
+    dcsol = isnothing(dcplan) ? nothing :
+        solvedcconductance(dcplan, bnmsource, Nmodes, Lmean)
+    bnm = isnothing(dcplan) ? bnmsource :
+        applydcconductance(bnmsource, dcplan, dcsol, Nmodes)
+
     checkdcsourcecompatibility(floatingcomponents, bnm, wmodes, Nmodes,
-        nodenames)
+        nodenames, bnmsource)
     gaugeindices = calcdcgaugeindices(floatingcomponents, wmodes, Nmodes)
     Amna = calcAmna(mnaindices, nodeindices, vvn, gaugeindices, wmodes,
         Nmodes, Nnodes, Lmean)
@@ -585,7 +607,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # system it produces is what every backend already solves.
         Amna = spaddkeepzeros(Amna, scatteringlinearterm(psc, wmodes,
             Nmodes; auxoffset = Nnodal + Naux - Nauxscattering,
-            Ntotal = Nnodal + Naux, scale = Lmean))
+            Ntotal = Nnodal + Naux, scale = Lmean,
+            blocks = psc.scatteringblocks))
     end
     # pad the system matrices and vectors with the auxiliary variables.
     # the incidence matrix gains empty columns so the branch fluxes and
@@ -1066,7 +1089,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 
     return NonlinearHB(w, frequencies, nodefluxout, Rbnmout, Ljb, Lb, Ljbm,
         Nmodes, Nbranches, nodenames, portnumbers, modes, Sout, solverinfo,
-        operatingpoint)
+        operatingpoint,
+        isnothing(dcsol) || !dcsol.active ? nothing : dcsol.nodevoltage)
 
 end
 
@@ -1167,4 +1191,19 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
     end
 
     return nothing
+end
+
+"""
+    hbnlsolve(w, Nharmonics, sources, circuit::Circuit,
+        circuitdefs = Dict{Symbol,Number}(); sorting = :name,
+        keyword arguments...)
+
+Nonlinear harmonic balance solution of a typed [`Circuit`](@ref); see
+[`hbsolve`](@ref).
+"""
+function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
+        circuit::Circuit, circuitdefs::AbstractDict = Dict{Symbol,Number}();
+        sorting::Symbol = :name, kwargs...) where N
+    return hbnlsolve(w, Nharmonics, sources, elaborate(circuit),
+        circuitdefs; sorting = sorting, kwargs...)
 end

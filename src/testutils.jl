@@ -48,7 +48,11 @@ julia> JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.warmupsyms())
 function showstruct(io::IO,out)
   tn = typeof(out)
   fn = fieldnames(tn)
-  print(io,tn,"(")
+  # the constructor name without its type parameters. A parameterized
+  # struct's full type is long, and printing it makes every example which
+  # dumps one depend on field types which are an implementation detail;
+  # the point here is the values.
+  print(io,Base.typename(tn).wrapper,"(")
   for i in 1:length(fn)-1
     testshow(io,getfield(out,fn[i]))
     print(io,", ")
@@ -136,8 +140,7 @@ compare(x::JosephsonCircuits.NonlinearHB,y::JosephsonCircuits.NonlinearHB) = com
 compare(x::JosephsonCircuits.SolverInfo,y::JosephsonCircuits.SolverInfo) = true
 compare(x::JosephsonCircuits.LinearizedHB,y::JosephsonCircuits.LinearizedHB) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CircuitMatrices,y::JosephsonCircuits.CircuitMatrices) = comparestruct(x,y)
-compare(x::JosephsonCircuits.ParsedSortedCircuit,y::JosephsonCircuits.ParsedSortedCircuit) = comparestruct(x,y)
-compare(x::JosephsonCircuits.ParsedCircuit,y::JosephsonCircuits.ParsedCircuit) = comparestruct(x,y)
+compare(x::JosephsonCircuits.CompiledCircuit,y::JosephsonCircuits.CompiledCircuit) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CircuitGraph,y::JosephsonCircuits.CircuitGraph) = comparestruct(x,y)
 compare(x::JosephsonCircuits.Frequencies,y::JosephsonCircuits.Frequencies) = comparestruct(x,y)
 compare(x::JosephsonCircuits.PassiveNetwork,y::JosephsonCircuits.PassiveNetwork) = comparestruct(x,y)

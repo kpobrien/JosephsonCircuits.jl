@@ -47,6 +47,18 @@ struct NonlinearHB
     S
     solverinfo
     operatingpoint
+    # the average node voltage in volts from the eliminated direct current
+    # block, or `nothing`; ground is first and identically zero. Distinct
+    # from `nodeflux`, whose zero mode is the static periodic flux which
+    # sets inductor currents and junction phases.
+    dcnodevoltage
+end
+
+function NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
+    Nbranches, nodes, ports, modes, S, solverinfo, operatingpoint)
+    return NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm,
+        Nmodes, Nbranches, nodes, ports, modes, S, solverinfo,
+        operatingpoint, nothing)
 end
 
 # backwards compatible constructors without the solver diagnostics and
@@ -480,13 +492,9 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     Nmodes = length(freq.modes)
 
     # parse and sort the circuit
-    psc = parsesortcircuit(circuit, sorting = sorting)
-
-    # calculate the circuit graph
-    cg = calccircuitgraph(psc)
-
-    # calculate the numeric matrices
-    nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+    # parse, graph, and assemble; a typed circuit takes the compiled path
+    psc, cg, nm = preparecircuit(circuit, circuitdefs;
+        sorting = sorting, Nmodes = Nmodes)
 
 
     # solve the nonlinear problem. `:staged` goes through the source
@@ -615,3 +623,22 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         circuit, Dict{Any,Any}(); kwargs...)
 end
 
+"""
+    hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
+        circuit::Circuit, circuitdefs = Dict{Symbol,Number}();
+        sorting = :name, keyword arguments...)
+
+Harmonic balance solution of a typed [`Circuit`](@ref). The circuit is
+elaborated and lowered with [`compile`](@ref) and solved with the
+existing solver; all keyword arguments of the legacy method are supported.
+`circuitdefs` is only needed when component values are symbolic. The
+default `sorting` is `:name` because hierarchical net names are not
+integers.
+"""
+function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
+        Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
+        circuit::Circuit, circuitdefs::AbstractDict = Dict{Symbol,Number}();
+        sorting::Symbol = :name, kwargs...) where {N,M}
+    return hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
+        elaborate(circuit), circuitdefs; sorting = sorting, kwargs...)
+end

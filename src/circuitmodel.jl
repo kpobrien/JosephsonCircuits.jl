@@ -135,28 +135,124 @@ struct VoltageSource{T} <: AbstractComponent
 end
 
 """
-    Port(number::Integer; Z0 = 50.0)
+    AbstractPortTermination
 
-An analysis port marker with the port number `number` and reference impedance
-`Z0` in Ohms. A `Port` identifies an electrical port for excitation and
+The supertype of the external environments a [`Port`](@ref) may own. A
+termination is the source and load the port sees looking outward, which is
+distinct from the reference impedance the port normalizes its waves to, even
+where the two are numerically equal.
+"""
+abstract type AbstractPortTermination end
+
+"""
+    MatchedTermination()
+
+A source and load environment matched to the port's reference impedance,
+acting across the two port terminals. This is the default: a port owns its
+environment, so no resistor should be added in order to terminate it.
+"""
+struct MatchedTermination <: AbstractPortTermination end
+
+"""
+    NoPortTermination()
+
+No port owned environment, written as `termination = nothing`. The port
+remains an excitation and observation boundary with its reference impedance
+intact, but contributes no physical loading of its own.
+"""
+struct NoPortTermination <: AbstractPortTermination end
+
+"""
+    LegacyTermination(component)
+
+The port owned environment of a legacy netlist: a resistor the netlist
+already contains, named by its instance identifier.
+
+Internal. A legacy netlist states a port's impedance by placing a resistor
+across it and carries no role marker, so the adapter finds that resistor once
+and records which one it is. Everything downstream then reads the port's
+environment from the port, exactly as for a native matched port, and nothing
+searches for a resistor sharing a port's branch.
+"""
+struct LegacyTermination{I} <: AbstractPortTermination
+    component::I
+end
+
+porttermination(t::AbstractPortTermination) = t
+porttermination(::Nothing) = NoPortTermination()
+porttermination(x) = throw(ArgumentError(lazy"The port termination $(x) is not recognized. Write termination = nothing for an unterminated boundary, or omit the keyword for the default matched environment."))
+
+# A port reference impedance must be a finite positive real number once it is
+# numeric. Symbolic and deferred values pass through and are checked after
+# binding, so the fallback method accepts anything.
+checkportimpedance(Z0, number) = nothing
+function checkportimpedance(
+        Z0::Union{AbstractFloat,Integer,Rational,
+            Complex{<:Union{AbstractFloat,Integer,Rational}}}, number)
+    if !isreal(Z0) || !isfinite(Z0) || !(real(Z0) > 0)
+        throw(ArgumentError(lazy"Port $(number) has reference impedance $(Z0), which must be finite, real, and positive."))
+    end
+    return nothing
+end
+
+"""
+    Port(number::Integer; Z0 = 50.0, termination = MatchedTermination())
+
+An analysis port with the port number `number` and reference impedance `Z0`
+in Ohms. A `Port` identifies an electrical port for excitation and
 observation; excitation amplitudes belong to the analysis arguments, not to
-the circuit topology. `Z0` is carried as metadata for wave-based analyses.
+the circuit topology.
 
-The legacy solver obtains the port termination resistance from a parallel
-[`Resistor`](@ref), exactly as with the legacy `P` component.
+By default the port owns a matched external source and load environment of
+impedance `Z0` acting across its two terminals, so a port needs no resistor
+to define its impedance. The environment acts between the port terminals and
+is never tied to [`Ground`](@ref) on its own, so a differential port behaves
+the same way as a ground referenced one.
+
+`termination = nothing` keeps `Z0` for wave normalization but adds no
+physical loading, which is the right form when the circuit already contains
+the resistor that terminates the port.
+
+Any further [`Resistor`](@ref) across the same terminals is an ordinary
+device resistor: it loads the port in parallel with the environment, it
+remains a dissipative noise source, and it is never mistaken for the port's
+own environment.
 
 # Examples
 ```jldoctest
 julia> Port(1)
-Port{Int64}(1, 50.0, 1)
+Port(1; Z0 = 50.0)
+
+julia> Port(2; Z0 = 1000.0, termination = nothing)
+Port(2; Z0 = 1000.0, termination = nothing)
 ```
 """
-struct Port{T} <: AbstractComponent
+struct Port{TZ,TT<:AbstractPortTermination} <: AbstractComponent
     number::Int
-    Z0::Float64
-    value::T
+    Z0::TZ
+    termination::TT
 end
-Port(number::Integer; Z0 = 50.0) = Port{Int}(Int(number), Float64(Z0), Int(number))
+
+# One method and not several: keyword arguments do not participate in
+# dispatch, so separate methods for the terminated and unterminated spellings
+# would redefine one another rather than coexist, and the surviving one would
+# silently answer for both.
+function Port(number::Integer; Z0 = 50.0, termination = MatchedTermination())
+    checkportimpedance(Z0, number)
+    return Port(Int(number), Z0, porttermination(termination))
+end
+
+function Base.show(io::IO, p::Port)
+    # the default is silent; anything else is stated, because a port which
+    # owns no environment and one which owns an existing resistor are
+    # different circuits
+    print(io, "Port(", p.number, "; Z0 = ", p.Z0)
+    p.termination isa NoPortTermination && print(io, ", termination = nothing")
+    p.termination isa LegacyTermination &&
+        print(io, ", termination = LegacyTermination(",
+            repr(p.termination.component), ")")
+    print(io, ")")
+end
 
 # === mutual inductors ===
 

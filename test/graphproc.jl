@@ -79,4 +79,34 @@ import SparseArrays
             )
 
     end
+
+    # the branches the incidence matrix is built from
+    @testset "extractbranches" begin
+        @test_throws(
+            DimensionMismatch("componenttypes must have the same length as the number of node indices"),
+            JosephsonCircuits.extractbranches(
+                [:P,:I,:R,:C,:Lj,:C],
+                [2 2 2 2 3; 1 1 1 3 1]
+            )
+        )
+
+        @test_throws(
+            DimensionMismatch("the length of the first axis must be 2"),
+            JosephsonCircuits.extractbranches(
+                [:P,:I,:R,:C,:Lj,:C],
+                [2 2 2 2 3 3; 1 1 1 3 1 1; 0 0 0 0 0 0],
+            )
+        )
+    end
+
+    @testset "extractbranches!" begin
+        @test_throws(
+            DimensionMismatch("branchvector should be length zero"),
+            JosephsonCircuits.extractbranches!(
+                [1],
+                [:P,:I,:R,:C,:Lj,:C],
+                [2 2 2 2 3 3; 1 1 1 3 1 1],
+            )
+        )
+    end
 end

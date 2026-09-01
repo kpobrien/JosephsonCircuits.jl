@@ -40,7 +40,7 @@ const CPU = JosephsonCircuits.CPU
         nl = JosephsonCircuits.hbnlsolve(wp, Npump,
             [(mode=ntuple(i->i==1 ? 1 : 0, length(wp)), port=1, current=1e-6)],
             circuit, circuitdefs; keyedarrays=false)
-        psc = JosephsonCircuits.parsesortcircuit(circuit)
+        psc = JosephsonCircuits.compile(circuit)
         cg = JosephsonCircuits.calccircuitgraph(psc)
         sf = JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(
             JosephsonCircuits.calcfreqsrdft(Nmod); dc=true, odd=true,
@@ -106,7 +106,7 @@ const CPU = JosephsonCircuits.CPU
         push!(circuit,("C2","2","0",Cj))
         circuitdefs = Dict(Lj=>1000.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
             Rleft=>50.0)
-        psc = JosephsonCircuits.parsesortcircuit(circuit)
+        psc = JosephsonCircuits.compile(circuit)
         cg = JosephsonCircuits.calccircuitgraph(psc)
         sf = JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(
             JosephsonCircuits.calcfreqsrdft((2,)); dc=true, odd=true,

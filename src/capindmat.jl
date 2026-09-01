@@ -43,22 +43,22 @@ inductances. See also [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
 - `vvn`: the vector of component values with numbers substituted in.
 
 """
-struct CircuitMatrices
-    Cnm::SparseMatrixCSC
-    Gnm::SparseMatrixCSC
-    Lb::SparseVector
-    Lbm::SparseVector
-    Ljb::SparseVector
-    Ljbm::SparseVector
-    Mb::SparseMatrixCSC
-    invLnm::SparseMatrixCSC
+struct CircuitMatrices{TC,TG,TLb,TLbm,TLj,TLjm,TM,TiL,TLmean,TV}
+    Cnm::TC
+    Gnm::TG
+    Lb::TLb
+    Lbm::TLbm
+    Ljb::TLj
+    Ljbm::TLjm
+    Mb::TM
+    invLnm::TiL
     Rbnm::SparseMatrixCSC{Int, Int}
     portindices::Vector{Int}
     portnumbers::Vector{Int}
     portimpedanceindices::Vector{Int}
     noiseportimpedanceindices::Vector{Int}
-    Lmean
-    vvn
+    Lmean::TLmean
+    vvn::TV
 end
 
 """
@@ -68,60 +68,66 @@ Return the symbolic matrices describing the circuit properties.
 
 See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref),
 [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
-[`calcinvLn`](@ref), [`calcLmean`](@ref), [`calcportindicesnumbers`](@ref),
-[`calcportimpedanceindices`](@ref), and [`calcnoiseportimpedanceindices`](@ref).
+[`calcinvLn`](@ref), [`calcLmean`](@ref), [`portindicesnumbers`](@ref),
+[`portenvironmentindices`](@ref), and [`noiseindices`](@ref).
 
 # Examples
 ```julia
 @variables Ipump Rleft Cc Lj Cj
-circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("I1","1","0",Ipump))
-push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("C1","1","2",Cc)) 
-push!(circuit,("Lj1","2","0",Lj)) 
-push!(circuit,("C2","2","0",Cj))
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = Rleft),
+     :i1 => CurrentSource(Ipump),
+     :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj),
+     :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:i1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 JosephsonCircuits.testshow(stdout,symbolicmatrices(circuit))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], Lj, Any[1, Rleft, Ipump, Cc, Lj, Cj])
 ```
 """
-function symbolicmatrices(circuit::AbstractVector; Nmodes::Int = 1,
-    sorting::Symbol = :number)
+function symbolicmatrices(circuit; Nmodes::Int = 1,
+    sorting::Symbol = defaultsorting(circuit))
     return numericmatrices(circuit, Dict(), Nmodes = Nmodes, sorting = sorting)
 end
 
 """
-    symbolicmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph;
+    symbolicmatrices(psc::CompiledCircuit, cg::CircuitGraph;
     Nmodes::Int = 1)
 
 Return the symbolic matrices describing the circuit properties.
 
 See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref),
 [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
-[`calcinvLn`](@ref), [`calcLmean`](@ref), [`calcportindicesnumbers`](@ref),
-[`calcportimpedanceindices`](@ref), and [`calcnoiseportimpedanceindices`](@ref).
+[`calcinvLn`](@ref), [`calcLmean`](@ref), [`portindicesnumbers`](@ref),
+[`portenvironmentindices`](@ref), and [`noiseindices`](@ref).
 
 # Examples
 ```julia
 @variables Ipump Rleft Cc Lj Cj
-circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("I1","1","0",Ipump))
-push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("C1","1","2",Cc)) 
-push!(circuit,("Lj1","2","0",Lj)) 
-push!(circuit,("C2","2","0",Cj))
-psc = JosephsonCircuits.parsesortcircuit(circuit)
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = Rleft),
+     :i1 => CurrentSource(Ipump),
+     :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj),
+     :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:i1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+psc = JosephsonCircuits.compile(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
 JosephsonCircuits.testshow(stdout,symbolicmatrices(psc,cg))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], Lj, Any[1, Ipump, Rleft, Cc, Lj, Cj])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], Lj, Any[1, Rleft, Ipump, Cc, Lj, Cj])
 ```
 """
-function symbolicmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph;
+function symbolicmatrices(psc::CompiledCircuit, cg::CircuitGraph;
     Nmodes::Int = 1)
     return numericmatrices(psc, cg, Dict(), Nmodes = Nmodes)
 end
@@ -134,56 +140,65 @@ Return the numeric matrices describing the circuit properties.
 See also [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
 [`calcCn`](@ref), [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref),
 [`calcMb`](@ref), [`calcinvLn`](@ref), [`calcLmean`](@ref),
-[`calcportindicesnumbers`](@ref), [`calcportimpedanceindices`](@ref), and
-[`calcnoiseportimpedanceindices`](@ref).
+[`portindicesnumbers`](@ref), [`portenvironmentindices`](@ref), and
+[`noiseindices`](@ref).
 
 # Examples
 ```julia
 @variables Ipump Rleft Cc Lj Cj
-circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("I1","1","0",Ipump))
-push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("C1","1","2",Cc)) 
-push!(circuit,("Lj1","2","0",Lj)) 
-push!(circuit,("C2","2","0",Cj))
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = Rleft),
+     :i1 => CurrentSource(Ipump),
+     :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj),
+     :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:i1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 circuitdefs = Dict(Lj =>1000.0e-12,Cc => 100.0e-15,Cj => 1000.0e-15,Rleft => 50.0,Ipump => 1.0e-8)
 JosephsonCircuits.testshow(stdout,numericmatrices(circuit,circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], 1.0e-9, Real[1, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
 ```
 ```julia
 @variables Ipump Rleft Cc Lj Cj
-circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("I1","1","0",Ipump))
-push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("C1","1","2",Cc)) 
-push!(circuit,("Lj1","2","0",Lj)) 
-push!(circuit,("C2","2","0",Cj))
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = Rleft),
+     :i1 => CurrentSource(Ipump),
+     :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj),
+     :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:i1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 circuitdefs = Dict(Lj =>1000.0e-12,Cc => 100.0e-15,Cj => 1000.0e-15,Rleft => 50.0,Ipump => 1.0e-8)
-psc = JosephsonCircuits.parsesortcircuit(circuit)
+psc = JosephsonCircuits.compile(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
 JosephsonCircuits.testshow(stdout,numericmatrices(psc, cg, circuitdefs))
 
 # output
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [3], Int64[], 1.0e-9, Real[1, 1.0e-8, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], 1.0e-9, Real[1, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
 ```
 """
-function numericmatrices(circuit::AbstractVector, circuitdefs::Dict; Nmodes::Int = 1,
-    sorting::Symbol = :number)
+function numericmatrices(circuit, circuitdefs::Dict; Nmodes::Int = 1,
+    sorting::Symbol = defaultsorting(circuit))
 
-    # parse the circuit
-    psc = parsesortcircuit(circuit, sorting = sorting)
+    # whatever `compile` accepts: a typed `Circuit`, a netlist of tuples, an
+    # elaborated circuit, or one already compiled
+    psc = compile(circuit; sorting = sorting)
 
     # calculate the circuit graph
-    cg = calccircuitgraph(psc)
+    # the loop enumeration is quadratic in the number of inductive
+    # loops and nothing here reads it
+    cg = calccircuitgraph(psc; loops = false)
 
     return numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 end
 
-function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
+function numericmatrices(psc::CompiledCircuit, cg::CircuitGraph,
     circuitdefs::Dict; Nmodes::Int = 1)
 
     # convert as many values as we can to numerical values using definitions
@@ -195,7 +210,7 @@ end
 # the same, from already resolved component values, so a second call at a
 # different mode count (the signal grid of hblinsolve after the pump grid
 # of hbnlsolve) does not redo the symbolic value resolution.
-function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
+function numericmatrices(psc::CompiledCircuit, cg::CircuitGraph,
     vvn::AbstractVector; Nmodes::Int = 1)
     
     # capacitance matrix
@@ -251,14 +266,12 @@ function numericmatrices(psc::ParsedSortedCircuit, cg::CircuitGraph,
     # calculate Lmean
     Lmean = calcLmean(psc.componenttypes, vvn)
 
-    portindices, portnumbers = calcportindicesnumbers(psc.componenttypes,
-        psc.nodeindices, psc.mutualinductorbranchnames, vvn)
-
-    portimpedanceindices = calcportimpedanceindices(psc.componenttypes,
-        psc.nodeindices, psc.mutualinductorbranchnames, vvn)
-
-    noiseportimpedanceindices = calcnoiseportimpedanceindices(psc.componenttypes,
-        psc.nodeindices, psc.mutualinductorbranchnames, vvn)
+    # the port and noise roles come from the compiled circuit, which knows
+    # which resistor is a port's own environment because the port declared
+    # it, rather than inferring it from what sits across the port's terminals
+    portindices, portnumbers = portindicesnumbers(psc)
+    portimpedanceindices = portenvironmentindices(psc)
+    noiseportimpedanceindices = noiseindices(psc, vvn)
 
     return CircuitMatrices(Cnm, Gnm, Lb, Lbm, Ljb, Ljbm, Mb, invLnm, Rbnm,
         portindices, portnumbers, portimpedanceindices,
@@ -1261,4 +1274,88 @@ function pushval!(V::Vector, val, c, invert::Bool)
         push!(V,c*val)
     end
     return nothing
+end
+
+# The element type to assemble a matrix in, given the values that will go
+# into it. Used by the matrix builders above.
+"""
+    calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,
+        components::Vector{Symbol};checkinverse::Bool=true)
+
+Returns a zero length vector with the (computer science) type which will hold
+a set of circuit components of the (electrical engineering) types given in
+`components`. This function is not type stable by design, but exists to make
+the later function calls type stable.
+
+# Arguments
+- `componenttypes::Vector{Symbol}`: the component (electrical engineering) types.
+- `componentvalues::Vector`: the component values.
+- `components::Vector{Symbol}`: find a (computer science) type which will
+    hold the component (electrical engineering) types in this vector.
+
+# Keywords
+- `checkinverse = true`: also check the inverse of each element. This is
+    useful if the type would be integer but we later want to take the inverse
+    and want an array with a type that supports this operation.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcvaluetype([:R,:C,:R],[1,2,3],[:R])
+Float64[]
+
+julia> JosephsonCircuits.calcvaluetype([:R,:C,:R],[1,2,3+0.0im],[:R])
+ComplexF64[]
+
+julia> @variables R1 C1 R2;JosephsonCircuits.calcvaluetype([:R,:C,:R],[R1,C1,R2],[:R])
+Num[]
+```
+"""
+function calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,
+    components::Vector{Symbol};checkinverse::Bool=true)
+
+    if length(componenttypes) !== length(componentvalues)
+         throw(DimensionMismatch(lazy"componenttypes and componentvalues should have the same length"))
+    end
+
+    # use this to store the types we have seen so we don't call promote_type
+    # or take the inverse for the same type more than once.
+    typestoredict = Dict{DataType,Nothing}()
+
+    componentsdict = Dict{Symbol,Nothing}()
+    sizehint!(componentsdict,length(components))
+    for component in components
+        componentsdict[component] = nothing
+    end
+
+    # find the first one then break the loop so we have to execute the first
+    # element logic only once. 
+    valuetype = Nothing
+    for (i,type) in enumerate(componenttypes)
+        if haskey(componentsdict,type)
+            valuetype = typeof(componentvalues[i])
+            # add the original type to the typestore
+            typestoredict[valuetype] = nothing
+            if checkinverse
+                valuetype = promote_type(typeof(1/componentvalues[i]),valuetype)
+            end
+            break
+        end
+    end
+
+    for (i,type) in enumerate(componenttypes)
+        if haskey(componentsdict,type)
+            # if a different type is found, promote valuetype
+            if typeof(componentvalues[i]) != valuetype
+                # if it is a type we have seen before, do nothing
+                valuetype = promote_type(typeof(componentvalues[i]),valuetype)
+                if !haskey(typestoredict,valuetype)
+                    typestoredict[valuetype] = nothing
+                    if checkinverse
+                        valuetype = promote_type(typeof(1/componentvalues[i]),valuetype)
+                    end
+                end
+            end
+        end
+    end
+    return Array{valuetype, 1}(undef, 0)
 end

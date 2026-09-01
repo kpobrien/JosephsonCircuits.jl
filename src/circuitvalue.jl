@@ -358,6 +358,9 @@ using .Parsing: fromexpr
 const _fromexpr = fromexpr
 end # module CircuitValues
 
+using .CircuitValues
+const CircuitValue = CircuitValues.CircuitValue
+
 """
     FrequencyDependent(f)
 
@@ -402,4 +405,186 @@ end
 for op in (:-, :inv, :sqrt, :exp, :log, :conj, :real, :imag)
     @eval Base.$op(a::FrequencyDependent) =
         CircuitValues.mk($op, CircuitValues.tocv(a))
+end
+
+# === resolving a written value to a number ===
+#
+# A component value is written as a number, a name to be looked up in
+# `circuitdefs`, an expression in the types above, or a callable of
+# frequency. This is where each becomes a number.
+"""
+    componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
+
+Convert the array of component values to numbers, if defined in `circuitdefs`. 
+This function is not type stable by design because we want the output array 
+to use a concrete type if all of the values are evaluated to numbers. 
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.componentvaluestonumber([:Lj1,:Lj2],Dict(:Lj1=>1e-12,:Lj2=>2e-12))
+2-element Vector{Float64}:
+ 1.0e-12
+ 2.0e-12
+
+julia> @variables Lj1 Lj2;JosephsonCircuits.componentvaluestonumber([Lj1,Lj1+Lj2],Dict(Lj1=>1e-12,Lj2=>2e-12))
+2-element Vector{Float64}:
+ 1.0e-12
+ 3.0e-12
+```
+```jldoctest
+# define a frequency dependent impedance function
+Zfun(w,R) = ifelse(w>10,R,100*R);
+# create symbolic variables including a two argument function
+@variables w R
+@register_symbolic Zfun(w,R)
+# substitute in numerical values and functions for everything but w
+out=JosephsonCircuits.componentvaluestonumber([R,Zfun(w,R)],Dict(R=>50));
+println(out)
+# evaluate with w = 2
+println(Symbolics.value.(Symbolics.substitute.(out,(Dict(w=>2),);fold=Val(true))))
+# evaluate with w = 11
+println(Symbolics.value.(Symbolics.substitute.(out,(Dict(w=>11),);fold=Val(true))))
+
+# output
+Any[50, Zfun(w, 50)]
+[50, 5000]
+[50, 50]
+```
+"""
+function componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
+    # A comprehension, not `map` over the values paired with a repeated
+    # dictionary. The two agree on every value and on the element type they
+    # produce -- which is the point of doing this at all, since the output
+    # should be concretely typed when every value resolves to a number -- but
+    # `map` over an iterator of unknown length cannot preallocate and widens
+    # the result as it goes. Over 8192 values that is 1229 us against 7 us.
+    return [valuetonumber(value,circuitdefs) for value in componentvalues]
+end
+
+"""
+    valuetonumber(value::Symbol,circuitdefs)
+
+If the component value is a symbol, assume it is a dictionary key.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.valuetonumber(:Lj1,Dict(:Lj1=>1e-12,:Lj2=>2e-12))
+1.0e-12
+```
+"""
+function valuetonumber(value::Symbol,circuitdefs)
+    return circuitdefs[value]
+end
+
+"""
+    valuetonumber(value::String,circuitdefs)
+
+If the component value is a string, assume it is a dictionary key.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.valuetonumber("Lj1",Dict("Lj1"=>1e-12,"Lj2"=>2e-12))
+1.0e-12
+```
+"""
+function valuetonumber(value::String,circuitdefs)
+    return circuitdefs[value]
+end
+
+# the circuit definitions arrive either as a dictionary or, from the per
+# mode frequency substitution in `sparseaddconjsubst!`, as a single
+# `symfreqvar => w` pair. `Symbolics.substitute` accepts both, so this must
+# too.
+_definitionpairs(d::AbstractDict) = pairs(d)
+_definitionpairs(d::Pair) = (d,)
+_definitionpairs(d) = d
+
+"""
+    valuetonumber(value::Symbolics.Num,circuitdefs)
+
+If the component value is Symbolics.Num, then try substituting in the definition
+from `circuitdefs`.
+
+# Examples
+```jldoctest
+julia> @variables Lj1;JosephsonCircuits.valuetonumber(Lj1,Dict(Lj1=>3.0e-12))
+3.0e-12
+
+julia> @variables Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
+4.0e-12
+```
+"""
+function valuetonumber(value::FrequencyDependent, circuitdefs)
+    # a frequency dependent value lowers to a provider leaf and survives to
+    # be resolved per mode by freqsubst
+    return CircuitValues.Provider(value.f)
+end
+
+function valuetonumber(value::CircuitValue, circuitdefs)
+    d = Dict{Symbol,ComplexF64}()
+    for (k,v) in _definitionpairs(circuitdefs)
+        key = k isa CircuitValues.Parameter ? k.name : Symbol(k)
+        d[key] = ComplexF64(v)
+    end
+    # substitute what is defined and leave the rest free. A component value
+    # which still depends on the symbolic frequency variable comes back as a
+    # CircuitValue and is resolved per mode later by `freqsubst`.
+    out = CircuitValues.substituteparams(value, d)
+    out isa CircuitValues.Constant || return out
+    return iszero(imag(out.val)) ? real(out.val) : out.val
+end
+
+# the `Num` methods live in the Symbolics extension
+
+# """
+#     valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
+
+# If the component value `value` is Complex{Symbolics.Num}, then try substituting in the
+# definition from `circuitdefs`. This function is currently broken as of 
+# Symbolics v7.1.1
+
+# # Examples
+# ```jldoctest
+# julia> @variables Lj1::Complex;JosephsonCircuits.valuetonumber(Lj1,Dict(Lj1=>3.0e-12))
+# 3.0e-12
+
+# julia> @variables Lj1::Complex Lj2::Complex;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
+# ComplexTerm(real(Lj2) + real(Lj1) + im*(imag(Lj2) + imag(Lj1)))
+# ```
+# """
+# function valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
+#     return Symbolics.unwrap(Symbolics.substitute(value,circuitdefs))
+# end
+
+"""
+    valuetonumber(value::Symbolics.SymbolicT, circuitdefs)
+
+If the component value `value` has a type Symbolics.SymbolicT, then try
+substituting in the definition from `circuitdefs`.
+
+# Examples
+```jldoctest
+julia> @syms Lj1;JosephsonCircuits.valuetonumber(Lj1,Dict(Lj1=>3.0e-12))
+3.0e-12
+
+julia> @syms Lj1 Lj2;JosephsonCircuits.valuetonumber(Lj1+Lj2,Dict(Lj1=>3.0e-12,Lj2=>1.0e-12))
+4.0e-12
+```
+"""
+# the `SymbolicT` method lives in the Symbolics extension
+
+"""
+    valuetonumber(value, circuitdefs)
+
+If the component value `value` is a number (or a type we haven't considered,
+return it as is.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.valuetonumber(1.0,Dict(:Lj1=>1e-12,:Lj2=>2e-12))
+1.0
+```
+"""
+function valuetonumber(value, circuitdefs)
+    return value
 end

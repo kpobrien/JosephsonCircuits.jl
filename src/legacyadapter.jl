@@ -1,3 +1,14 @@
+# Everything here exists only to keep the legacy tuple netlist working. The
+# typed `Circuit` is the input format; a netlist of `(name, node1, node2,
+# value)` tuples is adapted into one here and then takes exactly the same
+# path. Nothing outside this file should grow a dependency on it, so that
+# when the legacy format is deprecated the file can be deleted whole.
+#
+# What that costs today: `LegacyNL`, which has no typed counterpart because
+# component behavior is never inferred from an instance name outside this
+# file; the name prefix table and the two functions that read it; and the
+# port impedance convention where a port takes the resistor beside it.
+
 # unwrap a wrapped symbolic value; the Symbolics extension adds the `Num`
 # method
 unwrapvalue(value) = value
@@ -19,8 +30,83 @@ struct LegacyNL{T} <: AbstractComponent
     value::T
 end
 nterminals(::LegacyNL) = 2
+# the only component type the legacy netlist has that the typed circuit
+# does not, so it adds the one lowering method the compiler lacks
+lowercomponent(def::LegacyNL, path) = :NL, def.value
 
 const legacyallowedcomponents = ["Lj","NL","L","C","K","I","R","P"]
+
+"""
+    parsecomponenttype(name::String,allowedcomponents::Vector{String})
+
+The first one or two characters of the component name in the string `name`
+should match one of the strings in the vector `allowedcomponents`. Return the 
+index first of the match found.
+
+NOTE: if a two letter component appears in allowedcomponents after a one 
+letter component with the same starting letter this function will match on the
+first value.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.parsecomponenttype("L10",["Lj","NL","L","C","K","I","R","P"])
+3
+
+julia> [JosephsonCircuits.parsecomponenttype(c,["Lj","NL","L","C","K","I","R","P"]) for c in ["Lj","NL","L","C","K","I","R","P"]]
+8-element Vector{Int64}:
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+```
+"""
+function parsecomponenttype(name::String,allowedcomponents::Vector{String})
+
+    # loop over the labels
+    @inbounds for j in eachindex(allowedcomponents)
+        l=allowedcomponents[j]
+        if l[1] == name[1]
+            if length(l) == 2
+                if length(name) >= 2 && l[2] == name[2]
+                    return j
+                end
+            elseif length(l) == 1
+                return j
+            else
+                throw(ArgumentError(lazy"parsecomponenttype() currently only works for two letter components"))
+            end
+        end
+    end
+    throw(ArgumentError(lazy"No matching component found in allowedcomponents."))
+end
+
+"""
+    checkcomponenttypes(allowedcomponents::Vector{String})
+
+Check that each element in `allowedcomponents` is found at the correct place.
+This will detect the case where a two letter component appears in 
+`allowedcomponents` after a one letter component with the same starting letter.
+The function parsecomponenttype() will match on the first value and this
+function will throw an error.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.checkcomponenttypes(["Lj","NL","L","C","K","I","R","P"])
+true
+```
+"""
+function checkcomponenttypes(allowedcomponents::Vector{String})
+    for i in eachindex(allowedcomponents)
+        if i != parsecomponenttype(allowedcomponents[i],allowedcomponents)
+            throw(ArgumentError(lazy"Allowed components parsing check has failed for $(allowedcomponents[i]). This can happen if a two letter long component comes after a one letter component. Please reorder allowedcomponents."))
+        end
+    end
+    return true
+end
 
 function legacycomponent(typesymbol::Symbol, name, node1, node2, value)
     if typesymbol == :L
@@ -36,7 +122,7 @@ function legacycomponent(typesymbol::Symbol, name, node1, node2, value)
     elseif typesymbol == :I
         return CurrentSource(value)
     elseif typesymbol == :P
-        return Port{typeof(value)}(legacyportnumber(name, value), 50.0, value)
+        return Port(legacyportnumber(name, value); termination = nothing)
     elseif typesymbol == :K
         return MutualInductor(value, string(node1), string(node2))
     else
@@ -63,12 +149,12 @@ end
 
 Construct a typed [`Circuit`](@ref) from a legacy tuple netlist, where each
 entry is `(name, node1, node2, value)` and the component type is inferred
-from the name prefix exactly as in [`parsecircuit`](@ref): Lj, NL, L, C, K,
-I, R, and P. Component name prefixes are interpreted only inside this
+from the name prefix: Lj, NL, L, C, K, I, R, and P. Component name
+prefixes are interpreted only inside this
 adapter; typed component models never infer behavior from instance names.
 
 Node labels become net names, so lowering the result back with
-[`parsesortcircuit`](@ref) reproduces the legacy parse exactly. When
+[`compile`](@ref) reproduces the legacy parse exactly. When
 `circuitdefs` is supplied, symbolic values are substituted with
 [`valuetonumber`](@ref) during conversion; otherwise values pass through
 verbatim and `circuitdefs` may be supplied to the analysis as usual.
@@ -79,12 +165,44 @@ julia> Circuit([("P1","1","0",1),("R1","1","0",50.0),("C1","1","0",1e-12)]) isa 
 true
 ```
 """
-function Circuit(netlist::AbstractVector{<:Tuple})
+function Circuit(netlist::AbstractVector)
+    # The element type is not restricted to a tuple: a netlist assembled by
+    # pushing onto a Vector{Any}, which the original parser accepts, is a
+    # netlist. legacycircuit checks each entry and says what is wrong with it.
     return legacycircuit(netlist, nothing)
 end
 
-function Circuit(netlist::AbstractVector{<:Tuple}, circuitdefs::AbstractDict)
+function Circuit(netlist::AbstractVector, circuitdefs::AbstractDict)
     return legacycircuit(netlist, circuitdefs)
+end
+
+# A legacy netlist states no port reference impedance: it is the resistor the
+# user placed across the port, which the legacy solver finds by looking for a
+# resistor on the port's branch. That search is the one piece of geometric
+# discovery which stays, because legacy syntax carries no role marker, and
+# doing it here once means the typed circuit downstream carries an explicit
+# reference impedance like any other. The port itself is constructed
+# unterminated, so the netlist's own resistor remains its only load.
+function legacyportimpedances!(components, netlist)
+    resistorat = Dict{Tuple{String,String},Any}()  # node pair -> (value, name)
+    for (i, entry) in enumerate(netlist)
+        components[i].second isa Resistor || continue
+        n1, n2 = string(entry[2]), string(entry[3])
+        haskey(resistorat, (n1, n2)) && continue
+        r = (value = components[i].second.R, name = components[i].first)
+        resistorat[(n1, n2)] = r
+        resistorat[(n2, n1)] = r
+    end
+    for (i, entry) in enumerate(netlist)
+        p = components[i].second
+        p isa Port || continue
+        R = get(resistorat, (string(entry[2]), string(entry[3])), nothing)
+        isnothing(R) && continue
+        components[i] = components[i].first =>
+            Port(p.number; Z0 = R.value,
+                termination = LegacyTermination(R.name))
+    end
+    return components
 end
 
 function legacycircuit(netlist, circuitdefs)
@@ -122,6 +240,7 @@ function legacycircuit(netlist, circuitdefs)
             end
         end
     end
+    legacyportimpedances!(components, netlist)
     connections = Vector{Any}(undef, length(nodeorder))
     for (i, label) in enumerate(nodeorder)
         group = nodegroups[label]
@@ -134,220 +253,4 @@ function legacycircuit(netlist, circuitdefs)
         connections[i] = Net(label, group)
     end
     return Circuit(components, connections, nothing)
-end
-
-# === lowering: ElaboratedCircuit -> ParsedSortedCircuit ===
-
-function lowercomponent(def::Inductor, path) 
-    return :L, def.L
-end
-lowercomponent(def::Capacitor, path) = :C, def.C
-lowercomponent(def::Resistor, path) = :R, def.R
-lowercomponent(def::CurrentSource, path) = :I, def.I
-lowercomponent(def::Port, path) = :P, def.value
-lowercomponent(def::MutualInductor, path) = :K, def.K
-lowercomponent(def::LegacyNL, path) = :NL, def.value
-function lowercomponent(def::NonlinearInductor, path)
-    if issinusoidal(def)
-        return :Lj, def.L0
-    end
-    throw(ComponentNotSupportedError(lazy"the NonlinearInductor at $(path) has a non-sinusoidal current-phase relation, which the solver does not yet support. It parsed, validated, and elaborated successfully. Currently solvable nonlinear elements have the sinusoidal relation of JosephsonJunction."))
-end
-function lowercomponent(def::VoltageSource, path)
-    throw(ComponentNotSupportedError(lazy"the VoltageSource at $(path) is not supported by the solver, which matches the legacy parser (voltage sources are not currently supported)."))
-end
-function lowercomponent(def::GaussianChannel, path)
-    throw(ComponentNotSupportedError(lazy"the GaussianChannel at $(path) is not yet supported by the harmonic balance solvers. It parsed, validated, and elaborated successfully; solver support for Gaussian channels is planned. Currently solvable components: Inductor, Capacitor, Resistor, JosephsonJunction, MutualInductor, CurrentSource, and Port."))
-end
-function lowercomponent(def, path)
-    throw(ComponentNotSupportedError(lazy"the component $(typeof(def)) at $(path) is not supported by the solver."))
-end
-
-"""
-    parsesortcircuit(elab::ElaboratedCircuit; sorting = :name)
-    parsesortcircuit(circuit::Circuit; sorting = :name)
-
-Lower an elaborated typed circuit to the [`ParsedSortedCircuit`](@ref)
-consumed by the existing solvers. Hierarchical instance paths become
-component names and net names become node names, so results keep the
-keyed array behavior with hierarchical keys such as "cell37/net2"; circuits
-constructed by the legacy tuple adapter round trip exactly.
-
-Only components supported by the current solvers can be lowered. Each port
-of a passive [`ScatteringParameters`](@ref) lowers to one `:S` component whose
-two nodes are the signal and reference terminals of the port and whose
-value is a [`ScatteringStamp`](@ref) sharing the block definition; the
-solvers stamp the multiport admittance of the block at every mode
-frequency. A [`GaussianChannel`](@ref), a non-sinusoidal
-[`NonlinearInductor`](@ref), or a `ScatteringParameters` with an arbitrary noise
-covariance raises a [`ComponentNotSupportedError`](@ref) naming the
-instance. The default `sorting` is `:name` because automatic
-hierarchical net names are not integers; see [`sortnodes`](@ref).
-"""
-function parsesortcircuit(elab::ElaboratedCircuit; sorting::Symbol = :name)
-    N = ninstances(elab)
-    componentnames = String[]
-    componenttypes = Symbol[]
-    componentvalues = Any[]
-    nodeindexvector = Int[]
-    sizehint!(componentnames, N)
-    sizehint!(componenttypes, N)
-    sizehint!(componentvalues, N)
-    sizehint!(nodeindexvector, 2*N)
-    mutualinductorbranchnames = String[]
-    uniquenodedict = Dict{String,Int}()
-    uniquenodevector = String[]
-
-    componenttemperatures = Dict{Int,Float64}()
-    couplingnames = Dict{Int,Tuple{String,String}}()
-    for (k, i1, i2) in elab.couplings
-        couplingnames[k] = (elab.instancepaths[i1], elab.instancepaths[i2])
-    end
-
-    for i in 1:N
-        def = instancedefinition(elab, i)
-        path = elab.instancepaths[i]
-        if def isa ScatteringParameters
-            # each port lowers to one :S component whose two nodes are the
-            # signal and reference terminals of the port, carrying the
-            # shared block definition and the port index; the solvers
-            # reassemble the multiport admittance coupling from the shared
-            # identity (see ScatteringStampSystem).
-            if def.noise isa NoiseCovariance
-                throw(ComponentNotSupportedError(lazy"the ScatteringParameters at $(path) has an arbitrary noise covariance, which permits active blocks; the solver supports passive scattering blocks (noise = Passive() or ThermalEquilibrium). It parsed, validated, and elaborated successfully."))
-            end
-            terminals = instanceterminals(elab, i)
-            for p in 1:def.nports
-                push!(componentnames, path * "/port" * string(p))
-                push!(componenttypes, :S)
-                push!(componentvalues, ScatteringStamp(def, p))
-                if def.noise isa ThermalEquilibrium
-                    componenttemperatures[length(componentnames)] =
-                        Float64(def.noise.temperature)
-                end
-                push!(nodeindexvector, processnode(uniquenodedict,
-                    uniquenodevector, elab.netnames[terminals[2*p-1]]))
-                push!(nodeindexvector, processnode(uniquenodedict,
-                    uniquenodevector, elab.netnames[terminals[2*p]]))
-            end
-            continue
-        end
-        typesymbol, value = lowercomponent(def, path)
-        push!(componentnames, path)
-        push!(componenttypes, typesymbol)
-        push!(componentvalues, value)
-        # a component which states its temperature keeps it; the rest take
-        # the one the analysis is run at
-        t = componenttemperature(def)
-        isnothing(t) || (componenttemperatures[length(componentnames)] = t)
-        if typesymbol == :K
-            l1, l2 = couplingnames[i]
-            push!(mutualinductorbranchnames, l1)
-            push!(mutualinductorbranchnames, l2)
-            push!(nodeindexvector, 0)
-            push!(nodeindexvector, 0)
-        else
-            terminals = instanceterminals(elab, i)
-            if length(terminals) != 2
-                throw(ComponentNotSupportedError(lazy"the component $(typeof(def)) at $(path) has $(length(terminals)) terminals; the solver supports two terminal components."))
-            end
-            for t in 1:2
-                push!(nodeindexvector, processnode(uniquenodedict,
-                    uniquenodevector, elab.netnames[terminals[t]]))
-            end
-        end
-    end
-
-    if !haskey(uniquenodedict, "0")
-        throw(ArgumentError("The circuit has no connection to Ground. Connect at least one endpoint to Ground; the ground net is required by the solver."))
-    end
-
-    nodenames, nodeindices = sortnodes(uniquenodevector, nodeindexvector;
-        sorting = sorting)
-
-    componentnamedict = Dict{String,Int}()
-    sizehint!(componentnamedict, length(componentnames))
-    for (i, name) in enumerate(componentnames)
-        componentnamedict[name] = i
-    end
-
-    return ParsedSortedCircuit(nodeindices, nodenames,
-        mutualinductorbranchnames, componentnames, componenttypes,
-        tightenvalues(componentvalues), componentnamedict,
-        length(uniquenodevector), componenttemperatures)
-end
-
-# the temperature a component states, or `nothing`. Only the components which
-# can dissipate carry one; a scattering block states its temperature through
-# its noise model instead (see [`ThermalEquilibrium`](@ref)).
-componenttemperature(def::Resistor) = def.temperature
-componenttemperature(def::Capacitor) = def.temperature
-componenttemperature(def::Inductor) = def.temperature
-componenttemperature(def) = nothing
-
-function parsesortcircuit(circuit::Circuit; sorting::Symbol = :name)
-    return parsesortcircuit(elaborate(circuit); sorting = sorting)
-end
-
-# Identity passthrough so that the existing solver entry points, which call
-# parsesortcircuit on their circuit argument, accept a pre-parsed circuit.
-function parsesortcircuit(psc::ParsedSortedCircuit; sorting::Symbol = :name)
-    return psc
-end
-
-# narrow a Vector{Any} to a concrete element type when possible, matching
-# the value vector types produced by parsecircuit from typed tuple vectors.
-function tightenvalues(values::Vector{Any})
-    return map(identity, values)
-end
-
-# === solver entry points for the typed representation ===
-
-"""
-    hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
-        circuit::Circuit, circuitdefs = Dict{Symbol,Number}();
-        sorting = :name, keyword arguments...)
-
-Harmonic balance solution of a typed [`Circuit`](@ref). The circuit is
-elaborated and lowered with [`parsesortcircuit`](@ref) and solved with the
-existing solver; all keyword arguments of the legacy method are supported.
-`circuitdefs` is only needed when component values are symbolic. The
-default `sorting` is `:name` because hierarchical net names are not
-integers.
-"""
-function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
-        Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
-        circuit::Circuit, circuitdefs::AbstractDict = Dict{Symbol,Number}();
-        sorting::Symbol = :name, kwargs...) where {N,M}
-    return hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
-        parsesortcircuit(circuit; sorting = sorting), circuitdefs; kwargs...)
-end
-
-"""
-    hbnlsolve(w, Nharmonics, sources, circuit::Circuit,
-        circuitdefs = Dict{Symbol,Number}(); sorting = :name,
-        keyword arguments...)
-
-Nonlinear harmonic balance solution of a typed [`Circuit`](@ref); see
-[`hbsolve`](@ref).
-"""
-function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
-        circuit::Circuit, circuitdefs::AbstractDict = Dict{Symbol,Number}();
-        sorting::Symbol = :name, kwargs...) where N
-    return hbnlsolve(w, Nharmonics, sources,
-        parsesortcircuit(circuit; sorting = sorting), circuitdefs; kwargs...)
-end
-
-"""
-    hblinsolve(w, circuit::Circuit, circuitdefs = Dict{Symbol,Number}();
-        sorting = :name, keyword arguments...)
-
-Linearized harmonic balance solution of a typed [`Circuit`](@ref); see
-[`hbsolve`](@ref).
-"""
-function hblinsolve(w, circuit::Circuit,
-        circuitdefs::AbstractDict = Dict{Symbol,Number}();
-        sorting::Symbol = :name, kwargs...)
-    return hblinsolve(w, parsesortcircuit(circuit; sorting = sorting),
-        circuitdefs; kwargs...)
 end

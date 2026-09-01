@@ -512,7 +512,7 @@ using Test
                 # the pump operating point and the linearized system it defines
                 nonlinear = hbnlsolve(wp, Npumpharmonics, sources, circuit,
                     circuitdefs; keyedarrays=false)
-                psc = JosephsonCircuits.parsesortcircuit(circuit)
+                psc = JosephsonCircuits.compile(circuit)
                 cg = JosephsonCircuits.calccircuitgraph(psc)
                 signalfreq = JosephsonCircuits.truncfreqs(
                     JosephsonCircuits.calcfreqsdft(Nmodulationharmonics);
@@ -654,7 +654,7 @@ using Test
             # one nonlinear solution, reused so the operating point is fixed
             nonlinear = hbnlsolve(wp, (16,), sources, circuit, defs;
                 keyedarrays=false)
-            psc = JosephsonCircuits.parsesortcircuit(circuit)
+            psc = JosephsonCircuits.compile(circuit)
             cg = JosephsonCircuits.calccircuitgraph(psc)
             signalfreq = JosephsonCircuits.truncfreqs(
                 JosephsonCircuits.calcfreqsdft((8,)); dc=true, odd=false,
@@ -841,7 +841,7 @@ using Test
             wp = (2*pi*5e9,)
             sources = [(mode=(1,),port=1,current=1e-7)]
             ws = 2*pi*[4.5e9]
-            psc = parsesortcircuit(circuit)
+            psc = compile(circuit)
             cg = calccircuitgraph(psc)
             nl = hbnlsolve(wp, (4,), sources, circuit, defs;
                 returnoperatingpoint=true)

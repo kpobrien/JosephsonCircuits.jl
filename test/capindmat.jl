@@ -69,4 +69,16 @@ using Test
             JosephsonCircuits.combine_error(1,2),
         )
     end
+
+    # the element type the matrix builders assemble in
+    @testset "calcvaluetype" begin
+        @test_throws(
+            DimensionMismatch("componenttypes and componentvalues should have the same length"),
+            JosephsonCircuits.calcvaluetype(
+                [:C,:R],
+                [1,2,3],
+                [:R]
+            )
+        )
+    end
 end

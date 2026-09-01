@@ -136,7 +136,7 @@ end
             circuitdefs)
 
         # replicate the hblinsolve setup on the signal grid
-        psc = JosephsonCircuits.parsesortcircuit(circuit)
+        psc = JosephsonCircuits.compile(circuit)
         cg = JosephsonCircuits.calccircuitgraph(psc)
         signalfreq = JosephsonCircuits.truncfreqs(
             JosephsonCircuits.calcfreqsdft((6,)); dc=true, odd=false,

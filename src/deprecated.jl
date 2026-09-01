@@ -101,10 +101,12 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     Nmodes = length(freq.modes)
 
     # parse and sort the circuit
-    psc = parsesortcircuit(circuit, sorting = sorting)
+    psc = compile(circuit; sorting = sorting)
 
     # calculate the circuit graph
-    cg = calccircuitgraph(psc)
+    # the loop enumeration is quadratic in the number of inductive
+    # loops and nothing here reads it
+    cg = calccircuitgraph(psc; loops = false)
 
     # calculate the numeric matrices
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)

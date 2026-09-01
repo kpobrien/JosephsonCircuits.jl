@@ -152,23 +152,27 @@ where order does not matter, the nodes are sorted.
 ```jldoctest
 @variables R Cc L1 L2 Cj1 Cj2 I1 V1
 @variables Ipump Rleft L1 K1 K2 L2 C2 C3
-circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("I1","1","0",Ipump))
-push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("L1","1","0",L1))
-push!(circuit,("K1","L1","L2",K1))
-push!(circuit,("K2","L1","L2",K2))
-push!(circuit,("L2","2","0",L2))
-push!(circuit,("C2","2","0",C2))
-push!(circuit,("C3","2","0",C3))
-psc = JosephsonCircuits.parsesortcircuit(circuit)
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = Rleft),
+     :i1 => CurrentSource(Ipump),
+     :l1 => Inductor(L1),
+     :l2 => Inductor(L2),
+     :k1 => MutualInductor(K1, :l1, :l2),
+     :k2 => MutualInductor(K2, :l1, :l2),
+     :c2 => Capacitor(C2),
+     :c3 => Capacitor(C3),
+     :gnd => Ground()],
+    [[(:p1, 1), (:i1, 1), (:l1, 1)],
+     [(:l2, 1), (:c2, 1), (:c3, 1)],
+     [(:p1, 2), (:i1, 2), (:l1, 2), (:l2, 2), (:c2, 2), (:c3, 2),
+      (:gnd, 1)]])
+psc = JosephsonCircuits.compile(circuit)
 println(JosephsonCircuits.calcnodes(1,1,psc.componenttypes,psc.nodeindices, psc.componentnamedict,psc.mutualinductorbranchnames))
 println(JosephsonCircuits.calcnodes(5,1,psc.componenttypes,psc.nodeindices, psc.componentnamedict,psc.mutualinductorbranchnames))
 
 # output
 (1, 2)
-(4, 7)
+(1, 3)
 ```
 """
 function calcnodes(nodeindex::Int, mutualinductorindex::Int,
@@ -424,6 +428,20 @@ function calcCjIcmean(componenttypes::Vector{Symbol},
     return CjoIc*Icmean, Icmean
 end
 
+# SPICE takes an element's type from the first character of its name and does
+# not accept "/" in one. A legacy netlist satisfies both already, so its
+# output is unchanged; a hierarchical instance path from a typed circuit
+# satisfies neither, and was written out verbatim as a line SPICE cannot
+# read.
+function spicename(name::AbstractString, prefix::Char)
+    s = replace(String(name), '/' => '_')
+    if prefix == 'B' && length(s) > 2 && uppercase(s[1:2]) == "LJ"
+        # a legacy junction is named Lj1 and has always been written as B1
+        return string(prefix, s[3:end])
+    end
+    return (isempty(s) || uppercase(first(s)) != prefix) ? string(prefix, s) : s
+end
+
 """
     exportnetlist(circuit::Vector,circuitdefs::Dict,port::Int = true,
         jj::Bool = true)
@@ -431,12 +449,15 @@ end
 # Examples
 ```jldoctest
 @variables R Cc Lj Cj I
-circuit = [
-    ("P1","1","0",1),
-    ("R1","1","0",R),
-    ("C1","1","2",Cc),
-    ("Lj1","2","0",Lj),
-    ("C2","2","0",Cj)]
+circuit = Circuit(
+    [:P1 => Port(1; Z0 = R),
+     :C1 => Capacitor(Cc),
+     :Lj1 => JosephsonJunction(Lj),
+     :C2 => Capacitor(Cj),
+     :gnd => Ground()],
+    [Net("1", [(:P1, 1), (:C1, 1)]),
+     Net("2", [(:C1, 2), (:Lj1, 1), (:C2, 1)]),
+     Net("0", [(:P1, 2), (:Lj1, 2), (:C2, 2), (:gnd, 1)])])
 
 circuitdefs = Dict(
     Lj =>1000.0e-12,
@@ -450,29 +471,33 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 
 # output
 * SPICE Simulation
-R1 1 0 50.0
+RP1_termination 1 0 50.0
 C1 1 2 100.0f
 B1 2 0 3 jjk ics=0.32910597599999997u
 C2 2 0 674.18508376f
 .model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
 
 * SPICE Simulation
-R1 1 0 50.0
+RP1_termination 1 0 50.0
 C1 1 2 100.0f
 Lj1 2 0 1000.0000000000001p
 C2 2 0 1000.0f
 ```
 ```jldoctest
 @variables R Cc L1 L2 Cj1 Cj2 I1 V1
-circuit = [
-    ("P1","1","0",1),
-    ("R1","1","0",R),
-    ("C1","1","2",Cc),
-    ("L1","2","0",L1),
-    ("L2","2","0",L2),
-    ("C2","2","0",Cj1),
-    ("C3","2","0",Cj2),
-    ("I1","2","0",I1)]
+circuit = Circuit(
+    [:P1 => Port(1; Z0 = R),
+     :C1 => Capacitor(Cc),
+     :L1 => Inductor(L1),
+     :L2 => Inductor(L2),
+     :C2 => Capacitor(Cj1),
+     :C3 => Capacitor(Cj2),
+     :I1 => CurrentSource(I1),
+     :gnd => Ground()],
+    [Net("1", [(:P1, 1), (:C1, 1)]),
+     Net("2", [(:C1, 2), (:L1, 1), (:L2, 1), (:C2, 1), (:C3, 1), (:I1, 1)]),
+     Net("0", [(:P1, 2), (:L1, 2), (:L2, 2), (:C2, 2), (:C3, 2), (:I1, 2),
+      (:gnd, 1)])])
 
 circuitdefs = Dict(
     L1 =>2000.0e-12,
@@ -489,28 +514,32 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 
 # output
 * SPICE Simulation
-R1 1 0 50.0
+RP1_termination 1 0 50.0
 C1 1 2 100.0f
 L1 2 0 1000.0000000000001p
 C2 2 0 1000.0f
 
 * SPICE Simulation
-R1 1 0 50.0
+RP1_termination 1 0 50.0
 C1 1 2 100.0f
 L1 2 0 1000.0000000000001p
 C2 2 0 1000.0f
 ```
 ```jldoctest
 @variables Rleft L1 K1 L2 C2 C3 Lj1
-circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("L1","1","0",L1))
-push!(circuit,("Lj1","2","0",Lj1))
-push!(circuit,("K1","L1","L2",K1))
-push!(circuit,("L2","2","0",L2))
-push!(circuit,("C2","2","0",C2))
-push!(circuit,("C3","2","0",C3))
+circuit = Circuit(
+    [:P1 => Port(1; Z0 = Rleft),
+     :L1 => Inductor(L1),
+     :Lj1 => JosephsonJunction(Lj1),
+     :L2 => Inductor(L2),
+     :K1 => MutualInductor(K1, :L1, :L2),
+     :C2 => Capacitor(C2),
+     :C3 => Capacitor(C3),
+     :gnd => Ground()],
+    [Net("1", [(:P1, 1), (:L1, 1)]),
+     Net("2", [(:Lj1, 1), (:L2, 1), (:C2, 1), (:C3, 1)]),
+     Net("0", [(:P1, 2), (:L1, 2), (:Lj1, 2), (:L2, 2), (:C2, 2), (:C3, 2),
+      (:gnd, 1)])])
 circuitdefs = Dict(
     Rleft => 50.0,
     L1 => 1000.0e-12,
@@ -526,33 +555,37 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 
 # output
 * SPICE Simulation
-R1 1 0 50.0
+RP1_termination 1 0 50.0
 L1 1 0 1000.0000000000001p
 B1 2 0 3 jjk ics=0.32910597599999997u
 C2 2 0 1674.18508376f
-K1 L1 L2 0.1
 L2 2 0 1000.0000000000001p
+K1 L1 L2 0.1
 .model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
 
 * SPICE Simulation
-R1 1 0 50.0
+RP1_termination 1 0 50.0
 L1 1 0 1000.0000000000001p
 Lj1 2 0 1000.0000000000001p
-K1 L1 L2 0.1
 L2 2 0 1000.0000000000001p
+K1 L1 L2 0.1
 C2 2 0 2000.0f
 ```
 ```jldoctest
 @variables Rleft L1 K1 L2 C2 C3 Lj1
-circuit = Vector{Tuple{String,String,String,Num}}(undef,0)
-push!(circuit,("P1","1","0",1))
-push!(circuit,("R1","1","0",Rleft))
-push!(circuit,("L1","1","0",L1))
-push!(circuit,("Lj1","2","0",Lj1))
-push!(circuit,("K1","L2","L1",K1))
-push!(circuit,("L2","2","0",L2))
-push!(circuit,("C2","2","0",C2))
-push!(circuit,("C3","2","0",C3))
+circuit = Circuit(
+    [:P1 => Port(1; Z0 = Rleft),
+     :L1 => Inductor(L1),
+     :Lj1 => JosephsonJunction(Lj1),
+     :L2 => Inductor(L2),
+     :K1 => MutualInductor(K1, :L2, :L1),
+     :C2 => Capacitor(C2),
+     :C3 => Capacitor(C3),
+     :gnd => Ground()],
+    [Net("1", [(:P1, 1), (:L1, 1)]),
+     Net("2", [(:Lj1, 1), (:L2, 1), (:C2, 1), (:C3, 1)]),
+     Net("0", [(:P1, 2), (:L1, 2), (:Lj1, 2), (:L2, 2), (:C2, 2), (:C3, 2),
+      (:gnd, 1)])])
 circuitdefs = Dict(
     Rleft => 50.0,
     L1 => 1000.0e-12,
@@ -568,37 +601,30 @@ println(JosephsonCircuits.exportnetlist(circuit, circuitdefs;port = 1, jj = fals
 
 # output
 * SPICE Simulation
-R1 1 0 50.0
+RP1_termination 1 0 50.0
 L1 1 0 1000.0000000000001p
 B1 2 0 3 jjk ics=0.32910597599999997u
 C2 2 0 1674.18508376f
-K1 L2 L1 0.1
 L2 2 0 1000.0000000000001p
+K1 L2 L1 0.1
 .model jjk jj(rtype=0,cct=1,icrit=0.32910597599999997u,cap=325.81491624f,force=1,vm=9.9
 
 * SPICE Simulation
-R1 1 0 50.0
+RP1_termination 1 0 50.0
 L1 1 0 1000.0000000000001p
 Lj1 2 0 1000.0000000000001p
-K1 L2 L1 0.1
 L2 2 0 1000.0000000000001p
+K1 L2 L1 0.1
 C2 2 0 2000.0f
 ```
 """
-function exportnetlist(circuit::Vector,circuitdefs::Dict;port::Int = 1,
+function exportnetlist(circuit,circuitdefs::Dict;port::Int = 1,
         jj::Bool = true)
-    return exportnetlist(parsesortcircuit(circuit, sorting=:number),
+    return exportnetlist(compile(circuit; sorting = defaultsorting(circuit)),
         circuitdefs; port = port, jj = jj)
 end
 
-# a typed circuit lowers through its own parse; it is fully numeric, so it
-# needs no definitions
-function exportnetlist(circuit::Circuit; port::Int = 1, jj::Bool = true)
-    return exportnetlist(parsesortcircuit(circuit), Dict();
-        port = port, jj = jj)
-end
-
-function exportnetlist(psc::ParsedSortedCircuit,circuitdefs::Dict;
+function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
         port::Int = 1, jj::Bool = true)
 
     # set these to 1 for now, but i should consider how or whether to handle
@@ -607,7 +633,9 @@ function exportnetlist(psc::ParsedSortedCircuit,circuitdefs::Dict;
     portcurrent = 1
 
     # calculate the circuit graph
-    cg = calccircuitgraph(psc)
+    # the loop enumeration is quadratic in the number of inductive
+    # loops and nothing here reads it
+    cg = calccircuitgraph(psc; loops = false)
     
     # convert as many values as we can to numerical values using definitions
     # from circuitdefs
@@ -680,24 +708,24 @@ function exportnetlist(psc::ParsedSortedCircuit,circuitdefs::Dict;
             if jj == true
                 nJJ += 1
                 # push!(netlist,"B$(nJJ) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
-                push!(netlist,"B$(componentnames[i][3:end]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
+                push!(netlist,"$(spicename(componentnames[i],'B')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
                 capflag, capvalue, capindex = sumbranchvalues!(:C, node1, node2, componentvalues, countdictcopy, indexdictcopy)
 
                 # add any additional capacitance
                 if real(capvalue) > Ictmp*CjoIc
-                    push!(netlist,"$(componentnames[capindex]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(femto*real(capvalue-Ictmp*CjoIc))f")
+                    push!(netlist,"$(spicename(componentnames[capindex],'C')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(femto*real(capvalue-Ictmp*CjoIc))f")
                 end
             else
-                push!(netlist,"$(componentnames[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*pico))p")
+                push!(netlist,"$(spicename(componentnames[i],'L')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*pico))p")
             end
         elseif flag == true && componenttypes[i] == :L
-            push!(netlist,"$(componentnames[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*pico))p")
+            push!(netlist,"$(spicename(componentnames[i],'L')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*pico))p")
         elseif flag == true && componenttypes[i] == :C
-            push!(netlist,"$(componentnames[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*femto))f")
+            push!(netlist,"$(spicename(componentnames[i],'C')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value*femto))f")
         elseif flag == true && componenttypes[i] == :K
-            push!(netlist,"$(componentnames[i]) $(mutualinductorbranchnames[2*mutualinductorindex-1]) $(mutualinductorbranchnames[2*mutualinductorindex]) $(real(value))")
+            push!(netlist,"$(spicename(componentnames[i],'K')) $(mutualinductorbranchnames[2*mutualinductorindex-1]) $(mutualinductorbranchnames[2*mutualinductorindex]) $(real(value))")
         elseif flag == true && componenttypes[i] == :R
-            push!(netlist,"$(componentnames[i]) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value))")
+            push!(netlist,"$(spicename(componentnames[i],'R')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value))")
         end
     end
 
@@ -721,6 +749,21 @@ end
 
 # A fully numeric circuit (such as the output of a circuit builder) needs no
 # component definitions, so `circuitdefs` is optional.
-function exportnetlist(circuit::Vector; kwargs...)
+function exportnetlist(circuit; kwargs...)
     return exportnetlist(circuit, Dict(); kwargs...)
+end
+
+# Reading a component value back out of a SPICE line. Only
+# `import_netlist!` above uses it.
+"""
+    parsecomponentvalue(s::AbstractString)
+
+Parse a SPICE netlist component value into a number or a `CircuitValue`.
+Replaces `Symbolics.parse_expr_to_symbolic`; unlike it, this does not
+evaluate into a module, so a netlist cannot introduce arbitrary code.
+"""
+function parsecomponentvalue(s::AbstractString)
+    v = tryparse(Float64, s)
+    isnothing(v) || return v
+    return CircuitValues.fromexpr(Meta.parse(s))
 end

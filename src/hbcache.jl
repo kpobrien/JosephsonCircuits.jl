@@ -28,9 +28,12 @@ succeeded. Check it: a solve which does not converge returns a state that
 looks like a solution and is not one, and comparing timings or gradients
 against it is meaningless.
 """
-mutable struct HBCache{N,K}
+mutable struct HBCache{N,K,P}
     builder::Any
-    psc::ParsedSortedCircuit
+    compiled::CompiledCircuit
+    plan::P
+    structure::Any
+    valueorder::Vector{Int}
     cg::CircuitGraph
     frequencies::Frequencies{N}
     indices::FourierIndices{N}
@@ -59,8 +62,13 @@ against the parse.
 
 # Examples
 ```julia
-make(; Lj, Cc) = [("P1","1","0",1), ("R1","1","0",50.0),
-    ("C1","1","2",Cc), ("Lj1","2","0",Lj), ("C2","2","0",1000e-15)]
+make(; Lj, Cc) = Circuit(
+    [:p1 => Port(1), :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj), :cj => Capacitor(1000e-15),
+     :gnd => Ground()],
+    [[(:p1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 cache = hbcache((2*pi*4.75e9,), (8,),
     [(mode=(1,), port=1, current=1e-8)], make,
     (Lj = 1000e-12, Cc = 100e-15))
@@ -83,11 +91,24 @@ function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     indices = fourierindices(frequencies)
     Nmodes = length(frequencies.modes)
 
-    psc = parsesortcircuit(builder(; p...), sorting = sorting)
-    cg = calccircuitgraph(psc)
+    circuit0 = builder(; p...)
+    compiled = compile(circuit0; sorting = sorting)
+    # the loop enumeration is quadratic in the number of inductive
+    # loops and nothing here reads it
+    cg = calccircuitgraph(compiled; loops = false)
+    bound = bind(compiled)
+    plan = circuitmatrixplan(compiled, cg, bound; Nmodes = Nmodes)
 
-    return HBCache(builder, psc, cg, frequencies, indices, Nmodes, w,
-        collect(sources), kwargs, nothing, false, 0)
+    # where each component the builder returns lands in the value table.
+    # The topology is fixed as the parameters vary, so this is fixed too, and
+    # looking it up once turns a string hash and a dictionary probe per
+    # component per solve into an array read.
+    valueorder = [get(compiled.componentnamedict, String(first(c)), 0)
+                  for c in circuit0]
+
+    return HBCache(builder, compiled, plan, structuralkey(bound), valueorder,
+        cg, frequencies, indices, Nmodes, w, collect(sources), kwargs,
+        nothing, false, 0)
 end
 
 """
@@ -98,13 +119,28 @@ order, without re-parsing. The builder output must have the same
 component names as the parse and fully numeric values.
 """
 function componentvalues(cache::HBCache, p::NamedTuple)
-    circuit = cache.builder(; p...)
-    length(circuit) == length(cache.psc.componentvalues) ||
-        throw(ArgumentError(lazy"the builder returned $(length(circuit)) components where the parse has $(length(cache.psc.componentvalues)); the circuit topology must be fixed as the parameters vary."))
-    vals = Vector{Complex{Float64}}(undef, length(circuit))
-    for c in circuit
-        name = String(first(c))
-        i = get(cache.psc.componentnamedict, name, 0)
+    # A function barrier. The builder is stored as `Any`, so calling it
+    # yields a value of unknown type and everything downstream of it in the
+    # same function is dynamically dispatched -- once per component, per
+    # solve. Handing the result to a function which specializes on its
+    # concrete type costs one dispatch instead of thousands.
+    return gathercomponentvalues(cache.builder(; p...), cache.valueorder,
+        cache.compiled.componentnames, cache.compiled.componentnamedict)
+end
+
+function gathercomponentvalues(circuit, order::Vector{Int},
+        names::Vector{String}, namedict::Dict{String,Int})
+    length(circuit) == length(names) ||
+        throw(ArgumentError(lazy"the builder returned $(length(circuit)) components where the parse has $(length(names)); the circuit topology must be fixed as the parameters vary."))
+    vals = Vector{Complex{Float64}}(undef, length(names))
+    @inbounds for (k, c) in enumerate(circuit)
+        name = first(c)
+        # the cached position, confirmed by comparing the name rather than
+        # hashing it. A builder which reorders its components between calls
+        # still lands in the right place, it just pays for the lookup.
+        i = (k <= length(order) && !iszero(order[k]) &&
+             isequal(name, names[order[k]])) ? order[k] :
+            get(namedict, String(name), 0)
         iszero(i) && throw(ArgumentError(lazy"the builder returned the component $(name), which is not in the parsed circuit; the circuit topology must be fixed as the parameters vary."))
         v = c[4]
         v isa Number || throw(ArgumentError(lazy"the component $(name) has the non-numeric value $(v); the cached solver requires a fully numeric builder output."))
@@ -143,12 +179,22 @@ from a non-solution is usually worse than starting cold.
 """
 function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
     vvn = componentvalues(cache, p)
-    nm = numericmatrices(cache.psc, cache.cg, vvn; Nmodes = cache.Nmodes)
+    # only the numbers moved, so the topology, the groups and the sparsity
+    # patterns are reused and the matrices are refilled rather than rebuilt.
+    # A value which crosses a structural boundary -- an inductance going
+    # open or shorted, a capacitance going complex -- would change the
+    # patterns, so it is refused rather than silently assembled against a
+    # stale plan.
+    bound = bindvalues(cache.compiled, vvn)
+    if structuralkey(bound) != cache.structure
+        throw(ArgumentError("a component value crossed a structural boundary (an inductance became open or shorted, a value became complex, or a mutual coupling reached one), so the cached sparsity patterns no longer apply. Build a new cache for these parameters."))
+    end
+    nm = assemblematrices(cache.plan, bound)
     x0 = (warmstart && cache.converged) ? cache.x : nothing
     # keyed arrays are a presentation convenience and pure overhead in a
     # loop; the stored state has to be a plain vector for the warm start
     nl = hbnlsolve(cache.w, cache.sources, cache.frequencies,
-        cache.indices, cache.psc, cache.cg, nm;
+        cache.indices, cache.compiled, cache.cg, nm;
         x0 = x0, keyedarrays = false, cache.kwargs...)
     cache.x = vec(collect(nl.nodeflux))
     cache.converged = nl.solverinfo.converged

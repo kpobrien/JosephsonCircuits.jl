@@ -221,21 +221,26 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
             rtol = 1e-6)
     end
 
-    @testset "hbnlsolve mna unbalanced dc excitation throws" begin
+    @testset "hbnlsolve mna dc excitation through a resistor" begin
 
-        # a nonzero net DC current into a floating component has no
-        # periodic solution. the compatibility check must throw instead of
-        # letting the gauge equation absorb the source into the flux
-        # reference and report an apparently converged nonphysical result.
+        # This threw while a resistor was an open circuit at DC: the direct
+        # current had nowhere to go and no periodic solution existed. The
+        # port resistor carries it now, so the driven node sits at I*R and
+        # the node inside the grounded static component sits at zero,
+        # because a junction to ground holds it there.
         circuit, circuitdefs = jpacircuit()
         wp = (2*pi*4.75001*1e9,)
+        Idc = 1.0e-7
         sources = [
-            (mode=(0,),port=1,current=1.0e-7),
+            (mode=(0,),port=1,current=Idc),
             (mode=(1,),port=1,current=0.00565e-6),
         ]
 
-        @test_throws ArgumentError hbnlsolve(wp, (8,), sources, circuit,
-            circuitdefs; ftol = 1e-12, dc = true, odd = true)
+        sol = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
+            ftol = 1e-12, dc = true, odd = true, keyedarrays = false)
+        @test sol.solverinfo.converged
+        @test isapprox(maximum(sol.dcnodevoltage), Idc*50.0; rtol = 1e-9)
+        @test count(!iszero, sol.dcnodevoltage) == 1
     end
 
     @testset "hbnlsolve mna complex storage of real resistors" begin
@@ -388,8 +393,14 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
             (mode=(0,),port=2,current=Idc),
             (mode=(0,),port=3,current=-Idc*(1 - 1e-10)),
         ]
-        @test_throws ArgumentError hbnlsolve(wp, (8,), sources, circuit,
-            circuitdefs; ftol = 1e-12, dc = true, odd = true)
+        # The imbalance leaves through the two port resistors rather than
+        # having nowhere to go, so this has a bounded solution: a net
+        # Idc*1e-10 into a pair of 50 ohm paths to ground.
+        solnb = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
+            ftol = 1e-12, dc = true, odd = true, keyedarrays = false)
+        @test solnb.solverinfo.converged
+        @test isapprox(maximum(solnb.dcnodevoltage), Idc*1e-10/(2/50.0);
+            rtol = 1e-6)
 
         # exactly balanced sources through the same two ports are accepted
         sources2 = [

@@ -299,17 +299,31 @@ summation-roundoff bound, `max(1024, 4*length(component))*eps` times the
 sum of the magnitudes of the contributing source terms.
 """
 function checkdcsourcecompatibility(floatingcomponents::Vector{Vector{Int}},
-    bnm::Vector, wmodes::Vector, Nmodes::Int, nodenames::Vector{String})
+    bnm::Vector, wmodes::Vector, Nmodes::Int, nodenames::Vector{String},
+    scale::Vector = bnm)
 
+    # `scale` sets what counts as numerically zero, and is the source as
+    # applied. It differs from `bnm` once the direct current conductance
+    # block has been eliminated: the corrected source is then zero on every
+    # component by construction, so scaling by it would compare a rounding
+    # error against nothing at all.
+    #
+    # The scale is taken over the whole zero frequency source rather than
+    # over the component alone, because the elimination moves current
+    # between components: a component which is driven by nothing of its own
+    # still carries what a resistor delivered to it, and measuring its
+    # residual against its own zero injection is measuring against nothing.
+    nnodes = length(bnm) ÷ Nmodes
     for component in floatingcomponents
         for m in 1:Nmodes
             if iszero(wmodes[m])
-                s = zero(eltype(bnm))
                 nrm = zero(real(eltype(bnm)))
+                for p in 1:nnodes
+                    nrm += abs(scale[(p-1)*Nmodes + m])
+                end
+                s = zero(eltype(bnm))
                 for p in component
-                    v = bnm[(p-2)*Nmodes + m]
-                    s += v
-                    nrm += abs(v)
+                    s += bnm[(p-2)*Nmodes + m]
                 end
                 epsT = eps(one(real(eltype(bnm))))
                 # a non-finite sum (from a non-finite source term) is

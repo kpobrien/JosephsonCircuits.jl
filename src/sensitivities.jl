@@ -54,7 +54,7 @@ function componentlookups(mnaindices, coupledbranches, Ljb)
 end
 
 """
-    componentstamp(idx::Integer, psc::ParsedSortedCircuit, cg::CircuitGraph,
+    componentstamp(idx::Integer, psc::CompiledCircuit, cg::CircuitGraph,
         nm::CircuitMatrices, lookups, Nmodes::Integer, Nnodes::Integer)
 
 Classify the component at index `idx` for sensitivity analysis and build its
@@ -80,7 +80,7 @@ message from both the fixed operating point stamps
 ([`calcresidualsensitivity`](@ref)). `lookups` are the constant time
 tables of [`componentlookups`](@ref).
 """
-function componentstamp(idx::Integer, psc::ParsedSortedCircuit,
+function componentstamp(idx::Integer, psc::CompiledCircuit,
     cg::CircuitGraph, nm::CircuitMatrices, lookups,
     Nmodes::Integer, Nnodes::Integer)
 
@@ -156,7 +156,7 @@ the physical quantity and the only rows the linearized system depends on,
 are unaffected.
 """
 function calcresidualsensitivity(op::HBOperatingPoint,
-    psc::ParsedSortedCircuit, cg::CircuitGraph, nm::CircuitMatrices,
+    psc::CompiledCircuit, cg::CircuitGraph, nm::CircuitMatrices,
     sensitivityindices,
     alphas::AbstractVector = ones(Complex{Float64},
         length(sensitivityindices)))
@@ -909,7 +909,7 @@ operating point already determines: the augmented dimension is the state
 length and the block auxiliary variables occupy its tail.
 """
 function calcblockresidualsensitivity(op::HBOperatingPoint,
-        psc::ParsedSortedCircuit, blockpairs::AbstractVector)
+        psc::CompiledCircuit, blockpairs::AbstractVector)
     Ntot = length(op.x)
     Nmodes = op.Nmodes
     Nsc = countscatteringports(psc)*Nmodes
@@ -1035,7 +1035,7 @@ junction alone, obtained by scattering the Fourier coefficients of
 ([`addjosephsonterm!`](@ref)) which assembles the system matrix, so the mode
 coupling and its truncation agree exactly.
 """
-function calcsensitivitystamps(sensitivityindices, psc::ParsedSortedCircuit,
+function calcsensitivitystamps(sensitivityindices, psc::CompiledCircuit,
     cg::CircuitGraph, nm::CircuitMatrices, lsys,
     phimatrix, mnaindices, coupledbranches, Nnodalmna, Nmodes, Nnodes)
 
