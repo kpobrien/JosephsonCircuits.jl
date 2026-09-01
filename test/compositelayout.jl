@@ -17,7 +17,7 @@ using Test
         @test L.ndc == 80                  # one per node
         @test L.nac == 12240 - 80
         @test JC.canonicaldim(L) == ml.rdim
-        @test L.nvdc == 0 && L.nidc == 0
+        @test L.nvdc == 0
         @test JC.ispermutation(L)
         @test sort(L.perm) == collect(1:ml.rdim)
 
@@ -169,6 +169,46 @@ using Test
         # place for the real direct current unknowns, and says so
         @test_throws ArgumentError JC.hbnlsolve((2*pi*4.75e9,), (4,), srcs,
             circuit; dc = true, odd = true, method = :quasinewton)
+    end
+
+    @testset "the assembled Jacobian survives a growing internal pattern" begin
+        # The canonical Jacobian's pattern is the internal pattern under a
+        # permutation plus the direct current block, and none of it moves.
+        # It used to be rebuilt from the *values* at each point, and sparse
+        # addition prunes exact zeros, so the pattern it produced was the
+        # one the starting point happened to have. A junction driven hard
+        # enough to develop harmonics fills in mode coupling entries which
+        # were zero at the origin, the pattern grew, and the solve stopped
+        # with the internal error which guarded against exactly that.
+        #
+        # The plan is built from the pattern alone, so it holds everywhere.
+        # The check is that `:newton` reaches the same point `:newtonkrylov`
+        # does, on a drive strong enough for the fill in to happen.
+        circuit = Circuit(
+            [:p1 => Port(1; Z0 = 50.0), :cc => Capacitor(100e-15),
+             :jj => JosephsonJunction(1000e-12), :cj => Capacitor(1000e-15)],
+            [[(:p1,1),(:cc,1)], [(:cc,2),(:jj,1),(:cj,1)],
+             [(:p1,2),(:jj,2),(:cj,2), Ground]])
+        srcs = [(mode = (1,), port = 1, current = 6.0e-6),
+                (mode = (0,), port = 1, current = 1.0e-7)]
+        kw = (; dc = true, odd = true, even = true, keyedarrays = false,
+              rtol = 1e-12)
+        a = JC.hbnlsolve((2*pi*4.75e9,), (8,), srcs, circuit;
+            kw..., method = :newton)
+        b = JC.hbnlsolve((2*pi*4.75e9,), (8,), srcs, circuit;
+            kw..., method = :newtonkrylov)
+        @test a.solverinfo.converged
+        @test b.solverinfo.converged
+        # the scattering parameters and the direct current operating point
+        # are the physical content and agree to roundoff
+        @test maximum(abs, a.S .- b.S) < 1e-10
+        @test isapprox(a.dcnodevoltage, b.dcnodevoltage; rtol = 1e-8)
+        # the node fluxes differ by a whole number of flux quanta, which is
+        # the additive static gauge: a junction phase is defined modulo
+        # 2*pi and the two methods land on different branches of it
+        turns = (a.nodeflux .- b.nodeflux) ./ (2*pi)
+        @test all(x -> isapprox(x, round(real(x)); atol = 1e-8), turns)
+        @test any(x -> !isapprox(x, 0; atol = 1e-8), turns)
     end
 
     @testset "the assembled Jacobian is the matrix free one" begin

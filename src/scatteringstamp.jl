@@ -228,89 +228,20 @@ end
 """
     countscatteringports(psc::CompiledCircuit)
 
-The total number of scattering block ports (`:S` components) of the parsed
-circuit, which is the number of auxiliary port current variables per mode.
+The total number of scattering block ports of the circuit, which is the
+number of auxiliary port current variables per mode.
 """
-countscatteringports(psc::CompiledCircuit) = count(==(:S),
-    psc.componenttypes)
+countscatteringports(psc::CompiledCircuit) =
+    sum(b -> b.definition.nports, psc.scatteringblocks; init = 0)
 
 """
     hasscattering(psc::CompiledCircuit)
 
-Whether the parsed circuit contains scattering block components.
+Whether the circuit contains scattering blocks.
 """
-hasscattering(psc::CompiledCircuit) = any(==(:S), psc.componenttypes)
+hasscattering(psc::CompiledCircuit) = !isempty(psc.scatteringblocks)
 
-"""
-    scatteringstampsystem(psc::CompiledCircuit, Nmodes::Integer;
-        auxoffset::Integer, Ntotal::Integer, scale::Real = 1.0)
-
-Collect the `:S` components of the parsed circuit into a
-[`ScatteringStampSystem`](@ref), or return `nothing` when there are none.
-Ports are grouped into blocks by the identity of the shared
-[`ScatteringParameters`](@ref) definition, so instances sharing a definition
-share its data; every port of each block must appear exactly once. The
-auxiliary port current variables occupy the `countscatteringports(psc) *
-Nmodes` indices starting after `auxoffset` of the `Ntotal` dimensional
-system, and `scale` multiplies the stamped `B` entries (`Lmean` in the
-scaled nonlinear solver, one in the linearized solver), mirroring the
-constitutive equations of the promoted port resistors.
-"""
-function scatteringstampsystem(psc::CompiledCircuit, Nmodes::Integer;
-    auxoffset::Integer, Ntotal::Integer, scale::Real = 1.0)
-
-    blocks = StampedScatteringBlock[]
-    auxbase = auxoffset
-    # One block instance per run of port entries, not one per distinct block
-    # object. Grouping by object identity merged two instances of one shared
-    # definition into a single block, which is a thing a user has every
-    # reason to write -- elaboration deduplicates definitions by identity
-    # precisely so that a definition can be shared -- and which failed with
-    # a complaint that a port appeared twice. The entries of one instance
-    # are emitted consecutively and its first is port 1, which is what
-    # separates one instance from the next.
-    for (i, type) in enumerate(psc.componenttypes)
-        type == :S || continue
-        stamp = psc.componentvalues[i]
-        if !(stamp isa ScatteringStamp)
-            throw(ArgumentError(lazy"The component $(psc.componentnames[i]) has type :S but its value is a $(typeof(stamp)) rather than a ScatteringStamp."))
-        end
-        block = stamp.block
-        p = stamp.port
-        if p == 1
-            n = block.nports
-            push!(blocks, StampedScatteringBlock(block, zeros(Int, n),
-                zeros(Int, n), auxbase, psc.componentnames[i]))
-            auxbase += n*Nmodes
-        elseif isempty(blocks)
-            throw(ArgumentError(lazy"The component $(psc.componentnames[i]) is port $(p) of a scattering block whose port 1 does not precede it; every port of a block must lower to one :S component."))
-        end
-        sb = blocks[end]
-        if !(1 <= p <= sb.block.nports)
-            throw(ArgumentError(lazy"The component $(psc.componentnames[i]) references port $(p) of a $(sb.block.nports) port scattering block."))
-        end
-        if sb.signalnodes[p] != 0
-            throw(ArgumentError(lazy"Port $(p) of the scattering block at $(sb.name) appears more than once in the parsed circuit."))
-        end
-        sb.signalnodes[p] = psc.nodeindices[1,i]
-        sb.refnodes[p] = psc.nodeindices[2,i]
-    end
-
-    if isempty(blocks)
-        return nothing
-    end
-    for sb in blocks
-        missingports = [p for p in 1:sb.block.nports if sb.signalnodes[p] == 0]
-        if !isempty(missingports)
-            throw(ArgumentError(lazy"The ports $(missingports) of the scattering block at $(sb.name) are missing from the parsed circuit; every port of a block must lower to one :S component."))
-        end
-    end
-    return scatteringstampsystem(blocks, Nmodes, Ntotal, scale)
-end
-
-# Everything past the point where the blocks and their terminals are known,
-# which is the same whether they were recovered from per port entries or
-# taken from the compiled circuit.
+# Everything past the point where the blocks and their terminals are known.
 function scatteringstampsystem(blocks::Vector{StampedScatteringBlock},
     Nmodes::Integer, Ntotal::Integer, scale::Real)
 
@@ -557,13 +488,10 @@ function scatteringlinearterm(psc::CompiledCircuit,
     wmodes::AbstractVector, Nmodes::Integer; auxoffset::Integer,
     Ntotal::Integer, scale::Real = 1.0, blocks = nothing)
 
-    # the compiled blocks when the caller has them, which needs no
-    # regrouping of the per port entries
-    ssys = isnothing(blocks) ?
-        scatteringstampsystem(psc, Nmodes; auxoffset = auxoffset,
-            Ntotal = Ntotal, scale = scale) :
-        scatteringstampsystem(blocks, Nmodes; auxoffset = auxoffset,
-            Ntotal = Ntotal, scale = scale)
+    # the caller's blocks when it has them, and the circuit's own otherwise
+    ssys = scatteringstampsystem(
+        isnothing(blocks) ? psc.scatteringblocks : blocks,
+        Nmodes; auxoffset = auxoffset, Ntotal = Ntotal, scale = scale)
     if isnothing(ssys)
         return nothing
     end
@@ -970,14 +898,13 @@ function noisechanneltemperatures(psc, noiseportimpedanceindices, noiseplan,
     ts = Float64[get(stated, i, Float64(temperature))
         for i in noiseportimpedanceindices]
     isnothing(noiseplan) && return ts
-    # a block's ports lower to consecutive :S components, and its noise model
-    # was recorded against the first of them
-    index = psc.componentnamedict
+    # a block states its temperature on its own noise model, which the
+    # block carries; it used to be recorded against the flat entry of the
+    # block's first port and looked up by that entry's name
     for (e, bi) in enumerate(noiseplan.blockindices)
         sb = ssys.blocks[bi]
-        i = get(index, sb.name, 0)
-        t = iszero(i) ? Float64(temperature) :
-            get(stated, i, Float64(temperature))
+        t = sb.block.noise isa ThermalEquilibrium ?
+            Float64(sb.block.noise.temperature) : Float64(temperature)
         for _ in 1:sb.block.nports
             push!(ts, t)
         end
@@ -1053,33 +980,53 @@ end
 
 nports(d::DCBlockDescriptor) = length(d.signalnodes)
 
+# a block built before `dcmodel` existed, or one of the internal block types
+# which carries no model, evaluates its own data at zero as it always did
+dcmodelof(blk) = hasproperty(blk, :dcmodel) ? blk.dcmodel : ScatteringLimit()
+
+# The zero frequency scattering matrix of a block, from whichever model it
+# declared. The default asks the block; the others were checked for size and
+# passivity when the block was constructed, so here they are read.
+function dcscattering(::ScatteringLimit, sb::StampedScatteringBlock,
+        n::Integer, atol::Real)
+    S = Array{Complex{Float64},3}(undef, n, n, 1)
+    evaluatescattering!(S, sb.block, [0.0])
+    S0 = @view S[:,:,1]
+    all(isfinite, S0) || throw(ArgumentError(lazy"the scattering block $(sb.name) returned a non-finite S(0), so its direct current behavior cannot be read from it. A block whose limit exists but is not evaluable at zero -- a series capacitance written as 1/(im*w*C), whose limit is the open circuit -- has to state that limit with the dcmodel keyword: OpenDC(), ShortDC(), ThroughDC() or ScatteringDC(S0)."))
+    m = maximum(abs∘imag, S0)
+    m <= atol*max(1, maximum(abs, S0)) || throw(ArgumentError(lazy"the scattering block $(sb.name) has a complex S(0) (largest imaginary part $(m)); a block with no real zero frequency limit has no direct current behavior to stamp. State the limit with the dcmodel keyword if the block has one."))
+    return Matrix{Float64}(real.(S0))
+end
+
+dcscattering(m::AbstractDCModel, sb::StampedScatteringBlock, n::Integer,
+    atol::Real) = dcscatteringmatrix(m, n)
+
 """
     dcblockdescriptor(sb::StampedScatteringBlock; atol = 1e-10)
 
 Evaluate the zero frequency pencil of a stamped block.
 
-`S(0)` must be real and finite: a complex zero frequency scattering matrix
-describes a block with no direct current limit, which is refused here rather
-than resolved by a convention, on the same principle as a complex direct
-current conductance.
+The matrix comes from the block's [`AbstractDCModel`](@ref): by default from
+its own scattering data evaluated at zero, and from the stated model when
+the block declared one.
+
+Evaluated or stated, `S(0)` must be real and finite. A complex zero
+frequency scattering matrix describes a block with no direct current limit,
+which is refused here rather than resolved by a convention, on the same
+principle as a complex direct current conductance.
 """
 function dcblockdescriptor(sb::StampedScatteringBlock; atol::Real = 1e-10)
     blk = sb.block
     n = blk.nports
-    S = Array{Complex{Float64},3}(undef, n, n, 1)
-    evaluatescattering!(S, blk, [0.0])
-    S0 = @view S[:,:,1]
-    all(isfinite, S0) || throw(ArgumentError(lazy"the scattering block $(sb.name) returned a non-finite S(0), so its direct current behavior cannot be read from it. A block whose limit exists but is not evaluable at zero -- a series capacitor written as 1/(im*w*C), whose limit is the open circuit S(0) = I -- has to state that limit, by a definition which evaluates at zero or by a table containing a zero frequency entry."))
-    m = maximum(abs∘imag, S0)
-    m <= atol*max(1, maximum(abs, S0)) || throw(ArgumentError(lazy"the scattering block $(sb.name) has a complex S(0) (largest imaginary part $(m)); a block with no real zero frequency limit has no direct current behavior to stamp."))
+    S0 = dcscattering(dcmodelof(blk), sb, n, atol)
 
     r2 = sqrt.(float.(blk.zref))
     B0 = Matrix{Float64}(undef, n, n)
     C0 = Matrix{Float64}(undef, n, n)
     @inbounds for q in 1:n, p in 1:n
         d = p == q ? 1.0 : 0.0
-        B0[p,q] = (d - real(S0[p,q])) / r2[p]
-        C0[p,q] = (d + real(S0[p,q])) * r2[p]
+        B0[p,q] = (d - S0[p,q]) / r2[p]
+        C0[p,q] = (d + S0[p,q]) * r2[p]
     end
     # the current directions the block does not determine: an ideal short
     # has C0 = 0 and leaves all of them free
@@ -1188,15 +1135,19 @@ function dcblockrows(blocks::AbstractVector, componentof::Vector{Int},
 end
 
 """
-    addblocktransport!(Fv, r::DCBlockRows, u, pinned)
+    addblocktransport!(Fv, r::DCBlockRows, u)
 
 Add the block currents which cross a component boundary to that component's
-transport row. A pinned component's row is `v = 0` and takes none.
+transport row.
+
+Every one of them, unconditionally. A reference row is chosen after this,
+from the assembled descriptor, so there is no row here which is known in
+advance to be redundant and no current which may be dropped on the grounds
+that it lands in one.
 """
 function addblocktransport!(Fv::AbstractVector, r::DCBlockRows,
-        u::AbstractVector, pinned, local_::Dict{Int,Int})
+        u::AbstractVector, local_::Dict{Int,Int})
     @inbounds for (c, idx, sgn) in r.transportterms
-        (c in pinned) && continue
         Fv[c] += sgn * u[local_[idx]]
     end
     return Fv

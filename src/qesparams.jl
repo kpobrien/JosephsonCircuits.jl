@@ -274,6 +274,15 @@ normalization is singular. This is the single definition used by the
 scattering parameter calculation ([`calcinputoutput_inner!`](@ref)) and by
 the sensitivity scaling ([`calcsensitivityscaling!`](@ref)), so the two
 cannot drift apart.
+
+The zero is a convention and not an approximation, and it is what keeps the
+direct current out of the waves. The voltage those functions reconstruct is
+`im*w*phi`, which is zero at zero frequency whatever the average voltage
+is; a circuit with an explicit direct current block has a physical zero
+frequency voltage which that reconstruction cannot see. Returning it through
+this scale would mix a voltage the extractor does not know about into a
+normalization which does not exist there. The direct current operating point
+is reported as a voltage instead.
 """
 @inline function portwavescale(portimpedance, w)
     kval = 1/sqrt(Complex(real(portimpedance)))
@@ -522,7 +531,10 @@ The [`impedance`](@ref) code of a component type, or an error for a type which
 has no impedance.
 """
 function impedancecode(type)
-    type === :R && return IMPEDANCE_R
+    # a port's reference impedance is a constant impedance, so it takes the
+    # resistance code; the ports are the one entry in the component table
+    # whose impedance is its reference impedance rather than its value
+    (type === :R || type === :P) && return IMPEDANCE_R
     type === :C && return IMPEDANCE_C
     type === :L && return IMPEDANCE_L
     error(lazy"Unknown component type")
@@ -606,7 +618,10 @@ function calcimpedance(c, type, w, symfreqvar)
     # is in use, and substitutes symfreqvar when one is; on a plain
     # number it is the identity
     v = substitutefreq(c, symfreqvar, w)
-    if type == :R
+    # `:P` is a port, whose impedance is the reference impedance it was given
+    # rather than a component value, and is constant in frequency like a
+    # resistance
+    if type == :R || type == :P
         if w >= 0
             return v+0.0im
         else

@@ -23,7 +23,12 @@ A simple structure to hold the nonlinear harmonic balance solutions.
 - `modes`: tuple of the pump mode indices where (1,) is the pump in the single
     pump case.
 - `S`: the scattering matrix relating inputs and outputs for each combination
-    of port and frequency.
+    of port and frequency. Its zero frequency entries are identically zero
+    and carry no information: the waves are in units of
+    sqrt(photons/second), whose normalization `1/sqrt(|w|)` has no limit at
+    zero (see [`portwavescale`](@ref)), so there is no direct current wave
+    to report. The direct current operating point is in `dcnodevoltage`,
+    which is a voltage and not a wave.
 - `solverinfo`: diagnostics describing the nonlinear solution process.
     See [`SolverInfo`](@ref).
 - `operatingpoint`: the converged operating point and the exact real
@@ -47,10 +52,15 @@ struct NonlinearHB
     S
     solverinfo
     operatingpoint
-    # the average node voltage in volts from the eliminated direct current
-    # block, or `nothing`; ground is first and identically zero. Distinct
-    # from `nodeflux`, whose zero mode is the static periodic flux which
-    # sets inductor currents and junction phases.
+    # The average node voltage in volts from the explicit direct current
+    # block, or `nothing` when the circuit has no such block. Ground is
+    # excluded and the values are keyed by node name, as `nodeflux` is, so
+    # that node indexed code reads the two the same way.
+    #
+    # Distinct from `nodeflux`, whose zero mode is the static periodic flux
+    # which sets inductor currents and junction phases. A vector of zeros is
+    # an answer -- a node shorted to ground sits at zero volts -- and is not
+    # the same as `nothing`.
     dcnodevoltage
 end
 
@@ -126,7 +136,8 @@ output which was not requested is an empty array.
 - `mutualinductorbranchnames`:
 - `portnumbers`: vector of port numbers.
 - `portindices`:
-- `portimpedanceindices`:
+- `portimpedances`: the reference impedance of each port, ordered by port
+    number, which is what the scattering parameters are normalized to
 - `noiseportimpedanceindices`:
 - `sensitivitynames`:
 - `sensitivityindices`:
@@ -158,7 +169,7 @@ struct LinearizedHB
     mutualinductorbranchnames
     portnumbers
     portindices
-    portimpedanceindices
+    portimpedances
     noiseportimpedanceindices
     sensitivitynames
     sensitivityindices
@@ -171,8 +182,8 @@ end
 
 # a solution which carries no added noise covariance, which is every one
 # taken before `returnCnoise` existed and every one which does not ask for it
-LinearizedHB(w, modes, S, Snoise, Ssensitivity, QE, QEideal, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, nodenames, nodeindices, componentnames, componenttypes, componentnamedict, mutualinductorbranchnames, portnumbers, portindices, portimpedanceindices, noiseportimpedanceindices, sensitivitynames, sensitivityindices, Nmodes, Nnodes, Nbranches, Nports, signalindex) =
-    LinearizedHB(w, modes, S, Snoise, Array{Complex{Float64},3}(undef, 0, 0, 0), Ssensitivity, QE, QEideal, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, nodenames, nodeindices, componentnames, componenttypes, componentnamedict, mutualinductorbranchnames, portnumbers, portindices, portimpedanceindices, noiseportimpedanceindices, sensitivitynames, sensitivityindices, Nmodes, Nnodes, Nbranches, Nports, signalindex)
+LinearizedHB(w, modes, S, Snoise, Ssensitivity, QE, QEideal, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, nodenames, nodeindices, componentnames, componenttypes, componentnamedict, mutualinductorbranchnames, portnumbers, portindices, portimpedances, noiseportimpedanceindices, sensitivitynames, sensitivityindices, Nmodes, Nnodes, Nbranches, Nports, signalindex) =
+    LinearizedHB(w, modes, S, Snoise, Array{Complex{Float64},3}(undef, 0, 0, 0), Ssensitivity, QE, QEideal, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, nodenames, nodeindices, componentnames, componenttypes, componentnamedict, mutualinductorbranchnames, portnumbers, portindices, portimpedances, noiseportimpedanceindices, sensitivitynames, sensitivityindices, Nmodes, Nnodes, Nbranches, Nports, signalindex)
 
 """
     HB(nonlinear, linearized)

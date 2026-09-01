@@ -45,13 +45,13 @@ using Test
     # the lumped circuit through the full nonlinear + linearized solve.
     function jpacircuit(shunt)
         return Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            [:p1 => Port(1; Z0 = 50.0),
              :cc => Capacitor(100.0e-15),
              :jj => JosephsonJunction(1000.0e-12),
              :c2 => shunt],
-            [((:p1, 1), (:r1, 1), (:cc, 1)),
+            [((:p1, 1), (:cc, 1)),
              ((:cc, 2), (:jj, 1), (:c2, 1)),
-             ((:jj, 2), (:c2, 2), (:r1, 2), (:p1, 2), Ground)],
+             ((:jj, 2), (:c2, 2), (:p1, 2), Ground)],
         )
     end
     capS(C, Z0) = w -> fill((1 - im*w*C*Z0)/(1 + im*w*C*Z0), 1, 1)
@@ -67,13 +67,13 @@ using Test
         # the connection endpoints accordingly: rebuild with the block
         blk = ScatteringParameters(capS(C2, 50.0); nports = 1, grounded = true)
         stamped = Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            [:p1 => Port(1; Z0 = 50.0),
              :cc => Capacitor(100.0e-15),
              :jj => JosephsonJunction(1000.0e-12),
              :c2 => blk],
-            [((:p1, 1), (:r1, 1), (:cc, 1)),
+            [((:p1, 1), (:cc, 1)),
              ((:cc, 2), (:jj, 1), (:c2, 1)),
-             ((:jj, 2), (:r1, 2), (:p1, 2), Ground)],
+             ((:jj, 2), (:p1, 2), Ground)],
         )
         sol1 = hbsolve(ws, wp, sources, (8,), (16,), lumped)
         sol2 = hbsolve(ws, wp, sources, (8,), (16,), stamped)
@@ -107,14 +107,13 @@ using Test
         blk = ScatteringParameters(seriesS; nports = 2, grounded = false)
         lumped = jpacircuit(Capacitor(1000.0e-15))
         stamped = Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            [:p1 => Port(1; Z0 = 50.0),
              :cc => blk,
              :jj => JosephsonJunction(1000.0e-12),
              :c2 => Capacitor(1000.0e-15)],
-            [((:p1, 1), (:r1, 1), (:cc, 1, 1)),
+            [((:p1, 1), (:cc, 1, 1)),
              ((:cc, 2, 1), (:jj, 1), (:c2, 1)),
-             ((:cc, 1, 2), (:cc, 2, 2), (:jj, 2), (:c2, 2), (:r1, 2),
-              (:p1, 2), Ground)],
+             ((:cc, 1, 2), (:cc, 2, 2), (:jj, 2), (:c2, 2), (:p1, 2), Ground)],
         )
         sol1 = hbsolve(ws, wp, sources, (8,), (16,), lumped)
         sol2 = hbsolve(ws, wp, sources, (8,), (16,), stamped)
@@ -134,14 +133,14 @@ using Test
             Sgrid[1,1,k] = (1 - im*w*C2*Z0)/(1 + im*w*C2*Z0)
         end
         maketab(extrapolation) = Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            [:p1 => Port(1; Z0 = 50.0),
              :cc => Capacitor(100.0e-15),
              :jj => JosephsonJunction(1000.0e-12),
              :c2 => ScatteringParameters((wgrid, Sgrid); grounded = true,
                  extrapolation = extrapolation)],
-            [((:p1, 1), (:r1, 1), (:cc, 1)),
+            [((:p1, 1), (:cc, 1)),
              ((:cc, 2), (:jj, 1), (:c2, 1)),
-             ((:jj, 2), (:r1, 2), (:p1, 2), Ground)],
+             ((:jj, 2), (:p1, 2), Ground)],
         )
         sol1 = hbsolve(ws, wp, sources, (8,), (16,), lumped)
         sol2 = hbsolve(ws, wp, sources, (8,), (16,), maketab(:error))
@@ -157,13 +156,13 @@ using Test
             Sshort[1,1,k] = (1 - im*w*C2*Z0)/(1 + im*w*C2*Z0)
         end
         shortcircuit = Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            [:p1 => Port(1; Z0 = 50.0),
              :cc => Capacitor(100.0e-15),
              :jj => JosephsonJunction(1000.0e-12),
              :c2 => ScatteringParameters((wshort, Sshort); grounded = true)],
-            [((:p1, 1), (:r1, 1), (:cc, 1)),
+            [((:p1, 1), (:cc, 1)),
              ((:cc, 2), (:jj, 1), (:c2, 1)),
-             ((:jj, 2), (:r1, 2), (:p1, 2), Ground)],
+             ((:jj, 2), (:p1, 2), Ground)],
         )
         @test_throws ArgumentError hbsolve(ws, wp, sources, (8,), (16,),
             shortcircuit)
@@ -183,10 +182,10 @@ using Test
         function twpa(lumped::Bool)
             shuntfor(C) = lumped ? Capacitor(C) :
                 ScatteringParameters(capS(C, 50.0); nports = 1, grounded = true)
-            components = Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            components = Any[:p1 => Port(1; Z0 = 50.0),
                 :cin => shuntfor(Cg/2)]
             connections = Any[]
-            ground = Any[(:p1, 2), (:r1, 2)]
+            ground = Any[(:p1, 2)]
             lumped && push!(ground, (:cin, 2))
             prev = nothing
             for i in 1:Nj
@@ -195,7 +194,7 @@ using Test
                 push!(components, jid => JosephsonJunction(Lj),
                     cid => Capacitor(Cj))
                 left = prev === nothing ?
-                    Any[(:p1, 1), (:r1, 1), (:cin, 1)] : Any[(prev, 2)]
+                    Any[(:p1, 1), (:cin, 1)] : Any[(prev, 2)]
                 push!(left, (jid, 1), (cid, 1))
                 if i > 1
                     gid = Symbol(:cg, i)
@@ -208,10 +207,10 @@ using Test
                 push!(connections, ((jid, 2), (cid, 2)))
             end
             push!(components, :cout => shuntfor(Cg/2),
-                :r2 => Resistor(50.0), :p2 => Port(2; termination = nothing))
-            push!(connections, ((prev, 2), (:cout, 1), (:r2, 1), (:p2, 1)))
+                :p2 => Port(2; Z0 = 50.0))
+            push!(connections, ((prev, 2), (:cout, 1), (:p2, 1)))
             lumped && push!(ground, (:cout, 2))
-            push!(ground, (:r2, 2), (:p2, 2), Ground)
+            push!(ground, (:p2, 2), Ground)
             push!(connections, ground)
             return Circuit(components, connections)
         end
@@ -241,15 +240,15 @@ using Test
         stub1 = ScatteringParameters(w -> fill(exp(-2*im*w*tau), 1, 1);
             nports = 1, grounded = true, negative_frequency = Native())
         function stubcircuit(stub, extra...)
-            components = Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            components = Any[:p1 => Port(1; Z0 = 50.0),
                 :l => Inductor(2e-9), :stub => stub]
             for (id, def) in extra
                 push!(components, id => def)
             end
             return Circuit(components,
-                [((:p1, 1), (:r1, 1), (:l, 1)),
+                [((:p1, 1), (:l, 1)),
                  ((:l, 2), (:stub, 1)),
-                 ((:p1, 2), (:r1, 2), Ground)],
+                 ((:p1, 2), Ground)],
             )
         end
         wsl = 2*pi*(1.0:0.5:15.0)*1e9
@@ -283,11 +282,11 @@ using Test
         fhalf = 1/(2*tau) # first half wave frequency
         line = TransmissionLine(Z0, len; grounded = true)
         c = Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :line => line,
-             :r2 => Resistor(50.0), :p2 => Port(2; termination = nothing)],
-            [((:p1, 1), (:r1, 1), (:line, 1)),
-             ((:line, 2), (:r2, 1), (:p2, 1)),
-             ((:p1, 2), (:r1, 2), (:r2, 2), (:p2, 2), Ground)],
+            [:p1 => Port(1; Z0 = 50.0), :line => line,
+             :p2 => Port(2; Z0 = 50.0)],
+            [((:p1, 1), (:line, 1)),
+             ((:line, 2), (:p2, 1)),
+             ((:p1, 2), (:p2, 2), Ground)],
         )
         wsweep = 2*pi*[0.5*fhalf, fhalf, 1.5*fhalf, 2*fhalf, 2.5*fhalf]
         sol = hblinsolve(wsweep, c)
@@ -303,14 +302,14 @@ using Test
         C2 = 1000.0e-15
         lumped = jpacircuit(Capacitor(C2))
         stamped = Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            [:p1 => Port(1; Z0 = 50.0),
              :cc => Capacitor(100.0e-15),
              :jj => JosephsonJunction(1000.0e-12),
              :c2 => ScatteringParameters(capS(C2, 50.0); nports = 1,
                  grounded = true)],
-            [((:p1, 1), (:r1, 1), (:cc, 1)),
+            [((:p1, 1), (:cc, 1)),
              ((:cc, 2), (:jj, 1), (:c2, 1)),
-             ((:jj, 2), (:r1, 2), (:p1, 2), Ground)],
+             ((:jj, 2), (:p1, 2), Ground)],
         )
         out1 = hbnlsolve(wp, (8,), sources, lumped)
         out2 = hbnlsolve(wp, (8,), sources, stamped)
@@ -320,12 +319,12 @@ using Test
         # holds one alongside a dissipative lumped component still closes
         # the commutation relations
         lossy = Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            [:p1 => Port(1; Z0 = 50.0),
              :att => ScatteringParameters([0.0 0.5; 0.5 0.0]; grounded = true),
              :rt => Resistor(50.0)],
-            [((:p1, 1), (:r1, 1), (:att, 1)),
+            [((:p1, 1), (:att, 1)),
              ((:att, 2), (:rt, 1)),
-             ((:rt, 2), (:p1, 2), (:r1, 2), Ground)],
+             ((:rt, 2), (:p1, 2), Ground)],
         )
         out = hblinsolve(2*pi*[5e9], lossy; keyedarrays = false)
         @test isapprox(out.CM[1,1], 1.0; atol = 1e-12)
@@ -346,13 +345,13 @@ using Test
             blk = ScatteringParameters((ftab, tab); nports = 1, grounded = true,
                 extrapolation = :constant)
             circuit = Circuit(
-                Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+                Any[:p1 => Port(1; Z0 = 50.0),
                     :cc => Capacitor(100.0e-15),
                     :jj => JosephsonJunction(1000.0e-12), :c2 => blk,
                     :rl => Resistor(1.0e5)],
-                Any[((:p1,1), (:r1,1), (:cc,1)),
+                Any[((:p1,1), (:cc,1)),
                     ((:cc,2), (:jj,1), (:c2,1), (:rl,1)),
-                    ((:jj,2), (:r1,2), (:p1,2), Ground), ((:rl,2), Ground)])
+                    ((:jj,2), (:p1,2), Ground), ((:rl,2), Ground)])
             nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
             psc = JosephsonCircuits.compile(circuit)
             cg = JosephsonCircuits.calccircuitgraph(psc)
@@ -394,11 +393,11 @@ using Test
         # must be recognised as such rather than silently mis-evaluated
         cb = ScatteringParameters(capS(Cval, 50.0); nports = 1, grounded = true)
         ccircuit = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            Any[:p1 => Port(1; Z0 = 50.0),
                 :cc => Capacitor(100.0e-15),
                 :jj => JosephsonJunction(1000.0e-12), :c2 => cb],
-            Any[((:p1,1), (:r1,1), (:cc,1)), ((:cc,2), (:jj,1), (:c2,1)),
-                ((:jj,2), (:r1,2), (:p1,2), Ground)])
+            Any[((:p1,1), (:cc,1)), ((:cc,2), (:jj,1), (:c2,1)),
+                ((:jj,2), (:p1,2), Ground)])
         cnl = hbnlsolve(wp, (16,), sources, ccircuit; keyedarrays = false)
         cpsc = JosephsonCircuits.compile(ccircuit)
         ccg = JosephsonCircuits.calccircuitgraph(cpsc)
@@ -438,11 +437,11 @@ using Test
 
         # and through the whole solve
         mk(b) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            Any[:p1 => Port(1; Z0 = 50.0),
                 :cc => Capacitor(100.0e-15),
                 :jj => JosephsonJunction(1000.0e-12), :c2 => b],
-            Any[((:p1,1), (:r1,1), (:cc,1)), ((:cc,2), (:jj,1), (:c2,1)),
-                ((:jj,2), (:r1,2), (:p1,2), Ground)])
+            Any[((:p1,1), (:cc,1)), ((:cc,2), (:jj,1), (:c2,1)),
+                ((:jj,2), (:p1,2), Ground)])
         s1 = hbsolve(ws, wp, sources, (8,), (8,), mk(ret); keyedarrays = false)
         for other in (inp, ent)
             s2 = hbsolve(ws, wp, sources, (8,), (8,), mk(other);
@@ -473,13 +472,13 @@ using Test
         blk = ScatteringParameters(mkentry(Cval); nports = 1, grounded = true,
             form = :entry)
         circuit = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            Any[:p1 => Port(1; Z0 = 50.0),
                 :cc => Capacitor(100.0e-15),
                 :jj => JosephsonJunction(1000.0e-12), :c2 => blk,
                 :rl => Resistor(1.0e5)],
-            Any[((:p1,1), (:r1,1), (:cc,1)),
+            Any[((:p1,1), (:cc,1)),
                 ((:cc,2), (:jj,1), (:c2,1), (:rl,1)),
-                ((:jj,2), (:r1,2), (:p1,2), Ground), ((:rl,2), Ground)])
+                ((:jj,2), (:p1,2), Ground), ((:rl,2), Ground)])
         nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
         psc = JosephsonCircuits.compile(circuit)
         cg = JosephsonCircuits.calccircuitgraph(psc)
@@ -524,12 +523,12 @@ using Test
         two = ScatteringParameters(mkasym(1.0); nports = 2, grounded = false,
             form = :entry)
         tcircuit = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :cc => two,
+            Any[:p1 => Port(1; Z0 = 50.0), :cc => two,
                 :jj => JosephsonJunction(1000.0e-12),
                 :c2 => Capacitor(1000.0e-15)],
-            Any[((:p1,1), (:r1,1), (:cc,1,1)),
+            Any[((:p1,1), (:cc,1,1)),
                 ((:cc,2,1), (:jj,1), (:c2,1)),
-                ((:cc,1,2), (:cc,2,2), (:jj,2), (:c2,2), (:r1,2), (:p1,2),
+                ((:cc,1,2), (:cc,2,2), (:jj,2), (:c2,2), (:p1,2),
                  Ground)])
         tnl = hbnlsolve(wp, (16,), sources, tcircuit; keyedarrays = false)
         tpsc = JosephsonCircuits.compile(tcircuit)
@@ -568,11 +567,11 @@ using Test
                 (1 - im*w*buf[1]*1e-12*50.0)/(1 + im*w*buf[1]*1e-12*50.0);
             nports = 1, grounded = true, form = :entry)
         hcircuit = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            Any[:p1 => Port(1; Z0 = 50.0),
                 :cc => Capacitor(100.0e-15),
                 :jj => JosephsonJunction(1000.0e-12), :c2 => heavy],
-            Any[((:p1,1), (:r1,1), (:cc,1)), ((:cc,2), (:jj,1), (:c2,1)),
-                ((:jj,2), (:r1,2), (:p1,2), Ground)])
+            Any[((:p1,1), (:cc,1)), ((:cc,2), (:jj,1), (:c2,1)),
+                ((:jj,2), (:p1,2), Ground)])
         hnl = hbnlsolve(wp, (16,), sources, hcircuit; keyedarrays = false)
         hpsc = JosephsonCircuits.compile(hcircuit)
         hcg = JosephsonCircuits.calccircuitgraph(hpsc)
@@ -601,17 +600,15 @@ using Test
                         (p == 2 && q == 1) ? complex(a) : complex(0.0);
                     nports = 2, grounded = false, form = :entry)))
             circuit = Circuit(
-                Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :iso => blk,
+                Any[:p1 => Port(1; Z0 = 50.0), :iso => blk,
                     :jj => JosephsonJunction(1000.0e-12),
                     :cg => Capacitor(500.0e-15),
-                    :p2 => Port(2; termination = nothing), :r2 => Resistor(50.0),
+                    :p2 => Port(2; Z0 = 50.0),
                     :cl => Capacitor(200.0e-15), :rl => Resistor(2.0e4)],
-                Any[((:p1,1), (:r1,1), (:iso,1,1)),
-                    ((:iso,2,1), (:jj,1), (:cg,1), (:p2,1), (:r2,1),
-                     (:cl,1)),
+                Any[((:p1,1), (:iso,1,1)),
+                    ((:iso,2,1), (:jj,1), (:cg,1), (:p2,1), (:cl,1)),
                     ((:cl,2), (:rl,1)),
-                    ((:iso,1,2), (:iso,2,2), (:jj,2), (:cg,2), (:r1,2),
-                     (:p1,2), (:r2,2), (:p2,2), (:rl,2), Ground)])
+                    ((:iso,1,2), (:iso,2,2), (:jj,2), (:cg,2), (:p1,2), (:p2,2), (:rl,2), Ground)])
             nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
             psc = JosephsonCircuits.compile(circuit)
             cg = JosephsonCircuits.calccircuitgraph(psc)
@@ -718,13 +715,13 @@ using Test
                 ("lossy", ScatteringParameters(lossyS(Cval, 50.0, 0.85);
                     nports = 1, grounded = true)))
             circuit = Circuit(
-                Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+                Any[:p1 => Port(1; Z0 = 50.0),
                     :cc => Capacitor(100.0e-15),
                     :jj => JosephsonJunction(1000.0e-12), :c2 => blk,
                     :rl => Resistor(1.0e5)],
-                Any[((:p1,1), (:r1,1), (:cc,1)),
+                Any[((:p1,1), (:cc,1)),
                     ((:cc,2), (:jj,1), (:c2,1), (:rl,1)),
-                    ((:jj,2), (:r1,2), (:p1,2), Ground), ((:rl,2), Ground)])
+                    ((:jj,2), (:p1,2), Ground), ((:rl,2), Ground)])
             nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
             psc = JosephsonCircuits.compile(circuit)
             cg = JosephsonCircuits.calccircuitgraph(psc)
@@ -779,12 +776,12 @@ using Test
         Z0 = 50.0
         wsn = 2*pi*[5.0e9]
         oneport(b) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            Any[:p1 => Port(1; Z0 = 50.0),
                 :cc => Capacitor(100.0e-15),
                 :l1 => Inductor(1000.0e-12), :x => b],
-            Any[((:p1,1), (:r1,1), (:cc,1)),
+            Any[((:p1,1), (:cc,1)),
                 ((:cc,2), (:l1,1), (:x,1)),
-                ((:l1,2), (:r1,2), (:p1,2), Ground)])
+                ((:l1,2), (:p1,2), Ground)])
 
         # every loss level, from lossless through fully absorbing to a sign
         # reversed reflection
@@ -807,12 +804,12 @@ using Test
         # reference.
         R = 200.0
         ref = hblinsolve(wsn, Circuit(
-                Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+                Any[:p1 => Port(1; Z0 = 50.0),
                     :cc => Capacitor(100.0e-15),
                     :l1 => Inductor(1000.0e-12), :x => Resistor(R)],
-                Any[((:p1,1), (:r1,1), (:cc,1)),
+                Any[((:p1,1), (:cc,1)),
                     ((:cc,2), (:l1,1), (:x,1)),
-                    ((:l1,2), (:r1,2), (:p1,2), (:x,2), Ground)]);
+                    ((:l1,2), (:p1,2), (:x,2), Ground)]);
             keyedarrays = false, returnSnoise = true)
         for zr in (50.0, 200.0, 377.0)
             blk = ScatteringParameters(fill(complex((R-zr)/(R+zr)), 1, 1);
@@ -826,20 +823,17 @@ using Test
         # a two port: a series resistor, whose noise the package computes
         # from the resistor itself, against the same element as a block
         twoportR(x) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :x => x,
-                :l1 => Inductor(1000.0e-12), :p2 => Port(2; termination = nothing),
-                :r2 => Resistor(50.0)],
-            Any[((:p1,1), (:r1,1), (:x,1)),
-                ((:x,2), (:l1,1), (:p2,1), (:r2,1)),
-                ((:l1,2), (:r1,2), (:p1,2), (:r2,2), (:p2,2), Ground)])
+            Any[:p1 => Port(1; Z0 = 50.0), :x => x,
+                :l1 => Inductor(1000.0e-12), :p2 => Port(2; Z0 = 50.0)],
+            Any[((:p1,1), (:x,1)),
+                ((:x,2), (:l1,1), (:p2,1)),
+                ((:l1,2), (:p1,2), (:p2,2), Ground)])
         twoportB(b) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :x => b,
-                :l1 => Inductor(1000.0e-12), :p2 => Port(2; termination = nothing),
-                :r2 => Resistor(50.0)],
-            Any[((:p1,1), (:r1,1), (:x,1,1)),
-                ((:x,2,1), (:l1,1), (:p2,1), (:r2,1)),
-                ((:x,1,2), (:x,2,2), (:l1,2), (:r1,2), (:p1,2), (:r2,2),
-                 (:p2,2), Ground)])
+            Any[:p1 => Port(1; Z0 = 50.0), :x => b,
+                :l1 => Inductor(1000.0e-12), :p2 => Port(2; Z0 = 50.0)],
+            Any[((:p1,1), (:x,1,1)),
+                ((:x,2,1), (:l1,1), (:p2,1)),
+                ((:x,1,2), (:x,2,2), (:l1,2), (:p1,2), (:p2,2), Ground)])
         for R in (50.0, 200.0)
             z = R/Z0; sd = z/(z+2); so = 2/(z+2)
             a = hblinsolve(wsn, twoportR(Resistor(R)); keyedarrays = false,
@@ -906,17 +900,17 @@ using Test
         # the rows of Snoise: the dissipative lumped components first, then
         # one channel per port of each block which carries them
         c = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            Any[:p1 => Port(1; Z0 = 50.0),
                 :lossless => ScatteringParameters(ComplexF64[0 1; 1 0];
                     grounded = false),
                 :att => ScatteringParameters(ComplexF64[0 0.5; 0.5 0];
                     grounded = false),
                 :rt => Resistor(75.0)],
-            Any[((:p1,1), (:r1,1), (:lossless,1,1)),
+            Any[((:p1,1), (:lossless,1,1)),
                 ((:lossless,2,1), (:att,1,1)),
                 ((:att,2,1), (:rt,1)),
                 ((:lossless,1,2), (:lossless,2,2), (:att,1,2), (:att,2,2),
-                 (:rt,2), (:p1,2), (:r1,2), Ground)])
+                 (:rt,2), (:p1,2), Ground)])
         out = hblinsolve(2*pi*[5e9], c; returnSnoise = true)
         names = collect(JosephsonCircuits.AxisKeys.axiskeys(out.Snoise, 2))
         # the resistor, then the two ports of the dissipative block, and
@@ -934,24 +928,25 @@ using Test
         Z0 = 50.0
         capf(w) = fill((1 - im*w*1000.0e-15*Z0)/(1 + im*w*1000.0e-15*Z0), 1, 1)
         mk2(f, noise) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(Z0),
+            Any[:p1 => Port(1; Z0 = Z0),
                 :cc => Capacitor(100.0e-15),
                 :x => ScatteringParameters(f; nports = 1, grounded = true,
                     noise = noise)],
-            Any[((:p1,1), (:r1,1), (:cc,1)), ((:cc,2), (:x,1)),
-                ((:r1,2), (:p1,2), Ground)])
+            Any[((:p1,1), (:cc,1)), ((:cc,2), (:x,1)),
+                ((:p1,2), Ground)])
         mk(noise) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(Z0),
+            Any[:p1 => Port(1; Z0 = Z0),
                 :cc => Capacitor(100.0e-15),
                 :jj => JosephsonJunction(1000.0e-12),
                 :cj => ScatteringParameters(capf; nports = 1, grounded = true,
                     noise = noise)],
-            Any[((:p1,1), (:r1,1), (:cc,1)),
+            Any[((:p1,1), (:cc,1)),
                 ((:cc,2), (:jj,1), (:cj,1)),
-                ((:jj,2), (:r1,2), (:p1,2), Ground)])
+                ((:jj,2), (:p1,2), Ground)])
         for (noise, haschannels) in ((Passive(), true), (Lossless(), false))
             psc = JosephsonCircuits.compile(mk(noise))
-            ssys = JosephsonCircuits.scatteringstampsystem(psc, 1;
+            ssys = JosephsonCircuits.scatteringstampsystem(
+                psc.scatteringblocks, 1;
                 auxoffset = 0, Ntotal = 64, scale = 1.0)
             @test isnothing(JosephsonCircuits.planscatteringnoise(ssys)) !=
                 haschannels
@@ -1002,15 +997,15 @@ using Test
         # with a lossy non-reciprocal block in its line has several, at
         # frequencies which differ by the pump.
         c = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            Any[:p1 => Port(1; Z0 = 50.0),
                 :x => ScatteringParameters(ComplexF64[0 0; 0.8 0]; grounded = false),
                 :c1 => Capacitor(100.0e-15),
                 :jj => JosephsonJunction(1.0e-6),
                 :cj => Capacitor(100.0e-15)],
-            Any[((:p1,1), (:r1,1), (:x,1,1)),
+            Any[((:p1,1), (:x,1,1)),
                 ((:x,2,1), (:c1,1)),
                 ((:c1,2), (:jj,1), (:cj,1)),
-                ((:x,1,2), (:x,2,2), (:jj,2), (:cj,2), (:r1,2), (:p1,2),
+                ((:x,1,2), (:x,2,2), (:jj,2), (:cj,2), (:p1,2),
                  Ground)])
         sol = hbsolve(2*pi*[4.5e9], (2*pi*5.0e9,),
             [(mode=(1,), port=1, current=1.0e-6)], (4,), (8,), c)
@@ -1080,13 +1075,11 @@ using Test
                     (p, q, w) -> p == q ? complex(0.2) : complex(0.6);
                     nports = 2, grounded = false, form = :entry)))
             circuit = Circuit(
-                Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :x => blk,
-                    :l1 => Inductor(1000.0e-12), :p2 => Port(2; termination = nothing),
-                    :r2 => Resistor(50.0)],
-                Any[((:p1,1), (:r1,1), (:x,1,1)),
-                    ((:x,2,1), (:l1,1), (:p2,1), (:r2,1)),
-                    ((:x,1,2), (:x,2,2), (:l1,2), (:r1,2), (:p1,2), (:r2,2),
-                     (:p2,2), Ground)])
+                Any[:p1 => Port(1; Z0 = 50.0), :x => blk,
+                    :l1 => Inductor(1000.0e-12), :p2 => Port(2; Z0 = 50.0)],
+                Any[((:p1,1), (:x,1,1)),
+                    ((:x,2,1), (:l1,1), (:p2,1)),
+                    ((:x,1,2), (:x,2,2), (:l1,2), (:p1,2), (:p2,2), Ground)])
             psc = JosephsonCircuits.compile(circuit)
             cg = JosephsonCircuits.calccircuitgraph(psc)
             sf = JosephsonCircuits.truncfreqs(
@@ -1170,12 +1163,12 @@ using Test
         Z0 = 50.0
         symS(C, a) = w -> fill(a*(1 - im*w*C*Z0)/(1 + im*w*C*Z0), 1, 1)
         oneport(b) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(Z0),
+            Any[:p1 => Port(1; Z0 = Z0),
                 :cc => Capacitor(100.0e-15),
                 :l1 => Inductor(1000.0e-12), :x => b],
-            Any[((:p1,1), (:r1,1), (:cc,1)),
+            Any[((:p1,1), (:cc,1)),
                 ((:cc,2), (:l1,1), (:x,1)),
-                ((:l1,2), (:r1,2), (:p1,2), Ground)])
+                ((:l1,2), (:p1,2), Ground)])
         wsn = 2*pi*collect(range(4.0e9, 6.0e9, length = 6))
         wpn = (2*pi*2*5.0e9,)
         srcn = [(mode=(1,), port=1, current=0.3e-6)]
@@ -1221,26 +1214,23 @@ using Test
         M4 = ComplexF64[1 1 0 0; 0 1 1 0; 0 0 1 1im; 1im 0 0 1]
         smax = maximum(JosephsonCircuits.LinearAlgebra.svdvals(M4))
         fourport(S) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :p2 => Port(2; termination = nothing),
-                :r2 => Resistor(50.0), :l1 => Inductor(1000.0e-12),
+            Any[:p1 => Port(1; Z0 = 50.0), :p2 => Port(2; Z0 = 50.0), :l1 => Inductor(1000.0e-12),
                 :x => ScatteringParameters(S; grounded = true),
                 :ct => Capacitor(300.0e-15), :rt => Resistor(75.0)],
-            Any[((:p1,1), (:r1,1), (:x,1)),
-                ((:x,2), (:l1,1), (:p2,1), (:r2,1)),
+            Any[((:p1,1), (:x,1)),
+                ((:x,2), (:l1,1), (:p2,1)),
                 ((:x,3), (:ct,1)),
                 ((:x,4), (:rt,1)),
-                ((:l1,2), (:ct,2), (:rt,2), (:r1,2), (:p1,2), (:r2,2),
-                 (:p2,2), Ground)])
+                ((:l1,2), (:ct,2), (:rt,2), (:p1,2), (:p2,2), Ground)])
         # a circulator with its third port terminated is an isolator
         threeport(S) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :p2 => Port(2; termination = nothing),
-                :r2 => Resistor(50.0), :l1 => Inductor(1000.0e-12),
+            Any[:p1 => Port(1; Z0 = 50.0), :p2 => Port(2; Z0 = 50.0), :l1 => Inductor(1000.0e-12),
                 :x => ScatteringParameters(S; grounded = true),
                 :rt => Resistor(50.0)],
-            Any[((:p1,1), (:r1,1), (:x,1)),
-                ((:x,2), (:l1,1), (:p2,1), (:r2,1)),
+            Any[((:p1,1), (:x,1)),
+                ((:x,2), (:l1,1), (:p2,1)),
                 ((:x,3), (:rt,1)),
-                ((:l1,2), (:rt,2), (:r1,2), (:p1,2), (:r2,2), (:p2,2),
+                ((:l1,2), (:rt,2), (:p1,2), (:p2,2),
                  Ground)])
         wmp = 2*pi*collect(range(4.0e9, 6.0e9, length = 8))
         circulator(a) = ComplexF64[0 0 a; a 0 0; 0 a 0]
@@ -1320,20 +1310,20 @@ using Test
         # own scattering parameters.
         Z0 = 50.0
         blockjpa(Cc) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(Z0), :cc => Capacitor(Cc),
+            Any[:p1 => Port(1; Z0 = Z0), :cc => Capacitor(Cc),
                 :jj => JosephsonJunction(1000.0e-12),
                 :c2 => ScatteringParameters(capS(1000.0e-15, Z0); nports = 1,
                     grounded = true)],
-            Any[((:p1,1), (:r1,1), (:cc,1)),
+            Any[((:p1,1), (:cc,1)),
                 ((:cc,2), (:jj,1), (:c2,1)),
-                ((:jj,2), (:r1,2), (:p1,2), Ground)])
+                ((:jj,2), (:p1,2), Ground)])
         lumpedjpa(Cc) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(Z0), :cc => Capacitor(Cc),
+            Any[:p1 => Port(1; Z0 = Z0), :cc => Capacitor(Cc),
                 :jj => JosephsonJunction(1000.0e-12),
                 :c2 => Capacitor(1000.0e-15)],
-            Any[((:p1,1), (:r1,1), (:cc,1)),
+            Any[((:p1,1), (:cc,1)),
                 ((:cc,2), (:jj,1), (:c2,1)),
-                ((:jj,2), (:c2,2), (:r1,2), (:p1,2), Ground)])
+                ((:jj,2), (:c2,2), (:p1,2), Ground)])
         wsens = 2*pi*collect(4.6e9:0.01e9:4.9e9)
         wpsens = (2*pi*4.75001e9,)
         srcsens = [(mode=(1,), port=1, current=0.00565e-6)]
@@ -1395,10 +1385,10 @@ using Test
             grounded = true, form = :entry)
         for (blk, ok) in ((matrixform, false), (entryform, true))
             circuit = Circuit(
-                Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(Z0),
+                Any[:p1 => Port(1; Z0 = Z0),
                     :cc => Capacitor(100.0e-15), :x => blk],
-                Any[((:p1,1), (:r1,1), (:cc,1)), ((:cc,2), (:x,1)),
-                    ((:r1,2), (:p1,2), Ground)])
+                Any[((:p1,1), (:cc,1)), ((:cc,2), (:x,1)),
+                    ((:p1,2), Ground)])
             psc = JosephsonCircuits.compile(circuit)
             cg = JosephsonCircuits.calccircuitgraph(psc)
             sf = JosephsonCircuits.truncfreqs(
@@ -1431,17 +1421,17 @@ using Test
         # here and can be told apart. `nothing` means the component states no
         # temperature and takes the one the analysis is run at.
         mk(rT, bT) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(Z0),
+            Any[:p1 => Port(1; Z0 = Z0),
                 :cc => Capacitor(100.0e-15), :l1 => Inductor(1000.0e-12),
                 :x => ScatteringParameters(fill(complex(0.5), 1, 1);
                     grounded = true,
                     noise = isnothing(bT) ? Passive() : ThermalEquilibrium(bT)),
                 :cl => Capacitor(200.0e-15),
                 :rt => Resistor(2.0e4; temperature = rT)],
-            Any[((:p1,1), (:r1,1), (:cc,1)),
+            Any[((:p1,1), (:cc,1)),
                 ((:cc,2), (:l1,1), (:x,1), (:cl,1)),
                 ((:cl,2), (:rt,1)),
-                ((:l1,2), (:rt,2), (:r1,2), (:p1,2), Ground)])
+                ((:l1,2), (:rt,2), (:p1,2), Ground)])
         run(c; kw...) = hblinsolve(wst, c; keyedarrays = false,
             returnSnoise = true, returnQE = true, returnCM = true, kw...)
         plain = mk(nothing, nothing)
@@ -1516,18 +1506,16 @@ using Test
         w0 = 2*pi*5.0e9
         wsc = [w0]
         mkc(bT) = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(Z0),
+            Any[:p1 => Port(1; Z0 = Z0),
                 :x => ScatteringParameters(ComplexF64[0.2 0.6; 0.6 0.2];
                     grounded = false,
                     noise = isnothing(bT) ? Passive() : ThermalEquilibrium(bT)),
-                :l1 => Inductor(1000.0e-12), :p2 => Port(2; termination = nothing),
-                :r2 => Resistor(Z0), :cl => Capacitor(200.0e-15),
+                :l1 => Inductor(1000.0e-12), :p2 => Port(2; Z0 = Z0), :cl => Capacitor(200.0e-15),
                 :rt => Resistor(2.0e4)],
-            Any[((:p1,1), (:r1,1), (:x,1,1)),
-                ((:x,2,1), (:l1,1), (:p2,1), (:r2,1), (:cl,1)),
+            Any[((:p1,1), (:x,1,1)),
+                ((:x,2,1), (:l1,1), (:p2,1), (:cl,1)),
                 ((:cl,2), (:rt,1)),
-                ((:x,1,2), (:x,2,2), (:l1,2), (:r1,2), (:p1,2), (:r2,2),
-                 (:p2,2), (:rt,2), Ground)])
+                ((:x,1,2), (:x,2,2), (:l1,2), (:p1,2), (:p2,2), (:rt,2), Ground)])
         run(; kw...) = hblinsolve(wsc, mkc(nothing); keyedarrays = false,
             returnSnoise = true, returnCnoise = true, returnQE = true,
             returnCM = true, kw...)
@@ -1578,9 +1566,9 @@ using Test
         # arbitrary noise covariance permits active blocks: not supported
         active = ScatteringParameters([0.0 2.0; 2.0 0.0];
             noise = NoiseCovariance([1.0 0.0; 0.0 1.0]), grounded = true)
-        c = Circuit([:a => active, :r => Resistor(50.0), :p => Port(1; termination = nothing)],
-            [((:p, 1), (:r, 1), (:a, 1)), ((:a, 2), Ground),
-             ((:p, 2), (:r, 2), Ground)])
+        c = Circuit([:a => active, :p => Port(1; Z0 = 50.0)],
+            [((:p, 1), (:a, 1)), ((:a, 2), Ground),
+             ((:p, 2), Ground)])
         @test_throws ComponentNotSupportedError compile(c)
         # a scattering block has no scalar value to perturb, so a
         # sensitivity with respect to one is rejected; sensitivities with
@@ -1588,14 +1576,14 @@ using Test
         # block are supported, and tested above
         C2 = 1000.0e-15
         stamped = Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            [:p1 => Port(1; Z0 = 50.0),
              :cc => Capacitor(100.0e-15),
              :jj => JosephsonJunction(1000.0e-12),
              :c2 => ScatteringParameters(capS(C2, 50.0); nports = 1,
                  grounded = true)],
-            [((:p1, 1), (:r1, 1), (:cc, 1)),
+            [((:p1, 1), (:cc, 1)),
              ((:cc, 2), (:jj, 1), (:c2, 1)),
-             ((:jj, 2), (:r1, 2), (:p1, 2), Ground)],
+             ((:jj, 2), (:p1, 2), Ground)],
         )
         @test_throws ArgumentError hblinsolve(2*pi*[5e9], stamped;
             sensitivitynames = ["c2/port1"], returnSsensitivity = true)
@@ -1618,20 +1606,20 @@ using Test
             b1 = ScatteringParameters(capS(1e-12); nports = 1)
             b2 = shared ? b1 : ScatteringParameters(capS(1e-12); nports = 1)
             Circuit(
-                Any[:p1 => Port(1; termination = nothing),
-                    :r1 => Resistor(50.0), :cc => Capacitor(100e-15),
+                Any[:p1 => Port(1; Z0 = 50.0), :cc => Capacitor(100e-15),
                     :b1 => b1, :l => Inductor(1e-9), :b2 => b2,
                     :jj => JosephsonJunction(1e-9), :gnd => Ground()],
-                Any[[(:p1,1),(:r1,1),(:cc,1)], [(:cc,2),(:b1,1),(:l,1)],
+                Any[[(:p1,1),(:cc,1)], [(:cc,2),(:b1,1),(:l,1)],
                     [(:l,2),(:b2,1),(:jj,1)],
-                    [(:p1,2),(:r1,2),(:jj,2),(:gnd,1)]])
+                    [(:p1,2),(:jj,2),(:gnd,1)]])
         end
         # two instances, at their own nodes, whichever way they were built
         for shared in (true, false)
             cc = JosephsonCircuits.compile(mk(shared))
             @test length(cc.scatteringblocks) == 2
             @test [b.path for b in cc.scatteringblocks] == ["b1", "b2"]
-            sys = JosephsonCircuits.scatteringstampsystem(cc, 2;
+            sys = JosephsonCircuits.scatteringstampsystem(
+                cc.scatteringblocks, 2;
                 auxoffset = 0, Ntotal = 1000, scale = 1.0)
             @test length(sys.blocks) == 2
             @test allunique([b.signalnodes for b in sys.blocks])
@@ -1643,39 +1631,45 @@ using Test
     end
 
     @testset "stamp system from the compiled blocks" begin
-        # A compiled block is one instance with its own terminal map, so the
-        # stamp system can be built from those directly rather than from the
-        # per port entries the parsed representation is limited to. The two
-        # must agree in every field.
+        # A compiled block is one instance with its own terminal map, and it
+        # is the only place a block appears. Its ports used to be one flat
+        # component each, every one carrying the whole definition, and the
+        # stamp system was rebuilt by scanning for runs of them; this
+        # asserted that the two agreed. There is one now, so what is
+        # asserted is that it produces the instances the circuit describes.
         JC = JosephsonCircuits
         one = ScatteringParameters(
             w -> fill((1 - im*w*1e-12*50.0)/(1 + im*w*1e-12*50.0), 1, 1);
             nports = 1)
         two = ScatteringParameters([0.0 1.0; 1.0 0.0]; grounded = false)
         c = Circuit(
-            Any[:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            Any[:p1 => Port(1; Z0 = 50.0),
                 :b1 => one, :b2 => one, :t => two, :l => Inductor(1e-9),
                 :jj => JosephsonJunction(1e-9), :gnd => Ground()],
-            Any[[(:p1,1),(:r1,1),(:b1,1),(:t,1,1)], [(:t,2,1),(:l,1)],
+            Any[[(:p1,1),(:b1,1),(:t,1,1)], [(:t,2,1),(:l,1)],
                 [(:l,2),(:b2,1),(:jj,1)],
-                [(:p1,2),(:r1,2),(:jj,2),(:t,1,2),(:t,2,2),(:gnd,1)]])
+                [(:p1,2),(:jj,2),(:t,1,2),(:t,2,2),(:gnd,1)]])
         cc = JC.compile(c)
+        # three instances, two of them the same definition, and none of them
+        # in the flat table
+        @test [b.path for b in cc.scatteringblocks] == ["b1", "b2", "t"]
+        @test cc.scatteringblocks[1].definition === one
+        @test cc.scatteringblocks[2].definition === one
+        @test !any(==(:S), cc.componenttypes)
+        @test JC.countscatteringports(cc) == 4
+        @test JC.hasscattering(cc)
+
         for Nmodes in (1, 2, 4)
-            a = JC.scatteringstampsystem(cc, Nmodes; auxoffset = 7,
-                Ntotal = 200, scale = 1.5)
-            b = JC.scatteringstampsystem(cc.scatteringblocks, Nmodes;
+            a = JC.scatteringstampsystem(cc.scatteringblocks, Nmodes;
                 auxoffset = 7, Ntotal = 200, scale = 1.5)
-            for f in fieldnames(typeof(a))
-                f === :blocks && continue
-                @test getfield(a, f) == getfield(b, f)
-            end
-            @test [x.signalnodes for x in a.blocks] ==
-                [x.signalnodes for x in b.blocks]
-            @test [x.refnodes for x in a.blocks] ==
-                [x.refnodes for x in b.blocks]
+            @test length(a.blocks) == 3
+            # the auxiliary currents of each instance follow the one before
             @test [x.auxbase for x in a.blocks] ==
-                [x.auxbase for x in b.blocks]
-            @test [x.name for x in a.blocks] == [x.name for x in b.blocks]
+                [7, 7 + Nmodes, 7 + 2*Nmodes]
+            # two instances of one definition are at their own terminals
+            @test a.blocks[1].signalnodes != a.blocks[2].signalnodes
+            @test [x.name for x in a.blocks] ==
+                ["b1/port1", "b2/port1", "t/port1"]
         end
     end
 

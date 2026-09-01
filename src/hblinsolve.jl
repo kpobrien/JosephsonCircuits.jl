@@ -545,7 +545,7 @@ function hblinsolve(w, psc::CompiledCircuit,
     Rbnmmna = hcat(Rbnm, spzeros(eltype(Rbnm), size(Rbnm,1), Nauxmna))
     portindices = signalnm.portindices
     portnumbers = signalnm.portnumbers
-    portimpedanceindices = signalnm.portimpedanceindices
+    portimpedances = signalnm.portimpedances
     vvn = signalnm.vvn
     modes = signalfreq.modes
 
@@ -571,18 +571,29 @@ function hblinsolve(w, psc::CompiledCircuit,
 
     # find the indices associated with the components for which we will
     # calculate sensitivities
+    # A lumped component is named by its entry in the flat table; a
+    # scattering block is named by its instance path and has no entry there,
+    # so the block pairs resolve against the compiled blocks instead. The
+    # block ordinal is what goes in the vector for them, and only the block
+    # paths read it.
     sensitivityindices = zeros(Int,length(sensitivitynames))
     for i in eachindex(sensitivitynames)
-        sensitivityindices[i] = componentnamedict[sensitivitynames[i]]
         # entries past the lumped pairs are the block pairs; in the legacy
         # sensitivitynames path there are none
         blocktail = !isempty(sensitivityblockpairs) && i > Nlumpedpairs
-        if componenttypes[sensitivityindices[i]] == :S && !blocktail
-            throw(ArgumentError(lazy"Sensitivities with respect to scattering block components require a block derivative; got $(sensitivitynames[i]) as a plain component."))
+        if blocktail
+            b = scatteringblockindex(psc, sensitivitynames[i])
+            iszero(b) && throw(ArgumentError(lazy"The block pair component $(sensitivitynames[i]) is not a scattering block of this circuit."))
+            sensitivityindices[i] = b
+            continue
         end
-        if blocktail && componenttypes[sensitivityindices[i]] != :S
-            throw(ArgumentError(lazy"The block pair component $(sensitivitynames[i]) is not a scattering block port."))
+        idx = get(componentnamedict, sensitivitynames[i], 0)
+        if iszero(idx)
+            iszero(scatteringblockindex(psc, sensitivitynames[i])) &&
+                throw(ArgumentError(lazy"The component $(sensitivitynames[i]) is not in this circuit."))
+            throw(ArgumentError(lazy"Sensitivities with respect to scattering blocks require a block derivative; got $(sensitivitynames[i]) as a plain component."))
         end
+        sensitivityindices[i] = idx
     end
 
     # the grouping of the pairs into merged stamps, and the design parameter
@@ -598,7 +609,8 @@ function hblinsolve(w, psc::CompiledCircuit,
         g, sl = parametergrouping(sensitivitypairs,
             view(sensitivityindices, 1:Nlumpedpairs), componenttypes,
             Dict(idx => p
-                for (p, idx) in enumerate(signalnm.portimpedanceindices)))
+                for (p, idx) in enumerate(signalnm.portenvironmentindices)
+                if !iszero(idx)))
         for (bi, bp) in enumerate(sensitivityblockpairs)
             push!(g, [Nlumpedpairs + bi])
             push!(sl, Int(bp[2]))
@@ -696,7 +708,6 @@ function hblinsolve(w, psc::CompiledCircuit,
     channeltemperatures = noisechanneltemperatures(psc,
         noiseportimpedanceindices, noiseplan, ssys, temperature)
 
-    portimpedances = [vvn[i] for i in portimpedanceindices]
     noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
 
     # assemble Asparse once at the first frequency so we have something
@@ -720,8 +731,10 @@ function hblinsolve(w, psc::CompiledCircuit,
             isnothing(ssys) && throw(ArgumentError(
                 "the circuit has no scattering blocks to take a block sensitivity of"))
             for (bi, bp) in enumerate(sensitivityblockpairs)
-                targetdef = psc.componentvalues[
-                    sensitivityindices[Nlumpedpairs + bi]].block
+                # the block ordinal, which is what the block tail of
+                # `sensitivityindices` holds
+                targetdef = psc.scatteringblocks[
+                    sensitivityindices[Nlumpedpairs + bi]].definition
                 dsys, zsys = derivativestampsystems(ssys, targetdef, bp[3])
                 push!(st, blocksensitivitystamp(ssys, Int(bp[2])))
                 push!(entries, (0, dsys, zsys))
@@ -782,9 +795,12 @@ function hblinsolve(w, psc::CompiledCircuit,
                 size(sensitivitynodeflux) != (length(op.x), length(sensitivitynames))
             throw(DimensionMismatch(lazy"sensitivitynodeflux must be (operating point state length) x (number of sensitivity components) = ($(length(op.x)), $(length(sensitivitynames))), got $(size(sensitivitynodeflux))."))
         end
+        # the residual derivatives live wherever the implicit function
+        # theorem is applied, which is the canonical system when a direct
+        # current block is active and the harmonic one otherwise
         if !isnothing(sensitivityresidual) &&
-                size(sensitivityresidual) != (size(op.jacobian, 1), length(sensitivitynames))
-            throw(DimensionMismatch(lazy"sensitivityresidual must be (real Jacobian rows) x (number of sensitivity components) = ($(size(op.jacobian, 1)), $(length(sensitivitynames))), got $(size(sensitivityresidual))."))
+                size(sensitivityresidual) != (sensitivitydim(op), length(sensitivitynames))
+            throw(DimensionMismatch(lazy"sensitivityresidual must be (rows of the Jacobian the sensitivity is taken through) x (number of sensitivity components) = ($(sensitivitydim(op)), $(length(sensitivitynames))), got $(size(sensitivityresidual))."))
         end
         if !isempty(sensitivitypairs) && !isnothing(sensitivitynodeflux)
             throw(ArgumentError("sensitivitynodeflux is per component and cannot be combined with sensitivitypairs; supply sensitivityresidual (or neither) instead."))
@@ -876,7 +892,7 @@ function hblinsolve(w, psc::CompiledCircuit,
             Nmodes=Nsignalmodes, Nnodalmna=Nnodalmna, Nauxmna=Nauxmna,
             Nauxmnar=Nauxmnar, mnaindices=mnaindices,
             coupledbranches=coupledbranches, vvn=vvn,
-            portimpedanceindices=portimpedanceindices,
+            portindices=portindices, portimpedances=portimpedances,
             noiseportimpedanceindices=noiseportimpedanceindices,
             nodeindices=nodeindices, componenttypes=componenttypes,
             symfreqvar=symfreqvar)
@@ -984,7 +1000,7 @@ function hblinsolve(w, psc::CompiledCircuit,
         end
         solutions = devicesolutions(lsys, bnm, w, backend,
             (full = fullforward, rows = portsolutionrows(nodeindices,
-                portimpedanceindices, Nsignalmodes)),
+                portindices, Nsignalmodes)),
             adjointspec)
         # One pass over the whole sweep, so the frequency loop's buffers are
         # made once; the callbacks solve the batch a frequency belongs to when
@@ -1031,7 +1047,7 @@ function hblinsolve(w, psc::CompiledCircuit,
         nb = solutions.batchsize
         inner!(t, batch) = hblinsolve_inner!(wss[t], outputarrays,
             sensitivitytuple, lsys, bnm,
-            portindices, portimpedanceindices, noiseportimpedanceindices,
+            portindices, noiseportimpedanceindices,
             portimpedances, noiseportimpedances, nodeindices,
             componenttypes, w, wpumpmodes, Nsignalmodes, Nnodes,
             symfreqvar, batch, factorization;
@@ -1064,7 +1080,7 @@ function hblinsolve(w, psc::CompiledCircuit,
                     length(wpumpmodes), factorization),
                 outputarrays, sensitivitytuple,
                 lsys, bnm,
-                portindices, portimpedanceindices, noiseportimpedanceindices,
+                portindices, noiseportimpedanceindices,
                 portimpedances, noiseportimpedances, nodeindices, componenttypes,
                 w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batch,
                 factorization; noiseplan = noiseplan,
@@ -1177,7 +1193,7 @@ function hblinsolve(w, psc::CompiledCircuit,
         QEidealout, CMout, nodefluxout, nodefluxadjointout, voltageout,
         voltageadjointout, nodenames, nodeindices, componentnames,
         componenttypes, componentnamedict, mutualinductorbranchnames,
-        portnumbers, portindices, portimpedanceindices,
+        portnumbers, portindices, portimpedances,
         noiseportimpedanceindices, sensitivitynames, sensitivityindices,
         Nsignalmodes, Nnodes, Nbranches, Nports, signalindex)
 end
@@ -1311,7 +1327,10 @@ function LinearizedWorkspace(arrays::LinearizedArrays, sensitivity, lsys,
         nothing
     else
         c = FactorizationCache()
-        tryfactorize!(c, factorization, sensitivity.reverse.op.jacobian)
+        # the canonical Jacobian when a direct current block is active: the
+        # adjoint has to be taken through the system which was solved
+        tryfactorize!(c, factorization,
+            sensitivityjacobian(sensitivity.reverse.op))
         c
     end
     return LinearizedWorkspace(
@@ -1338,7 +1357,7 @@ end
 
 """
     hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
-        portindices, portimpedanceindices, noiseportimpedanceindices,
+        portindices, noiseportimpedanceindices,
         portimpedances, noiseportimpedances, nodeindices, componenttypes,
         w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization)
 
@@ -1359,7 +1378,7 @@ frequency views) and `sensitivity` are shared.
 """
 function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     sensitivity, lsys, bnm,
-    portindices, portimpedanceindices, noiseportimpedanceindices,
+    portindices, noiseportimpedanceindices,
     portimpedances, noiseportimpedances, nodeindices,
     componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization;
     noiseplan = nothing, channeltemperatures = nothing,
@@ -1464,7 +1483,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
         if !isempty(arrays.S) || !isempty(arrays.QE) || !isempty(arrays.QEideal) ||
                 !isempty(arrays.CM) || !isempty(arrays.Ssensitivity)
             calcinputoutput!(inputwave, outputwave, phin, bnm,
-                portimpedanceindices, portimpedanceindices, portimpedances,
+                portindices, portindices, portimpedances,
                 portimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
             calcscatteringmatrix!(Sview, inputwave, outputwave)
 
@@ -1475,7 +1494,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
             # differently normalized input currents.
             if !isempty(arrays.Ssensitivity)
                 calcsensitivityscaling!(sensitivitygamma, sensitivitybeta,
-                    inputwave, bnm, portimpedanceindices, portimpedances,
+                    inputwave, bnm, portindices, portimpedances,
                     componenttypes, nodeindices, wmodes, Nmodes)
             end
         end
@@ -1533,7 +1552,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                     !isempty(arrays.QE) || !isempty(arrays.CM)
                 if isnothing(presolvednoise)
                     calcinputoutputnoise!(inputwave, noiseoutputwave, phin, bnm,
-                        portimpedanceindices, noiseportimpedanceindices,
+                        portindices, noiseportimpedanceindices,
                         portimpedances, noiseportimpedances, nodeindices,
                         componenttypes, wmodes, symfreqvar)
                     # the vacuum noise the dissipative scattering blocks add,

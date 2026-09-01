@@ -41,7 +41,7 @@ circuit = Circuit(
      [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
 psc = JosephsonCircuits.compile(circuit)
 cg = JosephsonCircuits.calccircuitgraph(psc)
-JosephsonCircuits.comparestruct(cg,JosephsonCircuits.CircuitGraph(Dict((3, 2) => 3, (1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1, (2, 3) => 3), JosephsonCircuits.SparseArrays.sparse([1, 3, 2, 3], [1, 1, 2, 2], [1, -1, 1, 1], 3, 2), [(1, 2), (1, 3)], [(3, 2)], [(1, 2), (1, 3), (2, 3)], [[1, 2, 3]], Int64[], JosephsonCircuits.Graphs.SimpleGraphs.SimpleGraph{Int64}(3, [[2, 3], [1, 3], [1, 2]]), 3))
+JosephsonCircuits.comparestruct(cg,JosephsonCircuits.CircuitGraph(Dict((3, 2) => 3, (1, 2) => 1, (3, 1) => 2, (1, 3) => 2, (2, 1) => 1, (2, 3) => 3), JosephsonCircuits.SparseArrays.sparse([1, 3, 2, 3], [1, 1, 2, 2], [1, -1, 1, 1], 3, 2), [(1, 2), (1, 3)], [(3, 2)], [(1, 2), (1, 3), (2, 3)], [[2, 1, 3]], Int64[], JosephsonCircuits.Graphs.SimpleGraphs.SimpleGraph{Int64}(3, [[2, 3], [1, 3], [1, 2]]), 3))
 # output
 true
 ```
@@ -97,6 +97,10 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
 
         #calculate the closure branches
         ci = collect(Graphs.edges(Graphs.difference(gli,si)))
+
+        # the spanning tree, rooted once, so that each closure branch costs
+        # the length of its own loop rather than a search of the whole tree
+        parent, depth = loops ? rootedtree(si) : (Int[], Int[])
     
         #find the loop indices associated with each closure branch by starting
         #with the superconducting spanning tree (which has no loops), then
@@ -105,24 +109,23 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
             #push!(cearray,Edge(vmap[dst(cj)],vmap[src(cj)]))
             push!(cearray,(vmap[Graphs.dst(cj)],vmap[Graphs.src(cj)]))
 
-            # The loops themselves are enumerated by adding the closure
-            # branch back to the spanning tree and searching the result. That
-            # search is quadratic in the number of closure branches -- on a
-            # ladder of inductive loops it is 0.02 ms at 8 rungs and 2.9 ms
-            # at 128 -- and nothing outside this file reads `lvarray`, so a
-            # caller which does not want it says so and pays none of it. The
-            # spanning tree and the closure branches are still built, because
-            # the incidence matrix is derived from them.
+            # The loop of a closure branch is the unique path through the
+            # spanning tree between its endpoints, closed by the branch
+            # itself. A tree has exactly one such path, so it is walked
+            # rather than searched for: the enumeration this replaces added
+            # the branch back to the tree and looked for cycles of at most
+            # ten edges, which silently returned no loop for a longer one.
+            #
+            # Nothing outside this file reads `lvarray`, so a caller which
+            # does not want the loops says so and pays for none of this. The
+            # spanning tree and the closure branches are still built,
+            # because the incidence matrix is derived from them.
             loops || continue
 
-            stmp = copy(si)
-    #         stmp = SimpleGraphFromIterator(edges(si))
-            Graphs.add_edge!(stmp, Graphs.src(cj), Graphs.dst(cj))
-            #l = simplecycles_limited_length(stmp,nv(gl))
-            l = Graphs.simplecycles_limited_length(stmp,10)
-            # ul = unique(x->sort(x),l[length.(l).>2])
-            ul = unique(sort,l[length.(l).>2])
-            storeuniqueloops!(lvarray,vmap,ul)
+            cyc = treepath(parent, depth, Graphs.src(cj), Graphs.dst(cj))
+            # a closure branch parallel to a tree edge closes a two vertex
+            # loop, which the enumeration this replaces also dropped
+            push!(lvarray, length(cyc) > 2 ? vmap[cyc] : Int[])
         end
         
         #create a directed version of the superconducting spanning tree
@@ -177,31 +180,72 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
 end
 
 """
-    storeuniqueloops!(lvarray, vmap, ul)
+    rootedtree(tree)
+
+Root a spanning tree at its first vertex, returning the parent and the depth
+of every vertex.
+
+Both are needed to walk between two vertices: the depths bring the two walks
+to the same level and the parents carry them up to where they meet.
+"""
+function rootedtree(tree)
+    n = Graphs.nv(tree)
+    parent = zeros(Int, n)
+    depth = fill(-1, n)
+    n == 0 && return parent, depth
+    depth[1] = 0
+    queue = Int[1]
+    head = 1
+    while head <= length(queue)
+        u = queue[head]; head += 1
+        for w in Graphs.neighbors(tree, u)
+            depth[w] < 0 || continue
+            depth[w] = depth[u] + 1
+            parent[w] = u
+            push!(queue, w)
+        end
+    end
+    return parent, depth
+end
+
+"""
+    treepath(parent, depth, u, v)
+
+The vertices of the unique path from `u` to `v` through a rooted tree,
+`u` first and `v` last.
+
+Together with the closure branch from `v` back to `u` this is the
+fundamental loop of that branch, and there is exactly one of them, which is
+why it can be walked instead of searched for.
 
 # Examples
 ```jldoctest
-julia> lvarray = Vector{Int}[];JosephsonCircuits.storeuniqueloops!(lvarray,[1, 2, 3],[[1,2,3]]);lvarray
-1-element Vector{Vector{Int64}}:
- [1, 2, 3]
-
-julia> lvarray = Vector{Int}[];JosephsonCircuits.storeuniqueloops!(lvarray,[1, 2, 3],Vector{Int64}[]);lvarray
-1-element Vector{Vector{Int64}}:
- []
+julia> JosephsonCircuits.treepath([0, 1, 2, 1], [0, 1, 2, 1], 3, 4)
+4-element Vector{Int64}:
+ 3
+ 2
+ 1
+ 4
 ```
 """
-function storeuniqueloops!(lvarray, vmap, ul)
-
-    if length(ul) > 1
-        error(lazy"There should only be one loop associated with each closure branch.")
-    elseif length(ul) < 1
-        # println("Warning: Loop exists but max loop size too small to find vertices.")
-        push!(lvarray,Int[])
-    else
-        # println("closure branch: ",cj,", loop vertices:", first(ul))
-        push!(lvarray,vmap[first(ul)])
+function treepath(parent::Vector{Int}, depth::Vector{Int}, u::Integer,
+        v::Integer)
+    a, b = Int(u), Int(v)
+    (depth[a] < 0 || depth[b] < 0) && return Int[]
+    up = Int[a]
+    down = Int[b]
+    while depth[a] > depth[b]
+        a = parent[a]; push!(up, a)
     end
-    return nothing
+    while depth[b] > depth[a]
+        b = parent[b]; push!(down, b)
+    end
+    while a != b
+        a = parent[a]; push!(up, a)
+        b = parent[b]; push!(down, b)
+    end
+    pop!(down)                       # the meeting vertex, already in `up`
+    return vcat(up, reverse(down))
 end
 
 """

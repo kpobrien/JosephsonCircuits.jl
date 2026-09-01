@@ -80,20 +80,22 @@ const boltzmann_constant = 1.380649e-23
 # then circuit is solved using the harmonic balance method, and postprocessed
 # to determine the scattering parameters and quantum efficiency. 
 # How a component value is written and how it becomes a number.
+# --- the circuit -------------------------------------------------------
+# How a component value is written and how it becomes a number.
 include("circuitvalue.jl")
-
 # What each component is: the models, their noise, and the matrix providers
 # a scattering block reads its parameters from.
 include("circuitmodel.jl")
-
-# The input path: Circuit -> elaborate -> compile.
+# The input path: the Circuit a user writes and how one level of it is
+# parsed, then the hierarchy flattened and lowered to the compiled tables.
 include("parseinput.jl")
-
+include("circuitcompile.jl")
 # Scattering parameter stamps for the solvers, and the legacy tuple netlist
 # adapted into a Circuit.
 include("scatteringstamp.jl")
 include("legacyadapter.jl")
 
+# --- from a compiled circuit to matrices --------------------------------
 include("graphproc.jl")
 include("capindmat.jl")
 include("matutils.jl")
@@ -101,55 +103,64 @@ include("circuitbind.jl")
 include("mna.jl")
 include("dcconductance.jl")
 
-include("networkparamconversion.jl")
-include("networks.jl")
-include("networkconnection.jl")
-
-include("nlsolve.jl")
-include("krylov.jl")
-include("fftutils.jl")
-include("qesparams.jl")
-include("keyedarrayutils.jl")
-
-# new mult-tone harmonic balance solver code
-include("hbsolve.jl")
-include("hblinsolve.jl")
-include("sensitivities.jl")
-include("stagedsolve.jl")
-include("hbnlsolve.jl")
-include("designsensitivities.jl")
-include("hbcache.jl")
-
-# These are for exporting SPICE netlists and running simulations in
-# WRSPICE or Xyce. 
-include("exportnetlist.jl")
-include("spiceutils.jl")
-include("spicewrapper.jl")
-include("spiceraw.jl")
-
-# From DSP.jl https://github.com/JuliaDSP/DSP.jl/blob/master/src/unwrap.jl
-include("unwrap.jl")
-
-include("quantumoptics.jl")
-
+# --- the pieces a harmonic balance system is assembled from -------------
 include("realcomplexconv.jl")
 include("complexjacobian.jl")
 include("devicepattern.jl")
 include("structureassembly.jl")
 include("nonlinearterm.jl")
-include("hbsystem.jl")
 include("nonlineartermtranspose.jl")
-include("hbnonlinearproblem.jl")
+include("fftutils.jl")
+
+# --- the system itself --------------------------------------------------
+include("hbsystem.jl")
+
+# --- the linear algebra it is handed to ---------------------------------
+include("nlsolve.jl")
+include("krylov.jl")
 include("batchedblocks.jl")
-include("compositelayout.jl")
 include("cudss.jl")
-include("devicelinsolve.jl")
 include("modepreconditioner.jl")
+
+# --- the harmonic balance solves ----------------------------------------
+# the canonical state layout the direct current block is carried in; it
+# supplies a preconditioner, so it follows the abstraction it implements
+include("compositelayout.jl")
+# the entry point, the result types both solves return, and the shared
+# pieces of their docstrings, which are interpolated at definition time
+include("hbsolve.jl")
+include("hbnlsolve.jl")
+include("hblinsolve.jl")
+# the device sweep dispatches on the linearized solve's own array types, so
+# it follows it
+include("devicelinsolve.jl")
+include("stagedsolve.jl")
+include("hbcache.jl")
+include("hbnonlinearproblem.jl")
+
+# --- sensitivities ------------------------------------------------------
+include("sensitivities.jl")
+include("designsensitivities.jl")
+
+# --- turning a solution into what was asked for -------------------------
+include("networkparamconversion.jl")
+include("networks.jl")
+include("networkconnection.jl")
+include("qesparams.jl")
+include("keyedarrayutils.jl")
+include("quantumoptics.jl")
+# From DSP.jl https://github.com/JuliaDSP/DSP.jl/blob/master/src/unwrap.jl
+include("unwrap.jl")
+
+# --- exporting SPICE netlists and running them --------------------------
+include("exportnetlist.jl")
+include("spiceutils.jl")
+include("spicewrapper.jl")
+include("spiceraw.jl")
 
 # These are deprecated functions
 include("deprecated.jl")
 
-# These are functions for performing tests
 include("testutils.jl")
 
 
@@ -465,6 +476,7 @@ export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
     Inductor, Capacitor, Resistor, CurrentSource, VoltageSource, Port,
     MutualInductor, JosephsonJunction, NonlinearInductor, PolynomialCPR,
     ScatteringParameters, GaussianChannel, TransmissionLine, Passive, Lossless,
+    ScatteringLimit, OpenDC, ShortDC, ThroughDC, ScatteringDC,
     ThermalEquilibrium, NoiseCovariance, ConjugateSymmetry, Native,
     elaborate, ElaboratedCircuit, quadraturetransform,
     ComponentNotSupportedError

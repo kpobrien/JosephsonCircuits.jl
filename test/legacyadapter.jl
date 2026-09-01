@@ -49,11 +49,15 @@ using Test
         @test psc.componenttypes == [:P, :I, :R, :C, :Lj, :C]
         @test all(isequal.(psc.componentvalues[2:end],
             [Ipump, Rleft, Cc, Lj, Cj]))
+        # the port's value is its reference impedance, which a legacy
+        # netlist states as the resistor across it
+        @test isequal(psc.componentvalues[1], Rleft)
 
         # the value vector is narrowed from Vector{Any} to the tightest
-        # element type the netlist admits, here Real because the port
-        # number is an Int and the rest are symbolic
-        @test eltype(psc.componentvalues) === Real
+        # element type the netlist admits. Every entry is a quantity, so
+        # that is the symbolic type here; it used to be `Real`, the join of
+        # a quantity with the port number the port slot carried
+        @test eltype(psc.componentvalues) === Num
 
         # node "0" is ground and sorts first, so it is node index 1
         @test psc.nodenames == ["0","1","2"]
@@ -121,6 +125,11 @@ using Test
         sol2 = hbsolve(ws, wp, sources, (8,), (8,), Circuit(circuit),
             circuitdefs; sorting = :number)
 
+        # the native form states no termination of its own and keeps `r1` as
+        # an ordinary device resistor, where the legacy netlist adopts `R1`
+        # as the port environment. The two assign the resistor different
+        # roles and so count its noise differently, but they are the same
+        # electrical circuit, which is what the scattering parameters see
         native = Circuit(
             [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
              :c1 => Capacitor(100e-15), :jj => JosephsonJunction(1000e-12),
@@ -137,5 +146,29 @@ using Test
         @test isapprox(S1, S2; rtol = 1e-10)
         @test isapprox(S1, S3; rtol = 1e-6)
         @test maximum(abs2.(S1)) > 1.0 # it is an amplifier
+    end
+
+    # A legacy netlist has no way to say which resistor is a port's
+    # environment, so two across one port was refused and must stay refused:
+    # picking one silently would reinterpret a netlist which used to be an
+    # error. The typed format has no such restriction, because a port states
+    # its own termination.
+    @testset "two resistors across a legacy port are still refused" begin
+        @test_throws ArgumentError Circuit([("P1","1","0",1),
+            ("R1","1","0",50.0), ("R2","1","0",50.0), ("C1","1","0",1e-12)])
+
+        # one is fine, and becomes the port's environment
+        c = Circuit([("P1","1","0",1), ("R1","1","0",50.0)])
+        p = only([v for (k,v) in c.components if v isa Port])
+        @test p.termination isa JosephsonCircuits.LegacyTermination
+        @test p.termination.component == "R1"
+
+        # and the message names the offenders
+        err = try
+            Circuit([("P1","1","0",1), ("R1","1","0",50.0),
+                     ("R2","1","0",25.0)]); nothing
+        catch e; e; end
+        @test occursin("R1", sprint(showerror, err))
+        @test occursin("R2", sprint(showerror, err))
     end
 end

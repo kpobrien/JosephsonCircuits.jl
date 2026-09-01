@@ -56,8 +56,6 @@ depends on the sources.
 - `conductance`: `G0`, the direct current conductance in the solver's scaled
     units.
 - `reduced`: `Y = P'G0P`, the conductance seen between components.
-- `islands`: the resistively connected groups of components, and whether
-    each reaches ground.
 """
 struct DCConductancePlan{Tv,Ti}
     modeindex::Int
@@ -67,7 +65,6 @@ struct DCConductancePlan{Tv,Ti}
     lift::SparseMatrixCSC{Tv,Ti}
     conductance::SparseMatrixCSC{Tv,Ti}
     reduced::Matrix{Tv}
-    islands::Vector{Tuple{Vector{Int},Bool}}
 end
 
 """
@@ -76,12 +73,16 @@ end
 The solved average voltages and the direct current they carry.
 
 `nodevoltage` is in volts, indexed by node with ground first and identically
-zero. On a floating island only voltage differences are physical; the
-island's lowest numbered component is held at zero.
+zero. On a floating island only voltage differences are physical; one
+component of it is held at zero as a reference.
+
+A solution exists exactly when the explicit direct current block was built,
+which is what the caller tests by asking whether there is one. Whether the
+voltages it found happen to be zero is a fact about the circuit and not
+about whether it has a direct current model: a node shorted to ground sits
+at zero volts, and that is an answer.
 """
 struct DCConductanceSolution{T}
-    active::Bool
-    componentvoltage::Vector{T}
     nodevoltage::Vector{T}
     scaledcurrent::Vector{T}
 end
@@ -90,10 +91,13 @@ end
     dcconductanceplan(floatingcomponents, Gnm, wmodes, Nmodes, Nnodes)
 
 Build the [`DCConductancePlan`](@ref), or `nothing` when the circuit needs
-none: no zero frequency mode, no floating static component, or no
-conductance joining two distinct components, in which case no resistor can
-carry direct current between components and the existing answer is already
-right.
+none: no zero frequency mode, or no floating static component, in which case
+there is no average voltage to solve for.
+
+Having no conductance at all is not one of those cases. A circuit whose only
+direct current devices are scattering blocks has an empty `G0` and still
+needs the block rows, and gating on `G0` left it with the artificial `i = 0`
+rows the stamp writes.
 """
 function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
         Gnm::SparseMatrixCSC, wmodes::AbstractVector, Nmodes::Integer,
@@ -110,10 +114,19 @@ function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
     # at zero frequency has no steady state meaning, and would come from a
     # frequency dependent law whose limit at DC is not a conductance. Refuse
     # it rather than take a part of it.
-    for (k, g) in enumerate(nonzeros(G0c))
-        if !isfinite(g) || !iszero(imag(g))
-            throw(ArgumentError(lazy"The zero frequency conductance of this circuit has the entry $(g), which is not finite and real. A component whose conductance at zero frequency is complex or unbounded has no direct current behavior for the solver to use; give it a real finite value at DC or remove the direct current drive."))
-        end
+    #
+    # Against a tolerance and not an exact zero. These entries can come from
+    # evaluating a frequency dependent law at zero, and an expression whose
+    # imaginary part cancels analytically leaves roundoff when it is
+    # evaluated. The scale is the largest conductance in the matrix, so the
+    # decision does not depend on the units the circuit is written in.
+    gscale = maximum(abs, nonzeros(G0c); init = 0.0)
+    gtol = sqrt(eps(Float64))
+    for g in nonzeros(G0c)
+        isfinite(g) ||
+            throw(ArgumentError(lazy"The zero frequency conductance of this circuit has the entry $(g), which is not finite. A component whose conductance at zero frequency is unbounded has no direct current behavior for the solver to use; give it a finite value at DC or remove the direct current drive."))
+        abs(imag(g)) <= gtol*max(abs(real(g)), gscale) ||
+            throw(ArgumentError(lazy"The zero frequency conductance of this circuit has the entry $(g), whose imaginary part is not roundoff. A component whose conductance at zero frequency is complex has no direct current behavior for the solver to use; give it a real value at DC or remove the direct current drive."))
     end
     G0 = SparseMatrixCSC(size(G0c)..., G0c.colptr, G0c.rowval,
         real.(nonzeros(G0c)))
@@ -135,7 +148,6 @@ function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
     Y = zeros(eltype(G0), nc, nc)
     rows = rowvals(G0)
     vals = nonzeros(G0)
-    any(!iszero, vals) || return nothing
     for col in 1:n
         b = componentof[col+1]
         for r in nzrange(G0, col)
@@ -152,47 +164,7 @@ function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
 
 
     return DCConductancePlan(Int(m0), dcrows, [Int.(c) for c in
-        floatingcomponents], componentof, lift, G0, Y,
-        dcislands(G0, componentof, n, nc))
-end
-
-# The resistively connected groups of components, and whether each reaches
-# ground. Current injected into a grounded island leaves through ground, so
-# no compatibility condition applies to it; a floating island supports a
-# bounded solution only when its net injection is zero.
-function dcislands(G0::SparseMatrixCSC, componentof::Vector{Int}, n::Int,
-        nc::Int)
-    parent = collect(0:nc)
-    findroot(i) = (while parent[i+1] != i; i = parent[i+1]; end; i)
-    rows = rowvals(G0)
-    vals = nonzeros(G0)
-    rowsum = zeros(eltype(G0), n)
-    for col in 1:n
-        b = componentof[col+1]
-        for r in nzrange(G0, col)
-            iszero(vals[r]) && continue
-            row = rows[r]
-            rowsum[row] += vals[r]
-            a = componentof[row+1]
-            ra, rb = findroot(a), findroot(b)
-            ra == rb || (parent[ra+1] = rb)
-        end
-    end
-    # a node whose conductances do not cancel in its row sum has one to
-    # ground, which joins its component to the ground island
-    for p in 1:n
-        iszero(rowsum[p]) && continue
-        a = componentof[p+1]
-        a == 0 && continue
-        ra, rg = findroot(a), findroot(0)
-        ra == rg || (parent[ra+1] = rg)
-    end
-    groups = Dict{Int,Vector{Int}}()
-    for c in 1:nc
-        push!(get!(Vector{Int}, groups, findroot(c)), c)
-    end
-    gr = findroot(0)
-    return [(sort(v), r == gr) for (r, v) in sort(collect(groups); by = first)]
+        floatingcomponents], componentof, lift, G0, Y)
 end
 
 """
@@ -209,7 +181,6 @@ adding the same current back to the residual, hands it a consistent pair.
 """
 function applydcconductance(bnm::AbstractVector, plan::DCConductancePlan,
         sol::DCConductanceSolution, Nmodes::Integer)
-    sol.active || return bnm
     out = copy(bnm)
     for p in 2:(size(plan.lift, 1) + 1)
         out[(p-2)*Nmodes + plan.modeindex] -= sol.scaledcurrent[p-1]
@@ -250,39 +221,39 @@ end
 # which the two paths must agree and the reason the tests can demand it.
 #
 # A floating island fixes no absolute voltage, so `Y` is singular on it and
-# only differences are physical. The elimination drops the redundant
-# equation and holds the island's lowest numbered component at zero; the
-# explicit form does the same, by replacing that component's row with
-# `v = 0`. Keeping the singularity instead would move it into Newton, where
-# it is worse, and for a linear direct current device there is nothing to be
-# gained by it.
+# only differences are physical. Something has to choose a reference, but
+# nothing here does: these rows are the physics, and which of them is
+# redundant is not decided by the resistors alone. A block joining an island
+# to the rest of the circuit can make a row the resistors called redundant
+# necessary, and a reference chosen before the blocks were assembled would
+# have thrown that row away. The reference is chosen once the whole
+# descriptor exists, in `dcpinning`.
 
 """
     TransportRows
 
-The transport rows `Ytr v = jtr` of the explicit direct current block,
+The transport rows `Y v = j` of the explicit direct current block,
 together with the coupling into the zero frequency nodal rows.
 
 # Fields
 - `plan`: the topology, shared with the elimination.
-- `Ytr`: `Y` with each floating island's pinned component replaced by the
-  row `v = 0`, so it is nonsingular.
-- `jtr`: the injected current, zero on a pinned row.
+- `Y`: `P'G0P`, unreferenced. It is singular on a floating island, which is
+  correct: these rows state the physics and say nothing about where the
+  potential is measured from.
+- `j`: the injected current.
 - `coupling`: `G0 P`, the resistor current each component's voltage drives
   into the nodes, indexed by node with ground dropped.
-- `pinned`: the component held at zero on each floating island.
 
 See [`transportrows`](@ref) and [`DCConductancePlan`](@ref).
 """
 struct TransportRows{T}
     plan::DCConductancePlan
-    Ytr::Matrix{T}
-    jtr::Vector{T}
+    Y::Matrix{T}
+    j::Vector{T}
     coupling::SparseMatrixCSC{T,Int}
-    pinned::Vector{Int}
 end
 
-nvoltages(t::TransportRows) = length(t.jtr)
+nvoltages(t::TransportRows) = length(t.j)
 
 """
     transportrows(plan::DCConductancePlan, bnm, Nmodes)
@@ -295,40 +266,21 @@ a corrected source would count it twice.
 """
 function transportrows(plan::DCConductancePlan, bnm::AbstractVector,
         Nmodes::Integer)
-    nc = size(plan.reduced, 1)
     T = float(real(eltype(plan.reduced)))
-
-    j = zeros(T, nc)
-    for (k, nodes) in enumerate(plan.components), p in nodes
-        p > 1 || continue
-        j[k] += real(bnm[(p-2)*Nmodes + plan.modeindex])
-    end
-
-    Ytr = Matrix{T}(plan.reduced)
-    pinned = Int[]
-    for (c, grounded) in plan.islands
-        grounded && continue
-        isempty(c) && continue
-        k = first(c)                 # the elimination pins the same one
-        push!(pinned, k)
-        Ytr[k, :] .= zero(T)
-        Ytr[k, k] = one(T)
-        j[k] = zero(T)
-    end
-
+    j = dcsourcecurrent(plan, bnm, Nmodes)
     coupling = SparseMatrixCSC{T,Int}(plan.conductance * plan.lift)
-    return TransportRows(plan, Ytr, j, coupling, pinned)
+    return TransportRows(plan, Matrix{T}(plan.reduced), j, coupling)
 end
 
 """
     transportresidual!(Fv, t::TransportRows, v)
 
-The transport row residual `Ytr v - jtr`, in place.
+The transport row residual `Y v - j`, in place.
 """
 function transportresidual!(Fv::AbstractVector, t::TransportRows,
         v::AbstractVector)
-    mul!(Fv, t.Ytr, v)
-    Fv .-= t.jtr
+    mul!(Fv, t.Y, v)
+    Fv .-= t.j
     return Fv
 end
 
@@ -360,8 +312,46 @@ function dcsolutionfrom(plan::DCConductancePlan, v::AbstractVector)
         p > 1 && (nv[p] = v[k])
     end
     d = plan.conductance * (plan.lift * v)
-    return DCConductanceSolution(any(!iszero, v), collect(T, v),
-        phi0 .* nv, d)
+    return DCConductanceSolution(phi0 .* nv, d)
+end
+
+"""
+    dcsourcecurrent(plan::DCConductancePlan, bnm, Nmodes)
+
+The direct current injected into each static flux component, validated.
+
+The zero frequency mode is self conjugate, so its source coefficient is real
+by construction; an imaginary part there is not a small direct current but a
+sign that the source assembly or the mode layout is wrong, and taking the
+real part of it would carry that error silently into the answer. It is
+refused instead, against a tolerance relative to the largest coefficient of
+the zero frequency source, so the decision does not depend on the units the
+circuit is written in.
+"""
+function dcsourcecurrent(plan::DCConductancePlan, bnm::AbstractVector,
+        Nmodes::Integer)
+    T = float(real(eltype(plan.reduced)))
+    nc = size(plan.reduced, 1)
+    # the scale the imaginary parts are judged against, from the source
+    # itself rather than from a fixed number
+    scale = zero(T)
+    for nodes in plan.components, p in nodes
+        p > 1 || continue
+        b = bnm[(p-2)*Nmodes + plan.modeindex]
+        isfinite(b) || throw(ArgumentError(lazy"The zero frequency source at node $(p) is $(b), which is not finite. A direct current drive has to be a finite real current."))
+        scale = max(scale, abs(b))
+    end
+    tol = sqrt(eps(T))
+    j = zeros(T, nc)
+    for (k, nodes) in enumerate(plan.components), p in nodes
+        p > 1 || continue
+        b = bnm[(p-2)*Nmodes + plan.modeindex]
+        if abs(imag(b)) > tol*max(abs(real(b)), scale)
+            throw(ArgumentError(lazy"The zero frequency source at node $(p) is $(b), which has an imaginary part. The zero frequency mode is self conjugate, so its source is real; an imaginary part there is a source or mode layout error rather than a current, and is refused rather than discarded."))
+        end
+        j[k] += real(b)
+    end
+    return j
 end
 
 """
@@ -373,12 +363,57 @@ When none is, every average voltage and every block port current is zero and
 the explicit block has nothing to find: the `i = 0` rows the scattering
 stamp writes are then the right answer rather than a simplification, and the
 whole direct current apparatus is skipped.
+
+The test is an exact zero and not a tolerance. A drive is either declared at
+the zero frequency mode or it is not: `calcsources` writes the coefficient
+of a mode which no source names as exactly zero, so this asks a structural
+question and gets a structural answer. A small but nonzero direct current is
+a direct current, and is solved for.
 """
-function dcinjected(plan::DCConductancePlan, bnm::AbstractVector,
-        Nmodes::Integer)
-    for nodes in plan.components, p in nodes
-        p > 1 || continue
-        iszero(real(bnm[(p-2)*Nmodes + plan.modeindex])) || return true
+dcinjected(plan::DCConductancePlan, bnm::AbstractVector, Nmodes::Integer) =
+    any(!iszero, dcsourcecurrent(plan, bnm, Nmodes))
+
+"""
+    checkjunctiondc(sintd::AbstractArray, junctionbranches, branchnames;
+        atol = 1e-2)
+
+Warn about a Josephson junction carrying nearly its critical current at zero
+frequency.
+
+The static flux partition treats a junction of finite inductance as a short
+at zero frequency, which puts its two terminals in one component and is what
+lets the transport rows be the component sum of the nodal equations. That is
+true of a junction in the zero voltage state and false of one which is
+running, and the difference is whether the junction can carry the direct
+current asked of it: the branch current is `Ic*sin(phi)`, so its zero
+frequency part is `Ic` times the time average of `sin(phi)`, and no zero
+voltage state exists once that average would have to exceed `Ic`.
+
+The solver cannot report the failure itself. `sin` is bounded, so the
+average it finds is always a fraction of one, and a circuit which has no
+periodic solution converges to the nearest thing which is one rather than
+announcing that it does not exist. What can be reported is the approach: a
+junction whose direct current is within a percent of its critical current is
+at the edge of the partition's assumption, and a result there should be
+checked against a run at a lower drive.
+
+This is a heuristic about the operating point and not a proof of dynamic
+stability, which harmonic balance does not decide.
+"""
+function checkjunctiondc(sintd::AbstractArray, junctionbranches,
+        branchnames::Dict{Int,Vector{String}}; atol::Real = 1e-2)
+    # the last axis is the junction branch and the ones before it are the
+    # time grid, which has one axis per tone; the zero frequency Fourier
+    # coefficient is the average over all of them
+    nt = div(length(sintd), max(size(sintd)[end], 1))
+    (iszero(nt) || isempty(junctionbranches)) && return nothing
+    flat = reshape(sintd, nt, :)
+    for k in eachindex(junctionbranches)
+        f = sum(view(flat, :, k))/nt
+        abs(f) < 1 - atol && continue
+        b = junctionbranches[k]
+        who = join(get(branchnames, b, ["branch $(b)"]), ", ")
+        @warn "A Josephson junction is carrying nearly its critical current at zero frequency, so the assumption that it is in the zero voltage state -- which is what lets the static flux partition treat it as a short at direct current -- is marginal here. A junction which cannot carry the direct current asked of it has no zero voltage state at all, and the solver cannot tell you so: the branch current is Ic*sin(phi), which is bounded, so it converges to the nearest periodic thing instead. Check this result against one at a lower drive." junction=who fractionofcritical=abs(f)
     end
-    return false
+    return nothing
 end

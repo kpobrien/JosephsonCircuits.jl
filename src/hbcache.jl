@@ -62,13 +62,8 @@ against the parse.
 
 # Examples
 ```julia
-make(; Lj, Cc) = Circuit(
-    [:p1 => Port(1), :cc => Capacitor(Cc),
-     :jj => JosephsonJunction(Lj), :cj => Capacitor(1000e-15),
-     :gnd => Ground()],
-    [[(:p1, 1), (:cc, 1)],
-     [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+make(; Lj, Cc) = [("P1","1","0",1), ("R1","1","0",50.0),
+    ("C1","1","2",Cc), ("Lj1","2","0",Lj), ("C2","2","0",1000e-15)]
 cache = hbcache((2*pi*4.75e9,), (8,),
     [(mode=(1,), port=1, current=1e-8)], make,
     (Lj = 1000e-12, Cc = 100e-15))
@@ -91,7 +86,14 @@ function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     indices = fourierindices(frequencies)
     Nmodes = length(frequencies.modes)
 
+    # A netlist of tuples, not a typed `Circuit`: the value table below is
+    # built by walking the builder's output entry by entry, which a
+    # `Circuit` does not support, and a typed circuit's compiled table can
+    # hold generated entries the builder never returned. Rebinding a typed
+    # circuit needs the compiler's own value plan; until it has one, this
+    # takes what it can consume.
     circuit0 = builder(; p...)
+    circuit0 isa AbstractVector || throw(ArgumentError(lazy"hbcache needs a builder returning a netlist of (name, node1, node2, value) tuples; this one returned a $(typeof(circuit0)). A typed `Circuit` is not supported here yet, because the cache rebinds values by walking the builder's output."))
     compiled = compile(circuit0; sorting = sorting)
     # the loop enumeration is quadratic in the number of inductive
     # loops and nothing here reads it

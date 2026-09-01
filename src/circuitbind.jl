@@ -37,7 +37,7 @@ struct BoundCircuit{TC,TR,TL,TJ,TN,TI,TK}
     nonlinearinductors::Vector{TN}
     currentsources::Vector{TI}
     mutualinductors::Vector{TK}
-    values::Vector          # the flat table, resolved; the parsed view's vvn
+    values::Vector          # the flat component table, resolved
 end
 
 function Base.show(io::IO, b::BoundCircuit)
@@ -523,14 +523,15 @@ function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
     invLnm = assembleinvinductance(TL, plan.invinductance, Lb, Nmodes)
 
     Lmean = calcLmean(ct, vvn)
-    # by role, not by geometry
+    # by role, not by geometry: the port states its reference impedance and
+    # what realizes it, and nothing here looks at what shares its branch
     portindices, portnumbers = portindicesnumbers(c)
-    portimpedanceindices = portenvironmentindices(c)
+    portimpedances = portreferenceimpedances(c, vvn)
     noiseportimpedanceindices = noiseindices(c, vvn)
 
     return CircuitMatrices(Cnm, Gnm, Lb, Lbm, Ljb, Ljbm, Mb, invLnm,
-        plan.Rbnm, portindices, portnumbers, portimpedanceindices,
-        noiseportimpedanceindices, Lmean, vvn)
+        plan.Rbnm, portindices, portnumbers, portimpedances,
+        portenvironmentindices(c), noiseportimpedanceindices, Lmean, vvn)
 end
 
 # === the solver front end ===

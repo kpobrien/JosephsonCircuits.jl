@@ -415,9 +415,9 @@ end
 """
     componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
 
-Convert the array of component values to numbers, if defined in `circuitdefs`. 
-This function is not type stable by design because we want the output array 
-to use a concrete type if all of the values are evaluated to numbers. 
+Convert the array of component values to numbers, if defined in `circuitdefs`.
+This function is not type stable by design because we want the output array
+to use a concrete type if all of the values are evaluated to numbers.
 
 # Examples
 ```jldoctest
@@ -540,7 +540,7 @@ end
 #     valuetonumber(value::Complex{Symbolics.Num},circuitdefs)
 
 # If the component value `value` is Complex{Symbolics.Num}, then try substituting in the
-# definition from `circuitdefs`. This function is currently broken as of 
+# definition from `circuitdefs`. This function is currently broken as of
 # Symbolics v7.1.1
 
 # # Examples

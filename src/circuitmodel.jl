@@ -750,6 +750,117 @@ the commutation relations will be wrong by that much.
 """
 struct Lossless end
 
+# === the zero frequency model of a scattering block ===
+#
+# The direct current behavior of a block is its scattering matrix at zero
+# frequency, and the default is to ask the block for it. That is right when
+# the block can answer, and there are two ways it cannot. A measured or
+# tabulated block may start at gigahertz and have no zero frequency entry at
+# all. A closed form one may have a limit which exists but is not evaluable
+# there: a series capacitor written `1/(im*w*C)` is an open circuit at
+# direct current, and evaluating that expression at zero gives infinity
+# rather than the open.
+#
+# So the model is stated separately from the radio frequency data when the
+# two do not agree. Every realizable choice is some real `S(0)`, so one
+# constructor carries them all and the common ones are named.
+
+"""
+    AbstractDCModel
+
+The supertype of the zero frequency models a [`ScatteringParameters`](@ref)
+may declare, written as `dcmodel`.
+
+`ScatteringLimit()` (the default) evaluates the block's own scattering data
+at zero frequency. [`OpenDC`](@ref), [`ShortDC`](@ref), [`ThroughDC`](@ref)
+and [`ScatteringDC`](@ref) state it instead.
+"""
+abstract type AbstractDCModel end
+
+"""
+    ScatteringLimit()
+
+The default zero frequency model of a [`ScatteringParameters`](@ref): its own
+scattering data, evaluated at zero frequency.
+
+The result must be real and finite there. A block whose limit exists but is
+not evaluable at zero -- a series capacitance written `1/(im*w*C)`, whose
+limit is the open circuit -- has to state that limit with one of the other
+models rather than be asked for it.
+"""
+struct ScatteringLimit <: AbstractDCModel end
+
+"""
+    OpenDC()
+
+A [`ScatteringParameters`](@ref) which is an open circuit at zero frequency:
+`S(0) = I`, so no direct current flows through any port. This is the
+constant of a series capacitance and of anything else which blocks direct
+current.
+"""
+struct OpenDC <: AbstractDCModel end
+
+"""
+    ShortDC()
+
+A [`ScatteringParameters`](@ref) each of whose ports is shorted to its own
+reference terminal at zero frequency: `S(0) = -I`. The port voltages are
+held at zero and the currents are whatever the rest of the circuit sends,
+which is the ideal short the direct current rows are written to express.
+"""
+struct ShortDC <: AbstractDCModel end
+
+"""
+    ThroughDC()
+
+A two port [`ScatteringParameters`](@ref) which passes direct current
+unchanged: `S(0) = [0 1; 1 0]`, so the port voltages are equal and the
+currents are equal and opposite. This is the constant of a series inductance
+and of a transmission line.
+"""
+struct ThroughDC <: AbstractDCModel end
+
+"""
+    ScatteringDC(S0)
+
+A [`ScatteringParameters`](@ref) whose zero frequency scattering matrix is
+stated as `S0`, which must be real, finite, and of the block's dimension.
+
+Every realizable zero frequency behavior is one of these: a resistor, a
+transformer, an attenuator, and the open, short and through the named models
+are shorthand for. It is validated for passivity at construction on the same
+terms as the block's own data, so an active zero frequency model needs the
+same `NoiseCovariance` declaration an active block does.
+"""
+struct ScatteringDC <: AbstractDCModel
+    S0::Matrix{Float64}
+end
+function ScatteringDC(S0::AbstractMatrix)
+    size(S0, 1) == size(S0, 2) ||
+        throw(DimensionMismatch(lazy"a zero frequency scattering matrix must be square; got $(size(S0))."))
+    all(isfinite, S0) ||
+        throw(ArgumentError("a zero frequency scattering matrix must be finite."))
+    all(iszero∘imag, S0) ||
+        throw(ArgumentError("a zero frequency scattering matrix must be real: at zero frequency there is no phase to carry an imaginary part."))
+    return ScatteringDC(Matrix{Float64}(real.(S0)))
+end
+
+"""
+    dcscatteringmatrix(m::AbstractDCModel, nports)
+
+The zero frequency scattering matrix a stated model describes.
+"""
+dcscatteringmatrix(::OpenDC, n::Integer) = Matrix{Float64}(I, n, n)
+dcscatteringmatrix(::ShortDC, n::Integer) = Matrix{Float64}(-I, n, n)
+function dcscatteringmatrix(::ThroughDC, n::Integer)
+    n == 2 || throw(ArgumentError(lazy"ThroughDC is a two port model and this block has $(n) ports. Write the zero frequency matrix with ScatteringDC."))
+    return [0.0 1.0; 1.0 0.0]
+end
+function dcscatteringmatrix(m::ScatteringDC, n::Integer)
+    size(m.S0, 1) == n || throw(DimensionMismatch(lazy"the zero frequency scattering matrix has dimension $(size(m.S0,1)) but the block has $(n) ports."))
+    return m.S0
+end
+
 """
     ThermalEquilibrium(temperature)
 
@@ -828,6 +939,16 @@ says so, since unlike stored data it cannot be checked.
 validated at construction with absolute tolerance `atol` unless the noise
 model is a `NoiseCovariance`, which permits active blocks.
 
+`dcmodel` states the block's zero frequency behavior when its own data does
+not give it: [`OpenDC`](@ref), [`ShortDC`](@ref), [`ThroughDC`](@ref) or
+[`ScatteringDC`](@ref), defaulting to [`ScatteringLimit`](@ref), which
+evaluates the block at zero. Measured data which starts at gigahertz has no
+zero frequency entry, and a closed form whose limit exists may not be
+evaluable there -- a series capacitance written `1/(im*w*C)` is an open
+circuit at direct current and infinite at zero -- so those state the limit
+instead. The model is used only by the direct current rows; the alternating
+current path always uses the block's own data.
+
 `derivatives` supplies analytic derivatives of the scattering matrix with
 respect to design parameters, for [`designsensitivities`](@ref): a named
 tuple keyed by parameter name whose values are accepted in the same forms
@@ -842,7 +963,7 @@ julia> ScatteringParameters([0 1;1 0]).nports
 2
 ```
 """
-struct ScatteringParameters{P,N,NF,D} <: AbstractComponent
+struct ScatteringParameters{P,N,NF,D,DM<:AbstractDCModel} <: AbstractComponent
     provider::P
     nports::Int
     zref::Vector{Float64}
@@ -853,14 +974,21 @@ struct ScatteringParameters{P,N,NF,D} <: AbstractComponent
     # [`designsensitivities`](@ref); empty when derivatives come from
     # finite differences through `provider`
     derivatives::D
+    # the zero frequency behavior, when the block's own data does not give
+    # it; see [`AbstractDCModel`](@ref)
+    dcmodel::DM
 end
 
-# a block with no analytic derivatives, which is every block constructed
-# before the `derivatives` keyword existed
+# a block with no analytic derivatives and no stated zero frequency model,
+# which is every block constructed before those keywords existed
 ScatteringParameters(provider, nports::Int, zref::Vector{Float64},
     grounded::Bool, noise, negative_frequency) =
     ScatteringParameters(provider, nports, zref, grounded, noise,
-        negative_frequency, NamedTuple())
+        negative_frequency, NamedTuple(), ScatteringLimit())
+ScatteringParameters(provider, nports::Int, zref::Vector{Float64},
+    grounded::Bool, noise, negative_frequency, derivatives) =
+    ScatteringParameters(provider, nports, zref, grounded, noise,
+        negative_frequency, derivatives, ScatteringLimit())
 
 function ScatteringParameters(S; nports = nothing, zref = 50.0,
         grounded::Bool = true, noise = Passive(),
@@ -868,10 +996,11 @@ function ScatteringParameters(S; nports = nothing, zref = 50.0,
         interpolation::Symbol = :linear, extrapolation::Symbol = :error,
         form::Symbol = :matrix,
         derivatives::NamedTuple = NamedTuple(),
+        dcmodel::AbstractDCModel = ScatteringLimit(),
         atol::Real = 1e-8)
     if S isa AbstractString
         return touchstonescatteringblock(S; nports = nports, zref = zref,
-            grounded = grounded, noise = noise,
+            grounded = grounded, noise = noise, dcmodel = dcmodel,
             negative_frequency = negative_frequency,
             interpolation = interpolation, extrapolation = extrapolation,
             atol = atol)
@@ -894,8 +1023,22 @@ function ScatteringParameters(S; nports = nothing, zref = 50.0,
             providersize(dp) == n || throw(DimensionMismatch(lazy"the derivative for parameter $(k) has dimension $(providersize(dp)) but the block has $(n) ports."))
             dp
         end for (k, v) in pairs(derivatives))
+    checkdcmodel(dcmodel, n, noise, atol)
     return ScatteringParameters(provider, n, zrefvec, grounded, noise,
-        negative_frequency, dprov)
+        negative_frequency, dprov, dcmodel)
+end
+
+# A stated zero frequency matrix is data like the block's own, so it is
+# checked on the same terms and at the same time: the size against the
+# block, and passivity unless the block declared itself active.
+checkdcmodel(::ScatteringLimit, n::Int, noise, atol) = nothing
+function checkdcmodel(m::AbstractDCModel, n::Int, noise, atol)
+    S0 = dcscatteringmatrix(m, n)
+    if !(noise isa NoiseCovariance)
+        sv = maximum(svdvals(S0); init = 0.0)
+        sv <= 1 + atol || throw(ArgumentError(lazy"the zero frequency scattering matrix has largest singular value $(sv), so it is active at direct current. An active block has to declare its own noise with NoiseCovariance, as it does at every other frequency."))
+    end
+    return nothing
 end
 
 function zrefvector(zref, n::Int)
@@ -1102,7 +1245,7 @@ end
 # renormalization.
 function touchstonescatteringblock(path::AbstractString; nports, zref,
         grounded, noise, negative_frequency, interpolation, extrapolation,
-        atol)
+        atol, dcmodel::AbstractDCModel = ScatteringLimit())
     ts = Touchstone.touchstone_load(path)
     filezref = collect(Float64, ts.reference)
     if !(zref isa Number && zref == 50.0) # user supplied a non-default zref
@@ -1125,8 +1268,9 @@ function touchstonescatteringblock(path::AbstractString; nports, zref,
         checkpassive(provider; atol = atol)
     end
     checknoise(noise, n)
+    checkdcmodel(dcmodel, n, noise, atol)
     return ScatteringParameters(provider, n, filezref, grounded, noise,
-        negative_frequency)
+        negative_frequency, NamedTuple(), dcmodel)
 end
 
 """

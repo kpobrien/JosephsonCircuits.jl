@@ -112,7 +112,8 @@ end)
                 new.Lmean == ref.Lmean &&
                 new.portindices == ref.portindices &&
                 new.portnumbers == ref.portnumbers &&
-                new.portimpedanceindices == ref.portimpedanceindices &&
+                new.portimpedances == ref.portimpedances &&
+                new.portenvironmentindices == ref.portenvironmentindices &&
                 new.noiseportimpedanceindices == ref.noiseportimpedanceindices
         end
 

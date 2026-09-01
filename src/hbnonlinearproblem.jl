@@ -33,7 +33,91 @@ Built by [`hbnonlinearproblem`](@ref). See [`hbresidual!`](@ref) and
   a multi-tone problem the real Jacobian plan is the single largest object
   in the solve.
 """
-struct HBNonlinearProblem{S,ML,J,X,B,TP,FD,TD}
+# =====================================================================
+# The direct current augmentation.
+#
+# With an explicit direct current block the system being solved is not the
+# `HBSystem`: its scattering rows still say `i = 0` and its resistors still
+# carry no direct current. The average voltages, the transport rows and the
+# blocks' own zero frequency rows live in canonical coordinates around it.
+#
+# So there are two candidate definitions of the same operating point, and
+# handing out the harmonic one is how a caller ends up differentiating a
+# problem which is not the one that was solved. The augmentation is carried
+# on the problem rather than in a second problem type: one object, one
+# interface, and an external solver written against it does not have to know
+# whether the circuit has direct current in it.
+#
+# Everything the augmentation adds is affine. Writing `G` for the gather
+# into canonical coordinates and `S = G'` for the scatter back, the residual
+# is
+#
+#     R(u) = D (G F(S u)) + M u + s c
+#
+# with `M` the block's constant matrix, `c` its drive dependent constant,
+# `s` the drive scale, and `D` the diagonal which is zero on the rows the
+# block replaces rather than adds to -- the transport rows, which the
+# harmonic residual knows nothing about, and the reference rows. Every
+# derivative follows from that: the Jacobian is `D G J S + M`, the
+# transposed product is `S' J' G' D` plus `M'`, and the second and third
+# derivatives lose `M` entirely because it is linear.
+
+"""
+    DCAugmentation
+
+The explicit direct current block of an [`HBNonlinearProblem`](@ref).
+
+# Fields
+- `work`: the [`CanonicalWork`](@ref) holding the layout, the transport rows
+  and the blocks' zero frequency rows.
+- `jplan`: the [`CanonicalJacobianPlan`](@ref), or `nothing` when no
+  Jacobian was assembled.
+- `jint`: the internal Jacobian the plan reads, or `nothing`.
+- `keep`: the diagonal `D` over the direct current window: one where a row
+  is added to and zero where the block replaces it.
+- `constant`: the block's drive dependent constant, at the drive the problem
+  was built with.
+- `dcmatrix`: the transpose of the block's constant matrix `M`, restricted
+  to the window, which is what the transposed product needs.
+- `scale`: the drive scale, kept in step with [`setdrive!`](@ref).
+- `dwork`, `Fwork`, `zwork`: workspaces for the transposed product.
+"""
+struct DCAugmentation{W,JP,JI}
+    work::W
+    jplan::JP
+    jint::JI
+    keep::Vector{Float64}
+    constant::Vector{Float64}
+    dcmatrix::SparseMatrixCSC{Float64,Int}
+    scale::Base.RefValue{Float64}
+    dwork::Vector{Float64}
+    Fwork::Vector{Float64}
+    zwork::Vector{Float64}
+end
+
+function DCAugmentation(work, jint)
+    L = work.layout
+    N = canonicaldim(L)
+    nw = L.ndc + L.nvdc
+    # `keep`, the constant and the matrix are read off the scalar
+    # implementation by probing it, exactly as the device form is, so the
+    # three cannot disagree with the residual they describe
+    up = dcupdate(work)
+    isnothing(up) && throw(ArgumentError("a direct current augmentation needs a direct current block"))
+    Mt = SparseMatrixCSC(nw, nw, copy(up.rowptr), copy(up.colval),
+        copy(up.nzval))
+    keep = ones(Float64, N)
+    constant = zeros(Float64, N)
+    win = dcwindow(L)
+    copyto!(view(keep, win), up.keep)
+    copyto!(view(constant, win), up.cresidual)
+    jplan = isnothing(jint) ? nothing : canonicaljacobianplan(jint, work)
+    return DCAugmentation(work, jplan, jint, keep, constant, Mt,
+        Ref(1.0), zeros(Float64, nw), zeros(Float64, L.rdim),
+        zeros(Float64, N))
+end
+
+struct HBNonlinearProblem{S,ML,J,X,B,TP,FD,TD,A}
     sys::S
     modelayout::ML
     u0::Vector{Float64}
@@ -42,8 +126,10 @@ struct HBNonlinearProblem{S,ML,J,X,B,TP,FD,TD}
     bnm0::B           # the drive as built, for setdrive!
     tplan::TP         # transposed gather maps for the vjp
     Pwork::FD; Qwork::FD; betawork::TD; dirtd3::TD
+    augmentation::A   # the direct current block, or `nothing`
 end
-function HBNonlinearProblem(sys, ml, u0, J, parts)
+
+function HBNonlinearProblem(sys, ml, u0, J, parts; augmentation = nothing)
     fd = sys.phimatrix; td = sys.phitd
     # The transpose plan is built here rather than on first use so the field
     # is concretely typed. A `Ref{Any}` filled lazily makes every call into
@@ -54,7 +140,24 @@ function HBNonlinearProblem(sys, ml, u0, J, parts)
         fd, td; backend = sys.nonlineartermplan.backend)
     return HBNonlinearProblem(sys, ml, u0, J, parts, copy(sys.bnm),
         tp, Ref(similar(fd)), Ref(similar(fd)), Ref(similar(td)),
-        Ref(similar(td)))
+        Ref(similar(td)), augmentation)
+end
+
+"""
+    isaugmented(p::HBNonlinearProblem)
+
+Whether `p` carries an explicit direct current block, so that its unknowns
+are the canonical state rather than the harmonic one.
+"""
+isaugmented(p::HBNonlinearProblem) = !isnothing(p.augmentation)
+
+# the harmonic residual and its derivatives, evaluated at the internal point
+# a canonical one scatters to
+function _setcanonical!(p::HBNonlinearProblem, u::AbstractVector)
+    a = p.augmentation
+    scattercanonical!(a.work.xint, u, a.work.layout)
+    setpoint!(p.sys, a.work.xint)
+    return a
 end
 
 Base.length(p::HBNonlinearProblem) = length(p.u0)
@@ -69,7 +172,17 @@ function hbnonlinearproblem(w, Nharmonics, sources, circuit, circuitdefs;
         assemblejacobian::Bool = true, kwargs...)
     d = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs;
         returnsystem = true, assemblejacobian = assemblejacobian, kwargs...)
-    return HBNonlinearProblem(d.sys, d.modelayout, copy(d.xr), d.Jr, d)
+    d.dcexplicit || return HBNonlinearProblem(d.sys, d.modelayout,
+        copy(d.xr), d.Jr, d)
+    # with an explicit direct current block the unknowns are the canonical
+    # state and the Jacobian is the canonical one, so the problem handed out
+    # is the system which was solved rather than the harmonic part of it
+    a = DCAugmentation(d.canonicalwork, d.Jr)
+    L = a.work.layout
+    u0 = zeros(Float64, canonicaldim(L))
+    gathercanonical!(u0, d.xr, L)
+    return HBNonlinearProblem(d.sys, d.modelayout, u0,
+        isnothing(a.jplan) ? nothing : a.jplan.J, d; augmentation = a)
 end
 
 """
@@ -79,8 +192,21 @@ The harmonic balance residual at `u`, in place.
 """
 function hbresidual!(F::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real})
-    setpoint!(p.sys, u)
-    residual!(F, p.sys)
+    if !isaugmented(p)
+        setpoint!(p.sys, u)
+        residual!(F, p.sys)
+        return F
+    end
+    a = _setcanonical!(p, u)
+    w = a.work
+    residual!(w.Fint, p.sys)
+    gathercanonical!(F, w.Fint, w.layout)
+    # the block's rows, which replace where the harmonic system has nothing
+    # and add where it has something. `residual = false` leaves out the
+    # drive dependent constant, which is added back at the current scale so
+    # that `setdrive!` moves the direct current injection with the rest
+    addtransport!(F, w, u; residual = false)
+    @. F += a.scale[]*a.constant
     return F
 end
 
@@ -97,8 +223,25 @@ whose `mul!` pays only the product itself.
 """
 function hbjvp!(Jv::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real}, v::AbstractVector{<:Real})
-    setpoint!(p.sys, u)
-    jacobianvectorproduct!(Jv, p.sys, v)
+    if !isaugmented(p)
+        setpoint!(p.sys, u)
+        jacobianvectorproduct!(Jv, p.sys, v)
+        return Jv
+    end
+    a = _setcanonical!(p, u)
+    return _canonicaljvp!(Jv, p, v)
+end
+
+# the product at the point already set, which is what a Krylov loop wants
+function _canonicaljvp!(Jv::AbstractVector, p::HBNonlinearProblem,
+        v::AbstractVector)
+    a = p.augmentation
+    w = a.work
+    L = w.layout
+    scattercanonical!(w.xint, v, L)
+    jacobianvectorproduct!(w.Fint, p.sys, w.xint)
+    gathercanonical!(Jv, w.Fint, L)
+    addtransport!(Jv, w, v; residual = false)
     return Jv
 end
 
@@ -108,8 +251,16 @@ end
 Assemble the exact real Jacobian at `u`.
 """
 function hbjacobian!(J, p::HBNonlinearProblem, u::AbstractVector{<:Real})
-    setpoint!(p.sys, u)
-    jacobian!(J, p.sys)
+    if !isaugmented(p)
+        setpoint!(p.sys, u)
+        jacobian!(J, p.sys)
+        return J
+    end
+    a = _setcanonical!(p, u)
+    isnothing(a.jplan) && throw(ArgumentError("this problem assembled no Jacobian; build it with assemblejacobian = true"))
+    jacobian!(a.jint, p.sys)
+    canonicaljacobian!(a.jplan, a.jint)
+    J === a.jplan.J || copyto!(J.nzval, a.jplan.J.nzval)
     return J
 end
 
@@ -163,7 +314,7 @@ struct JacobianOperator{P<:HBNonlinearProblem,U<:AbstractVector}
     u::U
 end
 function JacobianOperator(prob::HBNonlinearProblem, u)
-    setpoint!(prob.sys, u)
+    isaugmented(prob) ? _setcanonical!(prob, u) : setpoint!(prob.sys, u)
     return JacobianOperator{typeof(prob),typeof(u)}(prob, u)
 end
 
@@ -176,11 +327,12 @@ Base.axes(J::JacobianOperator, i::Integer) = axes(J)[i]
 # the point was set at construction; the product is two transforms plus the
 # linear term, with no setpoint on the hot path
 LinearAlgebra.mul!(y::AbstractVector, J::JacobianOperator, v::AbstractVector) =
-    jacobianvectorproduct!(y, J.prob.sys, v)
+    isaugmented(J.prob) ? _canonicaljvp!(y, J.prob, v) :
+        jacobianvectorproduct!(y, J.prob.sys, v)
 
 function LinearAlgebra.mul!(y::AbstractVector, J::JacobianOperator,
         v::AbstractVector, alpha::Number, beta::Number)
-    tmp = jacobianvectorproduct!(similar(y), J.prob.sys, v)
+    tmp = mul!(similar(y), J, v)
     @. y = alpha*tmp + beta*y
     return y
 end
@@ -244,6 +396,14 @@ function preconditioner(p::HBNonlinearProblem, u::AbstractVector;
         d.Nfreq, d.invLnm, d.Gnm, d.Cnm, p.modelayout;
         couplingmodes = couplingmodes, factorization = factorization,
         precision = precision, Amatrixmodes = d.Amatrixmodes)
+    if isaugmented(p)
+        # the same wrapper the internal solve uses: the mode coupling
+        # preconditioner in the canonical coordinates, with the direct
+        # current subsystem factorized and solved exactly
+        cp = CanonicalPreconditioner(pc, p.augmentation.work)
+        updatepreconditioner!(cp, u)
+        return SizedPreconditioner(cp, length(u))
+    end
     setpoint!(p.sys, u)
     updatepreconditioner!(pc, u)
     return SizedPreconditioner(pc, length(u))
@@ -419,6 +579,9 @@ function setdrive!(p::HBNonlinearProblem, scale::Real)
         "hbnonlinearproblem"))
     @. p.sys.bnm = scale*p.bnm0
     complex_to_real!(p.sys.bnmr, p.sys.bnm, p.modelayout.isreal)
+    # the direct current injection is part of the same drive and moves with
+    # it; the block's constant is the injection, so scaling it is enough
+    isaugmented(p) && (p.augmentation.scale[] = scale)
     return p
 end
 
@@ -472,13 +635,33 @@ multiplied back in through the coefficients of the other; see
 """
 function hbvjp!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real}, w::AbstractVector{<:Real})
-    setpoint!(p.sys, u)
+    if !isaugmented(p)
+        setpoint!(p.sys, u)
+        _ensurecos!(p.sys)
+        # the transpose plan and the work buffers are concretely typed
+        # fields built at construction, so nothing here dispatches
+        # dynamically or allocates
+        return _hbvjp!(out, p.sys, p.tplan, p.Pwork[], p.Qwork[],
+            p.betawork[], w)
+    end
+    a = _setcanonical!(p, u)
     _ensurecos!(p.sys)
-    # the transpose plan and the work buffers are concretely typed fields
-    # built at construction, so nothing here dispatches dynamically or
-    # allocates
-    return _hbvjp!(out, p.sys, p.tplan, p.Pwork[], p.Qwork[],
-        p.betawork[], w)
+    L = a.work.layout
+    # The canonical Jacobian is `D G J S + M`, so its transpose is
+    # `S' J' G' D + M'`: mask the direction by `D` first, take the harmonic
+    # transposed product through the scatter and the gather, then add the
+    # block's own transpose. `M` lives entirely in the window, and so does
+    # its transpose.
+    z = a.zwork
+    @. z = a.keep*w
+    scattercanonical!(a.work.xint, z, L)
+    _hbvjp!(a.Fwork, p.sys, p.tplan, p.Pwork[], p.Qwork[], p.betawork[],
+        a.work.xint)
+    fill!(out, 0.0)
+    gathercanonical!(out, a.Fwork, L)
+    win = dcwindow(L)
+    mul!(view(out, win), a.dcmatrix, view(w, win), 1.0, 1.0)
+    return out
 end
 
 function _hbvjp!(out, sys, tp, P, Q, beta, w)
@@ -503,8 +686,22 @@ The exact second directional derivative
 function hbd2F!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real}, v::AbstractVector{<:Real},
         w::AbstractVector{<:Real})
-    setpoint!(p.sys, u)
-    hessianvectorproduct!(out, p.sys, v, w)
+    if !isaugmented(p)
+        setpoint!(p.sys, u)
+        hessianvectorproduct!(out, p.sys, v, w)
+        return out
+    end
+    # the block is affine, so it contributes nothing beyond the first
+    # derivative; what remains is the harmonic second derivative in the
+    # canonical coordinates, with the replaced rows masked out
+    a = _setcanonical!(p, u)
+    L = a.work.layout
+    scattercanonical!(a.work.xint, v, L)
+    scattercanonical!(a.Fwork, w, L)
+    hessianvectorproduct!(a.work.Fint, p.sys, a.work.xint, a.Fwork)
+    fill!(out, 0.0)
+    gathercanonical!(out, a.work.Fint, L)
+    @. out *= a.keep
     return out
 end
 
@@ -521,8 +718,29 @@ Bautin -- accurate.
 function hbd3F!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
         u::AbstractVector{<:Real}, v::AbstractVector{<:Real},
         w::AbstractVector{<:Real}, z::AbstractVector{<:Real})
+    if isaugmented(p)
+        # affine again, so only the harmonic term survives; it is taken in
+        # the internal coordinates and carried back
+        a = _setcanonical!(p, u)
+        L = a.work.layout
+        vi = similar(a.Fwork); wi = similar(a.Fwork); zi = similar(a.Fwork)
+        scattercanonical!(vi, v, L)
+        scattercanonical!(wi, w, L)
+        scattercanonical!(zi, z, L)
+        _hbd3F!(a.work.Fint, p, vi, wi, zi)
+        fill!(out, 0.0)
+        gathercanonical!(out, a.work.Fint, L)
+        @. out *= a.keep
+        return out
+    end
+    setpoint!(p.sys, u)
+    return _hbd3F!(out, p, v, w, z)
+end
+
+function _hbd3F!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
+        v::AbstractVector{<:Real}, w::AbstractVector{<:Real},
+        z::AbstractVector{<:Real})
     sys = p.sys
-    setpoint!(sys, u)
     _ensurecos!(sys)
     plan = sys.nonlineartermplan
     applyforwardterm!(sys.phimatrix, plan, v)
@@ -549,8 +767,22 @@ function hbdFdp!(out::AbstractVector{<:Real}, p::HBNonlinearProblem)
     isnothing(p.bnm0) && throw(ArgumentError("this problem recorded no drive"))
     b = similar(p.sys.bnm)
     copyto!(b, p.bnm0)
-    br = zeros(Float64, length(out))
+    if !isaugmented(p)
+        br = zeros(Float64, length(out))
+        complex_to_real!(br, b, p.modelayout.isreal)
+        @. out = -br
+        return out
+    end
+    # the alternating current drive through the gather, with the replaced
+    # rows masked out, plus the block's own constant, which is the direct
+    # current injection and carries its own sign
+    a = p.augmentation
+    L = a.work.layout
+    br = zeros(Float64, L.rdim)
     complex_to_real!(br, b, p.modelayout.isreal)
-    @. out = -br
+    @. br = -br
+    fill!(out, 0.0)
+    gathercanonical!(out, br, L)
+    @. out = a.keep*out + a.constant
     return out
 end

@@ -138,6 +138,19 @@ function nodevariabletokeyed(nodevariable, outputmodes, nodenames)
 end
 
 """
+    nodevariabletokeyed(nodevariable::AbstractVector, nodenames)
+
+Convert a node variable with one value per node, such as the average direct
+current voltage, to a keyed array.
+
+`nodevariable` excludes ground, as every node keyed output does, so it is
+keyed by `nodenames[2:end]` exactly as the node flux is.
+"""
+function nodevariabletokeyed(nodevariable::AbstractVector, nodenames)
+    return AxisKeys.KeyedArray(nodevariable, node = nodenames[2:end])
+end
+
+"""
     nodevariabletokeyed(nodevariable, outputmodes, nodenames, inputmodes,
         inputportnumbers, w)
 

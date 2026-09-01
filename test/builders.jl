@@ -57,7 +57,9 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
             ("Lj1","2","0",L), ("C2","2","0",C/4)]
         p = (L = 1000.0e-12, C = 400.0e-15)
         names, v0, J = JosephsonCircuits.designjacobian(builder, p)
-        @test names == ["P1","R1","C1","Lj1","C2"]
+        # the port is not among them: its slot in the flat table holds the
+        # port number, which is a label rather than a quantity to difference
+        @test names == ["R1","C1","Lj1","C2"]
         # exact rows: dC1/dC = 1, dC2/dC = 1/4, dLj1/dL = 1, others zero
         iC1 = findfirst(==("C1"), names); iC2 = findfirst(==("C2"), names)
         iL = findfirst(==("Lj1"), names); iR = findfirst(==("R1"), names)

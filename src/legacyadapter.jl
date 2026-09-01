@@ -40,10 +40,10 @@ const legacyallowedcomponents = ["Lj","NL","L","C","K","I","R","P"]
     parsecomponenttype(name::String,allowedcomponents::Vector{String})
 
 The first one or two characters of the component name in the string `name`
-should match one of the strings in the vector `allowedcomponents`. Return the 
+should match one of the strings in the vector `allowedcomponents`. Return the
 index first of the match found.
 
-NOTE: if a two letter component appears in allowedcomponents after a one 
+NOTE: if a two letter component appears in allowedcomponents after a one
 letter component with the same starting letter this function will match on the
 first value.
 
@@ -88,7 +88,7 @@ end
     checkcomponenttypes(allowedcomponents::Vector{String})
 
 Check that each element in `allowedcomponents` is found at the correct place.
-This will detect the case where a two letter component appears in 
+This will detect the case where a two letter component appears in
 `allowedcomponents` after a one letter component with the same starting letter.
 The function parsecomponenttype() will match on the first value and this
 function will throw an error.
@@ -184,20 +184,31 @@ end
 # reference impedance like any other. The port itself is constructed
 # unterminated, so the netlist's own resistor remains its only load.
 function legacyportimpedances!(components, netlist)
-    resistorat = Dict{Tuple{String,String},Any}()  # node pair -> (value, name)
+    # every candidate, not the first: a legacy netlist with two resistors on
+    # a port's branch was refused, and taking one of them silently would
+    # reinterpret a netlist which used to be an error
+    resistorsat = Dict{Tuple{String,String},Vector{Any}}()
     for (i, entry) in enumerate(netlist)
         components[i].second isa Resistor || continue
         n1, n2 = string(entry[2]), string(entry[3])
-        haskey(resistorat, (n1, n2)) && continue
         r = (value = components[i].second.R, name = components[i].first)
-        resistorat[(n1, n2)] = r
-        resistorat[(n2, n1)] = r
+        push!(get!(Vector{Any}, resistorsat, (n1, n2)), r)
+        n1 == n2 || push!(get!(Vector{Any}, resistorsat, (n2, n1)), r)
     end
     for (i, entry) in enumerate(netlist)
         p = components[i].second
         p isa Port || continue
-        R = get(resistorat, (string(entry[2]), string(entry[3])), nothing)
-        isnothing(R) && continue
+        rs = get(resistorsat, (string(entry[2]), string(entry[3])), nothing)
+        # a legacy netlist has no syntax for a reference impedance, so a port
+        # with no resistor across it has none, which was and stays an error
+        if isnothing(rs)
+            throw(ArgumentError(lazy"Ports without resistors detected. Each port must have a resistor to define the impedance. Port $(p.number) has none; place a resistor across it, or write the circuit in the typed format, where a port states its own reference impedance."))
+        end
+        if length(rs) > 1
+            names = join([r.name for r in rs], ", ")
+            throw(ArgumentError(lazy"Only one resistor allowed per port. Port $(p.number) has $(length(rs)) resistors across it ($(names)), and a legacy netlist has no way to say which one is its environment. Give the port a single resistor, or write the circuit in the typed format, where a port states its own termination and any number of device resistors may share its terminals."))
+        end
+        R = only(rs)
         components[i] = components[i].first =>
             Port(p.number; Z0 = R.value,
                 termination = LegacyTermination(R.name))

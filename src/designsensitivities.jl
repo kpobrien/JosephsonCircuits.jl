@@ -24,18 +24,42 @@ Parse a builder output -- a legacy tuple netlist or a typed
 component order, so the names returned to the caller are the names the
 solver uses. A [`ScatteringParameters`](@ref) port appears with its
 `ScatteringStamp` as the value; every other value must be numeric.
+
+Analysis ports are not among them. A port occupies a slot in the flat table
+whose value is the port *number*, which is a label and not a quantity, so
+differencing it is meaningless: at best it is an axis which is always zero,
+and at worst a builder whose port numbering moved with a parameter would
+report a derivative for it and the sensitivity would try to rescale a stamp
+which does not exist.
+
+A port's reference impedance is a design quantity, and it appears here under
+the component which realizes it: the resistor a legacy netlist placed across
+the port, or the environment the lowering generated for a matched one, named
+after the port. That component is the one whose value the matrices read, so
+it is the one a sensitivity has to name.
 """
 function designparse(circuit)
     psc = compile(circuit)
-    vals = Vector{Any}(undef, length(psc.componentvalues))
-    for (i, v) in enumerate(psc.componentvalues)
-        if v isa Number || v isa ScatteringStamp
-            vals[i] = v
+    keep = [i for i in eachindex(psc.componentvalues)
+            if psc.componenttypes[i] !== :P]
+    names = String[psc.componentnames[i] for i in keep]
+    vals = Vector{Any}(undef, length(keep))
+    for (k, i) in enumerate(keep)
+        v = psc.componentvalues[i]
+        if v isa Number
+            vals[k] = v
         else
             throw(ArgumentError(lazy"the component $(psc.componentnames[i]) has the non-numeric value $(v); design sensitivities require a fully numeric builder output (frequency dependent and symbolic values are not supported)."))
         end
     end
-    return psc.componentnames, vals
+    # a scattering block is one entry, named by its instance path and
+    # carrying its definition. It used to be one entry per port, each
+    # carrying the whole definition, so a two port block appeared twice.
+    for b in psc.scatteringblocks
+        push!(names, b.path)
+        push!(vals, b.definition)
+    end
+    return names, vals
 end
 
 """
@@ -103,9 +127,9 @@ vector of `(firstportname, parameterindex, derivativeblock)`.
 function designblockjacobian(builder, p::NamedTuple;
         parameters = keys(p), delta = 1e-6)
     names0, raw0 = designparse(builder(; p...))
-    # the first port of each distinct block, which represents it
+    # the scattering blocks, one entry each
     firstport = [i for i in eachindex(raw0)
-                 if raw0[i] isa ScatteringStamp && raw0[i].port == 1]
+                 if raw0[i] isa ScatteringParameters]
     out = Tuple{String,Int,Any}[]
     isempty(firstport) && return out
     for (j, q) in enumerate(parameters)
@@ -116,9 +140,9 @@ function designblockjacobian(builder, p::NamedTuple;
         _, rawm = designparse(
             builder(; merge(p, NamedTuple{(q,)}((x - h,)))...))
         for i in firstport
-            bp = rawp[i].block
-            bm = rawm[i].block
-            b0 = raw0[i].block
+            bp = rawp[i]
+            bm = rawm[i]
+            b0 = raw0[i]
             (bp === b0 && bm === b0) && continue
             bp.nports == b0.nports && bm.nports == b0.nports ||
                 throw(ArgumentError(lazy"the builder changed the port count of the scattering block at $(names0[i]) when the parameter $(q) was perturbed."))

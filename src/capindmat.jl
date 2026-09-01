@@ -4,7 +4,8 @@
         Lbm::SparseVector, Ljb::SparseVector, Ljbm::SparseVector,
         Mb::SparseMatrixCSC, invLnm::SparseMatrixCSC,
         Rbnm::SparseMatrixCSC{Int, Int}, portindices::Vector{Int},
-        portnumbers::Vector{Int}, portimpedanceindices::Vector{Int}
+        portnumbers::Vector{Int}, portimpedances::Vector,
+        portenvironmentindices::Vector{Int},
         noiseportimpedanceindices::Vector{Int}, Lmean, vvn)
 
 A simple structure to hold the circuit matrices including the capacitance
@@ -34,8 +35,12 @@ inductances. See also [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
     node and branch bases.
 - `portindices::Vector{Int}`: vector of indices at which ports occur.
 - `portnumbers::Vector{Int}`: vector of port numbers.
-- `portimpedanceindices::Vector{Int}`: vector of indices at which port
-    impedances occur.
+- `portimpedances::Vector`: the reference impedance of each port, ordered by
+    port number. This is what the waves are normalized to, and it is defined
+    for every port whether or not the port owns an environment.
+- `portenvironmentindices::Vector{Int}`: vector of indices at which the port
+    owned environments occur, ordered by port number, with zero for a port
+    which owns none.
 - `noiseportimpedanceindices::Vector{Int}`: vector of indices at which
     resistive elements other than port impedances occur, for noise
     calculations.
@@ -55,7 +60,8 @@ struct CircuitMatrices{TC,TG,TLb,TLbm,TLj,TLjm,TM,TiL,TLmean,TV}
     Rbnm::SparseMatrixCSC{Int, Int}
     portindices::Vector{Int}
     portnumbers::Vector{Int}
-    portimpedanceindices::Vector{Int}
+    portimpedances::Vector
+    portenvironmentindices::Vector{Int}
     noiseportimpedanceindices::Vector{Int}
     Lmean::TLmean
     vvn::TV
@@ -69,7 +75,7 @@ Return the symbolic matrices describing the circuit properties.
 See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref),
 [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
 [`calcinvLn`](@ref), [`calcLmean`](@ref), [`portindicesnumbers`](@ref),
-[`portenvironmentindices`](@ref), and [`noiseindices`](@ref).
+[`portreferenceimpedances`](@ref), and [`noiseindices`](@ref).
 
 # Examples
 ```julia
@@ -104,7 +110,7 @@ Return the symbolic matrices describing the circuit properties.
 See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref),
 [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
 [`calcinvLn`](@ref), [`calcLmean`](@ref), [`portindicesnumbers`](@ref),
-[`portenvironmentindices`](@ref), and [`noiseindices`](@ref).
+[`portreferenceimpedances`](@ref), and [`noiseindices`](@ref).
 
 # Examples
 ```julia
@@ -140,7 +146,7 @@ Return the numeric matrices describing the circuit properties.
 See also [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
 [`calcCn`](@ref), [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref),
 [`calcMb`](@ref), [`calcinvLn`](@ref), [`calcLmean`](@ref),
-[`portindicesnumbers`](@ref), [`portenvironmentindices`](@ref), and
+[`portindicesnumbers`](@ref), [`portreferenceimpedances`](@ref), and
 [`noiseindices`](@ref).
 
 # Examples
@@ -270,11 +276,12 @@ function numericmatrices(psc::CompiledCircuit, cg::CircuitGraph,
     # which resistor is a port's own environment because the port declared
     # it, rather than inferring it from what sits across the port's terminals
     portindices, portnumbers = portindicesnumbers(psc)
-    portimpedanceindices = portenvironmentindices(psc)
+    portimpedances = portreferenceimpedances(psc, vvn)
+    portenvironments = portenvironmentindices(psc)
     noiseportimpedanceindices = noiseindices(psc, vvn)
 
     return CircuitMatrices(Cnm, Gnm, Lb, Lbm, Ljb, Ljbm, Mb, invLnm, Rbnm,
-        portindices, portnumbers, portimpedanceindices,
+        portindices, portnumbers, portimpedances, portenvironments,
         noiseportimpedanceindices, Lmean, vvn)
 end
 
@@ -1328,7 +1335,7 @@ function calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,
     end
 
     # find the first one then break the loop so we have to execute the first
-    # element logic only once. 
+    # element logic only once.
     valuetype = Nothing
     for (i,type) in enumerate(componenttypes)
         if haskey(componentsdict,type)

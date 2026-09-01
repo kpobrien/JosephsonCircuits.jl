@@ -402,8 +402,7 @@ using Test
         # the groups partition the flat table exactly once
         grouped = sort(vcat(cc.capacitors, cc.resistors, cc.inductors,
             cc.junctions, cc.nonlinearinductors, cc.currentsources,
-            cc.mutualinductors, [p.component for p in cc.ports],
-            reduce(vcat, [b.components for b in cc.scatteringblocks])))
+            cc.mutualinductors, [p.component for p in cc.ports]))
         @test grouped == collect(1:JC.ncomponents(cc))
 
         # and each group holds only its own type
@@ -428,37 +427,76 @@ using Test
                 cc.componentnames[p.component]*"/termination"
         end
 
-        # a port which declares no termination of its own is terminated by
-        # the resistor the user placed across it. That is the one case where
-        # the environment is not declared anywhere, so it is found once at
-        # compile time and recorded like any other
+        # a port which declares no termination of its own owns none, whatever
+        # the user placed across it. The resistors stay device resistors,
+        # any number of them may share the terminals, and the reference
+        # impedance is the one the port declared
         cu = JC.compile(Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
+            [:p1 => Port(1; Z0 = 50.0, termination = nothing),
+             :r1 => Resistor(100.0), :r2 => Resistor(200.0),
              :c1 => Capacitor(1e-12)],
-            [[(:p1,1),(:r1,1),(:c1,1)], [(:p1,2),(:r1,2),(:c1,2),Ground]]))
-        @test cu.componentnames[only(cu.ports).environment] == "r1"
+            [[(:p1,1),(:r1,1),(:r2,1),(:c1,1)],
+             [(:p1,2),(:r1,2),(:r2,2),(:c1,2),Ground]]))
+        @test only(cu.ports).environment == 0
         @test only(cu.ports).zref == 50.0
-        # with nothing across it there is nothing to find
+        nmu = JC.numericmatrices(cu, calccircuitgraph(cu), Dict{Any,Any}();
+            Nmodes = 1)
+        # normalized to the declared Z0, not to the resistor beside it
+        @test nmu.portimpedances == [50.0]
+        @test nmu.portenvironmentindices == [0]
+        # and both resistors are still internal noise channels
+        @test [cu.componentnames[i] for i in nmu.noiseportimpedanceindices] ==
+            ["r1", "r2"]
+        # A port owning a matched environment beside a device resistor of
+        # the same value is loaded twice. That is legal and occasionally
+        # meant, but it is much more often a circuit written when a resistor
+        # was how a port got its impedance, so it is reported rather than
+        # refused or silently accepted.
+        dup = Circuit(
+            [:p1 => Port(1; Z0 = 50.0), :r1 => Resistor(50.0),
+             :c1 => Capacitor(1e-12)],
+            [[(:p1,1),(:r1,1),(:c1,1)], [(:p1,2),(:r1,2),(:c1,2),Ground]])
+        @test_logs (:warn,) JC.compile(dup)
+        # a device resistor of a different value is a device resistor
+        notdup = Circuit(
+            [:p1 => Port(1; Z0 = 50.0), :r1 => Resistor(100.0),
+             :c1 => Capacitor(1e-12)],
+            [[(:p1,1),(:r1,1),(:c1,1)], [(:p1,2),(:r1,2),(:c1,2),Ground]])
+        @test_logs JC.compile(notdup)
+
+        # with nothing across it the port is simply unloaded
         cnone = JC.compile(Circuit(
             [:p1 => Port(1; termination = nothing), :c1 => Capacitor(1e-12)],
             [[(:p1,1),(:c1,1)], [(:p1,2),(:c1,2),Ground]]))
         @test only(cnone.ports).environment == 0
-        # and two of them leave the reference impedance ambiguous
-        @test_throws ArgumentError JC.compile(Circuit(
-            [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0),
-             :r2 => Resistor(75.0), :c1 => Capacitor(1e-12)],
-            [[(:p1,1),(:r1,1),(:r2,1),(:c1,1)],
-             [(:p1,2),(:r1,2),(:r2,2),(:c1,2),Ground]]))
 
-        # the block keeps its whole terminal map, and it agrees with the per
-        # port entries the parsed view is limited to
+        # and the waves are normalized to the declared reference impedance
+        # rather than to whatever resistor shares the branch, which is what
+        # the geometric rule could not express. A port which owns its
+        # matched environment reflects (R - Z0)/(R + Z0) off a load R; an
+        # unterminated one is an ideal current source into the same load and
+        # gives (2R - Z0)/Z0, and both follow Z0 while the circuit stands
+        # still
+        onenode(port, R) = hblinsolve([2*pi*5e9], Circuit(
+            [:p1 => port, :r => Resistor(R)],
+            [[(:p1,1),(:r,1)], [(:p1,2),(:r,2),Ground]]);
+            keyedarrays = false).S[1,1,1,1,1]
+        @test isapprox(onenode(Port(1; Z0 = 50.0), 100.0), 1/3; atol = 1e-12)
+        @test isapprox(onenode(Port(1; Z0 = 100.0), 100.0), 0; atol = 1e-12)
+        @test isapprox(onenode(Port(1; Z0 = 50.0, termination = nothing),
+            100.0), 3.0; atol = 1e-12)
+        @test isapprox(onenode(Port(1; Z0 = 75.0, termination = nothing),
+            100.0), (2*100.0 - 75.0)/75.0; atol = 1e-12)
+
+        # the block keeps its whole terminal map, and it is the only place
+        # the block appears: it has no entries in the flat table
         b = only(cc.scatteringblocks)
         @test b.definition === blk
-        @test length(b.components) == blk.nports
-        for (p, k) in enumerate(b.components)
-            @test cc.componenttypes[k] === :S
-            @test cc.nodeindices[1, k] == b.signalnodes[p]
-            @test cc.nodeindices[2, k] == b.refnodes[p]
+        @test length(b.signalnodes) == blk.nports
+        @test !any(==(:S), cc.componenttypes)
+        for p in 1:blk.nports
+            @test b.signalnodes[p] > 0
+            @test b.refnodes[p] > 0
         end
         @test b.path == "blk"
 
@@ -540,9 +578,10 @@ using Test
         # a resistor across a port's terminals as that port's environment;
         # now both assemblies take the roles from the ports and agree
         ref = numericmatrices(cc, cg, Dict{Any,Any}(); Nmodes = 1)
-        @test nm.portimpedanceindices == ref.portimpedanceindices
+        @test nm.portimpedances == ref.portimpedances
+        @test nm.portenvironmentindices == ref.portenvironmentindices
         @test nm.noiseportimpedanceindices == ref.noiseportimpedanceindices
-        @test cc.componentnames[only(nm.portimpedanceindices)] ==
+        @test cc.componentnames[only(nm.portenvironmentindices)] ==
             "p1/termination"
         @test [cc.componentnames[i] for i in nm.noiseportimpedanceindices] ==
             ["rload"]
@@ -559,11 +598,12 @@ using Test
                 :gnd => Ground()],
             Any[[(:p1,1),(:p2,1),(:c1,1)],
                 [(:p1,2),(:p2,2),(:c1,2),(:gnd,1)]])))
-        # a port which owns nothing and has no resistor of its own
-        @test_throws ArgumentError JC.portenvironmentindices(JC.compile(
+        # a port which owns nothing reports zero rather than failing: it has
+        # a reference impedance like every port, it simply loads nothing
+        @test JC.portenvironmentindices(JC.compile(
             Circuit([:p1 => Port(1; termination = nothing),
                      :c1 => Capacitor(1e-12)],
-                [[(:p1,1),(:c1,1)], [(:p1,2),(:c1,2),Ground]])))
+                [[(:p1,1),(:c1,1)], [(:p1,2),(:c1,2),Ground]]))) == [0]
 
         # the per group element types are what the whole table scan produced
         function typesagree(c)
@@ -638,15 +678,15 @@ using Test
         # explicitly connecting a grounded reference terminal is an error
         @test_throws ArgumentError Circuit([:b => gblk],
             [((:b, 1, 2), Ground)])
-        # lowering emits one :S component per port, sharing the block
+        # lowering emits the block once, and nothing in the flat table
         psc = compile(cg)
-        sindices = findall(==(:S), psc.componenttypes)
-        @test length(sindices) == 2
-        @test psc.componentnames[sindices] == ["b/port1", "b/port2"]
-        @test all(psc.componentvalues[i].block === gblk for i in sindices)
-        @test [psc.componentvalues[i].port for i in sindices] == [1, 2]
+        @test !any(==(:S), psc.componenttypes)
+        b = only(psc.scatteringblocks)
+        @test b.definition === gblk
+        @test b.path == "b"
+        @test length(b.signalnodes) == 2
         # reference terminals lower to the ground node
-        @test all(psc.nodeindices[2, i] == 1 for i in sindices)
+        @test all(==(1), b.refnodes)
     end
 
     @testset "voltage sources and ground requirement" begin

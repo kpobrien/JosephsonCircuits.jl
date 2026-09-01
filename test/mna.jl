@@ -1315,26 +1315,26 @@ end
 
     @testset "solver scale" begin
 
-        # Z0/w0 with geometric means over port impedances and nonzero
-        # drive frequencies
+        # Z0/w0 with geometric means over the port reference impedances and
+        # the nonzero drive frequencies
         @test isapprox(JosephsonCircuits.calcsolverscale((2*pi*5e9,),
-            [:P,:R], Any[1,50.0], [2], 1e-9), 50.0/(2*pi*5e9))
+            [:P,:R], Any[1,50.0], Any[50.0], 1e-9), 50.0/(2*pi*5e9))
         # zero frequencies are ignored; geomean(4,9) = 6, geomean(25,100) = 50
         @test isapprox(JosephsonCircuits.calcsolverscale(
-            (2*pi*4e9, 0.0, 2*pi*9e9), [:R,:R], Any[25.0,100.0], [1,2],
-            1.0), 50.0/(2*pi*6e9))
+            (2*pi*4e9, 0.0, 2*pi*9e9), [:R,:R], Any[25.0,100.0],
+            Any[25.0,100.0], 1.0), 50.0/(2*pi*6e9))
         # fallback to all constant real resistors when no port impedances
         @test isapprox(JosephsonCircuits.calcsolverscale((2*pi*1e9,),
-            [:R], Any[200.0], Int[], 1.0), 200.0/(2*pi*1e9))
+            [:R], Any[200.0], Any[], 1.0), 200.0/(2*pi*1e9))
         # fallback to 50 ohms when no resistors at all
         @test isapprox(JosephsonCircuits.calcsolverscale((2*pi*1e9,),
-            [:C], Any[1e-15], Int[], 1.0), 50.0/(2*pi*1e9))
+            [:C], Any[1e-15], Any[], 1.0), 50.0/(2*pi*1e9))
         # purely zero-frequency drive falls back to the mean inductance
         @test JosephsonCircuits.calcsolverscale((0.0,), [:R], Any[50.0],
-            [1], 3.3e-9) == 3.3e-9
+            Any[50.0], 3.3e-9) == 3.3e-9
         # complex storage with zero imaginary part is accepted
         @test isapprox(JosephsonCircuits.calcsolverscale((2*pi*5e9,),
-            [:R], Any[50.0+0.0im], [1], 1e-9), 50.0/(2*pi*5e9))
+            [:R], Any[50.0+0.0im], Any[50.0+0.0im], 1e-9), 50.0/(2*pi*5e9))
     end
 
     @testset "coupled inductor MNA stamp Schur identity" begin

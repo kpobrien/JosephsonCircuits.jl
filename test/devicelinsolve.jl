@@ -129,7 +129,7 @@ const CPU = JosephsonCircuits.CPU
             nonlinear=nl, debuglsys=true)
         Nmodes = d.Nmodes
         rows = JosephsonCircuits.portsolutionrows(d.nodeindices,
-            d.portimpedanceindices, Nmodes)
+            d.portindices, Nmodes)
         @test issorted(rows)
         @test allunique(rows)
         @test all(r -> 1 <= r <= size(d.lsys.Asparse,1), rows)
@@ -145,14 +145,12 @@ const CPU = JosephsonCircuits.CPU
         iw = zeros(ComplexF64, nrhs, nrhs); ow = similar(iw)
         iw2 = similar(iw); ow2 = similar(iw)
         JosephsonCircuits.calcinputoutput!(iw, ow, phin, d.bnm,
-            d.portimpedanceindices, d.portimpedanceindices,
-            [d.vvn[i] for i in d.portimpedanceindices],
-            [d.vvn[i] for i in d.portimpedanceindices],
+            d.portindices, d.portindices,
+            d.portimpedances, d.portimpedances,
             d.nodeindices, d.componenttypes, wmodes, nothing)
         JosephsonCircuits.calcinputoutput!(iw2, ow2, masked, d.bnm,
-            d.portimpedanceindices, d.portimpedanceindices,
-            [d.vvn[i] for i in d.portimpedanceindices],
-            [d.vvn[i] for i in d.portimpedanceindices],
+            d.portindices, d.portindices,
+            d.portimpedances, d.portimpedances,
             d.nodeindices, d.componenttypes, wmodes, nothing)
         @test iw == iw2
         @test ow == ow2

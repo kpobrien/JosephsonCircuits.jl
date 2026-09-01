@@ -420,7 +420,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     invLnmcopy = nm.invLnm
     portindices = nm.portindices
     portnumbers = nm.portnumbers
-    portimpedanceindices = nm.portimpedanceindices
+    portimpedances = nm.portimpedances
     vvn = nm.vvn
     # if there are no inductors, then Lmean will be zero so set it to be one
     Lmean = if iszero(nm.Lmean)
@@ -444,8 +444,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # multiplies rows only, so the node fluxes and all physical outputs are
     # unchanged. The local name Lmean is kept for continuity with the
     # matrix and plan interfaces.
-    Lmean = calcsolverscale(w, componenttypes, vvn, portimpedanceindices,
-        Lmean)
+    Lmean = calcsolverscale(w, componenttypes, vvn, portimpedances, Lmean)
     Lb = nm.Lb
 
     # find the indices associated with the components for which we will
@@ -577,7 +576,11 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # the resistor and block currents they drive reach the nodes through the
     # coupling, so the system is built on the applied source: nothing is
     # subtracted from it here and so nothing can be subtracted twice.
-    bnmsource = bnm
+    # a copy, not an alias: `bnm` is handed to the `HBSystem`, which owns it
+    # from then on and writes into it when the drive is scaled. The direct
+    # current rows are built from the drive as applied, so they must not
+    # move when that happens.
+    bnmsource = copy(bnm)
     dcplan = dcconductanceplan(floatingcomponents, Gnm, wmodes, Nmodes,
         Nnodes)
 
@@ -588,10 +591,28 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # application. Skipping it leaves the `i = 0` rows the scattering stamp
     # writes, which are then the right answer rather than a simplification.
     dcexplicit = !isnothing(dcplan) && dcinjected(dcplan, bnmsource, Nmodes)
-    if dcexplicit && !(method in (:newtonkrylov, :newton))
-        throw(ArgumentError(lazy"a circuit which injects direct current is solved with the average voltages as unknowns, which needs the real system; $(method) solves the complex holomorphic one. Use method = :newtonkrylov or :newton."))
+
+    # The average voltages, their transport rows and the blocks' zero
+    # frequency rows live in a wrapper around the system rather than in it,
+    # so the raw `HBSystem` is not the system being solved: its scattering
+    # rows still say `i = 0` and its resistors still carry no direct
+    # current. Handing that object out, or differentiating it, would define
+    # a second and different operating point. Refuse instead, until the
+    # composite system exists to hand out.
+    if dcexplicit
+    end
+    # the canonical Jacobian is assembled as a host `SparseMatrixCSC`; on a
+    # device backend `Jr` is not one, and there is no device assembly yet
+    if dcexplicit && method == :newton && !(backend isa CPU)
+        throw(ArgumentError("a circuit which injects direct current is solved with an assembled canonical Jacobian under method = :newton, and that assembly is host only. Use method = :newtonkrylov on this backend, which is matrix free, or run :newton on the CPU."))
+    end
+    if dcexplicit && !(method in (:newtonkrylov, :newton, :external))
+        throw(ArgumentError(lazy"a circuit which injects direct current is solved with the average voltages as unknowns, which needs the real system; $(method) solves the complex holomorphic one. Use method = :newtonkrylov, :newton, or an ExternalSolver."))
     end
     dcsol = nothing
+    # the converged canonical state, which is the point the whole system is
+    # differentiated at when the direct current block is active
+    dccanonical = nothing
 
     gaugeindices = calcdcgaugeindices(floatingcomponents, wmodes, Nmodes)
     Amna = calcAmna(mnaindices, nodeindices, vvn, gaugeindices, wmodes,
@@ -797,6 +818,33 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # functions along with the ingredients from which the Jacobians are
     # assembled, so reference implementations can be constructed, eg. in the
     # tests.
+    # The canonical layout, built once for whichever method uses it. Both
+    # the matrix free path and the direct one solve the same system in the
+    # same coordinates; only the way they apply the Jacobian differs.
+    canonwork = if dcexplicit
+        tr = dcexplicit ? transportrows(dcplan, bnmsource, Nmodes) : nothing
+        Lc = tobackend(backend, compositelayout(modelayout, frequencies.modes;
+            nvdc = isnothing(tr) ? 0 : nvoltages(tr)))
+        # a block's zero frequency row is `i = 0` in the stamp; with an
+        # average voltage to respond to it becomes the block's own relation,
+        # which is what makes it visible at direct current
+        br = (dcexplicit && Nauxscattering > 0) ?
+            dcblockrows(stampedblocks, dcplan.componentof, Nmodes,
+                dcplan.modeindex, Lc.nac, Nnodes - 1, Lmean) : nothing
+        # the zero frequency block holds one entry per node and then one per
+        # auxiliary unknown; only the nodal ones carry the coupling.
+        #
+        # Not named `w`: that is this function's drive frequency, and
+        # assigning to it here rebound the argument, so every circuit which
+        # injected direct current reported the work object as its drive and
+        # `hbsolve` could not compute the mode frequencies from it.
+        CanonicalWork(Lc, tobackend(backend,
+                convert(Vector{precision}, xr));
+            transport = tr, blockrows = br, nnodaldc = Nnodes - 1)
+    else
+        nothing
+    end
+
     if returnsystem
         # Everything an external solver needs, without solving: the
         # evaluation object, the initial value, the real representation
@@ -806,6 +854,10 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         return (sys=sys, xr=xr, Fr=Fr, modelayout=modelayout,
             Jr=(assemblejacobian ? Jr : nothing), Nnodal=Nnodal,
             dcplan=dcplan, dcsol=dcsol, bnmsource=bnmsource,
+            # with direct current active, `sys` alone is not the system:
+            # the average voltages and the blocks' zero frequency rows are
+            # in here, and a caller must apply them
+            canonicalwork=canonwork, dcexplicit=dcexplicit,
             frequencies=frequencies,
             Amatrixindicesaliased=Amatrixindicesaliased,
             Amatrixconjindices=Amatrixconjindices, Ljb=Ljb, Lmean=Lmean,
@@ -814,6 +866,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     end
     if debugJacobian
         return (F=F, x=x, Fr=Fr, xr=xr, Jx=Jxb, Jr=Jr, fj=fj!, fjreal=fjreal!,
+            canonicalwork=canonwork, dcexplicit=dcexplicit,
             sys=sys, Nnodal=Nnodal, mnaindices=mnaindices,
             gaugeindices=gaugeindices, floatingcomponents=floatingcomponents,
             coupledbranches=coupledbranches,
@@ -837,30 +890,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # cost of them has to be known. The assembled Jacobian methods would
     # additionally need `P J Pᵀ`, which stage 5 brings with the transport
     # rows; until then say so rather than ignore the request.
-    # The canonical layout, built once for whichever method uses it. Both
-    # the matrix free path and the direct one solve the same system in the
-    # same coordinates; only the way they apply the Jacobian differs.
-    canonwork = if dcexplicit
-        tr = dcexplicit ? transportrows(dcplan, bnmsource, Nmodes) : nothing
-        Lc = tobackend(backend, compositelayout(modelayout, frequencies.modes;
-            nvdc = isnothing(tr) ? 0 : nvoltages(tr)))
-        # a block's zero frequency row is `i = 0` in the stamp; with an
-        # average voltage to respond to it becomes the block's own relation,
-        # which is what makes it visible at direct current
-        br = (dcexplicit && Nauxscattering > 0) ?
-            dcblockrows(stampedblocks, dcplan.componentof, Nmodes,
-                dcplan.modeindex, Lc.nac, Nnodes - 1, Lmean) : nothing
-        # the zero frequency block holds one entry per node and then one per
-        # auxiliary unknown; only the nodal ones carry the coupling
-        w = CanonicalWork(Lc, tobackend(backend,
-                convert(Vector{precision}, xr));
-            transport = tr, blockrows = br, nnodaldc = Nnodes - 1)
-        checkdcsubsystem(w, nodenames)
-        w
-    else
-        nothing
-    end
-
     info = if method == :quasinewton
 
         solveonbackend!(fj!, F, Jxb, x, backend; iterations = iterations,
@@ -876,17 +905,19 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             nc = canonicaldim(Lc)
             # the pattern, from one assembly at the starting point
             fjreal!(nothing, Jr, xr)
-            Jc = canonicaljacobian(Jr, canonwork)
+            jplan = canonicaljacobianplan(Jr, canonwork)
+            Jc = jplan.J
             uc = zeros(eltype(xr), nc)
             Fc = zeros(eltype(Fr), nc)
             gathercanonical!(uc, xr, Lc)
             out = solveonbackend!(
-                canonicalfj(fjreal!, canonwork, Jr, Jc), Fc, Jc, uc, backend;
+                canonicalfj(fjreal!, canonwork, Jr, jplan), Fc, Jc, uc, backend;
                 iterations = iterations, ftol = ftol, rtol = rtol,
                 andersondepth = andersondepth, factorization = factorization)
             scattercanonical!(xr, uc, Lc)
             scattercanonical!(Fr, Fc, Lc)
             if dcexplicit
+                dccanonical = Array(uc)
                 dcsol = dcsolutionfrom(dcplan,
                     Array(view(uc, voltagerange(Lc))))
             end
@@ -1025,6 +1056,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             # devices are linear conductances, which the tests assert; they
             # will not once a block's port current is an unknown too.
             if dcexplicit
+                dccanonical = Array(ucb)
                 dcsol = dcsolutionfrom(dcplan,
                     Array(view(ucb, voltagerange(L))))
             end
@@ -1044,20 +1076,42 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         info
     elseif method == :external
         # hand the caller's root finder the system as a problem object; it
-        # needs nothing from this scope beyond what the problem carries
-        prob = HBNonlinearProblem(sys, modelayout, copy(xr), Jr,
-            (Amatrixindicesaliased = Amatrixindicesaliased,
+        # needs nothing from this scope beyond what the problem carries.
+        # With direct current the problem carries the augmentation too, so
+        # the caller solves the system which was posed rather than the
+        # harmonic part of it, in the canonical unknowns.
+        aug = dcexplicit ? DCAugmentation(canonwork, Jr) : nothing
+        parts = (Amatrixindicesaliased = Amatrixindicesaliased,
              Amatrixconjindices = Amatrixconjindices, Ljb = Ljb,
              Lmean = Lmean, Rbnm = Rbnm, Nmodes = Nmodes,
              Nbranches = Nbranches, Nfreq = Nfreq, invLnm = invLnm,
-             Gnm = Gnm, Cnm = Cnm, Amatrixmodes = Amatrixmodes))
-        u, extconverged = solverobject.f(prob, copy(xr))
-        copyto!(xr, u)
-        hbresidual!(Fr, prob, xr)
+             Gnm = Gnm, Cnm = Cnm, Amatrixmodes = Amatrixmodes)
+        u0 = if dcexplicit
+            v = zeros(Float64, canonicaldim(canonwork.layout))
+            gathercanonical!(v, xr, canonwork.layout)
+            v
+        else
+            copy(xr)
+        end
+        prob = HBNonlinearProblem(sys, modelayout, u0,
+            dcexplicit ? (isnothing(aug.jplan) ? nothing : aug.jplan.J) : Jr,
+            parts; augmentation = aug)
+        u, extconverged = solverobject.f(prob, copy(u0))
+        Fc = similar(u)
+        hbresidual!(Fc, prob, u)
+        if dcexplicit
+            scattercanonical!(xr, u, canonwork.layout)
+            scattercanonical!(Fr, Fc, canonwork.layout)
+            dccanonical = Array(u)
+            dcsol = dcsolutionfrom(dcplan,
+                Array(view(u, voltagerange(canonwork.layout))))
+        else
+            copyto!(xr, u); copyto!(Fr, Fc)
+        end
         real_to_complex!(x, xr, modelayout.isreal)
         real_to_complex!(F, Fr, modelayout.isreal)
         IterationInfo("external", 1.0, 0.0, extconverged, 0,
-            [norm(Fr)], Float64[], Int[], Bool[], [])
+            [norm(Fc)], Float64[], Int[], Bool[], [])
     else
         throw(ArgumentError("Method $(method) is not defined."))
     end
@@ -1097,7 +1151,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # same way, hands this check the pair the elimination would have
         # produced, so it validates the physics rather than the path.
         bnmkcl = bnm
-        if dcexplicit && !isnothing(dcsol) && dcsol.active
+        if dcexplicit && !isnothing(dcsol)
             for p in 2:Nnodes
                 F[(p-2)*Nmodes + dcplan.modeindex] +=
                     dcsol.scaledcurrent[p-1]
@@ -1110,6 +1164,25 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             @warn "The original (ungauged) Kirchhoff current law equations are violated beyond the solver resolution at the returned solution, indicating that a gauge fixing equation absorbed an incompatibility, such as a net direct current injected into a floating subnetwork, into the arbitrary flux reference. Marking the solution as not converged." normkcl kcltol
             converged = false
         end
+    end
+
+    # The static flux partition treats a junction as a short at zero
+    # frequency, which is a statement about the junction being in the zero
+    # voltage state. The point is converged and the sine of the branch flux
+    # is cached there, so the direct current each junction carries is a mean
+    # over the reconstructed period and costs nothing to look at.
+    if converged && !isempty(Ljb.nzind)
+        setpoint!(sys, x)
+        residual!(similar(sys.x), sys)
+        branchnames = Dict{Int,Vector{String}}()
+        for i in eachindex(componenttypes)
+            componenttypes[i] === :Lj || continue
+            key = (nodeindices[1,i], nodeindices[2,i])
+            b = get(edge2indexdict, key, 0)
+            iszero(b) || push!(get!(Vector{String}, branchnames, b),
+                String(componentnames[i]))
+        end
+        checkjunctiondc(tohost(sys.sintd), Ljb.nzind, branchnames)
     end
 
     # remove the auxiliary variables so the output contains only the node
@@ -1132,11 +1205,10 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     S = zeros(Complex{Float64}, Nports*Nmodes, Nports*Nmodes)
     inputwave = zeros(Complex{Float64}, Nports*Nmodes)
     outputwave = zeros(Complex{Float64}, Nports*Nmodes)
-    portimpedances = [vvn[i] for i in portimpedanceindices]
     if !isempty(S)
         calcinputoutput!(inputwave, outputwave, nodeflux,
             bnm[1:Nnodal]/Lmean,
-            portimpedanceindices, portimpedanceindices, portimpedances,
+            portindices, portindices, portimpedances,
             portimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
         calcscatteringmatrix!(S, inputwave, outputwave)
     end
@@ -1200,17 +1272,35 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # the augmentation the solve actually used
         setpoint!(sys, x)
         jacobian!(Jr, sys)
+        # with an explicit block the implicit function theorem applies to
+        # the canonical system, so the point carries that too: the work, the
+        # canonical state and the canonical Jacobian assembled there
+        dcop = if dcexplicit && !isnothing(dccanonical)
+            jp = canonicaljacobianplan(hostsparse(Jr), canonwork)
+            canonicaljacobian!(jp, hostsparse(Jr))
+            DCOperatingPoint(canonwork, dccanonical, copy(jp.J), jp)
+        else
+            nothing
+        end
         HBOperatingPoint(opsys, copy(x), hostsparse(Jr), modelayout, Nnodal,
             Lmean, wmodes, Amna,
-            mnaindices, coupledbranches, Nmodes, Nnodes)
+            mnaindices, coupledbranches, Nmodes, Nnodes, dcop)
     else
         nothing
     end
 
+    # ground is dropped and the values keyed by node name, so that this
+    # reads like `nodeflux` rather than one index out of step with it
+    dcout = if isnothing(dcsol)
+        nothing
+    else
+        v = dcsol.nodevoltage[2:end]
+        keyedarrays ? nodevariabletokeyed(v, nodenames) : v
+    end
+
     return NonlinearHB(w, frequencies, nodefluxout, Rbnmout, Ljb, Lb, Ljbm,
         Nmodes, Nbranches, nodenames, portnumbers, modes, Sout, solverinfo,
-        operatingpoint,
-        isnothing(dcsol) || !dcsol.active ? nothing : dcsol.nodevoltage)
+        operatingpoint, dcout)
 
 end
 

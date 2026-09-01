@@ -81,8 +81,8 @@ common shift (a gauge degree of freedom). The modified nodal analysis
 formulation adds one gauge fixing equation per floating component and
 zero-frequency mode, see [`calcdcgaugeindices`](@ref). The net direct current
 injected into each floating component must be zero for a periodic solution to
-exist; the direct current subsystem is singular otherwise, which
-`checkdcsubsystem` reports.
+exist; the direct current subsystem has no solution otherwise, which
+`dcpinning` reports.
 
 # Examples
 ```jldoctest
@@ -564,7 +564,7 @@ end
 
 """
     calcsolverscale(w, componenttypes::Vector{Symbol}, vvn::Vector,
-        portimpedanceindices::Vector{Int}, Lmean)
+        portimpedances::Vector, Lmean)
 
 Calculate the inductance scale used to nondimensionalize the nonlinear
 harmonic balance system: the Kirchhoff current law rows are multiplied by
@@ -575,7 +575,7 @@ units of the corresponding natural current scale. The scale is
 
 `Lscale = Z0/w0`
 
-with `Z0` the geometric mean of the constant real port impedance resistors
+with `Z0` the geometric mean of the constant real port reference impedances
 (falling back to the geometric mean of all constant real resistors and then
 to 50 ohms when none are present) and `w0` the geometric mean of the
 absolute values of the nonzero drive frequencies. With this choice the
@@ -593,15 +593,15 @@ When every drive frequency is zero the mean inductance `Lmean` is returned
 instead, since no frequency scale is available.
 """
 function calcsolverscale(w, componenttypes::Vector{Symbol}, vvn::Vector,
-    portimpedanceindices::Vector{Int}, Lmean)
+    portimpedances::Vector, Lmean)
 
     # geometric mean of the constant real port impedances, falling back to
     # all constant real resistors, then to 50 ohms.
     logsum = 0.0
     n = 0
-    for i in portimpedanceindices
-        if ismnaresistance(vvn[i])
-            logsum += log(abs(mnaresistance(vvn[i])))
+    for z in portimpedances
+        if ismnaresistance(z)
+            logsum += log(abs(mnaresistance(z)))
             n += 1
         end
     end

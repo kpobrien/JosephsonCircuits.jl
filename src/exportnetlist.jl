@@ -725,6 +725,10 @@ function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
         elseif flag == true && componenttypes[i] == :K
             push!(netlist,"$(spicename(componentnames[i],'K')) $(mutualinductorbranchnames[2*mutualinductorindex-1]) $(mutualinductorbranchnames[2*mutualinductorindex]) $(real(value))")
         elseif flag == true && componenttypes[i] == :R
+            # every resistor, the environment a port owns included. The port
+            # itself writes no line, so its source impedance reaches the
+            # exported circuit only through this one; dropping it as a
+            # lowering artifact would export a different circuit.
             push!(netlist,"$(spicename(componentnames[i],'R')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value))")
         end
     end

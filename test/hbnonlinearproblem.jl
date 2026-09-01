@@ -310,3 +310,104 @@ end
 end
 
 end
+
+# The augmented problem: with an explicit direct current block the system
+# posed is not the harmonic one, and the whole derivative surface has to be
+# the augmented system's or a caller ends up differentiating a different
+# problem from the one that was solved. Every derivative below is checked
+# against something independent -- the assembled Jacobian, its transpose, or
+# a finite difference of the derivative one order below.
+@testset verbose=true "the direct current augmented problem" begin
+    circuit = Circuit(
+        [:p1 => Port(1; Z0 = 50.0), :cc => Capacitor(100e-15),
+         :jj => JosephsonJunction(1000e-12), :cj => Capacitor(1000e-15)],
+        [[(:p1,1),(:cc,1)], [(:cc,2),(:jj,1),(:cj,1)],
+         [(:p1,2),(:jj,2),(:cj,2), Ground]])
+    src = [(mode = (1,), port = 1, current = 1.2e-6),
+           (mode = (0,), port = 1, current = 1.0e-7)]
+    wp = (2*pi*4.75e9,)
+    kw = (; dc = true, odd = true, even = true)
+
+    prob = JC.hbnonlinearproblem(wp, (4,), src, circuit, Dict{Any,Any}();
+        kw...)
+    @test JC.isaugmented(prob)
+    L = prob.augmentation.work.layout
+    @test length(prob) == JC.canonicaldim(L)
+    @test L.nvdc > 0
+
+    n = length(prob)
+    Random.seed!(20)
+    u = randn(n); v = randn(n); w = randn(n); z = randn(n)
+
+    J = JC.hbjacobian!(copy(prob.jacobian), prob, u)
+    Jv = zeros(n); JC.hbjvp!(Jv, prob, u, v)
+    @test isapprox(J*v, Jv; rtol = 1e-12)
+
+    Jt = zeros(n); JC.hbvjp!(Jt, prob, u, z)
+    @test isapprox(transpose(Matrix(J))*z, Jt; rtol = 1e-12)
+
+    # the operator sets its point once and must agree with the assembled one
+    Jop = JC.JacobianOperator(prob, u)
+    @test size(Jop) == (n, n)
+    @test isapprox(Jop*v, J*v; rtol = 1e-12)
+    @test isapprox(transpose(Jop)*z, Jt; rtol = 1e-12)
+
+    # the preconditioner is the canonical wrapper, and applies
+    pc = JC.preconditioner(prob, u)
+    y = similar(v); ldiv!(y, pc, v)
+    @test all(isfinite, y)
+    @test !all(iszero, y)
+
+    # the residual against the product, and the higher derivatives against
+    # finite differences of the one below
+    h = 1e-6
+    F0 = zeros(n); JC.hbresidual!(F0, prob, u)
+    F1 = zeros(n); JC.hbresidual!(F1, prob, u .+ h.*v)
+    @test hbnlp_relerr((F1 .- F0)./h, Jv) < 1e-5
+
+    d2 = zeros(n); JC.hbd2F!(d2, prob, u, v, w)
+    a0 = zeros(n); JC.hbjvp!(a0, prob, u, v)
+    a1 = zeros(n); JC.hbjvp!(a1, prob, u .+ h.*w, v)
+    @test hbnlp_relerr((a1 .- a0)./h, d2) < 1e-4
+
+    d3 = zeros(n); JC.hbd3F!(d3, prob, u, v, w, z)
+    b0 = zeros(n); JC.hbd2F!(b0, prob, u, v, w)
+    b1 = zeros(n); JC.hbd2F!(b1, prob, u .+ h.*z, v, w)
+    @test hbnlp_relerr((b1 .- b0)./h, d3) < 1e-4
+
+    # the drive derivative is exact, and the direct current injection moves
+    # with the drive rather than staying at the scale it was built with
+    dp = zeros(n); JC.setdrive!(prob, 1.0); JC.hbdFdp!(dp, prob)
+    g1 = zeros(n); JC.drivenresidual!(g1, prob, u, 1.0 + h)
+    g0 = zeros(n); JC.drivenresidual!(g0, prob, u, 1.0)
+    @test hbnlp_relerr((g1 .- g0)./h, dp) < 1e-6
+    JC.setdrive!(prob, 1.0)
+
+    # and an external solver driving the augmented problem reaches the point
+    # the internal one does
+    @testset "an external solver sees the augmented system" begin
+        ext = JC.ExternalSolver() do p, u0
+            u = copy(u0); F = similar(u)
+            JC.hbresidual!(F, p, u); r0 = norm(F)
+            Jm = copy(p.jacobian)
+            for k in 1:60
+                norm(F) <= 1e-13*max(r0,1) && return (u, true)
+                JC.hbjacobian!(Jm, p, u)
+                u .-= Jm \ F
+                JC.hbresidual!(F, p, u)
+            end
+            return (u, norm(F) <= 1e-13*max(r0,1))
+        end
+        a = JC.hbnlsolve(wp, (4,), src, circuit, Dict{Any,Any}();
+            kw..., keyedarrays = false, method = ext)
+        b = JC.hbnlsolve(wp, (4,), src, circuit, Dict{Any,Any}();
+            kw..., keyedarrays = false, method = :newton, rtol = 1e-13)
+        @test a.solverinfo.converged
+        @test isapprox(a.dcnodevoltage, b.dcnodevoltage; rtol = 1e-8)
+        @test maximum(abs, a.S .- b.S) < 1e-10
+        # the node fluxes differ by whole flux quanta, which is the additive
+        # static gauge and not a different state
+        turns = (a.nodeflux .- b.nodeflux) ./ (2*pi)
+        @test all(x -> isapprox(x, round(real(x)); atol = 1e-8), turns)
+    end
+end

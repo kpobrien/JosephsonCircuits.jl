@@ -35,7 +35,130 @@ struct HBOperatingPoint
     coupledbranches::Vector{Int}
     Nmodes::Int
     Nnodes::Int
+    # The explicit direct current block, when the circuit has one: the
+    # canonical work, the canonical state the solve actually converged, and
+    # the canonical Jacobian there. `jacobian` above stays the harmonic one,
+    # because everything which differentiates the harmonic system alone
+    # reads it; what differentiates the whole system reads these.
+    dc
 end
+
+# an operating point of a circuit with no direct current block, which is
+# every one taken before the block existed
+HBOperatingPoint(sys, x, jacobian, modelayout, Nnodal, Lmean, wmodes, Amna,
+    mnaindices, coupledbranches, Nmodes, Nnodes) =
+    HBOperatingPoint(sys, x, jacobian, modelayout, Nnodal, Lmean, wmodes,
+        Amna, mnaindices, coupledbranches, Nmodes, Nnodes, nothing)
+
+"""
+    DCOperatingPoint
+
+The explicit direct current block at a converged point.
+
+# Fields
+- `work`: the [`CanonicalWork`](@ref) carrying the layout, the transport
+  rows and the blocks' zero frequency rows.
+- `u`: the converged canonical state, `[phiac | phidc | vdc]`.
+- `jacobian`: the canonical Jacobian there, which is the one the implicit
+  function theorem applies to when the block is active.
+- `plan`: the [`CanonicalJacobianPlan`](@ref) that filled it.
+"""
+struct DCOperatingPoint{W,P}
+    work::W
+    u::Vector{Float64}
+    jacobian::SparseMatrixCSC{Float64,Int}
+    plan::P
+end
+
+"""
+    dcresidualsensitivity(dc::DCOperatingPoint, psc, nm, scale,
+        sensitivityindices, alphas)
+
+The direct current block's own contribution to the residual sensitivity, in
+canonical coordinates.
+
+The canonical residual is `D G F(S u) + M u + s c`, so its derivative with
+respect to a component value is the harmonic one gathered and masked, plus
+`(dM/dr) u`. Only the conductance depends on a lumped component value, and
+it enters twice: as the transport rows `Y = P' G0 P` and as the coupling
+`G0 P` into the zero frequency nodal rows. A capacitor, an inductor and a
+junction are open circuits, a short and a short at zero frequency, none of
+which carries a conductance, so they contribute nothing here -- which is
+correct and is why the harmonic rows alone were right until a resistor
+carried direct current.
+
+The perturbation is relative, as it is everywhere in this file: `G0` is
+proportional to `1/R`, so a relative change in `R` scales the whole stamp by
+`-1`.
+"""
+function dcresidualsensitivity(dc::DCOperatingPoint, psc::CompiledCircuit,
+        nm::CircuitMatrices, scale, sensitivityindices,
+        alphas::AbstractVector = ones(Complex{Float64},
+            length(sensitivityindices)))
+    w = dc.work
+    L = w.layout
+    plan = w.transport.plan
+    n = canonicaldim(L)
+    # the average voltage of every node, ground dropped, from the component
+    # voltages the solve carries
+    nodev = plan.lift * dc.u[voltagerange(L)]
+    # the solver scale, which the whole system's rows are multiplied by and
+    # which is not the mean inductance: it is `Z0/w0` (see
+    # [`calcsolverscale`](@ref)), and using the wrong one leaves the block's
+    # own rows and their derivative scaled differently
+    gscale = real(scale)
+    I, J, V = Int[], Int[], Float64[]
+    for (k, idx) in enumerate(sensitivityindices)
+        psc.componenttypes[idx] === :R || continue
+        r = nm.vvn[idx]
+        (r isa Number && isfinite(r) && !iszero(r)) || continue
+        # the conductance the assembly gives this resistor at zero
+        # frequency, which is its own value scaled the way every other
+        # entry of the system is; a relative perturbation scales it by -1
+        g = -real(alphas[k])*gscale/real(r)
+        n1, n2 = psc.nodeindices[1, idx], psc.nodeindices[2, idx]
+        v1 = n1 > 1 ? nodev[n1-1] : zero(eltype(nodev))
+        v2 = n2 > 1 ? nodev[n2-1] : zero(eltype(nodev))
+        cur = g*(v1 - v2)
+        iszero(cur) && continue
+        # the current it drives into the zero frequency nodal rows
+        n1 > 1 && (push!(I, L.nac + n1 - 1); push!(J, k); push!(V, cur))
+        n2 > 1 && (push!(I, L.nac + n2 - 1); push!(J, k); push!(V, -cur))
+        # and into the transport rows, which are the component sums of
+        # those; a resistor inside one component cancels there, exactly as
+        # an inductor branch does
+        c1 = plan.componentof[n1]
+        c2 = plan.componentof[n2]
+        c1 == c2 && continue
+        iszero(c1) || (push!(I, L.nac + L.ndc + c1); push!(J, k); push!(V, cur))
+        iszero(c2) || (push!(I, L.nac + L.ndc + c2); push!(J, k); push!(V, -cur))
+    end
+    return sparse(I, J, V, n, length(sensitivityindices))
+end
+
+"""
+    sensitivityjacobian(op::HBOperatingPoint)
+
+The Jacobian the implicit function theorem applies to at `op`: the canonical
+one when an explicit direct current block is active, and the harmonic one
+otherwise.
+
+The forward and the reverse contraction both solve against this, forward
+through it and reverse through its transpose, so naming it once is what
+keeps the two orders solving the same system.
+"""
+sensitivityjacobian(op::HBOperatingPoint) =
+    isnothing(op.dc) ? op.jacobian : op.dc.jacobian
+
+"""
+    sensitivitydim(op::HBOperatingPoint)
+
+The dimension of the space the residual derivatives and the adjoint
+covectors live in: canonical with a direct current block, and the real
+representation of the augmented harmonic state without one.
+"""
+sensitivitydim(op::HBOperatingPoint) =
+    isnothing(op.dc) ? size(op.jacobian, 1) : canonicaldim(op.dc.work.layout)
 
 """
     componentlookups(mnaindices, coupledbranches, Ljb)
@@ -264,7 +387,86 @@ function calcresidualsensitivity(op::HBOperatingPoint,
             end
         end
     end
-    return sparse(Ir, Jc, Vr, Nreal, length(sensitivityindices))
+    harmonic = sparse(Ir, Jc, Vr, Nreal, length(sensitivityindices))
+    isnothing(op.dc) && return harmonic
+
+    # In canonical coordinates the residual is `D G F(S u) + M u`, so its
+    # parameter derivative is this gathered, masked by the rows the block
+    # replaces rather than adds to, plus the block's own dependence on the
+    # component values. The gather is a permutation of the flux rows and
+    # writes nothing into the voltage rows, which is where the block's part
+    # lands.
+    L = op.dc.work.layout
+    N = canonicaldim(L)
+    dccols = dcresidualsensitivity(op.dc, psc, nm, op.Lmean,
+        sensitivityindices, alphas)
+    Ic, Jc2, Vc = Int[], Int[], Float64[]
+    keep = dckeep(op.dc.work)
+    col = zeros(Float64, Nreal)
+    gathered = zeros(Float64, N)
+    for k in axes(harmonic, 2)
+        fill!(col, 0.0)
+        col .= view(harmonic, :, k)
+        fill!(gathered, 0.0)
+        gathercanonical!(gathered, col, L)
+        for i in eachindex(gathered)
+            v = gathered[i]*keep[i]
+            iszero(v) && continue
+            push!(Ic, i); push!(Jc2, k); push!(Vc, v)
+        end
+    end
+    return sparse(Ic, Jc2, Vc, N, length(sensitivityindices)) + dccols
+end
+
+"""
+    dckeep(work::CanonicalWork)
+
+The diagonal which is zero on the rows the direct current block replaces
+rather than adds to, over the whole canonical vector.
+
+Read off the block by probing it, so it cannot disagree with the residual it
+describes.
+"""
+function dckeep(work::CanonicalWork)
+    L = work.layout
+    keep = ones(Float64, canonicaldim(L))
+    up = dcupdate(work)
+    isnothing(up) && return keep
+    copyto!(view(keep, dcwindow(L)), Array(up.keep))
+    return keep
+end
+
+"""
+    dcvoltagesensitivity(op::HBOperatingPoint, dFr::AbstractMatrix;
+        factorization = KLUfactorization())
+
+The derivative of the average node voltages with respect to a relative
+perturbation of each component value, in volts, indexed by node with ground
+dropped as [`hbnlsolve`](@ref) reports them.
+
+The same solve as [`calcnodefluxsensitivity`](@ref) and the other half of
+its answer: that returns the node fluxes, which are the periodic part, and
+this returns the average voltages, which are the direct current part and
+are unknowns of the canonical system rather than of the harmonic one.
+`nothing` for a circuit with no direct current block.
+"""
+function dcvoltagesensitivity(op::HBOperatingPoint, dFr::AbstractMatrix;
+        factorization = KLUfactorization())
+    isnothing(op.dc) && return nothing
+    L = op.dc.work.layout
+    lift = op.dc.work.transport.plan.lift
+    cache = FactorizationCache()
+    tryfactorize!(cache, factorization, op.dc.jacobian)
+    rhs = zeros(Float64, canonicaldim(L))
+    duc = zeros(Float64, canonicaldim(L))
+    dv = zeros(Float64, size(lift, 1), size(dFr, 2))
+    for k in axes(dFr, 2)
+        rhs .= view(dFr, :, k)
+        trysolve!(duc, cache.factorization, rhs)
+        rmul!(duc, -1)
+        dv[:, k] .= phi0 .* (lift*view(duc, voltagerange(L)))
+    end
+    return dv
 end
 
 """
@@ -281,6 +483,26 @@ function calcnodefluxsensitivity(op::HBOperatingPoint, dFr::AbstractMatrix;
 
     Ntot = length(op.x)
     cache = FactorizationCache()
+    if !isnothing(op.dc)
+        # the implicit function theorem applies to the canonical system, so
+        # the solve is there and the answer is scattered back: the average
+        # voltages are unknowns of that system and not of this one, and the
+        # node fluxes are what the caller asked for
+        L = op.dc.work.layout
+        tryfactorize!(cache, factorization, op.dc.jacobian)
+        rhs = zeros(Float64, canonicaldim(L))
+        duc = zeros(Float64, canonicaldim(L))
+        dxr = zeros(Float64, L.rdim)
+        dx = zeros(Complex{Float64}, Ntot, size(dFr, 2))
+        for k in axes(dx, 2)
+            rhs .= view(dFr, :, k)
+            trysolve!(duc, cache.factorization, rhs)
+            rmul!(duc, -1)
+            scattercanonical!(dxr, duc, L)
+            real_to_complex!(view(dx,:,k), dxr, op.modelayout.isreal)
+        end
+        return dx
+    end
     tryfactorize!(cache, factorization, op.jacobian)
     # dFr is sparse from construction; the factorization wants a dense
     # right hand side, so densify one column at a time rather than the
@@ -380,6 +602,11 @@ struct ReverseSensitivityBuffers
     # eta one after the other, so their transforms need not coexist.
     padded::Array{Complex{Float64}}
     tgrid::Array{Complex{Float64}}
+    # the covector as the junction branches produce it, in the real
+    # representation of the harmonic state. With a direct current block the
+    # columns of `G` are canonical and this is gathered into one of them;
+    # without, it is copied straight across.
+    gint::Vector{Complex{Float64}}
 end
 
 # the byte budget of the two nr x chunk complex right hand side and
@@ -398,7 +625,7 @@ function ReverseSensitivityBuffers(rev::ReverseSensitivity, NPM::Integer)
     sys = rev.op.sys
     NLj = size(sys.phimatrix)[end]
     NF = length(sys.phimatrix)
-    nr = size(rev.op.jacobian, 1)
+    nr = sensitivitydim(rev.op)
     chunk = clamp(REVERSESENSITIVITYCHUNKBYTES ÷ (32*nr), 1, NPM^2)
     return ReverseSensitivityBuffers(
         zeros(Complex{Float64}, NF), zeros(Complex{Float64}, NF),
@@ -407,7 +634,8 @@ function ReverseSensitivityBuffers(rev::ReverseSensitivity, NPM::Integer)
         zeros(Complex{Float64}, size(rev.T, 1), NLj),
         zeros(Complex{Float64}, size(rev.T, 2), NLj),
         zeros(Complex{Float64}, size(sys.phitd)),
-        zeros(Complex{Float64}, size(sys.phitd)))
+        zeros(Complex{Float64}, size(sys.phitd)),
+        zeros(Complex{Float64}, size(rev.op.jacobian, 1)))
 end
 
 """
@@ -607,8 +835,13 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
             mul!(c, transpose(rev.T), eta)
 
             # the transpose of the branch flux map, into the real
-            # representation of the augmented state, as one column of G
-            g = view(G, :, col)
+            # representation of the augmented state. The outputs depend on
+            # the state through the harmonic coordinates, so this is where
+            # the covector is built whether or not there is a direct current
+            # block; with one it is carried into the canonical coordinates
+            # afterwards, which is the transpose of the scatter the residual
+            # applies going the other way.
+            g = bufs.gint
             fill!(g, 0)
             @inbounds for (jj, branch) in enumerate(sys.Ljb.nzind)
                 for m in 1:Nmodes
@@ -625,6 +858,16 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
                         end
                     end
                 end
+            end
+            gcol = view(G, :, col)
+            if isnothing(op.dc)
+                copyto!(gcol, g)
+            else
+                # the gather leaves the voltage rows alone, and they are
+                # zero: no output reads an average voltage directly, only
+                # through the state the block moves
+                fill!(gcol, 0)
+                gathercanonical!(gcol, g, op.dc.work.layout)
             end
         end
 
@@ -913,7 +1156,7 @@ function calcblockresidualsensitivity(op::HBOperatingPoint,
     Ntot = length(op.x)
     Nmodes = op.Nmodes
     Nsc = countscatteringports(psc)*Nmodes
-    pumpssys = scatteringstampsystem(psc, Nmodes;
+    pumpssys = scatteringstampsystem(psc.scatteringblocks, Nmodes;
         auxoffset = Ntot - Nsc, Ntotal = Ntot, scale = real(op.Lmean))
     isnothing(pumpssys) && throw(ArgumentError(
         "the circuit has no scattering blocks to take a block sensitivity of"))
@@ -938,8 +1181,9 @@ function calcblockresidualsensitivity(op::HBOperatingPoint,
     zbuf = Vector{Complex{Float64}}(undef, m)
     dA = copy(pumpssys.pattern)
     for (col, bp) in enumerate(blockpairs)
-        idx = psc.componentnamedict[String(bp[1])]
-        targetdef = psc.componentvalues[idx].block
+        bi = scatteringblockindex(psc, bp[1])
+        iszero(bi) && throw(ArgumentError(lazy"the block pair names $(bp[1]), which is not a scattering block of this circuit"))
+        targetdef = psc.scatteringblocks[bi].definition
         dsys, zsys = derivativestampsystems(pumpssys, targetdef, bp[3])
         blockstampvals!(nonzeros(dA), dsys, zsys, op.wmodes, work, workz,
             dbuf, zbuf, pumpssys.patternindex)
@@ -1042,8 +1286,11 @@ function calcsensitivitystamps(sensitivityindices, psc::CompiledCircuit,
     Ntot = size(lsys.Asparse, 1)
     stamps = Vector{SensitivityStamp}(undef, length(sensitivityindices))
     lookups = componentlookups(mnaindices, coupledbranches, nm.Ljb)
+    # a sensitivity taken with respect to a port's own environment also
+    # moves the wave normalization, so those components are recognized by
+    # their role; a port which owns no environment contributes none
     portordinal = Dict(idx => p
-        for (p, idx) in enumerate(nm.portimpedanceindices))
+        for (p, idx) in enumerate(nm.portenvironmentindices) if !iszero(idx))
 
     for (k, idx) in enumerate(sensitivityindices)
         portindex = get(portordinal, idx, 0)
@@ -1121,7 +1368,7 @@ end
 
 """
     calcsensitivityscaling!(gamma, beta, inputwave, bnm,
-        portimpedanceindices, portimpedances, componenttypes, nodeindices,
+        portindices, portimpedances, componenttypes, nodeindices,
         wmodes, Nmodes)
 
 Calculate the scalars which convert the derivative of the node fluxes into
@@ -1154,21 +1401,21 @@ scattering parameters themselves, which use `s` consistently in both the
 input and the output waves, would be correct.
 """
 function calcsensitivityscaling!(gamma, beta, inputwave, bnm,
-    portimpedanceindices, portimpedances, componenttypes, nodeindices,
+    portindices, portimpedances, componenttypes, nodeindices,
     wmodes, Nmodes)
 
-    for i in eachindex(portimpedanceindices)
+    for i in eachindex(portindices)
         for j in 1:Nmodes
             row = (i-1)*Nmodes + j
             portimpedance = calcimpedance(portimpedances[i],
-                componenttypes[portimpedanceindices[i]], wmodes[j], nothing)
+                componenttypes[portindices[i]], wmodes[j], nothing)
             kval = portwavescale(portimpedance, wmodes[j])
             # the orientation of the port branch relative to the node order
             # of the port component, from the source current of the port's
             # own unit drive.
             sourcecurrent = calcsourcecurrent(
-                nodeindices[1,portimpedanceindices[i]],
-                nodeindices[2,portimpedanceindices[i]], bnm, Nmodes, j, row)
+                nodeindices[1,portindices[i]],
+                nodeindices[2,portindices[i]], bnm, Nmodes, j, row)
             gamma[row] = iszero(sourcecurrent) ? 0 :
                 1/2*kval*(1 + conj(portimpedance)/portimpedance)*
                 im*wmodes[j]/sourcecurrent
