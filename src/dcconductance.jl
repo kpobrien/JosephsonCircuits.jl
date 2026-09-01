@@ -196,71 +196,16 @@ function dcislands(G0::SparseMatrixCSC, componentof::Vector{Int}, n::Int,
 end
 
 """
-    solvedcconductance(plan, bnm, Nmodes, Lmean)
-
-Solve `Y v = j` for the average component voltages given the applied source.
-
-A grounded island solves directly. A floating island holds its lowest
-numbered component at zero and drops that equation, which is the redundant
-one; only its voltage differences are physical. An island whose net injected
-current is not zero has no bounded solution, and the compatibility check
-which follows reports it.
-
-Returns an inactive solution when no direct current is injected anywhere,
-which is the common case and costs one projection.
-"""
-function solvedcconductance(plan::DCConductancePlan, bnm::AbstractVector,
-        Nmodes::Integer, Lmean)
-    nc = size(plan.reduced, 1)
-    T = float(real(eltype(plan.reduced)))
-
-    # the direct current injected into each component, in the solver's units
-    j = zeros(T, nc)
-    for (k, nodes) in enumerate(plan.components), p in nodes
-        p > 1 || continue
-        j[k] += real(bnm[(p-2)*Nmodes + plan.modeindex])
-    end
-
-    n = size(plan.lift, 1)
-    if all(iszero, j)
-        return DCConductanceSolution(false, zeros(T, nc),
-            zeros(T, n+1), zeros(T, n))
-    end
-
-    Yr = plan.reduced
-    v = zeros(T, nc)
-    for (c, grounded) in plan.islands
-        if grounded
-            v[c] = Yr[c, c] \ j[c]
-        else
-            keep = c[2:end]
-            isempty(keep) && continue
-            v[keep] = Yr[keep, keep] \ j[keep]
-        end
-    end
-
-    nv = zeros(T, n+1)
-    for (k, nodes) in enumerate(plan.components), p in nodes
-        p > 1 && (nv[p] = v[k])
-    end
-    d = plan.conductance * (plan.lift * v)
-    # The scaled coordinate is v = V/phi0: the source carries a factor
-    # Lmean/phi0 and the conductance a factor Lmean, which cancel, so the
-    # physical voltage is phi0 times the solved coordinate. The current d is
-    # left in the source's units, which is what it is subtracted from.
-    return DCConductanceSolution(true, v, phi0.*nv, d)
-end
-
-"""
     applydcconductance(bnm, plan, solution, Nmodes)
 
-Subtract the direct resistor current from the zero frequency rows of the
-source.
+Subtract the direct current the resistors and blocks carry from the zero
+frequency rows of the source.
 
-This is the elimination: the residual the periodic flux solver then forms is
-the physical augmented Kirchhoff equation, exactly and not approximately.
-The caller keeps the original source, because the port and scattering
-outputs need the current which was applied rather than the corrected one.
+The solve does not use this: it carries the average voltages as unknowns and
+the currents reach the nodes through the coupling. What needs it is the
+Kirchhoff validation, which reconstructs its residual from the system alone
+and so knows nothing of that coupling; correcting the source here, and
+adding the same current back to the residual, hands it a consistent pair.
 """
 function applydcconductance(bnm::AbstractVector, plan::DCConductancePlan,
         sol::DCConductanceSolution, Nmodes::Integer)
@@ -270,4 +215,170 @@ function applydcconductance(bnm::AbstractVector, plan::DCConductancePlan,
         out[(p-2)*Nmodes + plan.modeindex] -= sol.scaledcurrent[p-1]
     end
     return out
+end
+
+# =====================================================================
+# The same equation as explicit rows.
+#
+# Everything above eliminates the average voltages before Newton: it solves
+# `Y v = j` once, folds the resistor current `G0 P v` into the zero
+# frequency source, and the periodic solve never sees `v`. That is exact
+# while the direct current devices are linear conductances and the sources
+# are prescribed, which is the whole of stage 3.
+#
+# It cannot go further. A scattering block's direct current relation is a
+# pencil between its port voltages and its port currents, so the current is
+# a genuine unknown and there is nothing to eliminate; a short or an ideal
+# through has a free current direction and no determined value at all.
+# Reaching those needs `v` carried as an unknown with its equation as a row,
+# which is what this builds.
+#
+# The row is the same component sum. Adding the zero frequency Kirchhoff
+# equations over the nodes of one static flux component cancels every
+# inductor and junction branch current, because both terminals of such a
+# branch lie inside the component and the current enters with both signs --
+# rectified mixing products included, since the cancellation is a statement
+# about the topology and not about what produced the current. So the row
+# sees no periodic state, and the Jacobian is block triangular:
+#
+#     [ Jpp  Jpv ]      Jpv = G0 P on the zero frequency nodal rows
+#     [  0   Y   ]
+#
+# which is why an explicit `v` costs a small constant solve and does not
+# make the nonlinear problem harder. Solving that triangular system by
+# substitution is exactly the elimination above, which is the sense in
+# which the two paths must agree and the reason the tests can demand it.
+#
+# A floating island fixes no absolute voltage, so `Y` is singular on it and
+# only differences are physical. The elimination drops the redundant
+# equation and holds the island's lowest numbered component at zero; the
+# explicit form does the same, by replacing that component's row with
+# `v = 0`. Keeping the singularity instead would move it into Newton, where
+# it is worse, and for a linear direct current device there is nothing to be
+# gained by it.
+
+"""
+    TransportRows
+
+The transport rows `Ytr v = jtr` of the explicit direct current block,
+together with the coupling into the zero frequency nodal rows.
+
+# Fields
+- `plan`: the topology, shared with the elimination.
+- `Ytr`: `Y` with each floating island's pinned component replaced by the
+  row `v = 0`, so it is nonsingular.
+- `jtr`: the injected current, zero on a pinned row.
+- `coupling`: `G0 P`, the resistor current each component's voltage drives
+  into the nodes, indexed by node with ground dropped.
+- `pinned`: the component held at zero on each floating island.
+
+See [`transportrows`](@ref) and [`DCConductancePlan`](@ref).
+"""
+struct TransportRows{T}
+    plan::DCConductancePlan
+    Ytr::Matrix{T}
+    jtr::Vector{T}
+    coupling::SparseMatrixCSC{T,Int}
+    pinned::Vector{Int}
+end
+
+nvoltages(t::TransportRows) = length(t.jtr)
+
+"""
+    transportrows(plan::DCConductancePlan, bnm, Nmodes)
+
+Build the [`TransportRows`](@ref) for a source `bnm`.
+
+`bnm` must be the applied source, not the one the elimination corrects:
+the resistor current appears here as the coupling term, and taking it from
+a corrected source would count it twice.
+"""
+function transportrows(plan::DCConductancePlan, bnm::AbstractVector,
+        Nmodes::Integer)
+    nc = size(plan.reduced, 1)
+    T = float(real(eltype(plan.reduced)))
+
+    j = zeros(T, nc)
+    for (k, nodes) in enumerate(plan.components), p in nodes
+        p > 1 || continue
+        j[k] += real(bnm[(p-2)*Nmodes + plan.modeindex])
+    end
+
+    Ytr = Matrix{T}(plan.reduced)
+    pinned = Int[]
+    for (c, grounded) in plan.islands
+        grounded && continue
+        isempty(c) && continue
+        k = first(c)                 # the elimination pins the same one
+        push!(pinned, k)
+        Ytr[k, :] .= zero(T)
+        Ytr[k, k] = one(T)
+        j[k] = zero(T)
+    end
+
+    coupling = SparseMatrixCSC{T,Int}(plan.conductance * plan.lift)
+    return TransportRows(plan, Ytr, j, coupling, pinned)
+end
+
+"""
+    transportresidual!(Fv, t::TransportRows, v)
+
+The transport row residual `Ytr v - jtr`, in place.
+"""
+function transportresidual!(Fv::AbstractVector, t::TransportRows,
+        v::AbstractVector)
+    mul!(Fv, t.Ytr, v)
+    Fv .-= t.jtr
+    return Fv
+end
+
+"""
+    transportcurrent!(d, t::TransportRows, v)
+
+The direct resistor current `G0 P v` each node carries, in place, indexed by
+node with ground dropped. This is the coupling `Jpv` applied to `v`, and it
+is the quantity the elimination subtracts from the source.
+"""
+function transportcurrent!(d::AbstractVector, t::TransportRows,
+        v::AbstractVector)
+    mul!(d, t.coupling, v)
+    return d
+end
+
+"""
+    dcsolutionfrom(plan::DCConductancePlan, v::AbstractVector)
+
+Package explicitly solved component voltages as a
+[`DCConductanceSolution`](@ref), so the two paths report their answer the
+same way.
+"""
+function dcsolutionfrom(plan::DCConductancePlan, v::AbstractVector)
+    T = float(real(eltype(v)))
+    n = size(plan.lift, 1)
+    nv = zeros(T, n + 1)
+    for (k, nodes) in enumerate(plan.components), p in nodes
+        p > 1 && (nv[p] = v[k])
+    end
+    d = plan.conductance * (plan.lift * v)
+    return DCConductanceSolution(any(!iszero, v), collect(T, v),
+        phi0 .* nv, d)
+end
+
+"""
+    dcinjected(plan::DCConductancePlan, bnm::AbstractVector, Nmodes)
+
+Whether any direct current is injected into a static flux component.
+
+When none is, every average voltage and every block port current is zero and
+the explicit block has nothing to find: the `i = 0` rows the scattering
+stamp writes are then the right answer rather than a simplification, and the
+whole direct current apparatus is skipped.
+"""
+function dcinjected(plan::DCConductancePlan, bnm::AbstractVector,
+        Nmodes::Integer)
+    for nodes in plan.components, p in nodes
+        p > 1 || continue
+        iszero(real(bnm[(p-2)*Nmodes + plan.modeindex])) || return true
+    end
+    return false
 end

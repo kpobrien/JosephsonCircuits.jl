@@ -190,6 +190,25 @@ function gathervalues!(dest::AbstractArray, src::AbstractVector,
 end
 
 """
+    scattervalues!(dest::AbstractVector, src::AbstractVector,
+        index::AbstractArray)
+
+`dest[index[k]] = src[k]` for every `k`, as a KernelAbstractions kernel on
+the backend of `src`. The inverse of [`gathervalues!`](@ref) when `index` is
+a permutation; `index` must not repeat, or the writes race.
+"""
+function scattervalues!(dest::AbstractVector, src::AbstractVector,
+        index::AbstractArray)
+    length(src) == length(index) || throw(DimensionMismatch(
+        lazy"`src` has length $(length(src)) but the index has $(length(index))."))
+    backend = KernelAbstractions.get_backend(src)
+    kernel! = scatterblockskernel!(backend)
+    kernel!(dest, src, index; ndrange = length(index))
+    KernelAbstractions.synchronize(backend)
+    return dest
+end
+
+"""
     gatherblocks!(rhs::AbstractMatrix, v::AbstractVector,
         layout::BatchedBlockLayout)
 

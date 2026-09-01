@@ -157,8 +157,17 @@ end
 
 # === the stamp system ===
 
-# one scattering block with its port terminal nodes in the parsed circuit
-# and the position of its auxiliary port current variables
+"""
+    StampedScatteringBlock
+
+One scattering block instance, with the nodes its ports attach to and the
+position of the auxiliary port current variables which carry its currents.
+
+`auxbase` locates them: port `p` at mode `m` is the state index
+`auxbase + (p-1)*Nmodes + m`. That is the same current the zero frequency
+row treats as an unknown, which is how a block becomes visible at direct
+current; see [`DCBlockRows`](@ref).
+"""
 struct StampedScatteringBlock
     block::Any            # the shared ScatteringParameters definition
     signalnodes::Vector{Int}
@@ -988,4 +997,240 @@ function noisechannelnames(componentnames, noiseportimpedanceindices,
     names = String[String(componentnames[i]) for i in noiseportimpedanceindices]
     isnothing(noiseplan) && return names
     return vcat(names, scatteringnoisenames(noiseplan, ssys))
+end
+
+# =====================================================================
+# A scattering block at zero frequency.
+#
+# `evaluatehybrid!` writes `B = 0`, `C = I` at zero frequency, which is the
+# equation `i = 0`: every block is an open circuit at direct current. That
+# was the honest answer while the state carried no average voltage, since
+# without one there is nothing for a block to respond to. It is not the
+# block's physics.
+#
+# The block's own relation at zero frequency is the same pencil it satisfies
+# everywhere else,
+#
+#     B(0) V - C(0) i = 0,   B(0) = R^(-1/2)(I - S(0)),
+#                            C(0) = R^(1/2)(I + S(0)),
+#
+# now with `V` the average port voltage, which the explicit direct current
+# block carries, and `i` the average port current, which the solver already
+# carries as an auxiliary unknown -- it is the same variable the zero
+# frequency row currently pins to zero. So this is not a new coordinate; it
+# is the removal of a constraint.
+#
+# Nothing is inverted, which is the point of the pencil form. A resistive
+# block has `I + S(0)` invertible and a determined current. An ideal short
+# has `S(0) = -1`, so `C(0) = 0` and the row reads `B(0) V = 0`: the voltage
+# is constrained and the current is free, which is exactly right and is why
+# the current has to be an unknown rather than a value to be computed.
+
+"""
+    DCBlockDescriptor
+
+The zero frequency constitutive pencil of one scattering block.
+
+# Fields
+- `B0`, `C0`: `R^(-1/2)(I - S(0))` and `R^(1/2)(I + S(0))`, so the block's
+  rows read `B0 V - C0 i = 0`.
+- `signalnodes`, `refnodes`: the terminals of each port.
+- `auxbase`: the auxiliary index base, as in [`StampedScatteringBlock`](@ref).
+- `freecurrents`: the dimension of the null space of `C0`, the number of
+  port current directions the block leaves undetermined. Zero for a block
+  whose current is fixed by its voltages.
+- `name`: the block's first port, for messages.
+"""
+struct DCBlockDescriptor
+    B0::Matrix{Float64}
+    C0::Matrix{Float64}
+    signalnodes::Vector{Int}
+    refnodes::Vector{Int}
+    auxbase::Int
+    freecurrents::Int
+    name::String
+end
+
+nports(d::DCBlockDescriptor) = length(d.signalnodes)
+
+"""
+    dcblockdescriptor(sb::StampedScatteringBlock; atol = 1e-10)
+
+Evaluate the zero frequency pencil of a stamped block.
+
+`S(0)` must be real and finite: a complex zero frequency scattering matrix
+describes a block with no direct current limit, which is refused here rather
+than resolved by a convention, on the same principle as a complex direct
+current conductance.
+"""
+function dcblockdescriptor(sb::StampedScatteringBlock; atol::Real = 1e-10)
+    blk = sb.block
+    n = blk.nports
+    S = Array{Complex{Float64},3}(undef, n, n, 1)
+    evaluatescattering!(S, blk, [0.0])
+    S0 = @view S[:,:,1]
+    all(isfinite, S0) || throw(ArgumentError(lazy"the scattering block $(sb.name) returned a non-finite S(0), so its direct current behavior cannot be read from it. A block whose limit exists but is not evaluable at zero -- a series capacitor written as 1/(im*w*C), whose limit is the open circuit S(0) = I -- has to state that limit, by a definition which evaluates at zero or by a table containing a zero frequency entry."))
+    m = maximum(abs∘imag, S0)
+    m <= atol*max(1, maximum(abs, S0)) || throw(ArgumentError(lazy"the scattering block $(sb.name) has a complex S(0) (largest imaginary part $(m)); a block with no real zero frequency limit has no direct current behavior to stamp."))
+
+    r2 = sqrt.(float.(blk.zref))
+    B0 = Matrix{Float64}(undef, n, n)
+    C0 = Matrix{Float64}(undef, n, n)
+    @inbounds for q in 1:n, p in 1:n
+        d = p == q ? 1.0 : 0.0
+        B0[p,q] = (d - real(S0[p,q])) / r2[p]
+        C0[p,q] = (d + real(S0[p,q])) * r2[p]
+    end
+    # the current directions the block does not determine: an ideal short
+    # has C0 = 0 and leaves all of them free
+    free = n - rank(C0; atol = atol*max(1, maximum(abs, C0)))
+    return DCBlockDescriptor(B0, C0, sb.signalnodes, sb.refnodes, sb.auxbase,
+        free, sb.name)
+end
+
+"""
+    DCBlockRows
+
+The zero frequency rows of every scattering block in a circuit, ready to be
+applied to a canonical state.
+
+# Fields
+- `descriptors`: one [`DCBlockDescriptor`](@ref) per block.
+- `currentindex`: for each block, the canonical index of each port's zero
+  frequency current.
+- `signalcomponent`, `refcomponent`: for each block, the static flux
+  component of each port terminal, or zero where the average voltage is held
+  at zero by a path to ground through inductance.
+- `scale`: `Lmean`, which carries the average voltage into the units the
+  stamp's rows are written in.
+
+The units are the stamp's throughout. At a nonzero frequency the block's row
+is `B (im w scale phi) - C i`, so the stamp's voltage is `scale/phi0` times
+the physical one; the explicit direct current coordinate is `v = V/phi0`, so
+the same voltage is `scale * v` and the row is `B0 (scale dv) - C0 i` with
+the current the solver already carries.
+"""
+struct DCBlockRows{T}
+    descriptors::Vector{DCBlockDescriptor}
+    currentindex::Vector{Vector{Int}}
+    signalcomponent::Vector{Vector{Int}}
+    refcomponent::Vector{Vector{Int}}
+    scale::T
+    # (component, canonical current index, sign): the block currents which
+    # cross a static flux component's boundary and so survive its transport
+    # row's sum. A port with both terminals inside one component cancels,
+    # exactly as an inductor branch does.
+    transportterms::Vector{Tuple{Int,Int,Int}}
+end
+
+Base.isempty(r::DCBlockRows) = isempty(r.descriptors)
+
+"""
+    freecurrents(r::DCBlockRows)
+
+The total number of port current directions the blocks leave undetermined.
+Nonzero means some current is fixed by node level Kirchhoff rather than by
+the block, which is the case a short or an ideal through presents.
+"""
+freecurrents(r::DCBlockRows) = sum(d -> d.freecurrents, r.descriptors;
+    init = 0)
+
+"""
+    dcblockrows(blocks, componentof, Nmodes, modeindex, nac, nnodaldc,
+        auxoffset, scale)
+
+Build the [`DCBlockRows`](@ref) for the stamped blocks of a circuit.
+
+`nac` and `nnodaldc` locate the zero frequency block of the canonical state
+and the point in it where the nodal entries end and the auxiliary ones
+begin; `auxoffset` is the state offset the stamps were built against.
+"""
+function dcblockrows(blocks::AbstractVector, componentof::Vector{Int},
+        Nmodes::Integer, modeindex::Integer, nac::Integer,
+        nnodaldc::Integer, scale)
+    descriptors = DCBlockDescriptor[]
+    currentindex = Vector{Int}[]
+    signalcomponent = Vector{Int}[]
+    refcomponent = Vector{Int}[]
+    for sb in blocks
+        d = dcblockdescriptor(sb)
+        n = nports(d)
+        idx = Vector{Int}(undef, n)
+        for p in 1:n
+            # the complex state index of this port's zero frequency current,
+            # and the slot it belongs to; the zero frequency block of the
+            # canonical state holds one entry per slot in the same order
+            s = sb.auxbase + (p-1)*Nmodes + modeindex
+            idx[p] = nac + (s - 1) ÷ Nmodes + 1
+        end
+        push!(descriptors, d)
+        push!(currentindex, idx)
+        push!(signalcomponent, [componentof[k] for k in d.signalnodes])
+        push!(refcomponent, [componentof[k] for k in d.refnodes])
+    end
+    # The transport row of a component is the sum of its nodes' zero
+    # frequency Kirchhoff equations, in which a port current enters at its
+    # signal node and leaves at its reference node. Both inside one
+    # component and it cancels; otherwise it is a current the component
+    # exchanges with the rest of the circuit, and the row has to carry it or
+    # the block is invisible to the average voltages.
+    terms = Tuple{Int,Int,Int}[]
+    for b in eachindex(descriptors)
+        for p in eachindex(currentindex[b])
+            sc, rc = signalcomponent[b][p], refcomponent[b][p]
+            sc == rc && continue
+            iszero(sc) || push!(terms, (sc, currentindex[b][p], 1))
+            iszero(rc) || push!(terms, (rc, currentindex[b][p], -1))
+        end
+    end
+    return DCBlockRows(descriptors, currentindex, signalcomponent,
+        refcomponent, scale, terms)
+end
+
+"""
+    addblocktransport!(Fv, r::DCBlockRows, u, pinned)
+
+Add the block currents which cross a component boundary to that component's
+transport row. A pinned component's row is `v = 0` and takes none.
+"""
+function addblocktransport!(Fv::AbstractVector, r::DCBlockRows,
+        u::AbstractVector, pinned, local_::Dict{Int,Int})
+    @inbounds for (c, idx, sgn) in r.transportterms
+        (c in pinned) && continue
+        Fv[c] += sgn * u[local_[idx]]
+    end
+    return Fv
+end
+
+# the average voltage of a node in the explicit coordinate, zero where a
+# path to ground through inductance holds it there
+@inline _vof(v, c) = iszero(c) ? zero(eltype(v)) : @inbounds v[c]
+
+"""
+    addblockdc!(Fc, r::DCBlockRows, u, v; residual = true)
+
+Replace each block's zero frequency row in `Fc`, which holds `-i`, by the
+block's own relation `B0 (scale dv) - C0 i`.
+
+The correction is added rather than written, because the row also carries
+the Kirchhoff coupling of the current into the node equations, which is
+unchanged and must survive.
+"""
+function addblockdc!(Fc::AbstractVector, r::DCBlockRows, u::AbstractVector,
+        v::AbstractVector, local_::Dict{Int,Int})
+    for (b, d) in enumerate(r.descriptors)
+        idx = [local_[i] for i in r.currentindex[b]]
+        n = length(idx)
+        sc, rc = r.signalcomponent[b], r.refcomponent[b]
+        @inbounds for p in 1:n
+            # B0 (scale dv) - C0 i, less the -i already in the row
+            acc = u[idx[p]]
+            for q in 1:n
+                acc -= d.C0[p,q] * u[idx[q]]
+                acc += d.B0[p,q] * r.scale * (_vof(v, sc[q]) - _vof(v, rc[q]))
+            end
+            Fc[idx[p]] += acc
+        end
+    end
+    return Fc
 end

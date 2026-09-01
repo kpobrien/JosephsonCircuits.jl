@@ -81,7 +81,8 @@ common shift (a gauge degree of freedom). The modified nodal analysis
 formulation adds one gauge fixing equation per floating component and
 zero-frequency mode, see [`calcdcgaugeindices`](@ref). The net direct current
 injected into each floating component must be zero for a periodic solution to
-exist; see [`checkdcsourcecompatibility`](@ref).
+exist; the direct current subsystem is singular otherwise, which
+`checkdcsubsystem` reports.
 
 # Examples
 ```jldoctest
@@ -278,74 +279,6 @@ function calcdcgaugeindices(floatingcomponents::Vector{Vector{Int}},
     return gaugeindices
 end
 
-"""
-    checkdcsourcecompatibility(floatingcomponents::Vector{Vector{Int}},
-        bnm::Vector, wmodes::Vector, Nmodes::Int, nodenames::Vector{String})
-
-Check that the net direct current injected into each floating component of
-the static flux-stiffness graph is zero, and throw an `ArgumentError`
-otherwise. At zero frequency, capacitor currents and resistor currents
-vanish in the periodic steady state (the DC mode is the zero Fourier
-coefficient of a periodic flux, so the DC voltage `d(phi)/dt` is zero), and
-inductor and junction branches internal to the component transport current
-only between its nodes. Consequently the sum of the source terms over the
-nodes of a floating component must vanish for a solution to exist. Without
-this check, the gauge fixing equation would absorb an incompatible net
-current into the arbitrary flux reference and report an apparently converged
-solution which violates the original Kirchhoff current law equations.
-
-The comparison is relative: the magnitude of the sum is compared against a
-summation-roundoff bound, `max(1024, 4*length(component))*eps` times the
-sum of the magnitudes of the contributing source terms.
-"""
-function checkdcsourcecompatibility(floatingcomponents::Vector{Vector{Int}},
-    bnm::Vector, wmodes::Vector, Nmodes::Int, nodenames::Vector{String},
-    scale::Vector = bnm)
-
-    # `scale` sets what counts as numerically zero, and is the source as
-    # applied. It differs from `bnm` once the direct current conductance
-    # block has been eliminated: the corrected source is then zero on every
-    # component by construction, so scaling by it would compare a rounding
-    # error against nothing at all.
-    #
-    # The scale is taken over the whole zero frequency source rather than
-    # over the component alone, because the elimination moves current
-    # between components: a component which is driven by nothing of its own
-    # still carries what a resistor delivered to it, and measuring its
-    # residual against its own zero injection is measuring against nothing.
-    nnodes = length(bnm) ÷ Nmodes
-    for component in floatingcomponents
-        for m in 1:Nmodes
-            if iszero(wmodes[m])
-                nrm = zero(real(eltype(bnm)))
-                for p in 1:nnodes
-                    nrm += abs(scale[(p-1)*Nmodes + m])
-                end
-                s = zero(eltype(bnm))
-                for p in component
-                    s += bnm[(p-2)*Nmodes + m]
-                end
-                epsT = eps(one(real(eltype(bnm))))
-                # a non-finite sum (from a non-finite source term) is
-                # certainly incompatible; note Inf > Inf and NaN > tol are
-                # both false, so this must be tested explicitly.
-                if !isfinite(abs(s)) || abs(s) > max(1024, 4*length(component))*epsT*nrm
-                    names = join([nodenames[p] for p in component], ", ")
-                    throw(ArgumentError("No periodic solution exists: the "*
-                        "floating inductive/Josephson subnetwork containing "*
-                        "node(s) $(names) has nonzero net direct current "*
-                        "injection. With dc = true the zero frequency mode "*
-                        "is the zero Fourier coefficient of a periodic "*
-                        "flux, so capacitors and resistors carry no DC "*
-                        "current and the net DC current into a subnetwork "*
-                        "with no inductive path to ground must be zero."))
-                end
-            end
-        end
-    end
-
-    return nothing
-end
 
 """
     mnaaugmentation(mnaindices::Vector{Int}, nodeindices::Matrix{Int},
@@ -433,7 +366,7 @@ A gauge fixing equation (a one on the diagonal) is added for each index in
 graph and zero-frequency mode; see [`calcdcgaugeindices`](@ref). Because
 the Kirchhoff current law equations of a floating component are consistent
 but redundant at DC whenever the compatibility condition of
-[`checkdcsourcecompatibility`](@ref) holds, this rank-one term renders the
+the direct current block is solvable, this rank-one term renders the
 system nonsingular while the reference node flux is driven to exactly zero
 and all original equations remain satisfied.
 
@@ -551,7 +484,7 @@ fixing equations add `x[g]` to the augmented residual of each gauge row
 small for the reported solution to satisfy the original circuit
 equations: a gauge equation can otherwise absorb an incompatibility (for
 example a net direct current injected into a floating subnetwork which
-slipped past [`checkdcsourcecompatibility`](@ref)) into the arbitrary
+slipped past the direct current subsystem's solvability check) into the arbitrary
 flux reference while the augmented residual converges to zero.
 """
 function mnaungaugedkcl(F::AbstractVector, x::AbstractVector,

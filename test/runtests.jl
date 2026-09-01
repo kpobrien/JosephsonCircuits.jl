@@ -81,6 +81,8 @@ include("testcircuits.jl")
 
     include("circuitbind.jl")
 
+    include("compositelayout.jl")
+
     include("legacyadapter.jl")
 
     include("scatteringstamp.jl")

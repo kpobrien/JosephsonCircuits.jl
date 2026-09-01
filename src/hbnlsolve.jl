@@ -136,7 +136,8 @@ true
 ```
 """
 function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
-    circuit, circuitdefs; iterations = 1000,
+    circuit, circuitdefs; rtol = 0.0,
+    iterations = 1000,
     maxharmonics::NTuple{N,Int} = Nharmonics,
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, x0 = nothing, ftol = 1e-8,
@@ -187,6 +188,7 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
 
 
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
+        rtol = rtol,
         iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         method = method, andersondepth = andersondepth,
@@ -284,8 +286,9 @@ for details.
 """
 function hbnlsolve(w, sources, frequencies::Frequencies,
     indices::FourierIndices, psc::CompiledCircuit, cg::CircuitGraph,
-    nm::CircuitMatrices; iterations = 1000, x0 = nothing,
-    ftol = 1e-8, switchofflinesearchtol = nothing, alphamin = nothing,
+    nm::CircuitMatrices;
+    iterations = 1000, x0 = nothing,
+    ftol = 1e-8, rtol = 0.0, switchofflinesearchtol = nothing, alphamin = nothing,
     method = :newtonkrylov, andersondepth::Integer = method == :quasinewton ? 5 : 0,
     symfreqvar = nothing, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
@@ -570,16 +573,26 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # source: an exact elimination. `bnmsource` is kept because the port and
     # scattering outputs need the current which was applied, not the
     # corrected one.
+    # The average voltages are unknowns with their own transport rows, and
+    # the resistor and block currents they drive reach the nodes through the
+    # coupling, so the system is built on the applied source: nothing is
+    # subtracted from it here and so nothing can be subtracted twice.
     bnmsource = bnm
     dcplan = dcconductanceplan(floatingcomponents, Gnm, wmodes, Nmodes,
         Nnodes)
-    dcsol = isnothing(dcplan) ? nothing :
-        solvedcconductance(dcplan, bnmsource, Nmodes, Lmean)
-    bnm = isnothing(dcplan) ? bnmsource :
-        applydcconductance(bnmsource, dcplan, dcsol, Nmodes)
 
-    checkdcsourcecompatibility(floatingcomponents, bnm, wmodes, Nmodes,
-        nodenames, bnmsource)
+    # Nothing injects direct current in most circuits, and then every
+    # average voltage and every block port current is zero: the explicit
+    # block would carry a subsystem whose answer is the zero it starts at
+    # and charge for it on every residual, product and preconditioner
+    # application. Skipping it leaves the `i = 0` rows the scattering stamp
+    # writes, which are then the right answer rather than a simplification.
+    dcexplicit = !isnothing(dcplan) && dcinjected(dcplan, bnmsource, Nmodes)
+    if dcexplicit && !(method in (:newtonkrylov, :newton))
+        throw(ArgumentError(lazy"a circuit which injects direct current is solved with the average voltages as unknowns, which needs the real system; $(method) solves the complex holomorphic one. Use method = :newtonkrylov or :newton."))
+    end
+    dcsol = nothing
+
     gaugeindices = calcdcgaugeindices(floatingcomponents, wmodes, Nmodes)
     Amna = calcAmna(mnaindices, nodeindices, vvn, gaugeindices, wmodes,
         Nmodes, Nnodes, Lmean)
@@ -599,12 +612,19 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # convention and Lmean scaling; see scatteringlinearterm). The
     # residual, Jacobian, and solver machinery operate on the augmented
     # system unchanged.
+    # the stamped blocks, kept because the explicit direct current path
+    # needs each block's auxiliary base to find its zero frequency current
+    stampedblocks = StampedScatteringBlock[]
     if Nauxscattering > 0
         # The pump mode frequencies are fixed, so this is a constant matrix
         # folded into the augmentation before the solve begins, exactly as
         # the promoted resistor equations are. Nothing about it is per
         # iteration, so it needs nothing of the backend: the augmented
         # system it produces is what every backend already solves.
+        ssys = scatteringstampsystem(psc.scatteringblocks, Nmodes;
+            auxoffset = Nnodal + Naux - Nauxscattering,
+            Ntotal = Nnodal + Naux, scale = Lmean)
+        append!(stampedblocks, ssys.blocks)
         Amna = spaddkeepzeros(Amna, scatteringlinearterm(psc, wmodes,
             Nmodes; auxoffset = Nnodal + Naux - Nauxscattering,
             Ntotal = Nnodal + Naux, scale = Lmean,
@@ -785,6 +805,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # solve, and exactly what a matrix-free solver avoids).
         return (sys=sys, xr=xr, Fr=Fr, modelayout=modelayout,
             Jr=(assemblejacobian ? Jr : nothing), Nnodal=Nnodal,
+            dcplan=dcplan, dcsol=dcsol, bnmsource=bnmsource,
+            frequencies=frequencies,
             Amatrixindicesaliased=Amatrixindicesaliased,
             Amatrixconjindices=Amatrixconjindices, Ljb=Ljb, Lmean=Lmean,
             Rbnm=Rbnm, Nmodes=Nmodes, Nbranches=Nbranches, Nfreq=Nfreq,
@@ -810,6 +832,35 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     end
 
     # solve the nonlinear system
+    # The canonical layout is wired into the matrix free path, which is
+    # where the scatter and the gather sit in the inner loop and where the
+    # cost of them has to be known. The assembled Jacobian methods would
+    # additionally need `P J Pᵀ`, which stage 5 brings with the transport
+    # rows; until then say so rather than ignore the request.
+    # The canonical layout, built once for whichever method uses it. Both
+    # the matrix free path and the direct one solve the same system in the
+    # same coordinates; only the way they apply the Jacobian differs.
+    canonwork = if dcexplicit
+        tr = dcexplicit ? transportrows(dcplan, bnmsource, Nmodes) : nothing
+        Lc = tobackend(backend, compositelayout(modelayout, frequencies.modes;
+            nvdc = isnothing(tr) ? 0 : nvoltages(tr)))
+        # a block's zero frequency row is `i = 0` in the stamp; with an
+        # average voltage to respond to it becomes the block's own relation,
+        # which is what makes it visible at direct current
+        br = (dcexplicit && Nauxscattering > 0) ?
+            dcblockrows(stampedblocks, dcplan.componentof, Nmodes,
+                dcplan.modeindex, Lc.nac, Nnodes - 1, Lmean) : nothing
+        # the zero frequency block holds one entry per node and then one per
+        # auxiliary unknown; only the nodal ones carry the coupling
+        w = CanonicalWork(Lc, tobackend(backend,
+                convert(Vector{precision}, xr));
+            transport = tr, blockrows = br, nnodaldc = Nnodes - 1)
+        checkdcsubsystem(w, nodenames)
+        w
+    else
+        nothing
+    end
+
     info = if method == :quasinewton
 
         solveonbackend!(fj!, F, Jxb, x, backend; iterations = iterations,
@@ -820,9 +871,31 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 
         # solve the equivalent real nonlinear system with the exact real
         # Jacobian then convert back to complex
-        info = solveonbackend!(fjreal!, Fr, Jr, xr, backend;
-            iterations = iterations, ftol = ftol,
-            andersondepth = andersondepth, factorization = factorization)
+        info = if dcexplicit
+            Lc = canonwork.layout
+            nc = canonicaldim(Lc)
+            # the pattern, from one assembly at the starting point
+            fjreal!(nothing, Jr, xr)
+            Jc = canonicaljacobian(Jr, canonwork)
+            uc = zeros(eltype(xr), nc)
+            Fc = zeros(eltype(Fr), nc)
+            gathercanonical!(uc, xr, Lc)
+            out = solveonbackend!(
+                canonicalfj(fjreal!, canonwork, Jr, Jc), Fc, Jc, uc, backend;
+                iterations = iterations, ftol = ftol, rtol = rtol,
+                andersondepth = andersondepth, factorization = factorization)
+            scattercanonical!(xr, uc, Lc)
+            scattercanonical!(Fr, Fc, Lc)
+            if dcexplicit
+                dcsol = dcsolutionfrom(dcplan,
+                    Array(view(uc, voltagerange(Lc))))
+            end
+            out
+        else
+            solveonbackend!(fjreal!, Fr, Jr, xr, backend;
+                iterations = iterations, ftol = ftol,
+                andersondepth = andersondepth, factorization = factorization)
+        end
         real_to_complex!(x,xr,modelayout.isreal)
         real_to_complex!(F,Fr,modelayout.isreal)
         info
@@ -924,10 +997,44 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # live on `nlsolvekrylov!` itself, the single source of truth, so a
         # direct caller gets the same solver; `krylovkwargs` overrides any
         # of them
-        info = nlsolvekrylov!(fjreal!, jvpreal!, Frb, xrb, pc;
-            iterations = iterations, ftol = ftol,
-            linearsolver = linearsolver,
-            krylovkwargs...)
+        info = if dcexplicit
+            # The canonical layout groups the state by role rather than by
+            # node, which is what stage 5 needs and what this measures. It
+            # is a permutation here, so the iteration is the same one in a
+            # rotated basis and must reach the same point; the benchmark in
+            # `bench/compositelayout.jl` compares the two.
+            work = canonwork
+            L = work.layout
+            ucb = similar(xrb, canonicaldim(L))
+            Fcb = similar(Frb, canonicaldim(L))
+            # the explicit voltages start at zero, which is the answer when
+            # nothing injects direct current; `gathercanonical!` writes the
+            # flux blocks only and would leave them undefined
+            fill!(ucb, zero(eltype(ucb)))
+            gathercanonical!(ucb, xrb, L)
+            out = nlsolvekrylov!(canonicalresidual(fjreal!, work),
+                canonicaljvp(jvpreal!, work), Fcb, ucb,
+                CanonicalPreconditioner(pc, work);
+                iterations = iterations, ftol = ftol, rtol = rtol,
+                linearsolver = linearsolver,
+                krylovkwargs...)
+            scattercanonical!(xrb, ucb, L)
+            scattercanonical!(Frb, Fcb, L)
+            # report the voltages this path actually solved for, rather than
+            # the eliminated ones. They agree while the direct current
+            # devices are linear conductances, which the tests assert; they
+            # will not once a block's port current is an unknown too.
+            if dcexplicit
+                dcsol = dcsolutionfrom(dcplan,
+                    Array(view(ucb, voltagerange(L))))
+            end
+            out
+        else
+            nlsolvekrylov!(fjreal!, jvpreal!, Frb, xrb, pc;
+                iterations = iterations, ftol = ftol, rtol = rtol,
+                linearsolver = linearsolver,
+                krylovkwargs...)
+        end
         # back to the host for the complex representation returned to the
         # caller, whose conversion walks a BitVector serially
         copyto!(xr, tohost(xrb))
@@ -984,8 +1091,21 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         Fgauge = similar(sys.x)
         residual!(Fgauge, sys)
         copyto!(F, Fgauge)
+        # On the explicit path the system carries the applied source and the
+        # resistor current arrives through the transport coupling, which
+        # lives outside it. Adding it back, and correcting the source the
+        # same way, hands this check the pair the elimination would have
+        # produced, so it validates the physics rather than the path.
+        bnmkcl = bnm
+        if dcexplicit && !isnothing(dcsol) && dcsol.active
+            for p in 2:Nnodes
+                F[(p-2)*Nmodes + dcplan.modeindex] +=
+                    dcsol.scaledcurrent[p-1]
+            end
+            bnmkcl = applydcconductance(bnmsource, dcplan, dcsol, Nmodes)
+        end
         kclok, normkcl, kcltol = mnavalidatekcl(F, x, gaugeindices,
-            Nnodal, bnm, ftol)
+            Nnodal, bnmkcl, ftol)
         if !kclok
             @warn "The original (ungauged) Kirchhoff current law equations are violated beyond the solver resolution at the returned solution, indicating that a gauge fixing equation absorbed an incompatibility, such as a net direct current injected into a floating subnetwork, into the arbitrary flux reference. Marking the solution as not converged." normkcl kcltol
             converged = false

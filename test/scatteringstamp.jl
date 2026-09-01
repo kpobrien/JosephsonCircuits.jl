@@ -1680,3 +1680,63 @@ using Test
     end
 
 end
+
+# The zero frequency pencil, which is what makes a block visible at direct
+# current. `evaluatehybrid!` writes `i = 0` there; the descriptor reads the
+# block's own relation instead, and the classification of what it leaves
+# undetermined falls out of the rank of `C(0)` rather than out of a list of
+# block types.
+@testset verbose=true "scattering blocks at zero frequency" begin
+    JC = JosephsonCircuits
+    mk(S; n = 2) = ScatteringParameters(S; nports = n, grounded = true,
+        noise = Lossless())
+    descr(lab, blk) = JC.dcblockdescriptor(JC.StampedScatteringBlock(
+        blk, collect(1:blk.nports), zeros(Int, blk.nports), 0, lab))
+
+    @testset "a resistive block has a determined current" begin
+        # a 100 ohm series resistor between 50 ohm ports has S(0) with
+        # S11 = Z/(Z+2*Z0) = 1/2 and S21 = 2*Z0/(Z+2*Z0) = 1/2
+        d = descr("R", mk(w -> JC.ABCDtoS(JC.ABCD_seriesZ(100.0 + 0im))))
+        r = sqrt(50.0)
+        @test d.B0 ≈ [0.5 -0.5; -0.5 0.5] ./ r
+        @test d.C0 ≈ [1.5 0.5; 0.5 1.5] .* r
+        @test d.freecurrents == 0        # I + S(0) is invertible
+    end
+
+    @testset "an open block reproduces the row it replaces" begin
+        # S(0) = I gives B0 = 0 and C0 = 2*sqrt(R), so the row is i = 0,
+        # which is what the zero frequency special case hard codes. An open
+        # circuit is the one block for which that special case was right.
+        d = descr("open", mk(w -> Matrix{Complex{Float64}}(I, 2, 2)))
+        @test all(iszero, d.B0)
+        @test d.C0 ≈ 2*sqrt(50.0)*Matrix(I, 2, 2)
+        @test d.freecurrents == 0
+    end
+
+    @testset "a short constrains the voltage and frees the current" begin
+        # S(0) = -1 gives C0 = 0: the row is B0*V = 0, so the port voltage
+        # is pinned and the current is not determined by it at all
+        d = descr("short", mk(JC.S_short!(ones(Complex{Float64}, 1, 1)); n = 1))
+        @test all(iszero, d.C0)
+        @test d.B0 ≈ fill(2/sqrt(50.0), 1, 1)
+        @test d.freecurrents == 1
+    end
+
+    @testset "an ideal through leaves one current direction free" begin
+        # S(0) = [0 1; 1 0]: I + S(0) is singular, so one combination of the
+        # port currents is undetermined while the voltages are tied together
+        d = descr("through", mk(w -> JC.ABCDtoS(JC.ABCD_seriesZ(0.0 + 0im))))
+        @test rank(d.C0) == 1
+        @test d.freecurrents == 1
+        @test d.B0 ≈ [1.0 -1.0; -1.0 1.0] ./ sqrt(50.0)
+    end
+
+    @testset "a block with no real zero frequency limit is refused" begin
+        # a limit which exists but cannot be evaluated at zero
+        @test_throws ArgumentError descr("cap",
+            mk(w -> JC.ABCDtoS(JC.ABCD_seriesZ(1/(im*w*1e-12)))))
+        # and one which is genuinely complex there
+        @test_throws ArgumentError descr("reactive",
+            mk(w -> Complex{Float64}[0 im; im 0]))
+    end
+end

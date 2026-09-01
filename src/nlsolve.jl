@@ -1097,7 +1097,7 @@ evaluations after each iteration's first), and `andersonrecord` (true
 when the taken step lies on the curved path).
 """
 function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
-    x::AbstractVector{T}; iterations = 1000, ftol = 1e-8,
+    x::AbstractVector{T}; iterations = 1000, ftol = 1e-8, rtol = 0.0,
     factorization = KLUfactorization(), label = "",
     c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5,
     maxbacktracks::Integer = 10, maxbacktrackfailures::Integer = 2,
@@ -1213,6 +1213,10 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         # evaluated at a final point
         residual!(F, x)
         push!(normF, norm(F))
+        # `rtol` adds the relative test beside the absolute one, satisfied
+        # when either holds; at `rtol = 0` the tolerance is exactly `ftol`
+        # and nothing already measured moves. See `nlsolvekrylov!`.
+        ftol = max(ftol, rtol*normF[1])
         if normF[end] <= ftol
             converged = true
         else

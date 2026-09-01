@@ -1180,6 +1180,15 @@ solver is kept simple.
 # Keywords
 - `iterations = 1000`: maximum number of Newton iterations.
 - `ftol = 1e-8`: convergence when `norm(F) <= ftol`.
+- `rtol = 0.0`: an additional relative test, `norm(F) <= rtol*norm(F0)`,
+    satisfied when either holds. A residual whose terms are of size `s`
+    cannot be driven below about `eps*s` however exactly the step is taken,
+    so an absolute tolerance is a statement about the problem's units rather
+    than about the solve. Measured on a circuit carrying direct current
+    through a scattering block, the explicit block reaches `2.4e-16` of its
+    initial residual -- machine precision -- at every drive level, while the
+    absolute residual it stops at moves with the drive. Off by default: at
+    `rtol = 0` this is exactly the previous test.
 - `label = ""`: label for the returned `IterationInfo`.
 - `c1 = 1e-4`: Armijo sufficient-decrease constant, in (0, 1/2).
 - `safeguard_low = 0.1`, `safeguard_high = 0.5`: backtracking step clamp as
@@ -1220,7 +1229,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     krylovrtolmax = 0.9, krylovrtol0 = 0.3, krylovgamma = 0.9,
     krylovalpha = (1 + sqrt(5))/2,
     krylovstagnation = 0.9, krylovescalate::Integer = 1,
-    krylovrefreshrate = 0.5) where {T<:AbstractFloat}
+    krylovrefreshrate = 0.5, rtol = 0.0) where {T<:AbstractFloat}
 
     length(F) == length(x) || throw(DimensionMismatch(
         lazy"The residual `F` has length $(length(F)) but the point `x` has length $(length(x))."))
@@ -1326,6 +1335,11 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # final point
     residual!(F, x)
     push!(normF, norm(F))
+    # `ftol` is absolute, which asks a fixed accuracy of a residual whose
+    # size is the problem's. `rtol` adds the relative test beside it, off by
+    # default so that nothing already measured moves: with `rtol = 0` the
+    # tolerance below is exactly `ftol`.
+    ftol = max(ftol, rtol*normF[1])
     normF[end] <= ftol && (converged = true)
 
     for n in 1:iterations
