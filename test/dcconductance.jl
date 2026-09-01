@@ -88,6 +88,37 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test isapprox(maximum(v) - minimum(v), Idc*Rb; rtol = 1e-5)
     end
 
+    @testset "the tolerance follows the scale of the source" begin
+        # The scale which nondimensionalizes the system is read off the port
+        # reference impedances, so a circuit whose interior sits far from
+        # them -- a hundred ohm bridge between ports made nearly open at a
+        # teraohm -- is left with a scaled source many orders above one. The
+        # residual cannot be pushed below the rounding error of a sum of
+        # terms that size, and an absolute tolerance under that floor makes
+        # convergence a matter of which way the last rounding fell rather
+        # than of whether the iteration found the answer. What is asserted
+        # is that it is reported converged and that the answer is the exact
+        # one, on both of the methods which carry the block.
+        Rb, Rbig, Idc = 100.0, 1.0e12, 1.0e-6
+        c = Circuit(
+            [:p1 => Port(1; Z0 = Rbig), :p2 => Port(2; Z0 = Rbig),
+             :rb => Resistor(Rb), :c1 => Capacitor(1e-12),
+             :c2 => Capacitor(1e-12)],
+            [[(:p1,1),(:rb,1),(:c1,1)], [(:rb,2),(:p2,1),(:c2,1)],
+             [(:p1,2),(:p2,2),(:c1,2),(:c2,2), Ground]])
+        for m in (:newton, :newtonkrylov)
+            sol = hbnlsolve(ws, (1,), [(mode=(0,), port=1, current=Idc),
+                    (mode=(0,), port=2, current=-Idc)], c, Dict{Any,Any}();
+                keyedarrays = false, dc = true, odd = true, method = m)
+            @test sol.solverinfo.converged
+            # and it stops where the arithmetic runs out, not earlier
+            @test sol.solverinfo.finalresidual <=
+                1e-14*sol.solverinfo.initialresidual
+            v = sol.dcnodevoltage
+            @test isapprox(maximum(v) - minimum(v), Idc*Rb; rtol = 1e-8)
+        end
+    end
+
     @testset "no direct current, no voltage" begin
         # the common case: the elimination costs one projection and reports
         # nothing, and the answer is what it always was

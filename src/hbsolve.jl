@@ -210,7 +210,10 @@ end
 const _DOC_FTOL = """
 - `ftol = 1e-8`: the residual tolerance `norm(F) <= ftol` at which the
     nonlinear solution is considered converged. `F` is scaled by `Z0/w0`;
-    see [`calcsolverscale`](@ref)."""
+    see [`calcsolverscale`](@ref). A tolerance below the rounding error of
+    the scaled source, which a circuit whose interior is far from its port
+    impedances can reach, is raised to it: no iteration resolves a residual
+    below the rounding of the terms which make it."""
 
 const _DOC_METHOD = """
 - `method = :newtonkrylov`: the nonlinear solver, a symbol or a solver

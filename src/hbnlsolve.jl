@@ -884,6 +884,24 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             Nbranches=Nbranches, Nfreq=Nfreq)
     end
 
+    # The residual is a sum of terms whose size is set by the applied
+    # source, so no iteration can push it below the rounding error of that
+    # sum. The nondimensionalizing scale (see `calcsolverscale`) is read off
+    # the port reference impedances, and a circuit whose interior sits at a
+    # very different impedance -- a hundred ohm bridge between two ports
+    # made nearly open at a gigaohm, say -- is left with a scaled source
+    # many orders above one and a residual floor above the default absolute
+    # `ftol`. Asking for less than the floor is asking the iteration to
+    # converge on noise, and whether it reports success is then decided by
+    # which way the last rounding happened to fall. Raise the tolerance to
+    # the floor when the floor is the larger. The floor is the `sqrt(n)*eps`
+    # accumulation over the terms of the sum with room to spare, since what
+    # is wanted is a tolerance the arithmetic can reach and not a sharp
+    # bound on the rounding. For a circuit driven near its characteristic
+    # impedance it is orders of magnitude below `ftol` and nothing changes.
+    ftol = max(ftol,
+        16*sqrt(length(xr))*eps(real(eltype(xr)))*norm(bnmsource))
+
     # solve the nonlinear system
     # The canonical layout is wired into the matrix free path, which is
     # where the scatter and the gather sit in the inner loop and where the
@@ -893,7 +911,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     info = if method == :quasinewton
 
         solveonbackend!(fj!, F, Jxb, x, backend; iterations = iterations,
-            ftol = ftol, andersondepth = andersondepth,
+            ftol = ftol, rtol = rtol, andersondepth = andersondepth,
             factorization = factorization)
 
     elseif method == :newton
@@ -924,7 +942,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             out
         else
             solveonbackend!(fjreal!, Fr, Jr, xr, backend;
-                iterations = iterations, ftol = ftol,
+                iterations = iterations, ftol = ftol, rtol = rtol,
                 andersondepth = andersondepth, factorization = factorization)
         end
         real_to_complex!(x,xr,modelayout.isreal)
