@@ -100,8 +100,12 @@ windowindices(L::CompositeLayout) =
 # the canonical index range of the explicit voltage block
 voltagerange(L::CompositeLayout) = (L.rdim + 1):(L.rdim + L.nvdc)
 
-# the internal part of a canonical vector, which the harmonic system reads
-# and writes in place
+"""
+    internalpart(u::AbstractVector, L::CompositeLayout)
+
+The internal block of a canonical vector `u`, as a view: the first
+`L.rdim` entries, which the harmonic system reads and writes in place.
+"""
 internalpart(u::AbstractVector, L::CompositeLayout) = view(u, 1:L.rdim)
 
 """
