@@ -387,8 +387,7 @@ end
 """
     CompiledPort
 
-An analysis port: its number, its two nodes, its reference impedance and
-the termination it owns.
+An analysis port and the environment it owns.
 
 `environment` is the flat table index of the port's own termination, or
 `0` when the port owns none. It is recorded here when the port is
@@ -396,15 +395,15 @@ compiled, so nothing downstream needs to look for a resistor on the port's
 branch, and a port may share its terminals with any number of ordinary
 device resistors.
 
-`zref` is the reference impedance as written, which may still be symbolic;
-binding resolves it to a finite positive real number. `component` is the
-port's own index in the flat table.
+The reference impedance is not stored here: it is the value of the port's
+own entry in the flat component table, at `component`, so it is bound like
+every other value and read from the bound table by
+[`portreferenceimpedances`](@ref).
 """
 struct CompiledPort
     number::Int
     positivenode::Int
     negativenode::Int
-    zref::Any
     environment::Int
     component::Int
 end
@@ -713,8 +712,8 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
                 push!(legacyenvironments,
                     length(ports) + 1 => prefix*string(def.termination.component))
             end
-            push!(ports, CompiledPort(def.number, n1, n2, def.Z0,
-                environment, marker))
+            push!(ports, CompiledPort(def.number, n1, n2, environment,
+                marker))
         end
     end
 
@@ -738,13 +737,13 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
             throw(ArgumentError(lazy"The port $(componentnames[ports[k].component]) names $(name) as its termination, which is not a resistor in this circuit."))
         end
         ports[k] = CompiledPort(ports[k].number, ports[k].positivenode,
-            ports[k].negativenode, ports[k].zref, i, ports[k].component)
+            ports[k].negativenode, i, ports[k].component)
     end
 
     # `sortnodes` renumbered the nodes. The port nodes recorded above are in
     # the pre-sort numbering and are re-read from the sorted table.
     ports = [CompiledPort(p.number, nodeindices[1, p.component],
-        nodeindices[2, p.component], p.zref, p.environment, p.component)
+        nodeindices[2, p.component], p.environment, p.component)
         for p in ports]
 
     warnduplicatematchedload(ports, componentnames, componenttypes,
@@ -884,19 +883,30 @@ portenvironmentindices(c::CompiledCircuit) =
 """
     portreferenceimpedances(c::CompiledCircuit, values)
 
-The reference impedance of each port, ordered by port number, which the
-incoming and outgoing waves are normalized to.
+The reference impedance of each port, ordered by port number, read from a
+bound flat value table.
 
-For a port which owns a termination the impedance is read from that entry
-of the resolved value table `values`, so that a swept or symbolic
-impedance resolves the same way any component value does; the entry holds
-the port's own `Z0` in any case. For a port which owns none it is the
-port's `zref` as written.
+This is the impedance the incoming and outgoing waves are normalized to. It
+is the port's declared `Z0`, which is the value of the port's own entry in
+the table, and it is read from there for every port, whatever the port owns:
+a symbolic or swept impedance then resolves the same way a component value
+does, and an unterminated port resolves the same way a matched one. The two
+cannot disagree with an environment either, because a matched environment
+is generated with the port's own `Z0` and a legacy port's `Z0` is the value
+of the resistor it adopted.
+
+A bound value must be a finite positive real number. The constructor lets a
+symbol or a deferred value through so that it can be bound; this is where
+what it bound to is checked, before any matrix or wave is built from it.
 """
-portreferenceimpedances(c::CompiledCircuit, values) =
-    [iszero(c.ports[i].environment) ? c.ports[i].zref :
-        values[c.ports[i].environment]
-     for i in sortperm([p.number for p in c.ports])]
+function portreferenceimpedances(c::CompiledCircuit, values)
+    order = sortperm([p.number for p in c.ports])
+    z = [values[c.ports[i].component] for i in order]
+    for (k, i) in enumerate(order)
+        checkportimpedance(z[k], c.ports[i].number)
+    end
+    return z
+end
 
 """
     noiseindices(c::CompiledCircuit, values)

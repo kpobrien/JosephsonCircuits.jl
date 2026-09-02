@@ -120,16 +120,16 @@ function dcresidualsensitivity(dc::DCOperatingPoint, psc::CompiledCircuit,
         cur = g*(v1 - v2)
         iszero(cur) && continue
         # the current it drives into the zero frequency nodal rows
-        n1 > 1 && (push!(I, L.nac + n1 - 1); push!(J, k); push!(V, cur))
-        n2 > 1 && (push!(I, L.nac + n2 - 1); push!(J, k); push!(V, -cur))
+        n1 > 1 && (push!(I, L.dcpos[n1 - 1]); push!(J, k); push!(V, cur))
+        n2 > 1 && (push!(I, L.dcpos[n2 - 1]); push!(J, k); push!(V, -cur))
         # and into the transport rows, which are the component sums of
         # those; a resistor inside one component cancels there, exactly as
         # an inductor branch does
         c1 = plan.componentof[n1]
         c2 = plan.componentof[n2]
         c1 == c2 && continue
-        iszero(c1) || (push!(I, L.nac + L.ndc + c1); push!(J, k); push!(V, cur))
-        iszero(c2) || (push!(I, L.nac + L.ndc + c2); push!(J, k); push!(V, -cur))
+        iszero(c1) || (push!(I, L.rdim + c1); push!(J, k); push!(V, cur))
+        iszero(c2) || (push!(I, L.rdim + c2); push!(J, k); push!(V, -cur))
     end
     return sparse(I, J, V, n, length(sensitivityindices))
 end
@@ -391,10 +391,10 @@ function calcresidualsensitivity(op::HBOperatingPoint,
     isnothing(op.dc) && return harmonic
 
     # In canonical coordinates the residual is `D G F(S u) + M u`, so its
-    # parameter derivative is the harmonic derivative gathered and masked by
-    # the rows the block replaces, plus the block's own dependence on the
-    # component values. The gather permutes the flux rows and writes
-    # nothing into the voltage rows, which is where the block's part lands.
+    # parameter derivative is this gathered, masked by the rows the block
+    # replaces rather than adds to, plus the block's own dependence on the
+    # component values. The gather copies the flux rows and writes nothing
+    # into the voltage rows, which is where the block's part lands.
     L = op.dc.work.layout
     N = canonicaldim(L)
     dccols = dcresidualsensitivity(op.dc, psc, nm, op.Lmean,
@@ -431,7 +431,7 @@ function dckeep(work::CanonicalWork)
     keep = ones(Float64, canonicaldim(L))
     up = dcupdate(work)
     isnothing(up) && return keep
-    copyto!(view(keep, dcwindow(L)), Array(up.keep))
+    keep[windowindices(L)] .= Array(up.keep)
     return keep
 end
 

@@ -417,24 +417,8 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lmean,
     # slots of the Josephson branches incident on it. The entries of column
     # k of `Rbnm` are the branch rows which contribute to output k, so the
     # transposed product is a gather and needs no scatter or atomic.
-    jjofbranch = Dict{Int,Int}(Ljb.nzind[i] => i for i in 1:NJJ)
-    bptr = Vector{Ti}(undef, nc+1)
-    bptr[1] = 1
-    bsrc = Ti[]
-    bcoef = T[]
-    rowsrbnm = rowvals(Rbnm)
-    valsrbnm = nonzeros(Rbnm)
-    @inbounds for k in 1:nc
-        for t in nzrange(Rbnm, k)
-            r = rowsrbnm[t]
-            i = get(jjofbranch, (r-1) ÷ Nmodes + 1, 0)
-            iszero(i) && continue
-            j = (r-1) % Nmodes + 1
-            push!(bsrc, freqindexmap[j] + (i-1)*Nmatrix)
-            push!(bcoef, T(valsrbnm[t])*T(Lmean/Ljb.nzval[i]))
-        end
-        bptr[k+1] = length(bsrc)+1
-    end
+    bptr, bsrc, bcoef = backwardjosephsonmap(Ti, T, Rbnm, Ljb, Lmean, Nmodes,
+        Nmatrix, freqindexmap, nc)
 
     # The linear term in both representations, each transposed so that
     # applying it is a gather over the entries of one output row. Only the
@@ -443,18 +427,11 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lmean,
     # empty; converting `K` to the real layout is the largest allocation of
     # the plan, and a solve in the complex representation never applies it.
     kptr, kidx, kcoef = if realbackward
-        KrT = sparse(transpose(complex_to_real(Knm, layout, layout)))
-        (convert(Vector{Ti}, SparseArrays.getcolptr(KrT)),
-            convert(Vector{Ti}, rowvals(KrT)),
-            convert(Vector{T}, nonzeros(KrT)))
+        reallinearmap(Ti, T, Knm, layout)
     else
         (Ti[], Ti[], T[])
     end
-
-    KnmT = sparse(transpose(Knm))
-    cptr = convert(Vector{Ti}, SparseArrays.getcolptr(KnmT))
-    cidx = convert(Vector{Ti}, rowvals(KnmT))
-    ccoef = convert(Vector{Complex{T}}, nonzeros(KnmT))
+    cptr, cidx, ccoef = complexlinearmap(Ti, T, Knm)
 
     lptr = convert(Vector{Ti}, layout.ptr[1:nc])
     lwide = Int32[layout.w[k] ? 0 : 1 for k in 1:nc]
@@ -493,6 +470,273 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lmean,
         dkptrzero, dcptrzero, forward!, backward!, forwardcomplex!,
         backwardcomplex!, realtocomplex!, complextoreal!, backend,
         nslots, nc)
+end
+
+# The three parts of the backward map which carry values rather than
+# structure: the Josephson coefficients `Lmean/Lj` times the incidence entry,
+# and the linear term in each representation. They are built here for the
+# plan and again by `refreshvalues!` when the values move under a fixed
+# structure, so the two cannot disagree.
+function backwardjosephsonmap(::Type{Ti}, ::Type{T}, Rbnm::SparseMatrixCSC,
+        Ljb::SparseVector, Lmean, Nmodes::Integer, Nmatrix::Integer,
+        freqindexmap::Vector{Int}, nc::Integer) where {Ti,T}
+    NJJ = length(Ljb.nzval)
+    jjofbranch = Dict{Int,Int}(Ljb.nzind[i] => i for i in 1:NJJ)
+    bptr = Vector{Ti}(undef, nc+1)
+    bptr[1] = 1
+    bsrc = Ti[]
+    bcoef = T[]
+    rowsrbnm = rowvals(Rbnm)
+    valsrbnm = nonzeros(Rbnm)
+    @inbounds for k in 1:nc
+        for t in nzrange(Rbnm, k)
+            r = rowsrbnm[t]
+            i = get(jjofbranch, (r-1) ÷ Nmodes + 1, 0)
+            iszero(i) && continue
+            j = (r-1) % Nmodes + 1
+            push!(bsrc, freqindexmap[j] + (i-1)*Nmatrix)
+            push!(bcoef, T(valsrbnm[t])*T(Lmean/Ljb.nzval[i]))
+        end
+        bptr[k+1] = length(bsrc)+1
+    end
+    return bptr, bsrc, bcoef
+end
+
+function reallinearmap(::Type{Ti}, ::Type{T}, Knm::SparseMatrixCSC,
+        layout::ModeLayout) where {Ti,T}
+    KrT = sparse(transpose(complex_to_real(Knm, layout, layout)))
+    return (convert(Vector{Ti}, SparseArrays.getcolptr(KrT)),
+        convert(Vector{Ti}, rowvals(KrT)),
+        convert(Vector{T}, nonzeros(KrT)))
+end
+
+function complexlinearmap(::Type{Ti}, ::Type{T},
+        Knm::SparseMatrixCSC) where {Ti,T}
+    KnmT = sparse(transpose(Knm))
+    return (convert(Vector{Ti}, SparseArrays.getcolptr(KnmT)),
+        convert(Vector{Ti}, rowvals(KnmT)),
+        convert(Vector{Complex{T}}, nonzeros(KnmT)))
+end
+
+"""
+    ValueMaps
+
+Where each value array of a [`NonlinearTermPlan`](@ref) and the linear term
+it was built from read their numbers, under a fixed structure, so that new
+component values can be written into them without rebuilding anything.
+
+# Fields
+- `ml`, `mg`, `mc`: for each stored entry of `Knm`, the stored entry of
+  `invLnm`, `Gnm` and `Cnm` it takes, or zero.
+- `kmap`, `kre`, `kim`: for each entry of the real form of the linear term,
+  the entry of `Knm` it comes from and the coefficient of its real and its
+  imaginary part, which are `0` or `±1`.
+- `cmap`: for each entry of the complex form, the entry of `Knm`.
+- `bjunc`, `bsgn`: for each Josephson coefficient, its junction and the
+  incidence entry, so the coefficient is `bsgn*Lmean/Lj`.
+
+Found by [`valuemaps`](@ref), which probes the conversions with tagged
+values rather than restating their rules.
+"""
+struct ValueMaps{VI,VT,VC}
+    ml::Vector{Int}
+    mg::Vector{Int}
+    mc::Vector{Int}
+    kmap::VI
+    kre::VT
+    kim::VT
+    cmap::VI
+    bjunc::VI
+    bsgn::VT
+    knz::VC            # the entries of `Knm`, where the plan lives
+end
+
+# the entry a probe tagged, read back through a linear map: zero where the
+# entry depends on nothing, else the tag with the sign the map gave it
+_tagof(v) = (t = round(Int, abs(v)); (t, iszero(t) ? 0.0 : sign(v)))
+
+"""
+    valuemaps(plan::NonlinearTermPlan, Knm, invLnm, Gnm, Cnm, Rbnm, Ljb,
+        layout, freqindexmap)
+
+The [`ValueMaps`](@ref) of a plan, found by probing.
+
+Each conversion is linear and each of its output entries reads one input
+entry, so tagging the inputs with their own indices and reading the outputs
+gives the map, and does so for whatever rule the conversion follows. A
+conversion whose structure under the tags differs from the plan's -- one
+which drops a zero, say -- has no fixed map and `nothing` is returned; the
+refresh then rebuilds the arrays instead.
+"""
+function valuemaps(plan::NonlinearTermPlan{Ti,T}, Knm::SparseMatrixCSC,
+        invLnm::SparseMatrixCSC, Gnm::SparseMatrixCSC, Cnm::SparseMatrixCSC,
+        Rbnm::SparseMatrixCSC, Ljb::SparseVector, layout::ModeLayout,
+        freqindexmap::Vector{Int}) where {Ti,T}
+    # The three linear term matrices into `Knm`. Every entry of every
+    # matrix carries a value, so the structure is the union the real values
+    # produce, and the one whose map is read carries its tags on an axis of
+    # its own: the inductance and the capacitance contribute on the real
+    # axis and the conductance, through the `im`, on the imaginary one, so
+    # the other two are given values which keep off the axis being read and
+    # cannot cancel each other where they overlap, since the sum drops an
+    # exact zero. Unit frequency diagonals, so a zero frequency does not
+    # erase a tag.
+    n = size(Knm, 1)
+    ones_ = Diagonal(ones(n))
+    tagged(A, v) = SparseMatrixCSC(size(A)..., copy(SparseArrays.getcolptr(A)),
+        copy(rowvals(A)), v)
+    tags(A) = Complex{Float64}.(1:nnz(A))
+    fillc(A, v) = fill(Complex{Float64}(v), nnz(A))
+    # The probe's structure is the union of the three, which holds every
+    # entry of `Knm` and possibly more: a term which vanishes at the zero
+    # frequency column is dropped from `Knm` by the sum and kept by the
+    # probe. So the probe is read onto the structure of `Knm`, entry by
+    # entry, and a missing one means there is no map.
+    function probe(zl, zg, zc, part)
+        K = linearterm(zl, zg, zc, ones_, ones_, Float64)
+        size(K) == size(Knm) || return nothing
+        m = zeros(Int, nnz(Knm))
+        kcol, krow, knz = SparseArrays.getcolptr(K), rowvals(K), nonzeros(K)
+        for j in axes(Knm, 2), t in nzrange(Knm, j)
+            i = rowvals(Knm)[t]
+            r = kcol[j]:(kcol[j+1] - 1)
+            q = searchsortedfirst(view(krow, r), i)
+            (q <= length(r) && krow[r[q]] == i) || return nothing
+            m[t] = round(Int, part(knz[r[q]]))
+        end
+        return m
+    end
+    ml = probe(tagged(invLnm, tags(invLnm)), tagged(Gnm, fillc(Gnm, 1)),
+        tagged(Cnm, fillc(Cnm, 2im)), real)
+    mg = probe(tagged(invLnm, fillc(invLnm, 1)), tagged(Gnm, tags(Gnm)),
+        tagged(Cnm, fillc(Cnm, 2)), imag)
+    mc = probe(tagged(invLnm, fillc(invLnm, im)), tagged(Gnm, fillc(Gnm, 1)),
+        tagged(Cnm, tags(Cnm)), v -> -real(v))
+    (isnothing(ml) || isnothing(mg) || isnothing(mc)) && return nothing
+
+    # `Knm` into its real form. Each real entry is one part of one entry
+    # of `Knm` with a sign, so tagging the real parts with `k` and the
+    # imaginary parts with `nz + k` tells the two apart by size.
+    nz = nnz(Knm)
+    kmap = zeros(Ti, length(plan.kidx)); kre = zeros(T, length(plan.kidx))
+    kim = zeros(T, length(plan.kidx))
+    if hasrealbackward(plan)
+        both = tagged(Knm, Complex{Float64}[k + im*(nz + k) for k in 1:nz])
+        p1, i1, v1 = reallinearmap(Ti, Float64, both, layout)
+        (i1 == Array(plan.kidx) && p1 == Array(plan.kptr)) || return nothing
+        for t in eachindex(i1)
+            a, sa = _tagof(v1[t])
+            iszero(a) && continue
+            if a <= nz
+                kmap[t] = a; kre[t] = sa
+            else
+                kmap[t] = a - nz; kim[t] = sa
+            end
+        end
+    end
+    # and into its complex form, a permutation
+    pc, ic, vc = complexlinearmap(Ti, Float64, tagged(Knm, tags(Knm)))
+    (ic == Array(plan.cidx) && pc == Array(plan.cptr)) || return nothing
+    cmap = Ti[round(Ti, real(v)) for v in vc]
+
+    # the Josephson coefficients: the junction and the incidence entry of
+    # each, read from a map built with unit inductances
+    nc = plan.ncomplex
+    Nmodes = length(freqindexmap)
+    Nmatrix = plan.nslots ÷ max(length(Ljb.nzval), 1)
+    unit = SparseVector(length(Ljb), copy(Ljb.nzind), ones(Float64, length(Ljb.nzval)))
+    _, bsrc, bsgn = backwardjosephsonmap(Ti, Float64, Rbnm, unit, 1.0, Nmodes,
+        Nmatrix, freqindexmap, nc)
+    Array(plan.bsrc) == bsrc || return nothing
+    bjunc = Ti[(Int(src) - 1) ÷ Nmatrix + 1 for src in bsrc]
+
+    d = x -> tobackend(plan.backend, x)
+    return ValueMaps(ml, mg, mc, d(kmap), d(convert(Vector{T}, kre)),
+        d(convert(Vector{T}, kim)), d(cmap), d(bjunc),
+        d(convert(Vector{T}, bsgn)),
+        KernelAbstractions.allocate(plan.backend, Complex{T}, nz))
+end
+
+# the three refreshes, one work item per output entry
+@kernel function refreshrealkernel!(kcoef, @Const(knz), @Const(kmap),
+        @Const(kre), @Const(kim))
+    t = @index(Global)
+    @inbounds begin
+        v = knz[kmap[t]]
+        kcoef[t] = kre[t]*real(v) + kim[t]*imag(v)
+    end
+end
+
+@kernel function refreshcomplexkernel!(ccoef, @Const(knz), @Const(cmap))
+    t = @index(Global)
+    @inbounds ccoef[t] = knz[cmap[t]]
+end
+
+@kernel function refreshjosephsonkernel!(bcoef, @Const(ljnz), @Const(bjunc),
+        @Const(bsgn), lmean)
+    t = @index(Global)
+    @inbounds bcoef[t] = bsgn[t]*(lmean/ljnz[bjunc[t]])
+end
+
+"""
+    refreshvalues!(plan::NonlinearTermPlan, maps::ValueMaps, Knm, Ljb, Lmean)
+
+Rewrite the value arrays of a plan through its [`ValueMaps`](@ref): three
+kernels over the arrays where they live, and nothing allocated.
+"""
+function refreshvalues!(plan::NonlinearTermPlan{Ti,T}, maps::ValueMaps,
+        Knm::SparseMatrixCSC, Ljb::SparseVector, Lmean) where {Ti,T}
+    backend = plan.backend
+    copyto!(maps.knz, nonzeros(Knm))
+    ljnz = tobackend(backend, convert(Vector{T}, real.(Ljb.nzval)))
+    if hasrealbackward(plan)
+        refreshrealkernel!(backend, 64)(plan.kcoef, maps.knz, maps.kmap,
+            maps.kre, maps.kim; ndrange = length(plan.kcoef))
+    end
+    refreshcomplexkernel!(backend, 64)(plan.ccoef, maps.knz, maps.cmap;
+        ndrange = length(plan.ccoef))
+    isempty(plan.bcoef) || refreshjosephsonkernel!(backend, 64)(plan.bcoef,
+        ljnz, maps.bjunc, maps.bsgn, T(Lmean); ndrange = length(plan.bcoef))
+    KernelAbstractions.synchronize(backend)
+    return plan
+end
+
+"""
+    refreshvalues!(plan::NonlinearTermPlan, Rbnm, Ljb, Lmean, Knm, layout,
+        freqindexmap)
+
+Rewrite the value arrays of a plan for new component values under the same
+structure: the Josephson coefficients `Lmean/Lj`, and the linear term in
+both representations. Everything else in the plan is structure, which the
+new values must share; the maps are rebuilt and their structure checked
+against the plan's before the values are copied in, on whichever backend
+the plan lives on.
+
+This is what makes a system reusable across the points of a sweep: the
+transforms, the index maps and the kernels stay, and the numbers move.
+"""
+function refreshvalues!(plan::NonlinearTermPlan{Ti,T}, Rbnm::SparseMatrixCSC,
+        Ljb::SparseVector, Lmean, Knm::SparseMatrixCSC, layout::ModeLayout,
+        freqindexmap::Vector{Int}) where {Ti,T}
+    nc = plan.ncomplex
+    Nmodes = length(freqindexmap)
+    Nmatrix = plan.nslots ÷ max(length(Ljb.nzval), 1)
+    bptr, bsrc, bcoef = backwardjosephsonmap(Ti, T, Rbnm, Ljb, Lmean,
+        Nmodes, Nmatrix, freqindexmap, nc)
+    length(bcoef) == length(plan.bcoef) || throw(ArgumentError(
+        "the Josephson structure moved between points, which a refreshed plan cannot follow; build a new system."))
+    copyto!(plan.bcoef, bcoef)
+    if hasrealbackward(plan)
+        kptr, kidx, kcoef = reallinearmap(Ti, T, Knm, layout)
+        (length(kcoef) == length(plan.kcoef) && kidx == Array(plan.kidx)) ||
+            throw(ArgumentError("the linear term's structure moved between points, which a refreshed plan cannot follow; build a new system."))
+        copyto!(plan.kcoef, kcoef)
+    end
+    cptr, cidx, ccoef = complexlinearmap(Ti, T, Knm)
+    (length(ccoef) == length(plan.ccoef) && cidx == Array(plan.cidx)) ||
+        throw(ArgumentError("the linear term's structure moved between points, which a refreshed plan cannot follow; build a new system."))
+    copyto!(plan.ccoef, ccoef)
+    return plan
 end
 
 """

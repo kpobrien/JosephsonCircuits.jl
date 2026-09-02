@@ -15,16 +15,16 @@ using Test
 
         @test ml.rdim == 12240
         @test L.ndc == 80                  # one per node
-        @test L.nac == 12240 - 80
         @test JC.canonicaldim(L) == ml.rdim
         @test L.nvdc == 0
-        @test JC.ispermutation(L)
-        @test sort(L.perm) == collect(1:ml.rdim)
+        @test JC.isinternal(L)
+        @test JC.nwindow(L) == 80
 
         # each node contributes 1 + 2*76 = 153 internal entries with the
-        # zero frequency one first, so the direct current block collects
-        # exactly those
-        @test L.perm[L.nac+1:end] == [k*153 + 1 for k in 0:79]
+        # zero frequency one first, so the window names exactly those
+        @test L.dcpos == [k*153 + 1 for k in 0:79]
+        @test JC.windowindices(L) == L.dcpos
+        @test [JC.windowindex(L, k) for k in 1:80] == L.dcpos
     end
 
     @testset "a self conjugate mode which is not zero frequency stays alternating" begin
@@ -35,7 +35,7 @@ using Test
         L = JC.compositelayout(ml, isdc)
         @test L.ndc == 80                  # only the zero frequency mode
         @test JC.canonicaldim(L) == ml.rdim
-        @test JC.ispermutation(L)
+        @test JC.isinternal(L)
     end
 
     @testset "the mode tuples pick out the zero frequency mode" begin
@@ -44,17 +44,24 @@ using Test
         @test JC.compositelayout(ml, modes).ndc == 5
     end
 
-    @testset "round trip is exact" begin
+    @testset "the internal state is the first block, and the voltages follow" begin
         isdc = [i == 1 for i in 1:9]
         ml = JC.ModeLayout(isdc, 7*9)
-        L = JC.compositelayout(ml, isdc)
+        L = JC.compositelayout(ml, isdc; nvdc = 2)
+        @test JC.canonicaldim(L) == ml.rdim + 2
+        @test JC.voltagerange(L) == (ml.rdim + 1):(ml.rdim + 2)
+        @test JC.windowindices(L) == vcat(L.dcpos, ml.rdim + 1, ml.rdim + 2)
+        @test !JC.isinternal(L)
         Random.seed!(11)
         r = randn(ml.rdim)
-        u = similar(r); back = similar(r)
+        u = zeros(ml.rdim + 2); u[end-1:end] .= (3.0, 4.0)
         JC.gathercanonical!(u, r, L)
+        @test u[1:ml.rdim] == r            # a copy, so bit exact
+        @test u[end-1:end] == [3.0, 4.0]   # and the voltages are left alone
+        back = similar(r)
         JC.scattercanonical!(back, u, L)
-        @test back == r                    # a permutation, so bit exact
-        @test u != r                       # and not the identity one
+        @test back == r
+        @test JC.internalpart(u, L) == r
     end
 
     @testset "rejected layouts" begin
@@ -82,13 +89,18 @@ using Test
              [(:cc, 2), (:jj, 1), (:cj, 1)],
              [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
         srcs = [(mode = (1,), port = 1, current = 0.5e-6)]
-        s = JC.hbnlsolve((2*pi*4.75e9,), (4,), srcs, circuit;
-            dc = true, odd = true, even = true,
-            returnoperatingpoint = true, iterations = 3)
+        # three iterations is a truncated solve on purpose: what this needs
+        # is a point away from the origin, not the solution, so the solver
+        # reports that it did not converge and that is asserted here rather
+        # than printed
+        s = @test_logs((:warn,), match_mode=:any,
+            JC.hbnlsolve((2*pi*4.75e9,), (4,), srcs, circuit;
+                dc = true, odd = true, even = true,
+                returnoperatingpoint = true, iterations = 3))
         sys = s.operatingpoint.sys
         ml = s.operatingpoint.modelayout
         L = JC.compositelayout(ml, s.frequencies.modes)
-        @test JC.ispermutation(L)
+        @test JC.isinternal(L)
         @test L.ndc > 0
 
         Random.seed!(3)
@@ -134,11 +146,11 @@ using Test
              [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
         kw = (; dc = true, odd = true, even = true, ftol = 1e-12)
 
-        # alternating current only: no voltages to report
+        # alternating current only: the voltages are the zero they sit at
         ac = JC.hbnlsolve((2*pi*4.75e9,), (8,),
             [(mode = (1,), port = 1, current = 1.2e-6)], circuit; kw...)
         @test ac.solverinfo.converged
-        @test isnothing(ac.dcnodevoltage)
+        @test all(iszero, ac.dcnodevoltage)
 
         # with direct current in the drive the block is built and reports
         dc = JC.hbnlsolve((2*pi*4.75e9,), (8,),
@@ -183,13 +195,16 @@ using Test
         #
         # The plan is built from the pattern alone, so it holds everywhere.
         # The check is that `:newton` reaches the same point `:newtonkrylov`
-        # does, on a drive strong enough for the fill in to happen.
+        # does, on a drive strong enough for the fill in to happen. The
+        # drive is a few times the critical current, so the junction is
+        # strongly nonlinear, but not so far past it that the operating
+        # point is one of several and the two paths pick different ones.
         circuit = Circuit(
             [:p1 => Port(1; Z0 = 50.0), :cc => Capacitor(100e-15),
              :jj => JosephsonJunction(1000e-12), :cj => Capacitor(1000e-15)],
             [[(:p1,1),(:cc,1)], [(:cc,2),(:jj,1),(:cj,1)],
              [(:p1,2),(:jj,2),(:cj,2), Ground]])
-        srcs = [(mode = (1,), port = 1, current = 6.0e-6),
+        srcs = [(mode = (1,), port = 1, current = 1.0e-6),
                 (mode = (0,), port = 1, current = 1.0e-7)]
         kw = (; dc = true, odd = true, even = true, keyedarrays = false,
               rtol = 1e-12)
@@ -203,12 +218,11 @@ using Test
         # are the physical content and agree to roundoff
         @test maximum(abs, a.S .- b.S) < 1e-10
         @test isapprox(a.dcnodevoltage, b.dcnodevoltage; rtol = 1e-8)
-        # the node fluxes differ by a whole number of flux quanta, which is
-        # the additive static gauge: a junction phase is defined modulo
-        # 2*pi and the two methods land on different branches of it
+        # the node fluxes may differ by a whole number of flux quanta, which
+        # is the additive static gauge: a junction phase is defined modulo
+        # 2*pi and the two methods are free to land on different branches
         turns = (a.nodeflux .- b.nodeflux) ./ (2*pi)
         @test all(x -> isapprox(x, round(real(x)); atol = 1e-8), turns)
-        @test any(x -> !isapprox(x, 0; atol = 1e-8), turns)
     end
 
     @testset "the assembled Jacobian is the matrix free one" begin
@@ -241,7 +255,7 @@ using Test
             auxoffset = d.Nnodal + Naux - nauxsc,
             Ntotal = d.Nnodal + Naux, scale = d.Lmean)
         br = JC.dcblockrows(ssys.blocks, d.dcplan.componentof, Nmodes,
-            d.dcplan.modeindex, L.nac, Nnodes - 1, d.Lmean)
+            d.dcplan.modeindex, Nnodes - 1, d.Lmean)
         work = JC.CanonicalWork(L, zeros(ml.rdim); transport = tr,
             blockrows = br, nnodaldc = Nnodes - 1)
         @test L.nvdc > 0                    # the block is really explicit
@@ -255,6 +269,18 @@ using Test
             fill!(col, 0.0); col[k] = 1.0
             jvp(out, col); free[:,k] .= out
         end
+        # the coupling the preconditioner subtracts is the Jacobian's own:
+        # the columns of the direct current coordinates on the nodal zero
+        # frequency rows, which is the resistor current the voltages drive
+        # and the two terminals each block current enters
+        H = JC.dccoupling(work)
+        idx = JC.dcsubsystemindices(work)
+        nodal = L.dcpos[1:size(H, 1)]
+        @test free[nodal, idx] ≈ Matrix(H)
+        # and no other zero frequency row sees the direct current
+        # coordinates from outside the subsystem: the block is triangular
+        below = setdiff(JC.windowindices(L), nodal, idx)
+        @test all(iszero, free[below, idx])
 
         Jint = copy(d.Jr)
         JC.jacobian!(Jint, sys)

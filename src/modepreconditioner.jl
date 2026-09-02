@@ -371,7 +371,7 @@ mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
     # untyped, because on a backend `P` is a `DeviceSparsePattern` rather
     # than a host sparse matrix
     P
-    const sys::TS
+    sys::TS      # replaced when the system is rebound to new values
     const cache::FactorizationCache
     const basefactorization::Factorization
     factorization::Factorization
@@ -451,16 +451,28 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         couplingmodes = :band => ntuple(_ -> 0, length(first(Amatrixmodes)))
     end
 
-    # Build the restricted Jacobian structure `P`, its assembly plan and the
-    # values the assembly writes, for a coupling set `S`. The same path runs
-    # on every backend; the two differ only in orientation and in what the
-    # factorization is handed. A device sparse matrix is compressed by rows,
-    # so on a device the structure is built transposed, which puts the
-    # stored order in the row major order the device solver wants without a
-    # permutation, and its values live on the device. A host factorization
-    # wants the matrix itself, and the assembly writes straight into its
-    # stored values.
-    function build(S)
+    # On a device backend the Jacobian is built transposed, because its
+    # stored order is then the row major order a device sparse matrix and a
+    # device direct solver want. Producing it that way costs nothing and
+    # removes the permutation, the index the assembly kernel would go through
+    # to apply it, and the loss of coalescing that indirection caused.
+    # On a device backend there is no segmented gather at all: the assembly
+    # reads the circuit's structure directly, so what is built here is the
+    # sparsity structure and the linear term index maps, both cheap. The
+    # Jacobian is
+    # built transposed at the same time, because its stored order is then the
+    # row major order a device sparse matrix and a device direct solver want.
+    # One path, on every backend. The two differ only in orientation and in
+    # what the factorization is handed: a device sparse matrix is compressed by
+    # rows, so there the Jacobian is built transposed and its values live on the
+    # backend, while a host factorization wants the matrix itself and the
+    # assembly writes straight into its stored values.
+    # everything with a value in it is read from the system, so that a
+    # system rebound to new values is what a rebuild sees; the constructor
+    # arguments are the same objects at construction
+    function build(S, sys = sys)
+        Ljb, Lmean = sys.Ljb, sys.Lmean
+        invLnm, Gnm, Cnm = sys.invLnm, sys.Gnm, sys.Cnm
         keep = if S isa AbstractMatrix{Bool}
             S
         elseif S isa Pair && S.first === :band
@@ -582,9 +594,9 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
     else
         collect(1:pc.Nmodes)
     end
-    pc.P, pc.deviceplan, pc.nzval = pc.build(S)
-    # any retained coupling destroys the batch structure of the block
-    # diagonal, so the caller's own factorization applies
+    pc.P, pc.deviceplan, pc.nzval = pc.build(S, pc.sys)
+    # any retained coupling couples modes, so whatever batch structure the
+    # block diagonal had is gone and the caller's own factorization applies
     pc.factorization = pc.basefactorization
     pc.couplingmodes = S
     pc.escalations += 1
@@ -621,7 +633,7 @@ function updatepreconditioner!(pc::ModeCouplingPreconditioner,
         grown = map(max, want, have)
         if grown != have
             pc.couplingmodes = :band => grown
-            pc.P, pc.deviceplan, pc.nzval = pc.build(pc.couplingmodes)
+            pc.P, pc.deviceplan, pc.nzval = pc.build(pc.couplingmodes, pc.sys)
             pc.factorization = pc.basefactorization
             pc.cache.factorization = nothing
         end
@@ -641,4 +653,20 @@ end
 function applypreconditioner!(z::AbstractVector,
     pc::ModeCouplingPreconditioner, r::AbstractVector)
     return trysolve!(z, pc.cache.factorization, r)
+end
+
+"""
+    rebind!(pc::ModeCouplingPreconditioner, sys::HBSystem)
+
+The same preconditioner over a system rebound to new component values: the
+constant linear contribution of its assembly plan and the junction
+coefficients are refreshed from the system, and the structure, the
+coupling set and the factorization's symbolic analysis are kept. The next
+[`updatepreconditioner!`](@ref) refactorizes the numbers.
+"""
+function rebind!(pc::ModeCouplingPreconditioner, sys::HBSystem)
+    pc.sys = sys
+    refreshvalues!(pc.deviceplan, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
+        sys.wmodes2m, sys.Ljb, sys.Lmean)
+    return pc
 end

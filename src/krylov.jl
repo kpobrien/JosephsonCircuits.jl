@@ -274,11 +274,18 @@ reduce it, the least squares right hand side `s`, its solution `y`, and three
 length `n` work vectors.
 
 The dominant cost is `V`, which is `n*(m+1)` numbers, so `m` trades memory and
-orthogonalization work against restart frequency.
+orthogonalization work against restart frequency. It is not paid up front:
+the basis is allocated with a few columns and grows, by doubling, to what
+the iteration uses, up to `m + 1`. A restart length long enough for the
+hardest solve is then free on the easy ones, where a warm started Newton
+step takes a handful of Arnoldi steps, and the cost of a solve is no longer
+dominated by touching a basis it never fills. See [`ensurecolumns!`](@ref).
 """
-struct GMRESWorkspace{T<:AbstractFloat,TV<:AbstractVector{T},TM<:AbstractMatrix{T}}
+mutable struct GMRESWorkspace{T<:AbstractFloat,TV<:AbstractVector{T},TM<:AbstractMatrix{T}}
     # system sized, and therefore allocated like the right hand side, so on a
-    # device backend they live on the device
+    # device backend they live on the device. `V` holds the columns built so
+    # far and is replaced by a wider one as the iteration needs them; `H`
+    # is host resident and small, and is allocated in full.
     V::TM
     w::TV
     z::TV
@@ -315,14 +322,62 @@ function GMRESWorkspace(b::AbstractVector{T}, m::Integer) where {T<:AbstractFloa
     n = length(b)
     n >= 0 || throw(ArgumentError(lazy"`n` = $(n) must be nonnegative."))
     m >= 1 || throw(ArgumentError(lazy"the restart length `m` = $(m) must be at least 1."))
-    return GMRESWorkspace{T,typeof(similar(b)),typeof(similar(b, n, m+1))}(
-        similar(b, n, m + 1), similar(b), similar(b), similar(b),
+    cols = min(m + 1, GMRESINITIALCOLUMNS)
+    return GMRESWorkspace{T,typeof(similar(b)),typeof(similar(b, n, cols))}(
+        similar(b, n, cols), similar(b), similar(b), similar(b),
         zeros(T, m + 1, m),
         Vector{T}(undef, m), Vector{T}(undef, m),
         Vector{T}(undef, m + 1), Vector{T}(undef, m),
         similar(b, m), similar(b, m))
 end
 
+# the columns a basis is born with. Sixteen covers the Arnoldi steps of a
+# well preconditioned or warm started Newton step without a copy, and a
+# solve which needs more doubles its way there; at most log2(m/16) copies of
+# what was built, which is a fraction of the orthogonalization that built it
+const GMRESINITIALCOLUMNS = 16
+
+"""
+    ensurecolumns!(ws::GMRESWorkspace, k)
+
+Return the basis `ws.V` with at least `k` columns, replacing it with a wider
+one when it has fewer. The columns built so far are copied across; the new
+ones are uninitialized, as the whole basis was before. The width doubles
+and is capped at `size(ws.H, 1)`, which is `m + 1`, so a basis never grows
+past the restart length.
+"""
+function ensurecolumns!(ws::GMRESWorkspace, k::Integer)
+    V = ws.V
+    have = size(V, 2)
+    k <= have && return V
+    cols = min(max(k, 2*have), size(ws.H, 1))
+    Vnew = similar(V, size(V, 1), cols)
+    copyto!(view(Vnew, :, 1:have), V)
+    ws.V = Vnew
+    return Vnew
+end
+
+
+"""
+    KrylovVectors(x, F, m)
+
+The system sized vectors of one Newton-Krylov solve: the GMRES workspace
+for a restart length of `m`, and the step, the trial point, the product
+and the best residual, allocated like `x` and `F`. Handed back to
+[`nlsolvekrylov!`](@ref) through its `workspace` argument they are reused
+across solves of one system, which a sweep over component values is.
+"""
+struct KrylovVectors{V,VF,W}
+    ws::W
+    deltax::V
+    xcandidate::V
+    Jv::V
+    Fbest::VF
+end
+
+KrylovVectors(x::AbstractVector, F::AbstractVector, m::Integer) =
+    KrylovVectors(GMRESWorkspace(x, m), similar(x), similar(x), similar(x),
+        similar(F))
 
 """
     harvest!(pc::AbstractPreconditioner, ws::GMRESWorkspace, out::NamedTuple)
@@ -928,13 +983,13 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
         if initialzero
             fill!(x, zero(T))
             return (iterations = 0, residual = zero(T), converged = true,
-                reason = :converged)
+                reason = :converged, residualvector = nothing)
         end
         mul!(w, Aop, x)
         resnorm = norm(w)
         if resnorm <= atol
             return (iterations = 0, residual = resnorm, converged = true,
-                reason = :converged)
+                reason = :converged, residualvector = nothing)
         end
     end
 
@@ -995,6 +1050,7 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
             end
             resnorm <= tol && break
 
+            V = ensurecolumns!(ws, j + 1)
             @views V[:, j+1] .= w ./ hsub
         end
 
@@ -1030,9 +1086,31 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
     else
         :iterationlimit
     end
+    # `w` is the explicit residual `b - A x` of the returned `x`: it is
+    # recomputed after every cycle and never estimated, so a caller which
+    # needs `A x` has it without another product
     return (iterations = totaliterations, residual = resnorm,
         converged = converged, cycles = cycles, reason = reason,
-        precondtime = precondtime)
+        precondtime = precondtime, residualvector = w)
+end
+
+"""
+    meritslope!(Jv, jvp, p, F, ϕ0, w)
+
+The slope `real(F' J p)` of the merit function `ϕ = F'F/2` along the step
+`p`, where `p = -Δ` for a linear solve `J Δ ≈ F` which left the explicit
+residual `w = F - J Δ`.
+
+Then `J p = w - F` and the slope is `real(F'w) - 2ϕ0`: one inner product,
+with the Jacobian vector product the solve already paid for. Without a
+valid residual (`w === nothing`), the product is taken.
+"""
+function meritslope!(Jv, jvp, p, F, ϕ0, w)
+    if isnothing(w)
+        mul!(Jv, jvp, p)
+        return real(dot(F, Jv))
+    end
+    return real(dot(F, w)) - 2ϕ0
 end
 
 abstract type AbstractHBLinearSolver end
@@ -1101,8 +1179,8 @@ supportsrecycling(::InternalGMRES) = true
 """
     nlsolvekrylov!(fj!, jvp!, F, x, pc::AbstractPreconditioner;
         iterations = 1000, ftol = 1e-8, rtol = 0.0,
-        linearsolver = InternalGMRES(), label = "", c1 = 1e-4,
-        safeguard_low = 0.1, safeguard_high = 0.5, maxbacktracks = 10,
+        linearsolver = InternalGMRES(), workspace = nothing, label = "",
+        c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5, maxbacktracks = 10,
         maxbacktrackfailures = 2, krylovrestart = 400,
         krylovmaxrestarts = 4, krylovrefreshiterations = 1,
         krylovrtolmin = 1e-10, krylovrtolmax = 0.9, krylovrtol0 = 0.3,
@@ -1152,10 +1230,16 @@ solver is kept simple.
     about the problem's units; a relative one is not.
 - `linearsolver = InternalGMRES()`: the linear solver of the Newton step,
     [`InternalGMRES`](@ref) or [`KrylovJL`](@ref).
+- `workspace = nothing`: a `Ref` holding the [`KrylovVectors`](@ref) of a
+    previous solve of the same system, or holding `nothing`, in which case
+    the vectors are allocated and stored into it for the next solve. With
+    no `Ref` at all they are allocated and dropped.
 - `label = ""`: the label of the returned `IterationInfo`.
 - `c1 = 1e-4`: the Armijo sufficient decrease constant, in (0, 1/2).
 - `safeguard_low = 0.1`, `safeguard_high = 0.5`: the backtracking step
-    clamp, as fractions of the previous trial.
+    clamp, as fractions of the previous trial. The line search here halves
+    rather than interpolates (see [`backtracking_linesearch!`](@ref)), so
+    only `safeguard_high` acts.
 - `maxbacktracks = 10`: the trial point budget per line search.
 - `maxbacktrackfailures = 2`: the number of consecutive line search
     failures after which the iteration is declared stalled.
@@ -1197,6 +1281,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     label = "",
     c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5,
     maxbacktracks::Integer = 10, maxbacktrackfailures::Integer = 2,
+    workspace::Union{Nothing,Base.RefValue} = nothing,
     krylovrestart::Integer = 400, krylovmaxrestarts::Integer = 4,
     krylovrefreshiterations::Integer = 1, krylovrtolmin = 1e-10,
     krylovrtolmax = 0.9, krylovrtol0 = 0.3, krylovgamma = 0.9,
@@ -1249,11 +1334,18 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     0 < krylovrefreshrate <= 1 || throw(ArgumentError(
         lazy"`krylovrefreshrate` = $(krylovrefreshrate) must be in (0, 1]."))
 
-    ws = GMRESWorkspace(x, min(krylovrestart, length(x)))
-    deltax = similar(x)
-    xcandidate = similar(x)
-    Jv = similar(x)
-    Fbest = similar(F)
+    m = min(krylovrestart, length(x))
+    kv = if isnothing(workspace) || isnothing(workspace[])
+        KrylovVectors(x, F, m)
+    else
+        workspace[]
+    end
+    (length(kv.deltax) == length(x) && size(kv.ws.H, 2) == m &&
+        length(kv.Fbest) == length(F)) || throw(ArgumentError(
+        "the Krylov workspace handed in is for a different system or restart length; hand in a `Ref` to `nothing` to allocate one."))
+    isnothing(workspace) || (workspace[] = kv)
+    ws, deltax, xcandidate = kv.ws, kv.deltax, kv.xcandidate
+    Jv, Fbest = kv.Jv, kv.Fbest
 
     # absolute floor for the linear solves: once the linear residual is below
     # the nonlinear tolerance, further accuracy cannot help the Newton
@@ -1273,17 +1365,17 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # consecutive linear solves which failed to reach the forcing tolerance,
     # which trigger an escalation of the preconditioner
     linearfailures = 0
-    # A slope aware cap on the forcing sequence. The Eisenstat-Walker term
-    # reads only the residual reduction, which makes a crawl self
-    # perpetuating: a loose solve gives a weak direction, the line search
-    # accepts a short step, the residual barely falls, and the loose forcing
-    # is reproduced. The inexact Newton bound |slope| >= 1 - eta ties the
-    # direction quality to the forcing directly, so when a step comes back
-    # weak (a backtracked line search or a shallow slope) the cap tightens
-    # by a factor of four, and it relaxes by a factor of two once full steps
-    # resume. A well behaved problem takes full steps at slope about -1 from
-    # the start and never feels the cap.
-    forcingcap = krylovrtolmax
+    # The forcing sequence is Eisenstat-Walker choice 2 clamped to
+    # [krylovrtolmin, krylovrtolmax] and nothing else. A slope-aware cap
+    # which tightened the clamp by a factor of four after every damped step
+    # used to sit here. It read a short step as a weak direction; on a long
+    # pumped line every step is short because the residual is nonlinear
+    # along a full-slope Newton direction, and the near-exact solve the cap
+    # then demanded returned a longer step in exactly the direction the
+    # line search had to damp: 1033 Arnoldi steps against 177 for the same
+    # 24 Newton steps on a 2048 cell line. The inexact Newton theory needs
+    # only eta < 1 and a sufficient-decrease line search, which is what
+    # remains.
 
     Mop!(zv, vv) = applypreconditioner!(zv, pc, vv)
     # residual-only adapter for the linesearch, which never needs the
@@ -1326,8 +1418,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         # Eisenstat-Walker choice 2 forcing term from the last accepted
         # step, at its clamp maximum before any step has been taken
         forcing = if length(normF) >= 2 && normF[end-1] > 0
-            clamp(min(krylovgamma*(normF[end]/normF[end-1])^krylovalpha,
-                    forcingcap),
+            clamp(krylovgamma*(normF[end]/normF[end-1])^krylovalpha,
                 krylovrtolmin, krylovrtolmax)
         else
             # the *initial* forcing term, which is a separate quantity from
@@ -1421,13 +1512,16 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         end
         rmul!(deltax, -1)
 
-        # the merit function and its slope along deltax. the assembled
-        # Jacobian is stale, so the slope comes from an exact matrix-free
-        # product rather than the model claim dot(F, J, deltax) used by
-        # nlsolve!
+        # the merit function and its slope along deltax. The assembled
+        # Jacobian is stale, so the slope comes from the exact product,
+        # which the linear solve already took: its explicit final residual
+        # is `F - J Δ`, so the slope is an inner product away. A stagnated
+        # solve replaced `deltax` by the preconditioner solve, whose product
+        # nothing took, and a linear solver which reports no residual
+        # vector leaves it to the product as well.
         ϕ0 = merit(F)
-        mul!(Jv, jvp, deltax)
-        dϕ0dα = real(dot(F, Jv))
+        dϕ0dα = meritslope!(Jv, jvp, deltax, F, ϕ0,
+            stagnated ? nothing : get(out, :residualvector, nothing))
         if !isfinite(ϕ0) || !isfinite(dϕ0dα) || dϕ0dα >= zero(dϕ0dα)
             # not a descent direction: rebuild the preconditioner and solve
             # again. For an exact preconditioner GMRES then returns the
@@ -1444,8 +1538,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
                 maxrestarts = krylovmaxrestarts)
             record!(out, :rescue, true, false)
             rmul!(deltax, -1)
-            mul!(Jv, jvp, deltax)
-            dϕ0dα = real(dot(F, Jv))
+            dϕ0dα = meritslope!(Jv, jvp, deltax, F, ϕ0,
+                get(out, :residualvector, nothing))
             if !isfinite(ϕ0) || !isfinite(dϕ0dα) || dϕ0dα >= zero(dϕ0dα)
                 break
             end
@@ -1455,11 +1549,17 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         # Armijo failure it returns the best decreasing trial (alpha > 0)
         # with F and xcandidate restored there, or alpha == 0 when no trial
         # decreased the merit at all
+        # halving rather than interpolating: a trial here costs two
+        # transforms, one Arnoldi step of the direction it tests, and the
+        # interpolated first backtrack is the floor step whenever the full
+        # step overshoots, which on a long pumped line it does at every
+        # step (see backtracking_linesearch!)
         alpha1, ϕα, accepted, backtracks = backtracking_linesearch!(
             residual!, F, xcandidate, x, deltax, ϕ0, dϕ0dα;
             c1 = c1, safeguard_low = safeguard_low,
             safeguard_high = safeguard_high,
-            maxbacktracks = maxbacktracks, Fbest = Fbest)
+            maxbacktracks = maxbacktracks, Fbest = Fbest,
+            interpolate = false)
         push!(alphas, alpha1)
         push!(backtrackrecord, backtracks)
         if !isempty(krylovrecord) && krylovrecord[end].iteration == n
@@ -1478,22 +1578,6 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             continue
         end
         refreshedforstall = false
-        # the safeguard state advances only for a nonlinear step which was
-        # actually taken. a retry at the same point is not a new outer
-        # iteration and must not walk the forcing sequence forward
-        forcingprev = forcing
-        # step quality read by the slope-aware forcing cap: the normalized
-        # slope of the merit along the step, and whether the line search
-        # took the full step
-        stepslope = normF[end] > 0 ? dϕ0dα/normF[end]^2 : -one(ϕ0)
-        if alpha1 < one(alpha1) || stepslope > -0.9
-            # the cap floor stays well above the forcing clamp minimum: a
-            # near-exact solve costs a long Krylov cycle per step, and the
-            # direction quality it buys beyond this point is marginal
-            forcingcap = max(1e-2, forcingcap/4)
-        else
-            forcingcap = min(krylovrtolmax, 2*forcingcap)
-        end
 
         # accept the trial point: F already holds the residual there (the
         # linesearch postcondition), and convergence is decided on it now,

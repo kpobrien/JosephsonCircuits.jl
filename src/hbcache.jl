@@ -43,6 +43,11 @@ mutable struct HBCache{N,K,P}
     x::Union{Nothing,Vector{Complex{Float64}}}
     converged::Bool
     nsolves::Int
+    # the system, the preconditioner and the Krylov vectors of the last
+    # solve, rebound to each new point rather than rebuilt; see `HBReuse`
+    reuse::HBReuse
+    # the circuit matrices of the last point, refilled at the next
+    nm::Union{Nothing,CircuitMatrices}
 end
 
 """
@@ -107,7 +112,7 @@ function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
 
     return HBCache(builder, compiled, plan, structuralkey(bound), valueorder,
         cg, frequencies, indices, Nmodes, w, collect(sources), kwargs,
-        nothing, false, 0)
+        nothing, false, 0, HBReuse(), nothing)
 end
 
 """
@@ -124,11 +129,13 @@ function componentvalues(cache::HBCache, p::NamedTuple)
     # solve. Handing the result to a function which specializes on its
     # concrete type costs one dispatch instead of thousands.
     return gathercomponentvalues(cache.builder(; p...), cache.valueorder,
-        cache.compiled.componentnames, cache.compiled.componentnamedict)
+        cache.compiled.componentnames, cache.compiled.componentnamedict,
+        cache.compiled.ports)
 end
 
 function gathercomponentvalues(circuit, order::Vector{Int},
-        names::Vector{String}, namedict::Dict{String,Int})
+        names::Vector{String}, namedict::Dict{String,Int},
+        ports::Vector{CompiledPort})
     length(circuit) == length(names) ||
         throw(ArgumentError(lazy"the builder returned $(length(circuit)) components where the parse has $(length(names)); the circuit topology must be fixed as the parameters vary."))
     vals = Vector{Complex{Float64}}(undef, length(names))
@@ -144,6 +151,15 @@ function gathercomponentvalues(circuit, order::Vector{Int},
         v = c[4]
         v isa Number || throw(ArgumentError(lazy"the component $(name) has the non-numeric value $(v); the cached solver requires a fully numeric builder output."))
         vals[i] = Complex{Float64}(v)
+    end
+    # A legacy netlist writes the port number where every other entry has
+    # its value, and states the reference impedance through the resistor
+    # across the port; the elaborated circuit carries that impedance as the
+    # port's own value, which the compiled port records as its environment.
+    # The assembly reads the port's slot, so it is bound the same way here.
+    for port in ports
+        iszero(port.environment) ||
+            (vals[port.component] = vals[port.environment])
     end
     # keep purely real value vectors real, which the assembly prefers
     return all(v -> iszero(imag(v)), vals) ? real.(vals) : vals
@@ -171,10 +187,12 @@ parameters `p`, warm starting from the previously converged operating
 point. Returns the [`NonlinearHB`](@ref) solution; `cache.converged`
 reports whether it converged.
 
-The parse, the graph and the mode grid are reused; only the component
-values, the numeric matrices and the solve itself are recomputed. If the
-previous solve did not converge its state is not used, because starting
-from a non-solution is usually worse than starting cold.
+The parse, the graph and the mode grid are reused, and so are the system,
+the preconditioner and the Krylov vectors of the previous solve, rebound to
+the new component values (see [`HBReuse`](@ref)); only the numeric matrices
+and the solve itself are recomputed. If the previous solve did not converge
+its state is not used, because starting from a non-solution is usually
+worse than starting cold.
 """
 function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
     vvn = componentvalues(cache, p)
@@ -188,13 +206,16 @@ function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
     if structuralkey(bound) != cache.structure
         throw(ArgumentError("a component value crossed a structural boundary (an inductance became open or shorted, a value became complex, or a mutual coupling reached one), so the cached sparsity patterns no longer apply. Build a new cache for these parameters."))
     end
-    nm = assemblematrices(cache.plan, bound)
+    # into the storage of the previous point's matrices, once there are any
+    nm = isnothing(cache.nm) ? assemblematrices(cache.plan, bound) :
+        assemblematrices!(cache.nm, cache.plan, bound)
+    cache.nm = nm
     x0 = (warmstart && cache.converged) ? cache.x : nothing
     # keyed arrays are a presentation convenience and pure overhead in a
     # loop; the stored state has to be a plain vector for the warm start
     nl = hbnlsolve(cache.w, cache.sources, cache.frequencies,
         cache.indices, cache.compiled, cache.cg, nm;
-        x0 = x0, keyedarrays = false, cache.kwargs...)
+        x0 = x0, keyedarrays = false, reuse = cache.reuse, cache.kwargs...)
     cache.x = vec(collect(nl.nodeflux))
     cache.converged = nl.solverinfo.converged
     cache.nsolves += 1

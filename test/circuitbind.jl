@@ -115,6 +115,29 @@ end)
                 new.portenvironmentindices == ref.portenvironmentindices &&
                 new.noiseportimpedanceindices == ref.noiseportimpedanceindices
         end
+        # the same matrices refilled at other values are the matrices a
+        # fresh assembly gives at those values, exactly, in the storage
+        # they already had
+        function refillagrees(c; Nmodes = 8)
+            cc = JC.compile(c); b = JC.bind(cc)
+            cg = calccircuitgraph(cc)
+            plan = JC.circuitmatrixplan(cc, cg, b; Nmodes = Nmodes)
+            nm = JC.assemblematrices(plan, b)
+            vvn = JC.componentvaluestonumber(cc.componentvalues,
+                Dict{Any,Any}())
+            b2 = JC.bindvalues(cc, [v isa Number ? 1.3*v : v for v in vvn])
+            ref = JC.assemblematrices(plan, b2)
+            new = JC.assemblematrices!(nm, plan, b2)
+            return same(new.Cnm, ref.Cnm) && same(new.Gnm, ref.Gnm) &&
+                same(new.invLnm, ref.invLnm) && same(new.Mb, ref.Mb) &&
+                samev(new.Lb, ref.Lb) && samev(new.Lbm, ref.Lbm) &&
+                samev(new.Ljb, ref.Ljb) && samev(new.Ljbm, ref.Ljbm) &&
+                new.Lmean == ref.Lmean &&
+                new.portimpedances == ref.portimpedances &&
+                new.Cnm === nm.Cnm && new.Gnm === nm.Gnm &&
+                new.invLnm === nm.invLnm && new.Lbm === nm.Lbm &&
+                new.Ljbm === nm.Ljbm && new.Rbnm === nm.Rbnm
+        end
 
         # a legacy netlist
         @test matricesagree(Circuit([("P1","1","0",1), ("R1","1","0",50.0),
@@ -134,6 +157,24 @@ end)
         # inductance entries take more than two contributions and their
         # summation order is observable
         @test matricesagree(Circuit(
+            Any[:p1 => Port(1), :la => Inductor(1e-9), :lb => Inductor(2.5e-9),
+                :lc => Inductor(7e-9), :ld => Inductor(0.3e-9),
+                :ca => Capacitor(1e-12), :cb => Capacitor(2e-12),
+                :cc => Capacitor(3e-12), :gnd => Ground()],
+            Any[[(:p1,1),(:la,1),(:lb,1),(:lc,1),(:ld,1)],
+                [(:la,2),(:ca,1)], [(:lb,2),(:cb,1)], [(:lc,2),(:cc,1)],
+                [(:ld,2),(:p1,2),(:ca,2),(:cb,2),(:cc,2),(:gnd,1)]]))
+
+        @test refillagrees(Circuit([("P1","1","0",1), ("R1","1","0",50.0),
+            ("C1","1","2",100e-15), ("Lj1","2","0",1e-9), ("C2","2","0",1e-12)]))
+        @test refillagrees(Circuit(
+            Any[:p1 => Port(1), :la => Inductor(2e-9), :lb => Inductor(3e-9),
+                :l2 => Inductor(5e-9), :jj => JosephsonJunction(1e-9),
+                :c1 => Capacitor(1e-13 + 1e-16im), :gnd => Ground()],
+            Any[[(:p1,1),(:la,1),(:lb,1),(:c1,1)],
+                [(:la,2),(:lb,2),(:l2,1),(:jj,1)],
+                [(:l2,2),(:jj,2),(:p1,2),(:c1,2),(:gnd,1)]]); Nmodes = 1)
+        @test refillagrees(Circuit(
             Any[:p1 => Port(1), :la => Inductor(1e-9), :lb => Inductor(2.5e-9),
                 :lc => Inductor(7e-9), :ld => Inductor(0.3e-9),
                 :ca => Capacitor(1e-12), :cb => Capacitor(2e-12),

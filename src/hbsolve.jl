@@ -45,11 +45,13 @@ The solution of the nonlinear harmonic balance problem returned by
     `returnoperatingpoint = true`; otherwise `nothing`. See
     [`HBOperatingPoint`](@ref).
 - `dcnodevoltage`: the average voltage of each non-ground node in volts,
-    keyed by node name like `nodeflux`, when the circuit has an explicit
-    direct current block; otherwise `nothing`. This is distinct from the
-    zero mode of `nodeflux`, which is the static flux setting the inductor
+    keyed by node name like `nodeflux`, when the analysis has a zero
+    frequency mode; otherwise `nothing`. This is distinct from the zero
+    mode of `nodeflux`, which is the static flux setting the inductor
     currents and junction phases. A vector of zeros is an answer (a node
-    shorted to ground sits at zero volts) and differs from `nothing`.
+    shorted to ground sits at zero volts, and so does every node of a
+    circuit into which no direct current is injected) and differs from
+    `nothing`.
 """
 struct NonlinearHB
     w

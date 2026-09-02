@@ -89,9 +89,9 @@ function DCAugmentation(work, jint)
         copy(up.nzval))
     keep = ones(Float64, N)
     constant = zeros(Float64, N)
-    win = dcwindow(L)
-    copyto!(view(keep, win), up.keep)
-    copyto!(view(constant, win), up.cresidual)
+    win = windowindices(L)
+    keep[win] .= up.keep
+    constant[win] .= up.cresidual
     jplan = isnothing(jint) ? nothing : canonicaljacobianplan(jint, work)
     return DCAugmentation(work, jplan, jint, keep, constant, Mt,
         Ref(1.0), zeros(Float64, nw), zeros(Float64, L.rdim),
@@ -677,8 +677,16 @@ function hbvjp!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
         a.work.xint)
     fill!(out, 0.0)
     gathercanonical!(out, a.Fwork, L)
-    win = dcwindow(L)
-    mul!(view(out, win), a.dcmatrix, view(w, win), 1.0, 1.0)
+    # the window, gathered by index: `M'` is a window matrix
+    win = windowindices(L)
+    dw = a.dwork
+    @inbounds for k in eachindex(win)
+        dw[k] = w[win[k]]
+    end
+    mw = a.dcmatrix * dw
+    @inbounds for k in eachindex(win)
+        out[win[k]] += mw[k]
+    end
     return out
 end
 

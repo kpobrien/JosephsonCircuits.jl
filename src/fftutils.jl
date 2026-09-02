@@ -28,19 +28,20 @@ end
     FourierIndices(conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}},
         vectomatmap::Vector{Int}, conjsourceindices::Vector{Int},
         conjtargetindices::Vector{Int}, hbmatmodes::Matrix{NTuple{N, Int}},
-        hbmatindices::Matrix{Int}, hbconjmatmodes::Matrix{NTuple{N, Int}},
-        hbconjmatindices::Matrix{Int})
+        hbmatindices::Matrix{Int}, hbconjmatindices::Matrix{Int})
 
 A simple structure to hold time and frequency domain information for the
 signals, particularly the indices for converting between the node flux vectors
 and matrices. The `hbmatmodes` and `hbmatindices` matrices are built from the
 differences of the modes and describe the coupling between the modes (the
 derivative of the residual with respect to the node fluxes), while the
-`hbconjmatmodes` and `hbconjmatindices` matrices are built from the sums of
-the modes, aliased back onto the sampled grid, and describe the coupling
-between the modes and the complex conjugates of the modes (the derivative of
-the residual with respect to the complex conjugates of the node fluxes). See
-also [`fourierindices`](@ref).
+`hbconjmatindices` matrix is built from the sums of the modes, aliased back
+onto the sampled grid, and describes the coupling between the modes and the
+complex conjugates of the modes (the derivative of the residual with respect
+to the complex conjugates of the node fluxes). The mode sums themselves are
+not kept: nothing reads them, and at thousands of modes a matrix of mode
+tuples over every pair is the largest thing in the setup. See also
+[`fourierindices`](@ref).
 """
 struct FourierIndices{N}
     conjsymdict::Dict{CartesianIndex{N},CartesianIndex{N}}
@@ -49,7 +50,6 @@ struct FourierIndices{N}
     conjtargetindices::Vector{Int}
     hbmatmodes::Matrix{NTuple{N, Int}}
     hbmatindices::Matrix{Int}
-    hbconjmatmodes::Matrix{NTuple{N, Int}}
     hbconjmatindices::Matrix{Int}
 end
 
@@ -67,7 +67,7 @@ function fourierindices(freq::Frequencies)
     conjsymdict = conjsym(freq)
     freqindexmap, conjsourceindices, conjtargetindices = calcphiindices(freq,conjsymdict)
     Amatrixmodes, Amatrixindices = hbmatind(freq)
-    Amatrixconjmodes, Amatrixconjindices = hbconjmatind(freq)
+    _, Amatrixconjindices = hbconjmatind(freq)
 
     return FourierIndices(
         conjsymdict,
@@ -76,7 +76,6 @@ function fourierindices(freq::Frequencies)
         conjtargetindices,
         Amatrixmodes,
         Amatrixindices,
-        Amatrixconjmodes,
         Amatrixconjindices,
     )
 end

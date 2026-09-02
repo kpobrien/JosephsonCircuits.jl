@@ -1,5 +1,5 @@
-# The canonical state layout, and the transform between it and the layout
-# the solver evaluates in.
+# The canonical state layout: the internal real state as the solver
+# evaluates it, followed by the explicit direct current coordinates.
 #
 # The internal real state is node major and mode minor: every node
 # contributes one entry per self conjugate mode and two per conjugate pair,
@@ -7,52 +7,55 @@
 # node's alternating current entries. That is the layout `ModeLayout`
 # describes and every kernel in the solve is written against.
 #
-# The canonical state groups by role instead:
+# The canonical state is that state, untouched, with the explicit average
+# voltages appended:
 #
-#     [ phiac | phidc | vdc ]
+#     [ internal | vdc ]
 #
-# `phiac` is every nonzero frequency flux entry, `phidc` the zero frequency
-# flux of each node and of each auxiliary unknown, and `vdc` the explicit
-# average node voltages, present only when the circuit injects direct
-# current. (A fourth `idc` block for direct current port currents appears
-# in some names but is always empty: the solver carries a port current per
-# mode and the zero frequency one is inside `phidc`.) Grouping by role
-# makes the direct current block a contiguous subsystem with its own rows,
-# so the transport rows can be assembled, factorized and solved apart from
-# the alternating current problem.
+# The direct current block -- the zero frequency flux of each node and of
+# each auxiliary unknown, and the explicit voltages -- is then not
+# contiguous: its flux entries sit where the internal layout put them and
+# are named by an index, `dcpos`. That is the whole cost of leaving the
+# internal state alone, and it is paid on a window of a few hundred entries
+# rather than on the state. The residual, the Jacobian vector product and
+# the preconditioner run on the internal part of the canonical vector
+# directly, through a view, and only the window is gathered, worked on and
+# scattered back.
 #
-# Without direct current `vdc` is empty and the canonical state is a
-# permutation of the internal one, so the two paths solve the same problem
-# in a rotated basis and must reach the same point.
+# The earlier layout grouped the state by role, `[phiac | phidc | vdc]`, to
+# make the block contiguous, and bracketed every residual, product and
+# preconditioner application with a permutation of the whole state to get
+# there. Measured on a 2048 cell line with a direct current bias those
+# passes were under one percent of the solve on the host, so this is not a
+# change made for time there; the copies were overhead with nothing behind
+# them, and on a device each was a kernel launch and a synchronization.
 
 """
     CompositeLayout
 
-The canonical state layout, `[phiac | phidc | vdc | idc]`, together with the
-map into the internal layout the solver evaluates in.
+The canonical state layout, `[internal | vdc]`, and where the zero frequency
+entries of the internal state are.
 
 # Fields
-- `nac`, `ndc`, `nvdc`: the length of each block. `nvdc` is zero until a
-  circuit injects direct current.
-- `rdim`: the length of the internal real state.
-- `perm`: for each canonical index, the internal index holding it. Length
-  `nac + ndc`; the `vdc` and `idc` blocks have no internal counterpart.
+- `rdim`: the length of the internal real state, which is the first block.
+- `ndc`: the number of zero frequency entries in it: one per node and one
+  per auxiliary unknown, in internal order.
+- `nvdc`: the length of the explicit voltage block, which follows. Zero
+  until a circuit injects direct current.
+- `dcpos`: for the `k`th zero frequency entry, its position in the internal
+  state.
 
-While `nvdc` is zero, `perm` is a permutation of `1:rdim`, so
-[`scattercanonical!`](@ref) and [`gathercanonical!`](@ref) are exact
-inverses and the canonical Jacobian is `P J Pᵀ` with `P` orthogonal. A
-Krylov method is invariant under an orthogonal change of basis, so the two
-paths take the same iterations on the same problem, which is what the tests
-assert.
+The direct current window is the `ndc + nvdc` entries the block reads and
+writes: the zero frequency entries first, then the voltages. Window entry
+`k` sits at canonical position [`windowindex`](@ref)`(L, k)`.
 
 See [`compositelayout`](@ref).
 """
-struct CompositeLayout{Ti<:Integer,V<:AbstractVector{Ti}}
-    nac::Int
+struct CompositeLayout
+    rdim::Int
     ndc::Int
     nvdc::Int
-    rdim::Int
-    perm::V
+    dcpos::Vector{Int}
 end
 
 """
@@ -60,16 +63,46 @@ end
 
 The length of the canonical state.
 """
-canonicaldim(L::CompositeLayout) = L.nac + L.ndc + L.nvdc
+canonicaldim(L::CompositeLayout) = L.rdim + L.nvdc
 
 """
-    ispermutation(L::CompositeLayout)
+    nwindow(L::CompositeLayout)
 
-Whether the canonical state is a permutation of the internal one, which it
-is exactly while there are no explicit direct current coordinates.
+The length of the direct current window.
 """
-ispermutation(L::CompositeLayout) =
-    iszero(L.nvdc) && length(L.perm) == L.rdim
+nwindow(L::CompositeLayout) = L.ndc + L.nvdc
+
+"""
+    isinternal(L::CompositeLayout)
+
+Whether the canonical state is the internal one, which it is exactly while
+there are no explicit direct current coordinates.
+"""
+isinternal(L::CompositeLayout) = iszero(L.nvdc)
+
+"""
+    windowindex(L::CompositeLayout, k)
+
+The canonical position of window entry `k`: a zero frequency entry of the
+internal state for `k <= L.ndc`, an explicit voltage after that.
+"""
+windowindex(L::CompositeLayout, k::Integer) =
+    k <= L.ndc ? L.dcpos[k] : L.rdim + (k - L.ndc)
+
+"""
+    windowindices(L::CompositeLayout)
+
+The canonical positions of the whole window, in window order.
+"""
+windowindices(L::CompositeLayout) =
+    vcat(L.dcpos, collect((L.rdim + 1):(L.rdim + L.nvdc)))
+
+# the canonical index range of the explicit voltage block
+voltagerange(L::CompositeLayout) = (L.rdim + 1):(L.rdim + L.nvdc)
+
+# the internal part of a canonical vector, which the harmonic system reads
+# and writes in place
+internalpart(u::AbstractVector, L::CompositeLayout) = view(u, 1:L.rdim)
 
 """
     compositelayout(ml::ModeLayout, isdc::AbstractVector{Bool};
@@ -95,35 +128,26 @@ function compositelayout(ml::ModeLayout, isdc::AbstractVector{Bool};
     nvdc >= 0 || throw(ArgumentError("the voltage block length must be nonnegative."))
 
     nmodes = ml.nmodes
-    # count first so both blocks can be filled in one pass
     nper = ml.dim ÷ nmodes            # entries per mode across the state
-    ndcper = count(isdc)
-    ndc = nper * ndcper
-    nac = ml.rdim - ndc
+    ndc = nper * count(isdc)
 
-    perm = Vector{Int}(undef, nac + ndc)
-    a, d = 1, nac + 1                 # cursors into the two blocks
+    dcpos = Vector{Int}(undef, ndc)
+    d = 1                             # cursor into the window
     p, t = 1, 1                       # cursor into the internal real state
     @inbounds for _ in 1:ml.dim
         w = ml.isreal[t] ? 1 : 2
         if isdc[t]
             for k in 0:w-1
-                perm[d] = p + k
+                dcpos[d] = p + k
                 d += 1
-            end
-        else
-            for k in 0:w-1
-                perm[a] = p + k
-                a += 1
             end
         end
         p += w
         t = _next(t, nmodes)
     end
-    a == nac + 1 || error("internal error: filled $(a-1) of $(nac) alternating current entries.")
-    d == nac + ndc + 1 || error("internal error: filled $(d-nac-1) of $(ndc) direct current entries.")
+    d == ndc + 1 || error("internal error: found $(d-1) of $(ndc) direct current entries.")
 
-    return CompositeLayout(nac, ndc, nvdc, ml.rdim, perm)
+    return CompositeLayout(ml.rdim, ndc, nvdc, dcpos)
 end
 
 """
@@ -140,11 +164,14 @@ end
 """
     gathercanonical!(u, rint, L::CompositeLayout)
 
-Write the canonical form of the internal real state `rint` into `u`.
+Write the internal real state `rint` into the internal block of the
+canonical state `u`, a copy.
 
-The `vdc` and `idc` blocks have no internal counterpart and are left
-untouched, so a caller which keeps explicit direct current coordinates in
-`u` does not lose them here.
+The `vdc` block has no internal counterpart and is left untouched, so a
+caller which keeps explicit direct current coordinates in `u` does not lose
+them here. A solve does not call this: it hands the harmonic system the
+internal block of `u` through [`internalpart`](@ref) and no copy is made.
+The interfaces which want a state of their own do.
 """
 function gathercanonical!(u::AbstractVector, rint::AbstractVector,
         L::CompositeLayout)
@@ -152,13 +179,29 @@ function gathercanonical!(u::AbstractVector, rint::AbstractVector,
         lazy"the canonical state has length $(length(u)) but the layout needs $(canonicaldim(L))."))
     length(rint) == L.rdim || throw(DimensionMismatch(
         lazy"the internal state has length $(length(rint)) but the layout needs $(L.rdim)."))
-    _gatherperm!(u, rint, L.perm)
+    copyto!(u, 1, rint, 1, L.rdim)
     return u
 end
 
-# On the host a plain loop, on a device the kernel. A kernel launch and the
-# synchronize after it cost several times the copy itself at these sizes,
-# which matters for something applied on every Jacobian vector product.
+"""
+    scattercanonical!(rint, u, L::CompositeLayout)
+
+Write the internal block of the canonical state `u` into `rint`, a copy.
+The inverse of [`gathercanonical!`](@ref) on that block.
+"""
+function scattercanonical!(rint::AbstractVector, u::AbstractVector,
+        L::CompositeLayout)
+    length(u) == canonicaldim(L) || throw(DimensionMismatch(
+        lazy"the canonical state has length $(length(u)) but the layout needs $(canonicaldim(L))."))
+    length(rint) == L.rdim || throw(DimensionMismatch(
+        lazy"the internal state has length $(length(rint)) but the layout needs $(L.rdim)."))
+    copyto!(rint, 1, u, 1, L.rdim)
+    return rint
+end
+
+# The window is gathered and scattered by index: on the host a plain loop,
+# on a device the kernel. It is a few hundred entries, so what this costs is
+# the launch and not the copy.
 _onhost(x) = KernelAbstractions.get_backend(x) isa CPU
 
 function _gatherperm!(dest, src, index)
@@ -183,40 +226,9 @@ function _scatterperm!(dest, src, index)
     return dest
 end
 
-"""
-    scattercanonical!(rint, u, L::CompositeLayout)
-
-Write the internal real form of the canonical state `u` into `rint`.
-
-Every internal entry the layout covers is written, so `rint` needs no
-initialization. While the layout is a permutation that is all of them; once
-explicit direct current coordinates exist it will not be, and the entries
-they replace are zeroed here rather than left stale.
-
-The zero frequency flux entries are written from the `phidc` block, never
-zeroed. They carry the static phase across a junction, and dropping them
-would silently change `sin(phi)`.
-"""
-function scattercanonical!(rint::AbstractVector, u::AbstractVector,
-        L::CompositeLayout)
-    length(u) == canonicaldim(L) || throw(DimensionMismatch(
-        lazy"the canonical state has length $(length(u)) but the layout needs $(canonicaldim(L))."))
-    length(rint) == L.rdim || throw(DimensionMismatch(
-        lazy"the internal state has length $(length(rint)) but the layout needs $(L.rdim)."))
-    ispermutation(L) || fill!(rint, zero(eltype(rint)))
-    _scatterperm!(rint, u, L.perm)
-    return rint
-end
-
-"""
-    tobackend(backend, L::CompositeLayout)
-
-Move the index the scatter and the gather read to the given backend.
-"""
-function tobackend(backend::Backend, L::CompositeLayout)
-    return CompositeLayout(L.nac, L.ndc, L.nvdc, L.rdim,
-        tobackend(backend, L.perm))
-end
+# the layout is a host object: the index a device needs is carried by the
+# work built on it, on the backend the state is on
+tobackend(::Backend, L::CompositeLayout) = L
 
 # The direct current block is held in `Float64` whatever precision the
 # periodic solve runs in. It is small, dense and solved exactly, and its
@@ -265,29 +277,30 @@ end
 """
     CanonicalWork
 
-The workspaces a canonical evaluation needs: one internal state to scatter
-into, one internal residual (or product) to gather out of, and the transport
-rows when the direct current block is explicit.
+The workspaces a canonical evaluation needs, and the direct current block
+when it is explicit.
 
 # Fields
 - `layout`: the [`CompositeLayout`](@ref) the canonical state is written in.
-- `xint`, `Fint`: the internal state and residual the harmonic system reads
-    and writes, which the scatter and the gather move between.
+- `xint`, `Fint`: an internal state and an internal residual, for the
+    interfaces which need one of their own; the solve reads and writes the
+    internal block of the canonical vector in place.
 - `transport`: the transport rows, or `nothing` when there is no explicit
     block.
 - `blockrows`: the scattering blocks' own zero frequency rows, or `nothing`.
 - `dwork`: the resistor current the coupling drives into the nodes.
-- `nnodaldc`: where the `phidc` block splits. Its first entries are the zero
+- `nnodaldc`: where the zero frequency entries split. The first are the zero
     frequency flux of each node, which the transport coupling drives; any
     after them belong to auxiliary branch currents, which it does not.
 - `pinning`: the reference rows, or `nothing`. See [`DCPinning`](@ref).
 - `dcindex`, `dclocal`: the canonical positions of the direct current
-    unknowns, and the same positions local to the window.
-- `blocklocal`: canonical position to window position, for the blocks.
-- `Fwindow`, `uwindow`: host buffers for the window.
+    subsystem's unknowns, and the same positions local to the window.
+- `window`: the canonical positions of the window, on the backend the state
+    is on, for the gather and the scatter.
+- `Fwindow`, `uwindow`: the window itself, on that backend.
 - `update`: the block in its matrix form, where the state lives.
 """
-struct CanonicalWork{T,V<:AbstractVector{T},L<:CompositeLayout,TR,BR}
+struct CanonicalWork{T,V<:AbstractVector{T},L<:CompositeLayout,TR,BR,I}
     layout::L
     xint::V
     Fint::V
@@ -297,11 +310,11 @@ struct CanonicalWork{T,V<:AbstractVector{T},L<:CompositeLayout,TR,BR}
     nnodaldc::Int
     pinning::Union{Nothing,DCPinning}
     dcindex::Vector{Int}
-    dclocal::Vector{Int}            # `dcindex`, local to the window
-    blocklocal::Dict{Int,Int}       # canonical -> window, for the blocks
-    Fwindow::Vector{Float64}        # host buffers for the window
-    uwindow::Vector{Float64}
-    update::Any                     # the matrix form, where the state lives
+    dclocal::Vector{Int}
+    window::I
+    Fwindow::V
+    uwindow::V
+    update::Any
 end
 
 function CanonicalWork(L::CompositeLayout, proto::AbstractVector{T};
@@ -314,79 +327,60 @@ function CanonicalWork(L::CompositeLayout, proto::AbstractVector{T};
         nd <= nnodaldc || throw(DimensionMismatch(
             lazy"the coupling drives $(nd) nodal rows but only $(nnodaldc) of the direct current block are nodal."))
     end
-    nw = L.ndc + L.nvdc
+    nw = nwindow(L)
+    bk = KernelAbstractions.get_backend(proto)
+    window = tobackend(bk, windowindices(L))
     w = CanonicalWork(L, similar(proto, L.rdim), similar(proto, L.rdim),
         transport, blockrows, zeros(Float64, nd), nnodaldc, nothing, Int[],
-        Int[], Dict{Int,Int}(), zeros(Float64, nw), zeros(Float64, nw),
-        nothing)
+        Int[], window, similar(proto, nw), similar(proto, nw), nothing)
     isnothing(transport) && return w
     # the pinning is read off the subsystem this work describes, so it is
     # found once here and then carried
-    idx = dcsubsystemindices(w)
-    shift = L.nac
-    blocklocal = Dict{Int,Int}()
-    if !isnothing(blockrows)
-        for v in blockrows.currentindex, i in v
-            blocklocal[i] = i - shift
-        end
-    end
     full = CanonicalWork(L, w.xint, w.Fint, transport, blockrows, w.dwork,
-        nnodaldc, dcpinning(w), idx, idx .- shift, blocklocal,
-        w.Fwindow, w.uwindow, nothing)
-    # the matrix form, built only where the state is not host resident; on
-    # the host the scalar walk is the cheaper of the two
+        nnodaldc, dcpinning(w), dcsubsystemindices(w), dcsubsystemlocal(w),
+        window, w.Fwindow, w.uwindow, nothing)
+    # the matrix form, on the backend the state is on. On the host the
+    # scalar walk is already the cheaper of the two at these sizes, so it is
+    # built only where the state is not host resident.
     _onhost(proto) && return full
     up = dcupdate(full)
     isnothing(up) && return full
-    bk = KernelAbstractions.get_backend(proto)
     dev = DCUpdate(tobackend(bk, up.keep), tobackend(bk, up.rowptr),
         tobackend(bk, up.colval), tobackend(bk, up.nzval),
         tobackend(bk, up.cresidual))
     return CanonicalWork(L, full.xint, full.Fint, transport, blockrows,
-        full.dwork, nnodaldc, full.pinning, idx, full.dclocal, blocklocal,
-        full.Fwindow, full.uwindow, dev)
+        full.dwork, nnodaldc, full.pinning, full.dcindex, full.dclocal,
+        window, full.Fwindow, full.uwindow, dev)
 end
-
-# the canonical index range of the explicit voltage block
-voltagerange(L::CompositeLayout) =
-    (L.nac + L.ndc + 1):(L.nac + L.ndc + L.nvdc)
 
 # The explicit direct current block's contribution: the resistor current the
 # average voltages drive into the zero frequency nodal rows, and the
 # transport rows themselves.
 #
-# The sign follows from the elimination read backwards: the residual is
-# `A x - bnm`, and eliminating the voltages would replace `bnm` by
-# `bnm - G0 P v`, so carrying `v` instead means adding `G0 P v` here and
-# leaving the applied source alone. Doing both would count the resistor
-# current twice.
+# The sign is the elimination's, read backwards. The residual is
+# `A x - bnm`, and eliminating replaces `bnm` by `bnm - G0 P v`, so carrying
+# `v` instead means adding `G0 P v` here and leaving the applied source
+# alone. Doing both would count the resistor current twice.
 #
-# Everything the block reads and writes lies in one contiguous window of
-# the canonical vector, the zero frequency block and the explicit voltages,
-# so the arithmetic is done on that window with local indices. On the host
-# the window is a view; on a device it is either copied to the host,
-# worked on and copied back (a few hundred numbers beside a state of tens
-# of thousands), or, in the matrix form, updated in place.
-dcwindow(L::CompositeLayout) = (L.nac + 1):(L.nac + L.ndc + L.nvdc)
-
+# Everything the block reads and writes is the window: the zero frequency
+# entries, scattered through the internal state, and the explicit voltages
+# after it. The window is gathered by index into a buffer of its own, worked
+# on with local indices, and scattered back, which is what lets the
+# arithmetic run on a device without scalar indexing; it is a few hundred
+# numbers where the state is tens of thousands.
 function addtransport!(Fc::AbstractVector, work::CanonicalWork,
         u::AbstractVector; residual::Bool = true)
     isnothing(work.transport) && return Fc
-    win = dcwindow(work.layout)
-    if _onhost(Fc)
-        addtransportwindow!(view(Fc, win), view(u, win), work; residual)
-        return Fc
-    end
-    if !isnothing(work.update)
-        # in place, where the state is: three array operations and no copy
-        applydcupdate!(view(Fc, win), view(u, win), work.update; residual)
-        return Fc
-    end
     Fw, uw = work.Fwindow, work.uwindow
-    copyto!(Fw, view(Fc, win))
-    copyto!(uw, view(u, win))
-    addtransportwindow!(Fw, uw, work; residual)
-    copyto!(view(Fc, win), Fw)
+    _gatherperm!(Fw, Fc, work.window)
+    _gatherperm!(uw, u, work.window)
+    if isnothing(work.update)
+        addtransportwindow!(Fw, uw, work; residual)
+    else
+        # in place, where the state is: three array operations and no copy
+        applydcupdate!(Fw, uw, work.update; residual)
+    end
+    _scatterperm!(Fc, Fw, work.window)
     return Fc
 end
 
@@ -411,8 +405,8 @@ function addtransportwindow!(Fw::AbstractVector, uw::AbstractVector,
     # currents they exchange across a component boundary
     br = work.blockrows
     if !isnothing(br)
-        addblockdc!(Fw, br, uw, v, work.blocklocal)
-        addblocktransport!(view(Fw, vr), br, uw, work.blocklocal)
+        addblockdc!(Fw, br, uw, v)
+        addblocktransport!(view(Fw, vr), br, uw)
     end
     # the rows spent on the directions nothing determines, written over what
     # was there: the equation they replaced was the redundant one
@@ -430,34 +424,23 @@ end
 # Evaluating in canonical coordinates.
 #
 # The residual, the Jacobian vector product and the preconditioner are all
-# written against the internal layout. Rather than rewrite them, the
-# canonical path brackets each with a scatter in and a gather out. While
-# the layout is a permutation the canonical operator is `P J Pᵀ` with `P`
-# orthogonal, so a Krylov method takes the same iterations and reaches the
-# same point, and any difference between the two paths is a bug.
+# written against the internal layout, and the canonical vector holds that
+# layout in its first block. So each is handed a view of that block and
+# nothing is copied; what is added is the direct current block, on the
+# window.
 
 """
     canonicalresidual(fjreal!, work::CanonicalWork)
 
 Wrap an internal coordinate residual and Jacobian closure so it takes and
 returns canonical vectors.
-
-`fjreal!` writes the canonical real representation of the evaluation point
-back into its state argument, so the wrapper gathers that back out too;
-otherwise the solver's point would drift from the system's.
 """
 function canonicalresidual(fjreal!, work::CanonicalWork)
-    L, xint, Fint = work.layout, work.xint, work.Fint
+    L = work.layout
     return function (Fc, Jr, uc)
-        scattercanonical!(xint, uc, L)
-        fjreal!(isnothing(Fc) ? nothing : Fint, Jr, xint)
-        if !isnothing(Fc)
-            gathercanonical!(Fc, Fint, L)
-            addtransport!(Fc, work, uc)
-        end
-        # writes the flux blocks only, so the explicit voltages the solver
-        # is carrying in `uc` survive
-        gathercanonical!(uc, xint, L)
+        fjreal!(isnothing(Fc) ? nothing : internalpart(Fc, L), Jr,
+            internalpart(uc, L))
+        isnothing(Fc) || addtransport!(Fc, work, uc)
         return nothing
     end
 end
@@ -469,11 +452,9 @@ Wrap an internal coordinate Jacobian vector product so it takes and returns
 canonical vectors.
 """
 function canonicaljvp(jvpreal!, work::CanonicalWork)
-    L, vint, Jvint = work.layout, work.xint, work.Fint
+    L = work.layout
     return function (Jvc, vc)
-        scattercanonical!(vint, vc, L)
-        jvpreal!(Jvint, vint)
-        gathercanonical!(Jvc, Jvint, L)
+        jvpreal!(internalpart(Jvc, L), internalpart(vc, L))
         # the transport rows are affine, so their product drops the constant
         addtransport!(Jvc, work, vc; residual = false)
         return Jvc
@@ -504,8 +485,7 @@ function CanonicalPreconditioner(inner, work::CanonicalWork, F)
     idx = isnothing(F) ? Int[] : dcsubsystemindices(work)
     dev = (isnothing(F) || _onhost(work.xint) ||
            length(idx) > DCDEVICESOLVEMAX) ? nothing :
-        DCFactorization(F, idx .- work.layout.nac,
-            KernelAbstractions.get_backend(work.xint))
+        DCFactorization(F, idx, KernelAbstractions.get_backend(work.xint))
     return CanonicalPreconditioner(inner, work, F, idx,
         zeros(Float64, length(idx)), dev)
 end
@@ -557,20 +537,20 @@ The factorization of the direct current subsystem and the indices it acts
 on, resident on a backend.
 
 `factors` is the packed unit lower and upper triangle `lu` produced, `perm`
-its row permutation, and `local_` the position of each subsystem coordinate
-within the direct current window.
+its row permutation, and `index` the canonical position of each subsystem
+coordinate.
 """
 struct DCFactorization{V,I}
-    local_::I
+    index::I
     perm::I
     factors::V
     work::V
     n::Int
 end
 
-function DCFactorization(F::LinearAlgebra.LU, local_::Vector{Int}, backend)
+function DCFactorization(F::LinearAlgebra.LU, index::Vector{Int}, backend)
     n = size(F.factors, 1)
-    return DCFactorization(tobackend(backend, local_),
+    return DCFactorization(tobackend(backend, index),
         tobackend(backend, Vector{Int}(F.p)),
         tobackend(backend, Vector{Float64}(vec(F.factors))),
         tobackend(backend, zeros(Float64, n)), n)
@@ -579,12 +559,12 @@ end
 # One work item: the substitutions are sequential and the system is a
 # handful of unknowns, so what is being avoided is the bus and not the
 # arithmetic.
-@kernel function dcsolvekernel!(Fw, @Const(uw), @Const(local_),
+@kernel function dcsolvekernel!(z, @Const(r), @Const(index),
         @Const(perm), @Const(factors), b, n)
     @index(Global)
     @inbounds begin
         for k in 1:n
-            b[k] = uw[local_[perm[k]]]
+            b[k] = r[index[perm[k]]]
         end
         for k in 1:n, i in (k+1):n            # L y = P b, unit lower
             b[i] -= factors[i + (k-1)*n]*b[k]
@@ -596,25 +576,25 @@ end
             b[k] /= factors[k + (k-1)*n]
         end
         for k in 1:n
-            Fw[local_[k]] = b[k]
+            z[index[k]] = b[k]
         end
     end
 end
 
 """
-    applydcsolve!(Fw, uw, d::DCFactorization)
+    applydcsolve!(z, r, d::DCFactorization)
 
-Solve the direct current subsystem for the coordinates of `uw` it owns and
-write the answer into the same coordinates of `Fw`, in place and on the
+Solve the direct current subsystem for the coordinates of `r` it owns and
+write the answer into the same coordinates of `z`, in place and on the
 backend the factorization lives on.
 """
-function applydcsolve!(Fw::AbstractVector, uw::AbstractVector,
+function applydcsolve!(z::AbstractVector, r::AbstractVector,
         d::DCFactorization)
-    backend = KernelAbstractions.get_backend(Fw)
+    backend = KernelAbstractions.get_backend(z)
     kernel! = dcsolvekernel!(backend)
-    kernel!(Fw, uw, d.local_, d.perm, d.factors, d.work, d.n; ndrange = 1)
+    kernel!(z, r, d.index, d.perm, d.factors, d.work, d.n; ndrange = 1)
     KernelAbstractions.synchronize(backend)
-    return Fw
+    return z
 end
 
 """
@@ -632,8 +612,11 @@ function dcsubsystem(work::CanonicalWork)
     A = zeros(Float64, nc + nb, nc + nb)
     A[1:nc, 1:nc] .= t.Y
     # the reference rows are written last and unconditionally: the transport
-    # rows no longer carry one, so a circuit with no blocks still needs them
-    local_ = Dict(idx[nc+k] => nc + k for k in 1:nb)
+    # rows no longer carry one, so a circuit with no blocks still needs them.
+    # A block current is named by its window position, as the block rows
+    # name it.
+    slots = dcsubsystemlocal(work)
+    local_ = Dict(slots[nc+k] => nc + k for k in 1:nb)
     if !isnothing(br)
         # the block currents each component exchanges across its boundary
         for (c, ci, sgn) in br.transportterms
@@ -666,12 +649,22 @@ end
 """
     dcsubsystemindices(work::CanonicalWork)
 
-The canonical indices the direct current subsystem occupies: the explicit
+The canonical positions the direct current subsystem occupies: the explicit
 voltage block, then every block port's zero frequency current.
 """
 function dcsubsystemindices(work::CanonicalWork)
+    L = work.layout
+    return [windowindex(L, k) for k in dcsubsystemlocal(work)]
+end
+
+"""
+    dcsubsystemlocal(work::CanonicalWork)
+
+The same positions, local to the window.
+"""
+function dcsubsystemlocal(work::CanonicalWork)
     L, br = work.layout, work.blockrows
-    idx = collect(voltagerange(L))
+    idx = collect(L.ndc .+ (1:L.nvdc))
     isnothing(br) || for v in br.currentindex, i in v
         push!(idx, i)
     end
@@ -679,43 +672,50 @@ function dcsubsystemindices(work::CanonicalWork)
 end
 
 function updatepreconditioner!(pc::CanonicalPreconditioner, u::AbstractVector)
-    w = pc.work
-    scattercanonical!(w.xint, u, w.layout)
-    updatepreconditioner!(pc.inner, w.xint)
+    updatepreconditioner!(pc.inner, internalpart(u, pc.work.layout))
     return pc
 end
 
+# Block diagonal, and that is enough. The canonical Jacobian is
+#
+#     [ Jpp  Jpd ]    p: every flux entry, the zero frequency ones included
+#     [  0   Jdd ]    d: the average voltages and the block port currents
+#
+# since the transport rows and the block relations see no periodic state,
+# while the average voltages drive the resistor current `G0 P v` into the
+# nodal zero frequency rows and a block current enters its two terminals'
+# rows. Solving `d` exactly, the flux block with the inner preconditioner,
+# and dropping `Jpd` leaves an error whose range is the columns of `Jpd`,
+# one per direct current unknown, and a Krylov iteration removes an error
+# of that rank in as many steps. The exact triangular form, `d` first and
+# `Jpd d` taken off the nodal rows before the inner solve, was measured to
+# save no iterations on junction chains with a resistive bias network or
+# on a bridge between nearly open ports, and with an exact inner
+# preconditioner both take one step per solve; it cost a pass over the
+# nodal rows per application, so it is not here.
 function applypreconditioner!(z::AbstractVector, pc::CanonicalPreconditioner,
         r::AbstractVector)
     w = pc.work
     L = w.layout
-    scattercanonical!(w.xint, r, L)
-    applypreconditioner!(w.Fint, pc.inner, w.xint)
-    gathercanonical!(z, w.Fint, L)
-    # Block diagonal, not block triangular: the coupling `Jpv` between the
-    # flux and the direct current blocks is dropped. An exact triangular
-    # solve would need the flux block solved first; as a preconditioner the
-    # block diagonal is already the right shape, since the block it adds is
-    # solved exactly.
-    if !isnothing(pc.Yfact)
-        win = dcwindow(L)
-        # where the state is not on the host, the same factors and the same
-        # substitutions run there, so the window does not cross the bus
-        if !isnothing(pc.device)
-            applydcsolve!(view(z, win), view(r, win), pc.device)
-            return z
-        end
-        loc = w.dclocal
-        b = pc.dcwork
-        @inbounds for k in eachindex(loc)
-            b[k] = r[L.nac + loc[k]]
-        end
-        ldiv!(pc.Yfact, b)
-        # overwritten, not added: this solve is exact on these coordinates
-        # and the inner preconditioner's guess at them is not
-        @inbounds for k in eachindex(loc)
-            z[L.nac + loc[k]] = b[k]
-        end
+    applypreconditioner!(internalpart(z, L), pc.inner, internalpart(r, L))
+    isnothing(pc.Yfact) && return z
+    # where the state is not on the host, the same factors and the same
+    # substitutions run there; the subsystem used to cross the bus three
+    # times for this and that cost more than the residual it preconditions
+    if !isnothing(pc.device)
+        applydcsolve!(z, r, pc.device)
+        return z
+    end
+    idx = pc.dcindices
+    b = pc.dcwork
+    @inbounds for k in eachindex(idx)
+        b[k] = r[idx[k]]
+    end
+    ldiv!(pc.Yfact, b)
+    # overwritten, not added: this solve is exact on these coordinates
+    # and the inner preconditioner's guess at them is not
+    @inbounds for k in eachindex(idx)
+        z[idx[k]] = b[k]
     end
     return z
 end
@@ -962,7 +962,8 @@ end
 # matrix; it is written once here rather than once per iteration.
 function dcjacobianentries(work::CanonicalWork)
     L = work.layout
-    n = length(L.perm)
+    n = L.rdim
+    dcpos = L.dcpos
     I, J, V = Int[], Int[], Float64[]
     t = work.transport
     isnothing(t) && return I, J, V
@@ -971,7 +972,7 @@ function dcjacobianentries(work::CanonicalWork)
     # rows, and the transport rows themselves
     C = t.coupling
     for j in axes(C, 2), k in nzrange(C, j)
-        push!(I, L.nac + C.rowval[k]); push!(J, n + j); push!(V, C.nzval[k])
+        push!(I, dcpos[C.rowval[k]]); push!(J, n + j); push!(V, C.nzval[k])
     end
     for j in axes(t.Y, 2), i in axes(t.Y, 1)
         iszero(t.Y[i,j]) && continue
@@ -982,21 +983,22 @@ function dcjacobianentries(work::CanonicalWork)
     if !isnothing(br)
         # the block currents each component exchanges across its boundary
         for (c, ci, sgn) in br.transportterms
-            push!(I, n + c); push!(J, ci); push!(V, float(sgn))
+            push!(I, n + c); push!(J, dcpos[ci]); push!(V, float(sgn))
         end
         # and each block's own row, replacing the `-i` already in the stamp
         for (b, d) in enumerate(br.descriptors)
             ci = br.currentindex[b]
             sc, rc = br.signalcomponent[b], br.refcomponent[b]
             for p in eachindex(ci)
-                push!(I, ci[p]); push!(J, ci[p]); push!(V, 1.0)
+                rp = dcpos[ci[p]]
+                push!(I, rp); push!(J, rp); push!(V, 1.0)
                 for q in eachindex(ci)
-                    push!(I, ci[p]); push!(J, ci[q]); push!(V, -d.C0[p,q])
+                    push!(I, rp); push!(J, dcpos[ci[q]]); push!(V, -d.C0[p,q])
                     w = d.B0[p,q]*br.scale
                     iszero(sc[q]) ||
-                        (push!(I, ci[p]); push!(J, n + sc[q]); push!(V, w))
+                        (push!(I, rp); push!(J, n + sc[q]); push!(V, w))
                     iszero(rc[q]) ||
-                        (push!(I, ci[p]); push!(J, n + rc[q]); push!(V, -w))
+                        (push!(I, rp); push!(J, n + rc[q]); push!(V, -w))
                 end
             end
         end
@@ -1015,18 +1017,16 @@ which it must not.
 """
 function canonicaljacobianplan(Jint::SparseMatrixCSC, work::CanonicalWork)
     L = work.layout
-    p = L.perm
-    n = length(p)
-    nv = L.nvdc
-    N = n + nv
-    q = invperm(collect(p))
+    n = L.rdim
+    N = n + L.nvdc
 
-    # where each stored entry of the internal Jacobian lands
+    # where each stored entry of the internal Jacobian lands: where it is,
+    # since the internal state is the first block of the canonical one
     di = Vector{Int}(undef, nnz(Jint))
     dj = Vector{Int}(undef, nnz(Jint))
     for col in axes(Jint, 2), k in nzrange(Jint, col)
-        di[k] = q[Jint.rowval[k]]
-        dj[k] = q[col]
+        di[k] = Jint.rowval[k]
+        dj[k] = col
     end
 
     fi, fj, fv = dcjacobianentries(work)
@@ -1069,8 +1069,8 @@ end
 
 Fill the plan's matrix from an internal Jacobian and return it.
 
-The flux block is `Jint` under the layout's permutation, which is a
-symmetric reordering and nothing more. What is added is the explicit direct
+The flux block is `Jint` as it is, since the internal state is the first
+block of the canonical one. What is added is the explicit direct
 current block and its couplings, in the same places the residual adds them:
 the resistor current the average voltages drive into the zero frequency
 nodal rows, the transport rows and the block currents they carry across a
@@ -1128,20 +1128,14 @@ iterations -- and the plan is built from it once.
 function canonicalfj(fjreal!, work::CanonicalWork, Jint,
         plan::CanonicalJacobianPlan)
     L = work.layout
-    xint, Fint = work.xint, work.Fint
     return function (Fc, Jout, uc)
-        scattercanonical!(xint, uc, L)
-        fjreal!(isnothing(Fc) ? nothing : Fint,
-            isnothing(Jout) ? nothing : Jint, xint)
-        if !isnothing(Fc)
-            gathercanonical!(Fc, Fint, L)
-            addtransport!(Fc, work, uc)
-        end
+        fjreal!(isnothing(Fc) ? nothing : internalpart(Fc, L),
+            isnothing(Jout) ? nothing : Jint, internalpart(uc, L))
+        isnothing(Fc) || addtransport!(Fc, work, uc)
         if !isnothing(Jout)
             canonicaljacobian!(plan, Jint)
             Jout === plan.J || copyto!(Jout.nzval, plan.J.nzval)
         end
-        gathercanonical!(uc, xint, L)
         return nothing
     end
 end

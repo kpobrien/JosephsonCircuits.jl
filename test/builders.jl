@@ -1,5 +1,6 @@
 using JosephsonCircuits
 using LinearAlgebra
+using SparseArrays
 using Test
 
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"))
@@ -202,6 +203,27 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
             keyedarrays = false)
         @test isapprox(vec(collect(n2.nodeflux)),
             vec(collect(ref2.nodeflux)); rtol = 1e-6)
+        # the port's reference impedance is the resistor across it, as the
+        # legacy netlist states it, not the port number the netlist writes
+        # in the value slot; the waves are normalized to it
+        @test cache.nm.portimpedances == [50.0]
+        @test isapprox(Array(n2.S), Array(ref2.S); rtol = 1e-6)
+
+        # the system, the preconditioner and the Krylov vectors were built
+        # once and rebound: the same objects carry every point
+        pm = cache.reuse.sys.phimatrix
+        pc = cache.reuse.preconditioner
+        kv = cache.reuse.krylov[]
+        n3 = hbsolve!(cache, (Lj = 975.0e-12, Cc = 110.0e-15))
+        @test cache.converged
+        @test cache.reuse.sys.phimatrix === pm
+        @test cache.reuse.preconditioner === pc
+        @test cache.reuse.krylov[] === kv
+        ref3 = hbnlsolve(wp, (8,), src, make(; Lj = 975.0e-12,
+            Cc = 110.0e-15); ftol = 1e-12, keyedarrays = false)
+        @test isapprox(vec(collect(n3.nodeflux)),
+            vec(collect(ref3.nodeflux)); rtol = 1e-8)
+        @test isapprox(Array(n3.S), Array(ref3.S); rtol = 1e-8)
 
         # a reset discards the stored state
         JosephsonCircuits.reset!(cache)
@@ -214,6 +236,56 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
             ("Lj1","2","0",Lj)]
         cache.builder = make2
         @test_throws ArgumentError hbsolve!(cache, p)
+    end
+
+    @testset "the padded linear term is refilled exactly" begin
+        # The padding, the augmentation and their union are built once per
+        # cache and refilled with values; what the refill produces must be
+        # entry for entry what a fresh assembly at the same values produces,
+        # including the coupled inductor rows of the augmentation, which are
+        # the only value dependent entries it has, and the drive.
+        same(a::SparseMatrixCSC, b::SparseMatrixCSC) = size(a) == size(b) &&
+            SparseArrays.getcolptr(a) == SparseArrays.getcolptr(b) &&
+            rowvals(a) == rowvals(b) && nonzeros(a) == nonzeros(b)
+        function refilled(builder, w, Nh, sources, p1, p2; kw...)
+            cache = hbcache(w, Nh, sources, builder, p1; sorting = :name,
+                kw...)
+            hbsolve!(cache, p1)
+            lin = cache.reuse.linear
+            hbsolve!(cache, p2)
+            fresh = JosephsonCircuits.hbnlsolve(w, Nh, sources,
+                builder(; p2...), Dict{Symbol,Number}(); returnsystem = true,
+                keyedarrays = false, sorting = :name, kw...)
+            return cache.reuse.linear === lin && !isnothing(lin) &&
+                same(lin.invLnm, fresh.invLnm) && same(lin.Gnm, fresh.Gnm) &&
+                same(lin.Cnm, fresh.Cnm) && same(lin.Rbnm, fresh.Rbnm) &&
+                lin.bnm == fresh.sys.bnm &&
+                nonzeros(cache.reuse.sys.Knm) == nonzeros(fresh.sys.Knm)
+        end
+        function chain(; Lj, Cg = 45e-15, Nj = 8)
+            c = Tuple{String,String,String,Any}[("P1","1","0",1),
+                ("R1","1","0",50.0)]
+            for i in 1:Nj
+                push!(c, ("Lj$i","$i","$(i+1)",Lj))
+                push!(c, ("Cj$i","$i","$(i+1)",55e-15))
+                push!(c, ("Cg$i","$(i+1)","0",Cg))
+            end
+            push!(c, ("P2","$(Nj+1)","0",2)); push!(c, ("R2","$(Nj+1)","0",50.0))
+            return c
+        end
+        mutual(; L1, k) = Tuple{String,String,String,Any}[
+            ("P1","1","0",1), ("R1","1","0",50.0), ("L1","1","2",L1),
+            ("L2","2","3",2e-9), ("L3","3","0",4e-9), ("K1","L1","L2",k),
+            ("Lj1","1","0",1e-9), ("C1","1","0",1e-12)]
+        Lj0 = IctoLj(3.4e-6)
+        @test refilled(chain, (2*pi*7e9,), (6,),
+            [(mode=(1,), port=1, current=0.5e-6)],
+            (Lj = Lj0,), (Lj = 1.1*Lj0, Cg = 50e-15))
+        @test refilled(mutual, (2*pi*5e9,), (4,),
+            [(mode=(1,), port=1, current=1e-7),
+             (mode=(0,), port=1, current=2e-8)],
+            (L1 = 1e-9, k = 0.5), (L1 = 1.5e-9, k = 0.7);
+            dc = true, odd = true, even = true)
     end
 
     @testset "scattering block design parameters" begin

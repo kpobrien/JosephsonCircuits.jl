@@ -120,8 +120,9 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
     end
 
     @testset "no direct current, no voltage" begin
-        # the common case: the elimination costs one projection and reports
-        # nothing, and the answer is what it always was
+        # the common case: the block is classified and not carried, the
+        # answer is what it always was, and the average voltage it reports
+        # is the zero every node sits at
         c = Circuit([:p1 => Port(1), :cc => Capacitor(100e-15),
                      :jj => JosephsonJunction(1000e-12),
                      :cj => Capacitor(1000e-15)],
@@ -129,9 +130,120 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
              [(:p1,2),(:jj,2),(:cj,2), Ground]])
         sol = hbnlsolve((2*pi*4.75001e9,), (8,),
             [(mode=(1,), port=1, current=0.00565e-6)], c, Dict{Any,Any}();
-            keyedarrays = false)
+            keyedarrays = false, dc = true)
+        @test sol.solverinfo.converged
+        @test sol.dcnodevoltage == zeros(2)
+        # and without a zero frequency mode there is no average voltage
+        sol = hbnlsolve((2*pi*4.75001e9,), (8,),
+            [(mode=(1,), port=1, current=0.00565e-6)], c, Dict{Any,Any}();
+            keyedarrays = false, dc = false)
         @test sol.solverinfo.converged
         @test isnothing(sol.dcnodevoltage)
+    end
+
+    @testset "the network is classified whether or not it is driven" begin
+        # Whether a direct current is determined is a property of the
+        # network and not of the drive: a short or an ideal through in
+        # parallel with an inductive path leaves the division undetermined
+        # with a drive and without one, and the answer the stamp's `i = 0`
+        # row would give is one of infinitely many either way. So the
+        # descriptor is assembled and classified whenever there is a zero
+        # frequency mode, and the block is carried through the solve only
+        # when something is injected.
+        JC = JosephsonCircuits
+        R = 100.0
+        through() = ScatteringParameters(
+            w -> JC.ABCDtoS(JC.ABCD_seriesZ(0.0 + 0im));
+            nports = 2, grounded = true, noise = Lossless())
+        finite() = ScatteringParameters(
+            w -> JC.ABCDtoS(JC.ABCD_seriesZ(10.0 + 0im));
+            nports = 2, grounded = true, noise = Lossless())
+        pump = [(mode=(1,), port=1, current=1e-6)]
+        direct = [(mode=(0,), port=1, current=1e-6)]
+        go(c, srcs) = hbnlsolve(ws, (1,), srcs, c, Dict{Any,Any}();
+            keyedarrays = false, dc = true, odd = true)
+
+        # the loop which is refused with a direct current drive is the same
+        # loop without one
+        loop(t) = Circuit(
+            [:p1 => Port(1; Z0 = R), :l => Inductor(1e-9), :t => t,
+             :c1 => Capacitor(1e-12), :c2 => Capacitor(1e-12)],
+            [[(:p1,1),(:l,1),(:t,1),(:c1,1)], [(:l,2),(:t,2),(:c2,1)],
+             [(:p1,2),(:c1,2),(:c2,2), Ground]])
+        @test_throws ArgumentError go(loop(through()), pump)
+        @test go(loop(finite()), pump).solverinfo.converged
+
+        # every node held at ground by an inductor: there is no voltage to
+        # find, and there is still a current to classify. It was not, once,
+        # because a circuit with no floating component had no direct current
+        # block at all, and this loop solved with all of its direct current
+        # through the inductors.
+        grounded(t) = Circuit(
+            [:p1 => Port(1; Z0 = R), :lg => Inductor(1e-9),
+             :l => Inductor(1e-9), :t => t,
+             :c1 => Capacitor(1e-12), :c2 => Capacitor(1e-12)],
+            [[(:p1,1),(:lg,1),(:l,1),(:t,1),(:c1,1)],
+             [(:l,2),(:t,2),(:c2,1)],
+             [(:p1,2),(:lg,2),(:c1,2),(:c2,2), Ground]])
+        @test_throws ArgumentError go(grounded(through()), pump)
+        @test_throws ArgumentError go(grounded(through()), direct)
+        # a finite block between two nodes held at ground carries nothing,
+        # and the whole drive goes to ground through the inductor
+        s = go(grounded(finite()), direct)
+        @test s.solverinfo.converged
+        @test s.dcnodevoltage == zeros(2)
+
+        # a block whose data does not reach zero frequency is open there
+        # when nothing asks it to carry direct current, and has to state its
+        # limit when something does
+        f = 2*pi*(1e9:1e9:10e9)
+        S = zeros(Complex{Float64}, 2, 2, length(f))
+        for i in eachindex(f)
+            S[:,:,i] = JC.ABCDtoS(JC.ABCD_seriesZ(10.0 + 0im))
+        end
+        tab = ScatteringParameters((collect(f), S); nports = 2,
+            grounded = true)
+        c = Circuit(
+            [:p1 => Port(1; Z0 = R), :x => tab, :r2 => Resistor(R),
+             :c1 => Capacitor(1e-12)],
+            [[(:p1,1),(:x,1),(:c1,1)], [(:x,2),(:r2,1)],
+             [(:p1,2),(:r2,2),(:c1,2), Ground]])
+        @test go(c, pump).solverinfo.converged
+        @test_throws ArgumentError go(c, direct)
+
+        # Skipping the block when nothing is injected is exact and not an
+        # approximation: a junction driven by two tones rectifies, and a
+        # floating island joined to the rest by resistors could in principle
+        # develop an average voltage from it. It does not, because a
+        # rectified current circulates inside the island's inductive paths
+        # and the transport row sums it away. The same circuit driven by a
+        # direct current too small to matter carries the block explicitly,
+        # and lands on the same point.
+        j = Circuit(
+            [:p1 => Port(1), :cc => Capacitor(100e-15), :rb => Resistor(200.0),
+             :jj => JosephsonJunction(500e-12), :cj => Capacitor(500e-15),
+             :l3 => Inductor(2e-9), :c3 => Capacitor(1e-12),
+             :r3 => Resistor(300.0), :c4 => Capacitor(1e-12)],
+            [[(:p1,1),(:cc,1)],
+             [(:cc,2),(:rb,1),(:jj,1),(:cj,1),(:l3,1)],
+             [(:rb,2),(:jj,2),(:cj,2),(:c3,1),(:l3,2)],
+             [(:c3,2),(:r3,1)], [(:r3,2),(:c4,1)],
+             [(:p1,2),(:c4,2), Ground]])
+        ws2 = (2*pi*4.75e9, 2*pi*7.1e9)
+        two = [(mode=(1,0), port=1, current=1.2e-6),
+               (mode=(0,1), port=1, current=0.9e-6)]
+        kw = (; keyedarrays = false, dc = true, odd = true, even = true,
+            ftol = 1e-11)
+        a = hbnlsolve(ws2, (6,4), two, j, Dict{Any,Any}(); kw...)
+        @test a.solverinfo.converged
+        @test a.dcnodevoltage == zeros(5)
+        b = hbnlsolve(ws2, (6,4),
+            vcat(two, [(mode=(0,0), port=1, current=1e-30)]), j,
+            Dict{Any,Any}(); kw...)
+        @test b.solverinfo.converged
+        @test maximum(abs, b.dcnodevoltage) < 1e-20
+        @test isapprox(a.nodeflux, b.nodeflux;
+            atol = 1e-12*maximum(abs, a.nodeflux))
     end
 
     @testset "a floating island fixes only its differences" begin
@@ -293,13 +405,13 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test isapprox(maximum(vc) - minimum(vc), Idc*200.0; rtol = 1e-9)
         @test count(iszero, vc) >= 1       # the reference component
 
-        # a drive with no direct current in it does not build the block at
-        # all, and reports no voltages
+        # a drive with no direct current in it does not carry the block
+        # through the solve, and reports the zero the voltages sit at
         d = solve(Circuit([:p1 => Port(1; Z0 = R), :c1 => Capacitor(1.0e-12)],
                 [[(:p1,1),(:c1,1)], [(:p1,2),(:c1,2), Ground]]),
             [(mode=(1,), port=1, current=Idc)])
         @test d.solverinfo.converged
-        @test isnothing(d.dcnodevoltage)
+        @test d.dcnodevoltage == zeros(1)
     end
 
     # The capability the explicit block exists for. A scattering block used

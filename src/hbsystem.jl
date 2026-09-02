@@ -166,6 +166,103 @@ function HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
 end
 
 
+# the structure of two sparse matrices, compared exactly: a value which
+# moved under a fixed structure is a refresh, and one which moved the
+# structure is a new system
+function samestructure(A::SparseMatrixCSC, B::SparseMatrixCSC)
+    return size(A) == size(B) &&
+        SparseArrays.getcolptr(A) == SparseArrays.getcolptr(B) &&
+        rowvals(A) == rowvals(B)
+end
+
+"""
+    rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lmean;
+        maps = nothing)
+
+The same system at new component values: the linear term matrices, the
+source, the junction inductances and the scale are replaced by the new
+ones, in place where the arrays live and by a new struct sharing them where
+a scalar does. The transforms, the index maps, the kernels and every
+workspace stay, and nothing the size of the state is allocated.
+
+The structure must not have moved: a sparse pattern which differs from the
+one the system was built on is refused, because the plans are built on the
+pattern and a value which moves it is a new circuit and not a new point.
+"""
+function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lmean;
+        maps::Union{Nothing,ValueMaps} = nothing)
+    for (old, new, what) in ((sys.invLnm, invLnm, "inverse inductance"),
+            (sys.Gnm, Gnm, "conductance"), (sys.Cnm, Cnm, "capacitance"))
+        samestructure(old, new) || throw(ArgumentError(
+            lazy"the $(what) matrix changed its sparse structure between points, which a reused system cannot follow; build a new one."))
+        copyto!(nonzeros(old), nonzeros(new))
+    end
+    (Ljb.nzind == sys.Ljb.nzind && Ljbm.nzind == sys.Ljbm.nzind) ||
+        throw(ArgumentError("the junctions changed between points, which a reused system cannot follow; build a new one."))
+    copyto!(sys.Ljb.nzval, Ljb.nzval)
+    copyto!(sys.Ljbm.nzval, Ljbm.nzval)
+    TF = real(eltype(sys.phimatrix))
+    if isnothing(maps)
+        Knm = linearterm(sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
+            sys.wmodes2m, TF)
+        samestructure(Knm, sys.Knm) || throw(ArgumentError(
+            "the linear term changed its sparse structure between points, which a reused system cannot follow; build a new one."))
+        copyto!(nonzeros(sys.Knm), nonzeros(Knm))
+        refreshvalues!(sys.nonlineartermplan, sys.Rbnm, sys.Ljb, Lmean,
+            sys.Knm, sys.modelayout, sys.freqindexmap)
+    else
+        linearterm!(sys.Knm, maps, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
+            sys.wmodes2m)
+        refreshvalues!(sys.nonlineartermplan, maps, sys.Knm, sys.Ljb, Lmean)
+    end
+    copyto!(sys.bnm, convert(Vector{Complex{TF}}, bnm))
+    copyto!(sys.bnmr, convert(Vector{TF},
+        complex_to_real(bnm, sys.modelayout.isreal)))
+    # the point is stale: it was set against the old values
+    sys.sincurrent[] = false
+    sys.coscurrent[] = false
+    return HBSystem(sys.Rbnm, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
+        sys.wmodes2m, sys.Knm, sys.bnm, sys.Ljb, sys.Ljbm, Lmean,
+        sys.freqindexmap, sys.conjsourceindices, sys.conjtargetindices,
+        sys.irfftplan, sys.rfftplan, sys.modelayout, sys.realjacobianplan,
+        sys.complexjacobianplan, sys.nonlineartermplan, sys.bnmr, sys.x,
+        sys.xr, sys.phitd, sys.sintd, sys.costd, sys.sincurrent,
+        sys.coscurrent, sys.phimatrix, sys.dirtd, sys.dirtd2, sys.worktd)
+end
+
+"""
+    valuemaps(sys::HBSystem)
+
+The [`ValueMaps`](@ref) of a system, for rebinding it without allocation,
+or `nothing` when a conversion has no fixed map.
+"""
+valuemaps(sys::HBSystem) = valuemaps(sys.nonlineartermplan, sys.Knm,
+    sys.invLnm, sys.Gnm, sys.Cnm, sys.Rbnm, sys.Ljb, sys.modelayout,
+    sys.freqindexmap)
+
+"""
+    linearterm!(Knm, maps::ValueMaps, invLnm, Gnm, Cnm, wmodesm, wmodes2m)
+
+[`linearterm`](@ref) in place, through the maps: the same three terms in the
+same order, so the values are the ones the allocating form gives.
+"""
+function linearterm!(Knm::SparseMatrixCSC, maps::ValueMaps, invLnm, Gnm,
+        Cnm, wmodesm::Diagonal, wmodes2m::Diagonal)
+    knz = nonzeros(Knm)
+    lnz, gnz, cnz = nonzeros(invLnm), nonzeros(Gnm), nonzeros(Cnm)
+    wm, wm2 = wmodesm.diag, wmodes2m.diag
+    ml, mg, mc = maps.ml, maps.mg, maps.mc
+    T = eltype(knz)
+    @inbounds for j in axes(Knm, 2), t in nzrange(Knm, j)
+        v = zero(T)
+        iszero(ml[t]) || (v += lnz[ml[t]])
+        iszero(mg[t]) || (v += im*(gnz[mg[t]]*wm[j]))
+        iszero(mc[t]) || (v -= cnz[mc[t]]*wm2[j])
+        knz[t] = v
+    end
+    return Knm
+end
+
 """
     linearterm(invLnm, Gnm, Cnm, wmodesm::Diagonal, wmodes2m::Diagonal,
         T = Float64)

@@ -1219,16 +1219,19 @@ The solver carries the missing coordinate, the average node voltage,
 separately. A finite inductor or a zero-voltage Josephson junction has zero
 average voltage across it, so the average voltage is constant on each
 connected group of inductors and junctions, and the direct current problem
-reduces to those coordinates alone. It is linear in them, so it is solved
-once before the nonlinear solve and its resistor current folded into the
-zero frequency source. Nothing about the periodic solve changes, and a
-circuit with no direct current drive pays nothing.
+reduces to those coordinates alone. They are carried as a small block of
+unknowns beside the periodic state, with those equations as their rows, and
+only when some direct current is injected: with none every average voltage
+is zero, the periodic system is exact as it stands, and a circuit with no
+direct current drive pays nothing.
 
 `hbnlsolve` returns the result as `dcnodevoltage`, in volts, indexed like
 `nodeflux`: ground is excluded, so the first entry is the first real node.
-It is `nothing` when no direct current is drawn. It is not the same thing as the zero frequency
-entry of `nodeflux`, which remains the static periodic flux that sets
-inductor currents and junction phases.
+It is a vector of zeros when the circuit has a zero frequency mode and no
+direct current is drawn, and `nothing` only when the analysis has no zero
+frequency mode. It is not the same thing as the zero frequency entry of
+`nodeflux`, which remains the static periodic flux that sets inductor
+currents and junction phases.
 
 ```@example dc
 using JosephsonCircuits

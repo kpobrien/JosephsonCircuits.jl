@@ -953,25 +953,37 @@ nports(d::DCBlockDescriptor) = length(d.signalnodes)
 # `ScatteringParameters` has the field, so this is a defensive fallback
 dcmodelof(blk) = hasproperty(blk, :dcmodel) ? blk.dcmodel : ScatteringLimit()
 
-# The zero frequency scattering matrix of a block from the model it
-# declared: the default evaluates the block's own data, the others were
-# checked for size and passivity at construction and are read here.
-function dcscattering(::ScatteringLimit, sb::StampedScatteringBlock,
-        n::Integer, atol::Real)
+"""
+    dclimit(sb::StampedScatteringBlock, n, atol)
+
+The zero frequency scattering matrix read from a block's own data, or
+`nothing` and the reason the data has none: `:range` when it is tabulated
+and does not reach zero, `:nonfinite` when the value there is unbounded,
+`:complex` when it has no real limit.
+
+Read and not decided: what to do about a block with no zero frequency data
+depends on whether direct current is asked of it, which is the caller's
+question. See [`dcblockdescriptor`](@ref).
+"""
+function dclimit(sb::StampedScatteringBlock, n::Integer, atol::Real)
+    blk = sb.block
+    pr = blk.provider
+    if pr isa TabulatedMatrixProvider && pr.extrapolation == :error &&
+            !(pr.frequencies[1] <= 0.0 <= pr.frequencies[end])
+        return nothing, :range
+    end
     S = Array{Complex{Float64},3}(undef, n, n, 1)
-    evaluatescattering!(S, sb.block, [0.0])
+    evaluatescattering!(S, blk, [0.0])
     S0 = @view S[:,:,1]
-    all(isfinite, S0) || throw(ArgumentError(lazy"the scattering block $(sb.name) returned a non-finite S(0), so its direct current behavior cannot be read from it. A block whose limit exists but is not evaluable at zero -- a series capacitance written as 1/(im*w*C), whose limit is the open circuit -- has to state that limit with the dcmodel keyword: OpenDC(), ShortDC(), ThroughDC() or ScatteringDC(S0)."))
+    all(isfinite, S0) || return nothing, :nonfinite
     m = maximum(abs∘imag, S0)
-    m <= atol*max(1, maximum(abs, S0)) || throw(ArgumentError(lazy"the scattering block $(sb.name) has a complex S(0) (largest imaginary part $(m)); a block with no real zero frequency limit has no direct current behavior to stamp. State the limit with the dcmodel keyword if the block has one."))
-    return Matrix{Float64}(real.(S0))
+    m <= atol*max(1, maximum(abs, S0)) || return nothing, :complex
+    return Matrix{Float64}(real.(S0)), :ok
 end
 
-dcscattering(m::AbstractDCModel, sb::StampedScatteringBlock, n::Integer,
-    atol::Real) = dcscatteringmatrix(m, n)
-
 """
-    dcblockdescriptor(sb::StampedScatteringBlock; atol = 1e-10)
+    dcblockdescriptor(sb::StampedScatteringBlock; atol = 1e-10,
+        required = true)
 
 Evaluate the zero frequency pencil of a stamped block.
 
@@ -983,11 +995,38 @@ Evaluated or stated, `S(0)` must be real and finite. A complex zero
 frequency scattering matrix describes a block with no direct current limit,
 which is refused here rather than resolved by a convention, on the same
 principle as a complex direct current conductance.
+
+A block which states no model and whose data has no zero frequency value is
+refused when `required`, which is the case when direct current is injected
+and the block would have to carry its share. When none is, the block is
+open at zero frequency, which is the `i = 0` row the stamp already writes,
+and `nothing` is returned so the caller leaves that row alone: a block
+which cannot say what it does at direct current, and is asked to carry
+none, carries none. Tabulated data which starts above zero is the common
+case, and a circuit driven at its pump alone is not refused for it.
 """
-function dcblockdescriptor(sb::StampedScatteringBlock; atol::Real = 1e-10)
+function dcblockdescriptor(sb::StampedScatteringBlock; atol::Real = 1e-10,
+        required::Bool = true)
     blk = sb.block
     n = blk.nports
-    S0 = dcscattering(dcmodelof(blk), sb, n, atol)
+    model = dcmodelof(blk)
+    S0 = if model isa ScatteringLimit
+        S0, why = dclimit(sb, n, atol)
+        if isnothing(S0)
+            required || return nothing
+            if why === :range
+                throw(ArgumentError(lazy"the scattering block $(sb.name) is tabulated over a frequency range which does not reach zero, so its direct current behavior cannot be read from it, and this circuit injects direct current. State the zero frequency limit with the dcmodel keyword: OpenDC(), ShortDC(), ThroughDC() or ScatteringDC(S0), or pass extrapolation = :constant to hold the lowest tabulated value down to zero."))
+            elseif why === :nonfinite
+                throw(ArgumentError(lazy"the scattering block $(sb.name) returned a non-finite S(0), so its direct current behavior cannot be read from it. A block whose limit exists but is not evaluable at zero -- a series capacitance written as 1/(im*w*C), whose limit is the open circuit -- has to state that limit with the dcmodel keyword: OpenDC(), ShortDC(), ThroughDC() or ScatteringDC(S0)."))
+            else
+                throw(ArgumentError(lazy"the scattering block $(sb.name) has a complex S(0); a block with no real zero frequency limit has no direct current behavior to stamp. State the limit with the dcmodel keyword if the block has one."))
+            end
+        end
+        S0
+    else
+        # checked for size and passivity when the block was constructed
+        dcscatteringmatrix(model, n)
+    end
 
     r2 = sqrt.(float.(blk.zref))
     B0 = Matrix{Float64}(undef, n, n)
@@ -1012,8 +1051,9 @@ applied to a canonical state.
 
 # Fields
 - `descriptors`: one [`DCBlockDescriptor`](@ref) per block.
-- `currentindex`: for each block, the canonical index of each port's zero
-  frequency current.
+- `currentindex`: for each block, the window position of each port's zero
+  frequency current: its slot among the zero frequency entries of the state,
+  one per node and then one per auxiliary unknown.
 - `signalcomponent`, `refcomponent`: for each block, the static flux
   component of each port terminal, or zero where the average voltage is held
   at zero by a path to ground through inductance.
@@ -1032,9 +1072,9 @@ struct DCBlockRows{T}
     signalcomponent::Vector{Vector{Int}}
     refcomponent::Vector{Vector{Int}}
     scale::T
-    # (component, canonical current index, sign): the block currents which
-    # cross a static flux component's boundary and so survive its transport
-    # row's sum. A port with both terminals inside one component cancels,
+    # (component, window position of the current, sign): the block currents
+    # which cross a static flux component's boundary and so survive its
+    # transport row's sum. A port with both terminals inside one component cancels,
     # exactly as an inductor branch does.
     transportterms::Vector{Tuple{Int,Int,Int}}
 end
@@ -1052,34 +1092,34 @@ freecurrents(r::DCBlockRows) = sum(d -> d.freecurrents, r.descriptors;
     init = 0)
 
 """
-    dcblockrows(blocks, componentof, Nmodes, modeindex, nac, nnodaldc,
-        scale)
+    dcblockrows(blocks, componentof, Nmodes, modeindex, nnodaldc, scale;
+        required = true)
 
 Build the [`DCBlockRows`](@ref) for the stamped blocks of a circuit.
 
-`componentof` maps each node to its static flux component; `modeindex` is
-the position of the zero frequency mode; `nac` and `nnodaldc` locate the
-zero frequency block of the canonical state and the point in it where the
-nodal entries end and the auxiliary ones begin; `scale` is the solver scale
-of the stamps.
+`nnodaldc` is the point in the zero frequency block where the nodal entries
+end and the auxiliary ones begin. A block with no zero frequency data is
+refused when `required` and left open otherwise; see
+[`dcblockdescriptor`](@ref).
 """
 function dcblockrows(blocks::AbstractVector, componentof::Vector{Int},
-        Nmodes::Integer, modeindex::Integer, nac::Integer,
-        nnodaldc::Integer, scale)
+        Nmodes::Integer, modeindex::Integer, nnodaldc::Integer, scale;
+        required::Bool = true)
     descriptors = DCBlockDescriptor[]
     currentindex = Vector{Int}[]
     signalcomponent = Vector{Int}[]
     refcomponent = Vector{Int}[]
     for sb in blocks
-        d = dcblockdescriptor(sb)
+        d = dcblockdescriptor(sb; required = required)
+        isnothing(d) && continue
         n = nports(d)
         idx = Vector{Int}(undef, n)
         for p in 1:n
             # the complex state index of this port's zero frequency current,
-            # and the slot it belongs to; the zero frequency block of the
-            # canonical state holds one entry per slot in the same order
+            # and the slot it belongs to; the window holds one entry per slot
+            # in the same order
             s = sb.auxbase + (p-1)*Nmodes + modeindex
-            idx[p] = nac + (s - 1) ÷ Nmodes + 1
+            idx[p] = (s - 1) ÷ Nmodes + 1
         end
         push!(descriptors, d)
         push!(currentindex, idx)
@@ -1106,7 +1146,7 @@ function dcblockrows(blocks::AbstractVector, componentof::Vector{Int},
 end
 
 """
-    addblocktransport!(Fv, r::DCBlockRows, u, local_)
+    addblocktransport!(Fv, r::DCBlockRows, u)
 
 Add the block currents which cross a component boundary to that component's
 transport row, reading each current from `u` at the position `local_`
@@ -1118,9 +1158,9 @@ advance to be redundant and no current which may be dropped on the grounds
 that it lands in one.
 """
 function addblocktransport!(Fv::AbstractVector, r::DCBlockRows,
-        u::AbstractVector, local_::Dict{Int,Int})
+        u::AbstractVector)
     @inbounds for (c, idx, sgn) in r.transportterms
-        Fv[c] += sgn * u[local_[idx]]
+        Fv[c] += sgn * u[idx]
     end
     return Fv
 end
@@ -1130,7 +1170,7 @@ end
 @inline _vof(v, c) = iszero(c) ? zero(eltype(v)) : @inbounds v[c]
 
 """
-    addblockdc!(Fc, r::DCBlockRows, u, v, local_)
+    addblockdc!(Fc, r::DCBlockRows, u, v)
 
 Replace each block's zero frequency row in `Fc`, which holds `-i`, by the
 block's own relation `B0 (scale dv) - C0 i`, with the block currents read
@@ -1142,9 +1182,9 @@ the Kirchhoff coupling of the current into the node equations, which is
 unchanged and must survive.
 """
 function addblockdc!(Fc::AbstractVector, r::DCBlockRows, u::AbstractVector,
-        v::AbstractVector, local_::Dict{Int,Int})
+        v::AbstractVector)
     for (b, d) in enumerate(r.descriptors)
-        idx = [local_[i] for i in r.currentindex[b]]
+        idx = r.currentindex[b]
         n = length(idx)
         sc, rc = r.signalcomponent[b], r.refcomponent[b]
         @inbounds for p in 1:n

@@ -532,6 +532,92 @@ function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
         portenvironmentindices(c), noiseportimpedanceindices, Lmean, vvn)
 end
 
+# === the same matrices at new values ===
+
+# the stored values of `diagrepeat(A, Nmodes)` are those of `A` repeated
+# once per mode within each column, in column order; see `diagrepeat!`
+function repeatvalues!(out::AbstractVector, base::AbstractVector,
+        colptr::AbstractVector, Nmodes::Integer)
+    q = 1
+    @inbounds for j in 1:(length(colptr) - 1), _ in 1:Nmodes,
+            t in colptr[j]:(colptr[j+1] - 1)
+        out[q] = base[t]
+        q += 1
+    end
+    q == length(out) + 1 || throw(DimensionMismatch(
+        "the repeated matrix does not have the pattern its base repeats."))
+    return out
+end
+
+function repeatvalues!(out::AbstractVector, base::AbstractVector,
+        Nmodes::Integer)
+    @inbounds for i in eachindex(base), k in 1:Nmodes
+        out[(i-1)*Nmodes + k] = base[i]
+    end
+    return out
+end
+
+"""
+    assemblematrices!(nm::CircuitMatrices, plan::CircuitMatrixPlan,
+        b::BoundCircuit)
+
+The matrices of `nm` at the values of `b`, written into the storage `nm`
+already has. The patterns are the plan's and do not move, so only the
+stored values are rewritten: the nodal matrices through their stamp plans
+into a scratch the size of one mode and then repeated, and the branch
+vectors directly. The mutual inductance matrix, the value table and the
+scalars are rebuilt, and the returned [`CircuitMatrices`](@ref) shares every
+array with `nm`.
+
+This is the sweep's assembly: [`hbsolve!`](@ref) calls it at every point.
+"""
+function assemblematrices!(nm::CircuitMatrices, plan::CircuitMatrixPlan,
+        b::BoundCircuit)
+    c = plan.circuit
+    cg = plan.graph
+    vvn = b.values
+    Nmodes = plan.Nmodes
+    ct, ni = c.componenttypes, c.nodeindices
+
+    nodal!(A, sp, values) = begin
+        base = Vector{eltype(nonzeros(A))}(undef, length(sp.rowval))
+        assemblenodal!(base, Vector{Bool}(undef, length(base)), sp, values)
+        Nmodes == 1 ? copyto!(nonzeros(A), base) :
+            repeatvalues!(nonzeros(A), base, sp.colptr, Nmodes)
+        return A
+    end
+    branch!(v, vm, bp, values, combine) = begin
+        seen = Vector{Bool}(undef, length(bp.nzind))
+        assemblebranch!(v.nzval, seen, bp, values, combine)
+        # a separate vector even at one mode, so it is written either way
+        Nmodes == 1 ? copyto!(vm.nzval, v.nzval) :
+            repeatvalues!(vm.nzval, v.nzval, Nmodes)
+        return v
+    end
+
+    nodal!(nm.Cnm, plan.capacitance, b.capacitors)
+    nodal!(nm.Gnm, plan.conductance, b.resistors)
+    branch!(nm.Lb, nm.Lbm, plan.inductance, b.inductors,
+        combine_reciprocal_sum)
+    branch!(nm.Ljb, nm.Ljbm, plan.junction, b.junctions, combine_error)
+
+    Mb = calcMb(ct, ni, vvn, c.componentnamedict,
+        c.mutualinductorbranchnames, cg.edge2indexdict, 1, cg.Nbranches)
+    checkcoupledbranchinductors(c.componentnames, ct, ni, cg.edge2indexdict,
+        Mb)
+    if !isempty(plan.invinductance.positions)
+        TL = eltype(nm.Lb.nzval)
+        invL = TL[1/nm.Lb.nzval[p] for p in plan.invinductance.positions]
+        nodal!(nm.invLnm, plan.invinductance.stamp, invL)
+    end
+
+    Lmean = calcLmean(ct, vvn)
+    return CircuitMatrices(nm.Cnm, nm.Gnm, nm.Lb, nm.Lbm, nm.Ljb, nm.Ljbm,
+        Mb, nm.invLnm, nm.Rbnm, nm.portindices, nm.portnumbers,
+        portreferenceimpedances(c, vvn), nm.portenvironmentindices,
+        noiseindices(c, vvn), Lmean, vvn)
+end
+
 # === the solver front end ===
 
 """

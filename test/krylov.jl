@@ -18,6 +18,36 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Test
             zeros(5), op!, ones(5), ws; maxrestarts = 0)
     end
 
+    @testset "the basis grows to what the iteration uses" begin
+        # a workspace for a long restart is born with a few columns and
+        # widens as the Arnoldi steps need them, so a solve which takes a
+        # handful of steps never touches a basis it would not fill
+        n, m = 200, 100
+        A = Matrix(Diagonal(1.0 .+ (1:n)./n)) + 0.01*randn(n, n)
+        b = ones(n)
+        ws = JosephsonCircuits.GMRESWorkspace(b, m)
+        @test size(ws.V) == (n, JosephsonCircuits.GMRESINITIALCOLUMNS)
+        x = zeros(n)
+        out = JosephsonCircuits.gmres!(x, (w, v) -> mul!(w, A, v), b, ws;
+            rtol = 1e-12, maxrestarts = 1)
+        @test out.converged
+        @test out.iterations > JosephsonCircuits.GMRESINITIALCOLUMNS
+        # wide enough for what was built, no wider than the restart allows
+        @test size(ws.V, 2) >= out.iterations
+        @test size(ws.V, 2) <= m + 1
+        @test norm(A*x - b) <= 1e-10*norm(b)
+        # and the same answer as a basis allocated in full
+        full = JosephsonCircuits.GMRESWorkspace(b, m)
+        full.V = similar(b, n, m + 1)
+        y = zeros(n)
+        JosephsonCircuits.gmres!(y, (w, v) -> mul!(w, A, v), b, full;
+            rtol = 1e-12, maxrestarts = 1)
+        @test x == y
+        # growth stops at the restart length: a basis asked for more keeps
+        # its width
+        @test size(JosephsonCircuits.ensurecolumns!(ws, 10*m), 2) == m + 1
+    end
+
     @testset "zero right hand side" begin
         ws = JosephsonCircuits.GMRESWorkspace(4, 3)
         A = Matrix(2.0I, 4, 4)
@@ -221,6 +251,22 @@ end
     @test out5.converged
     @test out5.reason == :converged
     @test out5.cycles >= 1
+    # the explicit residual of the returned solution comes back with it,
+    # so a caller which needs `A x` does not take another product
+    @test out5.residualvector ≈ b5 - A5*x5
+    @test norm(out5.residualvector) == out5.residual
+
+    # the merit function slope read off that residual is the one the
+    # product gives: with p = -x, F'Jp = F'(w - F)
+    F6 = b5; p6 = -x5
+    ϕ0 = JosephsonCircuits.merit(F6)
+    Jv = zeros(20)
+    op = JosephsonCircuits.asoperator((y, v) -> mul!(y, A5, v), 20)
+    fromproduct = JosephsonCircuits.meritslope!(Jv, op, p6, F6, ϕ0, nothing)
+    @test fromproduct ≈ dot(F6, A5*p6)
+    fromresidual = JosephsonCircuits.meritslope!(Jv, op, p6, F6, ϕ0,
+        out5.residualvector)
+    @test fromresidual ≈ fromproduct
 end
 
 @testset "nlsolvekrylov! forcing terms and parameter validation" begin

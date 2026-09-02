@@ -287,16 +287,8 @@ function planstructurerealjacobian(Jt, ::Type{T},
     drlinv = d(collect(rl.inv)); drlptr = d(collect(rl.ptr))
     dclinv = d(collect(cl.inv)); dclptr = d(collect(cl.ptr))
     lin = KernelAbstractions.allocate(backend, T, n)
-    linearcontributionkernel!(backend, 64)(lin, dcolptr, drowval,
-        drlinv, drlptr, dclinv, dclptr,
-        d(SparseArrays.getcolptr(invLnm)), d(rowvals(invLnm)),
-        tobackend(backend, nonzeros(invLnm)),
-        d(SparseArrays.getcolptr(Gnm)), d(rowvals(Gnm)),
-        tobackend(backend, nonzeros(Gnm)), tobackend(backend, collect(wmodesm.diag)),
-        d(SparseArrays.getcolptr(Cnm)), d(rowvals(Cnm)),
-        tobackend(backend, nonzeros(Cnm)), tobackend(backend, collect(wmodes2m.diag)),
-        transposed; ndrange = n)
-    KernelAbstractions.synchronize(backend)
+    linearcontribution!(lin, dcolptr, drowval, drlinv, drlptr, dclinv,
+        dclptr, invLnm, Gnm, Cnm, wmodesm, wmodes2m, transposed, backend)
 
     # one work item per entry on a device, where coalescing pays for the
     # repeated decode, and one per row on a host, where it does not
@@ -358,6 +350,43 @@ end
     else
         return dr == 0 ? -imag(v) : real(v)
     end
+end
+
+# the launch, shared by the plan and its refresh
+function linearcontribution!(lin, colptr, rowval, rlinv, rlptr, clinv,
+        clptr, invLnm, Gnm, Cnm, wmodesm, wmodes2m, transposed, backend)
+    d = x -> tobackend(backend, convert(Vector{eltype(colptr)}, x))
+    linearcontributionkernel!(backend, 64)(lin, colptr, rowval,
+        rlinv, rlptr, clinv, clptr,
+        d(SparseArrays.getcolptr(invLnm)), d(rowvals(invLnm)),
+        tobackend(backend, nonzeros(invLnm)),
+        d(SparseArrays.getcolptr(Gnm)), d(rowvals(Gnm)),
+        tobackend(backend, nonzeros(Gnm)), tobackend(backend, wmodesm.diag),
+        d(SparseArrays.getcolptr(Cnm)), d(rowvals(Cnm)),
+        tobackend(backend, nonzeros(Cnm)), tobackend(backend, wmodes2m.diag),
+        transposed; ndrange = length(lin))
+    KernelAbstractions.synchronize(backend)
+    return lin
+end
+
+"""
+    refreshvalues!(plan::StructureRealJacobianPlan, invLnm, Gnm, Cnm,
+        wmodesm, wmodes2m, Ljb, Lmean)
+
+Rewrite the value arrays of an assembly plan for new component values under
+the same structure: the constant linear contribution of each stored entry,
+and `Lmean/Lj` per junction. The incidence products and the structure are
+what they were.
+"""
+function refreshvalues!(plan::StructureRealJacobianPlan{Ti,T}, invLnm, Gnm,
+        Cnm, wmodesm, wmodes2m, Ljb::SparseVector, Lmean) where {Ti,T}
+    linearcontribution!(plan.lin, plan.colptr, plan.rowval, plan.rlinv,
+        plan.rlptr, plan.clinv, plan.clptr, invLnm, Gnm, Cnm, wmodesm,
+        wmodes2m, plan.transposed, plan.backend)
+    length(Ljb.nzval) == length(plan.lmolj) || throw(ArgumentError(
+        "the junctions changed between points, which a refreshed plan cannot follow; build a new one."))
+    copyto!(plan.lmolj, T[T(Lmean / Ljb.nzval[i]) for i in eachindex(Ljb.nzval)])
+    return plan
 end
 
 """
@@ -690,10 +719,10 @@ function planstructurecomplexjacobian(Jx::SparseMatrixCSC, ::Type{T},
         tobackend(backend, nonzeros(invLnm)),
         d(SparseArrays.getcolptr(Gnm)), d(rowvals(Gnm)),
         tobackend(backend, nonzeros(Gnm)),
-        tobackend(backend, collect(wmodesm.diag)),
+        tobackend(backend, wmodesm.diag),
         d(SparseArrays.getcolptr(Cnm)), d(rowvals(Cnm)),
         tobackend(backend, nonzeros(Cnm)),
-        tobackend(backend, collect(wmodes2m.diag)), transposed; ndrange = n)
+        tobackend(backend, wmodes2m.diag), transposed; ndrange = n)
     KernelAbstractions.synchronize(backend)
     return StructureComplexJacobianPlan{typeof(josephson),typeof(lin)}(
         josephson, lin)

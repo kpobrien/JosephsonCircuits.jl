@@ -642,7 +642,7 @@ end
     backtracking_linesearch!(f!, F, xcandidate, x0, deltax, ϕ0, dϕ0dα;
         c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5,
         maxbacktracks = 10, correction = nothing, beta = 1.0,
-        Fbest = copy(F), ϕfullstep = nothing)
+        Fbest = copy(F), ϕfullstep = nothing, interpolate = true)
 
 Backtracking line search on the curvilinear trial path:
 
@@ -679,6 +679,10 @@ step. Return this step `α` and exit the function.
 Otherwise loop over proposed trial step evaluations and cubic interpolations
 with [`cubic_trial_step`](@ref). Once a successful trial step is identified
 return that or return the best identified once `maxbacktracks` is reached.
+With `interpolate = false` neither fit is made: the first backtrack is to
+`α = 1/2` and every later one multiplies `α` by `safeguard_high`, with the
+Armijo test at each trial. That is the choice for a caller whose residual
+evaluations are cheap next to the direction they test.
 
 This function always leaves`xcandidate == x(α)` and `F` holds the residual
 there (for `α == 0` that is the residual at `x0`).
@@ -701,7 +705,7 @@ function backtracking_linesearch!(f!, F::AbstractVector,
     safeguard_high = 0.5, maxbacktracks::Integer = 10,
     correction::Union{Nothing, AbstractVector} = nothing, beta::Real = 1.0,
     Fbest::AbstractVector = copy(F),
-    ϕfullstep::Union{Nothing, Real} = nothing)
+    ϕfullstep::Union{Nothing, Real} = nothing, interpolate::Bool = true)
 
     if maxbacktracks < 0
         throw(ArgumentError(lazy"`maxbacktracks` = $(maxbacktracks) must be nonnegative."))
@@ -731,8 +735,22 @@ function backtracking_linesearch!(f!, F::AbstractVector,
     # step return that, we're done. otherwise, we will have to validate the
     # proposed step. we will use the cubic trial step function for that
     # validation since it checks the proposed step before fitting.
-    α, ϕpred, accepted = quadratic_trial_step(ϕ0, ϕ1, dϕ0dα;
-        c1 = c1, safeguard = safeguard_low)
+    #
+    # The fit is only informative when the full step lands where the merit
+    # is still close to quadratic. When the full step overshoots badly the
+    # fitted minimizer falls below the floor and the floor is what gets
+    # taken, with nothing measured in between: on a long pumped line the
+    # merit along the Newton direction is minimized near 0.2 and the floor
+    # step of 0.1 is accepted sixty times in a row. A caller whose trials
+    # are cheap next to its directions therefore halves instead
+    # (`interpolate = false`): two evaluations reach 0.25, and a trial costs
+    # the Newton-Krylov path about as much as one Arnoldi step.
+    α, ϕpred, accepted = if interpolate
+        quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = c1, safeguard = safeguard_low)
+    else
+        armijo = isfinite(ϕ1) && ϕ1 <= muladd(c1, dϕ0dα, ϕ0)
+        (armijo ? one(ϕ0) : one(ϕ0)/2, ϕ1, armijo)
+    end
     if accepted
         return α, ϕ1, true, 0
     end
@@ -763,7 +781,7 @@ function backtracking_linesearch!(f!, F::AbstractVector,
             copyto!(Fbest, F)
         end
         # if the merit function is finite at the trial step, try the cubic fit
-        if havefinite
+        if havefinite && interpolate
             # cubic fit through (0, ϕ0, dϕ0dα) and the two most recent
             # trials. first performs the Armijo test at α.
             αnext, ϕpred, accepted = cubic_trial_step(αprev, α, ϕ0, ϕprev,
@@ -776,9 +794,9 @@ function backtracking_linesearch!(f!, F::AbstractVector,
                 return α, ϕα, true, backtracks
             end
         else
-            # no finite older trial yet (every longer step overflowed):
-            # test Armijo directly and back off geometrically. I could
-            # probably use the quadratic trial step function for this.
+            # no finite older trial yet (every longer step overflowed), or
+            # the caller asked for no interpolation: test Armijo directly
+            # and back off geometrically.
             if isfinite(ϕα) && ϕα <= muladd(c1*α, dϕ0dα, ϕ0)
                 return α, ϕα, true, backtracks
             end

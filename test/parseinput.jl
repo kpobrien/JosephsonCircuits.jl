@@ -415,11 +415,13 @@ using Test
         # environment it owns, rather than being matched to a resistor by
         # sharing a branch with it
         @test [p.number for p in cc.ports] == [1, 2]
-        @test [p.zref for p in cc.ports] == [50.0, 1000.0]
+        @test [cc.componentvalues[p.component] for p in cc.ports] ==
+            [50.0, 1000.0]
         for p in cc.ports
             @test p.environment != 0
             @test cc.componenttypes[p.environment] === :R
-            @test cc.componentvalues[p.environment] == p.zref
+            @test cc.componentvalues[p.environment] ==
+                cc.componentvalues[p.component]
             @test cc.nodeindices[:, p.environment] ==
                 [p.positivenode, p.negativenode]
             @test cc.componentnames[p.environment] ==
@@ -437,7 +439,7 @@ using Test
             [[(:p1,1),(:r1,1),(:r2,1),(:c1,1)],
              [(:p1,2),(:r1,2),(:r2,2),(:c1,2),Ground]]))
         @test only(cu.ports).environment == 0
-        @test only(cu.ports).zref == 50.0
+        @test cu.componentvalues[only(cu.ports).component] == 50.0
         nmu = JC.numericmatrices(cu, calccircuitgraph(cu), Dict{Any,Any}();
             Nmodes = 1)
         # normalized to the declared Z0, not to the resistor beside it
@@ -481,7 +483,11 @@ using Test
             [[(:p1,1),(:r,1)], [(:p1,2),(:r,2),Ground]]);
             keyedarrays = false).S[1,1,1,1,1]
         @test isapprox(onenode(Port(1; Z0 = 50.0), 100.0), 1/3; atol = 1e-12)
-        @test isapprox(onenode(Port(1; Z0 = 100.0), 100.0), 0; atol = 1e-12)
+        # this one loads the port twice on purpose, a matched environment
+        # beside a device resistor of the same value, so the warning that
+        # reports it is asserted here rather than printed
+        @test isapprox(@test_logs((:warn,), match_mode=:any,
+            onenode(Port(1; Z0 = 100.0), 100.0)), 0; atol = 1e-12)
         @test isapprox(onenode(Port(1; Z0 = 50.0, termination = nothing),
             100.0), 3.0; atol = 1e-12)
         @test isapprox(onenode(Port(1; Z0 = 75.0, termination = nothing),
@@ -587,16 +593,23 @@ using Test
         @test nm.Gnm[1,1] == 1/50 + 1/100
 
         # the checks the geometric path made are still made
-        @test_throws ArgumentError JC.portindicesnumbers(JC.compile(Circuit(
+        # both ports sit across the same terminals, so each is loaded by the
+        # other's termination and compiling says so; the refusal under test
+        # is the one `portindicesnumbers` makes about the port numbers, so
+        # the compile is hoisted out and its warning asserted
+        samenumber = @test_logs((:warn,), match_mode=:any, JC.compile(Circuit(
             Any[:p1 => Port(1), :p2 => Port(1), :c1 => Capacitor(1e-12),
                 :gnd => Ground()],
             Any[[(:p1,1),(:p2,1),(:c1,1)],
                 [(:p1,2),(:p2,2),(:c1,2),(:gnd,1)]])))
-        @test_throws ArgumentError JC.portindicesnumbers(JC.compile(Circuit(
-            Any[:p1 => Port(1), :p2 => Port(2), :c1 => Capacitor(1e-12),
-                :gnd => Ground()],
-            Any[[(:p1,1),(:p2,1),(:c1,1)],
-                [(:p1,2),(:p2,2),(:c1,2),(:gnd,1)]])))
+        @test_throws ArgumentError JC.portindicesnumbers(samenumber)
+        sharedterminals = @test_logs((:warn,), match_mode=:any,
+            JC.compile(Circuit(
+                Any[:p1 => Port(1), :p2 => Port(2), :c1 => Capacitor(1e-12),
+                    :gnd => Ground()],
+                Any[[(:p1,1),(:p2,1),(:c1,1)],
+                    [(:p1,2),(:p2,2),(:c1,2),(:gnd,1)]])))
+        @test_throws ArgumentError JC.portindicesnumbers(sharedterminals)
         # a port which owns nothing reports zero rather than failing: it has
         # a reference impedance like every port, it simply loads nothing
         @test JC.portenvironmentindices(JC.compile(
@@ -722,6 +735,48 @@ using Test
         sol2 = hbsolve(ws, wp, sources, (8,), (8,), native, circuitdefs)
         @test isapprox(sol1.linearized.S((0,), 1, (0,), 1, :),
             sol2.linearized.S((0,), 1, (0,), 1, :); rtol = 1e-6)
+    end
+
+    @testset "a port reference impedance is bound and checked" begin
+        # A port's Z0 is a component value like any other: a symbol binds
+        # through the circuit definitions whether or not the port owns an
+        # environment, and what it binds to is checked before it reaches the
+        # wave normalization, where a symbol or a negative impedance would
+        # otherwise fail deep in the linear solve or pass silently.
+        function one(port)
+            Circuit(
+                [:p1 => port, :r1 => Resistor(100.0), :c1 => Capacitor(1e-12),
+                 :l1 => Inductor(1e-9)],
+                [[(:p1,1),(:r1,1),(:c1,1),(:l1,1)],
+                 [(:p1,2),(:r1,2),(:c1,2),(:l1,2), Ground]])
+        end
+        ws = 2*pi*(4.5:0.5:5.5)*1e9
+        numeric = one(Port(1; Z0 = 50.0, termination = nothing))
+        symbolic = one(Port(1; Z0 = :Z, termination = nothing))
+        matched = one(Port(1; Z0 = :Z))
+        defs = Dict(:Z => 50.0)
+
+        cs = JC.compile(symbolic)
+        @test JC.portreferenceimpedances(cs, JC.bind(cs, defs).values) == [50.0]
+        cm = JC.compile(matched)
+        @test JC.portreferenceimpedances(cm, JC.bind(cm, defs).values) == [50.0]
+
+        ref = hblinsolve(ws, numeric, Dict{Symbol,Any}())
+        sol = hblinsolve(ws, symbolic, defs)
+        @test isapprox(sol.S, ref.S; rtol = 1e-12)
+        # the matched port with the same bound value loads the circuit with
+        # its own environment, 50 Ohms across the port beside the device
+        # resistor
+        sol = hblinsolve(ws, matched, defs)
+        @test !isapprox(sol.S, ref.S; rtol = 1e-3)
+        @test isapprox(sol.S, hblinsolve(ws, one(Port(1; Z0 = 50.0)),
+            Dict{Symbol,Any}()).S; rtol = 1e-12)
+
+        # a bound value which is not a finite positive real impedance is
+        # refused, in both forms of the port
+        for Z in (0.0, -50.0, Inf, NaN, 50.0im), c in (symbolic, matched)
+            @test_throws ArgumentError hblinsolve(ws, c, Dict(:Z => Z))
+        end
     end
 
     @testset "calcnodesorting" begin

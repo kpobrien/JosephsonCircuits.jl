@@ -414,6 +414,150 @@ function mnapad(A::SparseMatrixCSC, Naux::Int)
 end
 
 """
+    nzpositions(A::SparseMatrixCSC, U::SparseMatrixCSC)
+
+For a matrix `A` whose stored entries are a subset of those of `U`, the
+position in `nonzeros(U)` of each stored entry of `A`, in the order of
+`nonzeros(A)`. Throws if an entry of `A` has no home in `U`.
+"""
+function nzpositions(A::SparseMatrixCSC, U::SparseMatrixCSC)
+    size(A) == size(U) || throw(DimensionMismatch(
+        lazy"the matrices are $(size(A)) and $(size(U))."))
+    pos = Vector{Int}(undef, nnz(A))
+    Arows = rowvals(A); Urows = rowvals(U)
+    @inbounds for j in 1:size(A, 2)
+        k = SparseArrays.getcolptr(U)[j]
+        kmax = SparseArrays.getcolptr(U)[j+1] - 1
+        for ptr in nzrange(A, j)
+            r = Arows[ptr]
+            while k <= kmax && Urows[k] < r
+                k += 1
+            end
+            (k <= kmax && Urows[k] == r) || throw(ArgumentError(
+                lazy"entry ($(r), $(j)) has no position in the union structure."))
+            pos[ptr] = k
+        end
+    end
+    return pos
+end
+
+"""
+    PaddedLinearTerm
+
+The frequency dependent linear term of the augmented system, padded to the
+auxiliary variables with the modified nodal analysis augmentation folded
+in, together with the index maps which refill it from a new assembly of the
+unpadded matrices. A sweep over component values builds this once and then
+moves values only: the padding, the union with the augmentation and the
+incidence matrix's empty columns are structure, which the values do not
+change (see [`hbcache`](@ref)).
+
+# Fields
+- `Rbnm`: the incidence matrix with its empty auxiliary columns.
+- `invLnm`, `Gnm`, `Cnm`: the padded matrices, `invLnm` with `Amna` added.
+- `Amna`: the augmentation, whose only value dependent entries are the
+    coupled inductor rows of [`calcAmnaind`](@ref).
+- `pind`: the positions of those rows' entries in `nonzeros(Amna)`.
+- `pinv`, `pamna`: the positions of the unpadded inverse inductance
+    entries and of `Amna`'s entries in `nonzeros(invLnm)`.
+- `bnm`: the drive in the padded node basis.
+- `wmodesm`, `wmodes2m`: the mode frequency diagonals over the padded
+    system.
+- `stampedblocks`: the scattering blocks as stamped, which the direct
+    current path reads.
+"""
+struct PaddedLinearTerm{TR,TM,TA,TD,TS}
+    Rbnm::TR
+    invLnm::TM
+    Gnm::TM
+    Cnm::TM
+    Amna::TA
+    pind::Vector{Int}
+    pinv::Vector{Int}
+    pamna::Vector{Int}
+    bnm::Vector{Complex{Float64}}
+    wmodesm::TD
+    wmodes2m::TD
+    stampedblocks::TS
+end
+
+"""
+    PaddedLinearTerm(Rbnm, invLnm, Gnm, Cnm, Amna, AmnaL, invLnm0, bnm,
+        wmodesm, wmodes2m, stampedblocks)
+
+Record a padded linear term as [`hbnlsolve`](@ref) assembled it, with the
+unpadded inverse inductance `invLnm0` and the coupled inductor rows `AmnaL`
+it was assembled from, so that [`refill!`](@ref) can reproduce the assembly
+at new values. Returns `nothing` when the coupled inductor rows share an
+entry with the rest of the augmentation, which a refill by overwrite could
+not reproduce exactly.
+"""
+function PaddedLinearTerm(Rbnm, invLnm, Gnm, Cnm, Amna, AmnaL, invLnm0,
+        bnm, wmodesm, wmodes2m, stampedblocks)
+    pind = nzpositions(AmnaL, Amna)
+    # the coupled inductor rows are overwritten, not added, on refill, which
+    # is exact only where nothing else is stored under them
+    all(k -> nonzeros(Amna)[pind[k]] == nonzeros(AmnaL)[k], eachindex(pind)) ||
+        return nothing
+    pinv = nzpositions(mnapad(invLnm0, size(invLnm, 1) - size(invLnm0, 1)),
+        invLnm)
+    pamna = nzpositions(Amna, invLnm)
+    return PaddedLinearTerm(Rbnm, invLnm, Gnm, Cnm, Amna, pind, pinv, pamna,
+        bnm, wmodesm, wmodes2m, stampedblocks)
+end
+
+# the unpadded matrix has the padded one's structure in its leading block,
+# entry for entry
+function paddedstructure(A::SparseMatrixCSC, P::SparseMatrixCSC)
+    n = size(A, 2)
+    return nnz(A) == nnz(P) && rowvals(A) == rowvals(P) &&
+        view(SparseArrays.getcolptr(A), 1:n+1) ==
+        view(SparseArrays.getcolptr(P), 1:n+1)
+end
+
+"""
+    refill!(lin::PaddedLinearTerm, invLnm, Gnm, Cnm, AmnaL, bbm, Rbnm0)
+
+Move the values of a new assembly of the unpadded matrices, of the coupled
+inductor rows `AmnaL` (or `nothing` when there are none) and of the branch
+drive `bbm` into the padded linear term, in place. The result is entry for
+entry what [`hbnlsolve`](@ref) assembles from the same inputs.
+"""
+function refill!(lin::PaddedLinearTerm, invLnm::SparseMatrixCSC,
+        Gnm::SparseMatrixCSC, Cnm::SparseMatrixCSC, AmnaL, bbm, Rbnm0)
+    for (A, P, what) in ((Gnm, lin.Gnm, "conductance"),
+            (Cnm, lin.Cnm, "capacitance"), (invLnm, lin.invLnm, "inverse inductance"))
+        (what == "inverse inductance" ? length(lin.pinv) == nnz(A) :
+            paddedstructure(A, P)) || throw(ArgumentError(
+            lazy"the $(what) matrix changed its sparse structure between points, which a reused linear term cannot follow; build a new one."))
+    end
+    copyto!(nonzeros(lin.Gnm), nonzeros(Gnm))
+    copyto!(nonzeros(lin.Cnm), nonzeros(Cnm))
+    if !isnothing(AmnaL)
+        nnz(AmnaL) == length(lin.pind) || throw(ArgumentError(
+            "the coupled inductor rows changed their structure between points; build a new linear term."))
+        va = nonzeros(lin.Amna); vl = nonzeros(AmnaL)
+        @inbounds for k in eachindex(lin.pind)
+            va[lin.pind[k]] = vl[k]
+        end
+    end
+    v = nonzeros(lin.invLnm)
+    fill!(v, 0)
+    va = nonzeros(lin.Amna)
+    @inbounds for k in eachindex(lin.pamna)
+        v[lin.pamna[k]] = va[k]
+    end
+    vi = nonzeros(invLnm)
+    @inbounds for k in eachindex(lin.pinv)
+        v[lin.pinv[k]] += vi[k]
+    end
+    Nnodal = size(Rbnm0, 2)
+    mul!(view(lin.bnm, 1:Nnodal), transpose(Rbnm0), bbm)
+    fill!(view(lin.bnm, Nnodal+1:length(lin.bnm)), 0)
+    return lin
+end
+
+"""
     mnainitialaux!(x::AbstractVector, Amna::SparseMatrixCSC, Nnodal::Int)
 
 Initialize the auxiliary current variables `x[Nnodal+1:end]` consistently
@@ -836,9 +980,13 @@ function mnainitialauxall!(x::AbstractVector, Amna::SparseMatrixCSC,
     # residual to u makes the row exactly zero for any starting u. this is
     # not applied to the inductor rows, whose self coefficients are not
     # unity and which couple other auxiliary variables.
-    t = Amna*x
-    for i in Nnodal+1:Nnodal+Nauxr
-        x[i] += t[i]
+    # nothing to reconcile without promoted resistors, and the product is
+    # the size of the system
+    if Nauxr > 0
+        t = Amna*x
+        for i in Nnodal+1:Nnodal+Nauxr
+            x[i] += t[i]
+        end
     end
     mnainitialauxind!(x, coupledbranches, Lb, Mb, Rbn, Nmodes,
         Nnodal + Nauxr, Lscale)

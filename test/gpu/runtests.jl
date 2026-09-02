@@ -85,6 +85,77 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         @test agree(ra.S, rb.S)
     end
 
+    @testset "direct current on the device" begin
+        # the explicit direct current block: the average voltages appended
+        # to the state, the window gathered by index on the device, and the
+        # subsystem solved there. The chain is one floating static flux
+        # component with a resistor to ground at each end, so a direct
+        # current into port 1 develops a voltage across the pair.
+        srcdc = [(mode=(1,), port=1, current=2.0e-6),
+                 (mode=(0,), port=1, current=1.0e-7)]
+        ra = hbnlsolve((w1,), (8,), srcdc, circuit, defs;
+            dc = true, odd = true, even = true, method = :newtonkrylov)
+        rb = hbnlsolve((w1,), (8,), srcdc, circuit, defs;
+            dc = true, odd = true, even = true, method = :newtonkrylov,
+            backend = CUDABackend())
+        @test rb.solverinfo.converged
+        @test agree(ra.S, rb.S)
+        @test agree(ra.dcnodevoltage, rb.dcnodevoltage; rtol = 1e-8)
+        @test maximum(abs, ra.dcnodevoltage) > 0
+
+        # and a scattering block whose zero frequency current is one of the
+        # subsystem's unknowns
+        R = 100.0
+        blk = ScatteringParameters(
+            w -> JosephsonCircuits.ABCDtoS(
+                JosephsonCircuits.ABCD_seriesZ(10.0 + 0im));
+            nports = 2, grounded = true, noise = Lossless())
+        cblk = Circuit(
+            [:p1 => Port(1; Z0 = R), :x => blk, :jj => JosephsonJunction(500e-12),
+             :r2 => Resistor(R), :c1 => Capacitor(1e-12), :c2 => Capacitor(1e-12)],
+            [[(:p1,1),(:x,1),(:c1,1)], [(:x,2),(:r2,1),(:jj,1),(:c2,1)],
+             [(:p1,2),(:r2,2),(:jj,2),(:c1,2),(:c2,2), Ground]])
+        srcb = [(mode=(1,), port=1, current=1.0e-6),
+                (mode=(0,), port=1, current=1.0e-7)]
+        ba = hbnlsolve((w1,), (4,), srcb, cblk, Dict{Any,Any}();
+            dc = true, odd = true, even = true, method = :newtonkrylov)
+        bb = hbnlsolve((w1,), (4,), srcb, cblk, Dict{Any,Any}();
+            dc = true, odd = true, even = true, method = :newtonkrylov,
+            backend = CUDABackend())
+        @test bb.solverinfo.converged
+        @test agree(ba.S, bb.S)
+        @test agree(ba.dcnodevoltage, bb.dcnodevoltage; rtol = 1e-8)
+    end
+
+    @testset "a cached sweep on the device" begin
+        # the system, the preconditioner and the Krylov vectors are built on
+        # the device once and rebound to each point; every point agrees
+        # with a fresh device solve and with the host
+        make(; Lj, Cg) = Tuple{String,String,String,Any}[
+            ("P1","1","0",1), ("R1","1","0",50.0),
+            ("Lj1","1","2",Lj), ("C1","1","0",Cg),
+            ("Lj2","2","3",Lj), ("C2","2","0",Cg),
+            ("Lj3","3","4",Lj), ("C3","3","0",Cg),
+            ("C4","4","0",Cg), ("R2","4","0",50.0)]
+        p0 = (Lj = 100e-12, Cg = 40e-15)
+        cache = hbcache((w1,), (8,), src1, make, p0;
+            backend = CUDABackend(), ftol = 1e-10)
+        hbsolve!(cache, p0)
+        @test cache.converged
+        pm = cache.reuse.sys.phimatrix
+        for (Lj, Cg) in ((105e-12, 40e-15), (95e-12, 44e-15), (110e-12, 38e-15))
+            s = hbsolve!(cache, (Lj = Lj, Cg = Cg))
+            @test cache.converged
+            @test cache.reuse.sys.phimatrix === pm
+            fresh = hbnlsolve((w1,), (8,), src1, make(; Lj = Lj, Cg = Cg);
+                backend = CUDABackend(), ftol = 1e-10, keyedarrays = false)
+            host = hbnlsolve((w1,), (8,), src1, make(; Lj = Lj, Cg = Cg);
+                ftol = 1e-10, keyedarrays = false)
+            @test agree(s.nodeflux, fresh.nodeflux; rtol = 1e-7)
+            @test agree(s.nodeflux, host.nodeflux; rtol = 1e-7)
+        end
+    end
+
     @testset "hbsolve pipeline (nonlinear + linearized sweep)" begin
         ws = 2*pi*(4.55:0.3:5.5)*1e9
         ra = hbsolve(ws, (w1,), src1, (2,), (8,), circuit, defs)

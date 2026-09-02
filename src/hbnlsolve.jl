@@ -1,3 +1,34 @@
+"""
+    HBReuse()
+
+What one solve builds and a later solve of the same circuit at new
+component values takes over: the aliased mode coupling index, the padded
+linear term with its augmentation ([`PaddedLinearTerm`](@ref)), the
+[`HBSystem`](@ref) with its transforms and workspaces, the mode coupling
+preconditioner with its structure and symbolic factorization, and the
+Krylov vectors. Hand one to [`hbnlsolve`](@ref) as `reuse`; it is filled by
+the first solve and rebound to the new values by every later one, so a
+sweep pays for its transforms, index maps and factorization symbolics once.
+[`hbcache`](@ref) carries one for its sweeps.
+
+Only `method = :newtonkrylov` reads it. Every solve which shares it must be
+of the same circuit topology at the same mode grid with the same options,
+which is what a cache guarantees; a system whose sparse structure moved is
+refused rather than rebound.
+"""
+mutable struct HBReuse
+    indicesaliased::Any
+    linear::Any        # the `PaddedLinearTerm`, refilled at each point
+    sys::Any
+    maps::Any          # the system's `ValueMaps`, found on first rebind
+    preconditioner::Any
+    krylov::Base.RefValue{Any}
+    krylovcanonical::Base.RefValue{Any}
+end
+
+HBReuse() = HBReuse(nothing, nothing, nothing, nothing, nothing,
+    Ref{Any}(nothing), Ref{Any}(nothing))
+
 # =========================================================================
 # The nonlinear harmonic balance solve.
 # =========================================================================
@@ -311,6 +342,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     precision::Type{<:AbstractFloat} = Float64, debugJacobian = false,
     linearsolver::AbstractHBLinearSolver = InternalGMRES(),
     returnsystem::Bool = false, assemblejacobian::Bool = true,
+    reuse::Union{Nothing,HBReuse} = nothing,
     )
 
     # A solver object (`NewtonKrylov()`, ...) carries its own options; a
@@ -365,17 +397,30 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     Amatrixmodes = indices.hbmatmodes
     Amatrixindices = indices.hbmatindices
     Amatrixconjindices = indices.hbconjmatindices
-    # The residual is computed with cyclic Fourier transforms, so its exact
-    # Jacobian couples modes whose differences alias back onto the sampled
-    # grid. `hbmatind` with `alias = true` includes those couplings (the
-    # sum couplings of `hbconjmatind` always alias), and the exact real
-    # Jacobian of `method = :newton` is assembled from them, so it is the
-    # exact derivative for multi-tone problems too; it matches the
-    # matrix-free products of `HBSystem` to machine precision. The complex
-    # holomorphic Jacobian of `method = :quasinewton` keeps the truncated
-    # (non-aliased) indices: it is an approximation either way, and the
-    # aliased couplings would only make it denser to factorize.
-    Amatrixindicesaliased = hbmatind(frequencies; alias = true)[2]
+    # The harmonic balance residual is computed with cyclic Fourier
+    # transforms, so its exact Jacobian couples modes whose differences
+    # alias back onto the sampled grid; hbmatind with `alias = true`
+    # includes those couplings (the sum couplings of hbconjmatind always
+    # alias). The exact real Jacobian of method = :newton is assembled from
+    # the aliased difference indices, so it is the exact derivative of the
+    # residual for multi-tone problems as well; this was established with
+    # the matrix-free Jacobian-vector products of HBSystem as the ground
+    # truth, which the assembled Jacobian matches to machine precision. The
+    # complex holomorphic Jacobian of method = :quasinewton deliberately
+    # keeps the truncated (non-aliased) indices: it is an approximation to
+    # the exact Jacobian either way, the truncation does not change its
+    # iteration counts in practice, and the aliased couplings would densify
+    # it and slow its factorization.
+    # what a previous solve of this circuit built and this one takes over;
+    # see `HBReuse`. Only the matrix free path is built to be rebound.
+    reusing = !isnothing(reuse) && method == :newtonkrylov
+    Amatrixindicesaliased = if reusing && !isnothing(reuse.indicesaliased)
+        reuse.indicesaliased
+    else
+        a = hbmatind(frequencies; alias = true)[2]
+        reusing && (reuse.indicesaliased = a)
+        a
+    end
 
     # generate the frequencies of the modes
     Nmodes = length(modes)
@@ -473,11 +518,25 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # fourier transform
     # on the backend: the time domain array and every workspace of the system
     # derive from it with similar, so they follow it there.
-    phimatrix = tobackend(backend, zeros(Complex{precision}, Nwtuple))
-
-    # create an array to hold the time domain data for the RFFT. also generate
-    # the plans, which come from the package extension on a device backend.
-    phimatrixtd, irfftplan, rfftplan = plan_applynl(phimatrix, backend)
+    # a reused system already holds this array, its time domain twin and
+    # the plans, and they are read from it below rather than allocated
+    reusesys = reusing && !isnothing(reuse.sys)
+    if reusesys
+        rs = reuse.sys
+        (size(rs.phimatrix) == Nwtuple &&
+         eltype(rs.phimatrix) == Complex{precision} &&
+         KernelAbstractions.get_backend(rs.phimatrix) == backend) ||
+            throw(ArgumentError("the system handed in for reuse was built for a different mode grid, precision or backend; hand in a fresh `HBReuse`."))
+    end
+    phimatrix, phimatrixtd, irfftplan, rfftplan = if reusesys
+        reuse.sys.phimatrix, nothing, nothing, nothing
+    else
+        pm = tobackend(backend, zeros(Complex{precision}, Nwtuple))
+        # create an array to hold the time domain data for the RFFT. also
+        # generate the plans, which come from the package extension on a
+        # device backend.
+        (pm, plan_applynl(pm, backend)...)
+    end
 
     # the number of frequency entries per Josephson junction in phimatrix
     Nfreq = prod(Nwtuple[1:end-1])
@@ -557,93 +616,132 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         nodeindices, vvn, Nnodes)
 
     # Direct current through resistors. The zero frequency mode of a
-    # periodic flux carries no voltage, so a resistor is an open circuit
-    # there; the missing coordinate is the average voltage, constant on each
-    # static flux component because an inductor or a zero voltage junction
-    # is a short at direct current. The average voltages are solved as
-    # explicit unknowns with their own transport rows (see dcconductance.jl),
-    # so the system is built on the applied source and nothing is
-    # subtracted from it. `bnmsource` is a copy because `bnm` is handed to
-    # the `HBSystem`, which writes into it when the drive is scaled, while
-    # the direct current rows and the port outputs need the source as
-    # applied.
+    # periodic flux carries no voltage, so a resistor is an open circuit at
+    # DC. The missing coordinate is the average voltage, constant on each
+    # static flux component because an inductor or zero-voltage junction is
+    # a short there. The average voltages are unknowns with their own
+    # transport rows, and the resistor and block currents they drive reach
+    # the nodes through the coupling, so the system is built on the applied
+    # source and nothing is subtracted from it. `bnmsource` is a copy and
+    # not an alias: `bnm` is handed to the `HBSystem`, which owns it from
+    # then on and writes into it when the drive is scaled, while the
+    # transport rows read the drive as applied and the continuation
+    # interface scales their constant term itself.
     bnmsource = copy(bnm)
     dcplan = dcconductanceplan(floatingcomponents, Gnm, wmodes, Nmodes,
         Nnodes)
 
-    # Most circuits inject no direct current, and then every average voltage
-    # and block port current is zero: the explicit block would cost every
-    # residual, product and preconditioner application for an answer of
-    # zero. Without it, the `i = 0` zero frequency rows the scattering stamp
-    # writes are exactly right.
-    dcexplicit = !isnothing(dcplan) && dcinjected(dcplan, bnmsource, Nmodes)
+    # The direct current block exists when there is something in it: an
+    # average voltage to find, or a scattering block whose zero frequency
+    # current the stamp's `i = 0` row may or may not have right. It is
+    # classified in either case, below, once the system exists to classify
+    # it against; it is carried through the solve only when it has
+    # something to find. Nothing injects direct current in most circuits,
+    # and then every average voltage and every determined block current is
+    # zero: the explicit block would carry a subsystem whose answer is the
+    # zero it starts at and charge for it on every residual, product and
+    # preconditioner application. The periodic system as stamped is then
+    # exact, and is solved alone.
+    hasdc = !isnothing(dcplan) &&
+        (!isempty(dcplan.components) || Nauxscattering > 0)
+    dcexplicit = hasdc && dcinjected(dcplan, bnmsource, Nmodes)
 
-    # With direct current active the average voltages, their transport rows
-    # and the blocks' zero frequency rows live in a wrapper around the
-    # `HBSystem`, not in it, so the raw system is not the one being solved.
-    # Handing it out or differentiating it would define a different
-    # operating point, so those requests are refused.
-    if dcexplicit
-    end
-    # the canonical Jacobian is assembled on the host as a `SparseMatrixCSC`;
-    # there is no device assembly
+    # The average voltages, their transport rows and the blocks' zero
+    # frequency rows live in a wrapper around the system rather than in it,
+    # so the raw `HBSystem` is not the system being solved: its scattering
+    # rows still say `i = 0` and its resistors still carry no direct
+    # current. Handing that object out, or differentiating it, would define
+    # a second and different operating point. Refuse instead, until the
+    # composite system exists to hand out.
+    # the canonical Jacobian is assembled as a host `SparseMatrixCSC`; on a
+    # device backend `Jr` is not one, and there is no device assembly yet
     if dcexplicit && method == :newton && !(backend isa CPU)
         throw(ArgumentError("a circuit which injects direct current is solved with an assembled canonical Jacobian under method = :newton, and that assembly is host only. Use method = :newtonkrylov on this backend, which is matrix free, or run :newton on the CPU."))
     end
     if dcexplicit && !(method in (:newtonkrylov, :newton, :external))
         throw(ArgumentError(lazy"a circuit which injects direct current is solved with the average voltages as unknowns, which needs the real system; $(method) solves the complex holomorphic one. Use method = :newtonkrylov, :newton, or an ExternalSolver."))
     end
-    dcsol = nothing
+    # the zero every average voltage sits at when none is injected, which
+    # is the answer for a circuit with a zero frequency mode and no direct
+    # current, and is replaced by the solved voltages when there is some
+    dcsol = isnothing(dcplan) ? nothing :
+        dcsolutionfrom(dcplan, zeros(Float64, length(dcplan.components)))
     # the converged canonical state, which is the point the whole system is
     # differentiated at when the direct current block is active
     dccanonical = nothing
 
     gaugeindices = calcdcgaugeindices(floatingcomponents, wmodes, Nmodes)
-    Amna = calcAmna(mnaindices, nodeindices, vvn, gaugeindices, wmodes,
-        Nmodes, Nnodes, Lmean)
-    # pad with the coupled inductor auxiliary variables and add their
-    # constitutive equations and Kirchhoff current law couplings, which are
-    # real and frequency independent (see calcAmnaind).
-    Amna = mnapad(Amna, length(coupledbranches)*Nmodes + Nauxscattering)
+    # The padding, the augmentation and their union are structure; a sweep
+    # assembles them once and refills the values (see PaddedLinearTerm).
+    # The coupled inductor rows are the augmentation's only value
+    # dependent entries and are reassembled, small, at every point.
+    linear = reusing ? reuse.linear : nothing
     AmnaL = calcAmnaind(coupledbranches, Lb, Mb, cg.Rbn, Nmodes,
         Nnodal + Nauxr, Nnodal + Naux, Lmean)
-    Amna = spaddkeepzeros(Amna, AmnaL)
-    # The scattering block contribution: the pump mode frequencies are
-    # fixed, so the blocks' constitutive equations
-    # im*w_m*Lmean*B(w_m)*phi - C(w_m)*i = 0 and the Kirchhoff current law
-    # couplings of their auxiliary port currents form a constant matrix,
-    # folded into the augmentation like the promoted resistor equations
-    # (see `scatteringlinearterm`). The stamped blocks are kept because the
-    # explicit direct current path needs each block's auxiliary base.
-    stampedblocks = StampedScatteringBlock[]
-    if Nauxscattering > 0
-        # a constant matrix built once on the host; the augmented system it
-        # produces is what every backend then solves
-        ssys = scatteringstampsystem(psc.scatteringblocks, Nmodes;
-            auxoffset = Nnodal + Naux - Nauxscattering,
-            Ntotal = Nnodal + Naux, scale = Lmean)
-        append!(stampedblocks, ssys.blocks)
-        Amna = spaddkeepzeros(Amna, scatteringlinearterm(psc, wmodes,
-            Nmodes; auxoffset = Nnodal + Naux - Nauxscattering,
-            Ntotal = Nnodal + Naux, scale = Lmean,
-            blocks = psc.scatteringblocks))
+    if isnothing(linear)
+        Amna = calcAmna(mnaindices, nodeindices, vvn, gaugeindices, wmodes,
+            Nmodes, Nnodes, Lmean)
+        # pad with the coupled inductor auxiliary variables and add their
+        # constitutive equations and Kirchhoff current law couplings, which are
+        # real and frequency independent (see calcAmnaind).
+        Amna = mnapad(Amna, length(coupledbranches)*Nmodes + Nauxscattering)
+        Amna = spaddkeepzeros(Amna, AmnaL)
+        # The scattering block contribution: the pump mode frequencies are
+        # fixed, so the blocks' constitutive equations
+        # im*w_m*Lmean*B(w_m)*phi - C(w_m)*i = 0 and the Kirchhoff current law
+        # couplings of their auxiliary port currents form a constant matrix,
+        # folded into the augmentation like the promoted resistor equations
+        # (see `scatteringlinearterm`). The stamped blocks are kept because
+        # the explicit direct current path needs each block's auxiliary base.
+        stampedblocks = StampedScatteringBlock[]
+        if Nauxscattering > 0
+            # a constant matrix built once on the host; the augmented system
+            # it produces is what every backend then solves
+            ssys = scatteringstampsystem(psc.scatteringblocks, Nmodes;
+                auxoffset = Nnodal + Naux - Nauxscattering,
+                Ntotal = Nnodal + Naux, scale = Lmean)
+            append!(stampedblocks, ssys.blocks)
+            Amna = spaddkeepzeros(Amna, scatteringlinearterm(psc, wmodes,
+                Nmodes; auxoffset = Nnodal + Naux - Nauxscattering,
+                Ntotal = Nnodal + Naux, scale = Lmean,
+                blocks = psc.scatteringblocks))
+        end
+        # pad the system matrices and vectors with the auxiliary variables.
+        # the incidence matrix gains empty columns so the branch fluxes and
+        # the Josephson junction terms are unaffected, and the constant MNA
+        # equations are folded into the static linear term, which is added
+        # with unit coefficient and is its own contribution to the Jacobian.
+        Rbnm = hcat(Rbnm, spzeros(eltype(Rbnm), size(Rbnm,1), Naux))
+        invLnm0 = invLnm
+        invLnm = spaddkeepzeros(mnapad(invLnm, Naux), Amna)
+        Cnm = mnapad(Cnm, Naux)
+        Gnm = mnapad(Gnm, Naux)
+        bnm = vcat(bnm, zeros(eltype(bnm), Naux))
+        wmodesm = Diagonal(repeat(wmodes,
+            outer = Nnodes-1+length(mnaindices)+length(coupledbranches)+
+                countscatteringports(psc)))
+        wmodes2m = Diagonal(repeat(wmodes.^2,
+            outer = Nnodes-1+length(mnaindices)+length(coupledbranches)+
+                countscatteringports(psc)))
+        # promoted resistors would put values into calcAmna's rows, which
+        # the refill does not follow; there are none today (see mnaindices)
+        if reusing && isempty(mnaindices)
+            reuse.linear = PaddedLinearTerm(Rbnm, invLnm, Gnm, Cnm, Amna,
+                AmnaL, invLnm0, bnm, wmodesm, wmodes2m, stampedblocks)
+        end
+    else
+        refill!(linear, invLnm, Gnm, Cnm,
+            isempty(coupledbranches) ? nothing : AmnaL, bbm, Rbnm)
+        Rbnm = linear.Rbnm
+        invLnm = linear.invLnm
+        Gnm = linear.Gnm
+        Cnm = linear.Cnm
+        Amna = linear.Amna
+        bnm = linear.bnm
+        wmodesm = linear.wmodesm
+        wmodes2m = linear.wmodes2m
+        stampedblocks = linear.stampedblocks
     end
-    # pad the system matrices and vectors with the auxiliary variables.
-    # the incidence matrix gains empty columns so the branch fluxes and
-    # the Josephson junction terms are unaffected, and the constant MNA
-    # equations are folded into the static linear term, which is added
-    # with unit coefficient and is its own contribution to the Jacobian.
-    Rbnm = hcat(Rbnm, spzeros(eltype(Rbnm), size(Rbnm,1), Naux))
-    invLnm = spaddkeepzeros(mnapad(invLnm, Naux), Amna)
-    Cnm = mnapad(Cnm, Naux)
-    Gnm = mnapad(Gnm, Naux)
-    bnm = vcat(bnm, zeros(eltype(bnm), Naux))
-    wmodesm = Diagonal(repeat(wmodes,
-        outer = Nnodes-1+length(mnaindices)+length(coupledbranches)+
-            countscatteringports(psc)))
-    wmodes2m = Diagonal(repeat(wmodes.^2,
-        outer = Nnodes-1+length(mnaindices)+length(coupledbranches)+
-            countscatteringports(psc)))
     if length(x) == Nnodal
         # accept a nodal initial guess, materializing keyed arrays or
         # other array types into a plain vector. transform it into the
@@ -745,11 +843,26 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     realrepresentation = method == :newton || method == :newtonkrylov ||
         method == :external || debugJacobian || returnoperatingpoint ||
         returnsystem
-    sys = HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
-        Ljb, Ljbm, Lmean, Nbranches, freqindexmap, conjsourceindices,
-        conjtargetindices, phimatrix, phimatrixtd, irfftplan, rfftplan,
-        modelayout, realjacobianplan, complexjacobianplan, backend;
-        realbackward = realrepresentation)
+    sys = if reusesys
+        # the same transforms, maps, kernels and workspaces at the new
+        # values, written through maps found once so nothing is allocated
+        # a conversion with no fixed map is remembered as such, so it is
+        # probed once and not at every point
+        isnothing(reuse.maps) &&
+            (reuse.maps = something(valuemaps(reuse.sys), :none))
+        s = rebind!(reuse.sys, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lmean;
+            maps = reuse.maps === :none ? nothing : reuse.maps)
+        reuse.sys = s
+        s
+    else
+        s = HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
+            Ljb, Ljbm, Lmean, Nbranches, freqindexmap, conjsourceindices,
+            conjtargetindices, phimatrix, phimatrixtd, irfftplan, rfftplan,
+            modelayout, realjacobianplan, complexjacobianplan, backend;
+            realbackward = realrepresentation)
+        reusing && (reuse.sys = s)
+        s
+    end
 
     # the residual and the complex (holomorphic) Jacobian, an approximation
     # to the exact Jacobian, for method == :quasinewton
@@ -762,13 +875,14 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 
     # the residual and the exact Jacobian of the equivalent real system, for
     # method == :newton
+    # `xr` is read and not rewritten: the real representation has one slot
+    # per real entry and no redundant ones, so the round trip through the
+    # complex form is a copy and writing it back was a pass over the state,
+    # and on a device a crossing of the bus, per residual for nothing
     function fjreal!(Fr, Jr, xr)
         setpoint!(sys, xr)
         isnothing(Fr) || residual!(Fr, sys)
         isnothing(Jr) || jacobian!(Jr, sys)
-        # write back the real representation of the point through the plan;
-        # `complex_to_real!` walks a BitVector serially and is host only
-        applycomplextoreal!(xr, sys.nonlineartermplan, sys.x)
         return nothing
     end
 
@@ -778,25 +892,45 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # reserved for source stepping continuation; always NaN
     sourcefold = Ref(NaN)
 
-    # The canonical layout of the state with direct current active, built
-    # once for whichever method uses it: the matrix-free and the direct
-    # paths solve the same system in the same coordinates and differ only
-    # in how they apply the Jacobian.
-    canonwork = if dcexplicit
-        tr = dcexplicit ? transportrows(dcplan, bnmsource, Nmodes) : nothing
+    # use this for debugging purposes to return the residual and Jacobian
+    # functions along with the ingredients from which the Jacobians are
+    # assembled, so reference implementations can be constructed, eg. in the
+    # tests.
+    # The canonical layout, built once for whichever method uses it. Both
+    # the matrix free path and the direct one solve the same system in the
+    # same coordinates; only the way they apply the Jacobian differs.
+    #
+    # Built whenever the block exists, because building it is what
+    # classifies it: the complete descriptor -- every transport row and
+    # every block relation -- is what says whether the direct current is
+    # determined, and a short or an ideal through in parallel with an
+    # inductive path is refused here whether or not anything drives it.
+    # When nothing does, the classification is all that is wanted of it and
+    # the periodic system is solved as stamped, so the work is not kept.
+    canonwork = if hasdc
+        tr = transportrows(dcplan, bnmsource, Nmodes)
         Lc = tobackend(backend, compositelayout(modelayout, frequencies.modes;
-            nvdc = isnothing(tr) ? 0 : nvoltages(tr)))
+            nvdc = nvoltages(tr)))
         # a block's zero frequency row is `i = 0` in the stamp; with an
-        # average voltage to respond to, it becomes the block's own relation
-        br = (dcexplicit && Nauxscattering > 0) ?
+        # average voltage to respond to it becomes the block's own relation,
+        # which is what makes it visible at direct current. A block with no
+        # zero frequency data has to give one only when it is asked to
+        # carry direct current, and stays open otherwise.
+        br = Nauxscattering > 0 ?
             dcblockrows(stampedblocks, dcplan.componentof, Nmodes,
-                dcplan.modeindex, Lc.nac, Nnodes - 1, Lmean) : nothing
+                dcplan.modeindex, Nnodes - 1, Lmean;
+                required = dcexplicit) : nothing
         # the zero frequency block holds one entry per node and then one per
-        # auxiliary unknown; only the nodal ones carry the coupling. (Not
-        # named `w`, which is this function's drive frequency argument.)
-        CanonicalWork(Lc, tobackend(backend,
+        # auxiliary unknown; only the nodal ones carry the coupling.
+        #
+        # Not named `w`: that is this function's drive frequency, and
+        # assigning to it here rebound the argument, so every circuit which
+        # injected direct current reported the work object as its drive and
+        # `hbsolve` could not compute the mode frequencies from it.
+        work = CanonicalWork(Lc, tobackend(backend,
                 convert(Vector{precision}, xr));
             transport = tr, blockrows = br, nnodaldc = Nnodes - 1)
+        dcexplicit ? work : nothing
     else
         nothing
     end
@@ -905,25 +1039,52 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # Jacobian-vector product and the solution are always those of the
         # requested truncation.
         #
-        # The default `:none` keeps the mode block diagonal, whose
-        # factorization is a batch of small independent per mode solves. On
-        # a strongly pumped line it stalls on its own; escalation, which
-        # grows the coupling set on repeated linear failures, rescues it and
-        # in practice fires once or twice. `:band => p` restricts the
-        # coupling by harmonic offset, which is the restriction the Toeplitz
-        # structure of the nonlinear term suggests; its fill grows linearly
-        # rather than quadratically in the mode count, so it wins over the
-        # full factorization once there are enough modes, and it escalates
-        # one offset at a time. `krylovrecycle > 0` additionally wraps the
-        # preconditioner in a recycled deflation subspace, which also rescues
-        # the block diagonal and needs no sparse factorization at all, but
-        # is off by default.
-        base = ModeCouplingPreconditioner(sys, Amatrixindicesaliased,
-            Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches, Nfreq,
-            invLnm, Gnm, Cnm, modelayout;
-            couplingmodes = krylovcouplingmodes,
-            factorization = factorization, precision = precision,
-            Amatrixmodes = Amatrixmodes)
+        # The default is the mode block diagonal, whose factorization is a
+        # batch of small independent per mode solves rather than one large
+        # sparse factorization. On a strongly pumped line the block diagonal
+        # alone stalls; what rescues it is escalation, which grows the base
+        # only on repeated linear failures and in practice fires once or
+        # twice.
+        #
+        # `krylovcouplingmodes = :band => p` restricts the retained coupling by
+        # harmonic *offset* rather than by column (see `modebandmask`). That is
+        # the restriction the Toeplitz structure of the nonlinear term asks for,
+        # and at equal fill it is not close: on an eight mode chain driven to
+        # max|phi| = 1.9 rad a bandwidth of one converges a Newton path in 118
+        # GMRES iterations where a two column selection storing the same number
+        # of nonzeros fails to converge in 1051. Its fill grows linearly in the
+        # mode count where the full Jacobian's grows quadratically, so it
+        # overtakes the full factorization once there are enough modes: measured
+        # on a fixed circuit at max|phi| ~ 1.75 rad, the ratio of banded to full
+        # total solve time is 1.28 at 8 modes, 0.75 at 16, 0.61 at 24 and 0.31
+        # at 32, while the bandwidth that wins stays at one. It escalates by one
+        # offset at a time rather than jumping to the full operator. Measured on a two tone line, this is the only configuration
+        # whose standing improves with problem size: at 288 cells it is 3.72 s
+        # against 8.19 s for mode selection and 5.48 s for the direct solve,
+        # having been the slower of the two at 128 cells.
+        #
+        # `krylovrecycle > 0` additionally wraps the base in a recycled
+        # deflation subspace. It also rescues the block diagonal, and needs no
+        # sparse factorization at all, which makes it the natural fit for a
+        # GPU; but it is a second answer to the same problem and measured a
+        # net loss against escalation at 192 cells and above, so it is off by
+        # default. `krylovcouplingmodes = 12, krylovrecycle = 0` recovers the
+        # earlier frequency based mode selection, which is still the fastest
+        # option on moderately sized lines.
+        base = if reusing && !isnothing(reuse.preconditioner)
+            # the same structure, coupling set and symbolic factorization,
+            # with the linear term and the junction coefficients refreshed
+            rebind!(reuse.preconditioner, sys)
+        else
+            b = ModeCouplingPreconditioner(sys, Amatrixindicesaliased,
+                Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches,
+                Nfreq, invLnm, Gnm, Cnm, modelayout;
+                couplingmodes = krylovcouplingmodes,
+                factorization = factorization, precision = precision,
+                Amatrixmodes = Amatrixmodes)
+            reusing && (reuse.preconditioner = b)
+            b
+        end
 
         # the Krylov workspaces are allocated `similar` to the vectors handed
         # in, so device vectors put the whole iteration on the device; on
@@ -967,12 +1128,14 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
                 CanonicalPreconditioner(pc, work);
                 iterations = iterations, ftol = ftol, rtol = rtol,
                 linearsolver = linearsolver,
+                workspace = reusing ? reuse.krylovcanonical : nothing,
                 krylovkwargs...)
             scattercanonical!(xrb, ucb, L)
             scattercanonical!(Frb, Fcb, L)
-            # report the voltages this path solved for; they agree with the
-            # eliminated ones while the direct current devices are linear
-            # conductances, which the tests assert
+            # the voltages are read off the canonical state the solve
+            # converged in; the block currents beside them stay in the
+            # state, where the operating point and the sensitivities read
+            # them
             if dcexplicit
                 dccanonical = Array(ucb)
                 dcsol = dcsolutionfrom(dcplan,
@@ -983,6 +1146,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             nlsolvekrylov!(fjreal!, jvpreal!, Frb, xrb, pc;
                 iterations = iterations, ftol = ftol, rtol = rtol,
                 linearsolver = linearsolver,
+                workspace = reusing ? reuse.krylov : nothing,
                 krylovkwargs...)
         end
         # back to the host for the complex representation returned to the
@@ -1044,15 +1208,24 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
 
     converged = info.converged
 
-    # Validate the original, ungauged Kirchhoff current law equations by
-    # reconstructing their residuals from the augmented residual and the
-    # state (a gauge row g adds x[g] to the augmented residual). The
-    # acceptance policy is in `mnavalidatekcl`.
+    # validate the original, ungauged Kirchhoff current law equations
+    # directly by reconstructing their residuals from the augmented
+    # residual and the state (the gauge fixing equations add x[g] to the
+    # augmented residual of each gauge row g). the acceptance policy,
+    # including its block-relative infinity-norm tolerance and its
+    # rejection of non-finite residuals, is implemented and unit tested in
+    # mnavalidatekcl.
+    # whether the system has been set to the accepted point below, so the
+    # junction check does not set it twice
+    pointset = false
     if converged && !isempty(gaugeindices)
         setpoint!(sys, x)
-        # `F` and `x` are host vectors while `sys` holds its state on the
-        # backend, so the residual is evaluated into a backend buffer and
-        # copied back for the host side validation
+        pointset = true
+        # `sys` holds its state wherever the backend put it, while `F` and `x`
+        # are host vectors, so the residual is evaluated into a buffer like the
+        # system's own state and copied back for the host side validation.
+        # Evaluating straight into `F` launches the backward term kernel with a
+        # host array argument, which does not compile.
         Fgauge = similar(sys.x)
         residual!(Fgauge, sys)
         copyto!(F, Fgauge)
@@ -1078,12 +1251,15 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     end
 
     # The static flux partition treats a junction as a short at zero
-    # frequency, i.e. in its zero voltage state. The sine of the branch flux
-    # is cached at the converged point, so the direct current each junction
-    # carries costs nothing to check.
+    # frequency, which is a statement about the junction being in the zero
+    # voltage state. The direct current each junction carries is the mean of
+    # the sine of its branch flux over the reconstructed period, which is
+    # the pointwise sine the residual caches: setting the point is a
+    # transform and the sine a pass over the grid, and neither the backward
+    # transform nor the linear term is needed to read it.
     if converged && !isempty(Ljb.nzind)
-        setpoint!(sys, x)
-        residual!(similar(sys.x), sys)
+        pointset || setpoint!(sys, x)
+        _ensuresin!(sys)
         branchnames = Dict{Int,Vector{String}}()
         for i in eachindex(componenttypes)
             componenttypes[i] === :Lj || continue

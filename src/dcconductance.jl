@@ -29,14 +29,27 @@
 #
 #     Y v = j,   Y = P'G0P,   j = P'i_source,0
 #
-# This file builds that block: the map from nodes to components, the
-# conductance between components read from the assembled `Gnm` (so that it
-# works for a port environment stamped as a boundary with no component
-# behind it), and the transport rows through which the average voltages
-# enter the solve as explicit unknowns of the canonical state (see
-# compositelayout.jl). The standalone solve of `Y v = j` is kept for the
-# Kirchhoff current law validation, which reconstructs its residual from
-# the harmonic system alone.
+# The average voltages are carried as unknowns beside the periodic state,
+# with these rows as their equations and the resistor current `G0 P v` as
+# their coupling into the zero frequency nodal rows; a scattering block adds
+# its own zero frequency relation between its port voltages and the port
+# currents the solver already carries. That block of unknowns is small, its
+# rows see no periodic state, and it is built, classified and solved apart
+# from the periodic problem (see `compositelayout.jl`).
+#
+# It is classified whenever a zero frequency mode exists, and solved only
+# when it has something to find. With no direct current injected every
+# average voltage is zero, and so is every block current a nonsingular
+# relation determines from them, so the periodic system as stamped -- a
+# resistor open at zero frequency, a block with `i = 0` -- is exact and is
+# solved alone. What the classification decides is whether that is so: a
+# short or an ideal through in parallel with an inductive path leaves a
+# current undetermined whether or not anything drives it, and is refused
+# either way rather than given the zero it happens to start at.
+#
+# The conductance is read from the assembled `Gnm` rather than from the
+# resistors, so that it keeps working when a port environment becomes a
+# boundary stamp with no component behind it.
 
 """
     DCConductancePlan
@@ -44,7 +57,10 @@
 The topology of the direct current voltage block.
 
 Built from the circuit and its assembled conductance; holds nothing which
-depends on the sources.
+depends on the sources. It exists whenever there is a zero frequency mode,
+with no components when every node is held at zero by an inductive path to
+ground, so that the block relations and the classification have the nodal
+rows and the conductance to work from.
 
 # Fields
 - `modeindex`, `dcrows`: the zero frequency mode and its nodal rows.
@@ -75,11 +91,11 @@ The solved average voltages and the direct current they carry.
 zero. On a floating island only voltage differences are physical; one
 component of it is held at zero as a reference.
 
-A solution exists exactly when the explicit direct current block was built,
-which is what the caller tests by asking whether there is one. Whether the
-voltages it found happen to be zero is a fact about the circuit and not
-about whether it has a direct current model: a node shorted to ground sits
-at zero volts, and that is an answer.
+A solution exists exactly when the analysis has a zero frequency mode. When
+no direct current is injected it is the zero every average voltage sits at,
+which is an answer and not the absence of one: a node shorted to ground
+sits at zero volts. Only an analysis with no zero frequency mode has no
+average voltage to report.
 """
 struct DCConductanceSolution{T}
     nodevoltage::Vector{T}
@@ -89,14 +105,16 @@ end
 """
     dcconductanceplan(floatingcomponents, Gnm, wmodes, Nmodes, Nnodes)
 
-Build the [`DCConductancePlan`](@ref), or `nothing` when the circuit needs
-none: no zero frequency mode, or no floating static component, in which case
-there is no average voltage to solve for.
+Build the [`DCConductancePlan`](@ref), or `nothing` when there is no zero
+frequency mode and so no average voltage at all.
 
-Having no conductance at all is not one of those cases. A circuit whose only
-direct current devices are scattering blocks has an empty `G0` and still
-needs the block rows, and gating on `G0` left it with the artificial `i = 0`
-rows the stamp writes.
+Neither an empty conductance nor an empty set of floating components is a
+reason to build none. A circuit whose only direct current devices are
+scattering blocks has an empty `G0` and still needs the block rows; a
+circuit whose every node is held at zero by an inductive path to ground
+has no voltage to solve for and still has block currents to classify, and
+gating on either left such a block with the artificial `i = 0` row the
+stamp writes and nothing looking at whether that row is right.
 """
 function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
         Gnm::SparseMatrixCSC, wmodes::AbstractVector, Nmodes::Integer,
@@ -104,7 +122,6 @@ function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
 
     m0 = findfirst(iszero, wmodes)
     isnothing(m0) && return nothing
-    isempty(floatingcomponents) && return nothing
 
     n = Nnodes - 1
     dcrows = collect(Int(m0):Nmodes:n*Nmodes)
@@ -156,7 +173,8 @@ function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
     lift = sparse(
         [p-1 for c in floatingcomponents for p in c if p > 1],
         [k for (k, c) in enumerate(floatingcomponents) for p in c if p > 1],
-        ones(eltype(G0), count(p -> p > 1, reduce(vcat, floatingcomponents))),
+        ones(eltype(G0), count(p -> p > 1,
+            reduce(vcat, floatingcomponents; init = Int[]))),
         n, nc)
 
 
@@ -185,21 +203,21 @@ function applydcconductance(bnm::AbstractVector, plan::DCConductancePlan,
     return out
 end
 
-# The same equation as explicit rows.
+# =====================================================================
+# The equation as explicit rows.
 #
-# The functions above eliminate the average voltages: they solve `Y v = j`
-# once and fold the resistor current `G0 P v` into the zero frequency
-# source. That is exact while the direct current devices are linear
-# conductances and the sources are prescribed, and it is what the
-# Kirchhoff current law validation uses. It cannot go further: a
-# scattering block's direct current relation is a pencil between its port
-# voltages and its port currents, so the current is a genuine unknown and
-# there is nothing to eliminate, and a short or an ideal through has a
-# free current direction with no determined value at all. Reaching those
-# needs `v` carried as an unknown with its equation as a row, which is what
-# the solvers use and what this builds.
+# Eliminating the average voltages before Newton -- solving `Y v = j` once
+# and folding the resistor current `G0 P v` into the zero frequency source
+# -- is exact while the direct current devices are linear conductances and
+# the sources are prescribed, and it is how this began. It cannot go
+# further. A scattering block's direct current relation is a pencil between
+# its port voltages and its port currents, so the current is a genuine
+# unknown and there is nothing to eliminate; a short or an ideal through
+# has a free current direction and no determined value at all. Reaching
+# those needs `v` carried as an unknown with its equation as a row, which
+# is what this builds, and it is the only path now.
 #
-# The row is the same component sum. Adding the zero frequency Kirchhoff
+# The row is the component sum. Adding the zero frequency Kirchhoff
 # equations over the nodes of one static flux component cancels every
 # inductor and junction branch current, because both terminals of such a
 # branch lie inside the component and the current enters with both signs --
@@ -212,8 +230,9 @@ end
 #
 # which is why an explicit `v` costs a small constant solve and does not
 # make the nonlinear problem harder. Solving that triangular system by
-# substitution is exactly the elimination above, which is the sense in
-# which the two paths agree and the reason the tests can demand it.
+# substitution is exactly the elimination, which is the sense in which the
+# explicit rows and a hand elimination must agree and the reason the tests
+# can demand it.
 #
 # A floating island fixes no absolute voltage, so `Y` is singular on it and
 # only differences are physical. Something has to choose a reference, but
@@ -231,7 +250,7 @@ The transport rows `Y v = j` of the explicit direct current block,
 together with the coupling into the zero frequency nodal rows.
 
 # Fields
-- `plan`: the topology, shared with the elimination.
+- `plan`: the topology.
 - `Y`: `P'G0P`, unreferenced. It is singular on a floating island, which is
   correct: these rows state the physics and say nothing about where the
   potential is measured from.
@@ -255,9 +274,9 @@ nvoltages(t::TransportRows) = length(t.j)
 
 Build the [`TransportRows`](@ref) for a source `bnm`.
 
-`bnm` must be the applied source, not the one the elimination corrects:
-the resistor current appears here as the coupling term, and taking it from
-a corrected source would count it twice.
+`bnm` must be the applied source, not one corrected for the resistor
+current: that current appears here as the coupling term, and taking it
+from a corrected source would count it twice.
 """
 function transportrows(plan::DCConductancePlan, bnm::AbstractVector,
         Nmodes::Integer)
@@ -284,7 +303,7 @@ end
 
 The direct resistor current `G0 P v` each node carries, in place, indexed by
 node with ground dropped. This is the coupling `Jpv` applied to `v`, and it
-is the quantity the elimination subtracts from the source.
+is the quantity a hand elimination would subtract from the source.
 """
 function transportcurrent!(d::AbstractVector, t::TransportRows,
         v::AbstractVector)
@@ -354,10 +373,12 @@ end
 
 Whether any direct current is injected into a static flux component.
 
-When none is, every average voltage and every block port current is zero and
-the explicit block has nothing to find: the `i = 0` rows the scattering
-stamp writes are then the right answer rather than a simplification, and the
-whole direct current apparatus is skipped.
+When none is, every average voltage is zero, and so is every block port
+current a nonsingular relation determines from them, so the explicit block
+has nothing to find: the `i = 0` rows the scattering stamp writes are then
+the right answer rather than a simplification, and the block is classified
+but not carried. Whether the relations are nonsingular in a way the circuit
+can see is what the classification decides, and it does not depend on this.
 
 The test is an exact zero and not a tolerance. A drive is either declared at
 the zero frequency mode or it is not: `calcsources` writes the coefficient
