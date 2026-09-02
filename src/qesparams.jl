@@ -114,17 +114,16 @@ function calcinputoutput!(inputwave, outputwave, phin, bnm, inputportindices,
 end
 
 """
-    calcinputoutputnoise!(S, inputwave, outputwave, phin, bnm,
+    calcinputoutputnoise!(inputwave, outputwave, phin, bnm,
         inputportindices, outputportindices, inputportimpedances,
         outputportimpedances, nodeindices, componenttypes, wmodes, symfreqvar)
 
-Return the input and output waves for the system linearized around the strong
-pump.
-
-This is a bit of a hack but I ran into issues with complex capacitance when
-the capacitor was at the same branch as a current source. The calcS function
-would use that current source in calculating the output waves, which it should
-not do.
+The input and output waves at the ports when the linearized system is
+driven at the noise channels rather than at the ports:
+[`calcinputoutput!`](@ref) with `nosource = true`, so that no source
+current is attributed to a port when forming its output wave. (With the
+source included, a port sharing a branch with a lossy capacitor would be
+credited with that channel's source current.)
 
 # Examples
 ```jldoctest
@@ -230,7 +229,7 @@ function calcnoisecovariance!(Cnoise::AbstractMatrix, Snoise::AbstractMatrix,
 end
 
 """
-    noiseoccupation!(occupation, temperatures, wmodes, Nmodes)
+    noiseoccupation!(occupation, temperatures::AbstractVector, wmodes, Nmodes)
 
 Fill `occupation` with `2*nbar + 1` for each row of the noise scattering
 matrix, whose rows run over the noise channels with the modes innermost.
@@ -1070,10 +1069,15 @@ function calcqe(S::AbstractArray{Complex{T}},
 end
 
 """
-    calcqe!(qe, S, Snoise)
+    calcqe!(qe, S, Snoise, occupation = nothing)
 
-Calculate the quantum efficiency matrix for a scattering matrix in the field
-ladder operator basis. Overwrites qe with output.
+Overwrite `qe` with the quantum efficiency of the scattering matrix `S`
+in the field ladder operator basis, given the noise scattering matrix
+`Snoise` from the dissipative elements: `abs2(S[i,j])` over the total
+noise power at output `i`, `sum(abs2, S[i,:]) + sum(abs2, Snoise[i,:])`,
+with each noise channel's contribution multiplied by its `occupation`
+(`2*nbar + 1`, one entry per row of `Snoise`; `nothing` means the vacuum
+occupation of one everywhere).
 
 # Examples
 ```jldoctest
@@ -1123,13 +1127,17 @@ end
 
 """
     calcqe!(qe, S, noise::NoiseReduction)
+    calcqe!(qe, S, noise::NoiseReduction, occupation)
 
-The quantum efficiency from the scattering matrix and the reduction of the
-noise scattering matrix, rather than the matrix itself.
+The quantum efficiency from the scattering matrix and a reduction of the
+noise scattering matrix rather than the matrix itself.
 
-`calcqe!(qe, S, Snoise)` reads `Snoise` only as `sum(abs2, Snoise[i,:])` per
-row, so a caller which has that sum already, as one computed on a backend has,
-passes it here and never forms the matrix. See [`NoiseReduction`](@ref).
+`calcqe!(qe, S, Snoise)` reads `Snoise` only as `sum(abs2, Snoise[i,:])`
+per row, so a caller which has that sum already, as one computed on a
+device has, passes it here and never forms the matrix. The reduction
+already carries the occupation, so the `occupation` argument of the four
+argument method is accepted for uniformity with the matrix method and
+ignored. See [`NoiseReduction`](@ref).
 """
 function calcqe!(qe, S, noise::NoiseReduction, occupation)
     # the reduction's `denom` already carries the occupation, applied on the
@@ -1261,11 +1269,6 @@ function calcCnoise!(Cnoise::AbstractMatrix, S)
     # compute C = I - S*S' from Bosma's theorem
     @inbounds for j in 1:size(S,2)
         for i in 1:size(S,1)
-            # if i == j
-            #     Cnoise[i,j] = one(eltype(Cnoise))
-            # else
-            #     Cnoise[i,j] = zero(eltype(Cnoise))
-            # end
             Cnoise[i,j] = zero(eltype(Cnoise))
             for k in 1:size(S,2)
                 # use abs2 as a cludge to make sure QE is identical for
@@ -1402,8 +1405,7 @@ function calcqe_S_Cnoise!(qe, S, Cnoise)
             denom[i] += Cnoise[i,i]
     end
 
-    # more cache efficient version of QE calculation
-    # denom = zeros(eltype(qe),size(S,1))
+    # the row sums are accumulated column by column for cache efficiency
     @inbounds for j in 1:size(S,2)
         for i in 1:size(S,1)
             denom[i] += abs2(S[i,j])

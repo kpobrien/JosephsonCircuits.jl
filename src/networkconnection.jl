@@ -515,9 +515,11 @@ end
 
 
 """
-    interconnectS!(Sout, Cout, Sa, Sb, Ca, Cb, k, l)
+    interconnectS!(Sout, Cout, Sa, Sb, Ca, Cb, k, l;
+        nbatches = Base.Threads.nthreads())
 
-See [`interconnectS`](@ref) for description.
+In place version of [`interconnectS`](@ref) with noise covariances,
+writing into `Sout` and `Cout`.
 
 """
 function interconnectS!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int;
@@ -863,9 +865,9 @@ function interconnectS(Sa::AbstractArray{T,N}, Sb::AbstractArray{T,N}, k::Int,
 end
 
 """
-    interconnectS!(Sout, Sa, Sb, k, l)
+    interconnectS!(Sout, Sa, Sb, k, l; nbatches = Base.Threads.nthreads())
 
-See [`interconnectS`](@ref) for description.
+In place version of [`interconnectS`](@ref), writing into `Sout`.
 
 """
 function interconnectS!(Sout, Sa, Sb, k::Int, l::Int;
@@ -1798,16 +1800,18 @@ function add_modes(connections::AbstractVector{Vector{Tuple{T,Int}}},
 end
 
 """
-    add_splitters(networks::AbstractVector{Tuple{T,N}},
-        connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}};
-        splitter_name_length = 20) where {T,N}
+    add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
+        connections::AbstractVector{Vector{Tuple{T,Int}}};
+        small_splitters = true) where {T,N}
 
 Return the `networks` and `connections` with splitters (ideal lossless
 symmetrical reciprocal networks) and connections to the splitters added when
 more than two ports intersect. `connections` is also converted from a vector
 of vectors of tuples where the tuple contains the network and the port such as
 [[(:S1,1),(:S2,1)]] to a vector of tuples where the tuple contains the two
-networks and ports being connected [(S1,:S2,1,1)].
+networks and ports being connected [(:S1,:S2,1,1)]. With
+`small_splitters = true` an N port splitter is built by combining N-2 three
+port splitters; with `false` it is a single N port splitter.
 
 # References
 S. F. Cao, Y. C. Jiao, and Z. Zhang. "Applications of Generalized Cascade
@@ -1955,10 +1959,11 @@ end
 
 """
     add_splitters(networks, connections::AbstractVector{Tuple{T,T,Int,Int}};
-        kwargs...)) where T
+        small_splitters = true) where T
 
-If the connections are already in the correct format, just return them. This
-function assumes ports have already been added to `networks`.
+Connections already in the pairwise `(network1, network2, port1, port2)`
+form are returned unchanged along with `networks`; splitters must already
+have been added.
 """
 function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
     connections::AbstractVector{Tuple{T,T,Int,Int}};
@@ -1967,12 +1972,19 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
 end
 
 """
-    make_connection!(g,fconnectionlist,fweightlist,ports,networkdata,src_node,
-    connection_index)
+    make_connection!(g, fconnectionlist, fweightlist, ports,
+        scattering_parameters, noise_covariances, src_node,
+        connection_index, nbatches, userinput, scattering_parameter_storage,
+        noise_covariance_storage, noise)
 
 Apply the connection specified by the source node `src_node` and the index
-of the connection in the forward adjacency list `connection_index`. Modify the
-arguments and return nothing.
+of the connection in the forward adjacency list `connection_index`,
+updating the graph, the adjacency lists, the ports, and the scattering
+parameter and noise covariance matrices in place. `userinput` records
+which matrices are the user's and must not be overwritten;
+`scattering_parameter_storage` and `noise_covariance_storage` hold
+reusable buffers by size; `noise` selects whether the noise covariances
+are propagated.
 
 """
 function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
@@ -2145,9 +2157,16 @@ end
 
 """
     connectS_initialize(networks::AbstractVector, connections::AbstractVector;
-    small_splitters::Bool = true)
+        small_splitters::Bool = true, noise::Bool = false, Nmodes::Integer = 1)
 
-Return a directed graph of connections between the networks.
+Return the directed graph of connections between the networks and the
+arrays [`connectS!`](@ref) works on: the forward adjacency lists, the
+ports, and the scattering parameter and noise covariance matrices of every
+network, with splitters added where more than two ports meet. With
+`noise = true` the noise covariance `I - S S'` of each passive network is
+computed from its scattering parameters unless one was supplied; with
+`Nmodes > 1` each physical port of `connections` is expanded into its
+`Nmodes` mode ports (see [`add_modes`](@ref)).
 
 # Examples
 ```jldoctest
@@ -2313,14 +2332,16 @@ end
         fconnectionlist::AbstractVector{<:AbstractVector{Tuple{T,T,Int,Int}}},
         fweightlist::AbstractVector{<:AbstractVector{Int}},
         ports::AbstractVector{<:AbstractVector{Tuple{T,Int}}},
-        networkdata::AbstractVector{N};
+        scattering_parameters::AbstractVector{N},
+        noise_covariances::AbstractVector{N}; noise::Bool = false,
         nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
-Return the non-empty elements of the updated `networkdata` and `ports` after
-applying all of the connections in the connection forward adjacency list
-`fconnectionlist` to the graph `g`, the forward adjacency weight list
-`fweightlist`, the vector of ports `ports`, and the vector of scattering
-parameter matrices `networkdata`.
+Return the non-empty elements of the updated `scattering_parameters`,
+`noise_covariances` and `ports` after applying all of the connections in
+the connection forward adjacency list `fconnectionlist` to the graph `g`,
+the forward adjacency weight list `fweightlist`, the vector of ports
+`ports`, and the vectors of scattering parameter and noise covariance
+matrices. The noise covariances are propagated only when `noise = true`.
 
 # Examples
 ```jldoctest
@@ -2420,6 +2441,7 @@ end
 
 """
     connectS(networks, connections; small_splitters::Bool = true,
+        noise::Bool = false, Nmodes::Integer = 1,
         nbatches::Int = Base.Threads.nthreads())
 
 Return the network and ports resulting from connecting the networks in
@@ -2432,7 +2454,11 @@ vectors of tuples of networks names and ports such as [[("network1name",1),
 connected and 1 and 2 are integers describing the ports to connect.
 
 This function supports connections between more than two ports by
-automatically adding splitters.
+automatically adding splitters. With `noise = true` the noise covariance
+matrices are connected as well, the passive covariance `I - S S'` being
+used for a network given without one; with `Nmodes > 1` the scattering
+matrices are multi-mode and `connections` names physical ports, each
+expanded to its `Nmodes` modes (see [`add_modes`](@ref)).
 
 # Examples
 ```jldoctest
@@ -2634,6 +2660,18 @@ function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
     return porti_indices, porte_indices, ports, scattering_parameters, noise_covariances, gamma, Sindices, S
 end
 
+"""
+    solveS_initialize(networks, connections; small_splitters = true,
+        noise = false, factorization = KLUfactorization(),
+        internal_ports = false, Nmodes = 1,
+        nbatches = Base.Threads.nthreads())
+
+Build the arrays [`solveS!`](@ref) works on, from the same arguments as
+[`solveS`](@ref): the external and internal port lists and scattering and
+covariance outputs, the connection matrix `gammaii` with the index maps
+into the networks' matrices, and the networks' scattering parameters and
+noise covariances. Returned as a tuple to be splatted into `solveS!`.
+"""
 function solveS_initialize(networks::AbstractVector,
         connections::AbstractVector; small_splitters::Bool = true,
         noise::Bool = false, factorization = KLUfactorization(),
@@ -2860,14 +2898,16 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
 end
 
 """
-    solveS!(Se, Si, portse, portsi, gammaii, See, Sei, Sie, Sii,
-        See_indices, Sei_indices, Sie_indices, Sii_indices, networkdata,
-        nbatches, factorization, internal_ports)
+    solveS!(Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
+        See_indices, Sei_indices, Sie_indices, Sii_indices, gammaii_indexmap,
+        Sii_indexmap, scattering_parameters, noise_covariances, nbatches,
+        factorization, internal_ports, noise)
 
-In-place version of `solveS`. See [`solveS`](@ref) for description. The use-
-case for this function is to perform in-place updates of a network connection,
-for example, by changing the arrays that are referenced in `networks` then
-recomputing the scattering parameters for the connected system.
+In place version of [`solveS`](@ref), taking the arrays returned by
+[`solveS_initialize`](@ref), which it is meant to be called with as
+`solveS!(init...)`. It allows a network connection to be updated in place:
+change the arrays referenced by `networks`, then recompute the scattering
+parameters of the connected system.
 
 # Examples
 ```jldoctest
@@ -2913,7 +2953,8 @@ end
 
 """
     solveS(networks, connections; small_splitters::Bool = true,
-        factorization = KLUfactorization(), internal_ports::Bool = false,
+        noise::Bool = false, factorization = KLUfactorization(),
+        internal_ports::Bool = false, Nmodes::Integer = 1,
         nbatches::Integer = Base.Threads.nthreads())
 
 Perform the connections between the networks in `networks` specified by the
@@ -2937,12 +2978,17 @@ the internal ports `portsinternal`.
 - `small_splitters::Bool = true`: if true, then generate any N port splitter
     by combining (N-2) 3 port splitters. if false, then make the N port
     splitter and connect the components to it.
-- `factorization = KLUfactorization()`: use KLU factorization by default. 
-    JosephsonCircuits.LUfactorization() is another good choice. Keyword
-    arguments can be passed to the solver as keyword arguments to these
-    functions.
+- `noise::Bool = false`: also connect the noise covariance matrices of the
+    networks. A network given as `(name, S)` gets the passive covariance
+    `I - S S'`; one given as `(name, S, C)` uses `C`.
+- `factorization = KLUfactorization()`: the sparse factorization of the
+    connection system; [`LUfactorization`](@ref) is another good choice.
 - `internal_ports::Bool = false`: return the scattering parameters for the
     internal ports.
+- `Nmodes::Integer = 1`: the number of modes of each physical port when
+    the scattering matrices are multi-mode, in which case `connections`
+    names physical ports and each is expanded to its modes (see
+    [`add_modes`](@ref)).
 - `nbatches::Integer = Base.Threads.nthreads()`: the number of batches to run
     on threads. Defaults to the number of threads with which Julia was
     launched.

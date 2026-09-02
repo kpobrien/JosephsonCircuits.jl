@@ -1,14 +1,15 @@
 
 """
-    wrspice_input_transient(netlist::String, current, frequency, phase, tstep,
-        tstop, trise; maxdata = 2e9, jjaccel = 1, dphimax = 0.01,
-        filetype = "binary")
+    wrspice_input_transient(netlist::String, current, frequency, phase,
+        sourcenodes, tstep, tstop, trise; maxdata = 2e9, jjaccel = 1,
+        dphimax = 0.01, filetype = "binary")
 
-Generate the WRSPICE input file for a transient simulation using circuit 
-parameters from the given netlist, the source current, frequency phase, and
-nodes for the sources, and the time step and stop time. Leave filename empty
-so we can add that as a command line argument. Don't specify any variables
-so it saves everything.
+Generate the WRSPICE input for a transient simulation of the circuit in
+`netlist`, driven by one sinusoidal current source per entry of `current`,
+`frequency`, `phase` and `sourcenodes`, with the time step and stop time
+given. The output file name is left out of the `write` command so it can
+be given on the command line, and no variables are named so that every
+node is saved.
 
 # Arguments
 - `netlist`: String containing the circuit netlist, excluding sources.
@@ -119,11 +120,18 @@ function wrspice_input_transient(netlist::String, current, frequency, phase,
 end
 
 """
-    wrspice_input_ac(netlist,nsteps,fstart,fstop)
+    wrspice_input_ac(netlist, nsteps, fstart, fstop, portnodes, portcurrent;
+        maxdata = 2e9)
+    wrspice_input_ac(netlist, freqs, portnodes, portcurrent; maxdata = 2e9)
 
-Generate the WRSPICE input file for an AC small signal simulation using circuit
-parameters from the given netlist, and the specified frequency range. Example
-usage:
+Generate the WRSPICE input for an AC small signal simulation of the circuit
+in `netlist`, driven by an AC current source of amplitude `portcurrent`
+between the two nodes in `portnodes`, over `nsteps` linearly spaced
+frequencies from `fstart` to `fstop` in Hz. The second form takes the
+frequencies as a single number, or as a vector or range of which only the
+first and last entries are used, with `length(freqs) - 2` passed as the
+number of points. `maxdata` is the WRSPICE limit on the size of the data
+written, in kilobytes.
 
 # Examples
 ```jldoctest
@@ -297,14 +305,8 @@ function spice_run(input,spicecmd)
     end
 
     # run the simulation
-    # simple version that lets wrspice output go to stdout.
-    # run(`$wrspicecmd -b -r $outputfilename $inputfilename`)
-    # redirect stdout to the variable reader.
+    # run in batch mode, capturing the output which would go to stdout
     reader = read(`$spicecmd -b -r $outputfilename $inputfilename`,String)
-
-    # if we need to use this in the future.
-    # reader = @async read(`$wrspicecmd -b -r $outputfilename $inputfilename`,String)
-    # fetch(reader)
 
     #parse the output
     output=spice_raw_load(outputfilename)

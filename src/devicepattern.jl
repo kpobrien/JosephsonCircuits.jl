@@ -1,11 +1,11 @@
 # Building the real sparsity structure on a backend.
 #
 # `expandrealpattern` turns the complex pattern into the real one by walking
-# it and emitting each complex entry's block of real entries. On a two tone
-# line that is 21.7 million row indices written by a four deep host loop,
-# 0.070 s, and it runs inside the rebuild at escalation with the device idle.
-# It is also embarrassingly parallel: the number of real entries each complex
-# index contributes is fixed by the layouts, so a prefix sum over those counts
+# it and emitting each complex entry's block of real entries. On a multi
+# tone line that is tens of millions of row indices, written by a host loop
+# inside the rebuild at escalation while the device sits idle. It is also
+# embarrassingly parallel: the number of real entries each complex index
+# contributes is fixed by the layouts, so a prefix sum over those counts
 # gives every output column a known place to write.
 
 """
@@ -115,17 +115,15 @@ end
 # the complex pattern, on the backend
 # ---------------------------------------------------------------------------
 #
-# `complexjacobianpattern` collects each column's candidate rows, deduplicates
-# them through a workspace the size of the matrix, sorts, and appends. The
-# workspace is what makes it serial, and it exists only because the host
-# version cannot afford per column state.
-#
-# It is not needed. The candidates arrive already sorted, in four sequences:
-# the Josephson product `adjacency[n2] x activem1[m2]`, whose entries
-# `(n1-1)*Nmodes + m1` ascend with `n1` and then `m1` when both factors do,
-# and the row lists of the three linear term matrices in that column. So a
-# column is a four way merge with deduplication, which needs four cursors and
-# no workspace at all.
+# The host `complexjacobianpattern` collects each column's candidate rows,
+# deduplicates them through a workspace the size of the matrix, sorts, and
+# appends; the shared workspace is what makes it serial. On a device no
+# workspace is needed: the candidates arrive already sorted, in four
+# sequences (the Josephson product `adjacency[n2] x activem1[m2]`, whose
+# entries `(n1-1)*Nmodes + m1` ascend with `n1` and then `m1` when both
+# factors do, and the row lists of the three linear term matrices in that
+# column), so a column is a four way merge with deduplication, which needs
+# four cursors and nothing else.
 
 # the `t`th entry of the Josephson product for a column, or `typemax` past its
 # end, enumerated so that the sequence ascends
@@ -362,10 +360,10 @@ end
     @inbounds Atomix.@atomic seg[dest[k]+1] += one(eltype(seg))
 end
 
-# `seg` arrives holding the count of each destination at one past it; leave it
-# holding the first position of each. Runs on the host: it is one pass over the
-# stored entries and it is serial by nature, but it is also the only part of
-# this that is, and it is a hundredth of what it replaces.
+# `seg` arrives holding the count of each destination at one past it; leave
+# it holding the first position of each. Runs on the host: it is serial by
+# nature, but it is one pass over the stored entries and the only serial
+# part of this.
 function exclusiveprefix!(seg::AbstractVector)
     s = Array(seg)
     s[1] = one(eltype(s))
@@ -495,8 +493,7 @@ function hostsparse(A::DeviceValuedSparseMatrix)
     return SparseMatrixCSC(transpose(At))
 end
 
-# reading an entry would read the stale host values, so refuse rather than
-# return something wrong
+# reading an entry would read the stale host values, so it is refused
 function Base.getindex(A::DeviceValuedSparseMatrix, ::Integer, ::Integer)
     throw(ArgumentError("A DeviceValuedSparseMatrix holds its values on a device; its host structure carries the sparsity pattern only and its stored values are stale. Index the device vector returned by `nonzeros` instead."))
 end

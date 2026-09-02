@@ -54,8 +54,7 @@ function designparse(circuit)
         end
     end
     # a scattering block is one entry, named by its instance path and
-    # carrying its definition. It used to be one entry per port, each
-    # carrying the whole definition, so a two port block appeared twice.
+    # carrying its definition
     for b in psc.scatteringblocks
         push!(names, b.path)
         push!(vals, b.definition)

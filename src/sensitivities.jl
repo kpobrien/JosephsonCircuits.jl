@@ -1,6 +1,6 @@
-# =========================================================================
-# Sensitivities of the scattering parameters to component values.
-# =========================================================================
+# Sensitivities of the scattering parameters to component values, by the
+# adjoint method, at a fixed pump operating point or including the shift of
+# the operating point through the implicit function theorem.
 
 """
     HBOperatingPoint(sys, x, jacobian, modelayout, Nnodal, Lmean, wmodes,
@@ -21,8 +21,8 @@ function theorem does not hold with the holomorphic Jacobian, while in the
 real representation it applies directly.
 """
 struct HBOperatingPoint
-    # the HBSystem evaluation object and the ModeLayout; untyped because
-    # hbsolve.jl is included before hbsystem.jl and realcomplexconv.jl
+    # the HBSystem evaluation object and the ModeLayout, untyped: the
+    # system's type depends on the backend and the layout's on its index type
     sys
     x::Vector{Complex{Float64}}
     jacobian::SparseMatrixCSC{Float64,Int}
@@ -36,15 +36,14 @@ struct HBOperatingPoint
     Nmodes::Int
     Nnodes::Int
     # The explicit direct current block, when the circuit has one: the
-    # canonical work, the canonical state the solve actually converged, and
-    # the canonical Jacobian there. `jacobian` above stays the harmonic one,
-    # because everything which differentiates the harmonic system alone
-    # reads it; what differentiates the whole system reads these.
+    # canonical work, the canonical state the solve converged to, and the
+    # canonical Jacobian there. `jacobian` above is the harmonic one, read
+    # by everything which differentiates the harmonic system alone; what
+    # differentiates the whole system reads these.
     dc
 end
 
-# an operating point of a circuit with no direct current block, which is
-# every one taken before the block existed
+# an operating point of a circuit with no direct current block
 HBOperatingPoint(sys, x, jacobian, modelayout, Nnodal, Lmean, wmodes, Amna,
     mnaindices, coupledbranches, Nmodes, Nnodes) =
     HBOperatingPoint(sys, x, jacobian, modelayout, Nnodal, Lmean, wmodes,
@@ -102,10 +101,9 @@ function dcresidualsensitivity(dc::DCOperatingPoint, psc::CompiledCircuit,
     # the average voltage of every node, ground dropped, from the component
     # voltages the solve carries
     nodev = plan.lift * dc.u[voltagerange(L)]
-    # the solver scale, which the whole system's rows are multiplied by and
-    # which is not the mean inductance: it is `Z0/w0` (see
-    # [`calcsolverscale`](@ref)), and using the wrong one leaves the block's
-    # own rows and their derivative scaled differently
+    # the solver scale `Z0/w0` (see `calcsolverscale`), which every row of
+    # the system is multiplied by; the block's own rows and their derivative
+    # must be scaled by the same one
     gscale = real(scale)
     I, J, V = Int[], Int[], Float64[]
     for (k, idx) in enumerate(sensitivityindices)
@@ -245,11 +243,15 @@ end
 
 """
     calcresidualsensitivity(op::HBOperatingPoint, psc, cg, nm,
-        sensitivityindices)
+        sensitivityindices, alphas = ones(Complex{Float64}, length(sensitivityindices)))
 
 Calculate the derivative of the harmonic balance residual with respect to a
 relative (logarithmic) perturbation of each component value, at the
-operating point. Combined with the implicit function theorem applied to
+operating point. `alphas` scales the direction of each column: the derivative
+of column `k` is with respect to `alphas[k]*r` applied to component
+`sensitivityindices[k]`, which is how a design parameter's direction
+`alpha = (dv/dp)/v` is folded into the residual derivative of a component
+(see [`designsensitivities`](@ref)). Combined with the implicit function theorem applied to
 `F(x, r) = 0` in the equivalent real representation,
 
     dx/dr = -inv(J)*(dF/dr),
@@ -309,16 +311,14 @@ function calcresidualsensitivity(op::HBOperatingPoint,
         return mnapadto(Ms, Ntot)
     end
 
-    # The residual derivatives are sparse by nature: each component touches
-    # only its own rows of the state (its nodes and modes, one promoted
-    # resistor's constitutive rows, or one junction branch's Kirchhoff
-    # rows), so they are accumulated as triplets of the real representation
-    # and returned as a sparse matrix. The dense alternative peaks at
-    # O(Nstate*Ncomponents) memory, which is exactly the many component
-    # regime the reverse contraction order exists for. Duplicate triplets
-    # (a component matrix with several entries in one row) are summed by
-    # sparse, and the real representation is linear, so per entry
-    # realification distributes over the sums.
+    # The residual derivatives are sparse: each component touches only its
+    # own rows of the state (its nodes and modes, or one junction branch's
+    # Kirchhoff rows), so they are accumulated as triplets of the real
+    # representation and returned as a sparse matrix, where a dense array
+    # would cost O(Nstate*Ncomponents), the many component regime the
+    # reverse contraction order exists for. Duplicate triplets (a component
+    # matrix with several entries in one row) are summed by `sparse`, which
+    # is right because the real representation is linear.
     isrealmode = op.modelayout.isreal
     nmd = length(isrealmode)
     # the offset of complex entry r in the real representation (one real
@@ -391,11 +391,10 @@ function calcresidualsensitivity(op::HBOperatingPoint,
     isnothing(op.dc) && return harmonic
 
     # In canonical coordinates the residual is `D G F(S u) + M u`, so its
-    # parameter derivative is this gathered, masked by the rows the block
-    # replaces rather than adds to, plus the block's own dependence on the
-    # component values. The gather is a permutation of the flux rows and
-    # writes nothing into the voltage rows, which is where the block's part
-    # lands.
+    # parameter derivative is the harmonic derivative gathered and masked by
+    # the rows the block replaces, plus the block's own dependence on the
+    # component values. The gather permutes the flux rows and writes
+    # nothing into the voltage rows, which is where the block's part lands.
     L = op.dc.work.layout
     N = canonicaldim(L)
     dccols = dcresidualsensitivity(op.dc, psc, nm, op.Lmean,
@@ -599,16 +598,14 @@ struct ReverseSensitivityBuffers
     gint::Vector{Complex{Float64}}
 end
 
-# the byte budget of the two nr x chunk complex right hand side and
-# solution buffers of one frequency batch of the reverse contraction
-# (together they cost 32*nr*chunk bytes, so at this budget a pump system of
-# nr = 8000 real unknowns gets a chunk of about 128 columns, and a system a
-# hundred times larger degrades gracefully toward single column solves).
-# batching amortizes the per-call overhead of the sparse triangular solves,
-# measured about 3x for tens of right hand sides, and the budget rather
-# than a fixed column count keeps the per batch memory bounded for large
-# pump systems; nbatches controls how many batches (and therefore budgets)
-# are active at once.
+# The byte budget of the two `nr` by `chunk` complex right hand side and
+# solution buffers of one frequency batch of the reverse contraction.
+# Together they cost `32*nr*chunk` bytes, so a pump system of 8000 real
+# unknowns gets a chunk of about 128 columns and a system a hundred times
+# larger degrades toward single column solves. Batching amortizes the per
+# call overhead of the sparse triangular solves, and a byte budget rather
+# than a fixed column count keeps the memory per batch bounded; `nbatches`
+# batches are active at once.
 const REVERSESENSITIVITYCHUNKBYTES = 32*2^20
 
 function ReverseSensitivityBuffers(rev::ReverseSensitivity, NPM::Integer)
@@ -664,12 +661,16 @@ function calcbranchtimedomainmap(sys, Nmodes::Integer, NLj::Integer)
 end
 
 """
-    ReverseSensitivity(op::HBOperatingPoint, lsys, dFr)
+    ReverseSensitivity(op::HBOperatingPoint, lsys, dFr,
+        slots = collect(1:size(dFr, 2)))
 
 Precompute the reverse mode contraction data: the branch flux map
 ([`calcbranchtimedomainmap`](@ref)), the transform of the pump harmonic grid,
 the row and the column of each nonzero of the linearized system matrix, and
 the offset of each entry of the augmented state in its real representation.
+`dFr` holds the residual derivative columns and `slots[k]` is the output
+slot of `Ssensitivity` column `k` accumulates into, so that several columns
+belonging to one design parameter can share a slot.
 """
 function ReverseSensitivity(op::HBOperatingPoint, lsys, dFr,
         slots::Vector{Int} = collect(1:size(dFr, 2)))
@@ -677,11 +678,10 @@ function ReverseSensitivity(op::HBOperatingPoint, lsys, dFr,
     # incidence lists, live on the pump mode grid, not the signal mode grid
     Nmodes = op.Nmodes
     sys = op.sys
-    # the per-frequency contraction reads the cached time domain sine of the
-    # branch fluxes, so pin it to the operating point here, in this serial
-    # constructor: the threads of hblinsolve only read it, and updating a
-    # shared cache from them would be a race. without this the cache would
-    # hold whatever point the shared evaluation object was last used at.
+    # the per frequency contraction reads the cached time domain sine of the
+    # branch fluxes, so it is pinned to the operating point here, in this
+    # serial constructor: the threads of hblinsolve only read the shared
+    # evaluation object, and updating it from them would be a race
     setpoint!(sys, op.x)
     _ensuresin!(sys)
     NLj = size(sys.phimatrix)[end]
@@ -989,7 +989,6 @@ function reparameterize(stamp::SensitivityStamp, alpha::Number,
         Complex{Float64}(alpha))
 end
 
-# =====================================================================
 # Scattering block design parameter sensitivities.
 #
 # A block's contribution to the system matrix is the hybrid stamp of
@@ -1000,9 +999,8 @@ end
 # removes the identity parts of B and C and cancels the zero frequency
 # rows, which do not depend on S. The stamp values depend on the signal
 # frequency through S itself, so unlike the lumped stamps they are
-# rebuilt at every frequency -- by each worker into its own buffers,
-# because the workers of hblinsolve run concurrently.
-# =====================================================================
+# rebuilt at every frequency, by each worker into its own buffers, because
+# the workers of hblinsolve run concurrently.
 
 """
     zeroscatteringblock(b::ScatteringParameters)
@@ -1417,13 +1415,18 @@ function calcsensitivityscaling!(gamma, beta, inputwave, bnm,
 end
 
 """
-    calcSsensitivity!(Ssensitivity, stamps, dA, dAphin, phin, phinadjoint,
-        S, gamma, beta, wmodes, Nmodes, symfreqvar)
+    calcSsensitivity!(Ssensitivity, stamps, dAop, dA, dAphin, phin,
+        phinadjoint, S, gamma, beta, contraction, wmodes, Nmodes, symfreqvar)
 
 Calculate the derivative of the scattering matrix with respect to a relative
 (logarithmic) perturbation of each component value, `p -> r*p` evaluated at
 `r = 1`, at the pump operating point, with the adjoint method. Overwrites
-`Ssensitivity`.
+`Ssensitivity`. `stamps` are the fixed operating point stamps of each
+component (see [`SensitivityStamp`](@ref)); `dAop` holds, per component,
+the values of the operating point contribution to `dA` in the sparsity
+structure of the linearized system matrix, or is empty when the operating
+point is held fixed; `dA`, `dAphin` and `contraction` are scratch of the
+size of the system matrix, the solution, and the output port mode pairs.
 
 Differentiating the linearized system `A*phi = b`, whose source terms do not
 depend on any component value, gives `dphi = -inv(A)*dA*phi`, so with the
@@ -1450,8 +1453,8 @@ function calcSsensitivity!(Ssensitivity, stamps, dAop, dA, dAphin, phin,
     fill!(Ssensitivity, 0)
     for (k, stamp) in enumerate(stamps)
         # a stamp declares which output slot it accumulates into: the design
-        # parameter it belongs to, or its own index in the legacy relative
-        # form where every component is its own parameter
+        # parameter it belongs to, or its own index in the relative form,
+        # where every component is its own parameter
         slot = stamp.parameter == 0 ? k : stamp.parameter
         # the component's own contribution, driven by the entries of its
         # stamp rather than by the sparsity structure of the system matrix,

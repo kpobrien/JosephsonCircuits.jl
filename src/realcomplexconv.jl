@@ -233,6 +233,9 @@ end
 """
     complex_to_real(A, rmask, cmask; conj_input=false, realrowscale=1, realcolscale=1)
         -> Matrix{T}
+
+Allocate the real matrix and call [`complex_to_real!`](@ref); the keywords
+are forwarded to it.
 """
 complex_to_real(A::AbstractMatrix{Complex{T}}, rmask::AbstractVector{Bool},
         cmask::AbstractVector{Bool}; kw...) where {T<:Real} =
@@ -289,6 +292,9 @@ end
 
 """
     real_to_complex(Ar, rmask, cmask; conj_input=false) -> Matrix{Complex{T}}
+
+Allocate the complex matrix and call [`real_to_complex!`](@ref); the
+keywords are forwarded to it.
 """
 real_to_complex(Ar::AbstractMatrix{T}, rmask::AbstractVector{Bool},
            cmask::AbstractVector{Bool}; kw...) where {T<:Real} =

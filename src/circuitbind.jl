@@ -1,19 +1,18 @@
-# Binding values, and assembling from a fixed sparsity pattern.
+# Binding values, and assembling the circuit matrices from a fixed
+# sparsity pattern.
 #
-# Everything which runs in a loop in this package is already pattern fixed:
-# `freqsubst` shares the input's `colptr` and `rowval` and replaces only
-# `nzval`, `spaddkeepzeros` keeps structural zeros so a pattern never depends
-# on a value, and the Jacobian assembly writes into a structure built once.
-# The front end was the exception -- every matrix was rebuilt from coordinate
-# triples on every call, which is why changing one inductance rebuilt every
-# sparse matrix in the circuit.
-#
-# A plan closes that gap. The pattern and the destination of every stamp are
-# computed once from the compiled topology; assembly is a scatter-add into a
-# preallocated `nzval` with no allocation, no sort and no scan for component
-# types. The contributions are accumulated in the order the coordinate form
-# would have summed duplicates, so the result is bit for bit what
-# `calcnodematrix` produced.
+# The circuit matrices can be built from coordinate triples on every call
+# (`calcnodematrix` in capindmat.jl, which `numericmatrices` uses), which
+# rebuilds every sparse matrix when one value changes. The solvers use a
+# plan instead: the pattern and the destination of every stamp are computed
+# once from the compiled topology, and assembly is a scatter-add into a
+# preallocated `nzval` with no allocation, no sort and no scan for
+# component types. This matches the rest of the solve, where `freqsubst`
+# replaces only `nzval`, `spaddkeepzeros` keeps structural zeros so a
+# pattern never depends on a value, and the Jacobian assembly writes into a
+# structure built once. The contributions are accumulated in the order the
+# coordinate form sums duplicates, so the result is bit for bit the same as
+# `calcnodematrix`'s.
 
 """
     BoundCircuit
@@ -47,12 +46,10 @@ function Base.show(io::IO, b::BoundCircuit)
         length(b.circuit.ports), " ports)")
 end
 
-# The element type the assembly chooses for a group. This is `calcvaluetype`
-# restricted to the group's own components rather than scanning the whole
-# table for them: the compiled circuit already knows which components those
-# are, and the scans are seven passes over every component in the circuit.
-# The promotion logic is reproduced exactly, quirks included, because the
-# assembled matrices must keep their element types.
+# The element type the assembly chooses for a group: `calcvaluetype`
+# restricted to the group's own components rather than a scan of the whole
+# table, with the same promotion logic, quirks included, so that the
+# assembled matrices have the same element types either way.
 function grouptype(values, idx, checkinverse::Bool)
     seen = Dict{DataType,Nothing}()
     valuetype = Nothing
@@ -195,9 +192,9 @@ function nodalstampplan(c::CompiledCircuit, group::Vector{Int}, Nnodes::Int;
         invert::Bool = false)
 
     n = Nnodes - 1
-    # the coordinate form the old assembly built, in the order it built it:
-    # one diagonal entry for a grounded component, two diagonal and two off
-    # diagonal for a floating one
+    # the coordinate form `calcnodematrix` builds, in the order it builds
+    # it: one diagonal entry for a grounded component, two diagonal and two
+    # off diagonal for a floating one
     I = Int[]; J = Int[]; S = Int[]; G = Bool[]
     for (k, i) in enumerate(group)
         n1, n2 = c.nodeindices[1, i], c.nodeindices[2, i]
@@ -213,9 +210,9 @@ function nodalstampplan(c::CompiledCircuit, group::Vector{Int}, Nnodes::Int;
         end
     end
 
-    # the pattern, and where each contribution lands in it. Building it from
-    # the same coordinate triples the old assembly used is what makes the two
-    # patterns identical, including any structural zero.
+    # the pattern, and where each contribution lands in it; built from the
+    # same coordinate triples as the coordinate form, so the two patterns
+    # are identical, structural zeros included
     pattern = sparse(I, J, ones(Int, length(I)), n, n)
     dest = Vector{Int}(undef, length(I))
     for k in eachindex(I)
@@ -240,12 +237,11 @@ result is bit for bit the old assembly's.
 function assemblenodal!(nzval::Vector, seen::Vector{Bool},
         plan::NodalStampPlan, values)
     # The first contribution to a position is assigned and later ones are
-    # added to it, rather than accumulating onto a zero. That is what the
-    # coordinate form did -- `sparse` combines duplicates starting from the
-    # first value -- and it is why this works for element types which have
-    # no zero: an empty group, whose element type is Nothing, and a circuit
-    # whose values are still symbolic, which has to reach the diagnostic
-    # which names the undefined one rather than failing here.
+    # added to it, rather than accumulating onto a zero, as `sparse` does
+    # when it combines duplicates. This is what makes it work for element
+    # types with no zero: an empty group, whose element type is `Nothing`,
+    # and a circuit whose values are still symbolic, which must reach the
+    # diagnostic naming the undefined value rather than fail here.
     fill!(seen, false)
     @inbounds for k in eachindex(plan.dest)
         v = values[plan.src[k]]
@@ -348,20 +344,20 @@ end
 
 # === inverse nodal inductance ===
 #
-# The solvers represent mutually coupled inductor branches by auxiliary MNA
-# branch currents with their un-inverted branch inductance matrix as explicit
-# constitutive equations, so those branches are dropped here and no
-# inductance matrix is ever inverted. What is left,
+# The solvers represent mutually coupled inductor branches by auxiliary
+# branch currents with their (uninverted) branch inductance matrix as
+# explicit constitutive equations, so those branches are dropped here and
+# no inductance matrix is inverted. What is left,
 #
 #     transpose(Rbn) * diagm(1/L) * Rbn
 #
 # over the retained inductive branches, is the same stamp shape as a nodal
 # capacitance: a branch deposits +1/L on the diagonal of each of its nodes
 # and -1/L on the two off diagonal entries. So it is planned with the same
-# machinery, reading the node pair and the signs out of the incidence matrix
-# and taking the reciprocals of the branch inductances as its values. That
-# is also the order the triple product forms them in -- reciprocal first,
-# then the sign of the incidence product -- so the arithmetic matches.
+# machinery, reading the node pair and the signs out of the incidence
+# matrix and taking the reciprocals of the branch inductances as values,
+# formed in the order the triple product forms them (reciprocal first,
+# then the sign of the incidence product) so the arithmetic matches.
 
 """
     InverseInductancePlan
@@ -452,9 +448,11 @@ struct CircuitMatrixPlan{Ti<:Integer}
 end
 
 """
-    circuitmatrixplan(c::CompiledCircuit, cg::CircuitGraph; Nmodes = 1)
+    circuitmatrixplan(c::CompiledCircuit, cg::CircuitGraph, b::BoundCircuit;
+        Nmodes = 1)
 
-Build the [`CircuitMatrixPlan`](@ref) of a compiled circuit.
+Build the [`CircuitMatrixPlan`](@ref) of a compiled circuit, given its
+bound values `b`.
 
 The conductance plan covers the resistors and the port owned environments
 together, because at this stage an environment is realized as an ordinary
@@ -464,9 +462,9 @@ function circuitmatrixplan(c::CompiledCircuit, cg::CircuitGraph,
         b::BoundCircuit; Nmodes::Int = 1)
     inductance = branchstampplan(c, c.inductors, cg.edge2indexdict,
         cg.Nbranches)
-    # which branches are mutually coupled is a structural fact, but it is
-    # read off the mutual inductance matrix, so the plan is built from a
-    # bound circuit and is valid while `structuralkey` is unchanged
+    # which branches are mutually coupled is read off the mutual inductance
+    # matrix, so the plan is built from a bound circuit and is valid while
+    # `structuralkey` is unchanged
     Mb = calcMb(c.componenttypes, c.nodeindices, b.values,
         c.componentnamedict, c.mutualinductorbranchnames, cg.edge2indexdict,
         1, cg.Nbranches)
@@ -523,8 +521,8 @@ function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
     invLnm = assembleinvinductance(TL, plan.invinductance, Lb, Nmodes)
 
     Lmean = calcLmean(ct, vvn)
-    # by role, not by geometry: the port states its reference impedance and
-    # what realizes it, and nothing here looks at what shares its branch
+    # a port states its reference impedance and what realizes it; nothing
+    # here looks at what shares its branch
     portindices, portnumbers = portindicesnumbers(c)
     portimpedances = portreferenceimpedances(c, vvn)
     noiseportimpedanceindices = noiseindices(c, vvn)
@@ -549,8 +547,7 @@ same inputs for the same reasons.
 function preparecircuit(circuit, circuitdefs; sorting::Symbol = :name,
         Nmodes::Int = 1)
     c = compile(circuit; sorting = sorting)
-    # the loop enumeration is quadratic in the number of inductive loops and
-    # nothing reads it
+    # nothing here reads the loops of the circuit graph
     cg = calccircuitgraph(c; loops = false)
     b = bind(c, circuitdefs)
     nm = assemblematrices(circuitmatrixplan(c, cg, b; Nmodes = Nmodes), b)
@@ -558,7 +555,7 @@ function preparecircuit(circuit, circuitdefs; sorting::Symbol = :name,
 end
 
 """
-    assemblegrid(compiled, cg, circuitdefs, Nmodes)
+    assemblegrid(c::CompiledCircuit, cg::CircuitGraph, circuitdefs, Nmodes)
 
 The numeric matrices of a compiled circuit at a different mode count.
 

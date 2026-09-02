@@ -1,16 +1,16 @@
-# Everything here exists only to keep the legacy tuple netlist working. The
-# typed `Circuit` is the input format; a netlist of `(name, node1, node2,
-# value)` tuples is adapted into one here and then takes exactly the same
-# path. Nothing outside this file should grow a dependency on it, so that
-# when the legacy format is deprecated the file can be deleted whole.
+# The legacy tuple netlist.
 #
-# What that costs today: `LegacyNL`, which has no typed counterpart because
-# component behavior is never inferred from an instance name outside this
-# file; the name prefix table and the two functions that read it; and the
-# port impedance convention where a port takes the resistor beside it.
+# The typed `Circuit` is the input format of the package. A netlist of
+# `(name, node1, node2, value)` tuples, the original input format, is
+# converted into a `Circuit` here and then follows the same path as one.
+# Everything specific to the tuple format lives in this file, so that the
+# format can be removed by deleting the file: the `LegacyNL` component, the
+# name prefix table with the two functions that read it, and the
+# convention that a port's reference impedance is the resistor placed
+# across it.
 
-# unwrap a wrapped symbolic value; the Symbolics extension adds the `Num`
-# method
+# Unwrap a wrapped symbolic value to whatever it holds. The Symbolics
+# extension adds the method for `Num`; everything else is already unwrapped.
 unwrapvalue(value) = value
 
 
@@ -19,33 +19,33 @@ unwrapvalue(value) = value
 """
     LegacyNL(value)
 
-An internal two terminal component holding the raw value of a legacy "NL"
-netlist entry verbatim. The legacy parser accepts "NL" components but the
-solver on this branch does not define their value semantics, so the adapter
-preserves the value for exact round trips. Use
-[`NonlinearInductor`](@ref) for nonlinear elements in the typed
-representation.
+An internal two terminal component holding the value of a legacy `"NL"`
+netlist entry verbatim. The tuple format accepts `NL` components and they
+are carried through compilation as the `:NL` type, but the solvers do not
+define what their value means. In the typed representation use
+[`NonlinearInductor`](@ref).
 """
 struct LegacyNL{T} <: AbstractComponent
     value::T
 end
 nterminals(::LegacyNL) = 2
-# the only component type the legacy netlist has that the typed circuit
-# does not, so it adds the one lowering method the compiler lacks
+# the one component the tuple format has and the typed circuit does not,
+# with the lowering method the compiler would otherwise lack
 lowercomponent(def::LegacyNL, path) = :NL, def.value
 
+# The component type prefixes of the tuple format. Two letter prefixes must
+# come before one letter prefixes with the same first letter; see
+# `checkcomponenttypes`.
 const legacyallowedcomponents = ["Lj","NL","L","C","K","I","R","P"]
 
 """
     parsecomponenttype(name::String,allowedcomponents::Vector{String})
 
-The first one or two characters of the component name in the string `name`
-should match one of the strings in the vector `allowedcomponents`. Return the
-index first of the match found.
-
-NOTE: if a two letter component appears in allowedcomponents after a one
-letter component with the same starting letter this function will match on the
-first value.
+The index in `allowedcomponents` of the one or two letter prefix which
+matches the start of the component name `name`. Prefixes are tried in
+order and the first match wins, so a two letter prefix listed after a one
+letter prefix with the same first letter can never match;
+[`checkcomponenttypes`](@ref) detects that ordering mistake.
 
 # Examples
 ```jldoctest
@@ -66,7 +66,6 @@ julia> [JosephsonCircuits.parsecomponenttype(c,["Lj","NL","L","C","K","I","R","P
 """
 function parsecomponenttype(name::String,allowedcomponents::Vector{String})
 
-    # loop over the labels
     @inbounds for j in eachindex(allowedcomponents)
         l=allowedcomponents[j]
         if l[1] == name[1]
@@ -87,11 +86,10 @@ end
 """
     checkcomponenttypes(allowedcomponents::Vector{String})
 
-Check that each element in `allowedcomponents` is found at the correct place.
-This will detect the case where a two letter component appears in
-`allowedcomponents` after a one letter component with the same starting letter.
-The function parsecomponenttype() will match on the first value and this
-function will throw an error.
+Check that [`parsecomponenttype`](@ref) maps each prefix in
+`allowedcomponents` back to its own index, and throw an `ArgumentError`
+otherwise. This fails when a two letter prefix is listed after a one letter
+prefix with the same first letter, which would shadow it.
 
 # Examples
 ```jldoctest
@@ -108,6 +106,7 @@ function checkcomponenttypes(allowedcomponents::Vector{String})
     return true
 end
 
+# the typed component model of one tuple netlist entry
 function legacycomponent(typesymbol::Symbol, name, node1, node2, value)
     if typesymbol == :L
         return Inductor(value)
@@ -130,6 +129,8 @@ function legacycomponent(typesymbol::Symbol, name, node1, node2, value)
     end
 end
 
+# the port number of a `P` entry, whose value must be an integer however it
+# is written (an Int, a whole Float64, a whole real Complex)
 function legacyportnumber(name, value)
     v = unwrapvalue(value)
     if v isa Integer
@@ -144,20 +145,23 @@ function legacyportnumber(name, value)
 end
 
 """
-    Circuit(netlist::AbstractVector{<:Tuple})
-    Circuit(netlist::AbstractVector{<:Tuple}, circuitdefs)
+    Circuit(netlist::AbstractVector)
+    Circuit(netlist::AbstractVector, circuitdefs)
 
-Construct a typed [`Circuit`](@ref) from a legacy tuple netlist, where each
-entry is `(name, node1, node2, value)` and the component type is inferred
-from the name prefix: Lj, NL, L, C, K, I, R, and P. Component name
-prefixes are interpreted only inside this
-adapter; typed component models never infer behavior from instance names.
+Construct a typed [`Circuit`](@ref) from a legacy tuple netlist. Each entry
+is `(name, node1, node2, value)` and the component type is taken from the
+prefix of `name`: `Lj` (Josephson junction), `NL`, `L`, `C`, `K` (mutual
+inductor, whose "nodes" are the two inductor names), `I`, `R`, and `P`
+(port, whose value is the port number). Only this adapter reads a name
+prefix; typed component models never infer behavior from an instance name.
 
-Node labels become net names, so lowering the result back with
-[`compile`](@ref) reproduces the legacy parse exactly. When
-`circuitdefs` is supplied, symbolic values are substituted with
-[`valuetonumber`](@ref) during conversion; otherwise values pass through
-verbatim and `circuitdefs` may be supplied to the analysis as usual.
+Node labels become net names, so [`compile`](@ref) of the result gives the
+same tables the tuple netlist always produced. A port's reference
+impedance is the value of the single resistor placed across it, which the
+adapter records as the port's [`LegacyTermination`](@ref). When
+`circuitdefs` is given, values are resolved with [`valuetonumber`](@ref)
+during conversion; otherwise they pass through unchanged and
+`circuitdefs` is given to the analysis as usual.
 
 # Examples
 ```jldoctest
@@ -166,9 +170,9 @@ true
 ```
 """
 function Circuit(netlist::AbstractVector)
-    # The element type is not restricted to a tuple: a netlist assembled by
-    # pushing onto a Vector{Any}, which the original parser accepts, is a
-    # netlist. legacycircuit checks each entry and says what is wrong with it.
+    # The element type is not restricted to `Tuple`: a netlist built by
+    # pushing onto a `Vector{Any}` is accepted, and `legacycircuit` checks
+    # each entry and reports what is wrong with it.
     return legacycircuit(netlist, nothing)
 end
 
@@ -176,17 +180,18 @@ function Circuit(netlist::AbstractVector, circuitdefs::AbstractDict)
     return legacycircuit(netlist, circuitdefs)
 end
 
-# A legacy netlist states no port reference impedance: it is the resistor the
-# user placed across the port, which the legacy solver finds by looking for a
-# resistor on the port's branch. That search is the one piece of geometric
-# discovery which stays, because legacy syntax carries no role marker, and
-# doing it here once means the typed circuit downstream carries an explicit
-# reference impedance like any other. The port itself is constructed
-# unterminated, so the netlist's own resistor remains its only load.
+# A tuple netlist has no syntax for a port's reference impedance: by
+# convention it is the one resistor placed across the port. This finds that
+# resistor for every port, once, and rewrites the port with its value as
+# `Z0` and the resistor as its `LegacyTermination`, so that downstream
+# nothing needs to look for a resistor on a port's branch. The port is
+# constructed without a matched termination of its own, so the netlist's
+# resistor remains its only load.
 function legacyportimpedances!(components, netlist)
-    # every candidate, not the first: a legacy netlist with two resistors on
-    # a port's branch was refused, and taking one of them silently would
-    # reinterpret a netlist which used to be an error
+    # Collect every resistor on each branch rather than the first one: a
+    # port with two resistors across it has always been an error in this
+    # format, and picking one silently would change the meaning of such a
+    # netlist.
     resistorsat = Dict{Tuple{String,String},Vector{Any}}()
     for (i, entry) in enumerate(netlist)
         components[i].second isa Resistor || continue
@@ -199,8 +204,7 @@ function legacyportimpedances!(components, netlist)
         p = components[i].second
         p isa Port || continue
         rs = get(resistorsat, (string(entry[2]), string(entry[3])), nothing)
-        # a legacy netlist has no syntax for a reference impedance, so a port
-        # with no resistor across it has none, which was and stays an error
+        # a port with no resistor across it has no reference impedance
         if isnothing(rs)
             throw(ArgumentError(lazy"Ports without resistors detected. Each port must have a resistor to define the impedance. Port $(p.number) has none; place a resistor across it, or write the circuit in the typed format, where a port states its own reference impedance."))
         end
@@ -216,6 +220,9 @@ function legacyportimpedances!(components, netlist)
     return components
 end
 
+# Convert the tuple netlist to components and connection groups. Each
+# distinct node label becomes one `Net` holding every terminal on it, in
+# order of first appearance, with `Ground` appended to net "0".
 function legacycircuit(netlist, circuitdefs)
     checkcomponenttypes(legacyallowedcomponents)
     components = Vector{Pair{String,Any}}(undef, length(netlist))
@@ -258,9 +265,9 @@ function legacycircuit(netlist, circuitdefs)
         if label == "0"
             push!(group, Ground)
         end
-        # vector endpoint groups: a tuple of thousands of endpoints (a large
-        # ground net) would create a fresh NTuple type and force
-        # recompilation against it
+        # the endpoints are a vector, not a tuple: a large ground net as an
+        # `NTuple` of thousands of endpoints would be a new type to compile
+        # against
         connections[i] = Net(label, group)
     end
     return Circuit(components, connections, nothing)

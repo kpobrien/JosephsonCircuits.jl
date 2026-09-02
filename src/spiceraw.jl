@@ -67,7 +67,6 @@ function spice_raw_load(filename)
     ncurrents = 0
     nvoltages = 0
     ntimes = 0
-    # separator = " "
 
     #loop over the contents of the header
     i=0
@@ -178,7 +177,6 @@ function spice_raw_load(filename)
     sortperms = calcspicesortperms(variables)
 
     # use the sort permutation to sort the rest of the data
-    # values = Dict()
     for (label,sp) in sortperms
         values[label] = sf[indices[label][sp],:]
         variables[label] = variables[label][sp]
@@ -207,7 +205,6 @@ function calcspicesortperms(variabledict::Dict{String,Vector{String}})
         end
         #loop over the sorted outer arrays
         sp = Int[]
-        # for (key,val) in sort(collect(sortvariables), by=x->x)
         for (key,val) in sort(collect(sortvariables), by=identity)
             #sort the dictionary
             p = sortperm(val)

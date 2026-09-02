@@ -128,19 +128,16 @@ struct KrylovSolveInfo
     backtracks::Int
     armijo::Bool
     time::Float64
-    # The preconditioner at the time of this solve. `escalated` alone cannot
-    # distinguish an escalation which was never requested from one which was
-    # requested and refused, and the difference between those two is the
-    # whole of the behaviour below.
+    # whether an escalation was requested for this solve; with `escalated`
+    # this distinguishes an escalation never requested from one requested
+    # and refused
     escalationrequested::Bool
     # the width of the deflation subspace and how many times it has been
-    # rebuilt: the only visible sign of what recycling costs
+    # rebuilt, which is what recycling costs
     deflationsize::Int
     deflationrebuilds::Int
-    # wall time applying the preconditioner. A configuration which takes more
-    # iterations in less time is running against a weaker and cheaper
-    # preconditioner, which an iteration count alone cannot distinguish from
-    # one which is simply worse.
+    # wall time applying the preconditioner, which tells a weaker and cheaper
+    # preconditioner from a worse one when the iteration counts look alike
     precondtime::Float64
 end
 
@@ -169,8 +166,8 @@ Total Arnoldi steps across every linear solve in a vector of
 krylovtotaliterations(records) = sum(k -> k.iterations, records; init = 0)
 
 
-# the step outcome is only known after the linesearch, so the record of the
-# solve which produced it is completed in place rather than deferred
+# the step outcome is only known after the linesearch, so the record is
+# completed then
 function _withstep(k::KrylovSolveInfo, slope, alpha, backtracks, armijo)
     return KrylovSolveInfo(k.iteration, k.role, k.normF, k.forcing,
         k.residualratio, k.iterations, k.cycles, k.reason, k.refreshed,
@@ -286,19 +283,17 @@ struct GMRESWorkspace{T<:AbstractFloat,TV<:AbstractVector{T},TM<:AbstractMatrix{
     w::TV
     z::TV
     u::TV
-    # the projected quantities, which are `m` x `m` at most. These stay on the
-    # host: the Givens rotations and the back substitution index them entry by
-    # entry, which is exactly what a device array must not be asked to do, and
-    # they are small enough that keeping them host resident costs one small
-    # transfer per Arnoldi step rather than a kernel launch per entry.
+    # the projected quantities, at most `m` by `m`, kept on the host: the
+    # Givens rotations and the back substitution index them entry by entry,
+    # which a device array must not be asked to do, and they are small
+    # enough that the cost is one small transfer per Arnoldi step
     H::Matrix{T}
     cs::Vector{T}
     sn::Vector{T}
     s::Vector{T}
     y::Vector{T}
-    # device resident staging buffers for the two block Gram-Schmidt
-    # projections, so the coefficient vectors are formed where `V` lives and
-    # only the finished column of `H` crosses to the host
+    # staging buffers for the block Gram-Schmidt projections, allocated like
+    # `V`, so that only the finished column of `H` crosses to the host
     hd::TV
     cd::TV
 end
@@ -407,12 +402,11 @@ mutable struct RecyclingPreconditioner{TI,TJ,T<:AbstractFloat,TM<:AbstractMatrix
     U::TM
     Z::TM
     W::TM
-    # the k x k projected inverse and its two work vectors, which are small.
-    # `Ginv` lives with the basis rather than on the host: the apply
-    # multiplies it against `a` and `b`, which are device resident, so keeping
-    # it on the host would mix the two in a `mul!`. Only the dense
-    # factorizations that *build* it run on the host; see
-    # `_rebuilddeflation!`.
+    # the k by k projected inverse and its two work vectors. `Ginv` lives
+    # with the basis rather than on the host, because the apply multiplies
+    # it against the device resident `a` and `b`; only the dense
+    # factorizations which build it run on the host (see
+    # `_rebuilddeflation!`)
     Ginv::TM
     a::TV
     b::TV
@@ -454,34 +448,20 @@ function RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
         Int(kmax), Int(kharvest), Int(escalateafter), 0, 0)
 end
 
-# Escalating the base and recycling are two answers to the same problem, and
-# `escalateafter` lets recycling defer the base's escalation to absorb the
-# deficiency itself. The default is 1 -- no deferral. It used to be 3, from a
-# measurement in the restart-30 era where a failed linear solve cost at most
-# ~120 iterations and a premature escalation cost more than the rest of the
-# solve (3.25 s against 1.36 s at 128 cells). At the current restart of 400
-# with 4 cycles, one deferred escalation costs up to 1600 Arnoldi iterations,
-# and the deferral only pays if the deflation improves between failures.
-# Measured on a strongly driven 64 junction RPM line it does not: three
-# consecutive deferred solves achieved residual ratios of 0.38, 0.84 and 0.99
-# -- monotonically worse -- and the deferral tripled the total linear
-# iteration count (2306 to 6384) before escalating anyway. When the deflation
-# genuinely absorbs the deficiency (128 junctions, kmax = 40), every solve
-# converges and no escalation request ever arrives, so no deferral is needed
-# for recycling to win.
+# Escalating the base and recycling are two answers to the same problem,
+# and `escalateafter` lets recycling defer the base's escalation in the
+# hope that the deflation absorbs the deficiency. The default is 1, no
+# deferral: with a long restart cycle a deferred escalation costs up to a
+# full linear solve budget of Arnoldi iterations, and it only pays if the
+# deflation improves between failures, which in practice it does not; when
+# the deflation does absorb the deficiency no escalation is requested at
+# all.
 function escalatepreconditioner!(pc::RecyclingPreconditioner)
     # Withholding an escalation is only defensible when there is a deflation
-    # subspace which might cover the deficiency instead. While `U` is empty
-    # the recycling has nothing to absorb it with, so the throttle delays a
-    # real remedy for a mechanism which is not running.
-    #
-    # The delay is expensive. On a two tone travelling wave amplifier the
-    # first escalation takes the mode coupling preconditioner from block
-    # diagonal to fully coupled, after which every Newton step converges in
-    # one Krylov iteration. Absorbing the first two requests left five Newton
-    # steps solving against the unescalated preconditioner, reaching relative
-    # residuals of 0.46, 0.48, 0.79, 0.89 and 0.93 and spending 324
-    # iterations to do it.
+    # subspace which might cover the deficiency instead; while `U` is empty
+    # the throttle would delay a real remedy for a mechanism which is not
+    # running, and the delay is expensive, since each deferred request is a
+    # Newton step solved against an inadequate preconditioner.
     if size(pc.U, 2) == 0
         pc.escalationrequests = 0
         return escalatepreconditioner!(pc.inner)
@@ -499,12 +479,11 @@ deflationrebuilds(pc::RecyclingPreconditioner) = pc.rebuilds
 
 function updatepreconditioner!(pc::RecyclingPreconditioner, x::AbstractVector)
     updatepreconditioner!(pc.inner, x)
-    # Against an exact inner the correction is identically zero: Y = J*P^-1*U
-    # = U, so W = Z - P^-1*Y = 0. Rebuilding it anyway costs 2k inner solves
-    # and k Jacobian products per Newton step for nothing, which after an
-    # escalation to the full Jacobian -- where every linear solve takes one
-    # iteration -- is the dominant cost of the whole step. The subspace `U` is
-    # kept, in case the base is ever rebuilt restricted again.
+    # Against an exact inner preconditioner the correction is identically
+    # zero: Y = J*P^-1*U = U, so W = Z - P^-1*Y = 0. Rebuilding it anyway
+    # would cost 2k inner solves and k Jacobian products per Newton step,
+    # which after an escalation to the full Jacobian is most of the step.
+    # The subspace `U` is kept in case the base is rebuilt restricted again.
     if isexactpreconditioner(pc.inner)
         n = size(pc.U, 1)
         pc.Z = similar(pc.U, n, 0); pc.W = similar(pc.U, n, 0)
@@ -516,19 +495,18 @@ function updatepreconditioner!(pc::RecyclingPreconditioner, x::AbstractVector)
     return pc
 end
 
-# A small dense matrix built on the host, moved to wherever `proto` lives.
-# `eigen`, `svd` and `cholesky` are scalar indexed dense kernels, so the k x k
-# projected quantities are brought across, factorized on the host and the
-# result sent back. This is the same split `GMRESWorkspace` makes for the
-# Hessenberg and the Givens rotations, and for the same reason: what crosses
-# is k x k once per rebuild, not anything of the system dimension.
+# A small dense matrix built on the host and moved to wherever `proto`
+# lives. `eigen`, `svd` and `cholesky` are scalar indexed dense kernels, so
+# the k by k projected quantities are factorized on the host and the
+# result sent back, the same split `GMRESWorkspace` makes for the
+# Hessenberg and the Givens rotations.
 _hostbuilt(proto::AbstractMatrix, A::AbstractMatrix) =
     copyto!(similar(proto, size(A)...), A)
 
-# rebuild Z, W and inv(G) at the current point. Y = J*Z is recomputed rather
-# than carried over from the previous step's Arnoldi: the free but stale
-# version was measured to roughly double the Krylov iteration count, which
-# costs more than the mat-vecs it saves.
+# Rebuild Z, W and inv(G) at the current point. Y = J*Z is recomputed
+# rather than carried over from the previous step's Arnoldi: the stale
+# version is free but costs far more Krylov iterations than the products it
+# saves.
 function _rebuilddeflation!(pc::RecyclingPreconditioner{TI,TJ,T}) where {TI,TJ,T}
     k = size(pc.U, 2)
     n = size(pc.U, 1)
@@ -540,9 +518,9 @@ function _rebuilddeflation!(pc::RecyclingPreconditioner{TI,TJ,T}) where {TI,TJ,T
     end
     Z = similar(pc.U)
     Y = similar(pc.U)
-    # the base solve and the product are handed contiguous vectors rather than
-    # column views: a device direct solver wants a vector it can bind a
-    # descriptor to, and a strided view falls through to a scalar kernel
+    # the base solve and the product are handed contiguous vectors rather
+    # than column views, which a device direct solver cannot bind a
+    # descriptor to
     cin = similar(pc.U, n)
     cout = similar(pc.U, n)
     for j in 1:k
@@ -1121,7 +1099,15 @@ supportsrecycling(::AbstractHBLinearSolver) = false
 supportsrecycling(::InternalGMRES) = true
 
 """
-    nlsolvekrylov!(fj!, jvp!, F, x, pc::AbstractPreconditioner; kwargs...)
+    nlsolvekrylov!(fj!, jvp!, F, x, pc::AbstractPreconditioner;
+        iterations = 1000, ftol = 1e-8, rtol = 0.0,
+        linearsolver = InternalGMRES(), label = "", c1 = 1e-4,
+        safeguard_low = 0.1, safeguard_high = 0.5, maxbacktracks = 10,
+        maxbacktrackfailures = 2, krylovrestart = 400,
+        krylovmaxrestarts = 4, krylovrefreshiterations = 1,
+        krylovrtolmin = 1e-10, krylovrtolmax = 0.9, krylovrtol0 = 0.3,
+        krylovgamma = 0.9, krylovalpha = (1 + sqrt(5))/2,
+        krylovstagnation = 0.9, krylovescalate = 1, krylovrefreshrate = 0.5)
 
 Inexact (Newton-Krylov) solver for a real system: the Newton step is taken
 from [`gmres!`](@ref) on the exact matrix-free product `jvp!(y, v)` rather
@@ -1157,42 +1143,50 @@ acceleration here: the Krylov steps are near-exact Newton steps, and the
 solver is kept simple.
 
 # Keywords
-- `iterations = 1000`: maximum number of Newton iterations.
-- `ftol = 1e-8`: convergence when `norm(F) <= ftol`.
-- `rtol = 0.0`: an additional relative test, `norm(F) <= rtol*norm(F0)`,
-    satisfied when either holds. A residual whose terms are of size `s`
-    cannot be driven below about `eps*s` however exactly the step is taken,
-    so an absolute tolerance is a statement about the problem's units rather
-    than about the solve. Measured on a circuit carrying direct current
-    through a scattering block, the explicit block reaches `2.4e-16` of its
-    initial residual -- machine precision -- at every drive level, while the
-    absolute residual it stops at moves with the drive. Off by default: at
-    `rtol = 0` this is exactly the previous test.
-- `label = ""`: label for the returned `IterationInfo`.
-- `c1 = 1e-4`: Armijo sufficient-decrease constant, in (0, 1/2).
-- `safeguard_low = 0.1`, `safeguard_high = 0.5`: backtracking step clamp as
-  fractions of the previous trial.
-- `maxbacktracks = 10`: trial-point budget per line search.
-- `maxbacktrackfailures = 2`: consecutive-failure stall threshold.
-- `krylovrestart = 400`: GMRES restart length. A long cycle is the tuned
-  default: the block diagonal preconditioner leaves a few near-null
-  directions a short Krylov space cannot resolve, the linear solve stalls,
-  and escalation to the full Jacobian is what rescues it -- a long cycle
-  attacks the stall directly and the basis (`krylovrestart + 1` vectors of
-  the system dimension) is cheap next to the sparse factorization
-  escalation would build.
-- `krylovmaxrestarts = 4`: GMRES restart budget per solve.
-- `krylovrefreshiterations = 1`: GMRES iteration count above which the
-  preconditioner is considered stale and refreshed before the next step;
-  the tuned default refreshes eagerly.
-- `krylovrtolmin = 1e-10`, `krylovrtolmax = 0.9`, `krylovrtol0 = 0.3`:
-  clamp and initial value of the forcing sequence.
-- `krylovgamma = 0.9`, `krylovalpha = (1 + sqrt(5))/2`: Eisenstat-Walker
-  forcing parameters.
+- `iterations = 1000`: the maximum number of Newton iterations.
+- `ftol = 1e-8`: converged when `norm(F) <= ftol`.
+- `rtol = 0.0`: an additional relative test, `norm(F) <= rtol*norm(F0)`
+    with `F0` the initial residual, satisfied when either holds. A
+    residual whose terms are of size `s` cannot be driven below about
+    `eps*s` however exact the step, so an absolute tolerance is a statement
+    about the problem's units; a relative one is not.
+- `linearsolver = InternalGMRES()`: the linear solver of the Newton step,
+    [`InternalGMRES`](@ref) or [`KrylovJL`](@ref).
+- `label = ""`: the label of the returned `IterationInfo`.
+- `c1 = 1e-4`: the Armijo sufficient decrease constant, in (0, 1/2).
+- `safeguard_low = 0.1`, `safeguard_high = 0.5`: the backtracking step
+    clamp, as fractions of the previous trial.
+- `maxbacktracks = 10`: the trial point budget per line search.
+- `maxbacktrackfailures = 2`: the number of consecutive line search
+    failures after which the iteration is declared stalled.
+- `krylovrestart = 400`: the GMRES restart length. A long cycle is the
+    default because a restricted preconditioner leaves a few directions a
+    short Krylov space cannot resolve, and a restart discards the progress
+    on them; the basis of `krylovrestart + 1` vectors is cheap next to the
+    sparse factorization an escalation would build.
+- `krylovmaxrestarts = 4`: the GMRES restart budget per solve.
+- `krylovrefreshiterations = 1`: the GMRES iteration count above which the
+    preconditioner is considered stale and rebuilt before the next step;
+    the default rebuilds eagerly.
+- `krylovrefreshrate = 0.5`: the preconditioner is also rebuilt when the
+    mean residual ratio per Arnoldi step of the last linear solve,
+    `(residual/norm(F))^(1/iterations)`, exceeded this value; a better
+    staleness signal than the iteration count alone when the forcing term
+    is loose.
+- `krylovrtolmin = 1e-10`, `krylovrtolmax = 0.9`, `krylovrtol0 = 0.3`: the
+    clamp and the initial value of the forcing sequence.
+- `krylovgamma = 0.9`, `krylovalpha = (1 + sqrt(5))/2`: the
+    Eisenstat-Walker forcing parameters.
+- `krylovstagnation = 0.9`: a GMRES solve which did not reduce the linear
+    residual below this fraction of the residual norm is treated as
+    stagnated, and the preconditioner solve is taken as the step instead.
+- `krylovescalate = 1`: the number of consecutive linear solves which make
+    progress but fail to reach their tolerance after which the
+    preconditioner is escalated (see [`escalatepreconditioner!`](@ref));
+    `typemax(Int)` disables escalation.
 
-These are the values `hbnlsolve` runs with: the signature is the single
-source of truth for the tuned defaults, so a direct caller gets the same
-solver the package uses.
+These defaults are the ones `hbnlsolve` runs with; `krylovkwargs` there
+overrides any of them.
 
 Returns an [`IterationInfo`](@ref) with the same per-iteration diagnostics
 as [`nlsolve!`](@ref); the `andersonaccepted` record is always false.
@@ -1279,19 +1273,16 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # consecutive linear solves which failed to reach the forcing tolerance,
     # which trigger an escalation of the preconditioner
     linearfailures = 0
-    # Slope-aware safeguard on the forcing sequence. The Eisenstat-Walker
-    # term reads only the residual reduction, which makes a crawl
-    # self-perpetuating: a loose solve gives a weak direction, the line
-    # search accepts a short step, the residual barely falls, and the loose
-    # forcing is reproduced -- measured as tens of outer iterations at
-    # alpha ~ 0.2-0.4 with normalized slopes of -0.5 to -0.7 on a line of
-    # scattering block capacitors. The inexact Newton bound
-    # |slope| >= 1 - eta ties the direction quality to the forcing
-    # directly, so when a step comes back weak (a backtracked line search
-    # or a shallow slope) the cap tightens by a factor of four, and it
-    # relaxes by a factor of two once full steps resume. Well behaved
-    # problems take full steps at slope ~ -1 from the start and never feel
-    # the cap.
+    # A slope aware cap on the forcing sequence. The Eisenstat-Walker term
+    # reads only the residual reduction, which makes a crawl self
+    # perpetuating: a loose solve gives a weak direction, the line search
+    # accepts a short step, the residual barely falls, and the loose forcing
+    # is reproduced. The inexact Newton bound |slope| >= 1 - eta ties the
+    # direction quality to the forcing directly, so when a step comes back
+    # weak (a backtracked line search or a shallow slope) the cap tightens
+    # by a factor of four, and it relaxes by a factor of two once full steps
+    # resume. A well behaved problem takes full steps at slope about -1 from
+    # the start and never feels the cap.
     forcingcap = krylovrtolmax
 
     Mop!(zv, vv) = applypreconditioner!(zv, pc, vv)
@@ -1314,10 +1305,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # final point
     residual!(F, x)
     push!(normF, norm(F))
-    # `ftol` is absolute, which asks a fixed accuracy of a residual whose
-    # size is the problem's. `rtol` adds the relative test beside it, off by
-    # default so that nothing already measured moves: with `rtol = 0` the
-    # tolerance below is exactly `ftol`.
+    # `ftol` is absolute; `rtol` adds a relative test beside it, and with
+    # the default `rtol = 0` the tolerance is exactly `ftol`
     ftol = max(ftol, rtol*normF[1])
     normF[end] <= ftol && (converged = true)
 

@@ -33,7 +33,7 @@ HybridWorkspace() = HybridWorkspace(Int[], Float64[],
 
 """
     evaluatehybrid!(B, C, block::ScatteringParameters, ws::AbstractVector,
-        [work::HybridWorkspace])
+        work::HybridWorkspace = HybridWorkspace())
 
 The hybrid (wave to modified nodal analysis) coefficients `B` and `C` of a
 scattering block at the signed frequencies `ws`.
@@ -155,7 +155,8 @@ struct StampedScatteringBlock
     signalnodes::Vector{Int}
     refnodes::Vector{Int}
     auxbase::Int          # aux index of port p mode m: auxbase+(p-1)*Nmodes+m
-    name::String          # component name of the first port, for messages
+    name::String          # the instance path with a "/port1" suffix, for
+                          # messages and `scatteringblockindex`
 end
 
 """
@@ -373,7 +374,7 @@ end
 
 """
     assemblescattering!(A::SparseMatrixCSC, ssys::ScatteringStampSystem,
-        wmodes::AbstractVector)
+        wmodes::AbstractVector, work::ScatteringWorkspace = ScatteringWorkspace())
 
 Add the frequency dependent constitutive entries of the scattering blocks
 at the signed mode frequencies `wmodes` into the values of the system
@@ -401,7 +402,7 @@ end
 
 """
     scatteringvalues!(values::AbstractVector, ssys::ScatteringStampSystem,
-        wmodes::AbstractVector, [work::ScatteringWorkspace])
+        wmodes::AbstractVector, work::ScatteringWorkspace = ScatteringWorkspace())
 
 The value each scalar contribution of the scattering blocks adds to the
 system matrix at the signed mode frequencies `wmodes`, in the order of
@@ -455,7 +456,7 @@ end
 """
     scatteringlinearterm(psc::CompiledCircuit, wmodes::AbstractVector,
         Nmodes::Integer; auxoffset::Integer, Ntotal::Integer,
-        scale::Real = 1.0)
+        scale::Real = 1.0, blocks = nothing)
 
 The constant sparse matrix of the scattering block contribution at the
 fixed mode frequencies `wmodes` (the constitutive entries plus the
@@ -464,7 +465,8 @@ Kirchhoff current law couplings of the auxiliary port currents), or
 (pump) solver, where the mode frequencies do not change: the contribution
 is folded into the frequency independent linear term alongside the
 augmentation matrix of the promoted resistors, so the residual, Jacobian,
-and solver machinery operate on the augmented system unchanged.
+and solver machinery operate on the augmented system unchanged. `blocks`
+stamps the given compiled blocks instead of `psc.scatteringblocks`.
 """
 function scatteringlinearterm(psc::CompiledCircuit,
     wmodes::AbstractVector, Nmodes::Integer; auxoffset::Integer,
@@ -552,11 +554,10 @@ function planscatteringnoise(ssys::ScatteringStampSystem)
     return ScatteringNoisePlan(blockindices, channelbase, nch, ssys.Nmodes)
 end
 
-# the noise models other than Passive() are part of the component API but
-# not yet of the noise calculation; silently ignoring one would return a
-# quantum efficiency computed from a different block than the user asked
-# for, so they are an error at the point the noise is planned rather than a
-# warning
+# The noise models the noise calculation supports. Silently ignoring an
+# unsupported one would return a quantum efficiency computed for a
+# different block than the user asked for, so it is an error here rather
+# than a warning.
 function checknoisemodel(block::ScatteringParameters, name)
     noise = block.noise
     if noise isa Passive || noise isa Lossless ||
@@ -872,9 +873,7 @@ function noisechanneltemperatures(psc, noiseportimpedanceindices, noiseplan,
     ts = Float64[get(stated, i, Float64(temperature))
         for i in noiseportimpedanceindices]
     isnothing(noiseplan) && return ts
-    # a block states its temperature on its own noise model, which the
-    # block carries; it used to be recorded against the flat entry of the
-    # block's first port and looked up by that entry's name
+    # a block states its temperature on its own noise model
     for (e, bi) in enumerate(noiseplan.blockindices)
         sb = ssys.blocks[bi]
         t = sb.block.noise isa ThermalEquilibrium ?
@@ -900,32 +899,28 @@ function noisechannelnames(componentnames, noiseportimpedanceindices,
     return vcat(names, scatteringnoisenames(noiseplan, ssys))
 end
 
-# =====================================================================
 # A scattering block at zero frequency.
 #
-# `evaluatehybrid!` writes `B = 0`, `C = I` at zero frequency, which is the
-# equation `i = 0`: every block is an open circuit at direct current. That
-# was the honest answer while the state carried no average voltage, since
-# without one there is nothing for a block to respond to. It is not the
-# block's physics.
-#
-# The block's own relation at zero frequency is the same pencil it satisfies
-# everywhere else,
+# `evaluatehybrid!` writes `B = 0`, `C = I` at zero frequency, the equation
+# `i = 0`: in the harmonic system alone every block is an open circuit at
+# direct current, since the periodic state carries no average voltage for
+# a block to respond to. When the circuit injects direct current the
+# explicit block (compositelayout.jl) carries the average port voltages,
+# and each scattering block's zero frequency row is replaced by the same
+# pencil it satisfies at every other frequency,
 #
 #     B(0) V - C(0) i = 0,   B(0) = R^(-1/2)(I - S(0)),
 #                            C(0) = R^(1/2)(I + S(0)),
 #
-# now with `V` the average port voltage, which the explicit direct current
-# block carries, and `i` the average port current, which the solver already
-# carries as an auxiliary unknown -- it is the same variable the zero
-# frequency row currently pins to zero. So this is not a new coordinate; it
-# is the removal of a constraint.
+# with `V` the average port voltage and `i` the average port current, the
+# auxiliary unknown the `i = 0` row would otherwise pin to zero. This adds
+# no coordinate; it removes a constraint.
 #
 # Nothing is inverted, which is the point of the pencil form. A resistive
 # block has `I + S(0)` invertible and a determined current. An ideal short
-# has `S(0) = -1`, so `C(0) = 0` and the row reads `B(0) V = 0`: the voltage
-# is constrained and the current is free, which is exactly right and is why
-# the current has to be an unknown rather than a value to be computed.
+# has `S(0) = -1`, so `C(0) = 0` and the row reads `B(0) V = 0`: the
+# voltage is constrained and the current is free, which is why the current
+# has to be an unknown rather than a value to be computed.
 
 """
     DCBlockDescriptor
@@ -954,13 +949,13 @@ end
 
 nports(d::DCBlockDescriptor) = length(d.signalnodes)
 
-# a block built before `dcmodel` existed, or one of the internal block types
-# which carries no model, evaluates its own data at zero as it always did
+# a block without a `dcmodel` field evaluates its own data at zero; every
+# `ScatteringParameters` has the field, so this is a defensive fallback
 dcmodelof(blk) = hasproperty(blk, :dcmodel) ? blk.dcmodel : ScatteringLimit()
 
-# The zero frequency scattering matrix of a block, from whichever model it
-# declared. The default asks the block; the others were checked for size and
-# passivity when the block was constructed, so here they are read.
+# The zero frequency scattering matrix of a block from the model it
+# declared: the default evaluates the block's own data, the others were
+# checked for size and passivity at construction and are read here.
 function dcscattering(::ScatteringLimit, sb::StampedScatteringBlock,
         n::Integer, atol::Real)
     S = Array{Complex{Float64},3}(undef, n, n, 1)
@@ -1058,13 +1053,15 @@ freecurrents(r::DCBlockRows) = sum(d -> d.freecurrents, r.descriptors;
 
 """
     dcblockrows(blocks, componentof, Nmodes, modeindex, nac, nnodaldc,
-        auxoffset, scale)
+        scale)
 
 Build the [`DCBlockRows`](@ref) for the stamped blocks of a circuit.
 
-`nac` and `nnodaldc` locate the zero frequency block of the canonical state
-and the point in it where the nodal entries end and the auxiliary ones
-begin; `auxoffset` is the state offset the stamps were built against.
+`componentof` maps each node to its static flux component; `modeindex` is
+the position of the zero frequency mode; `nac` and `nnodaldc` locate the
+zero frequency block of the canonical state and the point in it where the
+nodal entries end and the auxiliary ones begin; `scale` is the solver scale
+of the stamps.
 """
 function dcblockrows(blocks::AbstractVector, componentof::Vector{Int},
         Nmodes::Integer, modeindex::Integer, nac::Integer,
@@ -1109,10 +1106,11 @@ function dcblockrows(blocks::AbstractVector, componentof::Vector{Int},
 end
 
 """
-    addblocktransport!(Fv, r::DCBlockRows, u)
+    addblocktransport!(Fv, r::DCBlockRows, u, local_)
 
 Add the block currents which cross a component boundary to that component's
-transport row.
+transport row, reading each current from `u` at the position `local_`
+maps its state index to.
 
 Every one of them, unconditionally. A reference row is chosen after this,
 from the assembled descriptor, so there is no row here which is known in
@@ -1132,10 +1130,12 @@ end
 @inline _vof(v, c) = iszero(c) ? zero(eltype(v)) : @inbounds v[c]
 
 """
-    addblockdc!(Fc, r::DCBlockRows, u, v; residual = true)
+    addblockdc!(Fc, r::DCBlockRows, u, v, local_)
 
 Replace each block's zero frequency row in `Fc`, which holds `-i`, by the
-block's own relation `B0 (scale dv) - C0 i`.
+block's own relation `B0 (scale dv) - C0 i`, with the block currents read
+from `u` at the positions `local_` maps their state indices to and the
+average voltages from `v`.
 
 The correction is added rather than written, because the row also carries
 the Kirchhoff coupling of the current into the node equations, which is

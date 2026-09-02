@@ -1,8 +1,8 @@
 
 """
     cosphibandwidths(sys::HBSystem, Amatrixindices::Matrix,
-        Amatrixmodes::AbstractMatrix, Nfreq::Integer, Nbranches::Integer;
-        tol = 1e-2)
+        Amatrixmodes::AbstractMatrix, Nfreq::Integer = 0,
+        Nbranches::Integer = 0; tol = 1e-2, budget = 0.25)
 
 The per-tone harmonic bandwidth of the Josephson coupling at the current point,
 as the tuple of the largest offset in each tone which carries a coefficient of
@@ -39,11 +39,10 @@ function cosphibandwidths(sys, Amatrixindices::Matrix,
     _updatecosphimatrix!(sys)
     cm = tohost(sys.phimatrix)
     Ntones = length(first(Amatrixmodes))
-    # The coefficient array's own shape, not the caller's Nfreq: it is
-    # `(frequency dims..., branch)` and multi-tone leaves it multidimensional,
-    # so the frequency stride is everything but the last dimension. This is the
-    # linear index the assembly kernel itself uses,
-    # `phimatrix[abs(ind) + nfreq*(b-1)]`.
+    # The frequency stride comes from the coefficient array's own shape,
+    # `(frequency dims..., branch)`, which is multidimensional for several
+    # tones: everything but the last dimension. This is the linear index the
+    # assembly kernel uses, `phimatrix[abs(ind) + nfreq*(b-1)]`.
     nb = size(cm)[end]
     nfreq = length(cm) ÷ nb
 
@@ -77,10 +76,11 @@ function cosphibandwidths(sys, Amatrixindices::Matrix,
     end
     total > 0 || return ntuple(_ -> 0, Ntones)
 
-    # smallest per-tone bandwidth whose discarded marginal tail is within `tol`.
-    # This sets the *shape*: a tone which contributes little phase amplitude has
-    # a tail that is already negligible at zero and collapses to a diagonal,
-    # which is the anisotropy the Jacobi-Anger product predicts.
+    # The smallest per tone bandwidth whose discarded tail is within `tol`.
+    # This sets the shape of the band: a tone which contributes little phase
+    # amplitude has a tail which is negligible already at zero offset and
+    # collapses to a diagonal, the anisotropy the Jacobi-Anger expansion
+    # predicts.
     p = zeros(Int, Ntones)
     for k in 1:Ntones
         pk = maxoff[k]
@@ -94,13 +94,13 @@ function cosphibandwidths(sys, Amatrixindices::Matrix,
         p[k] = pk
     end
 
-    # `tol` alone chooses the bandwidth which makes the preconditioner accurate,
-    # and under strong drive that is the whole Jacobian: the coefficients decay,
-    # but from a diagonal which is no longer dominant, so the tail stays above
-    # any useful tolerance out to the edge of the grid. A preconditioner does
-    # not need to be accurate, it needs to be worth its fill, so the *size* is
-    # then capped by a budget on the fraction of coupling blocks retained. The
-    # widest tone is trimmed first, which preserves the shape the tail chose.
+    # `tol` alone chooses the bandwidth which makes the preconditioner
+    # accurate, and under strong drive that is the whole Jacobian: the
+    # coefficients decay, but from a diagonal which is not dominant, so the
+    # tail stays above any useful tolerance out to the edge of the grid. A
+    # preconditioner does not need to be accurate but to be worth its fill,
+    # so the size is then capped by a budget on the fraction of coupling
+    # blocks retained, trimming the widest tone first to preserve the shape.
     keptfraction(q) = count(modebandmask(Amatrixmodes,
         NTuple{Ntones,Int}(q))) / length(Amatrixmodes)
     while keptfraction(p) > budget && any(>(0), p)
@@ -108,11 +108,10 @@ function cosphibandwidths(sys, Amatrixindices::Matrix,
         p[k] -= 1
     end
 
-    # Snap each bandwidth down onto an offset the grid actually realizes. A
-    # tone whose harmonics are all odd realizes only even offsets, so a
-    # bandwidth of one there keeps exactly what zero keeps; reporting one would
-    # claim a coupling the mask does not contain, and would make the escalation
-    # step of `escalatepreconditioner!` a no-op for a whole increment.
+    # Snap each bandwidth down to an offset the grid realizes. A tone whose
+    # harmonics are all odd realizes only even offsets, so a bandwidth of one
+    # keeps exactly what zero keeps; reporting one would claim a coupling the
+    # mask does not contain and make one escalation step a no-op.
     realized = [sort!(unique(abs(o[k]) for o in Amatrixmodes)) for k in 1:Ntones]
     for k in 1:Ntones
         idx = searchsortedlast(realized[k], p[k])
@@ -369,15 +368,15 @@ strongly pumped device the block diagonal alone stalls, and
 - `escalations`: the number of times the coupling set has been grown.
 """
 mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
-    # loosely typed, like the device half below: on a backend `P` is a
-    # `DeviceSparsePattern` rather than a host sparse matrix
+    # untyped, because on a backend `P` is a `DeviceSparsePattern` rather
+    # than a host sparse matrix
     P
     const sys::TS
     const cache::FactorizationCache
     const basefactorization::Factorization
     factorization::Factorization
-    # rebuilds (P, plan) for a coupling set, closing over the plan ingredients
-    # so the set can be grown after construction
+    # rebuilds `(P, plan, nzval)` for a coupling set, closing over the plan
+    # ingredients so the set can be grown after construction
     const build::TB
     const Nmodes::Int
     # the harmonic offset of every mode pair, `modes[m1] .- modes[m2]`, kept so
@@ -393,10 +392,9 @@ mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
     couplingmodes
     updates::Int
     escalations::Int
-    # the assembly and the values it writes. Loosely typed, as the rest of
-    # this struct is, because they are rebuilt on escalation and the concrete
-    # index type may change with the size of the escalated Jacobian. On a host
-    # `nzval` aliases the stored values of `P`.
+    # the assembly plan and the values it writes, untyped because they are
+    # rebuilt on escalation with a possibly different index type; on a host
+    # `nzval` aliases the stored values of `P`
     deviceplan
     nzval
 end
@@ -407,7 +405,8 @@ end
         Rbnm::SparseMatrixCSC, Nmodes::Integer, Nbranches::Integer,
         Nfreq::Integer, invLnm::SparseMatrixCSC, Gnm::SparseMatrixCSC,
         Cnm::SparseMatrixCSC, layout::ModeLayout;
-        couplingmodes = :none, factorization = KLUfactorization())
+        couplingmodes = :none, factorization = KLUfactorization(),
+        precision = nothing, Amatrixmodes = nothing)
 
 Build a [`ModeCouplingPreconditioner`](@ref) from the same ingredients
 [`planstructurerealjacobian`](@ref) takes. `couplingmodes` may be
@@ -422,6 +421,10 @@ Build a [`ModeCouplingPreconditioner`](@ref) from the same ingredients
     the Fourier coefficients of `cos(phi(t))` at every point and widened when
     the drive demands it (see [`cosphibandwidths`](@ref)). Starts at the block
     diagonal, so nothing is paid until it is needed.
+
+`precision` is the floating point type of the factorization, `nothing`
+for that of the system. `Amatrixmodes` is the harmonic offset of every
+mode pair, needed by `:band` and `:auto`.
 """
 function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     Amatrixconjindices::Matrix, Ljb::SparseVector, Lmean,
@@ -432,9 +435,9 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     precision::Union{Nothing,Type{<:AbstractFloat}} = nothing,
     Amatrixmodes = nothing)
 
-    # `:auto` measures the per tone bandwidth at every point and rebuilds when
-    # it grows. It starts from the block diagonal, so the first factorization is
-    # the cheap one and the structure widens only as the drive demands.
+    # `:auto` measures the per tone bandwidth at every point and rebuilds
+    # when it grows, starting from the block diagonal so that the first
+    # factorization is the cheap one
     autotol = if couplingmodes === :auto
         1e-2
     elseif couplingmodes isa Pair && couplingmodes.first === :auto
@@ -448,22 +451,15 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         couplingmodes = :band => ntuple(_ -> 0, length(first(Amatrixmodes)))
     end
 
-    # On a device backend the Jacobian is built transposed, because its
-    # stored order is then the row major order a device sparse matrix and a
-    # device direct solver want. Producing it that way costs nothing and
-    # removes the permutation, the index the assembly kernel would go through
-    # to apply it, and the loss of coalescing that indirection caused.
-    # On a device backend there is no segmented gather at all: the assembly
-    # reads the circuit's structure directly, so what is built here is the
-    # sparsity structure and the linear term index maps, both cheap. The
-    # Jacobian is
-    # built transposed at the same time, because its stored order is then the
-    # row major order a device sparse matrix and a device direct solver want.
-    # One path, on every backend. The two differ only in orientation and in
-    # what the factorization is handed: a device sparse matrix is compressed by
-    # rows, so there the Jacobian is built transposed and its values live on the
-    # backend, while a host factorization wants the matrix itself and the
-    # assembly writes straight into its stored values.
+    # Build the restricted Jacobian structure `P`, its assembly plan and the
+    # values the assembly writes, for a coupling set `S`. The same path runs
+    # on every backend; the two differ only in orientation and in what the
+    # factorization is handed. A device sparse matrix is compressed by rows,
+    # so on a device the structure is built transposed, which puts the
+    # stored order in the row major order the device solver wants without a
+    # permutation, and its values live on the device. A host factorization
+    # wants the matrix itself, and the assembly writes straight into its
+    # stored values.
     function build(S)
         keep = if S isa AbstractMatrix{Bool}
             S
@@ -494,7 +490,7 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
             nodesandsigns, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
             sys.wmodes2m, layout, layout, Nmodes, Nfreq, backend;
             transposed = transposed)
-        # on a host the assembly writes into the matrix that will be factorized
+        # on a host the assembly writes into the matrix which is factorized
         nzval = transposed ? tobackend(backend, zeros(Tv, nnz(P))) : nonzeros(P)
         return P, dp, nzval
     end
@@ -536,10 +532,10 @@ function selectfactorization(factorization::Factorization, P, S,
     layout::ModeLayout, Nmodes::Integer)
     (S isa Vector{Int} && isempty(S)) || return factorization
     isnothing(factorization.batched) && return factorization
-    # discovering the block layout is a walk over the stored entries of a host
-    # matrix, and on a backend the structure is not one. The batched path is
-    # off by default anyway, having measured slower than handing cuDSS the
-    # whole block diagonal.
+    # discovering the block layout is a walk over the stored entries of a
+    # host matrix, and on a backend the structure is not one; the batched
+    # path is off by default anyway, being slower than handing cuDSS the
+    # whole block diagonal
     P isa SparseMatrixCSC || return factorization
     return batchedfactorization(P, modeslotindex(layout), Nmodes,
         factorization, factorization)
@@ -574,11 +570,10 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
     pc.couplingmodes isa Vector{Int} &&
         length(pc.couplingmodes) >= pc.Nmodes && return false
     pc.couplingmodes isa AbstractMatrix{Bool} && all(pc.couplingmodes) && return false
-    # a bandwidth escalates by one offset at a time. The jump straight to the
-    # full Jacobian below exists because no per mode score identified *which*
-    # modes carried the deficiency; a bandwidth is not a choice of modes, so
-    # the graded step is available and is what is taken here. It stops when the
-    # band covers the grid, at which point it is already the full Jacobian.
+    # A band escalates by one offset per tone at a time, and becomes the
+    # full mode set once it covers the grid. Every other coupling set jumps
+    # straight to the full Jacobian, since nothing identifies which modes
+    # carried the deficiency.
     S = if pc.couplingmodes isa Pair && pc.couplingmodes.first === :band
         p = pc.couplingmodes.second
         next = p isa Integer ? p + 1 : map(x -> x + 1, p)
@@ -588,20 +583,19 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
         collect(1:pc.Nmodes)
     end
     pc.P, pc.deviceplan, pc.nzval = pc.build(S)
-    # any retained coupling couples modes, so whatever batch structure the
-    # block diagonal had is gone and the caller's own factorization applies
+    # any retained coupling destroys the batch structure of the block
+    # diagonal, so the caller's own factorization applies
     pc.factorization = pc.basefactorization
     pc.couplingmodes = S
     pc.escalations += 1
-    # the cache holds a symbolic factorization of the previous sparsity
-    # structure, which no longer applies
+    # the cached symbolic factorization is of the previous structure
     pc.cache.factorization = nothing
     return true
 end
 
-# the coupling set is the full one: every mode retained, or a mask with no
-# zero. `:band` never reports exact even when wide, because escalation
-# replaces a covering band by the full set before it stops growing.
+# Whether the coupling set is the full one: every mode retained, or a mask
+# with no zero. A `:band` never reports exact, because escalation replaces
+# a band which covers the grid by the full set.
 function isexactpreconditioner(pc::ModeCouplingPreconditioner)
     pc.couplingmodes isa Vector{Int} &&
         length(pc.couplingmodes) >= pc.Nmodes && return true
@@ -614,11 +608,11 @@ end
 function updatepreconditioner!(pc::ModeCouplingPreconditioner,
     x::AbstractVector)
     setpoint!(pc.sys, x)
-    # `:auto` remeasures the bandwidth here, where the Fourier coefficients are
-    # about to be computed anyway, and rebuilds only when it has grown. The
-    # bandwidth is never reduced: the structure would have to be rebuilt and
-    # refactorized symbolically to save fill the solve has already paid for, and
-    # the drive generally widens the coupling as the Newton iteration proceeds.
+    # `:auto` remeasures the bandwidth here, where the Fourier coefficients
+    # are computed anyway, and rebuilds only when it has grown. It is never
+    # reduced: that would cost a symbolic refactorization to save fill
+    # already paid for, and the drive generally widens the coupling as the
+    # iteration proceeds.
     if !isnothing(pc.autotol)
         want = cosphibandwidths(pc.sys, pc.autoindices, pc.Amatrixmodes;
             tol = pc.autotol)
@@ -632,10 +626,9 @@ function updatepreconditioner!(pc::ModeCouplingPreconditioner,
             pc.cache.factorization = nothing
         end
     end
-    # the Fourier coefficients are already on the backend, the assembly runs
-    # there, and it writes the order the factorization stores, so on a device
-    # nothing crosses to the host: no copy of phimatrix, no serial assembly
-    # loop, and no permutation of the values on their way back down.
+    # the Fourier coefficients are on the backend, the assembly runs there
+    # and writes the order the factorization stores, so on a device nothing
+    # crosses to the host
     _updatecosphimatrix!(pc.sys)
     assemblerealjacobian!(pc.nzval, pc.deviceplan, pc.sys.phimatrix)
     A = pc.P isa SparseMatrixCSC ? pc.P :

@@ -1,20 +1,17 @@
-# Lowering a typed circuit to the tables the assembly reads.
+# From a typed `Circuit` to the tables the matrix builders read.
 #
-# The second half of the input path. `parseinput.jl` ends with a `Circuit`
-# whose instances may themselves be circuits; this file flattens that
-# hierarchy into an `ElaboratedCircuit`, in which every instance has a path
-# and every net is a single wire, and then lowers it to a
-# `CompiledCircuit`, the flat integer indexed tables plus the groups the
-# assembly reads.
-#
-# The two steps share a file because `compile` dispatches on what
-# `elaborate` returns, and separating them would put a type and its only
-# consumer either side of a file boundary for no reader's benefit.
+# `parseinput.jl` ends with a `Circuit` whose instances may themselves be
+# circuits. `elaborate` flattens that hierarchy into an `ElaboratedCircuit`,
+# in which every primitive instance has a path and every net is a single
+# integer, and `compile` lowers the result to a `CompiledCircuit`: a flat
+# table of two terminal components, groups of indices into it by component
+# kind, and the ports and scattering blocks as their own records.
 
 # === flattening the hierarchy ===
 
-
-# === a small union-find over wire indices ===
+# A union-find over wire indices. Every terminal of every primitive
+# instance starts on its own wire, and each connection group unions the
+# wires of its endpoints; the roots at the end are the nets.
 
 mutable struct WireForest
     parent::Vector{Int}
@@ -56,9 +53,9 @@ end
     ElaboratedCircuit(definitions, definitionof, instancepaths,
         terminaloffsets, terminalnets, netnames, couplings)
 
-The flattened result of [`elaborate`](@ref): hierarchy resolved, definitions
-deduplicated by identity, and nets assigned dense integer indices. This
-structure is immutable after construction and safe to share across threads.
+The flattened result of [`elaborate`](@ref): the hierarchy resolved to a
+list of primitive instances, definitions deduplicated by identity, and
+nets numbered densely with the ground net first.
 
 # Fields
 - `definitions::Vector{Any}`: the unique component definitions, deduplicated
@@ -133,19 +130,20 @@ mutable struct FlattenState
     terminaloffsets::Vector{Int}
     terminalwires::Vector{Int}
     couplings::Vector{NTuple{3,Int}}
-    # net name candidates: wire => (depth, isauto, sequence, name or path)
-    usernames::Vector{Tuple{Int,Int,String,Int}}   # (depth, seq, qualifiedname, wire)
-    # The automatic name of a net comes from the shallowest, earliest
-    # terminal on it. That was one (depth, seq, path, wire) tuple per
-    # terminal, walked again afterwards; it is now the depth and the level
-    # path of each instance, which its terminals share, and the pass which
-    # already walks every terminal to find its net does the selection as it
-    # goes. The terminal's own index orders the candidates, because the
-    # sequence counter only ever increased along that same walk.
+    # the names the user gave to nets, as (depth, sequence, qualified
+    # name, wire); the shallowest and then earliest one wins for a net
+    usernames::Vector{Tuple{Int,Int,String,Int}}
+    # What an unnamed net is named from: the hierarchy path of the level
+    # containing the shallowest, earliest terminal on it. `levelpaths` holds
+    # the path of each level visited, and `autodepth` and `autopathid` give
+    # the depth and level of each primitive instance, which its terminals
+    # share. The terminal index orders candidates at equal depth.
     levelpaths::Vector{String}
     autodepth::Vector{Int}                         # per instance
     autopathid::Vector{Int}                        # per instance
+    # each distinct circuit definition is parsed once
     parsedcache::IdDict{Any,ParsedLevel}
+    # the definitions on the current path from the root, to detect recursion
     active::IdDict{Any,Nothing}
     maxdepth::Int
     seq::Int
@@ -162,6 +160,7 @@ end
 
 nextseq!(st::FlattenState) = (st.seq += 1; st.seq)
 
+# the index of `def` in the deduplicated definition list, adding it if new
 function definitionindex!(st::FlattenState, def)
     i = get(st.defindex, def, 0)
     if i == 0
@@ -172,6 +171,7 @@ function definitionindex!(st::FlattenState, def)
     return i
 end
 
+# hierarchical paths use "/" as the separator; the top level has the empty path
 joinpath_(path::String, id) = isempty(path) ? string(id) : path * "/" * string(id)
 
 """
@@ -191,9 +191,9 @@ Recursively flatten the hierarchy of `circuit` into an
 5. resolves mutual inductor couplings to flattened instance indices;
 6. rejects recursive circuit definitions.
 
-The structural analysis of a repeated subcircuit definition is performed
-once and reused for every instance; per instance work is proportional to
-the instance's own size.
+A repeated subcircuit definition is parsed once and the parse reused for
+every instance, so the work per instance is proportional to the instance's
+own size. `maxdepth` bounds the nesting depth.
 """
 function elaborate(circuit::Circuit; maxdepth::Integer = 64)
     st = FlattenState(Int(maxdepth))
@@ -201,6 +201,8 @@ function elaborate(circuit::Circuit; maxdepth::Integer = 64)
     return finishelaboration(st)
 end
 
+# Flatten one level of the hierarchy at `path`, returning the wires of its
+# interface pins so the parent can connect them.
 function flattencircuit!(st::FlattenState, c::Circuit, path::String,
         depth::Int)
     if haskey(st.active, c)
@@ -217,9 +219,11 @@ function flattencircuit!(st::FlattenState, c::Circuit, path::String,
     push!(st.levelpaths, path)
     pathid = length(st.levelpaths)
 
-    # wires of each local instance's terminals (for subcircuits: pin wires)
+    # the wires of each local instance's terminals; for a subcircuit, the
+    # wires of its interface pins
     instwires = Vector{Vector{Int}}(undef, length(table.ids))
-    # flattened global index of each local primitive instance (0 for subcircuits)
+    # the flattened index of each local primitive instance; 0 for a
+    # subcircuit or a ground instance, which contribute none
     localglobal = zeros(Int, length(table.ids))
 
     for (i, def) in enumerate(table.defs)
@@ -228,10 +232,10 @@ function flattencircuit!(st::FlattenState, c::Circuit, path::String,
             instwires[i] = flattencircuit!(st, def, joinpath_(path, id),
                 depth + 1)
         elseif def isa GroundType
-            # a declared ground instance is the reference net, not a device:
-            # it flattens to no instance, and every reference to its
-            # terminal already resolved to the ground sentinel at parse
-            # time, so its wire list is never consulted
+            # a declared ground instance is a spelling of the reference net,
+            # not a device: it produces no instance, and every reference to
+            # its terminal was already resolved to `Ground` by the parser,
+            # so its (empty) wire list is never read
             instwires[i] = Int[]
         else
             n = nterminals(def)
@@ -250,12 +254,13 @@ function flattencircuit!(st::FlattenState, c::Circuit, path::String,
         end
     end
 
-    # grounded multiport reference ties
+    # the reference terminals of grounded multiport blocks are tied to ground
     for (i, t) in pd.groundties
         unionwires!(st.wires, instwires[i][t], st.groundwire)
     end
 
-    # connection groups
+    # each connection group unions the wires of its endpoints, and records
+    # its name as a candidate name for the resulting net
     for (name, endpoints, hasground) in pd.groups
         first = hasground ? st.groundwire :
             instwires[endpoints[1][1]][endpoints[1][2]]
@@ -268,13 +273,13 @@ function flattencircuit!(st::FlattenState, c::Circuit, path::String,
         end
     end
 
-    # mutual inductor couplings resolved to flattened indices
+    # mutual inductor couplings, resolved to flattened instance indices
     for (k, i1, i2) in pd.mutuals
         push!(st.couplings, (localglobal[k], localglobal[i1],
             localglobal[i2]))
     end
 
-    # interface pin wires for the parent
+    # the wires of the interface pins, for the parent to connect
     pinwires = Vector{Int}(undef, length(pd.pinendpoints))
     for (j, (i, t)) in enumerate(pd.pinendpoints)
         pinwires[j] = instwires[i][t]
@@ -284,14 +289,16 @@ function flattencircuit!(st::FlattenState, c::Circuit, path::String,
     return pinwires
 end
 
+# Number the nets and name them, and assemble the `ElaboratedCircuit`.
 function finishelaboration(st::FlattenState)
-    # compress the union-find into dense net indices; net 1 is ground
+    # number the union-find roots densely, in order of first appearance
+    # over the terminals; the ground net is 1
     netofroot = Dict{Int,Int}()
     netofroot[findwire(st.wires, st.groundwire)] = 1
     terminalnets = Vector{Int}(undef, length(st.terminalwires))
-    # the shallowest, earliest terminal on each net, which names it when no
-    # user name does. Found on this walk rather than on a second one over a
-    # parallel record of every terminal.
+    # for each net, the (depth, terminal index, level path) of the
+    # shallowest and then earliest terminal on it, which names the net when
+    # no user name does
     autopath = Dict{Int,Tuple{Int,Int,String}}()
     nnets = 1
     inst = 1
@@ -305,7 +312,7 @@ function finishelaboration(st::FlattenState)
             netofroot[r] = n
         end
         terminalnets[i] = n
-        # which instance this terminal belongs to, walked alongside
+        # advance to the instance which owns terminal `i`
         while inst < ninst && i >= st.terminaloffsets[inst+1]
             inst += 1
         end
@@ -318,13 +325,14 @@ function finishelaboration(st::FlattenState)
         end
     end
 
-    # assign names: user names win, shallowest then earliest; otherwise an
-    # automatic hierarchical name from the shallowest, earliest level which
-    # touches the net.
+    # A net named by the user takes the shallowest, then earliest, of its
+    # user names. Any other net is named "<level path>/net<k>" from the
+    # shallowest, earliest level which touches it, with `k` counting the
+    # automatically named nets of that level.
     username = Dict{Int,Tuple{Int,Int,String}}()
     for (depth, seq, name, w) in st.usernames
         n = get(netofroot, findwire(st.wires, w), 0)
-        (n == 0 || n == 1) && continue # dropped or ground (always "0")
+        (n == 0 || n == 1) && continue # a net with no terminal, or ground
         best = get(username, n, (typemax(Int), typemax(Int), ""))
         if (depth, seq) < (best[1], best[2])
             username[n] = (depth, seq, name)
@@ -361,43 +369,36 @@ end
 
 
 # === lowering to the compiled tables ===
-
-# Compiling an elaborated typed circuit.
 #
-# `ElaboratedCircuit` is the last heterogeneous representation: its
-# definitions are arbitrary component objects and reading it means asking
-# what each one is. Everything below this file works from grouped, integer
-# indexed tables instead, so the question is asked once, here.
+# `ElaboratedCircuit` is the last representation whose definitions are
+# arbitrary component objects. Everything downstream works from the
+# `CompiledCircuit`: a flat table of two terminal components which the
+# matrix builders, the netlist export and the sensitivities walk entry by
+# entry, and index groups by component kind which the assembly plans and
+# the ports read without scanning the table.
 #
-# The compiled form is a flat component table plus groups indexing into it,
-# and it is honest to say that the table is still where much of the solver
-# reads from rather than that it has been retired. The matrix builders, the
-# netlist export and the sensitivities walk it component by component. The
-# groups are what the assembly plans and the ports read, and they are what
-# makes those O(components in the group) rather than a scan.
-#
-# What the table no longer holds is anything which is not a component. A
-# port's entry carries its reference impedance and not its number, so the
-# table's element type is the type of the quantities in it; and a scattering
-# block, which is not a two terminal component, has no entry there and lives
-# in `scatteringblocks` alone.
-#
-# A port is compiled with its own reference impedance and a direct index to
-# the environment it owns. Nothing here or below looks for a resistor which
-# happens to share a port's branch.
+# Two things are not entries in the table. A port's entry holds its
+# reference impedance (so that the table's element type is a quantity, not
+# a label); the port number, its nodes, and the index of the termination it
+# owns are on a `CompiledPort`. A scattering block is not a two terminal
+# component and has no table entry at all; it is a
+# `CompiledScatteringBlock`.
 
 """
     CompiledPort
 
-An analysis port with its reference impedance and the environment it owns.
+An analysis port: its number, its two nodes, its reference impedance and
+the termination it owns.
 
-`environment` is the flat component index of the port's own termination, or
-`0` when the port owns none. It is recorded when the port is compiled rather
-than discovered later by looking for a resistor on the port's branch, so a
-port may share its terminals with any number of ordinary device resistors.
+`environment` is the flat table index of the port's own termination, or
+`0` when the port owns none. It is recorded here when the port is
+compiled, so nothing downstream needs to look for a resistor on the port's
+branch, and a port may share its terminals with any number of ordinary
+device resistors.
 
 `zref` is the reference impedance as written, which may still be symbolic;
-binding resolves it to a finite positive real number.
+binding resolves it to a finite positive real number. `component` is the
+port's own index in the flat table.
 """
 struct CompiledPort
     number::Int
@@ -411,13 +412,10 @@ end
 """
     CompiledScatteringBlock
 
-A multiport scattering block with its whole terminal map intact.
-
-The block keeps its identity through compilation: `signalnodes[p]` and
-`refnodes[p]` are the nodes of port `p`, and the whole block is one object.
-The flat component table can only hold two terminal components, so a block
-had to appear there as one entry per port and be reassembled afterwards;
-nothing does that now, and the block has no entries in that table at all.
+A multiport [`ScatteringParameters`](@ref) instance after compilation:
+its `definition`, its instance `path`, and the node of the signal and
+reference terminal of each port, `signalnodes[p]` and `refnodes[p]`. A
+block has no entries in the flat component table.
 """
 struct CompiledScatteringBlock
     definition::Any
@@ -429,31 +427,40 @@ end
 """
     CompiledCircuit
 
-An elaborated circuit lowered to a flat component table with typed groups
-indexing into it.
+An elaborated circuit lowered to a flat table of two terminal components,
+with index groups by component kind.
 
 # Fields
 
-The flat table, in the order the components were elaborated:
+The flat table, in elaboration order:
 
-- `componentnames`: hierarchical instance paths.
-- `componenttypes`: the lowered type symbol of each component.
-- `componentvalues`: the value of each component, as written.
-- `nodeindices`: the two node indices of each component, ground being `1`.
-- `componenttemperatures`: the temperature of each component which states one.
-- `mutualinductorbranchnames`: the coupled inductor names, two per `:K`.
-- `nodenames`, `Nnodes`: the sorted node names and their count.
-- `componentnamedict`: name to flat index.
+- `componentnames`: the hierarchical instance path of each entry. A matched
+    port's own termination is the entry named `"<port path>/termination"`.
+- `componenttypes`: the type symbol of each entry: `:C`, `:R`, `:L`, `:Lj`
+    (a sinusoidal [`NonlinearInductor`](@ref)), `:NL` (a legacy nonlinear
+    element), `:I`, `:K` (a mutual inductor) or `:P` (a port).
+- `componentvalues`: the value of each entry as written; the reference
+    impedance for a port.
+- `nodeindices`: a 2 by `ncomponents` matrix of the node indices of each
+    entry, ground being node 1; both zero for a mutual inductor.
+- `componenttemperatures`: the temperature of each entry which states one,
+    keyed by flat index.
+- `mutualinductorbranchnames`: the names of the coupled inductors, two per
+    `:K` entry in order.
+- `nodenames`, `Nnodes`: the node names in sorted order (ground first) and
+    their count.
+- `componentnamedict`: component name to flat index.
 
-The groups, each a vector of flat indices:
+The groups, each a vector of flat indices in table order:
 
-- `capacitors`, `resistors`, `inductors`, `junctions`, `nonlinearinductors`,
-  `currentsources`, `mutualinductors`.
+- `capacitors`, `resistors`, `inductors`, `junctions` (`:Lj`),
+  `nonlinearinductors` (`:NL`), `currentsources`, `mutualinductors`.
 
-and the two which keep their own structure:
+The records which keep their own structure:
 
-- `ports::Vector{CompiledPort}`, ordered as elaborated.
-- `scatteringblocks::Vector{CompiledScatteringBlock}`, one per block instance.
+- `ports::Vector{CompiledPort}`, in elaboration order.
+- `scatteringblocks::Vector{CompiledScatteringBlock}`, one per block
+  instance.
 
 See [`compile`](@ref).
 """
@@ -493,18 +500,18 @@ The number of entries in the flat component table.
 """
 ncomponents(c::CompiledCircuit) = length(c.componenttypes)
 
-# A legacy netlist names its nodes with integers and has always been sorted
-# by their numeric value, which the entry points below preserve. Anything
-# else is a typed circuit, whose hierarchical net names are not integers.
+# A tuple netlist names its nodes with integers and is sorted by their
+# numeric value; a typed circuit has hierarchical net names, which are not
+# integers, and is sorted by name.
 defaultsorting(circuit) = circuit isa AbstractVector ? :number : :name
 
-# === lowering an elaborated circuit to component entries ===
+# === lowering one component to a table entry ===
 #
-# The `isa` chain in `compile` handles the common components inline;
-# everything rarer, and every component the solver does not support,
-# falls through to `lowercomponent` so the diagnostics stay in one place.
-# The legacy netlist's untyped nonlinear element adds its own method in
-# `legacyadapter.jl`.
+# `lowercomponent` returns the `(typesymbol, value)` of a component, or
+# throws `ComponentNotSupportedError` for one the solvers cannot use. The
+# `isa` chain in `compile` handles the common components inline and falls
+# through to `lowercomponent` for the rest, so the diagnostics are in one
+# place. The legacy `NL` element adds its own method in legacyadapter.jl.
 
 function lowercomponent(def::Inductor, path)
     return :L, def.L
@@ -530,16 +537,16 @@ function lowercomponent(def, path)
     throw(ComponentNotSupportedError(lazy"the component $(typeof(def)) at $(path) is not supported by the solver."))
 end
 
-# narrow a Vector{Any} to a concrete element type when possible, which is
-# what makes a fully numeric circuit's values a Vector{Float64} rather than
-# a vector of boxes.
+# Narrow a `Vector{Any}` to the element type its contents allow, so that a
+# fully numeric circuit gets a `Vector{Float64}` of values rather than a
+# vector of boxed numbers.
 function tightenvalues(values::Vector{Any})
     return map(identity, values)
 end
 
-# the temperature a component states, or `nothing`. Only the components which
-# can dissipate carry one; a scattering block states its temperature through
-# its noise model instead (see [`ThermalEquilibrium`](@ref)).
+# The temperature a component states, or `nothing`. Only the lumped
+# components which can dissipate carry one; a scattering block states its
+# temperature through its noise model (see `ThermalEquilibrium`).
 componenttemperature(def::Resistor) = def.temperature
 componenttemperature(def::Capacitor) = def.temperature
 componenttemperature(def::Inductor) = def.temperature
@@ -548,18 +555,26 @@ componenttemperature(def) = nothing
 """
     compile(elab::ElaboratedCircuit; sorting = :name)
     compile(circuit::Circuit; sorting = :name)
+    compile(netlist::AbstractVector; sorting = :name)
 
-Lower an elaborated typed circuit to a [`CompiledCircuit`](@ref).
+Lower a circuit to a [`CompiledCircuit`](@ref). A [`Circuit`](@ref) is
+elaborated first, and a legacy tuple netlist is converted to a `Circuit`
+first; a `CompiledCircuit` is returned unchanged.
 
-Component and node ordering are exactly those of the parsed representation
-this replaces, so no downstream result moves.
+Components appear in the table in elaboration order, with a matched port's
+own termination emitted as a resistor entry directly after the port. Nodes
+are numbered by [`calcnodesorting`](@ref) with ground first; the default
+`sorting = :name` sorts the net names as strings, since hierarchical net
+names are not integers (the tuple netlist entry points of the solvers
+default to `:number` instead).
 
-Only components the solvers support can be lowered; a
-[`GaussianChannel`](@ref), a non-sinusoidal [`NonlinearInductor`](@ref), or a
-[`ScatteringParameters`](@ref) with an arbitrary noise covariance raises a
-[`ComponentNotSupportedError`](@ref) naming the instance. The default
-`sorting` is `:name` because automatic hierarchical net names are not
-integers; see [`sortnodes`](@ref).
+Only components the solvers support can be lowered: a
+[`GaussianChannel`](@ref), a [`VoltageSource`](@ref), a non-sinusoidal
+[`NonlinearInductor`](@ref), a [`ScatteringParameters`](@ref) with a
+[`NoiseCovariance`](@ref) noise model, or any component with other than
+two terminals throws a [`ComponentNotSupportedError`](@ref) naming the
+instance. A circuit with no connection to [`Ground`](@ref) throws an
+`ArgumentError`.
 """
 function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
 
@@ -578,7 +593,7 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
     uniquenodedict = Dict{String,Int}()
     uniquenodevector = String[]
 
-    # the two coupled inductor names of each mutual inductor, by instance
+    # the names of the two inductors coupled by each mutual inductor
     couplingnames = Dict{Int,Tuple{String,String}}()
     for (k, i1, i2) in elab.couplings
         couplingnames[k] = (elab.instancepaths[i1], elab.instancepaths[i2])
@@ -592,21 +607,13 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         def = instancedefinition(elab, i)
         path = elab.instancepaths[i]
 
-        # A scattering block is one component with two terminals per port.
-        # The parsed table holds two terminal components only, so the block
-        # is spread over one entry per port there; the compiled block keeps
-        # the whole terminal map and the entries it owns.
+        # A scattering block has two terminals per port and is not a two
+        # terminal component, so it gets no table entry: it is compiled as
+        # one `CompiledScatteringBlock` holding the nodes of every port.
         if def isa ScatteringParameters
             if def.noise isa NoiseCovariance
                 throw(ComponentNotSupportedError(lazy"the ScatteringParameters at $(path) has an arbitrary noise covariance, which the harmonic balance solvers do not yet support. Use Passive, Lossless, or ThermalEquilibrium."))
             end
-            # A block is one thing and is compiled as one. Its ports used to
-            # be emitted as one flat component each, every one carrying the
-            # whole block definition, and the block was then reconstructed
-            # downstream by scanning for runs of them -- a contract that the
-            # ports appear consecutively with port 1 first, stated nowhere
-            # and checked nowhere. The block below already holds everything
-            # those entries did, so they are not written.
             terminals = instanceterminals(elab, i)
             n = def.nports
             signalnodes = Vector{Int}(undef, n)
@@ -622,27 +629,11 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
             continue
         end
 
-        # An `isa` chain rather than dispatch on `lowercomponent`, ordered
-        # by how many of each a large circuit holds. Selecting an operation
-        # by dynamic dispatch is expensive in the abstract: over 8192
-        # heterogeneous components whose type changes every element, it
-        # costs 114 us at two types and 420 us at eight against 2 us for a
-        # branch chain, the step between four and eight being the callsite
-        # method cache giving out.
-        #
-        # It is not expensive here, and this chain is not why the compiler
-        # is fast: on a circuit of 8402 instances spanning seven component
-        # types, lowering by dispatch and lowering by this chain both take
-        # 2.45 ms, because the work around them -- building the instance
-        # path, interning the nodes -- dwarfs the selection. The chain is
-        # kept because it costs nothing and does not depend on the component
-        # set staying small, not because it was measured to help.
-        #
-        # Where the selection genuinely is in a loop, it is not made at all:
-        # the assembly reads one homogeneous group at a time and never asks
-        # what a component is. Everything rarer, and every unsupported
-        # component, falls through to `lowercomponent`, which keeps the
-        # diagnostics in one place.
+        # The common components are lowered by an `isa` chain, ordered by
+        # how many of each a large circuit typically holds, and everything
+        # else falls through to `lowercomponent`. On a heterogeneous vector
+        # a branch chain avoids dynamic dispatch, although the interning of
+        # node names below dominates this loop either way.
         typesymbol, value = if def isa Capacitor
             (:C, def.C)
         elseif def isa NonlinearInductor
@@ -652,13 +643,9 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         elseif def isa Resistor
             (:R, def.R)
         elseif def isa Port
-            # the reference impedance, not the port number. A port has one
-            # quantity and the number is not it: a label in the value table
-            # makes the table's element type the join of a label and a
-            # quantity, which for the common circuit is `Number` rather than
-            # `ComplexF64`, so every read of every component value is boxed.
-            # The number is on the `CompiledPort`, which is where a number
-            # that identifies rather than measures belongs.
+            # a port's table value is its reference impedance, a quantity of
+            # the same kind as the other values, so that the table's element
+            # type stays concrete; the port number is on the `CompiledPort`
             (:P, def.Z0)
         elseif def isa CurrentSource
             (:I, def.I)
@@ -671,8 +658,8 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         push!(componenttypes, typesymbol)
         push!(componentvalues, value)
         marker = length(componentnames)
-        # a component which states its temperature keeps it; the rest take
-        # the one the analysis is run at
+        # a component which states its own temperature records it; the rest
+        # take the temperature the analysis is run at
         t = componenttemperature(def)
         isnothing(t) || (componenttemperatures[marker] = t)
 
@@ -697,17 +684,17 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         push!(nodeindexvector, n2)
 
         if def isa Port
-            # A matched port owns its external environment. It is emitted
-            # here as an ordinary resistor across the port terminals, which
-            # the conductance stamping, the solver scale and the parsed view
-            # all consume unchanged. What makes it the port's own is the
-            # index recorded on the port, not its position in the circuit,
-            # so any further resistor on these terminals is an ordinary
-            # device resistor.
+            # A matched port owns its external environment, emitted here as
+            # an ordinary resistor entry across the port's nodes, which the
+            # conductance stamping and the solver scale consume like any
+            # other resistor. What marks it as the port's own is the index
+            # recorded on the `CompiledPort`, so any further resistor on the
+            # same nodes is a device resistor.
             #
-            # The generated name cannot collide: "<path>/termination" would
-            # require the instance at "<path>" to be a subcircuit containing
-            # an instance named "termination", and it is a Port.
+            # The generated name "<path>/termination" cannot collide with an
+            # instance: that would require the instance at "<path>" to be a
+            # subcircuit containing an instance named "termination", and it
+            # is a Port.
             environment = 0
             if def.termination isa MatchedTermination
                 push!(componentnames, path * "/termination")
@@ -717,9 +704,10 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
                 push!(nodeindexvector, n2)
                 environment = length(componentnames)
             elseif def.termination isa LegacyTermination
-                # the environment already exists; it is named relative to the
-                # port, so a legacy circuit instanced as a subcircuit still
-                # resolves
+                # the termination is a resistor which already exists in the
+                # table. Its name is relative to the port's level, so a
+                # legacy circuit instanced as a subcircuit still resolves;
+                # the index is looked up once the table is complete.
                 k = findlast('/', path)
                 prefix = isnothing(k) ? "" : path[1:k]
                 push!(legacyenvironments,
@@ -743,8 +731,7 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         componentnamedict[name] = i
     end
 
-    # a legacy port owns a resistor which already existed, so its index is
-    # resolved once the whole table is known
+    # resolve the legacy terminations now that every name is in the table
     for (k, name) in legacyenvironments
         i = get(componentnamedict, name, 0)
         if iszero(i) || componenttypes[i] !== :R
@@ -754,9 +741,8 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
             ports[k].negativenode, ports[k].zref, i, ports[k].component)
     end
 
-    # sortnodes renumbers the nodes, so the port and block node indices
-    # recorded above are in the pre-sort numbering and are refreshed from the
-    # sorted table rather than translated.
+    # `sortnodes` renumbered the nodes. The port nodes recorded above are in
+    # the pre-sort numbering and are re-read from the sorted table.
     ports = [CompiledPort(p.number, nodeindices[1, p.component],
         nodeindices[2, p.component], p.zref, p.environment, p.component)
         for p in ports]
@@ -764,8 +750,8 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
     warnduplicatematchedload(ports, componentnames, componenttypes,
         componentvalues, nodeindices)
 
-    # the block terminals are node indices from before the sort, and are
-    # renumbered like every other one
+    # the block nodes are also pre-sort and are translated with the
+    # renumbering, since blocks have no table entry to re-read them from
     for b in scatteringblocks
         for p in eachindex(b.signalnodes)
             b.signalnodes[p] = renumber[b.signalnodes[p]]
@@ -786,18 +772,15 @@ end
     warnduplicatematchedload(ports, componentnames, componenttypes,
         componentvalues, nodeindices)
 
-Warn when a matched port has a device resistor of its own value across it.
+Warn when a matched port has a device resistor of exactly its own reference
+impedance across the same two nodes.
 
-Before ports owned their environments, a port was terminated by a resistor
-the user placed across it, and the two together were one 50 ohm load.
-Written unchanged now, the same circuit has two: the port's own matched
-environment and the resistor beside it. That is a legal circuit and is
-sometimes what is wanted, so it is not refused; but it is much more often a
-circuit which was written under the old rule and whose loading has quietly
-halved, which is not the kind of change that announces itself in an answer.
-
-Only an exact match of the reference impedance is reported, because that is
-what makes it a likely duplicate rather than a device.
+Such a circuit is legal, and is what a user who wants two loads means, so
+it is not refused. It is far more often a circuit written in the tuple
+netlist style, where the resistor across a port *was* its termination, and
+now carries two loads instead of one. Only an exact match of the reference
+impedance is reported, because that is what makes the resistor a likely
+duplicate rather than a device.
 """
 function warnduplicatematchedload(ports, componentnames, componenttypes,
         componentvalues, nodeindices)
@@ -823,35 +806,28 @@ end
 compile(circuit::Circuit; sorting::Symbol = :name) =
     compile(elaborate(circuit); sorting = sorting)
 
-# a netlist of tuples becomes a typed circuit first
+# a tuple netlist becomes a typed circuit first
 compile(netlist::AbstractVector; sorting::Symbol = :name) =
     compile(Circuit(netlist); sorting = sorting)
 
-# and a circuit which is already compiled is itself, so the solver entry
-# points accept one
+# a compiled circuit is returned as is, so the solver entry points accept one
 compile(c::CompiledCircuit; sorting::Symbol = :name) = c
 
 # === port and noise roles, read from the compiled circuit ===
 #
-# The legacy netlist carries no role, so the adapter recovers one by
-# geometry: it looks for a resistor sharing a port's branch and calls that
-# the port impedance, which is why the legacy language allows a port exactly
-# one resistor across it. That is the only place geometry decides a role. A
-# compiled port states its own reference impedance and which component, if
-# any, realizes it, so the lists below come out of the structure: a port may
-# share its terminals with any number of ordinary device resistors, none of
-# which it adopts, and a port which loads the circuit with nothing at all is
-# an ordinary thing to write.
+# A compiled port states its own reference impedance and, through
+# `environment`, which table entry realizes it. The functions below read
+# those records; none of them looks for a resistor on a port's branch. The
+# only place a role is recovered from circuit geometry is the legacy
+# adapter, where the tuple format has no way to state one.
 
 """
     scatteringblockindex(c::CompiledCircuit, name)
 
-The ordinal of the scattering block named `name`, or zero.
-
-A block is named by its instance path, which is the name the user wrote. It
-used to be named by the flat component its first port lowered to, so a two
-port block at `x` was addressed as `x/port1`; that spelling is still
-accepted, because it is what the design sensitivities produced.
+The position in `c.scatteringblocks` of the block whose instance path is
+`name`, or zero when there is none. The spelling `"<path>/port1"` is also
+accepted for compatibility with names the design sensitivities once
+produced.
 """
 function scatteringblockindex(c::CompiledCircuit, name)
     s = String(name)
@@ -864,7 +840,9 @@ end
 """
     portindicesnumbers(c::CompiledCircuit)
 
-The flat indices and numbers of the ports, ordered by port number.
+The flat table indices and the numbers of the ports, both ordered by port
+number. Throws an `ArgumentError` for duplicate port numbers or two ports
+on the same branch.
 """
 function portindicesnumbers(c::CompiledCircuit)
     numbers = [p.number for p in c.ports]
@@ -886,22 +864,17 @@ end
 """
     portenvironmentindices(c::CompiledCircuit)
 
-The flat index of each port's own environment, ordered by port number, or
-zero for a port which owns none.
+The flat table index of each port's own termination, ordered by port
+number, or zero for a port which owns none.
 
-A port owns an environment when it was declared with one, either as the
-matched source and load of `termination = nothing`'s complement or as the
-resistor a legacy netlist placed across it. `termination = nothing` means
-there is no such component, and zero says so. Nothing is searched for here:
-a resistor a user placed across a port is that user's device resistor, and
-the only place a role is recovered from geometry is the legacy adapter,
-where the input language has no way to state one.
-
-The index names a role, not a number. It says which component a port's
-reference impedance is realized by, for the two things which need to know
-that: the noise classification, which counts an external bath differently
-from an internal channel, and the sensitivities, where differentiating that
-component also moves the wave normalization. The impedance itself comes from
+A port owns a termination when it was written with the default
+[`MatchedTermination`](@ref), or when the legacy adapter recorded the
+resistor a tuple netlist placed across it. A port written with
+`termination = nothing` owns none. The index identifies a role rather than
+a value: it says which entry realizes the port's reference impedance, which
+the noise classification needs (a port termination is an external bath,
+not an internal noise channel) and the sensitivities need (perturbing that
+entry also moves the wave normalization). The impedance itself comes from
 [`portreferenceimpedances`](@ref), which is defined for every port.
 """
 portenvironmentindices(c::CompiledCircuit) =
@@ -911,16 +884,14 @@ portenvironmentindices(c::CompiledCircuit) =
 """
     portreferenceimpedances(c::CompiledCircuit, values)
 
-The reference impedance of each port, ordered by port number, resolved
-against a flat value table.
+The reference impedance of each port, ordered by port number, which the
+incoming and outgoing waves are normalized to.
 
-This is the impedance the incoming and outgoing waves are normalized to. It
-is the port's declared `Z0`, which is what the reference impedance means;
-when the port owns an environment the value is read from the table instead,
-so that a swept or symbolic impedance resolves the same way a component
-value does and the two cannot disagree. They describe the same quantity: a
-matched environment is generated with the port's own `Z0`, and a legacy
-port's `Z0` is the value of the resistor it adopted.
+For a port which owns a termination the impedance is read from that entry
+of the resolved value table `values`, so that a swept or symbolic
+impedance resolves the same way any component value does; the entry holds
+the port's own `Z0` in any case. For a port which owns none it is the
+port's `zref` as written.
 """
 portreferenceimpedances(c::CompiledCircuit, values) =
     [iszero(c.ports[i].environment) ? c.ports[i].zref :
@@ -930,12 +901,13 @@ portreferenceimpedances(c::CompiledCircuit, values) =
 """
     noiseindices(c::CompiledCircuit, values)
 
-The flat indices of the internal dissipative components: every resistor which
-is not a port's own environment, and every capacitor or inductor with a
-nonzero imaginary part.
+The flat table indices of the internal dissipative components, which are
+the noise channels of the linearized analysis: every resistor which is not
+a port's own termination, and every capacitor or inductor whose resolved
+value in `values` has a nonzero imaginary part.
 
-A port environment is an external bath rather than an internal channel, so it
-is excluded by role. Any other resistor across the port's terminals is an
+A port termination is an external bath rather than an internal channel and
+is excluded by its role; any other resistor across a port's nodes is an
 ordinary device resistor and is included.
 """
 function noiseindices(c::CompiledCircuit, values)

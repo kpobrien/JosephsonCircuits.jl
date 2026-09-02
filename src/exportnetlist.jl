@@ -101,10 +101,6 @@ end
 
 
 # export_netlist("test1.net", circuit,circuitdefs)
-# export_netlist("test2.net", circuit,Dict())
-
-# circuit = import_netlist("test2.net")
-
 
 
 """
@@ -360,19 +356,13 @@ function calcCjIcmean(componenttypes::Vector{Symbol},
         node1, node2 = calcnodes(i, mutualinductorindex, componenttypes,
             nodeindexarray, componentnamedict, mutualinductorbranchnames)
 
-        # sum up the values on the branch
+        # sum the values on the branch
         flag, value, index = sumbranchvalues!(componenttypes[i], node1, node2, componentvalues, countdictcopy, indexdictcopy)
-        # println(componenttypes[i]," ",flag," ",value)
 
         if flag == true && componenttypes[i] == :Lj
             nJJ += 1
 
             capflag, capvalue, capindex = sumbranchvalues!(:C, node1, node2, componentvalues, countdictcopy, indexdictcopy)
-            # println(:C," ",capflag," ", capvalue)
-
-            # if !capflag
-            #     error("Each Josephson junction needs a capacitor.")
-            # end
 
             Ictmp = real(LjtoIc(value))
             Icmean = Icmean + (Ictmp-Icmean)/nJJ
@@ -402,15 +392,7 @@ function calcCjIcmean(componenttypes::Vector{Symbol},
         end
     end
 
-    # decide on the circuit parameters
-    #decide on the JJ parameters and write the junction model.
-    # Icmean*CjoIc
-
-    # println(Icmin," ",Icmax," ",Icmean)
-    # println(Icmin/Icmean)
-    # println(Icmax/Icmean)
-
-    # check if the junction sizes are within the range allowed by WRSPICE
+    # check that the junction sizes are within the range WRSPICE allows
     if Icmin/Icmean < 0.02
         error(lazy"Minimum junction too much smaller than average for WRSPICE.")
     end
@@ -441,8 +423,23 @@ function spicename(name::AbstractString, prefix::Char)
 end
 
 """
-    exportnetlist(circuit::Vector,circuitdefs::Dict,port::Int = true,
+    exportnetlist(circuit, circuitdefs::Dict; port::Int = 1, jj::Bool = true)
+    exportnetlist(psc::CompiledCircuit, circuitdefs::Dict; port::Int = 1,
         jj::Bool = true)
+
+Export a circuit as a WRSPICE netlist. Returns a named tuple with the
+netlist as a string in `netlist`, along with `portnodes`, `port`,
+`portcurrent` and `Nnodes`, which [`wrspice_input_transient`](@ref) and
+[`wrspice_input_ac`](@ref) read to add sources and simulation commands.
+
+Component values are resolved with `circuitdefs`. With `jj = true` each
+Josephson junction is written as an instance of one WRSPICE `jj` model
+whose capacitance to critical current ratio is the mean over the junctions
+of their shunt capacitance to critical current (see
+[`calcCjIcmean`](@ref)); the part of a junction's shunt capacitance above
+what the model provides is written as a separate capacitor. With
+`jj = false` each junction is written as its linear inductance. `port` is
+the port number the sources are applied to, recorded in the output.
 
 # Examples
 ```jldoctest
@@ -621,18 +618,14 @@ end
 function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
         port::Int = 1, jj::Bool = true)
 
-    # set these to 1 for now, but i should consider how or whether to handle
-    # multi-port devices.
+    # placeholders; only a single port is handled
     portnodes = 1
     portcurrent = 1
 
-    # calculate the circuit graph
-    # the loop enumeration is quadratic in the number of inductive
-    # loops and nothing here reads it
+    # nothing here reads the loops of the circuit graph
     cg = calccircuitgraph(psc; loops = false)
-    
-    # convert as many values as we can to numerical values using definitions
-    # from circuitdefs
+
+    # resolve the component values
     componentvalues = componentvaluestonumber(psc.componentvalues,circuitdefs)
 
     countdict, indexdict = componentdictionaries(
@@ -698,7 +691,7 @@ function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
 
             Ictmp = real(LjtoIc(value))
 
-            # if jj == true, then write the JJ otherwise write and inductor
+            # a junction is written as a jj model instance, or as an inductor
             if jj == true
                 nJJ += 1
                 # push!(netlist,"B$(nJJ) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
@@ -726,17 +719,6 @@ function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
             push!(netlist,"$(spicename(componentnames[i],'R')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value))")
         end
     end
-
-    # # find the nodes for the selected port
-    # # i should also support multiple ports. maybe pass in an array of port indices.
-    # portnodes=findall(x->x == port, cdict[:P])
-    # portcurrent = 0.0
-    # if isempty(portnodes)
-    #     error("Port $(port) does not exist in dictionary.")
-    # else
-    #     portnodes=first(portnodes)
-    #     # portcurrent=cdict[:I][portnodes]
-    # end
 
     if jj == true && nJJ > 0
         push!(netlist,".model jjk jj(rtype=0,cct=1,icrit=$(micro*Icmean)u,cap=$(femto*Icmean*real(CjoIc))f,force=1,vm=$(vm)")

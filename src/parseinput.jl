@@ -1,18 +1,20 @@
-# The input path, in the order a circuit travels it.
+# The typed circuit a user writes, and the parse of one level of it.
 #
-#   Circuit          what the user writes: components, connections, and the
-#                    interface a subcircuit presents to its parent. Parsed
-#                    one level at a time by `parsecircuitlevel`.
-#   ElaboratedCircuit  the hierarchy flattened: every instance given a path,
-#                    every net a single wire, by `elaborate`.
-#   CompiledCircuit  flat integer indexed tables plus the groups the
-#                    assembly reads, by `compile`.
+# A circuit passes through three representations:
 #
-# The components themselves are in `circuitmodel.jl`, which is a catalogue
-# of what each one is rather than a step on this path. How a component
-# value becomes a number is in `circuitvalue.jl`. The legacy tuple netlist
-# is adapted into a `Circuit` in `legacyadapter.jl` and joins the path at
-# the top.
+#   Circuit            what the user writes: components, connections, and
+#                      the interface a subcircuit presents to its parent.
+#                      Validated one level at a time by `parsecircuitlevel`
+#                      (this file).
+#   ElaboratedCircuit  the hierarchy flattened, by `elaborate`
+#                      (circuitcompile.jl).
+#   CompiledCircuit    flat integer indexed tables, by `compile`
+#                      (circuitcompile.jl).
+#
+# The component models are in circuitmodel.jl, how a component value
+# becomes a number is in circuitvalue.jl, and the legacy tuple netlist is
+# converted to a `Circuit` in legacyadapter.jl. The end of this file holds
+# the node naming and sorting helpers `compile` uses.
 
 
 # === the circuit a user writes ===
@@ -48,8 +50,8 @@ and it contributes no flattened component.
 """
 const Ground = GroundType()
 
-# `Ground()` constructs like a component model but is the same singleton, so
-# the sentinel and component spellings cannot diverge.
+# `Ground()` reads like a component constructor but returns the same
+# singleton, so the two spellings cannot diverge.
 (::GroundType)() = Ground
 
 Base.show(io::IO, ::GroundType) = print(io, "Ground")
@@ -230,9 +232,8 @@ end
 countelements(x) = Base.IteratorSize(x) isa Union{Base.HasLength,Base.HasShape} ?
     length(x) : count(Returns(true), x)
 
-# compact display: the stored collections (and their types) can be large,
-# especially for generated circuits, and nested subcircuits would otherwise
-# print recursively
+# A compact display: the stored collections can be large for generated
+# circuits, and a nested subcircuit would otherwise print recursively.
 function Base.show(io::IO, c::Circuit)
     print(io, "Circuit(", countelements(c.components), " components, ",
         countelements(c.connections), " connections")
@@ -294,6 +295,9 @@ isgrounded(c::GaussianChannel) = c.grounded
 
 # === component table ===
 
+# The instances of one circuit level: their identifiers, their definitions
+# (with `Instance` wrappers removed), and a lookup from identifier to
+# position.
 struct ComponentTable
     ids::Vector{Any}
     defs::Vector{Any}
@@ -697,17 +701,18 @@ parsecircuitlevel(c::Circuit) = parsecircuitlevel(c.components, c.connections,
 
 # === node names and node ordering ===
 #
-# Both are used by `compile` below, which interns every terminal it
-# visits and then renumbers the result.
+# `compile` (circuitcompile.jl) interns the net name of every terminal it
+# visits with `processnode`, then sorts the resulting node list with
+# `calcnodesorting` and renumbers every recorded node index with
+# `sortnodes`.
 
 """
     processnode(uniquenodedict::Dict{String, Int},
         uniquenodevector::Vector{String},node::String)
 
-Return the node index when given a node. Add the node string
-to the vector `uniquenodevector` and the dictionary `uniquenodedict` with the
-node string as the key and the node index (index at which it appears in
-`uniquenodevector`) as the value.
+Return the index of the node named `node`, interning it if it is new: a
+new name is appended to `uniquenodevector` and recorded in
+`uniquenodedict` with its position as the value.
 
 # Examples
 ```jldoctest
@@ -738,11 +743,8 @@ Dict("10" => 1)
 function processnode(uniquenodedict::Dict{String, Int},
     uniquenodevector::Vector{String},node::String)
     if !haskey(uniquenodedict,node)
-        # if this is a new node, add to the unique node vector
         push!(uniquenodevector,node)
-        
-        # use the length plus one so it starts with one
-        # and we can use them as indices in an array
+        # the new node's index is one past the number of nodes seen so far
         return uniquenodedict[node] = length(uniquenodedict)+1
     else
         return uniquenodedict[node]
@@ -753,10 +755,8 @@ end
     processnode(uniquenodedict::Dict{String, Int},
         uniquenodevector::Vector{String},node)
 
-Return the node index when given a node. Add the node string
-to the vector `uniquenodevector` and the dictionary `uniquenodedict` with the
-node string as the key and the node index (index at which it appears in 
-`uniquenodevector`) as the value. If "node" is not a string, make it a string.
+Intern a node given as anything other than a string (an integer or a
+symbol) by converting it with `string` first.
 
 # Examples
 ```jldoctest
@@ -786,14 +786,14 @@ Dict("A" => 2, "10" => 1)
 """
 function processnode(uniquenodedict::Dict{String, Int},
     uniquenodevector::Vector{String},node)
-    # if the node isn't a string, turn it into a string
     return processnode(uniquenodedict,uniquenodevector,string(node))
 end
 
 """
     findgroundnodeindex(uniquenodevector::Vector{String})
 
-Find the index of the ground node.
+The index of the ground node `"0"` in `uniquenodevector`, or `0` if there
+is none.
 
 # Examples
 ```jldoctest
@@ -808,9 +808,6 @@ julia> JosephsonCircuits.findgroundnodeindex(String[])
 ```
 """
 function findgroundnodeindex(uniquenodevector::Vector{String})
-
-    # find the ground node. error if we don't find it.
-    # groundnodeindex = 0
     for i in eachindex(uniquenodevector)
         if uniquenodevector[i] == "0"
             return i
@@ -822,18 +819,17 @@ end
 """
     calcnodesorting(uniquenodevector::Vector{String};sorting=:number)
 
-Sort the unique node names in `uniquenodevector` according to the specified
-sorting scheme, always placing the ground node at the beginning. Return the
-indices which sort `uniquenodevector`.
+The permutation which sorts the node names in `uniquenodevector` according
+to `sorting`, with the ground node `"0"` moved to the front in every case.
+Throws an `ArgumentError` if there is no ground node.
 
 # Keywords
-- `sorting = :name`: Sort the vector of strings. This always works but leads
-    to results like "101" comes before "11".
-- `sorting = :number`: Convert the node strings to integer and sort by these
-    (this errors if the nodes names cannot be converted to integers).
-- `sorting = :none`: Don't perform any sorting except to place the ground node
-    first. In other words, order the nodes in the order they are found in
-    `circuit`.
+- `sorting = :number`: parse the names as integers and sort numerically.
+    Throws an `ArgumentError` if a name is not an integer.
+- `sorting = :name`: sort the names as strings, so that `"101"` sorts
+    before `"11"`.
+- `sorting = :none`: keep the names in order of first appearance, apart
+    from moving ground to the front.
 
 # Examples
 ```jldoctest
@@ -862,21 +858,16 @@ julia> JosephsonCircuits.calcnodesorting(["30","11","0","2"];sorting=:none)
 function calcnodesorting(uniquenodevector::Vector{String};
     sorting::Symbol = :number)
 
-    # vector of indices for the sortperm. if sorting is nothing, use this
-    # uniquenodevectorsortindices = ones(Int,length(uniquenodevector))
+    # the identity permutation, which `:none` keeps
     uniquenodevectorsortindices = Vector{Int}(undef,length(uniquenodevector))
-    # uniquenodevectorsortindices .= 1:length(uniquenodevector)
     for i in eachindex(uniquenodevectorsortindices)
         uniquenodevectorsortindices[i] = i
     end
 
-    # sort according to the desired scheme
     if sorting == :name
-        # sort the vector of unique node strings
         sortperm!(uniquenodevectorsortindices,uniquenodevector,initialized=true)
 
     elseif sorting == :number
-        # convert the unique node strings to integers and sort those
         uniquenodevectorints = Vector{Int}(undef,length(uniquenodevector))
         for i in eachindex(uniquenodevectorints)
             parsednode = tryparse(Int,uniquenodevector[i])
@@ -889,23 +880,19 @@ function calcnodesorting(uniquenodevector::Vector{String};
         sortperm!(uniquenodevectorsortindices, uniquenodevectorints, initialized=true)
 
     elseif sorting == :none
-        # don't perform any sorting. keep the nodes in
-        # order of first appearance, except move the
-        # ground node first later as always
         nothing
     else
         throw(ArgumentError(lazy"Unknown sorting type."))
     end
 
-    # find the ground node. error if we don't find it.
     groundnodeindex = findgroundnodeindex(uniquenodevector)
 
     if groundnodeindex == 0
         throw(ArgumentError(lazy"No ground node found in netlist."))
     end
 
-    # if the ground index is not the first after sorting, move it to the front
-    # and shift the nodes which sorted before it back by one
+    # move ground to the front, shifting the nodes which sorted before it
+    # back by one
     if uniquenodevectorsortindices[1] != groundnodeindex
         groundpos = findfirst(==(groundnodeindex), uniquenodevectorsortindices)
         for j = groundpos:-1:2
@@ -921,20 +908,17 @@ end
     sortnodes(uniquenodevector::Vector{String},
         nodeindexvector::Vector{Int};sorting=:name)
 
-Sort the unique node names in `uniquenodevector` according to the specified
-sorting scheme, always placing the ground node at the beginning.
+Sort the node names with [`calcnodesorting`](@ref) and renumber the node
+indices in `nodeindexvector` accordingly. Returns the sorted names and the
+renumbered indices reshaped from a vector of length `2*Ncomponents` into
+a 2 by `Ncomponents` matrix. A zero index, which marks a mutual inductor,
+stays zero.
 
-Return the sorted `uniquenodevector` and `nodeindexvector` (with the vector
-reshaped from a vector of length 2*Nnodes into a matrix with dimensions 2 by
-Nnodes).
+Note that this method defaults to `sorting = :name` while
+[`calcnodesorting`](@ref) defaults to `:number`.
 
 # Keywords
-- `sorting = :name`: Sort the vector of strings. This always works but leads
-    to results like "101" comes before "11".
-- `sorting = :number`: Convert the node strings to integer and sort by these
-    (this errors if the nodes names cannot be converted to integers).
-- `sorting = :none`: Don't perform any sorting except to place the ground node
-    first.
+- `sorting`: `:name`, `:number` or `:none`; see [`calcnodesorting`](@ref).
 
 # Examples
 ```jldoctest
@@ -962,23 +946,22 @@ function sortnodes(uniquenodevector::Vector{String},
 end
 
 """
-    noderenumbering(uniquenodevector, order)
+    noderenumbering(order)
 
-Where each node ends up once the nodes are sorted: `renumber[j]` is the new
-index of the node which was `j`.
-
-Anything holding a node index from before the sort is renumbered with this,
-which is how something that is not a component -- the terminals of a
-scattering block -- can be carried through the sort without being given a
-row in the component table to ride on.
+The renumbering induced by the sorting permutation `order` returned by
+[`calcnodesorting`](@ref): `renumber[j]` is the new index of the node whose
+old index was `j`. `compile` uses it to renumber the node indices of
+scattering blocks, which have no component table entry to be re-read from.
 """
 noderenumbering(order::Vector{Int}) = sortperm(order)
 
 """
     sortnodes(uniquenodevector, nodeindexvector, order)
 
-Sort the nodes by a precomputed ordering, returning the sorted names, the
-component node indices, and the renumbering the sort applied.
+Apply the precomputed sorting permutation `order` (see
+[`calcnodesorting`](@ref)), returning the sorted names, the renumbered
+component node indices as a 2 by `Ncomponents` matrix, and the
+renumbering itself (see [`noderenumbering`](@ref)).
 """
 function sortnodes(uniquenodevector::Vector{String},
         nodeindexvector::Vector{Int}, order::Vector{Int})
@@ -987,11 +970,9 @@ function sortnodes(uniquenodevector::Vector{String},
 
     nodevectorsortindices = noderenumbering(order)
 
-    # for (i,j) in enumerate(eachindex(nodeindexvector))
     for (i,j) in enumerate(nodeindexvector)
-        # if it's a mutual inductor the node index will be zero because the
-        # mutual inductor is between two inductors not between two nodes.
-        # it not a mutual inductor, assign the sorted node index.
+        # a mutual inductor couples two inductors rather than two nodes, so
+        # its node indices are zero and stay zero
         if j == 0
             nothing
         else

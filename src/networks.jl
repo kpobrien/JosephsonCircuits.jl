@@ -1,4 +1,9 @@
-# generate the network parameter convenience functions based on the functions below
+# Closed form network parameters of standard two port and four port
+# networks (series and shunt elements, transmission lines, coupled lines,
+# Pi and T networks, attenuators, couplers, splitters), each as an in place
+# function and a non in place function, for scalar and per frequency array
+# arguments. The loops below generate the array and scalar methods from the
+# in place scalar versions defined further down.
 
 # one argument functions
 for f in [:ABCD_seriesZ, :ABCD_shuntY, :Y_seriesY, :Z_shuntZ]
@@ -605,7 +610,7 @@ end
 
 
 """
-  Z_L(L,w)
+    Z_L(L,w)
 
 The impedance matrix `Z` for a network of inductors and mutual inductors is
 the inductance matrix `Z_L` times im*w.
@@ -624,7 +629,7 @@ function Z_L!(Z::AbstractMatrix,L::AbstractMatrix,w::Number)
 end
 
 """
-  Z_invC(invCmaxwell,w)
+    Z_invC(invCmaxwell,w)
 
 The impedance matrix `Z` for a network of capacitors is the inverse of the
 Maxwell capacitance matrix `invCmaxwell` divided by im*w.
@@ -643,7 +648,7 @@ function Z_invC!(Z,invC,w)
 end
 
 """
-  Y_C(Cmaxwell,w)
+    Y_C(Cmaxwell,w)
 
 The admittance matrix `Y` for a network of capacitors is the Maxwell
 capacitance matrix `Cmaxwell` times im*w.
@@ -662,7 +667,7 @@ function Y_C!(Y,C,w)
 end
 
 """
-  Y_invL(L,w)
+    Y_invL(L,w)
 
 The admittance matrix `Y` for a network of inductors and mutual inductors is
 the inverse of the inductance matrix `L` divided by im*w.
@@ -1011,16 +1016,12 @@ end
 function A_coupled_tlines!(phi11, phi12, phi21, phi22, phi_tmp, TI, TIinv,
     ZC_TI, TIinv_YC, coshgammal, sinhgammal)
 
-    # # The equations
-    # phi11 = 1/2*ZC*TI*(exp(gamma*l)+exp(-gamma*l))*TIinv*YC
-    # phi12 = -1/2*ZC*TI*(exp(-gamma*l)-exp(gamma*l))*TIinv
-    # phi21 = -1/2*TI*(exp(-gamma*l)-exp(gamma*l))*TIinv*YC
-    # phi22 = 1/2*TI*(exp(gamma*l)+exp(-gamma*l))*TIinv
-
-    # phi11 = 1/2*TV*(exp(gamma*l)+exp(-gamma*l))*TVinv
-    # phi12 = -1/2*TV*(exp(gamma*l)-exp(-gamma*l))*TVinv*ZC
-    # phi21 = -1/2*YC*TV*(exp(gamma*l)-exp(-gamma*l))*TVinv
-    # phi22 = 1/2*YC*TV*(exp(gamma*l)+exp(-gamma*l))*TVinv*ZC
+    # The blocks of the ABCD matrix, in the current eigenbasis TI (an
+    # equivalent form exists in the voltage eigenbasis TV):
+    #   phi11 = ZC*TI*cosh(gamma*l)*TIinv*YC
+    #   phi12 = ZC*TI*sinh(gamma*l)*TIinv
+    #   phi21 = TI*sinh(gamma*l)*TIinv*YC
+    #   phi22 = TI*cosh(gamma*l)*TIinv
 
     mul!(phi_tmp,coshgammal,TIinv_YC)
     mul!(phi11,ZC_TI,phi_tmp)
@@ -1164,10 +1165,10 @@ function maxwell_to_mutual(Cmaxwell::AbstractMatrix)
 end
 
 """
-    mutual_to_maxwell(Cmutual::AbstractMatrix)
+    mutual_to_maxwell(C::AbstractMatrix)
 
 Return the Maxwell capacitance matrix from the mutual capacitance matrix
-`Cmutual`.
+`C`.
 
 The Maxwell capacitance `Cmaxwell` is the relationship between charge and
 voltage on each node, Q = C V or dQi/dVj = C_ij where `C` is the
@@ -1215,12 +1216,8 @@ nodd = 0.008532242933583305
 """
 function maxwell_to_even_odd(L, Cmaxwell)
 
-    # consider erroring if not 2x2 matrices with capacitance and inductance
-    # to ground equal for both transmission lines.
-    # also error if not symmetric
-    # (Cmaxwell[1,1] != Cmaxwell[2,2]) || (Cmaxwell[1,2] != Cmaxwell[2,1])
-    # size(Cmaxwell) != (2,2)
-    # same for inductance matrix
+    # The matrices are assumed to be symmetric 2 by 2 with equal diagonal
+    # entries (two identical lines); this is not checked.
 
     c = JosephsonCircuits.speed_of_light
     Zeven = sqrt((L[1,1]+L[1,2])/(Cmaxwell[1,1]+Cmaxwell[1,2]))
@@ -1994,7 +1991,7 @@ function S_hybrid_coupler_symmetric()
 end
 
 """
-    S_hybrid_coupler_symmetric!()
+    S_hybrid_coupler_symmetric!(S)
 
 Overwrite `S` with the scattering parameter matrix for an ideal symmetric
 hybrid (3 dB) coupler (a 90 degree or quadature hybrid) with the convention
@@ -2216,10 +2213,6 @@ function Z_attenuator_inner(Zsource::Number,Zload::Number,attenuationdB::Number)
     return Z11,Z22,Z21
 end
 
-# function Z_attenuator(Zsource::Number,Zload::Number,attenuationdB::Number)
-#     Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
-#     return [Z11 Z21; Z21 Z22]
-# end
 
 """
     ABCD_attenuator_T(Zsource, Zload, attenuationdB)
@@ -2300,8 +2293,8 @@ julia> JosephsonCircuits.ABCD_attenuator_Pi(50.0,50.0,10.0)
 """
 function ABCD_attenuator_Pi(Zsource::Number,Zload::Number,attenuationdB::Number)
 
-    # make a Y_attenuator_inner function for cases where Z_attenuator_inner
-    # has NaN or Inf. 
+    # Derived from the T network impedances; a matched attenuator of zero
+    # attenuation makes these infinite, which this does not handle.
     Z11,Z22,Z21 = Z_attenuator_inner(Zsource,Zload,attenuationdB)
     denom = (Z11*Z22-Z21^2)
     Y11 = Z22/denom

@@ -9,10 +9,9 @@
 # over parameter values pays the parse once.
 #
 # The cache also carries the one piece of state worth keeping between
-# solves: the previously converged operating point, used to warm start the
-# next one. That is where the time actually goes -- a cold solve of a
-# driven line can take many Newton iterations, while warm started from a
-# nearby solution it takes a few.
+# solves: the previously converged operating point, which warm starts the
+# next one. A cold solve of a driven line can take many Newton iterations
+# where a warm start from a nearby solution takes a few.
 # =====================================================================
 
 """
@@ -86,12 +85,10 @@ function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     indices = fourierindices(frequencies)
     Nmodes = length(frequencies.modes)
 
-    # A netlist of tuples, not a typed `Circuit`: the value table below is
-    # built by walking the builder's output entry by entry, which a
-    # `Circuit` does not support, and a typed circuit's compiled table can
-    # hold generated entries the builder never returned. Rebinding a typed
-    # circuit needs the compiler's own value plan; until it has one, this
-    # takes what it can consume.
+    # The builder must return a netlist of tuples, not a typed `Circuit`:
+    # the value table below is built by walking the builder's output entry
+    # by entry, and a typed circuit's compiled table can hold generated
+    # entries (a port's termination) the builder never returned.
     circuit0 = builder(; p...)
     circuit0 isa AbstractVector || throw(ArgumentError(lazy"hbcache needs a builder returning a netlist of (name, node1, node2, value) tuples; this one returned a $(typeof(circuit0)). A typed `Circuit` is not supported here yet, because the cache rebinds values by walking the builder's output."))
     compiled = compile(circuit0; sorting = sorting)

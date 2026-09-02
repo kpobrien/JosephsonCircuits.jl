@@ -13,20 +13,17 @@
 #
 # `phiac` is every nonzero frequency flux entry, `phidc` the zero frequency
 # flux of each node and of each auxiliary unknown, and `vdc` the explicit
-# average node voltages. The design this came from had a fourth block for
-# the direct current port currents; it was never needed, because the solver
-# already carries a port current per mode and the zero frequency one is
-# inside `phidc`. Grouping by role is what
+# average node voltages, present only when the circuit injects direct
+# current. (A fourth `idc` block for direct current port currents appears
+# in some names but is always empty: the solver carries a port current per
+# mode and the zero frequency one is inside `phidc`.) Grouping by role
 # makes the direct current block a contiguous subsystem with its own rows,
-# which is the whole point: the transport rows can then be assembled,
-# factorized and solved apart from the alternating current problem.
+# so the transport rows can be assembled, factorized and solved apart from
+# the alternating current problem.
 #
-# This file is the transitional half of that change. `vdc` and `idc` are
-# empty here, so the canonical state is a permutation of the internal one
-# and nothing about the physics moves. What it buys is the layout itself,
-# and the measurement of what bracketing every residual and every Jacobian
-# vector product with a scatter and a gather costs, before anything harder
-# is built on top of it.
+# Without direct current `vdc` is empty and the canonical state is a
+# permutation of the internal one, so the two paths solve the same problem
+# in a rotated basis and must reach the same point.
 
 """
     CompositeLayout
@@ -160,10 +157,8 @@ function gathercanonical!(u::AbstractVector, rint::AbstractVector,
 end
 
 # On the host a plain loop, on a device the kernel. A kernel launch and the
-# synchronize after it cost more than the copy itself at these sizes: going
-# through the device path on the CPU measured 26 us against 3.6 us for the
-# loop on a 12240 entry state, which is the difference between this being a
-# fifth of a Jacobian vector product and a twentieth of one.
+# synchronize after it cost several times the copy itself at these sizes,
+# which matters for something applied on every Jacobian vector product.
 _onhost(x) = KernelAbstractions.get_backend(x) isa CPU
 
 function _gatherperm!(dest, src, index)
@@ -224,14 +219,13 @@ function tobackend(backend::Backend, L::CompositeLayout)
 end
 
 # The direct current block is held in `Float64` whatever precision the
-# periodic solve runs in, deliberately. It is small, dense and solved
-# exactly, and its conditioning is the worst in the problem: scaled
-# conductances are around 1e-11 while the injected currents are around 1e8,
-# so a rank decision or a factorization taken in the solve's precision would
-# be the least accurate part of the answer rather than the most. A single
-# precision solve with a direct current block converges to single precision,
-# which is what it should do, and costs nothing extra here because the block
-# is a few hundred numbers beside a state of tens of thousands.
+# periodic solve runs in. It is small, dense and solved exactly, and its
+# conditioning is the worst in the problem (scaled conductances of order
+# 1e-11 against injected currents of order 1e8), so a rank decision or a
+# factorization taken in a lower precision would be the least accurate
+# part of the answer. A single precision solve still converges to single
+# precision, and the block is a few hundred numbers beside a state of tens
+# of thousands, so this costs nothing.
 
 """
     DCPinning
@@ -339,9 +333,8 @@ function CanonicalWork(L::CompositeLayout, proto::AbstractVector{T};
     full = CanonicalWork(L, w.xint, w.Fint, transport, blockrows, w.dwork,
         nnodaldc, dcpinning(w), idx, idx .- shift, blocklocal,
         w.Fwindow, w.uwindow, nothing)
-    # the matrix form, on the backend the state is on. On the host the
-    # scalar walk is already the cheaper of the two at these sizes, so it is
-    # built only where the state is not host resident.
+    # the matrix form, built only where the state is not host resident; on
+    # the host the scalar walk is the cheaper of the two
     _onhost(proto) && return full
     up = dcupdate(full)
     isnothing(up) && return full
@@ -362,17 +355,18 @@ voltagerange(L::CompositeLayout) =
 # average voltages drive into the zero frequency nodal rows, and the
 # transport rows themselves.
 #
-# The sign is the elimination's, read backwards. The residual is
-# `A x - bnm`, and eliminating replaces `bnm` by `bnm - G0 P v`, so carrying
-# `v` instead means adding `G0 P v` here and leaving the applied source
-# alone. Doing both would count the resistor current twice.
-# Everything the direct current block reads and writes lies in one
-# contiguous window of the canonical vector: the zero frequency block and
-# the explicit voltages, which are adjacent. So the arithmetic is done on
-# that window with local indices, which is what lets it run on a device
-# without scalar indexing -- the window is copied to the host, worked on,
-# and copied back, and it is a few hundred numbers where the state is tens
-# of thousands. On the host it is a view and there is no copy at all.
+# The sign follows from the elimination read backwards: the residual is
+# `A x - bnm`, and eliminating the voltages would replace `bnm` by
+# `bnm - G0 P v`, so carrying `v` instead means adding `G0 P v` here and
+# leaving the applied source alone. Doing both would count the resistor
+# current twice.
+#
+# Everything the block reads and writes lies in one contiguous window of
+# the canonical vector, the zero frequency block and the explicit voltages,
+# so the arithmetic is done on that window with local indices. On the host
+# the window is a view; on a device it is either copied to the host,
+# worked on and copied back (a few hundred numbers beside a state of tens
+# of thousands), or, in the matrix form, updated in place.
 dcwindow(L::CompositeLayout) = (L.nac + 1):(L.nac + L.ndc + L.nvdc)
 
 function addtransport!(Fc::AbstractVector, work::CanonicalWork,
@@ -437,14 +431,10 @@ end
 #
 # The residual, the Jacobian vector product and the preconditioner are all
 # written against the internal layout. Rather than rewrite them, the
-# canonical path brackets each with a scatter in and a gather out, which is
-# what makes the two paths comparable: while the layout is a permutation
-# the canonical operator is `P J Pᵀ` with `P` orthogonal, so a Krylov
-# method takes the same iterations and reaches the same point, and any
-# difference between the paths is a bug rather than a change of problem.
-#
-# The cost of that bracketing is the thing worth knowing before the rest of
-# stage 5 is built on it, which is why it is measured rather than assumed.
+# canonical path brackets each with a scatter in and a gather out. While
+# the layout is a permutation the canonical operator is `P J Pᵀ` with `P`
+# orthogonal, so a Krylov method takes the same iterations and reaches the
+# same point, and any difference between the two paths is a bug.
 
 """
     canonicalresidual(fjreal!, work::CanonicalWork)
@@ -523,13 +513,13 @@ end
 function CanonicalPreconditioner(inner, work::CanonicalWork)
     t = work.transport
     isnothing(t) && return CanonicalPreconditioner(inner, work, nothing)
-    # The direct current subsystem is small, dense and constant: one unknown
-    # per static flux component and one per block port current, and its rows
-    # see no periodic state. Factorizing it once and solving it exactly
-    # beats any approximation, and it has to be solved jointly -- the
-    # transport rows carry the block currents and the block rows carry the
-    # average voltages, so solving only the transport half leaves the
-    # coupling to the Krylov iteration, which is what stalls it.
+    # The direct current subsystem is small, dense and constant, with one
+    # unknown per static flux component and one per block port current, and
+    # its rows see no periodic state, so it is factorized once and solved
+    # exactly. It has to be solved jointly: the transport rows carry the
+    # block currents and the block rows carry the average voltages, and
+    # solving only the transport half leaves the coupling to the Krylov
+    # iteration, which stalls it.
     F = lu(dcsubsystem(work))
     return CanonicalPreconditioner(inner, work, F)
 end
@@ -537,37 +527,27 @@ end
 # =====================================================================
 # The direct current solve, where the state is.
 #
-# The subsystem is constant, so its exact solve is a fixed linear map and it
-# is tempting to store that map as a matrix. It cannot be: the subsystem is
-# genuinely ill conditioned -- a circuit with a ten million to one impedance
-# ratio gives it a condition number of about that -- and its unknowns are
-# around 1e9 in the solver's scaled units, so an inverse accurate to a
-# relative 1e-8 leaves an absolute error of about ten in a residual the
-# solve is trying to drive to zero. Measured, that is the difference between
-# converging and not.
+# The subsystem is constant, so its exact solve is a fixed linear map, but
+# that map cannot be stored as a matrix: the subsystem is ill conditioned
+# (a circuit with a ten million to one impedance ratio gives it a condition
+# number of that order) and its unknowns are large in the solver's scaled
+# units, so an explicit inverse leaves an absolute error the solve cannot
+# drive to zero. It stays a linear solve, and what moves to the device is
+# the factorization rather than the answer: the same factors, permutation
+# and substitution order as the host path, in a kernel with one work item,
+# so the two agree exactly and the window does not cross the bus per
+# application.
 #
-# So it stays a linear solve, and what moves to the device is the
-# factorization rather than the answer. The same factors, the same
-# permutation and the same substitution order as the host path, in a kernel
-# with one work item: the arithmetic is identical, so the two agree exactly
-# rather than to a tolerance, and the window no longer crosses the bus three
-# times per application.
-#
-# One work item because the substitutions are sequential, which bounds where
-# this is worth doing. Measured on one device against the three copies it
-# replaces, which cost about 14 us whatever the size:
-#
-#     unknowns    1     4    16    32    64
-#     kernel    7.4   9.9  35.0 104.4 368.8  us
-#
-# so it wins below about eight unknowns and loses badly above it. That is
-# the common case rather than a lucky one -- there is one unknown per
-# floating static flux component and one per scattering block port current,
-# and most circuits have a handful -- but it is a case and not a rule, so a
-# larger subsystem keeps the host path, which is correct and merely copies.
+# One work item because the substitutions are sequential, so the kernel's
+# cost grows with the subsystem while the host copies it replaces cost a
+# fixed latency. It wins for a handful of unknowns and loses badly beyond
+# that. A handful is the common case, since there is one unknown per
+# floating static flux component and one per scattering block port current;
+# a larger subsystem keeps the host path, which is correct and merely
+# copies.
 
-# the largest subsystem the sequential device solve is worth launching for;
-# see the note above for the measurement behind it
+# the largest subsystem the sequential device solve is launched for; the
+# measured crossover against the host copies
 const DCDEVICESOLVEMAX = 8
 
 """
@@ -712,15 +692,15 @@ function applypreconditioner!(z::AbstractVector, pc::CanonicalPreconditioner,
     scattercanonical!(w.xint, r, L)
     applypreconditioner!(w.Fint, pc.inner, w.xint)
     gathercanonical!(z, w.Fint, L)
-    # Block diagonal, not block triangular: the coupling `Jpv` is dropped
-    # here. The exact triangular solve is 4D's, and needs the flux block
-    # solved first; as a preconditioner this is already the right shape,
-    # since the block it adds is solved exactly.
+    # Block diagonal, not block triangular: the coupling `Jpv` between the
+    # flux and the direct current blocks is dropped. An exact triangular
+    # solve would need the flux block solved first; as a preconditioner the
+    # block diagonal is already the right shape, since the block it adds is
+    # solved exactly.
     if !isnothing(pc.Yfact)
         win = dcwindow(L)
         # where the state is not on the host, the same factors and the same
-        # substitutions run there; the window used to cross the bus three
-        # times for this and that cost more than the residual it preconditions
+        # substitutions run there, so the window does not cross the bus
         if !isnothing(pc.device)
             applydcsolve!(view(z, win), view(r, win), pc.device)
             return z
@@ -740,12 +720,11 @@ function applypreconditioner!(z::AbstractVector, pc::CanonicalPreconditioner,
     return z
 end
 
-# The rest of the preconditioner interface is delegated rather than
-# inherited. Its defaults are inert -- no escalation, no deflation -- so a
-# wrapper which does not forward them silently turns escalation off, and on
-# a case hard enough to need the full Jacobian that is the difference
-# between converging and stalling with an O(1e-2) residual. It does not look
-# like a layout bug when it happens.
+# The rest of the preconditioner interface is forwarded to the inner
+# preconditioner rather than inherited: the defaults are inert (no
+# escalation, no deflation), so a wrapper which did not forward them would
+# silently turn escalation off, and on a problem which needs the full
+# Jacobian that is the difference between converging and stalling.
 escalatepreconditioner!(pc::CanonicalPreconditioner) =
     escalatepreconditioner!(pc.inner)
 deflationsize(pc::CanonicalPreconditioner) = deflationsize(pc.inner)
@@ -767,13 +746,12 @@ end
 
 # The direct current subsystem mixes volts and amperes, and its rows are
 # Kirchhoff sums in one place and constitutive relations in another, so its
-# entries carry whatever the circuit's impedance scale happens to be. A rank
-# decision on the raw matrix is therefore a decision about that scale: the
-# same circuit written at a different impedance can be called singular or
-# not. Equilibrating the rows and the columns to unit infinity norm first
-# removes the units from the question, which is all that is asked of it --
-# the answer is a structural fact about the circuit and must not depend on
-# how it is written.
+# entries carry the circuit's impedance scale. A rank decision on the raw
+# matrix would then depend on that scale: the same circuit written at a
+# different impedance could be called singular or not. Scaling the rows
+# and the columns to unit infinity norm first (two passes) removes the
+# units from a question whose answer is a structural fact about the
+# circuit.
 function equilibrate(A::AbstractMatrix)
     dr = ones(Float64, size(A, 1))
     dc = ones(Float64, size(A, 2))
@@ -884,11 +862,10 @@ function dcpinning(work::CanonicalWork, nodenames = String[])
         throw(ArgumentError(lazy"No direct current solution exists: direct current is injected into a subnetwork which has no path carrying it away. The zero frequency mode is the average voltage, so a subnetwork whose average voltage is unconstrained cannot absorb a net current; give it a path to ground, or drive it differentially."))
     end
 
-    # Which of the undetermined directions are gauges. A direction is one
-    # only if the rest of the residual cannot see it, which is `H N = 0`;
-    # anything else is a physical quantity the circuit leaves undetermined
-    # and has to be refused, because pinning it would return one of
-    # infinitely many different answers without saying so.
+    # Which of the undetermined directions are gauges: a direction is one
+    # only if the rest of the residual cannot see it, `H N = 0`. Anything
+    # else is a physical quantity the circuit leaves undetermined, which is
+    # refused rather than pinned to one of infinitely many answers.
     Nhat = F.V[:, end-k+1:end]
     H = dccoupling(work) * Diagonal(dc)
     G = Matrix(H * Nhat)
@@ -910,11 +887,10 @@ function dcpinning(work::CanonicalWork, nodenames = String[])
     end
 
     # Which equations to give up, and which coordinate each one fixes.
-    # Pivoting on the left null space picks rows which actually carry the
-    # redundancy, so what is left still spans the row space; pivoting on the
-    # null space picks coordinates the directions actually move, so the
-    # references are independent. Both are done in the equilibrated
-    # coordinates, so neither depends on the circuit's units.
+    # Pivoting on the left null space picks rows which carry the redundancy,
+    # so what is left still spans the row space; pivoting on the null space
+    # picks coordinates the directions move, so the references are
+    # independent. Both are done in the equilibrated coordinates.
     rows = sort!(qr(Y', ColumnNorm()).p[1:k])
     cols = sort!(qr(Nhat', ColumnNorm()).p[1:k])
     pn = DCPinning(rows, cols)
@@ -940,16 +916,15 @@ end
 # rows, the coupling `G0 P`, the block pencils `B0` and `C0`, the boundary
 # currents and the reference rows do not depend on the periodic state. What
 # moves between Newton iterations is the internal Jacobian, and only its
-# values -- its pattern is fixed and so is the permutation which reorders
-# it. So the whole assembly is a fixed pattern, a fixed scatter of the
-# internal values into it, and a fixed list of constant additions, all of
-# which can be found once.
+# values, since its pattern and the permutation which reorders it are
+# fixed. So the whole assembly is a fixed pattern, a fixed scatter of the
+# internal values into it, and a fixed list of constant additions, found
+# once.
 #
-# That is worth the plan rather than being a matter of taste. On a 64
-# junction line at sixteen harmonics the rebuild cost 2.2 ms against 0.23 ms
-# to evaluate the internal Jacobian and 0.67 ms to factorize the result, so
-# it was most of the linear algebra of a Newton step, spent on rediscovering
-# a pattern which had not moved.
+# Without the plan the rebuild costs several times the evaluation of the
+# internal Jacobian and the factorization of the result together, most of
+# the linear algebra of a Newton step spent rediscovering a pattern which
+# has not moved.
 
 """
     CanonicalJacobianPlan
@@ -1179,15 +1154,13 @@ end
 #
 #     Fw <- keep .* Fw + M uw + c
 #
-# with `keep` zero on the overwritten rows. Written that way it is three
-# array operations rather than a walk over scattered indices, which is what
-# lets it run where the state lives instead of being copied to the host and
-# back.
+# with `keep` zero on the overwritten rows. In that form it is three array
+# operations rather than a walk over scattered indices, so it can run where
+# the state lives instead of being copied to the host and back.
 #
-# `M` and `c` are read off the scalar implementation by probing it, one
-# basis vector at a time, rather than assembled a second time by hand. That
-# is O(window) setup once, and it makes the two forms agree by construction
-# rather than by inspection.
+# `M` and `c` are read off the scalar implementation by probing it one
+# basis vector at a time rather than assembled a second time by hand, which
+# is O(window) work once and makes the two forms agree by construction.
 
 """
     DCUpdate
@@ -1207,8 +1180,7 @@ struct DCUpdate{V,I}
 end
 
 # One work item per row of the window: its own entry, kept or not, plus its
-# row of the matrix, plus the constant when this is a residual. One kernel,
-# no scattered writes, and nothing read twice.
+# row of the matrix, plus the constant when this is a residual.
 @kernel function dcupdatekernel!(Fw, @Const(keep), @Const(rowptr),
         @Const(colval), @Const(nzval), @Const(uw), @Const(c), alpha)
     i = @index(Global)

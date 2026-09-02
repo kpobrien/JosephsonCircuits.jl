@@ -8,12 +8,11 @@
         portenvironmentindices::Vector{Int},
         noiseportimpedanceindices::Vector{Int}, Lmean, vvn)
 
-A simple structure to hold the circuit matrices including the capacitance
-matrix, the conductance matrix, the inductance vectors, the Josephson
-inductance vectors, the mutual inductance matrix, the inverse inductance
-matrix, the incidence matrix, the dictionary of port and resistor values where
-the nodes are the keys and the values are the values, and the mean of the
-inductances. See also [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
+The matrices of a compiled circuit at a given mode count: the capacitance,
+conductance and inverse inductance matrices in the node basis, the
+inductance vectors in the branch basis, the mutual inductance matrix, the
+incidence matrix, the port data, and the resolved component values. Built
+by [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
 
 # Fields
 - `Cnm::SparseMatrixCSC`: the capacitance matrix in the node basis with each
@@ -44,9 +43,9 @@ inductances. See also [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
 - `noiseportimpedanceindices::Vector{Int}`: vector of indices at which
     resistive elements other than port impedances occur, for noise
     calculations.
-- `Lmean`: the mean of all of the geometric and Josephson inductances.
-- `vvn`: the vector of component values with numbers substituted in.
-
+- `Lmean`: the mean of the linear and Josephson inductances, zero when the
+    circuit has none.
+- `vvn`: the vector of component values with the definitions substituted.
 """
 struct CircuitMatrices{TC,TG,TLb,TLbm,TLj,TLjm,TM,TiL,TLmean,TV}
     Cnm::TC
@@ -68,9 +67,15 @@ struct CircuitMatrices{TC,TG,TLb,TLbm,TLj,TLjm,TM,TiL,TLmean,TV}
 end
 
 """
-    symbolicmatrices(circuit; Nmodes = 1, sorting = :number)
+    symbolicmatrices(circuit; Nmodes = 1, sorting = defaultsorting(circuit))
+    symbolicmatrices(psc::CompiledCircuit, cg::CircuitGraph; Nmodes = 1)
 
-Return the symbolic matrices describing the circuit properties.
+The [`CircuitMatrices`](@ref) of a circuit with its component values left
+symbolic, so that the capacitance and inverse inductance matrices can be
+inspected as expressions. Requires Symbolics.jl to be loaded when the
+circuit has mutual inductors, since the inverse inductance matrix then
+needs a symbolic linear solve. `sorting` defaults to `:number` for a tuple
+netlist and `:name` for a typed circuit.
 
 See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref),
 [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
@@ -139,9 +144,18 @@ function symbolicmatrices(psc::CompiledCircuit, cg::CircuitGraph;
 end
 
 """
-    numericmatrices(circuit, circuitdefs; Nmodes = 1, sorting = :number)
+    numericmatrices(circuit, circuitdefs; Nmodes = 1,
+        sorting = defaultsorting(circuit))
+    numericmatrices(psc::CompiledCircuit, cg::CircuitGraph, circuitdefs;
+        Nmodes = 1)
+    numericmatrices(psc::CompiledCircuit, cg::CircuitGraph, vvn; Nmodes = 1)
 
-Return the numeric matrices describing the circuit properties.
+The [`CircuitMatrices`](@ref) of a circuit with its component values
+resolved to numbers with `circuitdefs`, at the mode count `Nmodes`, with
+every matrix entry repeated `Nmodes` times along the diagonal. The third
+form takes the already resolved values `vvn`, so that a second call at a
+different mode count (the signal grid of [`hblinsolve`](@ref) after the
+pump grid of [`hbnlsolve`](@ref)) does not resolve them again.
 
 See also [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
 [`calcCn`](@ref), [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref),

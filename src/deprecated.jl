@@ -1,9 +1,10 @@
+# Deprecated entry points. Each one warns once and forwards to its
+# replacement.
 
-# Deprecated `connectS` and `connectS!` intra and interconnection functions.
-# These are deprecated in order to allow the `intraconnectS` and
-# `interconnectS` functions to accept noise correlation matrices without the
-# ambiguity of whether the second matrix is a second scattering
-# parameter matrix or a noise correlation matrix.
+# `connectS(Sa, k, l)` and `connectS(Sa, Sb, k, l)` were split into
+# `intraconnectS` and `interconnectS` so that each can also take noise
+# covariance matrices: with one name, a second matrix argument would be
+# ambiguous between a second scattering matrix and a noise covariance.
 function connectS(Sa::AbstractArray{T,N}, k::Int, l::Int;
     nbatches::Int = Base.Threads.nthreads()) where {T,N}
     Base.depwarn(lazy"connectS(Sa::AbstractArray, k::Int, l::Int)` is deprecated, use `intraconnectS(Sa, k, l)` instead.", :connectS; force=true)
@@ -30,25 +31,15 @@ end
 
 
 #     hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
-#         circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
-#         switchofflinesearchtol = 1e-5, alphamin = 1e-4,
-#         symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
-#         returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-#         returnnodeflux = false, returnvoltage = false, returnnodefluxadjoint = false,
-#         returnvoltageadjoint = false, keyedarrays::Bool = false,
-#         sensitivitynames::Vector{String} = String[], returnSsensitivity = false,
-#         factorization = KLUfactorization())
-
-# Calls the harmonic balance solvers [`hbnlsolve`](@ref) and
-# [`hblinsolve`](@ref), which work for an arbitrary number of modes and ports,
-# through the older positional syntax which supported only four wave mixing
-# with a single strong tone. This method is deprecated; call [`hbsolve`](@ref)
-# with the current signature instead.
-
-# The outputs of [`hblinsolve`](@ref) may not order the signal modes the way
-# the older solver did. In [`hblinsolve`](@ref) the signal mode is always at
-# index 1 and the location of the other modes can be found by inspecting the
-# contents of `modes`.
+#         circuitdefs; pumpports = [1], keyword arguments...)
+#
+# The original `hbsolve` signature: a single pump at the scalar frequency
+# `wp`, applied to `pumpports` with the currents `Ip`, four wave mixing
+# only, and mode counts given as integers rather than tuples. It is
+# translated into a call of the current solvers and warns that it is
+# deprecated. Note that the signal modes of the result are ordered as
+# `hblinsolve` orders them (the signal at index 1, the rest as listed in
+# `modes`), which need not match the order the original solver used.
 function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
     symfreqvar = nothing, nbatches = Base.Threads.nthreads(), sorting = :number,
@@ -72,15 +63,12 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     to the new syntax.
         """, :hbsolve; force=true)
 
-    # solve the nonlinear system using the old syntax externally and the new
-    # syntax internally
+    # the single pump as a one element frequency tuple
     w = (wp,)
     Nharmonics = (2*Npumpmodes,)
 
-    # create the sources vector
+    # one source per pump port, all at the pump frequency
     sources = [(mode = (1,), port = pumpports[1], current = Ip[1])]
-    # if there are multiple currents and pumpports then add them as sources
-    # they all have to have the same frequency when using the old interface
     @assert length(pumpports) == length(Ip)
     if length(pumpports) > 1
         for i in 2:length(pumpports)
@@ -88,7 +76,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         end
     end
 
-    # calculate the frequency struct
+    # the pump harmonics: odd harmonics only, which is four wave mixing
     freq = removeconjfreqs(
         truncfreqs(
             calcfreqsrdft(Nharmonics),
@@ -100,31 +88,25 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
 
     Nmodes = length(freq.modes)
 
-    # parse and sort the circuit
     psc = compile(circuit; sorting = sorting)
-
-    # calculate the circuit graph
-    # the loop enumeration is quadratic in the number of inductive
-    # loops and nothing here reads it
+    # nothing here reads the loops of the circuit graph
     cg = calccircuitgraph(psc; loops = false)
-
-    # calculate the numeric matrices
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
-    # solve the nonlinear problem
     nonlinear = hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = nothing, ftol = ftol,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames, factorization = factorization)
 
-    # generate the signal modes
+    # the signal modes: the signal and the even pump harmonics on either
+    # side of it
     signalfreq =truncfreqs(
         calcfreqsdft((Nsignalmodes,)),
         dc=true,odd=false,even=true,maxintermodorder=Inf,
     )
 
-    # remove one of the signal modes if Nsignalmodes is even for compatibility
-    # with old harmonic balance solver
+    # the original solver kept one mode fewer when Nsignalmodes is even;
+    # drop the highest one to match
     if mod(Nsignalmodes,2) == 0 && Nsignalmodes > 0
         signalfreq = JosephsonCircuits.removefreqs(
             signalfreq,
@@ -132,8 +114,6 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         )
     end
 
-    # solve the linearized problem
-    # i should make this a tuple
     linearized = hblinsolve(ws, psc, cg, circuitdefs, signalfreq;
         nonlinear = nonlinear, symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,

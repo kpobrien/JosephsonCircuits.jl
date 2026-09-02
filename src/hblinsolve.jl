@@ -6,143 +6,80 @@
     hblinsolve(w, circuit, circuitdefs; Nmodulationharmonics = (0,),
         nonlinear = nothing, symfreqvar = nothing, threewavemixing = false,
         fourwavemixing = true, maxharmonics = Nmodulationharmonics,
-        maxintermodorder = Inf,
-        nbatches::Integer = Base.Threads.nthreads(), sorting = :number,
-        returnS = true, returnSnoise = false, returnQE = true,
-        returnCM = true, returnnodeflux = false,
-        returnnodefluxadjoint = false, returnvoltage = false,
-        returnvoltageadjoint = false, keyedarrays = true,
+        maxintermodorder = Inf, nbatches = Base.Threads.nthreads(),
+        sorting = :number, returnS = true, returnSnoise = false,
+        returnCnoise = false, returnQE = true, returnCM = true,
+        returnnodeflux = false, returnnodefluxadjoint = false,
+        returnvoltage = false, returnvoltageadjoint = false,
+        keyedarrays = true, temperature = 0.0,
         sensitivitynames::Vector{String} = String[],
         sensitivitynodeflux = nothing, sensitivityresidual = nothing,
         sensitivitymode = :auto, returnSsensitivity = false,
         factorization = KLUfactorization(), backend = CPU())
 
-Harmonic balance solver supporting an arbitrary number of small signals (weak
-tones) linearized around `nonlinear`, the solution of the nonlinear system
-consisting of an arbitrary number of large signals (strong tones) from
-`hbnlsolve`.
+Sweep the weak signal frequencies `w` through the circuit linearized about
+the operating point `nonlinear` found by [`hbnlsolve`](@ref), or through
+the linear circuit when `nonlinear = nothing`. Any number of signal and
+idler modes, ports and pumps is supported. The scattering parameters,
+noise scattering parameters, quantum efficiency, commutation relations,
+node fluxes and voltages, and sensitivities are computed on request.
+
+The linearized system is solved in the same modified nodal analysis
+formulation as the nonlinear one (see [`hbnlsolve`](@ref)), without gauge
+fixing rows because a mode at (numerically) zero total frequency is
+rejected with an `ArgumentError`; estimate a direct current limit from a
+sequence of decreasing nonzero frequencies instead.
 
 # Arguments
-- `w`: the small signal frequency or frequencies.
-- `circuit`: vector of tuples each of which contain the component name, the
-    first node, the second node, and the component value. The first three must
-    be strings.
-- `circuitdefs`: a dictionary where the keys are symbols or symbolic
-    variables for component values and the values are the numerical values
-    for the components.
+- `w`: the signal angular frequency or frequencies in radians per second.
+- `circuit`: a typed [`Circuit`](@ref), a legacy netlist of
+    `(name, node1, node2, value)` tuples, or a [`CompiledCircuit`](@ref).
+- `circuitdefs`: a dictionary from the symbols or symbolic variables used
+    as component values to their numerical values. Optional when every
+    component value is numeric.
 
 # Keywords
-- `Nmodulationharmonics::NTuple{M,Int}`: a tuple of integers describing how
-    many signal and idler modes.
-- `nonlinear=nothing`: solution to the nonlinear system from `hbnlsolve`.
-- `symfreqvar = nothing`: the symbolic frequency variable, eg `w`.
-- `threewavemixing = false`: simulate three wave mixing processes. 
-- `fourwavemixing = true`: simulate four wave mixing processes.
-- `maxintermodorder=Inf`: the maximum intermod order as defined by the sum of
-    the absolute values of the integers multiplying each of the frequencies
-    being less than or equal to `maxintermodorder`. This performs a diamond
-    truncation of the discrete Fourier space.
-- `nbatches = Base.Threads.nthreads()`: the number of batches to split the
-    signal frequencies into for multi-threading. Set to 1 for singled threaded
-    evaluation.
+- `Nmodulationharmonics = (0,)`: how many harmonics of each pump to retain
+    around the signal, which sets the signal and idler modes; `(0,)` is
+    the signal alone.
+- `nonlinear = nothing`: the [`NonlinearHB`](@ref) operating point to
+    linearize about, or `nothing` for a linear circuit.
+- `symfreqvar = nothing`: the symbolic frequency variable, such as `w`,
+    when component values are expressions in the frequency.
+- `threewavemixing = false`: retain the odd pump harmonics around the
+    signal, through which three wave mixing couples the modes.
+- `fourwavemixing = true`: retain the even pump harmonics around the
+    signal, through which four wave mixing couples the modes.
+- `maxharmonics = Nmodulationharmonics`: an upper bound on the absolute
+    harmonic index retained for each pump; see [`truncfreqs`](@ref).
+- `maxintermodorder = Inf`: keep only the modes whose harmonic indices
+    have an absolute sum of at most this order.
+$(_DOC_NBATCHES)
 $(_DOC_SORTING)
-- `returnS = true`: return the scattering parameters from the linearized
-    simulations.
-- `returnSnoise = false`: return the noise scattering parameters from the
-    linearized simulations.
-- `returnCnoise = false`: return the added noise covariance at the output
-    ports, `sum_c occupation[c] Snoise[c,i] conj(Snoise[c,j])`. With the
-    scattering matrix this is the Gaussian channel the circuit implements,
-    taking an input covariance to `S sigma S' + Cnoise`, and it is where the
-    temperature of each channel enters.
-- `returnQE = true`: return the quantum efficiency from the linearized
-    simulations.
-- `returnCM = true`: return the commutation relations from the linearized
-    simulations.
-- `returnnodeflux = false`: return the node fluxes from the linearized
-    simulations.
-- `returnvoltage = false`: return the node voltages from the linearized
-    simulations.
-- `returnnodefluxadjoint = false`: return the node fluxes from the linearized
-    adjoint simulations.
-- `returnvoltageadjoint = false`: return the node voltages from the linearized
-    adjoint simulations.
-- `keyedarrays = true`: when true return the output matrices
-    and vectors as keyed arrays for more intuitive indexing. When false
-    return normal matrices and vectors.
-- `temperature = 0.0`: the physical temperature in Kelvin of every
-    dissipative element, and so of the noise it adds. A channel at
-    temperature `T` carries `coth(hbar*w/(2*k*T))` times its vacuum noise,
-    which at the default of zero temperature is the vacuum noise itself.
-    Raising it lowers the quantum efficiency and leaves `Snoise` alone:
-    `Snoise` is a scattering matrix, describing a transformation rather than
-    the state of anything, and the occupation is applied where the noise
-    power is asked for. The commutation relations are likewise a statement
-    about the transformation, so they stay at one at every temperature and
-    remain a check on the adjoint solve, the covariance factorization and the
-    port normalization.
-
-    The explicitly defined ports are vacuum by definition. A non-vacuum input
-    at a port is had by tracing that port out and assuming one there.
-    A component may state its own temperature instead, and then takes that:
-    a lumped one as `Resistor(R; temperature = T)`, a
-    [`ScatteringParameters`](@ref) as `noise = ThermalEquilibrium(T)`. Only the
-    typed circuit format carries those; a netlist of tuples states none, and
-    everything in it takes this default. A block with a
-    [`NoiseCovariance`](@ref) takes no temperature at all: its covariance is
-    given rather than derived, and scaling it would modify an answer the
-    caller already has.
-- `sensitivitynames::Vector{String} = String[]`: the component names for which
-    to calculate sensitivities. Supported component types are C, L, R and Lj
-    with numeric values. A circuit may contain a [`ScatteringParameters`](@ref)
-    while the sensitivity is taken with respect to its lumped components; a
-    block itself has no scalar value to perturb, so naming one is an error.
+$(_DOC_RETURNS)
+$(_DOC_TEMPERATURE)
+$(_DOC_SENSNAMES)
 - `sensitivitynodeflux = nothing`: the derivatives of the pump operating
     point with respect to each component value, the columns of
-    [`calcnodefluxsensitivity`](@ref), to include the operating point shift
-    in the sensitivities. `hbsolve` supplies the residual derivatives
-    instead, from which these are computed only if the forward contraction
-    order is selected.
+    [`calcnodefluxsensitivity`](@ref), to include the shift of the
+    operating point in the sensitivities.
 - `sensitivityresidual = nothing`: the derivatives of the harmonic balance
     residual with respect to each component value, the columns of
-    [`calcresidualsensitivity`](@ref). Required by the reverse contraction
-    order; sufficient by itself for either order.
-- `sensitivitymode = :auto`: the order in which the contribution of the pump
-    operating point shift is contracted. Both orders run with the pump solve
-    and the signal sweep on the host, on a backend, or split between them. `:forward` costs one product against
-    the sparsity structure of the linearized system per component and per
-    signal frequency; `:reverse` pushes the output functionals through the
-    transposed pump Jacobian once per output port mode pair, leaving a sparse
-    inner product per component, so its cost does not grow with the number of
-    components. `:auto` selects `:reverse` when there are more components
-    than output port mode pairs, which is an operation count rather than a
-    measured crossover. Both orders support any number of pump tones.
-- `sensitivityoperatingpoint = true`: include the shift of the pump
-    operating point in the sensitivities, making the result the total
-    derivative rather than the derivative at a fixed operating point. Near
-    the gain peak of a strongly pumped amplifier the operating point
-    contribution is comparable to or larger than the fixed operating point
-    term, so this is the relevant quantity for optimization and tolerance
-    analysis. Requires the exact real Jacobian of the nonlinear solution,
-    which is assembled and factorized once.
-- `returnSsensitivity = false`: return `dS/dr`, the derivative of the
-    scattering matrix with respect to a relative (logarithmic) perturbation
-    `r` of each component value in `sensitivitynames` (`p -> r*p`, evaluated
-    at `r = 1`), calculated with the adjoint method. The pump operating point
-    is held fixed unless `sensitivityoperatingpoint = true`.
-- `factorization = KLUfactorization()`: the type of factorization to use for
-    the nonlinear and the linearized simulations.
-- `backend = CPU()`: the backend the frequency sweep is solved on. On a device
-    backend the system matrices of a batch of signal frequencies, which share
-    one sparsity pattern, are assembled by one kernel and factorized and solved
-    as a uniform batch. Falls back to the host when the component values depend
-    on the symbolic frequency variable, or when an output requires the adjoint
-    (transposed) solve: the noise scattering parameters, the scattering
-    parameter sensitivities, or the adjoint node outputs.
+    [`calcresidualsensitivity`](@ref), which serve the same purpose;
+    required by the reverse contraction order and sufficient for either.
+    [`hbsolve`](@ref) supplies these. When neither is given the pump
+    operating point is held fixed.
+$(_DOC_SENSMODE)
+$(_DOC_SSENS)
+- `factorization = KLUfactorization()`: the sparse factorization of the
+    linearized system matrix.
+$(_DOC_LINBACKEND)
+- `returnZ`, `returnZadjoint`, `returnZsensitivity`,
+    `returnZsensitivityadjoint`: removed; passing any of them warns.
+    Compute impedances from the scattering parameters instead.
 
 # Returns
-- `LinearizedHB`: A simple structure to hold the harmonic balance solutions.
-    See [`LinearizedHB`](@ref).
+- `LinearizedHB`: the linearized solution; see [`LinearizedHB`](@ref).
 
 # Examples
 ```jldoctest
@@ -221,15 +158,14 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     returnZsensitivityadjoint = nothing,
     factorization = KLUfactorization(), backend = CPU())
 
-    # parse, graph, and compile; a typed circuit takes the compiled path.
-    # The matrices are not assembled here: this analysis has only the signal
-    # grid, and that is built below at its own mode count.
+    # compile the circuit and build its graph; the matrices are assembled
+    # by the method below at the signal mode count
     psc = compile(circuit; sorting = sorting)
-    # the loop enumeration is quadratic in the number of inductive loops and
-    # nothing here reads it
+    # nothing here reads the loops of the circuit graph
     cg = calccircuitgraph(psc; loops = false)
 
-    # generate the signal modes
+    # the signal modes: the signal and the idlers offset from it by pump
+    # harmonics
     signalfreq =truncfreqs(
         calcfreqsdft(Nmodulationharmonics); dc = true, odd = threewavemixing,
         even = fourwavemixing, maxintermodorder = maxintermodorder,
@@ -256,25 +192,28 @@ return hblinsolve(w, psc, cg, circuitdefs, signalfreq;
         factorization = factorization, backend = backend)
 end
 
-# A fully numeric circuit (such as the output of a circuit builder) needs no
-# component definitions, so `circuitdefs` is optional.
+# A fully numeric circuit needs no component definitions.
 function hblinsolve(w, circuit; kwargs...)
     return hblinsolve(w, circuit, Dict{Any,Any}(); kwargs...)
 end
 
 """
-    hblinsolve(w, psc::CompiledCircuit,
-        cg::CircuitGraph, circuitdefs, signalfreq::Frequencies{N};
-        nonlinear=nothing, symfreqvar=nothing,
-        nbatches::Integer = Base.Threads.nthreads(), sorting = :number,
-        returnS = true, returnSnoise = false, returnQE = true, returnCM = true,
-        returnnodeflux = false, returnnodefluxadjoint = false,
-        returnvoltage = false,
-        )
+    hblinsolve(w, psc::CompiledCircuit, cg::CircuitGraph, circuitdefs,
+        signalfreq::Frequencies; nonlinear = nothing, kwargs...)
 
-Harmonic balance solver supporting an arbitrary number of small signals (weak
-tones) linearized around `pump`, the solution of the nonlinear system consisting
-of an arbitrary number of large signals (strong tones).
+The linearized sweep on an already compiled circuit `psc` with its graph
+`cg`, at the signal mode set `signalfreq`. `circuitdefs` may be the usual
+dictionary, or the vector of resolved component values `nm.vvn` of a
+[`CircuitMatrices`](@ref) already built for the circuit, which is what
+[`hbsolve`](@ref) passes so that the values are resolved once. This is
+what the other methods call after building those; it takes every keyword
+of the general method except the ones which describe the mode set
+(`Nmodulationharmonics`, `threewavemixing`, `fourwavemixing`,
+`maxharmonics`, `maxintermodorder`, `sorting`), plus the design parameter
+sensitivity keywords described under [`hbsolve`](@ref) and
+`debuglsys = false`, which returns the [`HBLinearizedSystem`](@ref) and its
+ingredients instead of solving, for building reference implementations
+in tests.
 
 # Examples
 ```jldoctest
@@ -374,9 +313,8 @@ function hblinsolve(w, psc::CompiledCircuit,
     end
 
     Nsignalmodes = length(signalfreq.modes)
-    # calculate the numeric matrices. The signal grid has a different mode
-    # count from the pump grid, so it assembles its own, the same way the
-    # pump did.
+    # the numeric matrices at the signal mode count, which differs from the
+    # pump's
     signalnm = assemblegrid(psc, cg, circuitdefs, Nsignalmodes)
 
     if isnothing(nonlinear)
@@ -385,34 +323,28 @@ function hblinsolve(w, psc::CompiledCircuit,
         Amatrixmodes, Amatrixindices = hbmatind(allpumpfreq, signalfreq)
         Nwtuple = NTuple{length(allpumpfreq.Nw)+1,Int}((allpumpfreq.Nw..., length(signalnm.Ljb.nzval)))
         phimatrix = ones(Complex{Float64}, Nwtuple)
-        # wpumpmodes = calcmodefreqs((0.0,),signalfreq.modes)
 
     else
 
         pumpfreq = nonlinear.frequencies
 
-        # pumpfreq = JosephsonCircuits.calcfreqsrdft((2*Npumpmodes,))
         allpumpfreq = calcfreqsrdft(pumpfreq.Nharmonics)
         pumpindices = fourierindices(pumpfreq)
         Npumpmodes = length(pumpfreq.modes)
 
         Amatrixmodes, Amatrixindices = hbmatind(allpumpfreq, signalfreq)
 
-        # calculate the dimensions of the array which holds the frequency
-        # domain information for the fourier transform
+        # the frequency domain array of the Fourier transform, with one
+        # column per junction
         Nwtuple = NTuple{length(pumpfreq.Nw)+1,Int}((pumpfreq.Nw..., length(nonlinear.Ljb.nzval)))
 
-        # create an array to hold the frequency domain data for the
-        # fourier transform
         phimatrix = zeros(Complex{Float64}, Nwtuple)
 
-        # create an array to hold the time domain data for the RFFT. also generate
-        # the plans.
+        # the time domain array and the transform plans
         phimatrixtd, irfftplan, rfftplan = plan_applynl(phimatrix, CPU())
 
-        # convert the branch flux vector to a matrix with the terms arranged
-        # in the correct way for the inverse rfft including the appropriate
-        # complex conjugates.
+        # arrange the pump branch fluxes for the inverse real transform,
+        # conjugate modes included
         branchflux = nonlinear.Rbnm*nonlinear.nodeflux[:]
         phivectortomatrix!(
             branchflux[nonlinear.Ljbm.nzind], phimatrix,
@@ -422,7 +354,7 @@ function hblinsolve(w, psc::CompiledCircuit,
             length(nonlinear.Ljb.nzval)
         )
 
-        # apply the sinusoidal nonlinearity when evaluaing the function
+        # the Fourier coefficients of cos(phi(t)) of the pump
         applynl!(
             phimatrix,
             phimatrixtd,
@@ -431,10 +363,9 @@ function hblinsolve(w, psc::CompiledCircuit,
             rfftplan,
         )
 
-        # wpumpmodes = calcmodefreqs(nonlinear.w,signalfreq.modes)
     end
 
-    # to avoid wpumpmodes being boxed
+    # `wpumpmodes` is captured below; bind it to a concrete type
     wpumpmodes::Vector{Float64} = if isnothing(nonlinear)
         calcmodefreqs((0.0,),signalfreq.modes)
     else
@@ -444,23 +375,22 @@ function hblinsolve(w, psc::CompiledCircuit,
     if !all(isfinite, w)
         throw(ArgumentError("All signal frequencies must be finite."))
     end
-    # make sure the signal frequency vector or iterator isn't empty.
+    # the signal frequencies must not be empty
     if isempty(w)
         throw(ArgumentError("At least one signal frequency is required."))
     end
-    # make sure there is at least one batch.
+    # and there must be at least one batch
     if nbatches < 1
         throw(ArgumentError(lazy"`nbatches` = $(nbatches) must be at least 1."))
     end
-    # the nonlinear solution's fields are untyped, so convert the pump
-    # frequencies to a concrete tuple here: everything below is per
-    # (frequency, mode) and would box every value otherwise.
+    # the fields of the nonlinear solution are untyped, so make the pump
+    # frequencies a concrete tuple: everything below is per (frequency,
+    # mode) and would box every value otherwise
     let wpumptuple = isnothing(nonlinear) ? (0.0,) :
             map(x -> Float64(real(x)), nonlinear.w)
-        # the contributing term magnitudes of each mode do not depend on
-        # the signal frequency, so their sum and the term count are
-        # precomputed per mode; only abs(wi) joins per frequency. this
-        # keeps the O(Nfrequencies*Nmodes) validation allocation free.
+        # the magnitudes of the pump terms of each mode do not depend on the
+        # signal frequency, so their sum is precomputed per mode and only
+        # abs(wi) joins per frequency
         all(isfinite, wpumptuple) || throw(ArgumentError("Every pump frequency must be finite."))
         modescales = Float64[sum(j -> abs(mode[j]*wpumptuple[j]),
             eachindex(wpumptuple)) for mode in signalfreq.modes]
@@ -476,7 +406,7 @@ function hblinsolve(w, psc::CompiledCircuit,
         end
     end
 
-    # this is the first signal frequency. we will use it for various setup tasks
+    # the first signal frequency, used for the setup below
     wmodes = w[1] .+ wpumpmodes
 
     # extract the elements we need
@@ -495,21 +425,18 @@ function hblinsolve(w, psc::CompiledCircuit,
     Gnm = signalnm.Gnm
     invLnm = signalnm.invLnm
 
-    #error if any component value contains symbolic variables which were not
-    # assigned numerical values in circuitdefs (values depending only on the
-    # symbolic frequency variable are ok).
+    # fail now if a component value contains a symbolic variable which was
+    # not defined (a value depending only on the frequency variable is fine)
     checkcomponentvaluesdefined(psc.componentnames, signalnm.vvn,
         symfreqvar)
 
-    # set up the modified nodal analysis (MNA), which assigns auxiliary branch
-    # current variables to the port resistors with constant real values and to the
-    # mutually coupled inductor branches (whose inverse inductance entries
-    # would otherwise diverge as the coupling coefficient approaches one).
-    # eliminating the auxiliary variables recovers the nodal equations. no
-    # gauge fixing equations are needed because modes at (numerically) zero
-    # total frequency are not permitted.
+    # The modified nodal analysis augmentation: auxiliary branch current
+    # variables for the mutually coupled inductor branches, whose inverse
+    # inductance entries would otherwise diverge as the coupling coefficient
+    # approaches one. No gauge fixing rows are needed, because a mode at
+    # zero total frequency is not permitted.
     checkstaticstiffnessvalues(psc.componenttypes, signalnm.vvn)
-    # no promoted components; see the matching comment in hbnlsolve
+    # no components are promoted to auxiliary currents; see hbnlsolve
     mnaindices = Int[]
     coupledbranches = mnacoupledbranches(signalnm.Mb)
     Nauxmnar = length(mnaindices)*Nsignalmodes
@@ -524,11 +451,11 @@ function hblinsolve(w, psc::CompiledCircuit,
     AmnaG = mnapad(AmnaG, length(coupledbranches)*Nsignalmodes +
         Nauxscattering)
     if !isempty(coupledbranches)
-        # the coupled inductor branches: numericmatrices already excludes
-        # them from the inverse inductance matrix; add the branch flux
-        # constitutive equations and Kirchhoff current law couplings, with
-        # unscaled branch currents as the auxiliary variables (Lscale = 1),
-        # matching the unscaled matrices of the linearized solver.
+        # the coupled inductor branches, which `numericmatrices` excludes
+        # from the inverse inductance matrix: their constitutive equations
+        # and Kirchhoff current law couplings, with unscaled branch currents
+        # as the auxiliary variables (Lscale = 1) to match the unscaled
+        # matrices of this solver
         AmnaL = calcAmnaind(coupledbranches, signalnm.Lb, signalnm.Mb,
             cg.Rbn, Nsignalmodes, Nnodalmna + Nauxmnar,
             Nnodalmna + Nauxmna, 1)
@@ -550,36 +477,31 @@ function hblinsolve(w, psc::CompiledCircuit,
     modes = signalfreq.modes
 
     # Design parameter sensitivities: the caller names physical parameters
-    # rather than components, through the pair list (componentindex,
-    # parameterindex, alpha) with alpha = (dc/dtheta)/c the direction of the
-    # component value under the parameter. Every component whose value
-    # depends on a parameter contributes to that parameter's derivative;
-    # the stamps of one parameter merge into one contraction.
+    # rather than components, through pairs (componentname, parameterindex,
+    # alpha) with alpha = (dv/dp)/v the direction of the component value
+    # under the parameter. The stamps of one parameter merge into one
+    # contraction.
     Nlumpedpairs = length(sensitivitypairs)
     if !isempty(sensitivitypairs) || !isempty(sensitivityblockpairs)
         isempty(sensitivitynames) || throw(ArgumentError(
             "pass either sensitivitynames or sensitivitypairs, not both"))
         nsensitivityparameters > 0 || throw(ArgumentError(
             "sensitivitypairs requires nsensitivityparameters"))
-        # pairs are keyed by component name because the parse sorts the
-        # circuit, so positional indices from the caller would not survive.
-        # A scattering block pair is keyed by its first port's component.
+        # pairs are keyed by component name, since positional indices would
+        # not survive the sorting of the compiled circuit
         sensitivitynames = vcat(
             String[String(t[1]) for t in sensitivitypairs],
             String[String(t[1]) for t in sensitivityblockpairs])
     end
 
-    # find the indices associated with the components for which we will
-    # calculate sensitivities
-    # A lumped component is named by its entry in the flat table; a
-    # scattering block is named by its instance path and has no entry there,
-    # so the block pairs resolve against the compiled blocks instead. The
-    # block ordinal is what goes in the vector for them, and only the block
-    # paths read it.
+    # The flat table indices of the sensitivity components. A scattering
+    # block has no table entry and is named by its instance path, so a block
+    # pair resolves to the block's ordinal instead, which only the block
+    # paths read.
     sensitivityindices = zeros(Int,length(sensitivitynames))
     for i in eachindex(sensitivitynames)
-        # entries past the lumped pairs are the block pairs; in the legacy
-        # sensitivitynames path there are none
+        # entries past the lumped pairs are block pairs; with
+        # `sensitivitynames` there are none
         blocktail = !isempty(sensitivityblockpairs) && i > Nlumpedpairs
         if blocktail
             b = scatteringblockindex(psc, sensitivitynames[i])
@@ -596,12 +518,11 @@ function hblinsolve(w, psc::CompiledCircuit,
         sensitivityindices[i] = idx
     end
 
-    # the grouping of the pairs into merged stamps, and the design parameter
-    # slot each group accumulates into. Computed here, before the residual
-    # derivative columns and the operating point solves, because both must
-    # be merged with the same grouping as the stamps. Each scattering block
-    # pair is its own group: its stamp values are rebuilt per frequency and
-    # cannot concatenate with anything.
+    # The grouping of the pairs into merged stamps and the design parameter
+    # slot each group accumulates into, computed before the residual
+    # derivative columns and the operating point solves because both merge
+    # with the same grouping. A scattering block pair is its own group: its
+    # stamp is rebuilt per frequency and cannot be concatenated.
     stampgrouping, stampslots = if isempty(sensitivitypairs) &&
             isempty(sensitivityblockpairs)
         Vector{Int}[], Int[]
@@ -618,41 +539,38 @@ function hblinsolve(w, psc::CompiledCircuit,
         g, sl
     end
 
-    # calculate the source currents
     Nports = length(portindices)
 
-    # calculate the source terms in the branch basis
+    # the source terms in the branch basis: a unit current source at each
+    # port and mode
     bbm = zeros(Complex{Float64},Nbranches*Nsignalmodes,Nsignalmodes*Nports)
 
-    # add a current source for each port and mode
     for (i,val) in enumerate(portindices)
         key = (nodeindices[1,val],nodeindices[2,val])
         for j = 1:Nsignalmodes
             bbm[(edge2indexdict[key]-1)*Nsignalmodes+j,(i-1)*Nsignalmodes+j] = 1
-            # bbm2[(i-1)*Nmodes+j,(i-1)*Nmodes+j] = Lmean*1/phi0
         end
     end
 
-    # calculate the source terms in the node basis
+    # and in the node basis
     bnm = transpose(Rbnm)*bbm
     if Nauxmna > 0
         bnm = vcat(bnm, zeros(eltype(bnm), Nauxmna, size(bnm, 2)))
     end
-    # return bnm
-    # a lossy capacitor or inductor is a noise channel only if its value has
-    # a nonzero imaginary part, which is not decidable for a symbolic
-    # expression, so with a symbolic frequency variable the channels are
-    # found again on the values substituted at the first mode frequency.
-    # Which resistor belongs to a port is a role rather than a value, so
-    # that half of the answer does not depend on the substitution.
+    # A lossy capacitor or inductor is a noise channel only if its value has
+    # a nonzero imaginary part, which a symbolic expression cannot tell, so
+    # with a symbolic frequency variable the channels are found on the
+    # values substituted at the first mode frequency. Which resistor is a
+    # port's termination is a role, not a value, so that part does not
+    # depend on the substitution.
     noiseportimpedanceindices = if isnothing(symfreqvar)
         signalnm.noiseportimpedanceindices
     else
         noiseindices(psc, substitutefreq.(vvn, symfreqvar, wmodes[1]))
     end
 
-    # find the indices at which there are symbolic variables so we can
-    # perform a substitution on only those. 
+    # the entries holding symbolic variables, so that the per frequency
+    # substitution touches only those
     Cnmfreqsubstindices  = symbolicindices(Cnm)
     Gnmfreqsubstindices  = symbolicindices(Gnm)
     invLnmfreqsubstindices  = symbolicindices(invLnm)
@@ -662,21 +580,17 @@ function hblinsolve(w, psc::CompiledCircuit,
     Gnmcopy = freqsubst(Gnm,wmodes,symfreqvar)
     invLnmcopy = freqsubst(invLnm,wmodes,symfreqvar)
 
-    # Build the linearized system object: the sparsity structure of the
-    # system matrix Asparse = (AoLjnm + invLnmcopy + Gnmcopy + Cnmcopy) with
-    # stored numerical zeros, a plan for scattering the Josephson (pump
-    # modulation) contribution AoLjnm = Rbnm'*AoLjbm*Rbnm into it directly
-    # from the Fourier coefficients of cos(phi(t)) of the pump, index maps
-    # for the frequency dependent linear terms, and the precomputed pump
-    # modulation contribution and its complex conjugate. This shares the
-    # machinery used for the Jacobians of the nonlinear system, see
-    # HBLinearizedSystem and plancomplexjacobian. The per-frequency system
-    # matrices are assembled from this object with assemblesystemmatrix!.
-    # the hybrid (wave to modified nodal analysis) contribution of the
-    # scattering block components: constant Kirchhoff current law couplings
-    # of the auxiliary port currents (folded into the constant augmentation
-    # matrix) and the frequency dependent constitutive equations, assembled
-    # per frequency alongside the conductance term
+    # The linearized system object: the sparsity structure of the system
+    # matrix Asparse = AoLjnm + invLnm + Gnm + Cnm with stored zeros, a
+    # plan scattering the pump modulation term AoLjnm = Rbnm'*AoLjbm*Rbnm
+    # into it from the Fourier coefficients of cos(phi(t)), index maps for
+    # the frequency dependent linear terms, and the pump modulation term
+    # with its conjugate. This shares the machinery of the nonlinear
+    # Jacobians (see `HBLinearizedSystem`); the per frequency matrices are
+    # assembled from it by `assemblesystemmatrix!`. The scattering blocks
+    # contribute constant Kirchhoff current law couplings of their auxiliary
+    # port currents, folded into the augmentation, and frequency dependent
+    # constitutive equations assembled per frequency.
     ssys = scatteringstampsystem(psc.scatteringblocks, Nsignalmodes;
         auxoffset = Nnodalmna + Nauxmna - Nauxscattering,
         Ntotal = Nnodalmna + Nauxmna, scale = 1.0)
@@ -691,10 +605,8 @@ function hblinsolve(w, psc::CompiledCircuit,
     Asparse = lsys.Asparse
 
     # the vacuum noise channels of the dissipative scattering blocks, which
-    # follow the noise ports of the dissipative lumped components in the rows
-    # of the noise scattering matrix
-    # a block which declares itself lossless is taken at its word for the
-    # noise, so it is worth looking at the frequencies actually being solved
+    # follow the lumped noise channels in the rows of the noise scattering
+    # matrix; a block declared lossless has none
     checklosslessblocks(ssys, w, wpumpmodes)
     noiseplan = if returnSnoise || returnQE || returnCM
         planscatteringnoise(ssys)
@@ -703,19 +615,19 @@ function hblinsolve(w, psc::CompiledCircuit,
     end
     Nnoisechannels = length(noiseportimpedanceindices) +
         (isnothing(noiseplan) ? 0 : noiseplan.Nchannels)
-    # the temperature of each noise channel: the analysis default, overridden
-    # by name, and overridden again by a block which states its own
+    # the temperature of each noise channel: the analysis default, or the
+    # one a component or block states for itself
     channeltemperatures = noisechanneltemperatures(psc,
         noiseportimpedanceindices, noiseplan, ssys, temperature)
 
     noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
 
-    # assemble Asparse once at the first frequency so we have something
-    # reasonable to factorize.
+    # assemble the system matrix at the first frequency for the symbolic
+    # analysis of the factorization
     assemblesystemmatrix!(Asparse, lsys, wmodes)
 
-    # precompute the derivative of the linearized system matrix with respect
-    # to a relative perturbation of each component in sensitivitynames.
+    # the derivative of the system matrix with respect to a relative
+    # perturbation of each sensitivity component, at a fixed operating point
     sensitivitystamps, sensitivityblockentries = if returnSsensitivity
         st = calcsensitivitystamps(
             sensitivityindices[1:(isempty(sensitivityblockpairs) ?
@@ -731,8 +643,8 @@ function hblinsolve(w, psc::CompiledCircuit,
             isnothing(ssys) && throw(ArgumentError(
                 "the circuit has no scattering blocks to take a block sensitivity of"))
             for (bi, bp) in enumerate(sensitivityblockpairs)
-                # the block ordinal, which is what the block tail of
-                # `sensitivityindices` holds
+                # the block ordinal held by the block tail of
+                # `sensitivityindices`
                 targetdef = psc.scatteringblocks[
                     sensitivityindices[Nlumpedpairs + bi]].definition
                 dsys, zsys = derivativestampsystems(ssys, targetdef, bp[3])
@@ -742,8 +654,8 @@ function hblinsolve(w, psc::CompiledCircuit,
         end
         if !isempty(stampgrouping)
             st = mergestamps(st, stampgrouping)
-            # locate each block pair's stamp in the merged vector: block
-            # groups are the singletons pointing past the lumped pairs
+            # each block pair's stamp in the merged vector: block groups are
+            # the singletons past the lumped pairs
             for (gi, g) in enumerate(stampgrouping)
                 if length(g) == 1 && g[1] > Nlumpedpairs
                     bi = g[1] - Nlumpedpairs
@@ -756,17 +668,15 @@ function hblinsolve(w, psc::CompiledCircuit,
         SensitivityStamp[], Tuple{Int,Any,Any}[]
     end
 
-    # the contribution of the shift of the pump operating point, when the
-    # operating point derivatives are supplied, either as the derivatives of
-    # the operating point itself (sensitivitynodeflux) or as the residual
-    # derivatives (sensitivityresidual), from which the former are computed
-    # here only if the forward contraction order needs them.
-    # The operating point contribution can be contracted in either order.
-    # The forward order costs one product against the full sparsity structure
-    # of the system matrix per component and per frequency; the reverse order
-    # costs (Nports*Nmodes)^2 transposed solves per frequency and a sparse
-    # inner product per component, so it wins once there are more components
-    # than output port mode pairs.
+    # The contribution of the shift of the pump operating point, when its
+    # derivatives are supplied either directly (`sensitivitynodeflux`) or as
+    # residual derivatives (`sensitivityresidual`), from which the former
+    # are computed only if the forward contraction order needs them. The
+    # forward order costs one product against the sparsity structure of the
+    # system matrix per component and frequency; the reverse order costs
+    # transposed solves per output port mode pair and a sparse inner product
+    # per component, so it wins once there are more components than output
+    # port mode pairs.
     if !(sensitivitymode == :auto || sensitivitymode == :forward ||
             sensitivitymode == :reverse)
         throw(ArgumentError(lazy"sensitivitymode must be :auto, :forward or :reverse, not $(sensitivitymode)."))
@@ -777,15 +687,11 @@ function hblinsolve(w, psc::CompiledCircuit,
             isnothing(nonlinear.operatingpoint))
         throw(ArgumentError("Including the operating point shift in the sensitivities requires a nonlinear solution with an operating point. Call hbnlsolve with returnoperatingpoint = true."))
     end
-    # Validate the low level operating point inputs at the public boundary,
-    # before anything sizes itself from them: the contractions index the
-    # output arrays (sized by sensitivitynames) and the transposed solutions
-    # (sized by the operating point) from these matrices inside @inbounds
-    # loops, so malformed inputs must be rejected here, not discovered as
-    # memory corruption. The two contraction orders read different inputs
-    # (forward the node flux derivatives, reverse the residual derivatives),
-    # so supplying both would let inconsistent inputs give order dependent
-    # results: reject that too.
+    # Validate the operating point inputs here: the contractions index
+    # arrays sized from them inside @inbounds loops, so malformed inputs
+    # must be rejected rather than discovered as memory corruption. The two
+    # contraction orders read different inputs, so supplying both would let
+    # inconsistent inputs give order dependent results; reject that too.
     if useoperatingpoint
         op = nonlinear.operatingpoint
         if !isnothing(sensitivitynodeflux) && !isnothing(sensitivityresidual)
@@ -795,9 +701,9 @@ function hblinsolve(w, psc::CompiledCircuit,
                 size(sensitivitynodeflux) != (length(op.x), length(sensitivitynames))
             throw(DimensionMismatch(lazy"sensitivitynodeflux must be (operating point state length) x (number of sensitivity components) = ($(length(op.x)), $(length(sensitivitynames))), got $(size(sensitivitynodeflux))."))
         end
-        # the residual derivatives live wherever the implicit function
-        # theorem is applied, which is the canonical system when a direct
-        # current block is active and the harmonic one otherwise
+        # the residual derivatives are sized by the system the implicit
+        # function theorem is applied to: the canonical one when a direct
+        # current block is active, the harmonic one otherwise
         if !isnothing(sensitivityresidual) &&
                 size(sensitivityresidual) != (sensitivitydim(op), length(sensitivitynames))
             throw(DimensionMismatch(lazy"sensitivityresidual must be (rows of the Jacobian the sensitivity is taken through) x (number of sensitivity components) = ($(sensitivitydim(op)), $(length(sensitivitynames))), got $(size(sensitivityresidual))."))
@@ -806,21 +712,20 @@ function hblinsolve(w, psc::CompiledCircuit,
             throw(ArgumentError("sensitivitynodeflux is per component and cannot be combined with sensitivitypairs; supply sensitivityresidual (or neither) instead."))
         end
     end
-    # The residual derivative columns are per pair; the stamps of one group
-    # merge into one contraction, so the columns must merge with the same
-    # grouping before anything is sized or solved from them. Summing is
-    # right because the residual is linear in each component's contribution.
+    # The residual derivative columns are per pair and merge with the same
+    # grouping as the stamps before anything is sized or solved from them;
+    # summing is right because the residual is linear in each component's
+    # contribution.
     if !isnothing(sensitivityresidual) && !isempty(stampgrouping) &&
             length(stampgrouping) != size(sensitivityresidual, 2)
         sensitivityresidual = hcat(
             [sum(sensitivityresidual[:, g], dims = 2)
              for g in stampgrouping]...)
     end
-    # Without Josephson junctions the linearized system matrix does not
-    # depend on the operating point, so the contribution is identically
-    # zero: drop the operating point inputs rather than build the junction
-    # shaped contractions (whose reverse constructor indexes the first
-    # junction) on an empty junction set.
+    # Without Josephson junctions the system matrix does not depend on the
+    # operating point, so its contribution is zero: drop the operating point
+    # inputs rather than build junction shaped contractions on an empty
+    # junction set.
     if useoperatingpoint && isempty(nonlinear.operatingpoint.sys.Ljb.nzind)
         useoperatingpoint = false
     end
@@ -833,22 +738,12 @@ function hblinsolve(w, psc::CompiledCircuit,
         isempty(sensitivityblockpairs) || throw(ArgumentError("The reverse mode sensitivity contraction does not support scattering block parameters; use sensitivitymode = :forward."))
         true
     else # :auto
-        # The forward order costs one product against the sparsity structure
-        # of the linearized system per component; the reverse order costs one
-        # transposed solve through the pump Jacobian per output port mode
-        # pair, plus a transform, whatever the component count. So the
-        # crossover is at a fixed multiple of the number of output port mode
-        # pairs, and only the multiple has to be measured.
-        #
-        # A solve is not a product, and counting them as if they were put the
-        # crossover an order of magnitude early, which cost a factor of ten
-        # to anyone who crossed it: on a two hundred cell line at nine modes,
-        # a hundred and twenty eight components took 0.42 s in the forward
-        # order and 4.17 s in the reverse one. Measured on travelling wave
-        # amplifiers of eighty and two hundred cells at five and nine modes,
-        # the crossover was 6 to 13 times the pair count, so it is taken as
-        # eight. Near a crossover the choice costs little either way, which
-        # is what makes one constant serviceable across that spread.
+        # The forward order costs one product per component; the reverse
+        # order costs one transposed solve per output port mode pair whatever
+        # the component count. A solve costs several times a product, so the
+        # crossover is at a multiple of the pair count; the factor of eight
+        # is an empirical estimate, and near the crossover either choice
+        # costs about the same.
         Ncomponents = isnothing(sensitivityresidual) ?
             size(sensitivitynodeflux, 2) : size(sensitivityresidual, 2)
         !isnothing(sensitivityresidual) &&
@@ -859,8 +754,8 @@ function hblinsolve(w, psc::CompiledCircuit,
     sensitivitydAop = if useoperatingpoint && !usereverse
         # the forward order contracts against the operating point shift
         # itself, so compute it from the residual derivatives if it was not
-        # supplied. the reverse order works from the residual derivatives
-        # directly and skips these per-component solves entirely.
+        # supplied; the reverse order works from the residual derivatives
+        # directly and skips these per component solves
         dx = if isnothing(sensitivitynodeflux)
             calcnodefluxsensitivity(nonlinear.operatingpoint,
                 sensitivityresidual; factorization = factorization)
@@ -882,10 +777,9 @@ function hblinsolve(w, psc::CompiledCircuit,
     end
 
 
-    # use this for debugging purposes to return the linearized system along
-    # with the ingredients from which its per-frequency matrices and right
-    # hand sides are built, so reference implementations can be constructed,
-    # eg. in the tests. mirrors the debugJacobian keyword of hbnlsolve.
+    # `debuglsys` returns the linearized system with the ingredients its per
+    # frequency matrices and right hand sides are built from, for reference
+    # implementations in the tests; the analogue of `debugJacobian`
     if debuglsys
         return (lsys=lsys, bnm=bnm, wpumpmodes=wpumpmodes,
             phimatrix=phimatrix, Ljb=signalnm.Ljb, Nnodes=Nnodes,
@@ -899,13 +793,10 @@ function hblinsolve(w, psc::CompiledCircuit,
     end
 
 
-    # make the output arrays for the scattering parameters, noise,
-    # sensitivities, quantum efficiency, commutation relations, and node
-    # quantities. an output which was not requested is a zero size array,
-    # which is the signal that it should not be computed. the scattering
-    # parameter sensitivities are scaled by the input waves and their port
-    # impedance term depends on S itself, so S is computed whenever the
-    # sensitivities are requested even if it is not returned.
+    # The output arrays. An output which was not requested is a zero size
+    # array, which signals that it is not to be computed. The sensitivities
+    # are scaled by the input waves and depend on S itself, so S is computed
+    # whenever they are requested even if it is not returned.
     outputarrays = LinearizedArrays(;
         requestS = returnS,
         requestSnoise = returnSnoise,
@@ -923,23 +814,19 @@ function hblinsolve(w, psc::CompiledCircuit,
         Nnodes = Nnodes,
         Nfrequencies = length(w))
 
-    # generate the mode indices and find the signal index
+    # the signal mode is always the first
     signalindex = 1
 
-    # solve the linear system for the specified frequencies. the response for
-    # each frequency is independent so it can be done in parallel; however
-    # we want to reuse the factorization object and other input arrays. 
-    # perform array allocations and factorization "nbatches" times.
-    # parallelize using tasks
-    # On a backend the sweep is solved there instead: the system matrices of
-    # a batch of frequencies share one sparsity pattern, so they are assembled
-    # by one kernel and factorized and solved by cuDSS as a uniform batch. The
-    # frequency loop and every output it computes are the host ones, with only
-    # the solve replaced, so both paths compute their outputs identically.
-    #
-    # It falls back to the host when the component values depend on the
-    # symbolic frequency variable, so the assembly is not a constant quadratic
-    # in the signal frequency.
+    # Solve the linear system at each frequency. The frequencies are
+    # independent, so they are split into `nbatches` batches solved by
+    # tasks in parallel, each batch reusing one workspace and one symbolic
+    # factorization. On a device backend the solve of a batch is done there
+    # instead: the matrices of a batch share one sparsity pattern, so they
+    # are assembled by one kernel and factorized and solved as a uniform
+    # batch, while the frequency loop and every output it computes stay the
+    # host ones. The device path is not used when the component values
+    # depend on the symbolic frequency variable, since the assembly is then
+    # not a constant quadratic in the frequency.
     sensitivitytuple = (stamps = sensitivitystamps, dAop = sensitivitydAop,
         reverse = sensitivityreverse,
         blockentries = sensitivityblockentries,
@@ -949,11 +836,11 @@ function hblinsolve(w, psc::CompiledCircuit,
     usedevice = !(backend isa CPU) && cansweepondevice(lsys) &&
         isempty(sensitivityblockentries)
     if usedevice
-        # what each direction's solutions are read for decides whether the
-        # whole solution comes back or only some of its rows. The scattering
-        # parameters read the forward solution at the port rows and the
-        # adjoint one at the noise port rows; the node flux, voltage and
-        # sensitivity outputs read all of both.
+        # what the solutions are read for decides whether the whole solution
+        # comes back from the device or only some rows: the scattering
+        # parameters read the port rows of the forward solution and the
+        # noise port rows of the adjoint one, while the node flux, voltage
+        # and sensitivity outputs read all of both
         fullforward = !isempty(outputarrays.nodeflux) ||
             !isempty(outputarrays.voltage) ||
             !isempty(outputarrays.Ssensitivity)
@@ -961,15 +848,12 @@ function hblinsolve(w, psc::CompiledCircuit,
             !isempty(outputarrays.voltageadjoint) ||
             !isempty(outputarrays.Ssensitivity)
         # The noise scattering parameters are computed where the adjoint
-        # solution is, so they ask nothing of the host copy. When they are its
-        # only reader, which is the usual case on a lossy line, the adjoint
-        # solution is never copied back at all.
-        # The noise channels of the dissipative scattering blocks are formed
-        # on the backend alongside those of the lumped noise ports whenever
-        # the blocks' scattering parameters can be evaluated there, which is
-        # the same condition their stamps are evaluated there under. When one
-        # cannot be, the whole adjoint solution comes back instead and every
-        # channel is formed on the host.
+        # solution is, so when they are its only reader the adjoint solution
+        # is never copied back. The noise channels of the scattering blocks
+        # are formed on the device when the blocks' scattering parameters
+        # can be evaluated there (the same condition as for their stamps);
+        # otherwise the whole adjoint solution comes back and every channel
+        # is formed on the host.
         blocknoiseondevice = isnothing(noiseplan) ||
             candeviceevaluate(lsys.scattering)
         wantsnoise = !isempty(outputarrays.Snoise) ||
@@ -1002,40 +886,21 @@ function hblinsolve(w, psc::CompiledCircuit,
             (full = fullforward, rows = portsolutionrows(nodeindices,
                 portindices, Nsignalmodes)),
             adjointspec)
-        # One pass over the whole sweep, so the frequency loop's buffers are
-        # made once; the callbacks solve the batch a frequency belongs to when
-        # they first reach it. Splitting the loop across threads was measured
-        # and it loses: a batch holds about a dozen frequencies, so each
-        # thread would remake those buffers for a frequency or two of work.
         # The device solves a batch of frequencies, then the host computes
-        # their outputs, reusing one set of scratch across every batch.
-        #
-        # Spreading those outputs across workers was tried and it loses. The
-        # host work here is about a quarter of the call, not the half a
-        # measurement which also counted the plans, the cuDSS analysis and the
-        # output arrays had suggested; and giving each worker its own scratch
-        # costs more in working set than the parallelism wins, because the
-        # solution buffer alone is the size of the state of the whole circuit.
-        # Measured on a thirteen mode travelling wave amplifier, the outputs
-        # took 0.132 s on one worker and 0.189 s on eight.
-        # How much host work a frequency carries decides how many workers
-        # are worth their working set, because a worker's solution buffer is
-        # the size of the state of the whole circuit. Without the
-        # sensitivities the outputs are cheap and one worker wins: measured
-        # on a thirteen mode travelling wave amplifier, they took 0.132 s on
-        # one worker and 0.189 s on eight. The sensitivities are not cheap,
-        # costing a product against the sparsity structure of the system
-        # matrix per component and per frequency; measured on a two hundred
-        # cell line with sixty four components, they took 20.7 ms per
-        # component on one worker and 2.9 ms on eight.
+        # their outputs. Each worker's workspace holds a solution buffer the
+        # size of the whole circuit's state, so the number of workers is
+        # chosen by how much host work a frequency carries: without the
+        # sensitivities the outputs are cheap and one worker wins, while the
+        # sensitivities cost a product per component and frequency and are
+        # worth spreading across workers.
         nworkers = isempty(outputarrays.Ssensitivity) ? 1 :
             max(1, min(nbatches, Base.Threads.nthreads()))
         wss = [LinearizedWorkspace(outputarrays, sensitivitytuple, lsys,
             Nports, Nsignalmodes, Nnoisechannels,
             length(wpumpmodes), factorization; assembles = false)
             for _ in 1:nworkers]
-        # the noise scattering parameters are reduced on the backend against
-        # scratch of their own, so a worker which computes them needs its own
+        # the noise scattering parameters are reduced on the device against
+        # scratch of their own, so each worker computing them needs its own
         noisecbs = isnothing(devicenoiseplan) ? nothing :
             [devicenoise(devicenoiseplan,
                 (isnothing(deviceblocknoiseplan) || t == 1) ?
@@ -1058,8 +923,8 @@ function hblinsolve(w, psc::CompiledCircuit,
             channeltemperatures = channeltemperatures)
         for lo in 1:nb:length(w)
             hi = min(lo + nb - 1, length(w))
-            # only this touches the backend, and it is serial; the outputs of
-            # the batch it staged are host work on disjoint frequencies
+            # only this touches the device, serially; the outputs of the
+            # batch it staged are host work on disjoint frequencies
             solutions.solvebatch!(lo)
             if nworkers == 1
                 inner!(1, lo:hi)
@@ -1088,15 +953,11 @@ function hblinsolve(w, psc::CompiledCircuit,
         end
     end
 
-    # calculate the `ideal` quantum efficiency based on the gain assuming an
-    # ideal two mode amplifier
+    # the quantum efficiency of an ideal two mode amplifier with the same
+    # gain
     QEideal = outputarrays.QEideal
 
-    # turn all of the array outputs into keyed arrays if the
-    # keyedarrays = true
-
-    # if keyword argument keyedarrays = true then generate keyed arrays
-    # for the scattering parameters
+    # wrap the requested outputs as keyed arrays when `keyedarrays = true`
     Sout = if returnS && keyedarrays
         Stokeyed(outputarrays.S, modes, portnumbers, modes, portnumbers, w)
     elseif returnS
@@ -1105,8 +966,6 @@ function hblinsolve(w, psc::CompiledCircuit,
 	zeros(Complex{Float64},0,0,0)
     end
 
-    # if keyword argument keyedarrays = true then generate keyed arrays
-    # for the noise scattering parameters
     Snoiseout = if returnSnoise && keyedarrays
         Snoisetokeyed(outputarrays.Snoise, modes,
             noisechannelnames(componentnames, noiseportimpedanceindices,
@@ -1123,8 +982,6 @@ function hblinsolve(w, psc::CompiledCircuit,
         outputarrays.Cnoise
     end
 
-    # if keyword argument keyedarrays = true then generate keyed arrays
-    # for Ssensitivity
     Ssensitivityout = if returnSsensitivity && keyedarrays
         Ssensitivitytokeyed(outputarrays.Ssensitivity, modes, portnumbers,
             modes, portnumbers,
@@ -1134,8 +991,6 @@ function hblinsolve(w, psc::CompiledCircuit,
         outputarrays.Ssensitivity
     end
 
-    # if keyword argument keyedarrays = true then generate keyed arrays
-    # for the quantum efficiency
     QEout = if returnQE && keyedarrays
         Stokeyed(outputarrays.QE, modes, portnumbers, modes, portnumbers, w)
     else
@@ -1148,15 +1003,12 @@ function hblinsolve(w, psc::CompiledCircuit,
         QEideal
     end
 
-    # if keyword argument keyedarrays = true then generate keyed arrays
-    # for the commutation relations
     CMout = if returnCM && keyedarrays
         CMtokeyed(outputarrays.CM, modes, portnumbers, w)
     else
         outputarrays.CM
     end
 
-    # if keyword argument keyedarrays = true then generate keyed arrays
     nodefluxout = if returnnodeflux && keyedarrays
         nodevariabletokeyed(outputarrays.nodeflux, modes, nodenames, modes,
             portnumbers, w)
@@ -1164,7 +1016,6 @@ function hblinsolve(w, psc::CompiledCircuit,
         outputarrays.nodeflux
     end
 
-    # if keyword argument keyedarrays = true then generate keyed arrays
     nodefluxadjointout = if returnnodefluxadjoint && keyedarrays
         nodevariabletokeyed(outputarrays.nodefluxadjoint, modes,
             nodenames, modes, portnumbers, w)
@@ -1172,7 +1023,6 @@ function hblinsolve(w, psc::CompiledCircuit,
         outputarrays.nodefluxadjoint
     end
 
-    # if keyword argument keyedarrays = true then generate keyed arrays
     voltageout = if returnvoltage && keyedarrays
         nodevariabletokeyed(outputarrays.voltage, modes,
             nodenames, modes, portnumbers, w)
@@ -1180,7 +1030,6 @@ function hblinsolve(w, psc::CompiledCircuit,
         outputarrays.voltage
     end
 
-    # if keyword argument keyedarrays = true then generate keyed arrays
     voltageadjointout = if returnvoltageadjoint && keyedarrays
         nodevariabletokeyed(outputarrays.voltageadjoint, modes,
             nodenames, modes, portnumbers, w)
@@ -1206,9 +1055,9 @@ end
 
 The preallocated output arrays of one [`hblinsolve`](@ref) run, filled per
 frequency by [`hblinsolve_inner!`](@ref). An output which was not requested
-is a zero size array of the same dimensionality, which is the signal, via
-`isempty`, that it should not be computed. This is the single place the
-output shapes and the request conditions are defined.
+is a zero size array of the same dimensionality, which signals, through
+`isempty`, that it is not to be computed. The output shapes and the request
+conditions are defined here and nowhere else.
 """
 struct LinearizedArrays
     S::Array{Complex{Float64},3}
@@ -1262,14 +1111,10 @@ end
 The scratch of one worker's pass over a range of signal frequencies in
 [`hblinsolve_inner!`](@ref).
 
-There are fourteen buffers here, the largest of them the size of the solution
-and of the system matrix, so making them is not free. They are a separate
-object so that a worker can be given one once and reuse it across every range
-it is handed, rather than remaking them per call. That is what lets the device
-path hand out a batch of frequencies at a time and still keep the host work
-parallel: without it, each worker would remake all of this for the frequency
-or two of a batch that fell to it, which was measured and cost more than the
-parallelism won.
+The largest buffers are the size of the solution and of the system matrix,
+so a worker is given one workspace once and reuses it across every range of
+frequencies it is handed. This is what lets the device path hand out one
+batch of frequencies at a time while keeping the host work parallel.
 """
 struct LinearizedWorkspace{TA,TC,TR}
     phin::Matrix{Complex{Float64}}
@@ -1321,8 +1166,8 @@ function LinearizedWorkspace(arrays::LinearizedArrays, sensitivity, lsys,
     # individual components do not.
     wantsop = wantssensitivity && !isempty(sensitivity.dAop)
     phinforward = wantssensitivity ? cplx(n, np) : cplx(0, 0)
-    # one factorization of the pump Jacobian per worker: a sparse
-    # factorization is not safe to solve against from several threads at once
+    # one factorization of the pump Jacobian per worker; a sparse
+    # factorization cannot be solved against from several threads at once
     sensitivitycache = if isnothing(sensitivity.reverse)
         nothing
     else
@@ -1356,25 +1201,36 @@ function LinearizedWorkspace(arrays::LinearizedArrays, sensitivity, lsys,
 end
 
 """
-    hblinsolve_inner!(arrays::LinearizedArrays, sensitivity, lsys, bnm,
-        portindices, noiseportimpedanceindices,
+    hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
+        sensitivity, lsys, bnm, portindices, noiseportimpedanceindices,
         portimpedances, noiseportimpedances, nodeindices, componenttypes,
-        w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization)
+        w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization;
+        noiseplan = nothing, channeltemperatures = nothing,
+        presolved = nothing, presolvedadjoint = nothing,
+        presolvednoise = nothing)
 
-Solve the linearized harmonic balance problem for a subset of the frequencies
-given by `wi`, assembling the per-frequency system matrices from the
-[`HBLinearizedSystem`](@ref) `lsys` with [`assemblesystemmatrix!`](@ref),
-and writing into the output arrays of the [`LinearizedArrays`](@ref)
-`arrays`. An empty output array means that output was not requested;
-requested outputs are written per frequency through views, and small
-working matrices stand in for the outputs which are computed but not stored
-(for example `S` when only the quantum efficiency needs it). `sensitivity`
-is a named tuple with the fixed operating point `stamps`, the operating
-point `dAop` stamps of the forward contraction order, and the
-[`ReverseSensitivity`](@ref) of the reverse order (or `nothing`). This
-function is thread safe in that different frequencies can be computed in
-parallel on separate threads; `lsys`, `arrays` (through disjoint per
-frequency views) and `sensitivity` are shared.
+Solve the linearized problem at the frequencies `w[wi]`, using the
+workspace `ws`, assembling each system matrix from the
+[`HBLinearizedSystem`](@ref) `lsys` with [`assemblesystemmatrix!`](@ref)
+and writing the results into the [`LinearizedArrays`](@ref) `arrays`
+through per frequency views. An empty output array means that output was
+not requested; small working matrices stand in for outputs which are
+computed but not stored (`S` when only the quantum efficiency needs it).
+
+`sensitivity` is a named tuple with the fixed operating point `stamps`,
+the operating point `dAop` stamps of the forward contraction order, and
+the [`ReverseSensitivity`](@ref) of the reverse order, or `nothing`.
+`noiseplan` and `channeltemperatures` describe the noise channels of the
+scattering blocks and the temperature of every channel. `presolved`,
+`presolvedadjoint` and `presolvednoise` are callbacks which replace the
+assemble, factorize and solve of a frequency, the transposed solve, and
+the noise scattering calculation with solutions computed elsewhere, which
+is how the device sweep hands back its batches (see
+[`devicesolutions`](@ref)).
+
+Different frequency ranges may be computed in parallel: `lsys`,
+`sensitivity` and `arrays` (through disjoint views) are shared, and each
+task has its own `ws`.
 """
 function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     sensitivity, lsys, bnm,
@@ -1385,12 +1241,8 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     presolved = nothing, presolvedadjoint = nothing,
     presolvednoise = nothing)
 
-    # `presolved` replaces the assemble, factorize and solve of each frequency
-    # with a callback which fills the solution some other way, and
-    # `presolvedadjoint` likewise replaces the transposed solve. That is how
-    # the device sweep hands back solutions it computed a batch at a time (see
-    # [`devicesolutions`](@ref)). Everything downstream of the solve is
-    # unchanged, so the two paths compute their outputs identically.
+    # everything downstream of the solve is the same whether the solution
+    # came from the callbacks or from the factorization here
     isnothing(presolved) || !isnothing(presolvedadjoint) ||
         !needsadjointsolve(arrays, noiseportimpedanceindices, noiseplan) ||
         throw(ArgumentError(
@@ -1418,51 +1270,44 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     scatteringnoisework = ws.scatteringnoisework
     occupation = ws.occupation
 
-    # whether the transposed (adjoint) system must be solved at each
-    # frequency: for the sensitivities always, and otherwise when a
-    # consumer of the adjoint solution (the noise scattering parameters,
-    # the quantum efficiency, the commutation relations, or the adjoint
-    # node outputs) is requested together with a source of it. This does
-    # not depend on the frequency.
+    # whether the transposed (adjoint) system must be solved: always for
+    # the sensitivities, and otherwise when an output which reads the
+    # adjoint solution (the noise scattering parameters, the quantum
+    # efficiency, the commutation relations, the adjoint node outputs) was
+    # requested
     needsadjoint = needsadjointsolve(arrays, noiseportimpedanceindices,
         noiseplan)
 
-    # this worker's private scattering block sensitivity state; bound
-    # before the loop because `ws` is rebound to the signal frequency there
+    # this worker's scattering block sensitivity state, bound before the
+    # loop because `ws` is rebound to the signal frequency there
     blocksens = ws.blocksens
 
-    # loop over the frequencies
     for i in wi
 
         Sview = isempty(arrays.S) ? Sworking : view(arrays.S, :, :, i)
         Snoiseview = isempty(arrays.Snoise) ? Snoiseworking : view(arrays.Snoise, :, :, i)
 
-        # calculate the mode frequencies
+        # the signal plus pump mode frequencies
         ws = w[i]
         wmodes .= ws .+ wpumpmodes
 
-        # assemble the linearized system matrix at this frequency,
-        # Asparsecopy = (AoLjnm + invLnm + im.*Gnm.*w - Cnm.*w.^2) with the
-        # per column mode frequency, in a way that doesn't allocate
-        # significant memory, taking the complex conjugates of the negative
-        # frequency mode entries of the linear term matrices and
-        # substituting any symbolic frequency variables.
+        # assemble the system matrix at this frequency,
+        # Asparsecopy = AoLjnm + invLnm + im*Gnm*w - Cnm*w^2 with the per
+        # column mode frequency, conjugating the negative frequency mode
+        # entries and substituting the symbolic frequency variable
         if isnothing(presolved)
             assemblesystemmatrix!(Asparsecopy, lsys, wmodes)
 
-            # factor the sparse matrix
-            # factorklu!(cache, Asparsecopy)
+            # factorize the matrix, reusing the symbolic analysis
             tryfactorize!(cache, factorization, Asparsecopy)
 
-            # solve the linear system
             trysolve!(phin, cache.factorization, bnm)
         else
             presolved(i, phin)
         end
 
-        # convert to node voltages. node flux is defined as the time integral
-        # of node voltage so node voltage is derivative of node flux which can
-        # be accomplished in the frequency domain by multiplying by j*w.
+        # node voltage is the time derivative of node flux, which in the
+        # frequency domain is multiplication by im*w
         if !isempty(arrays.voltage)
             vv = view(arrays.voltage, :, :, i)
             @inbounds for t in axes(vv, 1)
@@ -1473,13 +1318,13 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
             end
         end
 
-        # copy the nodeflux for output. the auxiliary variables of the
-        # modified nodal analysis augmentation are internal.
+        # copy the node fluxes for output; the auxiliary variables are
+        # internal
         if !isempty(arrays.nodeflux)
             copy!(view(arrays.nodeflux,:,:,i), view(phin, 1:size(arrays.nodeflux,1), :))
         end
 
-        # calculate the scattering parameters.
+        # the scattering parameters
         if !isempty(arrays.S) || !isempty(arrays.QE) || !isempty(arrays.QEideal) ||
                 !isempty(arrays.CM) || !isempty(arrays.Ssensitivity)
             calcinputoutput!(inputwave, outputwave, phin, bnm,
@@ -1488,10 +1333,9 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
             calcscatteringmatrix!(Sview, inputwave, outputwave)
 
             # the scalars which convert the adjoint contraction into the
-            # scattering parameter derivatives read the input waves computed
-            # just above, so they are formed here, before the Z parameter and
-            # adjoint output calculations below overwrite inputwave with the
-            # differently normalized input currents.
+            # scattering parameter derivatives read the input waves just
+            # computed, so they are formed before `inputwave` is overwritten
+            # with the differently normalized input currents below
             if !isempty(arrays.Ssensitivity)
                 calcsensitivityscaling!(sensitivitygamma, sensitivitybeta,
                     inputwave, bnm, portindices, portimpedances,
@@ -1501,32 +1345,28 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
 
         if needsadjoint
 
-            # retain the forward solution, which the adjoint solve overwrites
+            # keep the forward solution, which the adjoint solve overwrites
             if !isempty(arrays.Ssensitivity)
                 copy!(phinforward, phin)
             end
 
-            # Solve the transposed linearized system, reusing the
-            # factorization of the forward system. The adjoint solutions the
-            # noise and quantum efficiency calculations require are the
-            # solutions of the transposed system: by the adjoint identity the
-            # response at an output port to a source anywhere in the circuit
-            # is that source contracted against the transposed solution
-            # driven at the port. For a circuit without scattering blocks it
-            # is also the solution of the system with the complex conjugate
-            # of the pump modulation matrix, to which it is related by the
-            # diagonal similarity transformation of
-            # [`assemblesystemmatrix!`](@ref); the hybrid scattering rows
-            # break that similarity, so with blocks the two are different
-            # systems and it is the transposed one, whose auxiliary port
-            # current rows the block noise channels read, that is meant.
+            # Solve the transposed system, reusing the factorization. By the
+            # adjoint identity the response at an output port to a source
+            # anywhere in the circuit is that source contracted against the
+            # transposed solution driven at the port, which is what the
+            # noise and quantum efficiency calculations need. Without
+            # scattering blocks this is also the solution with the conjugate
+            # pump modulation matrix, related by the diagonal similarity of
+            # `assemblesystemmatrix!`; the scattering rows break that
+            # similarity, so with blocks it is the transposed system, whose
+            # auxiliary port current rows the block noise channels read.
             if isnothing(presolvedadjoint)
                 trysolvetranspose!(phin, cache.factorization, bnm)
             else
                 presolvedadjoint(i, phin)
             end
 
-            # copy the nodeflux adjoint for output
+            # copy the adjoint node fluxes for output
             if !isempty(arrays.nodefluxadjoint)
                 copy!(view(arrays.nodefluxadjoint,:,:,i), view(phin, 1:size(arrays.nodefluxadjoint,1), :))
             end
@@ -1541,11 +1381,10 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                 end
             end
 
-            # calculate the noise scattering parameters. `presolvednoise`
-            # computes them where the adjoint solution was computed and
-            # returns only what the quantum efficiency and the commutation
-            # relations read of them, which is a vector rather than a matrix
-            # with a row per noise port mode.
+            # the noise scattering parameters. `presolvednoise` computes
+            # them where the adjoint solution was computed and returns only
+            # what the quantum efficiency and the commutation relations read,
+            # a vector rather than a row per noise channel
             noiseterm = transpose(Snoiseview)
             wantscnoise = !isempty(arrays.Cnoise)
             if !isempty(arrays.Snoise) || wantscnoise ||
@@ -1555,8 +1394,8 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                         portindices, noiseportimpedanceindices,
                         portimpedances, noiseportimpedances, nodeindices,
                         componenttypes, wmodes, symfreqvar)
-                    # the vacuum noise the dissipative scattering blocks add,
-                    # in channels which follow the lumped noise ports
+                    # the channels of the dissipative scattering blocks
+                    # follow the lumped ones
                     if !isnothing(noiseplan)
                         scatteringnoisewaves!(noiseoutputwave, noiseplan,
                             lsys.scattering, phin, wmodes,
@@ -1569,13 +1408,11 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                 end
             end
 
-            # calculate the scattering parameter sensitivities. phin now
-            # holds the solution of the transposed system, which is the
-            # adjoint solution the contraction needs.
+            # the scattering parameter sensitivities; `phin` now holds the
+            # transposed solution the contraction needs
             if !isempty(arrays.Ssensitivity)
-                # a scattering block stamp depends on the signal frequency
-                # through S itself, so each worker rebuilds its private
-                # copy here rather than rescaling a constant
+                # a scattering block stamp depends on the frequency through S
+                # itself, so each worker rebuilds its own copy here
                 stamps = if isnothing(blocksens)
                     sensitivity.stamps
                 else
@@ -1595,11 +1432,9 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                 end
             end
 
-            # calculate the quantum efficiency
+            # the occupation of each channel, which is where the temperature
+            # enters; the noise scattering parameters carry none
             if !isempty(arrays.QE) || wantscnoise
-                # the occupation of each channel, which is where a
-                # temperature enters: the noise scattering parameters are a
-                # scattering matrix and carry none
                 noiseoccupation!(occupation, channeltemperatures, wmodes,
                     Nmodes)
             end
@@ -1611,23 +1446,22 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                 calcqe!(view(arrays.QE,:,:,i), Sview, noiseterm, occupation)
             end
 
-            # calculate the commutation relations (Manley-Rowe relations)
+            # the commutation relations
             if !isempty(arrays.CM)
                 calccm!(view(arrays.CM,:,i), Sview, noiseterm, wmodes)
             end
         else
-            # calculate the quantum efficiency
+            # the quantum efficiency and the commutation relations without
+            # noise channels
             if !isempty(arrays.QE)
                 calcqe!(view(arrays.QE,:,:,i), Sview)
             end
-
-            # calculate the commutation relations (Manley-Rowe relations)
             if !isempty(arrays.CM)
                 calccm!(view(arrays.CM,:,i), Sview, wmodes)
             end
         end
 
-        # calculate the ideal QE
+        # the quantum efficiency of an ideal amplifier with the same gain
         if !isempty(arrays.QEideal)
             calcqeideal!(view(arrays.QEideal,:,:,i), Sview)
         end
@@ -1637,10 +1471,12 @@ end
 
 """
     hblinsolve(w, circuit::Circuit, circuitdefs = Dict{Symbol,Number}();
-        sorting = :name, keyword arguments...)
+        sorting = :name, kwargs...)
 
-Linearized harmonic balance solution of a typed [`Circuit`](@ref); see
-[`hbsolve`](@ref).
+The linearized sweep of a typed [`Circuit`](@ref), with every keyword of
+the general method. `circuitdefs` is needed only when component values are
+symbolic, and `sorting` defaults to `:name` because hierarchical net names
+are not integers.
 """
 function hblinsolve(w, circuit::Circuit,
         circuitdefs::AbstractDict = Dict{Symbol,Number}();

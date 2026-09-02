@@ -1,7 +1,4 @@
-# =====================================================================
 # Transposed gather maps for the vector-Jacobian product.
-#
-# Device-clean transposed maps for the vjp.
 #
 # The forward maps of a NonlinearTermPlan are gathers: one work item owns
 # one output slot and reads only precomputed index maps, so there is no
@@ -32,10 +29,9 @@
 #
 # so the vjp needs only the existing forward transform plans, one division
 # by s folded into the first kernel and one multiplication by s folded
-# into the coefficients of the second. The host-only applyffttranspose!,
-# with its zero padded work array and its separate complex transform plan,
-# is not needed.
-# =====================================================================
+# into the coefficients of the second. It does not need the host only
+# `applyffttranspose!` of hbsystem.jl, which the reverse sensitivity
+# contraction still uses.
 
 """
     NonlinearTermTransposePlan
@@ -142,9 +138,9 @@ function plannonlineartermtranspose(plan::NonlinearTermPlan, modelayout,
     rdim = modelayout.rdim
     gtscale = conjugatemultiplicity(fd, td)
 
-    # ---- transpose of the Josephson part of the backward map ----
-    # forward: node k gathers slots bsrc[t]. transpose: slot q gathers the
-    # nodes k which named it.
+    # The transpose of the Josephson part of the backward map. Forward, node
+    # k gathers the slots bsrc[t]; transposed, slot q gathers the nodes k
+    # which named it.
     bkeys = Int[]; bnodes = Int[]; bcoefs = Float64[]
     @inbounds for k in 1:ncomplex, t in plan.bptr[k]:plan.bptr[k+1]-1
         push!(bkeys, Int(plan.bsrc[t]))
@@ -155,11 +151,11 @@ function plannonlineartermtranspose(plan::NonlinearTermPlan, modelayout,
     tbnode = Ti[bnodes[e] for e in bperm]
     tbcoef = Float64[bcoefs[e] for e in bperm]
 
-    # ---- transpose of the forward map ----
-    # forward: slot q reads real slot n1[q] (and n1[q]+1 when the mode is
-    # not self conjugate), likewise n2. transpose: real slot p gathers the
-    # slots which read it. The FCONJ sign and the conjugate multiplicity
-    # are folded into the coefficient here so the kernel is a plain gather.
+    # The transpose of the forward map. Forward, slot q reads real slot
+    # n1[q] (and n1[q]+1 when the mode is not self conjugate), likewise n2;
+    # transposed, real slot p gathers the slots which read it. The FCONJ
+    # sign and the conjugate multiplicity are folded into the coefficient,
+    # so the kernel is a plain gather.
     fkeys = Int[]; fslots = Int[]; fcoefs = Float64[]; fimag = Int32[]
     @inbounds for q in 1:nslots
         f = plan.flags[q]
@@ -183,7 +179,7 @@ function plannonlineartermtranspose(plan::NonlinearTermPlan, modelayout,
     tfcoef = Float64[fcoefs[e] for e in fperm]
     tfimag = Int32[fimag[e] for e in fperm]
 
-    # ---- transpose of the linear term ----
+    # The transpose of the linear term.
     kkeys = Int[]; krows = Int[]; kcoefs = Float64[]
     if !isempty(plan.kptr)
         @inbounds for p in 1:(length(plan.kptr)-1), t in plan.kptr[p]:plan.kptr[p+1]-1

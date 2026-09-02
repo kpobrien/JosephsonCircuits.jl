@@ -373,9 +373,11 @@ Communications Engineering, Second Edition. Artech House, 2006.
 """ StoY
 
 """
-    StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,sqrtportadmittances)
+    StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,oneoversqrtportimpedances)
 
-See [`StoY`](@ref) for description.
+In place version of [`StoY`](@ref), writing into `Y` with `tmp` as scratch
+and `oneoversqrtportimpedances` the reciprocal square roots of the port
+impedances.
 
 """
 function StoY!(Y::AbstractMatrix,S::AbstractMatrix,tmp::AbstractMatrix,oneoversqrtportimpedances)
@@ -630,9 +632,11 @@ Communications Engineering, Second Edition. Artech House, 2006.
 """ ZtoS
 
 """
-    ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,sqrtportimpedances)
+    ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversqrtportimpedances)
 
-See [`ZtoS`](@ref) for description.
+In place version of [`ZtoS`](@ref), writing into `S` with `tmp` as scratch
+and `oneoversqrtportimpedances` the reciprocal square roots of the port
+impedances.
 
 """
 function ZtoS!(S::AbstractMatrix,Z::AbstractMatrix,tmp::AbstractMatrix,oneoversqrtportimpedances)

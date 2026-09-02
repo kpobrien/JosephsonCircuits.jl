@@ -99,20 +99,13 @@ in the frequency domain RDFT array.
 """
 function calcfreqsrdft(Nharmonics::NTuple{N,Int}) where N
 
-    # double the size of all but the first n because 
-    # only the first axis of a multi-dimensional rfft has
-    # only positive frequencies.
+    # every dimension but the first holds both signs of frequency; the
+    # first dimension of a real transform holds only the positive ones
     Nw=NTuple{N,Int}(ifelse(i == 1, val+1, 2*val+1) for (i,val) in enumerate(Nharmonics))
     
-    # choose the number of time points based on the number of fourier
-    # coefficients
-    # changed to below because i wasn't using enough points when Nmodes=1.
-    # the results contained only real values. 
-    # Nt = if Nw[1] == 2
-    #     NTuple{N,Int}(ifelse(i == 1, 2*Nw[1]-1, val) for (i,val) in enumerate(Nw))
-    # else
-    #     NTuple{N,Int}(ifelse(i == 1, 2*Nw[1]-2, val) for (i,val) in enumerate(Nw))
-    # end
+    # the number of time points in each dimension; an odd number in the
+    # first dimension so that the highest mode is not the Nyquist mode,
+    # whose coefficient a real transform forces to be real
     Nt =  NTuple{N,Int}(ifelse(i == 1, 2*Nw[1]-1, val) for (i,val) in enumerate(Nw))
 
     return calcfreqs(Nharmonics, Nw, Nt)
@@ -352,11 +345,15 @@ function removefreqs(frequencies::Frequencies{N},
 end
 
 """
-    truncfreqs(frequencies::Frequencies;
-        dc = false, odd = true, even = false, maxintermodorder = Inf)
+    truncfreqs(frequencies::Frequencies; maxharmonics = frequencies.Nharmonics,
+        maxintermodorder = Inf, dc = true, odd = true, even = true)
 
-Return a new Frequencies struct with the coordinates and modes truncated
-according to the user specified criteria.
+Return a new [`Frequencies`](@ref) with the coordinates and modes truncated
+to those which satisfy the criteria: the zero frequency mode when `dc`,
+modes of odd or even total harmonic order when `odd` or `even`, modes
+which are a harmonic of a single tone or whose absolute harmonic indices
+sum to at most `maxintermodorder`, and modes whose absolute harmonic
+index in each tone is at most `maxharmonics` for that tone.
 
 # Examples
 ```jldoctest
@@ -410,7 +407,6 @@ function  truncfreqs(frequencies::Frequencies{N};
     coords = frequencies.coords
     modes = frequencies.modes
 
-    # keepmodesdict = Dict{eltype(keepmodes),Int}()
     keepmodes = Vector{eltype(modes)}(undef,0)
     sizehint!(keepmodes,length(modes))
 
@@ -419,21 +415,17 @@ function  truncfreqs(frequencies::Frequencies{N};
 
     for (i,nvals) in enumerate(modes)
 
-        # to be returned as a valid frequency, the point has to match the
-        # criteria of dc, even, or odd, and either only contain a single frequency
-        # or be less than the max intermod order if it contains multiple
-        # frequencies. 
+        # a mode is kept when it matches the dc, even or odd criterion, and
+        # is either a harmonic of a single tone or within the intermodulation
+        # order, and is within the per tone harmonic bound
         if (
                 # test for DC
                 (dc && all(==(0),nvals)) ||
-                # test for one of the fundamental frequencies
-                # sum(abs,nvals) == 1 ||
                 # test for even (and not DC)
                 (even && mod(sum(abs,nvals),2) == 0 && sum(abs,nvals) > 0) ||
                 # test for odd
                 (odd && mod(sum(abs,nvals),2) == 1)
-            ) && # test for containing only one frequency or less than maxintermodorder
-                # (sum( nvals .!== 0) == 1 || sum(abs,nvals) <= maxintermodorder)
+            ) && # a harmonic of one tone, or within the intermodulation order
                 (count(!=(0), nvals) == 1 || sum(abs,nvals) <= maxintermodorder) &&
                 # and less than the maxharmonics
                 all(map(<=,abs.(nvals),maxharmonics))
@@ -705,27 +697,22 @@ function calcphiindices(frequencies::Frequencies{N},
         coordsdict[coord] = i
     end
 
-    # empty vector to hold the map between indices in the vector and the
-    # matrix
+    # the position in the frequency domain array of each mode of the vector
     indexmap = Vector{Int}(undef,length(coords))
 
-    # the index of the element of the N dimensional array in the frequency domain
-    # that i should copy to conjtargetindices and take the complex conjugate of. 
+    # the positions in the frequency domain array which are copied,
+    # conjugated, to `conjtargetindices`
     conjsourceindices = Array{Int}(undef,0)
 
-    # the index of the element of the N dimensional array in the frequency domain
-    # that i should take the complex conjugate of
+    # the positions which receive the conjugates
     conjtargetindices = Vector{Int}(undef,0)
 
     # create a dictionary that maps between the CartesianIndex coordinates
     # and the index in the array at which they occur. 
     carttoint = calcindexdict(Nw)
 
-    # generate the index maps to convert between the vector
-    # and matrix. Loop over the modes and coords vectors to keep the order
-    # between.
+    # the vector to matrix map, in the order of `coords`
     for (i,coord) in enumerate(coords)
-        # push!(indexmap,carttoint[coord])
         indexmap[i] = carttoint[coord]
         if haskey(conjsymdict,coord)
             push!(conjsourceindices,carttoint[coord])
@@ -790,7 +777,6 @@ function phivectortomatrix!(phivector::AbstractVector, phimatrix::AbstractArray,
         Nvector = length(phivector)÷ Nbranches
     end
 
-    # Nvector = length(phivector)÷ Nbranches
     Nmatrix = prod(size(phimatrix)[1:end-1])
 
     # fill the matrix with zeros
@@ -803,8 +789,7 @@ function phivectortomatrix!(phivector::AbstractVector, phimatrix::AbstractArray,
         end
     end
 
-    # for the complex conjugates, copy and complex conjugate them from source
-    # index of the matrx to the destination index of the matrix.
+    # the conjugate modes, copied and conjugated within the matrix
     for i in 1:Nbranches
         for j in 1:length(conjtargetindices)
             phimatrix[conjtargetindices[j]+ (i-1)*Nmatrix] = conj(phimatrix[conjsourceindices[j]+ (i-1)*Nmatrix])
@@ -860,7 +845,6 @@ function phimatrixtovector!(phivector::AbstractVector, phimatrix::AbstractArray,
     indexmap::Vector{Int}, conjsourceindices::Vector{Int},
     conjtargetindices::Vector{Int}, Nbranches::Int)
 
-    # Nvector = length(phivector)÷ Nbranches
 
     if length(phivector) == 0
         Nvector = 0
@@ -886,9 +870,9 @@ function phimatrixtovector!(phivector::AbstractVector, phimatrix::AbstractArray,
 end
 
 """
-    applynl(am::Array{Complex{Float64}}, f::Function)
+    applynl(fd::Array{Complex{Float64}}, f::Function)
 
-Perform the inverse discrete Fourier transform on an array `am` of complex
+Perform the inverse discrete Fourier transform on an array `fd` of complex
 frequency domain data, apply the function `f` in the time domain, then perform
 the discrete Fourier transform to return to the frequency domain. Apply the
 Fourier transform on all but the last dimensions. See also [`applynl!`](@ref)
@@ -929,23 +913,17 @@ for the RFFT of an array of frequency domain data. See also [`applynl!`](@ref).
 function plan_applynl(fd::AbstractArray{Complex{T}},
     backend::Backend = CPU()) where T
 
-    #choose the number of time points based on the number of fourier
-    #coefficients
     sizefd = size(fd)
     stepsperperiod = 2*sizefd[1]-1
 
-    # generate the time domain array with the appropriate dimensions, on the
-    # same device as the frequency domain array. changed to prevent boxing of
-    # stepsperperiod.
+    # the time domain array, on the same device as the frequency domain
+    # array
     dims = (stepsperperiod, sizefd[2:end]...)
     td = similar(fd, T, dims)
 
     # A system with no Josephson junctions has an empty batch dimension and
-    # nothing to transform. FFTW plans that; cuFFT rejects it as an invalid
-    # transform size, so a linear circuit driven through the nonlinear solver
-    # failed on a backend and not on the host. There is no transform to apply
-    # either, so the plan is `nothing` and applying it is the identity (see
-    # [`applyifft!`](@ref)).
+    # nothing to transform. FFTW plans that but cuFFT rejects it, so the
+    # plan is `nothing` and applying it is the identity (see `applyifft!`).
     irfftplan, rfftplan = if isempty(fd)
         (nothing, nothing)
     else
@@ -1036,7 +1014,7 @@ applynl!(fd::AbstractArray{Complex{T}}, ::AbstractArray{T}, f, ::Nothing,
     ::Nothing) where T = fd
 
 """
-    hbmatind(truncfrequencies::Frequencies{N})
+    hbmatind(truncfrequencies::Frequencies{N}; alias = false)
 
 Returns a matrix describing which indices of the frequency domain matrix
 (from the RFFT) to pull out and use in the harmonic balance matrix. A negative
@@ -1137,8 +1115,8 @@ function hbmatind(frequencies::Frequencies{N},
     truncmodes = truncfrequencies.modes
     Nt = frequencies.Nt
 
-    # this is calculating the frequency domain input output relations
-    # first calculate this in terms of the modes
+    # the mode difference of each pair of modes, which is the mode the
+    # Fourier coefficient coupling them is read from
     Amatrixmodes = Matrix{NTuple{N,Int}}(undef,length(truncmodes),length(truncmodes))
     for i in 1:length(truncmodes)
         for j in 1:length(truncmodes)
@@ -1147,15 +1125,14 @@ function hbmatind(frequencies::Frequencies{N},
         end
     end
 
-    # now i need to find the keys that are in the rfft matrix and their
-    # locations
+    # the position of each mode in the frequency domain array
     modesdict = Dict{eltype(modes),Int}()
     for (i,mode) in enumerate(modes)
         modesdict[mode] = i
     end
 
-    # now we want to know where in the dft matrix we should pull
-    # these modes. to do these, we use the un-truncated frequencies struct.
+    # where in the frequency domain array each difference mode is, using the
+    # untruncated frequencies
     Amatrixindices = zeros(Int,length(truncmodes),length(truncmodes))
     for (i,mode) in enumerate(Amatrixmodes)
         # if the alias flag is true, then for modes that fall outside the grid

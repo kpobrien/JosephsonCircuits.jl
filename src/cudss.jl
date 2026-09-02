@@ -39,10 +39,8 @@ refactorization reusing the analysis), which is exactly the split cuDSS wants.
 
 That split is what makes this worth doing. The symbolic analysis depends only
 on the circuit topology and the retained mode coupling, neither of which
-changes across Newton steps, while the values change at every step. On a two
-tone travelling wave amplifier the mode block diagonal preconditioner takes
-about 72 ms to analyze and factorize from scratch and about 0.44 ms to
-refactorize, so the analysis is roughly 99% of the cost and is paid once.
+changes across Newton steps, while the values change at every step; the
+analysis is almost all of the cost of a factorization and is paid once.
 
 `batched = true` offers the mode block diagonal to cuDSS as a *uniform batch*
 instead: one analysis for the pattern every mode block shares, then a batched
@@ -52,24 +50,16 @@ numeric refactorization. See [`BatchedBlockLayout`](@ref) for the structure and
 path is used anyway.
 
 !!! note "Why the batch is off by default"
-    It was measured and it loses. cuDSS does not need to be told that a block
-    diagonal matrix is a batch: given the whole matrix it discovers the
-    independent blocks and works on them together, and given the blocks
-    separately it works through them one at a time. On a two tone line with 30
-    mode blocks of 4504 rows, one solve against the whole block diagonal is
-    165 us against 5920 us for the batch, and a refactorization is 0.44 ms
-    against 10.7 ms; the batched cost grows linearly in the number of blocks
-    up to twelve and then jumps by a factor of forty and stays flat, which is
-    a fallback inside the library rather than a load. The batch does win the
-    symbolic analysis, 12 ms against 72 ms, because it analyzes one block
-    rather than all thirty, but that is paid once and the per step losses
-    swamp it: end to end the batch turned a 3.16 s solve into 5.63 s.
-
-    Kept, off, because it is cheap to re-measure against a later cuDSS, and
-    because the analysis result points somewhere useful: the saving is in the
-    reordering, which the unbatched path could have too by analyzing one block
-    and handing the replicated permutation to the whole matrix as
-    `"user_perm"`.
+    With the cuDSS versions tested it loses. cuDSS does not need to be told
+    that a block diagonal matrix is a batch: given the whole matrix it
+    discovers the independent blocks and works on them together, while given
+    the blocks as a uniform batch it works through them far more slowly per
+    solve and per refactorization, with a cost which jumps beyond about a
+    dozen blocks. The batch only wins the symbolic analysis, which is paid
+    once. It is kept because it is cheap to re-measure against a later
+    cuDSS, and because the saving it does find is in the reordering, which
+    the unbatched path could have too by analyzing one block and handing
+    the replicated permutation to the whole matrix as `"user_perm"`.
 """
 function CUDSSFactorization(; batched::Bool = false, kwargs...)
     return Factorization(
@@ -105,15 +95,12 @@ right hand sides each.
     uniform batch of sixteen or more systems once each has six or more right
     hand sides. Every system of the batch comes back wrong, by order one, while
     `cudss_get(solver, "info")` reports success and `"lu_nnz"` is unchanged, so
-    nothing downstream can detect it. Measured on a 15372 row complex matrix:
-    a batch of fifteen is correct to 5e-12 with twelve right hand sides and a
-    batch of sixteen is wrong by a relative 1.4; with one or two right hand
-    sides batches of 128 and 20 are correct.
-
-    The cap costs nothing. Batching a frequency sweep saturates by about
-    twelve systems anyway, so the limit sits above the useful range: on that
-    same matrix a sweep took 0.0768 s at a batch of eight, 0.0723 s at twelve
-    and 0.0730 s at fifteen.
+    nothing downstream can detect it. A batch of fifteen is correct with
+    twelve right hand sides and a batch of sixteen is wrong by order one;
+    with one or two right hand sides batches of well over a hundred are
+    correct. The cap costs nothing, since the speedup of batching a
+    frequency sweep saturates by about a dozen systems. Re-check against
+    newer cuDSS releases before raising it.
 """
 uniformbatchlimit(nrhs::Integer) = nrhs >= 6 ? 15 : 128
 

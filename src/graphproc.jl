@@ -1,9 +1,30 @@
+# The graph of a compiled circuit: the branches the incidence matrix is
+# built from, a spanning tree of them, and the loops the remaining branches
+# close.
 
 """
     CircuitGraph(edge2indexdict, Rbn, searray, cearray, glearray, lvarray,
         isolatednodes, gl, Nbranches)
 
-A simple structure to hold the circuit graph information.
+The graph of the branch carrying components of a circuit, as computed by
+[`calccircuitgraph`](@ref).
+
+# Fields
+- `edge2indexdict`: maps a branch `(node1, node2)` in either orientation to
+    its branch index, the row of `Rbn` it occupies.
+- `Rbn`: the sparse oriented incidence matrix, `Nbranches` by
+    `Nnodes - 1`; the ground node column is omitted.
+- `searray`: the edges of the spanning tree, as `(node1, node2)` tuples.
+- `cearray`: the closure branches, the edges not in the spanning tree.
+- `glearray`: all edges, spanning tree first and closure branches after.
+- `lvarray`: for each closure branch, the vertices of the loop it closes
+    through the spanning tree (empty for a loop of only two vertices).
+    Empty altogether when `calccircuitgraph` was called with
+    `loops = false`.
+- `isolatednodes`: nodes which appear in the graph but have no branch to
+    any other node.
+- `gl`: the undirected `Graphs.SimpleGraph` of all branches.
+- `Nbranches`: the number of branches, `size(Rbn, 1)`.
 """
 struct CircuitGraph
     edge2indexdict
@@ -18,13 +39,19 @@ struct CircuitGraph
 end
 
 """
-    calccircuitgraph(compiledcircuit::CompiledCircuit)
+    calccircuitgraph(compiledcircuit::CompiledCircuit; loops = true)
 
-Calculate the superconducting spanning tree, incidence matrix, closure branches,
-and loops from the parsed and sorted circuit.
+Compute the [`CircuitGraph`](@ref) of a compiled circuit: the incidence
+matrix, a spanning tree, the closure branches, and (when `loops = true`)
+the loop each closure branch closes.
 
-See also [`CircuitGraph`](@ref), [`calcgraphs`](@ref), and [`extractbranches`](@ref) 
-for more explanation.
+The graph is built from the branches of the inductive components, the
+Josephson junctions, the current and voltage sources and the ports; see
+[`extractbranches`](@ref) for the list. Nothing in the solvers reads the
+loops, and enumerating them costs a tree walk per closure branch, so a
+caller which does not need them passes `loops = false`.
+
+See also [`calcgraphs`](@ref).
 
 # Examples
 ```jldoctest
@@ -51,20 +78,25 @@ function calccircuitgraph(compiledcircuit::CompiledCircuit;
     branchvector = extractbranches(compiledcircuit.componenttypes,
                                 compiledcircuit.nodeindices)
 
-    # calculate the graph of inductive components glelist, the
-    # superconducting spanning tree selist, and the list of loop
-    # indices celist. 
     return calcgraphs(branchvector, compiledcircuit.Nnodes;
         loops = loops)
 
 end
 
 """
-    calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int)
+    calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
+        loops = true)
 
-Calculate the superconducting spanning tree, closure branches, and loops.
-Accepts the graph of linear inductors and Josephson junctions. Outputs lists
-of edges that can be used to generate graphs.
+Build the [`CircuitGraph`](@ref) of the branches `Ledgearray`, given as
+`(node1, node2)` tuples over `Nnodes` nodes with ground being node 1.
+
+Each connected component of the branch graph gets a minimum spanning tree
+(Kruskal, on unit weights) rooted at its first vertex. The edges not in
+the tree are the closure branches, and when `loops = true` the loop of
+each closure branch is the unique path between its endpoints through the
+tree. The oriented incidence matrix is assembled from the tree edges
+followed by the closure branches, with vertices added for any nodes which
+carry no branch so that the matrix has `Nnodes - 1` columns.
 """
 function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
         loops::Bool = true)
@@ -77,99 +109,84 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
     glearray = Vector{Tuple{Int, Int}}(undef, 0)
     isolatednodes = Vector{Int}(undef,0)
 
-    # break into groups of connected components.
-    # loop over these and construct the spanning trees.
+    # one spanning tree per connected component of the branch graph
     for v in Graphs.connected_components(gl)
 
-        # list of vertices has length one, this node is isolated and
-        # should be removed later
+        # a component of one vertex is a node with no branch to anywhere
         if length(v) == 1
             push!(isolatednodes,v[1])
         end
 
-        #generate the subgraph
+        # the subgraph of this component; `vmap` takes its local vertex
+        # numbers back to the circuit's node indices
         gli, vmap = Graphs.induced_subgraph(gl,v)
 
-        #superconducting spanning tree
+        # a minimum spanning tree of the component
         si = Graphs.SimpleGraph(Graphs.kruskal_mst(gli))
-        #si = Graphs.SimpleGraph(prim_mst(gli))
 
-        #calculate the closure branches
+        # the closure branches: every edge not in the tree
         ci = collect(Graphs.edges(Graphs.difference(gli,si)))
 
-        # the spanning tree, rooted once, so that each closure branch costs
-        # the length of its own loop rather than a search of the whole tree
+        # root the tree once so that each loop below costs a walk of its
+        # own length rather than a search of the whole tree
         parent, depth = loops ? rootedtree(si) : (Int[], Int[])
-    
-        #find the loop indices associated with each closure branch by starting
-        #with the superconducting spanning tree (which has no loops), then
-        #adding a closure branch and looking for the cycle this creates. 
+
         for cj in ci
-            #push!(cearray,Edge(vmap[dst(cj)],vmap[src(cj)]))
             push!(cearray,(vmap[Graphs.dst(cj)],vmap[Graphs.src(cj)]))
 
             # The loop of a closure branch is the unique path through the
             # spanning tree between its endpoints, closed by the branch
-            # itself. A tree has exactly one such path, so it is walked
-            # rather than searched for: the enumeration this replaces added
-            # the branch back to the tree and looked for cycles of at most
-            # ten edges, which silently returned no loop for a longer one.
-            #
-            # Nothing outside this file reads `lvarray`, so a caller which
-            # does not want the loops says so and pays for none of this. The
-            # spanning tree and the closure branches are still built,
-            # because the incidence matrix is derived from them.
+            # itself. Nothing in the solvers reads the loops, so they are
+            # only computed on request; the tree and the closure branches
+            # are always built because the incidence matrix needs them.
             loops || continue
 
             cyc = treepath(parent, depth, Graphs.src(cj), Graphs.dst(cj))
-            # a closure branch parallel to a tree edge closes a two vertex
-            # loop, which the enumeration this replaces also dropped
+            # a closure branch parallel to a tree edge closes a loop of two
+            # vertices, which is recorded as empty
             push!(lvarray, length(cyc) > 2 ? vmap[cyc] : Int[])
         end
-        
-        #create a directed version of the superconducting spanning tree
-        #starting vertex for the tree will always be 1
+
+        # orient the tree edges away from local vertex 1 by a breadth first
+        # search, so that every branch has a definite direction
         if Graphs.ne(si) == 0
             sid = si
         else
             sid = Graphs.SimpleGraph(Graphs.bfs_tree(si,1))
         end
-        
-        # add the closure branches back to get a directed version of the
-        # superconducting graph gl
+
+        # add the closure branches back to get the directed graph of every
+        # branch in this component
         glid = copy(sid)
         for cj in ci
             Graphs.add_edge!(glid, Graphs.dst(cj), Graphs.src(cj))
         end
-        
-        # offset the vertices of the superconducting spanning tree by
-        # the vmap.
+
+        # record the edges in the circuit's node numbering
         for e in Graphs.edges(sid)
-            #push!(searray,Edge(vmap[src(e)],vmap[dst(e)]))
             push!(searray,(vmap[Graphs.src(e)],vmap[Graphs.dst(e)]))
 
         end
         for e in Graphs.edges(glid)
-            #push!(glearray,Edge(vmap[src(e)],vmap[dst(e)]))
             push!(glearray,(vmap[Graphs.src(e)],vmap[Graphs.dst(e)]))
 
         end
     end
 
     gl2 = Graphs.SimpleDiGraphFromIterator(tuple2edge(glearray))
-    # if more vertices were found when parsing all the compoments than there are in
-    # the graph of inductive components (gl), then add vertices.this can happen if
-    # there are only non-inductive components connected the last nodes in the graph. 
+    # A graph built from an edge list has as many vertices as the largest
+    # node index in it. Nodes above that, which can happen when only
+    # capacitors or resistors touch the highest numbered nodes, are added so
+    # that the incidence matrix has a column for every node. (`gl` and `gl2`
+    # have the same vertex count, both being built from the same branches.)
     if Graphs.nv(gl2) < Nnodes
         Graphs.add_vertices!(gl2,Nnodes-Graphs.nv(gl))
     end
 
-    # create a dictionary that maps index to indices
     edge2indexdict = edge2index(gl2)
 
-    # convert the branch inductance matrices 
-    # to inverse node inductance matrices. 
-    # get rid of the first node (the node to ground)
+    # the oriented incidence matrix, transposed to branches by nodes, with
+    # the ground node column (node 1) dropped
     Rbn=sparse(transpose(Graphs.incidence_matrix(gl2,oriented=true)))[:,2:end]
 
     Nbranches = Graphs.ne(gl2)
@@ -181,11 +198,13 @@ end
 """
     rootedtree(tree)
 
-Root a spanning tree at its first vertex, returning the parent and the depth
-of every vertex.
+Root the tree `tree` at vertex 1 by breadth first search and return the
+parent and the depth of every vertex (parent 0 and depth 0 for the root;
+depth -1 for a vertex unreachable from it).
 
-Both are needed to walk between two vertices: the depths bring the two walks
-to the same level and the parents carry them up to where they meet.
+[`treepath`](@ref) walks between two vertices using both: the depths bring
+the two ends to the same level and the parents carry them up to where they
+meet.
 """
 function rootedtree(tree)
     n = Graphs.nv(tree)
@@ -210,12 +229,12 @@ end
 """
     treepath(parent, depth, u, v)
 
-The vertices of the unique path from `u` to `v` through a rooted tree,
-`u` first and `v` last.
+The vertices of the unique path from `u` to `v` through the tree described
+by `parent` and `depth` (see [`rootedtree`](@ref)), `u` first and `v` last.
+Returns an empty vector when either vertex is unreachable from the root.
 
-Together with the closure branch from `v` back to `u` this is the
-fundamental loop of that branch, and there is exactly one of them, which is
-why it can be walked instead of searched for.
+Together with a closure branch from `v` back to `u` this path is the
+fundamental loop of that branch.
 
 # Examples
 ```jldoctest
@@ -250,11 +269,9 @@ end
 """
     edge2index(graph::Graphs.SimpleDiGraph{Int})
 
-Generate a dictionary where the tuple of nodes defining an edge of a graph
-is the key and the value is an index. The index gives the order the edge
-is found when iterating over the edges of the graph. The same index is used
-for both orderings of source and destination nodes on the edge. We don't care
-about the ordering of the indices as long as they are sequential and unique.
+A dictionary from the `(src, dst)` tuple of each edge of `graph`, in both
+orientations, to the position of that edge in `Graphs.edges(graph)`. The
+positions are the branch indices of the incidence matrix.
 """
 function edge2index(graph::Graphs.SimpleDiGraph{Int})
     edge2indexdict = Dict{Tuple{Int, Int},Int}()
@@ -268,8 +285,7 @@ end
 """
     tuple2edge(tuplevector::Vector{Tuple{Int, Int}})
 
-Converts a vector of edges specified with tuples of integers to a vector of
-Graphs edges.
+Convert a vector of `(src, dst)` tuples to a vector of `Graphs` edges.
 
 # Examples
 ```jldoctest
@@ -291,8 +307,8 @@ end
 """
     tuple2edge(tuplevector::Vector{Tuple{Int, Int, Int, Int}})
 
-Converts a vector of edges specified with tuples of integers to a vector of
-Graphs edges.
+Convert a vector of `(src1, dst1, src2, dst2)` tuples to a vector of pairs
+of `Graphs` edges.
 
 # Examples
 ```jldoctest
@@ -326,9 +342,8 @@ end
 """
     tuple2edge(tupledict::Dict{Tuple{Int, Int},T})
 
-Converts a dictionary whose keys are edges specified by tuples of integers to
-a dictionary whose keys are Graphs edges. The values associated with each key
-are preserved.
+Convert a dictionary keyed by `(src, dst)` tuples to one keyed by `Graphs`
+edges, keeping the values.
 """
 function tuple2edge(tupledict::Dict{Tuple{Int, Int},T}) where T
     edgedict = Dict{Graphs.SimpleGraphs.SimpleEdge{Int},T}()
@@ -343,9 +358,8 @@ end
 """
     tuple2edge(tupledict::Dict{Tuple{Int, Int, Int, Int},T})
 
-Converts a dictionary whose keys are edges specified by tuples of integers to
-a dictionary whose keys are Graphs edges. The values associated with each key
-are preserved.
+Convert a dictionary keyed by `(src1, dst1, src2, dst2)` tuples to one
+keyed by pairs of `Graphs` edges, keeping the values.
 """
 function tuple2edge(tupledict::Dict{Tuple{Int, Int, Int, Int},T}) where T
     edgedict = Dict{
@@ -363,18 +377,16 @@ function tuple2edge(tupledict::Dict{Tuple{Int, Int, Int, Int},T}) where T
     return edgedict
 end
 
-# The branches the incidence matrix is built from, read off the compiled
-# tables. Only `calccircuitgraph` above uses them.
 """
     extractbranches(componenttypes::Vector{Symbol},nodeindexarray::Matrix{Int})
 
-Return an array of tuples of pairs of node indices (branches) which we will
-use to calculate the incidence matrix.
+The `(node1, node2)` branches of the components which define the circuit
+graph: inductors (`:L`), Josephson junctions (`:Lj`), legacy nonlinear
+elements (`:NL`), current sources (`:I`), ports (`:P`) and voltage sources
+(`:V`). Capacitors, resistors and mutual inductors do not create branches.
 
-This will contain duplicates if multiple components are on the same branch. All
-checking for duplicate branches will occur in the graph procesing code.
-
-NOTE: the list of component types considered to lie on branches is hardcoded.
+Components sharing a branch produce duplicate tuples; the graph
+construction in [`calcgraphs`](@ref) merges them.
 
 # Examples
 ```jldoctest
@@ -397,8 +409,8 @@ end
     extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},
         nodeindexarray::Matrix{Int})
 
-Append tuples consisting of a pair of node indices (branches) which we will
-use to calculate the incidence matrix. Appends the tuples to branchvector.
+Push the branches described in [`extractbranches`](@ref) onto the empty
+vector `branchvector`.
 """
 function extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},nodeindexarray::Matrix{Int})
 

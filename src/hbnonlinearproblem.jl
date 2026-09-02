@@ -14,25 +14,6 @@
 # the real form.
 # =====================================================================
 
-"""
-    HBNonlinearProblem
-
-The harmonic balance nonlinear system in the equivalent real
-representation, as an evaluable object: `F(u)`, the exact matrix-free
-`J(u)*v`, and the assembled real Jacobian when one was built.
-
-Built by [`hbnonlinearproblem`](@ref). See [`hbresidual!`](@ref) and
-[`hbjvp!`](@ref).
-
-# Fields
-- `sys`: the [`HBSystem`](@ref) evaluation object.
-- `modelayout`: the real representation layout.
-- `u0`: the initial value, in the real representation.
-- `jacobian`: the assembled real Jacobian, or `nothing` when built with
-  `assemblejacobian = false`, which is what a matrix-free solver wants: on
-  a multi-tone problem the real Jacobian plan is the single largest object
-  in the solve.
-"""
 # =====================================================================
 # The direct current augmentation.
 #
@@ -192,10 +173,14 @@ end
 Base.length(p::HBNonlinearProblem) = length(p.u0)
 
 """
-    hbnonlinearproblem(w, Nharmonics, sources, circuit, circuitdefs; kwargs...)
+    hbnonlinearproblem(w, Nharmonics, sources, circuit, circuitdefs;
+        assemblejacobian = true, kwargs...)
 
 Build the harmonic balance system as an [`HBNonlinearProblem`](@ref)
-without solving it.
+without solving it, by calling [`hbnlsolve`](@ref) with
+`returnsystem = true` and the remaining keywords. `assemblejacobian =
+false` leaves out the assembled real Jacobian, which a matrix-free solver
+does not need.
 """
 function hbnonlinearproblem(w, Nharmonics, sources, circuit, circuitdefs;
         assemblejacobian::Bool = true, kwargs...)
@@ -408,9 +393,13 @@ jacobianprototype(p::HBNonlinearProblem) =
 
 """
     preconditioner(prob::HBNonlinearProblem, u; couplingmodes = :none,
-        factorization = KLUfactorization())
+        factorization = KLUfactorization(), precision = Float64)
 
-The mode coupling preconditioner of `prob`, updated at `u`.
+The mode coupling preconditioner of `prob` (see
+[`ModeCouplingPreconditioner`](@ref) for `couplingmodes`), updated at `u`,
+with its factorization in the given `precision`. With an explicit direct
+current block it is wrapped in the canonical coordinates with the direct
+current subsystem solved exactly.
 
 Applied by `ldiv!` and by `mul!`, so it can be handed straight to any
 external Krylov solver: `Krylov.gmres(J, -F; N = preconditioner(prob, u),

@@ -1,11 +1,15 @@
+# Helpers used by the test suite to record solver output as Julia source
+# and to compare structures field by field with a tolerance.
 
 """
     testshow(io::IO,S)
 
-Print `S` to the IOStream or IOBuffer `io`. This is used to generate the
-inputs for testing purposes. The default `show` function doesn't always
-produce an output which can be evaluated as the input. For example, for sparse
-vectors.
+Print `S` to `io` in a form which can be pasted back into a test as Julia
+source. The default `show` does not always produce such a form (a sparse
+vector, for example), and a parameterized struct would print its full type
+parameters, which are implementation details; this prints sparse vectors
+as `sparsevec(...)` calls and the solver result structs as their
+constructor applied to their fields.
 
 # Examples
 ```jldoctest
@@ -35,7 +39,8 @@ testshow(io::IO,S::JosephsonCircuits.AxisKeys.KeyedArray) = showstruct(io,S)
 """
     showstruct(io::IO,out)
 
-Recursively print the struct `out` to the IOStream or IOBuffer `io`.
+Print the struct `out` to `io` as its constructor name (without type
+parameters) applied to its fields, each printed with [`testshow`](@ref).
 
 # Examples
 ```jldoctest
@@ -48,10 +53,8 @@ julia> JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.warmupsyms())
 function showstruct(io::IO,out)
   tn = typeof(out)
   fn = fieldnames(tn)
-  # the constructor name without its type parameters. A parameterized
-  # struct's full type is long, and printing it makes every example which
-  # dumps one depend on field types which are an implementation detail;
-  # the point here is the values.
+  # the constructor name without type parameters, so the printed form does
+  # not depend on field types
   print(io,Base.typename(tn).wrapper,"(")
   for i in 1:length(fn)-1
     testshow(io,getfield(out,fn[i]))
@@ -64,7 +67,9 @@ end
 """
     comparestruct(x,y)
 
-Compare two structures for testing purposes.
+Compare two structures of the same type field by field with
+[`compare`](@ref), which compares floating point arrays with a tolerance
+and ignores the solver diagnostics.
 
 # Examples
 ```jldoctest
@@ -89,10 +94,8 @@ function comparestruct(x,y)
   fn = fieldnames(tn)
   out = true
   for i in 1:length(fn)
-    # println(fn[i])
     fieldx = getfield(x,fn[i])
     fieldy = getfield(y,fn[i])
-    # println(compare(fieldx,fieldy))
     out*=compare(fieldx,fieldy)
   end
   return out
@@ -101,7 +104,8 @@ end
 """
     comparearray(x::AbstractArray{T},y::AbstractArray{T}) where T
 
-Compare two arrays for testing purposes.
+Whether two arrays have the same size and differ by at most `1e-6` in the
+2-norm.
 
 # Examples
 ```jldoctest
@@ -124,6 +128,14 @@ function comparearray(x::AbstractArray{T},y::AbstractArray{T}) where T
     end
 end
 
+"""
+    compare(x,y)
+
+Compare two values for the tests: `isequal`, except that floating point
+arrays are compared with a tolerance ([`comparearray`](@ref)), the solver
+result structures are compared field by field ([`comparestruct`](@ref)),
+and the solver diagnostics are ignored.
+"""
 compare(x,y)::Bool = isequal(x,y)
 compare(x::AbstractArray{Complex{Float64}},y::AbstractArray{Complex{Float64}}) = comparearray(x,y)
 compare(x::AbstractArray{Float64},y::AbstractArray{Float64}) = comparearray(x,y)
@@ -134,9 +146,8 @@ compare(x::JosephsonCircuits.AbstractSparseVector,y::JosephsonCircuits.AbstractS
 compare(x::JosephsonCircuits.SparseMatrixCSC{Nothing, Int64},y::JosephsonCircuits.SparseMatrixCSC{Nothing, Int64}) = true
 compare(x::JosephsonCircuits.HB,y::JosephsonCircuits.HB) = comparestruct(x,y)
 compare(x::JosephsonCircuits.NonlinearHB,y::JosephsonCircuits.NonlinearHB) = comparestruct(x,y)
-# the solver diagnostics depend on the details of the solution process
-# such as the solver method and the iteration counts, so they are not
-# compared when comparing solutions
+# the solver diagnostics depend on the solver method and the iteration
+# counts, so two solutions with different diagnostics still compare equal
 compare(x::JosephsonCircuits.SolverInfo,y::JosephsonCircuits.SolverInfo) = true
 compare(x::JosephsonCircuits.LinearizedHB,y::JosephsonCircuits.LinearizedHB) = comparestruct(x,y)
 compare(x::JosephsonCircuits.CircuitMatrices,y::JosephsonCircuits.CircuitMatrices) = comparestruct(x,y)
@@ -150,14 +161,12 @@ compare(x::String,y::String) = isequal(x,y)
     structurejacobian(d, Amatrixindices, Amatrixconjindices, Ljb, Lmean, Rbnm,
         Nmodes, Nbranches, Nfreq, invLnm, Gnm, Cnm, rl, cl)
 
-The sparsity structure of a real Jacobian restricted to a given mode coupling,
-and a [`StructureRealJacobianPlan`](@ref) for it, taking the linear term
-ingredients from the system `d.sys` so the assembly is the one the solver would
-perform.
-
-A convenience for the tests, which build a Jacobian for a mask and assemble it
-at a point. `d` is the named tuple `hbnlsolve(...; debugJacobian = true)`
-returns.
+The sparsity structure of the real Jacobian restricted to the mode
+coupling described by `Amatrixindices` and `Amatrixconjindices`, together
+with the [`StructureRealJacobianPlan`](@ref) which assembles it, taking
+the linear term matrices from `d.sys` so that the assembly is the one the
+solver performs. `d` is the named tuple returned by
+`hbnlsolve(...; debugJacobian = true)`. Used only by the tests.
 """
 function structurejacobian(d, Amatrixindices::Matrix,
     Amatrixconjindices::Matrix, Ljb, Lmean, Rbnm, Nmodes, Nbranches, Nfreq,

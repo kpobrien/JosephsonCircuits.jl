@@ -16,9 +16,9 @@
 #     Phi(t) = phi0*phitilde(t) + P*v*t
 #
 # with `phitilde` periodic and `v` the average voltages. A finite inductor or
-# a zero-voltage Josephson junction requires zero average voltage across its
+# a zero voltage Josephson junction requires zero average voltage across its
 # branch, so `v` is constant on each connected component of the finite L/Lj
-# graph -- the components `calcstaticfluxcomponents` already returns.
+# graph, the components `calcstaticfluxcomponents` returns.
 #
 # Summing the DC Kirchhoff equation over the nodes of a component cancels
 # every inductor and junction branch current, because both of its terminals
@@ -29,20 +29,19 @@
 #
 #     Y v = j,   Y = P'G0P,   j = P'i_source,0
 #
-# For linear conductances and prescribed current sources this is independent
-# of the nonlinear state, so it is solved once, before Newton, and its
-# resistor current folded into the zero frequency source. That is an exact
-# elimination rather than an approximation, and it changes no mode layout, no
-# transform plan, no residual or Jacobian kernel, and no backend path.
-#
-# The conductance is read from the assembled `Gnm` rather than from the
-# resistors, so that it keeps working when a port environment becomes a
-# boundary stamp with no component behind it.
+# This file builds that block: the map from nodes to components, the
+# conductance between components read from the assembled `Gnm` (so that it
+# works for a port environment stamped as a boundary with no component
+# behind it), and the transport rows through which the average voltages
+# enter the solve as explicit unknowns of the canonical state (see
+# compositelayout.jl). The standalone solve of `Y v = j` is kept for the
+# Kirchhoff current law validation, which reconstructs its residual from
+# the harmonic system alone.
 
 """
     DCConductancePlan
 
-The topology of the eliminated direct current voltage block.
+The topology of the direct current voltage block.
 
 Built from the circuit and its assembled conductance; holds nothing which
 depends on the sources.
@@ -112,14 +111,12 @@ function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
     G0c = Gnm[dcrows, dcrows]
     # A conductance carries direct current only if it is real: a complex one
     # at zero frequency has no steady state meaning, and would come from a
-    # frequency dependent law whose limit at DC is not a conductance. Refuse
-    # it rather than take a part of it.
-    #
-    # Against a tolerance and not an exact zero. These entries can come from
-    # evaluating a frequency dependent law at zero, and an expression whose
-    # imaginary part cancels analytically leaves roundoff when it is
-    # evaluated. The scale is the largest conductance in the matrix, so the
-    # decision does not depend on the units the circuit is written in.
+    # frequency dependent law whose limit at DC is not a conductance, so it
+    # is refused rather than partly used. The test is against a tolerance
+    # rather than an exact zero, because an expression whose imaginary part
+    # cancels analytically leaves roundoff when evaluated; the scale is the
+    # largest conductance in the matrix, so the decision does not depend on
+    # the circuit's units.
     gscale = maximum(abs, nonzeros(G0c); init = 0.0)
     gtol = sqrt(eps(Float64))
     for g in nonzeros(G0c)
@@ -168,7 +165,7 @@ function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
 end
 
 """
-    applydcconductance(bnm, plan, solution, Nmodes)
+    applydcconductance(bnm, plan, sol, Nmodes)
 
 Subtract the direct current the resistors and blocks carry from the zero
 frequency rows of the source.
@@ -188,21 +185,19 @@ function applydcconductance(bnm::AbstractVector, plan::DCConductancePlan,
     return out
 end
 
-# =====================================================================
 # The same equation as explicit rows.
 #
-# Everything above eliminates the average voltages before Newton: it solves
-# `Y v = j` once, folds the resistor current `G0 P v` into the zero
-# frequency source, and the periodic solve never sees `v`. That is exact
-# while the direct current devices are linear conductances and the sources
-# are prescribed, which is the whole of stage 3.
-#
-# It cannot go further. A scattering block's direct current relation is a
-# pencil between its port voltages and its port currents, so the current is
-# a genuine unknown and there is nothing to eliminate; a short or an ideal
-# through has a free current direction and no determined value at all.
-# Reaching those needs `v` carried as an unknown with its equation as a row,
-# which is what this builds.
+# The functions above eliminate the average voltages: they solve `Y v = j`
+# once and fold the resistor current `G0 P v` into the zero frequency
+# source. That is exact while the direct current devices are linear
+# conductances and the sources are prescribed, and it is what the
+# Kirchhoff current law validation uses. It cannot go further: a
+# scattering block's direct current relation is a pencil between its port
+# voltages and its port currents, so the current is a genuine unknown and
+# there is nothing to eliminate, and a short or an ideal through has a
+# free current direction with no determined value at all. Reaching those
+# needs `v` carried as an unknown with its equation as a row, which is what
+# the solvers use and what this builds.
 #
 # The row is the same component sum. Adding the zero frequency Kirchhoff
 # equations over the nodes of one static flux component cancels every
@@ -218,7 +213,7 @@ end
 # which is why an explicit `v` costs a small constant solve and does not
 # make the nonlinear problem harder. Solving that triangular system by
 # substitution is exactly the elimination above, which is the sense in
-# which the two paths must agree and the reason the tests can demand it.
+# which the two paths agree and the reason the tests can demand it.
 #
 # A floating island fixes no absolute voltage, so `Y` is singular on it and
 # only differences are physical. Something has to choose a reference, but

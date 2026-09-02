@@ -2,18 +2,19 @@
 #
 # The Josephson part of the Jacobian is the incidence triple product
 # `Rbnm' * AoLjbm * Rbnm`, where `AoLjbm` is block diagonal in branches: one
-# dense mode block per junction. Precomputing that product as a gather with one
-# entry per contribution is what an assembly plan would ordinarily do, and on a
-# two tone line that is 57.6 million entries costing 0.43 s to build and 1.0 GB
-# to read at every assembly.
+# dense mode block per junction. Precomputing that product as a gather with
+# one entry per contribution is what an assembly plan would ordinarily do,
+# and on a multi tone line that is tens of millions of entries, read at
+# every assembly.
 #
 # The triple product itself is tiny. A junction touches two nodes, so it
-# deposits its mode block at four ordered node pairs with signs: 7996 entries
-# for a circuit with 2000 junctions. That table is enough on its own, because
-# it can be read backwards, from destination to contributions: an output entry
-# names the node pair and the mode pair it belongs to, and the junctions
-# incident on a node pair are exactly what contribute to it. So the assembly
-# here stores the structure and no gather at all.
+# deposits its mode block at four ordered node pairs with signs, a table of
+# a few entries per junction (see `junctionpairtable`). That table is
+# enough on its own, because it can be read backwards, from destination to
+# contributions: an output entry names the node pair and the mode pair it
+# belongs to, and the junctions incident on that node pair are exactly what
+# contribute to it. So the assembly here stores the structure and no gather
+# at all.
 
 """
     junctionpairtable(::Type{Ti}, ::Type{T}, Ljb::SparseVector, nodesandsigns,
@@ -184,9 +185,9 @@ addition is not associative, so that order is part of the result.
     T = eltype(nzval)
     @inbounds begin
         q = gid
-        # the stored column this entry is in, which is a row of the Jacobian.
-        # A precomputed row index was measured against this and made no
-        # difference, so the search stays and the four bytes per entry do not.
+        # the stored column this entry is in, which is a row of the Jacobian;
+        # a binary search rather than a stored row index per entry, which
+        # would cost memory and save no time
         lo = 1
         hi = length(colptr) - 1
         while lo < hi
@@ -242,13 +243,16 @@ neighbours', which costs coalescing on a device and nothing on a host.
 end
 
 """
-    planstructurerealjacobian(Jt::SparseMatrixCSC, Amatrixindices,
+    planstructurerealjacobian(Jt, T::Type{<:Real}, Amatrixindices,
         Amatrixconjindices, Ljb, Lmean, nodesandsigns, invLnm, Gnm, Cnm,
         wmodesm, wmodes2m, rl::ModeLayout, cl::ModeLayout, Nmodes, Nfreq,
-        backend)
+        backend; transposed = true)
 
-Build a [`StructureRealJacobianPlan`](@ref) for the transposed real Jacobian
-`Jt`. Nothing here is proportional to the number of contributions: what is
+Build a [`StructureRealJacobianPlan`](@ref) with values of type `T` for
+the real Jacobian whose structure is `Jt`, stored transposed (as a device
+factorization wants it) when `transposed = true` and in the natural
+orientation otherwise. Nothing here is proportional to the number of
+contributions: what is
 stored is [`junctionpairtable`](@ref), whose size is set by the circuit rather
 than by the mode count, and the constant linear term, which is gathered on
 `backend` by [`linearcontributionkernel!`](@ref).
@@ -515,7 +519,8 @@ end
 
 """
     planstructurecomplexjosephson(Jx::SparseMatrixCSC, ::Type{T},
-        Amatrixindices, Ljb, Lmean, nodesandsigns, Nmodes, Nfreq, backend)
+        Amatrixindices, Ljb, Lmean, nodesandsigns, Nmodes, Nfreq, backend;
+        transposed = false)
 
 Build a [`StructureComplexJosephsonPlan`](@ref) for the structure of `Jx`.
 """
@@ -662,7 +667,7 @@ end
 """
     planstructurecomplexjacobian(Jx::SparseMatrixCSC, ::Type{T},
         Amatrixindices, Ljb, Lmean, nodesandsigns, invLnm, Gnm, Cnm, wmodesm,
-        wmodes2m, Nmodes, Nfreq, backend)
+        wmodes2m, Nmodes, Nfreq, backend; transposed = false)
 
 Build a [`StructureComplexJacobianPlan`](@ref) for the structure of `Jx`.
 """

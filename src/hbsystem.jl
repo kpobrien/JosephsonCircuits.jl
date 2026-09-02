@@ -103,13 +103,17 @@ end
     HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm, Ljb,
         Ljbm, Lmean, Nbranches, freqindexmap, conjsourceindices, conjtargetindices,
         phimatrix, phimatrixtd, irfftplan, rfftplan, modelayout,
-        realjacobianplan, complexjacobianplan, backend = CPU())
+        realjacobianplan, complexjacobianplan, backend = CPU();
+        realbackward = true)
 
 Construct an [`HBSystem`](@ref) from the ingredients assembled by
 [`hbnlsolve`](@ref), allocating the workspaces. `phimatrix` and
 `phimatrixtd` are adopted as the frequency domain and one of the time domain
 workspaces. `realjacobianplan` and `complexjacobianplan` may be `nothing`,
 in which case the corresponding [`jacobian!`](@ref) method is unavailable.
+`realbackward = false` skips building the real representation of the
+linear term in the nonlinear term plan, which only a solve in the real
+representation applies; see [`plannonlinearterm`](@ref).
 `backend` is the KernelAbstractions backend on which the index mapped
 kernels run and on which the plan and the workspaces of the residual and the
 matrix-free products are allocated; `CPU()` is the default and the reference.
@@ -163,10 +167,11 @@ end
 
 
 """
-    linearterm(invLnm, Gnm, Cnm, wmodesm::Diagonal, wmodes2m::Diagonal)
+    linearterm(invLnm, Gnm, Cnm, wmodesm::Diagonal, wmodes2m::Diagonal,
+        T = Float64)
 
 Collapse the frequency dependent linear terms of the harmonic balance system
-into the single sparse matrix
+into the single sparse matrix of element type `Complex{T}`
 
     K = invLnm + im*Gnm*wmodesm - Cnm*wmodes2m
 
@@ -514,11 +519,13 @@ tohost(x::Array) = x
 tohost(x::AbstractArray) = Array(x)
 
 """
-    jacobian!(J::SparseMatrixCSC, sys::HBSystem)
+    jacobian!(Jx::SparseMatrixCSC{<:Complex}, sys::HBSystem)
+    jacobian!(Jr::SparseMatrixCSC{<:Real}, sys::HBSystem)
+    jacobian!(Jr, plan::StructureRealJacobianPlan, sys::HBSystem)
 
 Assemble the Jacobian of the harmonic balance nonlinear system at the point
 set with [`setpoint!`](@ref), in place, using the precomputed plans.
-Dispatches on the element type of `J`: a complex matrix receives the complex
+Dispatches on the element type of the matrix: a complex matrix receives the complex
 holomorphic Jacobian (an approximation to the exact Jacobian, used by the
 :quasinewton method, via [`assemblecomplexjacobian!`](@ref)) and a real
 matrix the exact Jacobian of the equivalent real system (used by the :newton
@@ -691,16 +698,24 @@ end
         phimatrix::Array, invLnmcopy::SparseMatrixCSC,
         Gnmcopy::SparseMatrixCSC, Cnmcopy::SparseMatrixCSC, invLnm, Gnm,
         Cnm, invLnmfreqsubstindices, Gnmfreqsubstindices,
-        Cnmfreqsubstindices, symfreqvar, wpumpmodes, Nnodes::Integer)
+        Cnmfreqsubstindices, Amna0::SparseMatrixCSC, AmnaG::SparseMatrixCSC,
+        symfreqvar, wpumpmodes, Nnodes::Integer; scattering = nothing)
 
 Construct an [`HBLinearizedSystem`](@ref) from the signal frequency grid
 index matrix `Amatrixindices` (see [`hbmatind`](@ref)), the Josephson
 junction data, the Fourier coefficients of `cos(phi(t))` of the pump in
 `phimatrix`, the numeric copies of the linear term matrices (which define
 the sparsity structure) and the possibly symbolic originals with their
-symbolic entry indices. Builds the sparsity structure and plan with
-[`plancomplexjacobian`](@ref) and assembles the pump modulation contribution
-and its conjugate with [`addjosephsonterm!`](@ref).
+symbolic entry indices, and the modified nodal analysis augmentation
+matrices `Amna0` (the frequency independent entries) and `AmnaG` (the
+entries scaled by `im*w` per mode like the conductance matrix; see
+[`calcAmnasplit`](@ref)), whose entries are merged into the sparsity
+structure. `scattering`
+is the [`ScatteringStampSystem`](@ref) of the circuit's scattering blocks,
+whose pattern is merged as well, or `nothing`. Builds the sparsity
+structure and plan with [`plancomplexjacobian`](@ref) and assembles the
+pump modulation contribution and its conjugate with
+[`addjosephsonterm!`](@ref).
 """
 function HBLinearizedSystem(Amatrixindices::Matrix, Ljb::SparseVector,
     Rbnm::SparseMatrixCSC, Nmodes::Integer, Nbranches::Integer,

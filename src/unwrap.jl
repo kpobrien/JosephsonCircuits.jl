@@ -27,9 +27,10 @@ In-place version of [`unwrap`](@ref).
 unwrap!(m::AbstractArray; kwargs...) = unwrap!(m, m; kwargs...)
 
 """
-    unwrap!(y, m; kwargs...)
+    unwrap!(y, m; dims = nothing, range = 2pi, kwargs...)
 
-Unwrap `m` storing the result in `y`, see [`unwrap`](@ref).
+Unwrap `m` storing the result in `y`, see [`unwrap`](@ref). `dims` must be
+given for an array of more than one dimension.
 """
 function unwrap!(y::AbstractArray{T,N}, m::AbstractArray{T,N}; dims=nothing, range=2T(pi), kwargs...) where {T,N}
     if dims === nothing

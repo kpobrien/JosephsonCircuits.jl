@@ -27,9 +27,9 @@ false
 """
 function ismnaresistance(value)
     if checkissymbolic(value)
-        # symbolic values, such as frequency dependent resistances, are
-        # not promoted. note that Symbolics.Num is a subtype of Real, so
-        # this check must come first.
+        # symbolic values, such as frequency dependent resistances, are not
+        # promoted; `Symbolics.Num` is a subtype of `Real`, so this test must
+        # come first
         return false
     elseif value isa Real
         return isfinite(value) && !iszero(value)
@@ -103,7 +103,7 @@ function calcstaticfluxcomponents(componenttypes::Vector{Symbol},
     nodeindices::Matrix{Int}, vvn::Vector, Nnodes::Int)
 
 
-    # union-find over the "one indexed" nodes, with path halving
+    # a union-find over the nodes (ground is node 1), with path halving
     parent = collect(1:Nnodes)
     function findroot(i::Int)
         while parent[i] != i

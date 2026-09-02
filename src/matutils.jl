@@ -242,10 +242,8 @@ function diagcombine(x::Vector{T}) where T<:AbstractArray
         end
     end
 
-    # prepare a new tuple with the size of the scattering
-    # parameter array.
-    # the first two dimensions are multiplied by the length
-    # of the 
+    # the output size: the first two dimensions are multiplied by the
+    # number of matrices
     outsize = NTuple{length(sizex),Int}(ifelse(i == 1 || i == 2, length(x)*val, val) for (i,val) in enumerate(sizex))
 
     out = zeros(eltype(eltype(x)),outsize)
@@ -259,10 +257,6 @@ function diagcombine(x::Vector{T}) where T<:AbstractArray
 end
 
 function diagcombine!(out::AbstractVecOrMat,A::AbstractVecOrMat,mode_index::Int)
-    # should this only operate on matrices?
-    # i think this function is really simple
-    # should i check that the size is sufficient?
-#     Nports = size(A,1)
     Nmodes = size(out,1) ÷ size(A,1)
     
     if mode_index <= 0
@@ -346,9 +340,7 @@ function axis_to_modes(S::AbstractArray, modes_axis::Integer)
     # the size of S with the dimension we will delete removed
     indicesS = NTuple{ndims(S)-1,Int}(ifelse(i < modes_axis, i, i+1) for i in 1:ndims(S)-1)
 
-    # allocate an array with the
-    # don't assume the number of input ports are equal to the number
-    # of output ports
+    # the output size, not assuming as many input ports as output ports
     sizeout = NTuple{ndims(S)-1,Int}(ifelse(i == 1 || i == 2, size(S,modes_axis)*size(S,i), size(S,i)) for i in indicesS)
 
 
@@ -361,7 +353,6 @@ function axis_to_modes(S::AbstractArray, modes_axis::Integer)
     
     # loop over the dimensions of the array greater than 2
     for c in CartesianIndices(axes(out)[3:end])
-        # 
         if modes_axis == 3
             axis_to_modes!(view(out,:,:,c),view(S,:,:,:,c.I[(modes_axis-2):end]...))
          else
@@ -700,66 +691,6 @@ function sparseadd!(A::SparseMatrixCSC, c::Number, Ad::Diagonal,
 end
 
 
-# """
-#   sparseaddconj!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
-#     Ad::Diagonal,indexmap::Vector,conjflag::Diagonal)
-
-# Perform the operation A+c*As*Ad and return the result in A. Take the complex
-# conjugate of As for any column where conjflag is true. 
-
-# The sparse matrix As must have nonzero elements only in a subset of the 
-# positions in A which has nonzero lements.
-
-# # Examples
-# ```jldoctest
-# A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1.0+1.0im,2.0+1.0im,-3.0+0.0im],2,2)
-# Ad = JosephsonCircuits.LinearAlgebra.Diagonal([1,-2])
-# As = JosephsonCircuits.SparseArrays.sparse([1,1], [1,2], [3.0+2.0im,4.0+3.0im],2,2)
-# wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal([-1,1])
-# indexmap = JosephsonCircuits.sparseaddmap(A,As)
-# JosephsonCircuits.sparseaddconj!(A,2,As,Ad,indexmap,wmodesm .< 0)
-# A
-
-# # output
-# 2×2 SparseArrays.SparseMatrixCSC{ComplexF64, Int64} with 3 stored entries:
-#  7.0-3.0im  -19.0-12.0im
-#      ⋅        2.0+1.0im
-# ```
-# """
-# function sparseaddconj!(A::SparseMatrixCSC,c::Number,As::SparseMatrixCSC,
-#     Ad::Diagonal,indexmap::Vector,conjflag::Diagonal)
-
-#     if nnz(A) < nnz(As)
-#         throw(DimensionMismatch("As cannot have more nonzero elements than A"))
-#     end
-
-#     if nnz(As) != length(indexmap)
-#         throw(DimensionMismatch("The indexmap must be the same length as As"))
-#     end
-
-#     if size(A) != size(As)
-#         throw(DimensionMismatch("A and As must be the same size."))
-#     end
-
-#     if size(A) != size(Ad)
-#         throw(DimensionMismatch("A and Ad must be the same size."))
-#     end
-
-#     if size(A) != size(conjflag)
-#         throw(DimensionMismatch("A and conjflag must be the same size."))
-#     end
-
-#     for i in 1:length(As.colptr)-1
-#         for j in As.colptr[i]:(As.colptr[i+1]-1)
-#             if conjflag[i,i]
-#                 A.nzval[indexmap[j]] += c*Ad[i,i]*conj(As.nzval[j])
-#             else
-#                 A.nzval[indexmap[j]] += c*Ad[i,i]*As.nzval[j]
-#             end
-#         end
-#     end
-#     return nothing
-# end
 
 """
     sparseaddconjsubst!(A::SparseMatrixCSC, c::Number, As::SparseMatrixCSC,
@@ -863,41 +794,17 @@ function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
         throw(DimensionMismatch(lazy"A and wmodesm must be the same size."))
     end
 
-    # if !(symfreqvar isa Symbolic || symfreqvar isa Num) && length(freqsubstindices) > 0
-    #     error("Error: Set symfreqvar equal to the symbolic variable representing frequency.")
-    # end
-
     k = 1
-
-    # println(length(indexmap))
-    # println(length(A.nzval))
-    # println(maximum(indexmap))
-    # println(1:length(As.colptr)-1)
-    # println(length(freqsubstindices))
-    # println((freqsubstindices))
-    # println(" ")
 
     for i in 1:length(As.colptr)-1
         for j in As.colptr[i]:(As.colptr[i+1]-1)
 
-            # if length(freqsubstindices) > 0 && j == freqsubstindices[k]
-            #     # tmp = substitute(As.nzval[j],Dict(symfreqvar=>wmodesm[i,i]))
-            #     # tmp = valuetonumber(As.nzval[j],Dict(symfreqvar=>wmodesm[i,i]))
-            #     tmp = valuetonumber(As.nzval[j],symfreqvar=>wmodesm[i,i])
-
-            #     k+=1
-            # else
-            #     tmp = As.nzval[j]
-            # end
-
-            # i don't notice a difference between these two. so i think i 
-            # should remove the freqsubstindices functionality. 
+            # substitute the mode frequency of this column into a frequency
+            # dependent entry (`freqsubstindices` is not used to skip the
+            # substitution: every entry goes through `substitutefreq`)
             tmp = substitutefreq(As.nzval[j], symfreqvar, wmodesm[i,i])
-            # tmp = As.nzval[j]
-
 
             if conjflag[i,i]
-                # println(j)
                 A.nzval[indexmap[j]] += c*Ad[i,i]*conj(tmp)
             else
                 A.nzval[indexmap[j]] += c*Ad[i,i]*tmp
@@ -952,7 +859,6 @@ function sparseaddmap(A::SparseMatrixCSC, B::SparseMatrixCSC)
             colindexB = i
             valB = B.nzval[j]
             indexB = j
-            # println("searching for:   ", rowindexB," ",colindexB," ",indexB," ",abs.(valB))
             kstart,lstart,indexA = sparseaddmap_innerloop(A,B,rowindexB,colindexB,kstart,lstart)
             indexmap[indexB] = indexA
         end
@@ -963,7 +869,6 @@ end
 function sparseaddmap_innerloop(A::SparseMatrixCSC, B::SparseMatrixCSC,
     rowindexB::Int, colindexB::Int, kstart::Int, lstart::Int)
     @inbounds for k in kstart:length(A.colptr) -1
-        # println("k: ",k, " kstart: ",kstart, " length(A.colptr) -1): ",(length(A.colptr) -1))
         tmp = A.colptr[k]:(A.colptr[k+1]-1)
         for l in lstart:length(tmp)
             rowindexA = A.rowval[tmp[l]]
@@ -977,7 +882,6 @@ function sparseaddmap_innerloop(A::SparseMatrixCSC, B::SparseMatrixCSC,
             end
 
             if rowindexA == rowindexB && colindexA == colindexB
-                # println("match found:     ",rowindexA," ",colindexA," ",indexA," ",abs(valA))
 
                 if l == length(tmp)
                     # if we have reached the end of a 
@@ -989,9 +893,6 @@ function sparseaddmap_innerloop(A::SparseMatrixCSC, B::SparseMatrixCSC,
                     # a column, increase lstart by 1
                     return k,l+1,indexA
                 end
-            # else
-                # println(l," ",lstart," ",length(tmp))
-                # println("match not found: ",rowindexA," ",colindexA," ",indexA," ",abs(valA))
             end
         end
             
@@ -1088,15 +989,6 @@ function symbolicindices(A)
     
     indices = Vector{Int}(undef,0)
     
-    # @inbounds for i = 1:length(A.colptr)-1
-    #     for j in A.colptr[i]:(A.colptr[i+1]-1)
-    #         if checkissymbolic(A.nzval[j])
-    #             push!(indices,j)
-    #         end
-    #     end
-    # end
-    # return indices
-
     for (i,j) in enumerate(A)
         if checkissymbolic(j)
             push!(indices,i)
@@ -1168,8 +1060,9 @@ dictionary and throws for a component name, which is not a value at all.
 substitutedefs(value, circuitdefs) = value
 substitutedefs(value::CircuitValue, circuitdefs) =
     valuetonumber(value, circuitdefs)
-# return Parameter objects, not bare Symbols, so a comparison against
-# `symfreqvar` (which the user passes as a Parameter) succeeds
+# the parameters as `Parameter` objects rather than bare symbols, so that
+# a comparison against `symfreqvar`, which the user passes as a
+# `Parameter`, succeeds
 circuitvariables(a::CircuitValue) =
     [CircuitValues.Parameter(n) for n in sort!(collect(CircuitValues.parameters(a)))]
 
@@ -1224,8 +1117,7 @@ function checkcomponentvaluesdefined(componentnames::Vector, vvn::Vector,
     return nothing
 end
 
-# the `Num` method lives in the Symbolics extension, which documents it
-# there: a docstring here would attach to whatever follows it
+# the `Num` method is defined in the Symbolics extension
 
 """
     freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
@@ -1275,8 +1167,8 @@ function freqsubst(A::SparseMatrixCSC, wmodes::Vector, symfreqvar)
         end
     end
 
-    # set the output to be Complex{Float64} since the input type may be something
-    # weird like a symbolic type
+    # the output is Complex{Float64} whatever the (possibly symbolic) input
+    # element type
     nzval = zeros(Complex{Float64},length(A.nzval))
 
     @inbounds for i in 1:length(A.colptr)-1
@@ -1458,7 +1350,8 @@ false
 ```
 """
 function pivot_rows(A11::Union{T,Complex{T}},A21::Union{T,Complex{T}}) where {T<:AbstractFloat}
-    # this help stability but doesn't work for Symbolic variables.
+    # pivoting on the larger entry helps stability but does not work for
+    # symbolic values
     if abs(A11) < abs(A21)
         return true
     else
@@ -1481,8 +1374,8 @@ false
 ```
 """
 function pivot_rows(A11,A21)
-    # this works for Symbolic variables, but isn't the best for numerical
-    # stability.
+    # pivoting only on an exact zero works for symbolic values, at some cost
+    # in numerical stability
     if iszero(A11)
         return true
     else

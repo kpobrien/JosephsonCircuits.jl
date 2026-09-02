@@ -1,12 +1,15 @@
+# The component models of the typed circuit representation, and the
+# matrix providers a scattering or Gaussian channel block reads its
+# frequency dependent data from.
 
 """
     AbstractComponent
 
-The abstract supertype for component models in the typed circuit
-representation. Component data belongs in concrete structs which subtype
-`AbstractComponent`; behavior is provided by dispatched methods such as
-[`nterminals`](@ref) and [`hasports`](@ref). A [`Circuit`](@ref) with an
-[`Interface`](@ref) is also usable as a component.
+The supertype of the component models of the typed circuit
+representation. A component is a concrete struct holding its data;
+behavior is given by methods such as [`nterminals`](@ref) and
+[`hasports`](@ref) in parseinput.jl. A [`Circuit`](@ref) with an
+[`Interface`](@ref) is also a component.
 """
 abstract type AbstractComponent end
 
@@ -47,9 +50,8 @@ julia> Inductor(1e-9; temperature = 4.0).temperature
 """
 struct Inductor{T} <: AbstractComponent
     L::T
-    # the physical temperature in Kelvin, or `nothing` to take the one the
-    # analysis is run at. Only a dissipative instance adds noise, so this is
-    # read only where it does.
+    # the physical temperature in Kelvin, or `nothing` for the temperature
+    # the analysis is run at; read only when the instance is dissipative
     temperature::Union{Nothing,Float64}
 end
 Inductor(L; temperature = nothing) = Inductor(L, temperature)
@@ -75,9 +77,7 @@ julia> Capacitor(100e-15; temperature = 4.0).temperature
 """
 struct Capacitor{T} <: AbstractComponent
     C::T
-    # the physical temperature in Kelvin, or `nothing` to take the one the
-    # analysis is run at. Only a dissipative instance adds noise, so this is
-    # read only where it does.
+    # as for `Inductor`
     temperature::Union{Nothing,Float64}
 end
 Capacitor(C; temperature = nothing) = Capacitor(C, temperature)
@@ -103,9 +103,7 @@ julia> Resistor(50.0; temperature = 4.0).temperature
 """
 struct Resistor{T} <: AbstractComponent
     R::T
-    # the physical temperature in Kelvin, or `nothing` to take the one the
-    # analysis is run at. Only a dissipative instance adds noise, so this is
-    # read only where it does.
+    # as for `Inductor`
     temperature::Union{Nothing,Float64}
 end
 Resistor(R; temperature = nothing) = Resistor(R, temperature)
@@ -178,13 +176,14 @@ struct LegacyTermination{I} <: AbstractPortTermination
     component::I
 end
 
+# normalize the `termination` keyword of `Port`: `nothing` means no
+# termination
 porttermination(t::AbstractPortTermination) = t
 porttermination(::Nothing) = NoPortTermination()
 porttermination(x) = throw(ArgumentError(lazy"The port termination $(x) is not recognized. Write termination = nothing for an unterminated boundary, or omit the keyword for the default matched environment."))
 
-# A port reference impedance must be a finite positive real number once it is
-# numeric. Symbolic and deferred values pass through and are checked after
-# binding, so the fallback method accepts anything.
+# A numeric port reference impedance must be finite, real and positive.
+# A symbolic one passes through here and is checked after binding.
 checkportimpedance(Z0, number) = nothing
 function checkportimpedance(
         Z0::Union{AbstractFloat,Integer,Rational,
@@ -233,19 +232,17 @@ struct Port{TZ,TT<:AbstractPortTermination} <: AbstractComponent
     termination::TT
 end
 
-# One method and not several: keyword arguments do not participate in
-# dispatch, so separate methods for the terminated and unterminated spellings
-# would redefine one another rather than coexist, and the surviving one would
-# silently answer for both.
+# One keyword method covers every spelling; keyword arguments do not
+# participate in dispatch, so separate methods would overwrite each other.
 function Port(number::Integer; Z0 = 50.0, termination = MatchedTermination())
     checkportimpedance(Z0, number)
     return Port(Int(number), Z0, porttermination(termination))
 end
 
+# The default termination is not printed; any other is, since a port with
+# no termination and one adopting an existing resistor are different
+# circuits.
 function Base.show(io::IO, p::Port)
-    # the default is silent; anything else is stated, because a port which
-    # owns no environment and one which owns an existing resistor are
-    # different circuits
     print(io, "Port(", p.number, "; Z0 = ", p.Z0)
     p.termination isa NoPortTermination && print(io, ", termination = nothing")
     p.termination isa LegacyTermination &&
@@ -304,7 +301,9 @@ julia> JosephsonCircuits.cprderivative(p)(0.0)
 ```
 """
 struct PolynomialCPR{T}
-    a::Vector{T}   # f(φ) = a[1] + a[2]*φ + a[3]*φ^2 + ...
+    # the coefficients in `evalpoly` order, `f(φ) = a[1] + a[2]*φ + ...`,
+    # with `a[1] = 0` so that the user's `coefficients[k]` is `a[k+1]`
+    a::Vector{T}
     PolynomialCPR{T}(a::Vector{T}) where T = new{T}(a)
 end
 
@@ -338,12 +337,13 @@ end
 (p::PolynomialCPRDerivative)(φ) = evalpoly(φ, p.a)
 
 """
-    cprderivative(f)
+    cprderivative(cpr)
 
-Return the derivative of a current-phase relation. Built-in CPRs (`sin`,
-[`PolynomialCPR`](@ref)) provide analytic derivatives. There is no automatic
-differentiation or finite difference fallback: user supplied callables must
-provide their derivative explicitly through the three argument
+The derivative of a current-phase relation as a callable. `sin` gives
+`cos` and a [`PolynomialCPR`](@ref) gives its analytic derivative. Any
+other callable throws an `ArgumentError`: there is no automatic
+differentiation or finite difference fallback, so a user defined relation
+must supply its derivative through the three argument
 [`NonlinearInductor`](@ref) constructor.
 """
 cprderivative(::typeof(sin)) = cos
@@ -411,8 +411,9 @@ Base.:(==)(a::NonlinearInductor, b::NonlinearInductor) =
 """
     issinusoidal(c::NonlinearInductor)
 
-Return true if the current-phase relation of `c` is the sinusoidal Josephson
-relation, in which case the component lowers to the legacy `Lj` component.
+Whether the current-phase relation of `c` is the sinusoidal Josephson
+relation `(sin, cos)`, in which case the component compiles to the `:Lj`
+type the solvers support.
 """
 issinusoidal(c::NonlinearInductor) = c.cpr === sin && c.dcpr === cos
 
@@ -421,12 +422,12 @@ issinusoidal(c::NonlinearInductor) = c.cpr === sin && c.dcpr === cos
 """
     AbstractMatrixProvider
 
-The abstract supertype for providers of frequency dependent matrix data such
-as scattering parameters, noise covariance, and Gaussian channel `X` and `Y`
-matrices. Providers implement [`evaluateprovider!`](@ref),
-[`frequencydomain`](@ref), and [`providersize`](@ref). Large arrays and
-interpolation data belong to the provider inside a shared component
-definition and are never copied per instance.
+The supertype of the sources of frequency dependent matrix data: the
+scattering parameters and noise covariance of a
+[`ScatteringParameters`](@ref) and the `X` and `Y` matrices of a
+[`GaussianChannel`](@ref). A provider implements
+[`evaluateprovider!`](@ref) and [`providersize`](@ref). Its data lives in
+the shared component definition and is never copied per instance.
 """
 abstract type AbstractMatrixProvider end
 
@@ -634,11 +635,14 @@ end
 
 """
     matrixprovider(x, T; n = nothing, interpolation = :linear,
-        extrapolation = :error)
+        extrapolation = :error, form = :matrix)
 
 Normalize user input into an [`AbstractMatrixProvider`](@ref) with element
-type `T`. Accepts a matrix, a tuple `(frequencies, values)` of tabulated
-data, an existing provider, or any callable of angular frequency.
+type `T`: a matrix becomes a [`ConstantMatrixProvider`](@ref), a tuple
+`(frequencies, values)` a [`TabulatedMatrixProvider`](@ref), a callable of
+angular frequency a [`CallableMatrixProvider`](@ref) (which requires the
+dimension `n` and accepts `form`), and an existing provider is returned as
+is. `n`, when given, is checked against the data.
 """
 matrixprovider(p::AbstractMatrixProvider, ::Type{T}; kwargs...) where T = p
 function matrixprovider(A::AbstractMatrix, ::Type{T}; n = nothing,
@@ -731,39 +735,36 @@ struct Passive end
 """
     Lossless()
 
-A noise model for a [`ScatteringParameters`](@ref) whose scattering matrix is
-unitary at every frequency, so that it absorbs nothing and adds no noise.
+A noise model for a [`ScatteringParameters`](@ref) asserting that its
+scattering matrix is unitary at every frequency, so that it absorbs nothing
+and adds no noise.
 
-The default [`Passive`](@ref) gives a block noise channels unless its data
-can be shown to be unitary, which is possible for a constant matrix and for a
-table and not for a callable, whose values away from any sampled frequency
-are unknown. A lossless callable therefore carries channels which are
-identically zero: on a five hundred cell line that was measured at a third of
-the run time on the host and half of it on a backend, spent computing zeros.
-This is how to say so and get them back.
+With the default [`Passive`](@ref) model a block gets noise channels unless
+its data can be shown to be unitary, which is possible for a constant
+matrix and a table but not for a callable, whose values away from the
+evaluated frequencies are unknown. A lossless callable would therefore
+carry noise channels which are identically zero, at a real cost on a
+circuit with many blocks; `Lossless()` removes them.
 
-Where the data can be checked it is, at construction, so asserting this of a
-constant or tabulated block which is not unitary is an error. For a callable
-it cannot be checked and is taken on trust: asserting it of a block which
-does absorb omits noise the block should add, and the quantum efficiency and
-the commutation relations will be wrong by that much.
+For a constant or tabulated block the assertion is checked at
+construction and an error if false. For a callable it is taken on trust,
+and asserting it of a block which does absorb omits the noise the block
+should add, making the quantum efficiency and the commutation relations
+wrong by that much.
 """
 struct Lossless end
 
 # === the zero frequency model of a scattering block ===
 #
 # The direct current behavior of a block is its scattering matrix at zero
-# frequency, and the default is to ask the block for it. That is right when
-# the block can answer, and there are two ways it cannot. A measured or
-# tabulated block may start at gigahertz and have no zero frequency entry at
-# all. A closed form one may have a limit which exists but is not evaluable
-# there: a series capacitor written `1/(im*w*C)` is an open circuit at
-# direct current, and evaluating that expression at zero gives infinity
-# rather than the open.
-#
-# So the model is stated separately from the radio frequency data when the
-# two do not agree. Every realizable choice is some real `S(0)`, so one
-# constructor carries them all and the common ones are named.
+# frequency, and by default the block's own data is evaluated there. That
+# fails in two ways: tabulated data may not extend down to zero, and a
+# closed form may have a limit which exists but is not evaluable at zero
+# (a series capacitor written `1/(im*w*C)` is an open circuit at direct
+# current, but the expression is infinite there). For those the zero
+# frequency model is stated separately. Every realizable choice is some
+# real `S(0)`, so `ScatteringDC` carries the general case and the common
+# ones are named.
 
 """
     AbstractDCModel
@@ -846,9 +847,11 @@ function ScatteringDC(S0::AbstractMatrix)
 end
 
 """
-    dcscatteringmatrix(m::AbstractDCModel, nports)
+    dcscatteringmatrix(m::AbstractDCModel, n)
 
-The zero frequency scattering matrix a stated model describes.
+The `n` by `n` real zero frequency scattering matrix of a stated model.
+Throws for a [`ThroughDC`](@ref) with `n != 2` or a
+[`ScatteringDC`](@ref) of the wrong dimension.
 """
 dcscatteringmatrix(::OpenDC, n::Integer) = Matrix{Float64}(I, n, n)
 dcscatteringmatrix(::ShortDC, n::Integer) = Matrix{Float64}(-I, n, n)
@@ -871,8 +874,8 @@ covariance is the vacuum covariance `I - S S'` scaled by
 exceeds its vacuum noise.
 
 This states the block's temperature where the block is defined, so it
-overrides both the `temperature` and the `temperatures` arguments of the
-analysis. `ThermalEquilibrium(0)` is [`Passive`](@ref).
+overrides the `temperature` argument of the analysis. At zero temperature
+it coincides with [`Passive`](@ref).
 """
 struct ThermalEquilibrium{T}
     temperature::T
@@ -902,7 +905,9 @@ end
 """
     ScatteringParameters(S; nports = nothing, zref = 50.0, grounded = true,
         noise = Passive(), negative_frequency = ConjugateSymmetry(),
-        interpolation = :linear, extrapolation = :error, atol = 1e-8)
+        interpolation = :linear, extrapolation = :error, form = :matrix,
+        derivatives = NamedTuple(), dcmodel = ScatteringLimit(),
+        atol = 1e-8)
 
 A multiport component defined by its scattering parameters. `S` may be:
 
@@ -930,14 +935,16 @@ or differential.
 `noise` is [`Passive`](@ref) (default), [`Lossless`](@ref),
 [`ThermalEquilibrium`](@ref), or [`NoiseCovariance`](@ref). A dissipative
 block adds noise, which the noise scattering parameters, the quantum
-efficiency and the commutation relations account for; of the four models they
-support `Passive` and `Lossless` only, and a `NoiseCovariance` block does not
-lower into a circuit at all. `Lossless` is how a callable which is unitary
+efficiency and the commutation relations account for. A `NoiseCovariance`
+block is accepted by the circuit representation but cannot be compiled
+for the harmonic balance solvers. `Lossless` is how a unitary callable
 says so, since unlike stored data it cannot be checked.
 `negative_frequency` is [`ConjugateSymmetry`](@ref) (default) or
-[`Native`](@ref). Passivity of constant and tabulated scattering data is
-validated at construction with absolute tolerance `atol` unless the noise
-model is a `NoiseCovariance`, which permits active blocks.
+[`Native`](@ref). `form` says how a callable `S` is called; see
+[`CallableMatrixProvider`](@ref). Passivity of constant and tabulated
+scattering data is validated at construction with absolute tolerance
+`atol` unless the noise model is a `NoiseCovariance`, which permits
+active blocks.
 
 `dcmodel` states the block's zero frequency behavior when its own data does
 not give it: [`OpenDC`](@ref), [`ShortDC`](@ref), [`ThroughDC`](@ref) or
@@ -979,8 +986,8 @@ struct ScatteringParameters{P,N,NF,D,DM<:AbstractDCModel} <: AbstractComponent
     dcmodel::DM
 end
 
-# a block with no analytic derivatives and no stated zero frequency model,
-# which is every block constructed before those keywords existed
+# positional constructors without derivatives and without a stated zero
+# frequency model
 ScatteringParameters(provider, nports::Int, zref::Vector{Float64},
     grounded::Bool, noise, negative_frequency) =
     ScatteringParameters(provider, nports, zref, grounded, noise,
@@ -1028,9 +1035,9 @@ function ScatteringParameters(S; nports = nothing, zref = 50.0,
         negative_frequency, dprov, dcmodel)
 end
 
-# A stated zero frequency matrix is data like the block's own, so it is
-# checked on the same terms and at the same time: the size against the
-# block, and passivity unless the block declared itself active.
+# A stated zero frequency matrix is checked like the block's own data: its
+# size against the block, and passivity unless the block declared itself
+# active with a `NoiseCovariance`.
 checkdcmodel(::ScatteringLimit, n::Int, noise, atol) = nothing
 function checkdcmodel(m::AbstractDCModel, n::Int, noise, atol)
     S0 = dcscatteringmatrix(m, n)
@@ -1041,6 +1048,7 @@ function checkdcmodel(m::AbstractDCModel, n::Int, noise, atol)
     return nothing
 end
 
+# the reference impedances as a vector of `n` positive finite reals
 function zrefvector(zref, n::Int)
     if zref isa AbstractVector
         if length(zref) != n
@@ -1180,8 +1188,8 @@ end
 provablylossless(b::ScatteringParameters; atol = 1e-10) =
     provablylossless(b.provider; atol = atol)
 
-# `Lossless` is an assertion about every frequency, which a constant matrix
-# and a table can be held to and a callable cannot
+# `Lossless` asserts unitarity at every frequency, which stored data can be
+# checked for and a callable cannot
 function checklossless(noise::Lossless, provider)
     if provider isa CallableMatrixProvider
         return nothing
@@ -1205,11 +1213,15 @@ end
 
 """
     evaluatescattering!(dest::AbstractArray{Complex{Float64},3},
-        block::ScatteringParameters, ws::AbstractVector)
+        block::ScatteringParameters, ws::AbstractVector,
+        absbuffer = nothing)
 
 Evaluate the scattering parameters of `block` at the signed angular
-frequencies `ws`, applying the negative frequency rule of the block, and
-write the matrix at frequency `ws[i]` into `dest[:,:,i]`.
+frequencies `ws`, applying the block's negative frequency rule, and write
+the matrix at `ws[i]` into `dest[:,:,i]`. With [`ConjugateSymmetry`](@ref)
+the provider is evaluated at `abs.(ws)` and conjugated where `ws[i] < 0`;
+`absbuffer`, a `Vector{Float64}` the caller may pass, holds the absolute
+frequencies and avoids one allocation per call.
 """
 function evaluatescattering!(dest::AbstractArray{Complex{Float64},3},
         block::ScatteringParameters, ws::AbstractVector,
@@ -1217,8 +1229,6 @@ function evaluatescattering!(dest::AbstractArray{Complex{Float64},3},
     if block.negative_frequency isa Native
         evaluateprovider!(dest, block.provider, ws)
     else
-        # `abs.(ws)` per call is one allocation per block per frequency on a
-        # line whose every cell is a block; the caller may pass a buffer
         absws = if isnothing(absbuffer)
             abs.(ws)
         else
@@ -1239,10 +1249,10 @@ function evaluatescattering!(dest::AbstractArray{Complex{Float64},3},
     return dest
 end
 
-# Touchstone loading. The reference impedance is read from the file option
-# line; a conflicting explicit zref is an error because the intent is
-# ambiguous between correcting a mislabeled file and requesting
-# renormalization.
+# A block loaded from a Touchstone file. The reference impedance is read
+# from the file's option line; an explicit `zref` which disagrees with it
+# is an error, since it is ambiguous between correcting a mislabeled file
+# and asking for renormalization.
 function touchstonescatteringblock(path::AbstractString; nports, zref,
         grounded, noise, negative_frequency, interpolation, extrapolation,
         atol, dcmodel::AbstractDCModel = ScatteringLimit())
@@ -1306,9 +1316,10 @@ end
 
 An ideal lossless transmission line of characteristic impedance `Z0` Ohms,
 length `len` meters, and phase velocity `vp` meters per second, as a two
-port [`ScatteringParameters`](@ref) referenced to `Z0` with an analytic provider
-which is exact at any frequency ([`Native`](@ref) signed frequency
-evaluation).
+port [`ScatteringParameters`](@ref) referenced to `Z0`. Its
+[`TransmissionLineProvider`](@ref) is exact at every signed frequency, so
+the block uses [`Native`](@ref) negative frequency evaluation. `grounded`
+and `noise` are as for `ScatteringParameters`.
 
 # Examples
 ```jldoctest
@@ -1398,11 +1409,12 @@ validated pointwise at construction for constant and tabulated data with
 absolute tolerance `atol`; the worst margin is recorded in the `cp_margin`
 field (NaN when validation is deferred for callable providers).
 
-Each mode is a two terminal port like a scattering block port, with the same
-`grounded` convenience. The deterministic X participates in linearized
-analyses; participation in nonlinear pump solves additionally requires a
-coherent mean model, which is an analysis capability outside the input
-format.
+Each mode is a two terminal port addressed like a port of a
+[`ScatteringParameters`](@ref), with the same `grounded` behavior.
+`displacement` is the mean displacement `d_0` and is stored but unused. A
+`GaussianChannel` is accepted by the circuit representation, but the
+harmonic balance solvers do not support it yet and [`compile`](@ref)
+throws a [`ComponentNotSupportedError`](@ref) for it.
 
 The complex Bogoliubov form b = A a + B conj(a) may be converted to the
 deterministic part with [`quadraturetransform`](@ref).
@@ -1444,6 +1456,9 @@ function GaussianChannel(X, Y; nmodes = nothing, displacement = nothing,
     return GaussianChannel(Xp, Yp, n, displacement, grounded, margin)
 end
 
+# the worst complete positivity margin over the frequencies where both X
+# and Y are stored data, validating each point; NaN when either is a
+# callable and nothing can be checked
 function gaussianchannelmargin(Xp, Yp, atol)
     if Xp isa ConstantMatrixProvider && Yp isa ConstantMatrixProvider
         checkchannelpoint(Xp.A, Yp.A, atol, nothing)
@@ -1478,10 +1493,11 @@ function gaussianchannelmargin(Xp, Yp, atol)
         end
         return worst
     else
-        return NaN # deferred for callable providers
+        return NaN
     end
 end
 
+# check the symmetry of Y and complete positivity at one frequency point
 function checkchannelpoint(X, Y, atol, k)
     where_ = isnothing(k) ? "" : " at frequency index $(k)"
     for j in axes(Y,2), i in axes(Y,1)

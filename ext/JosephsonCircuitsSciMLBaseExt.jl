@@ -1,15 +1,10 @@
 """
     JosephsonCircuitsSciMLBaseExt
 
-The harmonic balance system as a `SciMLBase.NonlinearProblem`, so
-NonlinearSolve.jl can drive it.
-
-The value here is not speed: `nlsolvekrylov!` already has a good
-Jacobian-free Newton-Krylov with a domain specific preconditioner. It is
-access to globalization strategies this package does not implement --
-trust region, pseudo-transient continuation, Levenberg-Marquardt, and the
-polyalgorithm fallback chain -- which matter for getting onto a strongly
-pumped branch from a cold start.
+The harmonic balance system as a `SciMLBase.NonlinearProblem`, so that
+NonlinearSolve.jl can solve it. This gives access to globalization
+strategies the package does not implement (trust region, pseudo-transient
+continuation, Levenberg-Marquardt, polyalgorithms).
 
 The problem is posed in the equivalent real representation, because the
 harmonic balance residual is not complex differentiable.
@@ -21,14 +16,14 @@ import JosephsonCircuits
 const JC = JosephsonCircuits
 
 """
-    SciMLBase.NonlinearProblem(prob::HBNonlinearProblem; u0, sparsejac)
+    SciMLBase.NonlinearProblem(prob::HBNonlinearProblem; u0 = prob.u0,
+        sparsejac = true)
 
-A `NonlinearProblem` over the real representation.
-
-The exact matrix-free Jacobian-vector product is supplied as `jvp`, so a
-Krylov `linsolve` never assembles or differentiates anything: one product
-is two transforms plus the linear term. `jac` and `jac_prototype` are
-supplied when the problem carries an assembled Jacobian, for the direct
+A `NonlinearProblem` over the real representation of `prob`, starting
+from `u0`. The exact matrix-free Jacobian-vector product is supplied as
+`jvp`, so a Krylov linear solver never assembles or differentiates
+anything. When `sparsejac = true` and `prob` carries an assembled
+Jacobian, `jac` and `jac_prototype` are supplied as well for the direct
 factorization path.
 """
 function SciMLBase.NonlinearProblem(prob::JC.HBNonlinearProblem;

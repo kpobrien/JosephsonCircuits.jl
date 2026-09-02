@@ -69,11 +69,11 @@ sparse row form:
   mode is not self conjugate.
 """
 struct NonlinearTermPlan{Ti<:Integer,T<:Real,VI,VT,VC,VF,KF,KB,KFC,KBC,KRC,KCR,B}
-    # forward map, one entry per slot of the frequency domain array. the
-    # incidence entries s1, s2 and the flags are shared by the two
+    # The forward map, one entry per slot of the frequency domain array.
+    # The incidence entries `s1`, `s2` and the flags are shared by the two
     # representations; only the addressing of the source differs, so the
-    # real representation stores the real slot holding the real part and
-    # the complex representation stores the complex index itself.
+    # real representation stores the real slot holding the real part
+    # (`n1`, `n2`) and the complex one the complex index (`cn1`, `cn2`).
     n1::VI
     s1::VT
     n2::VI
@@ -85,8 +85,8 @@ struct NonlinearTermPlan{Ti<:Integer,T<:Real,VI,VT,VC,VF,KF,KB,KFC,KBC,KRC,KCR,B
     bptr::VI
     bsrc::VI
     bcoef::VT
-    # backward map, the linear term in compressed sparse row form, in the
-    # real representation and in the complex one
+    # the backward map of the linear term, in compressed sparse row form,
+    # in the real representation and in the complex one
     kptr::VI
     kidx::VI
     kcoef::VT
@@ -313,7 +313,7 @@ end
         Nbranches::Integer, freqindexmap::Vector{Int},
         conjsourceindices::Vector{Int}, conjtargetindices::Vector{Int},
         phimatrix::AbstractArray, Knm::SparseMatrixCSC, layout::ModeLayout,
-        backend = CPU())
+        backend = CPU(); realbackward = true)
 
 Build the [`NonlinearTermPlan`](@ref) for the harmonic balance system
 described by the incidence matrix `Rbnm`, the Josephson inductances `Ljb`,
@@ -331,6 +331,11 @@ gather.
 
 Throws an `ArgumentError` if a branch touches more than two nodes, which the
 forward map's flat two entry form assumes.
+
+`realbackward = false` leaves out the real representation of the linear
+term, the largest allocation of the plan, which only the backward map of
+the real representation reads; a solve which stays in the complex
+representation (`method = :quasinewton`) never applies it.
 """
 function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lmean,
     Nbranches::Integer, freqindexmap::Vector{Int},
@@ -344,19 +349,19 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lmean,
     nc = layout.dim
     nslots = length(phimatrix)
     # 32 bit indices whenever the ranges permit, halving the memory traffic
-    # of the plan, following the convention of plancomplexjacobian
+    # of the plan, as `plancomplexjacobian` does
     Ti = (nslots <= typemax(Int32) && nc <= typemax(Int32) &&
         nnz(Knm) <= typemax(Int32) && size(Rbnm, 1) <= typemax(Int32)) ?
         Int32 : Int
-    # the working precision of the plan follows the frequency domain array it
-    # is built around, so a system whose phimatrix is Complex{Float32} carries
-    # Float32 incidence entries, branch coefficients and linear term.
+    # the precision of the plan follows the frequency domain array it is
+    # built around: a `Complex{Float32}` phimatrix gives `Float32` incidence
+    # entries, branch coefficients and linear term
     T = real(eltype(phimatrix))
 
-    # invert the frequency index map so a conjugate symmetry target can be
-    # traced back to the entry of the branch flux vector which feeds its
-    # source, letting the forward map be a single kernel rather than a scatter
-    # followed by a conjugating pass over what it just wrote
+    # invert the frequency index map, so that a conjugate symmetry target
+    # can be traced back to the entry of the branch flux vector which feeds
+    # its source and the forward map is one kernel rather than a scatter
+    # followed by a conjugating pass
     invfreqindexmap = Dict{Int,Int}(freqindexmap[j] => j for j in 1:Nmodes)
     slotmode = zeros(Int, nslots)
     slotflag = zeros(Int32, nslots)
@@ -408,9 +413,9 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lmean,
         flags[q] = f
     end
 
-    # the backward map: for each complex output index, the frequency domain
-    # slots of the Josephson branches incident to it. the entries of column k
-    # of Rbnm are the branch rows which contribute to output k, so the
+    # The backward map: for each complex output index, the frequency domain
+    # slots of the Josephson branches incident on it. The entries of column
+    # k of `Rbnm` are the branch rows which contribute to output k, so the
     # transposed product is a gather and needs no scatter or atomic.
     jjofbranch = Dict{Int,Int}(Ljb.nzind[i] => i for i in 1:NJJ)
     bptr = Vector{Ti}(undef, nc+1)
@@ -431,14 +436,12 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lmean,
         bptr[k+1] = length(bsrc)+1
     end
 
-    # the linear term in both representations, each transposed so that
-    # applying it is a gather over the entries of one output row.
-    #
-    # only the real representation backward map reads the real form, so with
-    # realbackward = false it is not built and its three arrays are left
-    # empty. converting K to the real layout is the largest single allocation
-    # of the plan, and a solve which stays in the complex representation
-    # (method = :quasinewton) never applies it.
+    # The linear term in both representations, each transposed so that
+    # applying it is a gather over the entries of one output row. Only the
+    # real representation backward map reads the real form, so with
+    # `realbackward = false` it is not built and its three arrays are left
+    # empty; converting `K` to the real layout is the largest allocation of
+    # the plan, and a solve in the complex representation never applies it.
     kptr, kidx, kcoef = if realbackward
         KrT = sparse(transpose(complex_to_real(Knm, layout, layout)))
         (convert(Vector{Ti}, SparseArrays.getcolptr(KrT)),
@@ -458,9 +461,9 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lmean,
     kptrzero = ones(Ti, length(kptr))
     cptrzero = ones(Ti, length(cptr))
 
-    # bake the work sizes into the kernel objects. they are fixed by the
-    # sparsity structure, so the launch does not have to partition the index
-    # space on every call, which would allocate.
+    # the work sizes are baked into the kernel objects, since they are fixed
+    # by the sparsity structure; partitioning the index space on every
+    # launch would allocate
     groupsize = 64
     forward! = forwardtermkernel!(backend, groupsize, nslots)
     backward! = backwardtermkernel!(backend, groupsize, nc)
@@ -469,9 +472,9 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lmean,
     realtocomplex! = realtocomplexkernel!(backend, groupsize, nc)
     complextoreal! = complextorealkernel!(backend, groupsize, nc)
 
-    # the index computation above is inherently sequential, so the maps are
-    # built on the host and then moved to the backend. on CPU() this is an
-    # allocation and a copy of arrays that are already the right type.
+    # the index computation above is sequential, so the maps are built on
+    # the host and then moved to the backend; on `CPU()` a dense array is
+    # adopted without a copy (see `tobackend`)
     d = x -> tobackend(backend, x)
     dn1, ds1, dn2, ds2 = d(n1), d(s1), d(n2), d(s2)
     dcn1, dcn2, dflags = d(cn1), d(cn2), d(flags)

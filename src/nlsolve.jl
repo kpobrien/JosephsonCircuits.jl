@@ -112,20 +112,23 @@ end
 
 
 """
-    Factorization(outofplace,inplace,kwargs)
-    Factorization(outofplace,inplace,kwargs,batched)
+    Factorization(factorize, factorize!, kwargs)
+    Factorization(factorize, factorize!, kwargs, batched)
 
-A structure to hold the factorizations and their keyword arguments.
+A sparse factorization method: `factorize(A; kwargs...)` computes a
+factorization of `A` and `factorize!(F, A; kwargs...)` refactorizes `A`
+into the existing `F`, reusing its symbolic analysis. Use
+[`KLUfactorization`](@ref), [`LUfactorization`](@ref),
+[`QRfactorization`](@ref), or [`CUDSSFactorization`](@ref) to construct
+one.
 
-`batched`, when it is not `nothing`, is a function of a
+`batched`, when not `nothing`, is a function of a
 [`BatchedBlockLayout`](@ref) returning the form of this factorization which
-treats the matrix as a uniform batch of diagonal blocks: one symbolic analysis
-for the pattern every block shares, then a batched numeric factorization. It is
-consulted by [`batchedfactorization`](@ref), which is the only place that knows
-whether a particular matrix really is such a batch. A factorization with no
-batched form leaves it `nothing` and is used unchanged.
-
-```
+treats a matrix as a uniform batch of diagonal blocks: one symbolic
+analysis for the pattern every block shares, then a batched numeric
+factorization. It is consulted by [`batchedfactorization`](@ref), the one
+place which knows whether a matrix is such a batch; a factorization with
+no batched form is used unchanged.
 """
 struct Factorization
     factorize
@@ -137,13 +140,19 @@ end
 Factorization(factorize, factorize!, kwargs) =
     Factorization(factorize, factorize!, kwargs, nothing)
 
+"""
+    KLUfactorization(; kwargs...)
+
+The [`Factorization`](@ref) using KLU.jl, a sparse LU factorization suited
+to circuit matrices. This is the default on the host. `kwargs` are passed
+to `KLU.klu`.
+"""
 function KLUfactorization(;kwargs...)
-    # return Factorization(KLU.klu,KLU.klu!,kwargs)
     return Factorization(KLU.klu,klunzval!,kwargs)
 end
 
-# this directly uses the nzvals without checking the sparse matrix so should
-# be slightly faster.
+# Refactorize from the nonzero values directly, skipping the sparse matrix
+# structure check `KLU.klu!` would do; the pattern is fixed by construction.
 function klunzval!(F,A;kwargs...)
     return KLU.klu!(F,A.nzval;kwargs...)
 end
@@ -160,10 +169,23 @@ function cudssbatchedfactorization(layout; kwargs...)
         "cudssbatchedfactorization requires CUDSS.jl and CUDA.jl to be loaded."))
 end
 
+"""
+    LUfactorization(; kwargs...)
+
+The [`Factorization`](@ref) using the UMFPACK sparse LU factorization
+`LinearAlgebra.lu`, with `kwargs` passed to it.
+"""
 function LUfactorization(;kwargs...)
     return Factorization(lu,lu!,kwargs)
 end
 
+"""
+    QRfactorization(; kwargs...)
+
+The [`Factorization`](@ref) using the SPQR sparse QR factorization
+`LinearAlgebra.qr`, with `kwargs` passed to it. QR does not support
+refactorization in place, so each call factorizes from scratch.
+"""
 function QRfactorization(;kwargs...)
     return Factorization(qr,nothing,kwargs)
 end
@@ -224,7 +246,9 @@ end
 """
     FactorizationCache(factorization)
 
-A cache for the factorization object.
+A mutable holder for a factorization object, so that
+[`tryfactorize!`](@ref) can refactorize into it across calls. Starts
+empty (`nothing`) when constructed without an argument.
 
 # Examples
 ```jldoctest
@@ -244,34 +268,32 @@ end
     tryfactorize!(cache::FactorizationCache,
         factorization::Factorization, A::AbstractArray)
 
-Factorize the matrix `A` using the factorization from `factorization` and
-store the result in `cache`. Attempt to reuse the symbolic factorization. Redo the
-symbolic factorization if we get a SingularException.
-
+Factorize `A` with the method `factorization` and store the result in
+`cache`. When the cache already holds a factorization and the method
+supports refactorization, its symbolic analysis is reused; a
+`SingularException` during that refactorization falls back to a fresh
+factorization, since reusing the symbolic analysis occasionally fails
+numerically where a fresh one succeeds.
 """
 function tryfactorize!(cache::FactorizationCache,
     factorization::Factorization, A::AbstractMatrix)
 
-    # if the factorization cache is empty then generate a factorizaion
     if isnothing(cache.factorization)
         cache.factorization = factorization.factorize(A;
             factorization.kwargs...)
-    # otherwise, try to update the factorization, falling back to generating
-    # a new one if that fails
+    # a method without in place refactorization (QR) factorizes afresh
     elseif isnothing(factorization.factorize!)
         cache.factorization = factorization.factorize(A;
             factorization.kwargs...)
     else
         try
-            # update the factorization. the sparsity structure does 
-            # not change so we can reuse the factorization object.
+            # the sparsity structure is unchanged, so refactorize in place
             factorization.factorize!(cache.factorization, A;
                 factorization.kwargs...)
         catch e
             if isa(e, SingularException)
-                # reusing the symbolic factorization can sometimes
-                # lead to numerical problems. if the first linear
-                # solve fails try factoring and solving again
+                # reusing the symbolic analysis occasionally fails
+                # numerically; factorize afresh
                 cache.factorization = factorization.factorize(A;
                     factorization.kwargs...)
             else
@@ -807,7 +829,7 @@ function andersonhistory!(s::AndersonState, x::AbstractVector,
 end
 
 """
-    andersoncorrection!(s::AndersonState, deltax) -> Bool
+    andersoncorrection!(s::AndersonState, deltax; rtol = eps(T)^(3//4)) -> Bool
 
 Assemble the Type-II Anderson correction `cₖ = (Sₖ + Yₖ)γₖ` into
 `s.correction` from the current history and the Newton update `deltax`. Return
@@ -929,7 +951,7 @@ end
 """
     dualsearch!(f!, F, xcandidate, x, deltax, ϕ0, dϕ0dα, ϕcand,
         correction, betak, Fbest, Fspare, Fatx; c1, safeguard_low,
-        safeguard_high, maxbacktracks)
+        safeguard_high, maxbacktracks, curvedpriority = false)
 
 
 
@@ -1009,8 +1031,6 @@ function dualsearch!(f!, F::AbstractVector,
             false
         end
     end
-    # curvedwins = (accc && !accp) ||
-        # (accc == accp && isfinite(ϕc) && !(isfinite(ϕp) && ϕp <= ϕc))
     if curvedwins
         copyto!(F, Fspare)
         linesearchtrialpoint!(xcandidate, x, αc, deltax, betak, correction)
@@ -1044,13 +1064,17 @@ end
 
 
 """
-    nlsolve!(fj!, F, J, x; kwargs...)
+    nlsolve!(fj!, F, J, x; iterations = 1000, ftol = 1e-8, rtol = 0.0,
+        factorization = KLUfactorization(), label = "", c1 = 1e-4,
+        safeguard_low = 0.1, safeguard_high = 0.5, maxbacktracks = 10,
+        maxbacktrackfailures = 2, andersondepth = 5, andersonbeta = 1.0,
+        andersonacceptfactor = 0.9)
 
-Newton's method with Anderson acceleration, designed for quasi-Newton problems
-with an approximate Jacobian. `fj!(F, J, x)` must write the residual into `F`
-when `F !== nothing` and the Jacobian into `J` when `J != nothing`. `x` is
-updated in place. `F` holds the residual at the returned `x` after `nlsolve!`
-returns.
+Newton's method with a line search and Anderson acceleration, suited to
+quasi-Newton problems with an approximate Jacobian. `fj!(F, J, x)` must
+write the residual into `F` when `F !== nothing` and the Jacobian into `J`
+when `J !== nothing`. `x` is updated in place and holds the solution on
+return; `F` holds the residual there.
 
 Each iteration solves `J*pₖ = -F` for the Newton step and forms the
 Type-II Anderson correction `cₖ = (Sₖ + Yₖ)γₖ` from a depth-
@@ -1062,20 +1086,23 @@ stored). The step is then chosen by measurement:
 accepted if its residual norm improves on the current one by at least
 `andersonacceptfactor`. An accepted candidate records `alpha = NaN`.
 
-2. Otherwise both line searches are run and compared. The curvilinear path
-`x + α*pₖ - andersonbeta*α²*cₖ`, starting with the value from (1), and the 
-linear path and the point which results in the lowest merit function is used.
-A curvilinear trial point that fulfills the Armijo condition at the full step
-is accepted without comparison. If both line searches fail, the solver sets 
-curved priority and any curved acceptance is taken with the linear path only
-taken if the curved path results in non-finite values.See `dualsearch!`.
-3. If there is no usable correction (empty history, failed coefficient
-solve), only the linear path line search runs.
+2. Otherwise both line searches are run and compared: the curvilinear path
+`x + α*pₖ - andersonbeta*α²*cₖ`, starting from the value of (1), and the
+linear path `x + α*pₖ`; the point with the lower merit function is taken.
+A curvilinear trial point which satisfies the Armijo condition at the full
+step is accepted without comparison. After both line searches have failed
+the solver gives the curved path priority, taking the linear path only
+when the curved one produces non-finite values. See [`dualsearch!`](@ref).
+
+3. Without a usable correction (an empty history, or a failed coefficient
+solve) only the linear line search runs.
 
 # Keywords
-- `iterations = 1000`: maximum number of Newton iterations.
-- `ftol = 1e-8`: convergence when `norm(F) <= ftol`.
-- `factorization = KLUfactorization()`: factorization method.
+- `iterations = 1000`: the maximum number of Newton iterations.
+- `ftol = 1e-8`: converged when `norm(F) <= ftol`.
+- `rtol = 0.0`: a relative tolerance; the effective tolerance is
+    `max(ftol, rtol*norm(F0))` with `F0` the initial residual.
+- `factorization = KLUfactorization()`: the sparse factorization of `J`.
 - `label = ""`: label for the returned `IterationInfo`.
 - `c1 = 1e-4`: Armijo sufficient-decrease constant, in (0, 1/2); the
   upper bound keeps the full Newton step acceptable near a root.
@@ -1083,9 +1110,7 @@ solve), only the linear path line search runs.
   clamp as fractions of the previous trial.
 - `maxbacktracks = 10`: trial-point budget per line search.
 - `maxbacktrackfailures = 2`: consecutive-failure stall threshold.
-- `andersondepth = 5`: history depth; `0` disables the acceleration.
-  Hard problems may need more depth (5 was required on the hardest
-  examples).
+- `andersondepth = 5`: the history depth; `0` disables the acceleration.
 - `andersonbeta = 1.0`: correction strength.
 - `andersonacceptfactor = 0.9`: candidate accept threshold, in (0, 1);
   smaller is stricter.

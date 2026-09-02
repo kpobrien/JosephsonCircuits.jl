@@ -1,40 +1,55 @@
 
-"""
-    NonlinearHB(nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes, Nbranches, S)
+# The result types of the harmonic balance solves, and the entry point
+# `hbsolve` which runs the nonlinear pump solve and the linearized signal
+# sweep in sequence.
 
-A simple structure to hold the nonlinear harmonic balance solutions.
+"""
+    NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
+        Nbranches, nodes, ports, modes, S, solverinfo, operatingpoint,
+        dcnodevoltage)
+
+The solution of the nonlinear harmonic balance problem returned by
+[`hbnlsolve`](@ref).
 
 # Fields
-- `w`: a tuple containing the the angular frequency of the pump in radians/s.
-- `frequencies`:
-- `nodeflux`: the node fluxes resulting from inputs at each frequency and
-    port.
-- `Rbnm`: incidence matrix to convert between the node and branch basis.
-- `Ljb`: sparse vector of Josephson junction inductances.
-- `Lb`: sparse vector of linear inductances.
-- `Ljbm`: sparse vector of linear inductances with each element duplicated
-    Nmodes times.
-- `Nmodes`: the number of signal and idler frequencies.
-- `Nbranches`: the number of branches in the circuit.
-- `nodenames`: the vector of unique node name strings.
-- `componentnames`: the vector of component name strings
-- `portnumbers`: vector of port numbers.
-- `portindices`: 
-- `modes`: tuple of the pump mode indices where (1,) is the pump in the single
-    pump case.
-- `S`: the scattering matrix relating inputs and outputs for each combination
-    of port and frequency. Its zero frequency entries are identically zero
-    and carry no information: the waves are in units of
-    sqrt(photons/second), whose normalization `1/sqrt(|w|)` has no limit at
-    zero (see [`portwavescale`](@ref)), so there is no direct current wave
-    to report. The direct current operating point is in `dcnodevoltage`,
-    which is a voltage and not a wave.
-- `solverinfo`: diagnostics describing the nonlinear solution process.
-    See [`SolverInfo`](@ref).
-- `operatingpoint`: the converged operating point and the exact real
-    Jacobian there, when the solver is called with
-    `returnoperatingpoint = true`, otherwise `nothing`. See
+- `w`: the tuple of pump angular frequencies in radians per second, one
+    per non-commensurate pump.
+- `frequencies`: the [`Frequencies`](@ref) describing the retained pump
+    harmonics and intermodulation products.
+- `nodeflux`: the node fluxes at each retained mode. With
+    `keyedarrays = true` an `Nmodes` by `Nnodes - 1` keyed array with axes
+    `:outputmode` and `:node`; otherwise a vector of length
+    `Nmodes*(Nnodes - 1)` with the mode index varying fastest.
+- `Rbnm`: the incidence matrix between the branch and node bases, with
+    each entry repeated `Nmodes` times.
+- `Ljb`: sparse vector of the Josephson junction inductances by branch.
+- `Lb`: sparse vector of the linear inductances by branch.
+- `Ljbm`: `Ljb` with each entry repeated `Nmodes` times.
+- `Nmodes`: the number of retained modes.
+- `Nbranches`: the number of branches in the circuit graph.
+- `nodes`: the node names, ground (`"0"`) first.
+- `ports`: the port numbers.
+- `modes`: the retained modes as tuples of harmonic indices; `(1,)` is
+    the pump of a single pump solve, `(1,0)` the first of two pumps.
+- `S`: the scattering matrix at the pump frequencies, relating the inputs
+    and outputs at each combination of port and mode. Its zero frequency
+    entries are identically zero: the waves are in units of
+    `sqrt(photons/second)`, whose normalization `1/sqrt(|w|)` (see
+    [`portwavescale`](@ref)) has no limit at zero, so there is no direct
+    current wave to report. The direct current operating point is in
+    `dcnodevoltage`.
+- `solverinfo`: diagnostics of the solution process; see
+    [`SolverInfo`](@ref).
+- `operatingpoint`: the converged operating point with the exact real
+    Jacobian there, when the solver was called with
+    `returnoperatingpoint = true`; otherwise `nothing`. See
     [`HBOperatingPoint`](@ref).
+- `dcnodevoltage`: the average voltage of each non-ground node in volts,
+    keyed by node name like `nodeflux`, when the circuit has an explicit
+    direct current block; otherwise `nothing`. This is distinct from the
+    zero mode of `nodeflux`, which is the static flux setting the inductor
+    currents and junction phases. A vector of zeros is an answer (a node
+    shorted to ground sits at zero volts) and differs from `nothing`.
 """
 struct NonlinearHB
     w
@@ -52,15 +67,6 @@ struct NonlinearHB
     S
     solverinfo
     operatingpoint
-    # The average node voltage in volts from the explicit direct current
-    # block, or `nothing` when the circuit has no such block. Ground is
-    # excluded and the values are keyed by node name, as `nodeflux` is, so
-    # that node indexed code reads the two the same way.
-    #
-    # Distinct from `nodeflux`, whose zero mode is the static periodic flux
-    # which sets inductor currents and junction phases. A vector of zeros is
-    # an answer -- a node shorted to ground sits at zero volts -- and is not
-    # the same as `nothing`.
     dcnodevoltage
 end
 
@@ -71,8 +77,9 @@ function NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
         operatingpoint, nothing)
 end
 
-# backwards compatible constructors without the solver diagnostics and
-# without the operating point
+# Constructors with the trailing fields omitted: without the direct current
+# voltages (above), and without the operating point and the diagnostics
+# (below), which default to `nothing` and to an empty, converged record.
 function NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
     Nbranches, nodes, ports, modes, S)
     return NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm,
@@ -87,65 +94,80 @@ function NonlinearHB(w, frequencies, nodeflux, Rbnm, Ljb, Lb, Ljbm, Nmodes,
 end
 
 """
-    LinearizedHB(w, modes, S, Snoise, Ssensitivity, QE, QEideal, CM,
-        nodeflux, nodefluxadjoint, voltage, voltageadjoint, Nmodes, Nnodes,
-        Nbranches, Nports, signalindex)
+    LinearizedHB(w, modes, S, Snoise, Cnoise, Ssensitivity, QE, QEideal,
+        CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, nodenames,
+        nodeindices, componentnames, componenttypes, componentnamedict,
+        mutualinductorbranchnames, portnumbers, portindices,
+        portimpedances, noiseportimpedanceindices, sensitivitynames,
+        sensitivityindices, Nmodes, Nnodes, Nbranches, Nports, signalindex)
 
-A simple structure to hold the linearized harmonic balance solutions. An
-output which was not requested is an empty array.
+The solution of the linearized harmonic balance problem returned by
+[`hblinsolve`](@ref). An output which was not requested is an empty
+array. The frequency dependent outputs are indexed as
+`[outputmode, outputport, inputmode, inputport, frequency]` (keyed arrays
+with those axis names when `keyedarrays = true`).
 
 # Fields
-- `w`: the signal frequencies.
-- `modes`: tuple of the signal mode indices where (0,) is the signal.
-- `S`: the scattering matrix relating inputs and outputs for each combination
-    of port and frequency.
-- `Snoise`: the scattering matrix relating inputs at the noise channels of the
-    dissipative elements and outputs at the physical ports, for each
-    combination of port and frequency. The channels are the dissipative
-    lumped components first, then one per port of each dissipative
-    [`ScatteringParameters`](@ref). Being a scattering matrix it describes a
-    transformation and does not depend on temperature.
+- `w`: the signal angular frequencies in radians per second.
+- `modes`: the retained signal modes as tuples of harmonic indices; `(0,)`
+    is the signal itself and `(k,)` the idler offset by `k` pump harmonics.
+- `S`: the scattering matrix relating the inputs and outputs at each
+    combination of port, mode and signal frequency.
+- `Snoise`: the scattering matrix from the noise channels of the
+    dissipative elements to the ports. The channels are the dissipative
+    lumped components (see [`noiseindices`](@ref)) followed by one per port
+    of each dissipative [`ScatteringParameters`](@ref). Being a scattering
+    matrix it describes a transformation and does not depend on
+    temperature.
 - `Cnoise`: the added noise covariance at the output ports,
-    `sum_c occupation[c] Snoise[c,i] conj(Snoise[c,j])`, returned only when
-    `returnCnoise = true`. With `S` this is the Gaussian channel the circuit
-    implements: the map takes an input covariance to `S sigma S' + Cnoise`.
-    This is where the temperature of each channel enters, `Snoise` supplying
-    the transformation and the occupation the state. At zero temperature its
-    diagonal is the noise term in the denominator of the quantum efficiency.
-- `Ssensitivity`: the derivative of the scattering matrix with respect to a
-    relative (logarithmic) perturbation of each component value in
-    `sensitivitynames`, at the fixed pump operating point, or the total
-    derivative including the shift of the operating point when
-    `sensitivityoperatingpoint = true`.
-- `QE`: the quantum efficiency for each combination of port and frequency.
-- `QEideal`: the quantum efficiency for an ideal amplifier with the same level
-    of gain, for each combination of port and frequency.
-- `CM`: the commutation relations (equal to ±1), for each combination of port
-    and frequency.
-- `nodeflux`: the node fluxes resulting from inputs at each frequency and port.
-- `nodefluxadjoint`: the node fluxes resulting from inputs at each frequency
-    and port with a time reversed modulation.
-- `voltage`: the node voltages resulting from inputs at each frequency and port.
-- `voltageadjoint`: the node fluxes resulting from inputs at each frequency
-    and port with a time reversed modulation.
-- `nodenames`: the vector of unique node strings.
-- `nodeindices`:
-- `componentnames`:
-- `componenttypes`:
-- `componentnamedict`:
-- `mutualinductorbranchnames`:
-- `portnumbers`: vector of port numbers.
-- `portindices`:
-- `portimpedances`: the reference impedance of each port, ordered by port
-    number, which is what the scattering parameters are normalized to
-- `noiseportimpedanceindices`:
-- `sensitivitynames`:
-- `sensitivityindices`:
-- `Nmodes`: the number of signal and idler frequencies.
-- `Nnodes`: the number of nodes in the circuit (including the ground node).
-- `Nbranches`: the number of branches in the circuit.
+    `sum_c occupation[c]*Snoise[c,i]*conj(Snoise[c,j])`, when
+    `returnCnoise = true`. Together with `S` this is the Gaussian channel
+    the circuit implements, taking an input covariance to
+    `S*sigma*S' + Cnoise`; the temperature of each channel enters here
+    through the occupation. At zero temperature its diagonal is the noise
+    term in the denominator of the quantum efficiency.
+- `Ssensitivity`: the derivative of `S` with respect to a relative
+    (logarithmic) perturbation of each component in `sensitivitynames`, or
+    of each design parameter when the sensitivity pair interface is used,
+    at a fixed pump operating point or including the shift of the operating
+    point when `sensitivityoperatingpoint = true`.
+- `QE`: the quantum efficiency at each combination of port, mode and
+    frequency.
+- `QEideal`: the quantum efficiency of an ideal amplifier with the same
+    gain.
+- `CM`: the bosonic commutation relations of each output, `sum_j
+    |S[i,j]|^2 sign(w_j)` over the input modes, which equal `+1` for an
+    output at positive frequency and `-1` for one at negative frequency
+    when the scattering matrix is complete.
+- `nodeflux`: the node fluxes resulting from a unit input at each port and
+    mode.
+- `nodefluxadjoint`: the node fluxes of the adjoint (time reversed
+    modulation) problem.
+- `voltage`: the node voltages resulting from a unit input at each port
+    and mode.
+- `voltageadjoint`: the node voltages of the adjoint problem.
+- `nodenames`: the node names, ground first.
+- `nodeindices`: the 2 by `Ncomponents` matrix of component node indices
+    from the [`CompiledCircuit`](@ref).
+- `componentnames`, `componenttypes`, `componentnamedict`,
+    `mutualinductorbranchnames`: the corresponding fields of the
+    [`CompiledCircuit`](@ref).
+- `portnumbers`: the port numbers, in the order the port axes use.
+- `portindices`: the flat component index of each port.
+- `portimpedances`: the reference impedance of each port, which the
+    scattering parameters are normalized to.
+- `noiseportimpedanceindices`: the flat component indices of the internal
+    dissipative components, in the order of the noise channel axis of
+    `Snoise`.
+- `sensitivitynames`: the component names the sensitivities were taken
+    with respect to.
+- `sensitivityindices`: their flat component indices.
+- `Nmodes`: the number of retained signal modes.
+- `Nnodes`: the number of nodes, including ground.
+- `Nbranches`: the number of branches in the circuit graph.
 - `Nports`: the number of ports.
-- `signalindex`: the index of the signal mode.
+- `signalindex`: the position of the signal mode `(0,)` in `modes`, which
+    is always 1.
 """
 struct LinearizedHB
     w
@@ -180,33 +202,25 @@ struct LinearizedHB
     signalindex
 end
 
-# a solution which carries no added noise covariance, which is every one
-# taken before `returnCnoise` existed and every one which does not ask for it
+# A constructor without `Cnoise`, which is an empty array when it was not
+# requested.
 LinearizedHB(w, modes, S, Snoise, Ssensitivity, QE, QEideal, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, nodenames, nodeindices, componentnames, componenttypes, componentnamedict, mutualinductorbranchnames, portnumbers, portindices, portimpedances, noiseportimpedanceindices, sensitivitynames, sensitivityindices, Nmodes, Nnodes, Nbranches, Nports, signalindex) =
     LinearizedHB(w, modes, S, Snoise, Array{Complex{Float64},3}(undef, 0, 0, 0), Ssensitivity, QE, QEideal, CM, nodeflux, nodefluxadjoint, voltage, voltageadjoint, nodenames, nodeindices, componentnames, componenttypes, componentnamedict, mutualinductorbranchnames, portnumbers, portindices, portimpedances, noiseportimpedanceindices, sensitivitynames, sensitivityindices, Nmodes, Nnodes, Nbranches, Nports, signalindex)
 
 """
     HB(nonlinear, linearized)
 
-A simple structure to hold the nonlinear and linearized harmonic balance
-solutions.
-
-# Fields
-- `nonlinear`: nonlinear harmonic balance solution for pump and pump
-    harmonics. See [`NonlinearHB`](@ref).
-- `linearized`: linearized harmonic balance solution.
-    See [`LinearizedHB`](@ref).
+The result of [`hbsolve`](@ref): the [`NonlinearHB`](@ref) solution for
+the pump and its harmonics in `nonlinear`, and the [`LinearizedHB`](@ref)
+solution for the signals in `linearized`.
 """
 struct HB
     nonlinear
     linearized
 end
 
-# ---------------------------------------------------------------------------
-# Shared docstring fragments, interpolated into the docstrings of `hbsolve`,
-# `hbnlsolve` and `hblinsolve` so the two descriptions of the same keyword
-# cannot drift.
-# ---------------------------------------------------------------------------
+# Docstring fragments shared by `hbsolve`, `hbnlsolve` and `hblinsolve`, so
+# that one keyword is described in one place.
 const _DOC_FTOL = """
 - `ftol = 1e-8`: the residual tolerance `norm(F) <= ftol` at which the
     nonlinear solution is considered converged. `F` is scaled by `Z0/w0`;
@@ -244,15 +258,131 @@ const _DOC_ANDERSON = """
     number of previous iterates used for the extrapolation. Values less than
     one disable the acceleration."""
 
+const _DOC_NLKWARGS = """
+- `rtol = 0.0`: a relative residual tolerance; the solve is converged when
+    `norm(F) <= max(ftol, rtol*norm(F0))` with `F0` the initial residual.
+- `x0 = nothing`: an initial value for the node fluxes, either of the node
+    flux length or of the full augmented length including the auxiliary
+    variables of the modified nodal analysis formulation.
+- `keyedarrays = true`: return `nodeflux` and `S` as keyed arrays with named
+    axes rather than plain arrays.
+- `sensitivitynames::Vector{String} = String[]`: the components whose
+    indices are recorded for the sensitivity calculation.
+- `returnoperatingpoint = false`: assemble and return the exact real
+    Jacobian at the converged solution in the `operatingpoint` field, for
+    sensitivities which include the shift of the operating point.
+- `krylovcouplingmodes = :none`: the mode couplings the Newton-Krylov
+    preconditioner keeps in full: `:none` (the mode block diagonal, the
+    default), `:all`, `:band => p` for couplings up to the harmonic offset
+    `p` of each tone (grown automatically on repeated linear failures),
+    `:auto` or `:auto => tol` for a band whose width is measured from the
+    solution, a vector of mode indices, or an `Nmodes` by `Nmodes` `Bool`
+    mask. See [`ModeCouplingPreconditioner`](@ref).
+- `krylovrecycle = 0`: when positive, wrap the preconditioner in a
+    [`RecyclingPreconditioner`](@ref) keeping a deflation subspace of at
+    most this many vectors across Newton steps; `krylovharvest = 8` is the
+    number of vectors harvested from each GMRES solve.
+- `krylovkwargs::NamedTuple = (;)`: further options of
+    [`nlsolvekrylov!`](@ref), which override its defaults.
+- `linearsolver = InternalGMRES()`: the linear solver of the Newton-Krylov
+    step, [`InternalGMRES`](@ref) or [`KrylovJL`](@ref).
+- `factorization = nothing`: the sparse factorization used by the direct
+    methods and the preconditioner: [`KLUfactorization`](@ref) on the host
+    and [`CUDSSFactorization`](@ref) on a CUDA device unless given.
+- `backend = CPU()`: the KernelAbstractions backend the solve runs on.
+- `precision = Float64`: the floating point type of the solve.
+- `debugJacobian = false`: instead of solving, return a named tuple with
+    the residual and Jacobian functions and the ingredients they are
+    assembled from, for building reference implementations in tests.
+- `returnsystem = false`: instead of solving, return a named tuple with
+    the [`HBSystem`](@ref), the initial real state and residual, the real
+    representation layout and (when `assemblejacobian = true`) the
+    assembled real Jacobian, for driving an external solver.
+- `switchofflinesearchtol`, `alphamin`: deprecated and ignored with a
+    warning."""
+
+const _DOC_RETURNS = """
+- `returnS = true`: return the scattering parameters of the linearized
+    solve.
+- `returnSnoise = false`: return the noise scattering parameters.
+- `returnCnoise = false`: return the added noise covariance at the output
+    ports; see [`LinearizedHB`](@ref).
+- `returnQE = true`: return the quantum efficiency.
+- `returnCM = true`: return the commutation relations.
+- `returnnodeflux = false`, `returnvoltage = false`: return the node fluxes
+    and voltages of the linearized solve.
+- `returnnodefluxadjoint = false`, `returnvoltageadjoint = false`: return
+    the node fluxes and voltages of the adjoint (time reversed modulation)
+    linearized solve.
+- `keyedarrays = true`: return the outputs as keyed arrays with named,
+    labeled axes rather than plain arrays."""
+
+const _DOC_TEMPERATURE = """
+- `temperature = 0.0`: the physical temperature in Kelvin of every
+    dissipative element which does not state its own, and so of the noise
+    it adds. A channel at temperature `T` carries `coth(hbar*w/(2*k*T))`
+    times its vacuum noise, which at zero temperature is the vacuum noise
+    itself. Raising it lowers the quantum efficiency and changes `Cnoise`
+    but leaves `Snoise` and the commutation relations alone, since those
+    describe the transformation rather than the state. The ports are
+    vacuum by definition. A component may state its own temperature in
+    the typed format (`Resistor(R; temperature = T)`, or a
+    [`ScatteringParameters`](@ref) with `noise = ThermalEquilibrium(T)`);
+    a tuple netlist cannot, and takes this default throughout."""
+
+const _DOC_SENSNAMES = """
+- `sensitivitynames::Vector{String} = String[]`: the names of the
+    components to take sensitivities with respect to. Supported types are
+    `C`, `L`, `R` and `Lj` with numeric values. A
+    [`ScatteringParameters`](@ref) block has no scalar value to perturb and
+    cannot be named; see [`designsensitivities`](@ref) for sensitivities
+    with respect to the parameters of a block.
+- `sensitivitypairs`, `sensitivityblockpairs`, `nsensitivityparameters`,
+    `sensitivitylabels`: the design parameter interface used by
+    [`designsensitivities`](@ref), which names physical parameters rather
+    than components; each pair `(componentname, parameterindex, alpha)`
+    gives the relative direction `alpha = (dv/dp)/v` of a component value
+    under a parameter. Not intended to be passed directly."""
+
+const _DOC_SENSMODE = """
+- `sensitivitymode = :auto`: the order in which the operating point shift
+    is contracted into the sensitivities. `:forward` costs one product
+    against the linearized system per component and signal frequency;
+    `:reverse` pushes the output functionals through the transposed pump
+    Jacobian once per output port and mode pair, so its cost does not grow
+    with the number of components. `:auto` chooses `:reverse` when there
+    are more components than output port and mode pairs. Both support any
+    number of pumps."""
+
+const _DOC_SSENS = """
+- `returnSsensitivity = false`: return `dS/dr`, the derivative of the
+    scattering matrix with respect to a relative perturbation `r` of each
+    named component value (`p -> r*p` at `r = 1`), computed by the adjoint
+    method."""
+
+const _DOC_NBATCHES = """
+- `nbatches = Base.Threads.nthreads()`: the number of batches the signal
+    frequencies are split into for multithreading; `1` runs single
+    threaded."""
+
+const _DOC_LINBACKEND = """
+- `backend = CPU()`: the KernelAbstractions backend the sweep is solved
+    on. On a device the system matrices of a batch of signal frequencies,
+    which share one sparsity pattern, are assembled by one kernel and
+    factorized and solved as a uniform batch (see
+    [`CUDSSFactorization`](@ref)). The sweep falls back to the host when
+    the component values depend on the symbolic frequency variable, or when
+    an output needs the adjoint (transposed) solve: the noise scattering
+    parameters, the scattering parameter sensitivities, or the adjoint node
+    outputs."""
+
 const _DOC_SORTING = """
-- `sorting = :number`: sort the nodes by:
-    `:name`: Sort the vector of strings. This always works but leads
-    to results like "101" comes before "11".
-    `:number`: Convert the node strings to integer and sort by these
-    (this errors if the nodes names cannot be converted to integers).
-    `:none`: Don't perform any sorting except to place the ground node
-    first. In other words, order the nodes in the order they are found in
-    `circuit`."""
+- `sorting = :number`: how the nodes are ordered, with ground always first.
+    `:number` parses the node names as integers and sorts numerically
+    (an error if a name is not an integer); `:name` sorts the names as
+    strings, so that "101" comes before "11"; `:none` keeps the order of
+    first appearance. The methods taking a typed [`Circuit`](@ref) default
+    to `:name`, since hierarchical net names are not integers."""
 
 """
     SolverInfo(stages, initialresidual, finalresidual, converged,
@@ -272,9 +402,8 @@ Diagnostics describing the nonlinear solution process of
 - `initialresidual`: the norm of the residual at the initial value.
 - `finalresidual`: the norm of the residual at the returned solution.
 - `converged`: whether the solver reported convergence.
-- `sourcefold`: reserved for source stepping continuation, which is not
-    currently implemented, and always `NaN`. It is retained so the field
-    layout of this struct does not change; do not depend on it.
+- `sourcefold`: always `NaN`. Reserved for a source stepping continuation
+    which is not implemented; kept so the field layout does not change.
 """
 struct SolverInfo
     stages
@@ -288,175 +417,134 @@ end
 """
     hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
-        circuit, circuitdefs;dc = false, threewavemixing = false,
-        fourwavemixing = true, maxintermodorder=Inf, iterations = 1000,
-        ftol = 1e-8, symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
-        sorting = :number, returnS = true, returnSnoise = false, returnQE = true,
-        returnCM = true, returnnodeflux = false, returnvoltage = false,
-        returnnodefluxadjoint = false, returnvoltageadjoint = false,
-        keyedarrays = true, sensitivitynames::Vector{String} = String[],
+        circuit, circuitdefs; dc = false, threewavemixing = false,
+        fourwavemixing = true, maxpumpintermodorder = Inf,
+        maxmodulationintermodorder = Inf,
+        maxpumpharmonics = Npumpharmonics,
+        maxmodulationharmonics = Nmodulationharmonics,
+        iterations = 1000, ftol = 1e-8, method = :newtonkrylov,
+        andersondepth = method == :quasinewton ? 5 : 0, x0 = nothing,
+        symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
+        sorting = :number, returnS = true, returnSnoise = false,
+        returnQE = true, returnCM = true, returnnodeflux = false,
+        returnvoltage = false, returnnodefluxadjoint = false,
+        returnvoltageadjoint = false, keyedarrays = true,
+        temperature = 0.0, returnCnoise = false,
+        sensitivitynames::Vector{String} = String[],
         sensitivityoperatingpoint = true, sensitivitymode = :auto,
-        returnSsensitivity = false,
-        factorization = nothing, backend = CPU()) where {N,M}
+        returnSsensitivity = false, krylovcouplingmodes = :none,
+        krylovkwargs = (;), stagedkwargs = (;), factorization = nothing,
+        backend = CPU(), precision = Float64)
 
-Calls the harmonic balance solvers, [`hbnlsolve`](@ref) and
-[`hblinsolve`](@ref), which work for an arbitrary number of modes and ports,
-and for both three and four wave mixing processes. See also [`hbnlsolve`](@ref)
-and [`hblinsolve`](@ref).
+Solve a circuit driven by one or more strong pumps, then linearize about
+that operating point and sweep the weak signal frequencies `ws`. This
+calls [`hbnlsolve`](@ref) for the pump and [`hblinsolve`](@ref) for the
+signals and returns both solutions in an [`HB`](@ref). Any number of
+pumps, ports and modes is supported, for three and four wave mixing.
 
 The system is solved in a modified nodal analysis formulation in the node
-flux basis: resistors with constant real values and mutually coupled
-inductor branches are assigned auxiliary branch current variables (keeping
-the system matrix bounded as coupling coefficients approach one), and one
-gauge fixing equation per floating inductive/Josephson subnetwork and
-zero-frequency mode makes circuits with no inductive path to ground
-exactly solvable in the nonlinear solve. The nonlinear system is
-nondimensionalized by the scale `Z0/w0` (see [`calcsolverscale`](@ref)),
-making `ftol` independent of the unit system. The
-linearized solve throws an informative `ArgumentError` when any signal plus
-pump mode frequency total is (numerically) zero; estimate DC limits from a
-sequence of decreasing nonzero frequencies. All returned quantities contain
-only the node coordinates. See `src/mna.jl`.
+flux basis. Resistors with constant real values and mutually coupled
+inductor branches are given auxiliary branch current variables, which
+keeps the system matrix bounded as a coupling coefficient approaches one,
+and one gauge fixing equation per floating inductive or Josephson
+subnetwork and zero frequency mode makes circuits with no inductive path
+to ground solvable without workaround inductors (see `src/mna.jl`). The
+nonlinear system is nondimensionalized by the scale `Z0/w0` (see
+[`calcsolverscale`](@ref)), so `ftol` does not depend on the unit system.
+The returned node fluxes and voltages contain only the node coordinates,
+not the auxiliary variables. The linearized solve throws an
+`ArgumentError` when any signal plus pump mode frequency is numerically
+zero; estimate a direct current limit from a sequence of decreasing
+nonzero frequencies instead.
 
 # Arguments
-- `ws`: the angular frequency or frequencies of the signal in Hz such as
-    2\\*pi\\*5.0e9 or 2\\*pi\\*(4.5:0.001:5.0)\\*1e9.
-- `wp::NTuple{N,Number}`: a tuple containing the angular frequencies of the
-    strong tones (or pumps) such as (2\\*pi\\*5.0e9,) for a single pump at 5 GHz
-    (2\\*pi\\*5.0e9,2\\*pi\\*6.0e9) for a pump at 5 GHz and a pump at 6 GHz. The
-    frequencies should be non-commensurate. For commensurate pumps, the lowest
-    pump frequency should be provided here, and the other pumps added to
-    `sources` with a mode index equal to the ratio.
-- `sources::Vector`: a vector of named tuples specifying the mode index,
-    port, and current for each source. The named tuple(s) have names
-    mode, port, and current. mode is a tuple specifying the mode or harmonic
-    indices of the pumps, port is an integer specifying the port, and current
-    is a number specifying the current. Note that the current is a complex
-    number 
-    For example:
-    [(mode=(1,0),port=1,current=Ip1),(mode=(0,1),port=1,current=Ip2)]
-    specifies two pumps where the frequency of the first pump would be
-    1\\*wp1 + 0\\*wp2 and the second 0\\*wp1+1\\*wp2 where wp1 is the first
-    pump frequency and wp2 is the second pump frequency. Both of the pumps are
-    applied to port 1 with currents Ip1 and Ip2, respectively. 
-- `Nmodulationharmonics::NTuple{M,Int}`: a tuple of integers describing how
-    many signal and idler modes.
-- `Npumpharmonics::NTuple{N,Int}`: a tuple of integers describing how many
-    harmonics to simulate for each of the pumps. The length of the tuple must
-    equal the number of non-commensurate pumps.
-- `circuit`: vector of tuples each of which contain the component name, the
-    first node, the second node, and the component value. The first three must
-    be strings.
-- `circuitdefs`: a dictionary where the keys are symbols or symbolic
-    variables for component values and the values are the numerical values
-    for the components.
+- `ws`: the signal angular frequency or frequencies in radians per second,
+    such as `2*pi*5.0e9` or `2*pi*(4.5:0.001:5.0)*1e9`.
+- `wp::NTuple{N,Number}`: the pump angular frequencies in radians per
+    second, `(2*pi*5.0e9,)` for a single pump or `(2*pi*5.0e9, 2*pi*6.0e9)`
+    for two. The pumps should be non-commensurate; for commensurate pumps
+    give the lowest frequency here and add the others to `sources` with a
+    mode index equal to the frequency ratio.
+- `sources::Vector`: a vector of named tuples `(mode, port, current)`.
+    `mode` is a tuple of harmonic indices, one per pump frequency, `port`
+    the port number, and `current` the complex current amplitude in
+    Amperes. `[(mode=(1,0), port=1, current=Ip1), (mode=(0,1), port=1,
+    current=Ip2)]` applies a source at `1*wp[1] + 0*wp[2]` and one at
+    `0*wp[1] + 1*wp[2]`, both at port 1. A source with `mode = (0,)` and
+    `dc = true` is a direct current bias.
+- `Nmodulationharmonics::NTuple{M,Int}`: how many harmonics of each pump to
+    retain around the signal in the linearized solve, which sets the
+    signal and idler modes.
+- `Npumpharmonics::NTuple{N,Int}`: how many harmonics of each pump to
+    retain in the nonlinear solve. Its length is the number of
+    non-commensurate pumps.
+- `circuit`: a typed [`Circuit`](@ref), a legacy netlist of
+    `(name, node1, node2, value)` tuples, or a [`CompiledCircuit`](@ref).
+- `circuitdefs`: a dictionary from the symbols or symbolic variables used
+    as component values to their numerical values. Optional when every
+    component value is numeric.
 
 # Keywords
-- `dc = false`: include 0 frequency terms in the harmonic balance analysis.
-- `threewavemixing = false`: simulate three wave mixing processes. 
-- `fourwavemixing = true`: simulate four wave mixing processes.
-- `maxintermodorder=Inf`: the maximum intermod order as defined by the sum of
-    the absolute values of the integers multiplying each of the frequencies
-    being less than or equal to `maxintermodorder`. This performs a diamond
-    truncation of the discrete Fourier space.
-- `iterations = 1000`: the number of iterations before the nonlinear solver
-    returns an error.
+- `dc = false`: retain the zero frequency mode in the nonlinear solve.
+- `threewavemixing = false`: retain the even pump harmonics, which are
+    what three wave mixing processes couple through.
+- `fourwavemixing = true`: retain the odd pump harmonics.
+- `maxpumpintermodorder = Inf`: keep only the pump modes whose harmonic
+    indices have an absolute sum of at most this order, a diamond
+    truncation of the multi-pump Fourier space.
+- `maxmodulationintermodorder = Inf`: the same truncation for the signal
+    modes.
+- `maxpumpharmonics = Npumpharmonics`: an upper bound on the absolute
+    harmonic index retained for each pump, applied together with the
+    intermodulation truncation; see [`truncfreqs`](@ref).
+- `maxmodulationharmonics = Nmodulationharmonics`: the same bound for the
+    signal modes.
+- `iterations = 1000`: the maximum number of nonlinear solver iterations
+    before it returns unconverged.
 $(_DOC_FTOL)
 $(_DOC_METHOD)
 $(_DOC_STAGEDKWARGS)
-- `krylovcouplingmodes = :none`: forwarded to `hbnlsolve`; see there.
-- `krylovkwargs::NamedTuple = (;)`: forwarded to `hbnlsolve`; see there.
+- `krylovcouplingmodes = :none`: which mode couplings the Newton-Krylov
+    preconditioner retains; forwarded to [`hbnlsolve`](@ref).
+- `krylovkwargs::NamedTuple = (;)`: further options of the Newton-Krylov
+    solver; forwarded to [`hbnlsolve`](@ref).
 $(_DOC_ANDERSON)
-- `symfreqvar = nothing`: the symbolic frequency variable, eg `w`.
-- `nbatches = Base.Threads.nthreads()`: the number of batches to split the
-    signal frequencies into for multi-threading. Set to 1 for singled threaded
-    evaluation.
+- `x0 = nothing`: an initial value for the node fluxes of the nonlinear
+    solve.
+- `symfreqvar = nothing`: the symbolic frequency variable, such as `w`,
+    when component values are expressions in the frequency.
+$(_DOC_NBATCHES)
 $(_DOC_SORTING)
-- `returnS = true`: return the scattering parameters from the linearized
-    simulations.
-- `returnSnoise = false`: return the noise scattering parameters from the
-    linearized simulations.
-- `returnCnoise = false`: return the added noise covariance at the output
-    ports, `sum_c occupation[c] Snoise[c,i] conj(Snoise[c,j])`. With the
-    scattering matrix this is the Gaussian channel the circuit implements,
-    taking an input covariance to `S sigma S' + Cnoise`, and it is where the
-    temperature of each channel enters.
-- `returnQE = true`: return the quantum efficiency from the linearized
-    simulations.
-- `returnCM = true`: return the commutation relations from the linearized
-    simulations.
-- `returnnodeflux = false`: return the node fluxes from the linearized
-    simulations.
-- `returnvoltage = false`: return the node voltages from the linearized
-    simulations.
-- `returnnodefluxadjoint = false`: return the node fluxes from the linearized
-    adjoint simulations.
-- `returnvoltageadjoint = false`: return the node voltages from the linearized
-    adjoint simulations.
-- `keyedarrays = true`: when true return the output matrices
-    and vectors as keyed arrays for more intuitive indexing. When false
-    return normal matrices and vectors.
-- `temperature = 0.0`: the physical temperature in Kelvin of every
-    dissipative element, and so of the noise it adds. A channel at
-    temperature `T` carries `coth(hbar*w/(2*k*T))` times its vacuum noise,
-    which at the default of zero temperature is the vacuum noise itself.
-    Raising it lowers the quantum efficiency and leaves `Snoise` alone:
-    `Snoise` is a scattering matrix, describing a transformation rather than
-    the state of anything, and the occupation is applied where the noise
-    power is asked for. The commutation relations are likewise a statement
-    about the transformation, so they stay at one at every temperature and
-    remain a check on the adjoint solve, the covariance factorization and the
-    port normalization.
-
-    The explicitly defined ports are vacuum by definition. A non-vacuum input
-    at a port is had by tracing that port out and assuming one there.
-    A component may state its own temperature instead, and then takes that:
-    a lumped one as `Resistor(R; temperature = T)`, a
-    [`ScatteringParameters`](@ref) as `noise = ThermalEquilibrium(T)`. Only the
-    typed circuit format carries those; a netlist of tuples states none, and
-    everything in it takes this default. A block with a
-    [`NoiseCovariance`](@ref) takes no temperature at all: its covariance is
-    given rather than derived, and scaling it would modify an answer the
-    caller already has.
-- `sensitivitynames::Vector{String} = String[]`: the component names for which
-    to calculate sensitivities. Supported component types are C, L, R and Lj
-    with numeric values. A circuit may contain a [`ScatteringParameters`](@ref)
-    while the sensitivity is taken with respect to its lumped components; a
-    block itself has no scalar value to perturb, so naming one is an error.
-- `sensitivitymode = :auto`: the order in which the contribution of the pump
-    operating point shift is contracted. Both orders run with the pump solve
-    and the signal sweep on the host, on a backend, or split between them. `:forward` costs one product against
-    the sparsity structure of the linearized system per component and per
-    signal frequency; `:reverse` pushes the output functionals through the
-    transposed pump Jacobian once per output port mode pair, leaving a sparse
-    inner product per component, so its cost does not grow with the number of
-    components. `:auto` selects `:reverse` when there are more components
-    than output port mode pairs, which is an operation count rather than a
-    measured crossover. Both orders support any number of pump tones.
+$(_DOC_RETURNS)
+$(_DOC_TEMPERATURE)
+$(_DOC_SENSNAMES)
+$(_DOC_SENSMODE)
 - `sensitivityoperatingpoint = true`: include the shift of the pump
-    operating point in the sensitivities, making the result the total
-    derivative rather than the derivative at a fixed operating point. Near
-    the gain peak of a strongly pumped amplifier the operating point
-    contribution is comparable to or larger than the fixed operating point
-    term, so this is the relevant quantity for optimization and tolerance
-    analysis. Requires the exact real Jacobian of the nonlinear solution,
-    which is assembled and factorized once.
-- `returnSsensitivity = false`: return `dS/dr`, the derivative of the
-    scattering matrix with respect to a relative (logarithmic) perturbation
-    `r` of each component value in `sensitivitynames` (`p -> r*p`, evaluated
-    at `r = 1`), calculated with the adjoint method. The pump operating point
-    is held fixed unless `sensitivityoperatingpoint = true`.
-- `factorization = KLUfactorization()`: the type of factorization to use for
-    the nonlinear and the linearized simulations.
-- `backend = CPU()`: the backend both solves run on. The nonlinear solve
-    assembles, factorizes and iterates there; the linearized sweep solves its
-    signal frequencies there in batches which share a sparsity pattern, and
-    falls back to the host for the requests it cannot serve there (see
-    [`hblinsolve`](@ref)).
+    operating point in the sensitivities, making them total derivatives
+    rather than derivatives at a fixed operating point. Near the gain peak
+    of a strongly pumped amplifier the operating point term is comparable
+    to or larger than the fixed point term. Requires the exact real
+    Jacobian of the nonlinear solution, which is assembled and factorized
+    once. Without Josephson junctions the operating point contribution is
+    identically zero and is skipped.
+$(_DOC_SSENS)
+- `factorization = nothing`: the sparse factorization used by the direct
+    and the linearized solves. `nothing` selects [`KLUfactorization`](@ref)
+    on the host and [`CUDSSFactorization`](@ref) on a CUDA device for the
+    nonlinear solve, and `KLUfactorization` for the linearized solve.
+- `backend = CPU()`: the KernelAbstractions backend both solves run on. The
+    nonlinear solve assembles, factorizes and iterates there; the
+    linearized sweep solves batches of signal frequencies there and falls
+    back to the host for what it cannot serve (see [`hblinsolve`](@ref)).
+- `precision = Float64`: the floating point type of the nonlinear solve.
+- `switchofflinesearchtol`, `alphamin`: deprecated and ignored with a
+    warning.
+- `returnZ`, `returnZadjoint`, `returnZsensitivity`,
+    `returnZsensitivityadjoint`: removed; passing any of them warns.
+    Compute impedances from the scattering parameters instead.
 
 # Returns
-- `HB`: A simple structure to hold the harmonic balance solutions. See
-    [`HB`](@ref).
+- `HB`: the nonlinear and linearized solutions; see [`HB`](@ref).
 
 """
 function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
@@ -491,7 +579,9 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     factorization = nothing, backend = CPU(),
     precision::Type{<:AbstractFloat} = Float64) where {N,M}
 
-    # calculate the Frequencies struct
+    # the pump modes: harmonics of each pump and their intermodulation
+    # products, truncated, with the conjugate (negative frequency) modes
+    # removed since the real signal determines them
     freq = removeconjfreqs(
         truncfreqs(
             calcfreqsrdft(Npumpharmonics); dc = dc, odd = fourwavemixing,
@@ -505,16 +595,16 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
 
     Nmodes = length(freq.modes)
 
-    # parse and sort the circuit
-    # parse, graph, and assemble; a typed circuit takes the compiled path
+    # compile the circuit, build its graph, and assemble the matrices at
+    # the pump mode count
     psc, cg, nm = preparecircuit(circuit, circuitdefs;
         sorting = sorting, Nmodes = Nmodes)
 
 
-    # solve the nonlinear problem. `:staged` goes through the source
-    # continuation driver, which re-derives its truncations from the same
-    # arguments the pump truncation above was built from and manages its own
-    # warm starts; every other method solves the assembled system directly.
+    # The nonlinear solve. `:staged` runs the source continuation driver,
+    # which rebuilds its own truncations from the same arguments and
+    # manages its own warm starts; every other method solves the system
+    # assembled above.
     nonlinear = if method === :staged
         stagedhbnlsolve(wp, Npumpharmonics, sources, circuit, circuitdefs;
             iterations = iterations, ftol = ftol,
@@ -544,19 +634,14 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
             precision = precision)
     end
 
-    # the derivative of the harmonic balance residual with respect to each
-    # component value, for total (operating point inclusive) sensitivities.
-    # The frequencies of the nonlinear solution are the truncated `freq`, so
-    # the numeric matrices `nm` built above have the mode count
-    # `calcresidualsensitivity` expects and everything is reused. The
-    # operating point derivatives dx/dr themselves are computed inside
-    # `hblinsolve` only if the forward contraction order is selected there,
-    # so the reverse order does not pay for the per-component solves.
-    # Without Josephson junctions the linearized system matrix has no
-    # dependence on the solved operating point (its only state dependence
-    # is the junction modulation term), so the operating point contribution
-    # is identically zero and the fixed component stamps are already the
-    # total derivative: skip the residual derivatives entirely.
+    # The derivative of the harmonic balance residual with respect to each
+    # sensitivity component, needed for sensitivities which include the
+    # shift of the operating point. The matrices `nm` were built at the
+    # pump mode count, which is what `calcresidualsensitivity` expects. The
+    # operating point derivatives dx/dr are computed in `hblinsolve` only
+    # when it selects the forward contraction order. Without Josephson
+    # junctions the linearized system does not depend on the operating
+    # point at all, so the contribution is zero and is skipped.
     sensitivityresidual = if sensitivityoperatingpoint && returnSsensitivity &&
             (!isempty(sensitivitynames) || !isempty(sensitivitypairs) ||
              !isempty(sensitivityblockpairs)) &&
@@ -567,15 +652,15 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         elseif isempty(sensitivitypairs)
             nothing
         else
-            # per-pair columns with the design parameter direction folded
-            # in; hblinsolve merges them per parameter with the stamps
+            # one column per (component, parameter) pair with the direction
+            # alpha folded in; hblinsolve merges them per parameter
             calcresidualsensitivity(nonlinear.operatingpoint, psc, cg, nm,
                 [psc.componentnamedict[String(t[1])]
                  for t in sensitivitypairs],
                 [Complex{Float64}(t[3]) for t in sensitivitypairs])
         end
-        # the scattering block pairs contribute their own columns, after
-        # the lumped ones, matching the pair order of hblinsolve
+        # the scattering block pairs add their columns after the lumped
+        # ones, in the order hblinsolve expects
         if !isempty(sensitivityblockpairs)
             blockcols = calcblockresidualsensitivity(
                 nonlinear.operatingpoint, psc, sensitivityblockpairs)
@@ -586,17 +671,17 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         nothing
     end
 
-    # generate the signal modes
+    # the signal modes: the signal and the idlers offset from it by pump
+    # harmonics
     signalfreq =truncfreqs(
         calcfreqsdft(Nmodulationharmonics); dc = true, odd = threewavemixing,
         even = fourwavemixing, maxintermodorder = maxmodulationintermodorder,
         maxharmonics = maxmodulationharmonics,
     )
 
-    # solve the linearized problem. the component values were already
-    # resolved for the nonlinear solve, so the signal side numeric matrices
-    # are built from them directly instead of redoing the symbolic value
-    # resolution at the signal mode count.
+    # The linearized solve. The component values were resolved for the
+    # nonlinear solve, so the signal side matrices are built from `nm.vvn`
+    # rather than resolving the values again at the signal mode count.
     linearized = hblinsolve(ws, psc, cg, nm.vvn, signalfreq;
         nonlinear = nonlinear, symfreqvar = symfreqvar, nbatches = nbatches,
         returnS = returnS, returnSnoise = returnSnoise, returnQE = returnQE,
@@ -616,11 +701,9 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
         returnZsensitivityadjoint = returnZsensitivityadjoint,
-        # the linearized sweep solves its frequencies on the backend when it
-        # can (see hblinsolve), and falls back to the host otherwise, so it
-        # takes the backend as well. The host factorization stays the default
-        # because that fallback is a host solve of complex matrices; an
-        # explicit one is still honored for both solves.
+        # the host factorization is the default here even on a device
+        # backend, because the fallback path of the sweep is a host solve
+        # of complex matrices; an explicit factorization is honored
         factorization = isnothing(factorization) ? KLUfactorization() :
             factorization,
         backend = backend)
@@ -628,8 +711,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     return HB(nonlinear, linearized)
 end
 
-# A fully numeric circuit (such as the output of a circuit builder) needs no
-# component definitions, so `circuitdefs` is optional.
+# A fully numeric circuit needs no component definitions.
 function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
     circuit; kwargs...) where {N,M}
@@ -640,12 +722,11 @@ end
 """
     hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics,
         circuit::Circuit, circuitdefs = Dict{Symbol,Number}();
-        sorting = :name, keyword arguments...)
+        sorting = :name, kwargs...)
 
-Harmonic balance solution of a typed [`Circuit`](@ref). The circuit is
-elaborated and lowered with [`compile`](@ref) and solved with the
-existing solver; all keyword arguments of the legacy method are supported.
-`circuitdefs` is only needed when component values are symbolic. The
+Solve a typed [`Circuit`](@ref). The circuit is elaborated and lowered
+with [`compile`](@ref) and every keyword of the general method applies.
+`circuitdefs` is needed only when component values are symbolic. The
 default `sorting` is `:name` because hierarchical net names are not
 integers.
 """

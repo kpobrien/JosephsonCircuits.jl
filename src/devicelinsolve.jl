@@ -241,10 +241,11 @@ end
 end
 
 """
-    gatherportrows!(out, X, rows)
+    gatherportrows!(out, X, rows, backend)
 
 Gather the rows named by `rows` from every right hand side of every system of
-the batch `X`, into `out`. See [`portsolutionrows`](@ref).
+the batch `X` into `out`, with a kernel on `backend`. See
+[`portsolutionrows`](@ref).
 """
 function gatherportrows!(out::AbstractArray{<:Any,3}, X::AbstractArray{<:Any,3},
     rows::AbstractVector, backend)
@@ -360,12 +361,10 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
             X = X, B = B)
     end
 
-    # One set of scattering values serves both directions: the contribution
-    # does not depend on the direction the system is assembled in, only the
-    # destinations it is scattered to do. Evaluating the providers once
-    # instead of once per direction halves that work whenever the adjoint is
-    # needed; the adjoint's view shares the values and differs only in where
-    # they land.
+    # One set of scattering values serves both directions: a contribution
+    # does not depend on the direction the system is assembled in, only its
+    # destination does, so the adjoint's view shares the values and differs
+    # only in where they land.
     scatstamps = plandevicescattering(lsys.scattering,
         hasscattering ? sweepdestinations(lsys.Asparse,
             lsys.scattering.Aindex, false) : Int[],
@@ -384,16 +383,14 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
         lsys.wpumpmodes, isnothing(lsys.scattering) ? 1.0 :
             lsys.scattering.scale)
 
-    # The staging for one direction. A whole batch is brought back at once and
-    # read from host memory afterwards, so that reading a solution touches the
-    # device not at all and any number of workers may do it at once.
+    # The staging for one direction. A whole batch is brought back at once
+    # and read from host memory afterwards, so reading a solution does not
+    # touch the device and any number of workers may do it at once.
     #
-    # Gathering pays only while the named rows are a small part of the
-    # solution. Past that the copy back is nearly the same size either way and
-    # the gather is just work, so the whole solution is staged instead. A
-    # circuit whose loss is spread along the line reaches this: its noise
-    # ports touch almost every node, so the adjoint solutions the noise
-    # scattering parameters read are almost the entire solution.
+    # Gathering only the named rows pays while they are a small part of the
+    # solution; past that the whole solution is staged instead. A circuit
+    # whose loss is spread along the line reaches this, since its noise
+    # ports touch almost every node.
     function newstage(spec)
         full = spec.full || 4*length(spec.rows) >= n
         rows = full ? Int[] : spec.rows
@@ -623,10 +620,9 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
     out = KernelAbstractions.allocate(backend, T, nrows, nrhs)
     Snoise = KernelAbstractions.allocate(backend, T, nrows, nrhs)
     invinput = KernelAbstractions.allocate(backend, T, nrhs, nrhs)
-    # the two reductions go through the backend's own `sum!`, which is a tree
-    # over the noise index. Summing each column in one work item instead was
-    # measured and it loses badly: it is one thread per port mode, a dozen of
-    # them, each walking every noise port in turn.
+    # the two reductions go through the backend's own `sum!`, a tree over
+    # the noise index; summing each column in one work item would be a
+    # dozen threads each walking every noise port in turn
     absq = KernelAbstractions.allocate(backend, Float64, nrows, nrhs)
     signs = KernelAbstractions.allocate(backend, Float64, nrows, 1)
     denomd = KernelAbstractions.allocate(backend, Float64, 1, nrhs)
@@ -636,13 +632,11 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
     signed = zeros(Float64, nrhs)
     wmodes = zeros(Float64, plan.nmodes)
     reduction = NoiseReduction(denom, signed)
-    # the thermal scale of each row, when any channel is warm. It depends on
-    # the mode frequencies, so it is rebuilt per signal frequency and sent;
-    # it is one row per channel mode, which is small beside the waves.
-    # the occupation of each channel mode, when any channel is warm. It goes
-    # into the sum the quantum efficiency reads and not the one the
-    # commutation relations read, which is the whole of the temperature
-    # dependence and is why they stay at one.
+    # The occupation of each channel mode, when any channel is warm. It
+    # depends on the mode frequencies, so it is rebuilt per signal frequency
+    # and sent; one entry per channel mode, which is small beside the
+    # waves. It enters the sum the quantum efficiency reads and not the one
+    # the commutation relations read, which is why the latter stay at one.
     warm = !isnothing(temperatures) && !all(iszero, temperatures)
     occupationhost = warm ? zeros(Float64, nrows) : Float64[]
     occupationd = warm ? KernelAbstractions.allocate(backend, Float64, nrows) :
@@ -1369,9 +1363,8 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     callables = entrycallables(ssys)
     istable = isnothing(callables)
     # size everything first and fill it in place: a line whose every cell is
-    # its own block has hundreds of thousands of table points between them,
-    # and growing the flat arrays a block at a time cost more than the per
-    # frequency evaluation this exists to remove
+    # its own block has hundreds of thousands of table points, and growing
+    # the flat arrays a block at a time would be slow
     ntot = 0; vtot = 0; ztot = 0
     for sb in ssys.blocks
         p = sb.block.provider

@@ -1,5 +1,26 @@
 __precompile__(true)
 
+"""
+    JosephsonCircuits
+
+A frequency domain simulator for superconducting circuits containing
+Josephson junctions, capacitors, inductors, mutual inductors, resistors,
+and multiport scattering parameter blocks.
+
+Circuits are solved by harmonic balance in a modified nodal analysis
+formulation in the node flux basis. A strong periodic drive (the pump) is
+solved with [`hbnlsolve`](@ref), the circuit is linearized about that
+operating point and swept over weak signal frequencies with
+[`hblinsolve`](@ref), and [`hbsolve`](@ref) runs the two in sequence. From
+the linearized solution the package computes scattering parameters, noise
+scattering parameters, quantum efficiency, commutation relations, and
+adjoint-method sensitivities with respect to component values.
+
+A circuit is written as a [`Circuit`](@ref) of typed component models, or
+as a legacy netlist of `(name, node1, node2, value)` tuples. The stages a
+circuit passes through, and the files that implement them, are listed
+next to the `include` statements below.
+"""
 module JosephsonCircuits
 
 import Graphs
@@ -20,32 +41,31 @@ using LinearAlgebra
 using SparseArrays
 using Touchstone
 
-# define the zero for symbolic numbers so that we can view the sparse arrays
-# Base.zero(::Type{Symbolic{Number}}) = 0
-# Base.zero(::Type{Any}) = 0
-# Base.zero(::Type{Nothing}) = 0
-
+# === physical constants ===
 
 """
     const phi0
 
-A constant for phi0, the reduced magnetic flux quantum in Weber, H*A:
-phi0 = hbar/(2*charge of electron).
+The reduced magnetic flux quantum `hbar/(2e)` in Weber (equivalently
+H*A). This is the flux scale that relates a Josephson junction's inductance
+to its critical current, `Ic = phi0/Lj`, and the unit in which the branch
+phases of the harmonic balance solution are measured.
 """
 const phi0 = 3.29105976e-16
 
 """
     const Phi0
 
-A constant for Phi0, the magnetic flux quantum in Weber, H*A:
-Phi0 = h/(2*charge of electron).
+The magnetic flux quantum `h/(2e)` in Weber (equivalently H*A), equal to
+`2*pi*phi0`.
 """
 const Phi0 = 2.067833848e-15
 
 """
     const speed_of_light
 
-A constant for the speed of light which is 2.99792458e8 m/s.
+The speed of light in vacuum, 2.99792458e8 m/s, the default phase velocity
+of a [`TransmissionLine`](@ref).
 """
 const speed_of_light = 2.99792458e8
 
@@ -53,101 +73,113 @@ const speed_of_light = 2.99792458e8
 """
     const planck_constant
 
-A constant for the Planck constant which is 6.62607015e-34 J*s.
+The Planck constant `h`, 6.62607015e-34 J*s.
 """
 const planck_constant = 6.62607015e-34
 
 """
     const reduced_planck_constant
 
-A constant for the reduced Planck constant which is planck_constant/(2*pi).
+The reduced Planck constant `hbar = h/(2*pi)` in J*s.
 """
 const reduced_planck_constant = planck_constant/(2*pi)
 
 """
     const boltzmann_constant
 
-A constant for the Boltzmann constant which is 1.380649×10−23 J/K.
+The Boltzmann constant `k_B`, 1.380649e-23 J/K, used with
+[`reduced_planck_constant`](@ref) to convert a physical temperature into
+the thermal occupation of a noise channel.
 """
 const boltzmann_constant = 1.380649e-23
 
 
-# The file structure below mimics the typical analysis flow. An input file
-# is first parsed, then the incidence matrix is calculated, then the 
-# capacitance, inverse inductance, and other matrices are calculated, then
-# then circuit is solved using the harmonic balance method, and postprocessed
-# to determine the scattering parameters and quantum efficiency. 
-# How a component value is written and how it becomes a number.
-# --- the circuit -------------------------------------------------------
-# How a component value is written and how it becomes a number.
+# === source files, in the order a circuit passes through them ===
+#
+# Files are included roughly in the order of the analysis flow: a circuit is
+# written, parsed and compiled to flat tables; the tables are turned into
+# the incidence, capacitance and inverse inductance matrices; a harmonic
+# balance system is assembled from those and solved, first for the pump
+# and then linearized for the signals; and the solution is post-processed
+# into scattering parameters, noise, quantum efficiency, sensitivities and
+# exported netlists. Where a file is placed for a reason other than flow
+# order, the reason is noted next to it.
+
+# --- writing a circuit --------------------------------------------------
+# How a component value is written (a number, a symbol, a parameterized
+# expression, or a callable of frequency) and how it becomes a number.
 include("circuitvalue.jl")
-# What each component is: the models, their noise, and the matrix providers
-# a scattering block reads its parameters from.
+# The component models: lumped elements, ports, nonlinear inductors, and
+# multiport scattering and Gaussian channel blocks with the matrix
+# providers their frequency dependent data comes from.
 include("circuitmodel.jl")
-# The input path: the Circuit a user writes and how one level of it is
-# parsed, then the hierarchy flattened and lowered to the compiled tables.
+# The typed `Circuit` the user writes, the parse of one hierarchy level
+# and the node naming and sorting helpers `compile` uses.
 include("parseinput.jl")
+# Flattening the hierarchy (`elaborate`) and lowering it to the integer
+# indexed tables the matrix builders read (`compile`).
 include("circuitcompile.jl")
-# Scattering parameter stamps for the solvers, and the legacy tuple netlist
-# adapted into a Circuit.
+# Stamps of multiport scattering blocks into the harmonic balance system.
 include("scatteringstamp.jl")
+# The legacy tuple netlist, adapted into a `Circuit`.
 include("legacyadapter.jl")
 
 # --- from a compiled circuit to matrices --------------------------------
-include("graphproc.jl")
-include("capindmat.jl")
-include("matutils.jl")
-include("circuitbind.jl")
-include("mna.jl")
-include("dcconductance.jl")
+include("graphproc.jl")        # incidence matrix, spanning tree, loops
+include("capindmat.jl")        # capacitance and inverse inductance matrices
+include("matutils.jl")         # sparse matrix helpers shared by the solvers
+include("circuitbind.jl")      # binding values and pattern-fixed assembly
+include("mna.jl")              # the modified nodal analysis augmentation
+include("dcconductance.jl")    # the explicit direct current block
 
-# --- the pieces a harmonic balance system is assembled from -------------
-include("realcomplexconv.jl")
-include("complexjacobian.jl")
-include("devicepattern.jl")
-include("structureassembly.jl")
-include("nonlinearterm.jl")
-include("nonlineartermtranspose.jl")
-include("fftutils.jl")
+# --- pieces a harmonic balance system is assembled from -----------------
+include("realcomplexconv.jl")  # the equivalent real representation
+include("complexjacobian.jl")  # the holomorphic (complex) Jacobian
+include("devicepattern.jl")    # sparsity patterns of device stamps
+include("structureassembly.jl")# assembly of the real Jacobian structure
+include("nonlinearterm.jl")    # the Josephson nonlinearity, forward map
+include("nonlineartermtranspose.jl") # ...and its transpose for adjoints
+include("fftutils.jl")         # frequency grids and transform plans
 
 # --- the system itself --------------------------------------------------
 include("hbsystem.jl")
 
 # --- the linear algebra it is handed to ---------------------------------
-include("nlsolve.jl")
-include("krylov.jl")
-include("batchedblocks.jl")
-include("cudss.jl")
+include("nlsolve.jl")          # Newton and quasi-Newton with factorizations
+include("krylov.jl")           # Newton-Krylov and its preconditioner types
+include("batchedblocks.jl")    # batched small block factorizations
+include("cudss.jl")            # the cuDSS factorization type (host stubs)
 include("modepreconditioner.jl")
 
 # --- the harmonic balance solves ----------------------------------------
-# the canonical state layout the direct current block is carried in; it
-# supplies a preconditioner, so it follows the abstraction it implements
+# The canonical state layout the direct current block is carried in. It
+# supplies a preconditioner, so it must follow the abstraction it implements
+# in krylov.jl.
 include("compositelayout.jl")
-# the entry point, the result types both solves return, and the shared
-# pieces of their docstrings, which are interpolated at definition time
+# The entry point `hbsolve`, the result types both solves return, and the
+# docstring fragments shared between the three solver docstrings.
 include("hbsolve.jl")
 include("hbnlsolve.jl")
 include("hblinsolve.jl")
-# the device sweep dispatches on the linearized solve's own array types, so
-# it follows it
+# The device sweep dispatches on the linearized solve's own array types, so
+# it follows hblinsolve.jl.
 include("devicelinsolve.jl")
-include("stagedsolve.jl")
-include("hbcache.jl")
-include("hbnonlinearproblem.jl")
+include("stagedsolve.jl")      # source continuation on a growing harmonic grid
+include("hbcache.jl")          # reusable workspace for repeated solves
+include("hbnonlinearproblem.jl") # the system exposed to external solvers
 
 # --- sensitivities ------------------------------------------------------
 include("sensitivities.jl")
 include("designsensitivities.jl")
 
 # --- turning a solution into what was asked for -------------------------
-include("networkparamconversion.jl")
-include("networks.jl")
-include("networkconnection.jl")
-include("qesparams.jl")
-include("keyedarrayutils.jl")
-include("quantumoptics.jl")
-# From DSP.jl https://github.com/JuliaDSP/DSP.jl/blob/master/src/unwrap.jl
+include("networkparamconversion.jl") # S, Z, Y, ABCD, ... conversions
+include("networks.jl")         # closed form networks (lines, couplers, ...)
+include("networkconnection.jl") # connecting scattering parameter networks
+include("qesparams.jl")        # scattering parameters, noise and quantum efficiency
+include("keyedarrayutils.jl")  # keyed array output helpers
+include("quantumoptics.jl")    # symplectic and Bogoliubov utilities
+# Phase unwrapping, copied from DSP.jl (see the license header in the file).
 include("unwrap.jl")
 
 # --- exporting SPICE netlists and running them --------------------------
@@ -156,16 +188,19 @@ include("spiceutils.jl")
 include("spicewrapper.jl")
 include("spiceraw.jl")
 
-# These are deprecated functions
+# Deprecated entry points, kept so that older scripts keep running with a
+# warning.
 include("deprecated.jl")
 
+# Helpers the test suite uses to print and compare solver output.
 include("testutils.jl")
 
 
 """
     LjtoIc(Lj)
 
-Convert the junction inductance to critical current in SI base units.
+The critical current `Ic = phi0/Lj` in Amperes of a Josephson junction
+with junction inductance `Lj` in Henries.
 
 # Examples
 ```jldoctest
@@ -174,16 +209,14 @@ julia> LjtoIc(100e-12)
 ```
 """
 function LjtoIc(Lj)
-    #reduced flux quantum in Weber, H*A
-    # hbar/(2*charge of electron)
-    # phi0 = 3.29105976e-16
     return phi0./Lj
 end
 
 """
     IctoLj(Ic)
 
-Convert the junction critical current to inductance in SI base units.
+The junction inductance `Lj = phi0/Ic` in Henries of a Josephson junction
+with critical current `Ic` in Amperes.
 
 # Examples
 ```jldoctest
@@ -192,14 +225,23 @@ julia> IctoLj(3.29105976e-6)
 ```
 """
 function IctoLj(Ic)
-    # the formula is the same for the two conversions
+    # Lj = phi0/Ic has the same form as Ic = phi0/Lj
     return LjtoIc(Ic)
 end
 
-# The circuit the warmups share: a Josephson parametric amplifier whose port
-# carries its own reference impedance. Written in the typed format because
-# that is the input path worth precompiling; the legacy tuple netlist is
-# adapted into a `Circuit` anyway and is not expected to see much use.
+# === precompilation workloads ===
+#
+# The `warmup*` functions below exercise the main code paths so that
+# PrecompileTools can compile them when the package is installed rather
+# than on first use. The test suite also calls them and compares their
+# output against stored reference values, so changing what they compute
+# requires updating test/JosephsonCircuits.jl.
+
+# The circuit every warmup shares: a single junction parametric amplifier,
+# capacitively coupled to a port which owns its own matched termination.
+# It is written in the typed format because that is the input path worth
+# precompiling; a legacy tuple netlist is adapted into a `Circuit` first
+# and then takes the same path.
 function warmupcircuit(Rleft, Cc, Lj, Cj)
     return Circuit(
         ["P1" => Port(1; Z0 = Rleft), "C1" => Capacitor(Cc),
@@ -209,7 +251,8 @@ function warmupcircuit(Rleft, Cc, Lj, Cj)
          Net("0", [("P1",2), ("Lj1",2), ("C2",2), Ground])])
 end
 
-# the values the warmups solve at, as a symbol keyed dictionary
+# The component values the warmups solve at, keyed by whatever parameter
+# objects `warmupcircuit` was given (symbols or `@params` parameters).
 warmupdefs(Rleft, Cc, Lj, Cj) = Dict(
     Lj => 1000.0e-12,
     Cc => 100.0e-15,
@@ -217,6 +260,7 @@ warmupdefs(Rleft, Cc, Lj, Cj) = Dict(
     Rleft => 50.0,
 )
 
+# The full pump plus signal solve with symbol valued components.
 function warmup()
 
     circuit = warmupcircuit(:Rleft, :Cc, :Lj, :Cj)
@@ -238,6 +282,8 @@ function warmup()
 end
 
 
+# The same solve with `CircuitValue` parameters, which is the form a
+# Symbolics `Num` is lowered to.
 function warmupsyms()
 
     @params R Cc Lj Cj
@@ -254,12 +300,14 @@ function warmupsyms()
         Npumpharmonics, circuit, circuitdefs;ftol=1e-12)
 end
 
+# Elaboration and compilation of the typed circuit alone.
 function warmupcompile()
 
     @params Rleft Cc Lj Cj
     return compile(warmupcircuit(Rleft, Cc, Lj, Cj))
 end
 
+# The capacitance and inverse inductance matrices at numeric values.
 function warmupnumericmatrices()
 
     @params Rleft Cc Lj Cj
@@ -267,6 +315,7 @@ function warmupnumericmatrices()
     return numericmatrices(circuit, warmupdefs(Rleft, Cc, Lj, Cj))
 end
 
+# A linear (no pump) frequency sweep.
 function warmuphblinsolve()
 
     @params Rleft Cc Lj Cj
@@ -275,6 +324,7 @@ function warmuphblinsolve()
         warmupdefs(Rleft, Cc, Lj, Cj))
 end
 
+# Resolving the compiled component values to numbers.
 function warmupvvn()
 
     @params Rleft Cc Lj Cj
@@ -284,9 +334,12 @@ function warmupvvn()
         warmupdefs(Rleft, Cc, Lj, Cj))
 end
 
+# Every network parameter conversion, for every input shape it accepts.
+# This is not part of the precompile workload (see the note there) but is
+# kept as a manual probe and for the test suite.
 function warmupnetwork()
-    # StoZ, StoY, StoA, StoB, StoABCD
-    # the different functions we want to test
+    # conversions to and from scattering parameters, which take a port
+    # impedance keyword
     for f in [
             (JosephsonCircuits.ZtoS,JosephsonCircuits.StoZ),
             (JosephsonCircuits.YtoS,JosephsonCircuits.StoY),
@@ -327,8 +380,8 @@ function warmupnetwork()
         end
     end
 
-    # StoT, AtoB, ZtoA, YtoA, YtoB, ZtoB, ZtoY
-    # the different functions we want to test
+    # conversions between the other representations, which take no port
+    # impedance
     for f in [
             (JosephsonCircuits.StoT,JosephsonCircuits.TtoS),
             (JosephsonCircuits.AtoB,JosephsonCircuits.BtoA),
@@ -358,7 +411,7 @@ function warmupnetwork()
     end
 
 
-    #  network devices, consistency check
+    # closed form two port networks in their ABCD, Z and Y forms
     x1 = rand(Complex{Float64})
     x2 = rand(Complex{Float64})
     x3 = rand(Complex{Float64})
@@ -385,6 +438,9 @@ function warmupnetwork()
     return true
 end
 
+# Connecting scattering parameter networks, with symbol and string names,
+# with single matrices and with frequency indexed arrays, through both the
+# graph based `connectS` and the linear system based `solveS`.
 function warmupconnect()
     # define an open
     Sopen = ones(Complex{Float64},1,1)
@@ -455,12 +511,12 @@ export hbsolve, hbnlsolve, hblinsolve, compile,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
     connectS, solveS
 
-# The CircuitValues expression type is INTERNAL: it is the lowering target
-# of the Symbolics extension and the representation of parameterized
-# netlist-file expressions. Users parameterize circuits with ordinary
-# Julia functions (builders) and numbers; there is deliberately no public
-# symbolic-looking parameter type, whose closed operator set would be a
-# confusing boundary. `@params` is used by internal warmup code only.
+# The `CircuitValues` expression type is internal: it is what a Symbolics
+# `Num` and a parameterized netlist file expression are lowered to. It is
+# deliberately not exported as a user facing symbolic type, because its
+# closed operator set (see circuitvalue.jl) would make a confusing public
+# boundary; users parameterize circuits with symbols, numbers, and ordinary
+# Julia functions. `@params` is imported for the warmups above only.
 import .CircuitValues: @params
 export FrequencyDependent, designsensitivities, designjacobian,
     hbcache, hbsolve!,
@@ -469,7 +525,7 @@ export FrequencyDependent, designsensitivities, designjacobian,
     setdrive!, drivenresidual!, NewtonKrylov, Newton, QuasiNewton,
     ExternalSolver, InternalGMRES, KrylovJL
 
-# the typed circuit representation
+# the typed circuit representation and its component models
 export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
     Inductor, Capacitor, Resistor, CurrentSource, VoltageSource, Port,
     MutualInductor, JosephsonJunction, NonlinearInductor, PolynomialCPR,
@@ -480,27 +536,25 @@ export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
     ComponentNotSupportedError
 
 
-# the below precompile directives are to help the compiler perform type inference
-# during the precompilation stage (when the package is installed) instead of
-# when it is loaded or the functions are run. this is a helpful guide:
-# https://timholy.github.io/SnoopCompile.jl/stable/tutorials/invalidations/#Tutorial-on-@snoop_invalidations
-# https://timholy.github.io/SnoopCompile.jl/stable/tutorials/snoop_inference/#Tutorial-on-@snoop_inference
-# and the basic commands to look at the inference triggers
-# julia> using SnoopCompileCore, JosephsonCircuits
-# julia> tinf = @snoop_inference JosephsonCircuits.warmupconnect();
-# julia> using SnoopCompile, AbstractTrees
-# julia> print_tree(tinf, maxdepth=100)
+# The precompile workload runs the warmups when the package is installed so
+# that type inference and compilation happen then rather than at load time
+# or on first call. To see what still gets inferred at run time:
+#
+#   julia> using SnoopCompileCore, JosephsonCircuits
+#   julia> tinf = @snoop_inference JosephsonCircuits.warmupconnect();
+#   julia> using SnoopCompile, AbstractTrees
+#   julia> print_tree(tinf, maxdepth=100)
+#
+# See the SnoopCompile.jl tutorials on inference and invalidations.
 
 PrecompileTools.@compile_workload begin
     warmup()
     warmupsyms()
-    # warmupnetwork() is deliberately NOT part of the workload: it costs
-    # about 20 seconds of precompile time (a third of the total) compiling
-    # every network-parameter conversion for every input shape, while a
-    # cold first call of one conversion costs a quarter of a second. The
-    # function itself is kept as a manual probe and for the test suite.
+    # `warmupnetwork()` is deliberately not part of the workload. It
+    # compiles every network parameter conversion for every input shape,
+    # which is a large fraction of the total precompile time, while a cold
+    # first call of any one conversion is cheap.
     warmupconnect()
 end
 
-#end module
-end
+end # module JosephsonCircuits
