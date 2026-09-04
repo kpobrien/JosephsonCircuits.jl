@@ -145,7 +145,6 @@ function legacyportnumber(name, value)
 end
 
 """
-    Circuit(netlist::AbstractVector)
     Circuit(netlist::AbstractVector, circuitdefs)
 
 Construct a typed [`Circuit`](@ref) from a legacy tuple netlist. Each entry
@@ -154,6 +153,8 @@ prefix of `name`: `Lj` (Josephson junction), `NL`, `L`, `C`, `K` (mutual
 inductor, whose "nodes" are the two inductor names), `I`, `R`, and `P`
 (port, whose value is the port number). Only this adapter reads a name
 prefix; typed component models never infer behavior from an instance name.
+The one argument `Circuit(netlist)` reads a legacy netlist the same way
+when its entries end in values rather than typed components.
 
 Node labels become net names, so [`compile`](@ref) of the result gives the
 same tables the tuple netlist always produced. A port's reference
@@ -169,14 +170,13 @@ julia> Circuit([("P1","1","0",1),("R1","1","0",50.0),("C1","1","0",1e-12)]) isa 
 true
 ```
 """
-function Circuit(netlist::AbstractVector)
+function Circuit(netlist::AbstractVector, circuitdefs::AbstractDict)
     # The element type is not restricted to `Tuple`: a netlist built by
     # pushing onto a `Vector{Any}` is accepted, and `legacycircuit` checks
     # each entry and reports what is wrong with it.
-    return legacycircuit(netlist, nothing)
-end
-
-function Circuit(netlist::AbstractVector, circuitdefs::AbstractDict)
+    if any(isnetlistentry, netlist)
+        throw(ArgumentError("A netlist of typed components takes no circuitdefs here; parameterized values are resolved by the analysis, which takes the definitions as usual."))
+    end
     return legacycircuit(netlist, circuitdefs)
 end
 

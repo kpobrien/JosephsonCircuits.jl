@@ -268,12 +268,22 @@ list with no entries in the connections:
 
 The referenced identifiers are resolved within the containing circuit during
 elaboration, so each instance of a subcircuit couples its own inductors.
+
+In the netlist form of [`Circuit`](@ref) the entry names the two inductors
+in place of nodes, and the component is written `MutualInductor(K)` alone:
+
+```julia
+(:k1, :l1, :l2, MutualInductor(0.9))
+```
 """
 struct MutualInductor{T,I1,I2} <: AbstractComponent
     K::T
     inductor1::I1
     inductor2::I2
 end
+
+# the inductors are named by the netlist entry
+MutualInductor(K) = MutualInductor(K, nothing, nothing)
 
 # === nonlinear inductive elements ===
 

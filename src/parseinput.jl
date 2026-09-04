@@ -232,6 +232,144 @@ end
 countelements(x) = Base.IteratorSize(x) isa Union{Base.HasLength,Base.HasShape} ?
     length(x) : count(Returns(true), x)
 
+# === the netlist form ===
+
+"""
+    Circuit(netlist::AbstractVector; pins = nothing, ports = nothing)
+
+Construct a [`Circuit`](@ref) from a netlist: a vector of entries
+`(name, nodes..., component)`, one per component instance, each listing the
+node of every terminal in terminal order, as a SPICE netlist does.
+
+- `name` is the instance identifier, a `Symbol` or a string.
+- The nodes are integers, strings or symbols. Node `0` (or `"0"`) is
+  ground. Every entry naming a node joins its net, and the nets carry the
+  node names.
+- `component` is a typed component model, and the entry lists one node
+  per terminal in terminal order: two for a lumped element or a port; for
+  a [`ScatteringParameters`](@ref) block the signal and reference
+  terminal of each port in turn, or the signal terminal alone when the
+  block is `grounded`; for a subcircuit [`Circuit`](@ref) one per
+  interface pin, in the order the pins were declared.
+- A [`MutualInductor`](@ref) has no terminals. Its entry names the two
+  inductors it couples in place of nodes, and the component is written
+  `MutualInductor(K)`.
+
+`pins` and `ports` declare an interface as they do for the connection-group
+form, so a netlist can define a subcircuit.
+
+The netlist is the connection-group form with the groups written out by
+node, and builds exactly that: the components in netlist order and one
+named connection group per node. What the connection-group form expresses
+beyond a node list, such as the bundled port views of pair connections, is
+written in that form.
+
+A vector of entries carrying numeric values under type-prefixed names,
+`("C1", "1", "0", 1e-12)`, is the legacy tuple netlist, which this method
+reads through the adapter of [`Circuit(netlist, circuitdefs)`](@ref).
+
+# Examples
+```jldoctest
+julia> circuit = Circuit([
+           (:p1, 1, 0, Port(1; Z0 = 50.0)),
+           (:cc, 1, 2, Capacitor(100e-15)),
+           (:jj, 2, 0, JosephsonJunction(1000e-12)),
+           (:cj, 2, 0, Capacitor(1000e-15))]);
+
+julia> compile(circuit).nodenames
+3-element Vector{String}:
+ "0"
+ "1"
+ "2"
+```
+"""
+function Circuit(netlist::AbstractVector; pins = nothing, ports = nothing)
+    typed = count(isnetlistentry, netlist)
+    if typed == length(netlist) && typed > 0
+        return netlistcircuit(netlist; pins = pins, ports = ports)
+    elseif typed > 0
+        throw(ArgumentError("The netlist mixes entries whose last element is a typed component with entries which are not; a netlist is one or the other."))
+    end
+    if !isnothing(pins) || !isnothing(ports)
+        throw(ArgumentError("A legacy tuple netlist has no interface; give pins and ports to a netlist of typed components or to the connection-group form."))
+    end
+    return legacycircuit(netlist, nothing)
+end
+
+# an entry of the netlist form ends in a component model; a legacy entry
+# ends in a value
+isnetlistentry(e) = e isa Tuple && length(e) >= 2 &&
+    (last(e) isa AbstractComponent || last(e) isa GroundType)
+
+function netlistcircuit(netlist::AbstractVector; pins = nothing,
+        ports = nothing)
+    components = Vector{Any}(undef, length(netlist))
+    nodeorder = String[]
+    groups = Dict{String,Vector{Any}}()
+    for (i, entry) in enumerate(netlist)
+        name = first(entry)
+        def = last(entry)
+        nodes = entry[2:end-1]
+        if !(name isa Union{Symbol,AbstractString})
+            throw(ArgumentError(lazy"The netlist entry $(i) names its component $(name), which is not a Symbol or a string."))
+        end
+        if def isa MutualInductor
+            # the entry names the inductors where the others name nodes
+            if length(nodes) != 2
+                throw(ArgumentError(lazy"The mutual inductor $(name) must name the two inductors it couples, as (name, inductor1, inductor2, MutualInductor(K)); its entry has $(length(nodes)) names."))
+            end
+            if isnothing(def.inductor1) && isnothing(def.inductor2)
+                def = MutualInductor(def.K, nodes[1], nodes[2])
+            elseif !(isequal(def.inductor1, nodes[1]) &&
+                    isequal(def.inductor2, nodes[2]))
+                throw(ArgumentError(lazy"The mutual inductor $(name) names $(nodes[1]) and $(nodes[2]) in its entry but $(def.inductor1) and $(def.inductor2) in its component; write MutualInductor(K) and let the entry name them."))
+            end
+            components[i] = name => def
+            continue
+        end
+        endpoints = netlistendpoints(def, name)
+        if length(nodes) != length(endpoints)
+            throw(ArgumentError(lazy"The component $(name) has $(length(endpoints)) terminals but its netlist entry lists $(length(nodes)) nodes; an entry is (name, nodes..., component) with one node per terminal."))
+        end
+        components[i] = name => def
+        for (endpoint, node) in zip(endpoints, nodes)
+            label = string(node)
+            if occursin('/', label)
+                throw(ArgumentError(lazy"The node $(label) of $(name) contains the reserved hierarchical path separator \"/\"."))
+            end
+            group = get!(() -> (push!(nodeorder, label); Any[]), groups,
+                label)
+            push!(group, endpoint)
+        end
+    end
+    connections = Vector{Any}(undef, length(nodeorder))
+    for (i, label) in enumerate(nodeorder)
+        group = groups[label]
+        label == "0" && push!(group, Ground)
+        connections[i] = Net(label, group)
+    end
+    return Circuit(components, connections; pins = pins, ports = ports)
+end
+
+# the endpoints of an instance in terminal order, as the connection groups
+# address them: a scalar terminal, a grounded block's port, a two terminal
+# port's (port, terminal), or a subcircuit's pin key
+function netlistendpoints(def, name)
+    return [(name, t) for t in 1:nterminals(def)]
+end
+function netlistendpoints(def::Union{ScatteringParameters,GaussianChannel},
+        name)
+    np = componentnports(def)
+    isgrounded(def) && return [(name, p) for p in 1:np]
+    return [(name, p, t) for p in 1:np for t in 1:2]
+end
+function netlistendpoints(def::Circuit, name)
+    if isnothing(def.interface)
+        throw(ArgumentError(lazy"The subcircuit $(name) has no interface; give it pins to use it as a component."))
+    end
+    return [(name, pin.first) for pin in def.interface.pins]
+end
+
 # A compact display: the stored collections can be large for generated
 # circuits, and a nested subcircuit would otherwise print recursively.
 function Base.show(io::IO, c::Circuit)
@@ -654,6 +792,9 @@ function parsemutuals(table::ComponentTable)
     mutuals = NTuple{3,Int}[]
     for (i, def) in enumerate(table.defs)
         if def isa MutualInductor
+            if isnothing(def.inductor1) || isnothing(def.inductor2)
+                throw(ArgumentError(lazy"The mutual inductor $(table.ids[i]) names no inductors. Write MutualInductor(K, inductor1, inductor2) in the connection-group form; MutualInductor(K) alone is for the netlist form, where the entry names the inductors."))
+            end
             i1 = get(table.index, def.inductor1, 0)
             i2 = get(table.index, def.inductor2, 0)
             if i1 == 0 || i2 == 0

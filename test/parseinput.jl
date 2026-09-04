@@ -67,6 +67,141 @@ using Test
         @test isapprox(S21flat, S21hier; rtol = 1e-6)
     end
 
+    @testset "netlist form" begin
+        # the same JPA as a netlist of typed components and as connection
+        # groups: the compiled tables agree except that the netlist names
+        # its nets after the nodes
+        netlist = Circuit([
+            (:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:cc, 1, 2, Capacitor(100e-15)),
+            (:jj, 2, 0, JosephsonJunction(1000e-12)),
+            (:cj, 2, 0, Capacitor(1000e-15))])
+        groups = Circuit(
+            [:p1 => Port(1; Z0 = 50.0), :cc => Capacitor(100e-15),
+             :jj => JosephsonJunction(1000e-12), :cj => Capacitor(1000e-15),
+             :gnd => Ground()],
+            [[(:p1, 1), (:cc, 1)], [(:cc, 2), (:jj, 1), (:cj, 1)],
+             [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+        a = compile(netlist)
+        b = compile(groups)
+        @test a.nodenames == ["0", "1", "2"]
+        @test b.nodenames == ["0", "net1", "net2"]
+        # the compiled tables agree except for the net names; a compiled
+        # block record compares by identity, so its fields are compared
+        samerecords(u, v) = length(u) == length(v) && all(
+            all(isequal(getfield(x, f), getfield(y, f))
+                for f in fieldnames(typeof(x))) for (x, y) in zip(u, v))
+        sametables(a, b) = all(fieldnames(typeof(a))) do f
+            f == :nodenames && return true
+            f == :scatteringblocks &&
+                return samerecords(getfield(a, f), getfield(b, f))
+            return JosephsonCircuits.compare(getfield(a, f), getfield(b, f))
+        end
+        @test sametables(a, b)
+        # nodes as strings and symbols, names as strings, ground as "0"
+        @test JosephsonCircuits.comparestruct(a, compile(Circuit([
+            ("p1", "1", "0", Port(1; Z0 = 50.0)),
+            ("cc", "1", "2", Capacitor(100e-15)),
+            ("jj", :2, "0", JosephsonJunction(1000e-12)),
+            ("cj", :2, 0, Capacitor(1000e-15))])))
+
+        # a mutual inductor names its inductors in place of nodes
+        km = compile(Circuit([
+            (:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:l1, 1, 2, Inductor(1e-9)), (:l2, 2, 3, Inductor(2e-9)),
+            (:l3, 3, 0, Inductor(4e-9)),
+            (:k, :l1, :l2, MutualInductor(0.9)),
+            (:c1, 1, 0, Capacitor(1e-12))]))
+        kg = compile(Circuit(
+            Any[:p1 => Port(1; Z0 = 50.0), :l1 => Inductor(1e-9),
+                :l2 => Inductor(2e-9), :l3 => Inductor(4e-9),
+                :k => MutualInductor(0.9, :l1, :l2),
+                :c1 => Capacitor(1e-12), :gnd => Ground()],
+            Any[[(:p1,1),(:l1,1),(:c1,1)], [(:l1,2),(:l2,1)],
+                [(:l2,2),(:l3,1)], [(:l3,2),(:p1,2),(:c1,2),(:gnd,1)]]))
+        @test km.mutualinductorbranchnames == kg.mutualinductorbranchnames
+        @test km.componenttypes == kg.componenttypes
+        # the fully named component is accepted when it agrees with the
+        # entry (the trailing resistor is the port's matched termination)
+        @test compile(Circuit([
+            (:l1, 1, 0, Inductor(1e-9)), (:l2, 1, 0, Inductor(2e-9)),
+            (:k, :l1, :l2, MutualInductor(0.9, :l1, :l2)),
+            (:p1, 1, 0, Port(1))])).componenttypes == [:L, :L, :K, :P, :R]
+        @test_throws ArgumentError Circuit([
+            (:l1, 1, 0, Inductor(1e-9)), (:l2, 1, 0, Inductor(2e-9)),
+            (:k, :l1, :l2, MutualInductor(0.9, :l2, :l1)),
+            (:p1, 1, 0, Port(1))])
+        # and MutualInductor(K) alone has no place in the connection-group
+        # form, where nothing names the inductors
+        @test_throws ArgumentError Circuit(
+            Any[:l1 => Inductor(1e-9), :l2 => Inductor(2e-9),
+                :k => MutualInductor(0.9), :p1 => Port(1)],
+            Any[[(:p1,1),(:l1,1),(:l2,1)], [(:p1,2),(:l1,2),(:l2,2),Ground]])
+
+        # an entry lists one node per terminal, so a subcircuit instance
+        # lists its pins and a block its port terminals
+        cell(Lj, Cj, Cg) = Circuit([
+            (:jj, 1, 2, JosephsonJunction(Lj)), (:cj, 1, 2, Capacitor(Cj)),
+            (:cg, 2, 0, Capacitor(Cg))];
+            pins = [1 => (:jj, 1), 2 => (:jj, 2)])
+        line = Circuit([
+            (:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:cell1, 1, 2, cell(1e-9, 50e-15, 40e-15)),
+            (:cell2, 2, 3, cell(1e-9, 50e-15, 40e-15)),
+            (:p2, 3, 0, Port(2; Z0 = 50.0))])
+        lc = compile(line)
+        @test lc.nodenames == ["0", "1", "2", "3"]
+        @test count(==(:Lj), lc.componenttypes) == 2
+        # a grounded block lists its signal terminals, an ungrounded one
+        # both terminals of every port
+        att = ScatteringParameters([0.0 0.5; 0.5 0.0])
+        @test sametables(compile(Circuit([
+                (:p1, 1, 0, Port(1; Z0 = 50.0)),
+                (:s, 1, 2, att),
+                (:p2, 2, 0, Port(2; Z0 = 50.0))])),
+            compile(Circuit(
+                [:p1 => Port(1; Z0 = 50.0), :s => att,
+                 :p2 => Port(2; Z0 = 50.0), :gnd => Ground()],
+                [[(:p1,1),(:s,1)], [(:s,2),(:p2,1)],
+                 [(:p1,2),(:p2,2),(:gnd,1)]])))
+        attu = ScatteringParameters([0.0 0.5; 0.5 0.0]; grounded = false)
+        @test sametables(compile(Circuit([
+                (:p1, 1, 0, Port(1; Z0 = 50.0)),
+                (:s, 1, 0, 2, 0, attu),
+                (:p2, 2, 0, Port(2; Z0 = 50.0))])),
+            compile(Circuit(
+                [:p1 => Port(1; Z0 = 50.0), :s => attu,
+                 :p2 => Port(2; Z0 = 50.0), :gnd => Ground()],
+                [[(:p1,1),(:s,1,1)], [(:s,2,1),(:p2,1)],
+                 [(:p1,2),(:p2,2),(:s,1,2),(:s,2,2),(:gnd,1)]])))
+        @test_throws ArgumentError Circuit([
+            (:p1, 1, 0, Port(1; Z0 = 50.0)), (:s, 1, 2, attu)])
+        # a subcircuit lists its pins by declaration order, whatever their keys
+        keyed = Circuit([(:l, 1, 2, Inductor(1e-9))];
+            pins = [:in => (:l, 1), :out => (:l, 2)])
+        @test sametables(compile(Circuit([
+                (:p1, 1, 0, Port(1; Z0 = 50.0)), (:x, 1, 2, keyed),
+                (:p2, 2, 0, Port(2; Z0 = 50.0))])),
+            compile(Circuit(
+                [:p1 => Port(1; Z0 = 50.0), :x => keyed,
+                 :p2 => Port(2; Z0 = 50.0), :gnd => Ground()],
+                [[(:p1,1),(:x,:in)], [(:x,:out),(:p2,1)],
+                 [(:p1,2),(:p2,2),(:gnd,1)]])))
+        @test_throws ArgumentError Circuit([
+            (:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 2, 0, Capacitor(1e-12))])
+        # the two netlist forms do not mix, and the legacy adapter still
+        # reads its own
+        @test_throws ArgumentError Circuit([
+            (:p1, 1, 0, Port(1; Z0 = 50.0)), ("C1", "1", "0", 1e-12)])
+        @test_throws ArgumentError Circuit([
+            (:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(1e-12))],
+            Dict{Symbol,Number}())
+        @test compile(Circuit([("P1","1","0",1), ("R1","1","0",50.0),
+            ("C1","1","0",1e-12)])).componenttypes == [:P, :R, :C]
+        @test_throws ArgumentError Circuit([("P1","1","0",1),
+            ("R1","1","0",50.0)]; pins = [1 => ("P1", 1)])
+    end
+
     @testset "pair syntax and subcircuit ports" begin
         function resonator()
             return Circuit(

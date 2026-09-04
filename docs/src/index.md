@@ -57,11 +57,189 @@ For context, the simulation times reported for the examples below use 16 threads
 
 The examples can be run in the command line (REPL) after starting Julia or you can run them in a Jupyter notebook with [IJulia](https://github.com/JuliaLang/IJulia.jl) or in Visual Studio Code with the [Julia extension](https://code.visualstudio.com/docs/languages/julia).
 
-# Usage:
-Generate a netlist using circuit components including capacitors `C`, inductors `L`, Josephson junctions described by the Josephson inductance `Lj`, mutual inductors described by the mutual coupling coefficient `K`, and resistors `R`. See the [SPICE netlist format](https://duckduckgo.com/?q=spice+netlist+format), docstrings, and examples below for usage. Run the harmonic balance analysis using [`hbnlsolve`](https://josephsoncircuits.org/stable/reference/#JosephsonCircuits.hbnlsolve-Union{Tuple{K},%20Tuple{N},%20Tuple{NTuple{N,%20Number},%20Any,%20JosephsonCircuits.Frequencies{N},%20JosephsonCircuits.FourierIndices{N},%20JosephsonCircuits.CompiledCircuit,%20JosephsonCircuits.CircuitGraph,%20JosephsonCircuits.CircuitMatrices}}%20where%20{N,%20K}) to solve a nonlinear system at one operating point, [`hblinsolve`](https://josephsoncircuits.org/dev/reference/#JosephsonCircuits.hblinsolve-Union{Tuple{K},%20Tuple{Any,%20Any,%20Any}}%20where%20K) to solve a linear (or linearized) system at one or more frequencies, or [`hbsolve`](https://josephsoncircuits.org/dev/reference/#JosephsonCircuits.hbsolve-Union{Tuple{K},%20Tuple{M},%20Tuple{N},%20Tuple{Any,%20NTuple{N,%20Number},%20Vector,%20NTuple{M,%20Int64},%20NTuple{N,%20Int64},%20Any,%20Any}}%20where%20{N,%20M,%20K}) to run both analyses. Add a question mark `?` in front of a function to access the docstring. For example, type (don't copy-paste) the following to see the documentation for `hbsolve`:
+# Defining a circuit
+
+A circuit is a list of component instances and the connections between
+their terminals. It is written in one of two forms, and both build the same
+`Circuit` object.
+
+## The netlist form
+
+Each entry is a tuple of the instance name, the node of every terminal in
+order, and the component: `(name, nodes..., component)`, as a line of a
+SPICE netlist. Names are symbols or strings, nodes are integers, strings or
+symbols, and node `0` (or `"0"`) is ground. Entries which name the same node
+share a net, and the nets take the node names, so they can be found again in
+the outputs.
+
+```julia
+using JosephsonCircuits
+
+R = 50.0
+Cc = 100.0e-15
+Lj = 1000.0e-12
+Cj = 1000.0e-15
+
+# a Josephson parametric amplifier: a port, a coupling capacitor, and a
+# junction shunted by a capacitor, with node 0 the ground
+circuit = Circuit(
+    [(:p1, 1, 0, Port(1; Z0 = R)),
+     (:cc, 1, 2, Capacitor(Cc)),
+     (:jj, 2, 0, JosephsonJunction(Lj)),
+     (:cj, 2, 0, Capacitor(Cj))])
 ```
-?hbsolve
+
+The components are typed: `Capacitor`, `Inductor`, `Resistor`,
+`JosephsonJunction`, `Port` (with its reference impedance `Z0`),
+`MutualInductor`, `NonlinearInductor`, `ScatteringParameters` for a block
+described by its scattering matrix, and a `Circuit` with an interface as a
+subcircuit. A component value may be a number, a complex number (a
+capacitor with dielectric loss), or a `FrequencyDependent` function of the
+mode frequency.
+
+An entry lists one node per terminal, so the form is not limited to two
+terminal elements. A subcircuit instance lists its pins in the order they
+were declared, a scattering parameter block lists the signal terminal of
+each port (or both terminals of each port when the block is not grounded),
+and a mutual inductor, which couples two inductor branches rather than
+nets, names the two inductors in place of nodes:
+
+```julia
+(:k1, :l1, :l2, MutualInductor(0.9))
 ```
+
+## The connection-group form
+
+The same circuit written as a list of named components and a list of
+connection groups, each group naming the terminals which share a net. A
+terminal is `(instance, number)`; `Ground` may appear in any group, and may
+also be declared as a component, `:gnd => Ground()`, and referred to
+through its single terminal.
+
+```julia
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = R),
+     :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj),
+     :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+```
+
+This is the form the netlist form expands to. It is what to use when a
+connection is not a node list: the bundled port views of scattering blocks
+in pair connections, or nets named explicitly with `Net`. The two forms may
+be mixed freely across a hierarchy, since either produces a `Circuit`.
+
+## Subcircuits
+
+A `Circuit` given an interface through the `pins` keyword is a component,
+and is instanced in either form like any other. The pins map an interface
+pin number to a terminal of an inner component. The examples below build
+traveling wave amplifiers from unit cells and a snake amplifier from
+hierarchical subcircuits this way; a subcircuit instanced many times, such
+as a unit cell, is defined once, and the flattened circuit names its inner
+nets by path.
+
+```julia
+# one unit cell of a transmission line, exposed through pins 1 and 2
+cell(Lj, Cj, Cg) = Circuit(
+    [(:jj, 1, 2, JosephsonJunction(Lj)),
+     (:cj, 1, 2, Capacitor(Cj)),
+     (:cg, 1, 0, Capacitor(Cg))];
+    pins = [1 => (:jj, 1), 2 => (:jj, 2)])
+
+# three cells in a chain between two ports
+line = Circuit(
+    [(:p1, 1, 0, Port(1)),
+     (:cell1, 1, 2, cell(1e-9, 50e-15, 40e-15)),
+     (:cell2, 2, 3, cell(1e-9, 50e-15, 40e-15)),
+     (:cell3, 3, 4, cell(1e-9, 50e-15, 40e-15)),
+     (:p2, 4, 0, Port(2))])
+```
+
+The older netlist of `(name, node1, node2, value)` tuples with the
+component type given by the prefix of the name, `("C1", "1", "0", 1e-12)`,
+is still read; see the `Circuit` docstring.
+
+# Running a simulation
+
+Three functions run the analyses. Add a question mark `?` in front of a
+function to read its docstring, for example `?hbsolve`.
+
+- `hbnlsolve(wp, Npumpharmonics, sources, circuit)` solves the nonlinear
+  circuit driven by the pumps: the harmonic balance solution of the pump
+  and its harmonics at one operating point.
+- `hblinsolve(ws, circuit; nonlinear = ...)` sweeps weak signals through
+  the circuit linearized about that operating point, or through a linear
+  circuit when no operating point is given.
+- `hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics, circuit)`
+  runs both in sequence, which is what the examples below do.
+
+The drive is a vector of sources, each a mode, a port and a current
+amplitude: `(mode = (1,), port = 1, current = Ip)` is a current of amplitude
+`Ip` at the first pump frequency `wp[1]` applied to port 1, and
+`(mode = (0,), port = 2, current = Idc)` a direct current bias on port 2
+(with `dc = true`). With two pumps the mode is a pair, `(1, 0)` and
+`(0, 1)`. The harmonic counts say how many pump harmonics the nonlinear
+solve keeps and how many signal and idler modes the linearized sweep
+keeps, one count per pump.
+
+## Reading the results
+
+`hbnlsolve` returns a `NonlinearHB`, the operating point. Its main fields:
+
+- `nodeflux`: the node flux at every retained mode of every node, a keyed
+  array with axes `outputmode` and `node` (a plain matrix with
+  `keyedarrays = false`). The zero mode is the static flux; the voltage of
+  a mode at frequency `w` is `i*w*phi0` times its flux.
+- `S`: the scattering parameters at the pump frequencies, which measure
+  how much of each pump is reflected and converted.
+- `dcnodevoltage`: the average voltage of each node in volts, when the
+  analysis has a zero frequency mode. See the direct current example.
+- `solverinfo`: whether the solve converged (`solverinfo.converged`) and
+  the residual history and step record of every solver stage, for
+  diagnosing a solve which did not.
+- `modes`: the retained modes as tuples of harmonic indices, which label
+  the mode axes of the arrays above.
+
+`hblinsolve` returns a `LinearizedHB`, the small signal response. Its
+frequency dependent outputs are indexed by output mode, output port, input
+mode, input port and signal frequency, and are keyed arrays: the gain of
+the JPA below is read as
+`S(outputmode = (0,), outputport = 1, inputmode = (0,), inputport = 1, freqindex = :)`,
+or positionally as `S((0,), 1, (0,), 1, :)`. Mode `(0,)` is the signal
+itself and `(k,)` the idler offset by `k` pump harmonics, so
+`S((-1,), 1, (0,), 1, :)` is the conversion from the signal to the first
+idler. The fields:
+
+- `w`: the signal frequencies of the sweep, and `modes` the retained
+  signal and idler modes.
+- `S`: the scattering parameters in units of photon flux, so that gain in
+  dB is `10*log10.(abs2.(S))` and a conversion between frequencies is
+  read in photons; multiply by `sqrt(w_out/w_in)` for power.
+- `QE` and `QEideal`: the quantum efficiency of each output, and that of
+  an ideal amplifier with the same gain, so `QE ./ QEideal` is the
+  fraction of the ideal.
+- `CM`: the commutation relation of each output, which is `1` when the
+  scattering matrix is complete; its deviation from `1` measures modes the
+  truncation left out.
+- `Snoise` and `Cnoise` (on request): the scattering from the noise
+  channels of the dissipative elements to the ports, and the added noise
+  covariance at a given temperature.
+- `nodeflux` and `voltage` (on request, `returnnodeflux = true` and
+  `returnvoltage = true`): the node fluxes and voltages resulting from a
+  unit input at each port and mode, for looking inside the circuit.
+- `Ssensitivity` (on request): the derivative of `S` with respect to the
+  named components or design parameters.
+
+`hbsolve` returns an `HB` holding both, as `nonlinear` and `linearized`;
+the examples below read the gain from `sol.linearized.S` and the operating
+point from `sol.nonlinear`. Every output which was not requested is an
+empty array, and the `return...` keywords of `hbsolve` and `hblinsolve`
+choose which are computed.
 
 # Examples:
 ## Josephson parametric amplifier (JPA)
@@ -76,17 +254,13 @@ Cc = 100.0e-15
 Lj = 1000.0e-12
 Cj = 1000.0e-15
 
-# the components, then the connections between their terminals; the last
-# group is the ground net
+# each entry is the name, the nodes of the two terminals, and the
+# component; node 0 is ground
 circuit = Circuit(
-    [:p1 => Port(1; Z0 = R),
-     :cc => Capacitor(Cc),
-     :jj => JosephsonJunction(Lj),
-     :cj => Capacitor(Cj),
-     :gnd => Ground()],
-    [[(:p1, 1), (:cc, 1)],
-     [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+    [(:p1, 1, 0, Port(1; Z0 = R)),
+     (:cc, 1, 2, Capacitor(Cc)),
+     (:jj, 2, 0, JosephsonJunction(Lj)),
+     (:cj, 2, 0, Capacitor(Cj))])
 
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.75001*1e9,)
@@ -174,14 +348,10 @@ vp = 2.0e8   # cable phase velocity, meters per second
 Zenv(w) = Z0*(ZL + im*Z0*tan(w*len/vp))/(Z0 + im*ZL*tan(w*len/vp))
 
 amplifier(Zr) = Circuit(
-    [:p1 => Port(1; Z0 = Zr),
-     :cc => Capacitor(Cc),
-     :jj => JosephsonJunction(Lj),
-     :cj => Capacitor(Cj),
-     :gnd => Ground()],
-    [[(:p1, 1), (:cc, 1)],
-     [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+    [(:p1, 1, 0, Port(1; Z0 = Zr)),
+     (:cc, 1, 2, Capacitor(Cc)),
+     (:jj, 2, 0, JosephsonJunction(Lj)),
+     (:cj, 2, 0, Capacitor(Cj))])
 
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.75001*1e9,)
@@ -209,17 +379,13 @@ Cc = 100.0e-15
 Lj = 1000.0e-12
 Cj = 1000.0e-15
 
-# the components, then the connections between their terminals; the last
-# group is the ground net
+# each entry is the name, the nodes of the two terminals, and the
+# component; node 0 is ground
 circuit = Circuit(
-    [:p1 => Port(1; Z0 = R),
-     :cc => Capacitor(Cc),
-     :jj => JosephsonJunction(Lj),
-     :cj => Capacitor(Cj),
-     :gnd => Ground()],
-    [[(:p1, 1), (:cc, 1)],
-     [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+    [(:p1, 1, 0, Port(1; Z0 = R)),
+     (:cc, 1, 2, Capacitor(Cc)),
+     (:jj, 2, 0, JosephsonJunction(Lj)),
+     (:cj, 2, 0, Capacitor(Cj))])
 
 ws = 2*pi*(4.5:0.001:5.0)*1e9
 wp = (2*pi*4.65001*1e9,2*pi*4.85001*1e9)
@@ -295,23 +461,17 @@ Ldc = 0.74e-12
 K = 0.999 # the inverse inductance matrix for K=1.0 diverges, so set K<1.0
 
 circuit = Circuit(
-    [:p1 => Port(1; Z0 = R),
-     :cc => Capacitor(Cc),
-     :lr => Inductor(Lr), :cr => Capacitor(Cr),
-     :jj1 => JosephsonJunction(Lj), :cj1 => Capacitor(Cj),
-     :ll => Inductor(Ll),
-     :jj2 => JosephsonJunction(Lj), :cj2 => Capacitor(Cj),
-     :ldc => Inductor(Ldc),
-     :k1 => MutualInductor(K, :ll, :ldc),
+    [(:p1, 1, 0, Port(1; Z0 = R)),
+     (:cc, 1, 2, Capacitor(Cc)),
+     (:lr, 2, 3, Inductor(Lr)), (:cr, 2, 0, Capacitor(Cr)),
+     (:jj1, 3, 0, JosephsonJunction(Lj)), (:cj1, 3, 0, Capacitor(Cj)),
+     (:ll, 3, 4, Inductor(Ll)),
+     (:jj2, 4, 0, JosephsonJunction(Lj)), (:cj2, 4, 0, Capacitor(Cj)),
+     # the bias inductor, mutually coupled to the loop inductor ll
+     (:ldc, 5, 0, Inductor(Ldc)),
+     (:k1, :ll, :ldc, MutualInductor(K)),
      # a high impedance port, so the bias may be applied across it
-     :p2 => Port(2; Z0 = 1000.0), :gnd => Ground()],
-    [[(:p1, 1), (:cc, 1)],
-     [(:cc, 2), (:lr, 1), (:cr, 1)],
-     [(:lr, 2), (:jj1, 1), (:cj1, 1), (:ll, 1)],
-     [(:ll, 2), (:jj2, 1), (:cj2, 1)],
-     [(:ldc, 1), (:p2, 1)],
-     [(:p1, 2), (:cr, 2), (:jj1, 2), (:cj1, 2), (:jj2, 2),
-      (:cj2, 2), (:ldc, 2), (:p2, 2), (:gnd, 1)]])
+     (:p2, 5, 0, Port(2; Z0 = 1000.0))])
 
 ws = 2*pi*(9.7:0.0001:9.8)*1e9
 wp = (2*pi*19.50*1e9,)
@@ -432,27 +592,21 @@ Z0 = 50
 w0 = 2*pi*8e9
 l=10e-3
 circuit = Circuit(
-    [:p1 => Port(1; Z0 = R),
-     :cc => Capacitor(Cc),
-     :lr => Inductor(Lr), :cr => Capacitor(Cr),
-     :jj1 => JosephsonJunction(Lj/alpha), :cj1 => Capacitor(Cj/alpha),
-     :ll => Inductor(Ll),
-     :jj2 => JosephsonJunction(Lj), :cj2 => Capacitor(Cj),
-     :jj3 => JosephsonJunction(Lj), :cj3 => Capacitor(Cj),
-     :jj4 => JosephsonJunction(Lj), :cj4 => Capacitor(Cj),
-     :ldc => Inductor(Ldc),
-     :k1 => MutualInductor(K, :ll, :ldc),
+    [(:p1, 1, 0, Port(1; Z0 = R)),
+     (:cc, 1, 2, Capacitor(Cc)),
+     (:lr, 2, 3, Inductor(Lr)), (:cr, 2, 0, Capacitor(Cr)),
+     # the small junction of the SNAIL, across the three large ones
+     (:jj1, 3, 0, JosephsonJunction(Lj/alpha)),
+     (:cj1, 3, 0, Capacitor(Cj/alpha)),
+     (:ll, 3, 4, Inductor(Ll)),
+     (:jj2, 4, 5, JosephsonJunction(Lj)), (:cj2, 4, 5, Capacitor(Cj)),
+     (:jj3, 5, 6, JosephsonJunction(Lj)), (:cj3, 5, 6, Capacitor(Cj)),
+     (:jj4, 6, 0, JosephsonJunction(Lj)), (:cj4, 6, 0, Capacitor(Cj)),
+     # the bias inductor, mutually coupled to the loop inductor ll
+     (:ldc, 7, 0, Inductor(Ldc)),
+     (:k1, :ll, :ldc, MutualInductor(K)),
      # a high impedance port, so the bias may be applied across it
-     :p2 => Port(2; Z0 = 1000.0), :gnd => Ground()],
-    [[(:p1, 1), (:cc, 1)],
-     [(:cc, 2), (:lr, 1), (:cr, 1)],
-     [(:lr, 2), (:jj1, 1), (:cj1, 1), (:ll, 1)],
-     [(:ll, 2), (:jj2, 1), (:cj2, 1)],
-     [(:jj2, 2), (:cj2, 2), (:jj3, 1), (:cj3, 1)],
-     [(:jj3, 2), (:cj3, 2), (:jj4, 1), (:cj4, 1)],
-     [(:ldc, 1), (:p2, 1)],
-     [(:p1, 2), (:cr, 2), (:jj1, 2), (:cj1, 2), (:jj4, 2),
-      (:cj4, 2), (:ldc, 2), (:p2, 2), (:gnd, 1)]])
+     (:p2, 7, 0, Port(2; Z0 = 1000.0))])
 
 # ws = 2*pi*(9.7:0.0001:9.8)*1e9
 # ws = 2*pi*(5.0:0.001:11)*1e9
@@ -601,30 +755,27 @@ Lr = 1.70e-10
 # one unit cell of the line: a junction with its shunt capacitance and
 # the capacitance to ground at its input, exposed through pins 1 and 2
 jjcell(Lj, Cj, Cg) = Circuit(
-    [:jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
-     :cg => Capacitor(Cg), :gnd => Ground()],
-    [[(:jj, 1), (:cj, 1), (:cg, 1)],
-     [(:jj, 2), (:cj, 2)],
-     [(:cg, 2), (:gnd, 1)]];
+    [(:jj, 1, 2, JosephsonJunction(Lj)),
+     (:cj, 1, 2, Capacitor(Cj)),
+     (:cg, 1, 0, Capacitor(Cg))];
     pins = [1 => (:jj, 1), 2 => (:jj, 2)])
 
 # a cell whose capacitance to ground is split to couple a phase matching
 # resonator
 pmrcell(Lj, Cj, Cg, Cc, Cr, Lr) = Circuit(
-    [:jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
-     :cg => Capacitor(Cg - Cc), :cc => Capacitor(Cc),
-     :cr => Capacitor(Cr), :lr => Inductor(Lr), :gnd => Ground()],
-    [[(:jj, 1), (:cj, 1), (:cg, 1), (:cc, 1)],
-     [(:jj, 2), (:cj, 2)],
-     [(:cc, 2), (:cr, 1), (:lr, 1)],
-     [(:cg, 2), (:cr, 2), (:lr, 2), (:gnd, 1)]];
+    [(:jj, 1, 2, JosephsonJunction(Lj)),
+     (:cj, 1, 2, Capacitor(Cj)),
+     (:cg, 1, 0, Capacitor(Cg - Cc)),
+     (:cc, 1, 3, Capacitor(Cc)),
+     (:cr, 3, 0, Capacitor(Cr)),
+     (:lr, 3, 0, Inductor(Lr))];
     pins = [1 => (:jj, 1), 2 => (:jj, 2)])
 
 Nj = 2048
 pmrpitch = 4
 
-# instance the cells and chain them
-components = Any[:p1 => Port(1; Z0 = Rleft), :gnd => Ground()]
+# instance the cells and chain them: cell i sits between nodes i and i+1
+netlist = Any[(:p1, 1, 0, Port(1; Z0 = Rleft))]
 for i in 1:Nj-1
     cell = if i == 1
         jjcell(Lj, Cj, Cg/2)             # half cap to ground at the input
@@ -633,20 +784,12 @@ for i in 1:Nj-1
     else
         jjcell(Lj, Cj, Cg)
     end
-    push!(components, Symbol(:cell, i) => cell)
+    push!(netlist, (Symbol(:cell, i), i, i+1, cell))
 end
-push!(components, :cend => Capacitor(Cg/2))
-push!(components, :p2 => Port(2; Z0 = Rright))
+push!(netlist, (:cend, Nj, 0, Capacitor(Cg/2)))
+push!(netlist, (:p2, Nj, 0, Port(2; Z0 = Rright)))
 
-connections = [[(Symbol(:cell, i), 2), (Symbol(:cell, i+1), 1)]
-    for i in 1:Nj-2]
-push!(connections, [(:p1, 1), (:cell1, 1)])
-push!(connections,
-    [(Symbol(:cell, Nj-1), 2), (:cend, 1), (:p2, 1)])
-push!(connections,
-    [(:p1, 2), (:cend, 2), (:p2, 2), (:gnd, 1)])
-
-circuit = Circuit(components, connections)
+circuit = Circuit(netlist)
 
 ws=2*pi*(1.0:0.1:14)*1e9
 wp=(2*pi*7.12*1e9,)
@@ -735,23 +878,21 @@ function floquetcircuit(; Rleft = 50.0, Rright = 50.0, Lj = IctoLj(1.75e-6),
     # the same unit cells as the uniform line, with the junction and
     # capacitance values weighted per cell
     jjcell(Lj, Cj, Cg) = Circuit(
-        [:jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
-         :cg => Capacitor(Cg), :gnd => Ground()],
-        [[(:jj, 1), (:cj, 1), (:cg, 1)],
-         [(:jj, 2), (:cj, 2)],
-         [(:cg, 2), (:gnd, 1)]];
+        [(:jj, 1, 2, JosephsonJunction(Lj)),
+         (:cj, 1, 2, Capacitor(Cj)),
+         (:cg, 1, 0, Capacitor(Cg))];
         pins = [1 => (:jj, 1), 2 => (:jj, 2)])
     pmrcell(Lj, Cj, Cg, Cc, Cr, Lr) = Circuit(
-        [:jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
-         :cg => Capacitor(Cg - Cc), :cc => Capacitor(Cc),
-         :cr => Capacitor(Cr), :lr => Inductor(Lr), :gnd => Ground()],
-        [[(:jj, 1), (:cj, 1), (:cg, 1), (:cc, 1)],
-         [(:jj, 2), (:cj, 2)],
-         [(:cc, 2), (:cr, 1), (:lr, 1)],
-         [(:cg, 2), (:cr, 2), (:lr, 2), (:gnd, 1)]];
+        [(:jj, 1, 2, JosephsonJunction(Lj)),
+         (:cj, 1, 2, Capacitor(Cj)),
+         (:cg, 1, 0, Capacitor(Cg - Cc)),
+         (:cc, 1, 3, Capacitor(Cc)),
+         (:cr, 3, 0, Capacitor(Cr)),
+         (:lr, 3, 0, Inductor(Lr))];
         pins = [1 => (:jj, 1), 2 => (:jj, 2)])
 
-    components = Any[:p1 => Port(1; Z0 = Rleft), :gnd => Ground()]
+    # cell i sits between nodes i and i+1
+    netlist = Any[(:p1, 1, 0, Port(1; Z0 = Rleft))]
     for i in 1:Nj-1
         wj = weight(i, Nj, weightwidth)
         wg = weight(i - 0.5, Nj, weightwidth)
@@ -762,21 +903,13 @@ function floquetcircuit(; Rleft = 50.0, Rright = 50.0, Lj = IctoLj(1.75e-6),
         else
             jjcell(Lj*wj, Cj/wj, Cg*wg)
         end
-        push!(components, Symbol(:cell, i) => cell)
+        push!(netlist, (Symbol(:cell, i), i, i+1, cell))
     end
-    push!(components,
-        :cend => Capacitor(Cg/2*weight(Nj - 0.5, Nj, weightwidth)))
-    push!(components, :p2 => Port(2; Z0 = Rright))
+    push!(netlist,
+        (:cend, Nj, 0, Capacitor(Cg/2*weight(Nj - 0.5, Nj, weightwidth))))
+    push!(netlist, (:p2, Nj, 0, Port(2; Z0 = Rright)))
 
-    connections = [[(Symbol(:cell, i), 2), (Symbol(:cell, i+1), 1)]
-        for i in 1:Nj-2]
-    push!(connections, [(:p1, 1), (:cell1, 1)])
-    push!(connections,
-        [(Symbol(:cell, Nj-1), 2), (:cend, 1), (:p2, 1)])
-    push!(connections,
-        [(:p1, 2), (:cend, 2), (:p2, 2), (:gnd, 1)])
-
-    return Circuit(components, connections)
+    return Circuit(netlist)
 end
 
 circuit = floquetcircuit()
@@ -935,10 +1068,9 @@ alternating stages -- and the `L1` rung tying the arm outputs together.
 Pins 1 and 2 are the arm inputs, pins 3 and 4 the arm outputs.
 """
 snakestage(L1, L2, Lj, odd) = Circuit(
-    [:u => odd ? JosephsonJunction(Lj) : Inductor(L2),
-     :l => odd ? Inductor(L2) : JosephsonJunction(Lj),
-     :rung => Inductor(L1)],
-    [[(:u, 2), (:rung, 1)], [(:l, 2), (:rung, 2)]];
+    [(:u, 1, 3, odd ? JosephsonJunction(Lj) : Inductor(L2)),
+     (:l, 2, 4, odd ? Inductor(L2) : JosephsonJunction(Lj)),
+     (:rung, 3, 4, Inductor(L1))];
     pins = [1 => (:u, 1), 2 => (:l, 1), 3 => (:u, 2), 4 => (:l, 2)])
 
 """
@@ -958,20 +1090,14 @@ across the input, then `Nstages` chained stages.
 Pin 1 is the start of the upper arm and pin 2 the end of the lower arm.
 """
 function snake(L1, L2, Lj, Nstages)
-    components = Any[:rung0 => Inductor(L1)]
+    # the upper and lower arm nodes u1, l1, u2, l2, ... along the snake:
+    # stage i spans (ui, li) to (u(i+1), l(i+1))
+    netlist = Any[(:rung0, "u1", "l1", Inductor(L1))]
     for i in 1:Nstages
-        push!(components,
-            Symbol(:stage, i) => snakestage(L1, L2, Lj, isodd(i)))
+        push!(netlist, (Symbol(:stage, i), "u$i", "l$i", "u$(i+1)", "l$(i+1)",
+            snakestage(L1, L2, Lj, isodd(i))))
     end
-    connections = [[(:rung0, 1), (:stage1, 1)],
-        [(:rung0, 2), (:stage1, 2)]]
-    for i in 1:Nstages-1
-        push!(connections,
-            [(Symbol(:stage, i), 3), (Symbol(:stage, i+1), 1)])
-        push!(connections,
-            [(Symbol(:stage, i), 4), (Symbol(:stage, i+1), 2)])
-    end
-    return Circuit(components, connections;
+    return Circuit(netlist;
         pins = [1 => (:stage1, 1), 2 => (Symbol(:stage, Nstages), 4)])
 end
 
@@ -991,26 +1117,20 @@ series across the bias port.
     Port 2 o--R--gnd, with Lb1 and Lb2 in series across it
 """
 function snakesquid(L1, L2, L3, Lj, Lb, K, R, Nstages)
-    components = Any[
-        :a1 => snake(L1, L2, Lj, Nstages), :l3a => Inductor(L3),
-        :a2 => snake(L1, L2, Lj, Nstages), :lba => Inductor(Lb),
-        :b1 => snake(L1, L2, Lj, Nstages), :l3b => Inductor(L3),
-        :b2 => snake(L1, L2, Lj, Nstages), :lbb => Inductor(Lb),
-        :kb1 => MutualInductor(K, :lba, :lb1),
-        :kb2 => MutualInductor(K, :lbb, :lb2),
-        :p2 => Port(2; Z0 = R),
-        :lb1 => Inductor(Lb), :lb2 => Inductor(Lb),
-        :gnd => Ground()]
-    connections = [
-        [(:a1, 1), (:b1, 1)],
-        [(:a1, 2), (:l3a, 1)], [(:l3a, 2), (:a2, 1)],
-        [(:a2, 2), (:lba, 1)],
-        [(:b1, 2), (:l3b, 1)], [(:l3b, 2), (:b2, 1)],
-        [(:b2, 2), (:lbb, 1)],
-        [(:p2, 1), (:lb1, 1)],
-        [(:lb1, 2), (:lb2, 1)],
-        [(:lba, 2), (:lbb, 2), (:lb2, 2), (:p2, 2), (:gnd, 1)]]
-    return Circuit(components, connections; pins = [1 => (:a1, 1)])
+    netlist = Any[
+        # arm a: node 1 is the signal pin
+        (:a1, 1, 2, snake(L1, L2, Lj, Nstages)), (:l3a, 2, 3, Inductor(L3)),
+        (:a2, 3, 4, snake(L1, L2, Lj, Nstages)), (:lba, 4, 0, Inductor(Lb)),
+        # arm b
+        (:b1, 1, 5, snake(L1, L2, Lj, Nstages)), (:l3b, 5, 6, Inductor(L3)),
+        (:b2, 6, 7, snake(L1, L2, Lj, Nstages)), (:lbb, 7, 0, Inductor(Lb)),
+        # the bias port, with its two inductors in series across it, each
+        # coupled to one arm
+        (:p2, 8, 0, Port(2; Z0 = R)),
+        (:lb1, 8, 9, Inductor(Lb)), (:lb2, 9, 0, Inductor(Lb)),
+        (:kb1, :lba, :lb1, MutualInductor(K)),
+        (:kb2, :lbb, :lb2, MutualInductor(K))]
+    return Circuit(netlist; pins = [1 => (:a1, 1)])
 end
 
 """
@@ -1057,18 +1177,13 @@ theta = 32.6*pi/180
 # the transmission line -- a scattering parameter block with the exact
 # line response -- form the impedance matching network to the port
 circuit = Circuit(
-    [:x1 => snakesquid(L1, L2, L3, Lj, Lb, K, R, Nstages_snake),
-     :c1 => Capacitor(C1), :c6 => Capacitor(C6),
-     :plcc => Capacitor(PLCC), :plcl => Inductor(PLCL),
-     :c7 => Capacitor(C7),
-     :tl => tline(theta, w0, Z0),
-     :l22 => Inductor(L22), :p1 => Port(1; Z0 = R),
-     :gnd => Ground()],
-    [[(:x1, 1), (:c1, 1), (:c6, 1)],
-     [(:c6, 2), (:plcc, 1), (:plcl, 1), (:c7, 1)],
-     [(:c7, 2), (:tl, 1)],
-     [(:tl, 2), (:l22, 1), (:p1, 1)],
-     [(:c1, 2), (:plcc, 2), (:plcl, 2), (:l22, 2), (:p1, 2), (:gnd, 1)]])
+    [(:x1, 1, snakesquid(L1, L2, L3, Lj, Lb, K, R, Nstages_snake)),
+     (:c1, 1, 0, Capacitor(C1)), (:c6, 1, 2, Capacitor(C6)),
+     (:plcc, 2, 0, Capacitor(PLCC)), (:plcl, 2, 0, Inductor(PLCL)),
+     (:c7, 2, 3, Capacitor(C7)),
+     # a grounded two port block lists the signal node of each port
+     (:tl, 3, 4, tline(theta, w0, Z0)),
+     (:l22, 4, 0, Inductor(L22)), (:p1, 4, 0, Port(1; Z0 = R))])
 
 # ws = 2*pi*(1:0.01:10.0)*1e9
 ws = 2*pi*(4.0:0.01:5.8)*1e9
@@ -1137,12 +1252,10 @@ using JosephsonCircuits
 using Plots
 
 makejpa(; Lj, Cc, Cj) = Circuit(
-    [:p1 => Port(1), :cc => Capacitor(Cc),
-     :jj => JosephsonJunction(Lj), :cj => Capacitor(Cj),
-     :gnd => Ground()],
-    [[(:p1, 1), (:cc, 1)],
-     [(:cc, 2), (:jj, 1), (:cj, 1)],
-     [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+    [(:p1, 1, 0, Port(1)),
+     (:cc, 1, 2, Capacitor(Cc)),
+     (:jj, 2, 0, JosephsonJunction(Lj)),
+     (:cj, 2, 0, Capacitor(Cj))])
 
 p = (Lj = 1000.0e-12, Cc = 100.0e-15, Cj = 1000.0e-15)
 ws = 2*pi*(4.5:0.001:5.0)*1e9
@@ -1181,13 +1294,11 @@ function maketline(; len, Lj)
     line = ScatteringParameters(tlineS; nports = 2, noise = Lossless(),
         derivatives = (len = dSdlen,))
     return Circuit(
-        [:p1 => Port(1), :tl => line,
-         :cc => Capacitor(100.0e-15), :jj => JosephsonJunction(Lj),
-         :c2 => Capacitor(1000.0e-15), :gnd => Ground()],
-        [[(:p1, 1), (:tl, 1)],
-         [(:tl, 2), (:cc, 1)],
-         [(:cc, 2), (:jj, 1), (:c2, 1)],
-         [(:jj, 2), (:c2, 2), (:p1, 2), (:gnd, 1)]])
+        [(:p1, 1, 0, Port(1)),
+         (:tl, 1, 2, line),
+         (:cc, 2, 3, Capacitor(100.0e-15)),
+         (:jj, 3, 0, JosephsonJunction(Lj)),
+         (:c2, 3, 0, Capacitor(1000.0e-15))])
 end
 
 p = (len = 2.0e-3, Lj = 1000.0e-12)
@@ -1240,10 +1351,9 @@ using JosephsonCircuits
 # direct current and an amplifier which is not driven here
 Idc = 1.0e-6
 circuit = Circuit(
-    [:p1 => Port(1; Z0 = 50.0), :rl => Resistor(150.0),
-     :c1 => Capacitor(1.0e-12)],
-    [[(:p1, 1), (:rl, 1), (:c1, 1)],
-     [(:p1, 2), (:rl, 2), (:c1, 2), Ground]])
+    [(:p1, 1, 0, Port(1; Z0 = 50.0)),
+     (:rl, 1, 0, Resistor(150.0)),
+     (:c1, 1, 0, Capacitor(1.0e-12))])
 
 sol = hbnlsolve((2*pi*5e9,), (1,), [(mode = (0,), port = 1, current = Idc)],
     circuit; dc = true, odd = true, keyedarrays = false)
