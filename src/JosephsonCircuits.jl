@@ -147,6 +147,7 @@ include("hbsystem.jl")
 # --- the linear algebra it is handed to ---------------------------------
 include("nlsolve.jl")          # Newton and quasi-Newton with factorizations
 include("krylov.jl")           # Newton-Krylov and its preconditioner types
+include("floquetdeflation.jl") # residual-image A-DEF1 with physical candidates
 include("batchedblocks.jl")    # batched small block factorizations
 include("cudss.jl")            # the cuDSS factorization type (host stubs)
 include("modepreconditioner.jl")

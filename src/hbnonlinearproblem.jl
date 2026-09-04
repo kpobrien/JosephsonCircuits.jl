@@ -449,6 +449,19 @@ applypreconditioner!(z::AbstractVector, p::SizedPreconditioner,
     r::AbstractVector) = applypreconditioner!(z, p.pc, r)
 updatepreconditioner!(p::SizedPreconditioner, u::AbstractVector) =
     (updatepreconditioner!(p.pc, u); p)
+pointmoved!(p::SizedPreconditioner) = (pointmoved!(p.pc); p)
+harvest!(p::SizedPreconditioner, ws::GMRESWorkspace, out::NamedTuple) =
+    (harvest!(p.pc, ws, out); p)
+usescycleharvest(p::SizedPreconditioner) = usescycleharvest(p.pc)
+harvestcycle!(p::SizedPreconditioner, ws::GMRESWorkspace, j::Integer) =
+    (harvestcycle!(p.pc, ws, j); p)
+candidatecount(p::SizedPreconditioner) = candidatecount(p.pc)
+deflationproducts(p::SizedPreconditioner) = deflationproducts(p.pc)
+isexactpreconditioner(p::SizedPreconditioner) = isexactpreconditioner(p.pc)
+deflationform(p::SizedPreconditioner) = deflationform(p.pc)
+deflationsize(p::SizedPreconditioner) = deflationsize(p.pc)
+deflationrebuilds(p::SizedPreconditioner) = deflationrebuilds(p.pc)
+escalatepreconditioner!(p::SizedPreconditioner) = escalatepreconditioner!(p.pc)
 
 # =====================================================================
 # The nonlinear solver behind the operating point.

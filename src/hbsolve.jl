@@ -282,8 +282,26 @@ const _DOC_NLKWARGS = """
     mask. See [`ModeCouplingPreconditioner`](@ref).
 - `krylovrecycle = 0`: when positive, wrap the preconditioner in a
     [`RecyclingPreconditioner`](@ref) keeping a deflation subspace of at
-    most this many vectors across Newton steps; `krylovharvest = 8` is the
-    number of vectors harvested from each GMRES solve.
+    most this many vectors across Newton steps and, through the reuse
+    object of a cached sweep, across its points; `krylovharvest = 8` is the
+    number of vectors harvested from each GMRES solve. This pays when the
+    block diagonal leaves a deficiency of rank comparable to `krylovrecycle`
+    (a two-tone line of about a hundred junctions converges without any
+    factorization of the full Jacobian, in half the time) and costs when
+    the deficiency is of high rank and the escalation does the work anyway,
+    or when the base is strong enough on its own (`:auto`).
+- `krylovdeflationform = :adef1`: how the recycled subspace is applied,
+    `:adef1` (the projection on the input of the base solve) or `:adef2`
+    (on its output, fused with the Jacobian product of the Arnoldi step);
+    see [`RecyclingPreconditioner`](@ref). `:floquet` selects the
+    residual-image form with physical candidates instead
+    ([`FloquetPreconditioner`](@ref)), which harvests harmonic Ritz
+    directions alongside the singular ones, from every restart cycle, and
+    drops the directions the base already handles.
+- `krylovdeflationkwargs::NamedTuple = (;)`: further keyword arguments of
+    the deflation wrapper's constructor ([`RecyclingPreconditioner`](@ref)
+    or [`FloquetPreconditioner`](@ref)), such as `nritz`, `kcandidate`,
+    `benefittol` or `escalateafter`, which override its defaults.
 - `krylovkwargs::NamedTuple = (;)`: further options of
     [`nlsolvekrylov!`](@ref), which override its defaults.
 - `linearsolver = InternalGMRES()`: the linear solver of the Newton-Krylov
@@ -435,7 +453,9 @@ end
         sensitivitynames::Vector{String} = String[],
         sensitivityoperatingpoint = true, sensitivitymode = :auto,
         returnSsensitivity = false, krylovcouplingmodes = :none,
-        krylovkwargs = (;), stagedkwargs = (;), factorization = nothing,
+        krylovrecycle = 0, krylovharvest = 8, krylovdeflationform = :adef1,
+        krylovdeflationkwargs = (;), krylovkwargs = (;), stagedkwargs = (;),
+        factorization = nothing,
         backend = CPU(), precision = Float64)
 
 Solve a circuit driven by one or more strong pumps, then linearize about
@@ -508,8 +528,12 @@ $(_DOC_METHOD)
 $(_DOC_STAGEDKWARGS)
 - `krylovcouplingmodes = :none`: which mode couplings the Newton-Krylov
     preconditioner retains; forwarded to [`hbnlsolve`](@ref).
-- `krylovkwargs::NamedTuple = (;)`: further options of the Newton-Krylov
-    solver; forwarded to [`hbnlsolve`](@ref).
+- `krylovrecycle = 0`, `krylovharvest = 8`, `krylovdeflationform = :adef1`:
+    the recycled deflation subspace of the Newton-Krylov preconditioner;
+    forwarded to [`hbnlsolve`](@ref).
+- `krylovkwargs::NamedTuple = (;)`, `krylovdeflationkwargs::NamedTuple = (;)`:
+    further options of the Newton-Krylov solver and of its deflation
+    wrapper; forwarded to [`hbnlsolve`](@ref).
 $(_DOC_ANDERSON)
 - `x0 = nothing`: an initial value for the node fluxes of the nonlinear
     solve.
@@ -576,7 +600,10 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    krylovcouplingmodes = :none, krylovkwargs::NamedTuple = (;),
+    krylovcouplingmodes = :none, krylovrecycle::Integer = 0,
+    krylovharvest::Integer = 8, krylovdeflationform::Symbol = :adef1,
+    krylovkwargs::NamedTuple = (;),
+    krylovdeflationkwargs::NamedTuple = (;),
     stagedkwargs::NamedTuple = (;),
     factorization = nothing, backend = CPU(),
     precision::Type{<:AbstractFloat} = Float64) where {N,M}
@@ -618,6 +645,9 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
             returnoperatingpoint = sensitivityoperatingpoint &&
                 returnSsensitivity && !isempty(nm.Ljb.nzind),
             krylovcouplingmodes = krylovcouplingmodes,
+            krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
+            krylovdeflationform = krylovdeflationform,
+            krylovdeflationkwargs = krylovdeflationkwargs,
             krylovkwargs = krylovkwargs, factorization = factorization,
             backend = backend, precision = precision, stagedkwargs...)
     else
@@ -627,6 +657,9 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
             alphamin = alphamin,
             method = method, andersondepth = andersondepth,
             krylovcouplingmodes = krylovcouplingmodes,
+            krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
+            krylovdeflationform = krylovdeflationform,
+            krylovdeflationkwargs = krylovdeflationkwargs,
             krylovkwargs = krylovkwargs,
                 symfreqvar = symfreqvar, keyedarrays = keyedarrays,
             sensitivitynames = sensitivitynames,

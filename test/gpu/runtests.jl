@@ -68,11 +68,20 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
     @testset "recycled deflation on the device" begin
         ra = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
             dc = true, odd = true, even = true, method = :newtonkrylov)
-        rb = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
-            dc = true, odd = true, even = true, method = :newtonkrylov,
-            krylovrecycle = 8, backend = CUDABackend())
-        @test rb.solverinfo.converged
-        @test agree(ra.S, rb.S)
+        for form in (:adef1, :adef2, :floquet)
+            rb = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
+                dc = true, odd = true, even = true, method = :newtonkrylov,
+                krylovrecycle = 8, krylovharvest = 2,
+                krylovdeflationform = form, backend = CUDABackend(),
+                krylovkwargs = (; krylovescalate = typemax(Int)))
+            @test rb.solverinfo.converged
+            @test agree(ra.S, rb.S)
+            kr = rb.solverinfo.stages[1].krylov
+            # the pair was built and applied on the device
+            @test any(k -> k.deflationsize > 0, kr)
+            @test kr[end].deflationrebuilds > 0
+            @test kr[end].deflationproducts > 0
+        end
     end
 
     @testset "method = :staged on the device" begin

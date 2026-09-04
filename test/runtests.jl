@@ -56,6 +56,8 @@ include("testcircuits.jl")
 
     include("krylov.jl")
 
+    include("floquetdeflation.jl")
+
     include("batchedblocks.jl")
 
     include("modepreconditioner.jl")

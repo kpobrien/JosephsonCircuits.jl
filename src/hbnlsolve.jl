@@ -1,3 +1,7 @@
+# the keyword pairs `kw` (a named tuple or the `Base.Pairs` a keyword
+# splat carries) as a named tuple without the given keys
+_withoutkeys(kw, drop::Tuple) = (; (k => v for (k, v) in pairs(kw) if !(k in drop))...)
+
 """
     HBReuse()
 
@@ -5,11 +9,13 @@ What one solve builds and a later solve of the same circuit at new
 component values takes over: the aliased mode coupling index, the padded
 linear term with its augmentation ([`PaddedLinearTerm`](@ref)), the
 [`HBSystem`](@ref) with its transforms and workspaces, the mode coupling
-preconditioner with its structure and symbolic factorization, and the
-Krylov vectors. Hand one to [`hbnlsolve`](@ref) as `reuse`; it is filled by
-the first solve and rebound to the new values by every later one, so a
-sweep pays for its transforms, index maps and factorization symbolics once.
-[`hbcache`](@ref) carries one for its sweeps.
+preconditioner with its structure and symbolic factorization, the
+recycled deflation candidates of the last converged solve when
+`krylovrecycle > 0`, and the Krylov vectors. Hand one to [`hbnlsolve`](@ref) as `reuse`; it is filled by the
+first solve and rebound to the new values by every later one, so a sweep
+pays for its transforms, index maps and factorization symbolics once, and
+each solve starts from the deflation subspace the previous one harvested
+rather than from nothing. [`hbcache`](@ref) carries one for its sweeps.
 
 Only `method = :newtonkrylov` reads it. Every solve which shares it must be
 of the same circuit topology at the same mode grid with the same options,
@@ -22,11 +28,14 @@ mutable struct HBReuse
     sys::Any
     maps::Any          # the system's `ValueMaps`, found on first rebind
     preconditioner::Any
+    # the `RecyclingState` or `FloquetState` of the last *converged* solve,
+    # whose candidates the next solve inherits; `nothing` without recycling
+    recycling::Any
     krylov::Base.RefValue{Any}
     krylovcanonical::Base.RefValue{Any}
 end
 
-HBReuse() = HBReuse(nothing, nothing, nothing, nothing, nothing,
+HBReuse() = HBReuse(nothing, nothing, nothing, nothing, nothing, nothing,
     Ref{Any}(nothing), Ref{Any}(nothing))
 
 # =========================================================================
@@ -42,6 +51,7 @@ HBReuse() = HBReuse(nothing, nothing, nothing, nothing, nothing,
         symfreqvar = nothing, sorting = :number, keyedarrays = true,
         sensitivitynames = String[], returnoperatingpoint = false,
         krylovcouplingmodes = :none, krylovrecycle = 0, krylovharvest = 8,
+        krylovdeflationform = :adef1, krylovdeflationkwargs = (;),
         krylovkwargs = (;), stagedkwargs = (;), factorization = nothing,
         backend = CPU(), precision = Float64, debugJacobian = false,
         linearsolver = InternalGMRES(), returnsystem = false,
@@ -190,7 +200,9 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     returnoperatingpoint::Bool = false,
     krylovcouplingmodes = :none,
     krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
+    krylovdeflationform::Symbol = :adef1,
     krylovkwargs::NamedTuple = (;),
+    krylovdeflationkwargs::NamedTuple = (;),
     stagedkwargs::NamedTuple = (;),
     factorization = nothing, backend = CPU(),
     precision::Type{<:AbstractFloat} = Float64, debugJacobian = false,
@@ -208,6 +220,8 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
             returnoperatingpoint = returnoperatingpoint,
             krylovcouplingmodes = krylovcouplingmodes,
             krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
+            krylovdeflationform = krylovdeflationform,
+            krylovdeflationkwargs = krylovdeflationkwargs,
             krylovkwargs = krylovkwargs, factorization = factorization,
             backend = backend, precision = precision, stagedkwargs...)
     end
@@ -239,6 +253,8 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         returnoperatingpoint = returnoperatingpoint,
         krylovcouplingmodes = krylovcouplingmodes,
         krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
+        krylovdeflationform = krylovdeflationform,
+            krylovdeflationkwargs = krylovdeflationkwargs,
         krylovkwargs = krylovkwargs,
         factorization = factorization, backend = backend,
         precision = precision, debugJacobian = debugJacobian,
@@ -337,7 +353,9 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     returnoperatingpoint::Bool = false,
     krylovcouplingmodes = :none,
     krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
+    krylovdeflationform::Symbol = :adef1,
     krylovkwargs::NamedTuple = (;),
+    krylovdeflationkwargs::NamedTuple = (;),
     factorization = nothing, backend = CPU(),
     precision::Type{<:AbstractFloat} = Float64, debugJacobian = false,
     linearsolver::AbstractHBLinearSolver = InternalGMRES(),
@@ -352,7 +370,23 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     method = solvermethod(method)
     andersondepth = solverobject isa QuasiNewton ?
         solverobject.andersondepth : andersondepth
-    krylovkwargs = merge(krylovkwargs, solverkwargs(solverobject))
+    # The options of the preconditioner and of the linear solver are keywords
+    # of this function, not of `nlsolvekrylov!`, so they are taken out of a
+    # solver object's keywords here rather than forwarded with the rest.
+    sk = solverkwargs(solverobject)
+    krylovcouplingmodes = get(sk, :krylovcouplingmodes, krylovcouplingmodes)
+    krylovrecycle = get(sk, :krylovrecycle, krylovrecycle)
+    krylovharvest = get(sk, :krylovharvest, krylovharvest)
+    krylovdeflationform = get(sk, :krylovdeflationform, krylovdeflationform)
+    krylovdeflationkwargs = get(sk, :krylovdeflationkwargs, krylovdeflationkwargs)
+    linearsolver = get(sk, :linearsolver, linearsolver)
+    # validated here rather than by the wrapper, which is only built when
+    # recycling is on
+    krylovdeflationform in (:adef1, :adef2, :floquet) || throw(ArgumentError(
+        lazy"`krylovdeflationform` = $(krylovdeflationform) must be `:adef1`, `:adef2` or `:floquet`."))
+    krylovkwargs = merge(krylovkwargs, _withoutkeys(sk, (:krylovcouplingmodes,
+        :krylovrecycle, :krylovharvest, :krylovdeflationform,
+        :krylovdeflationkwargs, :linearsolver)))
 
     # the default factorization matches the backend: KLU on the host, cuDSS
     # on a device, where a host factorization could not be applied to the
@@ -1092,13 +1126,68 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         xrb = tobackend(backend, convert(Vector{precision}, xr))
         Frb = tobackend(backend, convert(Vector{precision}, Fr))
 
-        # built from the vector rather than its length, so the deflation
-        # subspace lives where the iteration does
-        pc = if krylovrecycle > 0
-            RecyclingPreconditioner(base, jvpreal!, xrb;
-                kmax = krylovrecycle, kharvest = krylovharvest)
+        # With direct current the canonical layout groups the state by role
+        # rather than by node. It is a permutation, so the iteration is the
+        # same one in a rotated basis and must reach the same point. The
+        # recycling wrapper, when there is one, goes *outside* the canonical
+        # wrapper: its candidates are then corrections of the whole canonical
+        # state, and the Arnoldi factorization it harvests is that of the
+        # operator GMRES actually ran, rather than a restriction of it.
+        if dcexplicit
+            work = canonwork
+            L = work.layout
+            ucb = similar(xrb, canonicaldim(L))
+            Fcb = similar(Frb, canonicaldim(L))
+            # the explicit voltages start at zero, which is the answer when
+            # nothing injects direct current; `gathercanonical!` writes the
+            # flux blocks only and would leave them undefined
+            fill!(ucb, zero(eltype(ucb)))
+            gathercanonical!(ucb, xrb, L)
+            pcbase = CanonicalPreconditioner(base, work)
+            jvsolve = canonicaljvp(jvpreal!, work)
+            usolve, Fsolve = ucb, Fcb
         else
-            base
+            pcbase = base
+            jvsolve = jvpreal!
+            usolve, Fsolve = xrb, Frb
+        end
+
+        # Built from the solve vector rather than its length, so the
+        # deflation lives where the iteration does. Across a sweep the
+        # wrapper is rebuilt, since its product closes over the system, but
+        # the candidates are inherited: the directions the block diagonal
+        # leaves are those of the circuit, which a nearby operating point
+        # shares, and the pair is rebuilt against the rebound base at the
+        # first refresh of the new solve. The inherited state is copied and
+        # committed back only after a converged solve (below), so a failed
+        # point cannot seed the next one.
+        pc = if krylovrecycle > 0
+            prev = reusing ? reuse.recycling : nothing
+            if krylovdeflationform === :floquet
+                # the residual-image form with physical candidates: `kharvest`
+                # is the number of singular directions per harvest, the
+                # harmonic Ritz ones coming on top of it
+                state = if prev isa FloquetState && size(prev.X, 1) == length(usolve)
+                    copy(prev)
+                else
+                    FloquetState(usolve)
+                end
+                FloquetPreconditioner(pcbase, jvsolve, usolve;
+                    kmax = krylovrecycle, kharvest = krylovharvest,
+                    state = state, krylovdeflationkwargs...)
+            else
+                state = if prev isa RecyclingState && size(prev.U, 1) == length(usolve)
+                    copy(prev)
+                else
+                    RecyclingState(usolve)
+                end
+                RecyclingPreconditioner(pcbase, jvsolve, usolve;
+                    kmax = krylovrecycle, kharvest = krylovharvest,
+                    form = krylovdeflationform, state = state,
+                    krylovdeflationkwargs...)
+            end
+        else
+            pcbase
         end
 
         # The solver defaults (a long restart cycle and an eager preconditioner
@@ -1111,43 +1200,32 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # discards the progress on them and the iteration count stops
         # responding to the preconditioner at all.
         info = if dcexplicit
-            # The canonical layout groups the state by role rather than by
-            # node. It is a permutation, so the iteration is the same one in
-            # a rotated basis and must reach the same point.
-            work = canonwork
-            L = work.layout
-            ucb = similar(xrb, canonicaldim(L))
-            Fcb = similar(Frb, canonicaldim(L))
-            # the explicit voltages start at zero, which is the answer when
-            # nothing injects direct current; `gathercanonical!` writes the
-            # flux blocks only and would leave them undefined
-            fill!(ucb, zero(eltype(ucb)))
-            gathercanonical!(ucb, xrb, L)
-            out = nlsolvekrylov!(canonicalresidual(fjreal!, work),
-                canonicaljvp(jvpreal!, work), Fcb, ucb,
-                CanonicalPreconditioner(pc, work);
+            out = nlsolvekrylov!(canonicalresidual(fjreal!, canonwork),
+                jvsolve, Fsolve, usolve, pc;
                 iterations = iterations, ftol = ftol, rtol = rtol,
                 linearsolver = linearsolver,
                 workspace = reusing ? reuse.krylovcanonical : nothing,
                 krylovkwargs...)
-            scattercanonical!(xrb, ucb, L)
-            scattercanonical!(Frb, Fcb, L)
+            L = canonwork.layout
+            scattercanonical!(xrb, usolve, L)
+            scattercanonical!(Frb, Fsolve, L)
             # the voltages are read off the canonical state the solve
             # converged in; the block currents beside them stay in the
             # state, where the operating point and the sensitivities read
             # them
-            if dcexplicit
-                dccanonical = Array(ucb)
-                dcsol = dcsolutionfrom(dcplan,
-                    Array(view(ucb, voltagerange(L))))
-            end
+            dccanonical = Array(usolve)
+            dcsol = dcsolutionfrom(dcplan,
+                Array(view(usolve, voltagerange(L))))
             out
         else
-            nlsolvekrylov!(fjreal!, jvpreal!, Frb, xrb, pc;
+            nlsolvekrylov!(fjreal!, jvsolve, Fsolve, usolve, pc;
                 iterations = iterations, ftol = ftol, rtol = rtol,
                 linearsolver = linearsolver,
                 workspace = reusing ? reuse.krylov : nothing,
                 krylovkwargs...)
+        end
+        if reusing && krylovrecycle > 0 && info.converged
+            reuse.recycling = pc.state
         end
         # back to the host for the complex representation returned to the
         # caller; the conversion walks a BitVector serially

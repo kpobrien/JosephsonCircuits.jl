@@ -110,6 +110,14 @@ the extra solves are exactly where the expensive failures hide.
 - `time`: seconds since the start of the nonlinear solve, so that the
     residual history can be plotted against wall time with the refreshes and
     escalations marked.
+- `deflationsize`, `deflationrebuilds`, `precondtime`: the active rank of
+    the recycled deflation, how many times it has been built, and the wall
+    time spent applying the preconditioner in this solve.
+- `products`, `deflationproducts`: the exact operator products this linear
+    solve took, and the running count of those the recycling wrapper took
+    for its builds and standalone applications. The cost of a solve is in
+    these, not in `iterations` alone: every restart cycle recomputes the
+    residual, and `:adef2` reapplies its product at the restart correction.
 """
 struct KrylovSolveInfo
     iteration::Int
@@ -139,6 +147,13 @@ struct KrylovSolveInfo
     # wall time applying the preconditioner, which tells a weaker and cheaper
     # preconditioner from a worse one when the iteration counts look alike
     precondtime::Float64
+    # exact operator products: those the linear solve took (Arnoldi steps,
+    # the residual recomputed at every restart, a warm start) and, in the
+    # running count `deflationproducts`, those the recycling wrapper took
+    # for its builds and standalone `:adef2` applications; Arnoldi steps
+    # alone understate the cost of a form or a restart
+    products::Int
+    deflationproducts::Int
 end
 
 function Base.show(io::IO, ::MIME"text/plain", k::KrylovSolveInfo)
@@ -151,6 +166,7 @@ function Base.show(io::IO, ::MIME"text/plain", k::KrylovSolveInfo)
         k.escalated ? " escalated" :
             (k.escalationrequested ? " escalation-refused" : ""),
         k.deflationsize > 0 ? " deflation=$(k.deflationsize)" : "",
+        " products=", k.products,
         k.stagnated ? " stagnated" : "",
         " slope=", round(k.slope, sigdigits = 2),
         " alpha=", round(k.alpha, sigdigits = 2),
@@ -173,7 +189,7 @@ function _withstep(k::KrylovSolveInfo, slope, alpha, backtracks, armijo)
         k.residualratio, k.iterations, k.cycles, k.reason, k.refreshed,
         k.escalated, k.stagnated, slope, alpha, backtracks, armijo, k.time,
         k.escalationrequested, k.deflationsize, k.deflationrebuilds,
-        k.precondtime)
+        k.precondtime, k.products, k.deflationproducts)
 end
 
 function _withescalated(k::KrylovSolveInfo)
@@ -181,7 +197,7 @@ function _withescalated(k::KrylovSolveInfo)
         k.residualratio, k.iterations, k.cycles, k.reason, k.refreshed,
         true, k.stagnated, k.slope, k.alpha, k.backtracks, k.armijo, k.time,
         k.escalationrequested, k.deflationsize, k.deflationrebuilds,
-        k.precondtime)
+        k.precondtime, k.products, k.deflationproducts)
 end
 
 # an escalation which the preconditioner refused: the request happened, the
@@ -190,7 +206,8 @@ function _withescalationrefused(k::KrylovSolveInfo)
     return KrylovSolveInfo(k.iteration, k.role, k.normF, k.forcing,
         k.residualratio, k.iterations, k.cycles, k.reason, k.refreshed,
         k.escalated, k.stagnated, k.slope, k.alpha, k.backtracks, k.armijo,
-        k.time, true, k.deflationsize, k.deflationrebuilds, k.precondtime)
+        k.time, true, k.deflationsize, k.deflationrebuilds, k.precondtime,
+        k.products, k.deflationproducts)
 end
 
 
@@ -250,26 +267,12 @@ or has no cheaper/costlier settings.
 escalatepreconditioner!(::AbstractPreconditioner) = false
 
 """
-    deflationsize(pc)
-
-The number of vectors in the deflation subspace, zero for a preconditioner
-which does not recycle.
-"""
-deflationsize(::AbstractPreconditioner) = 0
-
-"""
-    deflationrebuilds(pc)
-
-How many times the deflation subspace has been rebuilt.
-"""
-deflationrebuilds(::AbstractPreconditioner) = 0
-
-"""
     GMRESWorkspace{T<:AbstractFloat}
 
 Preallocated storage for [`gmres!`](@ref) with a restart length of `m` on a
 system of dimension `n`. Holds the `n x (m+1)` Arnoldi basis `V`, the
-`(m+1) x m` Hessenberg matrix `H`, the Givens rotations `cs` and `sn` which
+`(m+1) x m` Hessenberg matrix `H` as the Givens rotations leave it, the raw
+Arnoldi Hessenberg `Harnoldi` beside it, the Givens rotations `cs` and `sn` which
 reduce it, the least squares right hand side `s`, its solution `y`, and three
 length `n` work vectors.
 
@@ -295,6 +298,13 @@ mutable struct GMRESWorkspace{T<:AbstractFloat,TV<:AbstractVector{T},TM<:Abstrac
     # which a device array must not be asked to do, and they are small
     # enough that the cost is one small transfer per Arnoldi step
     H::Matrix{T}
+    # the Arnoldi Hessenberg before the Givens rotations, column by column
+    # as each is finished. `H` itself is the triangularized least squares
+    # matrix once the rotations have been applied; a harvest that needs the
+    # Arnoldi relation `A*V[:, 1:j] = V[:, 1:j+1]*Harnoldi[1:j+1, 1:j]`
+    # (the harmonic Ritz pencil) reads this one. The singular values of the
+    # two agree, since a left orthogonal transformation preserves them.
+    Harnoldi::Matrix{T}
     cs::Vector{T}
     sn::Vector{T}
     s::Vector{T}
@@ -325,7 +335,7 @@ function GMRESWorkspace(b::AbstractVector{T}, m::Integer) where {T<:AbstractFloa
     cols = min(m + 1, GMRESINITIALCOLUMNS)
     return GMRESWorkspace{T,typeof(similar(b)),typeof(similar(b, n, cols))}(
         similar(b, n, cols), similar(b), similar(b), similar(b),
-        zeros(T, m + 1, m),
+        zeros(T, m + 1, m), zeros(T, m + 1, m),
         Vector{T}(undef, m), Vector{T}(undef, m),
         Vector{T}(undef, m + 1), Vector{T}(undef, m),
         similar(b, m), similar(b, m))
@@ -395,6 +405,30 @@ implementations must derive the usable Arnoldi dimension from
 harvest!(pc::AbstractPreconditioner, ::GMRESWorkspace, ::NamedTuple) = pc
 
 """
+    harvestcycle!(pc::AbstractPreconditioner, ws::GMRESWorkspace, j::Integer)
+
+Give the preconditioner the Arnoldi factorization of the restart cycle which
+has just ended, `j` vectors of it, before [`gmres!`](@ref) overwrites the
+workspace with the next cycle. The default does nothing.
+
+This is the per-cycle counterpart of [`harvest!`](@ref), which sees only the
+cycle left in the workspace when the solve returns. A preconditioner opts
+into it through [`usescycleharvest`](@ref), and one which does is *not*
+harvested again afterwards.
+"""
+harvestcycle!(pc::AbstractPreconditioner, ::GMRESWorkspace, ::Integer) = pc
+
+"""
+    usescycleharvest(pc::AbstractPreconditioner)
+
+Whether `pc` wants [`harvestcycle!`](@ref) at the end of every restart cycle
+instead of [`harvest!`](@ref) once the solve is over. `false` by default, so
+that a preconditioner which harvests only the final cycle keeps doing
+exactly that.
+"""
+usescycleharvest(::AbstractPreconditioner) = false
+
+"""
     isexactpreconditioner(pc::AbstractPreconditioner)
 
 Whether `pc` currently applies the exact Jacobian, so that a deflation or
@@ -404,11 +438,33 @@ preconditioner that does not say otherwise.
 isexactpreconditioner(::AbstractPreconditioner) = false
 
 """
+    RecyclingState(b::AbstractVector)
+
+The part of a [`RecyclingPreconditioner`](@ref) that outlives one solve:
+the candidate directions `U`, an `n` by `kc` matrix with orthonormal
+columns allocated like `b`. A candidate is a direction of the residual on
+which the preconditioned operator `J*inv(P)` was found to be small, the
+metric the harvest measures in; the correction it stands for is
+`inv(P)*u`, formed at the next build against whatever base is then in
+place. [`HBReuse`](@ref) carries one across a cached sweep, where a nearby
+operating point rebinds the base to nearly the same operator; the state is
+replaced only after a converged solve, so a failed point cannot seed the
+next one.
+"""
+mutable struct RecyclingState{TM<:AbstractMatrix}
+    U::TM
+end
+
+RecyclingState(b::AbstractVector) = RecyclingState(similar(b, length(b), 0))
+Base.copy(s::RecyclingState) = RecyclingState(copy(s.U))
+
+"""
     RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!, n::Integer;
-        kmax = 40, kharvest = 8)
+        kmax = 20, kharvest = 8, escalateafter = 1, form = :adef1)
 
 Augments any base preconditioner with a recycled deflation subspace, carried
-across Newton steps.
+across Newton steps and, through a [`RecyclingState`](@ref), across the
+solves of a sweep.
 
 The base preconditioner `inner` leaves a handful of directions on which the
 preconditioned operator `J*inv(P)` is nearly singular. Those directions are
@@ -416,92 +472,205 @@ what stalls GMRES, because its residual polynomial is pinned at `p(0) = 1` and
 so cannot be small near the origin. Rather than enlarging `inner` until it
 happens to cover them, this wrapper *measures* them: after each solve
 [`harvest!`](@ref) extracts the directions the Arnoldi factorization found the
-operator shrinks most, and the next solve deflates them explicitly.
+operator shrinks most, maps them to corrections of the unknowns, and the next
+solve deflates them explicitly.
 
-Given a subspace `U` and `Z = inv(P)*U`, `Y = J*Z`, `G = Z'Y`, the deflated
-preconditioner is
+The coarse space is the residual-image pair of the candidates: with `U` the
+candidate directions, `Z = inv(P)*U` their corrections, one Jacobian product
+per column and one small singular value decomposition give
 
-    inv(Pdef)*v = inv(P)*v + W*(inv(G)*(Z'*v)),   W = Z - inv(P)*Y
+    X = Z*V/S,    C = J*X,    C'*C = I,
 
-which makes `range(Y)` an exact eigenspace of `J*inv(Pdef)` at eigenvalue one.
-Folding `inv(P)*Y` into `W` at build time keeps the application to one base
-solve plus two dense mat-vecs with an `n` by `k` matrix, rather than three.
+after which `Q = X*C'` satisfies `J*Q = C*C'`, an orthogonal projector in the
+norm GMRES minimizes. This is the recycling space of GCRO-DR (Parks, de
+Sturler, Mackey, Johnson and Maiti, SIAM J. Sci. Comput. 28, 2006). It is
+preferred to the Galerkin pairing `Z'*J*Z` because a nonsymmetric Jacobian
+can pair a useful direction with a zero there (`J = [0 -e; 1 0]`, `Z = e2`
+gives `Z'*J*Z = 0` while `norm(J*Z) = e`), leaving the correction silently
+absent; the image pair cannot, and it needs no projected inverse and no
+tolerance for one. The deflated preconditioner is one of two forms, selected
+by `form`, which differ in whether the projection is applied to the *input*
+or to the *output* of the base solve:
 
-The subspace is *accumulated* rather than replaced: each harvest is appended
-and re-orthogonalized, and the result is trimmed back to `kmax` by keeping the
-eigenvectors of `Y'Y` with the smallest eigenvalues, that is, the subspace the
-operator shrinks most. Accumulating measurably beats rediscovering the
-subspace at every step, because the deficient directions move slowly while the
-Newton iterate does not.
+- `:adef1` (the default): `inv(Pdef)*v = inv(P)*(I - J*Q)*v + Q*v`, applied as
+  `inv(P)*v + W*(C'*v)` with `W = X - inv(P)*C` folded in at build time, so
+  an application is one base solve plus two dense mat-vecs with an `n` by
+  `k` matrix. `range(C)` is an exact eigenspace of `J*inv(Pdef)` at
+  eigenvalue one. The build costs `k` Jacobian products and `2k` base
+  solves.
+- `:adef2`: `inv(Pdef)*v = (I - Q*J)*inv(P)*v + Q*v`, applied
+  as `u = inv(P)*v; u + X*(C'*(v - J*u))`. This needs `J*u`, which on its
+  own costs a Jacobian product per application; inside [`gmres!`](@ref) the
+  product is fused with the Arnoldi step ([`preconditionedproduct!`](@ref)),
+  where `J*inv(Pdef)*v = J*u + C*(C'*(v - J*u))` is formed from the one
+  product the step takes anyway, so an Arnoldi step costs one base solve,
+  one Jacobian product and three dense mat-vecs. The build costs `k`
+  Jacobian products and `k` base solves (none of the latter when the base
+  has not changed since the last build). Outside the fused step (the restart
+  correction of `gmres!`, a stagnated step, an external Krylov solver) the
+  standalone form pays its product, which is counted in
+  [`deflationproducts`](@ref).
+
+With an exact `Q` the two preconditioned operators are block triangular in a
+basis adapted to the projector and have the same spectrum; they differ in
+sensitivity to an inexact `Q`, which here means a subspace harvested at an
+earlier Newton iterate or an earlier sweep point. In the deflation taxonomy
+of Tang, Nabben, Vuik and Erlangga (J. Sci. Comput. 39, 2009) these are the
+A-DEF1 and A-DEF2 variants. Which is the robust one depends on the coarse
+space it is paired with: on identical candidates from a 128-junction
+two-tone line, the image pair here takes 1891 Arnoldi steps as A-DEF1 and
+2849 as A-DEF2, while the Galerkin pairing took 1679 as A-DEF2 and 3058 as
+A-DEF1. So A-DEF1 is the default on this space, 13% behind the best
+Galerkin form on that case and without its failure mode.
+
+The pair is rebuilt at every Newton step from the current Jacobian, whether
+or not the base was rebuilt ([`pointmoved!`](@ref)); with a frozen base the
+rebuild is what turns newly harvested candidates into an active correction,
+and the base solves of the candidates it already holds are kept. The
+subspace is *accumulated* rather than replaced: each harvest is appended to
+the candidates and re-orthonormalized, and the rebuild trims the candidates
+to `kmax` by keeping the directions the preconditioned operator shrinks
+most, the smallest singular values of `J*inv(P)*U`. That is the metric of
+the harvest, and it is the one that matters: measured under `J` alone the
+images of the candidates span the many orders of magnitude of the harmonic
+scales, and a trim in that metric keeps the wrong directions. Accumulating
+measurably beats rediscovering the subspace at every step, because the
+deficient directions move slowly while the Newton iterate does not.
+`deflationsize` reports the active rank of the pair, which can be smaller
+than the number of candidates when a candidate's image falls below the
+numerical resolution of the build.
+
+What this can and cannot do, measured on two-tone lines with an explicit
+direct current block: a deficiency of rank comparable to `kmax` is removed
+(the 128-junction line above); the high-rank deficiency the block diagonal
+leaves on longer lines and stronger drives is not, 20 to 40 directions
+change nothing there and the escalation does the work, so the wrapper is a
+net cost. On a base strong enough to converge in ten Arnoldi steps
+(`krylovcouplingmodes = :auto`) the rebuild is the dominant cost and the
+wrapper loses. It is off by default (`krylovrecycle = 0`) for those reasons,
+and is the natural fit for a sweep at a size where the escalation is what
+it replaces.
 
 The intended base is the mode block diagonal
-([`ModeCouplingPreconditioner`](@ref) with `couplingmodes = :none`). That
-combination is the scalable one: the base is a batch of small independent
-factorizations, one per mode, and the deflation is dense level 2 BLAS, so
-neither part needs a large sparse factorization. It is also, for the same
-reason, the part of this solver that ports to a GPU.
+([`ModeCouplingPreconditioner`](@ref) with `couplingmodes = :none`): a batch
+of small independent factorizations, one per mode, plus dense level 2 BLAS
+for the deflation, so neither part needs a large sparse factorization, and
+both port to a GPU.
 
 `escalatepreconditioner!` is delegated to `inner`, so the usual safety net
-still applies when recycling alone is not enough.
+still applies when recycling alone is not enough; `escalateafter` lets the
+wrapper defer a request while it holds an active subspace which might absorb
+the deficiency instead (the default is no deferral).
 
-!!! note
-    The pairing this is built for is `couplingmodes = :none` plus recycling.
-    Escalation of the base is deliberately reluctant underneath this wrapper;
-    see `escalateafter`.
+!!! note "`:adef2` and the Jacobian product"
+    The fused product relies on `C` being the product of the *current*
+    Jacobian with `X`. Inside [`nlsolvekrylov!`](@ref) that is guaranteed by
+    [`pointmoved!`](@ref); a caller driving [`gmres!`](@ref) directly must
+    call it whenever the operator changes. Through an external Krylov solver
+    the standalone form is used, which is exact and costs one extra Jacobian
+    product per application.
+
+!!! note "Aliasing"
+    `applypreconditioner!(z, pc, r)` reads `r` after writing `z`, so the two
+    must not alias, the same contract as `mul!`. The two-argument `ldiv!`
+    allocates its result and is safe.
 """
 mutable struct RecyclingPreconditioner{TI,TJ,T<:AbstractFloat,TM<:AbstractMatrix{T},TV<:AbstractVector{T}} <: AbstractPreconditioner
     const inner::TI
     const jvp!::TJ
-    # system sized, and therefore allocated like the vectors of the system, so
-    # on a device backend the deflation is a pair of device gemvs
-    U::TM
+    # the candidates, which persist across solves, and their base solves
+    # `Z = inv(P)*U`, column for column, kept while the base is unchanged
+    state::RecyclingState{TM}
     Z::TM
+    # the active pair, `J*X = C` with orthonormal `C`, and for `:adef1` the
+    # folded block `W = X - inv(P)*C`; system sized and allocated like the
+    # vectors of the system, so on a device backend the deflation is a pair
+    # of device gemvs
+    X::TM
+    C::TM
     W::TM
-    # the k by k projected inverse and its two work vectors. `Ginv` lives
-    # with the basis rather than on the host, because the apply multiplies
-    # it against the device resident `a` and `b`; only the dense
-    # factorizations which build it run on the host (see
-    # `_rebuilddeflation!`)
-    Ginv::TM
+    # a k sized work vector for the coefficients, and a system sized one for
+    # the `:adef2` correction `v - J*u`
     a::TV
-    b::TV
+    t::TV
     const kmax::Int
     const kharvest::Int
     const escalateafter::Int
+    const form::Symbol
     escalationrequests::Int
     rebuilds::Int
+    # Jacobian products this wrapper took itself: `k` per rebuild and one
+    # per standalone `:adef2` application
+    products::Int
+    # whether the pair is that of the current Jacobian and the current
+    # candidates: cleared by `pointmoved!` and by a harvest, restored by a
+    # rebuild
+    fresh::Bool
 end
 
 function RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
     n::Integer; kmax::Integer = 20, kharvest::Integer = 8,
-    escalateafter::Integer = 1, T::Type{<:AbstractFloat} = Float64)
+    escalateafter::Integer = 1, form::Symbol = :adef1,
+    T::Type{<:AbstractFloat} = Float64, state = nothing)
     return RecyclingPreconditioner(inner, jvp!, Vector{T}(undef, n);
-        kmax = kmax, kharvest = kharvest, escalateafter = escalateafter)
+        kmax = kmax, kharvest = kharvest, escalateafter = escalateafter,
+        form = form, state = state)
 end
 
 """
     RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
-        b::AbstractVector; kmax = 20, kharvest = 8, escalateafter = 1)
+        b::AbstractVector; kmax = 20, kharvest = 8, escalateafter = 1,
+        form = :adef1, state = RecyclingState(b))
 
 Build the deflation wrapper on a system whose vectors are like `b`. The
-deflation subspace and the two blocks derived from it are allocated with
-`similar(b)`, so they live wherever `b` does and the application is a base
-solve plus two device gemvs. The `k` x `k` projected inverse stays on the
-host, where it is formed by a dense factorization of a matrix no larger than
-`kmax`.
+candidates and the active pair are allocated with `similar(b)`, so they live
+wherever `b` does and an application is a base solve plus a few device
+gemvs; the `k` by `k` factorizations of the build run on the host. `form` is
+`:adef1` or `:adef2`; see the type's documentation. `state` is a
+[`RecyclingState`](@ref) to start from, the candidates of a previous solve
+of a nearby system; it is mutated by the harvests of this solve.
 """
 function RecyclingPreconditioner(inner::AbstractPreconditioner, jvp!,
     b::AbstractVector{T}; kmax::Integer = 20, kharvest::Integer = 8,
-    escalateafter::Integer = 1) where {T<:AbstractFloat}
+    escalateafter::Integer = 1, form::Symbol = :adef1,
+    state = nothing) where {T<:AbstractFloat}
     kmax >= 1 || throw(ArgumentError(lazy"`kmax` = $(kmax) must be at least 1."))
     1 <= kharvest <= kmax || throw(ArgumentError(
         lazy"`kharvest` = $(kharvest) must satisfy 1 <= kharvest <= kmax = $(kmax)."))
+    form in (:adef1, :adef2) || throw(ArgumentError(
+        lazy"`form` = $(form) must be `:adef1` or `:adef2`."))
     n = length(b)
-    return RecyclingPreconditioner(inner, jvp!, similar(b, n, 0),
-        similar(b, n, 0), similar(b, n, 0), similar(b, 0, 0),
-        similar(b, 0), similar(b, 0),
-        Int(kmax), Int(kharvest), Int(escalateafter), 0, 0)
+    st = isnothing(state) ? RecyclingState(b) : state
+    size(st.U, 1) == n || throw(DimensionMismatch(
+        lazy"the recycling state is for dimension $(size(st.U, 1)) but the system has $(n)."))
+    return RecyclingPreconditioner(inner, jvp!, st, similar(b, n, 0),
+        similar(b, n, 0), similar(b, n, 0), similar(b, n, 0), similar(b, 0),
+        similar(b), Int(kmax), Int(kharvest), Int(escalateafter), form, 0, 0,
+        0, size(st.U, 2) == 0)
 end
+
+"""
+    deflationform(pc)
+
+The deflation form of a preconditioner, `:adef1` or `:adef2` for a
+[`RecyclingPreconditioner`](@ref) and `:none` for anything else.
+"""
+deflationform(::AbstractPreconditioner) = :none
+deflationform(pc::RecyclingPreconditioner) = pc.form
+
+"""
+    pointmoved!(pc::AbstractPreconditioner)
+
+Tell the preconditioner that the operator it approximates has changed
+without it having been rebuilt, and return `pc`. The default does nothing.
+A [`RecyclingPreconditioner`](@ref) marks its pair stale, so that the next
+application rebuilds it from the current Jacobian: for `:adef2` the fused
+product needs that to be exact, and for either form a stale pair is a
+weaker preconditioner. Called by [`nlsolvekrylov!`](@ref) at every Newton
+step; wrappers forward it.
+"""
+pointmoved!(pc::AbstractPreconditioner) = pc
+pointmoved!(pc::RecyclingPreconditioner) = (pc.fresh = false; pc)
 
 # Escalating the base and recycling are two answers to the same problem,
 # and `escalateafter` lets recycling defer the base's escalation in the
@@ -512,12 +681,11 @@ end
 # the deflation does absorb the deficiency no escalation is requested at
 # all.
 function escalatepreconditioner!(pc::RecyclingPreconditioner)
-    # Withholding an escalation is only defensible when there is a deflation
-    # subspace which might cover the deficiency instead; while `U` is empty
-    # the throttle would delay a real remedy for a mechanism which is not
-    # running, and the delay is expensive, since each deferred request is a
-    # Newton step solved against an inadequate preconditioner.
-    if size(pc.U, 2) == 0
+    # Withholding an escalation is only defensible when there is an active
+    # deflation which might cover the deficiency instead; candidates whose
+    # pair has not been built, or fell below the build's resolution, are
+    # not that
+    if deflationsize(pc) == 0
         pc.escalationrequests = 0
         return escalatepreconditioner!(pc.inner)
     end
@@ -529,24 +697,74 @@ function escalatepreconditioner!(pc::RecyclingPreconditioner)
     return escalatepreconditioner!(pc.inner)
 end
 
-deflationsize(pc::RecyclingPreconditioner) = size(pc.U, 2)
+# The diagnostics of a RecyclingPreconditioner, forwarded by the wrappers
+# and zero for any other preconditioner.
+"""
+    deflationsize(pc)
+
+The active rank of the deflation pair of a
+[`RecyclingPreconditioner`](@ref): how many directions the applied
+correction spans. Zero for a preconditioner which does not recycle.
+"""
+deflationsize(::AbstractPreconditioner) = 0
+deflationsize(pc::RecyclingPreconditioner) = size(pc.C, 2)
+
+"""
+    candidatecount(pc)
+
+The number of candidate directions a [`RecyclingPreconditioner`](@ref)
+holds: at least [`deflationsize`](@ref), and more when a candidate's image
+fell below the resolution of the last build or a harvest has added
+candidates the next build has not yet seen.
+"""
+candidatecount(::AbstractPreconditioner) = 0
+candidatecount(pc::RecyclingPreconditioner) = size(pc.state.U, 2)
+
+"""
+    deflationrebuilds(pc)
+
+How many times the deflation pair of a [`RecyclingPreconditioner`](@ref)
+has been built.
+"""
+deflationrebuilds(::AbstractPreconditioner) = 0
 deflationrebuilds(pc::RecyclingPreconditioner) = pc.rebuilds
+
+"""
+    deflationproducts(pc)
+
+The number of Jacobian products a [`RecyclingPreconditioner`](@ref) has
+taken itself: one per candidate at every build, and one per standalone
+`:adef2` application (the restart correction of [`gmres!`](@ref), a
+stagnated step, an external Krylov solver). Together with `products` in
+[`KrylovSolveInfo`](@ref) this is the exact cost of a solve.
+"""
+deflationproducts(::AbstractPreconditioner) = 0
+deflationproducts(pc::RecyclingPreconditioner) = pc.products
 
 function updatepreconditioner!(pc::RecyclingPreconditioner, x::AbstractVector)
     updatepreconditioner!(pc.inner, x)
     # Against an exact inner preconditioner the correction is identically
-    # zero: Y = J*P^-1*U = U, so W = Z - P^-1*Y = 0. Rebuilding it anyway
-    # would cost 2k inner solves and k Jacobian products per Newton step,
-    # which after an escalation to the full Jacobian is most of the step.
-    # The subspace `U` is kept in case the base is rebuilt restricted again.
+    # zero: C = J*inv(J)*... = the images are the candidates' Newton
+    # corrections and W = X - inv(P)*C = 0 for `:adef1`, v - J*inv(P)*v = 0
+    # for `:adef2`. Building it anyway would cost k Jacobian products (and k
+    # exact solves) per Newton step. The candidates are kept in case the
+    # base is rebuilt restricted again.
+    # the base has changed, so its solves of the candidates are stale
+    pc.Z = similar(pc.state.U, size(pc.state.U, 1), 0)
     if isexactpreconditioner(pc.inner)
-        n = size(pc.U, 1)
-        pc.Z = similar(pc.U, n, 0); pc.W = similar(pc.U, n, 0)
-        pc.Ginv = similar(pc.U, 0, 0)
-        pc.a = similar(pc.U, 0); pc.b = similar(pc.U, 0)
+        _clearactive!(pc)
         return pc
     end
-    _rebuilddeflation!(pc)
+    _builddeflation!(pc)
+    return pc
+end
+
+function _clearactive!(pc::RecyclingPreconditioner)
+    n = size(pc.state.U, 1)
+    pc.X = similar(pc.state.U, n, 0); pc.C = similar(pc.state.U, n, 0)
+    pc.W = similar(pc.state.U, n, 0)
+    pc.a = similar(pc.state.U, 0)
+    pc.fresh = true
     return pc
 end
 
@@ -557,69 +775,198 @@ end
 # Hessenberg and the Givens rotations.
 _hostbuilt(proto::AbstractMatrix, A::AbstractMatrix) =
     copyto!(similar(proto, size(A)...), A)
+_hostbuilt(proto::SubArray, A::AbstractMatrix) = _hostbuilt(parent(proto), A)
 
-# Rebuild Z, W and inv(G) at the current point. Y = J*Z is recomputed
-# rather than carried over from the previous step's Arnoldi: the stale
-# version is free but costs far more Krylov iterations than the products it
-# saves.
-function _rebuilddeflation!(pc::RecyclingPreconditioner{TI,TJ,T}) where {TI,TJ,T}
-    k = size(pc.U, 2)
-    n = size(pc.U, 1)
-    if k == 0
-        pc.Z = similar(pc.U, n, 0); pc.W = similar(pc.U, n, 0)
-        pc.Ginv = similar(pc.U, 0, 0)
-        pc.a = similar(pc.U, 0); pc.b = similar(pc.U, 0)
-        return pc
-    end
-    Z = similar(pc.U)
-    Y = similar(pc.U)
-    # the base solve and the product are handed contiguous vectors rather
-    # than column views, which a device direct solver cannot bind a
-    # descriptor to
-    cin = similar(pc.U, n)
-    cout = similar(pc.U, n)
-    for j in 1:k
-        copyto!(cin, view(pc.U, :, j))
-        applypreconditioner!(cout, pc.inner, cin)
-        copyto!(view(Z, :, j), cout)
-    end
-    for j in 1:k
-        copyto!(cin, view(Z, :, j))
-        pc.jvp!(cout, cin)
-        copyto!(view(Y, :, j), cout)
-    end
-    if k > pc.kmax
-        # keep the subspace the operator shrinks most
-        C = _hostbuilt(pc.U,
-            eigen(Symmetric(Array(Y'*Y))).vectors[:, 1:pc.kmax])
-        pc.U = pc.U*C; Z = Z*C; Y = Y*C; k = pc.kmax
-    end
-    F = svd(Array(Z'*Y))
-    tol = eps(T)^(3//4)*maximum(F.S; init = zero(T))
-    pc.Ginv = _hostbuilt(pc.U,
-        F.V*Diagonal([s > tol ? inv(s) : zero(T) for s in F.S])*F.U')
-    B = similar(Y)
-    for j in 1:k
-        copyto!(cin, view(Y, :, j))
-        applypreconditioner!(cout, pc.inner, cin)
+# apply an in-place map to the columns of `A` into `B`, through contiguous
+# vectors rather than column views, which a device direct solver cannot
+# bind a descriptor to
+function _mapcolumns!(f!, B::AbstractMatrix, A::AbstractMatrix, cin, cout)
+    for j in axes(A, 2)
+        copyto!(cin, view(A, :, j))
+        f!(cout, cin)
         copyto!(view(B, :, j), cout)
     end
-    pc.Z = Z
-    pc.W = Z .- B
-    pc.a = similar(pc.U, k); pc.b = similar(pc.U, k)
+    return B
+end
+
+"""
+    _builddeflation!(pc::RecyclingPreconditioner)
+
+Build the active pair for the current candidates at the current point. The
+base solves `Z = inv(P)*U` are kept from the last build for the candidates
+it already held, since the base is rebuilt through `updatepreconditioner!`,
+which empties them; the new candidates cost one base solve each. The
+images `Y = J*Z` cost one product per candidate. Their singular value
+decomposition is taken through the `k` by `k` Gram matrix on the host,
+`Y'*Y = V*S^2*V'`, and does three things at once: it drops the directions
+whose image is below the resolution of the Gram form (`S < sqrt(eps)*Smax`,
+where a squared condition number stops resolving; such a direction would
+otherwise be inverted into an unbounded correction), it trims to `kmax` by
+keeping the *smallest* remaining singular values, the directions the
+preconditioned operator shrinks most and the ones GMRES cannot resolve on
+its own, and it normalizes the rest, `X <- Z*V/S` and `C <- Y*V/S`, so that
+`J*X = C` with `C'*C = I` up to the Gram error, which a second Gram pass
+on `C` removes. The candidates and their base solves are replaced by their
+trimmed span, `U*V` and `Z*V`. For `:adef1` the folded block
+`W = X - inv(P)*C` costs `k` further base solves.
+"""
+function _builddeflation!(pc::RecyclingPreconditioner{TI,TJ,T}) where {TI,TJ,T}
+    U = pc.state.U
+    kc = size(U, 2)
+    n = size(U, 1)
+    kc == 0 && return _clearactive!(pc)
+    cin = similar(U, n)
+    cout = pc.t
+    solve! = (o, i) -> applypreconditioner!(o, pc.inner, i)
+    kz = min(size(pc.Z, 2), kc)
+    Z = similar(U)
+    kz > 0 && copyto!(view(Z, :, 1:kz), view(pc.Z, :, 1:kz))
+    kz < kc && _mapcolumns!(solve!, view(Z, :, kz+1:kc), view(U, :, kz+1:kc),
+        cin, cout)
+    Y = similar(U)
+    _mapcolumns!(pc.jvp!, Y, Z, cin, cout)
+    pc.products += kc
+    F = eigen(Symmetric(Array(Y'*Y)))
+    s = sqrt.(max.(F.values, zero(T)))
+    smax = maximum(s; init = zero(T))
+    floor = sqrt(eps(T))*smax
+    # ascending, so the smallest resolved singular values come first
+    keep = [i for i in eachindex(s) if s[i] > floor]
+    length(keep) > pc.kmax && (keep = keep[1:pc.kmax])
+    if isempty(keep)
+        pc.state.U = similar(U, n, 0)
+        pc.Z = similar(U, n, 0)
+        return _clearactive!(pc)
+    end
+    V = F.vectors[:, keep]
+    Vd = _hostbuilt(U, V)
+    T1 = _hostbuilt(U, V*Diagonal(inv.(s[keep])))
+    X = Z*T1
+    C = Y*T1
+    # the second pass: `C` is orthonormal to the Gram error, `eps` times the
+    # squared condition of the images, which the floor above bounds; one
+    # Cholesky of `C'*C` finishes it, applied to `X` as well so that
+    # `J*X = C` survives
+    R = cholesky(Symmetric(Array(C'*C)), check = false)
+    if issuccess(R)
+        Rinv = _hostbuilt(U, Matrix(inv(R.U)))
+        C = C*Rinv
+        X = X*Rinv
+    end
+    pc.state.U = U*Vd
+    pc.Z = Z*Vd
+    pc.X = X
+    pc.C = C
+    k = size(C, 2)
+    if pc.form === :adef1
+        # fold the base solve of C into the correction, k solves now for
+        # one fewer gemv per application
+        B = similar(C)
+        _mapcolumns!(solve!, B, C, cin, cout)
+        pc.W = X .- B
+    else
+        pc.W = similar(U, n, 0)
+    end
+    pc.a = similar(U, k)
     pc.rebuilds += 1
+    pc.fresh = true
     return pc
+end
+
+"""
+    _refreshproducts!(pc::RecyclingPreconditioner)
+
+Bring the pair up to date with the current Jacobian and candidates when
+the point has moved ([`pointmoved!`](@ref)) or a harvest has added
+candidates since the last build, whether or not the base was rebuilt. A
+no-op when the pair is fresh. Without this a subspace would only ever be
+applied after a base refresh, and a base frozen across Newton steps
+(`krylovrefreshiterations` large) would leave the deflation inert.
+"""
+function _refreshproducts!(pc::RecyclingPreconditioner)
+    pc.fresh && return pc
+    if isexactpreconditioner(pc.inner)
+        # the correction is identically zero against an exact base
+        _clearactive!(pc)
+        return pc
+    end
+    return _builddeflation!(pc)
 end
 
 function applypreconditioner!(z::AbstractVector, pc::RecyclingPreconditioner,
     r::AbstractVector)
+    _refreshproducts!(pc)
+    if pc.form === :adef1 && size(pc.C, 2) > 0
+        mul!(pc.a, transpose(pc.C), r)
+    end
     applypreconditioner!(z, pc.inner, r)
-    if size(pc.Z, 2) > 0
-        mul!(pc.a, transpose(pc.Z), r)
-        mul!(pc.b, pc.Ginv, pc.a)
-        mul!(z, pc.W, pc.b, true, true)
+    size(pc.C, 2) > 0 || return z
+    if pc.form === :adef1
+        mul!(z, pc.W, pc.a, true, true)
+    else
+        # the standalone form of `:adef2` pays the Jacobian product itself
+        pc.jvp!(pc.t, z)
+        pc.products += 1
+        pc.t .= r .- pc.t
+        mul!(pc.a, transpose(pc.C), pc.t)
+        mul!(z, pc.X, pc.a, true, true)
     end
     return z
+end
+
+# apply a preconditioner handed to `gmres!` either as an
+# `AbstractPreconditioner` or as a bare in-place closure `M(z, v)`
+_applyprecond!(z::AbstractVector, M::AbstractPreconditioner,
+    v::AbstractVector) = applypreconditioner!(z, M, v)
+_applyprecond!(z::AbstractVector, M, v::AbstractVector) = (M(z, v); z)
+
+"""
+    preconditionedproduct!(w, z, Aop, M, v)
+
+One right preconditioned Arnoldi step: overwrite `z` with `inv(M)*v` and `w`
+with `A*z`, and return the seconds spent inside the preconditioner. The
+generic method applies `M` and then the operator. A
+[`RecyclingPreconditioner`](@ref) of form `:adef2` fuses the two, because
+its correction needs `J*inv(P)*v`, which is the product the step takes
+anyway: with `u = inv(P)*v`, `w0 = J*u` and `c = C'*(v - w0)`,
+
+    z = u + X*c,    w = J*z = w0 + C*c
+
+exactly, since `J*X = C`. The timing excludes the Jacobian product so that
+`precondtime` in [`KrylovSolveInfo`](@ref) means the same thing for every
+form.
+"""
+function preconditionedproduct!(w::AbstractVector, z::AbstractVector, Aop,
+    M, v::AbstractVector)
+    return _unfusedproduct!(w, z, Aop, M, v)
+end
+
+function _unfusedproduct!(w, z, Aop, M, v)
+    tpc = time()
+    _applyprecond!(z, M, v)
+    tpc = time() - tpc
+    mul!(w, Aop, z)
+    return tpc
+end
+
+function preconditionedproduct!(w::AbstractVector, z::AbstractVector, Aop,
+    pc::RecyclingPreconditioner, v::AbstractVector)
+    t0 = time()
+    _refreshproducts!(pc)
+    tpc = time() - t0
+    if pc.form !== :adef2 || size(pc.C, 2) == 0
+        return tpc + _unfusedproduct!(w, z, Aop, pc, v)
+    end
+    t0 = time()
+    applypreconditioner!(z, pc.inner, v)
+    tpc += time() - t0
+    mul!(w, Aop, z)
+    t0 = time()
+    pc.t .= v .- w
+    mul!(pc.a, transpose(pc.C), pc.t)
+    mul!(z, pc.X, pc.a, true, true)
+    mul!(w, pc.C, pc.a, true, true)
+    return tpc + (time() - t0)
 end
 
 
@@ -632,10 +979,8 @@ end
 # GPU; Householder QR is sequential in the columns and, worse here, forming
 # `Matrix(qr(A).Q)` materializes a dense n by k matrix on every harvest.
 # The price is a squared condition number, so the Cholesky can fail on an
-# ill conditioned block. That is not an edge case for a recycling subspace,
-# whose whole purpose is to keep rediscovering the same few directions, so
-# the caller projects and drops dependent columns first and falls back to a
-# Householder QR when this returns -1.
+# ill conditioned block; the caller resolves the rank first (`_orthappend`)
+# and this is the cleanup pass.
 function _choleskyqr2!(A::AbstractMatrix{T}) where {T<:AbstractFloat}
     k = size(A, 2)
     k == 0 && return 0
@@ -646,8 +991,7 @@ function _choleskyqr2!(A::AbstractMatrix{T}) where {T<:AbstractFloat}
         # `rdiv!` against a device resident `UpperTriangular` falls through to
         # a generic scalar kernel. Inverting is the less stable of the two,
         # which costs nothing here: the second CholeskyQR pass is what fixes
-        # the squared condition number either way, and a block too ill
-        # conditioned for that already returns -1 to the Householder fallback.
+        # the squared condition number either way.
         F = cholesky(Symmetric(Array(A'*A)), check = false)
         issuccess(F) || return -1
         Rinv = _hostbuilt(A, Matrix(inv(F.U)))
@@ -656,57 +1000,87 @@ function _choleskyqr2!(A::AbstractMatrix{T}) where {T<:AbstractFloat}
     return k
 end
 
-# Append `Unew` to the orthonormal basis `U`, keeping the result orthonormal.
-# The projection is block classical Gram-Schmidt with one reorthogonalization,
-# again all level 3 BLAS. Columns whose norm collapses under the projection
-# were already in the span of `U` and are dropped rather than orthogonalized
-# into noise.
-function _orthappend(U::AbstractMatrix{T},
-    Unew::AbstractMatrix{T}) where {T<:AbstractFloat}
-    before = [norm(view(Unew, :, j)) for j in axes(Unew, 2)]
-    if size(U, 2) > 0
+# Append `Xnew` to the orthonormal basis `X`, keeping the result orthonormal
+# and never adding a direction outside `span(X, Xnew)`. The projection
+# against `X` is block classical Gram-Schmidt with one reorthogonalization,
+# level 3 BLAS. The rank of what remains is then revealed on the host from
+# the `k` by `k` Gram matrix: an eigenvalue below `eps` times the largest
+# incoming column's squared norm (or the block's own largest eigenvalue) is
+# a direction the projection removed, a candidate already in the span or a
+# duplicate of another, and is dropped rather than orthogonalized into
+# noise. A full orthogonal factor of a rank deficient block would instead
+# manufacture arbitrary orthogonal-complement columns after the true range
+# is exhausted, which is what a Householder fallback used to do here.
+function _orthappend(X::AbstractMatrix{T},
+    Xnew::AbstractMatrix{T}) where {T<:AbstractFloat}
+    size(Xnew, 2) == 0 && return X
+    scale = maximum(Array(vec(sum(abs2, Xnew; dims = 1))); init = zero(T))
+    if size(X, 2) > 0
         for _ in 1:2
-            mul!(Unew, U, U'*Unew, -one(T), one(T))
+            mul!(Xnew, X, X'*Xnew, -one(T), one(T))
         end
     end
-    # A column is dropped when the projection removed essentially all of it,
-    # measured against its own norm *before* projection. Comparing against
-    # the largest surviving norm instead would retain a block that is pure
-    # roundoff, which is exactly what a subspace that keeps rediscovering the
-    # same directions produces.
-    kept = [j for j in axes(Unew, 2)
-        if norm(view(Unew, :, j)) > sqrt(eps(T))*before[j]]
-    isempty(kept) && return U
-    B = Unew[:, kept]
-    if _choleskyqr2!(B) < 0
-        # the Householder fallback is host only, and is reached only when the
-        # block was too ill conditioned for CholeskyQR2
-        B = _hostbuilt(U, Matrix(qr(Array(B)).Q)[:, 1:length(kept)])
-    end
-    return size(U, 2) > 0 ? hcat(U, B) : B
+    F = eigen(Symmetric(Array(Xnew'*Xnew)))
+    lmax = max(maximum(F.values; init = zero(T)), scale)
+    keep = [i for i in eachindex(F.values) if F.values[i] > eps(T)*lmax]
+    isempty(keep) && return X
+    R = F.vectors[:, keep]*Diagonal(inv.(sqrt.(F.values[keep])))
+    B = Xnew*_hostbuilt(Xnew, R)
+    # the rank is settled; one CholeskyQR2 pass cleans up the Gram error
+    _choleskyqr2!(B)
+    return size(X, 2) > 0 ? hcat(X, B) : B
 end
 
+"""
+    harvestdimension(ws::GMRESWorkspace, out::NamedTuple)
+
+The number of Arnoldi vectors of the *last* restart cycle still present in
+the workspace, which is the usable dimension for a harvest; the workspace
+holds only that cycle, so this is derived from `out.iterations` and
+`out.cycles` rather than from the iteration count alone. Zero when the
+cycle is empty or overran.
+"""
+function harvestdimension(ws::GMRESWorkspace, out::NamedTuple)
+    m = size(ws.H, 2)
+    j = Int(out.iterations) - (Int(out.cycles) - 1)*m
+    return 1 <= j <= m ? j : 0
+end
+
+# The directions this Krylov space found the operator shrinks most are the
+# right singular vectors of the rectangular Hessenberg with the smallest
+# singular values, lifted through the Arnoldi basis. A cycle shorter than
+# `kharvest` is not harvested: the singular values of a Krylov space of two
+# or three vectors say little about the operator, and taking them anyway
+# (so that a short warm-started solve still contributes) was measured to
+# cost 21% more Arnoldi steps on a 128-junction two-tone line, since the
+# quality trim of the next build cannot tell such a direction from a good
+# one. They are directions `u` of the residual on which `J*inv(Pdef)` is
+# small. The
+# candidate stored is `u` for `:adef2` and `u - C*(C'*u)` for `:adef1`: the
+# base part of `inv(Pdef)*u` is `inv(P)` applied to that vector, and the
+# rest of it lies in `span(X)`, which the append would remove anyway. No
+# base solve and no Jacobian product here; the build pays them.
 function harvest!(pc::RecyclingPreconditioner{TI,TJ,T}, ws::GMRESWorkspace,
     out::NamedTuple) where {TI,TJ,T}
     # nothing to deflate against an exact inner; see updatepreconditioner!
     isexactpreconditioner(pc.inner) && return pc
-    # the workspace holds only the final cycle, so the usable Arnoldi
-    # dimension is what that cycle built, not the total across restarts
-    m = size(ws.H, 2)
-    j = Int(out.iterations) - (Int(out.cycles) - 1)*m
-    (1 <= j <= m && j >= pc.kharvest) || return pc
-    # the directions this Krylov space found the operator shrinks most are the
-    # right singular vectors of the rectangular Hessenberg with the smallest
-    # singular values, lifted through the Arnoldi basis
-    F = svd(Matrix(view(ws.H, 1:j+1, 1:j)))
-    # `ws.H` is host resident, so the right singular vectors are built there
-    # and moved to the basis before lifting them through it
-    C = _hostbuilt(ws.V, F.V[:, size(F.V, 2)-pc.kharvest+1:size(F.V, 2)])
-    Unew = view(ws.V, :, 1:j)*C
-    U = _orthappend(pc.U, Unew)
-    # guard only; the rebuild trims to kmax by quality on the next update
-    pc.U = size(U, 2) > pc.kmax + pc.kharvest ?
-        U[:, size(U, 2)-(pc.kmax + pc.kharvest)+1:end] : U
+    j = harvestdimension(ws, out)
+    j >= pc.kharvest || return pc
+    nh = pc.kharvest
+    Vj = view(ws.V, :, 1:j)
+    F = svd(Matrix(view(ws.Harnoldi, 1:j+1, 1:j)))
+    # the Hessenberg is host resident, so the right singular vectors are
+    # built there and moved to the basis before lifting them through it
+    Cs = _hostbuilt(Vj, F.V[:, size(F.V, 2)-nh+1:size(F.V, 2)])
+    Unew = Vj*Cs
+    if pc.form === :adef1 && size(pc.C, 2) > 0
+        mul!(Unew, pc.C, pc.C'*Unew, -one(T), one(T))
+    end
+    before = size(pc.state.U, 2)
+    pc.state.U = _orthappend(pc.state.U, Unew)
+    # new candidates have no base solve and no image yet: the next build
+    # makes them
+    size(pc.state.U, 2) == before || (pc.fresh = false)
     return pc
 end
 
@@ -903,7 +1277,7 @@ function gmres_correction!(x::AbstractVector{T}, ws::GMRESWorkspace{T},
     if isnothing(Mop!)
         @. x += u
     else
-        Mop!(z, u)
+        _applyprecond!(z, Mop!, u)
         @. x += z
     end
     return x
@@ -911,10 +1285,13 @@ end
 
 """
     gmres!(x, Aop!, b, ws::GMRESWorkspace; Mop! = nothing, rtol = 1e-6,
-        atol = 0.0, maxrestarts = 10, initialzero = true)
+        atol = 0.0, maxrestarts = 10, initialzero = true, oncycle = nothing)
 
 Solve `A*x = b` with restarted GMRES, where `mul!(w, Aop, v)` computes `w = A*v` and
-the optional `Mop!(z, v)` applies a preconditioner `z = M \\ v`. The matrix `A`
+the optional `Mop!` applies a preconditioner `z = M \\ v`, either as a bare
+in-place closure `Mop!(z, v)` or as an [`AbstractPreconditioner`](@ref), which
+is applied through [`applypreconditioner!`](@ref) and may fuse its application
+with the operator product ([`preconditionedproduct!`](@ref)). The matrix `A`
 is never formed; only its action is required, which is what makes this usable
 with the matrix-free [`jacobianvectorproduct!`](@ref).
 
@@ -943,20 +1320,27 @@ non-finite one), or `:iterationlimit`.
 
 `iterations` is *not* the total number of `Aop!` calls: each cycle costs one
 further application for the explicit residual recomputation, and a warm start
-costs one at the outset. `maxrestarts` bounds the number of cycles including
+costs one at the outset; `products` in the returned tuple is that total, not
+counting products a preconditioner takes inside its own application. `maxrestarts` bounds the number of cycles including
 the first, so the Arnoldi work is capped at `maxrestarts*m` steps.
+`oncycle(ws, j)`, when given, is called at the end of every cycle with the
+workspace still holding that cycle's `j` Arnoldi vectors, for a caller
+which harvests from each cycle ([`harvestcycle!`](@ref)); it must only read
+the workspace.
 
 Allocation free after the workspace is built, apart from whatever `Aop!` and
 `Mop!` themselves allocate.
 """
 function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
     ws::GMRESWorkspace{T}; Mop! = nothing, rtol = 1e-6, atol = 0.0,
-    maxrestarts::Integer = 10, initialzero::Bool = true) where {T<:AbstractFloat}
+    maxrestarts::Integer = 10, initialzero::Bool = true,
+    oncycle = nothing) where {T<:AbstractFloat}
 
     n = length(b)
     # a bare in-place product is accepted alongside any `mul!`-able operator
     Aop = asoperator(Aop_, n)
     precondtime = 0.0
+    products = 0
     length(x) == n || throw(DimensionMismatch(
         lazy"`x` has length $(length(x)) but `b` has length $(n)."))
     size(ws.V, 1) == n || throw(DimensionMismatch(
@@ -983,13 +1367,15 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
         if initialzero
             fill!(x, zero(T))
             return (iterations = 0, residual = zero(T), converged = true,
-                reason = :converged, residualvector = nothing)
+                reason = :converged, residualvector = nothing, products = 0)
         end
         mul!(w, Aop, x)
+        products += 1
         resnorm = norm(w)
         if resnorm <= atol
             return (iterations = 0, residual = resnorm, converged = true,
-                reason = :converged, residualvector = nothing)
+                reason = :converged, residualvector = nothing,
+                products = products)
         end
     end
 
@@ -999,6 +1385,7 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
         copyto!(w, b)
     else
         mul!(w, Aop, x)
+        products += 1
         @. w = b - w
     end
     resnorm = norm(w)
@@ -1022,16 +1409,19 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
             # the Arnoldi step on A*inv(M)
             if isnothing(Mop!)
                 @views copyto!(z, V[:, j])
+                mul!(w, Aop, z)
             else
-                tpc = time()
-                @views Mop!(z, V[:, j])
-                precondtime += time() - tpc
+                precondtime += preconditionedproduct!(w, z, Aop, Mop!,
+                    view(V, :, j))
             end
-            mul!(w, Aop, z)
 
             hsub, normw0 = gmres_orthogonalize!(w, V, H, ws.hd, ws.cd, j)
+            # the finished column of the Arnoldi Hessenberg, before the
+            # rotations below triangularize it in place
+            copyto!(view(ws.Harnoldi, 1:j+1, j), view(H, 1:j+1, j))
             resnorm = gmres_applyrotations!(H, cs, sn, s, j)
             totaliterations += 1
+            products += 1
 
             # A subdiagonal which collapsed relative to the incoming vector
             # means the Krylov space is invariant and there is no valid next
@@ -1056,9 +1446,22 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
 
         gmres_correction!(x, ws, j, Mop!)
 
+        # The Arnoldi factorization of this cycle is about to be overwritten
+        # by the next one, so anything that wants to read it has to read it
+        # here. A caller which recycles uses this to harvest from *every*
+        # cycle rather than only the one left in the workspace at the end:
+        # the difficult directions often show up in an early full cycle,
+        # while the cycle that finally converges can be a few steps long and
+        # carry almost nothing. The callback may only *read* the workspace;
+        # the preconditioner is fixed for the duration of a solve, so a
+        # harvest appends candidates and nothing is rebuilt until the solve
+        # is over.
+        isnothing(oncycle) || oncycle(ws, j)
+
         # recompute the residual explicitly for the next cycle so restarts
         # cannot drift from the recurrence estimate
         mul!(w, Aop, x)
+        products += 1
         @. w = b - w
         previous = beta
         resnorm = norm(w)
@@ -1091,7 +1494,7 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
     # needs `A x` has it without another product
     return (iterations = totaliterations, residual = resnorm,
         converged = converged, cycles = cycles, reason = reason,
-        precondtime = precondtime, residualvector = w)
+        precondtime = precondtime, residualvector = w, products = products)
 end
 
 """
@@ -1146,12 +1549,15 @@ end
 KrylovJL(method::Symbol = :gmres; kwargs...) = KrylovJL(method, kwargs)
 
 """
-    hblinearsolve!(ls, deltax, jvp!, F, ws, Mop!; rtol, atol, maxrestarts)
+    hblinearsolve!(ls, deltax, jvp!, F, ws, Mop!; rtol, atol, maxrestarts,
+        oncycle = nothing)
 
 Solve for the Newton step and return the output named tuple `gmres!`
 produces: `converged`, `residual`, `iterations`, `cycles`, `reason`.
-`jvp!(y, v)` applies the Jacobian and `Mop!(z, r)` the preconditioner, both
-in place.
+`jvp!(y, v)` applies the Jacobian, in place, and `Mop!` is the
+preconditioner, an [`AbstractPreconditioner`](@ref) or a closure
+`Mop!(z, r)`. `oncycle` is the per-cycle callback of [`gmres!`](@ref),
+which a solver that does not restart may ignore.
 
 This is the one part of the Newton-Krylov loop with nothing harmonic
 balance specific about it: an operator, a right hand side, a preconditioner
@@ -1159,9 +1565,9 @@ and a tolerance. Putting it behind an interface lets an external Krylov
 library be substituted without touching anything else.
 """
 function hblinearsolve!(::InternalGMRES, deltax, jvp!, F, ws, Mop!;
-        rtol, atol, maxrestarts)
+        rtol, atol, maxrestarts, oncycle = nothing)
     return gmres!(deltax, jvp!, F, ws; Mop! = Mop!, rtol = rtol,
-        atol = atol, maxrestarts = maxrestarts)
+        atol = atol, maxrestarts = maxrestarts, oncycle = oncycle)
 end
 
 hblinearsolve!(ls::AbstractHBLinearSolver, args...; kwargs...) =
@@ -1377,7 +1783,22 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # only eta < 1 and a sufficient-decrease line search, which is what
     # remains.
 
-    Mop!(zv, vv) = applypreconditioner!(zv, pc, vv)
+    # the preconditioner object itself is handed to the linear solve, so a
+    # form which fuses its application with the operator product can
+    # (`preconditionedproduct!`); a plain closure would hide that
+    Mop! = pc
+    # Where the recycled subspace is read out of the Arnoldi factorization.
+    # A preconditioner which harvests per cycle gets the callback and is not
+    # harvested again after the solve; one which harvests only the cycle
+    # left in the workspace gets the call afterwards. Either way nothing is
+    # *rebuilt* inside a solve: the preconditioner has to stay fixed for
+    # GMRES, so a harvest only banks candidates and the rebuild waits for
+    # the `pointmoved!` of the next Newton step.
+    recycles = supportsrecycling(linearsolver)
+    percycle = recycles && usescycleharvest(pc)
+    oncycle = percycle ? (wsc, j) -> harvestcycle!(pc, wsc, j) : nothing
+    harvestafter!(out) =
+        (recycles && !percycle && harvest!(pc, ws, out); nothing)
     # residual-only adapter for the linesearch, which never needs the
     # Jacobian and therefore does not accept the combined fj! interface
     residual!(Fv, xv) = fj!(Fv, nothing, xv)
@@ -1409,6 +1830,10 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         # caller, and the linesearch leaves it at the last trial point
         # rather than the accepted one, so resynchronize it
         fj!(nothing, nothing, x)
+        # the Jacobian the preconditioner's deflation was measured against
+        # is that of the previous step; a refresh below rebuilds it, and a
+        # form which can refresh cheaply without the base does so lazily
+        pointmoved!(pc)
         justrefreshed = refresh
         if refresh
             refreshpreconditioner!()
@@ -1432,15 +1857,16 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
 
         out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
             rtol = forcing, atol = gmresatol,
-            maxrestarts = krylovmaxrestarts)
-        supportsrecycling(linearsolver) && harvest!(pc, ws, out)
+            maxrestarts = krylovmaxrestarts, oncycle = oncycle)
+        harvestafter!(out)
         # one record per GMRES call; the step outcome is filled in later
         function record!(o, role, refreshedbefore, stag)
             push!(krylovrecord, KrylovSolveInfo(n, role, normF[end], forcing,
                 normF[end] > 0 ? o.residual/normF[end] : NaN, o.iterations,
                 o.cycles, o.reason, refreshedbefore, false, stag, NaN, NaN,
                 0, false, time() - tstart, false, deflationsize(pc),
-                deflationrebuilds(pc), get(o, :precondtime, NaN)))
+                deflationrebuilds(pc), get(o, :precondtime, NaN),
+                get(o, :products, 0), deflationproducts(pc)))
             return nothing
         end
         stagnated = !out.converged &&
@@ -1461,8 +1887,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             refreshpreconditioner!()
             out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
                 rtol = forcing, atol = gmresatol,
-                maxrestarts = krylovmaxrestarts)
-            supportsrecycling(linearsolver) && harvest!(pc, ws, out)
+                maxrestarts = krylovmaxrestarts, oncycle = oncycle)
+            harvestafter!(out)
             stagnated = !out.converged &&
                 out.residual > krylovstagnation*normF[end]
             record!(out, :retry, true, stagnated)
@@ -1535,7 +1961,9 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             refreshpreconditioner!()
             out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
                 rtol = forcing, atol = gmresatol,
-                maxrestarts = krylovmaxrestarts)
+                maxrestarts = krylovmaxrestarts, oncycle = oncycle)
+            # the rescue is often the most informative solve of the step
+            harvestafter!(out)
             record!(out, :rescue, true, false)
             rmul!(deltax, -1)
             dϕ0dα = meritslope!(Jv, jvp, deltax, F, ϕ0,

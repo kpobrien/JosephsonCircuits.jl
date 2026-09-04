@@ -15,11 +15,16 @@ import JosephsonCircuits
 const JC = JosephsonCircuits
 
 # `nlsolvekrylov!` hands over the Jacobian as an operator supporting
-# `mul!`, which Krylov.jl accepts directly, and the preconditioner as a
-# closure `Mop!(z, r)`, which is wrapped here into the package's
-# `AbstractPreconditioner` interface.
+# `mul!`, which Krylov.jl accepts directly, and the preconditioner as an
+# `AbstractPreconditioner`, which Krylov.jl applies through `mul!`. A bare
+# closure `Mop!(z, r)`, the older spelling, is wrapped into that interface.
+# Either way the preconditioner is applied standalone here: a form which
+# fuses its application with the Jacobian product inside the package's own
+# GMRES (`preconditionedproduct!`) falls back to its unfused, exact form.
 struct MopWrap{F} <: JC.AbstractPreconditioner; Mop!::F; end
 JC.applypreconditioner!(z, m::MopWrap, r) = (m.Mop!(z, r); z)
+aspreconditioner(M::JC.AbstractPreconditioner) = M
+aspreconditioner(M) = MopWrap(M)
 
 function JC.hblinearsolve!(ls::JC.KrylovJL, deltax, jvp, F, ws, Mop!;
         rtol, atol, maxrestarts)
@@ -39,7 +44,7 @@ function JC.hblinearsolve!(ls::JC.KrylovJL, deltax, jvp, F, ws, Mop!;
     x, st = if isnothing(Mop!)
         solver(A, F; rtol = rtol, itmax = itmax, kw...)
     else
-        solver(A, F; N = JC.SizedPreconditioner(MopWrap(Mop!), n),
+        solver(A, F; N = JC.SizedPreconditioner(aspreconditioner(Mop!), n),
             rtol = rtol, itmax = itmax, kw...)
     end
     copyto!(deltax, x)

@@ -699,9 +699,14 @@ end
 # nodal rows per application, so it is not here.
 function applypreconditioner!(z::AbstractVector, pc::CanonicalPreconditioner,
         r::AbstractVector)
-    w = pc.work
-    L = w.layout
+    L = pc.work.layout
     applypreconditioner!(internalpart(z, L), pc.inner, internalpart(r, L))
+    return _solvedcblock!(z, pc, r)
+end
+
+# the direct current coordinates of `z`, solved exactly from `r`
+function _solvedcblock!(z::AbstractVector, pc::CanonicalPreconditioner,
+        r::AbstractVector)
     isnothing(pc.Yfact) && return z
     # where the state is not on the host, the same factors and the same
     # substitutions run there; the subsystem used to cross the bus three
@@ -733,6 +738,22 @@ escalatepreconditioner!(pc::CanonicalPreconditioner) =
     escalatepreconditioner!(pc.inner)
 deflationsize(pc::CanonicalPreconditioner) = deflationsize(pc.inner)
 deflationrebuilds(pc::CanonicalPreconditioner) = deflationrebuilds(pc.inner)
+deflationform(pc::CanonicalPreconditioner) = deflationform(pc.inner)
+pointmoved!(pc::CanonicalPreconditioner) = (pointmoved!(pc.inner); pc)
+
+candidatecount(pc::CanonicalPreconditioner) = candidatecount(pc.inner)
+deflationproducts(pc::CanonicalPreconditioner) = deflationproducts(pc.inner)
+harvest!(pc::CanonicalPreconditioner, ws::GMRESWorkspace, out::NamedTuple) =
+    (harvest!(pc.inner, ws, out); pc)
+
+# Exact when the inner is: the error the wrapper then leaves, the dropped
+# `Jpd` block, has rank at most the number of direct current unknowns and
+# costs that many Arnoldi steps per solve, which is fewer than the products
+# and exact solves a deflation of it would cost at every Newton step. A
+# recycling wrapper outside this one therefore clears its pair after an
+# escalation rather than learning `Jpd`.
+isexactpreconditioner(pc::CanonicalPreconditioner) =
+    isexactpreconditioner(pc.inner)
 
 """
     dcsubsystemrhs(work::CanonicalWork)

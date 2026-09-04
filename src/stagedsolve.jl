@@ -96,9 +96,10 @@ Source continuation on an adaptively grown harmonic grid, reached through
 the keywords of [`hbnlsolve`](@ref) (`iterations`, `ftol`,
 `maxharmonics`, `maxintermodorder`, `dc`, `odd`, `even`, `symfreqvar`,
 `sorting`, `keyedarrays`, `sensitivitynames`, `returnoperatingpoint`,
-`krylovcouplingmodes`, `krylovrecycle`, `krylovharvest`, `krylovkwargs`,
-`factorization`, `backend`, `precision`), which are forwarded to every
-stage.
+`krylovcouplingmodes`, `krylovrecycle`, `krylovharvest`,
+`krylovdeflationform`, `krylovdeflationkwargs`, `krylovkwargs`,
+`factorization`, `backend`,
+`precision`), which are forwarded to every stage.
 
 Near a critical drive the Newton basin is small and the iteration count
 large, so those iterations are spent where they are cheap. The drive is
@@ -161,7 +162,9 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
     sensitivitynames::Vector{String} = String[],
     returnoperatingpoint::Bool = false, krylovcouplingmodes = :none,
     krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
-    krylovkwargs::NamedTuple = (;), factorization = nothing,
+    krylovdeflationform::Symbol = :adef1,
+    krylovkwargs::NamedTuple = (;), krylovdeflationkwargs::NamedTuple = (;),
+    factorization = nothing,
     backend = CPU(), precision::Type{<:AbstractFloat} = Float64) where {N}
 
     isempty(grids) && throw(ArgumentError("`grids` must not be empty."))
@@ -191,6 +194,8 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
         returnoperatingpoint = final ? returnoperatingpoint : false,
         krylovcouplingmodes = krylovcouplingmodes,
         krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
+        krylovdeflationform = krylovdeflationform,
+            krylovdeflationkwargs = krylovdeflationkwargs,
         krylovkwargs = (final || interiorescalation) ? krylovkwargs :
             merge((; krylovescalate = typemax(Int)), krylovkwargs),
         factorization = factorization,

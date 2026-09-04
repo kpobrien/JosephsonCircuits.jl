@@ -139,7 +139,8 @@ using Test
         @test isempty(on.solverinfo.stages[1].krylov)
 
         for kw in ((;), (; krylovcouplingmodes = :all),
-                   (; krylovrecycle = 20), (; krylovcouplingmodes = [1, 3]))
+                   (; krylovrecycle = 20), (; krylovcouplingmodes = [1, 3]),
+                   (; krylovrecycle = 20, krylovdeflationform = :adef2))
             ok = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
                 circuitdefs; method = :newtonkrylov, keyedarrays = false, kw...)
             @test ok.solverinfo.converged
@@ -147,6 +148,58 @@ using Test
                 rtol = 1e-6, atol = 1e-12*maximum(abs, on.nodeflux))
             st = ok.solverinfo.stages[1]
             @test length(st.krylov) >= st.iterations
+        end
+        @test_throws ArgumentError JosephsonCircuits.hbnlsolve((wp,), (8,),
+            sources, circuit, circuitdefs; method = :newtonkrylov,
+            keyedarrays = false, krylovrecycle = 4,
+            krylovdeflationform = :bogus)
+    end
+
+    @testset "deflation forms on a strongly driven chain" begin
+        # a junction chain driven hard enough that the block diagonal alone
+        # needs help, solved with escalation disabled so the recycled
+        # subspace is what has to carry the solve, in both forms and with
+        # the base refreshed eagerly or frozen across the Newton path
+        chain = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
+        push!(chain, ("P1","1","0",1)); push!(chain, ("R1","1","0",:R))
+        Ncell = 12
+        for i in 1:Ncell
+            push!(chain, ("Lj$(i)","$(i)","$(i+1)",:Lj))
+            push!(chain, ("C$(i)","$(i)","0",:Cg))
+        end
+        push!(chain, ("C$(Ncell+1)","$(Ncell+1)","0",:Cg))
+        push!(chain, ("R2","$(Ncell+1)","0",:R))
+        chaindefs = Dict{Symbol,Complex{Float64}}(
+            :Lj => 100e-12, :Cg => 40e-15, :R => 50.0)
+        wc = 2*pi*8e9
+        # about 0.97 of the critical current at the port; the junction
+        # phases reach ~1.4 rad and the block diagonal alone needs several
+        # Arnoldi steps per solve, which is what the harvest feeds on
+        chainsources = [(mode=(1,),port=1,current=3.2e-6)]
+        on = JosephsonCircuits.hbnlsolve((wc,), (8,), chainsources, chain,
+            chaindefs; method = :newton, keyedarrays = false)
+        @test on.solverinfo.converged
+        phimax = maximum(abs, on.nodeflux)
+        noescalation = (; krylovescalate = typemax(Int))
+        frozen = (; krylovescalate = typemax(Int),
+            krylovrefreshiterations = typemax(Int), krylovrefreshrate = 1.0)
+        for form in (:adef1, :adef2), (name, kk) in
+                (("eager", noescalation), ("frozen", frozen))
+            ok = JosephsonCircuits.hbnlsolve((wc,), (8,), chainsources, chain,
+                chaindefs; method = :newtonkrylov, keyedarrays = false,
+                krylovrecycle = 12, krylovharvest = 4,
+                krylovdeflationform = form, krylovkwargs = kk)
+            @test ok.solverinfo.converged
+            @test isapprox(ok.nodeflux, on.nodeflux;
+                rtol = 1e-6, atol = 1e-12*phimax)
+            st = ok.solverinfo.stages[1]
+            # no escalation was allowed, so the base stayed block diagonal
+            @test !any(k -> k.escalated, st.krylov)
+            # a subspace was harvested, and it was built into the
+            # preconditioner: under a frozen base that only happens through
+            # the lazy refresh, which is what the count checks
+            @test any(k -> k.deflationsize > 0, st.krylov)
+            @test st.krylov[end].deflationrebuilds > 0
         end
     end
 
@@ -202,7 +255,8 @@ using Test
             @test Matrix(P) == Matrix(Jref)
         end
 
-        for kw in ((;), (; krylovrecycle = 10))
+        for kw in ((;), (; krylovrecycle = 10),
+                   (; krylovrecycle = 10, krylovdeflationform = :adef2))
             ok = JosephsonCircuits.hbnlsolve((dcw,), (2,), dcsources,
                 dccircuit, dcdefs; dc = true, method = :newtonkrylov,
                 keyedarrays = false, kw...)
@@ -210,6 +264,140 @@ using Test
             @test isapprox(ok.nodeflux, on.nodeflux;
                 rtol = 1e-6, atol = 1e-9*maximum(abs, on.nodeflux))
         end
+        # With direct current injected the state is canonical and the
+        # recycler wraps the canonical preconditioner; the harvest must
+        # build a subspace there (it used to sit inside the wrapper, where
+        # no harvest reached it and recycling was inert on every such
+        # circuit). One vector per solve is enough to show it, with
+        # escalation off so the deflation is what is used.
+        for form in (:adef1, :adef2)
+            ok = JosephsonCircuits.hbnlsolve((dcw,), (2,), dcsources,
+                dccircuit, dcdefs; dc = true, method = :newtonkrylov,
+                keyedarrays = false, krylovrecycle = 6, krylovharvest = 1,
+                krylovdeflationform = form,
+                krylovkwargs = (; krylovescalate = typemax(Int)))
+            @test ok.solverinfo.converged
+            @test isapprox(ok.nodeflux, on.nodeflux;
+                rtol = 1e-6, atol = 1e-9*maximum(abs, on.nodeflux))
+            st = ok.solverinfo.stages[1]
+            @test any(k -> k.deflationsize > 0, st.krylov)
+            @test st.krylov[end].deflationrebuilds > 0
+        end
+    end
+
+    @testset "the deflation subspace is inherited across a cached sweep" begin
+        # a parameter sweep through hbcache rebinds the system and the
+        # preconditioner rather than rebuilding them; the recycled subspace
+        # of the previous point is what the next solve should start from
+        builder(; Lj) = [("P1","1","0",1), ("R1","1","0",50.0),
+            ("C1","1","2",100.0e-15), ("Lj1","2","0",Lj), ("C2","2","0",1000e-15)]
+        for form in (:adef1, :adef2)
+            cache = JosephsonCircuits.hbcache((wp,), (8,), sources, builder,
+                (; Lj = 1000e-12); krylovrecycle = 6, krylovharvest = 2,
+                krylovdeflationform = form,
+                krylovkwargs = (; krylovescalate = typemax(Int)))
+            first = JosephsonCircuits.hbsolve!(cache, (; Lj = 1000e-12))
+            @test first.solverinfo.converged
+            k1 = first.solverinfo.stages[1].krylov
+            # a cold start has nothing to deflate at its first solve
+            @test k1[1].deflationsize == 0
+            @test any(k -> k.deflationsize > 0, k1)
+            second = JosephsonCircuits.hbsolve!(cache, (; Lj = 1010e-12))
+            @test second.solverinfo.converged
+            k2 = second.solverinfo.stages[1].krylov
+            # the next point starts from the inherited subspace, rebuilt
+            # against the rebound base
+            @test k2[1].deflationsize > 0
+            @test k2[1].deflationrebuilds >= 1
+            @test cache.reuse.recycling isa JosephsonCircuits.RecyclingState
+            # and the answer is the answer
+            on = JosephsonCircuits.hbnlsolve((wp,), (8,), sources,
+                builder(; Lj = 1010e-12), Dict{Symbol,Complex{Float64}}();
+                method = :newton, keyedarrays = false)
+            @test isapprox(second.nodeflux, on.nodeflux;
+                rtol = 1e-6, atol = 1e-12*maximum(abs, on.nodeflux))
+        end
+    end
+
+    @testset "a failed solve does not seed the next point" begin
+        # the reuse object commits the candidates of a converged solve only:
+        # a solve cut off after one Newton step leaves the previous state in
+        # place, and the next converged solve starts from that state
+        builder(; Lj) = [("P1","1","0",1), ("R1","1","0",50.0),
+            ("C1","1","2",100.0e-15), ("Lj1","2","0",Lj), ("C2","2","0",1000e-15)]
+        cache = JosephsonCircuits.hbcache((wp,), (8,), sources, builder,
+            (; Lj = 1000e-12); krylovrecycle = 6, krylovharvest = 2,
+            krylovkwargs = (; krylovescalate = typemax(Int)))
+        first = JosephsonCircuits.hbsolve!(cache, (; Lj = 1000e-12))
+        @test first.solverinfo.converged
+        committed = cache.reuse.recycling
+        @test committed isa JosephsonCircuits.RecyclingState
+        @test size(committed.U, 2) > 0
+        Xcommitted = copy(committed.U)
+        # the solve `hbsolve!` makes, cut off after one Newton step
+        failed = JosephsonCircuits.hbnlsolve(cache.w, cache.sources,
+            cache.frequencies, cache.indices, cache.compiled, cache.cg,
+            cache.nm; keyedarrays = false, reuse = cache.reuse,
+            iterations = 1, cache.kwargs...)
+        @test !failed.solverinfo.converged
+        @test cache.reuse.recycling === committed
+        @test cache.reuse.recycling.U == Xcommitted
+        again = JosephsonCircuits.hbsolve!(cache, (; Lj = 1005e-12))
+        @test again.solverinfo.converged
+        @test again.solverinfo.stages[1].krylov[1].deflationsize > 0
+        @test cache.reuse.recycling !== committed
+    end
+
+    @testset "two tones with a direct current block, both forms" begin
+        # the recycler wraps the canonical preconditioner, so its candidates
+        # are corrections of the whole canonical state; both forms must
+        # reach the direct solve's answer with the deflation active
+        w1 = 2*pi*5e9; w2 = 2*pi*1.19e9
+        src2 = [(mode=(1,0),port=1,current=3.0e-7),
+                (mode=(0,1),port=1,current=2.4e-7)]
+        on = JosephsonCircuits.hbnlsolve((w1,w2), (6,3), src2, circuit,
+            circuitdefs; dc = true, odd = true, even = true,
+            method = :newton, keyedarrays = false)
+        @test on.solverinfo.converged
+        for form in (:adef1, :adef2)
+            ok = JosephsonCircuits.hbnlsolve((w1,w2), (6,3), src2, circuit,
+                circuitdefs; dc = true, odd = true, even = true,
+                method = :newtonkrylov, keyedarrays = false,
+                krylovrecycle = 8, krylovharvest = 2,
+                krylovdeflationform = form,
+                krylovkwargs = (; krylovescalate = typemax(Int)))
+            @test ok.solverinfo.converged
+            @test isapprox(ok.nodeflux, on.nodeflux;
+                rtol = 1e-6, atol = 1e-9*maximum(abs, on.nodeflux))
+            kr = ok.solverinfo.stages[1].krylov
+            @test any(k -> k.deflationsize > 0, kr)
+            @test kr[end].deflationrebuilds > 0
+            @test all(k -> k.products >= k.iterations + k.cycles, kr)
+        end
+    end
+
+    @testset "the recycling options travel through hbsolve and NewtonKrylov" begin
+        on = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
+            circuitdefs; method = :newton, keyedarrays = false)
+        # a solver object carrying preconditioner options, which are not
+        # options of the inner Newton-Krylov loop and used to be forwarded
+        # to it regardless
+        ok = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
+            circuitdefs; method = JosephsonCircuits.NewtonKrylov(
+                krylovrecycle = 6, krylovharvest = 2,
+                krylovdeflationform = :adef2, krylovcouplingmodes = :none,
+                krylovrestart = 50), keyedarrays = false)
+        @test ok.solverinfo.converged
+        @test isapprox(ok.nodeflux, on.nodeflux;
+            rtol = 1e-6, atol = 1e-12*maximum(abs, on.nodeflux))
+        @test any(k -> k.deflationsize > 0, ok.solverinfo.stages[1].krylov)
+        # and through hbsolve, which used to drop them
+        hs = JosephsonCircuits.hbsolve(2*pi*4.5e9, (wp,), sources, (1,), (8,),
+            circuit, circuitdefs; krylovrecycle = 6, krylovharvest = 2,
+            krylovdeflationform = :adef2, keyedarrays = false)
+        @test hs.nonlinear.solverinfo.converged
+        @test any(k -> k.deflationsize > 0,
+            hs.nonlinear.solverinfo.stages[1].krylov)
     end
 
     @testset "KrylovSolveInfo diagnostics" begin
