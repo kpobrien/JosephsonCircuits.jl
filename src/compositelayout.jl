@@ -740,6 +740,7 @@ deflationsize(pc::CanonicalPreconditioner) = deflationsize(pc.inner)
 deflationrebuilds(pc::CanonicalPreconditioner) = deflationrebuilds(pc.inner)
 deflationform(pc::CanonicalPreconditioner) = deflationform(pc.inner)
 pointmoved!(pc::CanonicalPreconditioner) = (pointmoved!(pc.inner); pc)
+stalled!(pc::CanonicalPreconditioner) = (stalled!(pc.inner); pc)
 
 candidatecount(pc::CanonicalPreconditioner) = candidatecount(pc.inner)
 deflationproducts(pc::CanonicalPreconditioner) = deflationproducts(pc.inner)

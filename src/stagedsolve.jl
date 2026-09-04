@@ -94,7 +94,8 @@ end
 Source continuation on an adaptively grown harmonic grid, reached through
 `hbnlsolve(...; method = :staged, stagedkwargs = (; ...))`. `kwargs` are
 the keywords of [`hbnlsolve`](@ref) (`iterations`, `ftol`,
-`maxharmonics`, `maxintermodorder`, `dc`, `odd`, `even`, `symfreqvar`,
+`Nevaluationharmonics`, `frequencywindow`, `maxintermodorder`, `dc`, `odd`,
+`even`, `symfreqvar`,
 `sorting`, `keyedarrays`, `sensitivitynames`, `returnoperatingpoint`,
 `krylovcouplingmodes`, `krylovrecycle`, `krylovharvest`,
 `krylovdeflationform`, `krylovdeflationkwargs`, `krylovkwargs`,
@@ -106,8 +107,8 @@ large, so those iterations are spent where they are cheap. The drive is
 climbed in warm started steps with only a small set of harmonics retained
 as unknowns, and each larger retained set is warm started from the last by
 matching mode tuples. The nonlinearity is always evaluated on the full
-`Nharmonics` transform grid, so that every stage sees the same aliasing of
-the nonlinear products; the ladder only controls `maxharmonics`, the modes
+`Nevaluationharmonics` transform grid, so that every stage sees the same
+aliasing of the nonlinear products; the ladder only controls the modes
 retained as unknowns, so it is the linear solves which shrink.
 
 The schedule adapts in both directions, because each truncation has its
@@ -155,7 +156,9 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
     interioriterations::Integer = 60, innermethod::Symbol = :newtonkrylov,
     interiorescalation::Bool = false,
     maxattempts::Integer = 60, verbose::Bool = false,
-    iterations = 1000, maxharmonics::NTuple{N,Number} = Nharmonics,
+    iterations = 1000,
+    Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
+    frequencywindow = (0, Inf),
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, ftol = 1e-8, symfreqvar = nothing,
     sorting = :number, keyedarrays::Bool = true,
@@ -173,20 +176,25 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
     0 < s0 <= 1 || throw(ArgumentError(lazy"`s0` = $(s0) must be in (0, 1]."))
     innermethod === :staged && throw(ArgumentError(
         "`innermethod` must be a non-staged method."))
+    all(map(>=, Nevaluationharmonics, Nharmonics)) || throw(ArgumentError(
+        lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Nharmonics` = $(Nharmonics) in every tone."))
 
-    # Every stage uses the full transform grid `Nharmonics`, so the
-    # aliasing of the nonlinear products is the same on every stage; the
-    # ladder only sets `maxharmonics`, the modes retained as unknowns.
-    modesof(grid) = removeconjfreqs(truncfreqs(calcfreqsrdft(Nharmonics);
+    # Every stage uses the full transform grid `Nevaluationharmonics`, so
+    # the aliasing of the nonlinear products is the same on every stage;
+    # the ladder only sets the modes retained as unknowns.
+    modesof(grid) = removeconjfreqs(truncfreqs(
+        calcfreqsrdft(Nevaluationharmonics);
         dc = dc, odd = odd, even = even,
         maxintermodorder = maxintermodorder,
-        maxharmonics = map(min, maxharmonics, grid))).modes
+        maxharmonics = map(min, Nharmonics, grid),
+        w = w, frequencywindow = frequencywindow)).modes
     scaled(s) = [(mode = t.mode, port = t.port, current = s*t.current)
         for t in sources]
-    solve(grid, s, x0, final) = hbnlsolve(w, Nharmonics, scaled(s), circuit,
-        circuitdefs; dc = dc, odd = odd, even = even,
+    solve(grid, s, x0, final) = hbnlsolve(w, map(min, Nharmonics, grid),
+        scaled(s), circuit, circuitdefs; dc = dc, odd = odd, even = even,
         maxintermodorder = maxintermodorder,
-        maxharmonics = map(min, maxharmonics, grid),
+        Nevaluationharmonics = Nevaluationharmonics,
+        frequencywindow = frequencywindow,
         method = innermethod, x0 = x0, symfreqvar = symfreqvar,
         sorting = sorting,
         keyedarrays = final ? keyedarrays : false,

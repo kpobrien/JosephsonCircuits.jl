@@ -12,17 +12,21 @@ hbnlp_relerr(a, b) = norm(a - b)/max(norm(a), norm(b), eps())
 # dc+even case puts a self-conjugate mode in the layout; the two tone case
 # is the only one with FCONJ conjugate symmetry slots, so the sign in the
 # transposed forward map is exercised nowhere else.
-function hbnlp_testproblems()
+# `padded = false` samples the nonlinearity on the retained grid itself
+# rather than the default doubled grid; see the allocation testset.
+function hbnlp_testproblems(; padded::Bool = true)
     circuit, defs = testjpacircuitnumeric()
+    grid(N) = padded ? map(i -> 2i, N) : N
     return [
         ("1 tone", JC.hbnonlinearproblem((2*pi*4.75001e9,), (8,),
-            [(mode=(1,),port=1,current=0.02e-6)], circuit, defs)),
+            [(mode=(1,),port=1,current=0.02e-6)], circuit, defs;
+            Nevaluationharmonics = grid((8,)))),
         ("1 tone dc+even", JC.hbnonlinearproblem((2*pi*4.75001e9,), (6,),
             [(mode=(1,),port=1,current=0.02e-6)], circuit, defs;
-            dc=true, even=true)),
+            dc=true, even=true, Nevaluationharmonics = grid((6,)))),
         ("2 tone", JC.hbnonlinearproblem((2*pi*4.65e9, 2*pi*4.85e9), (3,3),
             [(mode=(1,0),port=1,current=1e-8),(mode=(0,1),port=1,current=1e-8)],
-            circuit, defs)),
+            circuit, defs; Nevaluationharmonics = grid((3,3)))),
     ]
 end
 
@@ -203,7 +207,11 @@ end
         return @allocated JC.hbvjp!(y, prob, u, w)
     end
     Random.seed!(20260828)
-    for (nm, prob) in hbnlp_testproblems()
+    # The KernelAbstractions CPU backend spawns one task per thread when a
+    # launch spans more than one workgroup of 64 items, a few kilobytes per
+    # launch which is not the plan's doing. The unpadded grids keep every
+    # launch inside one workgroup, so what is measured is the plan itself.
+    for (nm, prob) in hbnlp_testproblems(; padded = false)
         @testset "$nm" begin
             n = length(prob)
             u = 0.05 .* randn(n); v = randn(n); w = randn(n)

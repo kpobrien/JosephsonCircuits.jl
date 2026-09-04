@@ -450,6 +450,7 @@ applypreconditioner!(z::AbstractVector, p::SizedPreconditioner,
 updatepreconditioner!(p::SizedPreconditioner, u::AbstractVector) =
     (updatepreconditioner!(p.pc, u); p)
 pointmoved!(p::SizedPreconditioner) = (pointmoved!(p.pc); p)
+stalled!(p::SizedPreconditioner) = (stalled!(p.pc); p)
 harvest!(p::SizedPreconditioner, ws::GMRESWorkspace, out::NamedTuple) =
     (harvest!(p.pc, ws, out); p)
 usescycleharvest(p::SizedPreconditioner) = usescycleharvest(p.pc)

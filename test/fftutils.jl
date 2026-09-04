@@ -457,3 +457,38 @@ end
     @test !isnothing(ip2) && !isnothing(rp2)
     @test size(td2) == (5, 2)
 end
+
+@testset "truncfreqs: the frequency window" begin
+    JC = JosephsonCircuits
+    w = (2*pi*7.12e9, 2*pi*6.4e9, 2*pi*5.2e9)
+    base = JC.truncfreqs(JC.calcfreqsrdft((6, 4, 4)); dc = true, odd = true, even = true)
+    f(m) = abs(sum(w .* m))
+    # a floor removes every mode below it except the zero frequency mode
+    fl = JC.truncfreqs(JC.calcfreqsrdft((6, 4, 4)); dc = true, odd = true, even = true,
+        w = w, frequencywindow = (2*pi*1e9, Inf))
+    @test all(m -> all(==(0), m) || f(m) >= 2*pi*1e9, fl.modes)
+    @test (0, 0, 0) in fl.modes
+    @test length(fl.modes) < length(base.modes)
+    @test all(m -> m in fl.modes, filter(m -> all(==(0), m) || f(m) >= 2*pi*1e9, base.modes))
+    # a ceiling removes the modes above it
+    ce = JC.truncfreqs(JC.calcfreqsrdft((6, 4, 4)); dc = true, odd = true, even = true,
+        w = w, frequencywindow = (0, 2*pi*40e9))
+    @test all(m -> f(m) <= 2*pi*40e9, ce.modes)
+    @test length(ce.modes) < length(base.modes)
+    # a box is both, and without `w` the window is ignored
+    box = JC.truncfreqs(JC.calcfreqsrdft((6, 4, 4)); dc = true, odd = true, even = true,
+        w = w, frequencywindow = (2*pi*1e9, 2*pi*40e9))
+    @test Set(box.modes) == intersect(Set(fl.modes), Set(ce.modes))
+    @test JC.truncfreqs(JC.calcfreqsrdft((6, 4, 4)); dc = true, odd = true, even = true,
+        frequencywindow = (2*pi*1e9, 2*pi*40e9)).modes == base.modes
+    # the zero frequency mode still follows `dc`
+    nodc = JC.truncfreqs(JC.calcfreqsrdft((6, 4, 4)); dc = false, odd = true, even = true,
+        w = w, frequencywindow = (2*pi*1e9, Inf))
+    @test !((0, 0, 0) in nodc.modes)
+    @test_throws ArgumentError JC.truncfreqs(JC.calcfreqsrdft((6, 4, 4)); w = w,
+        frequencywindow = (2*pi*2e9, 2*pi*1e9))
+    @test_throws ArgumentError JC.truncfreqs(JC.calcfreqsrdft((6, 4, 4)); w = w,
+        frequencywindow = (-1.0, Inf))
+    @test_throws DimensionMismatch JC.truncfreqs(JC.calcfreqsrdft((6, 4, 4)); w = w[1:2],
+        frequencywindow = (2*pi*1e9, Inf))
+end

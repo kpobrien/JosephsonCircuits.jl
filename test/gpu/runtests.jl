@@ -172,4 +172,34 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             backend = CUDABackend())
         @test agree(ra.linearized.S, rb.linearized.S)
     end
+    @testset "block factorization on the device" begin
+        # the dense node-block factorization of the full Jacobian and of a
+        # cluster mask, in double and single precision, against the host
+        ra = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
+            dc = true, odd = true, even = true, method = :newtonkrylov)
+        Nm = hbnlsolve((w1,w2), (8,4), src2, circuit, defs; dc = true,
+            odd = true, even = true, returnsystem = true).Nmodes
+        mask = Matrix{Bool}(I, Nm, Nm)
+        for (a, b) in ((1, 2), (2, 3), (1, 3), (4, 5))
+            mask[a, b] = mask[b, a] = true
+        end
+        for (cm, f) in ((:all, JosephsonCircuits.BlockFactorization()),
+                (:all, JosephsonCircuits.BlockFactorization(; precision = Float32)),
+                (mask, JosephsonCircuits.BlockFactorization()),
+                (:clusters, JosephsonCircuits.BlockFactorization()),
+                (:clusters, JosephsonCircuits.CUDSSFactorization()))
+            rb = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
+                dc = true, odd = true, even = true, method = :newtonkrylov,
+                backend = CUDABackend(), krylovcouplingmodes = cm,
+                factorization = f)
+            @test rb.solverinfo.converged
+            @test agree(ra.S, rb.S)
+            kr = rb.solverinfo.stages[1].krylov
+            # an exact solve in double takes one Arnoldi step per Newton step
+            cm === :all && f.kwargs.precision === nothing &&
+                @test all(k -> k.iterations <= 2, kr)
+        end
+    end
+
+
 end

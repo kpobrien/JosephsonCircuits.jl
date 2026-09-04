@@ -68,6 +68,12 @@ using Test
         @test_logs((:warn,lazy"The `alphamin` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions."),
             JosephsonCircuits.hbnlsolve(wp, Npumpharmonics, sources, circuit, circuitdefs;alphamin = 0.1),
         )
+        @test_logs((:warn,lazy"The `maxharmonics` kwarg is deprecated and no longer used. `Nharmonics` is the retained set of modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions."),
+            JosephsonCircuits.hbnlsolve(wp, Npumpharmonics, sources, circuit, circuitdefs;maxharmonics = (2,)),
+        )
+        @test_logs((:warn,lazy"The `maxpumpharmonics` kwarg is deprecated and no longer used. `Npumpharmonics` is the retained set of pump modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions."),
+            JosephsonCircuits.hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics, circuit, circuitdefs;maxpumpharmonics = (2,)),
+        )
 
         @test_logs((:warn,lazy"The `returnZ`, `returnZadjoint`, `returnZsensitivity`, and `returnZsensitivityadjoint` kwargs have been removed. Please compute them from scattering parameters matrices."),
             JosephsonCircuits.hblinsolve(ws, circuit, circuitdefs;returnZ = true),

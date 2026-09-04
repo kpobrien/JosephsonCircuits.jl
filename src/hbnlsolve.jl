@@ -44,12 +44,14 @@ HBReuse() = HBReuse(nothing, nothing, nothing, nothing, nothing, nothing,
 
 """
     hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
-        circuit, circuitdefs; iterations = 1000, maxharmonics = Nharmonics,
+        circuit, circuitdefs; iterations = 1000,
+        Nevaluationharmonics = map(i -> 2i, Nharmonics),
         maxintermodorder = Inf, dc = false, odd = true, even = false,
         ftol = 1e-8, rtol = 0.0, method = :newtonkrylov,
         andersondepth = method == :quasinewton ? 5 : 0, x0 = nothing,
         symfreqvar = nothing, sorting = :number, keyedarrays = true,
         sensitivitynames = String[], returnoperatingpoint = false,
+        frequencywindow = (0, Inf),
         krylovcouplingmodes = :none, krylovrecycle = 0, krylovharvest = 8,
         krylovdeflationform = :adef1, krylovdeflationkwargs = (;),
         krylovkwargs = (;), stagedkwargs = (;), factorization = nothing,
@@ -94,9 +96,10 @@ rejected with an `ArgumentError`. See `src/mna.jl`.
     6 GHz. The frequencies should be non-commensurate. For commensurate
     frequencies, the lowest frequency should be provided here, and the other
     added to `sources` with a mode index equal to the ratio.
-- `Nharmonics::NTuple{N,Int}`: a tuple of integers describing how many
-    harmonics to simulate for each of the tones. The length of the tuple must
-    equal the number of non-commensurate tones.
+- `Nharmonics::NTuple{N,Int}`: the largest absolute harmonic index of each
+    tone retained as an unknown, so the modes of the returned solution. The
+    length of the tuple must equal the number of non-commensurate tones. The
+    nonlinearity is evaluated on the larger `Nevaluationharmonics` grid.
 - `sources::Vector`: a vector of named tuples specifying the mode index,
     port, and current for each source. The named tuple(s) have names
     mode, port, and current. mode is a tuple specifying the mode or harmonic
@@ -118,8 +121,31 @@ rejected with an `ArgumentError`. See `src/mna.jl`.
 # Keywords
 - `iterations = 1000`: the maximum number of nonlinear solver iterations
     before it returns unconverged.
-- `maxharmonics = Nharmonics`: an upper bound on the absolute harmonic
-    index retained for each tone; see [`truncfreqs`](@ref).
+- `Nevaluationharmonics = map(i -> 2i, Nharmonics)`: the harmonics
+    of each tone on the grid where the nonlinearity is sampled, at least
+    `Nharmonics`. The nonlinear products of the retained modes reach
+    higher orders, and a grid with `M` harmonics folds order `p` back to
+    `p - (2M + 1)` (aliasing). Products of two retained modes reach twice
+    `Nharmonics` and fold outside the retained set once the grid is half
+    again as large, the three halves rule, but the leading nonlinearity of
+    a junction is cubic, and products of three retained modes reach three
+    times `Nharmonics`, which the three halves grid folds onto the tone
+    itself. Twice the retained set is the default: it dealiases the cubic
+    products and leaves the fifth order ones, whose folded contributions
+    land outside the retained set. Only the transforms grow, the unknowns
+    are the same. Measured against a grid four times the retained set on a
+    64-junction line with three tones retaining (6,4,4): the unpadded grid
+    is off by 1.5e-4 of the strongest mode in the modes of order four and
+    1.5e-6 in the tones, three halves by 1.8e-7 and 4e-11, twice by 2.7e-11
+    and 4.5e-15, at the same solve time and GMRES step count, which the
+    padding took from 196 to 16.
+- `maxharmonics`: deprecated and ignored with a warning; `Nharmonics` is
+    the retained set and `Nevaluationharmonics` the sampling grid.
+- `frequencywindow = (0, Inf)`: a lower and upper bound, in the units of
+    `w`, on the absolute frequency `abs(dot(w, mode))` of the retained
+    modes, a truncation by frequency beside the truncations by order; the
+    zero frequency mode follows `dc`. See [`truncfreqs`](@ref) for why a
+    floor matters on incommensurate tones.
 - `maxintermodorder = Inf`: keep only the modes whose harmonic indices
     have an absolute sum of at most this order, a diamond truncation of the
     multi-tone Fourier space.
@@ -190,7 +216,9 @@ true
 function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     circuit, circuitdefs; rtol = 0.0,
     iterations = 1000,
-    maxharmonics::NTuple{N,Int} = Nharmonics,
+    Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
+    maxharmonics = nothing,
+    frequencywindow = (0, Inf),
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, x0 = nothing, ftol = 1e-8,
     switchofflinesearchtol = nothing, alphamin = nothing,
@@ -210,9 +238,20 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     returnsystem::Bool = false, assemblejacobian::Bool = true,
     ) where {N}
 
+    # deprecation warning for maxharmonics, whose role `Nharmonics` took
+    # when the sampling grid became `Nevaluationharmonics`.
+    if !isnothing(maxharmonics)
+        Base.depwarn(lazy"The `maxharmonics` kwarg is deprecated and no longer used. `Nharmonics` is the retained set of modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions.", :hbnlsolve; force=true)
+    end
+
+    all(map(>=, Nevaluationharmonics, Nharmonics)) || throw(ArgumentError(
+        lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Nharmonics` = $(Nharmonics) in every tone."))
+
     if method === :staged
         return stagedhbnlsolve(w, Nharmonics, sources, circuit, circuitdefs;
-            iterations = iterations, maxharmonics = maxharmonics,
+            iterations = iterations,
+            Nevaluationharmonics = Nevaluationharmonics,
+            frequencywindow = frequencywindow,
             maxintermodorder = maxintermodorder, dc = dc, odd = odd,
             even = even, ftol = ftol, symfreqvar = symfreqvar,
             sorting = sorting, keyedarrays = keyedarrays,
@@ -229,8 +268,10 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     # calculate the frequency struct
     freq = removeconjfreqs(
         truncfreqs(
-            calcfreqsrdft(Nharmonics); dc = dc, odd = odd, even = even,
-            maxintermodorder = maxintermodorder, maxharmonics = maxharmonics,
+            calcfreqsrdft(Nevaluationharmonics); dc = dc, odd = odd,
+            even = even, maxintermodorder = maxintermodorder,
+            maxharmonics = Nharmonics, w = w,
+            frequencywindow = frequencywindow,
         )
     )
 
@@ -279,7 +320,7 @@ The nonlinear harmonic balance solve on an already compiled circuit `psc`
 with its graph `cg` and matrices `nm`, at the mode set `frequencies` with
 its Fourier indices `indices`. This is what the other methods call after
 building those; it takes every keyword of the general method except the
-ones which describe the mode set (`Nharmonics`, `maxharmonics`,
+ones which describe the mode set (`Nharmonics`, `Nevaluationharmonics`,
 `maxintermodorder`, `dc`, `odd`, `even`, `sorting`, `stagedkwargs`).
 
 # Examples
@@ -1109,6 +1150,17 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             # the same structure, coupling set and symbolic factorization,
             # with the linear term and the junction coefficients refreshed
             rebind!(reuse.preconditioner, sys)
+        elseif krylovcouplingmodes isa Function
+            # An experimental hook: a callable builds the base preconditioner
+            # from the same ingredients `ModeCouplingPreconditioner` takes,
+            # so that a preconditioner assembled outside the package (a
+            # combination of restricted factorizations, say) can be measured
+            # end to end. Such a base is not reused across a cached sweep.
+            krylovcouplingmodes(sys, Amatrixindicesaliased,
+                Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches,
+                Nfreq, invLnm, Gnm, Cnm, modelayout;
+                factorization = factorization, precision = precision,
+                Amatrixmodes = Amatrixmodes, backend = backend)
         else
             b = ModeCouplingPreconditioner(sys, Amatrixindicesaliased,
                 Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches,
@@ -1544,7 +1596,7 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
                 key = (nodeindices[1, portindex], nodeindices[2, portindex])
                 bbm[(edge2indexdict[key]-1)*Nmodes+modeindex] += Lmean*current/phi0
             else
-                throw(ArgumentError(lazy"Source mode $(mode) not found."))
+                throw(ArgumentError(lazy"Source mode $(mode) is not among the retained modes; the truncation (`Nharmonics`, `maxintermodorder`, `dc`, `odd`, `even`, `frequencywindow`) removed it."))
             end
         else
             throw(ArgumentError(lazy"Source port $(port) not found."))

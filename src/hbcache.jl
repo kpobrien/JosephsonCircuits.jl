@@ -53,7 +53,8 @@ end
 """
     hbcache(w, Nharmonics, sources, builder, p::NamedTuple;
         dc = false, odd = true, even = false, maxintermodorder = Inf,
-        maxharmonics = Nharmonics, sorting = :number, kwargs...)
+        Nevaluationharmonics = map(i -> 2i, Nharmonics),
+        frequencywindow = (0, Inf), sorting = :number, kwargs...)
 
 A reusable nonlinear solver over the circuit builder `builder`, parsed
 once at the parameter point `p`. The harmonic selection keywords match
@@ -79,14 +80,19 @@ end
 """
 function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         builder, p::NamedTuple;
-        maxharmonics::NTuple{N,Int} = Nharmonics, maxintermodorder = Inf,
+        Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
+        maxintermodorder = Inf, frequencywindow = (0, Inf),
         dc::Bool = false, odd::Bool = true, even::Bool = false,
         sorting = :number, kwargs...) where {N}
 
+    all(map(>=, Nevaluationharmonics, Nharmonics)) || throw(ArgumentError(
+        lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Nharmonics` = $(Nharmonics) in every tone."))
+
     frequencies = removeconjfreqs(
-        truncfreqs(calcfreqsrdft(Nharmonics); dc = dc, odd = odd,
+        truncfreqs(calcfreqsrdft(Nevaluationharmonics); dc = dc, odd = odd,
             even = even, maxintermodorder = maxintermodorder,
-            maxharmonics = maxharmonics))
+            maxharmonics = Nharmonics, w = w,
+            frequencywindow = frequencywindow))
     indices = fourierindices(frequencies)
     Nmodes = length(frequencies.modes)
 

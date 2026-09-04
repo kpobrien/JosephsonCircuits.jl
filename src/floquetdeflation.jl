@@ -295,6 +295,7 @@ it is missing from the base. Diagnostic only.
 correctionstrengths(pc::FloquetPreconditioner) = pc.strength
 
 pointmoved!(pc::FloquetPreconditioner) = (pc.fresh = false; pc)
+stalled!(pc::FloquetPreconditioner) = (stalled!(pc.inner); pc)
 
 # as `RecyclingPreconditioner`: withholding an escalation is only defensible
 # while there is a subspace which might cover the deficiency instead

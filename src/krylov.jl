@@ -672,6 +672,19 @@ step; wrappers forward it.
 pointmoved!(pc::AbstractPreconditioner) = pc
 pointmoved!(pc::RecyclingPreconditioner) = (pc.fresh = false; pc)
 
+"""
+    stalled!(pc::AbstractPreconditioner)
+
+Tell the preconditioner that the last linear solve reduced its residual
+slowly, by less than `krylovrefreshrate` per Arnoldi step, and return `pc`.
+The default does nothing. A [`ModeCouplingPreconditioner`](@ref) with
+`couplingmodes = :clusters` takes it as the sign that the coupling has
+outgrown its clusters and remeasures them at the next update. Called by
+[`nlsolvekrylov!`](@ref) after every linear solve; wrappers forward it.
+"""
+stalled!(pc::AbstractPreconditioner) = pc
+stalled!(pc::RecyclingPreconditioner) = (stalled!(pc.inner); pc)
+
 # Escalating the base and recycling are two answers to the same problem,
 # and `escalateafter` lets recycling defer the base's escalation in the
 # hope that the deflation absorbs the deficiency. The default is 1, no
@@ -1591,7 +1604,8 @@ supportsrecycling(::InternalGMRES) = true
         krylovmaxrestarts = 4, krylovrefreshiterations = 1,
         krylovrtolmin = 1e-10, krylovrtolmax = 0.9, krylovrtol0 = 0.3,
         krylovgamma = 0.9, krylovalpha = (1 + sqrt(5))/2,
-        krylovstagnation = 0.9, krylovescalate = 1, krylovrefreshrate = 0.5)
+        krylovstagnation = 0.9, krylovescalate = 1, krylovrefreshrate = 0.5,
+        krylovrefresh = :count)
 
 Inexact (Newton-Krylov) solver for a real system: the Newton step is taken
 from [`gmres!`](@ref) on the exact matrix-free product `jvp!(y, v)` rather
@@ -1663,6 +1677,20 @@ solver is kept simple.
     `(residual/norm(F))^(1/iterations)`, exceeded this value; a better
     staleness signal than the iteration count alone when the forcing term
     is loose.
+- `krylovrefresh = :count`: how a rebuild the two rules above ask for is
+    decided. `:count` rebuilds. `:probe` first applies the stale
+    preconditioner once to the residual and takes one product, which
+    measures the one-step reduction `rho = |J P^-1 F - F|/|F|`; the same
+    measurement on the fresh preconditioner (`rho_fresh`, with the Arnoldi
+    count `k_fresh` of its solve) calibrates the prediction
+    `k = k_fresh log(rho_fresh)/log(rho)` of the stale solve's Arnoldi
+    count, and the rebuild is skipped when `k` steps at the measured cost
+    of a step are cheaper than the measured rebuild plus a fresh solve.
+    Everything is measured, so the rule adapts to the device and the
+    factorization; it pays when a rebuild is expensive next to a solve,
+    as with a [`BlockFactorization`](@ref) of three tones, where it saved
+    a fifth to a third of the time. A rebuild forced by a failed, stalled
+    or non-descent solve is never skipped.
 - `krylovrtolmin = 1e-10`, `krylovrtolmax = 0.9`, `krylovrtol0 = 0.3`: the
     clamp and the initial value of the forcing sequence.
 - `krylovgamma = 0.9`, `krylovalpha = (1 + sqrt(5))/2`: the
@@ -1693,7 +1721,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     krylovrtolmax = 0.9, krylovrtol0 = 0.3, krylovgamma = 0.9,
     krylovalpha = (1 + sqrt(5))/2,
     krylovstagnation = 0.9, krylovescalate::Integer = 1,
-    krylovrefreshrate = 0.5, rtol = 0.0) where {T<:AbstractFloat}
+    krylovrefreshrate = 0.5, krylovrefresh::Symbol = :count,
+    rtol = 0.0) where {T<:AbstractFloat}
 
     length(F) == length(x) || throw(DimensionMismatch(
         lazy"The residual `F` has length $(length(F)) but the point `x` has length $(length(x))."))
@@ -1739,6 +1768,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         lazy"`krylovescalate` = $(krylovescalate) must be at least 1."))
     0 < krylovrefreshrate <= 1 || throw(ArgumentError(
         lazy"`krylovrefreshrate` = $(krylovrefreshrate) must be in (0, 1]."))
+    krylovrefresh in (:count, :probe) || throw(ArgumentError(
+        lazy"`krylovrefresh` = $(krylovrefresh) must be `:count` or `:probe`."))
 
     m = min(krylovrestart, length(x))
     kv = if isnothing(workspace) || isnothing(workspace[])
@@ -1768,6 +1799,17 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     backtrackfailures = 0
     refresh = true
     refreshedforstall = false
+    # why the next rebuild was asked for: `:forced` by a failure of the
+    # last solve or the start, `:stale` by the count and rate rules, which
+    # is the only kind `krylovrefresh = :probe` may skip
+    refreshreason = :forced
+    # the measurements of the probe rule: the last rebuild's time, the
+    # one-step reduction and Arnoldi count of the solve right after it, and
+    # the time per Arnoldi step of the last solve
+    tfactor = 0.0
+    rhofresh = NaN
+    kfresh = 0
+    tstep = 0.0
     # consecutive linear solves which failed to reach the forcing tolerance,
     # which trigger an escalation of the preconditioner
     linearfailures = 0
@@ -1806,9 +1848,23 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # rebuild the preconditioner at the current point. a preconditioner is
     # free to move the evaluation point of the matrix-free products while
     # rebuilding, so it is resynchronized afterwards
+    # the one-step reduction of the preconditioned residual: one solve of
+    # the residual and one product, into the scratch the solve overwrites
+    function onestepreduction()
+        nF = norm(F)
+        nF > 0 || return 0.0
+        applypreconditioner!(deltax, pc, F)
+        mul!(Jv, jvp, deltax)
+        Jv .-= F
+        return norm(Jv)/nF
+    end
     function refreshpreconditioner!()
+        t0 = time()
         updatepreconditioner!(pc, x)
         fj!(nothing, nothing, x)
+        tfactor = time() - t0
+        # the fresh reduction calibrates the probe of later steps
+        krylovrefresh === :probe && (rhofresh = onestepreduction())
         return nothing
     end
 
@@ -1834,10 +1890,18 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         # is that of the previous step; a refresh below rebuilds it, and a
         # form which can refresh cheaply without the base does so lazily
         pointmoved!(pc)
+        if refresh && refreshreason === :stale && krylovrefresh === :probe &&
+                kfresh > 0 && isfinite(rhofresh) && rhofresh > 0
+            rho = onestepreduction()
+            kpred = rho >= 1 ? Inf : rho <= 0 ? 0.0 :
+                kfresh*log(rhofresh)/log(rho)
+            refresh = kpred*tstep > tfactor + kfresh*tstep
+        end
         justrefreshed = refresh
         if refresh
             refreshpreconditioner!()
             refresh = false
+            refreshreason = :forced
         end
 
         # Eisenstat-Walker choice 2 forcing term from the last accepted
@@ -1855,9 +1919,13 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             krylovrtol0
         end
 
+        tsolve = time()
         out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
             rtol = forcing, atol = gmresatol,
             maxrestarts = krylovmaxrestarts, oncycle = oncycle)
+        tsolve = time() - tsolve
+        tstep = tsolve/max(out.iterations, 1)
+        justrefreshed && (kfresh = max(out.iterations, 1))
         harvestafter!(out)
         # one record per GMRES call; the step outcome is filled in later
         function record!(o, role, refreshedbefore, stag)
@@ -1930,11 +1998,21 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         # badly stale preconditioner can satisfy the tolerance in a single
         # iteration after removing only a small fraction of the linear
         # residual, and a rule keyed to the count reads that as health.
+        if out.iterations > 0 && normF[end] > 0
+            rate = (out.residual/normF[end])^(1/out.iterations)
+            # a slow solve is what a preconditioner which measures its own
+            # structure needs to hear, whether or not it is refreshed
+            isfinite(rate) && rate > krylovrefreshrate && stalled!(pc)
+        end
         if out.iterations >= krylovrefreshiterations
+            refresh || (refreshreason = :stale)
             refresh = true
         elseif out.iterations > 0 && normF[end] > 0
             rate = (out.residual/normF[end])^(1/out.iterations)
-            isfinite(rate) && rate > krylovrefreshrate && (refresh = true)
+            if isfinite(rate) && rate > krylovrefreshrate
+                refresh || (refreshreason = :stale)
+                refresh = true
+            end
         end
         rmul!(deltax, -1)
 

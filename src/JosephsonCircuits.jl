@@ -26,6 +26,10 @@ module JosephsonCircuits
 import Graphs
 import FFTW
 import KLU
+# the orderings of `kluordered` come from the CHOLMOD library that ships
+# with SparseArrays
+import SparseArrays.CHOLMOD
+import SparseArrays.LibSuiteSparse
 import KernelAbstractions
 import KernelAbstractions: @kernel, @index, @Const, CPU, Backend
 import Atomix
@@ -151,6 +155,7 @@ include("floquetdeflation.jl") # residual-image A-DEF1 with physical candidates
 include("batchedblocks.jl")    # batched small block factorizations
 include("cudss.jl")            # the cuDSS factorization type (host stubs)
 include("modepreconditioner.jl")
+include("blockfactorization.jl") # dense node blocks over the circuit graph
 
 # --- the harmonic balance solves ----------------------------------------
 # The canonical state layout the direct current block is carried in. It

@@ -278,8 +278,17 @@ const _DOC_NLKWARGS = """
     default), `:all`, `:band => p` for couplings up to the harmonic offset
     `p` of each tone (grown automatically on repeated linear failures),
     `:auto` or `:auto => tol` for a band whose width is measured from the
-    solution, a vector of mode indices, or an `Nmodes` by `Nmodes` `Bool`
-    mask. See [`ModeCouplingPreconditioner`](@ref).
+    solution, `:clusters` for clusters of modes measured from the coupling
+    strengths of the operator (which, with a
+    [`BlockFactorization`](@ref), is the form for three or more tones), a
+    vector of mode indices, or an `Nmodes` by `Nmodes` `Bool` mask. See
+    [`ModeCouplingPreconditioner`](@ref). For two strong tones
+    `:auto` is the setting that matters: the block diagonal's error is
+    then of high rank (every mode couples to every other through the
+    pump mixing), and on 128- and 256-junction lines the measured band
+    converges in 41 and 108 Arnoldi steps against about 3000 for the
+    block diagonal, three to five times faster on a GPU, with no
+    escalation to the full Jacobian.
 - `krylovrecycle = 0`: when positive, wrap the preconditioner in a
     [`RecyclingPreconditioner`](@ref) keeping a deflation subspace of at
     most this many vectors across Newton steps and, through the reuse
@@ -289,7 +298,11 @@ const _DOC_NLKWARGS = """
     (a two-tone line of about a hundred junctions converges without any
     factorization of the full Jacobian, in half the time) and costs when
     the deficiency is of high rank and the escalation does the work anyway,
-    or when the base is strong enough on its own (`:auto`).
+    or when the base is strong enough on its own (`:auto`). Recycling is a
+    correction layer for the few global directions a structural base
+    leaves, not a substitute for the base; the directions it finds are
+    the small singular directions of the preconditioned operator, the
+    channels of large linear response, rather than its eigenmodes.
 - `krylovdeflationform = :adef1`: how the recycled subspace is applied,
     `:adef1` (the projection on the input of the base solve) or `:adef2`
     (on its output, fused with the Jacobian product of the Arnoldi step);
@@ -440,7 +453,8 @@ end
         circuit, circuitdefs; dc = false, threewavemixing = false,
         fourwavemixing = true, maxpumpintermodorder = Inf,
         maxmodulationintermodorder = Inf,
-        maxpumpharmonics = Npumpharmonics,
+        Nevaluationharmonics = map(i -> 2i, Npumpharmonics),
+        frequencywindow = (0, Inf),
         maxmodulationharmonics = Nmodulationharmonics,
         iterations = 1000, ftol = 1e-8, method = :newtonkrylov,
         andersondepth = method == :quasinewton ? 5 : 0, x0 = nothing,
@@ -498,8 +512,9 @@ nonzero frequencies instead.
     retain around the signal in the linearized solve, which sets the
     signal and idler modes.
 - `Npumpharmonics::NTuple{N,Int}`: how many harmonics of each pump to
-    retain in the nonlinear solve. Its length is the number of
-    non-commensurate pumps.
+    retain as unknowns in the nonlinear solve. Its length is the number of
+    non-commensurate pumps. The nonlinearity is evaluated on the larger
+    `Nevaluationharmonics` grid.
 - `circuit`: a typed [`Circuit`](@ref), a legacy netlist of
     `(name, node1, node2, value)` tuples, or a [`CompiledCircuit`](@ref).
 - `circuitdefs`: a dictionary from the symbols or symbolic variables used
@@ -516,11 +531,21 @@ nonzero frequencies instead.
     truncation of the multi-pump Fourier space.
 - `maxmodulationintermodorder = Inf`: the same truncation for the signal
     modes.
-- `maxpumpharmonics = Npumpharmonics`: an upper bound on the absolute
-    harmonic index retained for each pump, applied together with the
-    intermodulation truncation; see [`truncfreqs`](@ref).
-- `maxmodulationharmonics = Nmodulationharmonics`: the same bound for the
-    signal modes.
+- `Nevaluationharmonics = map(i -> 2i, Npumpharmonics)`: the
+    harmonics of each pump on the grid where the nonlinearity is sampled,
+    at least `Npumpharmonics`; twice the retained set by default, which
+    dealiases the products of order three, the leading ones of a junction.
+    See [`hbnlsolve`](@ref).
+- `maxpumpharmonics`: deprecated and ignored with a warning;
+    `Npumpharmonics` is the retained set and `Nevaluationharmonics` the
+    sampling grid.
+- `maxmodulationharmonics = Nmodulationharmonics`: an upper bound on the
+    absolute harmonic index retained for each pump in the signal modes,
+    applied together with the intermodulation truncation; see
+    [`truncfreqs`](@ref).
+- `frequencywindow = (0, Inf)`: a lower and upper bound, in the units of
+    `wp`, on the absolute frequency of the retained pump modes; see
+    [`hbnlsolve`](@ref). The signal modes are not windowed.
 - `iterations = 1000`: the maximum number of nonlinear solver iterations
     before it returns unconverged.
 $(_DOC_FTOL)
@@ -578,7 +603,9 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     circuit, circuitdefs;dc::Bool = false, threewavemixing::Bool = false,
     fourwavemixing::Bool = true, maxpumpintermodorder=Inf,
     maxmodulationintermodorder=Inf,
-    maxpumpharmonics::NTuple{N,Number} = Npumpharmonics,
+    Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Npumpharmonics),
+    maxpumpharmonics = nothing,
+    frequencywindow = (0, Inf),
     maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
     iterations = 1000, ftol = 1e-8, switchofflinesearchtol = nothing,
     alphamin = nothing, method = :newtonkrylov,
@@ -608,15 +635,26 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     factorization = nothing, backend = CPU(),
     precision::Type{<:AbstractFloat} = Float64) where {N,M}
 
+    # deprecation warning for maxpumpharmonics, whose role `Npumpharmonics`
+    # took when the sampling grid became `Nevaluationharmonics`.
+    if !isnothing(maxpumpharmonics)
+        Base.depwarn(lazy"The `maxpumpharmonics` kwarg is deprecated and no longer used. `Npumpharmonics` is the retained set of pump modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions.", :hbsolve; force=true)
+    end
+
+    all(map(>=, Nevaluationharmonics, Npumpharmonics)) || throw(ArgumentError(
+        lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Npumpharmonics` = $(Npumpharmonics) in every pump."))
+
     # the pump modes: harmonics of each pump and their intermodulation
     # products, truncated, with the conjugate (negative frequency) modes
-    # removed since the real signal determines them
+    # removed since the real signal determines them; the nonlinearity is
+    # sampled on the larger `Nevaluationharmonics` grid
     freq = removeconjfreqs(
         truncfreqs(
-            calcfreqsrdft(Npumpharmonics); dc = dc, odd = fourwavemixing,
-            even = threewavemixing,
+            calcfreqsrdft(Nevaluationharmonics); dc = dc,
+            odd = fourwavemixing, even = threewavemixing,
             maxintermodorder = maxpumpintermodorder,
-            maxharmonics = maxpumpharmonics,
+            maxharmonics = Npumpharmonics, w = wp,
+            frequencywindow = frequencywindow,
         )
     )
 
@@ -637,7 +675,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     nonlinear = if method === :staged
         stagedhbnlsolve(wp, Npumpharmonics, sources, circuit, circuitdefs;
             iterations = iterations, ftol = ftol,
-            maxharmonics = maxpumpharmonics,
+            Nevaluationharmonics = Nevaluationharmonics,
             maxintermodorder = maxpumpintermodorder,
             dc = dc, odd = fourwavemixing, even = threewavemixing,
             symfreqvar = symfreqvar, sorting = sorting,

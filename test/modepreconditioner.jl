@@ -1,6 +1,7 @@
 using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays
+using Random
 using Test
 
 @testset verbose=true "modepreconditioner" begin
@@ -444,5 +445,205 @@ using Test
         @test occursin("KrylovSolveInfo", str)
         @test occursin("eta=", str)
     end
+
+    @testset "block factorization over the circuit graph" begin
+        circuit2, defs2 = testchaincircuit()
+        wpb = 2*pi*4.75e9; wsb = 2*pi*5.0e9
+        srcb = [(mode=(1,0), port=1, current=0.3e-6),
+                (mode=(0,1), port=1, current=0.1e-6)]
+        d = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
+            defs2; debugJacobian = true, dc = true, odd = true, even = true,
+            keyedarrays = false)
+        Nmodes = d.Nmodes
+        n = length(d.xr)
+        mk(cm, f; kw...) = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lmean,
+            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
+            d.modelayout; couplingmodes = cm, factorization = f,
+            Amatrixmodes = d.Amatrixmodes, kw...)
+        x = 0.3*randn(MersenneTwister(11), n)
+        d.fjreal(nothing, d.Jr, x)
+        r = randn(MersenneTwister(12), n)
+        z = similar(r)
+
+        # the symbolic pieces on a small chain: KLU's order is a
+        # permutation with no fill, and along the chain the elimination
+        # tree is a path which amalgamation merges into chains of the target
+        adj = [[2], [1, 3], [2, 4], [3, 5], [4]]
+        order = JosephsonCircuits.klunodeorder(adj)
+        @test sort(order) == 1:5
+        parent, post = JosephsonCircuits.eliminationtree(adj, order)
+        @test count(==(0), parent) == 1
+        @test sort(post) == 1:5
+        parent, post = JosephsonCircuits.eliminationtree(adj, 1:5)
+        @test parent == [2, 3, 4, 5, 0]
+        @test post == [1, 2, 3, 4, 5]
+        @test JosephsonCircuits.amalgamate(parent, post, fill(2, 5), 6) ==
+            [[1, 2, 3], [4, 5]]
+        @test JosephsonCircuits.amalgamate(parent, post, fill(2, 5), 100) ==
+            [[1, 2, 3, 4, 5]]
+        # a mask's clusters and singletons; the clusters are closed, which
+        # is what the block factorization keeps
+        mask = Matrix{Bool}(I, Nmodes, Nmodes)
+        for (a, b) in ((1, 2), (2, 3), (1, 3), (4, 5))
+            mask[a, b] = mask[b, a] = true
+        end
+        @test JosephsonCircuits.modeclusters(mask) == [[1, 2, 3], [4, 5]]
+        @test JosephsonCircuits.singletonmodes(mask) == collect(6:Nmodes)
+
+        # the full coupling set is an exact solve of the Jacobian
+        pb = mk(:all, JosephsonCircuits.BlockFactorization())
+        @test pb.P isa JosephsonCircuits.BlockStructure
+        @test length(pb.P.clusters) == 1
+        @test isnothing(pb.P.singletons)
+        JosephsonCircuits.updatepreconditioner!(pb, x)
+        JosephsonCircuits.applypreconditioner!(z, pb, r)
+        @test d.Jr*z ≈ r rtol=1e-9
+        @test JosephsonCircuits.isexactpreconditioner(pb)
+        # in single precision it is a preconditioner
+        p32 = mk(:all, JosephsonCircuits.BlockFactorization(;
+            precision = Float32))
+        JosephsonCircuits.updatepreconditioner!(p32, x)
+        JosephsonCircuits.applypreconditioner!(z, p32, r)
+        @test norm(d.Jr*z - r) < 5e-2*norm(r)
+        @test eltype(p32.P.clusters[1].D[1]) == Float32
+
+        # a mask made of clusters: the block solve equals the sparse
+        # factorization of the same mask
+        pm = mk(mask, JosephsonCircuits.KLUfactorization())
+        JosephsonCircuits.updatepreconditioner!(pm, x)
+        zm = similar(r)
+        JosephsonCircuits.applypreconditioner!(zm, pm, r)
+        pc = mk(mask, JosephsonCircuits.BlockFactorization())
+        @test [c.modes for c in pc.P.clusters] == [[1, 2, 3], [4, 5]]
+        @test !isnothing(pc.P.singletons)
+        JosephsonCircuits.updatepreconditioner!(pc, x)
+        JosephsonCircuits.applypreconditioner!(z, pc, r)
+        @test z ≈ zm rtol=1e-10
+        # a band is factorized on its closure, here everything
+        pa = mk(:band => 1, JosephsonCircuits.BlockFactorization())
+        @test length(pa.P.clusters) == 1
+        @test isnothing(pa.P.singletons)
+        JosephsonCircuits.updatepreconditioner!(pa, x)
+        JosephsonCircuits.applypreconditioner!(z, pa, r)
+        @test d.Jr*z ≈ r rtol=1e-9
+        # escalation from a mask rebuilds the structure on the full set
+        @test JosephsonCircuits.escalatepreconditioner!(pc)
+        @test length(pc.P.clusters) == 1
+        JosephsonCircuits.updatepreconditioner!(pc, x)
+        JosephsonCircuits.applypreconditioner!(z, pc, r)
+        @test d.Jr*z ≈ r rtol=1e-9
+        # a rebound structure gives the same solve
+        JosephsonCircuits.rebind!(pb, d.sys)
+        JosephsonCircuits.updatepreconditioner!(pb, x)
+        JosephsonCircuits.applypreconditioner!(z, pb, r)
+        @test d.Jr*z ≈ r rtol=1e-9
+
+        # end to end, against Newton, with the rebuild decided by the count
+        # rule and by the probe
+        on = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
+            defs2; method = :newton, dc = true, odd = true, even = true,
+            keyedarrays = false)
+        for (cm, f, kk) in ((:all, JosephsonCircuits.BlockFactorization(), (;)),
+                (:all, JosephsonCircuits.BlockFactorization(; precision = Float32), (;)),
+                (mask, JosephsonCircuits.BlockFactorization(), (;)),
+                (:auto, JosephsonCircuits.BlockFactorization(), (;)),
+                (:all, JosephsonCircuits.BlockFactorization(), (; krylovrefresh = :probe)),
+                (:all, JosephsonCircuits.BlockFactorization(; precision = Float32), (; krylovrefresh = :probe)),
+                (:auto, JosephsonCircuits.KLUfactorization(), (; krylovrefresh = :probe)))
+            ok = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb,
+                circuit2, defs2; method = :newtonkrylov, dc = true,
+                odd = true, even = true, keyedarrays = false,
+                krylovcouplingmodes = cm, factorization = f,
+                krylovkwargs = kk)
+            @test ok.solverinfo.converged
+            @test isapprox(ok.nodeflux, on.nodeflux; rtol = 1e-6,
+                atol = 1e-12*maximum(abs, on.nodeflux))
+            st = ok.solverinfo.stages[1]
+            # every step records whether the preconditioner was rebuilt
+            @test count(k -> k.refreshed, st.krylov) >= 1
+        end
+        @test_throws ArgumentError JosephsonCircuits.hbnlsolve((wpb, wsb),
+            (4, 2), srcb, circuit2, defs2; method = :newtonkrylov, dc = true,
+            odd = true, even = true, keyedarrays = false,
+            krylovkwargs = (; krylovrefresh = :bogus))
+    end
+
+
+    @testset "clusters measured from the operator" begin
+        # the rule on a toy strength matrix: two strong pairs and weak
+        # couplings elsewhere give two clusters and a contractive remainder
+        W = fill(0.01, 6, 6)
+        for i in 1:6; W[i, i] = 0; end
+        W[1, 2] = W[2, 1] = 5.0
+        W[3, 4] = W[4, 3] = 4.0
+        cids, r0, r1, taken = JosephsonCircuits.spectralclusters(W)
+        @test r0 > 1
+        @test r1 < 1
+        @test cids[1] == cids[2] && cids[3] == cids[4]
+        @test cids[1] != cids[3] && cids[5] != cids[6]
+        @test Set(taken) == Set([(1, 2), (3, 4)])
+        m = JosephsonCircuits.clustermask(cids)
+        @test m == m'
+        @test JosephsonCircuits.modeclusters(m) == [[1, 2], [3, 4]]
+        # nothing to merge when the couplings are already contractive
+        cids0, _, _, taken0 = JosephsonCircuits.spectralclusters(0.01*ones(4, 4))
+        @test length(unique(cids0)) == 4
+        @test isempty(taken0)
+
+        # the probe on a system: strengths are nonnegative with a zero
+        # diagonal, and `stalled!` makes the next update remeasure
+        circuit2, defs2 = testchaincircuit()
+        wpb = 2*pi*4.75e9; wsb = 2*pi*5.0e9
+        srcb = [(mode=(1,0), port=1, current=0.3e-6),
+                (mode=(0,1), port=1, current=0.1e-6)]
+        d = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
+            defs2; dc = true, odd = true, even = true, keyedarrays = false,
+            returnsystem = true)
+        pc = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lmean,
+            d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
+            d.modelayout; couplingmodes = :clusters,
+            factorization = JosephsonCircuits.BlockFactorization(),
+            Amatrixmodes = d.Amatrixmodes)
+        pr = pc.clusterprobe
+        @test pr.probes == 0
+        x = 0.3*randn(length(d.xr))
+        JosephsonCircuits.updatepreconditioner!(pc, x)
+        @test pr.probes == 1
+        @test all(>=(0), pr.W)
+        @test all(iszero, pr.W[i, i] for i in 1:d.Nmodes)
+        @test pc.couplingmodes isa Matrix{Bool}
+        JosephsonCircuits.updatepreconditioner!(pc, x)
+        @test pr.probes == 1
+        JosephsonCircuits.stalled!(pc)
+        JosephsonCircuits.updatepreconditioner!(pc, x)
+        @test pr.probes == 2
+        # the wrappers forward the notification
+        pcw = JosephsonCircuits.SizedPreconditioner(pc, length(d.xr))
+        JosephsonCircuits.stalled!(pcw)
+        @test pr.reprobe
+        @test_throws ArgumentError JosephsonCircuits.ModeCouplingPreconditioner(
+            d.sys, d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb,
+            d.Lmean, d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm,
+            d.Cnm, d.modelayout; couplingmodes = :bogus)
+
+        # end to end, with a sparse and with the block factorization
+        on = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
+            defs2; method = :newton, dc = true, odd = true, even = true,
+            keyedarrays = false)
+        for f in (JosephsonCircuits.KLUfactorization(),
+                JosephsonCircuits.BlockFactorization(),
+                JosephsonCircuits.BlockFactorization(; precision = Float32))
+            ok = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb,
+                circuit2, defs2; method = :newtonkrylov, dc = true,
+                odd = true, even = true, keyedarrays = false,
+                krylovcouplingmodes = :clusters, factorization = f)
+            @test ok.solverinfo.converged
+            @test isapprox(ok.nodeflux, on.nodeflux; rtol = 1e-6,
+                atol = 1e-12*maximum(abs, on.nodeflux))
+        end
+    end
+
 
 end

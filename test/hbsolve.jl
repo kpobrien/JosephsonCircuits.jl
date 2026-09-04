@@ -434,7 +434,7 @@ using Test
         # current source for non-existent mode
         sources = [(mode = (0,), port = 1, current = 0.0005), (mode = (2,), port = 1, current = 1.0e-10)]
         @test_throws(
-            ArgumentError("Source mode (2,) not found."),
+            ArgumentError("Source mode (2,) is not among the retained modes; the truncation (`Nharmonics`, `maxintermodorder`, `dc`, `odd`, `even`, `frequencywindow`) removed it."),
             JosephsonCircuits.calcsources(modes, sources, portindices, portnumbers,
                 nodeindices, edge2indexdict, Lmean, Nnodes, Nbranches, Nmodes))
 
@@ -1148,4 +1148,111 @@ using Test
         @test sensnoS.Ssensitivity == sensS.Ssensitivity
     end
 
+end
+
+@testset "the frequency window of the pump modes" begin
+    JC = JosephsonCircuits
+    circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
+    push!(circuit, ("P1","1","0",1)); push!(circuit, ("R1","1","0",:R))
+    for i in 1:6
+        push!(circuit, ("Lj$(i)","$(i)","$(i+1)",:Lj))
+        push!(circuit, ("C$(i)","$(i)","0",:Cg))
+    end
+    push!(circuit, ("C7","7","0",:Cg)); push!(circuit, ("R2","7","0",:R))
+    defs = Dict{Symbol,Complex{Float64}}(:Lj => 100e-12, :Cg => 40e-15, :R => 50.0)
+    w = (2*pi*5.0e9, 2*pi*1.19e9)
+    src = [(mode=(1,0),port=1,current=0.6e-6), (mode=(0,1),port=1,current=0.6e-6)]
+    full = JC.hbnlsolve(w, (8,4), src, circuit, defs; dc = true, odd = true, even = true,
+        method = :newton, keyedarrays = false)
+    @test full.solverinfo.converged
+    # a floor below every retained frequency changes nothing
+    same = JC.hbnlsolve(w, (8,4), src, circuit, defs; dc = true, odd = true, even = true,
+        method = :newton, keyedarrays = false, frequencywindow = (2*pi*0.1e9, Inf))
+    @test same.modes == full.modes
+    @test same.nodeflux == full.nodeflux
+    # a box removes modes and leaves the strong ones within the size of what it dropped
+    box = JC.hbnlsolve(w, (8,4), src, circuit, defs; dc = true, odd = true, even = true,
+        method = :newton, keyedarrays = false, frequencywindow = (2*pi*0.5e9, 2*pi*30e9))
+    @test box.solverinfo.converged
+    @test length(box.modes) < length(full.modes)
+    @test all(m -> all(==(0), m) || 2*pi*0.5e9 <= abs(sum(w .* m)) <= 2*pi*30e9, box.modes)
+    # a window that drops a source mode is refused with a message naming it
+    @test_throws ArgumentError JC.hbnlsolve(w, (8,4), src, circuit, defs; dc = true, odd = true,
+        even = true, method = :newton, keyedarrays = false, frequencywindow = (2*pi*2e9, Inf))
+    fullflux = reshape(full.nodeflux, length(full.modes), :)
+    boxflux = reshape(box.nodeflux, length(box.modes), :)
+    dropped = maximum(norm(fullflux[k, :]) for k in eachindex(full.modes) if !(full.modes[k] in box.modes))
+    strong = maximum(norm(fullflux[k, :]) for k in eachindex(full.modes))
+    for (kb, m) in enumerate(box.modes)
+        kf = findfirst(==(m), full.modes)
+        @test norm(boxflux[kb, :] - fullflux[kf, :]) <= 10*dropped + 1e-9*strong
+    end
+    # the window travels through hbsolve, hbcache and the staged solver
+    hs = JC.hbsolve(2*pi*5.1e9, w, src, (1,1), (8,4), circuit, defs; dc = true,
+        threewavemixing = true, fourwavemixing = true, keyedarrays = false,
+        frequencywindow = (2*pi*0.5e9, 2*pi*30e9))
+    @test hs.nonlinear.modes == box.modes
+    builder(; Lj) = [(n, a, b, v isa Symbol ? (v === :Lj ? Lj : defs[v]) : v) for (n, a, b, v) in circuit]
+    cache = JC.hbcache(w, (8,4), src, builder, (; Lj = 100e-12); dc = true, odd = true, even = true,
+        frequencywindow = (2*pi*0.5e9, 2*pi*30e9), method = :newton)
+    @test length(cache.frequencies.modes) == length(box.modes)
+    st = JC.hbnlsolve(w, (8,4), src, circuit, defs; dc = true, odd = true, even = true,
+        method = :staged, keyedarrays = false, frequencywindow = (2*pi*0.5e9, 2*pi*30e9))
+    @test st.solverinfo.converged
+    @test st.modes == box.modes
+end
+
+@testset "the evaluation grid of the pump modes" begin
+    JC = JosephsonCircuits
+    circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
+    push!(circuit, ("P1","1","0",1)); push!(circuit, ("R1","1","0",:R))
+    for i in 1:6
+        push!(circuit, ("Lj$(i)","$(i)","$(i+1)",:Lj))
+        push!(circuit, ("C$(i)","$(i)","0",:Cg))
+    end
+    push!(circuit, ("C7","7","0",:Cg)); push!(circuit, ("R2","7","0",:R))
+    defs = Dict{Symbol,Complex{Float64}}(:Lj => 100e-12, :Cg => 40e-15, :R => 50.0)
+    w = (2*pi*5.0e9, 2*pi*1.19e9)
+    src = [(mode=(1,0),port=1,current=0.6e-6), (mode=(0,1),port=1,current=0.6e-6)]
+    kw = (; dc = true, odd = true, even = true, method = :newton, keyedarrays = false)
+    # the default grid is twice the retained set, which is Nharmonics
+    sol = JC.hbnlsolve(w, (8,4), src, circuit, defs; kw...)
+    @test sol.solverinfo.converged
+    @test sol.frequencies.Nharmonics == (16,8)
+    @test all(m -> all(abs.(m) .<= (8,4)), sol.modes)
+    # the retained set does not depend on the grid
+    native = JC.hbnlsolve(w, (8,4), src, circuit, defs; kw..., Nevaluationharmonics = (8,4))
+    wide = JC.hbnlsolve(w, (8,4), src, circuit, defs; kw..., Nevaluationharmonics = (24,12))
+    @test native.frequencies.Nharmonics == (8,4)
+    @test wide.frequencies.Nharmonics == (24,12)
+    @test native.modes == sol.modes == wide.modes
+    # the dealiased default is closer to the wide grid than the native grid is
+    @test norm(sol.nodeflux - wide.nodeflux) < norm(native.nodeflux - wide.nodeflux)
+    @test norm(sol.nodeflux - wide.nodeflux) < 1e-3*norm(wide.nodeflux)
+    # a grid smaller than the retained set is refused everywhere
+    @test_throws ArgumentError JC.hbnlsolve(w, (8,4), src, circuit, defs; kw..., Nevaluationharmonics = (8,3))
+    @test_throws ArgumentError JC.hbnlsolve(w, (8,4), src, circuit, defs; kw..., method = :staged, Nevaluationharmonics = (8,3))
+    @test_throws ArgumentError JC.hbsolve(2*pi*5.1e9, w, src, (1,1), (8,4), circuit, defs; dc = true,
+        threewavemixing = true, fourwavemixing = true, keyedarrays = false, Nevaluationharmonics = (7,4))
+    make(; Lj, Cg, R) = [(String(n), a, b, v isa Symbol ? Dict(:Lj => Lj, :Cg => Cg, :R => R)[v] : v)
+        for (n, a, b, v) in circuit]
+    @test_throws ArgumentError JC.hbcache(w, (8,4), src, make, (Lj = 100e-12, Cg = 40e-15, R = 50.0);
+        dc = true, odd = true, even = true, Nevaluationharmonics = (8,3))
+    # the grid travels through hbsolve, hbcache and the staged solver
+    hs = JC.hbsolve(2*pi*5.1e9, w, src, (1,1), (8,4), circuit, defs; dc = true,
+        threewavemixing = true, fourwavemixing = true, keyedarrays = false, Nevaluationharmonics = (24,12))
+    @test hs.nonlinear.frequencies.Nharmonics == (24,12)
+    @test hs.nonlinear.modes == wide.modes
+    @test isapprox(hs.nonlinear.nodeflux, wide.nodeflux; rtol = 1e-6)
+    hsd = JC.hbsolve(2*pi*5.1e9, w, src, (1,1), (8,4), circuit, defs; dc = true,
+        threewavemixing = true, fourwavemixing = true, keyedarrays = false)
+    @test hsd.nonlinear.frequencies.Nharmonics == (16,8)
+    st = JC.hbnlsolve(w, (8,4), src, circuit, defs; kw..., method = :staged, Nevaluationharmonics = (24,12))
+    @test st.frequencies.Nharmonics == (24,12)
+    @test isapprox(st.nodeflux, wide.nodeflux; rtol = 1e-6)
+    cache = JC.hbcache(w, (8,4), src, make, (Lj = 100e-12, Cg = 40e-15, R = 50.0);
+        dc = true, odd = true, even = true, Nevaluationharmonics = (24,12), keyedarrays = false)
+    @test cache.frequencies.Nharmonics == (24,12)
+    cached = JC.hbsolve!(cache, (Lj = 100e-12, Cg = 40e-15, R = 50.0))
+    @test isapprox(cached.nodeflux, wide.nodeflux; rtol = 1e-6)
 end

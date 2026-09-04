@@ -145,10 +145,174 @@ Factorization(factorize, factorize!, kwargs) =
 
 The [`Factorization`](@ref) using KLU.jl, a sparse LU factorization suited
 to circuit matrices. This is the default on the host. `kwargs` are passed
-to `KLU.klu`.
+to `KLU.klu`. The fill reducing ordering is chosen by [`kluordered`](@ref)
+rather than left at KLU's default.
 """
 function KLUfactorization(;kwargs...)
-    return Factorization(KLU.klu,klunzval!,kwargs)
+    return Factorization(kluordered,klunzval!,kwargs)
+end
+
+"""
+    symbolicfill(S::SparseMatrixCSC, perm::AbstractVector{<:Integer})
+
+The number of nonzeros of the Cholesky factor of the symmetric pattern `S`
+under the symmetric permutation `perm` (`perm[k]` is the original index of
+the `k`th pivot), and the flop count of that factorization, both from the
+elimination tree without forming anything: `(fill, flops)`.
+
+Only the pattern of `S` is read, and only its structural symmetry matters;
+for the pattern of an unsymmetric `A` use that of `A + A'`. The fill of an
+LU factorization with the same permutation on both sides is about twice
+this and its flops about the same, which is enough to rank two orderings.
+Cost `O(fill)`: the column counts are accumulated by walking the row
+subtrees of the elimination tree, one step per nonzero of the factor.
+"""
+function symbolicfill(S::SparseMatrixCSC, perm::AbstractVector{<:Integer})
+    n = size(S, 1)
+    n == size(S, 2) || throw(DimensionMismatch("the pattern must be square."))
+    length(perm) == n || throw(DimensionMismatch(
+        lazy"the permutation has length $(length(perm)) but the pattern is $(n) by $(n)."))
+    iperm = invperm(perm)
+    rows = rowvals(S)
+    # the permuted upper pattern, column by column: the row indices below
+    # the diagonal of PAP' in the original storage are collected per pivot
+    # column, since the elimination tree wants the entries above each
+    # pivot and the walk below wants the entries left of each row, and both
+    # come from the same list
+    counts = zeros(Int, n)
+    for j in 1:n, k in nzrange(S, j)
+        i = rows[k]
+        pi, pj = iperm[i], iperm[j]
+        pi < pj && (counts[pj] += 1)
+    end
+    ptr = Vector{Int}(undef, n + 1)
+    ptr[1] = 1
+    for j in 1:n
+        ptr[j+1] = ptr[j] + counts[j]
+    end
+    above = Vector{Int}(undef, ptr[end] - 1)
+    fill!(counts, 0)
+    for j in 1:n, k in nzrange(S, j)
+        i = rows[k]
+        pi, pj = iperm[i], iperm[j]
+        if pi < pj
+            above[ptr[pj] + counts[pj]] = pi
+            counts[pj] += 1
+        end
+    end
+    # Liu's elimination tree with path compression
+    parent = zeros(Int, n)
+    ancestor = zeros(Int, n)
+    for j in 1:n
+        for k in ptr[j]:ptr[j+1]-1
+            i = above[k]
+            while i != 0 && i < j
+                inext = ancestor[i]
+                ancestor[i] = j
+                if inext == 0
+                    parent[i] = j
+                    break
+                end
+                i = inext
+            end
+        end
+    end
+    # column counts by row subtrees: row i of L is the union of the paths
+    # from each entry left of the diagonal up to i; each node on a path
+    # not yet marked for this row is one nonzero of L
+    colcount = ones(Int, n)
+    mark = zeros(Int, n)
+    fillcount = 0
+    flops = 0.0
+    for i in 1:n
+        mark[i] = i
+        for k in ptr[i]:ptr[i+1]-1
+            j = above[k]
+            while j != 0 && mark[j] != i
+                mark[j] = i
+                colcount[j] += 1
+                j = parent[j]
+            end
+        end
+    end
+    for j in 1:n
+        fillcount += colcount[j]
+        flops += float(colcount[j])^2
+    end
+    return fillcount, flops
+end
+
+"""
+    kluordered(A::SparseMatrixCSC; kwargs...)
+
+`KLU.klu(A)` with its fill reducing ordering chosen by measurement. KLU's
+own default, AMD on the pattern of `A + A'`, is the right ordering for
+most circuit matrices and a pathological one for some of the mode-coupling
+patterns the preconditioners of this package factorize: the harmonic band
+of a two-tone line is a mode lattice crossed with the spatial chain, a
+grid-like graph, and on the bandwidth-one pattern of a 128-junction line
+AMD produced 23 million fill entries and a 20 s factorization where METIS
+nested dissection gave 6 million and 0.4 s. Nested dissection is not
+uniformly better either: on the full Jacobian of the same line it fills
+60% more than AMD and factorizes in twice the time.
+
+So both permutations are computed, AMD and METIS nested dissection, each
+through the CHOLMOD library that ships with Julia, the flops of the
+factorization each would need are predicted from the elimination tree
+([`symbolicfill`](@ref)), and the cheaper one is handed to KLU as a given
+ordering. Everything before the numeric factorization is symbolic and
+costs a few tenths of a second on a matrix of a million nonzeros, once per
+sparsity pattern; the numeric refactorizations of the same pattern reuse
+the choice. Should either ordering fail, KLU's default is used.
+"""
+function kluordered(A::SparseMatrixCSC{Tv,Ti}; check::Bool = true,
+    allowsingular::Bool = false) where {Tv,Ti}
+    n = size(A, 1)
+    # a matrix which is not square is left to `KLU.klu` to refuse
+    perm = n == size(A, 2) ? (try _bestordering(A) catch; nothing end) : nothing
+    isnothing(perm) && return KLU.klu(A; check = check, allowsingular = allowsingular)
+    nzval = Tv <: Complex ? convert(Vector{ComplexF64}, A.nzval) :
+        convert(Vector{Float64}, A.nzval)
+    K = KLU.KLUFactorization(n, A.colptr .- one(Ti), A.rowval .- one(Ti), nzval)
+    p = Ti.(perm .- 1)
+    KLU.klu_analyze!(K, p, copy(p); check = check)
+    return KLU.klu_factor!(K; check = check, allowsingular = allowsingular)
+end
+
+# the symmetric pattern of `A`, as CHOLMOD wants it: `A + A'` with unit
+# values, 64 bit indices, stored as its upper triangle
+function _symmetricpattern(A::SparseMatrixCSC)
+    ones_ = SparseMatrixCSC(A.m, A.n, copy(A.colptr), copy(A.rowval), ones(nnz(A)))
+    S = SparseMatrixCSC{Float64,Int64}(ones_ + sparse(transpose(ones_)))
+    return S
+end
+
+# AMD and METIS nested dissection on the symmetric pattern, the one with
+# the smaller predicted flop count; `nothing` if neither could be formed
+function _bestordering(A::SparseMatrixCSC)
+    n = size(A, 1)
+    n <= 1 && return nothing
+    S = _symmetricpattern(A)
+    common = CHOLMOD.getcommon()
+    Sc = CHOLMOD.Sparse(S, 1)
+    best = nothing
+    bestflops = Inf
+    for order in (:amd, :metis)
+        perm = Vector{Int64}(undef, n)
+        ok = if order === :amd
+            LibSuiteSparse.cholmod_l_amd(Sc, C_NULL, 0, perm, common)
+        else
+            LibSuiteSparse.cholmod_l_metis(Sc, C_NULL, 0, true, perm, common)
+        end
+        ok == 1 || continue
+        perm .+= 1
+        _, flops = symbolicfill(S, perm)
+        if flops < bestflops
+            best = perm
+            bestflops = flops
+        end
+    end
+    return best
 end
 
 # Refactorize from the nonzero values directly, skipping the sparse matrix
@@ -266,17 +430,17 @@ end
 
 """
     tryfactorize!(cache::FactorizationCache,
-        factorization::Factorization, A::AbstractArray)
+        factorization::Factorization, A)
 
-Factorize `A` with the method `factorization` and store the result in
-`cache`. When the cache already holds a factorization and the method
+Factorize `A`, a matrix or a [`BlockJacobian`](@ref), with the method
+`factorization` and store the result in `cache`. When the cache already holds a factorization and the method
 supports refactorization, its symbolic analysis is reused; a
 `SingularException` during that refactorization falls back to a fresh
 factorization, since reusing the symbolic analysis occasionally fails
 numerically where a fresh one succeeds.
 """
 function tryfactorize!(cache::FactorizationCache,
-    factorization::Factorization, A::AbstractMatrix)
+    factorization::Factorization, A)
 
     if isnothing(cache.factorization)
         cache.factorization = factorization.factorize(A;
