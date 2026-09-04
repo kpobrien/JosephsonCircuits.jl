@@ -313,6 +313,6 @@ end
         bg = randn(rng, m^3)
         @test norm(G*(Fg\bg) - bg) <= 1e-10*norm(bg)
         # the factorization the package hands out is this one
-        @test JC.KLUfactorization().factorize === JC.kluordered
+        @test JC.factorize(JC.KLUfactorization(), G) isa typeof(Fg)
     end
 end

@@ -678,7 +678,7 @@ pointmoved!(pc::RecyclingPreconditioner) = (pc.fresh = false; pc)
 Tell the preconditioner that the last linear solve reduced its residual
 slowly, by less than `krylovrefreshrate` per Arnoldi step, and return `pc`.
 The default does nothing. A [`ModeCouplingPreconditioner`](@ref) with
-`couplingmodes = :clusters` takes it as the sign that the coupling has
+[`Clusters`](@ref) takes it as the sign that the coupling has
 outgrown its clusters and remeasures them at the next update. Called by
 [`nlsolvekrylov!`](@ref) after every linear solve; wrappers forward it.
 """
@@ -1532,14 +1532,33 @@ end
 abstract type AbstractHBLinearSolver end
 
 """
-    InternalGMRES()
+    GMRES(; restart = 400, maxrestarts = 4)
 
 The restarted GMRES of this package, with Givens rotations, the recycling
 subspace harvest and the preconditioner escalation the solver was built
 around. The default, and the only solver supporting deflation recycling,
 because `harvest!` reads the Arnoldi basis out of the internal workspace.
+`restart` is the cycle length and `maxrestarts` the restart budget per
+solve. A long cycle is the default because a restricted preconditioner
+leaves a few directions a short Krylov space cannot resolve, and a restart
+discards the progress on them; the basis of `restart + 1` vectors is cheap
+next to the sparse factorization an escalation would build.
 """
-struct InternalGMRES <: AbstractHBLinearSolver end
+struct GMRES <: AbstractHBLinearSolver
+    restart::Int
+    maxrestarts::Int
+end
+function GMRES(; restart::Integer = 400, maxrestarts::Integer = 4)
+    restart >= 1 || throw(ArgumentError(lazy"`restart` = $(restart) must be at least 1."))
+    maxrestarts >= 1 || throw(ArgumentError(
+        lazy"`maxrestarts` = $(maxrestarts) must be at least 1."))
+    return GMRES(Int(restart), Int(maxrestarts))
+end
+# the Krylov workspace of an external solver is sized like the default
+restartlength(ls::GMRES) = ls.restart
+restartlength(::AbstractHBLinearSolver) = 400
+maxrestarts(ls::GMRES) = ls.maxrestarts
+maxrestarts(::AbstractHBLinearSolver) = 4
 
 """
     KrylovJL(method::Symbol = :gmres; kwargs...)
@@ -1577,7 +1596,7 @@ balance specific about it: an operator, a right hand side, a preconditioner
 and a tolerance. Putting it behind an interface lets an external Krylov
 library be substituted without touching anything else.
 """
-function hblinearsolve!(::InternalGMRES, deltax, jvp!, F, ws, Mop!;
+function hblinearsolve!(::GMRES, deltax, jvp!, F, ws, Mop!;
         rtol, atol, maxrestarts, oncycle = nothing)
     return gmres!(deltax, jvp!, F, ws; Mop! = Mop!, rtol = rtol,
         atol = atol, maxrestarts = maxrestarts, oncycle = oncycle)
@@ -1593,19 +1612,13 @@ hblinearsolve!(ls::AbstractHBLinearSolver, args...; kwargs...) =
 Whether the solver exposes an Arnoldi basis for [`harvest!`](@ref).
 """
 supportsrecycling(::AbstractHBLinearSolver) = false
-supportsrecycling(::InternalGMRES) = true
+supportsrecycling(::GMRES) = true
 
 """
     nlsolvekrylov!(fj!, jvp!, F, x, pc::AbstractPreconditioner;
         iterations = 1000, ftol = 1e-8, rtol = 0.0,
-        linearsolver = InternalGMRES(), workspace = nothing, label = "",
-        c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5, maxbacktracks = 10,
-        maxbacktrackfailures = 2, krylovrestart = 400,
-        krylovmaxrestarts = 4, krylovrefreshiterations = 1,
-        krylovrtolmin = 1e-10, krylovrtolmax = 0.9, krylovrtol0 = 0.3,
-        krylovgamma = 0.9, krylovalpha = (1 + sqrt(5))/2,
-        krylovstagnation = 0.9, krylovescalate = 1, krylovrefreshrate = 0.5,
-        krylovrefresh = :count)
+        linearsolver = GMRES(), refresh = Always(), escalate = true,
+        workspace = nothing, label = "")
 
 Inexact (Newton-Krylov) solver for a real system: the Newton step is taken
 from [`gmres!`](@ref) on the exact matrix-free product `jvp!(y, v)` rather
@@ -1648,60 +1661,31 @@ solver is kept simple.
     residual whose terms are of size `s` cannot be driven below about
     `eps*s` however exact the step, so an absolute tolerance is a statement
     about the problem's units; a relative one is not.
-- `linearsolver = InternalGMRES()`: the linear solver of the Newton step,
-    [`InternalGMRES`](@ref) or [`KrylovJL`](@ref).
 - `workspace = nothing`: a `Ref` holding the [`KrylovVectors`](@ref) of a
     previous solve of the same system, or holding `nothing`, in which case
     the vectors are allocated and stored into it for the next solve. With
     no `Ref` at all they are allocated and dropped.
 - `label = ""`: the label of the returned `IterationInfo`.
-- `c1 = 1e-4`: the Armijo sufficient decrease constant, in (0, 1/2).
-- `safeguard_low = 0.1`, `safeguard_high = 0.5`: the backtracking step
-    clamp, as fractions of the previous trial. The line search here halves
-    rather than interpolates (see [`backtracking_linesearch!`](@ref)), so
-    only `safeguard_high` acts.
-- `maxbacktracks = 10`: the trial point budget per line search.
-- `maxbacktrackfailures = 2`: the number of consecutive line search
-    failures after which the iteration is declared stalled.
-- `krylovrestart = 400`: the GMRES restart length. A long cycle is the
-    default because a restricted preconditioner leaves a few directions a
-    short Krylov space cannot resolve, and a restart discards the progress
-    on them; the basis of `krylovrestart + 1` vectors is cheap next to the
-    sparse factorization an escalation would build.
-- `krylovmaxrestarts = 4`: the GMRES restart budget per solve.
-- `krylovrefreshiterations = 1`: the GMRES iteration count above which the
-    preconditioner is considered stale and rebuilt before the next step;
-    the default rebuilds eagerly.
-- `krylovrefreshrate = 0.5`: the preconditioner is also rebuilt when the
-    mean residual ratio per Arnoldi step of the last linear solve,
-    `(residual/norm(F))^(1/iterations)`, exceeded this value; a better
-    staleness signal than the iteration count alone when the forcing term
-    is loose.
-- `krylovrefresh = :count`: how a rebuild the two rules above ask for is
-    decided. `:count` rebuilds. `:probe` first applies the stale
-    preconditioner once to the residual and takes one product, which
-    measures the one-step reduction `rho = |J P^-1 F - F|/|F|`; the same
-    measurement on the fresh preconditioner (`rho_fresh`, with the Arnoldi
-    count `k_fresh` of its solve) calibrates the prediction
-    `k = k_fresh log(rho_fresh)/log(rho)` of the stale solve's Arnoldi
-    count, and the rebuild is skipped when `k` steps at the measured cost
-    of a step are cheaper than the measured rebuild plus a fresh solve.
-    Everything is measured, so the rule adapts to the device and the
-    factorization; it pays when a rebuild is expensive next to a solve,
-    as with a [`BlockFactorization`](@ref) of three tones, where it saved
-    a fifth to a third of the time. A rebuild forced by a failed, stalled
-    or non-descent solve is never skipped.
-- `krylovrtolmin = 1e-10`, `krylovrtolmax = 0.9`, `krylovrtol0 = 0.3`: the
-    clamp and the initial value of the forcing sequence.
-- `krylovgamma = 0.9`, `krylovalpha = (1 + sqrt(5))/2`: the
-    Eisenstat-Walker forcing parameters.
-- `krylovstagnation = 0.9`: a GMRES solve which did not reduce the linear
-    residual below this fraction of the residual norm is treated as
-    stagnated, and the preconditioner solve is taken as the step instead.
-- `krylovescalate = 1`: the number of consecutive linear solves which make
-    progress but fail to reach their tolerance after which the
-    preconditioner is escalated (see [`escalatepreconditioner!`](@ref));
-    `typemax(Int)` disables escalation.
+- `linearsolver = GMRES()`: the linear solver of the Newton step, a
+    [`GMRES`](@ref) or a [`KrylovJL`](@ref).
+- `refresh = Always()`: when the preconditioner is rebuilt, [`Always`](@ref)
+    before every step, by the measured rule of [`Probe`](@ref), or
+    [`Never`](@ref) except when forced. Either way a solve which failed its
+    tolerance, stagnated or produced no descent direction forces a rebuild.
+- `escalate = true`: whether a preconditioner which makes progress but
+    fails to reach its tolerance is escalated (see
+    [`escalatepreconditioner!`](@ref)) rather than tried again.
+
+The forcing sequence is Eisenstat-Walker choice 2 with `gamma = 0.9` and
+`alpha = (1 + sqrt(5))/2`, clamped to `[1e-10, 0.9]` and started at 0.3;
+the line search is Armijo backtracking with constant 1e-4, halving with
+safeguards 0.1 and 0.5, at most ten trials and two consecutive failures;
+a solve which does not bring the linear residual below 0.9 of the residual
+norm is treated as stagnated and the preconditioner solve taken as the
+step; and a solve whose residual came down by less than 0.5 per Arnoldi
+step is reported to the preconditioner as slow ([`stalled!`](@ref)). These
+are fixed: none has been changed in any measured case, and each was set by
+the inexact Newton theory or by a measurement recorded beside it.
 
 These defaults are the ones `hbnlsolve` runs with; `krylovkwargs` there
 overrides any of them.
@@ -1711,18 +1695,34 @@ as [`nlsolve!`](@ref); the `andersonaccepted` record is always false.
 """
 function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     x::AbstractVector{T}, pc::AbstractPreconditioner; iterations = 1000, ftol = 1e-8,
-    linearsolver::AbstractHBLinearSolver = InternalGMRES(),
-    label = "",
-    c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5,
-    maxbacktracks::Integer = 10, maxbacktrackfailures::Integer = 2,
+    rtol = 0.0, linearsolver::AbstractHBLinearSolver = GMRES(),
+    refresh::AbstractRefresh = Always(), escalate::Bool = true,
     workspace::Union{Nothing,Base.RefValue} = nothing,
-    krylovrestart::Integer = 400, krylovmaxrestarts::Integer = 4,
-    krylovrefreshiterations::Integer = 1, krylovrtolmin = 1e-10,
-    krylovrtolmax = 0.9, krylovrtol0 = 0.3, krylovgamma = 0.9,
-    krylovalpha = (1 + sqrt(5))/2,
-    krylovstagnation = 0.9, krylovescalate::Integer = 1,
-    krylovrefreshrate = 0.5, krylovrefresh::Symbol = :count,
-    rtol = 0.0) where {T<:AbstractFloat}
+    label = "") where {T<:AbstractFloat}
+
+    # The fixed constants of the iteration, under the names the loop below
+    # uses. The forcing sequence is Eisenstat-Walker choice 2 and its
+    # parameters are only defined on these ranges; the line search halves
+    # rather than interpolates, so only the upper safeguard acts; the
+    # stagnation and slow-solve thresholds were set by measurement (see
+    # the docstring).
+    krylovrestart = restartlength(linearsolver)
+    krylovmaxrestarts = maxrestarts(linearsolver)
+    krylovrefreshiterations = refresh isa Never ? typemax(Int) : 1
+    krylovrefreshrate = refresh isa Never ? 1.0 : 0.5
+    krylovrefresh = refresh isa Probe ? :probe : :count
+    krylovrtolmin = 1e-10
+    krylovrtolmax = 0.9
+    krylovrtol0 = 0.3
+    krylovgamma = 0.9
+    krylovalpha = (1 + sqrt(5))/2
+    krylovstagnation = 0.9
+    krylovescalate = escalate ? 1 : typemax(Int)
+    c1 = 1e-4
+    safeguard_low = 0.1
+    safeguard_high = 0.5
+    maxbacktracks = 10
+    maxbacktrackfailures = 2
 
     length(F) == length(x) || throw(DimensionMismatch(
         lazy"The residual `F` has length $(length(F)) but the point `x` has length $(length(x))."))
@@ -1750,27 +1750,6 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         lazy"`krylovrestart` = $(krylovrestart) must be at least 1."))
     krylovmaxrestarts >= 1 || throw(ArgumentError(
         lazy"`krylovmaxrestarts` = $(krylovmaxrestarts) must be at least 1."))
-    krylovrefreshiterations >= 1 || throw(ArgumentError(
-        lazy"`krylovrefreshiterations` = $(krylovrefreshiterations) must be at least 1."))
-    0 < krylovrtolmin <= krylovrtolmax < 1 || throw(ArgumentError(
-        lazy"`krylovrtolmin` = $(krylovrtolmin) and `krylovrtolmax` = $(krylovrtolmax) must satisfy 0 < krylovrtolmin <= krylovrtolmax < 1."))
-    krylovrtolmin <= krylovrtol0 <= krylovrtolmax || throw(ArgumentError(
-        lazy"`krylovrtol0` = $(krylovrtol0) must satisfy `krylovrtolmin` <= `krylovrtol0` <= `krylovrtolmax`."))
-    # the Choice 2 parameters are only defined on these ranges; outside them
-    # the forcing sequence is not a forcing sequence
-    (isfinite(krylovgamma) && 0 < krylovgamma <= 1) || throw(ArgumentError(
-        lazy"`krylovgamma` = $(krylovgamma) must be finite and in (0, 1]."))
-    (isfinite(krylovalpha) && 1 < krylovalpha <= 2) || throw(ArgumentError(
-        lazy"`krylovalpha` = $(krylovalpha) must be finite and in (1, 2]."))
-    0 < krylovstagnation <= 1 || throw(ArgumentError(
-        lazy"`krylovstagnation` = $(krylovstagnation) must be in (0, 1]."))
-    krylovescalate >= 1 || throw(ArgumentError(
-        lazy"`krylovescalate` = $(krylovescalate) must be at least 1."))
-    0 < krylovrefreshrate <= 1 || throw(ArgumentError(
-        lazy"`krylovrefreshrate` = $(krylovrefreshrate) must be in (0, 1]."))
-    krylovrefresh in (:count, :probe) || throw(ArgumentError(
-        lazy"`krylovrefresh` = $(krylovrefresh) must be `:count` or `:probe`."))
-
     m = min(krylovrestart, length(x))
     kv = if isnothing(workspace) || isnothing(workspace[])
         KrylovVectors(x, F, m)

@@ -193,20 +193,22 @@ using Test
 
         # a genuine uniform batch selects the batched path, which without the
         # extension loaded reports what is missing rather than a MethodError
-        @test_throws ArgumentError JosephsonCircuits.batchedfactorization(
-            A, [1,2], 2, gpu, cpu)
+        batched = JosephsonCircuits.batchedfactorization(A, [1,2], 2, gpu, cpu)
+        @test batched isa JosephsonCircuits.CUDSSBatchedFactorization
+        @test_throws ArgumentError JosephsonCircuits.factorize(batched, A)
 
         # a factorization with no batched form is used unchanged even when the
         # matrix is a uniform batch, which is what makes the batch opt-in: the
         # default cuDSS factorization measured slower batched than whole
         plain = JosephsonCircuits.CUDSSFactorization()
-        @test isnothing(plain.batched)
+        @test !plain.batched
         @test JosephsonCircuits.batchedfactorization(A, [1,2], 2, plain, cpu) === plain
         @test JosephsonCircuits.batchedfactorization(A, [1,2], 2, cpu, cpu) === cpu
 
         # and the unloaded GPU factorization is constructible and errors clearly
-        @test_throws ArgumentError gpu.factorize(A)
-        @test_throws ArgumentError JosephsonCircuits.cudssbatchedfactorization(nothing)
+        @test_throws ArgumentError JosephsonCircuits.factorize(gpu, A)
+        @test_throws ArgumentError JosephsonCircuits.factorize(
+            JosephsonCircuits.CUDSSBatchedFactorization(nothing), A)
     end
 
     @testset "the gather and scatter run on the layout's backend" begin

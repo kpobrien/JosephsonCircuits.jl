@@ -326,7 +326,7 @@ end
 """
     ClusterProbe
 
-The state of `couplingmodes = :clusters`: the block diagonal preconditioner
+The state of a [`Clusters`](@ref) request: the block diagonal preconditioner
 the probe solves with, the probe vector and its per mode norms, the probed
 strength matrix `W`, the couplings taken so far and the current cluster
 mask, and the flag [`stalled!`](@ref) raises to remeasure. See
@@ -476,7 +476,7 @@ submatrices are extracted and no sweep is written by hand; the block triangular
 structure is what makes the sparse LU cheap, and the sparse triangular solve is
 what applies the Gauss-Seidel sweep.
 
-The default is the empty coupling set, that is, the mode block diagonal. Its
+The default is [`BlockDiagonal`](@ref), the mode block diagonal. Its
 factorization is a batch of small independent per mode factorizations rather
 than one large sparse factorization, which is what makes it scale. On a
 strongly pumped device the block diagonal alone stalls, and
@@ -495,10 +495,11 @@ strongly pumped device the block diagonal alone stalls, and
     escalation destroys the batch structure.
 - `Amatrixmodes`: the harmonic offset `modes[m1] .- modes[m2]` of every mode
     pair, or `nothing`. Needed by `:band` and by its escalation.
-- `couplingmodes`: the modes whose coupling is retained in full, `:band => p`
-    for a bandwidth restriction on the harmonic offset (see
-    [`modebandmask`](@ref)), or a mask of the retained couplings when one was
-    given directly.
+- `coupling`: the coupling set currently factorized, a
+    [`BlockDiagonal`](@ref), [`FullJacobian`](@ref), [`HarmonicBand`](@ref),
+    [`CoupledModes`](@ref) or [`CouplingMask`](@ref); a [`MeasuredBand`](@ref)
+    or [`Clusters`](@ref) request is held as the band or mask it has grown
+    to so far.
 - `updates`: the number of times the factorization has been rebuilt.
 - `escalations`: the number of times the coupling set has been grown.
 """
@@ -508,8 +509,8 @@ mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
     P
     sys::TS      # replaced when the system is rebound to new values
     const cache::FactorizationCache
-    const basefactorization::Factorization
-    factorization::Factorization
+    const basefactorization::AbstractFactorization
+    factorization::AbstractFactorization
     # rebuilds `(P, plan, nzval)` for a coupling set, closing over the plan
     # ingredients so the set can be grown after construction
     const build::TB
@@ -518,13 +519,16 @@ mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
     # a bandwidth restriction can be rebuilt and stepped after construction.
     # `nothing` when the caller did not supply it, which disables `:band`.
     const Amatrixmodes
-    # ingredients of the `:auto` bandwidth measurement, `nothing` when the
-    # caller did not ask for it
+    # ingredients of the `MeasuredBand` bandwidth measurement, `nothing`
+    # when the caller did not ask for it
     const autoindices
     const autotol
+    const autobudget
     const autoNfreq::Int
     const autoNbranches::Int
-    couplingmodes
+    # the coupling set currently factorized: a `BlockDiagonal`,
+    # `FullJacobian`, `HarmonicBand`, `CoupledModes` or `CouplingMask`
+    coupling::AbstractModeCoupling
     updates::Int
     escalations::Int
     # the assembly plan and the values it writes, untyped because they are
@@ -532,7 +536,7 @@ mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
     # `nzval` aliases the stored values of `P`
     deviceplan
     nzval
-    # the state of `:clusters`, `nothing` otherwise
+    # the state of a `Clusters` request, `nothing` otherwise
     const clusterprobe
 end
 
@@ -542,74 +546,54 @@ end
         Rbnm::SparseMatrixCSC, Nmodes::Integer, Nbranches::Integer,
         Nfreq::Integer, invLnm::SparseMatrixCSC, Gnm::SparseMatrixCSC,
         Cnm::SparseMatrixCSC, layout::ModeLayout;
-        couplingmodes = :none, factorization = KLUfactorization(),
-        precision = nothing, Amatrixmodes = nothing)
+        spec::AbstractModeCoupling = BlockDiagonal(), precision = nothing,
+        Amatrixmodes = nothing)
 
 Build a [`ModeCouplingPreconditioner`](@ref) from the same ingredients
-[`planstructurerealjacobian`](@ref) takes. `couplingmodes` may be
-
-- `:none` (the default): the mode block diagonal,
-- `:all`: the full Jacobian, which is an exact preconditioner,
-- an `AbstractVector{<:Integer}`: exactly these mode indices,
-- `:band => p`: every coupling whose harmonic offset is within `p`, which
-    requires `Amatrixmodes` and is usually the best of these (see
-    [`modebandmask`](@ref)),
-- `:auto` or `:auto => tol`: a `:band` whose per-tone bandwidth is measured from
-    the Fourier coefficients of `cos(phi(t))` at every point and widened when
-    the drive demands it (see [`cosphibandwidths`](@ref)). Starts at the block
-    diagonal, so nothing is paid until it is needed.
-- `:clusters`: a mask of mode clusters measured from the operator by
-    probing the block Jacobi coupling strengths and merging modes in
-    decreasing strength until the couplings left between clusters are
-    contractive (see [`spectralclusters`](@ref)). Probed at the first
-    point and again whenever the Newton-Krylov solver reports a slow
-    linear solve ([`stalled!`](@ref)); the clusters only grow within a
-    solve. With a [`BlockFactorization`](@ref) each cluster is one dense
-    block factorization over the circuit graph, which is the form measured
-    to halve the memory of the full factorization on three tones.
-
-`precision` is the floating point type of the factorization, `nothing`
-for that of the system. `Amatrixmodes` is the harmonic offset of every
-mode pair, needed by `:band` and `:auto`. `factorization` may be a
-[`BlockFactorization`](@ref), which eliminates the circuit graph with dense
-blocks over the clusters of the coupling set instead of factorizing a
-sparse matrix.
+[`planstructurerealjacobian`](@ref) takes. `spec` is the member of the mode
+coupling family to build ([`BlockDiagonal`](@ref), [`FullJacobian`](@ref),
+[`HarmonicBand`](@ref), [`MeasuredBand`](@ref), [`Clusters`](@ref),
+[`CoupledModes`](@ref) or [`CouplingMask`](@ref)), carrying the
+factorization it is built with, the backend's default (KLU on the host,
+cuDSS on a device) when it carries none. A [`BlockFactorization`](@ref)
+eliminates the circuit graph with dense blocks over the clusters of the
+coupling set instead of factorizing a sparse matrix. `precision` is the
+floating point type of the factorization, `nothing` for that of the
+system. `Amatrixmodes` is the harmonic offset of every mode pair, needed by
+`HarmonicBand` and `MeasuredBand`.
 """
 function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     Amatrixconjindices::Matrix, Ljb::SparseVector, Lmean,
     Rbnm::SparseMatrixCSC, Nmodes::Integer, Nbranches::Integer,
     Nfreq::Integer, invLnm::SparseMatrixCSC, Gnm::SparseMatrixCSC,
-    Cnm::SparseMatrixCSC, layout::ModeLayout; couplingmodes = :none,
-    factorization = KLUfactorization(),
+    Cnm::SparseMatrixCSC, layout::ModeLayout;
+    spec::AbstractModeCoupling = BlockDiagonal(),
     precision::Union{Nothing,Type{<:AbstractFloat}} = nothing,
     Amatrixmodes = nothing)
 
-    # `:auto` measures the per tone bandwidth at every point and rebuilds
-    # when it grows, starting from the block diagonal so that the first
-    # factorization is the cheap one
-    autotol = if couplingmodes === :auto
-        1e-2
-    elseif couplingmodes isa Pair && couplingmodes.first === :auto
-        couplingmodes.second
-    else
-        nothing
-    end
-    if !isnothing(autotol)
+    backend = sys.nonlineartermplan.backend
+    spec isa Automatic && (spec = resolveautomatic(sys, Rbnm, Nmodes,
+        Nbranches, layout, Amatrixmodes, backend))
+    factorization = something(spec.factorization, defaultfactorization(backend))
+    # A measured band remeasures the per tone bandwidth at every point and
+    # rebuilds when it grows, starting from the block diagonal so that the
+    # first factorization is the cheap one.
+    autotol = spec isa MeasuredBand ? spec.tol : nothing
+    autobudget = spec isa MeasuredBand ? spec.budget : nothing
+    if spec isa MeasuredBand || spec isa HarmonicBand
         isnothing(Amatrixmodes) && throw(ArgumentError(
-            "`couplingmodes = :auto` needs the mode offsets; pass `Amatrixmodes`."))
-        couplingmodes = :band => ntuple(_ -> 0, length(first(Amatrixmodes)))
+            "a `HarmonicBand` or `MeasuredBand` needs the mode offsets; pass `Amatrixmodes`."))
     end
-    # `:clusters` starts from the block diagonal (an empty mask) and grows
+    # `Clusters` starts from the block diagonal (an empty mask) and grows
     # it by probing; the probe solves with its own block diagonal, sparse
     # whatever the base factorization is
-    clusterprobe = if couplingmodes === :clusters
-        backend = sys.nonlineartermplan.backend
-        bdfactorization = isblockfactorization(factorization) ?
+    clusterprobe = if spec isa Clusters
+        bdfactorization = factorization isa BlockFactorization ?
             singletonfactorization(factorization, backend) : factorization
         bd = ModeCouplingPreconditioner(sys, Amatrixindices,
             Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches, Nfreq,
-            invLnm, Gnm, Cnm, layout; couplingmodes = :none,
-            factorization = bdfactorization, precision = precision)
+            invLnm, Gnm, Cnm, layout; spec = BlockDiagonal(bdfactorization),
+            precision = precision)
         slot = modeslotindex(layout)
         n = layout.rdim
         # a fixed pseudo-random probe vector, so the clusters are
@@ -628,7 +612,22 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     else
         nothing
     end
-    isnothing(clusterprobe) || (couplingmodes = clusterprobe.mask)
+    # what is factorized first
+    coupling = if spec isa MeasuredBand
+        HarmonicBand(ntuple(_ -> 0, length(first(Amatrixmodes))), factorization)
+    elseif spec isa Clusters
+        CouplingMask(clusterprobe.mask, factorization)
+    elseif spec isa CoupledModes
+        all(k -> 1 <= k <= Nmodes, spec.indices) || throw(ArgumentError(
+            lazy"the coupled mode indices $(spec.indices) are outside 1:$(Nmodes)."))
+        withfactorization(spec, factorization)
+    elseif spec isa CouplingMask
+        size(spec.mask) == (Nmodes, Nmodes) || throw(DimensionMismatch(
+            lazy"a coupling mask is $(size(spec.mask)) but there are $(Nmodes) modes."))
+        withfactorization(spec, factorization)
+    else
+        withfactorization(spec, factorization)
+    end
 
     # On a device backend the Jacobian is built transposed, because its
     # stored order is then the row major order a device sparse matrix and a
@@ -649,18 +648,10 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     # everything with a value in it is read from the system, so that a
     # system rebound to new values is what a rebuild sees; the constructor
     # arguments are the same objects at construction
-    function build(S, sys = sys)
+    function build(S::AbstractModeCoupling, sys = sys)
         Ljb, Lmean = sys.Ljb, sys.Lmean
         invLnm, Gnm, Cnm = sys.invLnm, sys.Gnm, sys.Cnm
-        keep = if S isa AbstractMatrix{Bool}
-            S
-        elseif S isa Pair && S.first === :band
-            isnothing(Amatrixmodes) && throw(ArgumentError(
-                "`couplingmodes = :band => p` needs the mode offsets; pass `Amatrixmodes`."))
-            modebandmask(Amatrixmodes, S.second)
-        else
-            modecouplingmask(Nmodes, S)
-        end
+        keep = couplingmask(S, Nmodes, Amatrixmodes)
         backend = sys.nonlineartermplan.backend
         Tv = isnothing(precision) ?
             real(promote_type(typeof(Lmean),
@@ -670,17 +661,17 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         # blocks over the clusters of the coupling set, and the modes left
         # single by the block diagonal, which is this same preconditioner
         # with the empty coupling set and the backend's sparse factorization
-        if isblockfactorization(factorization)
+        if factorization isa BlockFactorization
             singletons = if isempty(singletonmodes(keep))
                 nothing
             else
                 ModeCouplingPreconditioner(sys, Amatrixindices,
                     Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches,
-                    Nfreq, invLnm, Gnm, Cnm, layout; couplingmodes = :none,
-                    factorization = singletonfactorization(factorization,
-                        backend), precision = precision)
+                    Nfreq, invLnm, Gnm, Cnm, layout;
+                    spec = BlockDiagonal(singletonfactorization(factorization,
+                        backend)), precision = precision)
             end
-            Tb = something(factorization.kwargs.precision, Tv)
+            Tb = something(factorization.precision, Tv)
             return blockstructure(Tb, sys, Amatrixindices, Amatrixconjindices,
                 keep, Rbnm, Nmodes, Nbranches, Nfreq, layout, singletons),
                 nothing, nothing
@@ -705,30 +696,64 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         return P, dp, nzval
     end
 
-    S = if couplingmodes === :none
-        Int[]
-    elseif couplingmodes === :all
-        collect(1:Nmodes)
-    elseif couplingmodes isa Pair && couplingmodes.first === :band
-        couplingmodes
-    elseif couplingmodes isa AbstractVector{<:Integer}
-        sort!(unique(Vector{Int}(couplingmodes)))
-    elseif couplingmodes isa AbstractMatrix{Bool}
-        size(couplingmodes) == (Nmodes, Nmodes) || throw(DimensionMismatch(
-            lazy"a `couplingmodes` mask is $(size(couplingmodes)) but there are $(Nmodes) modes."))
-        couplingmodes
-    else
-        throw(ArgumentError(
-            lazy"`couplingmodes` = $(couplingmodes) must be `:none`, `:all`, `:band => p`, `:auto`, `:clusters`, a vector of mode indices, or an Nmodes x Nmodes Bool mask."))
-    end
-
-    P, dp, nzval = build(S)
+    P, dp, nzval = build(coupling)
     return ModeCouplingPreconditioner(P, sys, FactorizationCache(),
-        factorization, selectfactorization(factorization, P, S, layout, Nmodes),
-        build, Int(Nmodes), Amatrixmodes, isnothing(autotol) ? nothing :
-        Amatrixindices, autotol, Int(Nfreq), Int(Nbranches), S, 0, 0, dp,
-        nzval, clusterprobe)
+        factorization, selectfactorization(factorization, P, coupling, layout,
+        Nmodes), build, Int(Nmodes), Amatrixmodes,
+        isnothing(autotol) ? nothing : Amatrixindices, autotol, autobudget,
+        Int(Nfreq), Int(Nbranches), coupling, 0, 0, dp, nzval, clusterprobe)
 end
+
+# the backend's default sparse factorization: KLU on the host, cuDSS on a
+# device, where a host factorization could not be applied to the device
+# vectors of the Krylov iteration
+defaultfactorization(backend) = backend isa CPU ? KLUfactorization() :
+    CUDSSFactorization()
+
+"""
+    resolveautomatic(sys, Rbnm, Nmodes, Nbranches, layout, Amatrixmodes,
+        backend; budget = freememory(backend) ÷ 2)
+
+The member of the mode coupling family an [`Automatic`](@ref) request
+stands for on this problem: [`BlockDiagonal`](@ref) for one tone;
+otherwise [`FullJacobian`](@ref) with single precision block factors when
+[`blockfactorbytes`](@ref) is within `budget`, and [`MeasuredBand`](@ref)
+when it is not.
+"""
+function resolveautomatic(sys, Rbnm::SparseMatrixCSC, Nmodes::Integer,
+    Nbranches::Integer, layout::ModeLayout, Amatrixmodes, backend;
+    budget::Integer = freememory(backend) ÷ 2)
+    ntones = isnothing(Amatrixmodes) ? 1 : length(first(Amatrixmodes))
+    ntones == 1 && return BlockDiagonal()
+    nnodes = layout.dim ÷ Nmodes
+    nodesandsigns = branchnodesandsigns(Rbnm, Nmodes, Nbranches)
+    pairptr, pairrow, _, _ = junctionpairtable(Int32, Float32, sys.Ljb,
+        nodesandsigns, nnodes)
+    adj = circuitnodegraph(pairptr, pairrow, sys.invLnm, sys.Gnm, sys.Cnm,
+        Nmodes, nnodes)
+    order = klunodeorder(adj)
+    bytes = blockfactorbytes(Float32, modecouplingmask(Nmodes, 1:Nmodes), adj,
+        order, Nmodes, layout)
+    bytes <= budget && return FullJacobian(BlockFactorization(;
+        precision = Float32))
+    isnothing(Amatrixmodes) && return BlockDiagonal()
+    return MeasuredBand()
+end
+
+"""
+    couplingmask(S::AbstractModeCoupling, Nmodes::Integer, Amatrixmodes)
+
+The `Nmodes` x `Nmodes` mask of the mode couplings the set `S` retains.
+"""
+couplingmask(::BlockDiagonal, Nmodes::Integer, Amatrixmodes) =
+    modecouplingmask(Nmodes, Int[])
+couplingmask(::FullJacobian, Nmodes::Integer, Amatrixmodes) =
+    modecouplingmask(Nmodes, 1:Nmodes)
+couplingmask(S::HarmonicBand, Nmodes::Integer, Amatrixmodes) =
+    modebandmask(Amatrixmodes, S.p)
+couplingmask(S::CoupledModes, Nmodes::Integer, Amatrixmodes) =
+    modecouplingmask(Nmodes, S.indices)
+couplingmask(S::CouplingMask, Nmodes::Integer, Amatrixmodes) = S.mask
 
 # The factorization to use for a freshly built `P`. The mode block diagonal is
 # a uniform batch of one block per mode whenever every mode contributes the
@@ -738,11 +763,11 @@ end
 # coupling couples modes by construction, and escalation goes straight to the
 # full Jacobian, so the two cases skip `blockdiagonallayout` rather than pay a
 # walk over every stored entry to be told what is already known.
-function selectfactorization(factorization::Factorization, P, S,
+function selectfactorization(factorization::AbstractFactorization, P, S,
     layout::ModeLayout, Nmodes::Integer)
-    isblockfactorization(factorization) && return factorization
-    (S isa Vector{Int} && isempty(S)) || return factorization
-    isnothing(factorization.batched) && return factorization
+    S isa BlockDiagonal || return factorization
+    (factorization isa CUDSSFactorization && factorization.batched) ||
+        return factorization
     # discovering the block layout is a walk over the stored entries of a
     # host matrix, and on a backend the structure is not one; the batched
     # path is off by default anyway, being slower than handing cuDSS the
@@ -778,26 +803,25 @@ same deficiency by measuring the directions rather than enlarging the
 factorization.
 """
 function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
-    pc.couplingmodes isa Vector{Int} &&
-        length(pc.couplingmodes) >= pc.Nmodes && return false
-    pc.couplingmodes isa AbstractMatrix{Bool} && all(pc.couplingmodes) && return false
+    isexactpreconditioner(pc) && return false
     # A band escalates by one offset per tone at a time, and becomes the
     # full mode set once it covers the grid. Every other coupling set jumps
     # straight to the full Jacobian, since nothing identifies which modes
     # carried the deficiency.
-    S = if pc.couplingmodes isa Pair && pc.couplingmodes.first === :band
-        p = pc.couplingmodes.second
+    f = pc.coupling.factorization
+    S = if pc.coupling isa HarmonicBand
+        p = pc.coupling.p
         next = p isa Integer ? p + 1 : map(x -> x + 1, p)
-        all(modebandmask(pc.Amatrixmodes, next)) ? collect(1:pc.Nmodes) :
-            (:band => next)
+        all(modebandmask(pc.Amatrixmodes, next)) ? FullJacobian(f) :
+            HarmonicBand(next, f)
     else
-        collect(1:pc.Nmodes)
+        FullJacobian(f)
     end
     pc.P, pc.deviceplan, pc.nzval = pc.build(S, pc.sys)
     # any retained coupling couples modes, so whatever batch structure the
     # block diagonal had is gone and the caller's own factorization applies
     pc.factorization = pc.basefactorization
-    pc.couplingmodes = S
+    pc.coupling = S
     pc.escalations += 1
     # the cached symbolic factorization is of the previous structure
     pc.cache.factorization = nothing
@@ -808,42 +832,40 @@ end
 # with no zero. A `:band` never reports exact, because escalation replaces
 # a band which covers the grid by the full set.
 function isexactpreconditioner(pc::ModeCouplingPreconditioner)
-    pc.couplingmodes isa Vector{Int} &&
-        length(pc.couplingmodes) >= pc.Nmodes && return true
-    pc.couplingmodes isa AbstractMatrix{Bool} && all(pc.couplingmodes) &&
-        return true
-    pc.couplingmodes === :all && return true
+    S = pc.coupling
+    S isa FullJacobian && return true
+    S isa CoupledModes && length(S.indices) >= pc.Nmodes && return true
+    S isa CouplingMask && all(S.mask) && return true
     return false
 end
 
 function updatepreconditioner!(pc::ModeCouplingPreconditioner,
     x::AbstractVector)
     setpoint!(pc.sys, x)
-    # `:auto` remeasures the bandwidth here, where the Fourier coefficients
+    # a measured band remeasures the bandwidth here, where the Fourier coefficients
     # are computed anyway, and rebuilds only when it has grown. It is never
     # reduced: that would cost a symbolic refactorization to save fill
     # already paid for, and the drive generally widens the coupling as the
     # iteration proceeds.
-    if !isnothing(pc.autotol)
+    if !isnothing(pc.autotol) && pc.coupling isa HarmonicBand
         want = cosphibandwidths(pc.sys, pc.autoindices, pc.Amatrixmodes;
-            tol = pc.autotol)
-        have = pc.couplingmodes isa Pair && pc.couplingmodes.second isa NTuple ?
-            pc.couplingmodes.second : ntuple(_ -> 0, length(want))
+            tol = pc.autotol, budget = pc.autobudget)
+        have = pc.coupling.p isa NTuple ? pc.coupling.p :
+            ntuple(_ -> 0, length(want))
         grown = map(max, want, have)
         if grown != have
-            pc.couplingmodes = :band => grown
-            pc.P, pc.deviceplan, pc.nzval = pc.build(pc.couplingmodes, pc.sys)
+            pc.coupling = HarmonicBand(grown, pc.coupling.factorization)
+            pc.P, pc.deviceplan, pc.nzval = pc.build(pc.coupling, pc.sys)
             pc.factorization = pc.basefactorization
             pc.cache.factorization = nothing
         end
     end
-    # `:clusters` probes at the first point and whenever the driver reports
+    # `Clusters` probes at the first point and whenever the driver reports
     # a slow linear solve (`stalled!`), the sign that the coupling has
     # outgrown the clusters; the mask only grows, so the structure is
     # rebuilt only when a probe adds to it
     pr = pc.clusterprobe
-    if !isnothing(pr) && !(pc.couplingmodes isa Vector{Int} &&
-            length(pc.couplingmodes) >= pc.Nmodes)
+    if !isnothing(pr) && pc.coupling isa CouplingMask
         if pr.probes == 0 || pr.reprobe
             pr.reprobe = false
             probecouplings!(pr, pc.sys, pc.Nmodes)
@@ -862,8 +884,8 @@ function updatepreconditioner!(pc::ModeCouplingPreconditioner,
             end
             if grown != pr.mask
                 pr.mask = grown
-                pc.couplingmodes = grown
-                pc.P, pc.deviceplan, pc.nzval = pc.build(grown, pc.sys)
+                pc.coupling = CouplingMask(grown, pc.coupling.factorization)
+                pc.P, pc.deviceplan, pc.nzval = pc.build(pc.coupling, pc.sys)
                 pc.factorization = pc.basefactorization
                 pc.cache.factorization = nothing
             end

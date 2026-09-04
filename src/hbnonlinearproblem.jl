@@ -392,27 +392,25 @@ jacobianprototype(p::HBNonlinearProblem) =
 
 
 """
-    preconditioner(prob::HBNonlinearProblem, u; couplingmodes = :none,
-        factorization = KLUfactorization(), precision = Float64)
+    preconditioner(prob::HBNonlinearProblem, u; spec = BlockDiagonal(),
+        precision = Float64)
 
 The mode coupling preconditioner of `prob` (see
-[`ModeCouplingPreconditioner`](@ref) for `couplingmodes`), updated at `u`,
-with its factorization in the given `precision`. With an explicit direct
-current block it is wrapped in the canonical coordinates with the direct
-current subsystem solved exactly.
+[`ModeCouplingPreconditioner`](@ref) for `spec`, a member of the mode
+coupling family), updated at `u`, with its factorization in the given
+`precision`. With an explicit direct current block it is wrapped in the
+canonical coordinates with the direct current subsystem solved exactly.
 
 Applied by `ldiv!` and by `mul!`, so it can be handed straight to any
 external Krylov solver: `Krylov.gmres(J, -F; N = preconditioner(prob, u),
 atol = 0.0)`. See [`JacobianOperator`](@ref) for why `atol = 0.0`.
 """
 function preconditioner(p::HBNonlinearProblem, u::AbstractVector;
-        couplingmodes = :none, factorization = KLUfactorization(),
-        precision = Float64)
+        spec::AbstractModeCoupling = BlockDiagonal(), precision = Float64)
     d = p.parts
     pc = ModeCouplingPreconditioner(p.sys, d.Amatrixindicesaliased,
         d.Amatrixconjindices, d.Ljb, d.Lmean, d.Rbnm, d.Nmodes, d.Nbranches,
-        d.Nfreq, d.invLnm, d.Gnm, d.Cnm, p.modelayout;
-        couplingmodes = couplingmodes, factorization = factorization,
+        d.Nfreq, d.invLnm, d.Gnm, d.Cnm, p.modelayout; spec = spec,
         precision = precision, Amatrixmodes = d.Amatrixmodes)
     if isaugmented(p)
         # the same wrapper the internal solve uses: the mode coupling
@@ -477,47 +475,6 @@ escalatepreconditioner!(p::SizedPreconditioner) = escalatepreconditioner!(p.pc)
 # =====================================================================
 
 """
-    AbstractHBNonlinearSolver
-
-The solver used for the harmonic balance operating point. See
-[`NewtonKrylov`](@ref), [`Newton`](@ref), [`QuasiNewton`](@ref) and
-[`ExternalSolver`](@ref).
-"""
-abstract type AbstractHBNonlinearSolver end
-
-"""
-    NewtonKrylov(; kwargs...)
-
-Jacobian-free Newton-Krylov with the mode coupling preconditioner: the
-default, and what `method = :newtonkrylov` selects. Keywords are the
-`krylov*` options of [`hbnlsolve`](@ref), including `linearsolver`.
-"""
-struct NewtonKrylov{K} <: AbstractHBNonlinearSolver
-    kwargs::K
-end
-NewtonKrylov(; kwargs...) = NewtonKrylov(kwargs)
-
-"""
-    Newton()
-
-Newton's method on the equivalent real system with the exact assembled real
-Jacobian. `method = :newton`.
-"""
-struct Newton <: AbstractHBNonlinearSolver end
-
-"""
-    QuasiNewton(; andersondepth = 5)
-
-The holomorphic Jacobian approximation with Anderson acceleration.
-`method = :quasinewton`. The harmonic balance residual is not complex
-differentiable, so this Jacobian is an approximation.
-"""
-struct QuasiNewton <: AbstractHBNonlinearSolver
-    andersondepth::Int
-end
-QuasiNewton(; andersondepth::Integer = 5) = QuasiNewton(andersondepth)
-
-"""
     ExternalSolver(f)
 
 Solve the operating point with a caller supplied root finder.
@@ -569,22 +526,6 @@ struct ExternalSolver{F} <: AbstractHBNonlinearSolver
     f::F
 end
 ExternalSolver(f::Function) = ExternalSolver{typeof(f)}(f)
-
-"""
-    solvermethod(solver)
-
-The `method` symbol of the built-in solvers, for the dispatch inside
-[`hbnlsolve`](@ref).
-"""
-solvermethod(::NewtonKrylov) = :newtonkrylov
-solvermethod(::Newton) = :newton
-solvermethod(::QuasiNewton) = :quasinewton
-solvermethod(::ExternalSolver) = :external
-solvermethod(m::Symbol) = m
-
-solverkwargs(s::NewtonKrylov) = s.kwargs
-solverkwargs(::AbstractHBNonlinearSolver) = (;)
-solverkwargs(::Symbol) = (;)
 
 """
     setdrive!(prob::HBNonlinearProblem, scale)

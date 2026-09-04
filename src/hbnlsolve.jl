@@ -1,6 +1,5 @@
 # the keyword pairs `kw` (a named tuple or the `Base.Pairs` a keyword
 # splat carries) as a named tuple without the given keys
-_withoutkeys(kw, drop::Tuple) = (; (k => v for (k, v) in pairs(kw) if !(k in drop))...)
 
 """
     HBReuse()
@@ -10,14 +9,15 @@ component values takes over: the aliased mode coupling index, the padded
 linear term with its augmentation ([`PaddedLinearTerm`](@ref)), the
 [`HBSystem`](@ref) with its transforms and workspaces, the mode coupling
 preconditioner with its structure and symbolic factorization, the
-recycled deflation candidates of the last converged solve when
-`krylovrecycle > 0`, and the Krylov vectors. Hand one to [`hbnlsolve`](@ref) as `reuse`; it is filled by the
+recycled deflation candidates of the last converged solve under a
+[`Recycling`](@ref) or [`Floquet`](@ref) preconditioner, and the Krylov
+vectors. Hand one to [`hbnlsolve`](@ref) as `reuse`; it is filled by the
 first solve and rebound to the new values by every later one, so a sweep
 pays for its transforms, index maps and factorization symbolics once, and
 each solve starts from the deflation subspace the previous one harvested
 rather than from nothing. [`hbcache`](@ref) carries one for its sweeps.
 
-Only `method = :newtonkrylov` reads it. Every solve which shares it must be
+Only a [`NewtonKrylov`](@ref) method reads it. Every solve which shares it must be
 of the same circuit topology at the same mode grid with the same options,
 which is what a cache guarantees; a system whose sparse structure moved is
 refused rather than rebound.
@@ -47,17 +47,11 @@ HBReuse() = HBReuse(nothing, nothing, nothing, nothing, nothing, nothing,
         circuit, circuitdefs; iterations = 1000,
         Nevaluationharmonics = map(i -> 2i, Nharmonics),
         maxintermodorder = Inf, dc = false, odd = true, even = false,
-        ftol = 1e-8, rtol = 0.0, method = :newtonkrylov,
-        andersondepth = method == :quasinewton ? 5 : 0, x0 = nothing,
+        ftol = 1e-8, rtol = 0.0, method = NewtonKrylov(), x0 = nothing,
         symfreqvar = nothing, sorting = :number, keyedarrays = true,
         sensitivitynames = String[], returnoperatingpoint = false,
-        frequencywindow = (0, Inf),
-        krylovcouplingmodes = :none, krylovrecycle = 0, krylovharvest = 8,
-        krylovdeflationform = :adef1, krylovdeflationkwargs = (;),
-        krylovkwargs = (;), stagedkwargs = (;), factorization = nothing,
-        backend = CPU(), precision = Float64, debugJacobian = false,
-        linearsolver = InternalGMRES(), returnsystem = false,
-        assemblejacobian = true)
+        frequencywindow = (0, Inf), backend = CPU(), debugJacobian = false,
+        returnsystem = false, assemblejacobian = true)
 
 Solve the nonlinear harmonic balance problem of a circuit driven by any
 number of strong tones (pumps) at any number of ports, including direct
@@ -156,8 +150,6 @@ rejected with an `ArgumentError`. See `src/mna.jl`.
     couples through.
 $(_DOC_FTOL)
 $(_DOC_METHOD)
-$(_DOC_STAGEDKWARGS)
-$(_DOC_ANDERSON)
 $(_DOC_NLKWARGS)
 - `symfreqvar = nothing`: the symbolic frequency variable, such as `w`,
     when component values are expressions in the frequency.
@@ -222,19 +214,11 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, x0 = nothing, ftol = 1e-8,
     switchofflinesearchtol = nothing, alphamin = nothing,
-    method = :newtonkrylov, andersondepth::Integer = method == :quasinewton ? 5 : 0,
+    method::AbstractHBNonlinearSolver = NewtonKrylov(),
     symfreqvar = nothing, sorting = :number, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
     returnoperatingpoint::Bool = false,
-    krylovcouplingmodes = :none,
-    krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
-    krylovdeflationform::Symbol = :adef1,
-    krylovkwargs::NamedTuple = (;),
-    krylovdeflationkwargs::NamedTuple = (;),
-    stagedkwargs::NamedTuple = (;),
-    factorization = nothing, backend = CPU(),
-    precision::Type{<:AbstractFloat} = Float64, debugJacobian = false,
-    linearsolver::AbstractHBLinearSolver = InternalGMRES(),
+    backend = CPU(), debugJacobian = false,
     returnsystem::Bool = false, assemblejacobian::Bool = true,
     ) where {N}
 
@@ -247,8 +231,8 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     all(map(>=, Nevaluationharmonics, Nharmonics)) || throw(ArgumentError(
         lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Nharmonics` = $(Nharmonics) in every tone."))
 
-    if method === :staged
-        return stagedhbnlsolve(w, Nharmonics, sources, circuit, circuitdefs;
+    if method isa Staged
+        return stagedsolve(method, w, Nharmonics, sources, circuit, circuitdefs;
             iterations = iterations,
             Nevaluationharmonics = Nevaluationharmonics,
             frequencywindow = frequencywindow,
@@ -256,13 +240,7 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
             even = even, ftol = ftol, symfreqvar = symfreqvar,
             sorting = sorting, keyedarrays = keyedarrays,
             sensitivitynames = sensitivitynames,
-            returnoperatingpoint = returnoperatingpoint,
-            krylovcouplingmodes = krylovcouplingmodes,
-            krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
-            krylovdeflationform = krylovdeflationform,
-            krylovdeflationkwargs = krylovdeflationkwargs,
-            krylovkwargs = krylovkwargs, factorization = factorization,
-            backend = backend, precision = precision, stagedkwargs...)
+            returnoperatingpoint = returnoperatingpoint, backend = backend)
     end
 
     # calculate the frequency struct
@@ -288,18 +266,12 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         rtol = rtol,
         iterations = iterations, x0 = x0, ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
-        method = method, andersondepth = andersondepth,
+        method = method,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames,
         returnoperatingpoint = returnoperatingpoint,
-        krylovcouplingmodes = krylovcouplingmodes,
-        krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
-        krylovdeflationform = krylovdeflationform,
-            krylovdeflationkwargs = krylovdeflationkwargs,
-        krylovkwargs = krylovkwargs,
-        factorization = factorization, backend = backend,
-        precision = precision, debugJacobian = debugJacobian,
-        linearsolver = linearsolver, returnsystem = returnsystem,
+        backend = backend, debugJacobian = debugJacobian,
+        returnsystem = returnsystem,
         assemblejacobian = assemblejacobian,
         )
 end
@@ -388,57 +360,22 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     nm::CircuitMatrices;
     iterations = 1000, x0 = nothing,
     ftol = 1e-8, rtol = 0.0, switchofflinesearchtol = nothing, alphamin = nothing,
-    method = :newtonkrylov, andersondepth::Integer = method == :quasinewton ? 5 : 0,
+    method::AbstractHBNonlinearSolver = NewtonKrylov(),
     symfreqvar = nothing, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
     returnoperatingpoint::Bool = false,
-    krylovcouplingmodes = :none,
-    krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
-    krylovdeflationform::Symbol = :adef1,
-    krylovkwargs::NamedTuple = (;),
-    krylovdeflationkwargs::NamedTuple = (;),
-    factorization = nothing, backend = CPU(),
-    precision::Type{<:AbstractFloat} = Float64, debugJacobian = false,
-    linearsolver::AbstractHBLinearSolver = InternalGMRES(),
+    backend = CPU(), debugJacobian = false,
     returnsystem::Bool = false, assemblejacobian::Bool = true,
     reuse::Union{Nothing,HBReuse} = nothing,
     )
 
-    # A solver object (`NewtonKrylov()`, ...) carries its own options; a
-    # symbol is the plain spelling. Resolve it first, since the setup below
-    # reads `method` to decide whether to build the real representation.
-    solverobject = method
-    method = solvermethod(method)
-    andersondepth = solverobject isa QuasiNewton ?
-        solverobject.andersondepth : andersondepth
-    # The options of the preconditioner and of the linear solver are keywords
-    # of this function, not of `nlsolvekrylov!`, so they are taken out of a
-    # solver object's keywords here rather than forwarded with the rest.
-    sk = solverkwargs(solverobject)
-    krylovcouplingmodes = get(sk, :krylovcouplingmodes, krylovcouplingmodes)
-    krylovrecycle = get(sk, :krylovrecycle, krylovrecycle)
-    krylovharvest = get(sk, :krylovharvest, krylovharvest)
-    krylovdeflationform = get(sk, :krylovdeflationform, krylovdeflationform)
-    krylovdeflationkwargs = get(sk, :krylovdeflationkwargs, krylovdeflationkwargs)
-    linearsolver = get(sk, :linearsolver, linearsolver)
-    # validated here rather than by the wrapper, which is only built when
-    # recycling is on
-    krylovdeflationform in (:adef1, :adef2, :floquet) || throw(ArgumentError(
-        lazy"`krylovdeflationform` = $(krylovdeflationform) must be `:adef1`, `:adef2` or `:floquet`."))
-    krylovkwargs = merge(krylovkwargs, _withoutkeys(sk, (:krylovcouplingmodes,
-        :krylovrecycle, :krylovharvest, :krylovdeflationform,
-        :krylovdeflationkwargs, :linearsolver)))
-
-    # the default factorization matches the backend: KLU on the host, cuDSS
-    # on a device, where a host factorization could not be applied to the
-    # device vectors of the Krylov iteration
-    factorization = if !isnothing(factorization)
-        factorization
-    elseif backend isa CPU
-        KLUfactorization()
-    else
-        CUDSSFactorization()
-    end
+    method isa Staged && throw(ArgumentError(
+        "a `Staged` method is solved by the general `hbnlsolve` method, which builds each stage's system."))
+    precision = solverprecision(method)
+    # the sparse factorization of the direct methods
+    directfactorization = something(
+        method isa Newton || method isa QuasiNewton ? method.factorization : nothing,
+        KLUfactorization())
 
     # deprecation warnings for switchofflinesearchtol and alphamin.
     if !isnothing(switchofflinesearchtol)
@@ -488,7 +425,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # it and slow its factorization.
     # what a previous solve of this circuit built and this one takes over;
     # see `HBReuse`. Only the matrix free path is built to be rebound.
-    reusing = !isnothing(reuse) && method == :newtonkrylov
+    reusing = !isnothing(reuse) && method isa NewtonKrylov
     Amatrixindicesaliased = if reusing && !isnothing(reuse.indicesaliased)
         reuse.indicesaliased
     else
@@ -730,11 +667,11 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # composite system exists to hand out.
     # the canonical Jacobian is assembled as a host `SparseMatrixCSC`; on a
     # device backend `Jr` is not one, and there is no device assembly yet
-    if dcexplicit && method == :newton && !(backend isa CPU)
-        throw(ArgumentError("a circuit which injects direct current is solved with an assembled canonical Jacobian under method = :newton, and that assembly is host only. Use method = :newtonkrylov on this backend, which is matrix free, or run :newton on the CPU."))
+    if dcexplicit && method isa Newton && !(backend isa CPU)
+        throw(ArgumentError("a circuit which injects direct current is solved with an assembled canonical Jacobian under `Newton()`, and that assembly is host only. Use `NewtonKrylov()` on this backend, which is matrix free, or run `Newton()` on the CPU."))
     end
-    if dcexplicit && !(method in (:newtonkrylov, :newton, :external))
-        throw(ArgumentError(lazy"a circuit which injects direct current is solved with the average voltages as unknowns, which needs the real system; $(method) solves the complex holomorphic one. Use method = :newtonkrylov, :newton, or an ExternalSolver."))
+    if dcexplicit && method isa QuasiNewton
+        throw(ArgumentError("a circuit which injects direct current is solved with the average voltages as unknowns, which needs the real system; `QuasiNewton()` solves the complex holomorphic one. Use `NewtonKrylov()`, `Newton()` or an `ExternalSolver`."))
     end
     # the zero every average voltage sits at when none is injected, which
     # is the answer for a circuit with a zero frequency mode and no direct
@@ -859,13 +796,13 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # on the backend; the host `Jx` is built either way, because
     # `debugJacobian` compares against it and the sensitivity calculation
     # reads its structure.
-    Jx, complexjacobianplan = if method == :quasinewton || debugJacobian
+    Jx, complexjacobianplan = if method isa QuasiNewton || debugJacobian
         plancomplexjacobian(Amatrixindices, Ljb, Lmean, Rbnm, Nmodes,
             Nbranches, Nfreq, invLnm, Gnm, Cnm)
     else
         nothing, nothing
     end
-    devicex = method == :quasinewton && !(backend isa CPU)
+    devicex = method isa QuasiNewton && !(backend isa CPU)
     Jxb, complexjacobianplan = if devicex
         Jxt = sparse(transpose(Jx))
         nodesandsignsx = branchnodesandsigns(Rbnm, Nmodes, Nbranches)
@@ -887,8 +824,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # matrix-free Jacobian-vector product, and its preconditioner assembles
     # its own much sparser restricted plan, so the full Jacobian plan (the
     # largest object in a multi-tone solve) is never built.
-    Jr, realjacobianplan = if method == :newton || debugJacobian ||
-            ((returnsystem || method == :external) && assemblejacobian) ||
+    Jr, realjacobianplan = if method isa Newton || debugJacobian ||
+            ((returnsystem || method isa ExternalSolver) && assemblejacobian) ||
             returnoperatingpoint
         # on a backend the structure is built there, transposed, because a
         # device factorization is compressed by rows, and the assembly writes
@@ -915,8 +852,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # needed exactly when the solve uses the real representation: every
     # method but `:quasinewton`, including an external solver and the
     # `returnsystem` path, since the residual is not complex differentiable.
-    realrepresentation = method == :newton || method == :newtonkrylov ||
-        method == :external || debugJacobian || returnoperatingpoint ||
+    realrepresentation = method isa Newton || method isa NewtonKrylov ||
+        method isa ExternalSolver || debugJacobian || returnoperatingpoint ||
         returnsystem
     sys = if reusesys
         # the same transforms, maps, kernels and workspaces at the new
@@ -1063,13 +1000,13 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # matrix-free path; the assembled Jacobian methods would additionally
     # need the permuted Jacobian `P J P'`, which is not implemented, so the
     # request is refused rather than ignored.
-    info = if method == :quasinewton
+    info = if method isa QuasiNewton
 
         solveonbackend!(fj!, F, Jxb, x, backend; iterations = iterations,
-            ftol = ftol, rtol = rtol, andersondepth = andersondepth,
-            factorization = factorization)
+            ftol = ftol, rtol = rtol, andersondepth = method.anderson,
+            factorization = directfactorization)
 
-    elseif method == :newton
+    elseif method isa Newton
 
         # solve the equivalent real system with the exact real Jacobian,
         # then convert back to complex
@@ -1086,7 +1023,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
             out = solveonbackend!(
                 canonicalfj(fjreal!, canonwork, Jr, jplan), Fc, Jc, uc, backend;
                 iterations = iterations, ftol = ftol, rtol = rtol,
-                andersondepth = andersondepth, factorization = factorization)
+                andersondepth = 0, factorization = directfactorization)
             scattercanonical!(xr, uc, Lc)
             scattercanonical!(Fr, Fc, Lc)
             if dcexplicit
@@ -1098,12 +1035,12 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         else
             solveonbackend!(fjreal!, Fr, Jr, xr, backend;
                 iterations = iterations, ftol = ftol, rtol = rtol,
-                andersondepth = andersondepth, factorization = factorization)
+                andersondepth = 0, factorization = directfactorization)
         end
         real_to_complex!(x,xr,modelayout.isreal)
         real_to_complex!(F,Fr,modelayout.isreal)
         info
-    elseif method == :newtonkrylov
+    elseif method isa NewtonKrylov
 
         # the matrix free real Jacobian
         jvpreal!(Jvr, vr) = jacobianvectorproduct!(Jvr, sys, vr)
@@ -1146,28 +1083,19 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # default. `krylovcouplingmodes = 12, krylovrecycle = 0` recovers the
         # earlier frequency based mode selection, which is still the fastest
         # option on moderately sized lines.
+        # the preconditioner the method asks for: a mode coupling
+        # preconditioner, possibly wrapped in a deflation below
+        spec = method.preconditioner
+        inner = spec isa AbstractModeCoupling ? spec : spec.inner
         base = if reusing && !isnothing(reuse.preconditioner)
             # the same structure, coupling set and symbolic factorization,
             # with the linear term and the junction coefficients refreshed
             rebind!(reuse.preconditioner, sys)
-        elseif krylovcouplingmodes isa Function
-            # An experimental hook: a callable builds the base preconditioner
-            # from the same ingredients `ModeCouplingPreconditioner` takes,
-            # so that a preconditioner assembled outside the package (a
-            # combination of restricted factorizations, say) can be measured
-            # end to end. Such a base is not reused across a cached sweep.
-            krylovcouplingmodes(sys, Amatrixindicesaliased,
-                Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches,
-                Nfreq, invLnm, Gnm, Cnm, modelayout;
-                factorization = factorization, precision = precision,
-                Amatrixmodes = Amatrixmodes, backend = backend)
         else
             b = ModeCouplingPreconditioner(sys, Amatrixindicesaliased,
                 Amatrixconjindices, Ljb, Lmean, Rbnm, Nmodes, Nbranches,
-                Nfreq, invLnm, Gnm, Cnm, modelayout;
-                couplingmodes = krylovcouplingmodes,
-                factorization = factorization, precision = precision,
-                Amatrixmodes = Amatrixmodes)
+                Nfreq, invLnm, Gnm, Cnm, modelayout; spec = inner,
+                precision = precision, Amatrixmodes = Amatrixmodes)
             reusing && (reuse.preconditioner = b)
             b
         end
@@ -1213,51 +1141,44 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # first refresh of the new solve. The inherited state is copied and
         # committed back only after a converged solve (below), so a failed
         # point cannot seed the next one.
-        pc = if krylovrecycle > 0
+        pc = if spec isa Floquet
             prev = reusing ? reuse.recycling : nothing
-            if krylovdeflationform === :floquet
-                # the residual-image form with physical candidates: `kharvest`
-                # is the number of singular directions per harvest, the
-                # harmonic Ritz ones coming on top of it
-                state = if prev isa FloquetState && size(prev.X, 1) == length(usolve)
-                    copy(prev)
-                else
-                    FloquetState(usolve)
-                end
-                FloquetPreconditioner(pcbase, jvsolve, usolve;
-                    kmax = krylovrecycle, kharvest = krylovharvest,
-                    state = state, krylovdeflationkwargs...)
+            # the residual-image form with physical candidates: `kharvest`
+            # is the number of singular directions per harvest, the
+            # harmonic Ritz ones coming on top of it
+            state = if prev isa FloquetState && size(prev.X, 1) == length(usolve)
+                copy(prev)
             else
-                state = if prev isa RecyclingState && size(prev.U, 1) == length(usolve)
-                    copy(prev)
-                else
-                    RecyclingState(usolve)
-                end
-                RecyclingPreconditioner(pcbase, jvsolve, usolve;
-                    kmax = krylovrecycle, kharvest = krylovharvest,
-                    form = krylovdeflationform, state = state,
-                    krylovdeflationkwargs...)
+                FloquetState(usolve)
             end
+            FloquetPreconditioner(pcbase, jvsolve, usolve;
+                kmax = spec.size, kharvest = spec.harvest, nritz = spec.ritz,
+                kcandidate = spec.candidates, benefittol = spec.benefittol,
+                cycleharvest = spec.cycleharvest, state = state,
+                (isnothing(spec.ranktol) ? (;) : (; ranktol = spec.ranktol))...)
+        elseif spec isa Recycling
+            prev = reusing ? reuse.recycling : nothing
+            state = if prev isa RecyclingState && size(prev.U, 1) == length(usolve)
+                copy(prev)
+            else
+                RecyclingState(usolve)
+            end
+            RecyclingPreconditioner(pcbase, jvsolve, usolve;
+                kmax = spec.size, kharvest = spec.harvest, form = spec.form,
+                state = state)
         else
             pcbase
         end
 
-        # The solver defaults (a long restart cycle and an eager preconditioner
-        # refresh) are those of `nlsolvekrylov!` itself; `krylovkwargs`
-        # overrides any of them. The refresh is eager because rebuilding the
-        # block diagonal is cheap while a preconditioner frozen at zero flux,
-        # where the Jacobian has no harmonic coupling, is stale at once. The
-        # restart length must be long enough for the Krylov space to resolve
-        # the directions a restricted preconditioner leaves, or a restart
-        # discards the progress on them and the iteration count stops
-        # responding to the preconditioner at all.
+        # the linear solver, the refresh policy and the escalation are the
+        # method's; see `NewtonKrylov`
         info = if dcexplicit
             out = nlsolvekrylov!(canonicalresidual(fjreal!, canonwork),
                 jvsolve, Fsolve, usolve, pc;
                 iterations = iterations, ftol = ftol, rtol = rtol,
-                linearsolver = linearsolver,
-                workspace = reusing ? reuse.krylovcanonical : nothing,
-                krylovkwargs...)
+                linearsolver = method.linearsolver, refresh = method.refresh,
+                escalate = method.escalate,
+                workspace = reusing ? reuse.krylovcanonical : nothing)
             L = canonwork.layout
             scattercanonical!(xrb, usolve, L)
             scattercanonical!(Frb, Fsolve, L)
@@ -1272,11 +1193,11 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         else
             nlsolvekrylov!(fjreal!, jvsolve, Fsolve, usolve, pc;
                 iterations = iterations, ftol = ftol, rtol = rtol,
-                linearsolver = linearsolver,
-                workspace = reusing ? reuse.krylov : nothing,
-                krylovkwargs...)
+                linearsolver = method.linearsolver, refresh = method.refresh,
+                escalate = method.escalate,
+                workspace = reusing ? reuse.krylov : nothing)
         end
-        if reusing && krylovrecycle > 0 && info.converged
+        if reusing && !(spec isa AbstractModeCoupling) && info.converged
             reuse.recycling = pc.state
         end
         # back to the host for the complex representation returned to the
@@ -1286,7 +1207,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         real_to_complex!(x,xr,modelayout.isreal)
         real_to_complex!(F,Fr,modelayout.isreal)
         info
-    elseif method == :external
+    elseif method isa ExternalSolver
         # hand the caller's root finder the system as a problem object. With
         # direct current the problem carries the augmentation too, so the
         # caller solves the posed system in the canonical unknowns.
@@ -1306,7 +1227,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         prob = HBNonlinearProblem(sys, modelayout, u0,
             dcexplicit ? (isnothing(aug.jplan) ? nothing : aug.jplan.J) : Jr,
             parts; augmentation = aug)
-        u, extconverged = solverobject.f(prob, copy(u0))
+        u, extconverged = method.f(prob, copy(u0))
         Fc = similar(u)
         hbresidual!(Fc, prob, u)
         if dcexplicit

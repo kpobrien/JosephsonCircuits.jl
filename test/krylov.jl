@@ -289,26 +289,26 @@ end
     end
     jvp!(y, v) = (y .= [2*xpt[1]*v[1], 3*xpt[2]^2*v[2]])
 
-    # the initial forcing term and the upper clamp are separate parameters
-    for (rtol0, rtolmax) in ((0.3, 0.9), (0.9, 0.9), (0.01, 0.5))
+    # every refresh policy and linear solver setting reaches the root
+    for (refresh, ls) in ((Always(), GMRES()), (Probe(), GMRES()),
+            (Never(), GMRES(restart = 5, maxrestarts = 2)))
         x = [1.0, 1.0]
         F = zeros(2)
         info = JosephsonCircuits.nlsolvekrylov!(fj!, jvp!, F, x,
-            ExactP(zeros(2, 2), nothing); ftol = 1e-10,
-            krylovrtol0 = rtol0, krylovrtolmax = rtolmax)
+            ExactP(zeros(2, 2), nothing); ftol = 1e-10, refresh = refresh,
+            linearsolver = ls)
         @test info.converged
         @test isapprox(x, [sqrt(2), cbrt(3)]; rtol = 1e-6)
         @test length(info.krylov) >= info.iterations
     end
 
-    # the Choice 2 parameters are only defined on their proper ranges
-    for bad in ((; krylovgamma = 0.0), (; krylovgamma = 1.5),
-                (; krylovalpha = 1.0), (; krylovalpha = 3.0),
-                (; krylovrtol0 = 0.99, krylovrtolmax = 0.5),
-                (; krylovrefreshrate = 0.0), (; krylovstagnation = 1.5))
-        @test_throws ArgumentError JosephsonCircuits.nlsolvekrylov!(fj!, jvp!,
-            zeros(2), [1.0, 1.0], ExactP(zeros(2, 2), nothing); bad...)
-    end
+    # the objects validate their own options
+    @test_throws ArgumentError GMRES(restart = 0)
+    @test_throws ArgumentError GMRES(maxrestarts = 0)
+    @test_throws ArgumentError NewtonKrylov(linearsolver = 1)
+    @test_throws TypeError NewtonKrylov(refresh = :always)
+    @test_throws ArgumentError Recycling(size = 2, harvest = 3)
+    @test_throws ArgumentError Floquet(Recycling())
 end
 
 @testset verbose=true "recycling deflation forms (adef1 / adef2)" begin
@@ -681,7 +681,7 @@ end
                 kharvest = 2, form = form)
             x = zeros(m); F = zeros(m)
             info = JC.nlsolvekrylov!(fjn!, jvpn!, F, x, pc; ftol = 1e-10,
-                krylovescalate = typemax(Int))
+                escalate = false)
             @test info.converged
             @test isapprox(x, xref; rtol = 1e-7)
             @test any(k -> k.deflationsize > 0, info.krylov)
@@ -713,9 +713,7 @@ end
                 kharvest = 2, form = form)
             x = zeros(m); F = zeros(m)
             info = JC.nlsolvekrylov!(fjn!, jvpn!, F, x, pc; ftol = 1e-10,
-                krylovescalate = typemax(Int),
-                krylovrefreshiterations = typemax(Int),
-                krylovrefreshrate = 1.0)
+                escalate = false, refresh = Never())
             @test info.converged
             @test isapprox(x, xref; rtol = 1e-7)
             @test info.krylov[end].deflationrebuilds > 0
@@ -727,14 +725,14 @@ end
             kharvest = 2, form = :adef2, state = st)
         x = zeros(m); F = zeros(m)
         JC.nlsolvekrylov!(fjn!, jvpn!, F, x, pc; ftol = 1e-10,
-            krylovescalate = typemax(Int))
+            escalate = false)
         @test pc.state === st && size(st.U, 2) > 0
         pc2 = JC.RecyclingPreconditioner(basen, jvpn!, m; kmax = 6,
             kharvest = 2, form = :adef2, state = copy(st))
         @test !pc2.fresh
         x = zeros(m); F = zeros(m)
         info = JC.nlsolvekrylov!(fjn!, jvpn!, F, x, pc2; ftol = 1e-10,
-            krylovescalate = typemax(Int))
+            escalate = false)
         @test info.converged && info.krylov[1].deflationsize > 0
     end
 end

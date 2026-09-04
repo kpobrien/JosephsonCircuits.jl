@@ -132,6 +132,7 @@ include("legacyadapter.jl")
 include("graphproc.jl")        # incidence matrix, spanning tree, loops
 include("capindmat.jl")        # capacitance and inverse inductance matrices
 include("matutils.jl")         # sparse matrix helpers shared by the solvers
+include("solveroptions.jl")    # the methods, preconditioners and factorizations a caller composes
 include("circuitbind.jl")      # binding values and pattern-fixed assembly
 include("mna.jl")              # the modified nodal analysis augmentation
 include("dcconductance.jl")    # the explicit direct current block
@@ -529,7 +530,11 @@ export FrequencyDependent, designsensitivities, designjacobian,
     hbnonlinearproblem, JacobianOperator, preconditioner, hbresidual!,
     hbjvp!, hbvjp!, hbjacobian!, hbd2F!, hbd3F!, hbdFdp!, jacobianprototype,
     setdrive!, drivenresidual!, NewtonKrylov, Newton, QuasiNewton,
-    ExternalSolver, InternalGMRES, KrylovJL
+    ExternalSolver, GMRES, KrylovJL, Staged,
+    BlockDiagonal, FullJacobian, HarmonicBand, MeasuredBand, Clusters,
+    CoupledModes, CouplingMask, Automatic,
+    Recycling, Floquet, Always, Probe, Never, KLUfactorization, LUfactorization,
+    QRfactorization, CUDSSFactorization, BlockFactorization
 
 # the typed circuit representation and its component models
 export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,

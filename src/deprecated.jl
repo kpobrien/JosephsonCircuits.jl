@@ -96,7 +96,9 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     nonlinear = hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         iterations = iterations, x0 = nothing, ftol = ftol,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
-        sensitivitynames = sensitivitynames, factorization = factorization)
+        sensitivitynames = sensitivitynames,
+        method = NewtonKrylov(preconditioner = BlockDiagonal(
+            factorization = factorization)))
 
     # the signal modes: the signal and the even pump harmonics on either
     # side of it

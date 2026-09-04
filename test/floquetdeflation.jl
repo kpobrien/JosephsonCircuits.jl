@@ -528,13 +528,11 @@ end
         w = (2*pi*8e9,); Nh = (6,)
         src = [(mode = (1,), port = 1, current = 2.5e-6)]
         circ = chain(12, 100e-12)
-        noesc = (; krylovescalate = typemax(Int))
 
-        ref = JC.hbnlsolve(w, Nh, src, circ, Dict(); method = :newton,
+        ref = JC.hbnlsolve(w, Nh, src, circ, Dict(); method = Newton(),
             keyedarrays = false)
-        sol = JC.hbnlsolve(w, Nh, src, circ, Dict(); method = :newtonkrylov,
-            krylovrecycle = 8, krylovharvest = 3,
-            krylovdeflationform = :floquet, krylovkwargs = noesc,
+        sol = JC.hbnlsolve(w, Nh, src, circ, Dict(); method = NewtonKrylov(preconditioner = Floquet(size = 8, harvest = 3),
+                escalate = false),
             keyedarrays = false)
         @test sol.solverinfo.converged
         st = sol.solverinfo.stages[1]
@@ -547,14 +545,14 @@ end
             atol = 1e-12*maximum(abs, ref.nodeflux))
 
         @test_throws ArgumentError JC.hbnlsolve(w, Nh, src, circ, Dict();
-            method = :newtonkrylov, krylovrecycle = 8,
-            krylovdeflationform = :nosuchform, keyedarrays = false)
+            method = NewtonKrylov(preconditioner = Recycling(size = 8,
+                form = :nosuchform)), keyedarrays = false)
 
         # and the same through hbsolve, which forwards the three recycling
         # keywords
         hs = JC.hbsolve(2*pi*8.1e9, w, src, (1,), Nh, circ, Dict();
-            krylovrecycle = 8, krylovharvest = 3,
-            krylovdeflationform = :floquet, keyedarrays = false)
+            method = NewtonKrylov(preconditioner = Floquet(size = 8, harvest = 3)),
+            keyedarrays = false)
         @test hs.nonlinear.solverinfo.converged
         @test any(k -> k.deflationsize > 0,
             hs.nonlinear.solverinfo.stages[1].krylov)
@@ -564,12 +562,11 @@ end
         w = (2*pi*8e9,); Nh = (6,)
         src = [(mode = (1,), port = 1, current = 2.5e-6)]
         Ljs = range(100e-12, 102e-12; length = 3)
-        noesc = (; krylovescalate = typemax(Int))
         builder = (; Lj) -> chain(12, Lj)
 
         cache = JC.hbcache(w, Nh, src, builder, (; Lj = Ljs[1]);
-            method = :newtonkrylov, krylovrecycle = 8, krylovharvest = 3,
-            krylovdeflationform = :floquet, krylovkwargs = noesc)
+            method = NewtonKrylov(preconditioner = Floquet(size = 8, harvest = 3),
+                escalate = false))
         first = Int[]
         for Lj in Ljs
             nl = JC.hbsolve!(cache, (; Lj = Lj))

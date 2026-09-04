@@ -72,10 +72,10 @@ solver, rather than writing the loop yourself:
 
 ```julia
 hbsolve(ws, wp, sources, Nmod, Npump, circuit, circuitdefs;
-        linearsolver = KrylovJL(:fgmres))
+        method = NewtonKrylov(linearsolver = KrylovJL(:fgmres)))
 ```
 
-`InternalGMRES()` is the default. Only the linear solve changes: the
+`GMRES()` is the default. Only the linear solve changes: the
 forcing term, line search, preconditioner escalation and stagnation
 handling are untouched.
 

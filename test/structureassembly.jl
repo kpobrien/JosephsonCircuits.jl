@@ -59,9 +59,10 @@ end
             # `:none` is the mode block diagonal, `:all` the full Jacobian,
             # and a partial set is the case whose coupling mask is lower
             # triangular and whose pattern is therefore not symmetric
-            for couplingmodes in (:none, :all, [2])
-                S = couplingmodes === :none ? Int[] :
-                    couplingmodes === :all ? collect(1:Nm) : couplingmodes
+            for spec in (JosephsonCircuits.BlockDiagonal(), JosephsonCircuits.FullJacobian(), JosephsonCircuits.CoupledModes([2]))
+                S = spec isa JosephsonCircuits.BlockDiagonal ? Int[] :
+                    spec isa JosephsonCircuits.FullJacobian ? collect(1:Nm) :
+                    spec.indices
                 mask = JosephsonCircuits.modecouplingmask(Nm, S)
                 Ami = JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixindicesaliased, mask)
@@ -106,12 +107,12 @@ end
             d = JosephsonCircuits.hbnlsolve(wp, Nharmonics, sources, circuit,
                 circuitdefs; debugJacobian = true)
             sys = d.sys; ml = d.modelayout; Nm = d.Nmodes
-            for couplingmodes in (:none, :all)
+            for spec in (JosephsonCircuits.BlockDiagonal(), JosephsonCircuits.FullJacobian())
                 pc = JosephsonCircuits.ModeCouplingPreconditioner(sys,
                     d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb,
                     d.Lmean, d.Rbnm, Nm, d.Nbranches, d.Nfreq, d.invLnm,
-                    d.Gnm, d.Cnm, ml; couplingmodes = couplingmodes)
-                S = couplingmodes === :none ? Int[] : collect(1:Nm)
+                    d.Gnm, d.Cnm, ml; spec = spec)
+                S = spec isa JosephsonCircuits.BlockDiagonal ? Int[] : collect(1:Nm)
                 mask = JosephsonCircuits.modecouplingmask(Nm, S)
                 Ami = JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixindicesaliased, mask)

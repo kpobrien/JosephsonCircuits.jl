@@ -17,7 +17,8 @@ import JosephsonCircuits: _cudss_factorize, _cudss_factorize!,
     _cudss_sweep, _cudss_sweepsolve!,
     blockdiagonallayout, gatherblocks!, scatterblocks!, gathervalues!,
     blockpattern, blockrowmajorindex, blockmatrix, BatchedBlockLayout,
-    myldiv!, tobackend, cscvaluepermutation, rowpointer, columnindices
+    myldiv!, tobackend, cscvaluepermutation, rowpointer, columnindices,
+    _batched_factorize, _batched_factorize!
 
 # ---------------------------------------------------------------------------
 # binding the caller's vectors to a cuDSS descriptor
@@ -63,9 +64,9 @@ end
 
 # The batched path needs the block assignment, which a bare matrix does not
 # carry, so it is selected by building the factorization from a layout
-# (`cudssbatchedfactorization`) rather than by a flag here. `CUDSSFactorization`
-# always takes the unbatched path; `batchedfactorization` picks between them
-# from the sparsity structure and is what callers should use.
+# (`CUDSSBatchedFactorization`) rather than by a flag here; `batchedfactorization`
+# picks between the two from the sparsity structure and is what callers
+# should use.
 function _cudss_factorize(A::SparseMatrixCSC{Tv,<:Integer};
     kwargs...) where {Tv<:AbstractFloat}
     n = size(A, 1)
@@ -204,23 +205,6 @@ mutable struct CUDSSBatchedSolve{TS,TL,TM,TV,TD,TI,Tv<:AbstractFloat}
     src::TI
     hostsrc::Matrix{Int}
     hostvals::Matrix{Tv}
-end
-
-"""
-    cudssbatchedfactorization(layout::BatchedBlockLayout; kwargs...)
-
-A [`Factorization`](@ref) which treats the matrix as the uniform batch
-described by `layout`: one symbolic analysis for the shared pattern, then a
-batched numeric refactorization per Newton step. Build `layout` once with
-[`blockdiagonallayout`](@ref); if it returns `nothing` the matrix is not a
-uniform batch and [`CUDSSFactorization`](@ref) should be used instead.
-"""
-function JosephsonCircuits.cudssbatchedfactorization(layout::BatchedBlockLayout;
-    kwargs...)
-    return JosephsonCircuits.Factorization(
-        (A; kws...) -> _batched_factorize(A, layout; kws...),
-        (F, A; kws...) -> _batched_factorize!(F, A; kws...),
-        kwargs)
 end
 
 # the shared pattern as compressed sparse rows, which is compressed sparse

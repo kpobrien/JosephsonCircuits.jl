@@ -27,8 +27,8 @@ continuation walk can be examined afterwards.
     assembly.
 - `finalresidual`: the residual norm the attempt ended at.
 - `inner`: the inner solver's own stage records ([`IterationInfo`](@ref)),
-    with their Krylov linear-solve diagnostics when the inner method is
-    `:newtonkrylov`.
+    with their Krylov linear-solve diagnostics when the inner method is a
+    [`NewtonKrylov`](@ref).
 """
 struct StagedStageInfo <: AbstractStageInfo
     label::String
@@ -88,19 +88,15 @@ end
     stagedhbnlsolve(w, Nharmonics, sources, circuit, circuitdefs;
         grids = defaultgridladder(Nharmonics), s0 = 0.5, smin = 0.02,
         interiorftol = 1e-7, interioriterations = 60,
-        innermethod = :newtonkrylov, interiorescalation = false,
+        inner = NewtonKrylov(), interiorescalation = false,
         maxattempts = 60, verbose = false, kwargs...)
 
 Source continuation on an adaptively grown harmonic grid, reached through
-`hbnlsolve(...; method = :staged, stagedkwargs = (; ...))`. `kwargs` are
-the keywords of [`hbnlsolve`](@ref) (`iterations`, `ftol`,
-`Nevaluationharmonics`, `frequencywindow`, `maxintermodorder`, `dc`, `odd`,
-`even`, `symfreqvar`,
+`hbnlsolve(...; method = Staged(...))`. `kwargs` are the keywords of
+[`hbnlsolve`](@ref) (`iterations`, `ftol`, `Nevaluationharmonics`,
+`frequencywindow`, `maxintermodorder`, `dc`, `odd`, `even`, `symfreqvar`,
 `sorting`, `keyedarrays`, `sensitivitynames`, `returnoperatingpoint`,
-`krylovcouplingmodes`, `krylovrecycle`, `krylovharvest`,
-`krylovdeflationform`, `krylovdeflationkwargs`, `krylovkwargs`,
-`factorization`, `backend`,
-`precision`), which are forwarded to every stage.
+`backend`), which are forwarded to every stage.
 
 Near a critical drive the Newton basin is small and the iteration count
 large, so those iterations are spent where they are cheap. The drive is
@@ -139,7 +135,7 @@ branch may reach it; failing that, an error states the bracket.
     Newton budget of the interior points. The budget is small on purpose: a
     stalled probe is evident within tens of iterations, and interior stalls
     are the overhead of the walk.
-- `innermethod = :newtonkrylov`: the solver of every stage.
+- `inner = NewtonKrylov()`: the method of every stage.
 - `interiorescalation = false`: whether interior stage solves may escalate
     their preconditioner to the full Jacobian. Off by default, because an
     interior probe exists only to produce a cheap warm start, and at a high
@@ -153,7 +149,8 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
     sources, circuit, circuitdefs;
     grids::Vector{NTuple{N,Int}} = defaultgridladder(Nharmonics),
     s0 = 0.5, smin = 0.02, interiorftol = 1e-7,
-    interioriterations::Integer = 60, innermethod::Symbol = :newtonkrylov,
+    interioriterations::Integer = 60,
+    inner::AbstractHBNonlinearSolver = NewtonKrylov(),
     interiorescalation::Bool = false,
     maxattempts::Integer = 60, verbose::Bool = false,
     iterations = 1000,
@@ -163,19 +160,14 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
     even::Bool = false, ftol = 1e-8, symfreqvar = nothing,
     sorting = :number, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
-    returnoperatingpoint::Bool = false, krylovcouplingmodes = :none,
-    krylovrecycle::Integer = 0, krylovharvest::Integer = 8,
-    krylovdeflationform::Symbol = :adef1,
-    krylovkwargs::NamedTuple = (;), krylovdeflationkwargs::NamedTuple = (;),
-    factorization = nothing,
-    backend = CPU(), precision::Type{<:AbstractFloat} = Float64) where {N}
+    returnoperatingpoint::Bool = false, backend = CPU()) where {N}
 
     isempty(grids) && throw(ArgumentError("`grids` must not be empty."))
     grids[end] == Nharmonics || throw(ArgumentError(
         lazy"the finest grid $(grids[end]) must equal `Nharmonics` = $(Nharmonics)."))
     0 < s0 <= 1 || throw(ArgumentError(lazy"`s0` = $(s0) must be in (0, 1]."))
-    innermethod === :staged && throw(ArgumentError(
-        "`innermethod` must be a non-staged method."))
+    inner isa Staged && throw(ArgumentError(
+        "`inner` must be a non-staged method."))
     all(map(>=, Nevaluationharmonics, Nharmonics)) || throw(ArgumentError(
         lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Nharmonics` = $(Nharmonics) in every tone."))
 
@@ -195,19 +187,14 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
         maxintermodorder = maxintermodorder,
         Nevaluationharmonics = Nevaluationharmonics,
         frequencywindow = frequencywindow,
-        method = innermethod, x0 = x0, symfreqvar = symfreqvar,
+        method = (final || interiorescalation) ? inner :
+            withescalation(inner, false),
+        x0 = x0, symfreqvar = symfreqvar,
         sorting = sorting,
         keyedarrays = final ? keyedarrays : false,
         sensitivitynames = final ? sensitivitynames : String[],
         returnoperatingpoint = final ? returnoperatingpoint : false,
-        krylovcouplingmodes = krylovcouplingmodes,
-        krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
-        krylovdeflationform = krylovdeflationform,
-            krylovdeflationkwargs = krylovdeflationkwargs,
-        krylovkwargs = (final || interiorescalation) ? krylovkwargs :
-            merge((; krylovescalate = typemax(Int)), krylovkwargs),
-        factorization = factorization,
-        backend = backend, precision = precision,
+        backend = backend,
         ftol = final ? ftol : interiorftol,
         iterations = final ? iterations : interioriterations)
 
@@ -365,3 +352,21 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
     return out
 end
 
+
+"""
+    stagedsolve(m::Staged, w, Nharmonics, sources, circuit, circuitdefs;
+        kwargs...)
+
+[`stagedhbnlsolve`](@ref) with the options of the [`Staged`](@ref) method
+`m`; `kwargs` are the problem keywords forwarded to every stage.
+"""
+function stagedsolve(m::Staged, w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
+    sources, circuit, circuitdefs; kwargs...) where {N}
+    grids = isnothing(m.grids) ? defaultgridladder(Nharmonics) :
+        Vector{NTuple{N,Int}}(m.grids)
+    return stagedhbnlsolve(w, Nharmonics, sources, circuit, circuitdefs;
+        grids = grids, s0 = m.s0, smin = m.smin, interiorftol = m.interiorftol,
+        interioriterations = m.interioriterations, inner = m.inner,
+        interiorescalation = m.interiorescalation,
+        maxattempts = m.maxattempts, verbose = m.verbose, kwargs...)
+end

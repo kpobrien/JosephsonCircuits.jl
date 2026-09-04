@@ -83,12 +83,12 @@ using Test
         pc = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
             d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lmean,
             d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout; couplingmodes = [1, 2])
-        @test pc.couplingmodes == [1, 2]
+            d.modelayout; spec = JosephsonCircuits.CoupledModes([1, 2]))
+        @test pc.coupling.indices == [1, 2]
 
         JosephsonCircuits.updatepreconditioner!(pc, 0.3*randn(length(d.xr)))
         ms = modeslot(d.modelayout)
-        retained = [m in pc.couplingmodes for m in 1:Nmodes]
+        retained = [m in pc.coupling.indices for m in 1:Nmodes]
         rows = rowvals(pc.P)
         vals = nonzeros(pc.P)
         # no stored nonzero couples a shell column into a retained row
@@ -103,7 +103,7 @@ using Test
             d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lmean,
             d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
             d.modelayout)
-        @test isempty(pc0.couplingmodes)
+        @test pc0.coupling isa JosephsonCircuits.BlockDiagonal
         JosephsonCircuits.updatepreconditioner!(pc0, 0.3*randn(length(d.xr)))
         rows0 = rowvals(pc0.P)
         for j in axes(pc0.P, 2), k in nzrange(pc0.P, j)
@@ -113,7 +113,7 @@ using Test
 
         # escalation goes straight to the full Jacobian, once
         @test JosephsonCircuits.escalatepreconditioner!(pc0)
-        @test pc0.couplingmodes == collect(1:Nmodes)
+        @test pc0.coupling isa JosephsonCircuits.FullJacobian
         @test pc0.escalations == 1
         @test !JosephsonCircuits.escalatepreconditioner!(pc0)
 
@@ -130,30 +130,28 @@ using Test
         @test_throws ArgumentError JosephsonCircuits.ModeCouplingPreconditioner(
             d.sys, d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb,
             d.Lmean, d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm,
-            d.Cnm, d.modelayout; couplingmodes = :bogus)
+            d.Cnm, d.modelayout; spec = JosephsonCircuits.CoupledModes([0]))
     end
 
     @testset "hbnlsolve newtonkrylov agrees with newton" begin
         on = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
-            circuitdefs; method = :newton, keyedarrays = false)
+            circuitdefs; method = Newton(), keyedarrays = false)
         @test on.solverinfo.converged
         @test isempty(on.solverinfo.stages[1].krylov)
 
-        for kw in ((;), (; krylovcouplingmodes = :all),
-                   (; krylovrecycle = 20), (; krylovcouplingmodes = [1, 3]),
-                   (; krylovrecycle = 20, krylovdeflationform = :adef2))
+        for m in (NewtonKrylov(), NewtonKrylov(preconditioner = FullJacobian()),
+                NewtonKrylov(preconditioner = Recycling(size = 20)),
+                NewtonKrylov(preconditioner = CoupledModes([1, 3])),
+                NewtonKrylov(preconditioner = Recycling(size = 20, form = :adef2)))
             ok = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
-                circuitdefs; method = :newtonkrylov, keyedarrays = false, kw...)
+                circuitdefs; method = m, keyedarrays = false)
             @test ok.solverinfo.converged
             @test isapprox(ok.nodeflux, on.nodeflux;
                 rtol = 1e-6, atol = 1e-12*maximum(abs, on.nodeflux))
             st = ok.solverinfo.stages[1]
             @test length(st.krylov) >= st.iterations
         end
-        @test_throws ArgumentError JosephsonCircuits.hbnlsolve((wp,), (8,),
-            sources, circuit, circuitdefs; method = :newtonkrylov,
-            keyedarrays = false, krylovrecycle = 4,
-            krylovdeflationform = :bogus)
+        @test_throws ArgumentError Recycling(size = 4, form = :bogus)
     end
 
     @testset "deflation forms on a strongly driven chain" begin
@@ -178,18 +176,15 @@ using Test
         # Arnoldi steps per solve, which is what the harvest feeds on
         chainsources = [(mode=(1,),port=1,current=3.2e-6)]
         on = JosephsonCircuits.hbnlsolve((wc,), (8,), chainsources, chain,
-            chaindefs; method = :newton, keyedarrays = false)
+            chaindefs; method = Newton(), keyedarrays = false)
         @test on.solverinfo.converged
         phimax = maximum(abs, on.nodeflux)
-        noescalation = (; krylovescalate = typemax(Int))
-        frozen = (; krylovescalate = typemax(Int),
-            krylovrefreshiterations = typemax(Int), krylovrefreshrate = 1.0)
-        for form in (:adef1, :adef2), (name, kk) in
-                (("eager", noescalation), ("frozen", frozen))
+        for form in (:adef1, :adef2), (name, refresh) in
+                (("eager", Always()), ("frozen", Never()))
             ok = JosephsonCircuits.hbnlsolve((wc,), (8,), chainsources, chain,
-                chaindefs; method = :newtonkrylov, keyedarrays = false,
-                krylovrecycle = 12, krylovharvest = 4,
-                krylovdeflationform = form, krylovkwargs = kk)
+                chaindefs; keyedarrays = false, method = NewtonKrylov(
+                    preconditioner = Recycling(size = 12, harvest = 4, form = form),
+                    refresh = refresh, escalate = false))
             @test ok.solverinfo.converged
             @test isapprox(ok.nodeflux, on.nodeflux;
                 rtol = 1e-6, atol = 1e-12*phimax)
@@ -226,7 +221,7 @@ using Test
         dcw = 2*pi*5e9
 
         on = JosephsonCircuits.hbnlsolve((dcw,), (2,), dcsources, dccircuit,
-            dcdefs; dc = true, method = :newton, keyedarrays = false)
+            dcdefs; dc = true, method = Newton(), keyedarrays = false)
         @test on.solverinfo.converged
 
         d = JosephsonCircuits.hbnlsolve((dcw,), (2,), dcsources, dccircuit,
@@ -256,11 +251,11 @@ using Test
             @test Matrix(P) == Matrix(Jref)
         end
 
-        for kw in ((;), (; krylovrecycle = 10),
-                   (; krylovrecycle = 10, krylovdeflationform = :adef2))
+        for m in (NewtonKrylov(), NewtonKrylov(preconditioner = Recycling(size = 10)),
+                NewtonKrylov(preconditioner = Recycling(size = 10, form = :adef2)))
             ok = JosephsonCircuits.hbnlsolve((dcw,), (2,), dcsources,
-                dccircuit, dcdefs; dc = true, method = :newtonkrylov,
-                keyedarrays = false, kw...)
+                dccircuit, dcdefs; dc = true, method = m,
+                keyedarrays = false)
             @test ok.solverinfo.converged
             @test isapprox(ok.nodeflux, on.nodeflux;
                 rtol = 1e-6, atol = 1e-9*maximum(abs, on.nodeflux))
@@ -273,10 +268,9 @@ using Test
         # escalation off so the deflation is what is used.
         for form in (:adef1, :adef2)
             ok = JosephsonCircuits.hbnlsolve((dcw,), (2,), dcsources,
-                dccircuit, dcdefs; dc = true, method = :newtonkrylov,
-                keyedarrays = false, krylovrecycle = 6, krylovharvest = 1,
-                krylovdeflationform = form,
-                krylovkwargs = (; krylovescalate = typemax(Int)))
+                dccircuit, dcdefs; dc = true, keyedarrays = false,
+                method = NewtonKrylov(preconditioner = Recycling(size = 6,
+                    harvest = 1, form = form), escalate = false))
             @test ok.solverinfo.converged
             @test isapprox(ok.nodeflux, on.nodeflux;
                 rtol = 1e-6, atol = 1e-9*maximum(abs, on.nodeflux))
@@ -294,9 +288,8 @@ using Test
             ("C1","1","2",100.0e-15), ("Lj1","2","0",Lj), ("C2","2","0",1000e-15)]
         for form in (:adef1, :adef2)
             cache = JosephsonCircuits.hbcache((wp,), (8,), sources, builder,
-                (; Lj = 1000e-12); krylovrecycle = 6, krylovharvest = 2,
-                krylovdeflationform = form,
-                krylovkwargs = (; krylovescalate = typemax(Int)))
+                (; Lj = 1000e-12); method = NewtonKrylov(preconditioner =
+                    Recycling(size = 6, harvest = 2, form = form), escalate = false))
             first = JosephsonCircuits.hbsolve!(cache, (; Lj = 1000e-12))
             @test first.solverinfo.converged
             k1 = first.solverinfo.stages[1].krylov
@@ -314,7 +307,7 @@ using Test
             # and the answer is the answer
             on = JosephsonCircuits.hbnlsolve((wp,), (8,), sources,
                 builder(; Lj = 1010e-12), Dict{Symbol,Complex{Float64}}();
-                method = :newton, keyedarrays = false)
+                method = Newton(), keyedarrays = false)
             @test isapprox(second.nodeflux, on.nodeflux;
                 rtol = 1e-6, atol = 1e-12*maximum(abs, on.nodeflux))
         end
@@ -327,8 +320,8 @@ using Test
         builder(; Lj) = [("P1","1","0",1), ("R1","1","0",50.0),
             ("C1","1","2",100.0e-15), ("Lj1","2","0",Lj), ("C2","2","0",1000e-15)]
         cache = JosephsonCircuits.hbcache((wp,), (8,), sources, builder,
-            (; Lj = 1000e-12); krylovrecycle = 6, krylovharvest = 2,
-            krylovkwargs = (; krylovescalate = typemax(Int)))
+            (; Lj = 1000e-12); method = NewtonKrylov(preconditioner =
+                Recycling(size = 6, harvest = 2), escalate = false))
         first = JosephsonCircuits.hbsolve!(cache, (; Lj = 1000e-12))
         @test first.solverinfo.converged
         committed = cache.reuse.recycling
@@ -358,15 +351,13 @@ using Test
                 (mode=(0,1),port=1,current=2.4e-7)]
         on = JosephsonCircuits.hbnlsolve((w1,w2), (6,3), src2, circuit,
             circuitdefs; dc = true, odd = true, even = true,
-            method = :newton, keyedarrays = false)
+            method = Newton(), keyedarrays = false)
         @test on.solverinfo.converged
         for form in (:adef1, :adef2)
             ok = JosephsonCircuits.hbnlsolve((w1,w2), (6,3), src2, circuit,
                 circuitdefs; dc = true, odd = true, even = true,
-                method = :newtonkrylov, keyedarrays = false,
-                krylovrecycle = 8, krylovharvest = 2,
-                krylovdeflationform = form,
-                krylovkwargs = (; krylovescalate = typemax(Int)))
+                keyedarrays = false, method = NewtonKrylov(preconditioner =
+                    Recycling(size = 8, harvest = 2, form = form), escalate = false))
             @test ok.solverinfo.converged
             @test isapprox(ok.nodeflux, on.nodeflux;
                 rtol = 1e-6, atol = 1e-9*maximum(abs, on.nodeflux))
@@ -379,23 +370,22 @@ using Test
 
     @testset "the recycling options travel through hbsolve and NewtonKrylov" begin
         on = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
-            circuitdefs; method = :newton, keyedarrays = false)
+            circuitdefs; method = Newton(), keyedarrays = false)
         # a solver object carrying preconditioner options, which are not
         # options of the inner Newton-Krylov loop and used to be forwarded
         # to it regardless
         ok = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
             circuitdefs; method = JosephsonCircuits.NewtonKrylov(
-                krylovrecycle = 6, krylovharvest = 2,
-                krylovdeflationform = :adef2, krylovcouplingmodes = :none,
-                krylovrestart = 50), keyedarrays = false)
+                preconditioner = Recycling(size = 6, harvest = 2, form = :adef2),
+                linearsolver = GMRES(restart = 50)), keyedarrays = false)
         @test ok.solverinfo.converged
         @test isapprox(ok.nodeflux, on.nodeflux;
             rtol = 1e-6, atol = 1e-12*maximum(abs, on.nodeflux))
         @test any(k -> k.deflationsize > 0, ok.solverinfo.stages[1].krylov)
         # and through hbsolve, which used to drop them
         hs = JosephsonCircuits.hbsolve(2*pi*4.5e9, (wp,), sources, (1,), (8,),
-            circuit, circuitdefs; krylovrecycle = 6, krylovharvest = 2,
-            krylovdeflationform = :adef2, keyedarrays = false)
+            circuit, circuitdefs; method = NewtonKrylov(preconditioner =
+                Recycling(size = 6, harvest = 2, form = :adef2)), keyedarrays = false)
         @test hs.nonlinear.solverinfo.converged
         @test any(k -> k.deflationsize > 0,
             hs.nonlinear.solverinfo.stages[1].krylov)
@@ -403,7 +393,7 @@ using Test
 
     @testset "KrylovSolveInfo diagnostics" begin
         o = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
-            circuitdefs; method = :newtonkrylov, keyedarrays = false)
+            circuitdefs; method = NewtonKrylov(), keyedarrays = false)
         st = o.solverinfo.stages[1]
         @test st.converged
         @test !isempty(st.krylov)
@@ -438,7 +428,7 @@ using Test
         @test issorted([k.time for k in st.krylov])
 
         on = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
-            circuitdefs; method = :newton, keyedarrays = false)
+            circuitdefs; method = Newton(), keyedarrays = false)
         @test isempty(on.solverinfo.stages[1].krylov)
 
         str = sprint(show, MIME("text/plain"), st.krylov[1])
@@ -456,11 +446,10 @@ using Test
             keyedarrays = false)
         Nmodes = d.Nmodes
         n = length(d.xr)
-        mk(cm, f; kw...) = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+        mk(spec; kw...) = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
             d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lmean,
             d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout; couplingmodes = cm, factorization = f,
-            Amatrixmodes = d.Amatrixmodes, kw...)
+            d.modelayout; spec = spec, Amatrixmodes = d.Amatrixmodes, kw...)
         x = 0.3*randn(MersenneTwister(11), n)
         d.fjreal(nothing, d.Jr, x)
         r = randn(MersenneTwister(12), n)
@@ -492,7 +481,7 @@ using Test
         @test JosephsonCircuits.singletonmodes(mask) == collect(6:Nmodes)
 
         # the full coupling set is an exact solve of the Jacobian
-        pb = mk(:all, JosephsonCircuits.BlockFactorization())
+        pb = mk(FullJacobian(factorization = BlockFactorization()))
         @test pb.P isa JosephsonCircuits.BlockStructure
         @test length(pb.P.clusters) == 1
         @test isnothing(pb.P.singletons)
@@ -501,8 +490,8 @@ using Test
         @test d.Jr*z ≈ r rtol=1e-9
         @test JosephsonCircuits.isexactpreconditioner(pb)
         # in single precision it is a preconditioner
-        p32 = mk(:all, JosephsonCircuits.BlockFactorization(;
-            precision = Float32))
+        p32 = mk(FullJacobian(factorization = BlockFactorization(;
+            precision = Float32)))
         JosephsonCircuits.updatepreconditioner!(p32, x)
         JosephsonCircuits.applypreconditioner!(z, p32, r)
         @test norm(d.Jr*z - r) < 5e-2*norm(r)
@@ -510,18 +499,18 @@ using Test
 
         # a mask made of clusters: the block solve equals the sparse
         # factorization of the same mask
-        pm = mk(mask, JosephsonCircuits.KLUfactorization())
+        pm = mk(CouplingMask(mask))
         JosephsonCircuits.updatepreconditioner!(pm, x)
         zm = similar(r)
         JosephsonCircuits.applypreconditioner!(zm, pm, r)
-        pc = mk(mask, JosephsonCircuits.BlockFactorization())
+        pc = mk(CouplingMask(mask; factorization = BlockFactorization()))
         @test [c.modes for c in pc.P.clusters] == [[1, 2, 3], [4, 5]]
         @test !isnothing(pc.P.singletons)
         JosephsonCircuits.updatepreconditioner!(pc, x)
         JosephsonCircuits.applypreconditioner!(z, pc, r)
         @test z ≈ zm rtol=1e-10
         # a band is factorized on its closure, here everything
-        pa = mk(:band => 1, JosephsonCircuits.BlockFactorization())
+        pa = mk(HarmonicBand(1; factorization = BlockFactorization()))
         @test length(pa.P.clusters) == 1
         @test isnothing(pa.P.singletons)
         JosephsonCircuits.updatepreconditioner!(pa, x)
@@ -542,20 +531,18 @@ using Test
         # end to end, against Newton, with the rebuild decided by the count
         # rule and by the probe
         on = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
-            defs2; method = :newton, dc = true, odd = true, even = true,
+            defs2; method = Newton(), dc = true, odd = true, even = true,
             keyedarrays = false)
-        for (cm, f, kk) in ((:all, JosephsonCircuits.BlockFactorization(), (;)),
-                (:all, JosephsonCircuits.BlockFactorization(; precision = Float32), (;)),
-                (mask, JosephsonCircuits.BlockFactorization(), (;)),
-                (:auto, JosephsonCircuits.BlockFactorization(), (;)),
-                (:all, JosephsonCircuits.BlockFactorization(), (; krylovrefresh = :probe)),
-                (:all, JosephsonCircuits.BlockFactorization(; precision = Float32), (; krylovrefresh = :probe)),
-                (:auto, JosephsonCircuits.KLUfactorization(), (; krylovrefresh = :probe)))
+        for m in (NewtonKrylov(preconditioner = FullJacobian(factorization = BlockFactorization())),
+                NewtonKrylov(preconditioner = FullJacobian(factorization = BlockFactorization(; precision = Float32))),
+                NewtonKrylov(preconditioner = CouplingMask(mask; factorization = BlockFactorization())),
+                NewtonKrylov(preconditioner = MeasuredBand(factorization = BlockFactorization())),
+                NewtonKrylov(preconditioner = FullJacobian(factorization = BlockFactorization()), refresh = Probe()),
+                NewtonKrylov(preconditioner = FullJacobian(factorization = BlockFactorization(; precision = Float32)), refresh = Probe()),
+                NewtonKrylov(preconditioner = MeasuredBand(), refresh = Probe()))
             ok = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb,
-                circuit2, defs2; method = :newtonkrylov, dc = true,
-                odd = true, even = true, keyedarrays = false,
-                krylovcouplingmodes = cm, factorization = f,
-                krylovkwargs = kk)
+                circuit2, defs2; method = m, dc = true, odd = true,
+                even = true, keyedarrays = false)
             @test ok.solverinfo.converged
             @test isapprox(ok.nodeflux, on.nodeflux; rtol = 1e-6,
                 atol = 1e-12*maximum(abs, on.nodeflux))
@@ -563,10 +550,7 @@ using Test
             # every step records whether the preconditioner was rebuilt
             @test count(k -> k.refreshed, st.krylov) >= 1
         end
-        @test_throws ArgumentError JosephsonCircuits.hbnlsolve((wpb, wsb),
-            (4, 2), srcb, circuit2, defs2; method = :newtonkrylov, dc = true,
-            odd = true, even = true, keyedarrays = false,
-            krylovkwargs = (; krylovrefresh = :bogus))
+        @test_throws TypeError NewtonKrylov(refresh = :bogus)
     end
 
 
@@ -603,8 +587,7 @@ using Test
         pc = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
             d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lmean,
             d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
-            d.modelayout; couplingmodes = :clusters,
-            factorization = JosephsonCircuits.BlockFactorization(),
+            d.modelayout; spec = Clusters(factorization = BlockFactorization()),
             Amatrixmodes = d.Amatrixmodes)
         pr = pc.clusterprobe
         @test pr.probes == 0
@@ -613,7 +596,7 @@ using Test
         @test pr.probes == 1
         @test all(>=(0), pr.W)
         @test all(iszero, pr.W[i, i] for i in 1:d.Nmodes)
-        @test pc.couplingmodes isa Matrix{Bool}
+        @test pc.coupling isa JosephsonCircuits.CouplingMask
         JosephsonCircuits.updatepreconditioner!(pc, x)
         @test pr.probes == 1
         JosephsonCircuits.stalled!(pc)
@@ -623,27 +606,90 @@ using Test
         pcw = JosephsonCircuits.SizedPreconditioner(pc, length(d.xr))
         JosephsonCircuits.stalled!(pcw)
         @test pr.reprobe
-        @test_throws ArgumentError JosephsonCircuits.ModeCouplingPreconditioner(
+        @test_throws DimensionMismatch JosephsonCircuits.ModeCouplingPreconditioner(
             d.sys, d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb,
             d.Lmean, d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm,
-            d.Cnm, d.modelayout; couplingmodes = :bogus)
+            d.Cnm, d.modelayout; spec = CouplingMask(falses(2, 2)))
 
         # end to end, with a sparse and with the block factorization
         on = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
-            defs2; method = :newton, dc = true, odd = true, even = true,
+            defs2; method = Newton(), dc = true, odd = true, even = true,
             keyedarrays = false)
         for f in (JosephsonCircuits.KLUfactorization(),
                 JosephsonCircuits.BlockFactorization(),
                 JosephsonCircuits.BlockFactorization(; precision = Float32))
             ok = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb,
-                circuit2, defs2; method = :newtonkrylov, dc = true,
-                odd = true, even = true, keyedarrays = false,
-                krylovcouplingmodes = :clusters, factorization = f)
+                circuit2, defs2; dc = true, odd = true, even = true,
+                keyedarrays = false, method = NewtonKrylov(preconditioner =
+                    Clusters(factorization = f)))
             @test ok.solverinfo.converged
             @test isapprox(ok.nodeflux, on.nodeflux; rtol = 1e-6,
                 atol = 1e-12*maximum(abs, on.nodeflux))
         end
     end
 
+
+    @testset "Automatic picks by the tones and the memory" begin
+        circuit2, defs2 = testchaincircuit()
+        wpb = 2*pi*4.75e9; wsb = 2*pi*5.0e9
+        srcb = [(mode=(1,0), port=1, current=0.3e-6),
+                (mode=(0,1), port=1, current=0.1e-6)]
+        d = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
+            defs2; dc = true, odd = true, even = true, returnsystem = true)
+        sys = d.sys; Nmodes = d.Nmodes; layout = d.modelayout
+        nnodes = layout.dim ÷ Nmodes
+        ns = JosephsonCircuits.branchnodesandsigns(d.Rbnm, Nmodes, d.Nbranches)
+        pairptr, pairrow, _, _ = JosephsonCircuits.junctionpairtable(Int32,
+            Float32, sys.Ljb, ns, nnodes)
+        adj = JosephsonCircuits.circuitnodegraph(pairptr, pairrow, sys.invLnm,
+            sys.Gnm, sys.Cnm, Nmodes, nnodes)
+        order = JosephsonCircuits.klunodeorder(adj)
+        keep = JosephsonCircuits.modecouplingmask(Nmodes, 1:Nmodes)
+        # the predictor counts every array the cluster allocates, exactly,
+        # without allocating any of them
+        pred = JosephsonCircuits.blockfactorbytes(Float32, keep, adj, order,
+            Nmodes, layout)
+        C = JosephsonCircuits.clusterblocks(Float32, 1:Nmodes, adj, order,
+            Nmodes, layout, JosephsonCircuits.CPU())
+        held = JosephsonCircuits.factorbytes(C) +
+            sum(sizeof, values(C.scratch); init = 0) +
+            sum(sizeof, values(C.eyes); init = 0) +
+            sizeof(C.z) + sizeof(C.w) + sizeof(C.tmp)
+        @test pred == held
+        @test JosephsonCircuits.blockfactorbytes(Float64, keep, adj, order,
+            Nmodes, layout) == 2*pred
+        @test JosephsonCircuits.freememory(JosephsonCircuits.CPU()) > 0
+        @test_throws ArgumentError JosephsonCircuits.freememory(nothing)
+        # one tone: the block diagonal; two tones: the full block factors in
+        # single precision when they fit, the measured band when they do not
+        res(modes; kw...) = JosephsonCircuits.resolveautomatic(sys, d.Rbnm,
+            Nmodes, d.Nbranches, layout, modes, JosephsonCircuits.CPU(); kw...)
+        @test res(nothing) isa BlockDiagonal
+        @test res(d.Amatrixmodes) isa FullJacobian{<:BlockFactorization}
+        @test res(d.Amatrixmodes).factorization.precision == Float32
+        @test res(d.Amatrixmodes; budget = pred) isa FullJacobian
+        @test res(d.Amatrixmodes; budget = pred - 1) isa MeasuredBand
+        @test Automatic().factorization === nothing
+        @test JosephsonCircuits.withfactorization(Automatic(),
+            KLUfactorization()) === Automatic()
+        # and the solve through it agrees with the assembled Newton solve
+        on = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
+            defs2; dc = true, odd = true, even = true, method = Newton())
+        ok = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
+            defs2; dc = true, odd = true, even = true,
+            method = NewtonKrylov(preconditioner = Automatic()))
+        @test ok.solverinfo.converged
+        @test isapprox(on.S, ok.S; rtol = 1e-6)
+        pc = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lmean,
+            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
+            layout; spec = Automatic(), Amatrixmodes = d.Amatrixmodes)
+        @test pc.coupling isa FullJacobian
+        @test JosephsonCircuits.isexactpreconditioner(pc)
+        one = JosephsonCircuits.hbnlsolve((wpb,), (8,),
+            [(mode=(1,), port=1, current=0.3e-6)], circuit2, defs2;
+            method = NewtonKrylov(preconditioner = Automatic()))
+        @test one.solverinfo.converged
+    end
 
 end

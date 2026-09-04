@@ -1,7 +1,7 @@
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"))
 using JosephsonCircuits, Test, LinearAlgebra
 
-@testset "method = :staged" begin
+@testset "method = Staged()" begin
     circuit, defs = testchaincircuit()
     w1 = 2*pi*5.0e9; w2 = 2*pi*1.19e9
     src = [(mode=(1,0), port=1, current=1.0e-6),
@@ -17,9 +17,9 @@ using JosephsonCircuits, Test, LinearAlgebra
 
     @testset "matches the direct solve" begin
         ra = hbnlsolve((w1,w2), (8,4), src, circuit, defs;
-            dc = true, odd = true, even = true, method = :newtonkrylov)
+            dc = true, odd = true, even = true, method = NewtonKrylov())
         rb = hbnlsolve((w1,w2), (8,4), src, circuit, defs;
-            dc = true, odd = true, even = true, method = :staged)
+            dc = true, odd = true, even = true, method = Staged())
         @test rb.solverinfo.converged
         a = vec(Array(ra.S)); b = vec(Array(rb.S))
         @test norm(a - b)/norm(a) < 1e-6
@@ -33,14 +33,14 @@ using JosephsonCircuits, Test, LinearAlgebra
             dc = true, threewavemixing = true, fourwavemixing = true)
         rb = hbsolve(ws, (w1,w2), src, (2,2), (8,4), circuit, defs;
             dc = true, threewavemixing = true, fourwavemixing = true,
-            method = :staged)
+            method = Staged())
         a = vec(Array(ra.linearized.S)); b = vec(Array(rb.linearized.S))
         @test norm(a - b)/norm(a) < 1e-6
     end
 
     @testset "stage records in solverinfo" begin
         r = hbnlsolve((w1,w2), (8,4), src, circuit, defs;
-            dc = true, odd = true, even = true, method = :staged)
+            dc = true, odd = true, even = true, method = Staged())
         st = r.solverinfo.stages
         @test !isempty(st)
         @test all(x -> x isa JosephsonCircuits.StagedStageInfo, st)
@@ -64,13 +64,10 @@ using JosephsonCircuits, Test, LinearAlgebra
 
     @testset "guards" begin
         @test_throws ArgumentError hbnlsolve((w1,w2), (8,4), src, circuit,
-            defs; dc = true, odd = true, even = true, method = :staged,
-            stagedkwargs = (; grids = [(2,2), (4,2)]))
+            defs; dc = true, odd = true, even = true, method = Staged(grids = [(2,2), (4,2)]))
         @test_throws ArgumentError hbnlsolve((w1,w2), (8,4), src, circuit,
-            defs; dc = true, odd = true, even = true, method = :staged,
-            stagedkwargs = (; innermethod = :staged))
+            defs; dc = true, odd = true, even = true, method = Staged(inner = Staged()))
         @test_throws ArgumentError hbnlsolve((w1,w2), (8,4), src, circuit,
-            defs; dc = true, odd = true, even = true, method = :staged,
-            stagedkwargs = (; s0 = 0.0))
+            defs; dc = true, odd = true, even = true, method = Staged(s0 = 0.0))
     end
 end

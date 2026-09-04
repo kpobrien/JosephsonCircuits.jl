@@ -170,7 +170,7 @@ using Test
         srcs = [(mode = (0,), port = 1, current = 1.0e-7)]
 
         # the two which solve the real system take the explicit block
-        for m in (:newtonkrylov, :newton)
+        for m in (NewtonKrylov(), Newton())
             s = JC.hbnlsolve((2*pi*4.75e9,), (4,), srcs, circuit;
                 dc = true, odd = true, method = m, rtol = 1e-12)
             @test s.solverinfo.converged
@@ -180,7 +180,7 @@ using Test
         # `:quasinewton` solves the complex holomorphic system, which has no
         # place for the real direct current unknowns, and says so
         @test_throws ArgumentError JC.hbnlsolve((2*pi*4.75e9,), (4,), srcs,
-            circuit; dc = true, odd = true, method = :quasinewton)
+            circuit; dc = true, odd = true, method = QuasiNewton())
     end
 
     @testset "the assembled Jacobian survives a growing internal pattern" begin
@@ -209,9 +209,9 @@ using Test
         kw = (; dc = true, odd = true, even = true, keyedarrays = false,
               rtol = 1e-12)
         a = JC.hbnlsolve((2*pi*4.75e9,), (8,), srcs, circuit;
-            kw..., method = :newton)
+            kw..., method = Newton())
         b = JC.hbnlsolve((2*pi*4.75e9,), (8,), srcs, circuit;
-            kw..., method = :newtonkrylov)
+            kw..., method = NewtonKrylov())
         @test a.solverinfo.converged
         @test b.solverinfo.converged
         # the scattering parameters and the direct current operating point

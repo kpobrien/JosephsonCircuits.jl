@@ -111,46 +111,14 @@ function AndersonState(x::AbstractVector{T}, depth::Integer) where T
 end
 
 
-"""
-    Factorization(factorize, factorize!, kwargs)
-    Factorization(factorize, factorize!, kwargs, batched)
-
-A sparse factorization method: `factorize(A; kwargs...)` computes a
-factorization of `A` and `factorize!(F, A; kwargs...)` refactorizes `A`
-into the existing `F`, reusing its symbolic analysis. Use
-[`KLUfactorization`](@ref), [`LUfactorization`](@ref),
-[`QRfactorization`](@ref), or [`CUDSSFactorization`](@ref) to construct
-one.
-
-`batched`, when not `nothing`, is a function of a
-[`BatchedBlockLayout`](@ref) returning the form of this factorization which
-treats a matrix as a uniform batch of diagonal blocks: one symbolic
-analysis for the pattern every block shares, then a batched numeric
-factorization. It is consulted by [`batchedfactorization`](@ref), the one
-place which knows whether a matrix is such a batch; a factorization with
-no batched form is used unchanged.
-"""
-struct Factorization
-    factorize
-    factorize!
-    kwargs
-    batched
-end
-
-Factorization(factorize, factorize!, kwargs) =
-    Factorization(factorize, factorize!, kwargs, nothing)
-
-"""
-    KLUfactorization(; kwargs...)
-
-The [`Factorization`](@ref) using KLU.jl, a sparse LU factorization suited
-to circuit matrices. This is the default on the host. `kwargs` are passed
-to `KLU.klu`. The fill reducing ordering is chosen by [`kluordered`](@ref)
-rather than left at KLU's default.
-"""
-function KLUfactorization(;kwargs...)
-    return Factorization(kluordered,klunzval!,kwargs)
-end
+# `factorize` of the host sparse factorizations; the types are defined in
+# solveroptions.jl. KLU's fill reducing ordering is chosen by measurement
+# (`kluordered`) and its refactorization reuses the symbolic analysis.
+factorize(f::KLUfactorization, A) = kluordered(A; f.kwargs...)
+refactorize!(f::KLUfactorization, F, A) = klunzval!(F, A; f.kwargs...)
+factorize(f::LUfactorization, A) = lu(A; f.kwargs...)
+refactorize!(f::LUfactorization, F, A) = lu!(F, A; f.kwargs...)
+factorize(f::QRfactorization, A) = qr(A; f.kwargs...)
 
 """
     symbolicfill(S::SparseMatrixCSC, perm::AbstractVector{<:Integer})
@@ -321,39 +289,6 @@ function klunzval!(F,A;kwargs...)
     return KLU.klu!(F,A.nzval;kwargs...)
 end
 
-"""
-    cudssbatchedfactorization(layout::BatchedBlockLayout; kwargs...)
-
-A batched cuDSS [`Factorization`](@ref). Defined by the CUDSS extension; see
-[`CUDSSFactorization`](@ref). Without CUDSS.jl and CUDA.jl loaded this raises
-an informative error.
-"""
-function cudssbatchedfactorization(layout; kwargs...)
-    throw(ArgumentError(
-        "cudssbatchedfactorization requires CUDSS.jl and CUDA.jl to be loaded."))
-end
-
-"""
-    LUfactorization(; kwargs...)
-
-The [`Factorization`](@ref) using the UMFPACK sparse LU factorization
-`LinearAlgebra.lu`, with `kwargs` passed to it.
-"""
-function LUfactorization(;kwargs...)
-    return Factorization(lu,lu!,kwargs)
-end
-
-"""
-    QRfactorization(; kwargs...)
-
-The [`Factorization`](@ref) using the SPQR sparse QR factorization
-`LinearAlgebra.qr`, with `kwargs` passed to it. QR does not support
-refactorization in place, so each call factorizes from scratch.
-"""
-function QRfactorization(;kwargs...)
-    return Factorization(qr,nothing,kwargs)
-end
-
 # fallback method to handle everything but QR adjoint
 function myldiv!(x,F,b)
     return ldiv!(x,F,b)
@@ -430,41 +365,33 @@ end
 
 """
     tryfactorize!(cache::FactorizationCache,
-        factorization::Factorization, A)
+        factorization::AbstractFactorization, A)
 
 Factorize `A`, a matrix or a [`BlockJacobian`](@ref), with the method
-`factorization` and store the result in `cache`. When the cache already holds a factorization and the method
-supports refactorization, its symbolic analysis is reused; a
-`SingularException` during that refactorization falls back to a fresh
-factorization, since reusing the symbolic analysis occasionally fails
-numerically where a fresh one succeeds.
+`factorization` and store the result in `cache`. When the cache already
+holds a factorization and the method supports refactorization, its symbolic
+analysis is reused; a `SingularException` during that refactorization falls
+back to a fresh factorization, since reusing the symbolic analysis
+occasionally fails numerically where a fresh one succeeds.
 """
 function tryfactorize!(cache::FactorizationCache,
-    factorization::Factorization, A)
+    factorization::AbstractFactorization, A)
 
     if isnothing(cache.factorization)
-        cache.factorization = factorization.factorize(A;
-            factorization.kwargs...)
-    # a method without in place refactorization (QR) factorizes afresh
-    elseif isnothing(factorization.factorize!)
-        cache.factorization = factorization.factorize(A;
-            factorization.kwargs...)
-    else
-        try
-            # the sparsity structure is unchanged, so refactorize in place
-            factorization.factorize!(cache.factorization, A;
-                factorization.kwargs...)
-        catch e
-            if isa(e, SingularException)
-                # reusing the symbolic analysis occasionally fails
-                # numerically; factorize afresh
-                cache.factorization = factorization.factorize(A;
-                    factorization.kwargs...)
-            else
-                throw(e)
-            end
-        end
+        cache.factorization = factorize(factorization, A)
+        return cache
     end
+    refreshed = try
+        # the sparsity structure is unchanged, so refactorize in place; a
+        # method without in place refactorization (QR) returns nothing
+        refactorize!(factorization, cache.factorization, A)
+    catch e
+        # reusing the symbolic analysis occasionally fails numerically;
+        # factorize afresh
+        isa(e, SingularException) || rethrow()
+        nothing
+    end
+    isnothing(refreshed) && (cache.factorization = factorize(factorization, A))
     return cache
 end
 

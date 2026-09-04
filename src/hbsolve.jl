@@ -232,33 +232,16 @@ const _DOC_FTOL = """
     below the rounding of the terms which make it."""
 
 const _DOC_METHOD = """
-- `method = :newtonkrylov`: the nonlinear solver, a symbol or a solver
-    value carrying its own options ([`NewtonKrylov`](@ref),
-    [`Newton`](@ref), [`QuasiNewton`](@ref), [`ExternalSolver`](@ref)).
-    `:quasinewton` uses the complex holomorphic Jacobian `Jx` only, an
-    approximation to the full Jacobian. `:newton` solves the equivalent
-    real system with the full Jacobian. `:newtonkrylov` uses the
-    matrix-free real Jacobian.
-    `:staged` runs [`stagedhbnlsolve`](@ref): source continuation on an
-    adaptively grown harmonic grid, spending the many Newton iterations a
-    near critical drive needs on small cheap truncations and warm starting
-    each larger grid from the last, with `:newtonkrylov` solving every
-    stage. It is the strategy for operating points the direct methods fail
-    outright, and the one that distinguishes a hard operating point from a
-    nonexistent one: a stall on the finest grid with the minimum drive step
-    brackets a fold -- the self oscillation threshold -- and errors with
-    the bracketed drive fraction rather than returning garbage."""
-
-const _DOC_STAGEDKWARGS = """
-- `stagedkwargs::NamedTuple = (;)`: options for `method = :staged`; see
-    [`stagedhbnlsolve`](@ref) (`grids`, `s0`, `smin`, `interiorftol`,
-    `interioriterations`, `innermethod`, `verbose`)."""
-
-const _DOC_ANDERSON = """
-- `andersondepth::Integer = method == :quasinewton ? 5 : 0`: the depth of the
-    Anderson acceleration of the Newton fixed point iteration, the maximum
-    number of previous iterates used for the extrapolation. Values less than
-    one disable the acceleration."""
+- `method = NewtonKrylov()`: the nonlinear solver, an
+    [`AbstractHBNonlinearSolver`](@ref) carrying its own options:
+    [`NewtonKrylov`](@ref) (the matrix-free real Jacobian with a
+    preconditioner, the default), [`Newton`](@ref) (the assembled real
+    Jacobian), [`QuasiNewton`](@ref) (the complex holomorphic Jacobian, an
+    approximation, with Anderson acceleration), [`Staged`](@ref) (source
+    continuation on an adaptively grown harmonic grid, see
+    [`stagedhbnlsolve`](@ref), the strategy for operating points the
+    direct methods fail outright and the one that distinguishes a hard
+    operating point from a nonexistent one) or [`ExternalSolver`](@ref)."""
 
 const _DOC_NLKWARGS = """
 - `rtol = 0.0`: a relative residual tolerance; the solve is converged when
@@ -273,57 +256,7 @@ const _DOC_NLKWARGS = """
 - `returnoperatingpoint = false`: assemble and return the exact real
     Jacobian at the converged solution in the `operatingpoint` field, for
     sensitivities which include the shift of the operating point.
-- `krylovcouplingmodes = :none`: the mode couplings the Newton-Krylov
-    preconditioner keeps in full: `:none` (the mode block diagonal, the
-    default), `:all`, `:band => p` for couplings up to the harmonic offset
-    `p` of each tone (grown automatically on repeated linear failures),
-    `:auto` or `:auto => tol` for a band whose width is measured from the
-    solution, `:clusters` for clusters of modes measured from the coupling
-    strengths of the operator (which, with a
-    [`BlockFactorization`](@ref), is the form for three or more tones), a
-    vector of mode indices, or an `Nmodes` by `Nmodes` `Bool` mask. See
-    [`ModeCouplingPreconditioner`](@ref). For two strong tones
-    `:auto` is the setting that matters: the block diagonal's error is
-    then of high rank (every mode couples to every other through the
-    pump mixing), and on 128- and 256-junction lines the measured band
-    converges in 41 and 108 Arnoldi steps against about 3000 for the
-    block diagonal, three to five times faster on a GPU, with no
-    escalation to the full Jacobian.
-- `krylovrecycle = 0`: when positive, wrap the preconditioner in a
-    [`RecyclingPreconditioner`](@ref) keeping a deflation subspace of at
-    most this many vectors across Newton steps and, through the reuse
-    object of a cached sweep, across its points; `krylovharvest = 8` is the
-    number of vectors harvested from each GMRES solve. This pays when the
-    block diagonal leaves a deficiency of rank comparable to `krylovrecycle`
-    (a two-tone line of about a hundred junctions converges without any
-    factorization of the full Jacobian, in half the time) and costs when
-    the deficiency is of high rank and the escalation does the work anyway,
-    or when the base is strong enough on its own (`:auto`). Recycling is a
-    correction layer for the few global directions a structural base
-    leaves, not a substitute for the base; the directions it finds are
-    the small singular directions of the preconditioned operator, the
-    channels of large linear response, rather than its eigenmodes.
-- `krylovdeflationform = :adef1`: how the recycled subspace is applied,
-    `:adef1` (the projection on the input of the base solve) or `:adef2`
-    (on its output, fused with the Jacobian product of the Arnoldi step);
-    see [`RecyclingPreconditioner`](@ref). `:floquet` selects the
-    residual-image form with physical candidates instead
-    ([`FloquetPreconditioner`](@ref)), which harvests harmonic Ritz
-    directions alongside the singular ones, from every restart cycle, and
-    drops the directions the base already handles.
-- `krylovdeflationkwargs::NamedTuple = (;)`: further keyword arguments of
-    the deflation wrapper's constructor ([`RecyclingPreconditioner`](@ref)
-    or [`FloquetPreconditioner`](@ref)), such as `nritz`, `kcandidate`,
-    `benefittol` or `escalateafter`, which override its defaults.
-- `krylovkwargs::NamedTuple = (;)`: further options of
-    [`nlsolvekrylov!`](@ref), which override its defaults.
-- `linearsolver = InternalGMRES()`: the linear solver of the Newton-Krylov
-    step, [`InternalGMRES`](@ref) or [`KrylovJL`](@ref).
-- `factorization = nothing`: the sparse factorization used by the direct
-    methods and the preconditioner: [`KLUfactorization`](@ref) on the host
-    and [`CUDSSFactorization`](@ref) on a CUDA device unless given.
 - `backend = CPU()`: the KernelAbstractions backend the solve runs on.
-- `precision = Float64`: the floating point type of the solve.
 - `debugJacobian = false`: instead of solving, return a named tuple with
     the residual and Jacobian functions and the ingredients they are
     assembled from, for building reference implementations in tests.
@@ -456,8 +389,8 @@ end
         Nevaluationharmonics = map(i -> 2i, Npumpharmonics),
         frequencywindow = (0, Inf),
         maxmodulationharmonics = Nmodulationharmonics,
-        iterations = 1000, ftol = 1e-8, method = :newtonkrylov,
-        andersondepth = method == :quasinewton ? 5 : 0, x0 = nothing,
+        iterations = 1000, ftol = 1e-8, method = NewtonKrylov(),
+        x0 = nothing,
         symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
         sorting = :number, returnS = true, returnSnoise = false,
         returnQE = true, returnCM = true, returnnodeflux = false,
@@ -466,11 +399,8 @@ end
         temperature = 0.0, returnCnoise = false,
         sensitivitynames::Vector{String} = String[],
         sensitivityoperatingpoint = true, sensitivitymode = :auto,
-        returnSsensitivity = false, krylovcouplingmodes = :none,
-        krylovrecycle = 0, krylovharvest = 8, krylovdeflationform = :adef1,
-        krylovdeflationkwargs = (;), krylovkwargs = (;), stagedkwargs = (;),
-        factorization = nothing,
-        backend = CPU(), precision = Float64)
+        returnSsensitivity = false, factorization = nothing,
+        backend = CPU())
 
 Solve a circuit driven by one or more strong pumps, then linearize about
 that operating point and sweep the weak signal frequencies `ws`. This
@@ -550,16 +480,6 @@ nonzero frequencies instead.
     before it returns unconverged.
 $(_DOC_FTOL)
 $(_DOC_METHOD)
-$(_DOC_STAGEDKWARGS)
-- `krylovcouplingmodes = :none`: which mode couplings the Newton-Krylov
-    preconditioner retains; forwarded to [`hbnlsolve`](@ref).
-- `krylovrecycle = 0`, `krylovharvest = 8`, `krylovdeflationform = :adef1`:
-    the recycled deflation subspace of the Newton-Krylov preconditioner;
-    forwarded to [`hbnlsolve`](@ref).
-- `krylovkwargs::NamedTuple = (;)`, `krylovdeflationkwargs::NamedTuple = (;)`:
-    further options of the Newton-Krylov solver and of its deflation
-    wrapper; forwarded to [`hbnlsolve`](@ref).
-$(_DOC_ANDERSON)
 - `x0 = nothing`: an initial value for the node fluxes of the nonlinear
     solve.
 - `symfreqvar = nothing`: the symbolic frequency variable, such as `w`,
@@ -579,15 +499,13 @@ $(_DOC_SENSMODE)
     once. Without Josephson junctions the operating point contribution is
     identically zero and is skipped.
 $(_DOC_SSENS)
-- `factorization = nothing`: the sparse factorization used by the direct
-    and the linearized solves. `nothing` selects [`KLUfactorization`](@ref)
-    on the host and [`CUDSSFactorization`](@ref) on a CUDA device for the
-    nonlinear solve, and `KLUfactorization` for the linearized solve.
+- `factorization = nothing`: the sparse factorization of the linearized
+    solve, [`KLUfactorization`](@ref) when `nothing`; the nonlinear solve's
+    is an option of its `method`.
 - `backend = CPU()`: the KernelAbstractions backend both solves run on. The
     nonlinear solve assembles, factorizes and iterates there; the
     linearized sweep solves batches of signal frequencies there and falls
     back to the host for what it cannot serve (see [`hblinsolve`](@ref)).
-- `precision = Float64`: the floating point type of the nonlinear solve.
 - `switchofflinesearchtol`, `alphamin`: deprecated and ignored with a
     warning.
 - `returnZ`, `returnZadjoint`, `returnZsensitivity`,
@@ -608,8 +526,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     frequencywindow = (0, Inf),
     maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
     iterations = 1000, ftol = 1e-8, switchofflinesearchtol = nothing,
-    alphamin = nothing, method = :newtonkrylov,
-    andersondepth::Integer = method == :quasinewton ? 5 : 0,
+    alphamin = nothing, method::AbstractHBNonlinearSolver = NewtonKrylov(),
     x0 = nothing, symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
     sorting = :number, returnS::Bool = true, returnSnoise::Bool = false,
     returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
@@ -627,13 +544,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    krylovcouplingmodes = :none, krylovrecycle::Integer = 0,
-    krylovharvest::Integer = 8, krylovdeflationform::Symbol = :adef1,
-    krylovkwargs::NamedTuple = (;),
-    krylovdeflationkwargs::NamedTuple = (;),
-    stagedkwargs::NamedTuple = (;),
-    factorization = nothing, backend = CPU(),
-    precision::Type{<:AbstractFloat} = Float64) where {N,M}
+    factorization = nothing, backend = CPU()) where {N,M}
 
     # deprecation warning for maxpumpharmonics, whose role `Npumpharmonics`
     # took when the sampling grid became `Nevaluationharmonics`.
@@ -672,8 +583,10 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     # which rebuilds its own truncations from the same arguments and
     # manages its own warm starts; every other method solves the system
     # assembled above.
-    nonlinear = if method === :staged
-        stagedhbnlsolve(wp, Npumpharmonics, sources, circuit, circuitdefs;
+    # `factorization` is the linearized solve's; the nonlinear solve's is
+    # an option of its method
+    nonlinear = if method isa Staged
+        stagedsolve(method, wp, Npumpharmonics, sources, circuit, circuitdefs;
             iterations = iterations, ftol = ftol,
             Nevaluationharmonics = Nevaluationharmonics,
             maxintermodorder = maxpumpintermodorder,
@@ -682,29 +595,17 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
             keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
             returnoperatingpoint = sensitivityoperatingpoint &&
                 returnSsensitivity && !isempty(nm.Ljb.nzind),
-            krylovcouplingmodes = krylovcouplingmodes,
-            krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
-            krylovdeflationform = krylovdeflationform,
-            krylovdeflationkwargs = krylovdeflationkwargs,
-            krylovkwargs = krylovkwargs, factorization = factorization,
-            backend = backend, precision = precision, stagedkwargs...)
+            backend = backend)
     else
         hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
             iterations = iterations, x0 = x0, ftol = ftol,
             switchofflinesearchtol = switchofflinesearchtol,
-            alphamin = alphamin,
-            method = method, andersondepth = andersondepth,
-            krylovcouplingmodes = krylovcouplingmodes,
-            krylovrecycle = krylovrecycle, krylovharvest = krylovharvest,
-            krylovdeflationform = krylovdeflationform,
-            krylovdeflationkwargs = krylovdeflationkwargs,
-            krylovkwargs = krylovkwargs,
-                symfreqvar = symfreqvar, keyedarrays = keyedarrays,
+            alphamin = alphamin, method = method,
+            symfreqvar = symfreqvar, keyedarrays = keyedarrays,
             sensitivitynames = sensitivitynames,
             returnoperatingpoint = sensitivityoperatingpoint &&
                 returnSsensitivity && !isempty(nm.Ljb.nzind),
-            factorization = factorization, backend = backend,
-            precision = precision)
+            backend = backend)
     end
 
     # The derivative of the harmonic balance residual with respect to each

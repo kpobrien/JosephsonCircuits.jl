@@ -48,18 +48,18 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
 
     @testset "hbnlsolve newtonkrylov, single tone" begin
         ra = hbnlsolve((w1,), (8,), src1, circuit, defs;
-            method = :newtonkrylov)
+            method = NewtonKrylov())
         rb = hbnlsolve((w1,), (8,), src1, circuit, defs;
-            method = :newtonkrylov, backend = CUDABackend())
+            method = NewtonKrylov(), backend = CUDABackend())
         @test rb.solverinfo.converged
         @test agree(ra.S, rb.S)
     end
 
     @testset "hbnlsolve newtonkrylov, two tone" begin
         ra = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
-            dc = true, odd = true, even = true, method = :newtonkrylov)
+            dc = true, odd = true, even = true, method = NewtonKrylov())
         rb = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
-            dc = true, odd = true, even = true, method = :newtonkrylov,
+            dc = true, odd = true, even = true, method = NewtonKrylov(),
             backend = CUDABackend())
         @test rb.solverinfo.converged
         @test agree(ra.S, rb.S)
@@ -67,13 +67,13 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
 
     @testset "recycled deflation on the device" begin
         ra = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
-            dc = true, odd = true, even = true, method = :newtonkrylov)
+            dc = true, odd = true, even = true, method = NewtonKrylov())
         for form in (:adef1, :adef2, :floquet)
+            pre = form === :floquet ? Floquet(size = 8, harvest = 2) :
+                Recycling(size = 8, harvest = 2, form = form)
             rb = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
-                dc = true, odd = true, even = true, method = :newtonkrylov,
-                krylovrecycle = 8, krylovharvest = 2,
-                krylovdeflationform = form, backend = CUDABackend(),
-                krylovkwargs = (; krylovescalate = typemax(Int)))
+                dc = true, odd = true, even = true, backend = CUDABackend(),
+                method = NewtonKrylov(preconditioner = pre, escalate = false))
             @test rb.solverinfo.converged
             @test agree(ra.S, rb.S)
             kr = rb.solverinfo.stages[1].krylov
@@ -84,11 +84,11 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         end
     end
 
-    @testset "method = :staged on the device" begin
+    @testset "method = Staged() on the device" begin
         ra = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
-            dc = true, odd = true, even = true, method = :newton)
+            dc = true, odd = true, even = true, method = Newton())
         rb = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
-            dc = true, odd = true, even = true, method = :staged,
+            dc = true, odd = true, even = true, method = Staged(),
             backend = CUDABackend())
         @test rb.solverinfo.converged
         @test agree(ra.S, rb.S)
@@ -103,9 +103,9 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         srcdc = [(mode=(1,), port=1, current=2.0e-6),
                  (mode=(0,), port=1, current=1.0e-7)]
         ra = hbnlsolve((w1,), (8,), srcdc, circuit, defs;
-            dc = true, odd = true, even = true, method = :newtonkrylov)
+            dc = true, odd = true, even = true, method = NewtonKrylov())
         rb = hbnlsolve((w1,), (8,), srcdc, circuit, defs;
-            dc = true, odd = true, even = true, method = :newtonkrylov,
+            dc = true, odd = true, even = true, method = NewtonKrylov(),
             backend = CUDABackend())
         @test rb.solverinfo.converged
         @test agree(ra.S, rb.S)
@@ -127,9 +127,9 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         srcb = [(mode=(1,), port=1, current=1.0e-6),
                 (mode=(0,), port=1, current=1.0e-7)]
         ba = hbnlsolve((w1,), (4,), srcb, cblk, Dict{Any,Any}();
-            dc = true, odd = true, even = true, method = :newtonkrylov)
+            dc = true, odd = true, even = true, method = NewtonKrylov())
         bb = hbnlsolve((w1,), (4,), srcb, cblk, Dict{Any,Any}();
-            dc = true, odd = true, even = true, method = :newtonkrylov,
+            dc = true, odd = true, even = true, method = NewtonKrylov(),
             backend = CUDABackend())
         @test bb.solverinfo.converged
         @test agree(ba.S, bb.S)
@@ -176,29 +176,29 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # the dense node-block factorization of the full Jacobian and of a
         # cluster mask, in double and single precision, against the host
         ra = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
-            dc = true, odd = true, even = true, method = :newtonkrylov)
+            dc = true, odd = true, even = true, method = NewtonKrylov())
         Nm = hbnlsolve((w1,w2), (8,4), src2, circuit, defs; dc = true,
             odd = true, even = true, returnsystem = true).Nmodes
         mask = Matrix{Bool}(I, Nm, Nm)
         for (a, b) in ((1, 2), (2, 3), (1, 3), (4, 5))
             mask[a, b] = mask[b, a] = true
         end
-        for (cm, f) in ((:all, JosephsonCircuits.BlockFactorization()),
-                (:all, JosephsonCircuits.BlockFactorization(; precision = Float32)),
-                (mask, JosephsonCircuits.BlockFactorization()),
-                (:clusters, JosephsonCircuits.BlockFactorization()),
-                (:clusters, JosephsonCircuits.CUDSSFactorization()))
+        for (pre, exact) in ((FullJacobian(factorization = BlockFactorization()), true),
+                (FullJacobian(factorization = BlockFactorization(; precision = Float32)), false),
+                (CouplingMask(mask; factorization = BlockFactorization()), false),
+                (Clusters(factorization = BlockFactorization()), false),
+                (Clusters(factorization = CUDSSFactorization()), false),
+                (Automatic(), false))
             rb = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
-                dc = true, odd = true, even = true, method = :newtonkrylov,
-                backend = CUDABackend(), krylovcouplingmodes = cm,
-                factorization = f)
+                dc = true, odd = true, even = true, backend = CUDABackend(),
+                method = NewtonKrylov(preconditioner = pre))
             @test rb.solverinfo.converged
             @test agree(ra.S, rb.S)
             kr = rb.solverinfo.stages[1].krylov
             # an exact solve in double takes one Arnoldi step per Newton step
-            cm === :all && f.kwargs.precision === nothing &&
-                @test all(k -> k.iterations <= 2, kr)
+            exact && @test all(k -> k.iterations <= 2, kr)
         end
+        @test JosephsonCircuits.freememory(CUDABackend()) > 0
     end
 
 

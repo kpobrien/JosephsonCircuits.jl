@@ -202,7 +202,7 @@ using Test
         args = ((2*pi*4.75001*1e9,), (8,),
                 [(mode=(1,),port=1,current=0.00565e-6)], circuitjpa,
                 circuitdefsjpa)
-        for m in (:quasinewton, :newtonkrylov)
+        for m in (QuasiNewton(), NewtonKrylov())
             a = JosephsonCircuits.hbnlsolve(args...; method = m)
             b = JosephsonCircuits.hbnlsolve(args...; method = m,
                 backend = JosephsonCircuits.CPU())

@@ -21,7 +21,7 @@ module JosephsonCircuitsCUDAExt
 using CUDA
 using CUDA.CUFFT
 using KernelAbstractions
-import JosephsonCircuits: fftplans
+import JosephsonCircuits: fftplans, freememory
 
 # Real transform plans on the device with the same dimensions, direction
 # and normalization convention as the FFTW plans of the CPU backend: the
@@ -35,5 +35,7 @@ function fftplans(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
     return irfftplan, rfftplan
 end
 
+
+freememory(::CUDABackend) = Int(CUDA.free_memory())
 
 end # module

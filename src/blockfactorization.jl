@@ -1,8 +1,8 @@
 """
     BlockFactorization(singletons = nothing; precision = nothing)
 
-The [`Factorization`](@ref) of a [`ModeCouplingPreconditioner`](@ref) by
-dense blocks over the circuit graph rather than by a scalar sparse solver.
+The [`AbstractFactorization`](@ref) of a [`ModeCouplingPreconditioner`](@ref)
+by dense blocks over the circuit graph rather than by a scalar sparse solver.
 
 The harmonic balance Jacobian has two structures: its sparsity follows the
 circuit graph, and every nonlinear connection carries a dense coupling
@@ -25,10 +25,10 @@ The coupling set of the preconditioner is honored at the level of its
 connected components, every component of two or more modes becomes one
 block factorization over the circuit graph restricted to those modes'
 slots, and the modes left single are solved by the mode block diagonal as
-before. `couplingmodes = :all` is therefore one factorization of the
-complete Jacobian, an exact solve; a mask made of complete clusters (as the
-spectral rule of `:clusters` produces) is one factorization per cluster;
-and a coupling set which is not a union of complete clusters, `:band => p`
+before. [`FullJacobian`](@ref) is therefore one factorization of the complete
+Jacobian, an exact solve; a mask made of complete clusters (as
+[`Clusters`](@ref) produces) is one factorization per cluster;
+and a coupling set which is not a union of complete clusters, a [`HarmonicBand`](@ref)
 say, is factorized on its closure, which keeps at least every coupling the
 set asked for.
 
@@ -40,7 +40,7 @@ nonlinear problem in 3.2 s against 38.5 s; clusters halve the memory again
 at 18 steps. Factor storage grows as the square of the number of retained
 slots per node and the arithmetic as its cube, which is what bounds it.
 
-`singletons` is the sparse [`Factorization`](@ref) of the block diagonal
+`singletons` is the sparse [`AbstractFactorization`](@ref) of the block diagonal
 of the modes left single, the backend's default (KLU on the host, cuDSS on
 a device) when `nothing`. `precision` is the floating point type of the
 blocks, that of the preconditioner when `nothing`: `Float32` is the mixed
@@ -48,18 +48,21 @@ precision form, which halves the storage and is two to four times faster
 on a GPU at three outer steps per solve while the iteration stays in
 double precision.
 """
-function BlockFactorization(singletons::Union{Nothing,Factorization} = nothing;
-    precision::Union{Nothing,Type{<:AbstractFloat}} = nothing)
-    return Factorization(blockfactorize, blockrefactorize!,
-        (; singletons, precision))
+struct BlockFactorization{S,P} <: AbstractFactorization
+    singletons::S
+    precision::P
 end
-
-isblockfactorization(f::Factorization) = f.factorize === blockfactorize
+function BlockFactorization(singletons::Union{Nothing,AbstractFactorization} = nothing;
+    precision::Union{Nothing,Type{<:AbstractFloat}} = nothing)
+    singletons isa BlockFactorization && throw(ArgumentError(
+        "the singleton modes are factorized by a sparse factorization, not a block one."))
+    return BlockFactorization(singletons, precision)
+end
 
 # the sparse factorization of the singleton modes' block diagonal: the one
 # given, or the backend's default as `hbnlsolve` picks it
-function singletonfactorization(f::Factorization, backend)
-    isnothing(f.kwargs.singletons) || return f.kwargs.singletons
+function singletonfactorization(f::BlockFactorization, backend)
+    isnothing(f.singletons) || return f.singletons
     return backend isa CPU ? KLUfactorization() : CUDSSFactorization()
 end
 
@@ -302,17 +305,19 @@ function factorbytes(C::ClusterBlocks{T}) where {T}
 end
 
 """
-    clusterblocks(::Type{T}, modes, adj, order, Nmodes::Integer,
-        layout::ModeLayout, backend; target = BLOCKTARGETROWS)
+    clustersymbolic(modes, adj, order, Nmodes::Integer, layout::ModeLayout;
+        target = BLOCKTARGETROWS)
 
-The symbolic block structure of one cluster: the supernodes of the
-amalgamated elimination tree of the circuit-node graph `adj` under the node
-`order`, restricted to the real-layout slots of `modes`; the panels from a
-symbolic elimination on the node graph; and the index maps of the Schur
-updates. Storage is allocated on `backend` in precision `T`.
+The symbolic block structure of one cluster, on the host and without
+allocating any factor storage: the supernodes of the amalgamated
+elimination tree of the circuit-node graph `adj` under the node `order`,
+restricted to the real-layout slots of `modes`, the positions of every
+supernode, its panel rows after fill, and the offsets the Schur updates
+scatter through. [`clusterblocks`](@ref) allocates from it and
+[`blockfactorbytes`](@ref) sizes it.
 """
-function clusterblocks(::Type{T}, modes, adj, order, Nmodes::Integer,
-    layout::ModeLayout, backend; target = BLOCKTARGETROWS) where {T}
+function clustersymbolic(modes, adj, order, Nmodes::Integer,
+    layout::ModeLayout; target = BLOCKTARGETROWS)
     nnodes = length(adj)
     # the slots of this cluster's modes at each node, in the real layout
     noderows = [Int[] for _ in 1:nnodes]
@@ -364,6 +369,54 @@ function clusterblocks(::Type{T}, modes, adj, order, Nmodes::Integer,
         end
         rowidxh[P] = idx
     end
+    return (; nodes, N, perm, range, rowsnodes, rowidxh, paneloff, snode,
+        nodepos, nrows)
+end
+
+"""
+    blockfactorbytes(::Type{T}, keep::AbstractMatrix{Bool}, adj, order,
+        Nmodes::Integer, layout::ModeLayout)
+
+The bytes a [`BlockFactorization`](@ref) in precision `T` of the coupling
+mask `keep` will hold on the backend: the diagonal blocks, their inverses,
+the panels, the scratch of the largest blocks and the identity of each
+block size, over every cluster of the mask. Exact for the storage the
+factorization allocates, from the symbolic analysis alone, so a caller can
+decide whether the factors fit before building anything.
+"""
+function blockfactorbytes(::Type{T}, keep::AbstractMatrix{Bool}, adj, order,
+    Nmodes::Integer, layout::ModeLayout) where {T}
+    bytes = 0
+    for modes in modeclusters(keep)
+        sym = clustersymbolic(modes, adj, order, Nmodes, layout)
+        scratch = Set{Tuple{Int,Int}}(); eyes = Set{Int}()
+        for P in 1:sym.N
+            n = length(sym.range[P]); m = length(sym.rowidxh[P])
+            bytes += 2*n*n + 2*m*n          # D, Dinv, L, U
+            push!(scratch, (n, n)); push!(eyes, n)
+            m > 0 && (push!(scratch, (m, n)); push!(scratch, (m, m)))
+        end
+        bytes += sum(a*b for (a, b) in scratch; init = 0) + sum(n*n for n in eyes; init = 0)
+        bytes += 2*length(sym.perm) + max(maximum(length, sym.rowidxh; init = 0), 1)
+    end
+    return bytes*sizeof(T)
+end
+
+"""
+    clusterblocks(::Type{T}, modes, adj, order, Nmodes::Integer,
+        layout::ModeLayout, backend; target = BLOCKTARGETROWS)
+
+The symbolic block structure of one cluster: the supernodes of the
+amalgamated elimination tree of the circuit-node graph `adj` under the node
+`order`, restricted to the real-layout slots of `modes`; the panels from a
+symbolic elimination on the node graph; and the index maps of the Schur
+updates. Storage is allocated on `backend` in precision `T`.
+"""
+function clusterblocks(::Type{T}, modes, adj, order, Nmodes::Integer,
+    layout::ModeLayout, backend; target = BLOCKTARGETROWS) where {T}
+    sym = clustersymbolic(modes, adj, order, Nmodes, layout; target)
+    (; nodes, N, perm, range, rowsnodes, rowidxh, paneloff, snode, nodepos,
+        nrows) = sym
     dI = x -> tobackend(backend, Vector{Int32}(x))
     dM = (r, c) -> KernelAbstractions.zeros(backend, T, r, c)
     D = [dM(length(range[P]), length(range[P])) for P in 1:N]
@@ -689,7 +742,7 @@ end
 
 # assemble every cluster and factorize it, and refactorize the block
 # diagonal of the singleton modes; the structure is the factorization
-function blockfactorize(A::BlockJacobian; kwargs...)
+function factorize(::BlockFactorization, A::BlockJacobian)
     S = A.structure
     for C in S.clusters
         assembleblocks!(C, S, A.phimatrix)
@@ -698,8 +751,8 @@ function blockfactorize(A::BlockJacobian; kwargs...)
     isnothing(S.singletons) || refactorize!(S.singletons)
     return S
 end
-blockrefactorize!(F::BlockStructure, A::BlockJacobian; kwargs...) =
-    blockfactorize(A)
+refactorize!(f::BlockFactorization, F::BlockStructure, A::BlockJacobian) =
+    factorize(f, A)
 
 # the solve: the block diagonal on every slot, then each cluster's exact
 # solve on its own slots; in the factorization's precision
@@ -717,4 +770,17 @@ function myldiv!(x::AbstractVector, F::BlockStructure, b::AbstractVector)
     end
     x .= F.xT
     return x
+end
+
+"""
+    freememory(backend)
+
+The free memory of `backend` in bytes: the host's for `CPU()`, the
+device's on a CUDA backend (defined by the CUDA extension). What
+[`Automatic`](@ref) sizes its choice of factorization against.
+"""
+freememory(::CPU) = Int(Sys.free_memory())
+function freememory(backend)
+    throw(ArgumentError(
+        "the free memory of this backend is unknown; load CUDA.jl for a CUDA device."))
 end

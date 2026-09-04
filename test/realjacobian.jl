@@ -173,9 +173,9 @@ using Test
 
         # solutions from the two methods should agree closely
         sol_qn = JosephsonCircuits.hbnlsolve((2*pi*5.0*1e9,), (8,), sources,
-            circuit, circuitdefs; ftol=1e-12, method=:quasinewton)
+            circuit, circuitdefs; ftol=1e-12, method = QuasiNewton())
         sol_n = JosephsonCircuits.hbnlsolve((2*pi*5.0*1e9,), (8,), sources,
-            circuit, circuitdefs; ftol=1e-12, method=:newton)
+            circuit, circuitdefs; ftol=1e-12, method = Newton())
         @test isapprox(sol_qn.nodeflux[:], sol_n.nodeflux[:], atol=1e-10)
     end
 

@@ -106,7 +106,7 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
              :c2 => Capacitor(1e-12)],
             [[(:p1,1),(:rb,1),(:c1,1)], [(:rb,2),(:p2,1),(:c2,1)],
              [(:p1,2),(:p2,2),(:c1,2),(:c2,2), Ground]])
-        for m in (:newton, :newtonkrylov)
+        for m in (Newton(), NewtonKrylov())
             sol = hbnlsolve(ws, (1,), [(mode=(0,), port=1, current=Idc),
                     (mode=(0,), port=2, current=-Idc)], c, Dict{Any,Any}();
                 keyedarrays = false, dc = true, odd = true, method = m)
@@ -784,7 +784,7 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
                (mode=(1,), port=1, current=1e-6)]
         go(P; kw...) = hbnlsolve(ws, (4,), src, c, Dict{Any,Any}();
             keyedarrays = false, dc = true, odd = true, even = true,
-            precision = P, kw...)
+            method = NewtonKrylov(precision = P), kw...)
 
         a = go(Float64)
         b = go(Float32; rtol = 1e-6)
@@ -866,7 +866,7 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
                 (mode=(1,), port=1, current=Iac)]
         go(r2; kw...) = hbnlsolve(wp, (4,), srcs, mk(r2), Dict{Any,Any}();
             dc = true, odd = true, even = true, keyedarrays = false,
-            rtol = 1e-13, method = :newton, kw...)
+            rtol = 1e-13, method = Newton(), kw...)
 
         sol = go(R2; returnoperatingpoint = true)
         op = sol.operatingpoint
@@ -905,7 +905,7 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         plain = hbnlsolve(wp, (4,),
             [(mode=(1,), port=1, current=Iac)], mk(R2), Dict{Any,Any}();
             dc = true, odd = true, even = true, keyedarrays = false,
-            method = :newton, returnoperatingpoint = true)
+            method = Newton(), returnoperatingpoint = true)
         @test isnothing(plain.operatingpoint.dc)
         @test isnothing(JC.dcvoltagesensitivity(plain.operatingpoint,
             zeros(1,1)))

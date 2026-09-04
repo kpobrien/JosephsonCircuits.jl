@@ -281,15 +281,14 @@ end
 @testset "solver protocol" begin
     circuit, defs = testjpacircuitnumeric()
     wp = (2*pi*4.75001e9,); src = [(mode=(1,),port=1,current=0.00565e-6)]
-    @test JC.solvermethod(JC.NewtonKrylov()) == :newtonkrylov
-    @test JC.solvermethod(JC.Newton()) == :newton
-    @test JC.solvermethod(JC.QuasiNewton()) == :quasinewton
-    @test JC.solvermethod(:newtonkrylov) == :newtonkrylov
+    @test JC.NewtonKrylov() isa JC.AbstractHBNonlinearSolver
+    @test JC.Newton() isa JC.AbstractHBNonlinearSolver
+    @test JC.QuasiNewton(anderson = 3).anderson == 3
 
     ref = JC.hbnlsolve(wp, (8,), src, circuit, defs;
                        keyedarrays=false, ftol=1e-14)
     @test ref.solverinfo.converged
-    for m in (JC.NewtonKrylov(), JC.Newton(), :newtonkrylov, :newton)
+    for m in (JC.NewtonKrylov(), JC.Newton())
         s = JC.hbnlsolve(wp, (8,), src, circuit, defs;
                          keyedarrays=false, ftol=1e-14, method=m)
         @test s.solverinfo.converged
@@ -409,7 +408,7 @@ end
         a = JC.hbnlsolve(wp, (4,), src, circuit, Dict{Any,Any}();
             kw..., keyedarrays = false, method = ext)
         b = JC.hbnlsolve(wp, (4,), src, circuit, Dict{Any,Any}();
-            kw..., keyedarrays = false, method = :newton, rtol = 1e-13)
+            kw..., keyedarrays = false, method = Newton(), rtol = 1e-13)
         @test a.solverinfo.converged
         @test isapprox(a.dcnodevoltage, b.dcnodevoltage; rtol = 1e-8)
         @test maximum(abs, a.S .- b.S) < 1e-10
