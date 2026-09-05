@@ -1,19 +1,25 @@
 """
     JosephsonCircuitsCUDAExt
 
-Package extension loaded with `using CUDA`. It supplies the real transform
-plans, through CUFFT, which the residual and the matrix-free
+Package extension loaded with `using CUDA`. It supplies three things: the
+real transform plans, through CUFFT, which the residual and the matrix-free
 Jacobian-vector and Hessian-vector products of
-[`JosephsonCircuits.HBSystem`](@ref) need on a CUDA device.
+[`JosephsonCircuits.HBSystem`](@ref) need on a CUDA device; the device's
+free memory, which the automatic choices of preconditioner and linearized
+factorization are sized against; and the batched dense primitives
+`batchedinverse!` and `batchedmul!`, cuBLAS `getrf`/`getri` strided
+batched and `gemm_strided_batched!`, which every dense operation of a
+`SparseBlockFactorization` is one call to.
 
 Everything else on that path is device generic: the linear maps around the
 pointwise time domain nonlinearity are KernelAbstractions kernels of
 `NonlinearTermPlan`, the pointwise and normalization steps are broadcasts,
-and the transform is a batched real transform over all but the last
-dimension, which is the layout CUFFT batches over. The Jacobian assembly
-is written as host loops and is not addressed here; a device factorization
-(see `CUDSSFactorization` and the CUDSS extension) is needed for the direct
-solve path on a device.
+the transform is a batched real transform over all but the last dimension,
+which is the layout CUFFT batches over, and the Jacobian assembly is a
+KernelAbstractions kernel per stored entry. For the direct solves a device
+needs either a device sparse factorization (see `CUDSSFactorization` and
+the CUDSS extension) or a `BlockFactorization`, whose dense kernels run on
+the primitives here.
 
 """
 module JosephsonCircuitsCUDAExt

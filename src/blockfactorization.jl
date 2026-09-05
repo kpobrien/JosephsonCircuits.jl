@@ -2,7 +2,8 @@
     BlockFactorization(singletons = nothing; precision = nothing)
 
 The [`AbstractFactorization`](@ref) of a [`ModeCouplingPreconditioner`](@ref)
-by dense blocks over the circuit graph rather than by a scalar sparse solver.
+by dense blocks over the circuit graph rather than by a scalar sparse solver,
+and, handed a sparse matrix with a block size, of the linearized solve.
 
 The harmonic balance Jacobian has two structures: its sparsity follows the
 circuit graph, and every nonlinear connection carries a dense coupling
@@ -19,6 +20,15 @@ the solves. The blocks are assembled on the backend straight from the
 Fourier coefficients with [`realstructureentry`](@ref), the same per entry
 value the sparse assembly uses, so no sparse Jacobian is ever formed. The
 structure comes from the circuit graph alone, whatever the circuit is.
+
+The same specification serves two operators. Handed a
+[`BlockJacobian`](@ref) it factorizes the preconditioner's mode clusters
+over the circuit graph, as above; handed a `SparseMatrixCSC` with a
+`blocksize` (see [`factorize`](@ref)) it builds a
+[`SparseBlockFactorization`](@ref), the direct solve of the linearized
+system in dense node blocks, batched over the frequencies of a device
+sweep, with `precision` then meaning the precision of the factors of a
+double matrix (equilibrated and refined when single).
 
 The coupling set of the preconditioner is honored at the level of its
 *clusters*: the retained coupling graph of the modes is split into its
@@ -70,6 +80,8 @@ end
 # spending fill on merged zeros: on the measured circuits the factorization
 # time is flat between 256 and 1024 rows and the solve is six times cheaper
 # than with single node blocks. A kernel size, not a numerical parameter.
+# Measured on one system at a time; the batched device factorization of the
+# linearized solve does not amalgamate (see `factorize` for a sparse matrix).
 const BLOCKTARGETROWS = 512
 
 """
@@ -386,9 +398,10 @@ end
 
 The bytes a [`BlockFactorization`](@ref) in precision `T` of the coupling
 mask `keep` will hold on the backend: the diagonal blocks, their inverses,
-the panels, the scratch of the largest blocks and the identity of each
-block size, over every cluster of the mask. Exact for the storage the
-factorization allocates, from the symbolic analysis alone, so a caller can
+the panels, the scratch of the largest blocks, the identity of each block
+size and the work vectors, over every cluster of the mask. Exact for the
+floating point storage the factorization allocates (the `Int32` index
+maps are not counted), from the symbolic analysis alone, so a caller can
 decide whether the factors fit before building anything.
 """
 function blockfactorbytes(::Type{T}, keep::AbstractMatrix{Bool}, adj, order,
@@ -496,7 +509,10 @@ What a [`ModeCouplingPreconditioner`](@ref) holds in place of a sparse
 structure when its factorization is a [`BlockFactorization`](@ref): the
 block factorizations of the mode clusters, the mode block diagonal for the
 modes left single (`nothing` when there are none), the assembly ingredients
-on the backend, and work vectors in the factorization's precision.
+on the backend, work vectors in the factorization's precision, and the
+backend together with the mode count, `Rbnm` and the branch count the
+junction pair table is rebuilt from when the system is rebound
+([`refreshvalues!`](@ref)).
 """
 mutable struct BlockStructure{T,VT}
     const clusters::Vector
@@ -789,7 +805,8 @@ end
 
 The free memory of `backend` in bytes: the host's for `CPU()`, the
 device's on a CUDA backend (defined by the CUDA extension). What
-[`Automatic`](@ref) sizes its choice of factorization against.
+[`Automatic`](@ref), [`linearizedfactorization`](@ref) and the device
+sweep's batch size their choices against.
 """
 freememory(::CPU) = Int(Sys.free_memory())
 function freememory(backend)
@@ -991,6 +1008,10 @@ function batchedmul!(C::AbstractArray{T,3}, A::AbstractArray{T,3},
     return C
 end
 
+# one Schur update of the batched factorization: the product of a
+# supernode's panels lands, through the row and column maps, at the offsets
+# `i0`, `j0` of the diagonal block or a panel of a later supernode, in every
+# slice of the batch
 struct BatchSchurTask{A3,VI}
     target::A3
     rowmap::VI
@@ -1018,11 +1039,12 @@ frequencies of a batch of a device sweep (one on the host): every block
 is an array `(rows, columns, nb)` and every dense operation of the
 factorization and the solves is one batched call over the batch
 ([`batchedinverse!`](@ref), [`batchedmul!`](@ref)), which is what fills a
-device with the many small blocks of a chain. Solves take a matrix
-right-hand side shared by the batch, a GEMM per block, and the transposed
-system from the same factors; factors in single precision refine against
-the double residual formed from the matrix's own blocks kept in double
-([`blockresidual!`](@ref)), at one and a half times the memory.
+device with the many small blocks of a chain. Solves take a right-hand
+side shared by the batch or one per system, a GEMM per block, and the
+transposed system from the same factors; factors in single precision
+refine against the double residual formed from the matrix's own blocks
+kept in double ([`blockresidual!`](@ref)), at close to twice the memory,
+since the originals cost as much as the single precision factors.
 
 # Fields
 - `N`, `nb`, `n`, `blocksize`: supernodes, batch, order, node block size.
@@ -1037,8 +1059,10 @@ the double residual formed from the matrix's own blocks kept in double
     magnitudes, which brings a linearized matrix's entries (inverse
     inductances against capacitances times squared frequencies) to order
     one before single precision arithmetic sees them; `nothing` in double.
-- `A`: the sparse pattern matrix; `refine`; `backend`; `work`: the work
-    arrays of the last right-hand side width.
+- `A`: the sparse pattern matrix; `refine` and `refinesteps`: whether the
+    solves refine against the double residual and the most steps they
+    take; `backend`; `work`: the work arrays of the last right-hand side
+    width.
 """
 mutable struct SparseBlockFactorization{T,A3,VI}
     const N::Int
@@ -1119,7 +1143,7 @@ end
 
 """
     factorize(f::BlockFactorization, A::SparseMatrixCSC; blocksize,
-        backend = CPU(), nb = 1, target, refine = true)
+        backend = CPU(), nb = 1, target, refine = 6)
 
 The [`SparseBlockFactorization`](@ref) of `A` with node blocks of
 `blocksize` unknowns (the linearized solve passes its mode count), on
@@ -1444,9 +1468,9 @@ end
 """
     blockresidual!(R, F::SparseBlockFactorization, X, B; transposed = false)
 
-`R_k = B - A_k X_k` for the batch from the matrix's own blocks kept for
-the refinement, a batched dense product per block, in the matrix's
-precision.
+`R_k = B - A_k X_k` for the batch, or `B - transpose(A_k) X_k` with
+`transposed`, from the matrix's own blocks kept for the refinement, a
+batched dense product per block, in the matrix's precision.
 """
 function blockresidual!(R::AbstractArray{<:Any,3}, F::SparseBlockFactorization,
     X::AbstractArray{<:Any,3}, B::AbstractMatrix; transposed::Bool = false)
@@ -1515,6 +1539,8 @@ function myldiv!(x::AbstractVector, F::SparseBlockFactorization, b::AbstractVect
     refinedsolve!(reshape(x, :, 1, 1), F, reshape(b, :, 1))
     return x
 end
+# the transposed system against the same factors, what
+# `trysolvetranspose!` solves with
 struct TransposedSparseBlockFactorization{F}
     parent::F
 end

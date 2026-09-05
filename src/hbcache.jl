@@ -23,7 +23,8 @@ maps, the solver options, and the last converged operating point, which
 [`hbsolve!`](@ref) uses to warm start the next solve.
 
 Built by [`hbcache`](@ref). `converged` reports whether the last solve
-succeeded. Check it: a solve which does not converge returns a state that
+succeeded, and a solve which does not converge also warns with the reason
+it stopped. Check it: a solve which does not converge returns a state that
 looks like a solution and is not one, and comparing timings or gradients
 against it is meaningless.
 """
@@ -57,9 +58,17 @@ end
         frequencywindow = (0, Inf), sorting = :number, kwargs...)
 
 A reusable nonlinear solver over the circuit builder `builder`, parsed
-once at the parameter point `p`. The harmonic selection keywords match
+once at the parameter point `p`. `builder(; p...)` must return a netlist
+of `(name, node1, node2, value)` tuples with fully numeric values; a typed
+[`Circuit`](@ref) is refused, because the cache rebinds values by walking
+the builder's output. The harmonic selection keywords match
 [`hbnlsolve`](@ref); the remaining keywords are stored and forwarded to
-every solve.
+every solve as keywords of `hbnlsolve` on the compiled circuit, so they
+are the solver keywords (`method`, `ftol`, `rtol`, `iterations`,
+`backend`, ...). `method = Staged()` is not supported through the cache,
+since the continuation builds its own systems at its own truncations;
+`x0`, `keyedarrays` and `reuse` are managed by the cache and should not
+be passed.
 
 The builder must keep the circuit topology fixed as the parameters vary;
 [`hbsolve!`](@ref) checks the component names of each new evaluation
@@ -198,7 +207,12 @@ the preconditioner and the Krylov vectors of the previous solve, rebound to
 the new component values (see [`HBReuse`](@ref)); only the numeric matrices
 and the solve itself are recomputed. If the previous solve did not converge
 its state is not used, because starting from a non-solution is usually
-worse than starting cold.
+worse than starting cold; `warmstart = false` starts cold without
+discarding the stored point, unlike [`reset!`](@ref). A component value
+which crosses a structural boundary (an inductance open or shorted, a value
+turned complex, a mutual coupling reaching one) invalidates the cached
+sparsity patterns and is an `ArgumentError`; build a new cache for those
+parameters.
 """
 function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
     vvn = componentvalues(cache, p)

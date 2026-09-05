@@ -42,10 +42,14 @@ Diagnostics recorded for a call of [`nlsolve!`](@ref).
     Newton step budget was spent; `:work` when the Krylov work budget was
     spent (`nlsolvekrylov!` only); `:linesearch` when the line search found
     no sufficient decrease along the Newton direction, once with no decrease
-    at all or twice in a row with a decrease short of the Armijo condition,
-    which is a stall; `:progress` when the residual history projected no
-    convergence within the remaining budget without accelerating, after the
-    recovery the solver has; `:external` for a failed [`ExternalSolver`](@ref).
+    at all (twice in `nlsolvekrylov!`, which retries the first from a
+    rebuilt preconditioner, and which also reports a direction that is not
+    a descent direction after its exact rescue here) or twice in a row with
+    a decrease short of the Armijo condition, which is a stall; `:progress`
+    when the residual history projected no convergence within the remaining
+    budget without accelerating (`nlsolvekrylov!` first takes one recovery,
+    a rebuilt preconditioner and exact Newton steps, and reports it only if
+    the stall persists); `:external` for a failed [`ExternalSolver`](@ref).
     [`stallmessage`](@ref) spells each out.
 
 The nine and ten argument constructors leave `krylov` empty and `reason`
@@ -77,7 +81,8 @@ end
     stallmessage(reason::Symbol)
 
 The sentence behind a `reason` of an [`IterationInfo`](@ref), for the
-warning a solve which did not converge issues.
+warning a solve which did not converge issues; a reason it does not know
+(`:converged`, `:unspecified`) is reported as `reason <name>`.
 """
 function stallmessage(reason::Symbol)
     reason === :iterations && return "the Newton iteration budget was spent"
@@ -420,7 +425,7 @@ end
 
 """
     tryfactorize!(cache::FactorizationCache,
-        factorization::AbstractFactorization, A)
+        factorization::AbstractFactorization, A; kwargs...)
 
 Factorize `A`, a matrix or a [`BlockJacobian`](@ref), with the method
 `factorization` and store the result in `cache`. When the cache already
@@ -428,6 +433,8 @@ holds a factorization and the method supports refactorization, its symbolic
 analysis is reused; a `SingularException` during that refactorization falls
 back to a fresh factorization, since reusing the symbolic analysis
 occasionally fails numerically where a fresh one succeeds.
+`kwargs` are forwarded to `factorize` (the block size of a
+[`BlockFactorization`](@ref) of a sparse matrix).
 """
 function tryfactorize!(cache::FactorizationCache,
     factorization::AbstractFactorization, A; kwargs...)
@@ -1280,11 +1287,15 @@ solve) only the linear line search runs.
 - `andersonacceptfactor = 0.9`: candidate accept threshold, in (0, 1);
   smaller is stricter.
 
-Returns an `IterationInfo` with per-iteration diagnostics: `normF`
-(residual norms, starting at the initial point), `alphas` (step
-lengths; `NaN` marks an accepted candidate), `backtrackrecord` (trial
-evaluations after each iteration's first), and `andersonrecord` (true
-when the taken step lies on the curved path).
+Returns an [`IterationInfo`](@ref) with per-iteration diagnostics:
+`normresidual` (residual norms, starting at the initial point), `alpha`
+(step lengths; `NaN` marks an accepted candidate), `backtracks` (trial
+evaluations after each iteration's first), `andersonaccepted` (true when
+the taken step lies on the curved path), and `reason`, why the iteration
+ended: `:converged`, `:iterations`, `:linesearch` (no decrease at all, or
+two consecutive steps short of the Armijo condition), or `:progress` (the
+residual history projects no convergence within the remaining budget,
+[`projectedstall`](@ref)); see [`stallmessage`](@ref).
 """
 function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     x::AbstractVector{T}; iterations = 1000, ftol = 1e-8, rtol = 0.0,

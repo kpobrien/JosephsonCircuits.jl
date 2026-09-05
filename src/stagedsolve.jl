@@ -18,9 +18,11 @@ continuation walk can be examined afterwards.
 - `sfrom`: the last accepted drive fraction before the attempt.
 - `starget`: the drive fraction the attempt targeted.
 - `ds`: `starget - sfrom` (negative for a growth retreat).
-- `action`: `:advance` (drive step on the current grid), `:grow` (first
-    solve on a larger grid after carrying a converged point up), or
-    `:final` (the full-drive solve on the finest grid).
+- `action`: `:advance` (drive step on the current grid), `:grow` (a solve
+    on a newly grown grid after carrying a converged point up, and the
+    drive retreats which follow it, including the retreat on the finest
+    grid which never changes the grid), or `:final` (the full-drive solve
+    on the finest grid).
 - `accepted`: whether the attempt's result was kept as the new operating
     point (a stalled attempt is recorded but not accepted).
 - `seconds`: wall time of the attempt, including the stage's system
@@ -122,13 +124,15 @@ converged on that grid is not diagnosed as a fold: the drive is retreated
 on the finest grid and climbed back. Only a stall from a point converged on
 the finest grid itself brackets a fold, the end of the solution branch
 (the self oscillation threshold) between the last converged drive fraction
-and the stalled one. Before reporting it, one plain damped solve at the
-full drive is attempted from the last converged point, since a coexisting
-branch may reach it; failing that, the solve returns not converged with
-a warning stating the bracket, and `solverinfo.sourcefold` holds the last
-converged drive fraction. No path throws: a schedule which cannot reach
-the point (its attempts spent, a carried point which does not reconverge,
-a first step which stalls) warns, returns its last attempt marked not
+and the stalled one. Before reporting it, and only when the stalled target
+was below full drive, one further solve at full drive is attempted from
+the last converged point with the caller's own method and tolerance, since
+a coexisting branch may reach it; failing that, the solve returns not
+converged with a warning stating the bracket, and `solverinfo.sourcefold`
+holds the last converged drive fraction (it stays `NaN` for the other
+ways a schedule ends). No path throws: a schedule which cannot reach the
+point (its attempts spent, a carried point which does not reconverge, a
+first step which stalls) warns, returns its last attempt marked not
 converged, and records the whole walk in `solverinfo.stages`.
 
 # Keywords

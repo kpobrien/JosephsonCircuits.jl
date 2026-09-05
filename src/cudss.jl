@@ -127,9 +127,12 @@ right hand sides each.
     nothing downstream can detect it. A batch of fifteen is correct with
     twelve right hand sides and a batch of sixteen is wrong by order one;
     with one or two right hand sides batches of well over a hundred are
-    correct. The cap costs nothing, since the speedup of batching a
-    frequency sweep saturates by about a dozen systems. Re-check against
-    newer cuDSS releases before raising it.
+    correct. The cap costs nothing on this path, since the speedup of
+    batching a frequency sweep through cuDSS saturates by about a dozen
+    systems; it applies only to the cuDSS batch, a
+    [`SparseBlockFactorization`](@ref) sweep sizes its batch by memory
+    instead ([`blocksystembytes`](@ref)) and profits from batches well past
+    this. Re-check against newer cuDSS releases before raising it.
 """
 uniformbatchlimit(nrhs::Integer) = nrhs >= 6 ? 15 : 128
 

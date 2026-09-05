@@ -488,13 +488,15 @@ strongly pumped device the block diagonal alone stalls, and
     transpose, which is the row major structure a device sparse matrix wants.
 - `sys`: the [`HBSystem`](@ref) the Jacobian is assembled from.
 - `cache`: the [`FactorizationCache`](@ref) holding the factorization of `P`.
-- `basefactorization`: the [`Factorization`](@ref) the caller asked for.
+- `basefactorization`: the [`AbstractFactorization`](@ref) the caller asked
+    for.
 - `factorization`: the one actually used for the current `P`, which is the
     batched form of `basefactorization` while `P` is the mode block diagonal
     and that form exists. It is reselected whenever `P` is rebuilt, because
     escalation destroys the batch structure.
 - `Amatrixmodes`: the harmonic offset `modes[m1] .- modes[m2]` of every mode
-    pair, or `nothing`. Needed by `:band` and by its escalation.
+    pair, or `nothing`. Needed by [`HarmonicBand`](@ref),
+    [`MeasuredBand`](@ref) and by their escalation.
 - `coupling`: the coupling set currently factorized, a
     [`BlockDiagonal`](@ref), [`FullJacobian`](@ref), [`HarmonicBand`](@ref),
     [`CoupledModes`](@ref) or [`CouplingMask`](@ref); a [`MeasuredBand`](@ref)
@@ -502,6 +504,24 @@ strongly pumped device the block diagonal alone stalls, and
     to so far.
 - `updates`: the number of times the factorization has been rebuilt.
 - `escalations`: the number of times the coupling set has been grown.
+- `build`: `build(S, sys)` rebuilds the structure, the assembly plan and
+    the values for a coupling set `S`, closing over the plan ingredients so
+    the set can be grown after construction.
+- `Nmodes`: the number of modes.
+- `autoindices`, `autotol`, `autobudget`, `autoNfreq`, `autoNbranches`:
+    the ingredients of a [`MeasuredBand`](@ref)'s bandwidth measurement,
+    `nothing` and zero when none was asked for.
+- `deviceplan`, `nzval`: the assembly plan and the values it writes, rebuilt
+    on escalation; on a host `nzval` aliases the stored values of `P`.
+- `clusterprobe`: the state of a [`Clusters`](@ref) request, `nothing`
+    otherwise.
+- `predict`: `predict(S)`, the bytes the factors of a coupling set `S`
+    would hold, sized from the symbolic analysis alone (the block predictor
+    for block factors, KLU's analysis of the host pattern for a sparse
+    factorization), so an escalation can be refused before it is built.
+- `budget`: the memory an escalation may take, or `nothing` for half the
+    backend's free memory at the time ([`freememory`](@ref)); set by tests,
+    not by a constructor keyword.
 """
 mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
     # untyped, because on a backend `P` is a `DeviceSparsePattern` rather
@@ -560,9 +580,11 @@ Build a [`ModeCouplingPreconditioner`](@ref) from the same ingredients
 [`planstructurerealjacobian`](@ref) takes. `spec` is the member of the mode
 coupling family to build ([`BlockDiagonal`](@ref), [`FullJacobian`](@ref),
 [`HarmonicBand`](@ref), [`MeasuredBand`](@ref), [`Clusters`](@ref),
-[`CoupledModes`](@ref) or [`CouplingMask`](@ref)), carrying the
-factorization it is built with, the backend's default (KLU on the host,
-cuDSS on a device) when it carries none. A [`BlockFactorization`](@ref)
+[`CoupledModes`](@ref), [`CouplingMask`](@ref), or [`Automatic`](@ref),
+which is resolved by [`resolveautomatic`](@ref) at construction to the
+member which fits this problem and this backend's free memory), carrying
+the factorization it is built with, the backend's default (KLU on the
+host, cuDSS on a device) when it carries none. A [`BlockFactorization`](@ref)
 eliminates the circuit graph with dense blocks over the clusters of the
 coupling set instead of factorizing a sparse matrix. `precision` is the
 floating point type of the factorization, `nothing` for that of the
@@ -810,17 +832,23 @@ end
 """
     escalatepreconditioner!(pc::ModeCouplingPreconditioner)
 
-Grow the coupling set to every mode and rebuild, returning `true` if it grew
-and `false` if it was already the full set.
+Grow the coupling set, a band by one offset per tone and any other set to
+every mode, and rebuild, returning `true` if it grew. Returns `false` when
+the set is already full, and when the factors of the grown set are
+predicted (`pc.predict`) to exceed `pc.budget`, half the backend's free
+memory unless set, in which case nothing is built: the driver records the
+refusal and carries on with the set it has rather than let a rescue
+exhaust the machine.
 
 This is the safety net of the block diagonal. A block diagonal preconditioner
 is cheap, but on a strongly pumped device it leaves the preconditioned operator
 nearly singular in a few directions, which stalls GMRES: the residual
 polynomial is pinned at `p(0) = 1` and so cannot be made small near the origin.
 
-Escalation goes straight to the full Jacobian rather than growing the set
-gradually, because there is no reliable way to know in advance *which* modes
-carry those directions. Criteria based on the linear response of the circuit,
+For every set but a band, escalation goes straight to the full Jacobian
+rather than growing the set gradually, because there is no reliable way to
+know in advance *which* modes carry those directions (a band has a measured
+width to step, so it grows by one offset per tone first). Criteria based on the linear response of the circuit,
 on the mode frequencies, and on the mode diagonal blocks were each measured and
 none generalized across devices: the deficiency is a specific direction inside
 a mode's subspace rather than a property of the mode, and any per mode score
@@ -878,6 +906,15 @@ function isexactpreconditioner(pc::ModeCouplingPreconditioner)
     return false
 end
 
+"""
+    updatepreconditioner!(pc::ModeCouplingPreconditioner, x)
+
+Rebuild the preconditioner at the point `x`: set the system's point, let a
+[`MeasuredBand`](@ref) remeasure its per tone bandwidths there and grow its
+band when they have widened (never shrinking), let a [`Clusters`](@ref)
+request reprobe its couplings at the first point or after
+[`stalled!`](@ref) and grow its mask, then assemble and refactorize.
+"""
 function updatepreconditioner!(pc::ModeCouplingPreconditioner,
     x::AbstractVector)
     setpoint!(pc.sys, x)

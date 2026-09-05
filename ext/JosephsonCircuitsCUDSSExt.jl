@@ -1,3 +1,16 @@
+"""
+    JosephsonCircuitsCUDSSExt
+
+Package extension loaded with `using CUDSS`. It supplies the cuDSS
+factorizations of the device path: `_cudss_factorize` and
+`_cudss_factorize!` for one sparse system, `_batched_factorize` and
+`_batched_factorize!` for the block diagonal of a mode coupling
+preconditioner as a uniform batch, and `_cudss_sweep` and
+`_cudss_sweepsolve!` for the uniform batch of a frequency sweep. cuDSS 0.8
+has no transposed solve, which is why the sweep's adjoint direction is a
+second factorization there; a `BlockFactorization` on the device does not
+need this extension.
+"""
 module JosephsonCircuitsCUDSSExt
 
 using JosephsonCircuits

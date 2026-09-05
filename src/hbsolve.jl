@@ -248,7 +248,10 @@ const _DOC_NLKWARGS = """
     `norm(F) <= max(ftol, rtol*norm(F0))` with `F0` the initial residual.
 - `x0 = nothing`: an initial value for the node fluxes, either of the node
     flux length or of the full augmented length including the auxiliary
-    variables of the modified nodal analysis formulation.
+    variables of the modified nodal analysis formulation. `x0`, `rtol`,
+    `debugJacobian`, `returnsystem` and `assemblejacobian` apply to the
+    direct and Krylov methods; a `Staged` method builds and warm starts
+    its own stages and ignores them.
 - `keyedarrays = true`: return `nodeflux` and `S` as keyed arrays with named
     axes rather than plain arrays.
 - `sensitivitynames::Vector{String} = String[]`: the components whose
@@ -264,8 +267,17 @@ const _DOC_NLKWARGS = """
     the [`HBSystem`](@ref), the initial real state and residual, the real
     representation layout and (when `assemblejacobian = true`) the
     assembled real Jacobian, for driving an external solver.
+- `assemblejacobian = true`: assemble the real Jacobian for `returnsystem`
+    and for an [`ExternalSolver`](@ref); `false` skips the assembly when
+    the external solver is matrix free.
 - `switchofflinesearchtol`, `alphamin`: deprecated and ignored with a
-    warning."""
+    warning.
+
+A solve which does not converge returns the last iterate with
+`solverinfo.converged = false` and warns with the reason it stopped, which
+is also the `reason` of its [`IterationInfo`](@ref) (`:iterations`,
+`:work`, `:linesearch`, `:progress` or `:external`; [`stallmessage`](@ref)
+spells each out). Check `solverinfo.converged` before using the result."""
 
 const _DOC_RETURNS = """
 - `returnS = true`: return the scattering parameters of the linearized
@@ -335,12 +347,19 @@ const _DOC_LINBACKEND = """
 - `backend = CPU()`: the KernelAbstractions backend the sweep is solved
     on. On a device the system matrices of a batch of signal frequencies,
     which share one sparsity pattern, are assembled by one kernel and
-    factorized and solved as a uniform batch (see
-    [`CUDSSFactorization`](@ref)). The sweep falls back to the host when
-    the component values depend on the symbolic frequency variable, or when
-    an output needs the adjoint (transposed) solve: the noise scattering
-    parameters, the scattering parameter sensitivities, or the adjoint node
-    outputs."""
+    factorized and solved as a uniform batch: with a sparse factorization
+    by cuDSS ([`CUDSSFactorization`](@ref)), and with a
+    [`BlockFactorization`](@ref), the default from two tones, by the
+    batched dense block factorization, whose batch is sized by the free
+    memory of the device. The adjoint (transposed) solve, the noise
+    scattering parameters and the sensitivities of `S` run on the device
+    too. The sweep falls back to the host when the component values
+    depend on the symbolic frequency variable (see
+    [`cansweepondevice`](@ref)) or when sensitivities with respect to
+    scattering block parameters are requested, whose stamps are rebuilt
+    per frequency on the host; a scattering block whose parameters cannot
+    be evaluated on the device forms its noise channels on the host from
+    the whole adjoint solution copied back."""
 
 const _DOC_SORTING = """
 - `sorting = :number`: how the nodes are ordered, with ground always first.
@@ -361,7 +380,7 @@ Diagnostics describing the nonlinear solution process of
 - `stages`: a vector of per-stage records (subtypes of
     `AbstractStageInfo`), one for each invocation of the nonlinear solver,
     in the order they ran. The direct and Krylov solvers push
-    [`IterationInfo`](@ref); `method = :staged` pushes one
+    [`IterationInfo`](@ref); `method = Staged()` pushes one
     [`StagedStageInfo`](@ref) per attempted continuation stage, each
     carrying its inner solver records. Every record has `label`,
     `converged` and `iterations` fields; the rest is method specific.
@@ -401,7 +420,7 @@ end
         sensitivitynames::Vector{String} = String[],
         sensitivityoperatingpoint = true, sensitivitymode = :auto,
         returnSsensitivity = false, factorization = nothing,
-        backend = CPU())
+        precision = Float64, backend = CPU())
 
 Solve a circuit driven by one or more strong pumps, then linearize about
 that operating point and sweep the weak signal frequencies `ws`. This
@@ -476,13 +495,14 @@ nonzero frequencies instead.
     [`truncfreqs`](@ref).
 - `frequencywindow = (0, Inf)`: a lower and upper bound, in the units of
     `wp`, on the absolute frequency of the retained pump modes; see
-    [`hbnlsolve`](@ref). The signal modes are not windowed.
+    [`hbnlsolve`](@ref). The signal modes are not windowed. The signal modes are not windowed.
 - `iterations = 1000`: the maximum number of nonlinear solver iterations
     before it returns unconverged.
 $(_DOC_FTOL)
 $(_DOC_METHOD)
 - `x0 = nothing`: an initial value for the node fluxes of the nonlinear
-    solve.
+    solve, used by the direct and Krylov methods; a `Staged` method builds
+    its own warm starts and ignores it.
 - `symfreqvar = nothing`: the symbolic frequency variable, such as `w`,
     when component values are expressions in the frequency.
 $(_DOC_NBATCHES)
@@ -502,14 +522,18 @@ $(_DOC_SENSMODE)
 $(_DOC_SSENS)
 - `factorization = nothing`: the factorization of the linearized solve at
     each signal frequency. `nothing` chooses by the number of tones and
-    the memory, as [`Automatic`](@ref) does for the nonlinear solve: the
-    backend's sparse factorization ([`KLUfactorization`](@ref) on the
-    host, [`CUDSSFactorization`](@ref) on a device) for one tone, and
-    [`BlockFactorization`](@ref), the dense node blocks of the multi-tone
-    system with BLAS-3 arithmetic, for two or more tones when its factors
-    fit in half the free memory ([`linearizedfactorization`](@ref)). Any
-    of them can be given explicitly. The nonlinear solve's factorization
-    is an option of its `method`.
+    the memory, by the same kind of rule [`Automatic`](@ref) applies to
+    the nonlinear solve (but in double precision, and counting one system
+    per host batch): the backend's sparse factorization
+    ([`KLUfactorization`](@ref) on the host, [`CUDSSFactorization`](@ref)
+    on a device) for one tone, and [`BlockFactorization`](@ref), the dense
+    node blocks of the multi-tone system with BLAS-3 arithmetic, for two
+    or more tones when its factors fit in half the free memory
+    ([`linearizedfactorization`](@ref)). Any of them can be given
+    explicitly; on a device the choice also picks the solver of the
+    batch, cuDSS for a sparse factorization and the batched block
+    factorization for a `BlockFactorization`. The nonlinear solve's
+    factorization is an option of its `method`.
 - `precision = Float64`: the precision of the linearized solutions;
     `Float32` solves each signal frequency entirely in single precision
     with a `BlockFactorization` (the factors, the solves, no refinement),
@@ -517,8 +541,11 @@ $(_DOC_SSENS)
     about 1e-2 of the largest element of S on strongly resonant
     multi-tone lines, 1e-3 on a plain chain, and four to five times
     faster than double on a device whose single precision rate far
-    exceeds its double one. The outputs are returned in double. The
-    nonlinear solve's precision is `NewtonKrylov(precision = ...)`.
+    exceeds its double one. The outputs are returned in double. It needs
+    the block factorization: `precision = Float32` with an explicit
+    `factorization` which is not a [`BlockFactorization`](@ref) is an
+    `ArgumentError`. The nonlinear solve's precision is
+    `NewtonKrylov(precision = ...)`.
 - `backend = CPU()`: the KernelAbstractions backend both solves run on. The
     nonlinear solve assembles, factorizes and iterates there; the
     linearized sweep solves batches of signal frequencies there and falls
@@ -608,6 +635,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
             iterations = iterations, ftol = ftol,
             Nevaluationharmonics = Nevaluationharmonics,
             maxintermodorder = maxpumpintermodorder,
+            frequencywindow = frequencywindow,
             dc = dc, odd = fourwavemixing, even = threewavemixing,
             symfreqvar = symfreqvar, sorting = sorting,
             keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,

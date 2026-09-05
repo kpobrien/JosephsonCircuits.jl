@@ -110,6 +110,9 @@ the extra solves are exactly where the expensive failures hide.
 - `time`: seconds since the start of the nonlinear solve, so that the
     residual history can be plotted against wall time with the refreshes and
     escalations marked.
+- `escalationrequested`: whether an escalation was requested after this
+    solve; with `escalated` false, that is an escalation the preconditioner
+    refused because the grown factors would not fit its memory budget.
 - `deflationsize`, `deflationrebuilds`, `precondtime`: the active rank of
     the recycled deflation, how many times it has been built, and the wall
     time spent applying the preconditioner in this solve.
@@ -259,8 +262,9 @@ LinearAlgebra.mul!(z::AbstractVector, pc::AbstractPreconditioner,
 
 Make the preconditioner `pc` a better approximation of the Jacobian, at greater
 cost, and return `true`; return `false` when it cannot be improved further.
-Called by [`nlsolvekrylov!`](@ref) when GMRES stagnates repeatedly, which is the
-symptom of a preconditioner too crude for the problem. The default method
+Called by [`nlsolvekrylov!`](@ref) after repeated linear solves which fail to
+reach the forcing tolerance, the symptom of a preconditioner too crude for
+the problem (stagnation alone is deliberately not the trigger). The default method
 returns `false`, which is correct for any preconditioner that is already exact
 or has no cheaper/costlier settings. A preconditioner which can grow must
 also refuse when the grown factors would not fit in memory: the driver
@@ -276,8 +280,9 @@ Preallocated storage for [`gmres!`](@ref) with a restart length of `m` on a
 system of dimension `n`. Holds the `n x (m+1)` Arnoldi basis `V`, the
 `(m+1) x m` Hessenberg matrix `H` as the Givens rotations leave it, the raw
 Arnoldi Hessenberg `Harnoldi` beside it, the Givens rotations `cs` and `sn` which
-reduce it, the least squares right hand side `s`, its solution `y`, and three
-length `n` work vectors.
+reduce it, the least squares right hand side `s`, its solution `y`, three
+length `n` work vectors, and the two length `m` staging buffers `hd` and
+`cd` of the block Gram-Schmidt projection, allocated like `V`.
 
 The dominant cost is `V`, which is `n*(m+1)` numbers, so `m` trades memory and
 orthogonalization work against restart frequency. It is not paid up front:
@@ -549,13 +554,13 @@ direct current block: a deficiency of rank comparable to `kmax` is removed
 leaves on longer lines and stronger drives is not, 20 to 40 directions
 change nothing there and the escalation does the work, so the wrapper is a
 net cost. On a base strong enough to converge in ten Arnoldi steps
-(`krylovcouplingmodes = :auto`) the rebuild is the dominant cost and the
-wrapper loses. It is off by default (`krylovrecycle = 0`) for those reasons,
-and is the natural fit for a sweep at a size where the escalation is what
-it replaces.
+([`MeasuredBand`](@ref)) the rebuild is the dominant cost and the
+wrapper loses. It is not applied by default for those reasons (a
+preconditioner is wrapped in [`Recycling`](@ref) explicitly), and is the
+natural fit for a sweep at a size where the escalation is what it replaces.
 
 The intended base is the mode block diagonal
-([`ModeCouplingPreconditioner`](@ref) with `couplingmodes = :none`): a batch
+([`ModeCouplingPreconditioner`](@ref) with [`BlockDiagonal`](@ref)): a batch
 of small independent factorizations, one per mode, plus dense level 2 BLAS
 for the deflation, so neither part needs a large sparse factorization, and
 both port to a GPU.
@@ -679,7 +684,8 @@ pointmoved!(pc::RecyclingPreconditioner) = (pc.fresh = false; pc)
     stalled!(pc::AbstractPreconditioner)
 
 Tell the preconditioner that the last linear solve reduced its residual
-slowly, by less than `krylovrefreshrate` per Arnoldi step, and return `pc`.
+slowly, by a factor worse than 0.5 per Arnoldi step (the report is off
+under [`Never`](@ref)), and return `pc`.
 The default does nothing. A [`ModeCouplingPreconditioner`](@ref) with
 [`Clusters`](@ref) takes it as the sign that the coupling has
 outgrown its clusters and remeasures them at the next update. Called by
@@ -897,7 +903,7 @@ the point has moved ([`pointmoved!`](@ref)) or a harvest has added
 candidates since the last build, whether or not the base was rebuilt. A
 no-op when the pair is fresh. Without this a subspace would only ever be
 applied after a base refresh, and a base frozen across Newton steps
-(`krylovrefreshiterations` large) would leave the deflation inert.
+(`refresh = Never()`) would leave the deflation inert.
 """
 function _refreshproducts!(pc::RecyclingPreconditioner)
     pc.fresh && return pc
@@ -1327,12 +1333,16 @@ recomputed explicitly at every restart so restarts cannot drift from the
 recurrence estimate.
 
 Converges when `norm(b - A*x) <= max(rtol*norm(b), atol)`. Returns the named
-tuple `(iterations, residual, converged, cycles, reason)`, where `iterations`
-counts Arnoldi steps across all cycles, `cycles` the number of restart cycles
-begun, and `reason` is one of `:converged`, `:breakdown` (an unhappy
-breakdown: the Krylov space went invariant without the residual coming down),
-`:stagnation` (a cycle failed to reduce the explicit residual, or produced a
-non-finite one), or `:iterationlimit`.
+tuple `(iterations, residual, converged, cycles, reason, precondtime,
+residualvector, products)`, where `iterations` counts Arnoldi steps across
+all cycles, `cycles` the number of restart cycles begun, `reason` is one of
+`:converged`, `:breakdown` (an unhappy breakdown: the Krylov space went
+invariant without the residual coming down), `:stagnation` (a cycle failed
+to reduce the explicit residual, or produced a non-finite one), or
+`:iterationlimit`, `precondtime` the seconds spent applying the
+preconditioner, and `residualvector` the final residual `b - A*x` when it
+was formed explicitly (`nothing` otherwise; the caller reads it with `get`,
+as it does `precondtime` and `products`).
 
 `iterations` is *not* the total number of `Aop!` calls: each cycle costs one
 further application for the explicit residual recomputation, and a warm start
@@ -1383,15 +1393,16 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
         if initialzero
             fill!(x, zero(T))
             return (iterations = 0, residual = zero(T), converged = true,
-                reason = :converged, residualvector = nothing, products = 0)
+                cycles = 0, reason = :converged, precondtime = 0.0,
+                residualvector = nothing, products = 0)
         end
         mul!(w, Aop, x)
         products += 1
         resnorm = norm(w)
         if resnorm <= atol
             return (iterations = 0, residual = resnorm, converged = true,
-                reason = :converged, residualvector = nothing,
-                products = products)
+                cycles = 0, reason = :converged, precondtime = 0.0,
+                residualvector = nothing, products = products)
         end
     end
 
@@ -1588,7 +1599,11 @@ KrylovJL(method::Symbol = :gmres; kwargs...) = KrylovJL(method, kwargs)
         oncycle = nothing)
 
 Solve for the Newton step and return the output named tuple `gmres!`
-produces: `converged`, `residual`, `iterations`, `cycles`, `reason`.
+produces. `converged`, `residual`, `iterations`, `cycles` and `reason` are
+required; `residualvector` (the explicit final residual, which the line
+search slope reads, at the cost of one extra Jacobian product when it is
+missing), `precondtime` and `products` are read with `get` and may be
+omitted by an external solver.
 `jvp!(y, v)` applies the Jacobian, in place, and `Mop!` is the
 preconditioner, an [`AbstractPreconditioner`](@ref) or a closure
 `Mop!(z, r)`. `oncycle` is the per-cycle callback of [`gmres!`](@ref),
@@ -1636,10 +1651,12 @@ than the Jacobian makes each Newton step much cheaper than a direct one.
 [`ModeCouplingPreconditioner`](@ref) is the harmonic balance Jacobian with its
 mode coupling restricted, and is exact when every mode is retained.
 
-`pc` is rebuilt lazily: when the GMRES iteration count says it has
-gone stale (`krylovrefreshiterations`), when GMRES fails, when a step is not
-a descent direction, or when a linesearch cannot find any decrease. The
-linear tolerance follows the Eisenstat-Walker choice 2 forcing sequence
+`pc` is rebuilt according to `refresh`: before every step for
+[`Always`](@ref), by the measured rule of [`Probe`](@ref), and for
+[`Never`](@ref) only when forced. A rebuild is forced regardless of the
+policy when a solve makes progress but misses its tolerance, when a step is
+not a descent direction, when the line search finds no decrease, and after
+a successful escalation. The linear tolerance follows the Eisenstat-Walker choice 2 forcing sequence
 `krylovgamma*(|F_k|/|F_{k-1}|)^krylovalpha` clamped to
 `[krylovrtolmin, krylovrtolmax]`, with an absolute floor of `ftol/10` so late
 solves are not pushed below the nonlinear tolerance. Because the assembled
@@ -1649,7 +1666,8 @@ Newton step through a fresh factorization before the iteration is declared
 stalled.
 
 The globalization is the plain damped-Newton path of [`nlsolve!`](@ref):
-the interpolated [`backtracking_linesearch!`](@ref), which on Armijo failure
+the [`backtracking_linesearch!`](@ref) of [`nlsolve!`](@ref) run in halving
+mode (`interpolate = false`), which on Armijo failure
 still takes the best decreasing trial, with consecutive failures counted
 against `maxbacktrackfailures` and a no-decrease step retried once from a
 fresh preconditioner before stopping. There is deliberately no Anderson
@@ -1673,11 +1691,15 @@ solver is kept simple.
     [`GMRES`](@ref) or a [`KrylovJL`](@ref).
 - `refresh = Always()`: when the preconditioner is rebuilt, [`Always`](@ref)
     before every step, by the measured rule of [`Probe`](@ref), or
-    [`Never`](@ref) except when forced. Either way a solve which failed its
-    tolerance, stagnated or produced no descent direction forces a rebuild.
+    [`Never`](@ref) except when forced. Either way a solve which made
+    progress but missed its tolerance, a non-descent direction, a line
+    search with no decrease and a successful escalation force a rebuild.
 - `escalate = true`: whether a preconditioner which makes progress but
     fails to reach its tolerance is escalated (see
-    [`escalatepreconditioner!`](@ref)) rather than tried again.
+    [`escalatepreconditioner!`](@ref)) rather than tried again, within the
+    memory the grown factors are predicted to take; a refused escalation is
+    recorded (`escalationrequested` in the Krylov record) and the solve
+    carries on.
 
 The forcing sequence is Eisenstat-Walker choice 2 with `gamma = 0.9` and
 `alpha = (1 + sqrt(5))/2`, clamped to `[1e-10, 0.9]` and started at 0.3;
@@ -1686,15 +1708,28 @@ safeguards 0.1 and 0.5, at most ten trials and two consecutive failures;
 a solve which does not bring the linear residual below 0.9 of the residual
 norm is treated as stagnated and the preconditioner solve taken as the
 step; and a solve whose residual came down by less than 0.5 per Arnoldi
-step is reported to the preconditioner as slow ([`stalled!`](@ref)). These
-are fixed: none has been changed in any measured case, and each was set by
-the inexact Newton theory or by a measurement recorded beside it.
+step is reported to the preconditioner as slow ([`stalled!`](@ref); off
+under [`Never`](@ref), which also disables the count rule). These are
+fixed: none has been changed in any measured case, and each was set by the
+inexact Newton theory or by a measurement recorded beside it. Two budgets
+bound the work: `iterations` Newton steps, and `iterations` restart
+lengths of Arnoldi steps in total, so that a preconditioner which runs
+every linear solve to its limit cannot turn the step budget into hours.
+A residual history which projects no convergence within the remaining
+budget without accelerating ([`projectedstall`](@ref)) gets one recovery,
+a rebuilt preconditioner and exact Newton steps from then on, and ends the
+solve if it persists.
 
-These defaults are the ones `hbnlsolve` runs with; `krylovkwargs` there
-overrides any of them.
+These are the settings `hbnlsolve` runs with; a caller changes them through
+the [`NewtonKrylov`](@ref) method object (`preconditioner`, `linearsolver`,
+`refresh`, `escalate`, `precision`) and through `hbnlsolve`'s own
+`iterations`, `ftol` and `rtol`.
 
 Returns an [`IterationInfo`](@ref) with the same per-iteration diagnostics
-as [`nlsolve!`](@ref); the `andersonaccepted` record is always false.
+as [`nlsolve!`](@ref) (the `andersonaccepted` record is always false) and a
+`reason` of `:converged`, `:iterations`, `:work` (the Arnoldi budget was
+spent), `:linesearch` (no decrease twice, or a direction which is not a
+descent direction after the exact rescue), or `:progress`.
 """
 function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     x::AbstractVector{T}, pc::AbstractPreconditioner; iterations = 1000, ftol = 1e-8,
@@ -2045,6 +2080,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             dϕ0dα = meritslope!(Jv, jvp, deltax, F, ϕ0,
                 get(out, :residualvector, nothing))
             if !isfinite(ϕ0) || !isfinite(dϕ0dα) || dϕ0dα >= zero(dϕ0dα)
+                reason = :linesearch
                 break
             end
         end

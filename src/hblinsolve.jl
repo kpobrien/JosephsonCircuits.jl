@@ -15,7 +15,7 @@
         sensitivitynames::Vector{String} = String[],
         sensitivitynodeflux = nothing, sensitivityresidual = nothing,
         sensitivitymode = :auto, returnSsensitivity = false,
-        factorization = nothing, backend = CPU())
+        factorization = nothing, precision = Float64, backend = CPU())
 
 Sweep the weak signal frequencies `w` through the circuit linearized about
 the operating point `nonlinear` found by [`hbnlsolve`](@ref), or through
@@ -79,7 +79,10 @@ $(_DOC_SSENS)
     chooses by the number of tones and the memory
     ([`linearizedfactorization`](@ref)): the sparse factorization for one
     tone, the block factorization in double for two or more when its
-    factors fit in half the free memory of the backend.
+    factors fit in half the free memory of the backend. On a device the
+    choice also picks the solver of the batch: a sparse factorization is
+    solved by cuDSS, a `BlockFactorization` by the batched block
+    factorization.
 - `precision = Float64`: the precision of the linearized solutions.
     `Float32` solves each frequency entirely in single precision with a
     [`BlockFactorization`](@ref) in single precision, equilibrated, with
@@ -177,7 +180,7 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    factorization = nothing, backend = CPU())
+    factorization = nothing, precision::Type = Float64, backend = CPU())
 
     # compile the circuit and build its graph; the matrices are assembled
     # by the method below at the signal mode count
@@ -210,7 +213,8 @@ return hblinsolve(w, psc, cg, circuitdefs, signalfreq;
         returnZadjoint = returnZadjoint,
         returnZsensitivity = returnZsensitivity,
         returnZsensitivityadjoint = returnZsensitivityadjoint,
-        factorization = factorization, backend = backend)
+        factorization = factorization, precision = precision,
+        backend = backend)
 end
 
 # A fully numeric circuit needs no component definitions.
@@ -231,10 +235,11 @@ what the other methods call after building those; it takes every keyword
 of the general method except the ones which describe the mode set
 (`Nmodulationharmonics`, `threewavemixing`, `fourwavemixing`,
 `maxharmonics`, `maxintermodorder`, `sorting`), plus the design parameter
-sensitivity keywords described under [`hbsolve`](@ref) and
-`debuglsys = false`, which returns the [`HBLinearizedSystem`](@ref) and its
-ingredients instead of solving, for building reference implementations
-in tests.
+sensitivity keywords described under [`hbsolve`](@ref) (`sensitivitypairs`,
+`sensitivityblockpairs`, `nsensitivityparameters`, `sensitivitylabels`,
+which only this method accepts) and `debuglsys = false`, which returns
+the [`HBLinearizedSystem`](@ref) and its ingredients instead of solving,
+for building reference implementations in tests.
 
 # Examples
 ```jldoctest

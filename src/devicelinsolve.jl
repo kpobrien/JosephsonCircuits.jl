@@ -23,9 +23,10 @@ into one coefficient at build time: `AoLjnm` with `Amna0`, and `Gnm` with
 `AmnaG`. Conjugation distributes over that sum, so this is exact.
 
 Because the coefficients do not depend on the signal frequency, one kernel
-fills the stored values of a whole batch of frequencies, which is what cuDSS
-wants for a uniform batch: the batch shares one sparsity pattern and one
-symbolic analysis, and only the values differ.
+fills the stored values of a whole batch of frequencies, which is what a
+uniform batch wants, whether cuDSS's or the batched block factorization's:
+the batch shares one sparsity pattern and one symbolic analysis, and only
+the values differ.
 
 # Fields
 - `colof`: the matrix column of each stored entry, from which its mode
@@ -33,8 +34,14 @@ symbolic analysis, and only the values differ.
     also the structure's own column index array; for the transposed one it is
     not, so it is carried separately.
 - `cst`, `kinvL`, `kG`, `kC`: the four coefficient vectors, in the stored
-    order of the transposed structure.
+    order of whichever structure the plan was built for (compressed sparse
+    row of the matrix for the forward plan, the matrix's own stored order
+    for the adjoint one).
 - `wpump`: the pump mode frequency offsets of the signal modes.
+- `assemble!`, `backend`: the compiled assembly kernel and the backend it
+    was compiled for.
+- `nmodes`, `nnz`: the mode count the kernel takes a column's mode from,
+    and the number of stored entries, which sizes the value matrix.
 """
 struct FrequencySweepPlan{VI,VC,VR,K,B}
     colof::VI
@@ -127,11 +134,15 @@ to form: compressed sparse row of the transpose is compressed sparse column of
 the matrix, which is how the host holds it, so the adjoint plan is the same
 coefficients in their original order against the original structure.
 
-The adjoint costs a second symbolic analysis and a second numeric
-factorization per batch, because cuDSS 0.8 has no transposed solve (its
-`"solve_mode"` is documented in the header as unsupported), so the factors of
-the forward system cannot be reused the way the host reuses them with
-[`trysolvetranspose!`](@ref).
+With cuDSS the adjoint costs a second symbolic analysis and a second
+numeric factorization per batch, because cuDSS 0.8 has no transposed solve
+(its `"solve_mode"` is documented in the header as unsupported), so the
+factors of the forward system cannot be reused the way the host reuses
+them with [`trysolvetranspose!`](@ref). The block path asks for the
+adjoint plan for a different reason: its coefficients are in the matrix's
+own stored order, which is the order a [`SparseBlockFactorization`](@ref)
+fills its blocks from, and it costs no second factorization, since the
+block factors solve both directions.
 """
 function planfrequencysweep(lsys::HBLinearizedSystem, backend;
     adjoint::Bool = false)
@@ -274,8 +285,9 @@ scattering blocks of a [`ScatteringNoisePlan`](@ref) are such a source, as
 the lumped noise ports are.
 
 This does not depend on the frequency, and both the host loop and the device
-sweep test it, the latter because it has no factorization to solve the
-transposed system against.
+sweep test it, the latter to decide whether to allocate and solve the
+adjoint direction at all (with cuDSS a whole second factorization, with a
+block factorization a second solve against the same factors).
 """
 function needsadjointsolve(arrays::LinearizedArrays,
     noiseportimpedanceindices, noiseplan = nothing)
@@ -291,10 +303,14 @@ end
 
 """
     devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
-        adjoint = nothing)
+        adjoint = nothing; factorization = nothing, refine = true)
 
 Callbacks which fill the solutions of the linearized system at a signal
 frequency, computing them on `backend` a batch of frequencies at a time.
+`factorization` is the linearized solve's factorization: a
+[`BlockFactorization`](@ref) takes the batched block path below, anything
+else the cuDSS one. `refine` asks single precision block factors to refine
+against the double residual; `false` is the fully single precision sweep.
 
 Returns
 `(batchsize, solvebatch!, providers, forward, adjoint, adjointdevice)`.
@@ -317,8 +333,12 @@ solution touches staged host memory and nothing else.
 
 The systems of a batch share one sparsity pattern, so cuDSS analyzes it once
 and then refactorizes and solves the whole batch together, from the values of
-one [`assemblesweep!`](@ref). The batch size is capped by
-[`uniformbatchlimit`](@ref).
+one [`assemblesweep!`](@ref). With a sparse device factorization the batch
+size is capped by [`uniformbatchlimit`](@ref); with a
+[`BlockFactorization`](@ref) the cap does not apply and the batch is sized by
+[`blocksystembytes`](@ref), the factors, the originals when refining, the
+solutions of both directions and the value matrix of one system, against
+half the backend's free memory and the length of the sweep.
 
 `forward` and `adjoint` each describe what a direction needs, as a named tuple
 `(full, rows)`. With `full` the whole solution is copied back, which the node
@@ -326,11 +346,15 @@ flux, voltage and sensitivity outputs need; otherwise only `rows` are gathered
 and returned, which for the scattering parameters is a handful of port rows
 out of the whole circuit (see [`portsolutionrows`](@ref)).
 
-The adjoint direction is a second uniform batch, over the transposed system.
-cuDSS 0.8 cannot solve against the transpose of a factorization, so unlike the
-host, which gets its adjoint solutions from the forward factors with
-[`trysolvetranspose!`](@ref), this pays a second analysis and a second
-factorization per batch.
+With a sparse device factorization the adjoint direction is a second uniform
+batch over the transposed system: cuDSS 0.8 cannot solve against the
+transpose of a factorization, so unlike the host, which gets its adjoint
+solutions from the forward factors with [`trysolvetranspose!`](@ref), it
+pays a second analysis and a second factorization per batch. A
+[`BlockFactorization`](@ref) solves both directions from the one
+factorization, reading the same factors the other way round
+([`blocksolve!`](@ref) with `transposed = true`), and assembles one batch
+of values in the stored column order for both.
 """
 function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     adjoint = nothing; factorization = nothing, refine::Bool = true)

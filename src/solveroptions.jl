@@ -304,7 +304,9 @@ end
     withfactorization(s, f)
 
 The preconditioner spec `s` with its factorization replaced by `f` where it
-had none; a deflation applies this to what it wraps.
+had none; a deflation applies this to what it wraps. An [`Automatic`](@ref)
+is returned unchanged: it carries no factorization, and the member it
+resolves to takes the backend's default (`resolveautomatic`).
 """
 withfactorization(s::BlockDiagonal, f) =
     isnothing(s.factorization) ? BlockDiagonal(f) : s
@@ -363,10 +365,16 @@ struct Probe end
 """
     Never()
 
-Rebuild the preconditioner only when a linear solve fails its tolerance,
-stagnates or produces no descent direction: a frozen preconditioner, for
-when a deflation ([`Recycling`](@ref), [`Floquet`](@ref)) is to carry the
-solve across the Newton path against a base built once.
+Rebuild the preconditioner only when it is forced: a linear solve which
+makes progress but misses its tolerance, a direction which is not a
+descent direction, a line search which finds no decrease, or a successful
+escalation. A stagnated solve is not retried and does not rebuild; its
+step is replaced by the preconditioner solve. The slow-solve report to the
+preconditioner ([`stalled!`](@ref)) is off as well, so a [`Clusters`](@ref)
+preconditioner never remeasures under this policy. A frozen
+preconditioner, for when a deflation ([`Recycling`](@ref),
+[`Floquet`](@ref)) is to carry the solve across the Newton path against a
+base built once.
 """
 struct Never end
 
@@ -397,17 +405,22 @@ rebuilds the preconditioner only when a measured probe says a rebuild
 pays, and is faster by a fifth to a third on the hard cases, at the price
 of a solve path which depends on measured times and so can differ
 between two runs) or [`Never`](@ref). `escalate` allows a preconditioner
-which fails to reach its tolerance to be grown to the full Jacobian (see
+which fails to reach its tolerance to be grown (a band by one offset per
+tone, any other set to the full Jacobian; see
 [`escalatepreconditioner!`](@ref)), within the memory the grown factors
-are predicted to take.
+are predicted to take; a refused escalation is recorded and the solve
+carries on.
 
 The solve ends promptly when it cannot succeed and says why, in the
 `reason` of its [`IterationInfo`](@ref): `:iterations` when the Newton
 steps are spent; `:work` when the Arnoldi steps exceed `iterations`
 restart lengths, so that a preconditioner which runs every linear solve to
 its limit cannot turn the step budget into hours; `:linesearch` when no
-sufficient decrease can be found, once with none at all or twice in a row
-short of the Armijo condition; `:progress` when the residual history
+sufficient decrease can be found (a step with no decrease at all is
+retried once from a rebuilt preconditioner and ends the solve if it fails
+again, as does a direction which is still not a descent direction after
+the exact rescue, or two consecutive steps short of the Armijo
+condition); `:progress` when the residual history
 projects no convergence within the remaining budget and is not
 accelerating, after one recovery which rebuilds the preconditioner and
 takes exact Newton steps from then on ([`projectedstall`](@ref)). A stall
@@ -499,13 +512,23 @@ function Staged(; grids = nothing, s0::Real = 0.5, smin::Real = 0.02,
         verbose)
 end
 
-# the precision of the iteration a method runs in
+"""
+    solverprecision(m::AbstractHBNonlinearSolver)
+
+The floating point type the method iterates in: `Float64` for every method
+but [`NewtonKrylov`](@ref), whose `precision` it is, and the inner method's
+for [`Staged`](@ref).
+"""
 solverprecision(m::NewtonKrylov) = m.precision
 solverprecision(m::Staged) = solverprecision(m.inner)
 solverprecision(::AbstractHBNonlinearSolver) = Float64
 
-# a method with its escalation switched, for the interior stages of the
-# staged solver; methods without escalation are returned unchanged
+"""
+    withescalation(m::AbstractHBNonlinearSolver, flag::Bool)
+
+The method with its `escalate` set to `flag`, for the interior stages of
+[`Staged`](@ref); methods without escalation are returned unchanged.
+"""
 withescalation(m::NewtonKrylov, flag::Bool) = NewtonKrylov(m.preconditioner,
     m.linearsolver, m.refresh, flag, m.precision)
 withescalation(m::AbstractHBNonlinearSolver, ::Bool) = m

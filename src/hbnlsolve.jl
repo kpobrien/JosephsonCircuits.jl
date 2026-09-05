@@ -293,7 +293,13 @@ with its graph `cg` and matrices `nm`, at the mode set `frequencies` with
 its Fourier indices `indices`. This is what the other methods call after
 building those; it takes every keyword of the general method except the
 ones which describe the mode set (`Nharmonics`, `Nevaluationharmonics`,
-`maxintermodorder`, `dc`, `odd`, `even`, `sorting`, `stagedkwargs`).
+`maxintermodorder`, `frequencywindow`, `dc`, `odd`, `even`, `sorting`),
+and it does not accept `method = Staged()`, whose continuation builds each
+stage's own system. It takes one keyword the general method does not:
+`reuse = nothing`, an [`HBReuse`](@ref) which a `NewtonKrylov` solve fills
+and every later solve of the same topology, mode grid, precision and
+backend rebinds (a mismatch is an `ArgumentError`); the other methods
+ignore it.
 
 # Examples
 ```jldoctest
@@ -820,7 +826,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         Jx, complexjacobianplan
     end
 
-    # `:newtonkrylov` is deliberately absent: its steps come from the
+    # `NewtonKrylov()` is deliberately absent: its steps come from the
     # matrix-free Jacobian-vector product, and its preconditioner assembles
     # its own much sparser restricted plan, so the full Jacobian plan (the
     # largest object in a multi-tone solve) is never built.
@@ -1051,14 +1057,16 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # Jacobian-vector product and the solution are always those of the
         # requested truncation.
         #
-        # The default is the mode block diagonal, whose factorization is a
-        # batch of small independent per mode solves rather than one large
-        # sparse factorization. On a strongly pumped line the block diagonal
-        # alone stalls; what rescues it is escalation, which grows the base
-        # only on repeated linear failures and in practice fires once or
-        # twice.
+        # The default is `Automatic()`: the mode block diagonal for one tone,
+        # whose factorization is a batch of small independent per mode solves
+        # rather than one large sparse factorization, and the full Jacobian
+        # in single precision block factors for two or more tones when they
+        # fit in memory (see `resolveautomatic`). On a strongly pumped line
+        # the block diagonal alone stalls; what rescues it is escalation,
+        # which grows the base only on repeated linear failures and in
+        # practice fires once or twice.
         #
-        # `krylovcouplingmodes = :band => p` restricts the retained coupling by
+        # `HarmonicBand(p)` restricts the retained coupling by
         # harmonic *offset* rather than by column (see `modebandmask`). That is
         # the restriction the Toeplitz structure of the nonlinear term asks for,
         # and at equal fill it is not close: on an eight mode chain driven to
@@ -1075,12 +1083,12 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         # against 8.19 s for mode selection and 5.48 s for the direct solve,
         # having been the slower of the two at 128 cells.
         #
-        # `krylovrecycle > 0` additionally wraps the base in a recycled
+        # `Recycling(...)` additionally wraps the base in a recycled
         # deflation subspace. It also rescues the block diagonal, and needs no
         # sparse factorization at all, which makes it the natural fit for a
         # GPU; but it is a second answer to the same problem and measured a
         # net loss against escalation at 192 cells and above, so it is off by
-        # default. `krylovcouplingmodes = 12, krylovrecycle = 0` recovers the
+        # default. `CoupledModes(1:12)` with no deflation recovers the
         # earlier frequency based mode selection, which is still the fastest
         # option on moderately sized lines.
         # the preconditioner the method asks for: a mode coupling
