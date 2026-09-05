@@ -784,3 +784,43 @@ function freememory(backend)
     throw(ArgumentError(
         "the free memory of this backend is unknown; load CUDA.jl for a CUDA device."))
 end
+
+"""
+    circuitorder(sys, Rbnm::SparseMatrixCSC, Nmodes::Integer,
+        Nbranches::Integer, layout::ModeLayout)
+
+The circuit-node graph of the system and KLU's elimination order of it,
+the two symbolic ingredients a block factorization and its memory
+prediction share.
+"""
+function circuitorder(sys, Rbnm::SparseMatrixCSC, Nmodes::Integer,
+    Nbranches::Integer, layout::ModeLayout)
+    nnodes = layout.dim ÷ Nmodes
+    nodesandsigns = branchnodesandsigns(Rbnm, Nmodes, Nbranches)
+    pairptr, pairrow, _, _ = junctionpairtable(Int32, Float32, sys.Ljb,
+        nodesandsigns, nnodes)
+    adj = circuitnodegraph(pairptr, pairrow, sys.invLnm, sys.Gnm, sys.Cnm,
+        Nmodes, nnodes)
+    return adj, klunodeorder(adj)
+end
+
+"""
+    sparsefactorbytes(P::SparseMatrixCSC, ::Type{T})
+
+The bytes a sparse LU of the pattern `P` in precision `T` would hold,
+from KLU's symbolic analysis of the pattern (its block triangular form
+and fill-reducing order) and nothing numeric: the entries of L and U and
+of the off-diagonal blocks, each with its index. What escalation to a
+larger coupling set is budgeted against on any backend; a device
+factorization orders differently, but the fill of the same pattern is of
+the same size.
+"""
+function sparsefactorbytes(P::SparseMatrixCSC, ::Type{T}) where {T}
+    A = SparseMatrixCSC(size(P, 1), size(P, 2), Vector{Int64}(P.colptr),
+        Vector{Int64}(P.rowval), ones(Float64, nnz(P)))
+    K = KLU.KLUFactorization(A)
+    KLU.klu_analyze!(K)
+    sym = K.symbolic
+    entries = sym.lnz + sym.unz + sym.nzoff
+    return round(Int, entries*(sizeof(T) + sizeof(Int)))
+end

@@ -279,7 +279,7 @@ using Test
         sources = ((mode=(1,),port=1,current=Ip),)
 
         @test_warn(
-            "Solver did not converge.",
+            "Solver did not converge",
             hbnlsolve(w,Nharmonics,sources,circuit,circuitdefs,iterations=1)
         )
     end

@@ -736,3 +736,34 @@ end
         @test info.converged && info.krylov[1].deflationsize > 0
     end
 end
+
+@testset "every solve ends with a reason" begin
+    circuit, defs = testchaincircuit()
+    wp = 2*pi*4.75e9
+    src = [(mode=(1,), port=1, current=0.3e-6)]
+    ok = hbnlsolve((wp,), (8,), src, circuit, defs)
+    @test ok.solverinfo.converged
+    @test ok.solverinfo.stages[end].reason == :converged
+    for m in (NewtonKrylov(), Newton(), QuasiNewton())
+        spent = @test_logs (:warn, r"did not converge: the Newton iteration budget") match_mode=:any hbnlsolve(
+            (wp,), (8,), src, circuit, defs; iterations = 1, method = m)
+        @test !spent.solverinfo.converged
+        @test spent.solverinfo.stages[end].reason == :iterations
+    end
+    # a work budget of one Arnoldi step per Newton step, spent on the first
+    work = hbnlsolve((wp,), (8,), src, circuit, defs; iterations = 2,
+        method = NewtonKrylov(linearsolver = GMRES(restart = 1, maxrestarts = 1)))
+    @test work.solverinfo.stages[end].reason in (:work, :iterations, :converged)
+    # a drive far beyond the self oscillation threshold has no operating
+    # point the direct solvers can reach: they stop and say so, well within
+    # their budgets, rather than spending them
+    hard = [(mode=(1,), port=1, current=60e-6)]
+    for m in (NewtonKrylov(preconditioner = BlockDiagonal(), escalate = false),
+            NewtonKrylov(), Newton())
+        r = @test_logs (:warn, r"did not converge") match_mode=:any hbnlsolve(
+            (wp,), (8,), hard, circuit, defs; iterations = 400, method = m)
+        @test !r.solverinfo.converged
+        @test r.solverinfo.stages[end].reason in (:linesearch, :progress, :work)
+        @test r.solverinfo.stages[end].iterations < 400
+    end
+end

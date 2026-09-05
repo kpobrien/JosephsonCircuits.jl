@@ -70,4 +70,14 @@ using JosephsonCircuits, Test, LinearAlgebra
         @test_throws ArgumentError hbnlsolve((w1,w2), (8,4), src, circuit,
             defs; dc = true, odd = true, even = true, method = Staged(s0 = 0.0))
     end
+
+    @testset "a spent schedule returns not converged" begin
+        r = @test_logs (:warn, r"maxattempts") match_mode=:any hbnlsolve(
+            (w1,w2), (8,4), src, circuit, defs; dc = true, odd = true,
+            even = true, method = Staged(maxattempts = 1))
+        @test !r.solverinfo.converged
+        @test length(r.solverinfo.stages) == 1
+        @test isnan(r.solverinfo.sourcefold)
+    end
+
 end

@@ -103,10 +103,10 @@ const MaybeFactorization = Union{Nothing,AbstractFactorization}
 """
     BlockDiagonal(; factorization = nothing)
 
-The mode block diagonal, the default preconditioner: one small independent
-factorization per mode, and no coupling. Cheap, and sufficient for one
-tone and for weak drives; on a strongly pumped device it stalls and is
-grown to the full Jacobian by escalation.
+The mode block diagonal, what [`Automatic`](@ref) picks for one tone: one
+small independent factorization per mode, and no coupling. Cheap, and
+sufficient for one tone and for weak drives; on a strongly pumped device
+it stalls and is grown to the full Jacobian by escalation.
 """
 struct BlockDiagonal{F<:MaybeFactorization} <: AbstractModeCoupling
     factorization::F
@@ -332,9 +332,10 @@ withfactorization(s::Floquet, f) = Floquet(withfactorization(s.inner, f),
 """
     Always()
 
-Rebuild the preconditioner before every Newton step. The default: a
-preconditioner frozen at zero flux, where the Jacobian has no harmonic
-coupling, is stale at once, and rebuilding the block diagonal is cheap.
+Rebuild the preconditioner before every Newton step: the default, and
+the policy whose solve path depends on nothing measured, so that the same
+problem solves the same way every time. [`Probe`](@ref) measures whether
+a rebuild pays and skips the ones which do not.
 """
 struct Always end
 
@@ -353,6 +354,9 @@ factorization; it pays when a rebuild is expensive next to a solve, as
 with a [`BlockFactorization`](@ref) of three tones, where it saved a
 fifth to a third of the time. A rebuild forced by a failed, stalled or
 non-descent solve is never skipped.
+Because the decision rests on measured times, the path a solve takes,
+and the answer within the tolerance, can differ between two runs of the
+same problem; the default [`Always`](@ref) is reproducible.
 """
 struct Probe end
 
@@ -381,16 +385,34 @@ A method of solving the operating point, the `method` of
 abstract type AbstractHBNonlinearSolver end
 
 """
-    NewtonKrylov(; preconditioner = BlockDiagonal(), linearsolver = GMRES(),
+    NewtonKrylov(; preconditioner = Automatic(), linearsolver = GMRES(),
         refresh = Always(), escalate = true, precision = Float64)
 
 Jacobian-free Newton-Krylov with the mode coupling preconditioner: the
-default. `preconditioner` is an [`AbstractPreconditionerSpec`](@ref)
-([`Automatic`](@ref) picks the fastest one that fits in memory),
-`linearsolver` a [`GMRES`](@ref) or a [`KrylovJL`](@ref) solver, `refresh`
-[`Always`](@ref) or [`Probe`](@ref). `escalate` allows a preconditioner
+default. `preconditioner` is an [`AbstractPreconditionerSpec`](@ref); the
+default [`Automatic`](@ref) picks the fastest one measured that fits in
+memory. `linearsolver` is a [`GMRES`](@ref) or a [`KrylovJL`](@ref)
+solver, `refresh` [`Always`](@ref) (the default), [`Probe`](@ref) (which
+rebuilds the preconditioner only when a measured probe says a rebuild
+pays, and is faster by a fifth to a third on the hard cases, at the price
+of a solve path which depends on measured times and so can differ
+between two runs) or [`Never`](@ref). `escalate` allows a preconditioner
 which fails to reach its tolerance to be grown to the full Jacobian (see
-[`escalatepreconditioner!`](@ref)). `precision` is the floating point type
+[`escalatepreconditioner!`](@ref)), within the memory the grown factors
+are predicted to take.
+
+The solve ends promptly when it cannot succeed and says why, in the
+`reason` of its [`IterationInfo`](@ref): `:iterations` when the Newton
+steps are spent; `:work` when the Arnoldi steps exceed `iterations`
+restart lengths, so that a preconditioner which runs every linear solve to
+its limit cannot turn the step budget into hours; `:linesearch` when no
+sufficient decrease can be found, once with none at all or twice in a row
+short of the Armijo condition; `:progress` when the residual history
+projects no convergence within the remaining budget and is not
+accelerating, after one recovery which rebuilds the preconditioner and
+takes exact Newton steps from then on ([`projectedstall`](@ref)). A stall
+outside the Newton basin is the continuation problem [`Staged`](@ref)
+exists for. `precision` is the floating point type
 of the iteration: the system on the backend, the Krylov vectors, and the
 factors of a sparse preconditioner; a single precision solve needs a
 relative tolerance `rtol` it can meet.
@@ -408,7 +430,7 @@ struct NewtonKrylov{P<:AbstractPreconditionerSpec,L,R<:AbstractRefresh,T} <: Abs
     escalate::Bool
     precision::Type{T}
 end
-function NewtonKrylov(; preconditioner::AbstractPreconditionerSpec = BlockDiagonal(),
+function NewtonKrylov(; preconditioner::AbstractPreconditionerSpec = Automatic(),
     linearsolver = GMRES(), refresh::AbstractRefresh = Always(),
     escalate::Bool = true, precision::Type{<:AbstractFloat} = Float64)
     linearsolver isa AbstractHBLinearSolver || throw(ArgumentError(

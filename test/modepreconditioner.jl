@@ -690,6 +690,23 @@ using Test
             [(mode=(1,), port=1, current=0.3e-6)], circuit2, defs2;
             method = NewtonKrylov(preconditioner = Automatic()))
         @test one.solverinfo.converged
+        # the memory prediction of any coupling set, from the structure
+        # alone, and the escalation budget it is held to
+        @test pc.predict(FullJacobian(BlockFactorization(precision = Float32))) == pred
+        @test pc.predict(FullJacobian()) > pc.predict(BlockDiagonal()) > 0
+        pcb = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lmean,
+            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
+            layout; spec = BlockDiagonal(), Amatrixmodes = d.Amatrixmodes)
+        @test pcb.budget === nothing
+        pcb.budget = 0
+        @test !JosephsonCircuits.escalatepreconditioner!(pcb)
+        @test pcb.coupling isa BlockDiagonal
+        @test pcb.escalations == 0
+        pcb.budget = pcb.predict(FullJacobian())
+        @test JosephsonCircuits.escalatepreconditioner!(pcb)
+        @test pcb.coupling isa FullJacobian
+        @test pcb.escalations == 1
     end
 
 end

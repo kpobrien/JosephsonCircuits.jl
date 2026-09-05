@@ -124,7 +124,12 @@ the finest grid itself brackets a fold, the end of the solution branch
 (the self oscillation threshold) between the last converged drive fraction
 and the stalled one. Before reporting it, one plain damped solve at the
 full drive is attempted from the last converged point, since a coexisting
-branch may reach it; failing that, an error states the bracket.
+branch may reach it; failing that, the solve returns not converged with
+a warning stating the bracket, and `solverinfo.sourcefold` holds the last
+converged drive fraction. No path throws: a schedule which cannot reach
+the point (its attempts spent, a carried point which does not reconverge,
+a first step which stalls) warns, returns its last attempt marked not
+converged, and records the whole walk in `solverinfo.stages`.
 
 # Keywords
 - `grids = defaultgridladder(Nharmonics)`: the coarse to fine ladder of
@@ -206,6 +211,9 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
     attempts = 0
     stagerecords = AbstractStageInfo[]
     pendinggrow = false
+    last = nothing      # the most recent attempt, converged or not
+    gaveup = false      # the schedule ended without the requested point
+    fold = NaN          # the last converged drive fraction below a fold
     record = function (cand, grid, sfrom, starget, action, accepted, secs)
         si = cand.solverinfo
         push!(stagerecords, StagedStageInfo("staged", si.converged,
@@ -216,12 +224,16 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
     end
     while true
         attempts += 1
-        attempts > maxattempts && error(
-            lazy"the staged schedule did not converge in `maxattempts` = $(maxattempts) stage solves; last converged drive fraction $(s) on grid $(grids[gi]).")
+        if attempts > maxattempts
+            @warn lazy"the staged schedule did not converge in `maxattempts` = $(maxattempts) stage solves; last converged drive fraction $(s) on grid $(grids[gi])."
+            gaveup = true
+            break
+        end
         starget = min(1.0, s + ds)
         final = gi == length(grids) && starget >= 1.0
         t0 = time_ns()
         cand = solve(grids[gi], starget, x, final)
+        last = cand
         ok = cand.solverinfo.converged
         # the first solve after carrying a full drive point to a larger
         # grid is a growth, not a drive advance
@@ -257,8 +269,11 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
             # the current grid's own solvability boundary: grow the grid at
             # the converged drive, retreating the drive on the new grid if
             # the carried point does not reconverge there
-            isnothing(x) && error(
-                "the first stage stalled at its first drive step; lower `s0`.")
+            if isnothing(x)
+                @warn "the first stage stalled at its first drive step; lower `s0`."
+                gaveup = true
+                break
+            end
             bigmodes = modesof(grids[gi+1])
             bigx = stagedembed(out, bigmodes)
             gi += 1
@@ -266,6 +281,7 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
             for f in (1.0, 0.9, 0.8, 0.65, 0.5)
                 t0 = time_ns()
                 re = solve(grids[gi], f*s, bigx, false)
+                last = re
                 record(re, grids[gi], s, f*s, :grow,
                     re.solverinfo.converged, (time_ns() - t0)/1e9)
                 verbose && println("staged: grow -> ", grids[gi], " at s=",
@@ -280,8 +296,11 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
                     break
                 end
             end
-            reconverged || error(
-                lazy"the carried point did not reconverge on grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid.")
+            if !reconverged
+                @warn lazy"the carried point did not reconverge on grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid."
+                gaveup = true
+                break
+            end
             ds = s0/2
         elseif pendinggrow
             # The stalled point was carried to the finest grid from a
@@ -290,12 +309,16 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
             # Retreat the drive on the finest grid and walk back up; only a
             # stall from a point converged on the finest grid brackets a
             # fold.
-            isnothing(x) && error(
-                "the first stage stalled at its first drive step; lower `s0`.")
+            if isnothing(x)
+                @warn "the first stage stalled at its first drive step; lower `s0`."
+                gaveup = true
+                break
+            end
             reconverged = false
             for f in (0.9, 0.8, 0.65, 0.5)
                 t0 = time_ns()
                 re = solve(grids[gi], f*s, x, false)
+                last = re
                 record(re, grids[gi], s, f*s, :grow,
                     re.solverinfo.converged, (time_ns() - t0)/1e9)
                 verbose && println("staged: retreat on ", grids[gi], " at s=",
@@ -310,8 +333,11 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
                     break
                 end
             end
-            reconverged || error(
-                lazy"the carried point did not reconverge on the finest grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid.")
+            if !reconverged
+                @warn lazy"the carried point did not reconverge on the finest grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid."
+                gaveup = true
+                break
+            end
             pendinggrow = false
             ds = s0/2
         else
@@ -323,6 +349,7 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
             if starget < 1.0 && !isnothing(x)
                 t0 = time_ns()
                 jump = solve(grids[gi], 1.0, x, true)
+                last = jump
                 record(jump, grids[gi], s, 1.0, :final,
                     jump.solverinfo.converged, (time_ns() - t0)/1e9)
                 verbose && println("staged: branch-end jump to s=1.0 |F|=",
@@ -333,9 +360,15 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
                     break
                 end
             end
-            error(lazy"no harmonic balance solution was found at the requested drive: the source continuation converged at $(round(s, digits = 4)) of the requested amplitudes on the finest grid $(grids[end]) and stalled at $(round(starget, digits = 4)), so the solution branch ends between them (a fold, the self oscillation threshold), and a direct solve at full drive from the last converged point also failed. No operating point at the requested drive is reachable from below.")
+            @warn lazy"no harmonic balance solution was found at the requested drive: the source continuation converged at $(round(s, digits = 4)) of the requested amplitudes on the finest grid $(grids[end]) and stalled at $(round(starget, digits = 4)), so the solution branch ends between them (a fold, the self oscillation threshold), and a direct solve at full drive from the last converged point also failed. No operating point at the requested drive is reachable from below."
+            fold = s
+            gaveup = true
+            break
         end
     end
+    # a schedule which gave up returns its last attempt, marked not
+    # converged whatever that attempt was, with the whole walk recorded
+    gaveup && (out = last)
     # the diagnostics are the whole walk, one StagedStageInfo per attempt
     # with its inner solver records
     si = out.solverinfo
@@ -344,8 +377,8 @@ function stagedhbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int},
     catch
         si.initialresidual
     end
-    newsi = SolverInfo(stagerecords, F0, si.finalresidual, si.converged,
-        si.sourcefold)
+    newsi = SolverInfo(stagerecords, F0, si.finalresidual,
+        !gaveup && si.converged, fold)
     vals = Any[getfield(out, f) for f in fieldnames(typeof(out))]
     vals[findfirst(==(:solverinfo), fieldnames(typeof(out)))] = newsi
     out = typeof(out)(vals...)

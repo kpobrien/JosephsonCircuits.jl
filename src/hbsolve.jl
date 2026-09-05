@@ -368,8 +368,9 @@ Diagnostics describing the nonlinear solution process of
 - `initialresidual`: the norm of the residual at the initial value.
 - `finalresidual`: the norm of the residual at the returned solution.
 - `converged`: whether the solver reported convergence.
-- `sourcefold`: always `NaN`. Reserved for a source stepping continuation
-    which is not implemented; kept so the field layout does not change.
+- `sourcefold`: `NaN`, except for a [`Staged`](@ref) solve which found the
+    solution branch ending below the requested drive, where it is the last
+    drive fraction the continuation converged at.
 """
 struct SolverInfo
     stages

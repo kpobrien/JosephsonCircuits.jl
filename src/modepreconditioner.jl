@@ -538,6 +538,13 @@ mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
     nzval
     # the state of a `Clusters` request, `nothing` otherwise
     const clusterprobe
+    # predicts the bytes the factors of a coupling set would hold, from the
+    # symbolic analysis alone, so an escalation can be refused before it is
+    # built (`predict(S)`)
+    const predict
+    # the memory an escalation may take; `nothing` for half the backend's
+    # free memory at the time
+    budget::Union{Nothing,Int}
 end
 
 """
@@ -696,12 +703,41 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         return P, dp, nzval
     end
 
+    # the memory the factors of a coupling set would take, sized from the
+    # symbolic structure alone: the block predictor for block factors, KLU's
+    # analysis of the host pattern for a sparse factorization
+    function predict(S::AbstractModeCoupling)
+        keep = couplingmask(S, Nmodes, Amatrixmodes)
+        f = something(S.factorization, factorization)
+        Tv = isnothing(precision) ?
+            real(promote_type(typeof(sys.Lmean),
+                isempty(sys.Ljb.nzval) ? typeof(sys.Lmean) : real(eltype(sys.Ljb)))) :
+            precision
+        function sparsebytes(mask)
+            Ami = restrictmodecoupling(Amatrixindices, mask)
+            Amc = restrictmodecoupling(Amatrixconjindices, mask)
+            P, _ = realjacobianstructure(Ami, Amc, sys.Ljb, Rbnm, Nmodes,
+                Nbranches, sys.invLnm, sys.Gnm, sys.Cnm, layout, layout, Tv)
+            return sparsefactorbytes(P, Tv)
+        end
+        f isa BlockFactorization || return sparsebytes(keep)
+        adj, order = circuitorder(sys, Rbnm, Nmodes, Nbranches, layout)
+        bytes = blockfactorbytes(something(f.precision, Tv), keep, adj, order,
+            Nmodes, layout)
+        # the modes the block factors leave single are the sparse block
+        # diagonal preconditioner's, sized by the whole block diagonal
+        isempty(singletonmodes(keep)) && return bytes
+        return bytes + sparsebytes(couplingmask(BlockDiagonal(), Nmodes,
+            Amatrixmodes))
+    end
+
     P, dp, nzval = build(coupling)
     return ModeCouplingPreconditioner(P, sys, FactorizationCache(),
         factorization, selectfactorization(factorization, P, coupling, layout,
         Nmodes), build, Int(Nmodes), Amatrixmodes,
         isnothing(autotol) ? nothing : Amatrixindices, autotol, autobudget,
-        Int(Nfreq), Int(Nbranches), coupling, 0, 0, dp, nzval, clusterprobe)
+        Int(Nfreq), Int(Nbranches), coupling, 0, 0, dp, nzval, clusterprobe,
+        predict, nothing)
 end
 
 # the backend's default sparse factorization: KLU on the host, cuDSS on a
@@ -725,13 +761,7 @@ function resolveautomatic(sys, Rbnm::SparseMatrixCSC, Nmodes::Integer,
     budget::Integer = freememory(backend) ÷ 2)
     ntones = isnothing(Amatrixmodes) ? 1 : length(first(Amatrixmodes))
     ntones == 1 && return BlockDiagonal()
-    nnodes = layout.dim ÷ Nmodes
-    nodesandsigns = branchnodesandsigns(Rbnm, Nmodes, Nbranches)
-    pairptr, pairrow, _, _ = junctionpairtable(Int32, Float32, sys.Ljb,
-        nodesandsigns, nnodes)
-    adj = circuitnodegraph(pairptr, pairrow, sys.invLnm, sys.Gnm, sys.Cnm,
-        Nmodes, nnodes)
-    order = klunodeorder(adj)
+    adj, order = circuitorder(sys, Rbnm, Nmodes, Nbranches, layout)
     bytes = blockfactorbytes(Float32, modecouplingmask(Nmodes, 1:Nmodes), adj,
         order, Nmodes, layout)
     bytes <= budget && return FullJacobian(BlockFactorization(;
@@ -816,6 +846,15 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
             HarmonicBand(next, f)
     else
         FullJacobian(f)
+    end
+    # the grown factors must fit: an escalation which would exhaust the
+    # memory is refused, and the driver carries on with the coupling it has
+    bytes = pc.predict(S)
+    budget = something(pc.budget,
+        freememory(pc.sys.nonlineartermplan.backend) ÷ 2)
+    if bytes > budget
+        @debug "escalation refused: the factors would take $(bytes) bytes of a budget of $(budget)"
+        return false
     end
     pc.P, pc.deviceplan, pc.nzval = pc.build(S, pc.sys)
     # any retained coupling couples modes, so whatever batch structure the

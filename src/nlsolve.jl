@@ -38,10 +38,19 @@ Diagnostics recorded for a call of [`nlsolve!`](@ref).
     [`nlsolvekrylov!`](@ref), with one entry per GMRES call rather than per
     Newton step, so that retries and rescues are visible. Empty for the direct
     solvers, which take each step from a factorization.
+- `reason`: why the iteration ended. `:converged`; `:iterations` when the
+    Newton step budget was spent; `:work` when the Krylov work budget was
+    spent (`nlsolvekrylov!` only); `:linesearch` when the line search found
+    no sufficient decrease along the Newton direction, once with no decrease
+    at all or twice in a row with a decrease short of the Armijo condition,
+    which is a stall; `:progress` when the residual history projected no
+    convergence within the remaining budget without accelerating, after the
+    recovery the solver has; `:external` for a failed [`ExternalSolver`](@ref).
+    [`stallmessage`](@ref) spells each out.
 
-The nine argument constructor leaves `krylov` empty, so the direct solvers
-construct an `IterationInfo` without mentioning a field which does not apply
-to them.
+The nine and ten argument constructors leave `krylov` empty and `reason`
+`:unspecified`, so a direct solver or a test constructs an `IterationInfo`
+without mentioning a field which does not apply to it.
 """
 struct IterationInfo <: AbstractStageInfo
     label::String
@@ -54,12 +63,58 @@ struct IterationInfo <: AbstractStageInfo
     backtracks::Vector{Int}
     andersonaccepted::Vector{Bool}
     krylov::Vector
+    reason::Symbol
+end
+function IterationInfo(label, parameter, regularization, converged,
+    iterations, normresidual, alpha, backtracks, andersonaccepted,
+    krylov = [])
+    return IterationInfo(label, parameter, regularization, converged,
+        iterations, normresidual, alpha, backtracks, andersonaccepted, krylov,
+        :unspecified)
 end
 
-function IterationInfo(label, parameter, regularization, converged,
-    iterations, normresidual, alpha, backtracks, andersonaccepted)
-    return IterationInfo(label, parameter, regularization, converged,
-        iterations, normresidual, alpha, backtracks, andersonaccepted, [])
+"""
+    stallmessage(reason::Symbol)
+
+The sentence behind a `reason` of an [`IterationInfo`](@ref), for the
+warning a solve which did not converge issues.
+"""
+function stallmessage(reason::Symbol)
+    reason === :iterations && return "the Newton iteration budget was spent"
+    reason === :work && return "the Krylov work budget (`iterations` restart lengths of Arnoldi steps) was spent"
+    reason === :linesearch && return "the line search found no sufficient decrease along the Newton direction (a stall)"
+    reason === :progress && return "the residual reduction rate projects no convergence within the remaining budget (a stall; the recovery did not help)"
+    reason === :external && return "the external solver reported failure"
+    return "reason $(reason)"
+end
+
+"""
+    projectedstall(normF::AbstractVector, start::Integer, ftol::Real,
+        remaining::Integer)
+
+Whether the residual history `normF[start:end]` says the iteration will
+not reach `ftol` in `remaining` further steps. The window is split in
+half: the geometric reduction rate over the later half projects the steps
+still needed, and the verdict is a stall when they exceed `remaining` and
+the later rate is no better than the earlier one, so that an iteration
+which is accelerating into a Newton basin is never stopped, only one
+whose slow progress is steady or worsening. A window shorter than four
+steps is never a stall. No constant enters beyond the halving; the
+budget the projection is measured against is the caller's own.
+"""
+function projectedstall(normF::AbstractVector, start::Integer, ftol::Real,
+    remaining::Integer)
+    m = length(normF)
+    npts = m - start + 1
+    npts >= 5 || return false
+    mid = start + (npts - 1) ÷ 2
+    k1 = mid - start
+    k2 = m - mid
+    r1 = (normF[mid]/normF[start])^(1/k1)
+    r2 = (normF[end]/normF[mid])^(1/k2)
+    r2 < r1 && return false
+    r2 >= 1 && return true
+    return log(ftol/normF[end])/log(r2) > remaining
 end
 
 """
@@ -1319,8 +1374,10 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     # priority on a fresh trajectory.
     curvedpriority = false
     stalled = false
+    reason = :iterations
 
     for attempt in 1:2
+        reason = :iterations
         if attempt == 2
             # retry by resetting to initial values and setting curved priority
             # the motivation for this is some problems may require the
@@ -1352,6 +1409,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         # and nothing already measured moves. See `nlsolvekrylov!`.
         ftol = max(ftol, rtol*normF[1])
         if normF[end] <= ftol
+            reason = :converged
             converged = true
         else
             # only a point from which a step will be taken needs a Jacobian.
@@ -1404,6 +1462,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
             # retry below run on a fresh trajectory, instead of throwing out of
             # the middle of the solve and discarding a usable best point.
             if !isfinite(ϕ0) || !isfinite(dϕ0dα) || dϕ0dα >= zero(dϕ0dα)
+                reason = :linesearch
                 stalled = true
                 break
             end
@@ -1478,6 +1537,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
                 # residual at the unchanged x, so no progress is possible and
                 # we stop, reporting non-convergence (this is a stall, so we
                 # will attempt the robust retry).
+                reason = :linesearch
                 stalled = true
                 break
             end
@@ -1488,6 +1548,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
             copyto!(x, xcandidate)
             push!(normF, norm(F))
             if normF[end] <= ftol
+                reason = :converged
                 converged = true
                 break
             end
@@ -1512,9 +1573,16 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
                     # reported state is the best point found; stop without
                     # refreshing the Jacobian, which would not be used (a
                     # stall will get one robust retry).
+                    reason = :linesearch
                     stalled = true
                     break
                 end
+            end
+
+            if projectedstall(normF, 1, ftol, iterations - n)
+                stalled = true
+                reason = :progress
+                break
             end
 
             # refresh and refactor the Jacobian at the new x; convergence was
@@ -1533,6 +1601,6 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     end
 
     return IterationInfo(label, NaN, 0.0, converged, length(alphas),
-        normF, alphas, backtrackrecord, andersonrecord)
+        normF, alphas, backtrackrecord, andersonrecord, [], reason)
 end
 

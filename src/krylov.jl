@@ -262,7 +262,10 @@ cost, and return `true`; return `false` when it cannot be improved further.
 Called by [`nlsolvekrylov!`](@ref) when GMRES stagnates repeatedly, which is the
 symptom of a preconditioner too crude for the problem. The default method
 returns `false`, which is correct for any preconditioner that is already exact
-or has no cheaper/costlier settings.
+or has no cheaper/costlier settings. A preconditioner which can grow must
+also refuse when the grown factors would not fit in memory: the driver
+records the refusal and carries on with what it has rather than let a
+rescue exhaust the machine.
 """
 escalatepreconditioner!(::AbstractPreconditioner) = false
 
@@ -1778,6 +1781,19 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     backtrackfailures = 0
     refresh = true
     refreshedforstall = false
+    reason = :iterations
+    # the work budget in Arnoldi steps: `iterations` restart lengths, so
+    # that the average Newton step may spend one GMRES cycle and a
+    # preconditioner which runs every solve to its limit cannot turn the
+    # step budget into hours
+    work = 0
+    workbudget = iterations*krylovrestart
+    # the progress projection (`projectedstall`) measures the residual
+    # history from `progressstart`; its one recovery rebuilds the
+    # preconditioner and takes exact Newton steps from then on, ruling out
+    # inexact directions before a stall is declared
+    progressstart = 1
+    exactforcing = false
     # why the next rebuild was asked for: `:forced` by a failure of the
     # last solve or the start, `:stale` by the count and rate rules, which
     # is the only kind `krylovrefresh = :probe` may skip
@@ -1856,7 +1872,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # `ftol` is absolute; `rtol` adds a relative test beside it, and with
     # the default `rtol = 0` the tolerance is exactly `ftol`
     ftol = max(ftol, rtol*normF[1])
-    normF[end] <= ftol && (converged = true)
+    normF[end] <= ftol && (converged = true; reason = :converged)
 
     for n in 1:iterations
         converged && break
@@ -1898,11 +1914,13 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             krylovrtol0
         end
 
+        exactforcing && (forcing = krylovrtolmin)
         tsolve = time()
         out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
             rtol = forcing, atol = gmresatol,
             maxrestarts = krylovmaxrestarts, oncycle = oncycle)
         tsolve = time() - tsolve
+        work += out.iterations
         tstep = tsolve/max(out.iterations, 1)
         justrefreshed && (kfresh = max(out.iterations, 1))
         harvestafter!(out)
@@ -1936,6 +1954,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
                 rtol = forcing, atol = gmresatol,
                 maxrestarts = krylovmaxrestarts, oncycle = oncycle)
             harvestafter!(out)
+            work += out.iterations
             stagnated = !out.converged &&
                 out.residual > krylovstagnation*normF[end]
             record!(out, :retry, true, stagnated)
@@ -2057,7 +2076,10 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             # no decrease anywhere along the direction; F again holds the
             # residual at the unchanged x (the linesearch restore contract).
             # retry once from a fresh preconditioner, then give up
-            refreshedforstall && break
+            if refreshedforstall
+                reason = :linesearch
+                break
+            end
             refreshedforstall = true
             refresh = true
             continue
@@ -2071,6 +2093,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         push!(normF, norm(F))
         if normF[end] <= ftol
             converged = true
+            reason = :converged
             break
         end
 
@@ -2081,11 +2104,33 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             backtrackfailures = 0
         else
             backtrackfailures += 1
-            backtrackfailures >= maxbacktrackfailures && break
+            if backtrackfailures >= maxbacktrackfailures
+                reason = :linesearch
+                break
+            end
+        end
+        if work >= workbudget
+            reason = :work
+            break
+        end
+        # Armijo accepts a step which reduces the merit by a hair, so a
+        # hopeless iteration can satisfy it for its whole budget; the
+        # projection stops it once its own rate says the budget cannot
+        # suffice, after one recovery
+        if projectedstall(normF, progressstart, ftol, iterations - n)
+            if exactforcing
+                reason = :progress
+                break
+            end
+            exactforcing = true
+            progressstart = length(normF)
+            refresh = true
+            refreshreason = :forced
         end
     end
 
     return IterationInfo(label, NaN, 0.0, converged, length(alphas), normF,
-        alphas, backtrackrecord, fill(false, length(alphas)), krylovrecord)
+        alphas, backtrackrecord, fill(false, length(alphas)), krylovrecord,
+        reason)
 end
 

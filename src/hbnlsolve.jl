@@ -1242,7 +1242,8 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         real_to_complex!(x, xr, modelayout.isreal)
         real_to_complex!(F, Fr, modelayout.isreal)
         IterationInfo("external", 1.0, 0.0, extconverged, 0,
-            [norm(Fc)], Float64[], Int[], Bool[], [])
+            [norm(Fc)], Float64[], Int[], Bool[], [],
+            extconverged ? :converged : :external)
     else
         throw(ArgumentError("Method $(method) is not defined."))
     end
@@ -1251,10 +1252,10 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     push!(solverstages, IterationInfo(info.label, 1.0,
         info.regularization, info.converged, info.iterations,
         info.normresidual, info.alpha, info.backtracks,
-        info.andersonaccepted, info.krylov))
+        info.andersonaccepted, info.krylov, info.reason))
 
     if !info.converged
-        @warn string(lazy"Solver did not converge.")
+        @warn lazy"Solver did not converge: $(stallmessage(info.reason))."
     end
 
     converged = info.converged
