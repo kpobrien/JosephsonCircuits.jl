@@ -15,7 +15,7 @@
         sensitivitynames::Vector{String} = String[],
         sensitivitynodeflux = nothing, sensitivityresidual = nothing,
         sensitivitymode = :auto, returnSsensitivity = false,
-        factorization = KLUfactorization(), backend = CPU())
+        factorization = nothing, backend = CPU())
 
 Sweep the weak signal frequencies `w` through the circuit linearized about
 the operating point `nonlinear` found by [`hbnlsolve`](@ref), or through
@@ -71,8 +71,29 @@ $(_DOC_SENSNAMES)
     operating point is held fixed.
 $(_DOC_SENSMODE)
 $(_DOC_SSENS)
-- `factorization = KLUfactorization()`: the sparse factorization of the
-    linearized system matrix.
+- `factorization = nothing`: the factorization of the linearized system
+    matrix at each frequency: [`KLUfactorization`](@ref),
+    [`LUfactorization`](@ref), [`CUDSSFactorization`](@ref) on a device,
+    or [`BlockFactorization`](@ref) for dense node blocks (`Nmodes`
+    unknowns per node, [`SparseBlockFactorization`](@ref)). `nothing`
+    chooses by the number of tones and the memory
+    ([`linearizedfactorization`](@ref)): the sparse factorization for one
+    tone, the block factorization in double for two or more when its
+    factors fit in half the free memory of the backend.
+- `precision = Float64`: the precision of the linearized solutions.
+    `Float32` solves each frequency entirely in single precision with a
+    [`BlockFactorization`](@ref) in single precision, equilibrated, with
+    no refinement to double, for the cases where single precision
+    scattering parameters are enough; the outputs are still returned in
+    double. Needs a `BlockFactorization`. The accuracy is that of a
+    single precision block elimination of the system: measured against
+    the double solve, the largest error in S relative to its largest
+    element is about 1e-2 on strongly resonant multi-tone lines and 1e-3
+    on a plain chain, the quantum efficiency about 1e-4 on the chain.
+    `BlockFactorization(precision = Float32)` with `precision = Float64`
+    is the other combination: single precision factors refined against
+    the double residual to double accuracy, at more than double's cost
+    on a device with a weak double rate.
 $(_DOC_LINBACKEND)
 - `returnZ`, `returnZadjoint`, `returnZsensitivity`,
     `returnZsensitivityadjoint`: removed; passing any of them warns.
@@ -156,7 +177,7 @@ function hblinsolve(w, circuit,circuitdefs; Nmodulationharmonics = (0,),
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    factorization = KLUfactorization(), backend = CPU())
+    factorization = nothing, backend = CPU())
 
     # compile the circuit and build its graph; the matrices are assembled
     # by the method below at the signal mode count
@@ -302,7 +323,14 @@ function hblinsolve(w, psc::CompiledCircuit,
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    factorization = KLUfactorization(), backend = CPU(), debuglsys = false)
+    factorization = nothing, precision::Type = Float64,
+    backend = CPU(), debuglsys = false)
+
+    precision === Float64 || precision === Float32 || throw(ArgumentError(
+        lazy"`precision` = $(precision) must be Float64 or Float32."))
+    precision === Float64 || isnothing(factorization) ||
+        factorization isa BlockFactorization || throw(ArgumentError(
+            "single precision linearized solutions need `factorization = BlockFactorization()`."))
 
 
     # deprecation warnings for  `returnZ`, `returnZadjoint`,
@@ -604,6 +632,19 @@ function hblinsolve(w, psc::CompiledCircuit,
         scattering = ssys)
     Asparse = lsys.Asparse
 
+    # the factorization when none was given: by the number of tones and
+    # the memory (see `linearizedfactorization`); single precision
+    # solutions always take the block factorization in single precision
+    if isnothing(factorization)
+        factorization = precision === Float32 ? BlockFactorization() :
+            linearizedfactorization(Asparse, Nsignalmodes, length(wpumpmodes[1]),
+                backend; nbatches = nbatches)
+    end
+    if precision === Float32 && isnothing(factorization.precision)
+        factorization = BlockFactorization(factorization.singletons;
+            precision = Float32)
+    end
+
     # the vacuum noise channels of the dissipative scattering blocks, which
     # follow the lumped noise channels in the rows of the noise scattering
     # matrix; a block declared lossless has none
@@ -626,6 +667,11 @@ function hblinsolve(w, psc::CompiledCircuit,
     # analysis of the factorization
     assemblesystemmatrix!(Asparse, lsys, wmodes)
 
+    # the pump Jacobian of the operating point sensitivities has the real
+    # layout's blocks, not the signal modes', so a block factorization of
+    # the linearized system does not apply to it
+    pumpfactorization = factorization isa BlockFactorization ?
+        KLUfactorization() : factorization
     # the derivative of the system matrix with respect to a relative
     # perturbation of each sensitivity component, at a fixed operating point
     sensitivitystamps, sensitivityblockentries = if returnSsensitivity
@@ -758,7 +804,7 @@ function hblinsolve(w, psc::CompiledCircuit,
         # directly and skips these per component solves
         dx = if isnothing(sensitivitynodeflux)
             calcnodefluxsensitivity(nonlinear.operatingpoint,
-                sensitivityresidual; factorization = factorization)
+                sensitivityresidual; factorization = pumpfactorization)
         else
             sensitivitynodeflux
         end
@@ -885,7 +931,8 @@ function hblinsolve(w, psc::CompiledCircuit,
         solutions = devicesolutions(lsys, bnm, w, backend,
             (full = fullforward, rows = portsolutionrows(nodeindices,
                 portindices, Nsignalmodes)),
-            adjointspec)
+            adjointspec; factorization = factorization,
+            refine = precision === Float64)
         # The device solves a batch of frequencies, then the host computes
         # their outputs. Each worker's workspace holds a solution buffer the
         # size of the whole circuit's state, so the number of workers is
@@ -938,18 +985,29 @@ function hblinsolve(w, psc::CompiledCircuit,
         end
     else
         batches = Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
-        Threads.@sync for batch in batches
-            Base.Threads.@spawn hblinsolve_inner!(
-                LinearizedWorkspace(outputarrays, sensitivitytuple, lsys,
-                    Nports, Nsignalmodes, Nnoisechannels,
-                    length(wpumpmodes), factorization),
-                outputarrays, sensitivitytuple,
-                lsys, bnm,
-                portindices, noiseportimpedanceindices,
-                portimpedances, noiseportimpedances, nodeindices, componenttypes,
-                w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batch,
-                factorization; noiseplan = noiseplan,
-                channeltemperatures = channeltemperatures)
+        # a block factorization's dense products would each spawn BLAS
+        # threads; with several batches the batches are the parallelism, so
+        # each task gets one BLAS thread while the sweep runs
+        blasthreads = BLAS.get_num_threads()
+        limitblas = factorization isa BlockFactorization && length(batches) > 1
+        limitblas && BLAS.set_num_threads(1)
+        try
+            Threads.@sync for batch in batches
+                Base.Threads.@spawn hblinsolve_inner!(
+                    LinearizedWorkspace(outputarrays, sensitivitytuple, lsys,
+                        Nports, Nsignalmodes, Nnoisechannels,
+                        length(wpumpmodes), factorization),
+                    outputarrays, sensitivitytuple,
+                    lsys, bnm,
+                    portindices, noiseportimpedanceindices,
+                    portimpedances, noiseportimpedances, nodeindices, componenttypes,
+                    w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batch,
+                    factorization; noiseplan = noiseplan,
+                    channeltemperatures = channeltemperatures,
+                    refine = precision === Float64)
+            end
+        finally
+            limitblas && BLAS.set_num_threads(blasthreads)
         end
     end
 
@@ -1174,7 +1232,12 @@ function LinearizedWorkspace(arrays::LinearizedArrays, sensitivity, lsys,
         c = FactorizationCache()
         # the canonical Jacobian when a direct current block is active: the
         # adjoint has to be taken through the system which was solved
-        tryfactorize!(c, factorization,
+        # the pump Jacobian has the real layout's blocks, not the signal
+        # modes', so a block factorization of the linearized system does
+        # not apply to it
+        pumpfactorization = factorization isa BlockFactorization ?
+            KLUfactorization() : factorization
+        tryfactorize!(c, pumpfactorization,
             sensitivityjacobian(sensitivity.reverse.op))
         c
     end
@@ -1239,7 +1302,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization;
     noiseplan = nothing, channeltemperatures = nothing,
     presolved = nothing, presolvedadjoint = nothing,
-    presolvednoise = nothing)
+    presolvednoise = nothing, refine::Bool = true)
 
     # everything downstream of the solve is the same whether the solution
     # came from the callbacks or from the factorization here
@@ -1298,8 +1361,14 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
         if isnothing(presolved)
             assemblesystemmatrix!(Asparsecopy, lsys, wmodes)
 
-            # factorize the matrix, reusing the symbolic analysis
-            tryfactorize!(cache, factorization, Asparsecopy)
+            # factorize the matrix, reusing the symbolic analysis; the
+            # block factorization takes the mode count as its block size
+            if factorization isa BlockFactorization
+                tryfactorize!(cache, factorization, Asparsecopy;
+                    blocksize = Nmodes, refine = refine ? 6 : 0)
+            else
+                tryfactorize!(cache, factorization, Asparsecopy)
+            end
 
             trysolve!(phin, cache.factorization, bnm)
         else

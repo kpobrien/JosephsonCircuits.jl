@@ -333,7 +333,7 @@ host, which gets its adjoint solutions from the forward factors with
 factorization per batch.
 """
 function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
-    adjoint = nothing)
+    adjoint = nothing; factorization = nothing, refine::Bool = true)
 
     T = Complex{Float64}
     n = size(lsys.Asparse, 1)
@@ -341,6 +341,23 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     nzA = nnz(lsys.Asparse)
     F = length(w)
     nb = min(uniformbatchlimit(nrhs), F)
+    # a block factorization solves both directions from one factorization
+    # per frequency, filled from the values assembled in the stored order;
+    # its batch is sized by the memory of the factors and the solutions of
+    # one system, within half the device's free memory
+    usesblocks = factorization isa BlockFactorization
+    blocksym = nothing
+    if usesblocks
+        noderows, adjn = blocknodegraph(lsys.Asparse, lsys.Nmodes)
+        blocksym = clustersymbolic(noderows, adjn, klunodeorder(adjn);
+            target = lsys.Nmodes)
+        Tf = something(factorization.precision, Float64)
+        persystem = blocksystembytes(Complex{Tf}, blocksym;
+            refine = refine && Tf === Float32, TA = T) +
+            (isnothing(adjoint) ? 3 : 5)*n*nrhs*sizeof(T) + nzA*sizeof(T)
+        # the cuDSS batch cap does not apply; the memory and the sweep do
+        nb = clamp(freememory(backend) ÷ 2 ÷ persystem, 1, F)
+    end
 
     # the right hand sides do not depend on the frequency, and are the same for
     # both directions, but cuDSS wants one set per system of the batch
@@ -367,9 +384,9 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     # only in where they land.
     scatstamps = plandevicescattering(lsys.scattering,
         hasscattering ? sweepdestinations(lsys.Asparse,
-            lsys.scattering.Aindex, false) : Int[],
+            lsys.scattering.Aindex, usesblocks) : Int[],
         nzA, nb, backend, lsys.Nmodes)
-    scatstampsadjoint = if hasscattering && !isnothing(adjoint)
+    scatstampsadjoint = if hasscattering && !isnothing(adjoint) && !usesblocks
         transposedestinations(scatstamps, sweepdestinations(lsys.Asparse,
             lsys.scattering.Aindex, true), backend)
     else
@@ -401,10 +418,28 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
             host = Array{T}(undef, full ? n : length(rows), nrhs, nb))
     end
 
-    fwd = newbatch(false)
     fstage = newstage(forward)
-    adj = isnothing(adjoint) ? nothing : newbatch(true)
     astage = isnothing(adjoint) ? nothing : newstage(adjoint)
+    # the block path: the values of a batch in the stored (column) order,
+    # one shared right-hand side, the solutions of each direction, and the
+    # factorization built on the backend from the pattern
+    blocks = if usesblocks
+        plan, _, _ = planfrequencysweep(lsys, backend; adjoint = true)
+        Fb = factorize(factorization, lsys.Asparse;
+            blocksize = lsys.Nmodes, backend = backend, nb = nb,
+            refine = refine ? 6 : 0)
+        (plan = plan,
+            nzval = KernelAbstractions.allocate(backend, T, nzA, nb),
+            B = tobackend(backend, bhost), F = Fb,
+            X = KernelAbstractions.allocate(backend, T, n, nrhs, nb),
+            Xadj = isnothing(adjoint) ? nothing :
+                KernelAbstractions.allocate(backend, T, n, nrhs, nb))
+    else
+        nothing
+    end
+    fwd = usesblocks ? (X = blocks.X,) : newbatch(false)
+    adj = isnothing(adjoint) ? nothing :
+        usesblocks ? (X = blocks.Xadj,) : newbatch(true)
 
     wshost = zeros(Float64, nb)
     wsdev = tobackend(backend, wshost)
@@ -422,6 +457,32 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
         return hi
     end
 
+    # the staging of a solved direction: nothing to bring back when the
+    # direction's solutions are read only where they were computed, as the
+    # noise scattering parameters read the adjoint ones
+    function stagebatch!(b, stage)
+        if stage.full
+            copyto!(stage.host, b.X)
+        elseif !isempty(stage.rows)
+            gatherportrows!(stage.gathered, b.X, stage.rowsd, backend)
+            copyto!(stage.host, stage.gathered)
+        end
+        return nothing
+    end
+    # the block path: the batch of frequencies is factorized from its
+    # assembled values in one batched block LU and solved in both
+    # directions from the one factorization
+    function runblockbatch!(k, stamps)
+        bl = blocks
+        assemblesweep!(bl.nzval, bl.plan, wsdev)
+        isnothing(stamps) || applyscatteringstamps!(bl.nzval, stamps)
+        fillandfactorize!(bl.F, bl.nzval)
+        refinedsolve!(bl.X, bl.F, bl.B)
+        isnothing(bl.Xadj) || refinedsolve!(bl.Xadj, bl.F, bl.B; transposed = true)
+        stagebatch!(fwd, fstage)
+        isnothing(adj) || stagebatch!(adj, astage)
+        return nothing
+    end
     function runbatch!(slot, b, stage, stamps)
         assemblesweep!(b.nzval, b.plan, wsdev)
         isnothing(stamps) || applyscatteringstamps!(b.nzval, stamps)
@@ -454,8 +515,12 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
                     lo, k)
             end
         end
-        runbatch!(1, fwd, fstage, scatstamps)
-        isnothing(adj) || runbatch!(2, adj, astage, scatstampsadjoint)
+        if usesblocks
+            runblockbatch!(k, scatstamps)
+        else
+            runbatch!(1, fwd, fstage, scatstamps)
+            isnothing(adj) || runbatch!(2, adj, astage, scatstampsadjoint)
+        end
         batchlo[] = lo
         return nothing
     end

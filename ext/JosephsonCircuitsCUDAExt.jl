@@ -21,7 +21,7 @@ module JosephsonCircuitsCUDAExt
 using CUDA
 using CUDA.CUFFT
 using KernelAbstractions
-import JosephsonCircuits: fftplans, freememory
+import JosephsonCircuits: fftplans, freememory, batchedinverse!, batchedmul!
 
 # Real transform plans on the device with the same dimensions, direction
 # and normalization convention as the FFTW plans of the CPU backend: the
@@ -37,5 +37,22 @@ end
 
 
 freememory(::CUDABackend) = Int(CUDA.free_memory())
+
+# the batched dense primitives of the block factorization of the
+# linearized system: one cuBLAS call over the batch of systems
+function batchedinverse!(Dinv::CuArray{T,3}, D::CuArray{T,3},
+    F::CuArray{T,3}, ::CUDABackend) where {T}
+    copyto!(F, D)
+    pivots, info = CUDA.CUBLAS.getrf_strided_batched!(F, true)
+    CUDA.CUBLAS.getri_strided_batched!(F, Dinv, pivots)
+    return Dinv
+end
+function batchedmul!(C::AbstractArray{T,3}, A::AbstractArray{T,3},
+    B::AbstractArray{T,3}, alpha, beta, tA::Bool, tB::Bool,
+    ::CUDABackend) where {T}
+    CUDA.CUBLAS.gemm_strided_batched!(tA ? 'T' : 'N', tB ? 'T' : 'N', T(alpha),
+        A, B, T(beta), C)
+    return C
+end
 
 end # module

@@ -1107,6 +1107,101 @@ using Test
         end
     end
 
+    @testset verbose=true "block factorization of the linearized solve" begin
+        # the dense node-block direct solve against KLU: every output of
+        # the linearized sweep, on a chain with two tones and a direct
+        # current mode (the modulation harmonics coupling every mode), with
+        # exact factors, with single precision factors refined against the
+        # double residual, and across host batches
+        circuit, defs = testchaincircuit()
+        w1 = 2*pi*5.0e9; w2 = 2*pi*1.19e9
+        src = [(mode=(1,0), port=1, current=1.0e-6),
+               (mode=(0,1), port=1, current=0.5e-6)]
+        ws = 2*pi*collect(range(4.41e9, 5.57e9, length = 4))
+        kw = (; dc = true, threewavemixing = true, fourwavemixing = true,
+            returnSnoise = true, returnnodeflux = true, keyedarrays = false)
+        ra = hbsolve(ws, (w1,w2), src, (2,2), (8,4), circuit, defs; kw...)
+        for (f, tol, nb) in ((BlockFactorization(), 1e-10, 1),
+                (BlockFactorization(), 1e-10, 3),
+                (BlockFactorization(precision = Float32), 1e-8, 1))
+            rb = hbsolve(ws, (w1,w2), src, (2,2), (8,4), circuit, defs;
+                factorization = f, nbatches = nb, kw...)
+            for name in (:S, :Snoise, :QE, :CM, :nodeflux)
+                a = getfield(ra.linearized, name); b = getfield(rb.linearized, name)
+                @test isapprox(a, b; rtol = tol)
+            end
+        end
+        # a promoted port resistor and a mutual inductor: the modified nodal
+        # analysis rows join the node blocks, and the sensitivity path takes
+        # its own factorization of the pump Jacobian
+        JosephsonCircuits.@params Rl Rr Cc Lj Cj Lla Llb Kab
+        circuitm = Tuple{String,String,String,Any}[]
+        push!(circuitm,("P1","1","0",1)); push!(circuitm,("R1","1","0",Rl))
+        push!(circuitm,("C1","1","2",Cc)); push!(circuitm,("Lj1","2","0",Lj))
+        push!(circuitm,("C2","2","0",Cj))
+        push!(circuitm,("L1","2","0",Lla)); push!(circuitm,("L2","3","0",Llb))
+        push!(circuitm,("P2","3","0",2)); push!(circuitm,("R2","3","0",Rr))
+        push!(circuitm,("K1","L1","L2",Kab))
+        defsm = Dict(Rl=>50.0, Rr=>50.0, Cc=>100e-15, Lj=>500e-12,
+            Cj=>1000e-15, Lla=>300e-12, Llb=>300e-12, Kab=>0.5)
+        wp = (2*pi*4.75001e9,)
+        sources = [(mode=(1,),port=1,current=1.0e-6)]
+        wsm = 2*pi*[4.5e9, 4.7e9]
+        sa = hbsolve(wsm, wp, sources, (4,), (8,), circuitm, defsm;
+            keyedarrays = false, sensitivitynames = ["R1"],
+            returnSsensitivity = true, returnSnoise = true)
+        sb = hbsolve(wsm, wp, sources, (4,), (8,), circuitm, defsm;
+            keyedarrays = false, sensitivitynames = ["R1"],
+            returnSsensitivity = true, returnSnoise = true,
+            factorization = BlockFactorization())
+        for name in (:S, :Snoise, :QE, :CM, :Ssensitivity)
+            @test isapprox(getfield(sa.linearized, name),
+                getfield(sb.linearized, name); rtol = 1e-9)
+        end
+        # single precision solutions: the whole solve in single, no
+        # refinement, single precision agreement with the double solve
+        rs = hbsolve(ws, (w1,w2), src, (2,2), (8,4), circuit, defs;
+            factorization = BlockFactorization(), precision = Float32, kw...)
+        # the accuracy of a single precision block elimination on this
+        # chain: 3e-4 of the norm of S, 1e-4 of the quantum efficiency
+        for (name, tol) in ((:S, 2e-3), (:Snoise, 1e-3), (:QE, 1e-3), (:CM, 1e-4))
+            @test isapprox(getfield(ra.linearized, name),
+                getfield(rs.linearized, name); rtol = tol)
+        end
+        @test !isapprox(ra.linearized.S, rs.linearized.S; rtol = 1e-12)
+        @test_throws ArgumentError hbsolve(ws, (w1,w2), src, (2,2), (8,4),
+            circuit, defs; precision = Float32,
+            factorization = KLUfactorization(), kw...)
+        @test_throws ArgumentError hbsolve(ws, (w1,w2), src, (2,2), (8,4),
+            circuit, defs; precision = Float16,
+            factorization = BlockFactorization(), kw...)
+        # the automatic choice: the sparse factorization for one tone, the
+        # block factorization for two or more when it fits, and the sweep
+        # through it agrees with the explicit choices
+        lf = JosephsonCircuits.linearizedfactorization
+        d2 = hbsolve(ws[1:1], (w1,w2), src, (2,2), (8,4), circuit, defs;
+            kw...)
+        @test lf(sprand(ComplexF64, 20, 20, 0.3) + I, 5, 1, JosephsonCircuits.CPU()) isa KLUfactorization
+        Asp = sparse(ComplexF64[1 1 0 0; 1 1 1 0; 0 1 1 1; 0 0 1 1])
+        @test lf(Asp, 2, 2, JosephsonCircuits.CPU()) isa BlockFactorization
+        @test lf(Asp, 2, 2, JosephsonCircuits.CPU(); budget = 0) isa KLUfactorization
+        @test lf(Asp, 2, 2, JosephsonCircuits.CPU(); nbatches = 4,
+            budget = 4*JosephsonCircuits.blocksystembytes(ComplexF64,
+                JosephsonCircuits.clustersymbolic(
+                    JosephsonCircuits.blocknodegraph(Asp, 2)...,
+                    JosephsonCircuits.klunodeorder(
+                        JosephsonCircuits.blocknodegraph(Asp, 2)[2])))) isa BlockFactorization
+        auto = hbsolve(ws, (w1,w2), src, (2,2), (8,4), circuit, defs; kw...)
+        for name in (:S, :Snoise, :QE, :CM)
+            @test isapprox(getfield(ra.linearized, name),
+                getfield(auto.linearized, name); rtol = 1e-9)
+        end
+        # single precision without a factorization takes the block one
+        rs2 = hbsolve(ws, (w1,w2), src, (2,2), (8,4), circuit, defs;
+            precision = Float32, kw...)
+        @test isapprox(rs.linearized.S, rs2.linearized.S; rtol = 1e-12)
+    end
+
     @testset "outputs do not depend on whether S is retained" begin
         # requestS used to be forced true by returnQE and returnSsensitivity,
         # so the scattering cube survived the frequency loop even when the

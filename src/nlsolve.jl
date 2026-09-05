@@ -430,10 +430,10 @@ back to a fresh factorization, since reusing the symbolic analysis
 occasionally fails numerically where a fresh one succeeds.
 """
 function tryfactorize!(cache::FactorizationCache,
-    factorization::AbstractFactorization, A)
+    factorization::AbstractFactorization, A; kwargs...)
 
     if isnothing(cache.factorization)
-        cache.factorization = factorize(factorization, A)
+        cache.factorization = factorize(factorization, A; kwargs...)
         return cache
     end
     refreshed = try
@@ -446,7 +446,8 @@ function tryfactorize!(cache::FactorizationCache,
         isa(e, SingularException) || rethrow()
         nothing
     end
-    isnothing(refreshed) && (cache.factorization = factorize(factorization, A))
+    isnothing(refreshed) && (cache.factorization = factorize(factorization, A;
+        kwargs...))
     return cache
 end
 

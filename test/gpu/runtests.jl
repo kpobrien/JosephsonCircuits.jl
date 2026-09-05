@@ -171,6 +171,41 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         rb = hbsolve(ws, (w1,), src1, (2,), (8,), circuit, defs;
             backend = CUDABackend())
         @test agree(ra.linearized.S, rb.linearized.S)
+        # the block factorization on the device: both directions from one
+        # factorization per frequency, every output, exact and refined
+        # single precision factors
+        kw = (; dc = true, threewavemixing = true, fourwavemixing = true,
+            returnSnoise = true, keyedarrays = false)
+        wl = 2*pi*collect(range(4.41e9, 5.57e9, length = 4))
+        rc = hbsolve(wl, (w1,w2), src2, (2,2), (8,4), circuit, defs; kw...)
+        for f in (BlockFactorization(), BlockFactorization(precision = Float32))
+            rd = hbsolve(wl, (w1,w2), src2, (2,2), (8,4), circuit, defs;
+                backend = CUDABackend(), factorization = f, kw...)
+            for name in (:S, :Snoise, :QE, :CM)
+                @test agree(getfield(rc.linearized, name),
+                    getfield(rd.linearized, name))
+            end
+        end
+        # the automatic choice on the device: the block factorization for
+        # two tones, agreeing with the host
+        auto = hbsolve(wl, (w1,w2), src2, (2,2), (8,4), circuit, defs;
+            backend = CUDABackend(), kw...)
+        @test agree(rc.linearized.S, auto.linearized.S)
+        @test agree(rc.linearized.QE, auto.linearized.QE)
+        Asp = JosephsonCircuits.SparseArrays.sparse(
+            ComplexF64[1 1 0 0; 1 1 1 0; 0 1 1 1; 0 0 1 1])
+        @test JosephsonCircuits.linearizedfactorization(Asp, 2, 2,
+            CUDABackend()) isa BlockFactorization
+        @test JosephsonCircuits.linearizedfactorization(Asp, 2, 1,
+            CUDABackend()) isa CUDSSFactorization
+        # single precision solutions on the device
+        rs = hbsolve(wl, (w1,w2), src2, (2,2), (8,4), circuit, defs;
+            backend = CUDABackend(), factorization = BlockFactorization(),
+            precision = Float32, kw...)
+        for (name, tol) in ((:S, 2e-3), (:Snoise, 1e-3), (:QE, 1e-3), (:CM, 1e-4))
+            @test isapprox(getfield(rc.linearized, name),
+                getfield(rs.linearized, name); rtol = tol)
+        end
     end
     @testset "block factorization on the device" begin
         # the dense node-block factorization of the full Jacobian and of a

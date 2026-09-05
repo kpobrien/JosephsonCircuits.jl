@@ -500,9 +500,25 @@ $(_DOC_SENSMODE)
     once. Without Josephson junctions the operating point contribution is
     identically zero and is skipped.
 $(_DOC_SSENS)
-- `factorization = nothing`: the sparse factorization of the linearized
-    solve, [`KLUfactorization`](@ref) when `nothing`; the nonlinear solve's
+- `factorization = nothing`: the factorization of the linearized solve at
+    each signal frequency. `nothing` chooses by the number of tones and
+    the memory, as [`Automatic`](@ref) does for the nonlinear solve: the
+    backend's sparse factorization ([`KLUfactorization`](@ref) on the
+    host, [`CUDSSFactorization`](@ref) on a device) for one tone, and
+    [`BlockFactorization`](@ref), the dense node blocks of the multi-tone
+    system with BLAS-3 arithmetic, for two or more tones when its factors
+    fit in half the free memory ([`linearizedfactorization`](@ref)). Any
+    of them can be given explicitly. The nonlinear solve's factorization
     is an option of its `method`.
+- `precision = Float64`: the precision of the linearized solutions;
+    `Float32` solves each signal frequency entirely in single precision
+    with a `BlockFactorization` (the factors, the solves, no refinement),
+    for the cases where single precision scattering parameters suffice:
+    about 1e-2 of the largest element of S on strongly resonant
+    multi-tone lines, 1e-3 on a plain chain, and four to five times
+    faster than double on a device whose single precision rate far
+    exceeds its double one. The outputs are returned in double. The
+    nonlinear solve's precision is `NewtonKrylov(precision = ...)`.
 - `backend = CPU()`: the KernelAbstractions backend both solves run on. The
     nonlinear solve assembles, factorizes and iterates there; the
     linearized sweep solves batches of signal frequencies there and falls
@@ -545,7 +561,8 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    factorization = nothing, backend = CPU()) where {N,M}
+    factorization = nothing, precision::Type = Float64,
+    backend = CPU()) where {N,M}
 
     # deprecation warning for maxpumpharmonics, whose role `Npumpharmonics`
     # took when the sampling grid became `Nevaluationharmonics`.
@@ -679,8 +696,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         # the host factorization is the default here even on a device
         # backend, because the fallback path of the sweep is a host solve
         # of complex matrices; an explicit factorization is honored
-        factorization = isnothing(factorization) ? KLUfactorization() :
-            factorization,
+        factorization = factorization, precision = precision,
         backend = backend)
 
     return HB(nonlinear, linearized)

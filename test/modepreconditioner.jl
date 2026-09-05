@@ -709,4 +709,67 @@ using Test
         @test pcb.escalations == 1
     end
 
+    @testset "block factorization of a sparse matrix" begin
+        # a random complex matrix with dense node blocks on a random node
+        # graph and three trailing auxiliary rows (a short last block):
+        # vector, matrix and transposed solves, refactorization on the
+        # pattern, and single precision factors refined to double
+        rng = MersenneTwister(3)
+        Nm = 7; Nn = 30
+        pairs = [(i, i+1) for i in 1:Nn-1]
+        append!(pairs, [(rand(rng, 1:Nn), rand(rng, 1:Nn)) for _ in 1:12])
+        I_ = Int[]; J_ = Int[]; V_ = ComplexF64[]
+        function addblock!(a, b)
+            for r in 1:Nm, c in 1:Nm
+                push!(I_, (a-1)*Nm+r); push!(J_, (b-1)*Nm+c)
+                push!(V_, randn(rng, ComplexF64))
+            end
+        end
+        for a in 1:Nn; addblock!(a, a); end
+        for (a, b) in pairs; a == b && continue; addblock!(a, b); addblock!(b, a); end
+        n = Nn*Nm + 3
+        for r in 1:3
+            push!(I_, Nn*Nm+r); push!(J_, Nn*Nm+r); push!(V_, 5.0+0im)
+            push!(I_, Nn*Nm+r); push!(J_, r); push!(V_, randn(rng, ComplexF64))
+            push!(I_, r+Nm); push!(J_, Nn*Nm+r); push!(V_, randn(rng, ComplexF64))
+        end
+        A = sparse(I_, J_, V_, n, n) + 10I
+        F = JosephsonCircuits.factorize(BlockFactorization(), A; blocksize = Nm)
+        @test F isa JosephsonCircuits.SparseBlockFactorization
+        @test !F.refine
+        @test F.N < Nn        # amalgamated
+        B = randn(rng, ComplexF64, n, 5); X = similar(B)
+        JosephsonCircuits.myldiv!(X, F, B)
+        @test norm(A*X - B)/norm(B) < 1e-12
+        x = similar(B[:, 1]); JosephsonCircuits.myldiv!(x, F, B[:, 1])
+        @test norm(A*x - B[:, 1])/norm(B[:, 1]) < 1e-12
+        JosephsonCircuits.myldiv!(X, transpose(F), B)
+        @test norm(transpose(A)*X - B)/norm(B) < 1e-12
+        JosephsonCircuits.trysolvetranspose!(X, F, B)
+        @test norm(transpose(A)*X - B)/norm(B) < 1e-12
+        A2 = copy(A); nonzeros(A2) .*= (1 .+ 0.1*randn(rng, nnz(A)))
+        @test JosephsonCircuits.refactorize!(BlockFactorization(), F, A2) === F
+        JosephsonCircuits.myldiv!(X, F, B)
+        @test norm(A2*X - B)/norm(B) < 1e-12
+        cache = JosephsonCircuits.FactorizationCache()
+        JosephsonCircuits.tryfactorize!(cache, BlockFactorization(), A; blocksize = Nm)
+        @test cache.factorization isa JosephsonCircuits.SparseBlockFactorization
+        JosephsonCircuits.tryfactorize!(cache, BlockFactorization(), A2; blocksize = Nm)
+        JosephsonCircuits.myldiv!(X, cache.factorization, B)
+        @test norm(A2*X - B)/norm(B) < 1e-12
+        F32 = JosephsonCircuits.factorize(BlockFactorization(precision = Float32), A;
+            blocksize = Nm)
+        @test F32.refine
+        @test eltype(F32.D[1]) == ComplexF32
+        JosephsonCircuits.myldiv!(X, F32, B)
+        @test norm(A*X - B)/norm(B) < 1e-12
+        JosephsonCircuits.myldiv!(X, transpose(F32), B)
+        @test norm(transpose(A)*X - B)/norm(B) < 1e-12
+        # the pattern is checked on refactorization
+        @test_throws DimensionMismatch JosephsonCircuits.refactorize!(
+            BlockFactorization(), F, A[1:n-3, 1:n-3])
+        @test_throws DimensionMismatch JosephsonCircuits.factorize(
+            BlockFactorization(), A[:, 1:n-1]; blocksize = Nm)
+    end
+
 end
