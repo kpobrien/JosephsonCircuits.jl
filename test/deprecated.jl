@@ -32,7 +32,7 @@ using Test
             :Cj => 1000.0e-15,
             :Rleft => 50.0,
         )
-        @test_logs((:warn,"""Calls the new harmonic balance solvers, [`hbnlsolve`](@ref) and\n[`hblinsolve`](@ref), which work for an arbitrary number of modes and ports),\nusing an identical syntax to the legacy harmonic balance solver, which only\nsupported four wave mixing processes involving single strong tone and an\narbitrary number of tone in the linearized solver. This function is\nprimarily for testing the new solvers and is now deprecated. Please switch\nto the new syntax.\n    """),
+        @test_logs((:warn, r"This form of hbsolve, with a single pump frequency and integer harmonic\ncounts, is deprecated"),
             hbsolve(2*pi*(4.5:0.5:5.0)*1e9,2*pi*4.75001*1e9,0.00565e-6,2,2,circuit,circuitdefs,pumpports=[1]),
         )
     end

@@ -68,9 +68,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
     @testset "recycled deflation on the device" begin
         ra = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
             dc = true, odd = true, even = true, method = NewtonKrylov())
-        for form in (:adef1, :adef2, :floquet)
-            pre = form === :floquet ? Floquet(size = 8, harvest = 2) :
-                Recycling(size = 8, harvest = 2, form = form)
+        let pre = Floquet(size = 8, harvest = 2)
             rb = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
                 dc = true, odd = true, even = true, backend = CUDABackend(),
                 method = NewtonKrylov(preconditioner = pre, escalate = false))
@@ -200,8 +198,9 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             CUDABackend()) isa CUDSSFactorization
         # single precision solutions on the device
         rs = hbsolve(wl, (w1,w2), src2, (2,2), (8,4), circuit, defs;
-            backend = CUDABackend(), factorization = BlockFactorization(),
-            precision = Float32, kw...)
+            backend = CUDABackend(),
+            factorization = BlockFactorization(precision = Float32, refine = false),
+            kw...)
         for (name, tol) in ((:S, 2e-3), (:Snoise, 1e-3), (:QE, 1e-3), (:CM, 1e-4))
             @test isapprox(getfield(rc.linearized, name),
                 getfield(rs.linearized, name); rtol = tol)

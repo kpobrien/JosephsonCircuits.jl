@@ -32,13 +32,13 @@ include("testcircuits.jl")
         end
     end
 
-    include("capindmat.jl")
+    include("matrices.jl")
 
     include("exportnetlist.jl")
 
-    include("fftutils.jl")
+    include("frequencies.jl")
 
-    include("graphproc.jl")
+    include("graph.jl")
 
     include("hbsolve.jl")
 
@@ -50,53 +50,51 @@ include("testcircuits.jl")
 
     include("networkconnection.jl")
 
-    include("matutils.jl")
+    include("sparse.jl")
 
-    include("nlsolve.jl")
+    include("newton.jl")
 
-    include("krylov.jl")
+    include("newtonkrylov.jl")
 
     include("floquetdeflation.jl")
 
-    include("batchedblocks.jl")
+    include("modecoupling.jl")
 
-    include("modepreconditioner.jl")
-
-    include("hbnonlinearproblem.jl")
+    include("problem.jl")
 
     include("builders.jl")
 
 
-    include("stagedsolve.jl")
+    include("staged.jl")
 
 
-    include("circuitmodel.jl")
+    include("components.jl")
 
-    include("parseinput.jl")
+    include("parse.jl")
 
-    include("circuitbind.jl")
+    include("bind.jl")
 
-    include("compositelayout.jl")
+    include("canonical.jl")
 
-    include("legacyadapter.jl")
+    include("legacy.jl")
 
-    include("scatteringstamp.jl")
+    include("scatteringblocks.jl")
 
-    include("qesparams.jl")
+    include("outputs.jl")
 
-    include("realcomplexconv.jl")
+    include("layout.jl")
 
     include("complexjacobian.jl")
 
     include("realjacobian.jl")
-    include("structureassembly.jl")
-    include("devicelinsolve.jl")
+    include("assembly.jl")
+    include("devicesweep.jl")
 
     include("nonlinearterm.jl")
-    include("hbsystem.jl")
+    include("system.jl")
 
     include("mna.jl")
-    include("dcconductance.jl")
+    include("directcurrent.jl")
 
     include("spiceraw.jl")
 
@@ -107,6 +105,7 @@ include("testcircuits.jl")
     include("quantumoptics.jl")
 
     include("testutils.jl")
+    include("docstringchecktests.jl")
 
     include("unwrap.jl")
 

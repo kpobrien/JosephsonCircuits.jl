@@ -158,57 +158,6 @@ bp = BifurcationProblem(F, zeros(length(prob)), (s = 0.0,), (@optic _.s);
     the linearized system matrix becomes singular, which is the parametric
     oscillation threshold.
 
-## Optimization
-
-`hbobjective` is the closure a gradient based optimizer calls: a vector of
-physical design parameters to a gain vector and its exact derivative.
-
-```julia
-Ic, adens, Ccoup = @params Ic adens Ccoup
-circuit = [("P1","1","0",1), ("R1","1","0",50.0),
-           ("C1","1","2", Ccoup),
-           ("Lj1","2","0", phi0/Ic),
-           ("C2","2","0", Ic*adens)]
-
-obj = hbobjective(ws, wp, sources, Nmod, Npump, circuit,
-                  [Ic, adens, Ccoup], Dict())
-objectivevalue(obj, p)      # gain in dB at each frequency
-objectivejacobian(obj, p)   # its derivative, one column per parameter
-```
-
-The gradient comes from the adjoint, so its cost grows far more slowly with
-the number of parameters than differencing does.
-
-The objective memoizes on `p`, because an interior point solver evaluates
-the value and the Jacobian at the same point in sequence and would
-otherwise pay two harmonic balance solves per iteration.
-
-A trial point which does not converge raises `HBConvergenceFailure` rather
-than returning a state that looks like a solution.
-
-!!! note "Wiring this into JuMP"
-    Use `MOI.VectorNonlinearOracle`, not `@operator`. Operators take scalar
-    arguments and return scalars, so a gain target at `m` frequencies would
-    need `m` operators over the same expensive solve; the oracle registers
-    the whole vector as one constraint block with a shared Jacobian, which
-    is what one solve plus one adjoint produces.
-
-    Scale the design variables to order one. Ipopt relaxes variable bounds
-    slightly before solving, by an amount which does not shrink with the
-    bounds themselves, so bounds of order `1e-13` are not enforced in any
-    useful sense: optimizing a coupling capacitance directly in farads
-    produced a converged solution with a *negative* capacitance, well
-    outside the bounds given. Optimizing in units of the starting point,
-    with the Jacobian chain ruled accordingly, fixes it.
-
-    Signal a failed evaluation by filling the output with `NaN`. JuMP does
-    not catch exceptions thrown from an oracle callback, so throwing aborts
-    the whole optimization; `NaN` is the signal Ipopt understands and it
-    cuts the trial step.
-
-    Set `hessian_approximation = "limited-memory"`. The adjoint gives first
-    derivatives only.
-
 ## Sensitivities
 
 `sensitivityparameters` names physical parameters rather than components.

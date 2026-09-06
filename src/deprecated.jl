@@ -53,14 +53,13 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     returnZsensitivityadjoint = nothing,
     factorization = KLUfactorization())
 
-    Base.depwarn(lazy"""
-    Calls the new harmonic balance solvers, [`hbnlsolve`](@ref) and
-    [`hblinsolve`](@ref), which work for an arbitrary number of modes and ports),
-    using an identical syntax to the legacy harmonic balance solver, which only
-    supported four wave mixing processes involving single strong tone and an
-    arbitrary number of tone in the linearized solver. This function is
-    primarily for testing the new solvers and is now deprecated. Please switch
-    to the new syntax.
+    Base.depwarn("""
+    This form of hbsolve, with a single pump frequency and integer harmonic
+    counts, is deprecated: it calls the harmonic balance solvers hbnlsolve
+    and hblinsolve, which take any number of pump tones and ports, with the
+    syntax of the legacy solver, which supported four wave mixing of one
+    strong tone only. Please switch to hbsolve(ws, (wp,), sources,
+    (Nmodulationharmonics,), (Npumpharmonics,), circuit, circuitdefs).
         """, :hbsolve; force=true)
 
     # the single pump as a one element frequency tuple

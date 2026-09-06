@@ -27,7 +27,10 @@ module JosephsonCircuitsCUDAExt
 using CUDA
 using CUDA.CUFFT
 using KernelAbstractions
-import JosephsonCircuits: fftplans, freememory, batchedinverse!, batchedmul!
+import LinearAlgebra
+using LinearAlgebra: lu!, ldiv!
+import JosephsonCircuits: fftplans, freememory, batchedinverse!, batchedmul!,
+    blockidentity!
 
 # Real transform plans on the device with the same dimensions, direction
 # and normalization convention as the FFTW plans of the CPU backend: the
@@ -47,9 +50,27 @@ freememory(::CUDABackend) = Int(CUDA.free_memory())
 # the batched dense primitives of the block factorization of the
 # linearized system: one cuBLAS call over the batch of systems
 function batchedinverse!(Dinv::CuArray{T,3}, D::CuArray{T,3},
-    F::CuArray{T,3}, ::CUDABackend) where {T}
+    F::CuArray{T,3}, backend::CUDABackend) where {T}
+    if size(D, 3) == 1
+        # a batch of one (the preconditioner's clusters, whose supernodes
+        # are amalgamated to hundreds of rows): the dense LU of cuSOLVER,
+        # which the batched routines below, made for many small blocks,
+        # are far slower than at that size
+        n = size(D, 1)
+        Fm = reshape(F, n, n)
+        copyto!(Fm, reshape(D, n, n))
+        LU = lu!(Fm)
+        blockidentity!(Dinv, backend)
+        ldiv!(LU, reshape(Dinv, n, n))
+        return Dinv
+    end
     copyto!(F, D)
     pivots, info = CUDA.CUBLAS.getrf_strided_batched!(F, true)
+    # a zero pivot in any system of the batch is a singular diagonal block;
+    # the host path throws the same from `lu!`, and `tryfactorize!` then
+    # refactorizes afresh rather than solve with garbage factors
+    k = findfirst(!=(0), Array(info))
+    isnothing(k) || throw(LinearAlgebra.SingularException(Int(k)))
     CUDA.CUBLAS.getri_strided_batched!(F, Dinv, pivots)
     return Dinv
 end

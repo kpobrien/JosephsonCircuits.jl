@@ -116,7 +116,7 @@ using Test
             # Jacobian, which is built by an independent code path
             # (planrealjacobian). Since the two representations now share the
             # plan, this and the central finite difference checks in
-            # test/hbsystem.jl are what makes them independently verified
+            # test/system.jl are what makes them independently verified
             # rather than merely consistent with each other.
             Jasm = copy(d.Jr)
             JosephsonCircuits.setpoint!(sys, d.xr)
@@ -189,7 +189,7 @@ using Test
         Rbnm3 = sparse(I, J, V, size(sys.Rbnm,1),
             max(size(sys.Rbnm,2), 3*Nmodes))
         @test_throws ArgumentError JosephsonCircuits.plannonlinearterm(
-            Rbnm3, sys.Ljb, sys.Lmean, Nbranches, sys.freqindexmap,
+            Rbnm3, sys.Ljb, sys.Lscale, Nbranches, sys.freqindexmap,
             sys.conjsourceindices, sys.conjtargetindices, sys.phimatrix,
             sys.Knm, sys.modelayout)
     end
@@ -210,7 +210,7 @@ using Test
             circuitdefsjpa; debugJacobian=true)
         sys = d.sys
         Nmodes = length(sys.freqindexmap)
-        args = (sys.Rbnm, sys.Ljb, sys.Lmean, size(sys.Rbnm,1) ÷ Nmodes,
+        args = (sys.Rbnm, sys.Ljb, sys.Lscale, size(sys.Rbnm,1) ÷ Nmodes,
             sys.freqindexmap, sys.conjsourceindices, sys.conjtargetindices,
             sys.phimatrix, sys.Knm, sys.modelayout)
         full = JosephsonCircuits.plannonlinearterm(args...)

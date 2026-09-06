@@ -1,5 +1,5 @@
 # Reference
 
 ```@autodocs
-Modules = [JosephsonCircuits]
+Modules = [JosephsonCircuits, JosephsonCircuits.CircuitValues]
 ```

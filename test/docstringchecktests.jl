@@ -261,7 +261,8 @@ end
         # definition for readability, kernels documented by name only, and
         # the deprecated or removed keywords the solver entry points still
         # accept but document in prose rather than in their signature lines
-        deprecated = ("switchofflinesearchtol", "alphamin", "returnZ",
+        deprecated = ("switchofflinesearchtol", "alphamin", "maxharmonics",
+            "maxpumpharmonics", "returnZ",
             "returnZadjoint", "returnZsensitivity", "returnZsensitivityadjoint",
             "sensitivitypairs", "sensitivityblockpairs",
             "nsensitivityparameters", "sensitivitylabels")

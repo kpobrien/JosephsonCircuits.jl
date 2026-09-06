@@ -7,7 +7,10 @@ strategies the package does not implement (trust region, pseudo-transient
 continuation, Levenberg-Marquardt, polyalgorithms).
 
 The problem is posed in the equivalent real representation, because the
-harmonic balance residual is not complex differentiable.
+harmonic balance residual is not complex differentiable. For a problem with
+an explicit direct current block the unknowns are the canonical state
+`[internal | vdc]` (see `CompositeLayout`), which is what `prob.u0` and the
+residual are written in.
 """
 module JosephsonCircuitsSciMLBaseExt
 

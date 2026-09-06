@@ -6,7 +6,7 @@
 )](https://github.com/kpobrien/JosephsonCircuits.jl/actions?query=workflow) [![PkgEval](https://juliaci.github.io/NanosoldierReports/pkgeval_badges/J/JosephsonCircuits.svg)](https://juliaci.github.io/NanosoldierReports/pkgeval_badges/J/JosephsonCircuits.html) [![Stable docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://josephsoncircuits.org/stable)
  [![Dev docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://josephsoncircuits.org/dev)
 
-[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) simulates the frequency domain behavior using a modified nodal analysis formulation in the flux basis [1,2], with resistors and mutually coupled inductors assigned auxiliary branch currents and floating inductive or Josephson subnetworks gauge fixed at DC, so nodes do not require an inductive path to ground) and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
+[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) simulates the frequency domain behavior using a modified nodal analysis formulation in the flux basis [1,2], with mutually coupled inductors assigned auxiliary branch currents and floating inductive or Josephson subnetworks gauge fixed at DC, so nodes do not require an inductive path to ground) and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
 
 Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by capacitors with an imaginary capacitance or frequency dependent resistors. 
 
@@ -1375,11 +1375,14 @@ And a direct current with nowhere to go, injected into a group of nodes
 which no resistor, inductor or junction connects to anything else, has no
 bounded solution and is reported as such before the solve starts.
 
-Scattering blocks do not yet carry direct current: a block is an open
-circuit at DC, as it was before. Supporting them needs the explicit direct
-current network rather than this elimination, because a short or a
-transmission line through a block constrains voltages instead of conducting
-between them.
+A scattering block carries direct current according to its zero frequency
+limit: by default the limit of its own data (`ScatteringLimit()`), which a
+constant or tabulated block reaching zero frequency supplies, and
+otherwise the model stated with its `dcmodel` keyword, `OpenDC()`,
+`ShortDC()`, `ThroughDC()` or `ScatteringDC(S0)`. A block whose limit is
+a short or a through constrains the direct voltages of its ports instead
+of conducting between them, which the solver handles by an explicit
+direct current block rather than by the elimination above.
 
 
 # Contributing:

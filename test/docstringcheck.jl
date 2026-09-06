@@ -333,7 +333,8 @@ function checkdocstrings(root::AbstractString; dirs = ("src", "ext"),
     for d in dirs
         dir = joinpath(root, d)
         isdir(dir) || continue
-        for f in sort(readdir(dir; join = true))
+        for (sub, _, files) in walkdir(dir), name in sort(files)
+            f = joinpath(sub, name)
             endswith(f, ".jl") || continue
             for iss in checkfile(f; wildcardunnamed)
                 ignore(iss) || push!(issues, iss)

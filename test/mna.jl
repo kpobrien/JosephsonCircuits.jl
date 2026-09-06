@@ -591,7 +591,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
             [:P,:R,:L], Any[1, 50.0, 0.0])
         @test_throws ArgumentError JosephsonCircuits.checkstaticstiffnessvalues(
             [:P,:R,:Lj], Any[1, 50.0, NaN])
-        # an infinite inductance would make Lmean infinite; an open
+        # an infinite inductance would make Lscale infinite; an open
         # circuit is represented by omitting the branch
         @test_throws ArgumentError JosephsonCircuits.checkstaticstiffnessvalues(
             [:P,:R,:L], Any[1, 50.0, Inf])
@@ -704,7 +704,6 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
         Nmodes = Ntot ÷ 2
         Nnodal = 2*Nmodes
         @test d.Nnodal == Nnodal
-        @test isempty(d.mnaindices)
         @test length(d.gaugeindices) == 1
         # evaluate the closure at the zero state to fill the true residual
         # and Jacobian
@@ -792,8 +791,8 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
     end
 
     @testset "hbnlsolve large auxiliary scale acceptance" begin
-        # in an inductor-free circuit the Lmean = 1 fallback makes the
-        # auxiliary currents u = Lmean*i/phi0 of order 1e9 while the node
+        # in an inductor-free circuit the Lscale = 1 fallback makes the
+        # auxiliary currents u = Lscale*i/phi0 of order 1e9 while the node
         # fluxes are of order 1. the physical KCL acceptance must not be
         # loosened by these large auxiliary entries: the solve converges,
         # the gauge fixed DC flux is exactly zero, and the pump mode
@@ -883,48 +882,6 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
             comps,[0.0,2pi*4e9],2) == [1,3]
         @test JosephsonCircuits.calcdcgaugeindices(
             comps,[2pi*4e9,2pi*8e9],2) == Int[]
-    end
-
-    @testset "calcAmna stamp identity" begin
-
-        # eliminating the auxiliary variables from the mna stamp must
-        # reproduce the nodal conductance contribution im*Gnm*wmodesm
-        # exactly, for positive, negative, and zero mode frequencies.
-        componenttypes = [:R]
-        nodeindices = reshape([2,3],2,1)
-        vvn = [50.0]
-        Nnodes = 4
-        Nmodes = 3
-        w0 = 2pi*4e9
-        wmodes = [-w0, 0.0, w0]
-        Lmean = 1e-9
-        Nnodal = (Nnodes-1)*Nmodes
-
-        # promote the resistor by explicit index: calcAmna stamps whatever
-        # index set it is given, independent of the promotion policy
-        mnaindices = [1]
-        Amna = JosephsonCircuits.calcAmna(mnaindices, nodeindices, vvn,
-            Int[], wmodes, Nmodes, Nnodes, Lmean)
-
-        Gnm = JosephsonCircuits.calcGn(componenttypes, nodeindices, vvn,
-            Nmodes, Nnodes)
-        JosephsonCircuits.conjnegfreq!(Gnm, wmodes)
-        wmodesm = JosephsonCircuits.LinearAlgebra.Diagonal(
-            repeat(wmodes, outer = Nnodes-1))
-
-        # a deterministic test vector keeps this exact algebraic identity
-        # independent of the global random number generator state
-        phi = Complex{Float64}[complex(sin(k), cos(2k)) for k in 1:Nnodal]
-        x = vcat(phi, zeros(Complex{Float64}, Nmodes))
-        JosephsonCircuits.mnainitialaux!(x, Amna, Nnodal)
-        r = Amna*x
-
-        # the constitutive rows are exactly zero after consistent
-        # initialization of the auxiliary currents
-        @test all(iszero, r[Nnodal+1:end])
-        # the Kirchhoff current law rows reproduce the nodal stamp
-        @test isapprox(r[1:Nnodal], im*Lmean*Gnm*wmodesm*phi,
-            rtol = 1e-14, atol = 1e-30)
     end
 
 end
@@ -1070,65 +1027,6 @@ end
                     rtol = 1e-12, atol = 1e-30)
             end
         end
-    end
-
-    @testset "calcAmnasplit stamp identity" begin
-        # eliminating the auxiliary currents from the per-frequency
-        # linearized assembly Amna0 + im*AmnaG*wmodesm (with the same
-        # negative-mode conjugation applied as for the conductance matrix)
-        # must reproduce the removed nodal stamp exactly. two promoted
-        # resistors share one node pair and one is stored as a zero
-        # imaginary part ComplexF64.
-        componenttypes = [:R, :R]
-        nodeindices = [2 2; 3 3]
-        vvn = Any[100.0, 300.0 + 0.0im]
-        Nnodes = 3
-        Nmodes = 3
-        w0 = 2pi*5e9
-        wmodes = [-w0 + 2pi*4e9, 2pi*1e5, w0 + 2pi*4e9]
-        Nnodal = (Nnodes-1)*Nmodes
-        # promote both resistors by explicit index, independent of the
-        # promotion policy
-        mnaindices = [1, 2]
-        Amna0, AmnaG = JosephsonCircuits.calcAmnasplit(mnaindices,
-            nodeindices, vvn, Nmodes, Nnodes)
-        Ntot = size(Amna0, 1)
-        Naux = Ntot - Nnodal
-        wmodesmfull = JosephsonCircuits.LinearAlgebra.Diagonal(
-            repeat(wmodes, outer = Nnodes-1+length(mnaindices)))
-        conjmask = real.(wmodesmfull) .< 0
-
-        # assemble the augmented matrix with the production machinery,
-        # zeroing the values while keeping the sparsity structure
-        X = JosephsonCircuits.spaddkeepzeros(Amna0, AmnaG)
-        fill!(X.nzval, 0)
-        m0 = JosephsonCircuits.sparseaddmap(X, Amna0)
-        mG = JosephsonCircuits.sparseaddmap(X, AmnaG)
-        JosephsonCircuits.sparseadd!(X, 1, Amna0, m0)
-        JosephsonCircuits.sparseaddconjsubst!(X, im, AmnaG, wmodesmfull,
-            mG, conjmask, wmodesmfull, JosephsonCircuits.symbolicindices(AmnaG),
-            nothing)
-
-        # assemble the nodal stamp of the same resistors identically
-        Gp = JosephsonCircuits.calcGn(componenttypes, nodeindices, vvn,
-            Nmodes, Nnodes)
-        Gp = JosephsonCircuits.mnapad(Gp, Naux)
-        Y = copy(Gp)
-        fill!(Y.nzval, 0)
-        mY = JosephsonCircuits.sparseaddmap(Y, Gp)
-        JosephsonCircuits.sparseaddconjsubst!(Y, im, Gp, wmodesmfull,
-            mY, conjmask, wmodesmfull, JosephsonCircuits.symbolicindices(Gp),
-            nothing)
-
-        # Schur elimination of the auxiliary block of X onto the nodes
-        Xd = Matrix(X)
-        A11 = Xd[1:Nnodal, 1:Nnodal]
-        A12 = Xd[1:Nnodal, Nnodal+1:end]
-        A21 = Xd[Nnodal+1:end, 1:Nnodal]
-        A22 = Xd[Nnodal+1:end, Nnodal+1:end]
-        schur = A11 - A12*(A22\A21)
-        @test isapprox(schur, Matrix(Y)[1:Nnodal, 1:Nnodal],
-            rtol = 1e-14, atol = 1e-30)
     end
 
     @testset "hblinsolve zero total sideband cancellation" begin
@@ -1360,8 +1258,13 @@ end
         C = A[Nnodal+1:end, 1:Nnodal]
         D = A[Nnodal+1:end, Nnodal+1:end]
         schur = -B*(D\C)
-        ref = Lscale .* Matrix(JosephsonCircuits.calcinvLn(Lb, Mb, Rbn,
-            Nmodes))
+        # the reference: the nodal inverse inductance of the coupled
+        # branches, Rbn'*inv(L)*Rbn with L the branch inductance matrix,
+        # repeated over the modes
+        idx = Lb.nzind
+        L = Matrix(Mb[idx, idx]) + Diagonal(Vector(Lb[idx]))
+        R = Matrix(Rbn[idx, :])
+        ref = Lscale .* kron(transpose(R)*(L \ R), I(Nmodes))
         @test isapprox(schur, ref, rtol = 1e-12)
 
         # a coupled branch without a self inductance is rejected

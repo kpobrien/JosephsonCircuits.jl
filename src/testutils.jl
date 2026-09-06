@@ -44,8 +44,8 @@ parameters) applied to its fields, each printed with [`testshow`](@ref).
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.testshow(stdout,JosephsonCircuits.warmupnumericmatrices())
-JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], Int64[], 1.0e-9, [50.0, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
+julia> JosephsonCircuits.testshow(stdout,JosephsonCircuits.NoiseReduction([1.0, 2.0], [3.0, -4.0]))
+JosephsonCircuits.NoiseReduction{Vector{Float64}}([1.0, 2.0], [3.0, -4.0])
 
 julia> JosephsonCircuits.testshow(IOBuffer(),JosephsonCircuits.warmupsyms())
 ```
@@ -73,7 +73,7 @@ and ignores the solver diagnostics.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.comparestruct(JosephsonCircuits.warmupnumericmatrices(),JosephsonCircuits.warmupnumericmatrices())
+julia> JosephsonCircuits.comparestruct(JosephsonCircuits.NoiseReduction([1.0], [2.0]),JosephsonCircuits.NoiseReduction([1.0], [2.0]))
 true
 
 julia> JosephsonCircuits.comparestruct(JosephsonCircuits.warmup(),JosephsonCircuits.warmup())
@@ -158,7 +158,7 @@ compare(x::JosephsonCircuits.PassiveNetwork,y::JosephsonCircuits.PassiveNetwork)
 compare(x::String,y::String) = isequal(x,y)
 
 """
-    structurejacobian(d, Amatrixindices, Amatrixconjindices, Ljb, Lmean, Rbnm,
+    structurejacobian(d, Amatrixindices, Amatrixconjindices, Ljb, Lscale, Rbnm,
         Nmodes, Nbranches, Nfreq, invLnm, Gnm, Cnm, rl, cl)
 
 The sparsity structure of the real Jacobian restricted to the mode
@@ -169,15 +169,16 @@ solver performs. `d` is the named tuple returned by
 `hbnlsolve(...; debugJacobian = true)`. Used only by the tests.
 """
 function structurejacobian(d, Amatrixindices::Matrix,
-    Amatrixconjindices::Matrix, Ljb, Lmean, Rbnm, Nmodes, Nbranches, Nfreq,
+    Amatrixconjindices::Matrix, Ljb, Lscale, Rbnm, Nmodes, Nbranches, Nfreq,
     invLnm, Gnm, Cnm, rl, cl)
 
-    P, nodesandsigns = realjacobianstructure(Amatrixindices,
+    P, _ = realjacobianstructure(Amatrixindices,
         Amatrixconjindices, Ljb, Rbnm, Nmodes, Nbranches, invLnm, Gnm, Cnm,
         rl, cl)
-    plan = planstructurerealjacobian(P, eltype(P), Amatrixindices,
-        Amatrixconjindices, Ljb, Lmean, nodesandsigns, d.sys.invLnm,
-        d.sys.Gnm, d.sys.Cnm, d.sys.wmodesm, d.sys.wmodes2m, rl, cl, Nmodes,
-        Nfreq, CPU(); transposed = false)
+    junctions = junctionstructure(eltype(P), Amatrixindices,
+        Amatrixconjindices, Ljb, Lscale, Rbnm, Nmodes, Nbranches, Nfreq, CPU())
+    plan = planstructurerealjacobian(P, eltype(P), junctions, d.sys.invLnm,
+        d.sys.Gnm, d.sys.Cnm, d.sys.wmodesm, d.sys.wmodes2m, rl, cl, CPU();
+        transposed = false)
     return P, plan
 end

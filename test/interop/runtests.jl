@@ -145,22 +145,37 @@ end
     @test ref.solverinfo.converged
     for m in (:gmres, :fgmres, :bicgstab)
         s = JCX.hbnlsolve(wp, (8,), src, circuit, defs; keyedarrays = false,
-                          ftol = 1e-14, linearsolver = JCX.KrylovJL(m))
+            ftol = 1e-14,
+            method = NewtonKrylov(linearsolver = JCX.KrylovJL(m)))
         @test s.solverinfo.converged
         @test isapprox(maximum(abs.(s.nodeflux)),
                        maximum(abs.(ref.nodeflux)); rtol = 1e-8)
     end
-    # with mode coupling and with deflation recycling, which is the path a
-    # dead reference in the extension once hid because every benchmark left
-    # the preconditioner nothing
-    for (cm, rec) in ((:all, 0), (:none, 12))
+    # with the full Jacobian as the preconditioner and with deflation
+    # recycling, which is the path a dead reference in the extension once
+    # hid because every benchmark left the preconditioner nothing
+    for pc in (FullJacobian(), Floquet(BlockDiagonal(); size = 12))
         s = JCX.hbnlsolve(wp, (8,), src, circuit, defs; keyedarrays = false,
-            ftol = 1e-14, linearsolver = JCX.KrylovJL(:gmres),
-            krylovcouplingmodes = cm, krylovrecycle = rec)
+            ftol = 1e-14, method = NewtonKrylov(preconditioner = pc,
+                linearsolver = JCX.KrylovJL(:gmres)))
         @test s.solverinfo.converged
         @test isapprox(maximum(abs.(s.nodeflux)),
                        maximum(abs.(ref.nodeflux)); rtol = 1e-8)
     end
+    # the residual a Krylov.jl solve reports is its final one, not the
+    # right hand side: a solve cut short by its iteration limit has made
+    # progress and says so
+    prob, _, _ = ext_problem(; assemble = false)
+    n = length(prob)
+    u = 0.05 .* collect(range(-1, 1; length = n))
+    F = JCX.hbresidual!(zeros(n), prob, u)
+    J = JCX.JacobianOperator(prob, u)
+    ws = JCX.GMRESWorkspace(n, 2, Float64)
+    d = zeros(n)
+    out = JCX.hblinearsolve!(JCX.KrylovJL(:gmres), d, J, F, ws, nothing;
+        rtol = 1e-14, atol = 0.0, maxrestarts = 1)
+    @test !out.converged
+    @test 0 < out.residual < norm(F)
 end
 
 end

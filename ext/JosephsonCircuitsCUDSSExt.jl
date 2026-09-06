@@ -3,9 +3,7 @@
 
 Package extension loaded with `using CUDSS`. It supplies the cuDSS
 factorizations of the device path: `_cudss_factorize` and
-`_cudss_factorize!` for one sparse system, `_batched_factorize` and
-`_batched_factorize!` for the block diagonal of a mode coupling
-preconditioner as a uniform batch, and `_cudss_sweep` and
+`_cudss_factorize!` for one sparse system, and `_cudss_sweep` and
 `_cudss_sweepsolve!` for the uniform batch of a frequency sweep. cuDSS 0.8
 has no transposed solve, which is why the sweep's adjoint direction is a
 second factorization there; a `BlockFactorization` on the device does not
@@ -28,10 +26,7 @@ const setmatrix! = isdefined(CUDSS, :cudss_update) ? CUDSS.cudss_update :
 
 import JosephsonCircuits: _cudss_factorize, _cudss_factorize!,
     _cudss_sweep, _cudss_sweepsolve!,
-    blockdiagonallayout, gatherblocks!, scatterblocks!, gathervalues!,
-    blockpattern, blockrowmajorindex, blockmatrix, BatchedBlockLayout,
-    myldiv!, tobackend, cscvaluepermutation, rowpointer, columnindices,
-    _batched_factorize, _batched_factorize!
+    myldiv!, tobackend, cscvaluepermutation, rowpointer, columnindices
 
 # ---------------------------------------------------------------------------
 # binding the caller's vectors to a cuDSS descriptor
@@ -75,11 +70,8 @@ mutable struct CUDSSSolve{TS,TM,TV,TD,Tv<:Union{AbstractFloat,Complex}}
     vals::Vector{Tv}
 end
 
-# The batched path needs the block assignment, which a bare matrix does not
-# carry, so it is selected by building the factorization from a layout
-# (`CUDSSBatchedFactorization`) rather than by a flag here; `batchedfactorization`
-# picks between the two from the sparsity structure and is what callers
-# should use.
+# one sparse system: the analysis, the first numeric factorization and the
+# descriptors bound to owned buffers
 function _cudss_factorize(A::SparseMatrixCSC{Tv,<:Integer};
     kwargs...) where {Tv<:AbstractFloat}
     n = size(A, 1)
@@ -184,152 +176,6 @@ function myldiv!(x::AbstractVector, F::CUDSSSolve, b::AbstractVector)
         cudss("solve", F.solver, F.xdesc, F.bdesc)
         copyto!(x, F.x)
     end
-    return x
-end
-
-# ---------------------------------------------------------------------------
-# batched: the mode block diagonal as a uniform batch
-# ---------------------------------------------------------------------------
-
-# cuDSS calls a set of systems which share one sparsity pattern a *uniform
-# batch*, and represents it as one row pointer, one column index array, and a
-# `blocknnz` by `nblocks` matrix of values; the right hand sides and solutions
-# are likewise one `blocksize` by `nblocks` matrix each. Every array here is
-# therefore a single contiguous device buffer, which is what removes the per
-# block staging copies an array-of-arrays interface would need: the gather
-# writes the batch's right hand sides directly and the assembly writes the
-# batch's values directly.
-mutable struct CUDSSBatchedSolve{TS,TL,TM,TV,TD,TI,Tv<:AbstractFloat}
-    solver::TS
-    # the layout with its slot map on the device, so the per solve gather and
-    # scatter are kernels rather than scalar indexing of a device vector
-    layout::TL
-    rowPtr::TV             # the shared pattern, one copy for the whole batch
-    colVal::TV
-    nzVal::TM              # blocknnz x nblocks
-    rhs::TM                # blocksize x nblocks
-    sol::TM
-    xdesc::TD              # bound to sol and rhs once, at construction
-    bdesc::TD
-    # a stored entry of the batch, in the row major order the device wants,
-    # back to where its value is found. `src` indexes the device value array
-    # of a DeviceValuedSparseMatrix; `hostsrc` indexes `nonzeros` of a host
-    # SparseMatrixCSC. Only one of the two is ever populated.
-    src::TI
-    hostsrc::Matrix{Int}
-    hostvals::Matrix{Tv}
-end
-
-# the shared pattern as compressed sparse rows, which is compressed sparse
-# columns of its transpose. Built on the host from the layout rather than by
-# converting a device matrix, so nothing depends on how a conversion treats a
-# stored zero.
-function sharedrowmajorpattern(layout::BatchedBlockLayout)
-    blkT = sparse(transpose(blockpattern(layout)))
-    return CuVector{Cint}(SparseArrays.getcolptr(blkT)),
-        CuVector{Cint}(rowvals(blkT))
-end
-
-# the analysis, the first numeric factorization, and the descriptors, shared by
-# the host valued and device valued entry points. `fill!` is the caller's job:
-# `nzVal` already holds the values of the first operating point.
-function newbatchedsolver(layout::BatchedBlockLayout, rowPtr, colVal, nzVal,
-    ::Type{Tv}) where {Tv}
-    nb, bs = layout.nblocks, layout.blocksize
-    solver = CudssSolver(rowPtr, colVal, nzVal, "G", 'F')
-    cudss_set(solver, "ubatch_size", nb)
-    rhs = CUDA.zeros(Tv, bs, nb)
-    sol = CUDA.zeros(Tv, bs, nb)
-    # a batched dense descriptor is created for the shape and then pointed at
-    # the buffers, which never move, so this is the only binding either needs
-    xdesc = CudssMatrix(Tv, bs; nbatch = nb)
-    bdesc = CudssMatrix(Tv, bs; nbatch = nb)
-    CUDSS.cudss_update(xdesc, sol)
-    CUDSS.cudss_update(bdesc, rhs)
-    cudss("analysis", solver, xdesc, bdesc)
-    cudss("factorization", solver, xdesc, bdesc)
-    # the slot map moves to the device once, because the right hand side
-    # gather and the solution scatter are kernels on the Krylov vectors
-    devlayout = tobackend(CUDABackend(), layout)
-    return solver, devlayout, rhs, sol, xdesc, bdesc
-end
-
-function _batched_factorize(A::SparseMatrixCSC{Tv}, layout::BatchedBlockLayout;
-    kwargs...) where {Tv}
-
-    rowPtr, colVal = sharedrowmajorpattern(layout)
-    hostsrc = blockrowmajorindex(layout)
-    hostvals = Matrix{Tv}(undef, size(hostsrc))
-    nz = nonzeros(A)
-    @inbounds for k in eachindex(hostsrc)
-        hostvals[k] = nz[hostsrc[k]]
-    end
-    nzVal = CuMatrix{Tv}(hostvals)
-    solver, devlayout, rhs, sol, xdesc, bdesc =
-        newbatchedsolver(layout, rowPtr, colVal, nzVal, Tv)
-    return CUDSSBatchedSolve(solver, devlayout, rowPtr, colVal, nzVal, rhs,
-        sol, xdesc, bdesc, nothing, hostsrc, hostvals)
-end
-
-# The values are already on the device, in the row major order of the *full*
-# matrix. Each stored entry of the batch is one of them, so the whole numeric
-# update is a single indexed copy on the device: the composition of "which
-# entry of the full matrix is this block slot" with "where does the device
-# value array keep that entry" is a fixed map, built once here.
-function _batched_factorize(A::JosephsonCircuits.DeviceValuedSparseMatrix{Tv},
-    layout::BatchedBlockLayout; kwargs...) where {Tv<:AbstractFloat}
-
-    rowPtr, colVal = sharedrowmajorpattern(layout)
-    hostsrc = blockrowmajorindex(layout)
-    # `nonzeros(A)` is in the row major order of the matrix, and the structure
-    # is stored as the transpose, whose row major order is the matrix's column
-    # major order. So transposing the stored structure's value order takes a
-    # column major index straight to the device slot holding it.
-    csrslot = cscvaluepermutation(A.patterntranspose)
-    src = CuMatrix{Cint}(Cint[csrslot[i] for i in hostsrc])
-    nzVal = CuMatrix{Tv}(undef, size(src))
-    gathervalues!(nzVal, A.nzval, src)
-    solver, devlayout, rhs, sol, xdesc, bdesc =
-        newbatchedsolver(layout, rowPtr, colVal, nzVal, Tv)
-    return CUDSSBatchedSolve(solver, devlayout, rowPtr, colVal, nzVal, rhs,
-        sol, xdesc, bdesc, src, Matrix{Int}(undef, 0, 0),
-        Matrix{Tv}(undef, 0, 0))
-end
-
-function _batched_factorize!(F::CUDSSBatchedSolve,
-    A::JosephsonCircuits.DeviceValuedSparseMatrix; kwargs...)
-    gathervalues!(F.nzVal, A.nzval, F.src)
-    return refactorize!(F)
-end
-
-function _batched_factorize!(F::CUDSSBatchedSolve, A::SparseMatrixCSC;
-    kwargs...)
-    # one permuted gather on the host, then values only to the device: the
-    # shared pattern and the analysis are untouched
-    nz = nonzeros(A)
-    @inbounds for k in eachindex(F.hostsrc)
-        F.hostvals[k] = nz[F.hostsrc[k]]
-    end
-    copyto!(F.nzVal, F.hostvals)
-    return refactorize!(F)
-end
-
-# `nzVal` is overwritten in place, so the solver's matrix descriptor already
-# points at the new values and only the numeric phase is redone.
-function refactorize!(F::CUDSSBatchedSolve)
-    cudss("refactorization", F.solver, F.xdesc, F.bdesc)
-    return F
-end
-
-# `b` and `x` are the vectors of the Krylov iteration, which are allocated
-# like its right hand side and therefore live on the device. The gather and
-# the scatter are kernels on that backend, and the batch's right hand sides
-# and solutions are the contiguous buffers the descriptors are bound to, so a
-# preconditioner solve is two kernels and a cuDSS call with no copies at all.
-function myldiv!(x::AbstractVector, F::CUDSSBatchedSolve, b::AbstractVector)
-    gatherblocks!(F.rhs, b, F.layout)
-    cudss("solve", F.solver, F.xdesc, F.bdesc)
-    scatterblocks!(x, F.sol, F.layout)
     return x
 end
 

@@ -41,30 +41,33 @@ end
         J, B0, _ = defectsystem(20, 2)
         b = zeros(20)
         jvp!(y, v) = (mul!(y, J, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, b)
-        @test JC.deflationform(pc) === :floquet
+        pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, b)
         @test JC.deflationsize(pc) == 0
         @test JC.candidatecount(pc) == 0
         @test JC.deflationrebuilds(pc) == 0
         # the integer constructor agrees with the vector one
-        pc2 = JC.FloquetPreconditioner(DensePC(B0), jvp!, 20)
+        pc2 = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, 20)
         @test JC.deflationsize(pc2) == 0
 
-        @test_throws ArgumentError JC.FloquetPreconditioner(DensePC(B0), jvp!, b;
-            kmax = 0)
-        @test_throws ArgumentError JC.FloquetPreconditioner(DensePC(B0), jvp!, b;
-            kharvest = 0, nritz = 0)
-        @test_throws ArgumentError JC.FloquetPreconditioner(DensePC(B0), jvp!, b;
-            kmax = 10, kcandidate = 4)
-        @test_throws ArgumentError JC.FloquetPreconditioner(DensePC(B0), jvp!, b;
-            ranktol = 0.0)
-        @test_throws ArgumentError JC.FloquetPreconditioner(DensePC(B0), jvp!, b;
-            benefittol = -1.0)
+        @test_throws ArgumentError Floquet(ranktol = 0.0)
+        @test_throws ArgumentError Floquet(benefittol = -1.0)
         @test_throws DimensionMismatch JC.seeddeflation!(pc, randn(7, 2))
+        # a seed which changes the bank marks the active blocks stale even
+        # when the bank's count does not change: with the bank full, an
+        # append trims the oldest unproven candidates and the count stays
+        pcb = JC.FloquetPreconditioner(Floquet(size = 2, candidates = 2), DensePC(B0), jvp!, b)
+        JC.seeddeflation!(pcb, randn(20, 2))
+        @test JC.candidatecount(pcb) == 2
+        JC.updatepreconditioner!(pcb, zeros(20))
+        @test pcb.fresh
+        g = pcb.state.generation
+        JC.seeddeflation!(pcb, randn(20, 2))
+        @test JC.candidatecount(pcb) == 2
+        @test pcb.state.generation > g
+        @test !pcb.fresh
         # a preconditioner which does not deflate ignores a seed
         @test JC.candidatecount(DensePC(B0)) == 0
-        @test_throws DimensionMismatch JC.FloquetPreconditioner(DensePC(B0), jvp!, b;
-            state = JC.FloquetState(zeros(7)))
+        @test_throws DimensionMismatch JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, b; state = JC.FloquetState(zeros(7)))
         @test JC.seeddeflation!(DensePC(B0), randn(20, 2)) isa DensePC
     end
 
@@ -74,7 +77,7 @@ end
         n, nbad = 40, 3
         J, B0, Q = defectsystem(n, nbad)
         jvp!(y, v) = (mul!(y, J, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n))
+        pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         # seed the bad directions themselves, plus noise
         JC.seeddeflation!(pc, hcat(Q[:, 1:nbad], randn(MersenneTwister(3), n, 2));
             source = :test)
@@ -98,7 +101,7 @@ end
         n = 30
         J, B0, Q = defectsystem(n, 2)
         jvp!(y, v) = (mul!(y, J, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n))
+        pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         x = Q[:, 1:2]
         # the same two directions offered five times over, in different
         # scalings and linear combinations
@@ -115,7 +118,7 @@ end
         n, nbad = 30, 2
         J, B0, Q = defectsystem(n, nbad)
         jvp!(y, v) = (mul!(y, J, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n))
+        pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         # columns nbad+1 onward satisfy B0*J*x = x exactly; only the first
         # nbad are missing from the base
         JC.seeddeflation!(pc, Q[:, 1:6]; source = :test)
@@ -124,12 +127,12 @@ end
         @test all(JC.correctionstrengths(pc) .> 1.0)
 
         # every candidate handled by the base leaves an empty active set
-        pc2 = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n))
+        pc2 = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc2, Q[:, nbad+1:nbad+4]; source = :test)
         JC._rebuildfloquet!(pc2)
         @test JC.deflationsize(pc2) == 0
         # ... and against an exact base nothing is retained at all
-        pcx = JC.FloquetPreconditioner(DensePC(inv(J), true), jvp!, zeros(n))
+        pcx = JC.FloquetPreconditioner(Floquet(), DensePC(inv(J), true), jvp!, zeros(n))
         JC.seeddeflation!(pcx, Q[:, 1:4]; source = :test)
         JC.updatepreconditioner!(pcx, zeros(n))
         @test JC.deflationsize(pcx) == 0
@@ -139,7 +142,7 @@ end
         n = 40
         J, B0, Q = defectsystem(n, 8)
         jvp!(y, v) = (mul!(y, J, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n); kmax = 3)
+        pc = JC.FloquetPreconditioner(Floquet(size = 3), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:8]; source = :test)
         JC._rebuildfloquet!(pc)
         @test JC.deflationsize(pc) == 3
@@ -152,8 +155,7 @@ end
         n = 25
         J, B0, _ = defectsystem(n, 2)
         jvp!(y, v) = (mul!(y, J, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n);
-            kmax = 4, kcandidate = 10)
+        pc = JC.FloquetPreconditioner(Floquet(size = 4, candidates = 10), DensePC(B0), jvp!, zeros(n))
         rng = MersenneTwister(11)
         for _ in 1:20
             JC.seeddeflation!(pc, randn(rng, n, 3); source = :test)
@@ -217,8 +219,7 @@ end
         A = triu(randn(rng, n, n), 1)*8.0 + Diagonal(range(0.05, 2.0; length = n))
         B0 = Matrix{Float64}(I, n, n)
         jvp!(y, v) = (mul!(y, A, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n);
-            kharvest = 2, nritz = 2, kmax = 8)
+        pc = JC.FloquetPreconditioner(Floquet(harvest = 2, ritz = 2, size = 8), DensePC(B0), jvp!, zeros(n))
         # a real Arnoldi factorization of A on a random start
         m = 12
         V = zeros(n, m+1); H = zeros(n, m)
@@ -244,7 +245,7 @@ end
         n = 30
         J, B0, Q = defectsystem(n, 2)
         jvp!(y, v) = (mul!(y, J, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n))
+        pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:2]; source = :test)
         JC._rebuildfloquet!(pc)
         rebuilds = JC.deflationrebuilds(pc)
@@ -265,7 +266,7 @@ end
         n = 30
         J, B0, Q = defectsystem(n, 3)
         jvp!(y, v) = (mul!(y, J, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n))
+        pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:3]; source = :test)
         JC._rebuildfloquet!(pc)
         rng = MersenneTwister(17)
@@ -283,7 +284,7 @@ end
         Jmoved = J + 0.01*Q*Diagonal(randn(MersenneTwister(19), n))*Q'
         moved = Ref(false)
         jvp!(y, v) = (mul!(y, moved[] ? Jmoved : J, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n))
+        pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:2]; source = :test)
         JC._rebuildfloquet!(pc)
         @test J*pc.X ≈ pc.C atol = 1e-9
@@ -319,7 +320,7 @@ end
             maxrestarts = 4)
         @test out0.converged
 
-        pc = JC.FloquetPreconditioner(base, jvp!, zeros(n); kmax = 8)
+        pc = JC.FloquetPreconditioner(Floquet(size = 8), base, jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:nbad]; source = :test)
         JC._rebuildfloquet!(pc)
         ws2 = JC.GMRESWorkspace(b, 40)
@@ -345,7 +346,7 @@ end
 
         # cold start at the second operator
         jvp1!(y, v) = (mul!(y, J1, v); y)
-        cold = JC.FloquetPreconditioner(base, jvp1!, zeros(n); kmax = 8)
+        cold = JC.FloquetPreconditioner(Floquet(size = 8), base, jvp1!, zeros(n))
         wsc = JC.GMRESWorkspace(b, 40); xc = zeros(n)
         outcold = JC.gmres!(xc, jvp1!, b, wsc; Mop! = cold, rtol = 1e-10,
             maxrestarts = 4)
@@ -353,8 +354,7 @@ end
         # warm: harvest at the first operator, carry the physical vectors
         Jcur = Ref(J0)
         jvp!(y, v) = (mul!(y, Jcur[], v); y)
-        warm = JC.FloquetPreconditioner(base, jvp!, zeros(n); kmax = 8,
-            kharvest = 4, nritz = 2)
+        warm = JC.FloquetPreconditioner(Floquet(size = 8, harvest = 4, ritz = 2), base, jvp!, zeros(n))
         ws = JC.GMRESWorkspace(b, 40); x = zeros(n)
         out0 = JC.gmres!(x, jvp!, b, ws; Mop! = warm, rtol = 1e-10,
             maxrestarts = 4)
@@ -400,8 +400,7 @@ end
         # them, which is the situation the per-cycle harvest exists for
         m = 4
 
-        percycle = JC.FloquetPreconditioner(base, jvp!, zeros(n);
-            kmax = 8, kharvest = 2, nritz = 2, kcandidate = 64)
+        percycle = JC.FloquetPreconditioner(Floquet(size = 8, harvest = 2, ritz = 2, candidates = 64), base, jvp!, zeros(n))
         @test JC.usescycleharvest(percycle)
         ws = JC.GMRESWorkspace(b, m); x = zeros(n)
         before = copy(percycle.W)
@@ -414,9 +413,7 @@ end
         @test JC.deflationrebuilds(percycle) == 0
 
         # against harvesting only the cycle left in the workspace
-        finalonly = JC.FloquetPreconditioner(base, jvp!, zeros(n);
-            kmax = 8, kharvest = 2, nritz = 2, kcandidate = 64,
-            cycleharvest = false)
+        finalonly = JC.FloquetPreconditioner(Floquet(size = 8, harvest = 2, ritz = 2, candidates = 64, cycleharvest = false), base, jvp!, zeros(n))
         @test !JC.usescycleharvest(finalonly)
         ws2 = JC.GMRESWorkspace(b, m); x2 = zeros(n)
         out2 = JC.gmres!(x2, jvp!, b, ws2; Mop! = finalonly, rtol = 1e-10,
@@ -436,7 +433,7 @@ end
         n = 40
         J, B0, Q = defectsystem(n, 3)
         jvp!(y, v) = (mul!(y, J, v); y)
-        pc = JC.FloquetPreconditioner(DensePC(B0), jvp!, zeros(n))
+        pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:2]; source = :test)
         JC._rebuildfloquet!(pc)
         @test JC.deflationsize(pc) == 2
@@ -498,8 +495,8 @@ end
             @test norm(U'*q) > 0.9
         end
         # and the harvest, given the workspace, finds the same subspace
-        pc = JC.FloquetPreconditioner(DensePC(Matrix{Float64}(I, n, n)), jvp!,
-            zeros(n); kharvest = 0, nritz = 2)
+        pc = JC.FloquetPreconditioner(Floquet(harvest = 0, ritz = 2), DensePC(Matrix{Float64}(I, n, n)), jvp!,
+            zeros(n))
         JC.harvest!(pc, ws, out)
         @test JC.candidatecount(pc) >= 2
         Xc = pc.state.X
@@ -544,12 +541,10 @@ end
         @test isapprox(sol.nodeflux, ref.nodeflux; rtol = 1e-6,
             atol = 1e-12*maximum(abs, ref.nodeflux))
 
-        @test_throws ArgumentError JC.hbnlsolve(w, Nh, src, circ, Dict();
-            method = NewtonKrylov(preconditioner = Recycling(size = 8,
-                form = :nosuchform)), keyedarrays = false)
+        @test_throws ArgumentError Floquet(size = 8, candidates = 4)
 
-        # and the same through hbsolve, which forwards the three recycling
-        # keywords
+        # and the same through hbsolve, which forwards the deflation
+        # options
         hs = JC.hbsolve(2*pi*8.1e9, w, src, (1,), Nh, circ, Dict();
             method = NewtonKrylov(preconditioner = Floquet(size = 8, harvest = 3)),
             keyedarrays = false)

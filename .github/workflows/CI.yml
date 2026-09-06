@@ -49,3 +49,15 @@ jobs:
         with:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+  interop:
+    name: Extensions - Julia 1 - ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      # the optional extensions (Krylov.jl, SciMLBase) against the package
+      # from this checkout, in the interop test environment
+      - run: julia --project=test/interop -e 'using Pkg; Pkg.develop(path = "."); Pkg.instantiate(); include("test/interop/runtests.jl")'

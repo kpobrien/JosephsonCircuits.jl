@@ -1,0 +1,1093 @@
+
+"""
+    CircuitMatrices(Cnm::SparseMatrixCSC, Gnm::SparseMatrixCSC, Lb::SparseVector
+        Lbm::SparseVector, Ljb::SparseVector, Ljbm::SparseVector,
+        Mb::SparseMatrixCSC, invLnm::SparseMatrixCSC,
+        Rbnm::SparseMatrixCSC{Int, Int}, portindices::Vector{Int},
+        portnumbers::Vector{Int}, portimpedances::Vector,
+        portenvironmentindices::Vector{Int},
+        noiseportimpedanceindices::Vector{Int}, Lmean, vvn)
+
+The matrices of a compiled circuit at a given mode count: the capacitance,
+conductance and inverse inductance matrices in the node basis, the
+inductance vectors in the branch basis, the mutual inductance matrix, the
+incidence matrix, the port data, and the resolved component values. Built
+by [`numericmatrices`](@ref) and [`symbolicmatrices`](@ref).
+
+# Fields
+- `Cnm`: the capacitance matrix in the node basis with each
+    element duplicated along the diagonal Nmodes times.
+- `Gnm`: the conductance matrix in the node basis with each
+    element duplicated along the diagonal Nmodes times.
+- `Lb`: vector of branch linear inductances.
+- `Lbm`: vector of branch linear inductances with each element
+    duplicated Nmodes times.
+- `Ljb`: vector of branch Josephson junction inductances.
+- `Ljbm`: vector of branch Josephson junction inductances with
+    each element duplicated Nmodes times.
+- `Mb`: the mutual inductance matrix in the branch basis.
+- `invLnm`: the inverse inductance matrix in the node basis, with each
+    element duplicated along the diagonal Nmodes times. It excludes the
+    mutually coupled inductor branches, which the solvers represent with
+    auxiliary branch current variables (see circuit/mna.jl).
+- `Rbnm::SparseMatrixCSC{Int, Int}`: incidence matrix to convert between the
+    node and branch bases.
+- `portindices::Vector{Int}`: vector of indices at which ports occur.
+- `portnumbers::Vector{Int}`: vector of port numbers.
+- `portimpedances::Vector`: the reference impedance of each port, ordered by
+    port number. This is what the waves are normalized to, and it is defined
+    for every port whether or not the port owns an environment.
+- `portenvironmentindices::Vector{Int}`: vector of indices at which the port
+    owned environments occur, ordered by port number, with zero for a port
+    which owns none.
+- `noiseportimpedanceindices::Vector{Int}`: vector of indices at which
+    resistive elements other than port impedances occur, for noise
+    calculations.
+- `Lmean`: the mean of the linear and Josephson inductances, zero when the
+    circuit has none; the solvers replace it by the solver scale of
+    [`calcsolverscale`](@ref) under the same name.
+- `vvn`: the vector of component values with the definitions substituted.
+"""
+struct CircuitMatrices{TC,TG,TLb,TLbm,TLj,TLjm,TM,TiL,TLmean,TV}
+    Cnm::TC
+    Gnm::TG
+    Lb::TLb
+    Lbm::TLbm
+    Ljb::TLj
+    Ljbm::TLjm
+    Mb::TM
+    invLnm::TiL
+    Rbnm::SparseMatrixCSC{Int, Int}
+    portindices::Vector{Int}
+    portnumbers::Vector{Int}
+    portimpedances::Vector
+    portenvironmentindices::Vector{Int}
+    noiseportimpedanceindices::Vector{Int}
+    Lmean::TLmean
+    vvn::TV
+end
+
+"""
+    symbolicmatrices(circuit; Nmodes = 1, sorting = defaultsorting(circuit))
+    symbolicmatrices(psc::CompiledCircuit, cg::CircuitGraph; Nmodes = 1)
+
+The [`CircuitMatrices`](@ref) of a circuit with its component values left
+symbolic, so that the capacitance and inverse inductance matrices can be
+inspected as expressions. The mutually coupled inductor branches are
+excluded from the inverse inductance matrix and represented by auxiliary
+branch currents instead (see circuit/mna.jl), so no symbolic linear solve is
+needed. `sorting` defaults to `:number` for a tuple
+netlist and `:name` for a typed circuit.
+
+See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref),
+[`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
+[`calcinvLn`](@ref), [`calcLmean`](@ref), [`portindicesnumbers`](@ref),
+[`portreferenceimpedances`](@ref), and [`noiseindices`](@ref).
+
+# Examples
+```julia
+@variables Ipump Rleft Cc Lj Cj
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = Rleft),
+     :i1 => CurrentSource(Ipump),
+     :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj),
+     :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:i1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+JosephsonCircuits.testshow(stdout,symbolicmatrices(circuit))
+
+# output
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], Lj, Any[1, Rleft, Ipump, Cc, Lj, Cj])
+```
+"""
+function symbolicmatrices(circuit; Nmodes::Int = 1,
+    sorting::Symbol = defaultsorting(circuit))
+    return numericmatrices(circuit, Dict(), Nmodes = Nmodes, sorting = sorting)
+end
+
+"""
+    symbolicmatrices(psc::CompiledCircuit, cg::CircuitGraph;
+    Nmodes::Int = 1)
+
+Return the symbolic matrices describing the circuit properties.
+
+See also  [`CircuitMatrices`](@ref), [`numericmatrices`](@ref), [`calcCn`](@ref),
+[`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref), [`calcMb`](@ref),
+[`calcinvLn`](@ref), [`calcLmean`](@ref), [`portindicesnumbers`](@ref),
+[`portreferenceimpedances`](@ref), and [`noiseindices`](@ref).
+
+# Examples
+```julia
+@variables Ipump Rleft Cc Lj Cj
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = Rleft),
+     :i1 => CurrentSource(Ipump),
+     :cc => Capacitor(Cc),
+     :jj => JosephsonJunction(Lj),
+     :cj => Capacitor(Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:i1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+psc = JosephsonCircuits.compile(circuit)
+cg = JosephsonCircuits.calccircuitgraph(psc)
+JosephsonCircuits.testshow(stdout,symbolicmatrices(psc,cg))
+
+# output
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Cc, -Cc, -Cc, Cc + Cj], 2, 2), sparse([1], [1], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[1 / Rleft], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparsevec([2], SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"{SymReal}[Lj], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], Lj, Any[1, Rleft, Ipump, Cc, Lj, Cj])
+```
+"""
+function symbolicmatrices(psc::CompiledCircuit, cg::CircuitGraph;
+    Nmodes::Int = 1)
+    return numericmatrices(psc, cg, Dict(), Nmodes = Nmodes)
+end
+
+"""
+    numericmatrices(circuit, circuitdefs; Nmodes = 1,
+        sorting = defaultsorting(circuit))
+    numericmatrices(psc::CompiledCircuit, cg::CircuitGraph, circuitdefs;
+        Nmodes = 1)
+    numericmatrices(psc::CompiledCircuit, cg::CircuitGraph, vvn; Nmodes = 1)
+
+The [`CircuitMatrices`](@ref) of a circuit with its component values
+resolved to numbers with `circuitdefs`, at the mode count `Nmodes`, with
+every matrix entry repeated `Nmodes` times along the diagonal. The third
+form takes the already resolved values `vvn`, so that a second call at a
+different mode count (the signal grid of [`hblinsolve`](@ref) after the
+pump grid of [`hbnlsolve`](@ref)) does not resolve them again.
+
+See also [`CircuitMatrices`](@ref), [`numericmatrices`](@ref),
+[`calcCn`](@ref), [`calcGn`](@ref), [`calcLb`](@ref),[`calcLjb`](@ref),
+[`calcMb`](@ref), [`calcinvLn`](@ref), [`calcLmean`](@ref),
+[`portindicesnumbers`](@ref), [`portreferenceimpedances`](@ref), and
+[`noiseindices`](@ref).
+
+# Examples
+```julia
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = :Rleft),
+     :i1 => CurrentSource(:Ipump),
+     :cc => Capacitor(:Cc),
+     :jj => JosephsonJunction(:Lj),
+     :cj => Capacitor(:Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:i1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+circuitdefs = Dict(:Lj => 1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15, :Rleft => 50.0, :Ipump => 1.0e-8)
+JosephsonCircuits.testshow(stdout,numericmatrices(circuit,circuitdefs))
+
+# output
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], 1.0e-9, Real[1, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
+```
+```julia
+circuit = Circuit(
+    [:p1 => Port(1; Z0 = :Rleft),
+     :i1 => CurrentSource(:Ipump),
+     :cc => Capacitor(:Cc),
+     :jj => JosephsonJunction(:Lj),
+     :cj => Capacitor(:Cj),
+     :gnd => Ground()],
+    [[(:p1, 1), (:i1, 1), (:cc, 1)],
+     [(:cc, 2), (:jj, 1), (:cj, 1)],
+     [(:p1, 2), (:i1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
+circuitdefs = Dict(:Lj => 1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15, :Rleft => 50.0, :Ipump => 1.0e-8)
+psc = JosephsonCircuits.compile(circuit)
+cg = JosephsonCircuits.calccircuitgraph(psc)
+JosephsonCircuits.testshow(stdout,numericmatrices(psc, cg, circuitdefs))
+
+# output
+JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [2], Int64[], 1.0e-9, Real[1, 50.0, 1.0e-8, 1.0e-13, 1.0e-9, 1.0e-12])
+```
+"""
+function numericmatrices(circuit, circuitdefs::Dict; Nmodes::Int = 1,
+    sorting::Symbol = defaultsorting(circuit))
+
+    # whatever `compile` accepts: a typed `Circuit`, a netlist of tuples, an
+    # elaborated circuit, or one already compiled
+    psc = compile(circuit; sorting = sorting)
+
+    # calculate the circuit graph
+    # the loop enumeration is quadratic in the number of inductive
+    # loops and nothing here reads it
+    cg = calccircuitgraph(psc; loops = false)
+
+    return numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
+end
+
+function numericmatrices(psc::CompiledCircuit, cg::CircuitGraph,
+    circuitdefs::Dict; Nmodes::Int = 1)
+
+    # convert as many values as we can to numerical values using definitions
+    # from circuitdefs
+    vvn = componentvaluestonumber(psc.componentvalues, circuitdefs)
+    return numericmatrices(psc, cg, vvn; Nmodes = Nmodes)
+end
+
+# the same, from already resolved component values, so a second call at a
+# different mode count (the signal grid of hblinsolve after the pump grid
+# of hbnlsolve) does not redo the symbolic value resolution.
+function numericmatrices(psc::CompiledCircuit, cg::CircuitGraph,
+    vvn::AbstractVector; Nmodes::Int = 1)
+    
+    # capacitance matrix
+    Cnm = calcCn(psc.componenttypes, psc.nodeindices, vvn, Nmodes, psc.Nnodes)
+
+    # conductance matrix
+    Gnm = calcGn(psc.componenttypes, psc.nodeindices, vvn, Nmodes, psc.Nnodes)
+
+    # branch inductance vector with Nmodes = 1
+    Lb = calcLb(psc.componenttypes, psc.nodeindices, vvn, cg.edge2indexdict,
+        1, cg.Nbranches)
+
+    # branch inductance vector with Nmodes = Nmodes
+    Lbm = calcLb(psc.componenttypes, psc.nodeindices, vvn, cg.edge2indexdict,
+        Nmodes, cg.Nbranches)
+
+    # branch Josephson inductance vector with Nmodes = 1
+    Ljb = calcLjb(psc.componenttypes, psc.nodeindices, vvn, cg.edge2indexdict,
+        1, cg.Nbranches)
+
+    # branch Josephson inductance vector with Nmodes = Nmodes
+    Ljbm = calcLjb(psc.componenttypes, psc.nodeindices, vvn, cg.edge2indexdict,
+        Nmodes, cg.Nbranches)
+
+    # mutual branch inductance matrix
+    Mb = calcMb(psc.componenttypes, psc.nodeindices, vvn, psc.componentnamedict,
+        psc.mutualinductorbranchnames, cg.edge2indexdict, 1, cg.Nbranches)
+
+    # inverse nodal inductance matrix from branch inductance vector and branch
+    # inductance matrix
+    # A branch which participates in mutual coupling must host exactly one
+    # inductor: multiple inductors on a branch are combined into a single
+    # branch inductance before the coupling is applied, which
+    # misrepresents the coupled system.
+    checkcoupledbranchinductors(psc.componentnames, psc.componenttypes,
+        psc.nodeindices, cg.edge2indexdict, Mb)
+
+    # Inductor branches which participate in mutual coupling are
+    # represented in the solvers by auxiliary branch current variables of
+    # the modified nodal analysis formulation, with their un-inverted
+    # branch inductance matrix as explicit constitutive equations (see
+    # circuit/mna.jl), so they are excluded from the inverse inductance matrix
+    # here. This also keeps the matrix defined for perfectly coupled
+    # (|k| = 1) pairs, whose branch inductance matrix is singular and
+    # cannot be inverted; the MNA system remains well posed for physically
+    # well determined configurations.
+    invLnm = calcinvLn(mnadropbranches(Lb, mnacoupledbranches(Mb)),
+        cg.Rbn, Nmodes)
+
+    # expand the size of the incidence matrix
+    Rbnm = diagrepeat(cg.Rbn, Nmodes)
+
+    # calculate Lmean
+    Lmean = calcLmean(psc.componenttypes, vvn)
+
+    # the port and noise roles come from the compiled circuit, which knows
+    # which resistor is a port's own environment because the port declared
+    # it, rather than inferring it from what sits across the port's terminals
+    portindices, portnumbers = portindicesnumbers(psc)
+    portimpedances = portreferenceimpedances(psc, vvn)
+    portenvironments = portenvironmentindices(psc)
+    noiseportimpedanceindices = noiseindices(psc, vvn)
+
+    return CircuitMatrices(Cnm, Gnm, Lb, Lbm, Ljb, Ljbm, Mb, invLnm, Rbnm,
+        portindices, portnumbers, portimpedances, portenvironments,
+        noiseportimpedanceindices, Lmean, vvn)
+end
+
+"""
+    calcIb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+        componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+
+Calculate the sparse branch current source vector whose length is
+`Nbranches*Nmodes`. Note that `nodeindices` is "one indexed" so 1 is the
+ground node.
+
+# Examples
+```jldoctest
+Nmodes = 1
+Nbranches = 2
+componenttypes = [:I,:C,:L,:C]
+nodeindices = [2 0 3 3; 1 0 1 1]
+componentvalues = [1e-9, 0.2, 4e-9, 1e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+Ib = JosephsonCircuits.calcIb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Ib)
+
+# output
+sparsevec([1], [1.0e-9], 2)
+```
+```jldoctest
+Nmodes = 1
+Nbranches = 2
+componenttypes = [:I,:C,:L,:C]
+nodeindices = [2 0 3 3; 1 0 1 1]
+componentvalues = [1.0, 2.0e-12, 3.0e-9, 4.0e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:I1 => 1,:C1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+Ib = JosephsonCircuits.calcIb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Ib)
+
+# output
+sparsevec([1], [1.0], 2)
+```
+"""
+function calcIb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+    componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+    return calcbranchvector(componenttypes, nodeindices, componentvalues,
+        calcvaluetype(componenttypes, componentvalues, [:I]), edge2indexdict,
+        Nmodes, Nbranches, :I, combine_sum)
+end
+
+"""
+    calcVb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+        componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+
+Calculate the sparse branch voltage source vector whose length is
+`Nbranches*Nmodes`. Note that `nodeindices` is "one indexed" so 1 is the
+ground node.
+
+# Examples
+```jldoctest
+Nmodes = 1
+Nbranches = 2
+componenttypes = [:V,:C,:L1,:C]
+nodeindices = [2 0 3 3; 1 0 1 1]
+componentvalues = [1e-9, 0.2, 4e-9, 1e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+Vb = JosephsonCircuits.calcVb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Vb)
+
+# output
+sparsevec([1], [1.0e-9], 2)
+```
+```jldoctest
+Nmodes = 1
+Nbranches = 2
+componenttypes = [:V,:C,:L,:C]
+nodeindices = [2 0 3 3; 1 0 1 1]
+componentvalues = [1.0, 2.0e-12, 3.0e-9, 4.0e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L1 => 3,:V1 => 1,:C1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+Vb = JosephsonCircuits.calcVb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Vb)
+
+# output
+sparsevec([1], [1.0], 2)
+```
+"""
+function calcVb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+    componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+    return calcbranchvector(componenttypes, nodeindices, componentvalues,
+        calcvaluetype(componenttypes, componentvalues, [:V]), edge2indexdict,
+        Nmodes, Nbranches, :V, combine_error)
+end
+
+"""
+    calcLb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+        componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+
+Calculate the sparse branch inductance vector whose length is
+`Nbranches*Nmodes`. Note that `nodeindices` is "one indexed" so 1 is the
+ground node.
+
+# Examples
+```jldoctest
+Nmodes = 1
+Nbranches = 2
+componenttypes = [:L,:K,:L,:C]
+nodeindices = [2 0 3 3; 1 0 1 1]
+componentvalues = [1e-9, 0.2, 4e-9, 1e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+Lb = JosephsonCircuits.calcLb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Lb)
+
+# output
+sparsevec([1, 2], [1.0e-9, 4.0e-9], 2)
+```
+```jldoctest
+Nmodes = 1
+Nbranches = 2
+componenttypes = [:L,:K,:L,:C]
+nodeindices = [2 0 3 3; 1 0 1 1]
+componentvalues = [1.0e-9, 0.1, 4.0e-9, 2.0e-12]
+componentnamedict = Dict{Symbol, Int}(:C1 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+Lb = JosephsonCircuits.calcLb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Lb)
+
+# output
+sparsevec([1, 2], [1.0e-9, 4.0e-9], 2)
+```
+"""
+function calcLb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+    componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+    return calcbranchvector(componenttypes, nodeindices, componentvalues,
+        calcvaluetype(componenttypes, componentvalues, [:L,:K]),
+        edge2indexdict, Nmodes, Nbranches, :L, combine_reciprocal_sum)
+end
+
+"""
+    calcLjb(componenttypes, nodeindices, componentvalues, edge2indexdict,
+        Nmodes, Nbranches)
+
+Calculate the sparse branch Josephson inductance vector whose length is
+`Nbranches*Nmodes`. Note that `nodeindices` is "one indexed" so 1 is the
+ground node.
+
+# Examples
+```jldoctest
+Nmodes = 1
+Nbranches = 2
+componenttypes = [:Lj,:C,:Lj,:C]
+nodeindices = [2 3 3 3; 1 2 1 1]
+componentvalues = [1e-9, 1e-12, 4e-9, 1e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:Cc => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+Ljb = JosephsonCircuits.calcLjb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Ljb)
+
+# output
+sparsevec([1, 2], [1.0e-9, 4.0e-9], 2)
+```
+```jldoctest
+Nmodes = 1
+Nbranches = 2
+componenttypes = [:Lj,:K,:Lj,:C]
+nodeindices = [2 0 3 3; 1 0 1 1]
+componentvalues = [1.0e-9, 0.1, 4.0e-9, 2.0e-12]
+componentnamedict = Dict{Symbol, Int}(:C1 => 4,:Lj2 => 3,:Lj1 => 1,:K1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+Ljb = JosephsonCircuits.calcLjb(componenttypes,nodeindices,componentvalues,edge2indexdict,Nmodes,Nbranches)
+JosephsonCircuits.testshow(stdout,Ljb)
+
+# output
+sparsevec([1, 2], [1.0e-9, 4.0e-9], 2)
+```
+"""
+function calcLjb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+    componentvalues::Vector, edge2indexdict::Dict, Nmodes, Nbranches)
+    return calcbranchvector(componenttypes, nodeindices, componentvalues,
+        calcvaluetype(componenttypes, componentvalues, [:Lj]), edge2indexdict,
+        Nmodes, Nbranches, :Lj, combine_error)
+end
+
+"""
+    calcbranchvector(componenttypes::Vector{Symbol},
+        nodeindices::Matrix{Int}, componentvalues::Vector,
+        valuecomponenttypes::Vector, edge2indexdict::Dict, Nmodes, Nbranches,
+        component::Symbol, combine::Function)
+
+Calculate the sparse branch vector whose length is `Nbranches*Nmodes` for the
+given component symbol. Note that `nodeindices` is "one indexed" so 1 is
+the ground node. The `combine` function determines how elements of the sparse
+vector will be combined.
+"""
+function calcbranchvector(componenttypes::Vector{Symbol},
+    nodeindices::Matrix{Int}, componentvalues::Vector,
+    valuecomponenttypes::Vector, edge2indexdict::Dict, Nmodes, Nbranches,
+    component::Symbol, combine::Function)
+
+    # calculate the expected number of elements
+    Nelements = 0
+    for (i,type) in enumerate(componenttypes)
+        if type == component
+            Nelements += 1
+        end
+    end
+
+    # define empty vectors for the indices and values
+    Ib = Vector{Int}(undef, Nelements)
+    Vb = Vector{eltype(valuecomponenttypes)}(undef, Nelements)
+
+    # copy the components over
+    j = 1
+    for (i,type) in enumerate(componenttypes)
+        if type == component
+            Ib[j] = edge2indexdict[(nodeindices[1,i],nodeindices[2,i])]
+            Vb[j] = convert(eltype(valuecomponenttypes), componentvalues[i])
+            j += 1
+        end
+    end
+
+    # return a sparse vector
+    branchvector = sparsevec(Ib,Vb,Nbranches,combine)
+    if Nmodes == 1
+        return branchvector
+    else
+        return diagrepeat(branchvector, Nmodes)
+    end
+end
+
+combine_reciprocal_sum(x1,x2) = x1*x2/(x1+x2)
+combine_sum(x1,x2)= x1+x2
+combine_error(x1,x2) = throw(ArgumentError(lazy"Components $(x1) and $(x2) cannot be combined to a single element. Please place the two components between different nodes."))
+
+"""
+    calcMb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+        componentvalues::Vector, componentnamedict::Dict,
+        mutualinductorbranchnames::Vector, edge2indexdict::Dict, Nmodes,
+        Nbranches)
+
+Returns the branch mutual inductance matrix. Note that `nodeindices` is
+"one indexed" so 1 is the ground node.
+
+# Examples
+```jldoctest
+Nmodes = 1
+Nbranches = 2
+componenttypes = [:L,:K,:L,:C]
+nodeindices = [2 0 3 3; 1 0 1 1]
+componentvalues = [1e-9, 0.2, 2e-9, 1e-12]
+componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
+edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+mutualinductorbranchnames = [ :L1, :L2]
+Mb = JosephsonCircuits.calcMb(componenttypes,nodeindices,componentvalues,componentnamedict,mutualinductorbranchnames,edge2indexdict,Nmodes,Nbranches)
+
+# output
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
+  ⋅           2.82843e-10
+ 2.82843e-10   ⋅ 
+```
+"""
+function calcMb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+    componentvalues::Vector, componentnamedict::Dict,
+    mutualinductorbranchnames::Vector, edge2indexdict::Dict, Nmodes,
+    Nbranches)
+    return calcMb_inner(componenttypes, nodeindices, componentvalues,
+        calcvaluetype(componenttypes, componentvalues, [:L,:K]),
+        componentnamedict, mutualinductorbranchnames, edge2indexdict, Nmodes,
+        Nbranches)
+end
+
+function calcMb_inner(componenttypes::Vector{Symbol},
+    nodeindices::Matrix{Int}, componentvalues::Vector,
+    valuecomponenttypes::Vector, componentnamedict::Dict,
+    mutualinductorbranchnames::Vector, edge2indexdict::Dict, Nmodes,
+    Nbranches)
+
+    # define empty vectors of zero length for the row indices, column indices,
+    # and values
+    Ib = Vector{Int}(undef, 0)
+    Jb = Vector{Int}(undef, 0)
+    Vb = Vector{eltype(valuecomponenttypes)}(undef, 0)
+
+    n = 1
+    #loop through componenttypes for mutual inductors
+    @inbounds for (i,type) in enumerate(componenttypes)
+        # when we find a mutual inductor:
+        # -find the value of the mutual inductor in componentvalues[i]
+        # -find the names of the two inductors it couples together from
+        #   mutualinductorbranchnames[n]
+        #  -look up the index of the inductors in
+        #     index=componentnamedict[inductorsymbol] for each inductor symbol
+        #  -given the index of the inductor, look of the value of the inductor
+        #     from componentvalues
+        #  -then compute the value of the mutual inductance from the two
+        #     inductor values and K
+
+        # then use the index of the inductors to get the nodes from
+        # nodeindices. use that as a key in edge2indexdict to look up the
+        # branch index then assign those to I, J, V for the sparse array.
+        # then do the usual step of expanding that to Nmodes after finishing
+        # this loop.
+
+        if type == :K
+            # value of K
+            K = componentvalues[i]
+            # names of inductors
+            inductor1name = mutualinductorbranchnames[2*n-1]
+            inductor2name = mutualinductorbranchnames[2*n]
+
+            # indices of inductors
+            inductor1index = componentnamedict[inductor1name]
+            inductor2index = componentnamedict[inductor2name]
+
+            # values of inductors
+            inductor1value = componentvalues[inductor1index]
+            inductor2value = componentvalues[inductor2index]
+
+            # check the two components coupled are actually inductors
+            if componenttypes[inductor1index] != :L
+               throw(ArgumentError(lazy"Mutual coupling coefficient K must couple two inductors. $(inductor1name) is not an inductor."))
+            end
+            if componenttypes[inductor2index] != :L
+               throw(ArgumentError(lazy"Mutual coupling coefficient K must couple two inductors. $(inductor2name) is not an inductor."))
+            end
+
+            # values of mutual inductance Lm
+            Lm = K*sqrt(inductor1value*inductor2value)
+
+            inductor1edge = (nodeindices[1,inductor1index],nodeindices[2,inductor1index])
+            inductor2edge = (nodeindices[1,inductor2index],nodeindices[2,inductor2index])
+
+            # add the edges
+            push!(Ib,edge2indexdict[inductor1edge])
+            push!(Jb,edge2indexdict[inductor2edge])
+            pushval!(Vb,Lm,1,false)
+
+            push!(Ib,edge2indexdict[inductor2edge])
+            push!(Jb,edge2indexdict[inductor1edge])
+            pushval!(Vb,Lm,1,false)
+
+            n+=1
+        end
+
+    end
+
+    # if there is only one frequency mode return the sparse matrix generated
+    # from these vectors. if multiple modes then duplicate along the diagonal
+    # Nmodes times.
+    if Nmodes == 1
+        return sparse(Ib,Jb,Vb,Nbranches,Nbranches)
+    else
+        return diagrepeat(sparse(Ib,Jb,Vb,Nbranches,Nbranches),Nmodes)
+    end
+end
+
+"""
+    calcinvLn(Lb::SparseVector, Rbn::SparseMatrixCSC, Nmodes)
+
+Returns the nodal inverse inductance matrix. Accepts the vector of branch
+inductances `Lb` and the incidence matrix `Rbn`.
+
+# Examples
+```jldoctest
+Nmodes = 1
+Lb = JosephsonCircuits.SparseArrays.sparsevec([1,2],[1e-9,4e-9])
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
+JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes)
+
+# output
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
+ 1.0e9   ⋅ 
+  ⋅     2.5e8
+```
+```jldoctest
+Nmodes = 1
+Lb = JosephsonCircuits.SparseArrays.sparsevec([],Nothing[])
+Rbn = JosephsonCircuits.SparseArrays.sparse([1,2], [1,2], [1,1])
+JosephsonCircuits.calcinvLn(Lb,Rbn,Nmodes).nzval
+
+# output
+Nothing[]
+```
+"""
+function calcinvLn(Lb::SparseVector, Rbn::SparseMatrixCSC, Nmodes)
+    if nnz(Lb)>0
+        s = transpose(Rbn[Lb.nzind,:])*spdiagm(0 => 1 ./Lb.nzval)*Rbn[Lb.nzind,:]
+        if Nmodes == 1
+            return s
+        else
+            return diagrepeat(s,Nmodes)
+        end 
+    else
+        return spzeros(eltype(Lb),Nmodes*size(Rbn)[2],Nmodes*size(Rbn)[2])
+    end
+end
+
+
+"""
+    calcLmean(componenttypes::Vector{Symbol}, componentvalues::Vector)
+
+Return the mean of the linear and Josephson inductors.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcLmean([:R,:L,:C,:Lj],[10,4,5,1])
+2.5
+```
+"""
+function calcLmean(componenttypes::Vector{Symbol}, componentvalues::Vector)
+    return calcLmean_inner(componenttypes, componentvalues,
+        calcvaluetype(componenttypes, componentvalues, [:Lj, :L]))
+end
+
+"""
+    calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
+        valuecomponenttypes::Vector{Nothing})
+
+Return the mean of the linear and Josephson inductors. Return 0 if the expected
+return type is Nothing.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcLmean_inner([:R,:C,:C,:P],[10,4,5,1],Nothing[])
+0
+```
+"""
+function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
+    valuecomponenttypes::Vector{Nothing})
+    return 0
+end
+
+"""
+    calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
+        valuecomponenttypes::Vector)
+
+Return the mean of the linear and Josephson inductors.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcLmean_inner([:R,:L,:C,:Lj],[10,4,5,1],Float64[])
+2.5
+
+julia> JosephsonCircuits.calcLmean_inner([:R,:C,:C,:C],[10,4,5,1],Float64[])
+0.0
+```
+"""
+function calcLmean_inner(componenttypes::Vector, componentvalues::Vector,
+    valuecomponenttypes::Vector)
+
+    if length(componenttypes) != length(componentvalues)
+        throw(DimensionMismatch(lazy"componenttypes and componentvalues should have the same length"))
+    end
+
+    # count the number of inductors
+    ninductors = 0
+    for (i,type) in enumerate(componenttypes)
+        if type == :L || type == :Lj
+            ninductors += 1
+        end
+    end
+
+    # it's a litle absurd but we have to copy the inductance values into
+    # a new array to perform a type stable mean over some elements of
+    # componentvalues
+    Vn = Array{eltype(valuecomponenttypes), 1}(undef, ninductors)
+    j = 1
+    for (i,type) in enumerate(componenttypes)
+        if type == :L || type == :Lj
+            Vn[j] = convert(eltype(valuecomponenttypes),componentvalues[i])
+            j += 1
+        end
+    end
+
+    # take the mean. mean will return NaN if there are no elements so return
+    # zero manually if Vn is empty.
+    if isempty(Vn)
+        return zero(eltype(valuecomponenttypes))
+    else
+        return Statistics.mean(Vn)
+    end
+end
+
+"""
+    calcCn(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+        componentvalues::Vector, Nmodes, Nnodes)
+
+Returns the node capacitance matrix from the capacitance values in
+`componentvalues` when `componenttypes` has the symbol `:C` with node indices
+from `nodeindices`. Other symbols are ignored. Capacitances to ground
+become diagonal elements. Capacitance between elements is an off-diagonal
+element with a minus sign and is added to the diagonal with a plus sign. The
+dimensions of the output are `(Nnodes-1)*Nmodes` by `(Nnodes-1)` times
+`Nmodes` where `Nnodes` is the number of nodes including ground and `Nmodes`
+is the number of different frequencies. Note that `nodeindices` is
+"one indexed" so 1 is the ground node.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcCn([:C,:C],[2 3;1 1],[1.0,2.0],1,3)
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
+ 1.0   ⋅ 
+  ⋅   2.0
+
+julia> JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[1.0,0.1,2.0],1,3)
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 4 stored entries:
+  1.1  -0.1
+ -0.1   2.1
+
+julia> JosephsonCircuits.calcCn([:C,:C,:C],[2 2 3;1 3 1],[1.0,0.1,2.0],2,3)
+4×4 SparseArrays.SparseMatrixCSC{Float64, Int64} with 8 stored entries:
+  1.1    ⋅   -0.1    ⋅ 
+   ⋅    1.1    ⋅   -0.1
+ -0.1    ⋅    2.1    ⋅ 
+   ⋅   -0.1    ⋅    2.1
+```
+"""
+function calcCn(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+    componentvalues::Vector, Nmodes, Nnodes)
+    return calcnodematrix(componenttypes, nodeindices, componentvalues,
+        calcvaluetype(componenttypes, componentvalues, [:C]), Nmodes, Nnodes, :C, false)
+end
+
+"""
+    calcGn(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+        componentvalues::Vector, Nmodes, Nnodes)
+
+Returns the node conductance matrix from the resistance values in
+`componentvalues` when `componenttypes` has the symbol `:R`. The node indices
+are taken from `nodeindices`. Conductances to ground are diagonal elements.
+Conductance between elements is an off-diagonal element with a minus sign and
+is added to the diagonal with a plus sign. The dimensions of the output are
+`(Nnodes-1)` times `Nmodes` by `(Nnodes-1)` times `Nmodes`. Note that
+`nodeindices` is "one indexed" so 1 is the ground node.
+
+We have to calculate the inverse of the individual components so select a type
+that allows that.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcGn([:R,:R],[2 3;1 1],[1.0,2.0],1,3)
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
+ 1.0   ⋅ 
+  ⋅   0.5
+
+julia> JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[1.0,100.0,2.0],1,3)
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 4 stored entries:
+  1.01  -0.01
+ -0.01   0.51
+
+julia> JosephsonCircuits.calcGn([:R,:R,:R],[1 3 1;2 2 3],[1.0,100.0,2.0],1,3)
+2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 4 stored entries:
+  1.01  -0.01
+ -0.01   0.51
+
+julia> JosephsonCircuits.calcGn([:R,:R,:R],[2 2 3;1 3 1],[1.0,100.0,2.0],2,3)
+4×4 SparseArrays.SparseMatrixCSC{Float64, Int64} with 8 stored entries:
+  1.01    ⋅    -0.01    ⋅ 
+   ⋅     1.01    ⋅    -0.01
+ -0.01    ⋅     0.51    ⋅ 
+   ⋅    -0.01    ⋅     0.51
+```
+"""
+function calcGn(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+    componentvalues::Vector, Nmodes, Nnodes)
+
+    return calcnodematrix(componenttypes, nodeindices, componentvalues,
+        calcvaluetype(componenttypes, componentvalues, [:R]), Nmodes, Nnodes,
+        :R, true)
+end
+
+"""
+    calcnodematrix(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+        componentvalues::Vector, valuecomponenttypes::Vector, Nmodes, Nnodes,
+        component::Symbol, invert::Bool)
+
+Returns either the capacitance or conductance matrix depending on the values
+of `component` and `invert`. `:C` and `false` for capacitance and `:R` and
+`true` for conductance. The dimensions of the output are `(Nnodes-1)` times
+`Nmodes` by `(Nnodes-1)` times `Nmodes`. Note that `nodeindices` is
+"one indexed" so 1 is the ground node.
+"""
+function calcnodematrix(componenttypes::Vector{Symbol},
+    nodeindices::Matrix{Int}, componentvalues::Vector,
+    valuecomponenttypes::Vector, Nmodes, Nnodes, component::Symbol,
+    invert::Bool)
+
+    if length(componenttypes) != size(nodeindices,2) || length(componenttypes) != length(componentvalues)
+        throw(DimensionMismatch(lazy"componenttypes, nodeindices, and componentvalues should have the same length"))
+    end
+
+    if size(nodeindices,1) != 2
+        throw(DimensionMismatch(lazy"nodeindices should have a first dimension size of 2."))
+    end
+
+    # calculate the expected number of elements
+    Nelements = 0
+    for (i,type) in enumerate(componenttypes)
+        if type == component
+            if nodeindices[1,i] == 1
+                Nelements += 1
+            elseif nodeindices[2,i] == 1
+                Nelements += 1
+            else
+                Nelements += 4
+            end
+        end
+    end
+
+    # define empty vectors for the row indices, column indices, and values
+    In = Vector{Int}(undef, Nelements)
+    Jn = Vector{Int}(undef, Nelements)
+    Vn = Vector{eltype(valuecomponenttypes)}(undef, Nelements)
+
+    j=1
+    # generate the capacitance or conductance matrix values for Nmodes=1
+    for (i,type) in enumerate(componenttypes)
+        if type == component
+
+            if nodeindices[1,i] == 1
+                # capacitance to ground, add to diagonal
+                In[j] = nodeindices[2,i]-1
+                Jn[j] = nodeindices[2,i]-1
+                Vn[j] = componentvalues[i]
+                if invert
+                    Vn[j] = 1/Vn[j]
+                end
+                j+=1
+
+            elseif nodeindices[2,i] == 1
+                # capacitance to ground, add to diagonal
+                In[j] = nodeindices[1,i]-1
+                Jn[j] = nodeindices[1,i]-1
+                Vn[j] = componentvalues[i]
+                if invert
+                    Vn[j] = 1/Vn[j]
+                end
+                j+=1
+
+            else
+                # diagonal elements
+                In[j] = nodeindices[1,i]-1
+                Jn[j] = nodeindices[1,i]-1
+                Vn[j] = componentvalues[i]
+                if invert
+                    Vn[j] = 1/Vn[j]
+                end
+                j+=1
+
+                In[j] = nodeindices[2,i]-1
+                Jn[j] = nodeindices[2,i]-1
+                Vn[j] = componentvalues[i]
+                if invert
+                    Vn[j] = 1/Vn[j]
+                end
+                j+=1
+
+                # off diagonal elements
+                In[j] = nodeindices[1,i]-1
+                Jn[j] = nodeindices[2,i]-1
+                Vn[j] = componentvalues[i]
+                Vn[j] = -Vn[j]
+                if invert
+                    Vn[j] = 1/Vn[j]
+                end
+                j+=1
+
+                In[j] = nodeindices[2,i]-1
+                Jn[j] = nodeindices[1,i]-1
+                Vn[j] = componentvalues[i]
+                Vn[j] = -Vn[j]
+                if invert
+                    Vn[j] = 1/Vn[j]
+                end
+                j+=1
+            end
+        end
+    end
+
+    # if there is only one frequency mode return the sparse matrix generated
+    # from these vectors. if multiple modes then duplicate along the diagonal
+    # Nmodes times.
+    if Nmodes == 1
+        return sparse(In,Jn,Vn,(Nnodes-1),(Nnodes-1))
+    else
+        return diagrepeat(sparse(In,Jn,Vn,(Nnodes-1),(Nnodes-1)),Nmodes)
+    end
+end
+
+"""
+    pushval!(V::Vector, val, c, invert::Bool)
+
+Append the value `val` of capacitance or conductance to the vector `V`. Scale
+the value by `c`. If `invert = true`, append `c/val` otherwise append `c*val`.
+
+# Examples
+```jldoctest
+julia> V = Array{Float64, 1}(undef, 0);JosephsonCircuits.pushval!(V,2.0,-1.0,false);V
+1-element Vector{Float64}:
+ -2.0
+
+julia> V = Array{Float64, 1}(undef, 0);JosephsonCircuits.pushval!(V,2.0,-1.0,true);V
+1-element Vector{Float64}:
+ -0.5
+```
+"""
+function pushval!(V::Vector, val, c, invert::Bool)
+    if invert
+        push!(V,c/val)
+    else
+        push!(V,c*val)
+    end
+    return nothing
+end
+
+# The element type to assemble a matrix in, given the values that will go
+# into it. Used by the matrix builders above.
+"""
+    calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,
+        components::Vector{Symbol};checkinverse::Bool=true)
+
+Returns a zero length vector with the (computer science) type which will hold
+a set of circuit components of the (electrical engineering) types given in
+`components`. This function is not type stable by design, but exists to make
+the later function calls type stable.
+
+# Arguments
+- `componenttypes::Vector{Symbol}`: the component (electrical engineering) types.
+- `componentvalues::Vector`: the component values.
+- `components::Vector{Symbol}`: find a (computer science) type which will
+    hold the component (electrical engineering) types in this vector.
+
+# Keywords
+- `checkinverse = true`: also check the inverse of each element. This is
+    useful if the type would be integer but we later want to take the inverse
+    and want an array with a type that supports this operation.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.calcvaluetype([:R,:C,:R],[1,2,3],[:R])
+Float64[]
+
+julia> JosephsonCircuits.calcvaluetype([:R,:C,:R],[1,2,3+0.0im],[:R])
+ComplexF64[]
+```
+"""
+function calcvaluetype(componenttypes::Vector{Symbol},componentvalues::Vector,
+    components::Vector{Symbol};checkinverse::Bool=true)
+
+    if length(componenttypes) !== length(componentvalues)
+         throw(DimensionMismatch(lazy"componenttypes and componentvalues should have the same length"))
+    end
+
+    # use this to store the types we have seen so we don't call promote_type
+    # or take the inverse for the same type more than once.
+    typestoredict = Dict{DataType,Nothing}()
+
+    componentsdict = Dict{Symbol,Nothing}()
+    sizehint!(componentsdict,length(components))
+    for component in components
+        componentsdict[component] = nothing
+    end
+
+    # find the first one then break the loop so we have to execute the first
+    # element logic only once.
+    valuetype = Nothing
+    for (i,type) in enumerate(componenttypes)
+        if haskey(componentsdict,type)
+            valuetype = typeof(componentvalues[i])
+            # add the original type to the typestore
+            typestoredict[valuetype] = nothing
+            if checkinverse
+                valuetype = promote_type(typeof(1/componentvalues[i]),valuetype)
+            end
+            break
+        end
+    end
+
+    for (i,type) in enumerate(componenttypes)
+        if haskey(componentsdict,type)
+            # if a different type is found, promote valuetype
+            if typeof(componentvalues[i]) != valuetype
+                # if it is a type we have seen before, do nothing
+                valuetype = promote_type(typeof(componentvalues[i]),valuetype)
+                if !haskey(typestoredict,valuetype)
+                    typestoredict[valuetype] = nothing
+                    if checkinverse
+                        valuetype = promote_type(typeof(1/componentvalues[i]),valuetype)
+                    end
+                end
+            end
+        end
+    end
+    return Array{valuetype, 1}(undef, 0)
+end

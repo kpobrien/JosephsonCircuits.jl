@@ -225,6 +225,28 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
             vec(collect(ref3.nodeflux)); rtol = 1e-8)
         @test isapprox(Array(n3.S), Array(ref3.S); rtol = 1e-8)
 
+        # the assembled Jacobian of a rebound system is that of the new
+        # values, not of the first point: the operating point of a cached
+        # solve matches a cold one, and a direct Newton cache converges
+        # like a cold solve
+        opc = hbcache(wp, (8,), src, make, p; ftol = 1e-12,
+            returnoperatingpoint = true)
+        hbsolve!(opc, p; warmstart = false)
+        o2 = hbsolve!(opc, p2).operatingpoint
+        r2 = hbnlsolve(wp, (8,), src, make(; p2...); ftol = 1e-12,
+            keyedarrays = false, returnoperatingpoint = true).operatingpoint
+        @test isapprox(o2.jacobian, r2.jacobian; rtol = 1e-8)
+        @test norm(o2.jacobian - r2.jacobian) < 1e-8*norm(r2.jacobian)
+        nc = hbcache(wp, (8,), src, make, p; ftol = 1e-12, method = Newton())
+        hbsolve!(nc, p; warmstart = false)
+        nn = hbsolve!(nc, p2; warmstart = false)
+        rn = hbnlsolve(wp, (8,), src, make(; p2...); ftol = 1e-12,
+            keyedarrays = false, method = Newton())
+        @test isapprox(vec(collect(nn.nodeflux)),
+            vec(collect(rn.nodeflux)); rtol = 1e-10)
+        @test sum(st.iterations for st in nn.solverinfo.stages) ==
+            sum(st.iterations for st in rn.solverinfo.stages)
+
         # a reset discards the stored state
         JosephsonCircuits.reset!(cache)
         @test isnothing(cache.x)
@@ -236,6 +258,29 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
             ("Lj1","2","0",Lj)]
         cache.builder = make2
         @test_throws ArgumentError hbsolve!(cache, p)
+        # and so is a builder which returns one name twice, which would
+        # fill one slot twice and leave another stale
+        make3(; Lj, Cc) = Tuple{String,String,String,Any}[
+            ("P1","1","0",1), ("R1","1","0",50.0), ("C1","1","2",Cc),
+            ("Lj1","2","0",Lj), ("C1","2","0",1000e-15)]
+        cache.builder = make3
+        @test_throws ArgumentError hbsolve!(cache, p)
+
+        # the keywords the cache manages, an unsupported method and a
+        # keyword the compiled solve does not take are refused at
+        # construction, and a solver keyword still reaches the solve
+        for bad in ((x0 = zeros(2),), (keyedarrays = true,),
+                (reuse = nothing,), (method = Staged(),), (nosuchkeyword = 1,),
+                (maxharmonics = (8,),))
+            @test_throws ArgumentError hbcache(wp, (8,), src, make, p; bad...)
+        end
+        # what the cache does anyway is accepted
+        @test hbcache(wp, (8,), src, make, p; keyedarrays = false) isa JosephsonCircuits.HBCache
+        loose = hbcache(wp, (8,), src, make, p; ftol = 1e-2, iterations = 2)
+        hbsolve!(loose, p; warmstart = false)
+        @test loose.nsolves == 1
+        @test sum(st.iterations for st in
+            hbsolve!(loose, p; warmstart = false).solverinfo.stages) <= 2
     end
 
     @testset "the padded linear term is refilled exactly" begin

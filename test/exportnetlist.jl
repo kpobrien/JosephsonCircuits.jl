@@ -50,6 +50,23 @@ using Test
         end
     end
 
+    @testset "coupled inductor names and scattering blocks" begin
+        # the K line names the inductors as their own lines name them,
+        # prefix included, so WRSPICE can resolve the coupling
+        c = Circuit([(:p1, "1", "0", Port(1)), (:coil1, "1", "0", Inductor(1e-9)),
+            (:coil2, "2", "0", Inductor(1e-9)),
+            (:k1, :coil1, :coil2, MutualInductor(0.5)),
+            (:c2, "2", "0", Capacitor(1e-12)), (:r2, "2", "0", Resistor(50.0))])
+        lines = split(JosephsonCircuits.exportnetlist(c, Dict()).netlist, "\n")
+        @test any(l -> startswith(l, "Lcoil1 "), lines)
+        @test any(l -> startswith(l, "Lcoil2 "), lines)
+        @test any(l -> l == "k1 Lcoil1 Lcoil2 0.5", lines)
+        # a scattering block has no SPICE element and is refused, not dropped
+        blk = Circuit([(:p1, "1", "0", Port(1)),
+            (:s, "1", ScatteringParameters(reshape([0.5], 1, 1)))])
+        @test_throws JosephsonCircuits.ComponentNotSupportedError JosephsonCircuits.exportnetlist(blk, Dict())
+    end
+
     @testset "import_netlist! errors" begin
         io = IOBuffer("P 1 1")
         circuit2 = Tuple{String,String,String,Any}[];

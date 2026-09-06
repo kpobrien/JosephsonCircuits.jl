@@ -14,7 +14,9 @@ operating point and swept over weak signal frequencies with
 [`hblinsolve`](@ref), and [`hbsolve`](@ref) runs the two in sequence. From
 the linearized solution the package computes scattering parameters, noise
 scattering parameters, quantum efficiency, commutation relations, and
-adjoint-method sensitivities with respect to component values.
+adjoint-method sensitivities with respect to component values or, through
+[`designsensitivities`](@ref), to the design parameters of a circuit
+builder.
 
 A circuit is written as a [`Circuit`](@ref) of typed component models, or
 as a legacy netlist of `(name, node1, node2, value)` tuples. The stages a
@@ -100,100 +102,114 @@ const boltzmann_constant = 1.380649e-23
 
 # === source files, in the order a circuit passes through them ===
 #
-# Files are included roughly in the order of the analysis flow: a circuit is
-# written, parsed and compiled to flat tables; the tables are turned into
-# the incidence, capacitance and inverse inductance matrices; a harmonic
-# balance system is assembled from those and solved, first for the pump
-# and then linearized for the signals; and the solution is post-processed
-# into scattering parameters, noise, quantum efficiency, sensitivities and
-# exported netlists. Where a file is placed for a reason other than flow
-# order, the reason is noted next to it.
+# The directories are the chapters of the analysis: a circuit is written,
+# parsed and compiled to flat tables and matrices (circuit/); a harmonic
+# balance system is assembled from them (harmonics/); it is solved for the
+# pump (solvers/), then linearized and swept for the signals and their
+# noise, quantum efficiency and sensitivities (linearized/); and the
+# scattering parameters meet the network library (networks/) and the SPICE
+# tools (spice/). Within a chapter the files are in reading order where
+# the dependencies allow it; where a file is placed for a reason other
+# than flow order, the reason is noted next to it.
 
-# --- writing a circuit --------------------------------------------------
+# --- circuit/: writing a circuit and turning it into matrices -----------
 # How a component value is written (a number, a symbol, a parameterized
 # expression, or a callable of frequency) and how it becomes a number.
-include("circuitvalue.jl")
+include("circuit/values.jl")
 # The component models: lumped elements, ports, nonlinear inductors, and
 # multiport scattering and Gaussian channel blocks with the matrix
 # providers their frequency dependent data comes from.
-include("circuitmodel.jl")
+include("circuit/components.jl")
 # The typed `Circuit` the user writes, the parse of one hierarchy level
 # and the node naming and sorting helpers `compile` uses.
-include("parseinput.jl")
+include("circuit/parse.jl")
 # Flattening the hierarchy (`elaborate`) and lowering it to the integer
 # indexed tables the matrix builders read (`compile`).
-include("circuitcompile.jl")
-# Stamps of multiport scattering blocks into the harmonic balance system.
-include("scatteringstamp.jl")
+include("circuit/compile.jl")
+# Stamps of multiport scattering blocks into the harmonic balance system:
+# a linearized/ concern, included here because `compile` and the legacy
+# adapter need its block types.
+include("linearized/scatteringblocks.jl")
 # The legacy tuple netlist, adapted into a `Circuit`.
-include("legacyadapter.jl")
+include("circuit/legacy.jl")
+include("circuit/graph.jl")      # incidence matrix, spanning tree, loops
+include("circuit/matrices.jl")   # capacitance and inverse inductance matrices
+include("harmonics/sparse.jl")   # sparse matrix helpers shared by the solvers
+# The methods, preconditioners and factorizations a caller composes: a
+# solvers/ concern, included here because binding stores a method.
+include("solvers/options.jl")
+include("circuit/bind.jl")       # binding values and pattern-fixed assembly
+include("circuit/mna.jl")        # the modified nodal analysis augmentation
 
-# --- from a compiled circuit to matrices --------------------------------
-include("graphproc.jl")        # incidence matrix, spanning tree, loops
-include("capindmat.jl")        # capacitance and inverse inductance matrices
-include("matutils.jl")         # sparse matrix helpers shared by the solvers
-include("solveroptions.jl")    # the methods, preconditioners and factorizations a caller composes
-include("circuitbind.jl")      # binding values and pattern-fixed assembly
-include("mna.jl")              # the modified nodal analysis augmentation
-include("dcconductance.jl")    # the explicit direct current block
+# --- harmonics/: the pieces a harmonic balance system is assembled from -
+include("harmonics/layout.jl")   # the equivalent real representation and the canonical state
+include("harmonics/directcurrent.jl") # everything about direct current, gauge to block
+include("harmonics/complexjacobian.jl") # the holomorphic (complex) Jacobian
+include("harmonics/pattern.jl")  # sparsity patterns of device stamps
+include("harmonics/assembly.jl") # assembly of the real Jacobian structure
+include("harmonics/nonlinearterm.jl") # the Josephson nonlinearity, forward map
+include("harmonics/nonlineartermtranspose.jl") # ...and its transpose for adjoints
+include("harmonics/frequencies.jl") # frequency grids and transform plans
+# The system itself: residual, products, assembled Jacobians.
+include("harmonics/system.jl")
+# The linearized system: the operating point assembled into one matrix per
+# signal frequency.
+include("linearized/system.jl")
 
-# --- pieces a harmonic balance system is assembled from -----------------
-include("realcomplexconv.jl")  # the equivalent real representation
-include("complexjacobian.jl")  # the holomorphic (complex) Jacobian
-include("devicepattern.jl")    # sparsity patterns of device stamps
-include("structureassembly.jl")# assembly of the real Jacobian structure
-include("nonlinearterm.jl")    # the Josephson nonlinearity, forward map
-include("nonlineartermtranspose.jl") # ...and its transpose for adjoints
-include("fftutils.jl")         # frequency grids and transform plans
-
-# --- the system itself --------------------------------------------------
-include("hbsystem.jl")
-
-# --- the linear algebra it is handed to ---------------------------------
-include("nlsolve.jl")          # Newton and quasi-Newton with factorizations
-include("krylov.jl")           # Newton-Krylov and its preconditioner types
-include("floquetdeflation.jl") # residual-image A-DEF1 with physical candidates
-include("batchedblocks.jl")    # batched small block factorizations
-include("cudss.jl")            # the cuDSS factorization type (host stubs)
-include("modepreconditioner.jl")
-include("blockfactorization.jl") # dense node blocks over the circuit graph
+# --- solvers/: the linear algebra the system is handed to ---------------
+include("solvers/solverinfo.jl") # the per stage records and stall diagnostics
+include("solvers/factorizations.jl") # sparse factorizations, their cache and solves
+include("solvers/linesearch.jl") # the backtracking line search both loops share
+include("solvers/newton.jl")     # Newton and quasi-Newton with Anderson acceleration
+include("solvers/preconditioners.jl") # the preconditioner interface and the solve record
+include("solvers/gmres.jl")      # GMRES and the linear solver objects
+include("solvers/newtonkrylov.jl") # the Newton-Krylov driver
+include("solvers/floquetdeflation.jl") # residual-image A-DEF1 with physical candidates
+include("solvers/cudss.jl")      # the cuDSS factorization type (host stubs)
+include("solvers/modecoupling.jl") # the mode coupling preconditioner family
+include("solvers/blockclusters.jl") # dense node blocks over the circuit graph, per cluster
+include("linearized/blockfactorization.jl") # the same blocks batched over a sweep
+# The canonical operators and the preconditioner wrapper of the direct
+# current block; it must follow the abstraction it implements in
+# solvers/preconditioners.jl.
+include("harmonics/canonical.jl")
 
 # --- the harmonic balance solves ----------------------------------------
-# The canonical state layout the direct current block is carried in. It
-# supplies a preconditioner, so it must follow the abstraction it implements
-# in krylov.jl.
-include("compositelayout.jl")
 # The entry point `hbsolve`, the result types both solves return, and the
 # docstring fragments shared between the three solver docstrings.
-include("hbsolve.jl")
-include("hbnlsolve.jl")
-include("hblinsolve.jl")
+include("linearized/outputs.jl") # scattering parameters, noise and quantum efficiency, what the sweep computes at each frequency
+include("linearized/hbsolve.jl")
+include("solvers/hbnlsolve.jl")
+include("linearized/hblinsolve.jl")
 # The device sweep dispatches on the linearized solve's own array types, so
-# it follows hblinsolve.jl.
-include("devicelinsolve.jl")
-include("stagedsolve.jl")      # source continuation on a growing harmonic grid
-include("hbcache.jl")          # reusable workspace for repeated solves
-include("hbnonlinearproblem.jl") # the system exposed to external solvers
+# it follows hblinsolve.jl; its scattering block evaluation and noise
+# reductions come first because the sweep drives them.
+include("linearized/devicescattering.jl")
+include("linearized/devicenoise.jl")
+include("linearized/devicesweep.jl")
+include("solvers/staged.jl")     # source continuation on a growing harmonic grid
+include("solvers/cache.jl")      # reusable workspace for repeated solves
+include("solvers/problem.jl")    # the system exposed to external solvers
 
-# --- sensitivities ------------------------------------------------------
-include("sensitivities.jl")
-include("designsensitivities.jl")
+# --- linearized/: sensitivities and outputs -----------------------------
+include("linearized/operatingpoint.jl") # the operating point and its implicit differentiation
+include("linearized/sensitivities.jl") # the fixed point stamps and the contraction
+include("linearized/designsensitivities.jl")
+include("linearized/keyed.jl")   # keyed array output helpers
 
-# --- turning a solution into what was asked for -------------------------
-include("networkparamconversion.jl") # S, Z, Y, ABCD, ... conversions
-include("networks.jl")         # closed form networks (lines, couplers, ...)
-include("networkconnection.jl") # connecting scattering parameter networks
-include("qesparams.jl")        # scattering parameters, noise and quantum efficiency
-include("keyedarrayutils.jl")  # keyed array output helpers
-include("quantumoptics.jl")    # symplectic and Bogoliubov utilities
+# --- networks/: the network library -------------------------------------
+include("networks/parameters.jl") # S, Z, Y, ABCD, ... conversions
+include("networks/networks.jl")  # closed form networks (lines, couplers, ...)
+include("networks/connections.jl") # connecting scattering parameter networks
+include("networks/quantumoptics.jl") # symplectic and Bogoliubov utilities
 # Phase unwrapping, copied from DSP.jl (see the license header in the file).
-include("unwrap.jl")
+include("networks/unwrap.jl")
 
-# --- exporting SPICE netlists and running them --------------------------
-include("exportnetlist.jl")
-include("spiceutils.jl")
-include("spicewrapper.jl")
-include("spiceraw.jl")
+# --- spice/: exporting SPICE netlists and running them ------------------
+include("spice/export.jl")
+include("spice/utils.jl")
+include("spice/wrapper.jl")
+include("spice/raw.jl")
 
 # Deprecated entry points, kept so that older scripts keep running with a
 # warning.
@@ -242,7 +258,8 @@ end
 # PrecompileTools can compile them when the package is installed rather
 # than on first use. The test suite also calls them and compares their
 # output against stored reference values, so changing what they compute
-# requires updating test/JosephsonCircuits.jl.
+# requires updating test/JosephsonCircuits.jl, which holds the fixtures
+# of the same circuit that are not part of the workload.
 
 # The circuit every warmup shares: a single junction parametric amplifier,
 # capacitively coupled to a port which owns its own matched termination.
@@ -305,144 +322,6 @@ function warmupsyms()
 
     return hbsolve(ws, wp, sources, Nmodulationharmonics,
         Npumpharmonics, circuit, circuitdefs;ftol=1e-12)
-end
-
-# Elaboration and compilation of the typed circuit alone.
-function warmupcompile()
-
-    @params Rleft Cc Lj Cj
-    return compile(warmupcircuit(Rleft, Cc, Lj, Cj))
-end
-
-# The capacitance and inverse inductance matrices at numeric values.
-function warmupnumericmatrices()
-
-    @params Rleft Cc Lj Cj
-    circuit = warmupcircuit(Rleft, Cc, Lj, Cj)
-    return numericmatrices(circuit, warmupdefs(Rleft, Cc, Lj, Cj))
-end
-
-# A linear (no pump) frequency sweep.
-function warmuphblinsolve()
-
-    @params Rleft Cc Lj Cj
-    circuit = warmupcircuit(Rleft, Cc, Lj, Cj)
-    return hblinsolve(2*pi*(4.5:0.1:5.0)*1e9, circuit,
-        warmupdefs(Rleft, Cc, Lj, Cj))
-end
-
-# Resolving the compiled component values to numbers.
-function warmupvvn()
-
-    @params Rleft Cc Lj Cj
-    psc = compile(warmupcircuit(Rleft, Cc, Lj, Cj); sorting = :number)
-
-    return componentvaluestonumber(psc.componentvalues,
-        warmupdefs(Rleft, Cc, Lj, Cj))
-end
-
-# Every network parameter conversion, for every input shape it accepts.
-# This is not part of the precompile workload (see the note there) but is
-# kept as a manual probe and for the test suite.
-function warmupnetwork()
-    # conversions to and from scattering parameters, which take a port
-    # impedance keyword
-    for f in [
-            (JosephsonCircuits.ZtoS,JosephsonCircuits.StoZ),
-            (JosephsonCircuits.YtoS,JosephsonCircuits.StoY),
-            (JosephsonCircuits.AtoS,JosephsonCircuits.StoA),
-            (JosephsonCircuits.BtoS,JosephsonCircuits.StoB),
-            (JosephsonCircuits.ABCDtoS,JosephsonCircuits.StoABCD),
-        ]
-        # single matrix input
-        for portimpedances in [
-                rand(Complex{Float64}), rand(Complex{Float64},2),
-            ]
-            for arg1 in [rand(Complex{Float64},2,2), (StaticArrays.@MMatrix rand(Complex{Float64},2,2))]
-                f[1](arg1,portimpedances=portimpedances)
-                f[2](arg1,portimpedances=portimpedances)
-                f[1](arg1)
-                f[2](arg1)
-            end
-        end
-        # array input
-        for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2,10)]
-            for arg1 in [rand(Complex{Float64},2,2,10)]
-                f[1](arg1,portimpedances=portimpedances)
-                f[2](arg1,portimpedances=portimpedances)
-                f[1](arg1)
-                f[2](arg1)
-            end
-        end
-        # vector of matrices
-        for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2) ]
-            for arg1 in [
-                    [rand(Complex{Float64},2,2) for i in 1:10],
-                ]
-                [f[1](arg1[i],portimpedances=portimpedances) for i in 1:10]
-                [f[2](arg1[i],portimpedances=portimpedances) for i in 1:10]
-                [f[1](arg1[i]) for i in 1:10]
-                [f[2](arg1[i]) for i in 1:10]
-            end
-        end
-    end
-
-    # conversions between the other representations, which take no port
-    # impedance
-    for f in [
-            (JosephsonCircuits.StoT,JosephsonCircuits.TtoS),
-            (JosephsonCircuits.AtoB,JosephsonCircuits.BtoA),
-            (JosephsonCircuits.ZtoA,JosephsonCircuits.AtoZ),
-            (JosephsonCircuits.YtoA,JosephsonCircuits.AtoY),
-            (JosephsonCircuits.YtoB,JosephsonCircuits.BtoY),
-            (JosephsonCircuits.ZtoB,JosephsonCircuits.BtoZ),
-            (JosephsonCircuits.ZtoY,JosephsonCircuits.YtoZ),
-        ]
-        # single matrix input
-        for arg1 in [rand(Complex{Float64},2,2), (StaticArrays.@MMatrix rand(Complex{Float64},2,2))]
-            f[1](arg1)
-            f[2](arg1)
-        end
-        # array input
-        for arg1 in [rand(Complex{Float64},2,2,10)]
-            f[1](arg1)
-            f[2](arg1)
-        end
-        # vector of matrices
-        for arg1 in [
-                [rand(Complex{Float64},2,2) for i in 1:10],
-            ]
-            [f[1](arg1[i]) for i in 1:10]
-            [f[2](arg1[i]) for i in 1:10]
-        end
-    end
-
-
-    # closed form two port networks in their ABCD, Z and Y forms
-    x1 = rand(Complex{Float64})
-    x2 = rand(Complex{Float64})
-    x3 = rand(Complex{Float64})
-    x4 = rand(Complex{Float64})
-    JosephsonCircuits.ABCD_seriesZ(x1)
-    JosephsonCircuits.YtoA(JosephsonCircuits.Y_seriesY(1/x1))
-
-    JosephsonCircuits.ABCD_shuntY(1/x1)
-    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_shuntZ(x1))
-
-    JosephsonCircuits.ABCD_tline(x1,x2)
-    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_tline(x1,x2))
-
-    JosephsonCircuits.ABCD_PiY(x1,x2,x3)
-    JosephsonCircuits.YtoA(JosephsonCircuits.Y_PiY(x1,x2,x3))
-
-    JosephsonCircuits.ABCD_TZ(x1,x2,x3)
-    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_TZ(x1,x2,x3))
-
-    JosephsonCircuits.ABCD_coupled_tline(x1,x2,x3,x4)
-    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_coupled_tline(x1,x2,x3,x4))
-
-
-    return true
 end
 
 # Connecting scattering parameter networks, with symbol and string names,
@@ -521,7 +400,7 @@ export hbsolve, hbnlsolve, hblinsolve, compile,
 # The `CircuitValues` expression type is internal: it is what a Symbolics
 # `Num` and a parameterized netlist file expression are lowered to. It is
 # deliberately not exported as a user facing symbolic type, because its
-# closed operator set (see circuitvalue.jl) would make a confusing public
+# closed operator set (see circuit/values.jl) would make a confusing public
 # boundary; users parameterize circuits with symbols, numbers, and ordinary
 # Julia functions. `@params` is imported for the warmups above only.
 import .CircuitValues: @params
@@ -533,7 +412,7 @@ export FrequencyDependent, designsensitivities, designjacobian,
     ExternalSolver, GMRES, KrylovJL, Staged,
     BlockDiagonal, FullJacobian, HarmonicBand, MeasuredBand, Clusters,
     CoupledModes, CouplingMask, Automatic,
-    Recycling, Floquet, Always, Probe, Never, KLUfactorization, LUfactorization,
+    Floquet, Always, Probe, Never, KLUfactorization, LUfactorization,
     QRfactorization, CUDSSFactorization, BlockFactorization
 
 # the typed circuit representation and its component models

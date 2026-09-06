@@ -7,8 +7,8 @@ using Test
 # from the mode coupling index matrix and the Fourier coefficients of
 # cos(phi(t)). Entries follow Amatrixindices (negative entries denote complex
 # conjugation, zeros denote dropped couplings and produce no stored entry),
-# scaled by Lmean/Lj per branch.
-function testAoLjbm(phimatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
+# scaled by Lscale/Lj per branch.
+function testAoLjbm(phimatrix, Amatrixindices, Ljb, Lscale, Nmodes, Nbranches)
     Nfreq = prod(size(phimatrix)[1:end-1])
     I = Int[]
     J = Int[]
@@ -22,7 +22,7 @@ function testAoLjbm(phimatrix, Amatrixindices, Ljb, Lmean, Nmodes, Nbranches)
                     conj(phimatrix[-ind + offset])
                 push!(I, (b-1)*Nmodes + i)
                 push!(J, (b-1)*Nmodes + j)
-                push!(V, (Lmean/Ljb.nzval[bi])*c)
+                push!(V, (Lscale/Ljb.nzval[bi])*c)
             end
         end
     end
@@ -86,7 +86,7 @@ end
                 # exactness is a single-tone property; the exact multi-tone
                 # real Jacobian is validated against the matrix-free
                 # product and finite differences in test/realjacobian.jl
-                # and test/hbsystem.jl.
+                # and test/system.jl.
                 if length(wp) == 1 && trial == 1
                     JosephsonCircuits.setpoint!(d.sys, xr)
                     A = zeros(Complex{Float64}, n, n)
@@ -162,13 +162,10 @@ end
         JosephsonCircuits.applynl!(phimatrix, phimatrixtd, cos, irfftplan,
             rfftplan)
 
-        # no promoted components: port resistors stay as node
-        # conductances, and the augmentation machinery is exercised with
-        # an empty promoted set
-        mnaindices = Int[]
-        Nauxmna = length(mnaindices)*Nsignalmodes
-        Amna0, AmnaG = JosephsonCircuits.calcAmnasplit(mnaindices,
-            psc.nodeindices, signalnm.vvn, Nsignalmodes, psc.Nnodes)
+        # no auxiliary unknowns: the augmentation is an empty matrix
+        Nauxmna = 0
+        Ntot = (psc.Nnodes-1)*Nsignalmodes
+        Amna0 = spzeros(Complex{Float64}, Ntot, Ntot)
         Gnmsub = JosephsonCircuits.mnapad(signalnm.Gnm, Nauxmna)
         invLnmp = JosephsonCircuits.mnapad(signalnm.invLnm, Nauxmna)
         Cnmp = JosephsonCircuits.mnapad(signalnm.Cnm, Nauxmna)
@@ -191,14 +188,13 @@ end
                 JosephsonCircuits.spaddkeepzeros(
                     JosephsonCircuits.spaddkeepzeros(
                         JosephsonCircuits.spaddkeepzeros(AoLjnm,
-                            invLnmcopy), Gnmcopy), Cnmcopy), Amna0), AmnaG)
+                            invLnmcopy), Gnmcopy), Cnmcopy), Amna0), Amna0)
 
         # the plan construction, as used by hblinsolve
         lsys = JosephsonCircuits.HBLinearizedSystem(Amatrixindices,
             signalnm.Ljb, Rbnmmna, Nsignalmodes, cg.Nbranches, phimatrix,
             invLnmcopy, Gnmcopy, Cnmcopy, invLnmp, Gnmsub, Cnmp,
-            Int[], Int[], Int[], Amna0, AmnaG, nothing, wpumpmodes,
-            psc.Nnodes)
+            false, Amna0, nothing, wpumpmodes, psc.Nnodes)
         Asparse = lsys.Asparse
 
         # identical sparsity structure, including stored zeros
@@ -241,20 +237,17 @@ end
                     JosephsonCircuits.sparseaddmap(Aref, AoLjnmuse))
                 JosephsonCircuits.sparseaddconjsubst!(Aref, -1, Cnmp,
                     wmodes2m, JosephsonCircuits.sparseaddmap(Aref, Cnmp),
-                    real.(wmodesm) .< 0, wmodesm, Int[], nothing)
+                    real.(wmodesm) .< 0, wmodesm, nothing)
                 JosephsonCircuits.sparseaddconjsubst!(Aref, im, Gnmsub,
                     wmodesm, JosephsonCircuits.sparseaddmap(Aref, Gnmsub),
-                    real.(wmodesm) .< 0, wmodesm, Int[], nothing)
+                    real.(wmodesm) .< 0, wmodesm, nothing)
                 JosephsonCircuits.sparseaddconjsubst!(Aref, 1, invLnmp,
                     JosephsonCircuits.LinearAlgebra.Diagonal(
                         ones(size(invLnmp, 1))),
                     JosephsonCircuits.sparseaddmap(Aref, invLnmp),
-                    real.(wmodesm) .< 0, wmodesm, Int[], nothing)
+                    real.(wmodesm) .< 0, wmodesm, nothing)
                 JosephsonCircuits.sparseadd!(Aref, 1, Amna0,
                     JosephsonCircuits.sparseaddmap(Aref, Amna0))
-                JosephsonCircuits.sparseaddconjsubst!(Aref, im, AmnaG,
-                    wmodesm, JosephsonCircuits.sparseaddmap(Aref, AmnaG),
-                    real.(wmodesm) .< 0, wmodesm, Int[], nothing)
 
                 # the shared assembly, both entry points. the reference
                 # above uses the Diagonal based sparseaddconjsubst! method,

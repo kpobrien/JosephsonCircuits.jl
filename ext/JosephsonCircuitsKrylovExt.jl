@@ -6,7 +6,9 @@ selected with `linearsolver = KrylovJL(:gmres)` (or any other Krylov.jl
 solver name). Only the linear solve changes: the forcing term, the line
 search, the preconditioner escalation and the stagnation handling are those
 of `nlsolvekrylov!`, and the package's preconditioner is passed to Krylov.jl
-as its right preconditioner `N`.
+as its right preconditioner `N`. Deflation harvesting is unavailable here:
+it reads the package's own Arnoldi workspace, which Krylov.jl does not
+expose, so the per cycle callback `oncycle` is accepted and ignored.
 """
 module JosephsonCircuitsKrylovExt
 
@@ -27,7 +29,7 @@ aspreconditioner(M::JC.AbstractPreconditioner) = M
 aspreconditioner(M) = MopWrap(M)
 
 function JC.hblinearsolve!(ls::JC.KrylovJL, deltax, jvp, F, ws, Mop!;
-        rtol, atol, maxrestarts)
+        rtol, atol, maxrestarts, oncycle = nothing)
     n = length(F)
     A = jvp
     solver = getfield(Krylov, ls.method)
@@ -41,6 +43,10 @@ function JC.hblinearsolve!(ls::JC.KrylovJL, deltax, jvp, F, ws, Mop!;
     # without doing anything. `nlsolvekrylov!` passes `atol = ftol/10`; an
     # explicit `atol` in the solver's own keywords wins.
     kw = haskey(ls.kwargs, :atol) ? ls.kwargs : merge((; atol = atol), ls.kwargs)
+    # Krylov.jl records the residual history only when asked; without it
+    # every solve reported its starting residual and an unconverged solve
+    # was read as one which made no progress at all
+    kw = haskey(kw, :history) ? kw : merge(kw, (; history = true))
     x, st = if isnothing(Mop!)
         solver(A, F; rtol = rtol, itmax = itmax, kw...)
     else
@@ -49,7 +55,8 @@ function JC.hblinearsolve!(ls::JC.KrylovJL, deltax, jvp, F, ws, Mop!;
     end
     copyto!(deltax, x)
     # the record `nlsolvekrylov!` expects; Krylov.jl has no notion of
-    # restart cycles, so one is reported
+    # restart cycles, so one is reported, and no product count, so the
+    # diagnostics count zero Jacobian products for a Krylov.jl solve
     return (converged = st.solved, residual = isempty(st.residuals) ?
                 norm(F) : last(st.residuals),
             iterations = st.niter, cycles = 1,

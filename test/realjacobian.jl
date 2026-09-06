@@ -38,7 +38,7 @@ using Test
             # the assembled Jacobian is validated against the exact
             # matrix-free Jacobian-vector product of HBSystem (which itself
             # matches finite differences of the residual, see
-            # test/hbsystem.jl), for combined and Jacobian-only
+            # test/system.jl), for combined and Jacobian-only
             # evaluations, at random points.
             nr = length(d.xr)
             Jvr = zeros(nr)
