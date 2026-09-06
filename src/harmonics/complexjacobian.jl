@@ -124,14 +124,9 @@ function plancomplexjacobian(Amatrixindices::Matrix, Ljb::SparseVector,
     isempty(Ljb.nzval) || all(isreal, Ljb.nzval) || throw(ArgumentError(
         "plancomplexjacobian requires real Josephson inductances."))
 
-    # a circuit with no Josephson junctions has an Ljb with element type
-    # Nothing and an empty nzval, in which case only the linear terms
-    # contribute to the Jacobian.
-    T = if isempty(Ljb.nzval) || eltype(Ljb) === Nothing
-        real(float(typeof(Lscale)))
-    else
-        real(promote_type(typeof(Lscale), real(eltype(Ljb))))
-    end
+    # a circuit with no Josephson junctions has an empty Ljb, in which case
+    # only the linear terms contribute to the Jacobian
+    T = real(promote_type(float(typeof(Lscale)), real(eltype(Ljb))))
     Tc = Complex{float(T)}
 
     junctions = junctionstructure(T, Amatrixindices,

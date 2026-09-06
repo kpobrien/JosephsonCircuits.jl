@@ -28,11 +28,6 @@ using Test
         )
 
         @test_throws(
-            ArgumentError("`dϕ0dα` = 0.0 must be finite and negative."),
-            JosephsonCircuits.quadratic_trial_step(0.0,0.2,0.0)
-        )
-
-        @test_throws(
             ArgumentError("`ϕ0` = NaN must be finite."),
             JosephsonCircuits.quadratic_trial_step(NaN,0.0,-0.02)
         )

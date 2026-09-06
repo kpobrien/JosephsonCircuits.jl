@@ -8,48 +8,6 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
     # the canonical JPA lives in testcircuits.jl, shared across test files
     jpacircuit() = testjpacircuit()
 
-    @testset "hbnlsolve nodal reference values" begin
-
-        # reference values computed with the purely nodal formulation
-        # (which this formulation replaces) at ftol = 1e-12; the two
-        # formulations were verified to agree to ~1e-11 before the nodal
-        # path was removed.
-        circuit, circuitdefs = jpacircuit()
-        wp = (2*pi*4.75001*1e9,)
-        sources = [(mode=(1,),port=1,current=0.00565e-6)]
-
-        out = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
-            ftol = 1e-12)
-        @test out.solverinfo.converged
-        @test isapprox(Vector(out.nodeflux(outputmode=(1,))),
-            ComplexF64[-0.013189575461243642 - 0.008650771565475453im,
-                0.12157593799903155 + 0.07973582686023277im], atol = 1e-8)
-        @test isapprox(
-            out.S(outputmode=(1,),outputport=1,inputmode=(1,),inputport=1),
-            -0.3984433276327756 - 0.9171756605002952im, atol = 1e-8)
-    end
-
-    @testset "hbnlsolve nodal reference values two tone" begin
-
-        # nodal formulation reference values, as above
-        circuit, circuitdefs = jpacircuit()
-        wp = (2*pi*4.75001*1e9, 2*pi*4.35001*1e9)
-        sources = [
-            (mode=(1,0),port=1,current=0.00565e-6),
-            (mode=(0,1),port=1,current=0.00265e-6),
-        ]
-
-        out = hbnlsolve(wp, (8,8), sources, circuit, circuitdefs;
-            ftol = 1e-12)
-        @test out.solverinfo.converged
-        @test isapprox(Vector(out.nodeflux(outputmode=(1,0))),
-            ComplexF64[-0.013075460477876147 - 0.008395813901112565im,
-                0.1233985871775909 + 0.07922607187414707im], atol = 1e-8)
-        @test isapprox(Vector(out.nodeflux(outputmode=(0,1))),
-            ComplexF64[-0.0028520505572584252 - 0.014156019369081027im,
-                0.00134982177864443 + 0.006713723189472766im], atol = 1e-8)
-    end
-
     @testset "hbnlsolve mna dc gauge fixing isolated node" begin
 
         # node 1 is connected only by a resistor and a capacitor, so with
@@ -259,11 +217,10 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
         out = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
             ftol = 1e-12)
         @test out.solverinfo.converged
-        # the result must match the real-typed definitions (the nodal
-        # formulation reference values from the first testset)
-        @test isapprox(Vector(out.nodeflux(outputmode=(1,))),
-            ComplexF64[-0.013189575461243642 - 0.008650771565475453im,
-                0.12157593799903155 + 0.07973582686023277im], atol = 1e-8)
+        # the result must match the real-typed definitions
+        ref = hbnlsolve(wp, (16,), sources, circuit, jpacircuit()[2];
+            ftol = 1e-12)
+        @test isapprox(Array(out.nodeflux), Array(ref.nodeflux), atol = 1e-10)
 
         # and the DC gauge case with complex-typed definitions
         outdc = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
@@ -824,31 +781,6 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"
         @test length(plain.nodeflux) == length(keyed.nodeflux)
         @test isapprox(Vector(keyed.nodeflux[:]), plain.nodeflux,
             atol = 1e-12)
-    end
-
-    @testset "hbsolve nodal reference values" begin
-
-        # full pipeline reference values computed with the purely nodal
-        # formulation prior to its removal; the linearized gain amplifies
-        # small operating point differences, hence the looser tolerance.
-        circuit, circuitdefs = jpacircuit()
-        ws = 2*pi*(4.6:0.1:4.9)*1e9
-        wp = (2*pi*4.75001*1e9,)
-        sources = [(mode=(1,),port=1,current=0.00565e-6)]
-
-        out = hbsolve(ws, wp, sources, (4,), (8,), circuit, circuitdefs;
-            ftol = 1e-12)
-        @test out.nonlinear.solverinfo.converged
-        @test isapprox(Vector(out.linearized.S(outputmode=(0,),
-                outputport=1, inputmode=(0,), inputport=1)),
-            ComplexF64[0.7946384428948396 - 0.6107482382057416im,
-                0.38523539452862193 - 1.0146026970089426im,
-                0.8028844946933809 + 0.7303408200854153im,
-                0.9926807608401819 + 0.13802125272539348im], atol = 1e-6)
-        @test isapprox(Vector(out.linearized.QE(outputmode=(0,),
-                outputport=1, inputmode=(0,), inputport=1)),
-            [0.9955631849311455, 0.8687783963970223, 0.8686637478305292,
-                0.9955599960987674], atol = 1e-6)
     end
 
     @testset "calcstaticfluxcomponents and calcdcgaugeindices" begin

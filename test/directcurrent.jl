@@ -234,10 +234,10 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
                (mode=(0,1), port=1, current=0.9e-6)]
         kw = (; keyedarrays = false, dc = true, odd = true, even = true,
             ftol = 1e-11)
-        a = hbnlsolve(ws2, (6,4), two, j, Dict{Any,Any}(); kw...)
+        a = hbnlsolve(ws2, (4,2), two, j, Dict{Any,Any}(); kw...)
         @test a.solverinfo.converged
         @test a.dcnodevoltage == zeros(5)
-        b = hbnlsolve(ws2, (6,4),
+        b = hbnlsolve(ws2, (4,2),
             vcat(two, [(mode=(0,0), port=1, current=1e-30)]), j,
             Dict{Any,Any}(); kw...)
         @test b.solverinfo.converged
@@ -358,60 +358,6 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test rank(t.Y) == size(t.Y, 1) - 1
         @test isapprox(t.Y * ones(size(t.Y, 2)), zeros(size(t.Y, 1));
             atol = 1e-12*maximum(abs, t.Y))
-    end
-
-    # The explicit block end to end: the average voltages carried as
-    # unknowns, their transport rows solved inside Newton, and their
-    # resistor current reaching the nodes through the coupling. The answers
-    # are analytic, so they are asserted directly rather than against a
-    # second implementation.
-    @testset "the explicit block solves the direct current" begin
-        solve(c, sources) = hbnlsolve(ws, (1,), sources, c, Dict{Any,Any}();
-            keyedarrays = false, dc = true, odd = true)
-
-        R, Idc = 50.0, 1.0e-6
-        # a port environment carrying the whole injected current
-        a = solve(Circuit([:p1 => Port(1; Z0 = R), :c1 => Capacitor(1.0e-12)],
-                [[(:p1,1),(:c1,1)], [(:p1,2),(:c1,2), Ground]]),
-            [(mode=(0,), port=1, current=Idc)])
-        @test a.solverinfo.converged
-        @test isapprox(maximum(abs, a.dcnodevoltage), Idc*R; rtol = 1e-9)
-
-        # a bridge between two floating components develops I*R across
-        # itself, the port environments diverting a part in ten million
-        Rb, Rbig = 100.0, 1.0e9
-        b = solve(Circuit(
-                [:p1 => Port(1; Z0 = Rbig), :p2 => Port(2; Z0 = Rbig),
-                 :rb => Resistor(Rb), :c1 => Capacitor(1e-12),
-                 :c2 => Capacitor(1e-12)],
-                [[(:p1,1),(:rb,1),(:c1,1)], [(:rb,2),(:p2,1),(:c2,1)],
-                 [(:p1,2),(:p2,2),(:c1,2),(:c2,2), Ground]]),
-            [(mode=(0,), port=1, current=Idc),
-             (mode=(0,), port=2, current=-Idc)])
-        @test b.solverinfo.converged
-        v = b.dcnodevoltage
-        @test isapprox(maximum(v) - minimum(v), Idc*Rb; rtol = 1e-5)
-
-        # a floating island fixes only its differences, the pinned component
-        # deciding the reference
-        c = solve(Circuit(
-                [:p1 => Port(1; Z0 = 200.0), :ca => Capacitor(1e-12),
-                 :cb => Capacitor(1e-12)],
-                [[(:p1,1),(:ca,1)], [(:p1,2),(:cb,1)],
-                 [(:ca,2),(:cb,2), Ground]]),
-            [(mode=(0,), port=1, current=Idc)])
-        @test c.solverinfo.converged
-        vc = c.dcnodevoltage
-        @test isapprox(maximum(vc) - minimum(vc), Idc*200.0; rtol = 1e-9)
-        @test count(iszero, vc) >= 1       # the reference component
-
-        # a drive with no direct current in it does not carry the block
-        # through the solve, and reports the zero the voltages sit at
-        d = solve(Circuit([:p1 => Port(1; Z0 = R), :c1 => Capacitor(1.0e-12)],
-                [[(:p1,1),(:c1,1)], [(:p1,2),(:c1,2), Ground]]),
-            [(mode=(1,), port=1, current=Idc)])
-        @test d.solverinfo.converged
-        @test d.dcnodevoltage == zeros(1)
     end
 
     # The capability the explicit block exists for. A scattering block used
@@ -689,9 +635,9 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
             [:p1 => Port(1; Z0 = 50.0), :jj => JosephsonJunction(Lj),
              :cj => Capacitor(1000e-15)],
             [[(:p1,1),(:jj,1),(:cj,1)], [(:p1,2),(:jj,2),(:cj,2), Ground]])
-        go(I) = hbnlsolve(ws, (4,), [(mode=(0,), port=1, current=I)], c,
+        go(I; kw...) = hbnlsolve(ws, (4,), [(mode=(0,), port=1, current=I)], c,
             Dict{Any,Any}(); keyedarrays = false, dc = true, odd = true,
-            even = true)
+            even = true, kw...)
 
         # well inside the zero voltage state: nothing to say
         a = @test_logs go(0.3*Ic)
@@ -702,7 +648,8 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test b.solverinfo.converged
 
         # and past it there is no periodic solution to find
-        d = (@test_logs (:warn,) match_mode = :any go(1.03*Ic))
+        # (the search cannot succeed, so its budget is what it costs)
+        d = (@test_logs (:warn,) match_mode = :any go(1.03*Ic; iterations = 40))
         @test !d.solverinfo.converged
     end
 

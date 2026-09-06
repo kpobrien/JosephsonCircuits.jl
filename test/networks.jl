@@ -17,7 +17,7 @@ import StaticArrays
                 f!(zeros(Complex{Float64},3,2),1.0)
             )
             @test_throws(
-                ArgumentError("Sizes of output (2, 2) and input (1,) not compatible."),
+                ArgumentError,
                 f!(zeros(Complex{Float64},2,2),ones(1))
             )
         end
@@ -58,7 +58,7 @@ import StaticArrays
         # check errors
         @testset "$(f), $(f!) errors" begin
             @test_throws(
-                ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
+                ArgumentError,
                 f(ones(2),ones(1))
             )
             @test_throws(
@@ -66,15 +66,15 @@ import StaticArrays
                 f!(zeros(Complex{Float64},3,2),1.0,1.0)
             )
             @test_throws(
-                ArgumentError("Sizes of output (2, 2) and inputs (1,) not compatible."),
+                ArgumentError,
                 f!(zeros(Complex{Float64},2,2),ones(1),ones(1))
             )
             @test_throws(
-                ArgumentError("Sizes of output (2, 2) and inputs (1,) not compatible."),
+                ArgumentError,
                 f!(zeros(Complex{Float64},2,2),1.0,ones(1))
             )
             @test_throws(
-                ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
+                ArgumentError,
                 f!(zeros(Complex{Float64},2,2,1),ones(2),ones(1))
             )
         end
@@ -130,15 +130,15 @@ import StaticArrays
                 f!(zeros(Complex{Float64},3,2),1.0,1.0,1.0)
             )
             @test_throws(
-                ArgumentError("Sizes of inputs (2,), (1,), and (1,) must be equal."),
+                ArgumentError,
                 f(ones(2),ones(1),ones(1))
             )
             @test_throws(
-                ArgumentError("Sizes of inputs (2,), (1,), and (1,) must be equal."),
+                ArgumentError,
                 f!(zeros(Complex{Float64},2,2),ones(2),ones(1),ones(1))
             )
             @test_throws(
-                ArgumentError("Sizes of output (3, 2) and inputs (1,) not compatible."),
+                ArgumentError,
                 f!(zeros(Complex{Float64},3,2),ones(1),ones(1),ones(1))
             )
         end
@@ -185,27 +185,27 @@ import StaticArrays
                 f!(zeros(Complex{Float64},4,3),1.0,1.0,1.0,1.0)
             )
             @test_throws(
-                ArgumentError("Sizes of inputs (2,), (1,), (1,), and (1,) must be equal."),
+                ArgumentError,
                 f(ones(2),ones(1),ones(1),ones(1))
             )
             @test_throws(
-                ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
+                ArgumentError,
                 f(1.0,1.0,ones(2),ones(1))
             )
             @test_throws(
-                ArgumentError("Sizes of inputs (2,) and (1,) must be equal."),
+                ArgumentError,
                 f!(zeros(Complex{Float64},4,4),1.0,1.0,ones(2),ones(1))
             )
             @test_throws(
-                ArgumentError("Sizes of output (4, 4) and inputs (2,) not compatible."),
+                ArgumentError,
                 f!(zeros(Complex{Float64},4,4),1.0,1.0,ones(2),ones(2))
             )
             @test_throws(
-                ArgumentError("Sizes of inputs (1,), (1,), (2,), and (1,) must be equal."),
+                ArgumentError,
                 f!(zeros(Complex{Float64},4,4),ones(1),ones(1),ones(2),ones(1))
             )
             @test_throws(
-                ArgumentError("Sizes of output (4, 4) and inputs (2,) not compatible."),
+                ArgumentError,
                 f!(zeros(Complex{Float64},4,4),ones(2),ones(2),ones(2),ones(2))
             )
         end
@@ -565,6 +565,33 @@ import StaticArrays
         )
     end
 
+
+    @testset "ideal elements and the attenuator have their closed form values" begin
+        # a short reflects with a sign change, an open without, a match not
+        # at all, on every port independently
+        @test JosephsonCircuits.S_short!(zeros(Complex{Float64}, 2, 2)) == -I
+        @test JosephsonCircuits.S_open!(zeros(Complex{Float64}, 2, 2)) == I
+        @test iszero(JosephsonCircuits.S_match!(ones(Complex{Float64}, 2, 2)))
+        # a matched T pad attenuator transmits 10^(-dB/20) and reflects
+        # nothing, from either side and at either impedance
+        for Z0 in (50.0, 75.0), dB in (3.0, 10.0, 20.0)
+            S = JosephsonCircuits.ABCDtoS(JosephsonCircuits.ABCD_attenuator_T(Z0, dB);
+                portimpedances = Z0)
+            tau = 10^(-dB/20)
+            @test isapprox(S, [0 tau; tau 0]; atol = 1e-14)
+            Spi = JosephsonCircuits.ABCDtoS(JosephsonCircuits.ABCD_attenuator_Pi(Z0, dB);
+                portimpedances = Z0)
+            @test isapprox(Spi, [0 tau; tau 0]; atol = 1e-14)
+        end
+        # a clockwise circulator terminated in a match on its third port
+        # is an isolator passing port 1 to port 2, which is also what
+        # terminating a port of any network in a match leaves: the
+        # submatrix of the other ports
+        S3 = JosephsonCircuits.S_circulator_clockwise()
+        iso = JosephsonCircuits.interconnectS(S3, zeros(Complex{Float64}, 1, 1), 3, 1)
+        @test isapprox(iso, S3[1:2, 1:2]; atol = 1e-14)
+        @test isapprox(iso, [0 0; 1 0]; atol = 1e-14)
+    end
 
     @testset "circulators" begin
 

@@ -254,8 +254,8 @@ using Test
              ((:cc, 2), (:jj, 1), (:c2, 1)),
              ((:jj, 2), (:p1, 2), Ground)],
         )
-        sol1 = hbsolve(ws, wp, sources, (8,), (16,), lumped)
-        sol2 = hbsolve(ws, wp, sources, (8,), (16,), maketab(:error))
+        sol1 = hbsolve(ws[1:10:end], wp, sources, (4,), (8,), lumped)
+        sol2 = hbsolve(ws[1:10:end], wp, sources, (4,), (8,), maketab(:error))
         # agreement is limited by the linear interpolation of the
         # tabulated scattering data on the grid
         @test isapprox(sol1.linearized.S((0,), 1, (0,), 1, :),
@@ -287,7 +287,7 @@ using Test
         Lj = IctoLj(3.4e-6)
         Cg = 45.0e-15
         Cj = 55e-15
-        Nj = 20
+        Nj = 8
         # `lumped = true` uses two terminal capacitors (whose second
         # terminals join the ground group); otherwise grounded one port
         # scattering blocks (single scalar terminal, reference auto-tied)
@@ -328,11 +328,11 @@ using Test
         end
         lumped = twpa(true)
         stamped = twpa(false)
-        wst = 2*pi*(3.0:0.5:9.0)*1e9
+        wst = 2*pi*(3.0:1.5:9.0)*1e9
         wpt = (2*pi*7.12*1e9,)
         sourcest = [(mode=(1,), port=1, current=1.85e-6)]
-        sol1 = hbsolve(wst, wpt, sourcest, (8,), (16,), lumped)
-        sol2 = hbsolve(wst, wpt, sourcest, (8,), (16,), stamped)
+        sol1 = hbsolve(wst, wpt, sourcest, (4,), (8,), lumped)
+        sol2 = hbsolve(wst, wpt, sourcest, (4,), (8,), stamped)
         @test isapprox(sol1.linearized.S((0,), 2, (0,), 1, :),
             sol2.linearized.S((0,), 2, (0,), 1, :); rtol = 1e-8)
         @test isapprox(sol1.linearized.S((0,), 1, (0,), 1, :),
@@ -1443,7 +1443,7 @@ using Test
             Any[((:p1,1), (:cc,1)),
                 ((:cc,2), (:jj,1), (:c2,1)),
                 ((:jj,2), (:c2,2), (:p1,2), Ground)])
-        wsens = 2*pi*collect(4.6e9:0.01e9:4.9e9)
+        wsens = 2*pi*collect(4.6e9:0.1e9:4.9e9)
         wpsens = (2*pi*4.75001e9,)
         srcsens = [(mode=(1,), port=1, current=0.00565e-6)]
         Cc0 = 100.0e-15

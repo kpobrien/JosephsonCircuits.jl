@@ -18,7 +18,11 @@ const CPU = JosephsonCircuits.CPU
     # each end, so the linearized system has a pump modulation contribution,
     # a modified nodal analysis augmentation from the promoted port resistors,
     # and every linear term matrix populated.
-    function buildcase(Nmod, wp, Npump)
+    buildcasecache = Dict{Any,Any}()
+    buildcase(Nmod, wp, Npump) = get!(buildcasecache, (Nmod, wp, Npump)) do
+        buildcase_(Nmod, wp, Npump)
+    end
+    function buildcase_(Nmod, wp, Npump)
         circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1_0","1","0",1))
         push!(circuit,("R1_0","1","0",:Rleft))

@@ -447,16 +447,18 @@ function plannonlinearterm(Rbnm::SparseMatrixCSC, Ljb::SparseVector, Lscale,
     kptrzero = ones(Ti, length(kptr))
     cptrzero = ones(Ti, length(cptr))
 
-    # the work sizes are baked into the kernel objects, since they are fixed
-    # by the sparsity structure; partitioning the index space on every
-    # launch would allocate
+    # The work sizes are given at each launch (`nslots`, `ncomplex`)
+    # rather than baked into the kernel objects: a kernel built with a
+    # static size has that size in its type, which would make the plan, the
+    # system holding it and every solver method taking the system a new
+    # type for every circuit size, compiled again for each.
     groupsize = 64
-    forward! = forwardtermkernel!(backend, groupsize, nslots)
-    backward! = backwardtermkernel!(backend, groupsize, nc)
-    forwardcomplex! = forwardtermkernelcomplex!(backend, groupsize, nslots)
-    backwardcomplex! = backwardtermkernelcomplex!(backend, groupsize, nc)
-    realtocomplex! = realtocomplexkernel!(backend, groupsize, nc)
-    complextoreal! = complextorealkernel!(backend, groupsize, nc)
+    forward! = forwardtermkernel!(backend, groupsize)
+    backward! = backwardtermkernel!(backend, groupsize)
+    forwardcomplex! = forwardtermkernelcomplex!(backend, groupsize)
+    backwardcomplex! = backwardtermkernelcomplex!(backend, groupsize)
+    realtocomplex! = realtocomplexkernel!(backend, groupsize)
+    complextoreal! = complextorealkernel!(backend, groupsize)
 
     # the index computation above is sequential, so the maps are built on
     # the host and then moved to the backend; on `CPU()` a dense array is
@@ -791,14 +793,14 @@ and read a `BitVector`.
 """
 function applyrealtocomplex!(xc::AbstractVector, plan::NonlinearTermPlan,
     xr::AbstractVector)
-    plan.realtocomplex!(xc, xr, plan.lptr, plan.lwide)
+    plan.realtocomplex!(xc, xr, plan.lptr, plan.lwide; ndrange = plan.ncomplex)
     KernelAbstractions.synchronize(plan.backend)
     return xc
 end
 
 function applycomplextoreal!(xr::AbstractVector, plan::NonlinearTermPlan,
     xc::AbstractVector)
-    plan.complextoreal!(xr, xc, plan.lptr, plan.lwide)
+    plan.complextoreal!(xr, xc, plan.lptr, plan.lwide; ndrange = plan.ncomplex)
     KernelAbstractions.synchronize(plan.backend)
     return xr
 end
@@ -815,7 +817,7 @@ equivalent real representation and a complex vector in the complex one.
 function applyforwardterm!(phimatrix::AbstractArray,
     plan::NonlinearTermPlan, xr::AbstractVector{<:Real})
     plan.forward!(phimatrix, plan.n1, plan.s1, plan.n2, plan.s2, plan.flags,
-        xr)
+        xr; ndrange = plan.nslots)
     KernelAbstractions.synchronize(plan.backend)
     return phimatrix
 end
@@ -823,7 +825,7 @@ end
 function applyforwardterm!(phimatrix::AbstractArray,
     plan::NonlinearTermPlan, xc::AbstractVector{<:Complex})
     plan.forwardcomplex!(phimatrix, plan.cn1, plan.s1, plan.cn2, plan.s2,
-        plan.flags, xc)
+        plan.flags, xc; ndrange = plan.nslots)
     KernelAbstractions.synchronize(plan.backend)
     return phimatrix
 end
@@ -860,7 +862,8 @@ function applybackwardterm!(out::AbstractVector{<:Real},
         "realbackward = true to use the real representation entry points."))
     kptr = addlinearterm ? plan.kptr : plan.kptrzero
     plan.backward!(out, plan.bptr, plan.bsrc, plan.bcoef, phimatrix, kptr,
-        plan.kidx, plan.kcoef, xr, plan.lptr, plan.lwide)
+        plan.kidx, plan.kcoef, xr, plan.lptr, plan.lwide;
+        ndrange = plan.ncomplex)
     KernelAbstractions.synchronize(plan.backend)
     return out
 end
@@ -870,7 +873,7 @@ function applybackwardterm!(out::AbstractVector{<:Complex},
     xc::AbstractVector{<:Complex}; addlinearterm::Bool = true)
     kptr = addlinearterm ? plan.cptr : plan.cptrzero
     plan.backwardcomplex!(out, plan.bptr, plan.bsrc, plan.bcoef, phimatrix,
-        kptr, plan.cidx, plan.ccoef, xc)
+        kptr, plan.cidx, plan.ccoef, xc; ndrange = plan.ncomplex)
     KernelAbstractions.synchronize(plan.backend)
     return out
 end

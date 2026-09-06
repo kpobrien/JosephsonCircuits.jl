@@ -92,13 +92,13 @@ function crosscheckcases()
         circuit = jpa(), defs = Dict{Any,Any}(),
         ws = GHz .* [4.6, 4.75, 4.9], wp = (GHz*4.75001,),
         sources = [(mode = (1,), port = 1, current = Ip)], signalport = 1,
-        Is = 1e-7*Ip, Npump = (8,), Nmod = (8,), kw = (;),
+        Is = 1e-7*Ip, Npump = (4,), Nmod = (4,), kw = (;),
         pumped = true, lossless = true, linear = false))
     push!(cases, (name = "4WM JPA with loss",
         circuit = jpa((:rl, 2, 0, Resistor(2.0e5))), defs = Dict{Any,Any}(),
         ws = GHz .* [4.6, 4.75, 4.9], wp = (GHz*4.75001,),
         sources = [(mode = (1,), port = 1, current = Ip)], signalport = 1,
-        Is = 1e-7*Ip, Npump = (8,), Nmod = (8,), kw = (;),
+        Is = 1e-7*Ip, Npump = (4,), Nmod = (4,), kw = (;),
         pumped = true, lossless = false, linear = false))
 
     # the four cell junction chain with a port at one end and a resistive
@@ -108,7 +108,7 @@ function crosscheckcases()
         circuit = chain, defs = chaindefs,
         ws = GHz .* [4.03, 5.47, 7.11], wp = (GHz*6.0,),
         sources = [(mode = (1,), port = 1, current = 0.6e-6)], signalport = 1,
-        Is = 1e-7*0.6e-6, Npump = (6,), Nmod = (6,), kw = (;),
+        Is = 1e-7*0.6e-6, Npump = (4,), Nmod = (4,), kw = (;),
         pumped = true, lossless = false, linear = false))
 
     # three wave mixing through a direct current bias: a junction resonator
@@ -128,7 +128,7 @@ function crosscheckcases()
         ws = wr .* [0.9713, 1.0000, 1.0291], wp = (2*wr*1.0017,),
         sources = [(mode = (0,), port = 1, current = 0.3e-6),
             (mode = (1,), port = 1, current = 0.1e-6)], signalport = 1,
-        Is = 1e-7*0.3e-6, Npump = (6,), Nmod = (6,),
+        Is = 1e-7*0.3e-6, Npump = (4,), Nmod = (4,),
         kw = (dc = true, threewavemixing = true, fourwavemixing = true),
         pumped = true, lossless = true, linear = false))
 
@@ -155,7 +155,7 @@ function crosscheckcases()
             ws = wsq .* [0.9713, 1.0000, 1.0291], wp = (2*wsq*1.0017,),
             sources = [(mode = (0,), port = 2, current = 8.0e-6),
                 (mode = (1,), port = pumpport, current = Ip)], signalport = 1,
-            Is = 1e-7*8.0e-6, Npump = (6,), Nmod = (6,),
+            Is = 1e-7*8.0e-6, Npump = (4,), Nmod = (4,),
             kw = (dc = true, threewavemixing = true, fourwavemixing = true),
             pumped = true, lossless = true, linear = false))
     end
@@ -170,7 +170,7 @@ function crosscheckcases()
         defs = Dict{Any,Any}(),
         ws = GHz .* [4.5, 5.0, 5.5], wp = (GHz*5.0001,),
         sources = [(mode = (1,), port = 1, current = 1.5e-6)], signalport = 1,
-        Is = 1e-7*1.5e-6, Npump = (6,), Nmod = (6,), kw = (;),
+        Is = 1e-7*1.5e-6, Npump = (4,), Nmod = (4,), kw = (;),
         pumped = true, lossless = true, linear = false))
 
     # the JPA behind a dissipative scattering block, a 3 dB attenuator
@@ -183,7 +183,7 @@ function crosscheckcases()
         defs = Dict{Any,Any}(),
         ws = GHz .* [4.6, 4.75, 4.9], wp = (GHz*4.75001,),
         sources = [(mode = (1,), port = 1, current = 1.4*Ip)], signalport = 1,
-        Is = 1e-7*Ip, Npump = (8,), Nmod = (8,), kw = (;),
+        Is = 1e-7*Ip, Npump = (4,), Nmod = (4,), kw = (;),
         pumped = true, lossless = false, linear = false))
 
     # the JPA fed through a lossless transmission line
@@ -195,7 +195,7 @@ function crosscheckcases()
         defs = Dict{Any,Any}(),
         ws = GHz .* [4.6, 4.75, 4.9], wp = (GHz*4.75001,),
         sources = [(mode = (1,), port = 1, current = Ip)], signalport = 1,
-        Is = 1e-7*Ip, Npump = (8,), Nmod = (8,), kw = (;),
+        Is = 1e-7*Ip, Npump = (4,), Nmod = (4,), kw = (;),
         pumped = true, lossless = true, linear = false))
 
     return cases

@@ -38,8 +38,8 @@ mutable struct HBCache{N,K,P}
     frequencies::Frequencies{N}
     indices::FourierIndices{N}
     Nmodes::Int
-    w::NTuple{N,Number}
-    sources::Vector
+    w::NTuple{N,Float64}
+    sources::Vector{SourceTuple{N}}
     kwargs::K
     x::Union{Nothing,Vector{Complex{Float64}}}
     converged::Bool
@@ -101,6 +101,9 @@ function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     all(map(>=, Nevaluationharmonics, Nharmonics)) || throw(ArgumentError(
         lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Nharmonics` = $(Nharmonics) in every tone."))
     checkcachekwargs(kwargs)
+    # the inputs in their canonical forms, once, for every solve
+    w = tonefrequencies(w)
+    sources = sourcetable(sources, w)
 
     frequencies = removeconjfreqs(
         truncfreqs(calcfreqsrdft(Nevaluationharmonics); dc = dc, odd = odd,
@@ -131,15 +134,19 @@ function hbcache(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
                   for c in circuit0]
 
     return HBCache(builder, compiled, plan, structuralkey(bound), valueorder,
-        cg, frequencies, indices, Nmodes, w, collect(sources), kwargs,
+        # as a named tuple: a keyword splat of mixed value types is a
+        # `Pairs{Symbol,Any}`, and splatting that into every solve hands the
+        # solver keywords of unknown type
+        cg, frequencies, indices, Nmodes, w, sources, NamedTuple(kwargs),
         nothing, false, 0, HBReuse(), nothing)
 end
 
 # the keywords the compiled circuit solve accepts, read off its method so
 # the check cannot drift from the signature
 function compiledsolvekwargs()
-    m = only(methods(hbnlsolve, (Tuple{Vararg{Number}}, Any, Frequencies,
-        FourierIndices, CompiledCircuit, CircuitGraph, CircuitMatrices)))
+    m = which(hbnlsolve, (NTuple{1,Float64}, Vector{SourceTuple{1}},
+        Frequencies{1}, FourierIndices{1}, CompiledCircuit, CircuitGraph,
+        CircuitMatrices))
     return Base.kwarg_decl(m)
 end
 
@@ -279,7 +286,7 @@ function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
     nm = isnothing(cache.nm) ? assemblematrices(cache.plan, bound) :
         assemblematrices!(cache.nm, cache.plan, bound)
     cache.nm = nm
-    x0 = (warmstart && cache.converged) ? cache.x : nothing
+    x0 = (warmstart && cache.converged) ? initialguess(cache.x) : ComplexF64[]
     # keyed arrays are a presentation convenience and pure overhead in a
     # loop; the stored state has to be a plain vector for the warm start
     nl = hbnlsolve(cache.w, cache.sources, cache.frequencies,

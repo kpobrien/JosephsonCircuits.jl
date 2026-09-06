@@ -1,4 +1,7 @@
-using JosephsonCircuits, LinearAlgebra, SparseArrays, Test
+using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test
+
+isdefined(Main, :testchaincircuit) || include("testcircuits.jl")
+Random.seed!(20260905)
 
 @testset verbose=true "krylov" begin
 

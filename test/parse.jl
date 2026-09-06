@@ -899,10 +899,10 @@ using Test
         matched = one(Port(1; Z0 = :Z))
         defs = Dict(:Z => 50.0)
 
-        cs = JC.compile(symbolic)
-        @test JC.portreferenceimpedances(cs, JC.bind(cs, defs).values) == [50.0]
-        cm = JC.compile(matched)
-        @test JC.portreferenceimpedances(cm, JC.bind(cm, defs).values) == [50.0]
+        cs = JosephsonCircuits.compile(symbolic)
+        @test JosephsonCircuits.portreferenceimpedances(cs, JosephsonCircuits.bind(cs, defs).values) == [50.0]
+        cm = JosephsonCircuits.compile(matched)
+        @test JosephsonCircuits.portreferenceimpedances(cm, JosephsonCircuits.bind(cm, defs).values) == [50.0]
 
         ref = hblinsolve(ws, numeric, Dict{Symbol,Any}())
         sol = hblinsolve(ws, symbolic, defs)

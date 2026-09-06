@@ -87,15 +87,16 @@ function stagedembed(out, bigmodes)
 end
 
 """
-    stagedhbnlsolve(m::Staged, w, Nharmonics, sources, circuit, circuitdefs;
-        kwargs...)
+    stagedhbnlsolve(m::Staged, w::NTuple{N,Float64}, Nharmonics,
+        sources::Vector{SourceTuple{N}}, psc::CompiledCircuit,
+        cg::CircuitGraph, circuitdefs::Dict{Any,Any}; kwargs...)
 
 Source continuation on an adaptively grown harmonic grid, reached through
 `hbnlsolve(...; method = Staged(...))`; the schedule is the [`Staged`](@ref)
 value `m`, validated at its construction. `kwargs` are the keywords of
 [`hbnlsolve`](@ref) (`iterations`, `ftol`, `Nevaluationharmonics`,
 `frequencywindow`, `maxintermodorder`, `dc`, `odd`, `even`, `symfreqvar`,
-`sorting`, `keyedarrays`, `sensitivitynames`, `returnoperatingpoint`,
+`keyedarrays`, `sensitivitynames`, `returnoperatingpoint`,
 `backend`), which are forwarded to every stage.
 
 Near a critical drive the Newton basin is small and the iteration count
@@ -154,18 +155,36 @@ converged, and records the whole walk in `solverinfo.stages`.
 - `maxattempts = 60`: a bound on the total number of stage solves.
 - `verbose = false`: print one line per stage solve.
 """
-function stagedhbnlsolve(m::Staged, w::NTuple{N,Number},
-    Nharmonics::NTuple{N,Int}, sources, circuit, circuitdefs;
+function stagedhbnlsolve(m::Staged, w::NTuple{N,Float64},
+    Nharmonics::NTuple{N,Int}, sources::Vector{SourceTuple{N}},
+    psc::CompiledCircuit, cg::CircuitGraph, circuitdefs::Dict{Any,Any};
+    kwargs...) where {N}
+    # a barrier on the inner method: the schedule holds it as an abstract
+    # field, and the stage solves below must see its concrete type, or
+    # every stage is called with keywords of unknown type. Through
+    # `invokelatest` rather than a plain call, because a plain call with an
+    # abstract argument is also inferred for that abstract signature (one
+    # method matches), and that inference of the whole continuation and the
+    # compiled circuit solve behind it, for an instance which never runs,
+    # took longer than compiling the one which does.
+    return Base.invokelatest(stagedhbnlsolve, m.inner, m, w, Nharmonics,
+        sources, psc, cg, circuitdefs; kwargs...)
+end
+
+function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
+    w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
+    sources::Vector{SourceTuple{N}}, psc::CompiledCircuit, cg::CircuitGraph,
+    circuitdefs::Dict{Any,Any};
     iterations = 1000,
     Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
     frequencywindow = (0, Inf),
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
     even::Bool = false, ftol = 1e-8, symfreqvar = nothing,
-    sorting = :number, keyedarrays::Bool = true,
+    keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
     returnoperatingpoint::Bool = false, backend = CPU()) where {N}
 
-    (; s0, smin, interiorftol, interioriterations, inner, interiorescalation,
+    (; s0, smin, interiorftol, interioriterations, interiorescalation,
         maxattempts, verbose) = m
     # the ladder of retained harmonic caps: the default for this problem's
     # `Nharmonics`, or the one the schedule states, which must end at it
@@ -189,14 +208,15 @@ function stagedhbnlsolve(m::Staged, w::NTuple{N,Number},
     scaled(s) = [(mode = t.mode, port = t.port, current = s*t.current)
         for t in sources]
     solve(grid, s, x0, final) = hbnlsolve(w, map(min, Nharmonics, grid),
-        scaled(s), circuit, circuitdefs; dc = dc, odd = odd, even = even,
+        scaled(s), psc, cg, circuitdefs; dc = dc, odd = odd, even = even,
         maxintermodorder = maxintermodorder,
         Nevaluationharmonics = Nevaluationharmonics,
         frequencywindow = frequencywindow,
         method = (final || interiorescalation) ? inner :
             withescalation(inner, false),
-        x0 = x0, symfreqvar = symfreqvar,
-        sorting = sorting,
+        # typed here, whatever the loop below inferred for its carried point,
+        # so the stage solve is called with keywords of known type
+        x0 = initialguess(x0), symfreqvar = symfreqvar,
         keyedarrays = final ? keyedarrays : false,
         sensitivitynames = final ? sensitivitynames : String[],
         returnoperatingpoint = final ? returnoperatingpoint : false,

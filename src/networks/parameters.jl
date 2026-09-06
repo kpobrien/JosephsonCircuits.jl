@@ -1,243 +1,258 @@
-# generate the non in-place versions of the network parameter conversion
-# functions.
+# The network parameter conversions, S to Z, Z to S, S to T and the rest.
+# Each is a kernel which converts one matrix into another,
+# `f!(y, x, tmp, ...)`, defined further down beside its docstring, and the
+# per frequency forms, on a matrix or on an array of matrices with one per
+# frequency, allocating and in place, come from the driver here. A port
+# impedance argument is a number, the same at every port and frequency, a
+# vector with one value per port, or a matrix with one row per port and one
+# column per frequency.
 
-# functions without an impedance argument
-for f in [:StoT, :TtoS, :AtoB, :BtoA, :AtoZ, :ZtoA, :AtoY, :YtoA, :BtoY, :YtoB, :BtoZ, :ZtoB, :ZtoY, :YtoZ]
-    # non-in-place version for matrix input
-    @eval function ($f)(x::AbstractMatrix)
-        # define the output matrix
-        y = similar(x)
-        # define a temporary storage array
-        tmp = similar(x)
-        # evaluate the in place version of the function
-        ($(Symbol(String(f)*"!")))(y,x,tmp)
-        return y
+"""
+    PortDiagonal(values, rows = Colon())
+
+A port argument handed to a conversion kernel as the diagonal matrix of
+its values at the frequency, restricted to the ports `rows`: `values` is a
+vector with one value per port, the same at every frequency, or a matrix
+with one row per port and one column per frequency. See
+[`convertperfrequency!`](@ref).
+"""
+struct PortDiagonal{A<:AbstractArray,R}
+    values::A
+    rows::R
+end
+PortDiagonal(values::AbstractArray) = PortDiagonal(values, Colon())
+
+"""
+    atfrequency(a, i)
+
+The port argument `a` at the frequency index `i`: a number is the same
+everywhere, a vector holds one value per port for every frequency, a
+matrix has one column per frequency, and a [`PortDiagonal`](@ref) is the
+diagonal matrix of its ports there.
+"""
+atfrequency(a::Number, i) = a
+atfrequency(a::AbstractVector, i) = a
+atfrequency(a::AbstractMatrix, i) = view(a, :, i)
+atfrequency(d::PortDiagonal{<:AbstractVector}, i) =
+    Diagonal(view(d.values, d.rows))
+atfrequency(d::PortDiagonal{<:AbstractMatrix}, i) =
+    Diagonal(view(d.values, d.rows, i))
+
+# the frequency axes a port argument carries, `nothing` when it is the same
+# at every frequency
+frequencyaxes(a::Number) = nothing
+frequencyaxes(a::AbstractVector) = nothing
+frequencyaxes(a::AbstractMatrix) = axes(a)[2:end]
+frequencyaxes(d::PortDiagonal) = frequencyaxes(d.values)
+
+"""
+    convertperfrequency!(kernel!, y, x, args...)
+    convertperfrequency(kernel!, x, args...)
+
+Convert the matrix `x[:, :, i]` into `y[:, :, i]` at every frequency index
+`i` of the trailing dimensions of `x` by the kernel
+`kernel!(y_i, x_i, tmp, args_i...)`, with `tmp` a scratch matrix and each
+port argument given at that frequency by [`atfrequency`](@ref). The
+allocating form converts into an array like `x`, and for a matrix `x`,
+one frequency, calls the kernel directly. One method per number of port arguments, none, one or two, rather
+than a variadic one: the argument map a variadic driver needs is compiled
+once per kernel and argument type, and that outweighed what it saved. The
+type parameter makes the method specialize on the kernel, which Julia does
+not do on its own for a function argument.
+"""
+function convertperfrequency!(kernel!::F, y::AbstractArray,
+        x::AbstractArray) where {F}
+    tmp = checkconversion(y, x)
+    for i in CartesianIndices(axes(x)[3:end])
+        kernel!(view(y, :, :, i), view(x, :, :, i), tmp)
     end
-
-    # non-in-place version for array input
-    @eval function ($f)(x::AbstractArray)
-        # define the output matrix
-        y = similar(x)
-        # define a temporary storage array
-        tmp = similar(x,axes(x)[1:2])
-        # evaluate the in place version of the function
-        for i in CartesianIndices(axes(x)[3:end])
-            ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp)
-        end
-        return y
-    end
-
-    # in place version for matrix or array input, copy results to input
-    @eval function ($(Symbol(String(f)*"!")))(x)
-        return copy!(x,($f)(x))
-    end
-
+    return y
 end
 
-# functions using portimpedances
-for f in [:ABCDtoS, :StoABCD]
-    # non-in-place version for matrix input
-    @eval function ($f)(x::AbstractMatrix;portimpedances=50.0)
-        # define the output matrix
-        y = copy(x)
-        # evaluate the in place version of the function
-        ($(Symbol(String(f)*"!")))(y,portimpedances)
-        return y
+function convertperfrequency!(kernel!::F, y::AbstractArray, x::AbstractArray,
+        a) where {F}
+    tmp = checkconversion(y, x, a)
+    for i in CartesianIndices(axes(x)[3:end])
+        kernel!(view(y, :, :, i), view(x, :, :, i), tmp, atfrequency(a, i))
     end
-
-    # non-in-place version for array input
-    @eval function ($f)(x::AbstractArray;portimpedances=50.0)
-        # define the output matrix
-        y = copy(x)
-        # if portimpedances is a scalar, pass that, otherwise pass as a
-        # diagonal matrix
-        if iszero(ndims(portimpedances))
-            # assume the port impedances are all the same for all ports and
-            # frequencies. loop over the dimensions of the array greater than 2
-            for i in CartesianIndices(axes(y)[3:end])
-                ($(Symbol(String(f)*"!")))(view(y,:,:,i),portimpedances)
-            end
-        else
-            # assume the port impedances are given for each port and frequency
-            # loop over the dimensions of the array greater than 2
-            for i in CartesianIndices(axes(y)[3:end])
-                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(portimpedances,:,i))
-            end
-        end
-        return y
-    end
-
-    # in place version for matrix or array input, copy results to input
-    @eval function ($(Symbol(String(f)*"!")))(x;portimpedances=50.0)
-        return copy!(x,($f)(x;portimpedances=portimpedances))
-    end
+    return y
 end
 
-# functions using sqrtportimpedances
-for f in [:StoZ, :YtoS]
-    # non-in-place version for matrix input
-    @eval function ($f)(x::AbstractMatrix;portimpedances=50.0)
-        # define the output matrix
-        y = similar(x)
-        # define a temporary storage array
-        tmp = similar(x)
-        # calculate the square root of the port impedances
-        sqrtportimpedances = sqrt.(portimpedances)
-        # if portimpedances is a scalar, pass that, otherwise pass as a
-        # diagonal matrix
-        if iszero(ndims(portimpedances))
-            # evaluate the in place version of the function
-            ($(Symbol(String(f)*"!")))(y,x,tmp,sqrtportimpedances)
-        else
-            # evaluate the in place version of the function
-            ($(Symbol(String(f)*"!")))(y,x,tmp,Diagonal(sqrtportimpedances))
-        end
-        return y
+function convertperfrequency!(kernel!::F, y::AbstractArray, x::AbstractArray,
+        a, b) where {F}
+    tmp = checkconversion(y, x, a, b)
+    for i in CartesianIndices(axes(x)[3:end])
+        kernel!(view(y, :, :, i), view(x, :, :, i), tmp, atfrequency(a, i),
+            atfrequency(b, i))
     end
-    
-    # non-in-place version for array input
-    @eval function ($f)(x::AbstractArray;portimpedances=50.0)
-        # define the output matrix
-        y = similar(x)
-        # define a temporary storage array
-        tmp = similar(x,axes(x)[1:2])
-        # calculate the square root of the port impedances
-        sqrtportimpedances = sqrt.(portimpedances)
-        # if portimpedances is a scalar, pass that, otherwise pass as a
-        # diagonal matrix
-        if iszero(ndims(portimpedances))
-            # assume the port impedances are all the same for all ports and
-            # frequencies. loop over the dimensions of the array greater than 2
-            for i in CartesianIndices(axes(x)[3:end])
-                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,sqrtportimpedances)
-            end
-        else
-            # assume the port impedances are given for each port and frequency
-            # loop over the dimensions of the array greater than 2
-            for i in CartesianIndices(axes(x)[3:end])
-                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,Diagonal(view(sqrtportimpedances,:,i)))
-            end
-        end
-        return y
-    end
-
-    # in place version for matrix or array input, copy results to input
-    @eval function ($(Symbol(String(f)*"!")))(x;portimpedances=50.0)
-        return copy!(x,($f)(x;portimpedances=portimpedances))
-    end
+    return y
 end
 
+convertperfrequency(kernel!::F, x::AbstractArray, args...) where {F} =
+    convertperfrequency!(kernel!, similar(x), x, args...)
 
-# functions using oneoversqrtportimpedances
-for f in [:StoY, :ZtoS]
-    @eval function ($f)(x::AbstractMatrix;portimpedances=50.0)
-        # define the output matrix
-        y = similar(x)
-        # define a temporary storage array
-        tmp = similar(x)
-        # calculate the inverse of the square root of the port impedances
-        oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
-        # if portimpedances is a scalar, pass that, otherwise pass as a
-        # diagonal matrix
-        if iszero(ndims(portimpedances))
-            # evaluate the in place version of the function
-            ($(Symbol(String(f)*"!")))(y,x,tmp,oneoversqrtportimpedances)
-        else
-            # evaluate the in place version of the function
-            ($(Symbol(String(f)*"!")))(y,x,tmp,Diagonal(oneoversqrtportimpedances))
-        end
-        return y
-    end
-    
-    @eval function ($f)(x::AbstractArray;portimpedances=50.0)
-        # define the output matrix
-        y = similar(x)
-        # define a temporary storage array
-        tmp = similar(x,axes(x)[1:2])
-        # calculate the inverse of the square root of the port impedances
-        oneoversqrtportimpedances = 1 ./sqrt.(portimpedances)
-        # if portimpedances is a scalar, pass that, otherwise pass as a
-        # diagonal matrix
-        if iszero(ndims(portimpedances))
-            # assume the port impedances are all the same for all ports and
-            # frequencies. loop over the dimensions of the array greater than 2
-            for i in CartesianIndices(axes(x)[3:end])
-                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,oneoversqrtportimpedances)
-            end
-        else
-            # assume the port impedances are given for each port and frequency
-            # loop over the dimensions of the array greater than 2
-            for i in CartesianIndices(axes(x)[3:end])
-                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,Diagonal(view(oneoversqrtportimpedances,:,i)))
-            end
-        end
-        return y
-    end
-
-    # in place version for matrix or array input, copy results to input
-    @eval function ($(Symbol(String(f)*"!")))(x;portimpedances=50.0)
-        return copy!(x,($f)(x;portimpedances=portimpedances))
-    end
+# a matrix is one frequency and is converted by the kernel directly: no
+# loop, no views and no scratch of its own to compile per kernel and
+# argument type, which for the single matrix calls of user code is nearly
+# all of what the loop form would compile
+function convertperfrequency(kernel!::F, x::AbstractMatrix) where {F}
+    y = similar(x)
+    kernel!(y, x, similar(x))
+    return y
+end
+function convertperfrequency(kernel!::F, x::AbstractMatrix, a) where {F}
+    checkconversion(x, x, a)
+    y = similar(x)
+    kernel!(y, x, similar(x), atmatrix(a))
+    return y
+end
+function convertperfrequency(kernel!::F, x::AbstractMatrix, a, b) where {F}
+    checkconversion(x, x, a, b)
+    y = similar(x)
+    kernel!(y, x, similar(x), atmatrix(a), atmatrix(b))
+    return y
 end
 
-# functions using sqrtportimpedances split into two
-for f in [:StoA, :AtoS, :StoB, :BtoS]
-    @eval function ($f)(x::AbstractMatrix;portimpedances=50.0)
-        # define the output matrix
-        y = similar(x)
-        # define a temporary storage array
-        tmp = similar(x)
-        # calculate the square root of the port impedances
-        sqrtportimpedances = sqrt.(portimpedances)
-        # if portimpedances is a scalar, pass that, otherwise pass as a
-        # diagonal matrix
-        if iszero(ndims(portimpedances))
-            # evaluate the in place version of the function
-            ($(Symbol(String(f)*"!")))(y,x,tmp,sqrtportimpedances,
-                sqrtportimpedances)
-        else
-            # evaluate the in place version of the function
-            ($(Symbol(String(f)*"!")))(y,x,tmp,
-                Diagonal(sqrtportimpedances[1:size(sqrtportimpedances,1)÷2]),
-                Diagonal(sqrtportimpedances[size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1)]))
-        end
-        return y
-    end
-    
-    @eval function ($f)(x::AbstractArray;portimpedances=50.0)
-        # define the output matrix
-        y = similar(x)
-        # define a temporary storage array
-        tmp = similar(x,axes(x)[1:2])
-        # calculate the square root of the port impedances
-        sqrtportimpedances = sqrt.(portimpedances)
-        # if portimpedances is a scalar, pass that, otherwise pass as a
-        # diagonal matrix
-        if iszero(ndims(portimpedances))
-            # assume the port impedances are all the same for all ports and
-            # frequencies. loop over the dimensions of the array greater than 2
-            for i in CartesianIndices(axes(x)[3:end])
-                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,
-                    sqrtportimpedances, sqrtportimpedances)
-            end
-        else
-            # assume the port impedances are given for each port and frequency
-            # loop over the dimensions of the array greater than 2
-            for i in CartesianIndices(axes(x)[3:end])
-                ($(Symbol(String(f)*"!")))(view(y,:,:,i),view(x,:,:,i),tmp,
-                Diagonal(view(sqrtportimpedances,1:size(sqrtportimpedances,1)÷2,i)),
-                Diagonal(view(sqrtportimpedances,size(sqrtportimpedances,1)÷2+1:size(sqrtportimpedances,1),i)))
-            end
-        end
-        return y
-    end
+# the port argument of a single matrix: as `atfrequency` but with the
+# diagonal built from the vector itself, not a view of it
+atmatrix(a::Number) = a
+atmatrix(a::AbstractVector) = a
+atmatrix(d::PortDiagonal{<:AbstractVector}) =
+    Diagonal(d.rows isa Colon ? d.values : d.values[d.rows])
 
-    # in place version for matrix or array input, copy results to input
-    @eval function ($(Symbol(String(f)*"!")))(x;portimpedances=50.0)
-        return copy!(x,($f)(x;portimpedances=portimpedances))
+"""
+    convertcopy(kernel!, x, a)
+
+The two port chain conversions in place on one copy of `x`: the kernel
+`kernel!(y_i, a_i)` converts the matrix at every frequency index of the
+copy, with the port argument given at that frequency by
+[`atfrequency`](@ref); a matrix `x` is converted directly.
+"""
+function convertcopy(kernel!::F, x::AbstractArray, a) where {F}
+    checkconversion(x, x, a)
+    y = copy(x)
+    for i in CartesianIndices(axes(x)[3:end])
+        kernel!(view(y, :, :, i), atfrequency(a, i))
     end
+    return y
+end
+function convertcopy(kernel!::F, x::AbstractMatrix, a) where {F}
+    checkconversion(x, x, a)
+    y = copy(x)
+    kernel!(y, atmatrix(a))
+    return y
 end
 
+# the checks of the driver, and its scratch matrix: the output like the
+# input, and every port argument with one column per frequency of the
+# input or none
+function checkconversion(y, x, args...)
+    axes(y) == axes(x) || throw(DimensionMismatch(
+        lazy"Sizes of output $(size(y)) and input $(size(x)) must be equal."))
+    trailing = axes(x)[3:end]
+    for a in args
+        fa = frequencyaxes(a)
+        (isnothing(fa) || fa == trailing) || throw(ArgumentError(
+            lazy"A port argument of size $(size(a isa PortDiagonal ? a.values : a)) does not have one column per frequency of the input of size $(size(x))."))
+    end
+    return similar(x, axes(x)[1:2])
+end
+
+"""
+    portdiagonal(a)
+    porthalves(a)
+
+A port impedance argument as the kernels take it: a number stays a
+number and an array becomes a [`PortDiagonal`](@ref); `porthalves` splits
+the ports in two, the first half the input ports of a chain matrix and the
+second half its output ports.
+"""
+portdiagonal(a::Number) = a
+portdiagonal(a::AbstractArray) = PortDiagonal(a)
+porthalves(a::Number) = (a, a)
+function porthalves(a::AbstractArray)
+    n = size(a, 1)
+    return PortDiagonal(a, 1:n÷2), PortDiagonal(a, n÷2+1:n)
+end
+
+# the per frequency forms: allocating, and in place through a copy
+
+StoT(x::AbstractArray) = convertperfrequency(StoT!, x)
+TtoS(x::AbstractArray) = convertperfrequency(TtoS!, x)
+AtoB(x::AbstractArray) = convertperfrequency(AtoB!, x)
+BtoA(x::AbstractArray) = convertperfrequency(BtoA!, x)
+AtoZ(x::AbstractArray) = convertperfrequency(AtoZ!, x)
+ZtoA(x::AbstractArray) = convertperfrequency(ZtoA!, x)
+AtoY(x::AbstractArray) = convertperfrequency(AtoY!, x)
+YtoA(x::AbstractArray) = convertperfrequency(YtoA!, x)
+BtoY(x::AbstractArray) = convertperfrequency(BtoY!, x)
+YtoB(x::AbstractArray) = convertperfrequency(YtoB!, x)
+BtoZ(x::AbstractArray) = convertperfrequency(BtoZ!, x)
+ZtoB(x::AbstractArray) = convertperfrequency(ZtoB!, x)
+ZtoY(x::AbstractArray) = convertperfrequency(ZtoY!, x)
+YtoZ(x::AbstractArray) = convertperfrequency(YtoZ!, x)
+StoT!(x::AbstractArray) = copy!(x, StoT(x))
+TtoS!(x::AbstractArray) = copy!(x, TtoS(x))
+AtoB!(x::AbstractArray) = copy!(x, AtoB(x))
+BtoA!(x::AbstractArray) = copy!(x, BtoA(x))
+AtoZ!(x::AbstractArray) = copy!(x, AtoZ(x))
+ZtoA!(x::AbstractArray) = copy!(x, ZtoA(x))
+AtoY!(x::AbstractArray) = copy!(x, AtoY(x))
+YtoA!(x::AbstractArray) = copy!(x, YtoA(x))
+BtoY!(x::AbstractArray) = copy!(x, BtoY(x))
+YtoB!(x::AbstractArray) = copy!(x, YtoB(x))
+BtoZ!(x::AbstractArray) = copy!(x, BtoZ(x))
+ZtoB!(x::AbstractArray) = copy!(x, ZtoB(x))
+ZtoY!(x::AbstractArray) = copy!(x, ZtoY(x))
+YtoZ!(x::AbstractArray) = copy!(x, YtoZ(x))
+
+# the chain matrix conversions of a two port work on a copy of the input
+# with the port impedances as they are
+ABCDtoS(x::AbstractArray; portimpedances = 50.0) =
+    convertcopy(ABCDtoS!, x, portimpedances)
+StoABCD(x::AbstractArray; portimpedances = 50.0) =
+    convertcopy(StoABCD!, x, portimpedances)
+ABCDtoS!(x::AbstractArray; portimpedances = 50.0) =
+    copy!(x, ABCDtoS(x; portimpedances))
+StoABCD!(x::AbstractArray; portimpedances = 50.0) =
+    copy!(x, StoABCD(x; portimpedances))
+
+# the scattering conversions take the square roots of the port impedances
+StoZ(x::AbstractArray; portimpedances = 50.0) =
+    convertperfrequency(StoZ!, x, portdiagonal(sqrt.(portimpedances)))
+YtoS(x::AbstractArray; portimpedances = 50.0) =
+    convertperfrequency(YtoS!, x, portdiagonal(sqrt.(portimpedances)))
+StoY(x::AbstractArray; portimpedances = 50.0) =
+    convertperfrequency(StoY!, x, portdiagonal(1 ./ sqrt.(portimpedances)))
+ZtoS(x::AbstractArray; portimpedances = 50.0) =
+    convertperfrequency(ZtoS!, x, portdiagonal(1 ./ sqrt.(portimpedances)))
+StoZ!(x::AbstractArray; portimpedances = 50.0) =
+    copy!(x, StoZ(x; portimpedances))
+YtoS!(x::AbstractArray; portimpedances = 50.0) =
+    copy!(x, YtoS(x; portimpedances))
+StoY!(x::AbstractArray; portimpedances = 50.0) =
+    copy!(x, StoY(x; portimpedances))
+ZtoS!(x::AbstractArray; portimpedances = 50.0) =
+    copy!(x, ZtoS(x; portimpedances))
+
+# the chain conversions of scattering parameters take the square roots of
+# the port impedances split between the input and the output ports
+StoA(x::AbstractArray; portimpedances = 50.0) =
+    convertperfrequency(StoA!, x, porthalves(sqrt.(portimpedances))...)
+AtoS(x::AbstractArray; portimpedances = 50.0) =
+    convertperfrequency(AtoS!, x, porthalves(sqrt.(portimpedances))...)
+StoB(x::AbstractArray; portimpedances = 50.0) =
+    convertperfrequency(StoB!, x, porthalves(sqrt.(portimpedances))...)
+BtoS(x::AbstractArray; portimpedances = 50.0) =
+    convertperfrequency(BtoS!, x, porthalves(sqrt.(portimpedances))...)
+StoA!(x::AbstractArray; portimpedances = 50.0) =
+    copy!(x, StoA(x; portimpedances))
+AtoS!(x::AbstractArray; portimpedances = 50.0) =
+    copy!(x, AtoS(x; portimpedances))
+StoB!(x::AbstractArray; portimpedances = 50.0) =
+    copy!(x, StoB(x; portimpedances))
+BtoS!(x::AbstractArray; portimpedances = 50.0) =
+    copy!(x, BtoS(x; portimpedances))
 
 @doc """
     StoT(S)

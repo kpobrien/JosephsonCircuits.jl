@@ -131,36 +131,6 @@ using Test
         @test gotj == wantj
     end
 
-    @testset "the layout is used exactly when it is needed" begin
-        # A circuit which injects no direct current does not build the
-        # explicit block, and one which does builds it. That is the whole
-        # condition now: there is no flag, and no second path to compare
-        # against, so what is asserted is that each case solves and that the
-        # block appears only in the second.
-        circuit = Circuit(
-            [:p1 => Port(1), :cc => Capacitor(100e-15),
-             :jj => JosephsonJunction(1000e-12), :cj => Capacitor(1000e-15),
-             :gnd => Ground()],
-            [[(:p1, 1), (:cc, 1)],
-             [(:cc, 2), (:jj, 1), (:cj, 1)],
-             [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
-        kw = (; dc = true, odd = true, even = true, ftol = 1e-12)
-
-        # alternating current only: the voltages are the zero they sit at
-        ac = JC.hbnlsolve((2*pi*4.75e9,), (8,),
-            [(mode = (1,), port = 1, current = 1.2e-6)], circuit; kw...)
-        @test ac.solverinfo.converged
-        @test all(iszero, ac.dcnodevoltage)
-
-        # with direct current in the drive the block is built and reports
-        dc = JC.hbnlsolve((2*pi*4.75e9,), (8,),
-            [(mode = (1,), port = 1, current = 1.2e-6),
-             (mode = (0,), port = 1, current = 1.0e-7)], circuit;
-            kw..., rtol = 1e-12)
-        @test dc.solverinfo.converged
-        @test !isnothing(dc.dcnodevoltage)
-    end
-
     @testset "the methods which can carry the block, and the one which cannot" begin
         circuit = Circuit(
             [:p1 => Port(1; Z0 = 50.0), :cc => Capacitor(100e-15),

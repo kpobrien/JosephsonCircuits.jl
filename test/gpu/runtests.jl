@@ -230,7 +230,9 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             @test agree(ra.S, rb.S)
             kr = rb.solverinfo.stages[1].krylov
             # an exact solve in double takes one Arnoldi step per Newton step
-            exact && @test all(k -> k.iterations <= 2, kr)
+            if exact
+                @test all(k -> k.iterations <= 2, kr)
+            end
         end
         @test JosephsonCircuits.freememory(CUDABackend()) > 0
     end

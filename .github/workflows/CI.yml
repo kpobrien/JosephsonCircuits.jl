@@ -39,7 +39,12 @@ jobs:
         with:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v3
-      - uses: julia-actions/julia-buildpkg@v1
+      # the environment instantiated and precompiled in the configuration
+      # the tests run in (`Pkg.test` adds `--check-bounds=yes`, which is a
+      # pkgimage configuration of its own); `julia-buildpkg` cannot be
+      # given the flag and would compile the default configuration, which
+      # nothing in this job uses
+      - run: julia --color=yes --check-bounds=yes --project=@. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
       - uses: julia-actions/julia-runtest@v1
         env:
           JULIA_NUM_THREADS: ${{ matrix.threads }}

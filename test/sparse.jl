@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using StaticArrays
 using Test
 
 @testset verbose=true "matutils" begin

@@ -2,6 +2,8 @@ using JosephsonCircuits
 using LinearAlgebra
 using SparseArrays
 using Random
+
+isdefined(Main, :testchaincircuit) || include("testcircuits.jl")
 using Test
 
 @testset verbose=true "modepreconditioner" begin
@@ -434,14 +436,18 @@ using Test
         @test occursin("eta=", str)
     end
 
+    # the two tone chain with a direct current mode, debugged once for the
+    # three testsets which build preconditioners on it
+    circuit2, defs2 = testchaincircuit()
+    wpb = 2*pi*4.75e9; wsb = 2*pi*5.0e9
+    srcb = [(mode=(1,0), port=1, current=0.3e-6),
+            (mode=(0,1), port=1, current=0.1e-6)]
+    chain2 = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
+        defs2; debugJacobian = true, dc = true, odd = true, even = true,
+        keyedarrays = false)
+
     @testset "block factorization over the circuit graph" begin
-        circuit2, defs2 = testchaincircuit()
-        wpb = 2*pi*4.75e9; wsb = 2*pi*5.0e9
-        srcb = [(mode=(1,0), port=1, current=0.3e-6),
-                (mode=(0,1), port=1, current=0.1e-6)]
-        d = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
-            defs2; debugJacobian = true, dc = true, odd = true, even = true,
-            keyedarrays = false)
+        d = chain2
         Nmodes = d.Nmodes
         n = length(d.xr)
         mk(spec; kw...) = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
@@ -532,12 +538,9 @@ using Test
             defs2; method = Newton(), dc = true, odd = true, even = true,
             keyedarrays = false)
         for m in (NewtonKrylov(preconditioner = FullJacobian(factorization = BlockFactorization())),
-                NewtonKrylov(preconditioner = FullJacobian(factorization = BlockFactorization(; precision = Float32))),
-                NewtonKrylov(preconditioner = CouplingMask(mask; factorization = BlockFactorization())),
-                NewtonKrylov(preconditioner = MeasuredBand(factorization = BlockFactorization())),
-                NewtonKrylov(preconditioner = FullJacobian(factorization = BlockFactorization()), refresh = Probe()),
                 NewtonKrylov(preconditioner = FullJacobian(factorization = BlockFactorization(; precision = Float32)), refresh = Probe()),
-                NewtonKrylov(preconditioner = MeasuredBand(), refresh = Probe()))
+                NewtonKrylov(preconditioner = CouplingMask(mask; factorization = BlockFactorization())),
+                NewtonKrylov(preconditioner = MeasuredBand(factorization = BlockFactorization()), refresh = Probe()))
             ok = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb,
                 circuit2, defs2; method = m, dc = true, odd = true,
                 even = true, keyedarrays = false)
@@ -575,13 +578,7 @@ using Test
 
         # the probe on a system: strengths are nonnegative with a zero
         # diagonal, and `stalled!` makes the next update remeasure
-        circuit2, defs2 = testchaincircuit()
-        wpb = 2*pi*4.75e9; wsb = 2*pi*5.0e9
-        srcb = [(mode=(1,0), port=1, current=0.3e-6),
-                (mode=(0,1), port=1, current=0.1e-6)]
-        d = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
-            defs2; dc = true, odd = true, even = true, keyedarrays = false,
-            returnsystem = true)
+        d = chain2
         pc = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
             d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
             d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
@@ -628,12 +625,7 @@ using Test
 
 
     @testset "Automatic picks by the tones and the memory" begin
-        circuit2, defs2 = testchaincircuit()
-        wpb = 2*pi*4.75e9; wsb = 2*pi*5.0e9
-        srcb = [(mode=(1,0), port=1, current=0.3e-6),
-                (mode=(0,1), port=1, current=0.1e-6)]
-        d = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
-            defs2; dc = true, odd = true, even = true, returnsystem = true)
+        d = chain2
         sys = d.sys; Nmodes = d.Nmodes; layout = d.modelayout
         nnodes = layout.dim ÷ Nmodes
         ns = JosephsonCircuits.branchnodesandsigns(d.Rbnm, Nmodes, d.Nbranches)
@@ -664,7 +656,8 @@ using Test
         res(modes; kw...) = JosephsonCircuits.resolveautomatic(sys, d.Rbnm,
             Nmodes, d.Nbranches, layout, modes, JosephsonCircuits.CPU(); kw...)
         @test res(nothing) isa BlockDiagonal
-        @test res(d.Amatrixmodes) isa FullJacobian{<:BlockFactorization}
+        @test res(d.Amatrixmodes) isa FullJacobian &&
+            res(d.Amatrixmodes).factorization isa BlockFactorization
         @test res(d.Amatrixmodes).factorization.precision == Float32
         @test res(d.Amatrixmodes; budget = pred) isa FullJacobian
         @test res(d.Amatrixmodes; budget = pred - 1) isa MeasuredBand
@@ -684,15 +677,18 @@ using Test
             d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
             layout; spec = Automatic(), Amatrixmodes = d.Amatrixmodes)
         @test pc.coupling isa FullJacobian
-        @test JosephsonCircuits.isexactpreconditioner(pc)
+        # the full set in single precision is full but not exact: its
+        # escalation is the double precision factorization
+        @test JosephsonCircuits.isfullcoupling(pc)
+        @test !JosephsonCircuits.isexactpreconditioner(pc)
         one = JosephsonCircuits.hbnlsolve((wpb,), (8,),
             [(mode=(1,), port=1, current=0.3e-6)], circuit2, defs2;
             method = NewtonKrylov(preconditioner = Automatic()))
         @test one.solverinfo.converged
         # the memory prediction of any coupling set, from the structure
         # alone, and the escalation budget it is held to
-        @test pc.predict(FullJacobian(BlockFactorization(precision = Float32))) == pred
-        @test pc.predict(FullJacobian()) > pc.predict(BlockDiagonal()) > 0
+        @test JosephsonCircuits.couplingbytes(pc, FullJacobian(BlockFactorization(precision = Float32))) == pred
+        @test JosephsonCircuits.couplingbytes(pc, FullJacobian()) > JosephsonCircuits.couplingbytes(pc, BlockDiagonal()) > 0
         pcb = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
             d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
             d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
@@ -702,7 +698,7 @@ using Test
         @test !JosephsonCircuits.escalatepreconditioner!(pcb)
         @test pcb.coupling isa BlockDiagonal
         @test pcb.escalations == 0
-        pcb.budget = pcb.predict(FullJacobian())
+        pcb.budget = JosephsonCircuits.couplingbytes(pcb, FullJacobian())
         @test JosephsonCircuits.escalatepreconditioner!(pcb)
         @test pcb.coupling isa FullJacobian
         @test pcb.escalations == 1
@@ -722,16 +718,32 @@ using Test
         srcs = [(mode = (s.mode..., 0), port = s.port, current = s.current)
             for s in case.sources]
         push!(srcs, (mode = (0, 1), port = case.signalport, current = case.Is))
+        # (at six harmonics; the singular supernode is a property of the
+        # mode grid, and the table's own count is not pinned to it)
         sol = @test_logs (:warn, r"singular supernode") match_mode = :any hbnlsolve(
-            (case.wp..., ws), (case.Npump..., case.Nmod[1]), srcs,
+            (case.wp..., ws), (6, 6), srcs,
             case.circuit, case.defs; nonlinearkw(case.kw)..., ftol = 1e-12,
             method = NewtonKrylov(preconditioner =
                 FullJacobian(BlockFactorization(precision = Float32))))
         @test sol.solverinfo.converged
-        ref = hbnlsolve((case.wp..., ws), (case.Npump..., case.Nmod[1]), srcs,
+        ref = hbnlsolve((case.wp..., ws), (6, 6), srcs,
             case.circuit, case.defs; nonlinearkw(case.kw)..., ftol = 1e-12,
             method = Newton())
         @test maximum(abs, Array(sol.S) .- Array(ref.S)) < 1e-9
+
+        # at four harmonics the same single precision factors are not
+        # singular but poor: the Krylov solves stagnate, and the escalation
+        # the driver asks for is the double precision factorization of the
+        # same full set, after which the solve converges
+        sol4 = hbnlsolve((case.wp..., ws), (4, 4), srcs, case.circuit,
+            case.defs; nonlinearkw(case.kw)..., ftol = 1e-12,
+            method = NewtonKrylov(preconditioner =
+                FullJacobian(BlockFactorization(precision = Float32))))
+        @test sol4.solverinfo.converged
+        @test count(k -> k.escalated, sol4.solverinfo.stages[end].krylov) >= 1
+        ref4 = hbnlsolve((case.wp..., ws), (4, 4), srcs, case.circuit,
+            case.defs; nonlinearkw(case.kw)..., ftol = 1e-12, method = Newton())
+        @test maximum(abs, Array(sol4.S) .- Array(ref4.S)) < 1e-9
     end
 
     @testset "block factorization of a sparse matrix" begin

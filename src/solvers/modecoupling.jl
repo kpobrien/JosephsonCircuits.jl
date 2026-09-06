@@ -449,6 +449,147 @@ function spectralclusters(W::AbstractMatrix)
 end
 
 """
+    PreconditionerPlan
+
+The structural ingredients from which a [`ModeCouplingPreconditioner`](@ref)
+rebuilds its pattern, its assembly plan and its values for a new coupling
+set ([`buildcoupling`](@ref)) and sizes the factors a coupling set would
+take ([`couplingbytes`](@ref)): the Jacobian index matrices, the incidence
+matrix, the counts, the mode layout, the mode offsets and the requested
+precision. Everything with a value in it is read from the system at the
+time of the rebuild, so a system rebound to new values is what a rebuild
+sees. A plain struct rather than closures over the constructor's locals,
+so that a preconditioner's type depends on its system's type alone and not
+on the types of a dozen captured variables; the two parameters, the mode
+offsets (whose tuple length is the tone count) and the precision, are
+what a rebuild dispatches on.
+"""
+struct PreconditionerPlan{A,P<:Union{Nothing,Type{<:AbstractFloat}}}
+    Amatrixindices::Matrix{Int}
+    Amatrixconjindices::Matrix{Int}
+    Rbnm::SparseMatrixCSC{Int,Int}
+    Nmodes::Int
+    Nbranches::Int
+    Nfreq::Int
+    layout::ModeLayout{Int}
+    # `nothing`, or the harmonic offset of every mode pair
+    Amatrixmodes::A
+    # the floating point type of the factorization, `nothing` for the
+    # system's own
+    precision::P
+end
+
+# the plan's precision parameter: the type of a requested precision (so a
+# `Float32` is held as `Type{Float32}`, not as a `DataType`), or `Nothing`
+planprecision(::Nothing) = Nothing
+planprecision(::Type{T}) where {T<:AbstractFloat} = Type{T}
+
+# the floating point type of the factors: the requested precision, or the
+# real type of the system's scale and Josephson inductances
+factorprecision(plan::PreconditionerPlan, sys) = isnothing(plan.precision) ?
+    real(promote_type(typeof(sys.Lscale), real(eltype(sys.Ljb)))) :
+    plan.precision
+
+"""
+    buildcoupling(plan::PreconditionerPlan, S::AbstractModeCoupling, sys,
+        factorization)
+
+The pattern `P`, the assembly plan and the values it writes for the
+coupling set `S` of the system `sys`, factorized by `factorization`: the
+triple a [`ModeCouplingPreconditioner`](@ref) holds, rebuilt when its
+coupling set grows. On a device backend the Jacobian is built transposed,
+because its stored order is then the row major order a device sparse
+matrix and a device direct solver want; on a host the assembly writes
+straight into the stored values of `P`. A block factorization eliminates
+the circuit graph with dense blocks over the clusters of the coupling set,
+and the modes left single by the block diagonal are handed to this same
+preconditioner with the empty coupling set and the backend's sparse
+factorization.
+"""
+function buildcoupling(plan::PreconditionerPlan, S::AbstractModeCoupling,
+        sys, factorization)
+    (; Amatrixindices, Amatrixconjindices, Rbnm, Nmodes, Nbranches, Nfreq,
+        layout, Amatrixmodes) = plan
+    Ljb, Lscale = sys.Ljb, sys.Lscale
+    invLnm, Gnm, Cnm = sys.invLnm, sys.Gnm, sys.Cnm
+    keep = couplingmask(S, Nmodes, Amatrixmodes)
+    backend = sys.nonlineartermplan.backend
+    Tv = factorprecision(plan, sys)
+    if factorization isa BlockFactorization
+        singletons = if isempty(singletonmodes(keep))
+            nothing
+        else
+            ModeCouplingPreconditioner(sys, Amatrixindices,
+                Amatrixconjindices, Ljb, Lscale, Rbnm, Nmodes, Nbranches,
+                Nfreq, invLnm, Gnm, Cnm, layout;
+                spec = BlockDiagonal(singletonfactorization(factorization,
+                    backend)), precision = plan.precision)
+        end
+        Tb = something(factorization.precision, Tv)
+        return blockstructure(Tb, sys, Amatrixindices, Amatrixconjindices,
+            keep, Rbnm, Nmodes, Nbranches, Nfreq, layout, singletons),
+            nothing, nothing
+    end
+    Ami = restrictmodecoupling(Amatrixindices, keep)
+    Amc = restrictmodecoupling(Amatrixconjindices, keep)
+    transposed = !(backend isa CPU)
+
+    P, _ = realjacobianstructure(Ami, Amc, Ljb, Rbnm, Nmodes,
+        Nbranches, invLnm, Gnm, Cnm, layout, layout, Tv;
+        transposed = transposed, backend = backend)
+
+    # the junction structure of the restricted coupling, in the
+    # preconditioner's precision; the linear term ingredients come from
+    # the system, so the precomputed contribution is by construction the
+    # one the assembly would have scattered
+    junctions = junctionstructure(Tv, Ami, Amc, Ljb, Lscale, Rbnm,
+        Nmodes, Nbranches, Nfreq, backend)
+    dp = planstructurerealjacobian(P, Tv, junctions, sys.invLnm, sys.Gnm,
+        sys.Cnm, sys.wmodesm, sys.wmodes2m, layout, layout, backend;
+        transposed = transposed)
+    # on a host the assembly writes into the matrix which is factorized
+    nzval = transposed ? tobackend(backend, zeros(Tv, nnz(P))) : nonzeros(P)
+    return P, dp, nzval
+end
+
+"""
+    couplingbytes(plan::PreconditionerPlan, S::AbstractModeCoupling, sys,
+        factorization)
+    couplingbytes(pc::ModeCouplingPreconditioner, S::AbstractModeCoupling,
+        factorization = pc.factorization)
+
+The memory the factors of the coupling set `S` would take, sized from the
+symbolic structure alone: the block predictor for block factors, KLU's
+analysis of the host pattern for a sparse factorization. A coupling set
+carrying its own factorization is sized with that one. This is what lets
+an escalation be refused before it is built.
+"""
+function couplingbytes(plan::PreconditionerPlan, S::AbstractModeCoupling,
+        sys, factorization)
+    (; Amatrixindices, Amatrixconjindices, Rbnm, Nmodes, Nbranches,
+        layout, Amatrixmodes) = plan
+    keep = couplingmask(S, Nmodes, Amatrixmodes)
+    f = something(S.factorization, factorization)
+    Tv = factorprecision(plan, sys)
+    function sparsebytes(mask)
+        Ami = restrictmodecoupling(Amatrixindices, mask)
+        Amc = restrictmodecoupling(Amatrixconjindices, mask)
+        P, _ = realjacobianstructure(Ami, Amc, sys.Ljb, Rbnm, Nmodes,
+            Nbranches, sys.invLnm, sys.Gnm, sys.Cnm, layout, layout, Tv)
+        return sparsefactorbytes(P, Tv)
+    end
+    f isa BlockFactorization || return sparsebytes(keep)
+    adj, order = circuitorder(sys, Rbnm, Nmodes, Nbranches, layout)
+    bytes = blockfactorbytes(something(f.precision, Tv), keep, adj, order,
+        Nmodes, layout)
+    # the modes the block factors leave single are the sparse block
+    # diagonal preconditioner's, sized by the whole block diagonal
+    isempty(singletonmodes(keep)) && return bytes
+    return bytes + sparsebytes(couplingmask(BlockDiagonal(), Nmodes,
+        Amatrixmodes))
+end
+
+"""
     ModeCouplingPreconditioner
 
 A preconditioner for the matrix-free Newton-Krylov solve of the harmonic
@@ -492,9 +633,10 @@ strongly pumped device the block diagonal alone stalls, and
     to so far.
 - `updates`: the number of times the factorization has been rebuilt.
 - `escalations`: the number of times the coupling set has been grown.
-- `build`: `build(S, sys)` rebuilds the structure, the assembly plan and
-    the values for a coupling set `S`, closing over the plan ingredients so
-    the set can be grown after construction.
+- `plan`: the [`PreconditionerPlan`](@ref), the structural ingredients
+    from which [`buildcoupling`](@ref) rebuilds the pattern, the assembly
+    plan and the values for a new coupling set, so the set can be grown
+    after construction.
 - `Nmodes`: the number of modes.
 - `autoindices`, `autotol`, `autobudget`:
     the ingredients of a [`MeasuredBand`](@ref)'s bandwidth measurement,
@@ -503,24 +645,21 @@ strongly pumped device the block diagonal alone stalls, and
     on escalation; on a host `nzval` aliases the stored values of `P`.
 - `clusterprobe`: the state of a [`Clusters`](@ref) request, `nothing`
     otherwise.
-- `predict`: `predict(S)`, the bytes the factors of a coupling set `S`
-    would hold, sized from the symbolic analysis alone (the block predictor
-    for block factors, KLU's analysis of the host pattern for a sparse
-    factorization), so an escalation can be refused before it is built.
 - `budget`: the memory an escalation may take, or `nothing` for half the
     backend's free memory at the time ([`freememory`](@ref)); set by tests,
     not by a constructor keyword.
 """
-mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
+mutable struct ModeCouplingPreconditioner{TS} <: AbstractPreconditioner
     # untyped, because on a backend `P` is a `DeviceSparsePattern` rather
     # than a host sparse matrix
     P
     sys::TS      # replaced when the system is rebound to new values
     const cache::FactorizationCache
     factorization::AbstractFactorization
-    # rebuilds `(P, plan, nzval)` for a coupling set, closing over the plan
-    # ingredients so the set can be grown after construction
-    const build::TB
+    # the structural ingredients from which `buildcoupling` rebuilds
+    # `(P, plan, nzval)` for a coupling set, so the set can be grown after
+    # construction
+    const plan::PreconditionerPlan
     const Nmodes::Int
     # the harmonic offset of every mode pair, `modes[m1] .- modes[m2]`, kept so
     # a bandwidth restriction can be rebuilt and stepped after construction.
@@ -543,10 +682,6 @@ mutable struct ModeCouplingPreconditioner{TS,TB} <: AbstractPreconditioner
     nzval
     # the state of a `Clusters` request, `nothing` otherwise
     const clusterprobe
-    # predicts the bytes the factors of a coupling set would hold, from the
-    # symbolic analysis alone, so an escalation can be refused before it is
-    # built (`predict(S)`)
-    const predict
     # the memory an escalation may take; `nothing` for half the backend's
     # free memory at the time
     budget::Union{Nothing,Int}
@@ -643,111 +778,21 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         withfactorization(spec, factorization)
     end
 
-    # On a device backend the Jacobian is built transposed, because its
-    # stored order is then the row major order a device sparse matrix and a
-    # device direct solver want. Producing it that way costs nothing and
-    # removes the permutation, the index the assembly kernel would go through
-    # to apply it, and the loss of coalescing that indirection caused.
-    # On a device backend there is no segmented gather at all: the assembly
-    # reads the circuit's structure directly, so what is built here is the
-    # sparsity structure and the linear term index maps, both cheap. The
-    # Jacobian is
-    # built transposed at the same time, because its stored order is then the
-    # row major order a device sparse matrix and a device direct solver want.
-    # One path, on every backend. The two differ only in orientation and in
-    # what the factorization is handed: a device sparse matrix is compressed by
-    # rows, so there the Jacobian is built transposed and its values live on the
-    # backend, while a host factorization wants the matrix itself and the
-    # assembly writes straight into its stored values.
-    # everything with a value in it is read from the system, so that a
-    # system rebound to new values is what a rebuild sees; the constructor
-    # arguments are the same objects at construction
-    function build(S::AbstractModeCoupling, sys = sys,
-            factorization = factorization)
-        Ljb, Lscale = sys.Ljb, sys.Lscale
-        invLnm, Gnm, Cnm = sys.invLnm, sys.Gnm, sys.Cnm
-        keep = couplingmask(S, Nmodes, Amatrixmodes)
-        backend = sys.nonlineartermplan.backend
-        Tv = isnothing(precision) ?
-            real(promote_type(typeof(Lscale),
-                isempty(Ljb.nzval) ? typeof(Lscale) : real(eltype(Ljb)))) :
-            precision
-        # a block factorization eliminates the circuit graph with dense
-        # blocks over the clusters of the coupling set, and the modes left
-        # single by the block diagonal, which is this same preconditioner
-        # with the empty coupling set and the backend's sparse factorization
-        if factorization isa BlockFactorization
-            singletons = if isempty(singletonmodes(keep))
-                nothing
-            else
-                ModeCouplingPreconditioner(sys, Amatrixindices,
-                    Amatrixconjindices, Ljb, Lscale, Rbnm, Nmodes, Nbranches,
-                    Nfreq, invLnm, Gnm, Cnm, layout;
-                    spec = BlockDiagonal(singletonfactorization(factorization,
-                        backend)), precision = precision)
-            end
-            Tb = something(factorization.precision, Tv)
-            return blockstructure(Tb, sys, Amatrixindices, Amatrixconjindices,
-                keep, Rbnm, Nmodes, Nbranches, Nfreq, layout, singletons),
-                nothing, nothing
-        end
-        Ami = restrictmodecoupling(Amatrixindices, keep)
-        Amc = restrictmodecoupling(Amatrixconjindices, keep)
-        transposed = !(backend isa CPU)
-
-        P, _ = realjacobianstructure(Ami, Amc, Ljb, Rbnm, Nmodes,
-            Nbranches, invLnm, Gnm, Cnm, layout, layout, Tv;
-            transposed = transposed, backend = backend)
-
-        # the junction structure of the restricted coupling, in the
-        # preconditioner's precision; the linear term ingredients come from
-        # the system rather than from the constructor arguments, so the
-        # precomputed contribution is by construction the one the assembly
-        # would have scattered
-        junctions = junctionstructure(Tv, Ami, Amc, Ljb, Lscale, Rbnm,
-            Nmodes, Nbranches, Nfreq, backend)
-        dp = planstructurerealjacobian(P, Tv, junctions, sys.invLnm, sys.Gnm,
-            sys.Cnm, sys.wmodesm, sys.wmodes2m, layout, layout, backend;
-            transposed = transposed)
-        # on a host the assembly writes into the matrix which is factorized
-        nzval = transposed ? tobackend(backend, zeros(Tv, nnz(P))) : nonzeros(P)
-        return P, dp, nzval
-    end
-
-    # the memory the factors of a coupling set would take, sized from the
-    # symbolic structure alone: the block predictor for block factors, KLU's
-    # analysis of the host pattern for a sparse factorization
-    function predict(S::AbstractModeCoupling, factorization = factorization)
-        keep = couplingmask(S, Nmodes, Amatrixmodes)
-        f = something(S.factorization, factorization)
-        Tv = isnothing(precision) ?
-            real(promote_type(typeof(sys.Lscale),
-                isempty(sys.Ljb.nzval) ? typeof(sys.Lscale) : real(eltype(sys.Ljb)))) :
-            precision
-        function sparsebytes(mask)
-            Ami = restrictmodecoupling(Amatrixindices, mask)
-            Amc = restrictmodecoupling(Amatrixconjindices, mask)
-            P, _ = realjacobianstructure(Ami, Amc, sys.Ljb, Rbnm, Nmodes,
-                Nbranches, sys.invLnm, sys.Gnm, sys.Cnm, layout, layout, Tv)
-            return sparsefactorbytes(P, Tv)
-        end
-        f isa BlockFactorization || return sparsebytes(keep)
-        adj, order = circuitorder(sys, Rbnm, Nmodes, Nbranches, layout)
-        bytes = blockfactorbytes(something(f.precision, Tv), keep, adj, order,
-            Nmodes, layout)
-        # the modes the block factors leave single are the sparse block
-        # diagonal preconditioner's, sized by the whole block diagonal
-        isempty(singletonmodes(keep)) && return bytes
-        return bytes + sparsebytes(couplingmask(BlockDiagonal(), Nmodes,
-            Amatrixmodes))
-    end
-
-    P, dp, nzval = build(coupling)
+    # the structural ingredients of every rebuild; the values are read from
+    # the system at the time
+    plan = PreconditionerPlan{typeof(Amatrixmodes), planprecision(precision)}(
+        Amatrixindices, Amatrixconjindices, Rbnm, Int(Nmodes), Int(Nbranches),
+        Int(Nfreq), layout, Amatrixmodes, precision)
+    P, dp, nzval = buildcoupling(plan, coupling, sys, factorization)
     return ModeCouplingPreconditioner(P, sys, FactorizationCache(),
-        factorization, build, Int(Nmodes), Amatrixmodes,
+        factorization, plan, Int(Nmodes), Amatrixmodes,
         isnothing(autotol) ? nothing : Amatrixindices, autotol, autobudget,
-        coupling, 0, 0, dp, nzval, clusterprobe, predict, nothing)
+        coupling, 0, 0, dp, nzval, clusterprobe, nothing)
 end
+
+couplingbytes(pc::ModeCouplingPreconditioner, S::AbstractModeCoupling,
+    factorization = pc.factorization) =
+    couplingbytes(pc.plan, S, pc.sys, factorization)
 
 # the backend's default sparse factorization: KLU on the host, cuDSS on a
 # device, where a host factorization could not be applied to the device
@@ -800,7 +845,7 @@ couplingmask(S::CouplingMask, Nmodes::Integer, Amatrixmodes) = S.mask
 Grow the coupling set, a band by one offset per tone and any other set to
 every mode, and rebuild, returning `true` if it grew. Returns `false` when
 the set is already full, and when the factors of the grown set are
-predicted (`pc.predict`) to exceed `pc.budget`, half the backend's free
+predicted ([`couplingbytes`](@ref)) to exceed `pc.budget`, half the backend's free
 memory unless set, in which case nothing is built: the driver records the
 refusal and carries on with the set it has rather than let a rescue
 exhaust the machine.
@@ -821,12 +866,40 @@ averages it away. The full set is exact, so the method is never less robust
 than a direct solve, only faster when the block diagonal suffices. In practice
 this fires once or twice on a strongly pumped line and not at all otherwise.
 
+A single precision block factorization of the full set is not exact
+either: its factors approximate the Jacobian to single precision, and on a
+node whose stiffness at some mode frequency lives in a promoted branch
+current they can be poor enough to stall the Krylov solve (see
+[`refactorize!`](@ref) for the singular limit of the same). Its escalation
+is the double precision factorization of the same coupling set, which is
+exact; a single precision factorization of a smaller set grows the set
+first, keeping its speed, and escalates its precision once the set is
+full.
+
 See [`FloquetPreconditioner`](@ref) for the alternative, which absorbs the
 same deficiency by measuring the directions rather than enlarging the
 factorization.
 """
 function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
     isexactpreconditioner(pc) && return false
+    if isfullcoupling(pc) && singleprecision(pc.factorization)
+        f = pc.factorization
+        newf = BlockFactorization(f.singletons; precision = Float64,
+            refine = f.refine)
+        bytes = couplingbytes(pc, pc.coupling, newf)
+        budget = something(pc.budget,
+            freememory(pc.sys.nonlineartermplan.backend) ÷ 2)
+        if bytes > budget
+            @debug "escalation refused: the double precision factors would take $(bytes) bytes of a budget of $(budget)"
+            return false
+        end
+        pc.factorization = newf
+        pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan, pc.coupling,
+            pc.sys, newf)
+        pc.escalations += 1
+        pc.cache.factorization = nothing
+        return true
+    end
     # A band escalates by one offset per tone at a time, and becomes the
     # full mode set once it covers the grid. Every other coupling set jumps
     # straight to the full Jacobian, since nothing identifies which modes
@@ -842,14 +915,15 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
     end
     # the grown factors must fit: an escalation which would exhaust the
     # memory is refused, and the driver carries on with the coupling it has
-    bytes = pc.predict(S, pc.factorization)
+    bytes = couplingbytes(pc, S)
     budget = something(pc.budget,
         freememory(pc.sys.nonlineartermplan.backend) ÷ 2)
     if bytes > budget
         @debug "escalation refused: the factors would take $(bytes) bytes of a budget of $(budget)"
         return false
     end
-    pc.P, pc.deviceplan, pc.nzval = pc.build(S, pc.sys, pc.factorization)
+    pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan, S, pc.sys,
+        pc.factorization)
     # any retained coupling couples modes, so whatever batch structure the
     # block diagonal had is gone and the caller's own factorization applies
     pc.coupling = S
@@ -860,15 +934,23 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
 end
 
 # Whether the coupling set is the full one: every mode retained, or a mask
-# with no zero. A `:band` never reports exact, because escalation replaces
+# with no zero. A `:band` never reports full, because escalation replaces
 # a band which covers the grid by the full set.
-function isexactpreconditioner(pc::ModeCouplingPreconditioner)
+function isfullcoupling(pc::ModeCouplingPreconditioner)
     S = pc.coupling
     S isa FullJacobian && return true
     S isa CoupledModes && length(S.indices) >= pc.Nmodes && return true
     S isa CouplingMask && all(S.mask) && return true
     return false
 end
+
+# a single precision block factorization approximates the matrix it
+# factorizes; its escalation is the double precision one
+singleprecision(f) = f isa BlockFactorization && f.precision === Float32
+
+# exact: the full coupling set factorized in double precision
+isexactpreconditioner(pc::ModeCouplingPreconditioner) =
+    isfullcoupling(pc) && !singleprecision(pc.factorization)
 
 """
     updatepreconditioner!(pc::ModeCouplingPreconditioner, x)
@@ -895,8 +977,8 @@ function updatepreconditioner!(pc::ModeCouplingPreconditioner,
         grown = map(max, want, have)
         if grown != have
             pc.coupling = HarmonicBand(grown, pc.coupling.factorization)
-            pc.P, pc.deviceplan, pc.nzval = pc.build(pc.coupling, pc.sys,
-                    pc.factorization)
+            pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan,
+                pc.coupling, pc.sys, pc.factorization)
             pc.cache.factorization = nothing
         end
     end
@@ -925,8 +1007,8 @@ function updatepreconditioner!(pc::ModeCouplingPreconditioner,
             if grown != pr.mask
                 pr.mask = grown
                 pc.coupling = CouplingMask(grown, pc.coupling.factorization)
-                pc.P, pc.deviceplan, pc.nzval = pc.build(pc.coupling, pc.sys,
-                    pc.factorization)
+                pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan,
+                    pc.coupling, pc.sys, pc.factorization)
                 pc.cache.factorization = nothing
             end
         end
@@ -978,8 +1060,8 @@ function refactorize!(pc::ModeCouplingPreconditioner)
         backend = pc.sys.nonlineartermplan.backend
         pc.factorization = singletonfactorization(pc.factorization, backend)
         pc.cache.factorization = nothing
-        pc.P, pc.deviceplan, pc.nzval = pc.build(pc.coupling, pc.sys,
-            pc.factorization)
+        pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan, pc.coupling,
+            pc.sys, pc.factorization)
         return refactorize!(pc)
     end
     pc.updates += 1

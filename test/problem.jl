@@ -30,11 +30,14 @@ function hbnlp_testproblems(; padded::Bool = true)
     ]
 end
 
+# built once; every testset sets its own point before reading anything
+const HBNLP_PROBLEMS = hbnlp_testproblems()
+
 @testset verbose=true "hbnonlinearproblem" begin
 
 @testset "residual and jacobian-vector product" begin
     Random.seed!(20260828)
-    for (nm, prob) in hbnlp_testproblems()
+    for (nm, prob) in HBNLP_PROBLEMS
         @testset "$nm" begin
             n = length(prob)
             u = 0.05 .* randn(n)
@@ -54,7 +57,7 @@ end
 
 @testset "transposed product" begin
     Random.seed!(20260828)
-    for (nm, prob) in hbnlp_testproblems()
+    for (nm, prob) in HBNLP_PROBLEMS
         @testset "$nm" begin
             n = length(prob)
             u = 0.05 .* randn(n)
@@ -79,7 +82,7 @@ end
     # wrong gives a vjp which is right on self-conjugate modes and wrong by
     # a factor of two elsewhere, so the test must fail when it is removed.
     Random.seed!(20260828)
-    _, prob = hbnlp_testproblems()[3]          # two tone, has FCONJ slots
+    _, prob = HBNLP_PROBLEMS[3]          # two tone, has FCONJ slots
     n = length(prob)
     u = 0.05 .* randn(n); w = randn(n)
     Jr = copy(prob.jacobian); JC.hbjacobian!(Jr, prob, u)
@@ -99,7 +102,7 @@ end
     # problem's point has moved: a residual elsewhere, or a second
     # operator, in between
     Random.seed!(20260828)
-    _, prob = hbnlp_testproblems()[1]
+    _, prob = HBNLP_PROBLEMS[1]
     n = length(prob)
     u1 = 0.05 .* randn(n); u2 = 0.05 .* randn(n)
     J1 = JC.JacobianOperator(prob, u1)
@@ -137,7 +140,7 @@ end
 
 @testset "second and third derivatives" begin
     Random.seed!(20260828)
-    for (nm, prob) in hbnlp_testproblems()
+    for (nm, prob) in HBNLP_PROBLEMS
         @testset "$nm" begin
             n = length(prob)
             u = 0.05 .* randn(n)
@@ -162,7 +165,7 @@ end
 
 @testset "drive scaling and its derivative" begin
     Random.seed!(20260828)
-    for (nm, prob) in hbnlp_testproblems()
+    for (nm, prob) in HBNLP_PROBLEMS
         @testset "$nm" begin
             n = length(prob)
             u = 0.05 .* randn(n)
@@ -195,7 +198,7 @@ end
 
 @testset "JacobianOperator" begin
     Random.seed!(20260828)
-    _, prob = hbnlp_testproblems()[1]
+    _, prob = HBNLP_PROBLEMS[1]
     n = length(prob)
     u = 0.05 .* randn(n); v = randn(n); w = randn(n)
     Jr = copy(prob.jacobian); JC.hbjacobian!(Jr, prob, u)
@@ -268,7 +271,7 @@ end
     # assembled Jacobian is fixed. If it ever moves, those are silently
     # invalid rather than wrong in a way that throws.
     Random.seed!(20260828)
-    for (nm, prob) in hbnlp_testproblems()
+    for (nm, prob) in HBNLP_PROBLEMS
         @testset "$nm" begin
             n = length(prob)
             J = copy(prob.jacobian)
@@ -297,7 +300,7 @@ end
     # `ldiv!`, IterativeSolvers.jl the two argument in-place form (on a
     # view), Krylov.jl and KrylovKit `mul!`. All must agree.
     Random.seed!(20260828)
-    _, prob = hbnlp_testproblems()[1]
+    _, prob = HBNLP_PROBLEMS[1]
     n = length(prob)
     u = zeros(n)
     P = JC.preconditioner(prob, u)

@@ -35,10 +35,10 @@ suited to circuit matrices. This is the default on the host. `kwargs` are
 passed to `KLU.klu`. The fill reducing ordering is chosen by
 [`kluordered`](@ref) rather than left at KLU's default.
 """
-struct KLUfactorization{K} <: AbstractFactorization
-    kwargs::K
+struct KLUfactorization <: AbstractFactorization
+    kwargs::NamedTuple
 end
-KLUfactorization(; kwargs...) = KLUfactorization(kwargs)
+KLUfactorization(; kwargs...) = KLUfactorization(NamedTuple(kwargs))
 
 """
     LUfactorization(; kwargs...)
@@ -46,10 +46,10 @@ KLUfactorization(; kwargs...) = KLUfactorization(kwargs)
 The [`AbstractFactorization`](@ref) using the UMFPACK sparse LU
 factorization `LinearAlgebra.lu`, with `kwargs` passed to it.
 """
-struct LUfactorization{K} <: AbstractFactorization
-    kwargs::K
+struct LUfactorization <: AbstractFactorization
+    kwargs::NamedTuple
 end
-LUfactorization(; kwargs...) = LUfactorization(kwargs)
+LUfactorization(; kwargs...) = LUfactorization(NamedTuple(kwargs))
 
 """
     QRfactorization(; kwargs...)
@@ -58,13 +58,18 @@ The [`AbstractFactorization`](@ref) using the SPQR sparse QR factorization
 `LinearAlgebra.qr`, with `kwargs` passed to it. QR does not support
 refactorization in place, so each call factorizes from scratch.
 """
-struct QRfactorization{K} <: AbstractFactorization
-    kwargs::K
+struct QRfactorization <: AbstractFactorization
+    kwargs::NamedTuple
 end
-QRfactorization(; kwargs...) = QRfactorization(kwargs)
+QRfactorization(; kwargs...) = QRfactorization(NamedTuple(kwargs))
 
 # `CUDSSFactorization` lives in solvers/cudss.jl and `BlockFactorization` in
-# solvers/blockfactorization.jl, beside their methods.
+# solvers/blockclusters.jl, beside their methods.
+#
+# None of the option objects below has a type parameter. They are
+# configuration, read a few times per solve, and a parameter on the
+# factorization or the preconditioner they carry would make every solver
+# body that takes them a new specialization per way of configuring them.
 
 # ---------------------------------------------------------------- preconditioners
 
@@ -105,8 +110,8 @@ small independent factorization per mode, and no coupling. Cheap, and
 sufficient for one tone and for weak drives; on a strongly pumped device
 it stalls and is grown to the full Jacobian by escalation.
 """
-struct BlockDiagonal{F<:MaybeFactorization} <: AbstractModeCoupling
-    factorization::F
+struct BlockDiagonal <: AbstractModeCoupling
+    factorization::MaybeFactorization
 end
 BlockDiagonal(; factorization::MaybeFactorization = nothing) =
     BlockDiagonal(factorization)
@@ -119,8 +124,8 @@ direct solve. With a [`BlockFactorization`](@ref) this is the dense block
 factorization over the circuit graph, the fastest measured method on three
 or more tones.
 """
-struct FullJacobian{F<:MaybeFactorization} <: AbstractModeCoupling
-    factorization::F
+struct FullJacobian <: AbstractModeCoupling
+    factorization::MaybeFactorization
 end
 FullJacobian(; factorization::MaybeFactorization = nothing) =
     FullJacobian(factorization)
@@ -132,9 +137,9 @@ The couplings whose harmonic offset is within `p`, an `Integer` number of
 offset shells or a per tone tuple of bounds; see [`modebandmask`](@ref).
 Grown by one offset per tone on escalation.
 """
-struct HarmonicBand{P,F<:MaybeFactorization} <: AbstractModeCoupling
-    p::P
-    factorization::F
+struct HarmonicBand <: AbstractModeCoupling
+    p::Union{Integer,Tuple{Vararg{Integer}}}
+    factorization::MaybeFactorization
 end
 HarmonicBand(p; factorization::MaybeFactorization = nothing) = HarmonicBand(p, factorization)
 
@@ -147,10 +152,10 @@ demands it, starting from the block diagonal; see
 [`cosphibandwidths`](@ref) for `tol` and `budget`. For two strong tones
 this is the setting that matters.
 """
-struct MeasuredBand{F<:MaybeFactorization} <: AbstractModeCoupling
+struct MeasuredBand <: AbstractModeCoupling
     tol::Float64
     budget::Float64
-    factorization::F
+    factorization::MaybeFactorization
 end
 function MeasuredBand(; tol::Real = 1e-2, budget::Real = 0.25,
     factorization::MaybeFactorization = nothing)
@@ -172,8 +177,8 @@ solve. With a [`BlockFactorization`](@ref) each cluster is one dense block
 factorization over the circuit graph, which halves the memory of
 [`FullJacobian`](@ref) on three tones.
 """
-struct Clusters{F<:MaybeFactorization} <: AbstractModeCoupling
-    factorization::F
+struct Clusters <: AbstractModeCoupling
+    factorization::MaybeFactorization
 end
 Clusters(; factorization::MaybeFactorization = nothing) = Clusters(factorization)
 
@@ -211,9 +216,9 @@ Automatic() = Automatic(nothing)
 Exactly these modes coupled in full, the rest on the mode diagonal; see
 [`modecouplingmask`](@ref).
 """
-struct CoupledModes{F<:MaybeFactorization} <: AbstractModeCoupling
+struct CoupledModes <: AbstractModeCoupling
     indices::Vector{Int}
-    factorization::F
+    factorization::MaybeFactorization
 end
 CoupledModes(indices::AbstractVector{<:Integer}; factorization::MaybeFactorization = nothing) =
     CoupledModes(sort!(unique(Vector{Int}(indices))), factorization)
@@ -224,9 +229,9 @@ CoupledModes(indices::AbstractVector{<:Integer}; factorization::MaybeFactorizati
 The couplings selected by an `Nmodes` by `Nmodes` `Bool` matrix, the block
 coupling column mode `m2` into row mode `m1` kept where `mask[m1, m2]`.
 """
-struct CouplingMask{F<:MaybeFactorization} <: AbstractModeCoupling
+struct CouplingMask <: AbstractModeCoupling
     mask::Matrix{Bool}
-    factorization::F
+    factorization::MaybeFactorization
 end
 function CouplingMask(mask::AbstractMatrix{Bool}; factorization::MaybeFactorization = nothing)
     size(mask, 1) == size(mask, 2) || throw(ArgumentError(
@@ -248,13 +253,13 @@ precision's default) and `benefittol` the predicted improvement below
 which a candidate is not built in; `cycleharvest` harvests every GMRES
 cycle rather than the last.
 """
-struct Floquet{I<:AbstractPreconditionerSpec,R} <: AbstractPreconditionerSpec
-    inner::I
+struct Floquet <: AbstractPreconditionerSpec
+    inner::AbstractPreconditionerSpec
     size::Int
     harvest::Int
     ritz::Int
     candidates::Int
-    ranktol::R
+    ranktol::Union{Nothing,Float64}
     benefittol::Float64
     cycleharvest::Bool
 end
@@ -359,6 +364,27 @@ struct Never end
 
 const AbstractRefresh = Union{Always,Probe,Never}
 
+"""
+    meritslope!(Jv, jvp, p, F, ϕ0, w)
+
+The slope `real(F' J p)` of the merit function `ϕ = F'F/2` along the step
+`p`, where `p = -Δ` for a linear solve `J Δ ≈ F` which left the explicit
+residual `w = F - J Δ`.
+
+Then `J p = w - F` and the slope is `real(F'w) - 2ϕ0`: one inner product,
+with the Jacobian vector product the solve already paid for. Without a
+valid residual (`w === nothing`), the product is taken.
+"""
+function meritslope!(Jv, jvp, p, F, ϕ0, w)
+    if isnothing(w)
+        mul!(Jv, jvp, p)
+        return real(dot(F, Jv))
+    end
+    return real(dot(F, w)) - 2ϕ0
+end
+
+abstract type AbstractHBLinearSolver end
+
 # ---------------------------------------------------------------- the methods
 
 """
@@ -415,10 +441,13 @@ with safeguards 0.1 and 0.5, ten trials, two failures) and the stagnation
 threshold (a solve which does not bring the linear residual below 0.9 of
 the residual norm) are fixed; see [`nlsolvekrylov!`](@ref).
 """
-struct NewtonKrylov{P<:AbstractPreconditionerSpec,L,R<:AbstractRefresh,T} <: AbstractHBNonlinearSolver
-    preconditioner::P
-    linearsolver::L
-    refresh::R
+struct NewtonKrylov{T<:AbstractFloat} <: AbstractHBNonlinearSolver
+    # the precision is the one parameter kept: it sets the element types of
+    # the system's arrays, so a solve at each precision is a different
+    # specialization whatever the option carries
+    preconditioner::AbstractPreconditionerSpec
+    linearsolver::AbstractHBLinearSolver
+    refresh::AbstractRefresh
     escalate::Bool
     precision::Type{T}
 end
@@ -438,8 +467,8 @@ Newton's method on the equivalent real system with the exact assembled
 real Jacobian, factorized by `factorization` (the host's KLU when
 `nothing`).
 """
-struct Newton{F<:MaybeFactorization} <: AbstractHBNonlinearSolver
-    factorization::F
+struct Newton <: AbstractHBNonlinearSolver
+    factorization::MaybeFactorization
 end
 function Newton(; factorization::MaybeFactorization = nothing)
     checkdirectfactorization(factorization, "Newton")
@@ -472,9 +501,9 @@ not complex differentiable, so this Jacobian is an approximation.
     prefer [`Newton`](@ref) or [`NewtonKrylov`](@ref), which solve the real
     system, for a circuit with a direct current bias.
 """
-struct QuasiNewton{F<:MaybeFactorization} <: AbstractHBNonlinearSolver
+struct QuasiNewton <: AbstractHBNonlinearSolver
     anderson::Int
-    factorization::F
+    factorization::MaybeFactorization
 end
 function QuasiNewton(; anderson::Integer = 5, factorization::MaybeFactorization = nothing)
     checkdirectfactorization(factorization, "QuasiNewton")
@@ -491,13 +520,13 @@ solving every stage; see [`stagedhbnlsolve`](@ref) for the keywords.
 `grids` is the ladder of retained harmonic caps, `nothing` for the default
 ladder of the problem's `Nharmonics`.
 """
-struct Staged{G,I<:AbstractHBNonlinearSolver} <: AbstractHBNonlinearSolver
-    grids::G
+struct Staged <: AbstractHBNonlinearSolver
+    grids::Union{Nothing,AbstractVector}
     s0::Float64
     smin::Float64
     interiorftol::Float64
     interioriterations::Int
-    inner::I
+    inner::AbstractHBNonlinearSolver
     interiorescalation::Bool
     maxattempts::Int
     verbose::Bool
@@ -542,3 +571,165 @@ The method with its `escalate` set to `flag`, for the interior stages of
 withescalation(m::NewtonKrylov, flag::Bool) = NewtonKrylov(m.preconditioner,
     m.linearsolver, m.refresh, flag, m.precision)
 withescalation(m::AbstractHBNonlinearSolver, ::Bool) = m
+
+"""
+    ExternalSolver(f)
+
+Solve the operating point with a caller supplied root finder.
+
+`f(prob, u0)` receives an [`HBNonlinearProblem`](@ref) and the initial
+value in the real representation, and returns `(u, converged)`. Everything
+it needs is on `prob`: [`hbresidual!`](@ref), [`hbjvp!`](@ref),
+[`JacobianOperator`](@ref) and [`preconditioner`](@ref).
+
+This is the plug point for a solver the package does not know about. A
+NonlinearSolve.jl algorithm, a hand written continuation stepper or a
+homotopy all go here without an extension.
+
+The assembled real Jacobian is available on the problem unless
+`assemblejacobian = false` was passed, which is what a matrix-free solver
+wants: on a multi-tone problem that plan is the largest object in the
+solve.
+
+```julia
+ExternalSolver() do prob, u0
+    u = copy(u0); F = similar(u)
+    hbresidual!(F, prob, u)
+    for k in 1:40
+        J = JacobianOperator(prob, u)
+        P = preconditioner(prob, u)
+        d, st = Krylov.gmres(J, -F; N = P, rtol = 1e-10, atol = 0.0)
+        st.solved || return (u, false)
+        u .+= d; hbresidual!(F, prob, u)
+    end
+    return (u, norm(F) <= tol)
+end
+```
+
+!!! warning "Absolute tolerances stall Newton"
+    Note `atol = 0.0`. Krylov.jl defaults to `atol = sqrt(eps())`, about
+    1.5e-8, and stops as soon as the linear residual falls below it. Once
+    the Newton residual is smaller than that -- which is the whole point of
+    the last few Newton steps -- every linear solve returns immediately
+    having done zero iterations, reports success, and hands back a zero
+    step. Newton then stagnates while nothing reports a failure.
+
+    Measured on a JPA with the default `atol`: 40 Newton iterations, final
+    residual 3.2e-10, never converged. With `atol = 0.0`: 7 Newton
+    iterations, residual 7.4e-17. Any external Krylov solver used inside a
+    Newton loop wants its absolute tolerance set to zero and its stopping
+    left to the relative one.
+"""
+struct ExternalSolver{F} <: AbstractHBNonlinearSolver
+    f::F
+end
+ExternalSolver(f::Function) = ExternalSolver{typeof(f)}(f)
+
+# === the canonical forms of the solver inputs ===
+#
+# The entry points accept their inputs in every way a user may write them
+# (a frequency as an integer, a source as a named tuple of whatever number
+# types, the definitions as a dictionary of any key and value types) and
+# convert them once here, so that the solves below are compiled for one form
+# of each rather than once per way of writing them: a solver body of a
+# thousand lines compiled for `Tuple{Int64}` and again for `Tuple{Float64}`
+# costs seconds each time and computes the same numbers.
+
+"""
+    SourceTuple{N}
+
+The canonical form of a source: a named tuple `(mode, port, current)` with
+the mode as `N` integers, one harmonic index per tone, the port as an
+integer and the current as a complex number. See [`sourcetable`](@ref).
+"""
+const SourceTuple{N} = @NamedTuple{mode::NTuple{N,Int}, port::Int, current::ComplexF64}
+
+"""
+    tonefrequencies(w)
+
+The tone frequencies `w` as a tuple of `Float64`. Each must be a real
+number, in radians per second; the solve checks that they are finite.
+"""
+function tonefrequencies(w::NTuple{N,Number}) where {N}
+    all(x -> x isa Real, w) || throw(ArgumentError(lazy"the tone frequencies $(w) must be real numbers, in radians per second."))
+    return map(Float64, w)
+end
+
+"""
+    sweepfrequencies(ws)
+
+The signal frequencies `ws` as a `Vector{Float64}`: a real number, or any
+iterable of real numbers (a vector, a range), in radians per second.
+"""
+function sweepfrequencies(ws)
+    ws isa Real && return Float64[ws]
+    ws isa Number && throw(ArgumentError(lazy"the signal frequency $(ws) must be a real number, in radians per second."))
+    out = Float64[]
+    for w in ws
+        w isa Real || throw(ArgumentError(lazy"the signal frequency $(w) must be a real number, in radians per second."))
+        push!(out, w)
+    end
+    return out
+end
+
+"""
+    sourcetable(sources, w)
+
+The sources as a `Vector{SourceTuple{N}}` for the `N` tones of `w`.
+`sources` is any iterable of named tuples with the fields `mode`, `port`
+and `current`; a source whose mode does not have one integer per tone,
+whose port is not an integer or whose current is not a number is an
+`ArgumentError`.
+"""
+function sourcetable(sources, ::NTuple{N,Number}) where {N}
+    table = SourceTuple{N}[]
+    for s in sources
+        (s isa NamedTuple && hasfield(typeof(s), :mode) &&
+            hasfield(typeof(s), :port) && hasfield(typeof(s), :current)) ||
+            throw(ArgumentError(lazy"the source $(s) must be a named tuple with the fields mode, port and current, such as (mode = (1,), port = 1, current = 1e-6)."))
+        (s.mode isa Tuple && length(s.mode) == N &&
+            all(x -> x isa Integer, s.mode)) ||
+            throw(ArgumentError(lazy"the source $(s) has the mode $(s.mode); a mode is a tuple of $(N) integers, one harmonic index per tone."))
+        s.port isa Integer || throw(ArgumentError(lazy"the source $(s) has the port $(s.port), which must be an integer."))
+        s.current isa Number || throw(ArgumentError(lazy"the source $(s) has the current $(s.current), which must be a number."))
+        push!(table, (mode = NTuple{N,Int}(s.mode), port = Int(s.port),
+            current = ComplexF64(s.current)))
+    end
+    return table
+end
+
+"""
+    definitiontable(circuitdefs)
+
+The component definitions as a `Dict{Any,Any}`, whatever the key and value
+types of the dictionary given.
+"""
+definitiontable(circuitdefs::Dict{Any,Any}) = circuitdefs
+definitiontable(circuitdefs::AbstractDict) = Dict{Any,Any}(circuitdefs)
+
+"""
+    initialguess(x0)
+
+The initial guess `x0` of a nonlinear solve as a `Vector{ComplexF64}`,
+empty when there is none (`nothing`); a node flux matrix of a previous
+solve, keyed or plain, is flattened in the solver's own layout.
+"""
+initialguess(::Nothing) = ComplexF64[]
+# a keyed node flux matrix of a previous solve is accepted as it is, in
+# the layout the solver keeps it (modes fastest)
+initialguess(x0::AbstractArray) =
+    Vector{ComplexF64}(vec(AxisKeys.keyless_unname(x0)))
+
+"""
+    sensitivitypairtable(pairs)
+    sensitivityblockpairtable(pairs)
+
+The `(name, parameter, direction)` sensitivity pairs of a component or of a
+scattering block as vectors of one tuple type, the direction of a
+component pair as a complex number.
+"""
+sensitivitypairtable(pairs) =
+    Tuple{String,Int,ComplexF64}[(String(t[1]), Int(t[2]), ComplexF64(t[3]))
+        for t in pairs]
+sensitivityblockpairtable(pairs) =
+    Tuple{String,Int,Any}[(String(t[1]), Int(t[2]), t[3]) for t in pairs]

@@ -5,7 +5,6 @@ import AxisKeys.NamedDims
 import AxisKeys.NamedDims: NamedDimsArray
 
 using Test
-import StaticArrays
 
 # The fixtures of the warmup circuit which are not part of the precompile
 # workload: the same single junction amplifier as `warmup`, taken through
@@ -45,126 +44,25 @@ function warmupvvn()
         JosephsonCircuits.warmupdefs(Rleft, Cc, Lj, Cj))
 end
 
-# Every network parameter conversion, for every input shape it accepts.
-# Not part of the precompile workload (see the note there): it would be a
-# large fraction of the precompile time while a cold first call of any one
-# conversion is cheap.
-function warmupnetwork()
-    # conversions to and from scattering parameters, which take a port
-    # impedance keyword
-    for f in [
-            (JosephsonCircuits.ZtoS,JosephsonCircuits.StoZ),
-            (JosephsonCircuits.YtoS,JosephsonCircuits.StoY),
-            (JosephsonCircuits.AtoS,JosephsonCircuits.StoA),
-            (JosephsonCircuits.BtoS,JosephsonCircuits.StoB),
-            (JosephsonCircuits.ABCDtoS,JosephsonCircuits.StoABCD),
-        ]
-        # single matrix input
-        for portimpedances in [
-                rand(Complex{Float64}), rand(Complex{Float64},2),
-            ]
-            for arg1 in [rand(Complex{Float64},2,2), (StaticArrays.@MMatrix rand(Complex{Float64},2,2))]
-                f[1](arg1,portimpedances=portimpedances)
-                f[2](arg1,portimpedances=portimpedances)
-                f[1](arg1)
-                f[2](arg1)
-            end
-        end
-        # array input
-        for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2,10)]
-            for arg1 in [rand(Complex{Float64},2,2,10)]
-                f[1](arg1,portimpedances=portimpedances)
-                f[2](arg1,portimpedances=portimpedances)
-                f[1](arg1)
-                f[2](arg1)
-            end
-        end
-        # vector of matrices
-        for portimpedances in [rand(Complex{Float64}), rand(Complex{Float64},2) ]
-            for arg1 in [
-                    [rand(Complex{Float64},2,2) for i in 1:10],
-                ]
-                [f[1](arg1[i],portimpedances=portimpedances) for i in 1:10]
-                [f[2](arg1[i],portimpedances=portimpedances) for i in 1:10]
-                [f[1](arg1[i]) for i in 1:10]
-                [f[2](arg1[i]) for i in 1:10]
-            end
-        end
-    end
-
-    # conversions between the other representations, which take no port
-    # impedance
-    for f in [
-            (JosephsonCircuits.StoT,JosephsonCircuits.TtoS),
-            (JosephsonCircuits.AtoB,JosephsonCircuits.BtoA),
-            (JosephsonCircuits.ZtoA,JosephsonCircuits.AtoZ),
-            (JosephsonCircuits.YtoA,JosephsonCircuits.AtoY),
-            (JosephsonCircuits.YtoB,JosephsonCircuits.BtoY),
-            (JosephsonCircuits.ZtoB,JosephsonCircuits.BtoZ),
-            (JosephsonCircuits.ZtoY,JosephsonCircuits.YtoZ),
-        ]
-        # single matrix input
-        for arg1 in [rand(Complex{Float64},2,2), (StaticArrays.@MMatrix rand(Complex{Float64},2,2))]
-            f[1](arg1)
-            f[2](arg1)
-        end
-        # array input
-        for arg1 in [rand(Complex{Float64},2,2,10)]
-            f[1](arg1)
-            f[2](arg1)
-        end
-        # vector of matrices
-        for arg1 in [
-                [rand(Complex{Float64},2,2) for i in 1:10],
-            ]
-            [f[1](arg1[i]) for i in 1:10]
-            [f[2](arg1[i]) for i in 1:10]
-        end
-    end
-
-
-    # closed form two port networks in their ABCD, Z and Y forms
-    x1 = rand(Complex{Float64})
-    x2 = rand(Complex{Float64})
-    x3 = rand(Complex{Float64})
-    x4 = rand(Complex{Float64})
-    JosephsonCircuits.ABCD_seriesZ(x1)
-    JosephsonCircuits.YtoA(JosephsonCircuits.Y_seriesY(1/x1))
-
-    JosephsonCircuits.ABCD_shuntY(1/x1)
-    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_shuntZ(x1))
-
-    JosephsonCircuits.ABCD_tline(x1,x2)
-    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_tline(x1,x2))
-
-    JosephsonCircuits.ABCD_PiY(x1,x2,x3)
-    JosephsonCircuits.YtoA(JosephsonCircuits.Y_PiY(x1,x2,x3))
-
-    JosephsonCircuits.ABCD_TZ(x1,x2,x3)
-    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_TZ(x1,x2,x3))
-
-    JosephsonCircuits.ABCD_coupled_tline(x1,x2,x3,x4)
-    JosephsonCircuits.ZtoA(JosephsonCircuits.Z_coupled_tline(x1,x2,x3,x4))
-
-
-    return true
-end
 
 
 @testset verbose=true "JosephsonCircuits" begin
 
-    @testset verbose=true "warmup" begin
-        # JosephsonCircuits.testshow(stdout,JosephsonCircuits.warmup())
-        out1 = JosephsonCircuits.HB(JosephsonCircuits.NonlinearHB((2.9845193040956104e10,), JosephsonCircuits.Frequencies{1}((8,), (9,), (17,), CartesianIndex{1}[CartesianIndex(2,), CartesianIndex(4,)], [(1,), (3,)]), AxisKeys.KeyedArray(NamedDimsArray(ComplexF64[-0.013189575432099367 - 0.008650771492698668im 0.12157593851587092 + 0.07973582673770656im; 2.6396794305334596e-5 - 5.667768409647593e-6im 1.3736422941968979e-5 - 6.463157824687593e-5im], (:outputmode, :node)), ([(1,), (3,)], ["1", "2"])), sparse([1, 2, 3, 4], [1, 2, 3, 4], [1, 1, 1, 1], 4, 4), sparsevec([2], ComplexF64[1.0e-9 + 0.0im], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([3, 4], ComplexF64[1.0e-9 + 0.0im, 1.0e-9 + 0.0im], 4), 2, 2, ["0", "1", "2"], [1], [(1,), (3,)], AxisKeys.KeyedArray(NamedDimsArray(ComplexF64[-0.398443332693522 - 0.9171756584736628im; 0.0006826442364201504 + 0.00317931471261814im;;; 0.0 + 0.0im; 0.0 + 0.0im;;;;], (:outputmode, :outputport, :inputmode, :inputport)), ([(1,), (3,)], [1], [(1,), (3,)], [1])), JosephsonCircuits.SolverInfo(JosephsonCircuits.IterationInfo[JosephsonCircuits.IterationInfo("", 1.0, 0.0, true, 7, [0.028761285387902808, 0.0008478931202268492, 0.00029737130091068027, 9.271596038449762e-5, 1.2025211742011353e-5, 1.7742531321096506e-7, 1.665122406177395e-10, 4.599450526618848e-16], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], [0, 0, 0, 0, 0, 0, 0], Bool[0, 0, 0, 0, 0, 0, 0], JosephsonCircuits.KrylovSolveInfo[JosephsonCircuits.KrylovSolveInfo(1, :step, 0.028761285387902808, 0.3, 8.401501840988981e-16, 1, 1, :converged, true, false, false, -0.9999999999999999, 1.0, 0, true, 0.00043010711669921875, false, 0, 0, 9.059906005859375e-6, 2, 0), JosephsonCircuits.KrylovSolveInfo(2, :step, 0.0008478931202268492, 0.003005346793977146, 0.00012397002797414974, 2, 1, :converged, true, false, false, -0.9999999846314379, 1.0, 0, true, 0.0004470348358154297, false, 0, 0, 0.0, 3, 0), JosephsonCircuits.KrylovSolveInfo(3, :step, 0.00029737130091068027, 0.16518438555224432, 0.0005076172648579786, 2, 1, :converged, true, false, false, -0.9999997423246838, 1.0, 0, true, 0.00045108795166015625, false, 0, 0, 9.5367431640625e-7, 3, 0), JosephsonCircuits.KrylovSolveInfo(4, :step, 9.271596038449762e-5, 0.13654739582318626, 0.0008091769267230887, 2, 1, :converged, true, false, false, -0.9999993452327361, 1.0, 0, true, 0.00045490264892578125, false, 0, 0, 9.5367431640625e-7, 3, 0), JosephsonCircuits.KrylovSolveInfo(5, :step, 1.2025211742011353e-5, 0.03303287828082091, 0.0008558116986115706, 2, 1, :converged, true, false, false, -0.9999992675863039, 1.0, 0, true, 0.00045990943908691406, false, 0, 0, 0.0, 3, 0), JosephsonCircuits.KrylovSolveInfo(6, :step, 1.7742531321096506e-7, 0.000980612538483343, 0.0009175254786116636, 2, 1, :converged, true, false, false, -0.9999991581469871, 1.0, 0, true, 0.0004630088806152344, false, 0, 0, 0.0, 3, 0), JosephsonCircuits.KrylovSolveInfo(7, :step, 1.665122406177395e-10, 1.1364027903220362e-5, 9.418568491589304e-14, 4, 1, :converged, true, false, false, -0.9999999999999877, 1.0, 0, true, 0.0004680156707763672, false, 0, 0, 2.1457672119140625e-6, 5, 0)], :converged)], 0.028761285387902808, 4.599450526618848e-16, true, NaN), nothing, nothing), JosephsonCircuits.LinearizedHB(2.827433388230814e10:3.141592653589793e9:3.141592653589793e10, [(0,), (2,), (-2,)], AxisKeys.KeyedArray(NamedDimsArray(ComplexF64[0.8793564637286858 - 0.47682060384504393im; -0.0007930106153610371 + 0.001328911722833514im; 0.024680116713696843 + 0.004354912602142049im;;; 0.0015125515070087768 - 0.0003271930792919663im; 0.7304798230140793 - 0.6829325471781765im; -5.950455562493635e-5 + 0.00016478025833752im;;; 0.020025138314169726 - 0.015068750958247893im; -0.00016852335542687788 - 4.7937824545111854e-5im; 0.9999644370616343 + 0.02644293346261109im;;;;; 0.9999647647056292 - 0.026385938154034522im; 0.0011632565619808823 - 0.001228215733392152im; 0.020032881315088888 + 0.015076263827101864im;;; -0.0016916047682272869 - 1.2185390442217143e-5im; 0.7132140419053078 - 0.700944286101756im; -0.00011182722012212552 + 0.00010468741689850734im;;; 0.02469089207252435 - 0.00435544588884515im; -0.00011205672525206722 - 0.0001044634570411564im; 0.8793334299773569 + 0.47686617876906234im], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,), (2,), (-2,)], [1], [(0,), (2,), (-2,)], [1], 1:2)), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 4}(undef, 0, 0, 0, 0), AxisKeys.KeyedArray(NamedDimsArray([0.9993703226798601; 2.394872056123316e-6; 0.0006272854236583467;;; 2.3918628415412343e-6; 0.9999975744297894; 3.065481684450174e-8;;; 0.0006272854572984323; 3.0698154461698255e-8; 0.9993726839215247;;;;; 0.9993693211667153; 2.861679582420237e-6; 0.0006278207264504302;;; 2.8580819375117695e-6; 0.9999971148510951; 2.34353179638287e-8;;; 0.0006278207513470704; 2.3469322429588575e-8; 0.9993721558382315], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,), (2,), (-2,)], [1], [(0,), (2,), (-2,)], [1], 1:2)), AxisKeys.KeyedArray(NamedDimsArray([0.9993751034162082; 1.0; 1.0;;; 1.0; 1.0; 1.0;;; 1.0; 1.0; 0.9993726839215253;;;;; 0.9993750337581802; 1.0; 1.0;;; 1.0; 1.0; 1.0;;; 1.0; 1.0; 0.9993721558382326], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,), (2,), (-2,)], [1], [(0,), (2,), (-2,)], [1], 1:2)), AxisKeys.KeyedArray(NamedDimsArray([1.0000000000000009; 0.9999999999999999; -0.9999999999999994;;; 1.0000000000000009; 0.9999999999999997; -0.9999999999999992], (:outputmode, :outputport, :freqindex)), ([(0,), (2,), (-2,)], [1], 1:2)), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), ["0", "1", "2"], [2 2 2 3 3; 1 1 3 1 1], ["P1", "P1/termination", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Dict("C1" => 3, "C2" => 5, "P1/termination" => 2, "P1" => 1, "Lj1" => 4), String[], [1], [1], ComplexF64[50.0 + 0.0im], Int64[], String[], Int64[], 3, 3, 2, 1, 1))
-        out2 = JosephsonCircuits.warmup()
-        @test JosephsonCircuits.compare(out1,out2)
-    end
-
-    @testset verbose=true "warmupsyms" begin
-        # JosephsonCircuits.testshow(stdout,JosephsonCircuits.warmupsyms())
-        out1 = JosephsonCircuits.HB(JosephsonCircuits.NonlinearHB((2.9845193040956104e10,), JosephsonCircuits.Frequencies{1}((8,), (9,), (17,), CartesianIndex{1}[CartesianIndex(2,), CartesianIndex(4,)], [(1,), (3,)]), AxisKeys.KeyedArray(NamedDimsArray(ComplexF64[-0.013189575432098458 - 0.008650771492696132im 0.12157593851588883 + 0.07973582673770299im; 2.6396794305340342e-5 - 5.66776840965625e-6im 1.3736422941955386e-5 - 6.463157824689741e-5im], (:outputmode, :node)), ([(1,), (3,)], ["1", "2"])), sparse([1, 2, 3, 4], [1, 2, 3, 4], [1, 1, 1, 1], 4, 4), sparsevec([2], [1.0e-9], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([3, 4], [1.0e-9, 1.0e-9], 4), 2, 2, ["0", "1", "2"], [1], [(1,), (3,)], AxisKeys.KeyedArray(NamedDimsArray(ComplexF64[-0.3984433326936984 - 0.9171756584735996im; 0.0006826442364211931 + 0.003179314712618832im;;; 0.0 + 0.0im; 0.0 + 0.0im;;;;], (:outputmode, :outputport, :inputmode, :inputport)), ([(1,), (3,)], [1], [(1,), (3,)], [1])), JosephsonCircuits.SolverInfo(JosephsonCircuits.IterationInfo[JosephsonCircuits.IterationInfo("", 1.0, 0.0, true, 7, [0.028761285387902808, 0.0008478931202269102, 0.0002973713009106762, 9.271596038453327e-5, 1.2025211742041373e-5, 1.7742531313509158e-7, 1.6651235922170286e-10, 4.471044108803567e-16], [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], [0, 0, 0, 0, 0, 0, 0], Bool[0, 0, 0, 0, 0, 0, 0], JosephsonCircuits.KrylovSolveInfo[JosephsonCircuits.KrylovSolveInfo(1, :step, 0.028761285387902808, 0.3, 1.2297967778900613e-15, 1, 1, :converged, true, false, false, -1.0000000000000002, 1.0, 0, true, 0.00012993812561035156, false, 0, 0, 4.0531158447265625e-6, 2, 0), JosephsonCircuits.KrylovSolveInfo(2, :step, 0.0008478931202269102, 0.003005346793977496, 0.00012397002797724045, 2, 1, :converged, true, false, false, -0.9999999846314196, 1.0, 0, true, 0.000141143798828125, false, 0, 0, 9.5367431640625e-7, 3, 0), JosephsonCircuits.KrylovSolveInfo(3, :step, 0.0002973713009106762, 0.16518438555222142, 0.0005076172648687954, 2, 1, :converged, true, false, false, -0.9999997423247401, 1.0, 0, true, 0.00014495849609375, false, 0, 0, 9.5367431640625e-7, 3, 0), JosephsonCircuits.KrylovSolveInfo(4, :step, 9.271596038453327e-5, 0.13654739582327424, 0.0008091769267251104, 2, 1, :converged, true, false, false, -0.9999993452326986, 1.0, 0, true, 0.00014901161193847656, false, 0, 0, 0.0, 3, 0), JosephsonCircuits.KrylovSolveInfo(5, :step, 1.2025211742041373e-5, 0.03303287828093378, 0.0008558116985947549, 2, 1, :converged, true, false, false, -0.999999267586354, 1.0, 0, true, 0.00015306472778320312, false, 0, 0, 0.0, 3, 0), JosephsonCircuits.KrylovSolveInfo(6, :step, 1.7742531313509158e-7, 0.000980612537800867, 0.0009175254773179266, 2, 1, :converged, true, false, false, -0.999999158147008, 1.0, 0, true, 0.00015592575073242188, false, 0, 0, 0.0, 3, 0), JosephsonCircuits.KrylovSolveInfo(7, :step, 1.6651235922170286e-10, 1.1364041008120785e-5, 4.48342452867188e-14, 4, 1, :converged, true, false, false, -1.0000000000000002, 1.0, 0, true, 0.0001609325408935547, false, 0, 0, 0.0, 5, 0)], :converged)], 0.028761285387902808, 4.471044108803567e-16, true, NaN), nothing, nothing), JosephsonCircuits.LinearizedHB(2.827433388230814e10:3.141592653589793e9:3.141592653589793e10, [(0,), (2,), (-2,)], AxisKeys.KeyedArray(NamedDimsArray(ComplexF64[0.879356463728682 - 0.47682060384505076im; -0.0007930106153609734 + 0.0013289117228339321im; 0.02468011671370038 + 0.004354912602147072im;;; 0.0015125515070091497 - 0.00032719307929178227im; 0.7304798230140793 - 0.6829325471781768im; -5.9504555625013736e-5 + 0.0001647802583375572im;;; 0.020025138314170667 - 0.015068750958253892im; -0.0001685233554269531 - 4.793782454507143e-5im; 0.9999644370616343 + 0.026442933462622737im;;;;; 0.9999647647056287 - 0.026385938154046135im; 0.0011632565619808214 - 0.0012282157333925235im; 0.020032881315089828 + 0.015076263827107856im;;; -0.001691604768227512 - 1.2185390442497103e-5im; 0.7132140419053078 - 0.700944286101756im; -0.00011182722012220014 + 0.000104687416898506im;;; 0.024690892072527885 - 0.004355445888850175im; -0.00011205672525214234 - 0.00010446345704115444im; 0.8793334299773534 + 0.4768661787690691im], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,), (2,), (-2,)], [1], [(0,), (2,), (-2,)], [1], 1:2)), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 4}(undef, 0, 0, 0, 0), AxisKeys.KeyedArray(NamedDimsArray([0.9993703226798599; 2.394872056124326e-6; 0.0006272854236585642;;; 2.39186284154224e-6; 0.9999975744297894; 3.0654816844523155e-8;;; 0.0006272854572986503; 3.069815446171972e-8; 0.9993726839215245;;;;; 0.9993693211667151; 2.861679582421008e-6; 0.0006278207264506479;;; 2.8580819375125377e-6; 0.9999971148510951; 2.343531796384507e-8;;; 0.0006278207513472886; 2.3469322429605e-8; 0.9993721558382312], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,), (2,), (-2,)], [1], [(0,), (2,), (-2,)], [1], 1:2)), AxisKeys.KeyedArray(NamedDimsArray([0.9993751034162082; 1.0; 1.0;;; 1.0; 1.0; 1.0;;; 1.0; 1.0; 0.9993726839215249;;;;; 0.9993750337581806; 1.0; 1.0;;; 1.0; 1.0; 1.0;;; 1.0; 1.0; 0.9993721558382321], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,), (2,), (-2,)], [1], [(0,), (2,), (-2,)], [1], 1:2)), AxisKeys.KeyedArray(NamedDimsArray([1.0000000000000007; 1.0; -0.9999999999999999;;; 1.0000000000000002; 0.9999999999999997; -0.9999999999999994], (:outputmode, :outputport, :freqindex)), ([(0,), (2,), (-2,)], [1], 1:2)), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), ["0", "1", "2"], [2 2 2 3 3; 1 1 3 1 1], ["P1", "P1/termination", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Dict("C1" => 3, "C2" => 5, "P1/termination" => 2, "P1" => 1, "Lj1" => 4), String[], [1], [1], [50.0], Int64[], String[], Int64[], 3, 3, 2, 1, 1))
-        out2 = JosephsonCircuits.warmupsyms()
-        @test JosephsonCircuits.compare(out1,out2)
+    @testset verbose=true "warmup and warmupsyms" begin
+        # the precompile workloads solve the warmup circuit with symbol
+        # valued and with @params valued components; both must give the
+        # numbers a plain numeric circuit gives
+        circuit = Circuit(
+            ["P1" => Port(1; Z0 = 50.0), "C1" => Capacitor(100.0e-15),
+             "Lj1" => JosephsonJunction(1000.0e-12), "C2" => Capacitor(1000.0e-15)],
+            [Net("1", [("P1",1), ("C1",1)]),
+             Net("2", [("C1",2), ("Lj1",1), ("C2",1)]),
+             Net("0", [("P1",2), ("Lj1",2), ("C2",2), Ground])])
+        ref = hbsolve(2*pi*(4.5:0.5:5.0)*1e9, (2*pi*4.75001*1e9,),
+            [(mode=(1,),port=1,current=0.00565e-6)], (2,), (4,), circuit;
+            ftol = 1e-12)
+        @test JosephsonCircuits.compare(ref, JosephsonCircuits.warmup())
+        @test JosephsonCircuits.compare(ref, JosephsonCircuits.warmupsyms())
     end
 
     @testset verbose=true "warmupcompile" begin
@@ -182,7 +80,7 @@ end
     end
 
     @testset verbose=true "warmupnumericmatrices" begin
-        out1 = JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Nothing[], 2), sparsevec(Int64[], Nothing[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse(Int64[], Int64[], Nothing[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], Int64[], 1.0e-9, [50.0, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
+        out1 = JosephsonCircuits.CircuitMatrices(sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0e-13, -1.0e-13, -1.0e-13, 1.1e-12], 2, 2), sparse([1], [1], [0.02], 2, 2), sparsevec(Int64[], Float64[], 2), sparsevec(Int64[], Float64[], 2), sparsevec([2], [1.0e-9], 2), sparsevec([2], [1.0e-9], 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse(Int64[], Int64[], Float64[], 2, 2), sparse([1, 2], [1, 2], [1, 1], 2, 2), [1], [1], [50.0], [2], Int64[], 1.0e-9, [50.0, 50.0, 1.0e-13, 1.0e-9, 1.0e-12])
         out2 = warmupnumericmatrices()
         @test JosephsonCircuits.compare(out1,out2)
 
@@ -190,7 +88,7 @@ end
 
     @testset verbose=true "warmuphblinsolve" begin
         # JosephsonCircuits.testshow(stdout,warmuphblinsolve())
-        out1 = JosephsonCircuits.LinearizedHB(2.827433388230814e10:6.283185307179586e8:3.141592653589793e10, [(0,)], AxisKeys.KeyedArray(NamedDimsArray(ComplexF64[0.895270864122939 - 0.4455222551709022im;;;;; 0.8415115570832487 - 0.5402391130743189im;;;;; 0.6457820691998714 - 0.7635217869189669im;;;;; -0.9968560060568034 + 0.07923448231975308im;;;;; 0.9316787544566122 + 0.36328322077158454im;;;;; 0.9988570509555925 + 0.04779740323801577im], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 4}(undef, 0, 0, 0, 0), AxisKeys.KeyedArray(NamedDimsArray([1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), AxisKeys.KeyedArray(NamedDimsArray([0.9999999999999996;;;;; 0.9999999999999996;;;;; 1.0;;;;; 0.9999999999999991;;;;; 1.0;;;;; 0.9999999999999993], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), AxisKeys.KeyedArray(NamedDimsArray([1.0000000000000004;;; 1.0000000000000004;;; 0.9999999999999997;;; 1.0000000000000009;;; 1.0;;; 1.0000000000000007], (:outputmode, :outputport, :freqindex)), ([(0,)], [1], 1:6)), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), ["0", "1", "2"], [2 2 2 3 3; 1 1 3 1 1], ["P1", "P1/termination", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Dict("C1" => 3, "C2" => 5, "P1/termination" => 2, "P1" => 1, "Lj1" => 4), String[], [1], [1], [50.0], Int64[], String[], Int64[], 1, 3, 2, 1, 1)
+        out1 = JosephsonCircuits.LinearizedHB(collect(2*pi*(4.5:0.1:5.0)*1e9), [(0,)], AxisKeys.KeyedArray(NamedDimsArray(ComplexF64[0.895270864122939 - 0.4455222551709022im;;;;; 0.8415115570832487 - 0.5402391130743189im;;;;; 0.6457820691998714 - 0.7635217869189669im;;;;; -0.9968560060568034 + 0.07923448231975308im;;;;; 0.9316787544566122 + 0.36328322077158454im;;;;; 0.9988570509555925 + 0.04779740323801577im], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 4}(undef, 0, 0, 0, 0), AxisKeys.KeyedArray(NamedDimsArray([1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0;;;;; 1.0], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), AxisKeys.KeyedArray(NamedDimsArray([0.9999999999999996;;;;; 0.9999999999999996;;;;; 1.0;;;;; 0.9999999999999991;;;;; 1.0;;;;; 0.9999999999999993], (:outputmode, :outputport, :inputmode, :inputport, :freqindex)), ([(0,)], [1], [(0,)], [1], 1:6)), AxisKeys.KeyedArray(NamedDimsArray([1.0000000000000004;;; 1.0000000000000004;;; 0.9999999999999997;;; 1.0000000000000009;;; 1.0;;; 1.0000000000000007], (:outputmode, :outputport, :freqindex)), ([(0,)], [1], 1:6)), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), Array{ComplexF64, 3}(undef, 0, 0, 0), ["0", "1", "2"], [2 2 2 3 3; 1 1 3 1 1], ["P1", "P1/termination", "C1", "Lj1", "C2"], [:P, :R, :C, :Lj, :C], Dict("C1" => 3, "C2" => 5, "P1/termination" => 2, "P1" => 1, "Lj1" => 4), String[], [1], [1], [50.0], Int64[], String[], Int64[], 1, 3, 2, 1, 1)
         out2 = warmuphblinsolve()
         @test JosephsonCircuits.compare(out1,out2)
     end
@@ -201,10 +99,6 @@ end
         out1 = [50.0, 50.0, 1.0e-13, 1.0e-9, 1.0e-12]
         out2 = warmupvvn()
         @test JosephsonCircuits.compare(out1,out2)
-    end
-
-    @testset verbose=true "warmupnetwork" begin
-        @test warmupnetwork()
     end
 
     @testset verbose=true "warmupconnect" begin

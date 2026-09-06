@@ -87,6 +87,13 @@ using Test
             JosephsonCircuits.residual!(Fr2, sys)
             @test Fr1 == Fr2
 
+            # the combined evaluation and the Jacobian only evaluation
+            # assemble the same real Jacobian
+            d.fjreal(Fr1, d.Jr, copy(xr))
+            Jr1 = copy(d.Jr)
+            d.fjreal(nothing, d.Jr, copy(xr))
+            @test Jr1 == d.Jr
+
             # the matrix-free Jacobian-vector product equals the assembled
             # real Jacobian applied to the same vector, for single-tone and
             # multi-tone problems alike. The mode coupling indices include

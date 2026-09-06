@@ -639,26 +639,8 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
         precondtime = precondtime, residualvector = w, products = products)
 end
 
-"""
-    meritslope!(Jv, jvp, p, F, ϕ0, w)
-
-The slope `real(F' J p)` of the merit function `ϕ = F'F/2` along the step
-`p`, where `p = -Δ` for a linear solve `J Δ ≈ F` which left the explicit
-residual `w = F - J Δ`.
-
-Then `J p = w - F` and the slope is `real(F'w) - 2ϕ0`: one inner product,
-with the Jacobian vector product the solve already paid for. Without a
-valid residual (`w === nothing`), the product is taken.
-"""
-function meritslope!(Jv, jvp, p, F, ϕ0, w)
-    if isnothing(w)
-        mul!(Jv, jvp, p)
-        return real(dot(F, Jv))
-    end
-    return real(dot(F, w)) - 2ϕ0
-end
-
-abstract type AbstractHBLinearSolver end
+# `AbstractHBLinearSolver` is declared in solvers/options.jl, before the
+# `NewtonKrylov` option which holds one.
 
 """
     GMRES(; restart = 400, maxrestarts = 4)
@@ -703,11 +685,11 @@ applied by `mul!`, which is what Krylov.jl's `N` argument consumes.
 Deflation recycling is unavailable, since it depends on the internal
 workspace.
 """
-struct KrylovJL{K} <: AbstractHBLinearSolver
+struct KrylovJL <: AbstractHBLinearSolver
     method::Symbol
-    kwargs::K
+    kwargs::NamedTuple
 end
-KrylovJL(method::Symbol = :gmres; kwargs...) = KrylovJL(method, kwargs)
+KrylovJL(method::Symbol = :gmres; kwargs...) = KrylovJL(method, NamedTuple(kwargs))
 
 """
     hblinearsolve!(ls, deltax, jvp!, F, ws, Mop!; rtol, atol, maxrestarts,

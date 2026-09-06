@@ -265,19 +265,20 @@ end
     componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
 
 Resolve each component value in `componentvalues` with [`valuetonumber`](@ref)
-and return the results as a vector. The element type of the result is
-inferred from the resolved values, so it is `Vector{Float64}` when every
-value resolves to a real number; this is deliberately not type stable.
+and return the results as a `Vector{Any}`: the table mixes port numbers,
+real and complex values, symbolic values and frequency dependent providers,
+and the groups the assembly reads are typed when they are gathered from it
+(see `grouptype`), so the table itself has one type for every circuit.
 
 # Examples
 ```jldoctest
 julia> JosephsonCircuits.componentvaluestonumber([:Lj1,:Lj2],Dict(:Lj1=>1e-12,:Lj2=>2e-12))
-2-element Vector{Float64}:
+2-element Vector{Any}:
  1.0e-12
  2.0e-12
 
 julia> JosephsonCircuits.@params Lj1 Lj2;JosephsonCircuits.componentvaluestonumber([Lj1,Lj1+Lj2],Dict(Lj1=>1e-12,Lj2=>2e-12))
-2-element Vector{Float64}:
+2-element Vector{Any}:
  1.0e-12
  3.0e-12
 ```
@@ -290,9 +291,9 @@ function componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
     # for the whole table rather than once per value, which was quadratic
     # in the circuit size times the definition count.
     any(v -> v isa CircuitValue, componentvalues) ||
-        return [valuetonumber(value,circuitdefs) for value in componentvalues]
+        return Any[valuetonumber(value,circuitdefs) for value in componentvalues]
     d = normalizedefinitions(circuitdefs)
-    return [value isa CircuitValue ? valuetonumber(value, d) :
+    return Any[value isa CircuitValue ? valuetonumber(value, d) :
         valuetonumber(value, circuitdefs) for value in componentvalues]
 end
 

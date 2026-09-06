@@ -80,9 +80,9 @@ multi-tone lines, 1e-3 on a plain chain) at four to five times double's
 speed on a device whose single precision rate far exceeds its double one.
 The outputs are returned in double either way.
 """
-struct BlockFactorization{S,P} <: AbstractFactorization
-    singletons::S
-    precision::P
+struct BlockFactorization <: AbstractFactorization
+    singletons::Union{Nothing,AbstractFactorization}
+    precision::Union{Nothing,Type{<:AbstractFloat}}
     refine::Bool
 end
 function BlockFactorization(singletons::Union{Nothing,AbstractFactorization} = nothing;

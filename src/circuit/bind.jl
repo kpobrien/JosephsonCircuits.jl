@@ -51,31 +51,40 @@ function Base.show(io::IO, b::BoundCircuit)
         length(b.circuit.ports), " ports)")
 end
 
-# The element type the assembly chooses for a group: `calcvaluetype`
-# restricted to the group's own components rather than a scan of the whole
-# table, with the same promotion logic, quirks included, so that the
-# assembled matrices have the same element types either way.
+# The element type of a value group. Numbers are held as `Float64` or
+# `ComplexF64` however the netlist wrote them (`1` or `1.0f0` for an
+# inductance, `50` for a resistance), empty groups included, so that a
+# circuit has one matrix type per real or complex distinction rather than
+# one per way of writing its values; every solver method downstream is
+# compiled once per matrix type. A group with a value which is not a plain
+# number (symbolic, or a frequency dependent provider) keeps the promotion
+# of the types present, with the inverse of each when `checkinverse` is set.
 function grouptype(values, idx, checkinverse::Bool)
-    seen = Dict{DataType,Nothing}()
-    valuetype = Nothing
-    if !isempty(idx)
-        v = values[first(idx)]
-        valuetype = typeof(v)
-        seen[valuetype] = nothing
-        checkinverse && (valuetype = promote_type(typeof(1/v), valuetype))
-    end
+    isempty(idx) && return Float64
+    complex = false
+    plain = true
     for i in idx
         v = values[i]
-        if typeof(v) != valuetype
-            valuetype = promote_type(typeof(v), valuetype)
-            if !haskey(seen, valuetype)
-                seen[valuetype] = nothing
-                checkinverse && (valuetype = promote_type(typeof(1/v), valuetype))
-            end
+        if v isa Complex && plainnumber(real(v))
+            complex = true
+        elseif !plainnumber(v)
+            plain = false
+            break
         end
+    end
+    plain && return complex ? ComplexF64 : Float64
+    valuetype = Union{}
+    for i in idx
+        v = values[i]
+        valuetype = promote_type(valuetype, typeof(v))
+        # the inverse too: the conductance of a symbolic resistance is a
+        # different expression type from the resistance itself
+        checkinverse && (valuetype = promote_type(valuetype, typeof(1/v)))
     end
     return valuetype
 end
+
+plainnumber(v) = v isa Union{Integer,AbstractFloat,Rational,Irrational}
 
 gather(::Type{T}, values, idx) where {T} = T[values[i] for i in idx]
 

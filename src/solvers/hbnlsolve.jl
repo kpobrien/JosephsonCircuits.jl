@@ -98,13 +98,11 @@ rejected with an `ArgumentError`. See `src/circuit/mna.jl`.
     tone retained as an unknown, so the modes of the returned solution. The
     length of the tuple must equal the number of non-commensurate tones. The
     nonlinearity is evaluated on the larger `Nevaluationharmonics` grid.
-- `sources::Vector`: a vector of named tuples specifying the mode index,
-    port, and current for each source. The named tuple(s) have names
-    mode, port, and current. mode is a tuple specifying the mode or harmonic
-    indices of the pumps, port is an integer specifying the port, and current
-    is a number specifying the current. Note that the current is a complex
-    number 
-    For example:
+- `sources`: the sources, as named tuples with the fields mode, port and
+    current: mode is a tuple of one harmonic index per tone, port is the
+    integer port number and current the (complex) current amplitude. Any
+    iterable of them is accepted and converted to the canonical
+    [`SourceTuple`](@ref) form by [`sourcetable`](@ref). For example:
     [(mode=(1,0),port=1,current=Ip1),(mode=(0,1),port=1,current=Ip2)]
     specifies two pumps where the frequency of the first pump would be
     1\\*wp1 + 0\\*wp2 and the second 0\\*wp1+1\\*wp2 where wp1 is the first
@@ -210,7 +208,30 @@ true
 ```
 """
 function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
-    circuit, circuitdefs; rtol = 0.0,
+    circuit, circuitdefs; sorting = :number, kwargs...) where {N}
+    # the circuit compiled and the inputs in their canonical forms, so that
+    # the solve is compiled once for every way of writing them
+    psc = compile(circuit; sorting = sorting)
+    # nothing here reads the loops of the circuit graph
+    cg = calccircuitgraph(psc; loops = false)
+    return hbnlsolve(tonefrequencies(w), Nharmonics, sourcetable(sources, w),
+        psc, cg, definitiontable(circuitdefs); kwargs...)
+end
+
+"""
+    hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
+        sources::Vector{SourceTuple{N}}, psc::CompiledCircuit,
+        cg::CircuitGraph, circuitdefs::Dict{Any,Any}; kwargs...)
+
+The general method on a compiled circuit `psc` with its graph `cg`, with
+the inputs in their canonical forms ([`tonefrequencies`](@ref),
+[`sourcetable`](@ref), [`definitiontable`](@ref)): it builds the mode set
+and the matrices at its mode count, then solves. It takes every keyword of
+the general method except `sorting`, which the compilation consumed.
+"""
+function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
+    sources::Vector{SourceTuple{N}}, psc::CompiledCircuit, cg::CircuitGraph,
+    circuitdefs::Dict{Any,Any}; rtol = 0.0,
     iterations = 1000,
     Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
     maxharmonics = nothing,
@@ -219,7 +240,7 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
     even::Bool = false, x0 = nothing, ftol = 1e-8,
     switchofflinesearchtol = nothing, alphamin = nothing,
     method::AbstractHBNonlinearSolver = NewtonKrylov(),
-    symfreqvar = nothing, sorting = :number, keyedarrays::Bool = true,
+    symfreqvar = nothing, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
     returnoperatingpoint::Bool = false,
     backend = CPU(), debugJacobian = false,
@@ -236,13 +257,13 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
         lazy"`Nevaluationharmonics` = $(Nevaluationharmonics) must be at least `Nharmonics` = $(Nharmonics) in every tone."))
 
     if method isa Staged
-        return stagedhbnlsolve(method, w, Nharmonics, sources, circuit, circuitdefs;
-            iterations = iterations,
+        return stagedhbnlsolve(method, w, Nharmonics, sources, psc, cg,
+            circuitdefs; iterations = iterations,
             Nevaluationharmonics = Nevaluationharmonics,
             frequencywindow = frequencywindow,
             maxintermodorder = maxintermodorder, dc = dc, odd = odd,
             even = even, ftol = ftol, symfreqvar = symfreqvar,
-            sorting = sorting, keyedarrays = keyedarrays,
+            keyedarrays = keyedarrays,
             sensitivitynames = sensitivitynames,
             returnoperatingpoint = returnoperatingpoint, backend = backend)
     end
@@ -261,14 +282,13 @@ function hbnlsolve(w::NTuple{N,Number}, Nharmonics::NTuple{N,Int}, sources,
 
     Nmodes = length(freq.modes)
 
-    # parse, graph, and assemble; a typed circuit takes the compiled path
-    psc, cg, nm = preparecircuit(circuit, circuitdefs;
-        sorting = sorting, Nmodes = Nmodes)
+    # the matrices at the mode count
+    nm = assemblegrid(psc, cg, circuitdefs, Nmodes)
 
 
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         rtol = rtol,
-        iterations = iterations, x0 = x0, ftol = ftol,
+        iterations = iterations, x0 = initialguess(x0), ftol = ftol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         method = method,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
@@ -295,9 +315,11 @@ end
 The nonlinear harmonic balance solve on an already compiled circuit `psc`
 with its graph `cg` and matrices `nm`, at the mode set `frequencies` with
 its Fourier indices `indices`. This is what the other methods call after
-building those; it takes every keyword of the general method except the
-ones which describe the mode set (`Nharmonics`, `Nevaluationharmonics`,
-`maxintermodorder`, `frequencywindow`, `dc`, `odd`, `even`, `sorting`),
+building those, with the inputs in their canonical forms
+([`tonefrequencies`](@ref), [`sourcetable`](@ref)); it takes every keyword
+of the general method except the ones which describe the mode set
+(`Nharmonics`, `Nevaluationharmonics`, `maxintermodorder`,
+`frequencywindow`, `dc`, `odd`, `even`, `sorting`),
 and it does not accept `method = Staged()`, whose continuation builds each
 stage's own system. It takes one keyword the general method does not:
 `reuse = nothing`, an [`HBReuse`](@ref) which a `NewtonKrylov` solve fills
@@ -365,10 +387,17 @@ true
 See the general [`hbnlsolve`](@ref) docstring for the formulation and the
 keywords.
 """
-function hbnlsolve(w, sources, frequencies::Frequencies,
-    indices::FourierIndices, psc::CompiledCircuit, cg::CircuitGraph,
-    nm::CircuitMatrices;
-    iterations = 1000, x0 = nothing,
+function hbnlsolve(w::NTuple{N,Number}, sources, frequencies::Frequencies{N},
+    indices::FourierIndices{N}, psc::CompiledCircuit, cg::CircuitGraph,
+    nm::CircuitMatrices; x0 = nothing, kwargs...) where {N}
+    return hbnlsolve(tonefrequencies(w), sourcetable(sources, w), frequencies,
+        indices, psc, cg, nm; x0 = initialguess(x0), kwargs...)
+end
+
+function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
+    frequencies::Frequencies{N}, indices::FourierIndices{N},
+    psc::CompiledCircuit, cg::CircuitGraph, nm::CircuitMatrices;
+    iterations = 1000, x0::Vector{ComplexF64} = ComplexF64[],
     ftol = 1e-8, rtol = 0.0, switchofflinesearchtol = nothing, alphamin = nothing,
     method::AbstractHBNonlinearSolver = NewtonKrylov(),
     symfreqvar = nothing, keyedarrays::Bool = true,
@@ -377,7 +406,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     backend = CPU(), debugJacobian = false,
     returnsystem::Bool = false, assemblejacobian::Bool = true,
     reuse::Union{Nothing,HBReuse} = nothing,
-    )
+    ) where {N}
 
     method isa Staged && throw(ArgumentError(
         "a `Staged` method is solved by the general `hbnlsolve` method, which builds each stage's system."))
@@ -396,6 +425,221 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         Base.depwarn(lazy"The `alphamin` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions.", :hbnlsolve; force=true)
     end
 
+    # what the method asks of the setup: which Jacobians are assembled,
+    # which representation of the linear term is built, and whether a
+    # previous solve's objects are taken over; see `nonlinearsetup`
+    reusing = !isnothing(reuse) && method isa NewtonKrylov
+    needjx = method isa QuasiNewton || debugJacobian
+    devicex = method isa QuasiNewton && !(backend isa CPU)
+    needjr = method isa Newton || debugJacobian ||
+        ((returnsystem || method isa ExternalSolver) && assemblejacobian) ||
+        returnoperatingpoint
+    realrepresentation = method isa Newton || method isa NewtonKrylov ||
+        method isa ExternalSolver || debugJacobian || returnoperatingpoint ||
+        returnsystem
+    # fail immediately, with the actual cause, if any component value
+    # contains symbolic variables which were not assigned numerical values
+    # in circuitdefs (values depending only on the symbolic frequency
+    # variable are frequency dependent components and are accepted)
+    checkcomponentvaluesdefined(psc.componentnames, nm.vvn, symfreqvar)
+    m = nonlinearmatrices(nm, w, psc.componenttypes,
+        calcmodefreqs(w, frequencies.modes), symfreqvar)
+    s = nonlinearsetup(w, sources, frequencies, indices, psc, cg, m, x0,
+        symfreqvar, backend, precision, reusing ? reuse : nothing;
+        needjx = needjx, needjr = needjr, devicex = devicex,
+        realrepresentation = realrepresentation,
+        sensitivitynames = sensitivitynames)
+    (; sys, x, F, xr, Fr, modelayout, Jxb, Jr, complexjacobianplan,
+        realjacobianplan, canonwork, dcplan, dcsol, dccanonical, dcexplicit,
+        bnm, bnmsource, Lscale, gaugeindices, floatingcomponents,
+        coupledbranches, Nnodal, Amna, wmodes, wmodesm, wmodes2m,
+        Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes,
+        Amatrixindices, Ljb, Ljbm, Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm,
+        Nmodes, Nbranches, Nfreq, phimatrix, modes, portindices, portnumbers,
+        portimpedances, nodeindices, nodenames, componenttypes,
+        componentnames, edge2indexdict, freqindexmap, conjsourceindices,
+        conjtargetindices, Nnodes, fj!, fjreal!) = s
+
+    # the canonical Jacobian is assembled as a host `SparseMatrixCSC`; on a
+    # device backend `Jr` is not one, and there is no device assembly yet
+    if dcexplicit && method isa Newton && !(backend isa CPU)
+        throw(ArgumentError("a circuit which injects direct current is solved with an assembled canonical Jacobian under `Newton()`, and that assembly is host only. Use `NewtonKrylov()` on this backend, which is matrix free, or run `Newton()` on the CPU."))
+    end
+    if dcexplicit && method isa QuasiNewton
+        throw(ArgumentError("a circuit which injects direct current is solved with the average voltages as unknowns, which needs the real system; `QuasiNewton()` solves the complex holomorphic one. Use `NewtonKrylov()`, `Newton()` or an `ExternalSolver`."))
+    end
+
+    # use this for debugging purposes to return the residual and Jacobian
+    # functions along with the ingredients from which the Jacobians are
+    # assembled, so reference implementations can be constructed, eg. in the
+    # tests.
+    if returnsystem
+        # Everything an external solver needs, without solving: the
+        # evaluation object, the initial value, the real representation
+        # layout, and the assembled real Jacobian if it was asked for.
+        return (sys=sys, xr=xr, Fr=Fr, modelayout=modelayout,
+            Jr=(assemblejacobian ? Jr : nothing), Nnodal=Nnodal,
+            dcplan=dcplan, dcsol=dcsol, bnmsource=bnmsource,
+            # with direct current active `sys` alone is not the system: the
+            # average voltages and the blocks' zero frequency rows are here
+            canonicalwork=canonwork, dcexplicit=dcexplicit,
+            frequencies=frequencies,
+            Amatrixindicesaliased=Amatrixindicesaliased,
+            Amatrixconjindices=Amatrixconjindices, Ljb=Ljb, Lscale=Lscale,
+            Rbnm=Rbnm, Nmodes=Nmodes, Nbranches=Nbranches, Nfreq=Nfreq,
+            invLnm=invLnm, Gnm=Gnm, Cnm=Cnm, Amatrixmodes=Amatrixmodes)
+    end
+    if debugJacobian
+        return (F=F, x=x, Fr=Fr, xr=xr, Jx=Jxb, Jr=Jr, fj=fj!, fjreal=fjreal!,
+            canonicalwork=canonwork, dcexplicit=dcexplicit,
+            sys=sys, Nnodal=Nnodal,
+            gaugeindices=gaugeindices, floatingcomponents=floatingcomponents,
+            coupledbranches=coupledbranches,
+            complexjacobianplan=complexjacobianplan,
+            realjacobianplan=realjacobianplan, phimatrix=phimatrix,
+            cosphimatrix=(x -> (setpoint!(sys, x); cosphimatrix(sys))),
+            modelayout=modelayout,
+            Amatrixindices=Amatrixindices, Amatrixmodes=Amatrixmodes,
+            modes=modes,
+            Amatrixindicesaliased=Amatrixindicesaliased,
+            Amatrixconjindices=Amatrixconjindices, Ljb=Ljb, Ljbm=Ljbm,
+            Lscale=Lscale, Rbnm=Rbnm, invLnm=invLnm, Gnm=Gnm, Cnm=Cnm,
+            wmodesm=wmodesm, wmodes2m=wmodes2m, Nmodes=Nmodes,
+            Nbranches=Nbranches, Nfreq=Nfreq)
+    end
+
+    # The residual is a sum of terms whose size is set by the applied
+    # source, so no iteration can push it below the rounding error of that
+    # sum. The scale (see `calcsolverscale`) comes from the port impedances,
+    # and a circuit whose interior sits at a very different impedance is
+    # left with a scaled source many orders above one and a rounding floor
+    # above the default `ftol`. Asking for less than the floor is asking the
+    # iteration to converge on noise, so the tolerance is raised to the
+    # floor when the floor is larger. The floor is a `sqrt(n)*eps`
+    # accumulation over the terms with room to spare; for a circuit driven
+    # near its characteristic impedance it is far below `ftol`.
+    ftol = max(ftol,
+        16*sqrt(length(xr))*eps(real(eltype(xr)))*norm(bnmsource))
+
+    # Solve the nonlinear system. The canonical layout is supported by the
+    # matrix-free path; the assembled Jacobian methods would additionally
+    # need the permuted Jacobian `P J P'`, which is not implemented, so the
+    # request is refused rather than ignored.
+    info, dcsol, dccanonical = if method isa QuasiNewton
+        solvequasinewton!(method; x, F, Jxb, dcsol, dccanonical, fj!,
+            backend, iterations, ftol, rtol, directfactorization)
+    elseif method isa Newton
+        solvenewton!(method; x, F, xr, Fr, modelayout, Jr, canonwork, dcplan,
+            dcsol, dccanonical, dcexplicit, fjreal!, backend, iterations,
+            ftol, rtol, directfactorization)
+    elseif method isa NewtonKrylov
+        solvenewtonkrylov!(method; sys, x, F, xr, Fr, modelayout, canonwork,
+            dcplan, dcsol, dccanonical, dcexplicit, Lscale,
+            Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes, Ljb,
+            Rbnm, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq, fjreal!,
+            backend, iterations, ftol, rtol, reuse = reusing ? reuse : nothing, precision)
+    elseif method isa ExternalSolver
+        solveexternal!(method; sys, x, F, xr, Fr, modelayout, Jr, canonwork,
+            dcplan, dcsol, dccanonical, dcexplicit, Lscale,
+            Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes, Ljb,
+            Rbnm, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq, backend,
+            iterations, ftol, rtol)
+    else
+        throw(ArgumentError("Method $(method) is not defined."))
+    end
+
+    return nonlinearoutputs(; info, dcsol, dccanonical, w, frequencies, ftol,
+        symfreqvar, keyedarrays, returnoperatingpoint, sys, x, F, modelayout,
+        Jr, canonwork, dcplan, dcexplicit, bnm, bnmsource, Lscale,
+        gaugeindices, coupledbranches, Nnodal, Amna, wmodes, wmodesm,
+        wmodes2m, Ljb, Ljbm, Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm, Nmodes,
+        Nbranches, phimatrix, modes, portindices, portnumbers,
+        portimpedances, nodeindices, nodenames, componenttypes,
+        componentnames, edge2indexdict, freqindexmap, conjsourceindices,
+        conjtargetindices, Nnodes)
+end
+
+"""
+    nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes,
+        symfreqvar)
+
+The linear term of the nonlinear solve from the circuit matrices `nm`: the
+solver scale (see [`calcsolverscale`](@ref)), and the capacitance,
+conductance and inverse inductance matrices with the mode frequencies
+`wmodes` substituted into frequency dependent values, the entries of the
+negative frequency modes conjugated and the rows scaled, as
+`SparseMatrixCSC{ComplexF64,Int}` whatever the element types of `nm`; the
+branch vectors and the port lists come along. A stage of its own in front
+of [`nonlinearsetup`](@ref), so that the setup and everything after it is
+compiled once for every way the circuit's values were typed rather than
+once per combination of them.
+"""
+function nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes,
+        symfreqvar)
+    # if there are no inductors, then Lmean will be zero so set it to be one
+    Lscale = iszero(nm.Lmean) ? one(nm.Lmean) : nm.Lmean
+    # Nondimensionalize with the solver inductance scale Z0/w0 (see
+    # `calcsolverscale`): the scaled entries are of order one for circuits
+    # driven near their characteristic impedance and frequency, and `ftol`
+    # is independent of the unit system. The scale multiplies rows only, so
+    # the node fluxes and all physical outputs are unchanged.
+    Lscale = calcsolverscale(w, componenttypes, nm.vvn, nm.portimpedances,
+        Lscale)
+    # substitute in the mode frequencies for components which have
+    # frequency defined symbolically; the result is complex whatever the
+    # input
+    Cnm = freqsubst(nm.Cnm, wmodes, symfreqvar)
+    Gnm = freqsubst(nm.Gnm, wmodes, symfreqvar)
+    invLnm = freqsubst(nm.invLnm, wmodes, symfreqvar)
+    # take the complex conjugate of the terms associated with modes with
+    # negative frequencies. this is the same operation hblinsolve performs
+    # with sparseaddconjsubst!. these matrices are used in both the residual
+    # and the Jacobian.
+    conjnegfreq!(Cnm, wmodes)
+    conjnegfreq!(Gnm, wmodes)
+    conjnegfreq!(invLnm, wmodes)
+    # scale the matrices for numerical reasons
+    rmul!(Cnm, Lscale)
+    rmul!(Gnm, Lscale)
+    rmul!(invLnm, Lscale)
+    return (; Ljb = nm.Ljb, Ljbm = nm.Ljbm, Rbnm = nm.Rbnm, Lb = nm.Lb,
+        Mb = nm.Mb, Cnm, Gnm, invLnm, Lscale, portindices = nm.portindices,
+        portnumbers = nm.portnumbers,
+        portimpedances = Vector{Any}(nm.portimpedances), vvn = nm.vvn)
+end
+
+"""
+    nonlinearsetup(w, sources, frequencies, indices, psc, cg, m, x0,
+        symfreqvar, backend, precision, reuse; needjx, needjr, devicex,
+        realrepresentation, sensitivitynames)
+
+Everything the nonlinear solve of [`hbnlsolve`](@ref) needs before a
+method is applied: the mode frequencies and the checks on them, the
+scaled and frequency substituted linear term, the modified nodal analysis
+augmentation with its direct current block, the initial value in the real
+representation, the assembled Jacobians the method asked for (`needjx`
+the complex one, `needjr` the real one, `devicex` the complex one on the
+backend), the [`HBSystem`](@ref) with its residual closures `fj!` and
+`fjreal!`, and the canonical work of an explicit direct current block.
+`reuse` is an [`HBReuse`](@ref) whose objects are taken over, or `nothing`.
+
+Returned as a named tuple, whose fields the solve and the outputs stages
+read by name; it is the seam between them. This stage depends on the tone
+count, the matrices, the precision, the backend and the reuse, and not on
+the method, so a solve with a different method compiles it again only when
+one of those differs.
+"""
+function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
+    frequencies::Frequencies{N}, indices::FourierIndices{N},
+    psc::CompiledCircuit, cg::CircuitGraph, m,
+    x0::Vector{ComplexF64}, symfreqvar, backend, precision::Type{<:AbstractFloat},
+    reuse::Union{Nothing,HBReuse}; needjx::Bool, needjr::Bool, devicex::Bool,
+    realrepresentation::Bool, sensitivitynames::Vector{String}) where {N}
+
+    reusing = !isnothing(reuse)
+    # the linear term and the branch vectors, from `nonlinearmatrices`
+    (; Ljb, Ljbm, Rbnm, Lb, Mb, Cnm, Gnm, invLnm, Lscale, portindices,
+        portnumbers, portimpedances, vvn) = m
     # Reject non-finite inputs up front: the frequency and source checks
     # below compare against bounds built from these values, and an infinite
     # or NaN value would pass or fail those comparisons silently.
@@ -435,7 +679,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # it and slow its factorization.
     # what a previous solve of this circuit built and this one takes over;
     # see `HBReuse`. Only the matrix free path is built to be rebound.
-    reusing = !isnothing(reuse) && method isa NewtonKrylov
     Amatrixindicesaliased = if reusing && !isnothing(reuse.indicesaliased)
         reuse.indicesaliased
     else
@@ -480,36 +723,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     nodeindices = psc.nodeindices
     Nbranches = cg.Nbranches
     edge2indexdict = cg.edge2indexdict
-    Ljb = nm.Ljb
-    Ljbm = nm.Ljbm
-    Rbnm = nm.Rbnm
-    Cnmcopy = nm.Cnm
-    Gnmcopy = nm.Gnm
-    invLnmcopy = nm.invLnm
-    portindices = nm.portindices
-    portnumbers = nm.portnumbers
-    portimpedances = nm.portimpedances
-    vvn = nm.vvn
-    # if there are no inductors, then Lscale will be zero so set it to be one
-    Lscale = if iszero(nm.Lmean)
-        one(eltype(nm.Lmean))
-    else
-        nm.Lmean
-    end
-    # fail immediately, with the actual cause, if any component value
-    # contains symbolic variables which were not assigned numerical values
-    # in circuitdefs (values depending only on the symbolic frequency
-    # variable are frequency dependent components and are accepted).
-    checkcomponentvaluesdefined(componentnames, vvn, symfreqvar)
-
-    # Nondimensionalize with the solver inductance scale Z0/w0 (see
-    # `calcsolverscale`): the scaled entries are of order one for circuits
-    # driven near their characteristic impedance and frequency, and `ftol`
-    # is independent of the unit system. The scale multiplies rows only, so
-    # the node fluxes and all physical outputs are unchanged. The local
-    # name `Lscale` is what the matrix and plan interfaces call the scale.
-    Lscale = calcsolverscale(w, componenttypes, vvn, portimpedances, Lscale)
-    Lb = nm.Lb
 
     # find the indices associated with the components for which we will
     # calculate sensitivities
@@ -563,7 +776,7 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # the number of frequency entries per Josephson junction in phimatrix
     Nfreq = prod(Nwtuple[1:end-1])
 
-    x = if isnothing(x0)
+    x = if isempty(x0)
         zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
     else
         copy(x0)
@@ -571,8 +784,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     F = zeros(Complex{Float64}, (Nnodes-1)*Nmodes)
     # substitute in the mode frequencies for components which have frequency
     # defined symbolically.
-    Cnm = freqsubst(Cnmcopy, wmodes, symfreqvar)
-    Gnm = freqsubst(Gnmcopy, wmodes, symfreqvar)
     # Inductor branches which participate in mutual coupling are promoted
     # to auxiliary branch current variables by the modified nodal analysis
     # formulation below, instead of being eliminated through the inverse of
@@ -582,23 +793,15 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # inductance entries of the promoted constitutive equations remain
     # bounded. numericmatrices already excludes the coupled branches from
     # the inverse inductance matrix.
-    Mb = nm.Mb
     coupledbranches = mnacoupledbranches(Mb)
-    invLnm = freqsubst(invLnmcopy, wmodes, symfreqvar)
 
 
     # take the complex conjugate of the terms associated with modes with
     # negative frequencies. this is the same operation hblinsolve performs
     # with sparseaddconjsubst!. these matrices are used in both the residual
     # and the Jacobian in calcfj2!.
-    conjnegfreq!(Cnm, wmodes)
-    conjnegfreq!(Gnm, wmodes)
-    conjnegfreq!(invLnm, wmodes)
 
     # scale the matrices for numerical reasons
-    rmul!(Cnm,Lscale)
-    rmul!(Gnm,Lscale)
-    rmul!(invLnm,Lscale)
 
 
     # Set up the modified nodal analysis (MNA) formulation, which assigns
@@ -673,14 +876,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # current. Handing that object out, or differentiating it, would define
     # a second and different operating point. Refuse instead, until the
     # composite system exists to hand out.
-    # the canonical Jacobian is assembled as a host `SparseMatrixCSC`; on a
-    # device backend `Jr` is not one, and there is no device assembly yet
-    if dcexplicit && method isa Newton && !(backend isa CPU)
-        throw(ArgumentError("a circuit which injects direct current is solved with an assembled canonical Jacobian under `Newton()`, and that assembly is host only. Use `NewtonKrylov()` on this backend, which is matrix free, or run `Newton()` on the CPU."))
-    end
-    if dcexplicit && method isa QuasiNewton
-        throw(ArgumentError("a circuit which injects direct current is solved with the average voltages as unknowns, which needs the real system; `QuasiNewton()` solves the complex holomorphic one. Use `NewtonKrylov()`, `Newton()` or an `ExternalSolver`."))
-    end
     # the zero every average voltage sits at when none is injected, which
     # is the answer for a circuit with a zero frequency mode and no direct
     # current, and is replaced by the solved voltages when there is some
@@ -797,7 +992,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # on the backend; the host `Jx` is built either way, because
     # `debugJacobian` compares against it and the sensitivity calculation
     # reads its structure.
-    needjx = method isa QuasiNewton || debugJacobian
     # a reused system keeps its complex Jacobian and the plan which fills
     # it; the plan's values are refreshed by the rebind below
     reusejx = needjx && reusesys && !isnothing(reuse.jacobianx) &&
@@ -808,7 +1002,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     else
         nothing, nothing
     end
-    devicex = method isa QuasiNewton && !(backend isa CPU)
     Jxb, complexjacobianplan = if reusejx
         reuse.jacobianx, reuse.sys.complexjacobianplan
     elseif devicex
@@ -841,9 +1034,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # matrix-free Jacobian-vector product, and its preconditioner assembles
     # its own much sparser restricted plan, so the full Jacobian plan (the
     # largest object in a multi-tone solve) is never built.
-    needjr = method isa Newton || debugJacobian ||
-        ((returnsystem || method isa ExternalSolver) && assemblejacobian) ||
-        returnoperatingpoint
     reusejr = needjr && reusesys && !isnothing(reuse.jacobian) &&
         !isnothing(reuse.sys.realjacobianplan)
     Jr, realjacobianplan = if reusejr
@@ -879,9 +1069,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
     # needed exactly when the solve uses the real representation: every
     # method but `:quasinewton`, including an external solver and the
     # `returnsystem` path, since the residual is not complex differentiable.
-    realrepresentation = method isa Newton || method isa NewtonKrylov ||
-        method isa ExternalSolver || debugJacobian || returnoperatingpoint ||
-        returnsystem
     sys = if reusesys
         # the same transforms, maps, kernels and workspaces at the new
         # values, written through maps found once so nothing is allocated
@@ -930,13 +1117,6 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         return nothing
     end
 
-    # the diagnostics of each solver invocation, returned in the output
-    solverstages = IterationInfo[]
-
-    # use this for debugging purposes to return the residual and Jacobian
-    # functions along with the ingredients from which the Jacobians are
-    # assembled, so reference implementations can be constructed, eg. in the
-    # tests.
     # The canonical layout, built once for whichever method uses it. Both
     # the matrix free path and the direct one solve the same system in the
     # same coordinates; only the way they apply the Jacobian differs.
@@ -976,65 +1156,43 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         nothing
     end
 
-    if returnsystem
-        # Everything an external solver needs, without solving: the
-        # evaluation object, the initial value, the real representation
-        # layout, and the assembled real Jacobian if it was asked for.
-        return (sys=sys, xr=xr, Fr=Fr, modelayout=modelayout,
-            Jr=(assemblejacobian ? Jr : nothing), Nnodal=Nnodal,
-            dcplan=dcplan, dcsol=dcsol, bnmsource=bnmsource,
-            # with direct current active `sys` alone is not the system: the
-            # average voltages and the blocks' zero frequency rows are here
-            canonicalwork=canonwork, dcexplicit=dcexplicit,
-            frequencies=frequencies,
-            Amatrixindicesaliased=Amatrixindicesaliased,
-            Amatrixconjindices=Amatrixconjindices, Ljb=Ljb, Lscale=Lscale,
-            Rbnm=Rbnm, Nmodes=Nmodes, Nbranches=Nbranches, Nfreq=Nfreq,
-            invLnm=invLnm, Gnm=Gnm, Cnm=Cnm, Amatrixmodes=Amatrixmodes)
-    end
-    if debugJacobian
-        return (F=F, x=x, Fr=Fr, xr=xr, Jx=Jxb, Jr=Jr, fj=fj!, fjreal=fjreal!,
-            canonicalwork=canonwork, dcexplicit=dcexplicit,
-            sys=sys, Nnodal=Nnodal,
-            gaugeindices=gaugeindices, floatingcomponents=floatingcomponents,
-            coupledbranches=coupledbranches,
-            complexjacobianplan=complexjacobianplan,
-            realjacobianplan=realjacobianplan, phimatrix=phimatrix,
-            cosphimatrix=(x -> (setpoint!(sys, x); cosphimatrix(sys))),
-            modelayout=modelayout,
-            Amatrixindices=Amatrixindices, Amatrixmodes=Amatrixmodes,
-            modes=modes,
-            Amatrixindicesaliased=Amatrixindicesaliased,
-            Amatrixconjindices=Amatrixconjindices, Ljb=Ljb, Ljbm=Ljbm,
-            Lscale=Lscale, Rbnm=Rbnm, invLnm=invLnm, Gnm=Gnm, Cnm=Cnm,
-            wmodesm=wmodesm, wmodes2m=wmodes2m, Nmodes=Nmodes,
-            Nbranches=Nbranches, Nfreq=Nfreq)
-    end
+    return (; sys, x, F, xr, Fr, modelayout, Jxb, Jr, complexjacobianplan, realjacobianplan, canonwork, dcplan, dcsol, dccanonical, dcexplicit, bnm, bnmsource, Lscale, gaugeindices, floatingcomponents, coupledbranches, Nnodal, Amna, wmodes, wmodesm, wmodes2m, Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes, Amatrixindices, Ljb, Ljbm, Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq, phimatrix, modes, portindices, portnumbers, portimpedances, nodeindices, nodenames, componenttypes, componentnames, edge2indexdict, freqindexmap, conjsourceindices, conjtargetindices, Nnodes, fj!, fjreal!)
+end
 
-    # The residual is a sum of terms whose size is set by the applied
-    # source, so no iteration can push it below the rounding error of that
-    # sum. The scale (see `calcsolverscale`) comes from the port impedances,
-    # and a circuit whose interior sits at a very different impedance is
-    # left with a scaled source many orders above one and a rounding floor
-    # above the default `ftol`. Asking for less than the floor is asking the
-    # iteration to converge on noise, so the tolerance is raised to the
-    # floor when the floor is larger. The floor is a `sqrt(n)*eps`
-    # accumulation over the terms with room to spare; for a circuit driven
-    # near its characteristic impedance it is far below `ftol`.
-    ftol = max(ftol,
-        16*sqrt(length(xr))*eps(real(eltype(xr)))*norm(bnmsource))
+"""
+    solvequasinewton!(method; ...)
+    solvenewton!(method; ...)
+    solvenewtonkrylov!(method; ...)
+    solveexternal!(method; ...)
 
-    # Solve the nonlinear system. The canonical layout is supported by the
-    # matrix-free path; the assembled Jacobian methods would additionally
-    # need the permuted Jacobian `P J P'`, which is not implemented, so the
-    # request is refused rather than ignored.
-    info = if method isa QuasiNewton
+Solve the system [`nonlinearsetup`](@ref) built, each with the fields it
+reads passed by name: the quasi-Newton iteration on the complex holomorphic
+Jacobian, Newton's method on the equivalent real system, the Newton-Krylov
+iteration with its mode coupling preconditioner, or the caller's own solver
+through a problem object. The state `x`, `xr`, `F` and `Fr` of the setup
+is updated in place. Returns the
+[`IterationInfo`](@ref) of the solve, the direct current solution and the
+converged canonical state (the last two `nothing` when there is no explicit
+direct current block).
+"""
+function solvequasinewton!(method::QuasiNewton;
+        x, F, Jxb, dcsol, dccanonical, fj!, backend, iterations, ftol, rtol,
+        directfactorization)
+    info = begin
 
         solveonbackend!(fj!, F, Jxb, x, backend; iterations = iterations,
             ftol = ftol, rtol = rtol, andersondepth = method.anderson,
             factorization = directfactorization)
 
-    elseif method isa Newton
+    end
+    return info, dcsol, dccanonical
+end
+
+function solvenewton!(method::Newton;
+        x, F, xr, Fr, modelayout, Jr, canonwork, dcplan, dcsol, dccanonical,
+        dcexplicit, fjreal!, backend, iterations, ftol, rtol,
+        directfactorization)
+    info = begin
 
         # solve the equivalent real system with the exact real Jacobian,
         # then convert back to complex
@@ -1068,7 +1226,17 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         real_to_complex!(x,xr,modelayout.isreal)
         real_to_complex!(F,Fr,modelayout.isreal)
         info
-    elseif method isa NewtonKrylov
+    end
+    return info, dcsol, dccanonical
+end
+
+function solvenewtonkrylov!(method::NewtonKrylov;
+        sys, x, F, xr, Fr, modelayout, canonwork, dcplan, dcsol, dccanonical,
+        dcexplicit, Lscale, Amatrixindicesaliased, Amatrixconjindices,
+        Amatrixmodes, Ljb, Rbnm, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq,
+        fjreal!, backend, iterations, ftol, rtol, reuse, precision)
+    reusing = !isnothing(reuse)
+    info = begin
 
         # the matrix free real Jacobian
         jvpreal!(Jvr, vr) = jacobianvectorproduct!(Jvr, sys, vr)
@@ -1219,7 +1387,16 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         real_to_complex!(x,xr,modelayout.isreal)
         real_to_complex!(F,Fr,modelayout.isreal)
         info
-    elseif method isa ExternalSolver
+    end
+    return info, dcsol, dccanonical
+end
+
+function solveexternal!(method::ExternalSolver;
+        sys, x, F, xr, Fr, modelayout, Jr, canonwork, dcplan, dcsol,
+        dccanonical, dcexplicit, Lscale, Amatrixindicesaliased,
+        Amatrixconjindices, Amatrixmodes, Ljb, Rbnm, invLnm, Gnm, Cnm,
+        Nmodes, Nbranches, Nfreq, backend, iterations, ftol, rtol)
+    info = begin
         # hand the caller's root finder the system as a problem object. With
         # direct current the problem carries the augmentation too, so the
         # caller solves the posed system in the canonical unknowns.
@@ -1256,10 +1433,34 @@ function hbnlsolve(w, sources, frequencies::Frequencies,
         IterationInfo("external", 1.0, 0.0, extconverged, 0,
             [norm(Fc)], Float64[], Int[], Bool[], [],
             extconverged ? :converged : :external)
-    else
-        throw(ArgumentError("Method $(method) is not defined."))
     end
+    return info, dcsol, dccanonical
+end
 
+
+"""
+    nonlinearoutputs(; info, dcsol, dccanonical, w, frequencies, ftol,
+        symfreqvar, keyedarrays, returnoperatingpoint, ...)
+
+The [`NonlinearHB`](@ref) of a solve: the checks on the accepted point
+(the ungauged Kirchhoff current law, the junctions' direct current), the
+node fluxes and the scattering parameters at the pump modes, keyed when
+asked, the operating point with its assembled Jacobian when asked, and the
+direct current node voltages. The remaining keywords are the fields of
+[`nonlinearsetup`](@ref) this stage reads, and `info`, `dcsol` and
+`dccanonical` what the solve returned.
+"""
+function nonlinearoutputs(;
+        info, dcsol, dccanonical, w, frequencies, ftol, symfreqvar,
+        keyedarrays, returnoperatingpoint, sys, x, F, modelayout, Jr,
+        canonwork, dcplan, dcexplicit, bnm, bnmsource, Lscale, gaugeindices,
+        coupledbranches, Nnodal, Amna, wmodes, wmodesm, wmodes2m, Ljb, Ljbm,
+        Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm, Nmodes, Nbranches, phimatrix,
+        modes, portindices, portnumbers, portimpedances, nodeindices,
+        nodenames, componenttypes, componentnames, edge2indexdict,
+        freqindexmap, conjsourceindices, conjtargetindices, Nnodes)
+    # the diagnostics of each solver invocation, returned in the output
+    solverstages = IterationInfo[]
 
     # a direct solve is at the full drive
     push!(solverstages, with(info; parameter = 1.0))

@@ -267,7 +267,9 @@ function sumbranchvalues!(type::Symbol, node1::Int, node2::Int,
     componentvalues::Vector, countdict::Dict, indexdict::Dict)
     countkey = (type, node1, node2)
     countflag = false
-    value = zero(eltype(componentvalues))
+    # the value table is untyped; the zero stands in only when no branch of
+    # this kind sits between the nodes, in which case `countflag` says so
+    value = 0.0
     index = 0
 
     if haskey(countdict,countkey)

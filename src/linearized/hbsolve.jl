@@ -93,11 +93,14 @@ with those axis names when `keyedarrays = true`).
 - `S`: the scattering matrix relating the inputs and outputs at each
     combination of port, mode and signal frequency.
 - `Snoise`: the scattering matrix from the noise channels of the
-    dissipative elements to the ports. The channels are the dissipative
-    lumped components (see [`noiseindices`](@ref)) followed by one per port
-    of each dissipative [`ScatteringParameters`](@ref). Being a scattering
-    matrix it describes a transformation and does not depend on
-    temperature.
+    dissipative elements to the ports, in the same signed frequency
+    convention as `S`: a resistor's channel is a port of its impedance in
+    vacuum, and its row of `Snoise` is what that port's column of `S`
+    would be (see [`adjointnoisesigns!`](@ref)). The channels are the
+    dissipative lumped components (see [`noiseindices`](@ref)) followed by
+    one per port of each dissipative [`ScatteringParameters`](@ref). Being
+    a scattering matrix it describes a transformation and does not depend
+    on temperature.
 - `Cnoise`: the added noise covariance at the output ports,
     `sum_c occupation[c]*Snoise[c,i]*conj(Snoise[c,j])`, when
     `returnCnoise = true`. Together with `S` this is the Gaussian channel
@@ -422,16 +425,17 @@ nonzero frequencies instead.
 
 # Arguments
 - `ws`: the signal angular frequency or frequencies in radians per second,
-    such as `2*pi*5.0e9` or `2*pi*(4.5:0.001:5.0)*1e9`.
+    such as `2*pi*5.0e9` or `2*pi*(4.5:0.001:5.0)*1e9`; a real number or
+    any iterable of them.
 - `wp::NTuple{N,Number}`: the pump angular frequencies in radians per
     second, `(2*pi*5.0e9,)` for a single pump or `(2*pi*5.0e9, 2*pi*6.0e9)`
-    for two. The pumps should be non-commensurate; for commensurate pumps
+    for two, as real numbers. The pumps should be non-commensurate; for commensurate pumps
     give the lowest frequency here and add the others to `sources` with a
     mode index equal to the frequency ratio.
-- `sources::Vector`: a vector of named tuples `(mode, port, current)`.
-    `mode` is a tuple of harmonic indices, one per pump frequency, `port`
-    the port number, and `current` the complex current amplitude in
-    Amperes. `[(mode=(1,0), port=1, current=Ip1), (mode=(0,1), port=1,
+- `sources`: the sources, as named tuples `(mode, port, current)` in any
+    iterable. `mode` is a tuple of harmonic indices, one per pump
+    frequency, `port` the port number, and `current` the complex current
+    amplitude in Amperes; see [`sourcetable`](@ref) for the checks. `[(mode=(1,0), port=1, current=Ip1), (mode=(0,1), port=1,
     current=Ip2)]` applies a source at `1*wp[1] + 0*wp[2]` and one at
     `0*wp[1] + 1*wp[2]`, both at port 1. A source with `mode = (0,)` and
     `dc = true` is a direct current bias.
@@ -530,9 +534,36 @@ $(_DOC_SSENS)
 - `HB`: the nonlinear and linearized solutions; see [`HB`](@ref).
 
 """
-function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
+function hbsolve(ws, wp::NTuple{N,Number}, sources,
     Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
-    circuit, circuitdefs;dc::Bool = false, threewavemixing::Bool = false,
+    circuit, circuitdefs; sorting = :number, kwargs...) where {N,M}
+    # the circuit compiled and the inputs in their canonical forms, so that
+    # the solve is compiled once for every way of writing them
+    psc = compile(circuit; sorting = sorting)
+    # nothing here reads the loops of the circuit graph
+    cg = calccircuitgraph(psc; loops = false)
+    return hbsolve(sweepfrequencies(ws), tonefrequencies(wp),
+        sourcetable(sources, wp), Nmodulationharmonics, Npumpharmonics,
+        psc, cg, definitiontable(circuitdefs); kwargs...)
+end
+
+"""
+    hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
+        sources::Vector{SourceTuple{N}}, Nmodulationharmonics::NTuple{M,Int},
+        Npumpharmonics::NTuple{N,Int}, psc::CompiledCircuit,
+        cg::CircuitGraph, circuitdefs::Dict{Any,Any}; kwargs...)
+
+The general method on a compiled circuit `psc` with its graph `cg`, with
+the inputs in their canonical forms ([`sweepfrequencies`](@ref),
+[`tonefrequencies`](@ref), [`sourcetable`](@ref),
+[`definitiontable`](@ref)). It takes every keyword of the general method
+except `sorting`, which the compilation consumed.
+"""
+function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
+    sources::Vector{SourceTuple{N}},
+    Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
+    psc::CompiledCircuit, cg::CircuitGraph, circuitdefs::Dict{Any,Any};
+    dc::Bool = false, threewavemixing::Bool = false,
     fourwavemixing::Bool = true, maxpumpintermodorder=Inf,
     maxmodulationintermodorder=Inf,
     Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Npumpharmonics),
@@ -542,7 +573,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     iterations = 1000, ftol = 1e-8, switchofflinesearchtol = nothing,
     alphamin = nothing, method::AbstractHBNonlinearSolver = NewtonKrylov(),
     x0 = nothing, symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
-    sorting = :number, returnS::Bool = true, returnSnoise::Bool = false,
+    returnS::Bool = true, returnSnoise::Bool = false,
     returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
     returnvoltage::Bool = false, returnnodefluxadjoint::Bool = false,
     returnvoltageadjoint::Bool = false, keyedarrays::Bool = true,
@@ -587,10 +618,8 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
 
     Nmodes = length(freq.modes)
 
-    # compile the circuit, build its graph, and assemble the matrices at
-    # the pump mode count
-    psc, cg, nm = preparecircuit(circuit, circuitdefs;
-        sorting = sorting, Nmodes = Nmodes)
+    # the matrices at the pump mode count
+    nm = assemblegrid(psc, cg, circuitdefs, Nmodes)
 
 
     # The nonlinear solve. `:staged` runs the source continuation driver,
@@ -600,13 +629,14 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
     # `factorization` is the linearized solve's; the nonlinear solve's is
     # an option of its method
     nonlinear = if method isa Staged
-        stagedhbnlsolve(method, wp, Npumpharmonics, sources, circuit, circuitdefs;
+        stagedhbnlsolve(method, wp, Npumpharmonics, sources, psc, cg,
+            circuitdefs;
             iterations = iterations, ftol = ftol,
             Nevaluationharmonics = Nevaluationharmonics,
             maxintermodorder = maxpumpintermodorder,
             frequencywindow = frequencywindow,
             dc = dc, odd = fourwavemixing, even = threewavemixing,
-            symfreqvar = symfreqvar, sorting = sorting,
+            symfreqvar = symfreqvar,
             keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
             # the operating point, with its assembled Jacobian, only when
             # there is a sensitivity to take through it
@@ -617,7 +647,7 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
             backend = backend)
     else
         hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
-            iterations = iterations, x0 = x0, ftol = ftol,
+            iterations = iterations, x0 = initialguess(x0), ftol = ftol,
             switchofflinesearchtol = switchofflinesearchtol,
             alphamin = alphamin, method = method,
             symfreqvar = symfreqvar, keyedarrays = keyedarrays,
@@ -684,8 +714,8 @@ function hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         returnvoltageadjoint = returnvoltageadjoint, 
         keyedarrays = keyedarrays, temperature = temperature,
         returnCnoise = returnCnoise, sensitivitynames = sensitivitynames,
-        sensitivitypairs = sensitivitypairs,
-        sensitivityblockpairs = sensitivityblockpairs,
+        sensitivitypairs = sensitivitypairtable(sensitivitypairs),
+        sensitivityblockpairs = sensitivityblockpairtable(sensitivityblockpairs),
         nsensitivityparameters = nsensitivityparameters,
         sensitivitylabels = sensitivitylabels,
         sensitivityresidual = sensitivityresidual,

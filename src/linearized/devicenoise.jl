@@ -137,6 +137,9 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
     # dozen threads each walking every noise port in turn
     absq = KernelAbstractions.allocate(backend, Float64, nrows, nrhs)
     signs = KernelAbstractions.allocate(backend, Float64, nrows, 1)
+    # the sign of the mode frequency of each port column, for the sign the
+    # adjoint route owes the matrix (see `adjointnoisesigns!`)
+    colsigns = KernelAbstractions.allocate(backend, Float64, 1, nrhs)
     denomd = KernelAbstractions.allocate(backend, Float64, 1, nrhs)
     signedd = KernelAbstractions.allocate(backend, Float64, 1, nrhs)
     wmodesd = KernelAbstractions.allocate(backend, Float64, plan.nmodes)
@@ -202,7 +205,10 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
         mul!(Snoise, out, invinput)
         modesignkernel!(backend, 64)(signs, wmodesd, plan.nmodes;
             ndrange = nrows)
+        modesignkernel!(backend, 64)(colsigns, wmodesd, plan.nmodes;
+            ndrange = nrhs)
         KernelAbstractions.synchronize(backend)
+        Snoise .*= signs .* colsigns
         # the same two passes and two reductions as at zero temperature, with
         # the occupation folded into the one the quantum efficiency reads
         if warm

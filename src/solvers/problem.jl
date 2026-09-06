@@ -492,58 +492,8 @@ updatepreconditioner!(p::SizedPreconditioner, u::AbstractVector) =
 # and so an external one can be passed in without the package naming it.
 # =====================================================================
 
-"""
-    ExternalSolver(f)
-
-Solve the operating point with a caller supplied root finder.
-
-`f(prob, u0)` receives an [`HBNonlinearProblem`](@ref) and the initial
-value in the real representation, and returns `(u, converged)`. Everything
-it needs is on `prob`: [`hbresidual!`](@ref), [`hbjvp!`](@ref),
-[`JacobianOperator`](@ref) and [`preconditioner`](@ref).
-
-This is the plug point for a solver the package does not know about. A
-NonlinearSolve.jl algorithm, a hand written continuation stepper or a
-homotopy all go here without an extension.
-
-The assembled real Jacobian is available on the problem unless
-`assemblejacobian = false` was passed, which is what a matrix-free solver
-wants: on a multi-tone problem that plan is the largest object in the
-solve.
-
-```julia
-ExternalSolver() do prob, u0
-    u = copy(u0); F = similar(u)
-    hbresidual!(F, prob, u)
-    for k in 1:40
-        J = JacobianOperator(prob, u)
-        P = preconditioner(prob, u)
-        d, st = Krylov.gmres(J, -F; N = P, rtol = 1e-10, atol = 0.0)
-        st.solved || return (u, false)
-        u .+= d; hbresidual!(F, prob, u)
-    end
-    return (u, norm(F) <= tol)
-end
-```
-
-!!! warning "Absolute tolerances stall Newton"
-    Note `atol = 0.0`. Krylov.jl defaults to `atol = sqrt(eps())`, about
-    1.5e-8, and stops as soon as the linear residual falls below it. Once
-    the Newton residual is smaller than that -- which is the whole point of
-    the last few Newton steps -- every linear solve returns immediately
-    having done zero iterations, reports success, and hands back a zero
-    step. Newton then stagnates while nothing reports a failure.
-
-    Measured on a JPA with the default `atol`: 40 Newton iterations, final
-    residual 3.2e-10, never converged. With `atol = 0.0`: 7 Newton
-    iterations, residual 7.4e-17. Any external Krylov solver used inside a
-    Newton loop wants its absolute tolerance set to zero and its stopping
-    left to the relative one.
-"""
-struct ExternalSolver{F} <: AbstractHBNonlinearSolver
-    f::F
-end
-ExternalSolver(f::Function) = ExternalSolver{typeof(f)}(f)
+# `ExternalSolver` is declared in solvers/options.jl beside the other
+# solver options; the problem object it hands out is defined here.
 
 """
     setdrive!(prob::HBNonlinearProblem, scale)

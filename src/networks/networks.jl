@@ -1,237 +1,115 @@
 # Closed form network parameters of standard two port and four port
 # networks (series and shunt elements, transmission lines, coupled lines,
-# Pi and T networks, attenuators, couplers, splitters), each as an in place
-# function and a non in place function, for scalar and per frequency array
-# arguments. The loops below generate the per frequency array methods from
-# the in place scalar versions defined further down.
+# Pi and T networks, attenuators, couplers, splitters). Each network is a
+# scalar kernel which fills one matrix in place, `f!(y, args...)`, and an
+# allocating scalar form `f(args...)`, defined further down; the per
+# frequency array forms of both, for array arguments with one value per
+# frequency and scalar arguments held at every frequency, come from the
+# two drivers here.
 
-# one argument functions
-for f in [:ABCD_seriesZ, :ABCD_shuntY, :Y_seriesY, :Z_shuntZ]
+"""
+    perfrequency!(kernel!, y, args...)
 
-    # non-in-place version for array x1
-    @eval function $f(x1::AbstractArray)
-        # define the output matrix
-        y = zeros(eltype(x1),(2,2,size(x1)...))
-        # evaluate the in place version of the function
-        $(Symbol(String(f)*"!"))(y,x1)
-        return y
-    end
-
-    # in-place version for scalar x1
-    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray,x1::Number)
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(y)[3:end])
-            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1)
+Fill the network parameter matrix `y[:, :, i]` at every frequency index
+`i` of the trailing dimensions of `y` by the scalar kernel `kernel!`, with
+each array argument indexed at `i` and each scalar argument the same at
+every frequency. An array argument must have the size of the trailing
+dimensions of `y`. The type parameters make the method specialize on the
+kernel and on the argument types, which Julia does not do on its own for
+a function argument and for arguments only passed on; without them the
+kernel is called through a dynamic dispatch at every frequency.
+"""
+function perfrequency!(kernel!::F, y::AbstractArray,
+        args::Vararg{Any,N}) where {F,N}
+    trailing = axes(y)[3:end]
+    for a in args
+        if a isa AbstractArray
+            axes(a) == trailing || throw(ArgumentError(
+                lazy"Sizes of output $(size(y)) and input $(size(a)) not compatible."))
+        elseif !(a isa Number)
+            throw(ArgumentError(
+                lazy"An argument must be a number or an array of numbers, got a $(typeof(a))."))
         end
-        return y
     end
-
-    # in-place version for abstract array x1
-    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray,x1::AbstractArray)
-        if size(y)[3:end] != size(x1)
-            throw(ArgumentError(lazy"Sizes of output $(size(y)) and input $(size(x1)) not compatible."))
-        end
-        # assume a value of x1 is given for each frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(y)[3:end])
-            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1[i])
-        end
-        return y
+    for i in CartesianIndices(trailing)
+        kernel!(view(y, :, :, i),
+            map(a -> a isa AbstractArray ? a[i] : a, args)...)
     end
+    return y
 end
 
-# two argument functions, complex
-for f in [:ABCD_tline, :Z_tline]
+"""
+    perfrequency(kernel!, f, args...)
 
-    # non-in-place version for array x1, x2
-    @eval function $f(x1::AbstractArray, x2::AbstractArray)
-        # check the sizes of the inputs
-        if size(x1) != size(x2)
-            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)) and $(size(x2)) must be equal."))
-        end
-        # define the output matrix
-        y = zeros(promote_type(typeof(im*x1[1]),eltype(x2)),(2,2,size(x1)...))
-        # evaluate the in place version of the function
-        $(Symbol(String(f)*"!"))(y,x1,x2)
-        return y
-    end
-
-    # non-in-place version for scalar x1, array x2
-    @eval function $f(x1::Number, x2::AbstractArray)
-        # define the output matrix
-        y = zeros(promote_type(typeof(im*x1),eltype(x2)),(2,2,size(x2)...))
-        # evaluate the in place version of the function
-        $(Symbol(String(f)*"!"))(y,x1,x2)
-        return y
-    end
-
-    # in-place version for scalar x1, x2
-    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray, x1::Number,
-        x2::Number)
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(y)[3:end])
-            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1,x2)
-        end
-        return y
-    end
-
-    # in-place version for scalar x1, abstract array x2
-    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray,
-        x1::Number, x2::AbstractArray)
-        # check the sizes of the inputs
-        if size(y)[3:end] != size(x2)
-            throw(ArgumentError(lazy"Sizes of output $(size(y)) and inputs $(size(x2)) not compatible."))
-        end
-        # assume a value of x1 is given for each frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(y)[3:end])
-            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1,x2[i])
-        end
-        return y
-    end
-
-    # in-place version for abstract array x1, x2
-    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray,
-        x1::AbstractArray, x2::AbstractArray)
-        # check the sizes of the inputs
-        if size(x1) != size(x2)
-            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)) and $(size(x2)) must be equal."))
-        end
-        if size(y)[3:end] != size(x1)
-            throw(ArgumentError(lazy"Sizes of output $(size(y)) and inputs $(size(x1)) not compatible."))
-        end
-        # assume a value of x1 is given for each frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(y)[3:end])
-            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1[i],x2[i])
-        end
-        return y
-    end
+The allocating form of [`perfrequency!`](@ref): the matrices of the network
+`f` at every frequency of the array arguments, in an array whose element
+type is the one `f` returns for scalars, found by evaluating `f` once on
+the first element of each array argument.
+"""
+function perfrequency(kernel!::F, f::G, args::Vararg{Any,N}) where {F,G,N}
+    arrays = filter(a -> a isa AbstractArray, args)
+    trailing = isempty(arrays) ? () : size(first(arrays))
+    probe = f(map(a -> a isa AbstractArray ?
+        (isempty(a) ? zero(eltype(a)) : first(a)) : a, args)...)
+    y = zeros(eltype(probe), size(probe)..., trailing...)
+    return perfrequency!(kernel!, y, args...)
 end
 
-# three argument functions
-for f in [:ABCD_PiY, :Y_PiY, :ABCD_TZ, :Z_TZ]
+# an argument of a per frequency form: one value, or one per frequency
+const PerFrequency = Union{Number,AbstractArray}
 
-    # non-in-place version for array x1, x2, x3
-    @eval function $f(x1::AbstractArray, x2::AbstractArray, x3::AbstractArray)
-        # check the sizes of the inputs
-        if size(x1) != size(x2) || size(x1) != size(x3)
-            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)), $(size(x2)), and $(size(x3)) must be equal."))
-        end
-        # define the output matrix
-        y = zeros(promote_type(eltype(x1),eltype(x2),eltype(x3)),(2,2,size(x1)...))
-        # evaluate the in place version of the function
-        $(Symbol(String(f)*"!"))(y,x1,x2,x3)
-        return y
-    end
+ABCD_seriesZ(x1::AbstractArray) = perfrequency(ABCD_seriesZ!, ABCD_seriesZ, x1)
+ABCD_seriesZ!(y::AbstractArray, x1::PerFrequency) = perfrequency!(ABCD_seriesZ!, y, x1)
+ABCD_shuntY(x1::AbstractArray) = perfrequency(ABCD_shuntY!, ABCD_shuntY, x1)
+ABCD_shuntY!(y::AbstractArray, x1::PerFrequency) = perfrequency!(ABCD_shuntY!, y, x1)
+Y_seriesY(x1::AbstractArray) = perfrequency(Y_seriesY!, Y_seriesY, x1)
+Y_seriesY!(y::AbstractArray, x1::PerFrequency) = perfrequency!(Y_seriesY!, y, x1)
+Z_shuntZ(x1::AbstractArray) = perfrequency(Z_shuntZ!, Z_shuntZ, x1)
+Z_shuntZ!(y::AbstractArray, x1::PerFrequency) = perfrequency!(Z_shuntZ!, y, x1)
 
-    # in-place version for scalar x1, x2, x3
-    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray, x1::Number,
-        x2::Number, x3::Number)
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(y)[3:end])
-            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1,x2,x3)
-        end
-        return y
-    end
+ABCD_tline(x1::PerFrequency, x2::PerFrequency) =
+    perfrequency(ABCD_tline!, ABCD_tline, x1, x2)
+ABCD_tline!(y::AbstractArray, x1::PerFrequency, x2::PerFrequency) =
+    perfrequency!(ABCD_tline!, y, x1, x2)
+Z_tline(x1::PerFrequency, x2::PerFrequency) =
+    perfrequency(Z_tline!, Z_tline, x1, x2)
+Z_tline!(y::AbstractArray, x1::PerFrequency, x2::PerFrequency) =
+    perfrequency!(Z_tline!, y, x1, x2)
 
-    # in-place version for abstract array x1, x2, x3
-    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray,
-        x1::AbstractArray, x2::AbstractArray, x3::AbstractArray)
-        # check the sizes of the inputs
-        if size(x1) != size(x2) || size(x1) != size(x3)
-            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)), $(size(x2)), and $(size(x3)) must be equal."))
-        end
-        if size(y)[3:end] != size(x1)
-            throw(ArgumentError(lazy"Sizes of output $(size(y)) and inputs $(size(x1)) not compatible."))
-        end
-        # assume a value of x1 is given for each frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(y)[3:end])
-            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1[i],x2[i],x3[i])
-        end
-        return y
-    end
-end
+ABCD_PiY(x1::PerFrequency, x2::PerFrequency, x3::PerFrequency) =
+    perfrequency(ABCD_PiY!, ABCD_PiY, x1, x2, x3)
+ABCD_PiY!(y::AbstractArray, x1::PerFrequency, x2::PerFrequency,
+        x3::PerFrequency) =
+    perfrequency!(ABCD_PiY!, y, x1, x2, x3)
+Y_PiY(x1::PerFrequency, x2::PerFrequency, x3::PerFrequency) =
+    perfrequency(Y_PiY!, Y_PiY, x1, x2, x3)
+Y_PiY!(y::AbstractArray, x1::PerFrequency, x2::PerFrequency,
+        x3::PerFrequency) =
+    perfrequency!(Y_PiY!, y, x1, x2, x3)
+ABCD_TZ(x1::PerFrequency, x2::PerFrequency, x3::PerFrequency) =
+    perfrequency(ABCD_TZ!, ABCD_TZ, x1, x2, x3)
+ABCD_TZ!(y::AbstractArray, x1::PerFrequency, x2::PerFrequency,
+        x3::PerFrequency) =
+    perfrequency!(ABCD_TZ!, y, x1, x2, x3)
+Z_TZ(x1::PerFrequency, x2::PerFrequency, x3::PerFrequency) =
+    perfrequency(Z_TZ!, Z_TZ, x1, x2, x3)
+Z_TZ!(y::AbstractArray, x1::PerFrequency, x2::PerFrequency,
+        x3::PerFrequency) =
+    perfrequency!(Z_TZ!, y, x1, x2, x3)
 
-# four argument functions, complex
-for f in [:ABCD_coupled_tline, :Z_coupled_tline]
+ABCD_coupled_tline(x1::PerFrequency, x2::PerFrequency, x3::PerFrequency,
+        x4::PerFrequency) =
+    perfrequency(ABCD_coupled_tline!, ABCD_coupled_tline, x1, x2, x3, x4)
+ABCD_coupled_tline!(y::AbstractArray, x1::PerFrequency, x2::PerFrequency,
+        x3::PerFrequency, x4::PerFrequency) =
+    perfrequency!(ABCD_coupled_tline!, y, x1, x2, x3, x4)
+Z_coupled_tline(x1::PerFrequency, x2::PerFrequency, x3::PerFrequency,
+        x4::PerFrequency) =
+    perfrequency(Z_coupled_tline!, Z_coupled_tline, x1, x2, x3, x4)
+Z_coupled_tline!(y::AbstractArray, x1::PerFrequency, x2::PerFrequency,
+        x3::PerFrequency, x4::PerFrequency) =
+    perfrequency!(Z_coupled_tline!, y, x1, x2, x3, x4)
 
-    # non-in-place version for array x1, x2, x3, x4
-    @eval function $f(x1::AbstractArray, x2::AbstractArray,
-        x3::AbstractArray, x4::AbstractArray)
-        # check the sizes of the inputs
-        if size(x1) != size(x2) || size(x1) != size(x3) || size(x1) != size(x4)
-            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)), $(size(x2)), $(size(x3)), and $(size(x4)) must be equal."))
-        end
-        # define the output matrix
-        y = zeros(promote_type(typeof(im*x1[1]),typeof(im*x2[1]),eltype(x3),eltype(x4)),(4,4,size(x1)...))
-        # evaluate the in place version of the function
-        $(Symbol(String(f)*"!"))(y,x1,x2,x3,x4)
-        return y
-    end
-
-    # non-in-place version for scalar x1, x2, array x3, x4
-    @eval function $f(x1::Number, x2::Number, x3::AbstractArray,
-        x4::AbstractArray)
-        # check the sizes of the inputs
-        if size(x3) != size(x4)
-            throw(ArgumentError(lazy"Sizes of inputs $(size(x3)) and $(size(x4)) must be equal."))
-        end
-        # define the output matrix
-        y = zeros(promote_type(typeof(im*x1),typeof(im*x2),eltype(x3),eltype(x4)),(4,4,size(x3)...))
-        # evaluate the in place version of the function
-        $(Symbol(String(f)*"!"))(y,x1,x2,x3,x4)
-        return y
-    end
-
-    # in-place version for scalar x1, x2, x3, x4
-    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray, x1::Number,
-        x2::Number, x3::Number, x4::Number)
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(y)[3:end])
-            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1,x2,x3,x4)
-        end
-        return y
-    end
-
-    # in-place version for scalar x1, x2, abstract array x3, x4
-    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray,
-        x1::Number, x2::Number, x3::AbstractArray, x4::AbstractArray)
-        # check the sizes of the inputs
-        if size(x3) != size(x4)
-            throw(ArgumentError(lazy"Sizes of inputs $(size(x3)) and $(size(x4)) must be equal."))
-        end
-        if size(y)[3:end] != size(x3)
-            throw(ArgumentError(lazy"Sizes of output $(size(y)) and inputs $(size(x3)) not compatible."))
-        end
-        # assume a value of x1 is given for each frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(y)[3:end])
-            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1,x2,x3[i],x4[i])
-        end
-        return y
-    end
-
-    # in-place version for abstract array x1, x2, x3, x4
-    @eval function $(Symbol(String(f)*"!"))(y::AbstractArray,
-        x1::AbstractArray, x2::AbstractArray, x3::AbstractArray,
-        x4::AbstractArray)
-        # check the sizes of the inputs
-        if size(x1) != size(x2) || size(x1) != size(x3) || size(x1) != size(x4)
-            throw(ArgumentError(lazy"Sizes of inputs $(size(x1)), $(size(x2)), $(size(x3)), and $(size(x4)) must be equal."))
-        end
-        if size(y)[3:end] != size(x1)
-            throw(ArgumentError(lazy"Sizes of output $(size(y)) and inputs $(size(x1)) not compatible."))
-        end
-        # assume a value of x1 is given for each frequency
-        # loop over the dimensions of the array greater than 2
-        for i in CartesianIndices(axes(y)[3:end])
-            $(Symbol(String(f)*"!"))(view(y,:,:,i),x1[i],x2[i],x3[i],x4[i])
-        end
-        return y
-    end
-end
 
 """
     ABCD_seriesZ(Z1)

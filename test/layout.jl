@@ -1,5 +1,6 @@
 using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test
 include("layoutreference.jl")
+Random.seed!(20260905)
 
 
 @testset verbose=true "realcomplexconv" begin

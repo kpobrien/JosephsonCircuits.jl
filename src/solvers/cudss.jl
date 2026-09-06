@@ -48,10 +48,10 @@ independent blocks of a mode block diagonal itself and works on them
 together, and measured faster that way than when handed the blocks as a
 uniform batch.
 """
-struct CUDSSFactorization{K} <: AbstractFactorization
-    kwargs::K
+struct CUDSSFactorization <: AbstractFactorization
+    kwargs::NamedTuple
 end
-CUDSSFactorization(; kwargs...) = CUDSSFactorization(kwargs)
+CUDSSFactorization(; kwargs...) = CUDSSFactorization(NamedTuple(kwargs))
 factorize(f::CUDSSFactorization, A) = _cudss_factorize(A; f.kwargs...)
 refactorize!(f::CUDSSFactorization, F, A) = _cudss_factorize!(F, A; f.kwargs...)
 

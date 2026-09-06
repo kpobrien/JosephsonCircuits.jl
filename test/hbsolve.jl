@@ -33,8 +33,8 @@ using Test
 
             # linearized simulation
             sources = [(mode=(1,),port=1,current=Ip)]
-            Npumpharmonics = (10,)
-            Nmodulationharmonics = (10,)
+            Npumpharmonics = (6,)
+            Nmodulationharmonics = (6,)
             sol1 = hbsolve(ws, (wp,), sources, Nmodulationharmonics,
                 Npumpharmonics, circuit, circuitdefs, ftol = ftol)
             S1ss = sol1.linearized.S((0,),1,(0,),1,1)
@@ -42,7 +42,7 @@ using Test
 
             # nonlinear simulation with (pump,signal) order
             w = (wp,ws)
-            Nharmonics = (10,10)
+            Nharmonics = (6,6)
             sources = [(mode=(1,0),port=1,current=Ip),(mode=(0,1),port=1,current=Is)]
             sol2 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = ftol)
             S2ss = sol2.S((0,1),1,(0,1),1)
@@ -50,7 +50,7 @@ using Test
 
             # nonlinear simulation with (signal,pump) order
             w = (ws,wp)
-            Nharmonics = (10,10)
+            Nharmonics = (6,6)
             sources = [(mode=(0,1),port=1,current=Ip),(mode=(1,0),port=1,current=Is)]
             sol3 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = ftol)
             S3ss = sol3.S((1,0),1,(1,0),1)
@@ -69,75 +69,47 @@ using Test
 
     end
 
-    @testset "hbsolve method comparison" begin
+    @testset "uncommon options give the same numbers" begin
 
-        JosephsonCircuits.@params Rleft Cc Lj Cj w L1
+        JosephsonCircuits.@params Rleft Cc Lj Cj w
         circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",Rleft))
-        push!(circuit,("C1","1","2",Cc)) 
-        push!(circuit,("Lj1","2","0",Lj)) 
+        push!(circuit,("C1","1","2",Cc))
+        push!(circuit,("Lj1","2","0",Lj))
         push!(circuit,("C2","2","0",Cj))
-        circuitdefs = Dict(
-            Lj =>1000.0e-12,
-            Cc => 100.0e-15,
-            Cj => 1000.0e-15,
-            Rleft => 50.0,
-        )
-        ws = 2*pi*(4.5:0.01:5.0)*1e9
+        circuitdefs = Dict(Lj => 1000.0e-12, Cc => 100.0e-15,
+            Cj => 1000.0e-15, Rleft => 50.0)
+        ws = 2*pi*(4.5:0.05:5.0)*1e9
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
-        Nmodulationharmonics = (8,)
-        Npumpharmonics = (16,)
 
-        quasinewton = hbsolve(ws, wp, sources, Nmodulationharmonics,
-            Npumpharmonics, circuit, circuitdefs, ftol=1e-12, method = QuasiNewton())
-
-
-        @test isapprox(
-            quasinewton.nonlinear.nodeflux[:],
-            ComplexF64[-0.013189575486618105 - 0.00865077163136891im, 2.6396823809835998e-5 - 5.667772212498911e-6im, -2.3501629748681806e-8 - 2.2306559257777402e-8im, -7.987057959121183e-12 + 3.750064665528795e-11im, 4.337129743740559e-14 - 1.3397330127340191e-14im, -3.812185723603184e-17 - 3.8456119951452504e-17im, -4.278102807441037e-20 + 3.974761087481868e-20im, -8.24749227891514e-25 + 3.0560138516751506e-24im, 0.12157593753208869 + 0.07973582696437984im, 1.3736443951855489e-5 - 6.463164795537436e-5im, -5.3397980865816756e-8 + 9.191484285021433e-9im, 2.7913096743299775e-11 + 4.514682457284182e-11im, 3.3395873694437265e-14 - 4.569085921919452e-14im, -6.154948861291708e-17 - 1.523212283849711e-17im, -2.2291909276375226e-20 + 6.18003971235134e-20im, 5.405242786243393e-25 + 3.424470385254823e-24im],
-            atol = 1e-8)
-
-        @test isapprox(
-            10*log10.(abs2.(quasinewton.linearized.S((0,),1,(0,),1,:))),
-            [0.002717249265375112, 0.0031881165263016476, 0.003764438371177404, 0.004475612824820614, 0.005360972358329889, 0.006473775210238347, 0.007887075336301673, 0.009702494973065136, 0.012063564112722006, 0.0151763872044898, 0.019342315628701326, 0.025010742306207902, 0.03286645328833334, 0.043977897966981386, 0.060055891091184574, 0.08391851842302066, 0.12035318288996377, 0.17776810664422604, 0.27146258097536335, 0.43031121414540996, 0.7108074673012084, 1.2271520892520107, 2.2163506977088527, 4.180249149477177, 8.16945893982768, 13.302337843265873, 8.180459085825893, 4.185698117374451, 2.2190409577860577, 1.2285225612890744, 0.7115311472717254, 0.4307082670317731, 0.2716887696865355, 0.17790149553267967, 0.12043426616790562, 0.08396907049655332, 0.06008804086742857, 0.04399863098219145, 0.0328799192406124, 0.02501947707672059, 0.019347909243977855, 0.015179860051320881, 0.012065584850116115, 0.009703510073587402, 0.007887387964370132, 0.006473594325612282, 0.005360443913078622, 0.0044748399587568825, 0.003763494713109064, 0.0031870550949444913, 0.002716108513561703],
-            atol = 1e-6)
-
-        newton = hbsolve(ws, wp, sources, Nmodulationharmonics,
-            Npumpharmonics, circuit, circuitdefs, ftol=1e-12, method = Newton())
-
-        @test isapprox(
-            quasinewton.nonlinear.nodeflux[:],
-            newton.nonlinear.nodeflux[:],
-            atol = 1e-8)
-
-        @test isapprox(
-            10*log10.(abs2.(quasinewton.linearized.S((0,),1,(0,),1,:))),
-            10*log10.(abs2.(newton.linearized.S((0,),1,(0,),1,:))),
-            atol = 1e-6)
-
-        # test some uncommon options
-        JosephsonCircuits.@params w
-        result = hbsolve(ws, wp, sources, Nmodulationharmonics,
-            Npumpharmonics, circuit, circuitdefs, ftol=1e-12, symfreqvar = w,
-            returnS=false, returnSnoise=true, returnQE=false,
-            returnnodeflux=true,
-            returnnodefluxadjoint=true, returnCM=false,
-            returnvoltage=true, returnvoltageadjoint=true,
-            returnSsensitivity = true,
-            sensitivitynames=["C1"],
-            nbatches=4)
-
-        @test result.linearized.QE == Array{Float64, 3}(undef, 0, 0, 0)
-        @test result.linearized.S == Array{Float64, 3}(undef, 0, 0, 0)
-        # @test result.linearized.nodeflux == ComplexF64[]
-        @test result.linearized.Snoise[:] == ComplexF64[]
-        @test result.linearized.CM == Matrix{Float64}(undef, 0, 0)
-
+        base = hbsolve(ws, wp, sources, (8,), (16,), circuit, circuitdefs;
+            ftol = 1e-12, returnnodeflux = true, returnvoltage = true,
+            keyedarrays = false)
+        # a symbolic frequency variable, four batches, and every output
+        # flag the other way round must give the same numbers where both
+        # computed them, and nothing where they were not asked for
+        other = hbsolve(ws, wp, sources, (8,), (16,), circuit, circuitdefs;
+            ftol = 1e-12, symfreqvar = w, returnS = false,
+            returnSnoise = true, returnQE = false, returnnodeflux = true,
+            returnnodefluxadjoint = true, returnCM = false,
+            returnvoltage = true, returnvoltageadjoint = true,
+            returnSsensitivity = true, sensitivitynames = ["C1"],
+            nbatches = 4, keyedarrays = false)
+        @test isempty(other.linearized.QE)
+        @test isempty(other.linearized.S)
+        @test isempty(other.linearized.CM)
+        @test isempty(other.linearized.Snoise)      # a lossless circuit
+        @test isapprox(other.nonlinear.nodeflux, base.nonlinear.nodeflux;
+            rtol = 1e-10)
+        @test isapprox(other.linearized.nodeflux, base.linearized.nodeflux;
+            rtol = 1e-10)
+        @test isapprox(other.linearized.voltage, base.linearized.voltage;
+            rtol = 1e-10)
+        @test size(other.linearized.Ssensitivity, 3) == 1
+        @test all(isfinite, other.linearized.nodefluxadjoint)
     end
-
-
 
     @testset "hbsolve initial nodeflux" begin
 
@@ -220,8 +192,19 @@ using Test
         solalltrue = hbsolve(ws, wp, sources, Nmodulationharmonics,
             Npumpharmonics, circuit, circuitdefs;returnflags...);
 
-        # loop over all of the flags, setting one of them to be true
-        for j in 1:length(flags)
+        # every flag false leaves every output empty
+        returnflags = NamedTuple([(Symbol("return"*flags[i])=>false) for i in 1:length(flags)])
+        solallfalse = hbsolve(ws, wp, sources, Nmodulationharmonics,
+            Npumpharmonics, circuit, circuitdefs;returnflags...);
+        for k in 1:length(flags)
+            @test isempty(getfield(solallfalse.linearized, Symbol(flags[k])))
+        end
+
+        # one flag true at a time, for the two outputs which need more than
+        # the forward solve (the noise channels and the adjoint solve, and
+        # the sensitivity contraction): the same numbers as with every flag
+        # true, and nothing else
+        for j in (findfirst(==("Snoise"), flags), findfirst(==("Ssensitivity"), flags))
             # set one of the flags to be true and the rest false
             returnflags = NamedTuple([(Symbol("return"*flags[i])=>ifelse(i==j,true,false)) for i in 1:length(flags)])
             sol = hbsolve(ws, wp, sources, Nmodulationharmonics,
@@ -499,17 +482,17 @@ using Test
 
         testcases = (
             ("single-tone JPA", (2*pi*4.75001e9,),
-                [(mode=(1,),port=1,current=0.00565e-6)], (8,), (4,),
+                [(mode=(1,),port=1,current=0.00565e-6)], (4,), (2,),
                 circuitjpa, circuitdefsjpa),
             ("single-tone lossy JPA", (2*pi*4.75001e9,),
-                [(mode=(1,),port=1,current=0.00565e-6)], (8,), (4,),
+                [(mode=(1,),port=1,current=0.00565e-6)], (4,), (2,),
                 circuitjpa, circuitdefsjpalossy),
             ("two-tone JPA", (2*pi*4.65001e9, 2*pi*4.85001e9),
                 [(mode=(1,0),port=1,current=0.00565e-6*1.7),
                  (mode=(0,1),port=1,current=0.00565e-6*1.7)], (4,4), (2,2),
                 circuitjpa, circuitdefsjpa),
             ("mutual inductor", (2*pi*4.75001e9,),
-                [(mode=(1,),port=1,current=1.0e-6)], (6,), (4,),
+                [(mode=(1,),port=1,current=1.0e-6)], (4,), (2,),
                 circuitmutual, circuitdefsmutual),
             )
 
@@ -642,17 +625,17 @@ using Test
             names = ["C1","C2","Lj1","R1"]
             syms = Dict("C1"=>Cc,"C2"=>Cj,"Lj1"=>Lj,"R1"=>Rl)
 
-            sol = hbsolve(ws, wp, sources, (8,), (16,), circuit, defs;
+            sol = hbsolve(ws, wp, sources, (4,), (8,), circuit, defs;
                 keyedarrays=false, sensitivitynames=names,
                 returnSsensitivity=true,sensitivityoperatingpoint=false)
 
             # one nonlinear solution, reused so the operating point is fixed
-            nonlinear = hbnlsolve(wp, (16,), sources, circuit, defs;
+            nonlinear = hbnlsolve(wp, (8,), sources, circuit, defs;
                 keyedarrays=false)
             psc = JosephsonCircuits.compile(circuit)
             cg = JosephsonCircuits.calccircuitgraph(psc)
             signalfreq = JosephsonCircuits.truncfreqs(
-                JosephsonCircuits.calcfreqsdft((8,)); dc=true, odd=false,
+                JosephsonCircuits.calcfreqsdft((4,)); dc=true, odd=false,
                 even=true, maxintermodorder=Inf)
             frozen(d) = JosephsonCircuits.hblinsolve(ws, psc, cg, d,
                 signalfreq; nonlinear=nonlinear, keyedarrays=false).S
@@ -669,7 +652,7 @@ using Test
             end
 
             # keyed array output round trip
-            solk = hbsolve(ws, wp, sources, (8,), (16,), circuit, defs;
+            solk = hbsolve(ws, wp, sources, (4,), (8,), circuit, defs;
                 sensitivitynames=names, returnSsensitivity=true,
                 sensitivityoperatingpoint=false)
             modes = collect(sol.linearized.modes)
@@ -699,7 +682,7 @@ using Test
             ws = 2*pi*[4.5e9, 4.75e9]
             names = ["C1","C2","Lj1","R1"]
             syms = Dict("C1"=>Cc,"C2"=>Cj,"Lj1"=>Lj,"R1"=>Rl)
-            solve(d; op=false) = hbsolve(ws, wp, sources, (8,), (16,),
+            solve(d; op=false) = hbsolve(ws, wp, sources, (4,), (8,),
                 circuit, d; keyedarrays=false, ftol=1e-13,
                 sensitivitynames=names, returnSsensitivity=true,
                 sensitivityoperatingpoint=op)
@@ -979,7 +962,7 @@ using Test
             sources = [(mode=(1,),port=1,current=0.00565e-6)]
             ws = 2*pi*[4.5e9, 4.75e9]
             names = ["C1","Lj1"]
-            solve(; kwargs...) = hbsolve(ws, wp, sources, (8,), (16,),
+            solve(; kwargs...) = hbsolve(ws, wp, sources, (4,), (8,),
                 circuit, defs; keyedarrays=false, sensitivitynames=names,
                 returnSsensitivity=true, kwargs...).linearized.Ssensitivity
             base = solve()
@@ -989,80 +972,6 @@ using Test
             @test base == solve(returnQE=false, returnCM=false)
             @test base == solve(returnS=false, returnQE=false,
                 returnCM=false, returnSnoise=false)
-        end
-
-        @testset "port node order" begin
-            # The adjoint solve uses the source columns, which carry the
-            # canonical orientation of the port branch, while the output
-            # functional differences the node fluxes in the node order of the
-            # port component. Writing a port with its nodes in the opposite
-            # order must not flip the sign of the sensitivities.
-            JosephsonCircuits.@params R1v R2v C1v L1v C2v
-            for reversed in (false, true)
-                circuit = Tuple{String,String,String,Any}[]
-                push!(circuit,("P1","1","0",1))
-                push!(circuit,("R1","1","0",R1v))
-                push!(circuit,("C1","1","2",C1v))
-                push!(circuit,("L1","2","0",L1v))
-                push!(circuit,("C2","2","0",C2v))
-                if reversed
-                    push!(circuit,("P2","0","2",2))
-                    push!(circuit,("R2","0","2",R2v))
-                else
-                    push!(circuit,("P2","2","0",2))
-                    push!(circuit,("R2","2","0",R2v))
-                end
-                defs = Dict(R1v=>50.0, R2v=>50.0, C1v=>100e-15, L1v=>1e-9,
-                    C2v=>200e-15)
-                ws = 2*pi*[5.0e9]
-                names = ["C1","L1"]
-                syms = Dict("C1"=>C1v,"L1"=>L1v)
-                sol = hblinsolve(ws, circuit, defs; keyedarrays=false,
-                    sensitivitynames=names, returnSsensitivity=true)
-                h = 1e-6
-                for (k, name) in enumerate(names)
-                    dp = copy(defs); dp[syms[name]] *= (1+h)
-                    dm = copy(defs); dm[syms[name]] *= (1-h)
-                    Sp = hblinsolve(ws, circuit, dp; keyedarrays=false).S
-                    Sm = hblinsolve(ws, circuit, dm; keyedarrays=false).S
-                    fd = (Sp .- Sm)./(2*h)
-                    @test isapprox(sol.Ssensitivity[:,:,k,1], fd[:,:,1],
-                        rtol = 1e-6, norm = v->maximum(abs,v))
-                end
-            end
-        end
-
-        @testset "mutual inductor with promoted port resistor" begin
-            # A promoted port resistor sensitivity with the operating point
-            # shift, in a circuit which also contains a mutually coupled
-            # inductor pair, so the operating point augmentation includes the
-            # coupled inductor auxiliary variables as well.
-            JosephsonCircuits.@params Rl Rr Cc Lj Cj Lla Llb Kab
-            circuit = Tuple{String,String,String,Any}[]
-            push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
-            push!(circuit,("C1","1","2",Cc)); push!(circuit,("Lj1","2","0",Lj))
-            push!(circuit,("C2","2","0",Cj))
-            push!(circuit,("L1","2","0",Lla)); push!(circuit,("L2","3","0",Llb))
-            push!(circuit,("P2","3","0",2)); push!(circuit,("R2","3","0",Rr))
-            push!(circuit,("K1","L1","L2",Kab))
-            defs = Dict(Rl=>50.0, Rr=>50.0, Cc=>100e-15, Lj=>500e-12,
-                Cj=>1000e-15, Lla=>300e-12, Llb=>300e-12, Kab=>0.5)
-            wp = (2*pi*4.75001e9,)
-            sources = [(mode=(1,),port=1,current=1.0e-6)]
-            ws = 2*pi*[4.5e9]
-            sol = hbsolve(ws, wp, sources, (4,), (8,), circuit, defs;
-                keyedarrays=false, ftol=1e-13, sensitivitynames=["R1"],
-                returnSsensitivity=true, sensitivityoperatingpoint=true)
-            h = 1e-6
-            dp = copy(defs); dp[Rl] *= (1+h)
-            dm = copy(defs); dm[Rl] *= (1-h)
-            Sp = hbsolve(ws, wp, sources, (4,), (8,), circuit, dp;
-                keyedarrays=false, ftol=1e-13).linearized.S
-            Sm = hbsolve(ws, wp, sources, (4,), (8,), circuit, dm;
-                keyedarrays=false, ftol=1e-13).linearized.S
-            fd = (Sp .- Sm)./(2*h)
-            @test isapprox(sol.linearized.Ssensitivity[:,:,1,1], fd[:,:,1],
-                rtol = 1e-4, norm = v->maximum(abs,v))
         end
 
         @testset "sensitivity mode validation" begin

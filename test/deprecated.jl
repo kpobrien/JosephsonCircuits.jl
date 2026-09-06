@@ -2,91 +2,78 @@ using JosephsonCircuits
 using LinearAlgebra
 using Test
 
+# The deprecated forms warn and give the same numbers as the forms which
+# replace them; the wording of the warnings is not pinned.
 @testset verbose=true "deprecated" begin
 
-    @testset "connectS deprecation warnings" begin
+    @testset "connectS is intraconnectS and interconnectS" begin
         Sa = rand(Complex{Float64},3,3)
         Sb = rand(Complex{Float64},3,3)
         Sout1 = zeros(Complex{Float64},1,1)
         Sout2 = zeros(Complex{Float64},4,4)
-        @test_logs((:warn, lazy"connectS(Sa::AbstractArray, k::Int, l::Int)` is deprecated, use `intraconnectS(Sa, k, l)` instead."),JosephsonCircuits.connectS(Sa,1,2));
-        @test_logs((:warn, lazy"connectS(Sa::AbstractArray, Sb::AbstractArray, k::Int, l::Int)` is deprecated, use `interconnectS(Sa, Sb, k, l)` instead."),JosephsonCircuits.connectS(Sa,Sb,1,2));
-        @test_logs((:warn, lazy"connectS!(Sout, Sa, k::Int, l::Int)` is deprecated, use `intraconnectS!(Sout, Sa, k, l)` instead."),JosephsonCircuits.connectS!(Sout1,Sa,1,2));
-        @test_logs((:warn, lazy"connectS!(Sout, Sa, Sb, k::Int, l::Int)` is deprecated, use `interconnectS!(Sout, Sa, Sb, k, l)` instead."),JosephsonCircuits.connectS!(Sout2,Sa,Sb,1,2));
+        a = @test_logs (:warn,) JosephsonCircuits.connectS(Sa,1,2)
+        @test a == JosephsonCircuits.intraconnectS(Sa,1,2)
+        b = @test_logs (:warn,) JosephsonCircuits.connectS(Sa,Sb,1,2)
+        @test b == JosephsonCircuits.interconnectS(Sa,Sb,1,2)
+        @test_logs (:warn,) JosephsonCircuits.connectS!(Sout1,Sa,1,2)
+        @test Sout1 == JosephsonCircuits.intraconnectS(Sa,1,2)
+        @test_logs (:warn,) JosephsonCircuits.connectS!(Sout2,Sa,Sb,1,2)
+        @test Sout2 == JosephsonCircuits.interconnectS(Sa,Sb,1,2)
     end
 
-    @testset "hbsolve deprecation warnings" begin
-        # define the circuit components
+    @testset "the deprecated solver forms and keywords" begin
         circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int}},1}(undef,0)
-
-        # port on the left side
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)) 
-        push!(circuit,("Lj1","2","0",:Lj)) 
+        push!(circuit,("C1","1","2",:Cc))
+        push!(circuit,("Lj1","2","0",:Lj))
         push!(circuit,("C2","2","0",:Cj))
-
         circuitdefs = Dict{Symbol,Complex{Float64}}(
-            :Lj =>1000.0e-12,
-            :Cc => 100.0e-15,
-            :Cj => 1000.0e-15,
-            :Rleft => 50.0,
-        )
-        @test_logs((:warn, r"This form of hbsolve, with a single pump frequency and integer harmonic\ncounts, is deprecated"),
-            hbsolve(2*pi*(4.5:0.5:5.0)*1e9,2*pi*4.75001*1e9,0.00565e-6,2,2,circuit,circuitdefs,pumpports=[1]),
-        )
-    end
-
-    @testset "hbnlsolve switchofflinesearchtol and alphamin kwarg deprecation" begin
-        # define the circuit components
-        circuit = Array{Tuple{String,String,String,Union{Complex{Float64}, Symbol,Int}},1}(undef,0)
-
-        # port on the left side
-        push!(circuit,("P1","1","0",1))
-        push!(circuit,("R1","1","0",:Rleft))
-        push!(circuit,("C1","1","2",:Cc)) 
-        push!(circuit,("Lj1","2","0",:Lj)) 
-        push!(circuit,("C2","2","0",:Cj))
-
-        circuitdefs = Dict{Symbol,Complex{Float64}}(
-            :Lj =>1000.0e-12,
-            :Cc => 100.0e-15,
-            :Cj => 1000.0e-15,
-            :Rleft => 50.0,
-        )
-
-        ws = 2*pi*(4.5:0.5:5.0)*1e9
+            :Lj =>1000.0e-12, :Cc => 100.0e-15, :Cj => 1000.0e-15,
+            :Rleft => 50.0)
+        ws = 2*pi*[4.5e9]
         wp = (2*pi*4.75001*1e9,)
-        sources = [(mode=(1,),port=1,current=0.00565e-6)]
-        Nmodulationharmonics = (2,)
-        Npumpharmonics = (4,)
+        Ip = 0.00565e-6
+        sources = [(mode=(1,),port=1,current=Ip)]
+        ref = hbsolve(ws, wp, sources, (2,), (2,), circuit, circuitdefs;
+            keyedarrays = false)
+        same(sol) = isapprox(Array(sol.linearized.S), ref.linearized.S;
+            rtol = 1e-10) && isapprox(Array(sol.nonlinear.nodeflux),
+            ref.nonlinear.nodeflux; rtol = 1e-10)
 
-        @test_logs((:warn,lazy"The `switchofflinesearchtol` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions."),
-            JosephsonCircuits.hbnlsolve(wp, Npumpharmonics, sources, circuit,
-                circuitdefs;switchofflinesearchtol = 1),
-        )
-        @test_logs((:warn,lazy"The `alphamin` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions."),
-            JosephsonCircuits.hbnlsolve(wp, Npumpharmonics, sources, circuit, circuitdefs;alphamin = 0.1),
-        )
-        @test_logs((:warn,lazy"The `maxharmonics` kwarg is deprecated and no longer used. `Nharmonics` is the retained set of modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions."),
-            JosephsonCircuits.hbnlsolve(wp, Npumpharmonics, sources, circuit, circuitdefs;maxharmonics = (2,)),
-        )
-        @test_logs((:warn,lazy"The `maxpumpharmonics` kwarg is deprecated and no longer used. `Npumpharmonics` is the retained set of pump modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions."),
-            JosephsonCircuits.hbsolve(ws, wp, sources, Nmodulationharmonics, Npumpharmonics, circuit, circuitdefs;maxpumpharmonics = (2,)),
-        )
+        # the single pump frequency, integer harmonic count form of hbsolve:
+        # its pump count Npumpmodes is the tuple form's (2*Npumpmodes,), so
+        # the operating points agree; its signal mode set is the legacy
+        # solver's own, so of the linearized outputs the signal to signal
+        # entry is compared, with one signal mode either way
+        old = @test_logs (:warn,) match_mode = :any hbsolve(ws, wp[1], Ip, 1, 2,
+            circuit, circuitdefs, pumpports = [1], keyedarrays = true)
+        oldref = hbsolve(ws, wp, sources, (1,), (4,), circuit, circuitdefs)
+        @test isapprox(Array(old.nonlinear.nodeflux(outputmode = (1,))),
+            Array(oldref.nonlinear.nodeflux(outputmode = (1,))); rtol = 1e-10)
+        @test isapprox(old.linearized.S((0,), 1, (0,), 1, 1),
+            oldref.linearized.S((0,), 1, (0,), 1, 1); rtol = 1e-6)
 
-        @test_logs((:warn,lazy"The `returnZ`, `returnZadjoint`, `returnZsensitivity`, and `returnZsensitivityadjoint` kwargs have been removed. Please compute them from scattering parameters matrices."),
-            JosephsonCircuits.hblinsolve(ws, circuit, circuitdefs;returnZ = true),
-        )
-        @test_logs((:warn,lazy"The `returnZ`, `returnZadjoint`, `returnZsensitivity`, and `returnZsensitivityadjoint` kwargs have been removed. Please compute them from scattering parameters matrices."),
-            JosephsonCircuits.hblinsolve(ws, circuit, circuitdefs;returnZadjoint = true),
-        )
-        @test_logs((:warn,lazy"The `returnZ`, `returnZadjoint`, `returnZsensitivity`, and `returnZsensitivityadjoint` kwargs have been removed. Please compute them from scattering parameters matrices."),
-            JosephsonCircuits.hblinsolve(ws, circuit, circuitdefs;returnZsensitivity = true),
-        )
-        @test_logs((:warn,lazy"The `returnZ`, `returnZadjoint`, `returnZsensitivity`, and `returnZsensitivityadjoint` kwargs have been removed. Please compute them from scattering parameters matrices."),
-            JosephsonCircuits.hblinsolve(ws, circuit, circuitdefs;returnZsensitivityadjoint = true),
-        )
+        nlref = hbnlsolve(wp, (2,), sources, circuit, circuitdefs;
+            keyedarrays = false)
+        for kw in ((switchofflinesearchtol = 1,), (alphamin = 0.1,),
+                (maxharmonics = (2,),))
+            sol = @test_logs (:warn,) match_mode = :any hbnlsolve(wp, (2,),
+                sources, circuit, circuitdefs; keyedarrays = false, kw...)
+            @test isapprox(sol.nodeflux, nlref.nodeflux; rtol = 1e-10)
+        end
+        sol = @test_logs (:warn,) match_mode = :any hbsolve(ws, wp, sources,
+            (2,), (2,), circuit, circuitdefs; keyedarrays = false,
+            maxpumpharmonics = (2,))
+        @test same(sol)
+
+        linref = hblinsolve(ws, circuit, circuitdefs; keyedarrays = false)
+        for kw in ((returnZ = true,), (returnZadjoint = true,),
+                (returnZsensitivity = true,), (returnZsensitivityadjoint = true,))
+            lin = @test_logs (:warn,) match_mode = :any hblinsolve(ws, circuit,
+                circuitdefs; keyedarrays = false, kw...)
+            @test lin.S == linref.S
+        end
     end
 
 end

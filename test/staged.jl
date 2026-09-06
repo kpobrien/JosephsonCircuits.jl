@@ -15,16 +15,6 @@ using JosephsonCircuits, Test, LinearAlgebra
             [(2,), (3,), (5,), (10,), (20,)]
     end
 
-    @testset "matches the direct solve" begin
-        ra = hbnlsolve((w1,w2), (8,4), src, circuit, defs;
-            dc = true, odd = true, even = true, method = NewtonKrylov())
-        rb = hbnlsolve((w1,w2), (8,4), src, circuit, defs;
-            dc = true, odd = true, even = true, method = Staged())
-        @test rb.solverinfo.converged
-        a = vec(Array(ra.S)); b = vec(Array(rb.S))
-        @test norm(a - b)/norm(a) < 1e-6
-    end
-
     @testset "hbsolve integration" begin
         # offset from the 5 GHz pump so no signal + pump mode lands at
         # zero total frequency

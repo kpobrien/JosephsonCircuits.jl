@@ -159,6 +159,44 @@ function calcinputoutputnoise!(inputwave, outputwave, phin, bnm,
 end
 
 """
+    adjointnoisesigns!(Snoise::AbstractMatrix, wmodes, Nmodes::Integer)
+
+The sign the adjoint route owes the noise scattering matrix: multiply
+`Snoise[c, i]` by the sign of the channel's mode frequency times the sign
+of the port's.
+
+`Snoise` is formed by the adjoint identity, from the transposed system
+driven at the ports and read at the channels, because that costs one solve
+per port rather than one per channel. The output wave read at a channel `c`
+is `kval_c * i*w_c * phi_c`, with the signed mode frequency the voltage of
+a flux carries, and it is divided by the input wave at the port `i`,
+`kval_i * Z_i * I_i / 2`, which carries no frequency. The scattering matrix
+the channel's own drive would give is the reverse, `kval_i * i*w_i * phi_i`
+over `kval_c * Z_c * I_c / 2`, and by reciprocity of the transposed system
+the two flux responses per unit current are the same. With
+`kval^2 = 1/(|w| Z)` the ratio of the adjoint quantity to the true one is
+`sign(w_c) * sign(w_i)`: the magnitudes agree, and the sign of every entry
+between a positive and a negative frequency mode is reversed. This restores
+it, so that `Snoise` is the scattering matrix from the channel's incoming
+wave to the port's outgoing wave in the same signed frequency convention
+as `S`; a resistor's channel is then exactly a port of its impedance in
+vacuum, and the cross terms of the added noise covariance between positive
+and negative frequency outputs compose with `S` as a Gaussian channel does.
+The quantum efficiency and the commutation relations read only magnitudes
+and do not see this.
+"""
+function adjointnoisesigns!(Snoise::AbstractMatrix, wmodes, Nmodes::Integer)
+    @inbounds for i in axes(Snoise, 2)
+        si = sign(real(wmodes[(i - 1) % Nmodes + 1]))
+        for c in axes(Snoise, 1)
+            sc = sign(real(wmodes[(c - 1) % Nmodes + 1]))
+            Snoise[c, i] *= sc*si
+        end
+    end
+    return Snoise
+end
+
+"""
     thermaloccupation(w, temperature)
 
 The factor `2*nbar + 1 = coth(hbar*abs(w)/(2*k*T))` by which a mode at

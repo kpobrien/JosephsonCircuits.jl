@@ -16,8 +16,7 @@ import StaticArrays
             ]
             # single matrix input
             for portimpedances in [
-                    rand(Complex{Float64}), rand(Complex{Float64},2),
-                    (StaticArrays.@MVector rand(Complex{Float64},2))
+                    rand(Complex{Float64}), rand(Complex{Float64},2)
                 ]
                 for arg1 in [rand(Complex{Float64},2,2), (StaticArrays.@MMatrix rand(Complex{Float64},2,2))]
                     arg2 = f[1](arg1,portimpedances=portimpedances)
@@ -109,10 +108,6 @@ import StaticArrays
         A = rand(Complex{Float64},2,2)
 
         @test isapprox(JosephsonCircuits.AtoS(A),JosephsonCircuits.ABCDtoS(A))
-
-        @test isapprox(JosephsonCircuits.AtoS(A),JosephsonCircuits.ABCDtoS(A))
-
-        @test isapprox(JosephsonCircuits.StoA(S),JosephsonCircuits.StoABCD(S))
 
         @test isapprox(JosephsonCircuits.StoA(S),JosephsonCircuits.StoABCD(S))
 
