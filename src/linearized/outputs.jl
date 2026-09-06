@@ -561,15 +561,31 @@ function calcsourcecurrent(key1, key2, bnm, Nmodes, j, k)
     return sourcecurrent
 end
 
+# The component types `impedance` knows, as integers. A kernel cannot carry a
+# `Symbol`, so the shared impedance is written against these and
+# `impedancecode` maps a component type to one at the boundary. The three are
+# declared separately because a docstring on a destructuring assignment is an
+# error from Julia 1.13.
 """
-    IMPEDANCE_R, IMPEDANCE_C, IMPEDANCE_L
+    IMPEDANCE_R
 
-The component types [`impedance`](@ref) knows, as integers.
-
-A kernel cannot carry a `Symbol`, so the shared impedance is written against
-these and [`impedancecode`](@ref) maps a component type to one at the boundary.
+The integer code [`impedance`](@ref) uses for a resistor; see [`impedancecode`](@ref).
 """
-const IMPEDANCE_R, IMPEDANCE_C, IMPEDANCE_L = Int32(1), Int32(2), Int32(3)
+const IMPEDANCE_R = Int32(1)
+
+"""
+    IMPEDANCE_C
+
+The integer code [`impedance`](@ref) uses for a capacitor; see [`impedancecode`](@ref).
+"""
+const IMPEDANCE_C = Int32(2)
+
+"""
+    IMPEDANCE_L
+
+The integer code [`impedance`](@ref) uses for an inductor; see [`impedancecode`](@ref).
+"""
+const IMPEDANCE_L = Int32(3)
 
 """
     impedancecode(type)

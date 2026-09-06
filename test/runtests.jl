@@ -99,21 +99,25 @@ else
         BLAS.set_num_threads(1)
         include(joinpath($TESTDIR, "testcircuits.jl"))
     end
-    # a job on a worker: its testset records into a parent kept on the
-    # stack rather than reporting itself as the outermost one, which would
-    # throw there; the testset comes back to the master, which nests it in
-    # the suite's
+    # a job on a worker: its testset runs inside an enclosing one, so it
+    # records there rather than reporting itself as the outermost testset,
+    # and comes back to the master, which nests it in the suite's. The
+    # enclosing testset is the outermost on the worker and throws at its
+    # end when the job failed; that is caught, since the failures travel
+    # in the returned testset. Only the documented interface of Test is
+    # used, since its internals moved between Julia versions.
     @everywhere function runtestjob(name::String, code::String)
-        parent = Test.DefaultTestSet("worker")
-        Test.push_testset(parent)
-        ts = try
-            @testset "$name" begin
-                include_string(Main, code)
+        job = Ref{Any}(nothing)
+        try
+            @testset "worker" begin
+                job[] = @testset "$name" begin
+                    include_string(Main, code)
+                end
             end
-        finally
-            Test.pop_testset()
+        catch e
+            e isa Test.TestSetException || rethrow()
         end
-        return ts
+        return job[]
     end
     # each worker draws the next job until none is left
     queue = copy(jobs)

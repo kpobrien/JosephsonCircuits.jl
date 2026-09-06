@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using LinearAlgebra
 using StaticArrays
 using Test
 
