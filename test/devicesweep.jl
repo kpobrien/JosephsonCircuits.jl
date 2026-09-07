@@ -280,12 +280,14 @@ const CPU = JosephsonCircuits.CPU
             1/sqrt(Complex(50.0))/sqrt(2*pi*5e9)
     end
 
-    @testset "the batch size cap avoids the cuDSS wrong answer" begin
+    @testset "the batch size cap avoids two cuDSS faults at sixteen" begin
         # cuDSS returns silently wrong solutions from a uniform batch of
-        # sixteen or more systems with six or more right hand sides each
-        @test JosephsonCircuits.uniformbatchlimit(6) == 15
-        @test JosephsonCircuits.uniformbatchlimit(12) == 15
-        @test JosephsonCircuits.uniformbatchlimit(5) > 15
-        @test JosephsonCircuits.uniformbatchlimit(1) > 15
+        # sixteen or more systems with six or more right hand sides each,
+        # and takes about eight times as long for a batch of sixteen as for
+        # one of fifteen at every right hand side count, so the cap is
+        # fifteen whatever the caller asks for
+        for nrhs in (1, 2, 5, 6, 12, 64)
+            @test JosephsonCircuits.uniformbatchlimit(nrhs) == 15
+        end
     end
 end

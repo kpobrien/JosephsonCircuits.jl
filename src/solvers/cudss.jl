@@ -70,25 +70,41 @@ end
 """
     uniformbatchlimit(nrhs::Integer)
 
-The largest uniform batch of systems which cuDSS solves correctly with `nrhs`
-right hand sides each.
+The largest uniform batch of systems to hand cuDSS, whatever the number of
+right hand sides `nrhs`. Fifteen, for two independent reasons, one of
+correctness and one of speed.
 
-!!! warning "This works around a wrong answer, not a failure"
-    cuDSS 0.7 (through CUDSS.jl 0.8.0) returns silently wrong solutions from a
-    uniform batch of sixteen or more systems once each has six or more right
-    hand sides. Every system of the batch comes back wrong, by order one, while
-    `cudss_get(solver, "info")` reports success and `"lu_nnz"` is unchanged, so
-    nothing downstream can detect it. A batch of fifteen is correct with
-    twelve right hand sides and a batch of sixteen is wrong by order one;
-    with one or two right hand sides batches of well over a hundred are
-    correct. The cap costs nothing on this path, since the speedup of
-    batching a frequency sweep through cuDSS saturates by about a dozen
-    systems; it applies only to the cuDSS batch, a
-    [`SparseBlockFactorization`](@ref) sweep sizes its batch by memory
-    instead ([`blocksystembytes`](@ref)) and profits from batches well past
-    this. Re-check against newer cuDSS releases before raising it.
+!!! warning "A wrong answer above fifteen systems with six or more right hand sides"
+    cuDSS 0.7 and 0.8 (through CUDSS.jl 0.8.0) return silently wrong
+    solutions from a uniform batch of sixteen or more systems once each has
+    six or more right hand sides. Every system of the batch comes back
+    wrong, by order one, while `cudss_get(solver, "info")` reports success
+    and `"lu_nnz"` is unchanged, so nothing downstream can detect it. A
+    batch of fifteen is correct with twelve right hand sides and a batch of
+    sixteen is wrong by order one.
+
+!!! warning "A step in the cost at sixteen systems, at every right hand side count"
+    cuDSS 0.8 takes about eight times as long per refactorization and solve
+    for a batch of sixteen as for a batch of fifteen, and then the same
+    time for every batch from sixteen to sixty four. On a 600 by 600 sparse
+    system the cost per refactorization and solve was 2.0 ms at fifteen
+    systems and 16.6 ms at sixteen, and the ratio was 8.2, 8.4, 8.4 and 7.8
+    at one, two, four and eight right hand sides. Because the cost above
+    the step does not grow with the batch, splitting into chunks of fifteen
+    always wins: sixty four systems as five chunks is about 9.5 ms against
+    16.2 ms as one batch. This is not documented by NVIDIA and does not
+    appear to have been reported.
+
+The cap costs nothing on this path, since the speedup of batching a
+frequency sweep through cuDSS saturates by about a dozen systems. It
+applies only to the cuDSS batch: a [`SparseBlockFactorization`](@ref)
+sweep sizes its batch by memory instead ([`blocksystembytes`](@ref)) and
+profits from batches well past this. The `nrhs` argument is kept because
+the first bound depends on it and the second does not, so a cuDSS release
+which fixes one can be accommodated without changing the callers. Re-check
+both against newer releases before raising it.
 """
-uniformbatchlimit(nrhs::Integer) = nrhs >= 6 ? 15 : 128
+uniformbatchlimit(nrhs::Integer) = 15
 
 # Overridden by the CUDSS extension: a uniform batch of systems sharing one
 # sparsity pattern, analyzed once and then refactorized and solved as a batch.
