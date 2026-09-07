@@ -381,9 +381,8 @@ end
     extractbranches(componenttypes::Vector{Symbol},nodeindexarray::Matrix{Int})
 
 The `(node1, node2)` branches of the components which define the circuit
-graph: inductors (`:L`), Josephson junctions (`:Lj`), legacy nonlinear
-elements (`:NL`), current sources (`:I`), ports (`:P`) and voltage sources
-(`:V`). Capacitors, resistors and mutual inductors do not create branches.
+graph: inductors (`:L`), Josephson junctions (`:Lj`), current sources
+(`:I`), ports (`:P`) and voltage sources (`:V`). Capacitors, resistors and mutual inductors do not create branches.
 
 Components sharing a branch produce duplicate tuples; the graph
 construction in [`calcgraphs`](@ref) merges them.
@@ -426,7 +425,7 @@ function extractbranches!(branchvector::Vector,componenttypes::Vector{Symbol},no
         throw(DimensionMismatch(lazy"branchvector should be length zero"))
     end
 
-    allowedcomponenttypes = [:Lj,:NL,:L,:I,:P,:V]
+    allowedcomponenttypes = [:Lj,:L,:I,:P,:V]
     for i in eachindex(componenttypes)
         type = componenttypes[i]
         if type in allowedcomponenttypes

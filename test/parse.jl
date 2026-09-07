@@ -543,7 +543,7 @@ using Test
 
         # the groups partition the flat table exactly once
         grouped = sort(vcat(cc.capacitors, cc.resistors, cc.inductors,
-            cc.junctions, cc.nonlinearinductors, cc.currentsources,
+            cc.junctions, cc.currentsources,
             cc.mutualinductors, [p.component for p in cc.ports]))
         @test grouped == collect(1:JC.ncomponents(cc))
 
@@ -769,7 +769,7 @@ using Test
                     eltype(JC.calcvaluetype(cc.componenttypes, vals, [t])),
                 ((cc.capacitors, :C), (cc.resistors, :R),
                  (cc.inductors, :L), (cc.junctions, :Lj),
-                 (cc.nonlinearinductors, :NL), (cc.currentsources, :I),
+                 (cc.currentsources, :I),
                  (cc.mutualinductors, :K)))
         end
         @test typesagree(lc)

@@ -480,14 +480,23 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
             length(nonlinear.Ljb.nzval)
         )
 
-        # the Fourier coefficients of cos(phi(t)) of the pump
-        applynl!(
-            phimatrix,
-            phimatrixtd,
-            cos,
-            irfftplan,
-            rfftplan,
-        )
+        # The Fourier coefficients of the derivative of the current-phase
+        # relation at the pump, `cos(phi(t))` for the Josephson relation,
+        # which is what modulates the linearized system.
+        relations = calcjunctionrelations(psc.componenttypes, psc.nodeindices,
+            psc.junctioncprs, cg.edge2indexdict, nonlinear.Ljb)
+        if isnothing(relations)
+            applynl!(
+                phimatrix,
+                phimatrixtd,
+                cos,
+                irfftplan,
+                rfftplan,
+            )
+        else
+            applyrelationnl!(phimatrix, phimatrixtd, similar(phimatrixtd),
+                relations, relations.derivative, cos, irfftplan, rfftplan)
+        end
 
     end
 

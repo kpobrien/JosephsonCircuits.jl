@@ -493,6 +493,35 @@ function calcLjb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
 end
 
 """
+    calcjunctionrelations(componenttypes::Vector{Symbol},
+        nodeindices::Matrix{Int}, junctioncprs::AbstractDict,
+        edge2indexdict::Dict, Ljb::SparseVector)
+
+The [`JunctionRelations`](@ref) of the junctions of a circuit, ordered by
+the nonzero entries of the branch inductance vector `Ljb`, which is the
+order every solver indexes its junction axis by. Returns `nothing` when
+every junction is the sinusoidal Josephson one, which is the case the
+solvers evaluate as plain `sin` and `cos`.
+
+`junctioncprs` is keyed by the flat component index, as it is on a
+[`CompiledCircuit`](@ref); a junction is placed by the branch its two
+nodes make, the same way [`calcbranchvector`](@ref) places its value.
+"""
+function calcjunctionrelations(componenttypes::Vector{Symbol},
+        nodeindices::Matrix{Int}, junctioncprs::AbstractDict,
+        edge2indexdict::Dict, Ljb::SparseVector)
+    isempty(junctioncprs) && return nothing
+    # the relation of each branch which holds a junction
+    bycpr = Dict{Int,Any}()
+    for (i, type) in enumerate(componenttypes)
+        type === :Lj || continue
+        b = edge2indexdict[(nodeindices[1,i], nodeindices[2,i])]
+        bycpr[b] = get(junctioncprs, i, nothing)
+    end
+    return junctionrelations([get(bycpr, b, nothing) for b in Ljb.nzind])
+end
+
+"""
     calcbranchvector(componenttypes::Vector{Symbol},
         nodeindices::Matrix{Int}, componentvalues::Vector,
         valuecomponenttypes::Vector, edge2indexdict::Dict, Nmodes, Nbranches,

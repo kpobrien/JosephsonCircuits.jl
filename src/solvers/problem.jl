@@ -698,7 +698,11 @@ function _hbd3F!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
     applyifft!(sys.dirtd2, sys.phimatrix, sys.irfftplan)
     applyforwardterm!(sys.phimatrix, plan, z)
     applyifft!(p.dirtd3[], sys.phimatrix, sys.irfftplan)
-    sys.worktd .= .-sys.costd .* sys.dirtd .* sys.dirtd2 .* p.dirtd3[]
+    if allsinusoidal(sys.relations)
+        sys.worktd .= .-sys.costd .* sys.dirtd .* sys.dirtd2 .* p.dirtd3[]
+    else
+        sys.worktd .= _third!(sys) .* sys.dirtd .* sys.dirtd2 .* p.dirtd3[]
+    end
     applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
     applybackwardterm!(out, plan, sys.phimatrix, v; addlinearterm = false)
     return out

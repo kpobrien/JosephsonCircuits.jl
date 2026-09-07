@@ -156,13 +156,24 @@ using Test
         @test_throws ArgumentError NonlinearInductor(1e-9, mycpr)
         nl = NonlinearInductor(1e-9, mycpr, x -> 1 - x^2/2)
         @test !JosephsonCircuits.issinusoidal(nl)
-        # snail-style direct specification elaborates but does not yet lower
+        # a snail written as its expansion compiles as a junction, with
+        # the relation kept beside the table; see test/nonlinearinductor.jl
         c = Circuit([:snail => NonlinearInductor(1e-9, p),
                      :r => Resistor(50.0), :p1 => Port(1; termination = nothing)],
             [((:p1, 1), (:r, 1), (:snail, 1)),
              ((:p1, 2), (:r, 2), (:snail, 2), Ground)])
         @test JosephsonCircuits.ninstances(elaborate(c)) == 3
-        @test_throws ComponentNotSupportedError compile(c)
+        psc = compile(c)
+        i = findfirst(==("snail"), psc.componentnames)
+        @test psc.componenttypes[i] == :Lj
+        @test psc.junctioncprs[i].a == [0.0, 1.0, 0.0, -1/6]
+        # a relation which is neither the Josephson one nor a polynomial
+        # is refused, since no solver can write it down
+        cn = Circuit([:nl => nl, :r => Resistor(50.0),
+                      :p1 => Port(1; termination = nothing)],
+            [((:p1, 1), (:r, 1), (:nl, 1)),
+             ((:p1, 2), (:r, 2), (:nl, 2), Ground)])
+        @test_throws ComponentNotSupportedError compile(cn)
         # a sinusoidal junction lowers to the legacy Lj component
         c2 = Circuit([:jj => JosephsonJunction(100e-12), :p1 => Port(1; termination = nothing),
                       :r => Resistor(50.0)],

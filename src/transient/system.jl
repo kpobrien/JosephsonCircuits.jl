@@ -184,6 +184,11 @@ struct TransientProblem
     portconductances::Vector{Float64}
     blocks::Vector{TransientBlock}
     lines::Vector{TransientLine}
+    # the current-phase relation of every junction, in the order of the
+    # nonzero entries of `matrices.Ljb`, which is the order of the junction
+    # rows of `RJ` and of `lmolj`. `nothing` when every one of them is the
+    # sinusoidal Josephson relation.
+    relations::Union{Nothing,JunctionRelations{Matrix{Float64},Vector{Bool}}}
 end
 
 Base.length(p::TransientProblem) = p.Nnodal + p.Naux
@@ -223,8 +228,6 @@ any other block is rejected for the same reason.
 function transientproblem(circuit, circuitdefs = Dict{Symbol,Any}();
         sources = (), sorting::Symbol = defaultsorting(circuit))
     psc = compile(circuit; sorting)
-    isempty(psc.nonlinearinductors) || throw(ArgumentError(
-        "the transient supports the sinusoidal Josephson junction only; use JosephsonJunction."))
     cg = calccircuitgraph(psc; loops = false)
     vvn = componentvaluestonumber(psc.componentvalues, circuitdefs)
     checkcomponentvaluesdefined(psc.componentnames, vvn, circuitdefs)
@@ -305,7 +308,9 @@ function transientproblem(circuit, circuitdefs = Dict{Symbol,Any}();
     end
     return TransientProblem(psc, cg, nm, Nnodal, Naux, Lscale, coupledbranches,
         floatingcomponents, gaugeindices, inertialess, algebraic, directions, constraints, rateextraction,
-        injection, drives, constantcurrent, portpositive, portnegative, portimpedances, portconductances, blocks, lines)
+        injection, drives, constantcurrent, portpositive, portnegative, portimpedances, portconductances, blocks, lines,
+        calcjunctionrelations(psc.componenttypes, psc.nodeindices,
+            psc.junctioncprs, cg.edge2indexdict, nm.Ljb))
 end
 
 # the ideal lines of a compiled circuit, in compiled order

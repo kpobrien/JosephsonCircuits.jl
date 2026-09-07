@@ -92,7 +92,7 @@ linear term, the Jacobian it fills and the factorization of it. Built by
 [`transientsystem`](@ref); [`transientsolve`](@ref), the tangent and the
 adjoint all step on it.
 """
-struct TransientSystem{B, M, MJ, V, VC, J, P, F, G}
+struct TransientSystem{B, M, MJ, V, VC, J, P, F, G, RM, RB}
     problem::TransientProblem
     backend::B
     method::AbstractTransientIntegrator
@@ -149,6 +149,15 @@ struct TransientSystem{B, M, MJ, V, VC, J, P, F, G}
     factorization::F
     # the cosine of the junction phases the plan reads
     cosphi::VC
+    # The current-phase relation of every junction, on the backend, and a
+    # work vector for the Horner loop, which reads the phases while it
+    # writes its result. The empty table is every junction sinusoidal,
+    # which is every circuit that does not ask for another, and the steps
+    # then take the `sin` and `cos` they always did. A table rather than a
+    # `nothing` so that the type of a system does not depend on what the
+    # circuit holds.
+    relations::JunctionRelations{RM, RB}
+    relationwork::V
     # the stage data of the Gauss-Legendre rule, nothing for the others; a
     # type parameter, so that the step loop reading the tableau is typed
     gauss::G
@@ -292,7 +301,8 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
         d(RJ), d(RJt), v(lmolj), d(injection), v(constant), d(blockgather), d(blockscatter),
         d(sparse(transpose(blockgather))), d(sparse(transpose(blockscatter))), d(lineinjection), d(linegather), d(lineE),
         d(ports), d(portst), d(portdrives), v(p.portimpedances), v(p.portconductances), plan, jacobian,
-        factorization, cosphi, gauss)
+        factorization, cosphi, torelations(p.relations, v(zeros(0))),
+        v(zeros(length(Ljb.nzval))), gauss)
 end
 
 # a sparse matrix scaled with every stored entry kept, zero or not: the
@@ -407,7 +417,13 @@ function junctionphases!(phi, sys::TransientSystem, x)
     return phi
 end
 function junctioncurrent!(y, sys::TransientSystem, phi, work)
-    work .= sys.lmolj .* sin.(phi)
+    r = sys.relations
+    if allsinusoidal(r)
+        work .= sys.lmolj .* sin.(phi)
+    else
+        relationinto!(sys.relationwork, r, phi)
+        work .= sys.lmolj .* sys.relationwork
+    end
     stepmul!(y, sys.RJt, work)
     return y
 end
@@ -437,7 +453,7 @@ end
 # the Jacobian of the step at the phases, assembled by the plan from the
 # cosines and factorized, or refactorized on the analysis of the first
 function stepjacobian!(sys::TransientSystem, phi, factor)
-    sys.cosphi .= cos.(phi)
+    derivativeinto!(sys.cosphi, sys.relations, phi)
     assemblerealjacobian!(nonzeros(sys.jacobian), sys.plan, sys.cosphi)
     if isnothing(factor)
         return factorize(sys.factorization, sys.jacobian)
@@ -676,7 +692,8 @@ function transientconsistency(sys::TransientSystem, x, v, t, p::TransientProblem
     xh, vh = Array(x), Array(v)
     b = hostdrivecurrent(sys, t, p, linevalues, blockwaves)
     phi = RJ*xh
-    gv, lx, j = G*vh, L*xh, transpose(RJ)*(lmolj .* sin.(phi))
+    hr = hostrelations(sys.relations)
+    gv, lx, j = G*vh, L*xh, transpose(RJ)*(lmolj .* relationat(hr, phi))
     r = gv .+ lx .+ j .- b
     # the violations are relative to the terms balanced
     scale = max(norm(b, Inf), norm(gv, Inf), norm(lx, Inf), norm(j, Inf), 1.0)
@@ -684,7 +701,7 @@ function transientconsistency(sys::TransientSystem, x, v, t, p::TransientProblem
     # the rate of the drives, by a central difference far below the step
     delta = 1e-3*sys.h
     bdot = (hostdrivecurrent(sys, t + delta, p, linevalues, blockwaves) .- hostdrivecurrent(sys, t - delta, p, linevalues, blockwaves)) ./ (2delta)
-    lv, jv = L*vh, transpose(RJ)*(lmolj .* cos.(phi) .* (RJ*vh))
+    lv, jv = L*vh, transpose(RJ)*(lmolj .* derivativeat(hr, phi) .* (RJ*vh))
     ratescale = max(norm(bdot, Inf), norm(lv, Inf), norm(jv, Inf), 1.0)
     lv .+= jv .- bdot
     for z in p.inertialess

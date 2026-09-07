@@ -60,6 +60,35 @@ include(joinpath(@__DIR__, "..", "transientquantum.jl"))
         @test agree(ra.S, rb.S)
     end
 
+    @testset "a polynomial current-phase relation" begin
+        # the polynomial relations are evaluated by Horner in whole array
+        # broadcasts along the junction axis, and the sinusoidal columns of
+        # a circuit which mixes the two kinds are written over afterwards:
+        # both paths run on the device as they do on the host
+        L0 = 1e-9
+        w = 2*pi*4.75e9
+        src = [(mode = (1,), port = 1, current = 4*0.00565e-6)]
+        taylor(n) = [k % 2 == 1 ? (-1.0)^((k-1)÷2)/prod(1.0:k) : 0.0 for k in 1:n]
+        poly = NonlinearInductor(L0, PolynomialCPR([1.0, 0.25, -1/6, 0.0, 1/120]))
+        jpa = Circuit([("p1","1","0",Port(1)), ("c1","1","2",Capacitor(100e-15)),
+            ("lj","2","0",poly), ("c2","2","0",Capacitor(1e-12))])
+        # one junction of each kind in one circuit, which takes the mixed
+        # path
+        mixed = Circuit([("p1","1","0",Port(1)), ("c1","1","2",Capacitor(100e-15)),
+            ("jj","2","3",JosephsonJunction(L0)),
+            ("lj","3","0",NonlinearInductor(L0, PolynomialCPR(taylor(9)))),
+            ("c2","2","0",Capacitor(1e-12))])
+        for c in (jpa, mixed)
+            ra = hbnlsolve((w,), (8,), src, c, Dict{Symbol,Float64}();
+                method = NewtonKrylov(), keyedarrays = false)
+            rb = hbnlsolve((w,), (8,), src, c, Dict{Symbol,Float64}();
+                method = NewtonKrylov(), backend = CUDABackend(),
+                keyedarrays = false)
+            @test rb.solverinfo.converged
+            @test agree(ra.nodeflux, rb.nodeflux; rtol = 1e-10)
+        end
+    end
+
     @testset "hbnlsolve newtonkrylov, two tone" begin
         ra = hbnlsolve((w1,w2), (8,4), src2, circuit, defs;
             dc = true, odd = true, even = true, method = NewtonKrylov())
@@ -245,6 +274,41 @@ include(joinpath(@__DIR__, "..", "transientquantum.jl"))
     # the circuit in time on the device: the solve through the device
     # sparse products, the assembly plan and cuDSS, its tangent and its
     # adjoint, against the host
+    @testset "a polynomial relation in the transient on the device" begin
+        # the transient reads the same table: its residual and Jacobian on
+        # the device, its tangent and adjoint, and a batch, on a circuit
+        # holding one polynomial junction and one Josephson one
+        taylor(n) = [k % 2 == 1 ? (-1.0)^((k-1)÷2)/prod(1.0:k) : 0.0 for k in 1:n]
+        circuit = Circuit([
+            ("p1", "1", "0", Port(1)), ("c1", "1", "2", Capacitor(100e-15)),
+            ("jj", "2", "3", JosephsonJunction(1e-9)),
+            ("lj", "3", "0", NonlinearInductor(1e-9, PolynomialCPR([1.0, 0.25, -1/6]))),
+            ("c2", "2", "0", Capacitor(1e-12))])
+        drive(t) = t <= 0 ? 0.0 : 0.3e-6*sinpi(2*3e9*t)
+        prob = transientproblem(circuit; sources = [TransientSource(1, drive)])
+        args = ((0.0, 0.5e-9),)
+        host = transientsolve(prob, args...; dt = 2e-12, record = :phases,
+            method = GaussLegendre(), rtol = 1e-12)
+        device = transientsolve(prob, args...; dt = 2e-12, record = :phases,
+            method = GaussLegendre(), rtol = 1e-12, backend = CUDABackend())
+        @test agree(host.outgoing, device.outgoing; rtol = 1e-8)
+        currents = [1e-8*sinpi(2*1.1e9*t) for _ in 1:1, t in host.times]
+        @test agree(transienttangent(host, currents).outgoing,
+            transienttangent(device, currents).outgoing; rtol = 1e-8)
+        weights = [cospi(2*1.7e9*t) for _ in 1:1, t in host.times]
+        @test agree(transientadjoint(host, weights).currents,
+            transientadjoint(device, weights).currents; rtol = 1e-8)
+        # a batch, whose stage Jacobian averages the derivative of the
+        # relation over the two stages
+        half = transientproblem(prob;
+            sources = [TransientSource(1, t -> drive(t)/2)])
+        bh = transientsolve([prob, half], args...; dt = 2e-12, record = :phases,
+            method = GaussLegendre(), rtol = 1e-12)
+        bd = transientsolve([prob, half], args...; dt = 2e-12, record = :phases,
+            method = GaussLegendre(), rtol = 1e-12, backend = CUDABackend())
+        @test agree(bh.outgoing, bd.outgoing; rtol = 1e-8)
+    end
+
     @testset "transient on the device" begin
         circuit = Circuit([
             ("p1", "1", "0", Port(1)), ("p2", "2", "1", Port(2; Z0 = 75.0)),

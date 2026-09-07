@@ -45,7 +45,7 @@ function testjobs()
     for f in ("hbsolve.jl", "directcurrent.jl", "quantumoptics.jl",
             "networkparamconversion.jl", "scatteringblocks.jl", "crosscheck.jl",
             "problem.jl", "transient.jl", "transientblocks.jl", "transientnoise.jl", "transientpumped.jl",
-            "transientiq.jl", "transientquantum.jl",
+            "transientiq.jl", "transientquantum.jl", "nonlinearinductor.jl",
             "modecoupling.jl", "builders.jl", "matrices.jl",
             "exportnetlist.jl", "frequencies.jl", "graph.jl",
             "JosephsonCircuits.jl", "networks.jl", "networkconnection.jl",

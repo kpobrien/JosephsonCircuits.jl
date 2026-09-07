@@ -300,7 +300,15 @@ available through [`cprderivative`](@ref).
 
 This supports specifying the effective nonlinearity of a SNAIL, SQUID,
 Quarton, or kinetic inductor directly through its expansion coefficients
-without wiring up the underlying junction arrangement.
+without wiring up the underlying junction arrangement. An array of `N`
+identical junctions in series, for example, divides the phase and so has
+the relation `N*sin(φ/N)` with small signal inductance `N*Lj`, whose
+expansion is `[1, 0, -1/(6N^2), 0, 1/(120N^4), ...]`.
+
+The coefficients are taken as given. A polynomial is not periodic and not
+bounded, so where it leaves the range it was fitted on, and what the
+harmonic count must be for the harmonics its degree generates, are the
+user's to judge: the solver evaluates what it is given.
 
 # Examples
 ```jldoctest
@@ -359,16 +367,253 @@ must supply its derivative through the three argument
 """
 cprderivative(::typeof(sin)) = cos
 function cprderivative(p::PolynomialCPR{T}) where T
-    # the constructor prepends the zero constant coefficient, so there is
-    # always a linear one to differentiate
-    n = length(p.a)
+    return PolynomialCPRDerivative{T}(differentiatecoefficients(p.a))
+end
+# The derivative of a derivative is the second derivative, which the
+# Hessian of the harmonic balance system and the derivative of the
+# linearized system with respect to the operating point both need. Taking
+# it twice more gives zero polynomials rather than an error, so a caller
+# does not have to know the degree.
+cprderivative(p::PolynomialCPRDerivative{T}) where T =
+    PolynomialCPRDerivative{T}(differentiatecoefficients(p.a))
+
+# `evalpoly` order in, `evalpoly` order out. A polynomial of degree zero
+# differentiates to the zero polynomial, written with the one coefficient
+# `evalpoly` needs rather than as an empty vector.
+function differentiatecoefficients(a::Vector{T}) where T
+    n = length(a)
+    n <= 1 && return T[zero(T)]
     da = Vector{T}(undef, n-1)
     for k in 2:n
-        da[k-1] = (k-1)*p.a[k]
+        da[k-1] = (k-1)*a[k]
     end
-    return PolynomialCPRDerivative{T}(da)
+    return da
 end
 cprderivative(f) = throw(ArgumentError(lazy"No analytic derivative is known for the current-phase relation $(f). Supply it explicitly with NonlinearInductor(L0, f, df); automatic differentiation and finite differences are deliberately not used."))
+
+"""
+    JunctionRelations(value, derivative, negsecond, sinusoidal, anysinusoidal)
+
+The current-phase relations of the Josephson junction branches of a
+circuit, in the order of the nonzero entries of the branch inductance
+vector `Ljb`, which is the order of the junction axis of every time domain
+array the solvers hold.
+
+A relation is either the sinusoidal Josephson one or a
+[`PolynomialCPR`](@ref). The polynomial coefficients of every junction sit
+in the rows of `value`, in `evalpoly` order along the second axis and
+padded with zeros to one common degree, so that a single Horner loop
+evaluates them all; `derivative` and `negsecond` hold the coefficients of
+the first derivative and of the *negative* of the second, which is the
+combination the Hessian and the derivative of the linearized system with
+respect to the operating point are written in, and `third` those of the
+third derivative, which the trilinear form of the problem interface
+takes. `sinusoidal` is true for
+the junctions whose relation no polynomial represents, whose columns the
+evaluation writes over with the trigonometric one; `anysinusoidal` is
+whether any is, so that a circuit of polynomials alone skips that pass.
+
+A circuit whose junctions are all sinusoidal, which is every circuit that
+does not ask for anything else, has no table at all: the solvers hold
+`nothing` and take the plain `sin` and `cos` they always did.
+"""
+struct JunctionRelations{M,V}
+    value::M
+    derivative::M
+    negsecond::M
+    third::M
+    sinusoidal::V
+    anysinusoidal::Bool
+end
+
+"""
+    junctionrelations(cprs::AbstractVector)
+
+The [`JunctionRelations`](@ref) of the junctions whose relations are
+`cprs`, one entry per junction in the order of the junction axis, each
+either `nothing` for the sinusoidal Josephson relation or a
+[`PolynomialCPR`](@ref). Returns `nothing` when every entry is `nothing`.
+"""
+function junctionrelations(cprs::AbstractVector)
+    any(!isnothing, cprs) || return nothing
+    nj = length(cprs)
+    # one common degree, so that the Horner loop is the same length for
+    # every junction; a sinusoidal one contributes no terms
+    nterms = maximum(c -> isnothing(c) ? 0 : length(c.a), cprs)
+    value = zeros(Float64, nj, nterms)
+    derivative = zeros(Float64, nj, nterms)
+    negsecond = zeros(Float64, nj, nterms)
+    third = zeros(Float64, nj, nterms)
+    sinusoidal = fill(true, nj)
+    for (j, c) in enumerate(cprs)
+        isnothing(c) && continue
+        sinusoidal[j] = false
+        d = cprderivative(c)
+        d2 = cprderivative(d)
+        d3 = cprderivative(d2)
+        copycoefficients!(value, j, c.a)
+        copycoefficients!(derivative, j, d.a)
+        copycoefficients!(negsecond, j, -1 .* d2.a)
+        copycoefficients!(third, j, d3.a)
+    end
+    return JunctionRelations(value, derivative, negsecond, third, sinusoidal,
+        any(sinusoidal))
+end
+
+"""
+    relationat(r::JunctionRelations, phi)
+
+The current-phase relation of every junction at the branch phases `phi`,
+whose first axis is the junction: `sin.(phi)` when every relation is the
+Josephson one, and the polynomials by Horner otherwise. Allocating, for
+the setup, the diagnostics and the noise, which are not inside a step
+loop; [`relationinto!`](@ref) is the in place form the steps take.
+
+`phi` and the table must live on the same backend, so a host path takes a
+host table from [`hostrelations`](@ref).
+"""
+relationat(r::JunctionRelations, phi) = relationinto!(similar(phi), r, phi)
+
+"""
+    derivativeat(r::JunctionRelations, phi)
+
+The derivative of the relation of every junction at the branch phases
+`phi`, `cos.(phi)` for the Josephson relation: the differential
+inductance which every Jacobian and every linearization is built from.
+The counterpart of [`relationat`](@ref), with
+[`derivativeinto!`](@ref) as its in place form.
+"""
+derivativeat(r::JunctionRelations, phi) = derivativeinto!(similar(phi), r, phi)
+
+"""
+    relationinto!(out, r::JunctionRelations, phi)
+
+[`relationat`](@ref) writing into `out`, which may not alias `phi`. A
+circuit whose junctions are all sinusoidal takes the single broadcast of
+`sin` it always did.
+"""
+function relationinto!(out, r::JunctionRelations, phi)
+    allsinusoidal(r) && return out .= sin.(phi)
+    return applyrelationfirst!(out, phi, r.value, r.sinusoidal,
+        r.anysinusoidal, sin)
+end
+
+"""
+    derivativeinto!(out, r::JunctionRelations, phi)
+
+[`derivativeat`](@ref) writing into `out`, which may not alias `phi`. A
+circuit whose junctions are all sinusoidal takes the single broadcast of
+`cos` it always did.
+"""
+function derivativeinto!(out, r::JunctionRelations, phi)
+    allsinusoidal(r) && return out .= cos.(phi)
+    return applyrelationfirst!(out, phi, r.derivative, r.sinusoidal,
+        r.anysinusoidal, cos)
+end
+
+"""
+    hostrelations(r::JunctionRelations)
+    hostrelations(r::JunctionRelations, rows::AbstractVector{Int})
+
+The table on the host, for the host loops which cannot read a device
+array, and with `rows` the table of that subset of the junctions, in that
+order, which is what a projection onto part of the circuit reads.
+"""
+hostrelations(r::JunctionRelations) = JunctionRelations(Array(r.value),
+    Array(r.derivative), Array(r.negsecond), Array(r.third),
+    Array(r.sinusoidal), r.anysinusoidal)
+
+function hostrelations(r::JunctionRelations, rows::AbstractVector{Int})
+    allsinusoidal(r) && return hostrelations(r)
+    sub(m) = Array(m)[rows, :]
+    mask = Array(r.sinusoidal)[rows]
+    return JunctionRelations(sub(r.value), sub(r.derivative),
+        sub(r.negsecond), sub(r.third), mask, any(mask))
+end
+
+"""
+    allsinusoidal(r::JunctionRelations)
+
+Whether every junction of `r` is the sinusoidal Josephson one, which is
+the empty table: the solvers hold a table always, so that their type does
+not depend on what the circuit holds, and an empty one means the plain
+`sin` and `cos` of the Josephson relation.
+"""
+allsinusoidal(r::JunctionRelations) = size(r.value, 2) == 0
+
+"""
+    emptyrelations(A::AbstractArray)
+
+The empty [`JunctionRelations`](@ref), of the array types of `A`, which is
+what a circuit of sinusoidal junctions alone holds.
+"""
+emptyrelations(A::AbstractArray) = JunctionRelations(similar(A, 0, 0),
+    similar(A, 0, 0), similar(A, 0, 0), similar(A, 0, 0),
+    similar(A, Bool, 0), true)
+
+"""
+    torelations(r, A::AbstractArray)
+
+The relations `r`, `nothing` or a host [`JunctionRelations`](@ref), in the
+array types of `A`: the coefficients take the working precision of `A` and
+move to the backend it lives on, so that the solvers' broadcasts stay on
+one device and in one precision.
+"""
+torelations(::Nothing, A::AbstractArray) = emptyrelations(A)
+function torelations(r::JunctionRelations, A::AbstractArray)
+    T = real(eltype(A))
+    move(m) = copyto!(similar(A, T, size(m)...), convert(Matrix{T}, m))
+    return JunctionRelations(move(r.value), move(r.derivative),
+        move(r.negsecond), move(r.third),
+        copyto!(similar(A, Bool, length(r.sinusoidal)), r.sinusoidal),
+        r.anysinusoidal)
+end
+
+function copycoefficients!(m::Matrix, j::Integer, a::AbstractVector)
+    for k in eachindex(a)
+        m[j, k] = a[k]
+    end
+    return m
+end
+
+# `out .= f.(src)` where `f` is the relation of each junction, given by the
+# rows of `c` as a polynomial in `evalpoly` order, and `trig` where the
+# junction is sinusoidal. The junction is the last axis of `src`, as it is
+# in every time domain array of harmonic balance, so a coefficient column
+# is reshaped to broadcast along it. Everything here is a broadcast of
+# whole arrays, which is what keeps it device generic: no kernel, no
+# scalar indexing, and one pass per degree rather than one per junction.
+function applyrelationlast!(out::AbstractArray, src::AbstractArray,
+        c::AbstractMatrix, sinusoidal::AbstractVector, anysinusoidal::Bool, trig)
+    shape = ntuple(d -> d == ndims(out) ? size(c, 1) : 1, ndims(out))
+    column(k) = reshape(view(c, :, k), shape)
+    nterms = size(c, 2)
+    out .= column(nterms)
+    for k in nterms-1:-1:1
+        out .= out .* src .+ column(k)
+    end
+    if anysinusoidal
+        mask = reshape(sinusoidal, shape)
+        out .= ifelse.(mask, trig.(src), out)
+    end
+    return out
+end
+
+# the same for the transient, whose branch phases carry the junction on
+# the first axis, `(junction,)` or `(junction, condition)`, against which a
+# coefficient column broadcasts as it is
+function applyrelationfirst!(out::AbstractArray, src::AbstractArray,
+        c::AbstractMatrix, sinusoidal::AbstractVector, anysinusoidal::Bool, trig)
+    nterms = size(c, 2)
+    out .= view(c, :, nterms)
+    for k in nterms-1:-1:1
+        out .= out .* src .+ view(c, :, k)
+    end
+    if anysinusoidal
+        out .= ifelse.(sinusoidal, trig.(src), out)
+    end
+    return out
+end
 
 """
     NonlinearInductor(L0, cpr, dcpr)
@@ -384,6 +629,20 @@ analytic derivatives through [`cprderivative`](@ref).
 
 This supports specifying the effective nonlinearity of a SNAIL, SQUID, or
 Quarton directly, as an alternative to composing the underlying junctions.
+A quadratic term in the relation is what makes such an element a three
+wave mixer, which the Josephson relation, being odd, is not.
+
+The relations the solvers evaluate are the sinusoidal Josephson one,
+which is what [`JosephsonJunction`](@ref) writes, and a
+[`PolynomialCPR`](@ref); another callable is refused when the circuit is
+compiled. The element is a junction to everything else in the solvers: it
+makes the same branch, enters the same matrices, and `L0` is its
+inductance there, so only the pointwise relation differs. Harmonic
+balance evaluates it, in the residual, in the Jacobian, in the Hessian
+and in the pump modulation of the linearized system, and the transient
+solver steps it, in its residual, its Jacobian, its tangent and adjoint,
+and the linearization its noise is taken about.
+
 See also [`JosephsonJunction`](@ref).
 """
 struct NonlinearInductor{T,F,DF} <: AbstractComponent
@@ -425,6 +684,24 @@ relation `(sin, cos)`, in which case the component compiles to the `:Lj`
 type the solvers support.
 """
 issinusoidal(c::NonlinearInductor) = c.cpr === sin && c.dcpr === cos
+
+"""
+    junctioncpr(c::NonlinearInductor, path)
+
+The relation the solvers evaluate for `c`: `nothing` for the sinusoidal
+Josephson relation, which they hold as `sin` and `cos`, or the
+[`PolynomialCPR`](@ref) they evaluate by Horner. Any other callable throws,
+since a relation the solvers cannot write down is one they cannot
+transform.
+
+The coefficients are converted to `Float64` here, so that the table the
+solvers build is concrete whatever the user wrote them as.
+"""
+junctioncpr(c::NonlinearInductor, path = "") =
+    issinusoidal(c) ? nothing : junctioncpr(c.cpr, path)
+junctioncpr(p::PolynomialCPR, path) =
+    PolynomialCPR{Float64}(convert(Vector{Float64}, p.a))
+junctioncpr(f, path) = throw(ComponentNotSupportedError(lazy"the NonlinearInductor at $(path) has the current-phase relation $(f), which the solvers do not evaluate; give the sinusoidal Josephson relation or a PolynomialCPR."))
 
 # === frequency dependent matrix providers ===
 

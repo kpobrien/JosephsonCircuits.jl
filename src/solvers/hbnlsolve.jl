@@ -722,6 +722,12 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     nodenames = psc.nodenames
     nodeindices = psc.nodeindices
     Nbranches = cg.Nbranches
+    # the current-phase relation of every junction, in the order of the
+    # junction axis of the time domain arrays. `nothing` when they are all
+    # the sinusoidal Josephson relation, which is the path the system takes
+    # unchanged
+    relations = calcjunctionrelations(componenttypes, nodeindices,
+        psc.junctioncprs, cg.edge2indexdict, Ljb)
     edge2indexdict = cg.edge2indexdict
 
     # find the indices associated with the components for which we will
@@ -1090,7 +1096,7 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
             Ljb, Ljbm, Lscale, Nbranches, freqindexmap, conjsourceindices,
             conjtargetindices, phimatrix, phimatrixtd, irfftplan, rfftplan,
             modelayout, realjacobianplan, complexjacobianplan, backend;
-            realbackward = realrepresentation)
+            realbackward = realrepresentation, relations = relations)
         reusing && (reuse.sys = s)
         s
     end
@@ -1531,7 +1537,9 @@ function nonlinearoutputs(;
             iszero(b) || push!(get!(Vector{String}, branchnames, b),
                 String(componentnames[i]))
         end
-        checkjunctiondc(tohost(sys.sintd), Ljb.nzind, branchnames)
+        checkjunctiondc(tohost(sys.sintd), Ljb.nzind, branchnames,
+            allsinusoidal(sys.relations) ? nothing :
+                Array(sys.relations.sinusoidal))
     end
 
     # drop the auxiliary variables; the output holds only the node fluxes
@@ -1602,7 +1610,8 @@ function nonlinearoutputs(;
             twin = HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
                 Ljb, Ljbm, Lscale, Nbranches, freqindexmap, conjsourceindices,
                 conjtargetindices, hostphimatrix, hostphitd, hostirfftplan,
-                hostrfftplan, modelayout, nothing, nothing, CPU())
+                hostrfftplan, modelayout, nothing, nothing, CPU();
+                relations = relations)
             setpoint!(twin, x)
             twin
         end

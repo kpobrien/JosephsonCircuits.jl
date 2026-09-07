@@ -1052,6 +1052,33 @@ applynl!(fd::AbstractArray{Complex{T}}, ::AbstractArray{T}, f, ::Nothing,
     ::Nothing) where T = fd
 
 """
+    applyrelationnl!(fd, td, work, relations, coefficients, trig, irfftplan,
+        rfftplan)
+
+[`applynl!`](@ref) with the per junction relation of `relations` in place
+of a single function: `coefficients` are the polynomial coefficients to
+evaluate, one junction per row, and `trig` is what the junctions the table
+marks sinusoidal take instead. `work` is a time domain array the size of
+`td`, which the Horner loop reads while it writes `td`.
+"""
+function applyrelationnl!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
+        work::AbstractArray{T}, relations, coefficients, trig, irfftplan,
+        rfftplan) where T
+    mul!(td, irfftplan, fd)
+    normalization = prod(size(td)[1:end-1])
+    work .= td .* normalization
+    applyrelationlast!(td, work, coefficients, relations.sinusoidal,
+        relations.anysinusoidal, trig)
+    mul!(fd, rfftplan, td)
+    fd .*= 1/normalization
+    return nothing
+end
+
+applyrelationnl!(fd::AbstractArray{Complex{T}}, ::AbstractArray{T},
+    ::AbstractArray{T}, relations, coefficients, trig, ::Nothing,
+    ::Nothing) where T = fd
+
+"""
     hbmatind(truncfrequencies::Frequencies{N}; alias = false)
 
 With `alias = true` a difference mode which falls outside the sampled grid

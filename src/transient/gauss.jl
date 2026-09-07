@@ -357,6 +357,11 @@ struct GaussProjection{M, MP, VP}
     RJZl::Matrix{Float64}
     lmoljp::Vector{Float64}
     lmoljpdev::VP
+    # the current-phase relations of the projected junctions, in the order
+    # of `pj`. The projection evaluates them on the host, from `hphi`, and
+    # moves the result where a device array needs it, so one host table
+    # serves both.
+    relationsp::JunctionRelations{Matrix{Float64},Vector{Bool}}
     ZLZ::Matrix{Float64}
     Zrate::M
     Zratet::M
@@ -426,7 +431,10 @@ function gaussprojection(p::TransientProblem, G::SparseMatrixCSC, L::SparseMatri
     Minv = ratesystem(G, L, Zrh, Eah).Minv
     d = A -> devicesparse(A, backend)
     return GaussProjection(directions, pj, d(Zh), d(sparse(transpose(Zh))), d(Zth*L), Zth, d(Zlh), d(RJph), d(sparse(transpose(RJph))),
-        RJZ, RJZl, lmolj[pj], tobackend(backend, lmolj[pj]), ZLZ, d(Zrateh), d(sparse(transpose(Zrateh))),
+        RJZ, RJZl, lmolj[pj], tobackend(backend, lmolj[pj]),
+        isnothing(p.relations) ? emptyrelations(zeros(0)) :
+            hostrelations(p.relations, pj),
+        ZLZ, d(Zrateh), d(sparse(transpose(Zrateh))),
         Zth*injection, Vector(Zth*constant), Zth*lineinjection, Zth*blockscatter,
         readrows, auxrows, d(Zrh), d(Eah), d(Qh), d(sparse(transpose(Qh))), d(Qh*G), d(Qh*L), Matrix(RJph*Zrh), Minv,
         Qh*injection, Vector(Qh*constant), Qh*lineinjection, Qh*blockscatter)
@@ -436,7 +444,8 @@ end
 # `Z' (L + J'(x)) Z`, one small matrix per column of the projected
 # junctions' phases
 function projectionmatrices(pr::GaussProjection, hphi::AbstractMatrix)
-    return [pr.ZLZ .+ transpose(pr.RJZl)*(Diagonal(pr.lmoljp .* cos.(view(hphi, :, j)))*pr.RJZ) for j in axes(hphi, 2)]
+    return [pr.ZLZ .+ transpose(pr.RJZl)*(Diagonal(pr.lmoljp .*
+        derivativeat(pr.relationsp, view(hphi, :, j)))*pr.RJZ) for j in axes(hphi, 2)]
 end
 
 # the buffers of the projection over `N` conditions and `m` columns: the
@@ -483,6 +492,14 @@ struct GaussStage{V, M, R, SM, SV}
     rationalvals::R
     rational::Vector{RationalStage}
     coupling::Union{Nothing, RationalCoupling{SM}}
+    # The only constructor, and it takes the parameters: `SM` and `SV`
+    # appear in the union fields alone, so a circuit with neither a
+    # projection nor a coupling passes `nothing` for both and leaves them
+    # with nothing to infer from. `gaussstage` reads them off the backend.
+    GaussStage{V, M, R, SM, SV}(coefficients, imvals, cjacobian, projection,
+            rationalvals, rational, coupling) where {V, M, R, SM, SV} =
+        new{V, M, R, SM, SV}(coefficients, imvals, cjacobian, projection,
+            rationalvals, rational, coupling)
 end
 
 # the stage with its union fields' types taken from the backend

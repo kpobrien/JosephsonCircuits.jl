@@ -26,7 +26,13 @@ end
 # directions at once, `RJ' * (lmolj .* cos(phi) .* (RJ*d))`
 function junctionproduct!(y, sys::TransientSystem, phi, d, work)
     stepmul!(work, sys.RJ, d)
-    work .*= sys.lmolj .* cos.(phi)
+    r = sys.relations
+    if allsinusoidal(r)
+        work .*= sys.lmolj .* cos.(phi)
+    else
+        derivativeinto!(sys.relationwork, r, phi)
+        work .*= sys.lmolj .* sys.relationwork
+    end
     stepmul!(y, sys.RJt, work)
     return y
 end

@@ -41,7 +41,7 @@ types. The workspaces of the residual and the matrix-free products are
 parameterized on their array types rather than fixed to `Array`, so they can
 live on whichever KernelAbstractions backend the system was built for.
 """
-struct HBSystem{TR,TinvL,TG,TC,TWm,TK,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ,TNP,TVC,TVR,TAC,TAR}
+struct HBSystem{TR,TinvL,TG,TC,TWm,TK,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ,TNP,TVC,TVR,TAC,TAR,TAM,TAB}
     # linear term matrices and source vector (complex representation, scaled
     # by Lscale, conjugated for negative frequency modes with conjnegfreq!)
     Rbnm::TR
@@ -95,6 +95,25 @@ struct HBSystem{TR,TinvL,TG,TC,TWm,TK,Tb,TLjb,TLjbm,TLm,TIP,TFP,TRJ,TCJ,TNP,TVC,
     costd::TAR
     sincurrent::Base.RefValue{Bool}
     coscurrent::Base.RefValue{Bool}
+    # the negative of the second derivative of the relation at the point,
+    # which the Hessian and the derivative of the linearized system with
+    # respect to the operating point are written in. The sinusoidal
+    # relation has `-f'' = sin`, so that case reads `sintd` and this array
+    # is empty; a polynomial one fills it.
+    negsecondtd::TAR
+    negsecondcurrent::Base.RefValue{Bool}
+    # the third derivative of the relation at the point, `-cos` for the
+    # Josephson one, which the trilinear form of the problem interface
+    # takes; empty for the Josephson relation, whose caller reads `-costd`
+    thirdtd::TAR
+    thirdcurrent::Base.RefValue{Bool}
+    # the current-phase relation of every junction. The empty table is
+    # every junction sinusoidal, which is every circuit that does not ask
+    # for another, and the evaluations then take the `sin` and `cos` they
+    # always did. Held as a table rather than as `nothing` so that the type
+    # of a system, and with it everything compiled for it, does not depend
+    # on what the circuit holds.
+    relations::JunctionRelations{TAM,TAB}
     # workspaces: `phimatrix` is the frequency domain scratch of every
     # residual and product
     phimatrix::TAC
@@ -114,7 +133,7 @@ end
         Ljbm, Lscale, Nbranches, freqindexmap, conjsourceindices, conjtargetindices,
         phimatrix, phimatrixtd, irfftplan, rfftplan, modelayout,
         realjacobianplan, complexjacobianplan, backend = CPU();
-        realbackward = true)
+        realbackward = true, relations = nothing)
 
 Construct an [`HBSystem`](@ref) from the ingredients assembled by
 [`hbnlsolve`](@ref), allocating the workspaces. `phimatrix` and
@@ -130,12 +149,18 @@ matrix-free products are allocated; `CPU()` is the default and the reference.
 `phimatrix` and `phimatrixtd` are adopted as given, so pass them already on
 the backend, and the time domain workspaces derived from them with `similar`
 follow.
+`relations` are the [`JunctionRelations`](@ref) of the junctions, or
+`nothing` when every one of them is the sinusoidal Josephson relation,
+which is the case the evaluations take as the plain `sin` and `cos` they
+always did. They are moved to the backend and to the working precision
+here, and the cache of the second derivative is allocated only when there
+is one to hold.
 """
 function HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
     Ljb, Ljbm, Lscale, Nbranches, freqindexmap, conjsourceindices, conjtargetindices,
     phimatrix, phimatrixtd, irfftplan, rfftplan, modelayout,
     realjacobianplan, complexjacobianplan, backend = CPU();
-    realbackward::Bool = true)
+    realbackward::Bool = true, relations = nothing)
 
     n = size(Rbnm, 2)
     # the working precision of everything the residual and the matrix-free
@@ -173,6 +198,13 @@ function HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
         tobackend(backend, zeros(TF, modelayout.rdim)),
         similar(phimatrixtd), similar(phimatrixtd), similar(phimatrixtd),
         Ref(false), Ref(false),
+        # the second derivative is cached only where it is not the sine
+        isnothing(relations) ? similar(phimatrixtd, ntuple(_ -> 0,
+            ndims(phimatrixtd))) : similar(phimatrixtd),
+        Ref(false),
+        isnothing(relations) ? similar(phimatrixtd, ntuple(_ -> 0,
+            ndims(phimatrixtd))) : similar(phimatrixtd),
+        Ref(false), torelations(relations, phimatrixtd),
         phimatrix, similar(phimatrixtd), similar(phimatrixtd), phimatrixtd,
         similar(phimatrix), Ref(false))
 end
@@ -252,6 +284,8 @@ function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
     # the point is stale: it was set against the old values
     sys.sincurrent[] = false
     sys.coscurrent[] = false
+    sys.negsecondcurrent[] = false
+    sys.thirdcurrent[] = false
     sys.cosfdcurrent[] = false
     return HBSystem(sys.Rbnm, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
         sys.wmodes2m, sys.Knm, sys.bnm, sys.Ljb, sys.Ljbm, Lscale,
@@ -259,7 +293,8 @@ function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
         sys.irfftplan, sys.rfftplan, sys.modelayout, realjacobianplan,
         complexjacobianplan, sys.nonlineartermplan, sys.bnmr, sys.x,
         sys.xr, sys.phitd, sys.sintd, sys.costd, sys.sincurrent,
-        sys.coscurrent, sys.phimatrix, sys.dirtd, sys.dirtd2, sys.worktd,
+        sys.coscurrent, sys.negsecondtd, sys.negsecondcurrent,
+        sys.thirdtd, sys.thirdcurrent, sys.relations, sys.phimatrix, sys.dirtd, sys.dirtd2, sys.worktd,
         sys.cosfd, sys.cosfdcurrent)
 end
 
@@ -432,11 +467,24 @@ function _applypointwise!(out::AbstractArray{T}, f::F,
     return out
 end
 
-# ensure the cached pointwise sine or cosine of the time domain branch
-# fluxes at the current point are up to date.
+# Ensure the cached pointwise current-phase relation, or its derivative,
+# of the time domain branch fluxes at the current point is up to date.
+#
+# A circuit whose junctions are all sinusoidal, which is every circuit that
+# does not ask for another relation, takes the same single broadcast of
+# `sin` or `cos` over the whole array that it always did: the table is
+# empty, the branch is one comparison outside the loop, and nothing about
+# the junction path changes. A circuit which does ask evaluates every
+# junction's polynomial by Horner along the junction axis.
 function _ensuresin!(sys::HBSystem)
     if !sys.sincurrent[]
-        _applypointwise!(sys.sintd, sin, sys.phitd)
+        r = sys.relations
+        if allsinusoidal(r)
+            _applypointwise!(sys.sintd, sin, sys.phitd)
+        else
+            applyrelationlast!(sys.sintd, sys.phitd, r.value, r.sinusoidal,
+                r.anysinusoidal, sin)
+        end
         sys.sincurrent[] = true
     end
     return sys
@@ -444,10 +492,48 @@ end
 
 function _ensurecos!(sys::HBSystem)
     if !sys.coscurrent[]
-        _applypointwise!(sys.costd, cos, sys.phitd)
+        r = sys.relations
+        if allsinusoidal(r)
+            _applypointwise!(sys.costd, cos, sys.phitd)
+        else
+            applyrelationlast!(sys.costd, sys.phitd, r.derivative,
+                r.sinusoidal, r.anysinusoidal, cos)
+        end
         sys.coscurrent[] = true
     end
     return sys
+end
+
+# The array holding the negative of the second derivative of the relation
+# at the point, which is what the Hessian and the derivative of the
+# linearized system multiply. The sinusoidal relation has `-f'' = sin`, so
+# that case returns the cached sine and allocates nothing.
+function _negsecond!(sys::HBSystem)
+    r = sys.relations
+    if allsinusoidal(r)
+        _ensuresin!(sys)
+        return sys.sintd
+    end
+    if !sys.negsecondcurrent[]
+        applyrelationlast!(sys.negsecondtd, sys.phitd, r.negsecond,
+            r.sinusoidal, r.anysinusoidal, sin)
+        sys.negsecondcurrent[] = true
+    end
+    return sys.negsecondtd
+end
+
+# The array holding the third derivative of the relation at the point, for
+# a circuit which has a polynomial one. The Josephson relation has
+# `f''' = -cos`, which its caller reads from the cached cosine instead, so
+# this is never called for it.
+function _third!(sys::HBSystem)
+    r = sys.relations
+    if !sys.thirdcurrent[]
+        applyrelationlast!(sys.thirdtd, sys.phitd, r.third, r.sinusoidal,
+            r.anysinusoidal, x -> -cos(x))
+        sys.thirdcurrent[] = true
+    end
+    return sys.thirdtd
 end
 
 """
@@ -474,6 +560,8 @@ function setpoint!(sys::HBSystem, xr::AbstractVector{<:Real})
     applyifft!(sys.phitd, sys.phimatrix, sys.irfftplan)
     sys.sincurrent[] = false
     sys.coscurrent[] = false
+    sys.negsecondcurrent[] = false
+    sys.thirdcurrent[] = false
     sys.cosfdcurrent[] = false
     return sys
 end
@@ -483,6 +571,8 @@ function _setpoint!(sys::HBSystem)
     applyifft!(sys.phitd, sys.phimatrix, sys.irfftplan)
     sys.sincurrent[] = false
     sys.coscurrent[] = false
+    sys.negsecondcurrent[] = false
+    sys.thirdcurrent[] = false
     sys.cosfdcurrent[] = false
     return sys
 end
@@ -581,13 +671,13 @@ require directional second derivatives.
 function hessianvectorproduct!(Hvw::AbstractVector{<:Complex},
     sys::HBSystem, v::AbstractVector{<:Complex},
     w::AbstractVector{<:Complex})
-    _ensuresin!(sys)
+    negsecond = _negsecond!(sys)
     plan = sys.nonlineartermplan
     applyforwardterm!(sys.phimatrix, plan, v)
     applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
     applyforwardterm!(sys.phimatrix, plan, w)
     applyifft!(sys.dirtd2, sys.phimatrix, sys.irfftplan)
-    _multiplyintowork!(sys.worktd, sys.sintd, sys.dirtd, sys.dirtd2)
+    _multiplyintowork!(sys.worktd, negsecond, sys.dirtd, sys.dirtd2)
     applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
     # the linear terms are linear in x so they do not contribute
     applybackwardterm!(Hvw, plan, sys.phimatrix, v; addlinearterm = false)
@@ -596,13 +686,13 @@ end
 
 function hessianvectorproduct!(Hvwr::AbstractVector{<:Real},
     sys::HBSystem, vr::AbstractVector{<:Real}, wr::AbstractVector{<:Real})
-    _ensuresin!(sys)
+    negsecond = _negsecond!(sys)
     plan = sys.nonlineartermplan
     applyforwardterm!(sys.phimatrix, plan, vr)
     applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
     applyforwardterm!(sys.phimatrix, plan, wr)
     applyifft!(sys.dirtd2, sys.phimatrix, sys.irfftplan)
-    _multiplyintowork!(sys.worktd, sys.sintd, sys.dirtd, sys.dirtd2)
+    _multiplyintowork!(sys.worktd, negsecond, sys.dirtd, sys.dirtd2)
     applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
     # the linear terms are linear in x so they do not contribute
     applybackwardterm!(Hvwr, plan, sys.phimatrix, vr; addlinearterm = false)
@@ -629,10 +719,10 @@ system whichever backend solved for it.
 """
 function cosdirectionalderivative!(dcos::Array, sys::HBSystem,
     v::AbstractVector{<:Complex})
-    _ensuresin!(sys)
+    negsecond = _negsecond!(sys)
     applyforwardterm!(sys.phimatrix, sys.nonlineartermplan, v)
     applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
-    _multiplyintowork!(sys.worktd, sys.sintd, sys.dirtd)
+    _multiplyintowork!(sys.worktd, negsecond, sys.dirtd)
     applyfft!(dcos, sys.worktd, sys.rfftplan)
     @inbounds for i in eachindex(dcos)
         dcos[i] = -dcos[i]

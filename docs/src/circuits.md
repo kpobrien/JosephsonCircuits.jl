@@ -106,6 +106,47 @@ component type given by the prefix of the name, `("C1", "1", "0", 1e-12)`,
 is still read; see the `Circuit` docstring.
 
 
+## Nonlinear elements and their current-phase relations
+
+A [`JosephsonJunction`](@ref) is the sinusoidal relation
+`I(φ) = (phi0/Lj)*sin(φ)`, and it is what almost every circuit uses. An
+element whose relation is something else is a
+[`NonlinearInductor`](@ref), written as its small signal inductance and a
+relation of unit slope at zero:
+
+```julia
+using JosephsonCircuits
+# the effective relation of a SNAIL, biased away from its symmetric point:
+# the quadratic term is what makes it a three wave mixer
+snail = NonlinearInductor(1e-9, PolynomialCPR([1.0, 0.3, -1/6]))
+```
+
+A [`PolynomialCPR`](@ref) is given by the coefficients of its expansion,
+`f(φ) = c[1]*φ + c[2]*φ^2 + ...`, with `c[1] = 1` so that the `L0` of the
+element is the small signal inductance. It is the way to write an element
+whose junctions you do not want to wire up: a SNAIL, a SQUID, a Quarton,
+a kinetic inductor, or an array of `N` junctions in series, which divides
+the phase and so has the relation `N*sin(φ/N)`.
+
+The element is a junction to everything else. It makes the same branch,
+enters the same matrices, and is indexed with the junctions, so a circuit
+which mixes the two kinds is ordinary. What differs is the relation the
+solver evaluates at the junction phases, and its derivative, which is
+where `cos` would otherwise stand.
+
+Two things follow from a polynomial not being a sine. It is not bounded,
+so nothing warns that an element is past the range its coefficients were
+fitted on, and it is not band limited: a term of degree `d` generates
+harmonics to `d` times the drive, which the harmonic count has to cover.
+Both are yours to judge.
+
+Both solvers evaluate any of these relations. Harmonic balance takes it
+in the residual, the Jacobian, the Hessian and the pump modulation of the
+linearized system; the transient solver steps it, and its tangent, its
+adjoint and the linearization its noise is taken about all read the same
+derivative.
+
+
 ## Scattering blocks, transmission lines and fitted data
 
 A [`ScatteringParameters`](@ref) block is a multiport given by its

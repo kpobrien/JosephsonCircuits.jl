@@ -90,17 +90,17 @@ using Test
         @test psc.nodeindices[:,5] == [0, 0]
     end
 
-    @testset "legacy round trip with NL and circuitdefs substitution" begin
+    @testset "legacy round trip with circuitdefs substitution" begin
         circuit = [
             ("P1","1","0",1),
             ("R1","1","0",:Rleft),
-            ("NL1","1","0",:nlvalue),
+            ("L1","1","0",:lvalue),
             ("C1","1","0",:Cval),
         ]
-        circuitdefs = Dict(:Rleft => 50.0, :nlvalue => 2.0, :Cval => 1e-12)
+        circuitdefs = Dict(:Rleft => 50.0, :lvalue => 2.0, :Cval => 1e-12)
         c = Circuit(circuit, circuitdefs)
         psc = compile(c; sorting = :number)
-        @test psc.componenttypes == [:P, :R, :NL, :C]
+        @test psc.componenttypes == [:P, :R, :L, :C]
         @test psc.componentvalues[2] == 50.0
         @test psc.componentvalues[3] == 2.0
         # without substitution the symbols pass through

@@ -679,12 +679,13 @@ function ReverseSensitivity(op::HBOperatingPoint, lsys, dFr,
     # incidence lists, live on the pump mode grid, not the signal mode grid
     Nmodes = op.Nmodes
     sys = op.sys
-    # the per frequency contraction reads the cached time domain sine of the
-    # branch fluxes, so it is pinned to the operating point here, in this
+    # the per frequency contraction reads the cached negative of the
+    # second derivative of the relation at the branch fluxes, `sin` for the
+    # Josephson one, so it is pinned to the operating point here, in this
     # serial constructor: the threads of hblinsolve only read the shared
     # evaluation object, and updating it from them would be a race
     setpoint!(sys, op.x)
-    _ensuresin!(sys)
+    _negsecond!(sys)
     NLj = size(sys.phimatrix)[end]
     A = lsys.Asparse
     nzrow = zeros(Int, nnz(A))
@@ -771,10 +772,11 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
     isrealmode = op.modelayout.isreal
     nmd = length(isrealmode)
 
-    # the cached time domain sine of the pump branch fluxes, pinned to the
+    # the cached negative of the second derivative of the relation at the
+    # pump branch fluxes, `sin` for the Josephson one, pinned to the
     # operating point by the ReverseSensitivity constructor and read only
     # here.
-    sintd = reshape(sys.sintd, :, NLj)
+    sintd = reshape(_negsecond!(sys), :, NLj)
     P = bufs.P
     Q = bufs.Q
     G = bufs.G

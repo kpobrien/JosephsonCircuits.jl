@@ -315,7 +315,8 @@ function stationaryoperator(sys::TransientSystem, x0, w)
     C, G, L = hostsparse(sys.C), hostsparse(sys.G), hostsparse(sys.L)
     RJ = hostsparse(sys.RJ)
     phi = RJ*Array(x0)
-    F = -w^2 .* C .+ (im*w) .* G .+ L .+ transpose(RJ)*Diagonal(Array(sys.lmolj) .* cos.(phi))*RJ
+    dphi = derivativeat(hostrelations(sys.relations), phi)
+    F = -w^2 .* C .+ (im*w) .* G .+ L .+ transpose(RJ)*Diagonal(Array(sys.lmolj) .* dphi)*RJ
     blockstates(p) == 0 || (F = F .+ rationalmatrix(p, im*w, sys.Lscale, n))
     isempty(p.lines) && return F
     nl2 = 2length(p.lines)
@@ -562,7 +563,8 @@ function transientstationary(sys::TransientSystem, x, v, t, p::TransientProblem 
     b = hostdrivecurrent(sys, t, p, linevalues, resting)
     phi = RJ*xh
     scale = max(norm(b, Inf), 1.0)
-    r = G*vh .+ L*xh .+ transpose(RJ)*(lmolj .* sin.(phi)) .- b
+    hr = hostrelations(sys.relations)
+    r = G*vh .+ L*xh .+ transpose(RJ)*(lmolj .* relationat(hr, phi)) .- b
     # a rational block's states are at rest under the incident waves of
     # the state: `A z + B a = 0`
     for bl in p.blocks
@@ -584,7 +586,9 @@ function transientstationary(sys::TransientSystem, x, v, t, p::TransientProblem 
     before = hostdrivecurrent(sys, t - sys.h, p, linevalues, resting)
     norm(before .- b, Inf) <= 1e-6*scale || throw(ArgumentError(
         "the noise needs a constant drive before the start of the record, whose stationary state is the circuit's prehistory; start the solve before the drive changes."))
-    all(>(0), cos.(phi)) || throw(ArgumentError(
+    # the differential inductance of a junction is its relation's
+    # derivative, `cos` for the Josephson one
+    all(>(0), derivativeat(hr, phi)) || throw(ArgumentError(
         "a junction starts beyond a quarter flux quantum, where its differential inductance is negative and the stationary linearization is not a stable prehistory."))
     return nothing
 end

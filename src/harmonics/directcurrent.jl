@@ -677,6 +677,10 @@ current asked of it: the branch current is `Ic*sin(phi)`, so its zero
 frequency part is `Ic` times the time average of `sin(phi)`, and no zero
 voltage state exists once that average would have to exceed `Ic`.
 
+A junction whose current-phase relation is a [`PolynomialCPR`](@ref) is
+skipped: the bound below is the one of the sinusoidal relation, and what a
+polynomial does past the range it was fitted on is the user's to judge.
+
 The solver cannot report the failure itself. `sin` is bounded, so the
 average it finds is always a fraction of one, and a circuit which has no
 periodic solution converges to the nearest thing which is one rather than
@@ -689,7 +693,8 @@ This is a heuristic about the operating point and not a proof of dynamic
 stability, which harmonic balance does not decide.
 """
 function checkjunctiondc(sintd::AbstractArray, junctionbranches,
-        branchnames::Dict{Int,Vector{String}}; atol::Real = 1e-2)
+        branchnames::Dict{Int,Vector{String}}, sinusoidal = nothing;
+        atol::Real = 1e-2)
     # the last axis is the junction branch and the ones before it are the
     # time grid, which has one axis per tone; the zero frequency Fourier
     # coefficient is the average over all of them
@@ -697,6 +702,10 @@ function checkjunctiondc(sintd::AbstractArray, junctionbranches,
     (iszero(nt) || isempty(junctionbranches)) && return nothing
     flat = reshape(sintd, nt, :)
     for k in eachindex(junctionbranches)
+        # the reasoning is about the sinusoidal relation, whose current
+        # cannot exceed the critical one; a junction given another relation
+        # is the user's to reason about
+        isnothing(sinusoidal) || sinusoidal[k] || continue
         f = sum(view(flat, :, k))/nt
         abs(f) < 1 - atol && continue
         b = junctionbranches[k]

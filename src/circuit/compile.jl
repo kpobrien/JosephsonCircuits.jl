@@ -436,12 +436,16 @@ The flat table, in elaboration order:
 - `componentnames`: the hierarchical instance path of each entry. A matched
     port's own termination is the entry named `"<port path>/termination"`.
 - `componenttypes`: the type symbol of each entry: `:C`, `:R`, `:L`, `:Lj`
-    (a sinusoidal [`NonlinearInductor`](@ref)), `:NL` (a legacy nonlinear
-    element), `:I`, `:K` (a mutual inductor) or `:P` (a port).
+    (a sinusoidal [`NonlinearInductor`](@ref)), `:I`, `:K` (a mutual
+    inductor) or `:P` (a port).
 - `componentvalues`: the value of each entry as written; the reference
     impedance for a port.
 - `nodeindices`: a 2 by `ncomponents` matrix of the node indices of each
     entry, ground being node 1; both zero for a mutual inductor.
+- `junctioncprs`: the [`PolynomialCPR`](@ref) of each `:Lj` entry whose
+    current-phase relation is not the sinusoidal Josephson one. Empty for
+    every circuit which does not ask for another, and the solvers then
+    evaluate `sin` and `cos` as they always did.
 - `componenttemperatures`: the temperature of each entry which states one,
     keyed by flat index.
 - `mutualinductorbranchnames`: the names of the coupled inductors, two per
@@ -453,7 +457,7 @@ The flat table, in elaboration order:
 The groups, each a vector of flat indices in table order:
 
 - `capacitors`, `resistors`, `inductors`, `junctions` (`:Lj`),
-  `nonlinearinductors` (`:NL`), `currentsources`, `mutualinductors`.
+  `currentsources`, `mutualinductors`.
 
 The records which keep their own structure:
 
@@ -472,12 +476,12 @@ struct CompiledCircuit
     componentvalues::Vector
     componentnamedict::Dict{String,Int}
     componenttemperatures::Dict{Int,Float64}
+    junctioncprs::Dict{Int,PolynomialCPR{Float64}}
     mutualinductorbranchnames::Vector{String}
     capacitors::Vector{Int}
     resistors::Vector{Int}
     inductors::Vector{Int}
     junctions::Vector{Int}
-    nonlinearinductors::Vector{Int}
     currentsources::Vector{Int}
     mutualinductors::Vector{Int}
     ports::Vector{CompiledPort}
@@ -513,11 +517,13 @@ defaultsorting(circuit) = circuit isa AbstractVector ? :number : :name
 # chain alone; a second table for them would be a second place to get one
 # wrong. The legacy `NL` element adds its own method in circuit/legacy.jl.
 
+# A nonlinear inductor is a junction whatever its relation: the branch it
+# makes, the matrices it enters and the small signal inductance `L0` are
+# the same, and only the pointwise relation the solvers evaluate differs.
+# `junctioncpr` decides whether that relation is one they can evaluate.
 function lowercomponent(def::NonlinearInductor, path)
-    if issinusoidal(def)
-        return :Lj, def.L0
-    end
-    throw(ComponentNotSupportedError(lazy"the NonlinearInductor at $(path) has a non-sinusoidal current-phase relation, which the solver does not yet support. It parsed, validated, and elaborated successfully. Currently solvable nonlinear elements have the sinusoidal relation of JosephsonJunction."))
+    junctioncpr(def, path)
+    return :Lj, def.L0
 end
 function lowercomponent(def::VoltageSource, path)
     throw(ComponentNotSupportedError(lazy"the VoltageSource at $(path) is not supported by the solver, which matches the legacy parser (voltage sources are not currently supported)."))
@@ -577,6 +583,7 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
     componentvalues = Any[]
     nodeindexvector = Int[]
     componenttemperatures = Dict{Int,Float64}()
+    junctioncprs = Dict{Int,PolynomialCPR{Float64}}()
     mutualinductorbranchnames = String[]
     sizehint!(componentnames, N)
     sizehint!(componenttypes, N)
@@ -630,7 +637,7 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         typesymbol, value = if def isa Capacitor
             (:C, def.C)
         elseif def isa NonlinearInductor
-            issinusoidal(def) ? (:Lj, def.L0) : lowercomponent(def, path)
+            (:Lj, def.L0)
         elseif def isa Inductor
             (:L, def.L)
         elseif def isa Resistor
@@ -655,6 +662,12 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
         # take the temperature the analysis is run at
         t = componenttemperature(def)
         isnothing(t) || (componenttemperatures[marker] = t)
+        # a junction whose relation is not the sinusoidal one records it;
+        # the entry is otherwise a junction like any other
+        if def isa NonlinearInductor
+            cpr = junctioncpr(def, path)
+            isnothing(cpr) || (junctioncprs[marker] = cpr)
+        end
 
         if typesymbol == :K
             l1, l2 = couplingnames[i]
@@ -761,8 +774,9 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
 
     return CompiledCircuit(nodenames, nodeindices, length(uniquenodevector),
         componentnames, componenttypes, tightenvalues(componentvalues),
-        componentnamedict, componenttemperatures, mutualinductorbranchnames,
-        group(:C), group(:R), group(:L), group(:Lj), group(:NL), group(:I),
+        componentnamedict, componenttemperatures, junctioncprs,
+        mutualinductorbranchnames,
+        group(:C), group(:R), group(:L), group(:Lj), group(:I),
         group(:K), ports, scatteringblocks)
 end
 

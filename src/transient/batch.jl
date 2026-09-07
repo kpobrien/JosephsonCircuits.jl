@@ -50,7 +50,8 @@ function transientproblem(p::TransientProblem; sources)
     end
     return TransientProblem(psc, p.graph, p.matrices, p.Nnodal, p.Naux, p.Lscale, p.coupledbranches,
         p.floatingcomponents, p.gaugeindices, p.inertialess, p.algebraic, p.directions, p.constraints, p.rateextraction,
-        injection, drives, constantcurrent, p.portpositive, p.portnegative, p.portimpedances, p.portconductances, p.blocks, p.lines)
+        injection, drives, constantcurrent, p.portpositive, p.portnegative, p.portimpedances, p.portconductances, p.blocks, p.lines,
+        p.relations)
 end
 
 # The problems of a batch share everything but their waveforms: the
@@ -221,9 +222,17 @@ end
 # the stage matrices at the stage phases of every column, assembled per
 # column by the plan from the mean cosine of the two stages, and
 # factorized, or refactorized on the analyses of the first time
-function gaussbatchjacobian!(bf::GaussBatchFactor, sys::TransientSystem, phi, cosphi)
+function gaussbatchjacobian!(bf::GaussBatchFactor, sys::TransientSystem, phi, cosphi, dwork)
     g = sys.gauss
-    cosphi .= (cos.(stage(phi, 1)) .+ cos.(stage(phi, 2))) ./ 2
+    r = sys.relations
+    if allsinusoidal(r)
+        cosphi .= (cos.(stage(phi, 1)) .+ cos.(stage(phi, 2))) ./ 2
+    else
+        derivativeinto!(dwork, r, stage(phi, 1))
+        cosphi .= dwork
+        derivativeinto!(dwork, r, stage(phi, 2))
+        cosphi .= (cosphi .+ dwork) ./ 2
+    end
     ncolumns = size(cosphi, 2)
     if sys.backend isa CPU
         for j in 1:ncolumns
@@ -306,10 +315,20 @@ end
 # the junction Jacobian of every condition applied to its block of
 # directions: `d` has `ncolumns` columns per condition, `phi` the phases
 # of one stage as `(nj, N)`, and `work` is `(nj, size(d, 2))`
-function batchjunctionproduct!(y, sys::TransientSystem, phi, d, work)
+function batchjunctionproduct!(y, sys::TransientSystem, phi, d, work, dwork)
     nj, N = size(phi)
     stepmul!(work, sys.RJ, d)
-    reshape(work, nj, :, N) .*= sys.lmolj .* reshape(cos.(phi), nj, 1, N)
+    # the columns per condition, written out rather than left to a colon:
+    # a circuit with no junctions has none of the rows the colon divides
+    # by, which the long term support release will not reshape
+    ncolumns = div(size(work, 2), N)
+    r = sys.relations
+    if allsinusoidal(r)
+        reshape(work, nj, ncolumns, N) .*= sys.lmolj .* reshape(cos.(phi), nj, 1, N)
+    else
+        derivativeinto!(dwork, r, phi)
+        reshape(work, nj, ncolumns, N) .*= sys.lmolj .* reshape(dwork, nj, 1, N)
+    end
     stepmul!(y, sys.RJt, work)
     return y
 end
@@ -321,7 +340,7 @@ end
 # as the simplified Newton of the step does. `d` and `r` are `(n, ndir*N, 2)`
 # with the directions of a condition contiguous; `phi` is `(nj, N, 2)`.
 function gaussbatchstagesolve!(d, r, sys::TransientSystem, gc::GaussCoefficients, bf::GaussBatchFactor, phi,
-        transposed::Bool, res, dd, cwork, gwork, lwork, jwork, rc, zc; rtol = 1e-12, maxiters = 100, rw = nothing)
+        transposed::Bool, res, dd, cwork, gwork, lwork, jwork, dwork, rc, zc; rtol = 1e-12, maxiters = 100, rw = nothing)
     h = sys.h
     fill!(d, 0)
     # the convergence per column: each direction of each condition against
@@ -342,7 +361,7 @@ function gaussbatchstagesolve!(d, r, sys::TransientSystem, gc::GaussCoefficients
             stepmul!(stage(cwork, i), sys.C, di)
             stepmul!(stage(gwork, i), transposed ? sys.Gt : sys.G, di)
             stepmul!(stage(lwork, i), transposed ? sys.Lt : sys.L, di)
-            batchjunctionproduct!(stage(res, i), sys, view(phi, :, :, i), di, jwork)
+            batchjunctionproduct!(stage(res, i), sys, view(phi, :, :, i), di, jwork, dwork)
         end
         # the rational blocks' coupling of the stages, or its transpose
         if !isnothing(rw)
@@ -466,6 +485,9 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
     end
     nj = length(sys.lmolj)
     jwork, phi = allocate(nj, m), allocate(nj, N, 2)
+    # the derivative of the relation at one stage, for a circuit which has
+    # a polynomial one; the Josephson relation is broadcast in place
+    dwork = allsinusoidal(sys.relations) ? allocate(nj, 0) : allocate(nj, N)
     cosphi = KernelAbstractions.zeros(backend, ComplexF64, nj, N)
     rc, zc = [KernelAbstractions.zeros(backend, ComplexF64, n, m) for _ in 1:2]
     stagecurrent = allocate(nq, ndir)
@@ -520,7 +542,8 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
                 hphim = Array(pw.phim)
                 for j in 1:N
                     cols = (j - 1)*ndir + 1:j*ndir
-                    view(pw.g, :, cols) .+= transpose(pr.RJZl)*(pr.lmoljp .* cos.(view(pw.hphi, :, j)) .* view(hphim, :, cols))
+                    view(pw.g, :, cols) .+= transpose(pr.RJZl)*(pr.lmoljp .*
+                        derivativeat(pr.relationsp, view(pw.hphi, :, j)) .* view(hphim, :, cols))
                 end
             end
             dIz = repeat(Zti*view(dIh, :, k + 1, :), 1, N)
@@ -545,7 +568,8 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
             else
                 stepmul!(pw.phim, pr.RJp, dxnew)
                 hphim = Array(pw.phim)
-                reshape(pr.lmoljp .* reshape(cos.(pw.hphi), :, 1, N) .* reshape(hphim, :, ndir, N), :, m)
+                reshape(pr.lmoljp .* reshape(derivativeat(pr.relationsp, pw.hphi), :, 1, N) .*
+                    reshape(hphim, :, ndir, N), :, m)
             end
             dIq = repeat(Qinji*view(dIh, :, k + 1, :), 1, N)
             nl2 > 0 && (dIq .+= pr.Qline*Array(ddlinevalues))
@@ -567,7 +591,7 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
         stepmul!(lx, sys.L, dx)
         stepmul!(cdv, sys.C, dv)
         for i in 1:2
-            batchjunctionproduct!(work, sys, view(phi, :, :, i), dx, jwork)
+            batchjunctionproduct!(work, sys, view(phi, :, :, i), dx, jwork, dwork)
             if staged
                 stagecurrent .= view(dS, :, i, k, :)
             else
@@ -595,8 +619,8 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
             rationalsources!(rwt, sys, zerostages, fullstages)
             r .+= rwt.source
         end
-        stale && gaussbatchjacobian!(bf, sys, phi, cosphi)
-        contraction = gaussbatchstagesolve!(d, r, sys, gc, bf, phi, false, res, dd, cwork, gwork, lwork, jwork, rc, zc; rw = rwt)
+        stale && gaussbatchjacobian!(bf, sys, phi, cosphi, dwork)
+        contraction = gaussbatchstagesolve!(d, r, sys, gc, bf, phi, false, res, dd, cwork, gwork, lwork, jwork, dwork, rc, zc; rw = rwt)
         stale = nj > 0 && contraction > 0.25
         if !isnothing(rwt)
             stage(fullstages, 1) .= dx .+ stage(d, 1)
@@ -666,6 +690,7 @@ function gaussbatchadjoint(sol, weights, quantity::Symbol, targets, sys::Transie
     wst, mu, res, dd, cwork, gwork, lwork = [allocate(n, m, 2) for _ in 1:7]
     nj = length(sys.lmolj)
     jwork, phi = allocate(nj, m), allocate(nj, N, 2)
+    dwork = allsinusoidal(sys.relations) ? allocate(nj, 0) : allocate(nj, N)
     cosphi = KernelAbstractions.zeros(backend, ComplexF64, nj, N)
     rc, zc = [KernelAbstractions.zeros(backend, ComplexF64, n, m) for _ in 1:2]
     portwork = allocate(np, nobj)
@@ -726,7 +751,7 @@ function gaussbatchadjoint(sol, weights, quantity::Symbol, targets, sys::Transie
         # the reading of the index one unknowns transposed, last in the
         # step so first here: its row vector moves the current at the
         # endpoint time
-        cosp = tobackend(backend, cos.(pw.hphi))
+        cosp = tobackend(backend, derivativeat(pr.relationsp, pw.hphi))
         if endpointreadtranspose!(vbar, xbar, pr, pw, sys, cosp, nobj, N)
             stepmul!(targetwork, injectiont, pw.work)
             ringadd!(ring, k + 1, targetwork, -1.0)
@@ -800,8 +825,8 @@ function gaussbatchadjoint(sol, weights, quantity::Symbol, targets, sys::Transie
             fill!(xextra, 0)
             statesbartostages!(rwa, sys, wst, xextra)
         end
-        stale && gaussbatchjacobian!(bf, sys, phi, cosphi)
-        contraction = gaussbatchstagesolve!(mu, wst, sys, gc, bf, phi, true, res, dd, cwork, gwork, lwork, jwork, rc, zc; rw = rwa)
+        stale && gaussbatchjacobian!(bf, sys, phi, cosphi, dwork)
+        contraction = gaussbatchstagesolve!(mu, wst, sys, gc, bf, phi, true, res, dd, cwork, gwork, lwork, jwork, dwork, rc, zc; rw = rwa)
         stale = nj > 0 && contraction > 0.25
         # the states before the step: through the update, and through
         # the reflected waves the multipliers weigh, whose incident
@@ -823,7 +848,7 @@ function gaussbatchadjoint(sol, weights, quantity::Symbol, targets, sys::Transie
                 linescatter!(sol.times[k] + gc.c[i]*h, npre + k - 1, 1.0)
             end
             stepmul!(lmu, sys.Lt, mui)
-            batchjunctionproduct!(work, sys, view(phi, :, :, i), mui, jwork)
+            batchjunctionproduct!(work, sys, view(phi, :, :, i), mui, jwork, dwork)
             xbar .-= lmu .+ work
             stepmul!(cmu, sys.C, mui)
             vbar .+= (gc.ainvone[i]/h) .* cmu
@@ -906,7 +931,12 @@ function gaussbatchresidual!(norms, residual, sys::TransientSystem, gc::GaussCoe
     stepmul!(stage(cwork, 1), sys.C, stage(delta, 1)); stepmul!(stage(cwork, 2), sys.C, stage(delta, 2))
     stepmul!(stage(gwork, 1), sys.G, stage(delta, 1)); stepmul!(stage(gwork, 2), sys.G, stage(delta, 2))
     stepmul!(stage(phi, 1), sys.RJ, stage(X, 1)); stepmul!(stage(phi, 2), sys.RJ, stage(X, 2))
-    jwork .= sys.lmolj .* sin.(phi)
+    if allsinusoidal(sys.relations)
+        jwork .= sys.lmolj .* sin.(phi)
+    else
+        relationinto!(jwork, sys.relations, phi)
+        jwork .= sys.lmolj .* jwork
+    end
     stepmul!(stage(junction, 1), sys.RJt, stage(jwork, 1)); stepmul!(stage(junction, 2), sys.RJt, stage(jwork, 2))
     stepmul!(stage(residual, 1), sys.L, stage(delta, 1)); stepmul!(stage(residual, 2), sys.L, stage(delta, 2))
     c1, c2 = stage(cwork, 1), stage(cwork, 2)
@@ -1319,6 +1349,10 @@ mutable struct GaussStepper{S, P, A, M, C, F, W, B, R, T, E, U, K, HW, FI, NW}
     phi::A
     trialphi::A
     jwork::A
+    # the derivative of the relation at one stage, for a circuit which has
+    # a polynomial one, and empty for the Josephson relation, which is
+    # broadcast in place
+    dwork::M
     cosphi::C
     rc::C
     zc::C
@@ -1378,6 +1412,7 @@ function gaussstepper(sys::TransientSystem, problems, rtol, atol, maxiters, bf)
     xnew, cv, lx, b1, b2, bend = [allocate(n, N) for _ in 1:6]
     nj = length(sys.lmolj)
     phi, trialphi, jwork = [allocate(nj, N, 2) for _ in 1:3]
+    dwork = allsinusoidal(sys.relations) ? allocate(nj, 0) : allocate(nj, N)
     cosphi = KernelAbstractions.zeros(backend, ComplexF64, nj, N)
     rc, zc = [KernelAbstractions.zeros(backend, ComplexF64, n, N) for _ in 1:2]
     colnorm = allocate(N)
@@ -1387,7 +1422,7 @@ function gaussstepper(sys::TransientSystem, problems, rtol, atol, maxiters, bf)
     rw = isempty(sys.gauss.rational) ? nothing : rationalwork(p, backend, n, N)
     baseresidual! = (norms, r, D) -> gaussbatchresidual!(norms, r, sys, gc, D, x, lx, X, phi, junction, jwork, cwork, gwork, rhs, colnorm, rw)
     trialresidual! = (norms, r, D) -> gaussbatchresidual!(norms, r, sys, gc, D, x, lx, X, trialphi, trialjunction, jwork, cwork, gwork, rhs, colnorm, rw)
-    refresh! = () -> (gaussbatchjacobian!(bf, sys, phi, cosphi); nothing)
+    refresh! = () -> (gaussbatchjacobian!(bf, sys, phi, cosphi, dwork); nothing)
     solve! = (c, r) -> (gaussbatchtransform!(c, r, bf, gc, rc, zc); (false, 0))
     accept! = mask -> (maskcolumns!(phi, trialphi, mask); maskcolumns!(junction, trialjunction, mask); nothing)
     pr = sys.gauss.projection
@@ -1396,7 +1431,7 @@ function gaussstepper(sys::TransientSystem, problems, rtol, atol, maxiters, bf)
     far, readscale, sqrtz = linetables(p, backend)
     npre = lineprehistory(p, sys.h)
     return GaussStepper(sys, problems, N, x, v, X, delta, lastdelta, residual, trial, trialresidual, correction, rhs,
-        junction, trialjunction, cwork, gwork, xnew, cv, lx, b1, b2, bend, phi, trialphi, jwork, cosphi, rc, zc,
+        junction, trialjunction, cwork, gwork, xnew, cv, lx, b1, b2, bend, phi, trialphi, jwork, dwork, cosphi, rc, zc,
         colnorm, hostvalues, values, portwork, bf, baseresidual!, trialresidual!, refresh!, solve!, accept!, pw,
         allocate(nl, linering(npre), N), npre, Float64[], 0, allocate(nl, N), zeros(8, nl), allocate(8, nl), far, readscale, sqrtz,
         allocate(nl, N), allocate(n, N), rw,
@@ -1449,7 +1484,7 @@ function gaussproject!(st::GaussStepper, t)
             copyto!(pw.hphi, pw.phip)
             stepmul!(pw.zwork, pr.ZtL, st.xnew)
             copyto!(pw.g, pw.zwork)
-            pw.g .+= transpose(pr.RJZl)*(pr.lmoljp .* sin.(pw.hphi)) .- gb
+            pw.g .+= transpose(pr.RJZl)*(pr.lmoljp .* relationat(pr.relationsp, pw.hphi)) .- gb
             converged = all(j -> maximum(abs, view(pw.g, :, j)) <= st.tolerance[j], 1:N)
             (converged || iteration > st.maxiters) && break
             for (j, M) in enumerate(projectionmatrices(pr, pw.hphi))
@@ -1472,7 +1507,8 @@ function gaussproject!(st::GaussStepper, t)
         gq = pr.Qinj*st.hostvalues .+ pr.Qconst
         isnothing(linedrive) || (gq .+= pr.Qline*linedrive)
         isnothing(st.rw) || (gq .+= pr.Qblock*restingwaves(sys, st.rw.z))
-        endpointread!(st.v, st.xnew, pr, pw, pr.lmoljp .* sin.(pw.hphi), gq)
+        endpointread!(st.v, st.xnew, pr, pw,
+            pr.lmoljp .* relationat(pr.relationsp, pw.hphi), gq)
         projectedphases!(st, st.xnew)
     end
     return st
@@ -1486,7 +1522,7 @@ function setstate!(st::GaussStepper, x, v, lastdelta)
     isnothing(lastdelta) ? fill!(st.lastdelta, 0) : copyto!(st.lastdelta, lastdelta)
     st.X .= st.x
     stepmul!(stage(st.phi, 1), st.sys.RJ, stage(st.X, 1)); stepmul!(stage(st.phi, 2), st.sys.RJ, stage(st.X, 2))
-    gaussbatchjacobian!(st.bf, st.sys, st.phi, st.cosphi)
+    gaussbatchjacobian!(st.bf, st.sys, st.phi, st.cosphi, st.dwork)
     st.factorizations += 1
     st.stalefailed = false
     return st

@@ -4,10 +4,9 @@
 # `(name, node1, node2, value)` tuples, the original input format, is
 # converted into a `Circuit` here and then follows the same path as one.
 # Everything specific to the tuple format lives in this file, so that the
-# format can be removed by deleting the file: the `LegacyNL` component, the
-# name prefix table with the two functions that read it, and the
-# convention that a port's reference impedance is the resistor placed
-# across it.
+# format can be removed by deleting the file: the name prefix table with
+# the two functions that read it, and the convention that a port's
+# reference impedance is the resistor placed across it.
 
 # Unwrap a wrapped symbolic value to whatever it holds. The Symbolics
 # extension adds the method for `Num`; everything else is already unwrapped.
@@ -16,27 +15,10 @@ unwrapvalue(value) = value
 
 # === legacy tuple netlist -> Circuit ===
 
-"""
-    LegacyNL(value)
-
-An internal two terminal component holding the value of a legacy `"NL"`
-netlist entry verbatim. The tuple format accepts `NL` components and they
-are carried through compilation as the `:NL` type, but the solvers do not
-define what their value means. In the typed representation use
-[`NonlinearInductor`](@ref).
-"""
-struct LegacyNL{T} <: AbstractComponent
-    value::T
-end
-nterminals(::LegacyNL) = 2
-# the one component the tuple format has and the typed circuit does not,
-# with the lowering method the compiler would otherwise lack
-lowercomponent(def::LegacyNL, path) = :NL, def.value
-
 # The component type prefixes of the tuple format. Two letter prefixes must
 # come before one letter prefixes with the same first letter; see
 # `checkcomponenttypes`.
-const legacyallowedcomponents = ["Lj","NL","L","C","K","I","R","P"]
+const legacyallowedcomponents = ["Lj","L","C","K","I","R","P"]
 
 """
     parsecomponenttype(name::String,allowedcomponents::Vector{String})
@@ -49,11 +31,11 @@ letter prefix with the same first letter can never match;
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.parsecomponenttype("L10",["Lj","NL","L","C","K","I","R","P"])
-3
+julia> JosephsonCircuits.parsecomponenttype("L10",["Lj","L","C","K","I","R","P"])
+2
 
-julia> [JosephsonCircuits.parsecomponenttype(c,["Lj","NL","L","C","K","I","R","P"]) for c in ["Lj","NL","L","C","K","I","R","P"]]
-8-element Vector{Int64}:
+julia> [JosephsonCircuits.parsecomponenttype(c,["Lj","L","C","K","I","R","P"]) for c in ["Lj","L","C","K","I","R","P"]]
+7-element Vector{Int64}:
  1
  2
  3
@@ -61,7 +43,6 @@ julia> [JosephsonCircuits.parsecomponenttype(c,["Lj","NL","L","C","K","I","R","P
  5
  6
  7
- 8
 ```
 """
 function parsecomponenttype(name::String,allowedcomponents::Vector{String})
@@ -93,7 +74,7 @@ prefix with the same first letter, which would shadow it.
 
 # Examples
 ```jldoctest
-julia> JosephsonCircuits.checkcomponenttypes(["Lj","NL","L","C","K","I","R","P"])
+julia> JosephsonCircuits.checkcomponenttypes(["Lj","L","C","K","I","R","P"])
 true
 ```
 """
@@ -116,8 +97,6 @@ function legacycomponent(typesymbol::Symbol, name, node1, node2, value)
         return Resistor(value)
     elseif typesymbol == :Lj
         return NonlinearInductor(value, sin, cos)
-    elseif typesymbol == :NL
-        return LegacyNL(value)
     elseif typesymbol == :I
         return CurrentSource(value)
     elseif typesymbol == :P
