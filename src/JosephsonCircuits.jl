@@ -18,6 +18,11 @@ adjoint-method sensitivities with respect to component values or, through
 [`designsensitivities`](@ref), to the design parameters of a circuit
 builder.
 
+The same compiled circuit, on the same node flux unknowns, can also be
+integrated directly in physical time with [`transientsolve`](@ref), for
+pulsed drives and for drives with more tones than a harmonic grid can
+hold, with the exact tangent and adjoint of the recorded time steps.
+
 A circuit is written as a [`Circuit`](@ref) of typed component models, or
 as a legacy netlist of `(name, node1, node2, value)` tuples. The stages a
 circuit passes through, and the files that implement them, are listed
@@ -42,6 +47,7 @@ import OrderedCollections
 import StaticArrays
 import Statistics
 import FastInterpolations
+import FunctionWrappers: FunctionWrapper
 
 using LinearAlgebra
 using SparseArrays
@@ -120,6 +126,7 @@ include("circuit/values.jl")
 # multiport scattering and Gaussian channel blocks with the matrix
 # providers their frequency dependent data comes from.
 include("circuit/components.jl")
+include("circuit/vectorfit.jl")
 # The typed `Circuit` the user writes, the parse of one hierarchy level
 # and the node naming and sorting helpers `compile` uses.
 include("circuit/parse.jl")
@@ -196,6 +203,20 @@ include("linearized/operatingpoint.jl") # the operating point and its implicit d
 include("linearized/sensitivities.jl") # the fixed point stamps and the contraction
 include("linearized/designsensitivities.jl")
 include("linearized/keyed.jl")   # keyed array output helpers
+
+# --- transient/: the circuit integrated in time -------------------------
+# The same compiled circuit, on the same node flux state and matrices as
+# harmonic balance at one mode, stepped in physical time for pulsed and
+# many tone drives; the Jacobian of a step is the real Jacobian of
+# harmonic balance with the step's linear term folded in.
+include("transient/system.jl")
+include("transient/solve.jl")
+include("transient/gauss.jl")
+include("transient/batch.jl")
+include("transient/sensitivity.jl")
+include("transient/iq.jl")       # windowed I/Q of a port trace and its transpose
+include("transient/quantum.jl")  # photon normalized temporal modes of a port trace
+include("transient/noise.jl")    # the physical baths, and the noise
 
 # --- networks/: the network library -------------------------------------
 include("networks/parameters.jl") # S, Z, Y, ABCD, ... conversions
@@ -419,11 +440,20 @@ export FrequencyDependent, designsensitivities, designjacobian,
 export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
     Inductor, Capacitor, Resistor, CurrentSource, VoltageSource, Port,
     MutualInductor, JosephsonJunction, NonlinearInductor, PolynomialCPR,
-    ScatteringParameters, GaussianChannel, TransmissionLine, Passive, Lossless,
+    ScatteringParameters, GaussianChannel, TransmissionLine, RationalScattering, Passive, Lossless,
     ScatteringLimit, OpenDC, ShortDC, ThroughDC, ScatteringDC,
     ThermalEquilibrium, NoiseCovariance, ConjugateSymmetry, Native,
     elaborate, ElaboratedCircuit, quadraturetransform,
     ComponentNotSupportedError
+
+# the circuit integrated in time
+export TransientSource, transientproblem, transientstate, transientsolve,
+    transientdemodulate, transienttangent, transientadjoint, transientinjection,
+    Trapezoidal, GaussLegendre, BackwardEuler, TransientReuse, TransientBatchSolution,
+    transientiqplan, transientiq!, transientiq, transientiqvjp!,
+    transientquantumplan, transientquantum, transientquantum!, transientquantumvjp!,
+    transientnoisebaths, transientnoise, transientgain, transientquantumdiagnostics,
+    transientquantumefficiency
 
 
 # The precompile workload runs the warmups when the package is installed so
@@ -437,9 +467,74 @@ export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
 #
 # See the SnoopCompile.jl tutorials on inference and invalidations.
 
+# The circuit in time on the same amplifier: the Gauss-Legendre and the
+# trapezoidal steps, the records the responses read, the tangent, the
+# adjoint and the noise of a short record, a batch of two conditions,
+# which are the paths a first transient pays for otherwise.
+function warmuptransient()
+    circuit = warmupcircuit(50.0, 100.0e-15, 1000.0e-12, 1000.0e-15)
+    fp, ip = 4.75e9, 0.00565e-6
+    pump(t) = t <= 0 ? 0.0 : 2ip*cospi(2fp*t)
+    base = transientproblem(circuit; sources = [TransientSource(1, t -> 0.0)])
+    problem = transientproblem(base; sources = [TransientSource(1, pump)])
+    n, T = 64, 2e-9
+    solution = transientsolve(problem, (0.0, T*(n - 1)/n); dt = T/n, method = GaussLegendre(), record = :phases)
+    transientsolve(problem, (0.0, T*(n - 1)/n); dt = T/n)
+    checkpointed = transientsolve(problem, (0.0, T*(n - 1)/n); dt = T/n, method = GaussLegendre(), record = :checkpoints)
+    currents = [1e-8*cospi(2*4.7e9*t) for _ in 1:1, t in solution.times]
+    weights = [cospi(2*4.7e9*t) for _ in 1:1, t in solution.times]
+    transienttangent(solution, currents)
+    transientadjoint(solution, weights)
+    transienttangent(checkpointed, currents)
+    transientadjoint(checkpointed, weights)
+    # the measured tone on a bin of the record, and the bath on two bins
+    plan = transientquantumplan(solution.times, [9/T])
+    transientnoise(solution, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
+    batch = transientsolve([problem, transientproblem(base; sources = [TransientSource(1, t -> pump(t)/2)])],
+        (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
+    transienttangent(batch, currents)
+    transientadjoint(batch, weights)
+    # the batch's noise on both methods, of a member and of a range of
+    # members, which are views of the batch, and of a checkpointed batch;
+    # the pulsed gain of the solution and of the batch
+    transientnoise(batch, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
+    transientnoise(batch, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan, method = :forward)
+    transientnoise(batch[1], plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
+    transientnoise(batch[1:2], plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
+    transientnoise(transientsolve([problem, problem], (0.0, T*(n - 1)/n); dt = T/n, record = :checkpoints),
+        plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
+    transientgain(solution, plan, plan)
+    transientgain(batch, plan, plan)
+    transienttangent(batch[1], currents)
+    # several directions at once, and directions given at the stages
+    transienttangent(solution, cat(currents, currents; dims = 3))
+    transienttangent(solution, [currents[1, i] for _ in 1:1, _ in 1:3, i in 1:n, _ in 1:1])
+    # a windowed measurement with an envelope
+    half = solution.times[1:n÷2]
+    windowed = transientquantumplan(half, [9/T]; envelopes = reshape(sinpi.((half .- half[1]) ./ (T/2)) .^ 2, :, 1))
+    transientnoise(solution, windowed; frequencies = [8/T, 9/T], weights = [1/T, 1/T])
+    transientgain(solution, windowed, windowed)
+    # a line and a lossy rational block ahead of the junction: the line
+    # history, the block states and their noise, on both noise methods
+    a = 2pi*4e9
+    block = RationalScattering(-a .* Matrix(1.0I, 2, 2), a .* Matrix(1.0I, 2, 2), 0.8 .* [0.0 1.0; 1.0 0.0],
+        zeros(2, 2); zref = 50.0)
+    front = Circuit([("p1", "1", "0", Port(1; Z0 = 50.0)), ("line", "1", "2", TransmissionLine(50.0, 0.02)),
+        ("b", "2", "3", block), ("cc", "3", "4", Capacitor(100.0e-15)),
+        ("jj", "4", "0", JosephsonJunction(1000.0e-12)), ("cj", "4", "0", Capacitor(1000.0e-15))])
+    fronted = transientsolve(transientproblem(front; sources = [TransientSource(1, pump)]),
+        (0.0, T*(n - 1)/n); dt = T/n, method = GaussLegendre(), record = :phases)
+    transienttangent(fronted, currents)
+    transientadjoint(fronted, weights)
+    transientnoise(fronted, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
+    transientnoise(fronted, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan, method = :forward)
+    return nothing
+end
+
 PrecompileTools.@compile_workload begin
     warmup()
     warmupsyms()
+    warmuptransient()
     # `warmupnetwork()` is deliberately not part of the workload. It
     # compiles every network parameter conversion for every input shape,
     # which is a large fraction of the total precompile time, while a cold

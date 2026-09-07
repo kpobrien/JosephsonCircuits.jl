@@ -1,4 +1,4 @@
-using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test
+using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
 
 isdefined(Main, :testchaincircuit) || include("testcircuits.jl")
 Random.seed!(20260905)
@@ -410,8 +410,13 @@ end
         @test !spent.solverinfo.converged
         @test spent.solverinfo.stages[end].reason == :iterations
     end
-    # a work budget of one Arnoldi step per Newton step, spent on the first
-    work = hbnlsolve((wp,), (8,), src, circuit, defs; iterations = 2,
+    # a work budget of one Arnoldi step per Newton step, spent on the
+    # first. Whether the budget or the iteration count runs out first, or
+    # the one step is enough after all, is not fixed, so the warning the
+    # solver makes when it gives up is taken rather than asserted; a
+    # message at error level would still fail the test
+    work = @test_logs min_level=Logging.Error hbnlsolve((wp,), (8,), src, circuit, defs;
+        iterations = 2,
         method = NewtonKrylov(linearsolver = GMRES(restart = 1, maxrestarts = 1)))
     @test work.solverinfo.stages[end].reason in (:work, :iterations, :converged)
     # a drive far beyond the self oscillation threshold has no operating

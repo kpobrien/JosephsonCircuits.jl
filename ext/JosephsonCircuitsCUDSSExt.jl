@@ -25,7 +25,7 @@ const setmatrix! = isdefined(CUDSS, :cudss_update) ? CUDSS.cudss_update :
     CUDSS.cudss_set
 
 import JosephsonCircuits: _cudss_factorize, _cudss_factorize!,
-    _cudss_sweep, _cudss_sweepsolve!,
+    _cudss_sweep, _cudss_sweepsolve!, _cudss_sweeprefactorize!, _cudss_sweepapply!,
     myldiv!, tobackend, cscvaluepermutation, rowpointer, columnindices
 
 # ---------------------------------------------------------------------------
@@ -76,7 +76,7 @@ function _cudss_factorize(A::SparseMatrixCSC{Tv,<:Integer};
     kwargs...) where {Tv<:AbstractFloat}
     n = size(A, 1)
     Agpu = CuSparseMatrixCSR(A)
-    F = newsolver(Agpu, Tv, n, cscvaluepermutation(A))
+    F = newsolver(Agpu, Tv, n, cscvaluepermutation(A); kwargs...)
     return F
 end
 
@@ -102,14 +102,17 @@ function _cudss_factorize(A::JosephsonCircuits.DeviceValuedSparseMatrix{Tv};
     Agpu = CuSparseMatrixCSR{Tv,Int32}(
         CuVector(convert(Vector{Int32}, rowpointer(A))),
         CuVector(convert(Vector{Int32}, columnindices(A))), nzval, size(A))
-    return newsolver(Agpu, Tv, n)
+    return newsolver(Agpu, Tv, n; kwargs...)
 end
 
 # the analysis and the first numeric factorization, shared by both entry
 # points. The descriptors start bound to the owned buffers, which is what the
-# analysis and every later refactorization use.
+# analysis and every later refactorization use. The keywords of the
+# factorization object are cuDSS configuration settings applied after the
+# defaults below, so a caller whose system needs none of the refinement
+# (the transient's diagonally dominant step matrix) can turn it off.
 function newsolver(Agpu, ::Type{Tv}, n::Integer,
-    perm::Vector{Int} = Int[]) where {Tv}
+    perm::Vector{Int} = Int[]; kwargs...) where {Tv}
     x = CUDA.zeros(Tv, n)
     b = CUDA.zeros(Tv, n)
     solver = CudssSolver(Agpu, "G", 'F')
@@ -125,6 +128,9 @@ function newsolver(Agpu, ::Type{Tv}, n::Integer,
     # scaled Jacobian entries, so well pivoted systems are unaffected.
     CUDSS.cudss_set(solver, "pivot_epsilon", 1e-8)
     CUDSS.cudss_set(solver, "ir_n_steps", 2)
+    for (k, v) in kwargs
+        CUDSS.cudss_set(solver, string(k), v)
+    end
     xdesc = CudssMatrix(x)
     bdesc = CudssMatrix(b)
     cudss("analysis", solver, xdesc, bdesc)
@@ -178,6 +184,24 @@ function myldiv!(x::AbstractVector, F::CUDSSSolve, b::AbstractVector)
     end
     return x
 end
+
+# every column of a right hand side matrix in one solve: the dense
+# descriptors of the caller's matrices are made for the call, since cuDSS
+# takes any number of right hand sides against one analysis; a matrix that
+# is not a device matrix of the factorization's type goes column by column
+function myldiv!(X::AbstractMatrix, F::CUDSSSolve, B::AbstractMatrix)
+    T, n = eltype(F.x), length(F.x)
+    size(X) == size(B) && size(B, 1) == n || throw(DimensionMismatch("the right hand side and the solution must be n by nrhs."))
+    if X isa CuMatrix{T} && B isa CuMatrix{T}
+        cudss("solve", F.solver, CudssMatrix(X), CudssMatrix(B))
+    else
+        for j in axes(B, 2)
+            myldiv!(view(X, :, j), F, view(B, :, j))
+        end
+    end
+    return X
+end
+JosephsonCircuits.matrixsolve!(X, F::CUDSSSolve, B) = myldiv!(X, F, B)
 
 # ---------------------------------------------------------------------------
 # a frequency sweep as a uniform batch
@@ -233,11 +257,36 @@ end
 # refactorize the whole batch against whatever values `S.nzval` now holds and
 # solve every system for every right hand side, reusing the one analysis
 function _cudss_sweepsolve!(S::CUDSSSweep)
-    setmatrix!(S.solver, S.rowptr, S.colind, vec(S.nzval))
-    cudss("refactorization", S.solver, S.xdesc, S.bdesc)
+    _cudss_sweeprefactorize!(S)
     cudss("solve", S.solver, S.xdesc, S.bdesc)
     CUDA.synchronize()
     return S.X
+end
+
+# the two phases apart, for a time stepper that solves many times per
+# refactorization: the refactorization against the values `S.nzval` holds,
+# the descriptors bound to the owned buffers; and a solve of the caller's
+# `X` and `B`, `(n, nrhs, nbatch)` device arrays of the batch's shape, bound
+# for the call, with no synchronization
+function _cudss_sweeprefactorize!(S::CUDSSSweep)
+    setmatrix!(S.solver, S.rowptr, S.colind, vec(S.nzval))
+    if S.nbatch > 1
+        CUDSS.cudss_update(S.xdesc, S.X); CUDSS.cudss_update(S.bdesc, S.B)
+    else
+        CUDSS.cudss_update(S.xdesc, reshape(S.X, size(S.X, 1), :)); CUDSS.cudss_update(S.bdesc, reshape(S.B, size(S.B, 1), :))
+    end
+    cudss("refactorization", S.solver, S.xdesc, S.bdesc)
+    return S
+end
+function _cudss_sweepapply!(S::CUDSSSweep, X::CuArray{T,3}, B::CuArray{T,3}) where {T}
+    size(X) == size(S.X) && size(B) == size(S.B) || throw(DimensionMismatch("the batch solve takes arrays of the batch's shape."))
+    if S.nbatch > 1
+        CUDSS.cudss_update(S.xdesc, X); CUDSS.cudss_update(S.bdesc, B)
+    else
+        CUDSS.cudss_update(S.xdesc, reshape(X, size(X, 1), :)); CUDSS.cudss_update(S.bdesc, reshape(B, size(B, 1), :))
+    end
+    cudss("solve", S.solver, S.xdesc, S.bdesc)
+    return X
 end
 
 end # module

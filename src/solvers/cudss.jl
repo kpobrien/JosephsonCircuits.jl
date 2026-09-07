@@ -101,3 +101,9 @@ function _cudss_sweepsolve!(S)
     throw(ArgumentError(
         "solving a frequency sweep on a device requires CUDSS.jl and CUDA.jl to be loaded."))
 end
+function _cudss_sweeprefactorize!(S)
+    throw(ArgumentError("a batched solve on a device requires CUDSS.jl and CUDA.jl to be loaded."))
+end
+function _cudss_sweepapply!(S, X, B)
+    throw(ArgumentError("a batched solve on a device requires CUDSS.jl and CUDA.jl to be loaded."))
+end

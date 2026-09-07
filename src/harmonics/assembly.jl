@@ -383,23 +383,61 @@ end
 
 """
     assemblerealjacobian!(nzval::AbstractVector,
-        plan::StructureRealJacobianPlan, phimatrix::AbstractArray)
+        plan::StructureRealJacobianPlan, phimatrix::AbstractArray;
+        synchronize = true)
 
 Assemble the stored values of the real Jacobian into `nzval` from the Fourier
 coefficients of `cos(phi(t))`, using the circuit's structure rather than a
-precomputed gather.
+precomputed gather. On a device the assembly kernel is synchronized before
+returning unless `synchronize = false`, for a caller which orders the work
+on the stream itself, as the transient step does.
 """
 function assemblerealjacobian!(nzval::AbstractVector,
-    plan::StructureRealJacobianPlan, phimatrix::AbstractArray)
+    plan::StructureRealJacobianPlan, phimatrix::AbstractArray; synchronize::Bool = true)
     length(nzval) == plan.n || throw(DimensionMismatch(
         lazy"`nzval` has length $(length(nzval)) but the plan assembles $(plan.n) entries."))
     js = plan.junctions
+    if plan.backend isa CPU && (Threads.nthreads() == 1 || plan.n <= hostassemblylimit)
+        # the same per row assembly as a plain loop: launching a kernel on
+        # the CPU backend costs tens of microseconds of task scheduling,
+        # which is nothing to a harmonic balance solve and everything to a
+        # time stepper assembling once per step; a large assembly with
+        # threads to use keeps the threaded kernel
+        hostassemblerealjacobian!(nzval, plan.colptr, plan.rowval, plan.lin,
+            phimatrix, js.pairptr, js.pairrow, js.pairjunc, js.paircoef,
+            js.lmolj, js.ami, js.amc, plan.rlinv, plan.rlptr, plan.clinv,
+            plan.clptr, js.nmodes, js.nfreq, plan.transposed)
+        return nzval
+    end
     plan.assemble!(nzval, plan.colptr, plan.rowval, plan.lin, phimatrix,
         js.pairptr, js.pairrow, js.pairjunc, js.paircoef, js.lmolj,
         js.ami, js.amc, plan.rlinv, plan.rlptr, plan.clinv, plan.clptr,
         js.nmodes, js.nfreq, plan.transposed;
         ndrange = plan.perrow ? length(plan.colptr) - 1 : plan.n)
-    KernelAbstractions.synchronize(plan.backend)
+    # a caller assembling many matrices in a row synchronizes once after
+    synchronize && KernelAbstractions.synchronize(plan.backend)
+    return nzval
+end
+
+# the entry count below which a CPU assembly runs as a plain loop even
+# with threads available: the launch costs more than the entries
+const hostassemblylimit = 1 << 16
+
+# the body of `structureassemblerowkernel!` over every stored row, on the
+# host, with no kernel launch
+function hostassemblerealjacobian!(nzval, colptr, rowval, lin, phimatrix,
+        pairptr, pairrow, pairjunc, paircoef, lmolj, ami, amc, rlinv, rlptr,
+        clinv, clptr, Nmodes, Nfreq, transposed)
+    T = eltype(nzval)
+    @inbounds for rr in 1:length(colptr)-1
+        for q in Int(colptr[rr]):Int(colptr[rr+1])-1
+            rri = transposed ? rr : Int(rowval[q])
+            rci = transposed ? Int(rowval[q]) : rr
+            nzval[q] = realstructureentry(T, rri, rci, Nmodes, Nfreq, ami, amc,
+                pairptr, pairrow, pairjunc, paircoef, lmolj, rlinv, rlptr,
+                clinv, clptr, phimatrix) + lin[q]
+        end
+    end
     return nzval
 end
 

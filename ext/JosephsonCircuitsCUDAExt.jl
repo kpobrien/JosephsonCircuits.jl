@@ -30,7 +30,7 @@ using KernelAbstractions
 import LinearAlgebra
 using LinearAlgebra: lu!, ldiv!
 import JosephsonCircuits: fftplans, freememory, batchedinverse!, batchedmul!,
-    blockidentity!
+    blockidentity!, transientiqfftplans
 
 # Real transform plans on the device with the same dimensions, direction
 # and normalization convention as the FFTW plans of the CPU backend: the
@@ -81,5 +81,9 @@ function batchedmul!(C::AbstractArray{T,3}, A::AbstractArray{T,3},
         A, B, T(beta), C)
     return C
 end
+
+
+# the complex in place plans of the transient's windowed I/Q measurement
+transientiqfftplans(work, ::CUDABackend) = (CUFFT.plan_fft!(work), CUFFT.plan_bfft!(work))
 
 end # module

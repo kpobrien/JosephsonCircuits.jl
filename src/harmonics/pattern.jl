@@ -528,6 +528,20 @@ end
     end
 end
 
+# one work item per row and per right hand side column
+@kernel function devicecsrmulmatrixkernel!(W, @Const(colptr), @Const(rowval),
+        @Const(nzval), @Const(X))
+    i, j = @index(Global, NTuple)
+    T = eltype(W)
+    @inbounds begin
+        acc = zero(T)
+        for k in Int(colptr[i]):Int(colptr[i+1])-1
+            acc += nzval[k] * X[Int(rowval[k]), j]
+        end
+        W[i, j] = acc
+    end
+end
+
 """
     mul!(w::AbstractVector{<:BlasFloat}, A::DeviceValuedSparseMatrix,
         x::AbstractVector)

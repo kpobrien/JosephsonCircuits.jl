@@ -1163,6 +1163,210 @@ end
 checkpassive(p::AbstractMatrixProvider; atol = 1e-8) = nothing
 
 """
+    RationalScatteringProvider(A, B, C, D)
+
+A scattering matrix given as the real state space realization
+`S(s) = D + C (s I - A)^(-1) B` of a passive rational multiport, the
+form a vector fit of measured or simulated scattering data takes and the
+one the transient solver realizes in time, `dz/dt = A z + B a`,
+`b = C z + D a` on the incident and reflected power waves. Evaluated at
+a signed angular frequency by one dense solve, without forming an
+inverse. Built by [`RationalScattering`](@ref), which validates it.
+"""
+struct RationalScatteringProvider <: AbstractMatrixProvider
+    A::Matrix{Float64}
+    B::Matrix{Float64}
+    C::Matrix{Float64}
+    D::Matrix{Float64}
+end
+providersize(p::RationalScatteringProvider) = size(p.D, 1)
+function evaluateprovider!(dest::AbstractArray{T,3},
+        p::RationalScatteringProvider, ws::AbstractVector) where T
+    n = size(p.D, 1)
+    checkdestsize(dest, n, length(ws))
+    nz = size(p.A, 1)
+    for i in eachindex(ws)
+        if nz == 0
+            dest[:, :, i] .= p.D
+        else
+            dest[:, :, i] .= p.D .+ p.C*((im*ws[i]*I - p.A) \ p.B)
+        end
+    end
+    return dest
+end
+
+# The passivity of a rational realization: the bounded real lemma's
+# Hamiltonian test where the feedthrough is strictly contractive, exact
+# and dependency free, since `S` has a singular value crossing one on the
+# imaginary axis if and only if the Hamiltonian matrix has an imaginary
+# eigenvalue; and where the feedthrough reaches one, as a lossless block's
+# does, a fine sampling over the band of the poles.
+function checkpassive(p::RationalScatteringProvider; atol = 1e-8)
+    A, B, C, D = p.A, p.B, p.C, p.D
+    margin = passivitymargin(D)
+    margin < -atol && throw(ArgumentError(lazy"The rational scattering block is not passive at infinite frequency: the minimum eigenvalue of I - D*D' is $(margin)."))
+    size(A, 1) == 0 && return nothing
+    worst, w = hinfnorm(A, B, C, D)
+    worst > 1 + atol && throw(ArgumentError(lazy"The rational scattering block is not passive: its largest singular value over all frequencies is $(worst), at $(w) rad/s."))
+    return nothing
+end
+
+# the realization in the frequency unit of the poles, `S(s) = D + C (s/w I - A/w)^(-1) B/w`,
+# with each state scaled to balance its input row and output column, the
+# similarity `A -> T^(-1) A T`, `B -> T^(-1) B`, `C -> C T`, which leaves
+# `S` alone; and the scale
+function balancedrealization(A, B, C)
+    nz = size(A, 1)
+    wscale = max(maximum(abs, eigvals(A)), floatmin(Float64))
+    An, Bn = A ./ wscale, B ./ wscale
+    t = [(cb = norm(view(C, :, k)); bb = norm(view(Bn, k, :)); cb > 0 && bb > 0 ? sqrt(bb/cb) : cb > 0 ? 1/cb : bb > 0 ? bb : 1.0) for k in 1:nz]
+    return (1 ./ t) .* An .* transpose(t), Bn ./ t, C .* transpose(t), wscale
+end
+
+"""
+    hinfnorm(A, B, C, D; rtol = 1e-8)
+
+The largest singular value of the real rational matrix
+`S(s) = D + C (s I - A)^(-1) B` over every frequency, and the frequency
+in rad/s where it is reached, to the relative tolerance, by the level set
+iteration of Boyd, Balakrishnan, Bruinsma and Steinbuch: a lower bound
+from the feedthrough and samples at the poles' frequencies is raised by
+a hair to a level, the frequencies where a singular value equals the
+level are the imaginary eigenvalues of the pencil of [`passivitycrossings`](@ref)
+for `S` over the level, and where there are any the largest singular
+value between consecutive ones raises the bound, until no singular value
+reaches the level. A peak however narrow is found, since the pencil
+finds every crossing of the level, which a sample can miss.
+"""
+function hinfnorm(A, B, C, D; rtol = 1e-8)
+    An, Bn, Cn, wscale = balancedrealization(A, B, C)
+    # a pole on the axis, as an inverted notch has, is an infinite norm
+    S = w -> try
+        D .+ Cn*((im*w*I - An) \ Bn)
+    catch e
+        e isa SingularException ? fill(Inf, size(D)) : rethrow()
+    end
+    probes = vcat(0.0, [abs(imag(l)) for l in eigvals(An) if abs(imag(l)) > 0], exp.(range(log(1e-2), log(1e2); length = 7)))
+    bound, where = opnorm(D), Inf
+    for w in probes
+        s = opnorm(S(w))
+        isfinite(s) || return Inf, w*wscale
+        s > bound && ((bound, where) = (s, w))
+    end
+    isfinite(bound) || return Inf, where*wscale
+    for iteration in 1:100
+        level = (1 + 2rtol)*bound
+        # the pencil at a level above the bound is regular, a singular
+        # value equal to the level everywhere being impossible, so its
+        # eigenvalues are taken as they come: a nearly lossless block only
+        # scales the pencil's determinant by a small constant, and a
+        # singular value test on it would mistake that for singularity and
+        # miss a peak between the samples
+        crossings, _ = pencilcrossings(An, Bn, Cn ./ level, D ./ level; singulartest = false)
+        length(crossings) < 2 && break
+        raised = false
+        for k in 1:length(crossings) - 1
+            w = (crossings[k] + crossings[k + 1])/2
+            s = opnorm(S(w))
+            isfinite(s) || return Inf, w*wscale
+            s > bound*(1 + rtol) && ((bound, where, raised) = (s, w, true))
+        end
+        raised || break
+    end
+    return bound, where*wscale
+end
+
+"""
+    passivitycrossings(A, B, C, D)
+
+The frequencies in rad/s at which a singular value of the real rational
+scattering matrix `S(s) = D + C (s I - A)^(-1) B` equals one, sorted,
+and the scale of the poles: the finite eigenvalues on the imaginary axis
+of the pencil of the equations `i w x = A x + B u`, `-i w y = A' y + C' w`,
+`w = C x + D u`, `u = B' y + D' w`, which say `S(i w)' S(i w) u = u`,
+whose matrices are formed without inverting `I - D' D`, so a feedthrough
+on the unit circle is no obstacle. Returns `nothing` for the crossings
+when the pencil is singular, which is when a singular value is one at
+every frequency, as a lossless block's are. The pencil for `S` over a
+level finds the crossings of that level, which is how [`hinfnorm`](@ref)
+finds the largest singular value.
+"""
+function passivitycrossings(A, B, C, D)
+    An, Bn, Cn, wscale = balancedrealization(A, B, C)
+    crossings, _ = pencilcrossings(An, Bn, Cn, D)
+    return isnothing(crossings) ? nothing : crossings .* wscale, wscale
+end
+
+# the crossings of one in the units of the balanced realization
+function pencilcrossings(An, Bn, Cn, D; singulartest::Bool = true)
+    nz, m = size(An, 1), size(D, 1)
+    Z = zeros
+    H = [An Z(nz, nz) Bn Z(nz, m); Z(nz, nz) transpose(An) Z(nz, m) transpose(Cn);
+        Cn Z(m, nz) D -Matrix(1.0I, m, m); Z(m, nz) transpose(Bn) -Matrix(1.0I, m, m) transpose(D)]
+    E = Matrix(Diagonal(vcat(ones(nz), -ones(nz), zeros(2m))))
+    # a singular pencil, one whose determinant vanishes at every point,
+    # has no meaningful eigenvalues: it is told by its rank at two points
+    # off the axis
+    if singulartest
+        for l0 in (complex(0.7, 1.3), complex(-1.1, 0.4))
+            sv = svdvals(l0 .* E .- H)
+            sv[end] <= 1e-10*sv[1] && return nothing, 1.0
+        end
+    end
+    lambda = eigvals(H, E)
+    finite = [l for l in lambda if isfinite(real(l)) && isfinite(imag(l)) && abs(l) <= 1e8]
+    crossings = sort!([abs(imag(l)) for l in finite if abs(real(l)) <= 1e-8*(abs(l) + 1)])
+    # a crossing and its conjugate are one
+    merged = Float64[]
+    for w in crossings
+        (isempty(merged) || w - last(merged) > 1e-9*(w + 1)) && push!(merged, w)
+    end
+    return merged, 1.0
+end
+
+# a point in every interval between the crossings, from zero and beyond
+# the last
+function passivityprobes(crossings, wscale)
+    edges = vcat(0.0, crossings, isempty(crossings) ? wscale : 2last(crossings) + wscale)
+    return [(edges[k] + edges[k + 1])/2 for k in 1:length(edges) - 1]
+end
+
+"""
+    RationalScattering(A, B, C, D; zref = 50.0, grounded = true,
+        noise = Passive(), atol = 1e-8)
+
+A [`ScatteringParameters`](@ref) block from the real state space
+realization `S(s) = D + C (s I - A)^(-1) B` of a passive rational
+multiport, with `A` the `nz` by `nz` state matrix, `B` `nz` by `nports`,
+`C` `nports` by `nz` and `D` `nports` by `nports`, all real and finite,
+`A` stable. The block is validated as passive by the bounded real
+lemma's Hamiltonian test, or by sampling where its feedthrough is
+lossless, and it is rejected otherwise; an active block is not a
+scattering block of this kind. It is evaluated by the harmonic balance
+solvers at every frequency and realized in time by the transient solver
+with its states, so the two describe the same block, and its noise is
+the noise of its loss at every frequency by Bosma's relation. The
+realization is what a vector fit of measured or simulated data
+delivers; a lossless line is [`TransmissionLine`](@ref) instead, which
+needs no states.
+"""
+function RationalScattering(A, B, C, D; zref = 50.0, grounded::Bool = true, noise = Passive(), atol::Real = 1e-8)
+    Am, Bm, Cm, Dm = Matrix{Float64}(A), Matrix{Float64}(B), Matrix{Float64}(C), Matrix{Float64}(D)
+    n, nz = size(Dm, 1), size(Am, 1)
+    size(Dm) == (n, n) && size(Am) == (nz, nz) && size(Bm) == (nz, n) && size(Cm) == (n, nz) || throw(DimensionMismatch(
+        lazy"the realization needs A of size (nz, nz), B (nz, nports), C (nports, nz) and D (nports, nports); got $(size(Am)), $(size(Bm)), $(size(Cm)), $(size(Dm))."))
+    all(M -> all(isfinite, M), (Am, Bm, Cm, Dm)) || throw(ArgumentError("the realization must be finite."))
+    nz == 0 || maximum(real.(eigvals(Am))) < 0 || throw(ArgumentError(
+        lazy"the realization is unstable: the largest real part of an eigenvalue of A is $(maximum(real.(eigvals(Am)))) per second."))
+    provider = RationalScatteringProvider(Am, Bm, Cm, Dm)
+    checkpassive(provider; atol = atol)
+    checklossless(noise, provider)
+    z = zref isa Number ? fill(Float64(zref), n) : Float64.(collect(zref))
+    length(z) == n && all(x -> isfinite(x) && x > 0, z) || throw(ArgumentError("give one positive reference impedance per port."))
+    return ScatteringParameters(provider, n, z, grounded, noise, ConjugateSymmetry())
+end
+
+"""
     unitaritydeviation(S::AbstractMatrix)
 
 The largest absolute entry of `I - S S'`, which is zero for a lossless
@@ -1200,6 +1404,29 @@ lossless are identically zero. A `false` here therefore costs work and
 never correctness, which is why the fallback is `false`.
 """
 provablylossless(p::AbstractMatrixProvider; atol = 1e-10) = false
+# A rational block is lossless when every singular value of `S` is one at
+# every frequency: the largest at most one, by the largest singular value
+# over all frequencies, and the smallest at least one, by the largest
+# singular value of `S^(-1)` over all frequencies, which is a rational
+# block of its own when the feedthrough is invertible, and without an
+# invertible feedthrough the block is not lossless. Both are found by the
+# level set iteration, which finds a peak or a notch however narrow. No
+# test of the coefficients of `I - S(-s)' S(s)` can: a notch of relative
+# width `eps` has coefficients of order `eps^2` there and reaches one
+# at its center, so only the values on the axis tell. The tolerance is
+# a part in 1e8 of a singular value, a loss no noise sees.
+# Nothing is inferred about a rational block by default: it keeps the
+# channels of its loss, however small, and only a declaration of
+# `Lossless()` is validated, by `losslessnorms`, which can only refuse.
+provablylossless(p::RationalScatteringProvider; atol = 1e-8) = false
+function losslessnorms(p::RationalScatteringProvider; atol = 1e-8)
+    nz = size(p.A, 1)
+    unitaritydeviation(p.D) <= atol || return false
+    nz == 0 && return true
+    hinfnorm(p.A, p.B, p.C, p.D)[1] <= 1 + atol || return false
+    Dinv = inv(p.D)
+    return hinfnorm(p.A - p.B*Dinv*p.C, p.B*Dinv, -Dinv*p.C, Dinv)[1] <= 1 + atol
+end
 provablylossless(p::ConstantMatrixProvider; atol = 1e-10) =
     unitaritydeviation(p.A) <= atol
 function provablylossless(p::TabulatedMatrixProvider; atol = 1e-10)
@@ -1215,6 +1442,10 @@ provablylossless(b::ScatteringParameters; atol = 1e-10) =
 # checked for and a callable cannot
 function checklossless(noise::Lossless, provider)
     if provider isa CallableMatrixProvider
+        return nothing
+    end
+    if provider isa RationalScatteringProvider
+        losslessnorms(provider) || throw(ArgumentError("noise = Lossless() says the scattering matrix is unitary at every frequency, but this rational block's largest singular value over all frequencies, or its inverse's, exceeds one by more than a part in 1e8. Use the default Passive() noise model, which gives a dissipative block the noise its loss requires."))
         return nothing
     end
     if !provablylossless(provider)

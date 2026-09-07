@@ -1,4 +1,5 @@
 using JosephsonCircuits
+using LinearAlgebra
 using Test
 isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"))
 

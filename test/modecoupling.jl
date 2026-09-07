@@ -332,8 +332,10 @@ using Test
         @test committed isa JosephsonCircuits.FloquetState
         @test size(committed.X, 2) > 0
         Xcommitted = copy(committed.X)
-        # the solve `hbsolve!` makes, cut off after one Newton step
-        failed = JosephsonCircuits.hbnlsolve(cache.w, cache.sources,
+        # the solve `hbsolve!` makes, cut off after one Newton step, which
+        # it says
+        failed = @test_logs (:warn, r"did not converge: the Newton iteration budget") match_mode=:any JosephsonCircuits.hbnlsolve(
+            cache.w, cache.sources,
             cache.frequencies, cache.indices, cache.compiled, cache.cg,
             cache.nm; keyedarrays = false, reuse = cache.reuse,
             iterations = 1, cache.kwargs...)

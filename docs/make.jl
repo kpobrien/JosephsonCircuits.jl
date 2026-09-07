@@ -14,7 +14,14 @@ makedocs(
     modules=[JosephsonCircuits],
     doctest = false,
     sitename="JosephsonCircuits",
-    format = Documenter.HTML(edit_link = nothing, disable_git = true,size_threshold_ignore = ["reference.md"]),
+    format = Documenter.HTML(edit_link = nothing, disable_git = true,size_threshold_ignore = ["reference.md", "examples.md"]),
+    pages = [
+        "Home" => "index.md",
+        "Circuits" => "circuits.md",
+        "Harmonic balance" => ["Usage" => "harmonicbalance.md", "Theory and implementation" => "harmonicbalancetheory.md", "Examples" => "examples.md", "Using other solvers" => "interop.md"],
+        "Time domain" => ["Usage" => "transient.md", "Theory and implementation" => "transienttheory.md", "Quantum noise in time" => "transientnoise.md"],
+        "Reference" => "reference.md",
+    ],
     )
 
 deploydocs(

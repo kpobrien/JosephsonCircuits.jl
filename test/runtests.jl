@@ -27,19 +27,26 @@ function testjobs()
     # Aqua and the doctests are not run on nightly
     if !occursin("DEV", string(VERSION))
         push!(jobs, "Doctests (Documenter.jl)" => """
-            using Documenter
+            using Documenter, Logging
             DocMeta.setdocmeta!(JosephsonCircuits, :DocTestSetup,
                 :(using JosephsonCircuits); recursive = true)
-            makedocs(remotes = nothing,
-                root = joinpath(dirname(pathof(JosephsonCircuits)), "..", "docs"),
-                modules = [JosephsonCircuits], doctest = :only,
-                sitename = "JosephsonCircuits",
-                format = Documenter.HTML(edit_link = nothing, disable_git = true))
+            # Documenter narrates each of its steps at info level, which
+            # says nothing about the doctests; a failing doctest is logged
+            # as an error and still comes through
+            with_logger(ConsoleLogger(stderr, Logging.Warn)) do
+                makedocs(remotes = nothing,
+                    root = joinpath(dirname(pathof(JosephsonCircuits)), "..", "docs"),
+                    modules = [JosephsonCircuits], doctest = :only,
+                    sitename = "JosephsonCircuits",
+                    format = Documenter.HTML(edit_link = nothing, disable_git = true))
+            end
             """)
     end
     for f in ("hbsolve.jl", "directcurrent.jl", "quantumoptics.jl",
             "networkparamconversion.jl", "scatteringblocks.jl", "crosscheck.jl",
-            "problem.jl", "modecoupling.jl", "builders.jl", "matrices.jl",
+            "problem.jl", "transient.jl", "transientblocks.jl", "transientnoise.jl", "transientpumped.jl",
+            "transientiq.jl", "transientquantum.jl",
+            "modecoupling.jl", "builders.jl", "matrices.jl",
             "exportnetlist.jl", "frequencies.jl", "graph.jl",
             "JosephsonCircuits.jl", "networks.jl", "networkconnection.jl",
             "sparse.jl", "newton.jl", "newtonkrylov.jl", "floquetdeflation.jl",
@@ -101,21 +108,37 @@ else
     end
     # a job on a worker: its testset runs inside an enclosing one, so it
     # records there rather than reporting itself as the outermost testset,
-    # and comes back to the master, which nests it in the suite's. The
-    # enclosing testset is the outermost on the worker and throws at its
-    # end when the job failed; that is caught, since the failures travel
-    # in the returned testset. Only the documented interface of Test is
-    # used, since its internals moved between Julia versions.
+    # and comes back to the master, which nests it in the suite's.
+    #
+    # The enclosing testset keeps nothing and reports nothing: were it an
+    # ordinary testset it would be the outermost on the worker, and would
+    # print a summary of the job at its end, which the suite's own summary
+    # on the master then repeats, and would throw when the job failed. A
+    # failure or an error still prints where it happens, from the job's
+    # testset, along with whatever the code under test logs, and travels
+    # to the master in the returned testset, which is what the summary and
+    # the exit status are made of. Only the documented interface of Test
+    # is used, `record` and `finish` on an `AbstractTestSet`, since its
+    # internals moved between Julia versions.
+    @everywhere struct SilentTestSet <: Test.AbstractTestSet
+        description::String
+        SilentTestSet(description; kwargs...) = new(String(description))
+    end
+    @everywhere Test.record(::SilentTestSet, ::Any) = nothing
+    @everywhere Test.finish(ts::SilentTestSet) = ts
+    # The job's testset says which type it is, since a testset takes the
+    # type of the one enclosing it when it is not told: it would be silent
+    # too, and would swallow the job's failures rather than report them.
+    # The name is bound here because `@testset` takes the type as a plain
+    # name and not as `Test.DefaultTestSet` on the long term support
+    # release.
+    @everywhere const JobTestSet = Test.DefaultTestSet
     @everywhere function runtestjob(name::String, code::String)
         job = Ref{Any}(nothing)
-        try
-            @testset "worker" begin
-                job[] = @testset "$name" begin
-                    include_string(Main, code)
-                end
+        @testset SilentTestSet "worker" begin
+            job[] = @testset JobTestSet "$name" begin
+                include_string(Main, code)
             end
-        catch e
-            e isa Test.TestSetException || rethrow()
         end
         return job[]
     end
