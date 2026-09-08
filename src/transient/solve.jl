@@ -581,6 +581,15 @@ lies, since the launches of a step serve every condition. `initialstate`
 is one pair for all conditions or a vector of pairs. Returns a
 [`TransientBatchSolution`](@ref), whose `solution[j]` is the ordinary
 solution of condition `j`.
+
+On the host the conditions are also split across the threads of the
+session and their chunks stepped at once, since the conditions of a batch
+are independent of one another. The whole step parallelizes that way, not
+only the assembly, the factorization and the solve, and the chunks fill
+the arrays of the batch in place, so the split costs no copy and changes
+no result: any layout of chunks gives the same bits. Start Julia with
+`-t` to use it. A device keeps the one chunk its uniform batch already
+is.
 """
 function transientsolve(problems::AbstractVector{TransientProblem}, tspan; dt::Real,
         method::AbstractTransientIntegrator = GaussLegendre(), backend::Backend = CPU(),

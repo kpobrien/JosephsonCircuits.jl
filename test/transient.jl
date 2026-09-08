@@ -4,6 +4,10 @@ using SparseArrays
 using Random
 using Test
 
+# a backend which is not the host, to check that a device batch keeps the
+# one chunk its uniform batch already is, without needing a device
+struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
+
 @testset "the circuit in time" begin
     JC = JosephsonCircuits
     rc = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12)]
@@ -587,6 +591,27 @@ using Test
             @test transientadjoint(member, weights).currents ≈ transientadjoint(single, weights).currents rtol=1e-10
         end
         @test batch.stats.factorizations == 1
+        # A host batch splits its conditions across the threads of the
+        # session and steps the chunks at once. The split is exact: the
+        # conditions are independent, so any layout of chunks fills the
+        # batch's arrays with the same bits. Only the Newton counter
+        # differs, since a joint step iterates until the worst condition of
+        # its own chunk has converged, never more than the whole batch.
+        let sys = JosephsonCircuits.transientsystem(base, 5e-12, GaussLegendre(),
+                JosephsonCircuits.CPU(), JosephsonCircuits.transientfactorization(JosephsonCircuits.CPU())),
+            states = [transientstate(q) for q in problems],
+            run = chunks -> JosephsonCircuits.gaussbatchintegrate(sys, problems, 0.0, 5e-9, 1000,
+                states, 1, :states, 0, 1e-9, 1e-10, 15, nothing; chunks = chunks)
+            whole, split = run([1:3]), run([1:1, 2:3])
+            for f in (:voltage, :incident, :outgoing, :phases, :flux, :rate, :finalflux, :initialflux)
+                @test getfield(whole, f) == getfield(split, f)
+            end
+            @test whole.stats.factorizations == split.stats.factorizations == 1
+            @test split.stats.newtoncorrections <= whole.stats.newtoncorrections
+            @test JosephsonCircuits.batchchunks(JosephsonCircuits.CPU(), 1) == [1:1]
+            # a device keeps the one chunk its uniform batch already is
+            @test JosephsonCircuits.batchchunks(NotTheHost(), 8) == [1:8]
+        end
         # the responses of the whole batch on one pass equal the members'
         currents = [1e-8*sinpi(2*4.7e9*t) for p in 1:1, t in batch.times]
         tb = transienttangent(batch, currents)
@@ -631,7 +656,11 @@ using Test
         @test b1.finalflux == b2.finalflux
         reuse = TransientReuse()
         b3 = transientsolve(problems, (0.0, 1e-9); dt = 5e-12, reuse)
-        @test reuse.factor isa JC.GaussBatchFactor && reuse.factor.ncolumns == 3
+        # the kept factorizations are one per chunk of conditions, and the
+        # chunks together are the batch
+        @test reuse.factor isa Vector && all(f -> f isa JC.GaussBatchFactor, reuse.factor)
+        @test sum(f -> f.ncolumns, reuse.factor) == 3
+        @test length(reuse.factor) == length(JC.batchchunks(JC.CPU(), 3))
         @test transientsolve(problems, (0.0, 1e-9); dt = 5e-12, reuse).finalflux ≈ b3.finalflux rtol=1e-12
         # each condition's state is checked under its own drive, and the
         # sources a batch leaves constant must agree

@@ -82,6 +82,12 @@ dimension, `voltage[port, time, condition]`, `flux[state, time, condition]`,
 `solution[j]`, is the ordinary solution of condition `j`, a view of the
 batch's arrays, on which the demodulation, the tangent, the adjoint and
 the noise run as on any solution.
+
+`stats` counts the work of one chunk of conditions: a host batch split
+across threads reports the counters of the chunk which worked hardest,
+as a batch on one chunk reports those of the condition which converged
+worst. The count of Newton corrections therefore falls as the chunks get
+smaller, while the results do not change.
 """
 struct TransientBatchSolution{P, M, V}
     problems::P
@@ -145,12 +151,13 @@ end
 # through the permutation `tperm` when an adjoint first asks for it and
 # refreshed with the forward factor thereafter; on the host KLU solves
 # the transpose from the one factorization.
-struct GaussBatchFactor{J, F, X, B, I, IT}
+struct GaussBatchFactor{J, F, X, B, S, I, IT}
     ncolumns::Int
     jacobians::J
     factors::F
     X::X
     B::B
+    scratch::S
     chunks::Vector{UnitRange{Int}}
     rowptr::I
     colind::I
@@ -171,7 +178,10 @@ function gaussbatchfactor(sys::TransientSystem, ncolumns::Int; nrhs::Int = 1)
         pattern = g.cjacobian
         jacobians = [SparseMatrixCSC(size(pattern)..., SparseArrays.getcolptr(pattern), rowvals(pattern),
             zeros(ComplexF64, nnzj)) for _ in 1:ncolumns]
-        return GaussBatchFactor(ncolumns, jacobians, Vector{Any}(nothing, ncolumns), nothing, nothing, UnitRange{Int}[],
+        # the assembly scratch belongs to the factor, not to the system,
+        # so that several batches of one circuit may step at once
+        return GaussBatchFactor(ncolumns, jacobians, Vector{Any}(nothing, ncolumns), nothing, nothing,
+            zeros(Float64, nnzj), UnitRange{Int}[],
             nothing, nothing, sys.symmetric, Any[], nothing, nothing, nothing, nothing, Ref(true))
     end
     n = size(sys.jacobian, 1)
@@ -196,7 +206,7 @@ function gaussbatchfactor(sys::TransientSystem, ncolumns::Int; nrhs::Int = 1)
         tperm = tobackend(backend, nonzeros(Kcsc))
         tnzval = KernelAbstractions.zeros(backend, ComplexF64, nnzj, ncolumns)
     end
-    return GaussBatchFactor(ncolumns, nzval, Vector{Any}(nothing, length(chunks)), X, B, chunks, rowptr, colind,
+    return GaussBatchFactor(ncolumns, nzval, Vector{Any}(nothing, length(chunks)), X, B, nothing, chunks, rowptr, colind,
         sys.symmetric, Vector{Any}(nothing, length(chunks)), trowptr, tcolind, tperm, tnzval, Ref(true))
 end
 
@@ -237,8 +247,8 @@ function gaussbatchjacobian!(bf::GaussBatchFactor, sys::TransientSystem, phi, co
     if sys.backend isa CPU
         for j in 1:ncolumns
             A = bf.jacobians[j]
-            assemblerealjacobian!(nonzeros(sys.jacobian), sys.plan, view(cosphi, :, j))
-            nonzeros(A) .= nonzeros(sys.jacobian) .+ im .* g.imvals .+ g.rationalvals
+            assemblerealjacobian!(bf.scratch, sys.plan, view(cosphi, :, j))
+            nonzeros(A) .= bf.scratch .+ im .* g.imvals .+ g.rationalvals
             bf.factors[j] = isnothing(bf.factors[j]) ? factorize(sys.factorization, A) :
                 refactorize!(sys.factorization, bf.factors[j], A)
         end
@@ -1578,21 +1588,149 @@ function advance!(st::GaussStepper, tprev, t, step)
     return st
 end
 
-# the integration of a batch under the Gauss-Legendre rule
-function gaussbatchintegrate(sys::TransientSystem, problems, t0, tf, nsteps, initialstates,
-        saveevery, record, checkpointevery, rtol, atol, maxiters, reuse)
+# The conditions each task of a host batch steps. The conditions of a
+# batch are independent of one another, so a host splits them across the
+# threads of the session and steps the chunks at once: the whole step
+# parallelizes that way, not only the assembly, the factorization and the
+# solve, and the arrays of the batch are filled in place through views, so
+# nothing is copied to put the batch back together. A device keeps the one
+# chunk it has always had: its batch is already the parallelism, and
+# driving one device from several tasks at once is not how the package
+# uses it.
+function batchchunks(backend, N::Integer)
+    (backend isa CPU && N > 1) || return [1:N]
+    nc = min(Base.Threads.nthreads(), N)
+    nc > 1 || return [1:N]
+    return [round(Int, (k - 1)*N/nc) + 1:round(Int, k*N/nc) for k in 1:nc]
+end
+
+# The arrays a batch of `N` conditions fills, allocated before the
+# conditions are split. Every one carries the condition last, so the
+# arrays of a chunk are views along that axis and the batch's solution is
+# the whole set. What the record asks for decides which are allocated,
+# and a run writes exactly those which are there.
+function gaussbatchoutputs(sys::TransientSystem, N, nsteps, saveevery, record, checkpointevery)
     savephases, savestates, savecheckpoints = recordlevel(record, saveevery)
     p = sys.problem
     backend = sys.backend
-    N = length(problems)
-    n, np = length(p), length(p.portimpedances)
-    nj = length(sys.lmolj)
-    h = sys.h
-    bf = if !isnothing(reuse) && reuse.factor isa GaussBatchFactor && reuse.factor.ncolumns == N
-        reuse.factor
-    else
-        gaussbatchfactor(sys, N)
+    n, np, nj = length(p), length(p.portimpedances), length(sys.lmolj)
+    nl = 2length(p.lines)
+    npre = lineprehistory(p, sys.h)
+    nzs = blockstates(p)
+    pr = sys.gauss.projection
+    npj = isnothing(pr) ? 0 : length(pr.pj)
+    nsaved = cld(nsteps, saveevery) + 1
+    # the checkpoints, and the history of the line waves before each of
+    # them when that history would not outweigh the record of the waves
+    K = checkpointevery > 0 ? Int(checkpointevery) : max(1, round(Int, sqrt(nsteps)))
+    nc = savecheckpoints ? cld(nsteps, K) : 0
+    tails = savecheckpoints && npre*nc <= nsteps + 1
+    zeroed = (dims...) -> KernelAbstractions.zeros(backend, Float64, dims...)
+    voltage, incident, outgoing = [KernelAbstractions.allocate(backend, Float64, np, nsaved, N) for _ in 1:3]
+    return (; voltage, incident, outgoing,
+        phases = savephases ? zeroed(nj, 2, nsaved, N) : nothing,
+        endphases = savephases && npj > 0 ? zeroed(npj, nsaved, N) : nothing,
+        linewaves = nl > 0 && (!savecheckpoints || !tails) ? zeroed(nl, nsteps + 1, N) : nothing,
+        flux = savestates ? KernelAbstractions.allocate(backend, Float64, n, nsaved, N) : nothing,
+        rate = savestates ? KernelAbstractions.allocate(backend, Float64, n, nsaved, N) : nothing,
+        blockstates = savestates && nzs > 0 ? zeroed(nzs, nsaved, N) : nothing,
+        checkpoints = savecheckpoints ? (; every = K, flux = zeroed(n, nc, N), rate = zeroed(n, nc, N),
+            increment = zeroed(n, 2, nc, N), states = zeroed(nzs, nc, N),
+            waves = zeroed(nl, nl > 0 && tails ? npre : 0, tails ? nc : 0, N)) : nothing,
+        initialflux = zeroed(n, N), initialrate = zeroed(n, N),
+        finalflux = zeroed(n, N), finalrate = zeroed(n, N),
+        initialwaves = zeros(nl, N), initialstates = zeros(nzs, N))
+end
+
+# the arrays of the conditions `ch`, views of the batch's along the
+# condition axis, which a chunk fills as though they were its own
+function chunkoutputs(out, ch)
+    slice = a -> isnothing(a) ? nothing : selectdim(a, ndims(a), ch)
+    cp = isnothing(out.checkpoints) ? nothing : (; every = out.checkpoints.every,
+        flux = slice(out.checkpoints.flux), rate = slice(out.checkpoints.rate),
+        increment = slice(out.checkpoints.increment), states = slice(out.checkpoints.states),
+        waves = slice(out.checkpoints.waves))
+    return (; voltage = slice(out.voltage), incident = slice(out.incident), outgoing = slice(out.outgoing),
+        phases = slice(out.phases), endphases = slice(out.endphases), linewaves = slice(out.linewaves),
+        flux = slice(out.flux), rate = slice(out.rate), blockstates = slice(out.blockstates), checkpoints = cp,
+        initialflux = slice(out.initialflux), initialrate = slice(out.initialrate),
+        finalflux = slice(out.finalflux), finalrate = slice(out.finalrate),
+        initialwaves = slice(out.initialwaves), initialstates = slice(out.initialstates))
+end
+
+# The factorizations of every chunk, kept between the solves of one
+# batch: one per chunk, taken over when the chunks are laid out as the
+# kept ones are, since a factor holds the analyses of its conditions and
+# an ordering is not cheap to find again.
+function batchfactors(sys::TransientSystem, chunks, reuse)
+    kept = isnothing(reuse) ? nothing : reuse.factor
+    if kept isa Vector && length(kept) == length(chunks) && all(k -> kept[k] isa GaussBatchFactor &&
+            kept[k].ncolumns == length(chunks[k]), eachindex(chunks))
+        return kept
     end
+    return [gaussbatchfactor(sys, length(ch)) for ch in chunks]
+end
+
+# The statistics of a batch stepped in chunks. Every chunk walks the same
+# grid, and within a chunk the counters are those of the condition which
+# converged worst, so across chunks they are those of the worst chunk;
+# summing them would count one grid several times over.
+function mergebatchstats(each)
+    s = first(each)
+    return (; steps = s.steps, newtoncorrections = maximum(c -> c.newtoncorrections, each),
+        factorizations = maximum(c -> c.factorizations, each), retries = maximum(c -> c.retries, each),
+        kryloviterations = 0, rtol = s.rtol, atol = s.atol, maxiters = s.maxiters)
+end
+
+# The integration of a batch under the Gauss-Legendre rule: the arrays of
+# every condition allocated once, the conditions split into chunks, and
+# each chunk stepped into its own views of them. One chunk is the whole
+# batch on one task, which is what a device and a single threaded session
+# do.
+function gaussbatchintegrate(sys::TransientSystem, problems, t0, tf, nsteps, initialstates,
+        saveevery, record, checkpointevery, rtol, atol, maxiters, reuse;
+        chunks = batchchunks(sys.backend, length(problems)))
+    h = sys.h
+    times = [k == nsteps ? tf : t0 + k*h for k in 0:nsteps]
+    savedtimes = [times[1]; [times[step + 1] for step in 1:nsteps if step % saveevery == 0 || step == nsteps]]
+    out = gaussbatchoutputs(sys, length(problems), nsteps, saveevery, record, checkpointevery)
+    factors = batchfactors(sys, chunks, reuse)
+    stats = if length(chunks) == 1
+        gaussbatchrun!(out, sys, problems, initialstates, times, saveevery, rtol, atol, maxiters, factors[1])
+    else
+        each = Vector{Any}(undef, length(chunks))
+        # the chunks share the system, which they read and do not write,
+        # and nothing else: their steppers, factors and arrays are their own
+        Base.Threads.@sync for (k, ch) in enumerate(chunks)
+            Base.Threads.@spawn each[k] = gaussbatchrun!(chunkoutputs(out, ch), sys, problems[ch],
+                initialstates[ch], times, saveevery, rtol, atol, maxiters, factors[k])
+        end
+        mergebatchstats(each)
+    end
+    isnothing(reuse) || (reuse.factor = factors)
+    return TransientBatchSolution(problems, sys.method, h, savedtimes, out.voltage, out.incident, out.outgoing,
+        out.phases, out.endphases, out.linewaves, out.flux, out.rate, out.checkpoints, out.initialflux,
+        out.initialrate, out.finalflux, out.finalrate, out.blockstates, out.initialwaves, out.initialstates, stats)
+end
+
+# One chunk of a batch stepped along `times` into the arrays `out`, on
+# the factorizations `bf`: the initial states read, the algebraic
+# equations checked, and every step advanced and saved. The record is
+# whichever arrays of `out` are there to be filled. Returns the chunk's
+# statistics.
+function gaussbatchrun!(out, sys::TransientSystem, problems, initialstates, times, saveevery,
+        rtol, atol, maxiters, bf::GaussBatchFactor)
+    p = sys.problem
+    backend = sys.backend
+    N = length(problems)
+    n = length(p)
+    h = sys.h
+    t0, nsteps = first(times), length(times) - 1
+    savephases, savestates = !isnothing(out.phases), !isnothing(out.flux)
+    checkpoints = out.checkpoints
+    savecheckpoints = !isnothing(checkpoints)
+    K = savecheckpoints ? checkpoints.every : 0
+    tails = savecheckpoints && size(checkpoints.waves, 2) > 0
     st = gaussstepper(sys, problems, rtol, atol, maxiters, bf)
     nl = 2length(p.lines)
     x0, v0, w0 = zeros(n, N), zeros(n, N), zeros(nl, N)
@@ -1615,24 +1753,17 @@ function gaussbatchintegrate(sys::TransientSystem, problems, t0, tf, nsteps, ini
         end
         copyto!(st.rw.z, z0)
     end
+    copyto!(out.initialwaves, w0)
+    copyto!(out.initialstates, z0)
     setstate!(st, x0, v0, nothing)
-    # the grid, and the history of the line waves before the start,
-    # constant at the initial waves; the record of the waves leaving
-    # every port at every step, or with checkpoints the history before
-    # each of them
-    times = [k == nsteps ? tf : t0 + k*h for k in 0:nsteps]
+    # the history of the line waves before the start, constant at the
+    # initial waves; the record of the waves leaving every port at every
+    # step, or with checkpoints the history before each of them
     npre = st.npre
     tail = KernelAbstractions.zeros(backend, Float64, nl, npre, N)
     tail .= reshape(tobackend(backend, w0), nl, 1, N)
     sethistory!(st, times, tail, 0)
-    # the record of the waves is kept without checkpoints, and with them
-    # when the history before every checkpoint would outweigh it, as it
-    # does once the longest delay exceeds the checkpoint interval
-    K = checkpointevery > 0 ? Int(checkpointevery) : max(1, round(Int, sqrt(nsteps)))
-    nc = savecheckpoints ? cld(nsteps, K) : 0
-    tails = savecheckpoints && npre*nc <= nsteps + 1
-    waves = nl > 0 && (!savecheckpoints || !tails) ? KernelAbstractions.zeros(backend, Float64, nl, nsteps + 1, N) : nothing
-    isnothing(waves) || (view(waves, :, 1, :) .= tobackend(backend, w0))
+    isnothing(out.linewaves) || (view(out.linewaves, :, 1, :) .= tobackend(backend, w0))
     # the check of the algebraic equations at the start, per condition
     # under its own drives, the lines carrying their initial waves
     resting = isnothing(st.rw) ? nothing : restingwaves(sys, st.rw.z)
@@ -1642,40 +1773,21 @@ function gaussbatchintegrate(sys::TransientSystem, problems, t0, tf, nsteps, ini
         violation <= atol + rtol || throw(ArgumentError(
             lazy"the initial state of condition $(j) violates the algebraic equations of the circuit along a direction without capacitance to ground (a node no capacitor touches, a capacitive island, a coupled inductor or gauge row); supply a consistent transientstate, or start the drive from an equilibrium."))
     end
-    # the saved outputs
-    nsaved = cld(nsteps, saveevery) + 1
-    savedtimes = Vector{Float64}(undef, nsaved)
-    voltage, incident, outgoing = [KernelAbstractions.allocate(backend, Float64, np, nsaved, N) for _ in 1:3]
-    phases = savephases ? KernelAbstractions.zeros(backend, Float64, nj, 2, nsaved, N) : nothing
-    pr = sys.gauss.projection
-    npj = isnothing(pr) ? 0 : length(pr.pj)
-    endphases = savephases && npj > 0 ? KernelAbstractions.zeros(backend, Float64, npj, nsaved, N) : nothing
-    isnothing(endphases) || copyto!(view(endphases, :, 1, :), projectedphases!(st, st.x))
-    flux = savestates ? KernelAbstractions.allocate(backend, Float64, n, nsaved, N) : nothing
-    rate = savestates ? KernelAbstractions.allocate(backend, Float64, n, nsaved, N) : nothing
-    nzs = blockstates(p)
-    states = savestates && nzs > 0 ? KernelAbstractions.zeros(backend, Float64, nzs, nsaved, N) : nothing
-    isnothing(states) || (view(states, :, 1, :) .= st.rw.z)
-    # the checkpoints: the state and the stage predictor every K steps,
-    # from which a response replays the steps between, and the history of
-    # the line waves before each, unless the record is kept instead
-    checkpoints = savecheckpoints ? (; every = K, flux = KernelAbstractions.zeros(backend, Float64, n, nc, N),
-        rate = KernelAbstractions.zeros(backend, Float64, n, nc, N),
-        increment = KernelAbstractions.zeros(backend, Float64, n, 2, nc, N),
-        states = KernelAbstractions.zeros(backend, Float64, nzs, nc, N),
-        waves = KernelAbstractions.zeros(backend, Float64, nl, nl > 0 && tails ? npre : 0, tails ? nc : 0, N)) : nothing
-    savedtimes[1] = t0
+    isnothing(out.endphases) || copyto!(view(out.endphases, :, 1, :), projectedphases!(st, st.x))
+    isnothing(out.blockstates) || (view(out.blockstates, :, 1, :) .= st.rw.z)
     batchdrivecurrent!(st.bend, st, t0)
-    portwaves!(view(voltage, :, 1, :), view(incident, :, 1, :), view(outgoing, :, 1, :), sys, st.v, st.values, st.portwork)
+    portwaves!(view(out.voltage, :, 1, :), view(out.incident, :, 1, :), view(out.outgoing, :, 1, :),
+        sys, st.v, st.values, st.portwork)
     if savestates
-        copyto!(view(flux, :, 1, :), st.x)
-        copyto!(view(rate, :, 1, :), st.v)
+        copyto!(view(out.flux, :, 1, :), st.x)
+        copyto!(view(out.rate, :, 1, :), st.v)
     end
-    initialflux, initialrate = copy(st.x), copy(st.v)
+    copyto!(out.initialflux, st.x)
+    copyto!(out.initialrate, st.v)
     saved = 1
     tprev = t0
     for step in 1:nsteps
-        t = step == nsteps ? tf : t0 + step*h
+        t = times[step + 1]
         if savecheckpoints && (step - 1) % K == 0
             c = (step - 1) ÷ K + 1
             copyto!(view(checkpoints.flux, :, c, :), st.x)
@@ -1687,31 +1799,30 @@ function gaussbatchintegrate(sys::TransientSystem, problems, t0, tf, nsteps, ini
         end
         advance!(st, tprev, t, step)
         tprev = t
-        isnothing(waves) || (view(waves, :, step + 1, :) .= view(st.waves, :, ringslot(npre + step, size(st.waves, 2)), :))
+        isnothing(out.linewaves) || (view(out.linewaves, :, step + 1, :) .=
+            view(st.waves, :, ringslot(npre + step, size(st.waves, 2)), :))
         if step % saveevery == 0 || step == nsteps
             saved += 1
-            savedtimes[saved] = t
             batchdrivecurrent!(st.bend, st, t)
-            portwaves!(view(voltage, :, saved, :), view(incident, :, saved, :), view(outgoing, :, saved, :), sys, st.v, st.values, st.portwork)
+            portwaves!(view(out.voltage, :, saved, :), view(out.incident, :, saved, :),
+                view(out.outgoing, :, saved, :), sys, st.v, st.values, st.portwork)
             if savephases
-                view(phases, :, 1, saved, :) .= stage(st.phi, 1)
-                view(phases, :, 2, saved, :) .= stage(st.phi, 2)
+                view(out.phases, :, 1, saved, :) .= stage(st.phi, 1)
+                view(out.phases, :, 2, saved, :) .= stage(st.phi, 2)
             end
-            isnothing(endphases) || copyto!(view(endphases, :, saved, :), st.pw.phip)
+            isnothing(out.endphases) || copyto!(view(out.endphases, :, saved, :), st.pw.phip)
             if savestates
-                copyto!(view(flux, :, saved, :), st.x)
-                copyto!(view(rate, :, saved, :), st.v)
-                isnothing(states) || (view(states, :, saved, :) .= st.rw.z)
+                copyto!(view(out.flux, :, saved, :), st.x)
+                copyto!(view(out.rate, :, saved, :), st.v)
+                isnothing(out.blockstates) || (view(out.blockstates, :, saved, :) .= st.rw.z)
             end
         end
     end
     KernelAbstractions.synchronize(backend)
-    isnothing(reuse) || (reuse.factor = bf)
-    return TransientBatchSolution(problems, sys.method, h, savedtimes, voltage, incident, outgoing,
-        phases, endphases, waves, flux, rate, checkpoints, initialflux, initialrate, copy(st.x), copy(st.v),
-        states, w0, z0,
-        (; steps = nsteps, newtoncorrections = st.corrections, factorizations = st.factorizations,
-            retries = st.retries, kryloviterations = 0, rtol = Float64(rtol), atol = Float64(atol), maxiters = Int(maxiters)))
+    copyto!(out.finalflux, st.x)
+    copyto!(out.finalrate, st.v)
+    return (; steps = nsteps, newtoncorrections = st.corrections, factorizations = st.factorizations,
+        retries = st.retries, kryloviterations = 0, rtol = Float64(rtol), atol = Float64(atol), maxiters = Int(maxiters))
 end
 
 # The windows of steps a response walks and the phases of each. With a
