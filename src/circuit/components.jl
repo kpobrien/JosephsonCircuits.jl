@@ -1483,8 +1483,8 @@ function checkpassive(p::RationalScatteringProvider; atol = 1e-8)
     margin = passivitymargin(D)
     margin < -atol && throw(ArgumentError(lazy"The rational scattering block is not passive at infinite frequency: the minimum eigenvalue of I - D*D' is $(margin)."))
     size(A, 1) == 0 && return nothing
-    worst, w = hinfnorm(A, B, C, D)
-    worst > 1 + atol && throw(ArgumentError(lazy"The rational scattering block is not passive: its largest singular value over all frequencies is $(worst), at $(w) rad/s."))
+    verdict, worst, level, w = passivityassessment(A, B, C, D; atol = atol)
+    verdict === :active && throw(ArgumentError(lazy"The rational scattering block is not passive: its largest singular value over all frequencies is at least $(worst), at $(w) rad/s, which is above the tolerance $(atol)."))
     return nothing
 end
 
@@ -1501,36 +1501,118 @@ function balancedrealization(A, B, C)
 end
 
 """
-    hinfnorm(A, B, C, D; rtol = 1e-8)
+    hinfnorm(A, B, C, D; rtol = 1e-8, span = 8.0, refinements = 32,
+        pad = 10.0)
 
 The largest singular value of the real rational matrix
-`S(s) = D + C (s I - A)^(-1) B` over every frequency, and the frequency
-in rad/s where it is reached, to the relative tolerance, by the level set
+`S(s) = D + C (s I - A)^(-1) B` over every frequency, by the level set
 iteration of Boyd, Balakrishnan, Bruinsma and Steinbuch: a lower bound
-from the feedthrough and samples at the poles' frequencies is raised by
-a hair to a level, the frequencies where a singular value equals the
-level are the imaginary eigenvalues of the pencil of [`passivitycrossings`](@ref)
-for `S` over the level, and where there are any the largest singular
-value between consecutive ones raises the bound, until no singular value
-reaches the level. A peak however narrow is found, since the pencil
-finds every crossing of the level, which a sample can miss.
+from the feedthrough, samples spanning the poles' frequencies, and a
+peak search around each pole is raised by a hair to a level, the
+frequencies where a singular value equals the level are the imaginary
+eigenvalues of the pencil of [`passivitycrossings`](@ref) for `S` over
+the level, and the largest singular value between consecutive ones
+raises the bound, until no singular value reaches the level. A peak
+however narrow is found, since the pencil finds every crossing of the
+level, which a sample can miss.
+
+Returns three values: a lower bound on the norm, the frequency in
+rad/s where it was attained, and the level the search established
+nothing reaches, `Inf` where termination established no such level.
+The first value is only the largest value the search evaluated; what
+termination proves is the third. They differ by `2 rtol`, which
+matters wherever the answer is compared against one: at the default
+tolerance a norm returned as `1 - 1e-9` is consistent with a true norm
+of `1 + 1e-8`, so calling a block passive on the first value is
+calling it passive on a lower bound.
+
+`rtol` is not worth pushing far below its default. The level is a
+bound only so far as the pencil resolves the crossings of it, and a
+peak which exceeds a level by less than roundoff brings its two
+crossings together into a nearly double eigenvalue which leaves the
+imaginary axis and is lost: a tolerance below the square root of `eps`
+asks the pencil for a resolution it does not have, and returns a level
+which is not a bound.
+
+`span` is how many pole half widths the peak search brackets either
+side of each complex pole, `refinements` how many golden section steps
+refine each bracket, and `pad` how far past the outermost pole
+magnitudes the probe grid extends.
 """
-function hinfnorm(A, B, C, D; rtol = 1e-8)
+function hinfnorm(A, B, C, D; rtol = 1e-8, span::Real = 8.0, refinements::Int = 32,
+        pad::Real = 10.0)
     An, Bn, Cn, wscale = balancedrealization(A, B, C)
-    # a pole on the axis, as an inverted notch has, is an infinite norm
+    # A dense solve at every evaluation rather than held Schur
+    # factors: the search refines around each pole, which is where a
+    # triangular solve of `i w I - T` is at its worst, the diagonal
+    # entry it divides by nearly zero with nothing to pivot, and the
+    # peak of a narrow resonance depends on those digits. The dense
+    # solve pivots, and the accuracy buys the answer.
     S = w -> try
         D .+ Cn*((im*w*I - An) \ Bn)
     catch e
         e isa SingularException ? fill(Inf, size(D)) : rethrow()
     end
-    probes = vcat(0.0, [abs(imag(l)) for l in eigvals(An) if abs(imag(l)) > 0], exp.(range(log(1e-2), log(1e2); length = 7)))
+    λs = eigvals(An)
+    # The grid spans the magnitudes of the poles the system has, not
+    # fixed decades around one: a peak can lie far from every pole
+    # frequency, as `k s/((s + a)(s + b))` peaking at `sqrt(a b)` shows,
+    # so the grid has to cover the whole range the poles set.
+    mags = [abs(l) for l in λs if abs(l) > 0]
+    glo = isempty(mags) ? 1e-2 : minimum(mags)/pad
+    ghi = isempty(mags) ? 1e2 : maximum(mags)*pad
+    probes = vcat(0.0, [abs(imag(l)) for l in λs if abs(imag(l)) > 0],
+                  exp.(range(log(glo), log(ghi); length = max(9, 2*length(λs)))))
+    sort!(probes)
     bound, where = opnorm(D), Inf
     for w in probes
         s = opnorm(S(w))
-        isfinite(s) || return Inf, w*wscale
+        isfinite(s) || return Inf, w*wscale, Inf
         s > bound && ((bound, where) = (s, w))
     end
-    isfinite(bound) || return Inf, where*wscale
+    isfinite(bound) || return Inf, where*wscale, Inf
+    # A golden section search sharpens the lower bound: a resonance
+    # peaks near its pole's frequency but not at it, and for a narrow
+    # one the difference exceeds the tolerance being tested against.
+    # This only ever raises a lower bound, so it cannot make the answer
+    # wrong, and the bound is what decides passivity, since the level
+    # cannot be sharpened past the pencil's resolution (see the
+    # docstring). The brackets are a few half widths either side of
+    # each complex pole, plus the span between the neighbours of the
+    # best probe, which covers a peak the grid only straddled -- a real
+    # pole has no resonance of its own, and a peak it takes part in
+    # need not be near it, so the second bracket is the one that covers
+    # it.
+    brackets = Tuple{Float64,Float64}[]
+    for l in λs
+        imag(l) > 0 || continue
+        w0, half = imag(l), max(abs(real(l)), eps())
+        push!(brackets, (max(w0 - span*half, 0.0), w0 + span*half))
+    end
+    if isfinite(where)
+        j = searchsortedfirst(probes, where)
+        push!(brackets, (probes[max(j - 1, 1)], probes[min(j + 1, length(probes))]))
+    end
+    for (a, b) in brackets
+        b > a || continue
+        φ = (sqrt(5) - 1)/2
+        u, v = b - φ*(b - a), a + φ*(b - a)
+        fu, fv = opnorm(S(u)), opnorm(S(v))
+        for _ in 1:refinements
+            if fu > fv
+                b, v, fv = v, u, fu
+                u = b - φ*(b - a); fu = opnorm(S(u))
+            else
+                a, u, fu = u, v, fv
+                v = a + φ*(b - a); fv = opnorm(S(v))
+            end
+        end
+        isfinite(fu) && isfinite(fv) || return Inf, a*wscale, Inf
+        fu > bound && ((bound, where) = (fu, u))
+        fv > bound && ((bound, where) = (fv, v))
+    end
+    # the level the search ends on, once nothing reaches it
+    ceiling = Inf
     for iteration in 1:100
         level = (1 + 2rtol)*bound
         # the pencil at a level above the bound is regular, a singular
@@ -1540,17 +1622,61 @@ function hinfnorm(A, B, C, D; rtol = 1e-8)
         # singular value test on it would mistake that for singularity and
         # miss a peak between the samples
         crossings, _ = pencilcrossings(An, Bn, Cn ./ level, D ./ level; singulartest = false)
-        length(crossings) < 2 && break
+        if length(crossings) < 2
+            # no singular value reaches the level, anywhere
+            ceiling = level
+            break
+        end
         raised = false
         for k in 1:length(crossings) - 1
             w = (crossings[k] + crossings[k + 1])/2
             s = opnorm(S(w))
-            isfinite(s) || return Inf, w*wscale
+            isfinite(s) || return Inf, w*wscale, Inf
             s > bound*(1 + rtol) && ((bound, where, raised) = (s, w, true))
         end
+        # a level with crossings is reached somewhere, so midpoints which
+        # cannot improve on the bound are a failure of the search rather
+        # than a proof, and nothing is established
         raised || break
     end
-    return bound, where*wscale
+    return bound, where*wscale, ceiling
+end
+
+"""
+    passivityassessment(A, B, C, D; atol = 1e-8, rtol = 1e-8)
+
+Whether the real rational block `S(s) = D + C (s I - A)^(-1) B` is
+passive to within `atol`, as `(:passive, :active, :indeterminate)`,
+together with the lower bound on its largest singular value over all
+frequencies, the level the search ended at, and the frequency in rad/s
+where the lower bound was attained.
+
+Three answers rather than two, because [`hinfnorm`](@ref) returns two
+numbers which straddle the truth and the question can fall between them.
+A block is `:active` when even the lower bound exceeds `1 + atol`, which
+settles it; `:passive` when the level does not, which also settles it,
+the level being what the search's termination establishes. In between
+nothing is settled: the block may be passive or may not, and the caller
+is told so rather than given whichever bound suits.
+
+The middle case is not rare. A lossless block has a largest singular
+value of exactly one, so its level stands at `1 + 2 rtol` and it is
+`:indeterminate` at any `atol` below that. Callers which must decide
+regardless decide on the lower bound, and this makes that choice
+explicit rather than implicit in a two valued answer.
+"""
+function passivityassessment(A, B, C, D; atol = 1e-8, rtol = 1e-8)
+    lower, where, level = hinfnorm(A, B, C, D; rtol = rtol)
+    verdict = if !isfinite(level) || !isfinite(lower)
+        lower > 1 + atol ? :active : :indeterminate
+    elseif lower > 1 + atol
+        :active
+    elseif level <= 1 + atol
+        :passive
+    else
+        :indeterminate
+    end
+    return verdict, lower, level, where
 end
 
 """
@@ -1599,13 +1725,6 @@ function pencilcrossings(An, Bn, Cn, D; singulartest::Bool = true)
         (isempty(merged) || w - last(merged) > 1e-9*(w + 1)) && push!(merged, w)
     end
     return merged, 1.0
-end
-
-# a point in every interval between the crossings, from zero and beyond
-# the last
-function passivityprobes(crossings, wscale)
-    edges = vcat(0.0, crossings, isempty(crossings) ? wscale : 2last(crossings) + wscale)
-    return [(edges[k] + edges[k + 1])/2 for k in 1:length(edges) - 1]
 end
 
 """
