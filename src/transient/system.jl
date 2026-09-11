@@ -67,7 +67,10 @@ of the linearized solver, `(I - S) R^(-1/2) v - (I + S) R^(1/2) i = 0`,
 with `v` the port voltages and `i` the port currents entering the block
 through the signal terminals, as auxiliary unknowns whose Kirchhoff
 couplings enter the node equations; nothing is inverted, so a short or
-an open is stamped exactly. A block whose matrix depends on frequency
+an open is stamped exactly, and a scattering entry within roundoff of
+one is snapped to it, so a fitted feedthrough on the unit circle
+carries the exact zeros of its hybrid coefficients (see
+[`snapscattering`](@ref)). A block whose matrix depends on frequency
 needs a causal realization, which the transient does not yet have.
 """
 struct TransientBlock
@@ -330,6 +333,27 @@ function transientlines(psc::CompiledCircuit)
 end
 
 
+"""
+    snapscattering(S::AbstractMatrix)
+
+The real scattering matrix `S` with every entry within `1e-12` of a
+perfect open, short or isolation snapped to the exact `1`, `-1` or `0`,
+which is how a block realized in time stamps it. The hybrid
+coefficients `I - S` and `I + S` of a port whose feedthrough reaches
+the unit circle then hold exact zeros where the algebra has them, so
+the endpoint's rate system sees a zero row rather than the roundoff
+residue of one, which its balancing would otherwise scale up into an
+equation whose inverted singular value multiplies the residual by the
+reciprocal of machine epsilon at every step. The snap moves an entry
+by less than `1e-12`, far below any scattering the data resolves.
+"""
+function snapscattering(S::AbstractMatrix)
+    snap = x -> abs(x) < 1e-12 ? zero(x) :
+        abs(x - 1) < 1e-12 ? one(x) :
+        abs(x + 1) < 1e-12 ? -one(x) : x
+    return snap.(Matrix{Float64}(real.(S)))
+end
+
 # the blocks of a compiled circuit the transient realizes, in compiled
 # order, their port currents laid out from `offset`
 function transientblocks(psc::CompiledCircuit, offset::Int)
@@ -340,7 +364,7 @@ function transientblocks(psc::CompiledCircuit, offset::Int)
         provider = def.provider
         provider isa TransmissionLineProvider && continue
         if provider isa RationalScatteringProvider
-            push!(blocks, TransientBlock(def, copy(provider.D), Float64.(def.zref), cb.signalnodes .- 1, cb.refnodes .- 1,
+            push!(blocks, TransientBlock(def, snapscattering(provider.D), Float64.(def.zref), cb.signalnodes .- 1, cb.refnodes .- 1,
                 offset, cb.path, copy(provider.A), copy(provider.B), copy(provider.C), zbase))
             zbase += size(provider.A, 1)
         else
@@ -349,7 +373,7 @@ function transientblocks(psc::CompiledCircuit, offset::Int)
             S = provider.A
             all(x -> isreal(x) && isfinite(x), S) || throw(ArgumentError(
                 lazy"the scattering block at $(cb.path) has a complex or nonfinite matrix; a block realized in time is real."))
-            push!(blocks, TransientBlock(def, Matrix{Float64}(real.(S)), Float64.(def.zref), cb.signalnodes .- 1, cb.refnodes .- 1,
+            push!(blocks, TransientBlock(def, snapscattering(S), Float64.(def.zref), cb.signalnodes .- 1, cb.refnodes .- 1,
                 offset, cb.path, zeros(0, 0), zeros(0, def.nports), zeros(def.nports, 0), zbase))
         end
         offset += def.nports

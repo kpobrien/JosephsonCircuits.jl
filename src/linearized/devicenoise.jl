@@ -182,7 +182,8 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
                     blockplan.blockindex, blockplan.factoroff,
                     providers.nports, providers.freqoff, providers.nfreq,
                     providers.freqs, providers.valoff, providers.vals,
-                    providers.conjsym, providers.extrapcode, wmodesd,
+                    providers.curv, providers.slopeoff, providers.eslopes,
+                    providers.conjsym, wmodesd,
                     plan.nmodes, blockplan.nentries;
                     ndrange = blockplan.nentries*plan.nmodes)
             else
@@ -258,8 +259,9 @@ and a block has few ports.
 """
 @kernel function blocknoisefactorkernel!(L, @Const(blockindex),
         @Const(factoroff), @Const(nports), @Const(freqoff), @Const(nfreq),
-        @Const(freqs), @Const(valoff), @Const(vals), @Const(conjsym),
-        @Const(extrapcode), @Const(wmodes), Nmodes, nentries)
+        @Const(freqs), @Const(valoff), @Const(vals), @Const(curv),
+        @Const(slopeoff), @Const(eslopes), @Const(conjsym), @Const(wmodes),
+        Nmodes, nentries)
     gid = @index(Global)
     @inbounds begin
         g = gid - 1
@@ -281,15 +283,15 @@ and a block has few ports.
             wq = isconj ? abs(wm) : wm
             neg = isconj && wm < 0
             fo = Int(freqoff[bi]); nf = Int(nfreq[bi]); vo = Int(valoff[bi])
-            ec = extrapcode[bi]
+            so = Int(slopeoff[bi])
             for c in 1:n
                 for p in c:n
                     acc = p == c ? one(T) : zero(T)
                     for l in 1:n
-                        spl = tableentry(freqs, vals, fo, nf, vo, n, p, l,
-                            wq, ec)
-                        scl = tableentry(freqs, vals, fo, nf, vo, n, c, l,
-                            wq, ec)
+                        spl = tableentry(freqs, vals, curv, eslopes, fo, nf,
+                            vo, so, n, p, l, wq)
+                        scl = tableentry(freqs, vals, curv, eslopes, fo, nf,
+                            vo, so, n, c, l, wq)
                         if neg
                             spl = conj(spl); scl = conj(scl)
                         end

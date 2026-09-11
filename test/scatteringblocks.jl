@@ -256,8 +256,8 @@ using Test
         )
         sol1 = hbsolve(ws[1:10:end], wp, sources, (4,), (8,), lumped)
         sol2 = hbsolve(ws[1:10:end], wp, sources, (4,), (8,), maketab(:error))
-        # agreement is limited by the linear interpolation of the
-        # tabulated scattering data on the grid
+        # agreement is limited by the interpolation of the tabulated
+        # scattering data on the grid
         @test isapprox(sol1.linearized.S((0,), 1, (0,), 1, :),
             sol2.linearized.S((0,), 1, (0,), 1, :); rtol = 1e-3)
         # a short grid: the pump harmonics fall outside and the default
@@ -1239,7 +1239,8 @@ using Test
                 JosephsonCircuits.blocknoisefactorkernel!(backend, 64)(
                     bp.factors, bp.blockindex, bp.factoroff, dp.nports,
                     dp.freqoff, dp.nfreq, dp.freqs, dp.valoff, dp.vals,
-                    dp.conjsym, dp.extrapcode, wmodes, Nmodes, bp.nentries;
+                    dp.curv, dp.slopeoff, dp.eslopes,
+                    dp.conjsym, wmodes, Nmodes, bp.nentries;
                     ndrange = bp.nentries*Nmodes)
             else
                 JosephsonCircuits.blocknoiseentryfactorkernel!(backend, 64)(
@@ -1407,7 +1408,8 @@ using Test
             JosephsonCircuits.blocknoisefactorkernel!(backend, 64)(
                 bp.factors, bp.blockindex, bp.factoroff, dp.nports,
                 dp.freqoff, dp.nfreq, dp.freqs, dp.valoff, dp.vals,
-                dp.conjsym, dp.extrapcode, wmodes, Nmodes, bp.nentries;
+                dp.curv, dp.slopeoff, dp.eslopes,
+                dp.conjsym, wmodes, Nmodes, bp.nentries;
                 ndrange = bp.nentries*Nmodes)
             JosephsonCircuits.blocknoisecontractkernel!(backend, 64)(got,
                 phiadj, bp.factors, bp.blockindex, bp.factoroff, bp.auxbase,

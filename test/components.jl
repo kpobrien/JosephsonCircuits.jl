@@ -50,6 +50,56 @@ using Test
             vals[:,:,1:2]))
         @test_throws ArgumentError ScatteringParameters(([1.0, 1.0],
             vals[:,:,1:2]))
+        @test_throws ArgumentError ScatteringParameters((freqs, vals);
+            interpolation = :quartic)
+
+        # cubic interpolation: exact at the knots, and it follows a
+        # rotating phase where the chords cut across it
+        fdense = collect(range(1.0, 10.0, 50))
+        Sphase = zeros(Complex{Float64}, 1, 1, 50)
+        for (k, w) in enumerate(fdense)
+            Sphase[1,1,k] = 0.9*cis(-2*w)
+        end
+        pcub = ScatteringParameters((fdense, Sphase))
+        plin = ScatteringParameters((fdense, Sphase); interpolation = :linear)
+        JosephsonCircuits.evaluatescattering!(d, pcub, [fdense[7]])
+        @test d[1,1,1] ≈ Sphase[1,1,7] atol = 1e-14
+        errc = errl = 0.0
+        for k in 1:49
+            w = (fdense[k] + fdense[k+1])/2
+            JosephsonCircuits.evaluatescattering!(d, pcub, [w])
+            errc = max(errc, abs(d[1,1,1] - 0.9*cis(-2*w)))
+            JosephsonCircuits.evaluatescattering!(d, plin, [w])
+            errl = max(errl, abs(d[1,1,1] - 0.9*cis(-2*w)))
+        end
+        @test errc < errl/10
+        # `:linear` extrapolation continues with the interpolant's end
+        # slope; `:constant` holds the end value
+        pext = ScatteringParameters((fdense, Sphase); extrapolation = :linear)
+        JosephsonCircuits.evaluatescattering!(d, pext, [10.0 + 1e-3])
+        endslope = pext.provider.endslopes[1,1,2]
+        @test d[1,1,1] ≈ Sphase[1,1,end] + endslope*1e-3 atol = 1e-14
+        @test abs(endslope - (-2*im)*0.9*cis(-20.0)) < 0.05
+        pconst = ScatteringParameters((fdense, Sphase);
+            extrapolation = :constant)
+        JosephsonCircuits.evaluatescattering!(d, pconst, [11.0])
+        @test d[1,1,1] == Sphase[1,1,end]
+
+        # a table too short for a cubic takes the highest order it
+        # determines: three samples their parabola, two their line
+        f3 = [1.0, 2.0, 4.0]
+        v3 = zeros(Complex{Float64}, 1, 1, 3)
+        par(w) = 0.3 + 0.1*w - 0.02*w^2 + im*0.01*w^2
+        for (k, w) in enumerate(f3)
+            v3[1,1,k] = par(w)
+        end
+        p3 = ScatteringParameters((f3, v3))
+        JosephsonCircuits.evaluatescattering!(d, p3, [3.1])
+        @test d[1,1,1] ≈ par(3.1) atol = 1e-14
+        p2 = ScatteringParameters(([1.0, 3.0],
+            reshape(Complex{Float64}[0.2, 0.6], 1, 1, 2)))
+        JosephsonCircuits.evaluatescattering!(d, p2, [2.0])
+        @test d[1,1,1] ≈ 0.4 atol = 1e-14
 
         # callable provider requires nports
         f(w) = [0.0 exp(-im*w*1e-12); exp(-im*w*1e-12) 0.0]

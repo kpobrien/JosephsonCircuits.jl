@@ -762,27 +762,44 @@ The ways a callable provider may be called. See
 const CALLABLE_FORMS = (:matrix, :inplace, :entry)
 
 """
-    TabulatedMatrixProvider(frequencies, values; interpolation = :linear,
+    TabulatedMatrixProvider(frequencies, values; interpolation = :cubic,
         extrapolation = :error)
 
 A matrix provider for tabulated data. `frequencies` is a strictly increasing
 vector of angular frequencies in radians per second and `values` is an array
-of dimensions (n, n, length(frequencies)). `interpolation` may be `:linear`.
+of dimensions (n, n, length(frequencies)).
+
+`interpolation` may be `:cubic` (the default) or `:linear`. Cubic
+interpolation evaluates the cubic spline through each entry's samples, which
+follows a rotating phase far more closely than the chords between them; a
+table too short for a cubic takes the highest order it determines, the
+parabola through three samples or the line through two. A spline can
+overshoot between samples, so a quantity bounded in the data -- a scattering
+entry's magnitude, say -- can exceed the bound a little between them; a
+bound guaranteed at every frequency takes a passive fit, see
+[`RationalScattering`](@ref).
+
 `extrapolation` may be `:error` (the default), `:constant`, or `:linear`.
 With `:error`, any requested frequency outside the tabulated range throws an
 error listing the offending frequencies; extrapolation of tabulated data is
-deliberately opt-in.
+deliberately opt-in. `:constant` holds the end values beyond the ends, and
+`:linear` continues from them with the interpolant's end slopes.
 """
 struct TabulatedMatrixProvider{T} <: AbstractMatrixProvider
     frequencies::Vector{Float64}
     values::Array{T,3}
     interpolation::Symbol
     extrapolation::Symbol
+    # the spline's second derivatives at the knots and its slopes at the two
+    # band edges, which the evaluation and the device kernels read; both
+    # empty for `:linear`
+    curvatures::Array{T,3}
+    endslopes::Array{T,3}
 end
 
 function TabulatedMatrixProvider(frequencies::AbstractVector,
         values::AbstractArray{T,3};
-        interpolation::Symbol = :linear,
+        interpolation::Symbol = :cubic,
         extrapolation::Symbol = :error) where T
     if size(values,1) != size(values,2)
         throw(DimensionMismatch(lazy"Tabulated matrix data must be square along the first two dimensions; got size $(size(values))."))
@@ -799,14 +816,71 @@ function TabulatedMatrixProvider(frequencies::AbstractVector,
     if !issorted(frequencies; lt = <=)
         throw(ArgumentError("Tabulated frequencies must be strictly increasing."))
     end
-    if interpolation != :linear
-        throw(ArgumentError(lazy"Unknown interpolation $(interpolation). Supported: :linear."))
+    if !(interpolation in (:linear, :cubic))
+        throw(ArgumentError(lazy"Unknown interpolation $(interpolation). Supported: :cubic, :linear."))
     end
     if !(extrapolation in (:error, :constant, :linear))
         throw(ArgumentError(lazy"Unknown extrapolation $(extrapolation). Supported: :error, :constant, :linear."))
     end
-    return TabulatedMatrixProvider{T}(collect(Float64, frequencies),
-        Array{T,3}(values), interpolation, extrapolation)
+    f = collect(Float64, frequencies)
+    vals = Array{T,3}(values)
+    n = size(vals, 1)
+    if interpolation == :cubic
+        curvatures, endslopes = splinecoefficients(f, vals)
+    else
+        curvatures = Array{T,3}(undef, n, n, 0)
+        endslopes = Array{T,3}(undef, n, n, 0)
+    end
+    return TabulatedMatrixProvider{T}(f, vals, interpolation, extrapolation,
+        curvatures, endslopes)
+end
+
+# The cubic spline through each entry's samples, held as the spline's second
+# derivatives at the knots and its slopes at the two band edges: a piecewise
+# cubic with stated knot values and knot second derivatives is exactly the
+# spline, and the two arrays are the shape both the evaluation and a device
+# kernel index. The spline comes from FastInterpolations; a table of three
+# samples takes its parabola and one of two its line, the highest orders
+# they determine.
+function splinecoefficients(f::Vector{Float64}, values::Array{T,3}) where T
+    n = size(values, 1)
+    nf = length(f)
+    M = zeros(T, n, n, nf)
+    slopes = zeros(T, n, n, 2)
+    nf == 1 && return M, slopes
+    y = Vector{T}(undef, nf)
+    for j in 1:n, i in 1:n
+        for k in 1:nf
+            y[k] = values[i, j, k]
+        end
+        if nf == 2
+            slopes[i, j, 1] = slopes[i, j, 2] = (y[2] - y[1])/(f[2] - f[1])
+        elseif nf == 3
+            d1 = (y[2] - y[1])/(f[2] - f[1])
+            d2 = (y[3] - y[2])/(f[3] - f[2])
+            a = (d2 - d1)/(f[3] - f[1])
+            for k in 1:3
+                M[i, j, k] = 2a
+            end
+            slopes[i, j, 1] = d1 - a*(f[2] - f[1])
+            slopes[i, j, 2] = d2 + a*(f[3] - f[2])
+        else
+            itp = FastInterpolations.cubic_interp(f, y)
+            for k in 1:nf - 1
+                c = FastInterpolations.coeffs(itp, (f[k] + f[k + 1])/2)
+                M[i, j, k] = 2*c.p[3]
+                if k == 1
+                    slopes[i, j, 1] = c.p[2]
+                end
+                if k == nf - 1
+                    h = f[nf] - f[nf - 1]
+                    M[i, j, nf] = 2*c.p[3] + 6*c.p[4]*h
+                    slopes[i, j, 2] = c.p[2] + 2*c.p[3]*h + 3*c.p[4]*h^2
+                end
+            end
+        end
+    end
+    return M, slopes
 end
 
 """
@@ -872,7 +946,7 @@ function evaluateprovider!(dest::AbstractArray{T,3},
     if p.extrapolation == :error
         outofrange = [w for w in ws if w < f[1] || w > f[end]]
         if !isempty(outofrange)
-            throw(ArgumentError(lazy"The angular frequencies $(outofrange) are outside the tabulated range [$(f[1]), $(f[end])] rad/s. Extrapolation of tabulated data is opt-in: pass extrapolation = :constant or :linear if extrapolation is intended."))
+            throw(ArgumentError(lazy"The angular frequencies $(outofrange) are outside the tabulated range [$(f[1]), $(f[end])] rad/s. Extrapolation of tabulated data is opt-in: pass extrapolation = :constant or :linear if extrapolation is intended, or fit the block with RationalScattering, which extrapolates as a passive rational function."))
         end
     end
     for i in eachindex(ws)
@@ -880,21 +954,28 @@ function evaluateprovider!(dest::AbstractArray{T,3},
         if w <= f[1]
             if p.extrapolation == :constant || length(f) == 1 || w == f[1]
                 dest[:,:,i] .= view(p.values,:,:,1)
-            else # linear extrapolation from the first segment
+            elseif p.interpolation == :linear
+                # the first segment continues
                 lerpslices!(view(dest,:,:,i), p, 1, 2, w)
+            else
+                edgeslices!(view(dest,:,:,i), p, 1, w)
             end
         elseif w >= f[end]
             if p.extrapolation == :constant || length(f) == 1 || w == f[end]
                 dest[:,:,i] .= view(p.values,:,:,length(f))
-            else
+            elseif p.interpolation == :linear
                 lerpslices!(view(dest,:,:,i), p, length(f)-1, length(f), w)
+            else
+                edgeslices!(view(dest,:,:,i), p, 2, w)
             end
         else
             j = searchsortedlast(f, w)
             if f[j] == w
                 dest[:,:,i] .= view(p.values,:,:,j)
-            else
+            elseif p.interpolation == :linear
                 lerpslices!(view(dest,:,:,i), p, j, j+1, w)
+            else
+                splineslices!(view(dest,:,:,i), p, j, w)
             end
         end
     end
@@ -911,6 +992,33 @@ function lerpslices!(dest, p::TabulatedMatrixProvider, j1::Int, j2::Int, w)
     return dest
 end
 
+# the spline on the segment from knot `j` to knot `j + 1`, from the knot
+# values and curvatures
+function splineslices!(dest, p::TabulatedMatrixProvider, j::Int, w)
+    f1 = p.frequencies[j]
+    h = p.frequencies[j+1] - f1
+    t = (w - f1)/h
+    u = 1 - t
+    cu = h^2/6*(u^3 - u)
+    ct = h^2/6*(t^3 - t)
+    A = view(p.values,:,:,j)
+    B = view(p.values,:,:,j+1)
+    MA = view(p.curvatures,:,:,j)
+    MB = view(p.curvatures,:,:,j+1)
+    @. dest = u*A + t*B + cu*MA + ct*MB
+    return dest
+end
+
+# the tangent beyond a band edge, `e = 1` below the band and `e = 2` above
+function edgeslices!(dest, p::TabulatedMatrixProvider, e::Int, w)
+    k = e == 1 ? 1 : length(p.frequencies)
+    dw = w - p.frequencies[k]
+    A = view(p.values,:,:,k)
+    s = view(p.endslopes,:,:,e)
+    @. dest = A + s*dw
+    return dest
+end
+
 function checkdestsize(dest, n::Int, nf::Int)
     if size(dest) != (n, n, nf)
         throw(DimensionMismatch(lazy"The destination array has size $(size(dest)) but ($(n), $(n), $(nf)) is required."))
@@ -919,7 +1027,7 @@ function checkdestsize(dest, n::Int, nf::Int)
 end
 
 """
-    matrixprovider(x, T; n = nothing, interpolation = :linear,
+    matrixprovider(x, T; n = nothing, interpolation = :cubic,
         extrapolation = :error, form = :matrix)
 
 Normalize user input into an [`AbstractMatrixProvider`](@ref) with element
@@ -942,7 +1050,7 @@ function matrixprovider(A::AbstractMatrix, ::Type{T}; n = nothing,
     return ConstantMatrixProvider(Matrix{T}(A))
 end
 function matrixprovider(t::Tuple{<:AbstractVector,<:AbstractArray{<:Any,3}},
-        ::Type{T}; n = nothing, interpolation::Symbol = :linear,
+        ::Type{T}; n = nothing, interpolation::Symbol = :cubic,
         extrapolation::Symbol = :error, form::Symbol = :matrix) where T
     checknoform(form, "tabulated data")
     frequencies, values = t
@@ -1172,7 +1280,7 @@ struct ThermalEquilibrium{T}
 end
 
 """
-    NoiseCovariance(V; interpolation = :linear, extrapolation = :error)
+    NoiseCovariance(V; interpolation = :cubic, extrapolation = :error)
 
 An arbitrary user specified noise covariance for a
 [`ScatteringParameters`](@ref). `V` may be a matrix, a callable of angular
@@ -1185,7 +1293,7 @@ struct NoiseCovariance{P}
     interpolation::Symbol
     extrapolation::Symbol
 end
-function NoiseCovariance(V; interpolation::Symbol = :linear,
+function NoiseCovariance(V; interpolation::Symbol = :cubic,
         extrapolation::Symbol = :error)
     return NoiseCovariance(V, interpolation, extrapolation)
 end
@@ -1195,7 +1303,7 @@ end
 """
     ScatteringParameters(S; nports = nothing, zref = nothing, grounded = true,
         noise = Passive(), negative_frequency = ConjugateSymmetry(),
-        interpolation = :linear, extrapolation = :error, form = :matrix,
+        interpolation = :cubic, extrapolation = :error, form = :matrix,
         derivatives = NamedTuple(), dcmodel = ScatteringLimit(),
         atol = 1e-8)
 
@@ -1207,6 +1315,17 @@ A multiport component defined by its scattering parameters. `S` may be:
   radians per second and `values` of size (nports, nports, nfrequencies);
 - a path to a Touchstone file, from which the reference impedance is also
   read.
+
+Tabulated data is interpolated with the cubic spline through each entry's
+samples (`interpolation = :cubic`, the default; `:linear` takes the chords
+between them, which lag a rotating phase) and is never extrapolated unless
+asked: `extrapolation` is `:error` by default, with `:constant` and
+`:linear` to opt in. The harmonic balance solvers evaluate a block wherever
+their mixing products fall, which can be far outside the band the data
+covers, so measured data meant for them is better fitted with
+[`RationalScattering`](@ref), which extrapolates as a passive rational
+function and is passive at every frequency by construction, where any
+interpolant of passive samples can stray between and beyond them.
 
 `zref` is the reference impedance in Ohms, a scalar broadcast to all ports
 or a vector with one entry per port. For a Touchstone file the reference
@@ -1295,7 +1414,7 @@ ScatteringParameters(provider, nports::Int, zref::Vector{Float64},
 function ScatteringParameters(S; nports = nothing, zref = nothing,
         grounded::Bool = true, noise = Passive(),
         negative_frequency = ConjugateSymmetry(),
-        interpolation::Symbol = :linear, extrapolation::Symbol = :error,
+        interpolation::Symbol = :cubic, extrapolation::Symbol = :error,
         form::Symbol = :matrix,
         derivatives::NamedTuple = NamedTuple(),
         dcmodel::AbstractDCModel = ScatteringLimit(),
@@ -1863,10 +1982,22 @@ function worstunitaritydeviation(p::TabulatedMatrixProvider)
     for k in axes(p.values,3)
         worst = max(worst, unitaritydeviation(view(p.values,:,:,k)))
     end
-    if p.interpolation == :linear
-        for k in 1:size(p.values,3)-1
-            mid = (view(p.values,:,:,k) .+ view(p.values,:,:,k+1))./2
+    for k in 1:size(p.values,3)-1
+        mid = (view(p.values,:,:,k) .+ view(p.values,:,:,k+1))./2
+        if p.interpolation == :linear
             worst = max(worst, unitaritydeviation(mid))
+        else
+            # The spline is the chord plus the curvature correction
+            # `(h^2/6)*((u^3 - u)*M_k + (t^3 - t)*M_(k+1))`, whose operator
+            # norm never exceeds `(h^2/6)*(2/(3*sqrt(3)))*(|M_k| + |M_(k+1)|)`,
+            # and a perturbation `E` of a matrix of norm at most one moves
+            # `I - S*S'` by at most `2*|E| + |E|^2`; the chord's own deviation
+            # peaks at the midpoint, so knots, midpoints and this bound
+            # together bound the spline over the whole table.
+            h = p.frequencies[k+1] - p.frequencies[k]
+            e = 2/(3*sqrt(3))/6*h^2*(opnorm(Matrix(view(p.curvatures,:,:,k))) +
+                opnorm(Matrix(view(p.curvatures,:,:,k+1))))
+            worst = max(worst, unitaritydeviation(mid) + 2e + e^2)
         end
     end
     return worst
@@ -2056,7 +2187,7 @@ end
 
 """
     GaussianChannel(X, Y; nmodes = nothing, displacement = nothing,
-        grounded = true, interpolation = :linear, extrapolation = :error,
+        grounded = true, interpolation = :cubic, extrapolation = :error,
         atol = 1e-8)
 
 An arbitrary Gaussian bosonic channel in the canonical real quadrature
@@ -2097,7 +2228,7 @@ struct GaussianChannel{PX,PY,D} <: AbstractComponent
 end
 
 function GaussianChannel(X, Y; nmodes = nothing, displacement = nothing,
-        grounded::Bool = true, interpolation::Symbol = :linear,
+        grounded::Bool = true, interpolation::Symbol = :cubic,
         extrapolation::Symbol = :error, atol::Real = 1e-8)
     n2 = isnothing(nmodes) ? nothing : 2*nmodes
     Xp = matrixprovider(X, Float64; n = n2, interpolation = interpolation,

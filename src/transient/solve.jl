@@ -623,7 +623,9 @@ end
 Integrate the circuit in physical time on a uniform grid of step at most
 `dt`, shortened slightly to land on `tspan[2]`. `method` is the stepping
 rule, [`Trapezoidal`](@ref) by default, [`GaussLegendre`](@ref) for
-fourth order at the same step, or [`BackwardEuler`](@ref); `backend` is
+fourth order at the same step, or [`BackwardEuler`](@ref), or
+[`WRspice`](@ref) to run the same problem through the WRSPICE simulator
+and read its output back as the same solution; `backend` is
 where the solve runs, and `factorization` the sparse factorization, KLU
 on the CPU and cuDSS on a CUDA device by default. The
 Jacobian's pattern is fixed and its symbolic analysis done once; a linear
@@ -657,6 +659,11 @@ function transientsolve(p::TransientProblem, tspan; dt::Real,
         initialstate = transientstate(p),
         saveevery::Integer = 1, record::Symbol = :ports, checkpointevery::Integer = 0, rtol::Real = 1e-9,
         atol::Real = 1e-10, maxiters::Integer = 15, maxsteps::Integer = 10^7)
+    if method isa WRspice
+        return wrspicetransient(p, tspan, method; dt, saveevery, record,
+            initialstate, backend, linearsolver, factorization, reuse,
+            checkpointevery, rtol, atol, maxiters, maxsteps)
+    end
     t0, tf, nsteps, h = transientgrid(tspan, dt, maxsteps, saveevery, maxiters, rtol, atol, linearsolver, reuse)
     (isempty(p.blocks) && isempty(p.lines)) || method isa GaussLegendre || throw(ArgumentError(
         "a circuit with scattering blocks or transmission lines steps under GaussLegendre()."))

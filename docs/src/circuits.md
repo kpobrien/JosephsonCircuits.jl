@@ -160,6 +160,18 @@ a short or an open, and a [`RationalScattering`](@ref) block, a real
 state space realization `S(s) = D + C (s I - A)^(-1) B`, which is the
 form a fit of measured or simulated data takes.
 
+A tabulated block is interpolated with the cubic spline through each
+entry's samples and, by default, refuses a frequency outside its band.
+The harmonic balance solvers place mixing products at sums and
+differences of the pump harmonics and the signal, which measured data
+often does not cover, and the noise of a lossy block reads the
+dissipation `I - S S'`, in which an error of the data or its interpolant
+appears roughly doubled. Measured data meant for those solvers is
+therefore best fitted once with [`RationalScattering`](@ref): the fit
+extrapolates as a passive rational function, is passive at every
+frequency by construction, and the same block runs in the frequency and
+the time domain solvers.
+
 ```julia
 # a fit of tabulated data at as many poles as it might need; the poles it
 # does not need are dropped

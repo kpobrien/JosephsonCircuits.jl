@@ -429,14 +429,25 @@ end
     exportnetlist(circuit, circuitdefs::Dict; port::Int = 1, jj::Bool = true)
     exportnetlist(psc::CompiledCircuit, circuitdefs::Dict; port::Int = 1,
         jj::Bool = true)
+    exportnetlist(psc::CompiledCircuit, componentvalues::AbstractVector;
+        port::Int = 1, jj::Bool = true)
     exportnetlist(circuit; port::Int = 1, jj::Bool = true)
 
 Export a circuit as a WRSPICE netlist. Returns a named tuple with the
-netlist as a string in `netlist`, the port number in `port` and the node
-count in `Nnodes`; `portnodes` and `portcurrent` are placeholders fixed at
+netlist as a string in `netlist`, the port number in `port`, the node
+count in `Nnodes`, and in `junctions` one entry per `jj` model instance
+written, in the order of the netlist, with the flat component index of
+the junction the instance realizes in `index` and the name of its phase
+node, whose voltage WRSPICE reports as the junction phase in radians, in
+`phasenode`; `portnodes` and `portcurrent` are placeholders fixed at
 `1`, since the source nodes and amplitude are given directly to
 [`wrspice_input_transient`](@ref) or [`wrspice_input_ac`](@ref). A fully
-numeric circuit needs no `circuitdefs`.
+numeric circuit needs no `circuitdefs`; a compiled circuit whose values
+are already numbers can be given those values directly as a vector in
+compiled component order. A resistor of infinite resistance is an open
+and writes no line. An ideal [`TransmissionLine`](@ref) is written as
+the SPICE lossless line element with its impedance and delay; any other
+scattering block has no SPICE element and is refused.
 
 Component values are resolved with `circuitdefs`. With `jj = true` each
 Josephson junction is written as an instance of one WRSPICE `jj` model
@@ -624,13 +635,25 @@ end
 
 function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
         port::Int = 1, jj::Bool = true)
+    return exportnetlist(psc,
+        componentvaluestonumber(psc.componentvalues,circuitdefs);
+        port = port, jj = jj)
+end
 
-    # a scattering block has no SPICE element; exporting the circuit
-    # without it would simulate a different circuit
-    if !isempty(psc.scatteringblocks)
-        blocknames = join([b.path for b in psc.scatteringblocks], ", ")
+function exportnetlist(psc::CompiledCircuit,componentvalues::AbstractVector;
+        port::Int = 1, jj::Bool = true)
+
+    # an ideal lossless transmission line is the one scattering block
+    # with a SPICE element; any other block has none, and exporting the
+    # circuit without it would simulate a different circuit
+    tlineblocks = [b for b in psc.scatteringblocks
+        if b.definition.provider isa TransmissionLineProvider]
+    if length(tlineblocks) != length(psc.scatteringblocks)
+        others = [b.path for b in psc.scatteringblocks
+            if !(b.definition.provider isa TransmissionLineProvider)]
+        blocknames = join(others, ", ")
         throw(ComponentNotSupportedError(
-            lazy"the circuit has $(length(psc.scatteringblocks)) scattering block(s) ($(blocknames)), which the netlist export cannot express; export a circuit of lumped elements only."))
+            lazy"the circuit has $(length(others)) scattering block(s) ($(blocknames)), which the netlist export cannot express; export lumped elements and transmission lines only."))
     end
 
     # placeholders; only a single port is handled
@@ -639,9 +662,6 @@ function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
 
     # nothing here reads the loops of the circuit graph
     cg = calccircuitgraph(psc; loops = false)
-
-    # resolve the component values
-    componentvalues = componentvaluestonumber(psc.componentvalues,circuitdefs)
 
     countdict, indexdict = componentdictionaries(
         psc.componenttypes,
@@ -683,6 +703,10 @@ function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
     # define an array of strings for the netlist
     netlist =  ["* SPICE Simulation"]
 
+    # one entry per jj model instance: the flat component index of the
+    # junction it realizes and the name of its phase node
+    junctions = @NamedTuple{index::Int, phasenode::String}[]
+
     # write the netlist
     # make a copy of the dictionaries so we don't modify the originals
     # not strictly necessary since we don't use them again after the loop below.
@@ -711,6 +735,7 @@ function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
                 nJJ += 1
                 # push!(netlist,"B$(nJJ) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
                 push!(netlist,"$(spicename(componentnames[i],'B')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(Nnodes+nJJ-1) jjk ics=$(real(LjtoIc(value)*micro))u")
+                push!(junctions,(index = i, phasenode = string(Nnodes+nJJ-1)))
                 capflag, capvalue, capindex = sumbranchvalues!(:C, node1, node2, componentvalues, countdictcopy, indexdictcopy)
 
                 # add any additional capacitance
@@ -731,16 +756,28 @@ function exportnetlist(psc::CompiledCircuit,circuitdefs::Dict;
             # every resistor, the environment a port owns included. The port
             # itself writes no line, so its source impedance reaches the
             # exported circuit only through this one; dropping it as a
-            # lowering artifact would export a different circuit.
+            # lowering artifact would export a different circuit. An
+            # infinite resistance is an open, which is no element at all.
+            isfinite(real(value)) || continue
             push!(netlist,"$(spicename(componentnames[i],'R')) $(uniquenodevector[nodeindexarray[1, i]]) $(uniquenodevector[nodeindexarray[2, i]]) $(real(value))")
         end
+    end
+
+    # each transmission line as the lossless line element, its two ports
+    # between their signal and reference terminals
+    for b in tlineblocks
+        provider = b.definition.provider
+        (isfinite(provider.Z0) && provider.Z0 > 0 && isfinite(provider.delay) && provider.delay > 0) || throw(ArgumentError(
+            lazy"the transmission line at $(b.path) needs a finite positive impedance and a positive delay to be written as a SPICE element."))
+        node = i -> uniquenodevector[i]
+        push!(netlist,"$(spicename(b.path,'T')) $(node(b.signalnodes[1])) $(node(b.refnodes[1])) $(node(b.signalnodes[2])) $(node(b.refnodes[2])) z0=$(provider.Z0) td=$(provider.delay)")
     end
 
     if jj == true && nJJ > 0
         push!(netlist,".model jjk jj(rtype=0,cct=1,icrit=$(micro*Icmean)u,cap=$(femto*Icmean*real(CjoIc))f,force=1,vm=$(vm)")
     end
 
-    return  (netlist=join(netlist,"\n"),portnodes=portnodes,port=port,portcurrent=portcurrent,Nnodes = Nnodes)
+    return  (netlist=join(netlist,"\n"),portnodes=portnodes,port=port,portcurrent=portcurrent,Nnodes = Nnodes,junctions=junctions)
 end
 
 # A fully numeric circuit (such as the output of a circuit builder) needs no

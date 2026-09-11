@@ -250,34 +250,27 @@ function wrspice_input_ac(netlist,nsteps,fstart,fstop,portnodes,portcurrent; max
     return input
 end
 
+# the command a loaded provider registers, which XicTools_jll's
+# extension fills with its wrspice
+const wrspicedefaultcmd = Ref{Any}(nothing)
+
 """
     wrspice_cmd()
 
-This returns the path of the WRSPICE executable.
-
+The command which runs WRSPICE: the executable at WRSPICE's standard
+installation path if one is installed there, else the one a loaded
+provider registered, which loading the XicTools_jll package does on the
+platforms its artifact supports. Throws when neither is available;
+[`WRspice`](@ref) and [`spice_run`](@ref) take an executable directly
+for one installed elsewhere.
 """
 function wrspice_cmd()
-
-    if Sys.iswindows()
-        wrspicecmd = "C:/usr/local/xictools/bin/wrspice.bat"
-    # Note: This code has been tested on Linux but not macOS or Windows. 
-    else
-        wrspicecmd = "/usr/local/xictools/bin/wrspice"
-    end
-
-    # Check if the wrspice executable exists
-    if !islink(wrspicecmd) && !isfile(wrspicecmd)
-        # if the path isn't valid, try checking if we have imported
-        # XicTools_jll and use that.
-        if :XicTools_jll in names(Main,imported=true) && isdefined(Main.XicTools_jll,:wrspice)
-           wrspicecmd =  Main.XicTools_jll.wrspice()
-        else
-            error(lazy"WRSPICE executable not found. Please install WRSPICE, load XicTools_jll, or supply a path manually if installed elsewhere.")
-        end
-    end
-
-    return wrspicecmd
-
+    # Note: This code has been tested on Linux but not macOS or Windows.
+    wrspicecmd = Sys.iswindows() ? "C:/usr/local/xictools/bin/wrspice.bat" :
+        "/usr/local/xictools/bin/wrspice"
+    (islink(wrspicecmd) || isfile(wrspicecmd)) && return wrspicecmd
+    isnothing(wrspicedefaultcmd[]) || return wrspicedefaultcmd[]
+    error("WRSPICE executable not found. Please install WRSPICE, load XicTools_jll, or supply a path directly if installed elsewhere.")
 end
 
 """

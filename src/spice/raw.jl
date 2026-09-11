@@ -189,25 +189,32 @@ end
     calcspicesortperms(variabledict::Dict{String,Vector{String}})
 
 Calculate the sortperms which will sort the variable and node names.
+Numbered names sort numerically before the names without a number, which
+keep their order, so a rawfile may mix nodes named with numbers and with
+words.
 """
 function calcspicesortperms(variabledict::Dict{String,Vector{String}})
 
     sortperms = Dict{String,Vector{Int}}()
 
+    # numbers numerically first, then everything else by its text; the
+    # variables of one group may parse to either kind
+    sortkey(v) = v isa Integer ? (0, Int(v), "") : (1, 0, string(v))
+
     for (label,variables) in variabledict
-        sortvariables = Dict()
+        sortvariables = Dict{Any,Vector{Any}}()
         for variable in variables
             key, val = parsespicevariable(variable)
             if !haskey(sortvariables,key)
-                sortvariables[key] = typeof(val)[]
+                sortvariables[key] = Any[]
             end
             push!(sortvariables[key],val)
         end
         #loop over the sorted outer arrays
         sp = Int[]
-        for (key,val) in sort(collect(sortvariables), by=identity)
+        for (key,val) in sort(collect(sortvariables), by = p -> string(first(p)))
             #sort the dictionary
-            p = sortperm(val)
+            p = sortperm(val, by = sortkey)
             sp = vcat(sp,p .+ length(sp))
         end
 

@@ -1393,6 +1393,18 @@ function enforcepassivity(A, B, C, D, ws; atol = 1e-8, rounds::Int = 20, margin:
         measured, _ = hinfnorm(A, B, C, D)
         measured >= previous && break
     end
+    # The contraction is bounded by the same principle as the scaling of
+    # the feedthrough: a fit within `scalelimit` of passive needs a
+    # contraction of about `scalelimit` to repair, and the repeated
+    # measurement can spend that much again, so a contraction below
+    # `1 - 2 scalelimit` describes a block which is mostly the anchor
+    # rather than the data -- passive because nothing of the fit remains,
+    # which is worse than refusing. The norm search decides each step on
+    # a lower bound, so without this floor a step of no size at all can
+    # measure contractive against an anchor of unit norm and be accepted.
+    s >= 1 - 2*scalelimit || throw(ArgumentError(isnothing(dc) ?
+        lazy"making the fit passive took a contraction to $(s) of the data, which describes a block which is mostly loss rather than the data. Fit with fewer poles, or over a narrower band." :
+        lazy"making the fit passive took a contraction to $(s) of the data, which describes a block which is mostly the value it states at zero frequency rather than the data. Fit with fewer poles, over a narrower band, or without stating the value at zero."))
     # one is the floor for a fit anchored at a statement of unit norm,
     # not a target it can be brought under; it is accepted there to the
     # tolerance it is validated against

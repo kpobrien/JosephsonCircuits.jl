@@ -53,7 +53,8 @@ function testjobs()
             "staged.jl", "components.jl", "parse.jl", "bind.jl", "canonical.jl",
             "legacy.jl", "outputs.jl", "layout.jl", "complexjacobian.jl",
             "assembly.jl", "devicesweep.jl", "nonlinearterm.jl", "system.jl",
-            "mna.jl", "spiceraw.jl", "spiceutils.jl", "spicewrapper.jl",
+            "mna.jl", "spiceraw.jl", "spiceutils.jl", "spicewrapper.jl", "wrspice.jl",
+            "wrspicecrosscheck.jl",
             "testutils.jl", "docstringchecktests.jl", "unwrap.jl",
             "deprecated.jl")
         push!(jobs, file(f))

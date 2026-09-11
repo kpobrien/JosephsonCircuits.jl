@@ -161,45 +161,47 @@ end
 # evaluating the scattering blocks on the backend
 # ---------------------------------------------------------------------------
 
-# the interpolated scattering parameter S[p,q] of one block at frequency w,
-# from its table. A block whose data is a single matrix is a one point table,
-# so it needs no separate path.
-@inline function tableentry(freqs, vals, foff, nf, voff, n, p, q, w,
-        extrapcode)
+# The interpolated scattering parameter S[p,q] of one block at frequency w,
+# from its table: the spline through the samples, held as knot values and
+# knot second derivatives, with the chord as the case of zero curvature. A
+# block whose data is a single matrix is a one point table, so it needs no
+# separate path. Beyond the band the stored edge slopes continue the
+# interpolant, and a block whose data must not leave the band was checked on
+# the host, because a kernel cannot raise.
+@inline function tableentry(freqs, vals, curv, eslopes, foff, nf, voff, soff,
+        n, p, q, w)
     @inbounds begin
         s = n*n
+        e = (q-1)*n + p
         if nf == 1
-            return vals[voff + (q-1)*n + p]
+            return vals[voff + e]
         end
         f1 = freqs[foff+1]
         fn = freqs[foff+nf]
+        if w <= f1
+            return vals[voff + e] + eslopes[soff + e]*(w - f1)
+        elseif w >= fn
+            return vals[voff + (nf-1)*s + e] + eslopes[soff + s + e]*(w - fn)
+        end
         # which segment, by the same branchless search the assembly kernels
         # use over a column pointer
         lo = 1; hi = nf - 1
-        if w <= f1
-            lo = 1
-        elseif w >= fn
-            lo = nf - 1
-        else
-            while lo < hi
-                mid = (lo + hi + 1) >>> 1
-                if freqs[foff+mid] <= w
-                    lo = mid
-                else
-                    hi = mid - 1
-                end
+        while lo < hi
+            mid = (lo + hi + 1) >>> 1
+            if freqs[foff+mid] <= w
+                lo = mid
+            else
+                hi = mid - 1
             end
         end
         a = freqs[foff+lo]
-        b = freqs[foff+lo+1]
-        t = (w - a)/(b - a)
-        # `:constant` holds the end value beyond the ends; `:linear` lets the
-        # end segment continue, which is what an unclamped t already does
-        if extrapcode == Int8(1)
-            t = t < 0 ? zero(t) : (t > 1 ? one(t) : t)
-        end
-        k1 = voff + (lo-1)*s + (q-1)*n + p
-        return vals[k1]*(1-t) + vals[k1+s]*t
+        h = freqs[foff+lo+1] - a
+        t = (w - a)/h
+        u = 1 - t
+        k1 = voff + (lo-1)*s + e
+        c = h*h/6
+        return u*vals[k1] + t*vals[k1+s] +
+            (c*(u*u*u - u))*curv[k1] + (c*(t*t*t - t))*curv[k1+s]
     end
 end
 
@@ -234,8 +236,8 @@ end
         @Const(blockindex), @Const(pindex), @Const(qindex), @Const(coeff),
         @Const(sgn), @Const(nports), @Const(zrefoff), @Const(zref),
         @Const(freqoff), @Const(nfreq), @Const(freqs), @Const(valoff),
-        @Const(vals), @Const(conjsym), @Const(extrapcode), @Const(wpump),
-        @Const(ws), scale, ncontrib)
+        @Const(vals), @Const(curv), @Const(slopeoff), @Const(eslopes),
+        @Const(conjsym), @Const(wpump), @Const(ws), scale, ncontrib)
     gid = @index(Global)
     @inbounds begin
         g = gid - 1
@@ -250,8 +252,9 @@ end
         if !iszero(wm)
             isconj = conjsym[bi] != 0
             wq = isconj ? abs(wm) : wm
-            S = tableentry(freqs, vals, Int(freqoff[bi]), Int(nfreq[bi]),
-                Int(valoff[bi]), n, p, q, wq, extrapcode[bi])
+            S = tableentry(freqs, vals, curv, eslopes, Int(freqoff[bi]),
+                Int(nfreq[bi]), Int(valoff[bi]), Int(slopeoff[bi]), n, p, q,
+                wq)
             if isconj && wm < 0
                 S = conj(S)
             end
@@ -318,11 +321,16 @@ struct DeviceProviders{VI,VZ,VR,VC,VF,B}
     freqs::VR
     valoff::VI
     vals::VC
+    # the spline curvatures of each table, laid out like `vals`, and the
+    # interpolant's slopes at each table's band edges, `n*n` below then
+    # `n*n` above, zero where the block holds its end values
+    curv::VC
+    slopeoff::VI
+    eslopes::VC
     # the callables of the `:entry` form, or `nothing` when the blocks are
     # tabulated; exactly one of `vals` and `funcs` is used
     funcs::VF
     conjsym::VZ
-    extrapcode::VZ
     modeindex::VI
     blockindex::VI
     pindex::VI
@@ -371,8 +379,6 @@ function candeviceevaluate(ssys)
         p = sb.block.provider
         (p isa TabulatedMatrixProvider || p isa ConstantMatrixProvider) ||
             return false
-        p isa TabulatedMatrixProvider && p.interpolation != :linear &&
-            return false
     end
     return true
 end
@@ -404,6 +410,31 @@ function copytable!(dest::Vector{Complex{Float64}}, off::Int,
     return nothing
 end
 
+# The interpolant's slopes at a table's band edges, `n*n` below then `n*n`
+# above: a cubic block stores them, a linear block's are the chords of its
+# end segments.
+function copyedgeslopes!(dest::Vector{Complex{Float64}}, off::Int,
+    prov, n::Int, nf::Int)
+    s = n*n
+    if prov.interpolation == :cubic
+        @inbounds for q in 1:n, p in 1:n
+            dest[off + (q-1)*n + p] = prov.endslopes[p, q, 1]
+            dest[off + s + (q-1)*n + p] = prov.endslopes[p, q, 2]
+        end
+    else
+        f = prov.frequencies
+        h1 = f[2] - f[1]
+        h2 = f[nf] - f[nf-1]
+        @inbounds for q in 1:n, p in 1:n
+            dest[off + (q-1)*n + p] =
+                (prov.values[p, q, 2] - prov.values[p, q, 1])/h1
+            dest[off + s + (q-1)*n + p] =
+                (prov.values[p, q, nf] - prov.values[p, q, nf-1])/h2
+        end
+    end
+    return dest
+end
+
 function copymatrix!(dest::Vector{Complex{Float64}}, off::Int,
     src::AbstractMatrix{<:Number}, n::Int)
     @inbounds for j in 1:n, i in 1:n
@@ -429,12 +460,13 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     # size everything first and fill it in place: a line whose every cell is
     # its own block has hundreds of thousands of table points, and growing
     # the flat arrays a block at a time would be slow
-    ntot = 0; vtot = 0; ztot = 0
+    ntot = 0; vtot = 0; ztot = 0; stot = 0
     for sb in ssys.blocks
         p = sb.block.provider
         n = sb.block.nports
         ztot += n
         istable || continue
+        stot += 2*n*n
         if p isa ConstantMatrixProvider
             ntot += 1; vtot += n*n
         else
@@ -447,12 +479,15 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     freqs = Vector{Float64}(undef, ntot)
     valoff = Vector{Int32}(undef, nb)
     vals = Vector{Complex{Float64}}(undef, vtot)
-    conjsym = Vector{Int8}(undef, nb); extrapcode = Vector{Int8}(undef, nb)
+    curv = zeros(Complex{Float64}, vtot)
+    slopeoff = Vector{Int32}(undef, nb)
+    eslopes = zeros(Complex{Float64}, stot)
+    conjsym = Vector{Int8}(undef, nb)
     ranges = Vector{Tuple{Float64,Float64}}(undef, nb)
     strict = Vector{Bool}(undef, nb)
     conjhost = Vector{Bool}(undef, nb)
     names = String[sb.name for sb in ssys.blocks]
-    zi = 0; fi = 0; vi = 0
+    zi = 0; fi = 0; vi = 0; si = 0
     for (bi, sb) in enumerate(ssys.blocks)
         blk = sb.block
         n = blk.nports
@@ -464,11 +499,11 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
         prov = blk.provider
         freqoff[bi] = fi
         valoff[bi] = vi
+        slopeoff[bi] = si
         if !istable
             # an entry-wise callable has no table, no range, and nothing to
             # extrapolate
             nfreq[bi] = 0
-            extrapcode[bi] = Int8(1)
             ranges[bi] = (-Inf, Inf)
             strict[bi] = false
         elseif prov isa ConstantMatrixProvider
@@ -478,7 +513,7 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
             fi += 1
             copymatrix!(vals, vi, prov.A, n)
             vi += n*n
-            extrapcode[bi] = Int8(1)
+            si += 2*n*n
             ranges[bi] = (0.0, 0.0)
             strict[bi] = false
         else
@@ -487,8 +522,18 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
             copyfrequencies!(freqs, fi, prov.frequencies)
             fi += nf
             copytable!(vals, vi, prov.values, n, nf)
+            if prov.interpolation == :cubic
+                copytable!(curv, vi, prov.curvatures, n, nf)
+            end
+            # beyond the band the kernel continues the interpolant with the
+            # stored edge slopes: zero holds the end values, and a strict
+            # block never reaches them, since its range is checked on the
+            # host before each batch
+            if prov.extrapolation != :constant && nf > 1
+                copyedgeslopes!(eslopes, si, prov, n, nf)
+            end
             vi += n*n*nf
-            extrapcode[bi] = prov.extrapolation == :linear ? Int8(2) : Int8(1)
+            si += 2*n*n
             ranges[bi] = (Float64(prov.frequencies[1]),
                 Float64(prov.frequencies[nf]))
             strict[bi] = prov.extrapolation == :error && nf > 1
@@ -501,8 +546,8 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     funcs = istable ? nothing : tobackend(backend, callables)
     ncontrib = length(ssys.Aindex)
     return DeviceProviders(d(nports), d(zrefoff), d(zref), d(freqoff),
-        d(nfreq), d(freqs), d(valoff), d(vals), funcs, d(conjsym),
-        d(extrapcode),
+        d(nfreq), d(freqs), d(valoff), d(vals), d(curv), d(slopeoff),
+        d(eslopes), funcs, d(conjsym),
         d(Int32.(ssys.modeindex)), d(Int32.(ssys.blockindex)),
         d(Int32.(ssys.pindex)), d(Int32.(ssys.qindex)), d(Int8.(ssys.coeff)),
         d(Int8.(ssys.sign)), d(collect(Float64, wpumpmodes)),
@@ -560,8 +605,8 @@ function stagedeviceproviders!(values::AbstractMatrix, dp::DeviceProviders,
         deviceproviderkernel!(dp.backend, 64)(values, dp.modeindex,
             dp.blockindex, dp.pindex, dp.qindex, dp.coeff, dp.sgn, dp.nports,
             dp.zrefoff, dp.zref, dp.freqoff, dp.nfreq, dp.freqs, dp.valoff,
-            dp.vals, dp.conjsym, dp.extrapcode, dp.wpump, dp.ws, dp.scale,
-            dp.ncontrib; ndrange = length(values))
+            dp.vals, dp.curv, dp.slopeoff, dp.eslopes, dp.conjsym, dp.wpump,
+            dp.ws, dp.scale, dp.ncontrib; ndrange = length(values))
     else
         deviceentrykernel!(dp.backend, 64)(values, dp.modeindex,
             dp.blockindex, dp.pindex, dp.qindex, dp.coeff, dp.sgn,

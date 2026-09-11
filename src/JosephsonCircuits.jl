@@ -231,6 +231,7 @@ include("spice/export.jl")
 include("spice/utils.jl")
 include("spice/wrapper.jl")
 include("spice/raw.jl")
+include("spice/transient.jl") # the transient run through WRspice
 
 # Deprecated entry points, kept so that older scripts keep running with a
 # warning.
@@ -449,7 +450,7 @@ export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
 # the circuit integrated in time
 export TransientSource, transientproblem, transientstate, transientsolve,
     transientdemodulate, transienttangent, transientadjoint, transientinjection,
-    Trapezoidal, GaussLegendre, BackwardEuler, TransientReuse, TransientBatchSolution,
+    Trapezoidal, GaussLegendre, BackwardEuler, WRspice, TransientReuse, TransientBatchSolution,
     transientiqplan, transientiq!, transientiq, transientiqvjp!,
     transientquantumplan, transientquantum, transientquantum!, transientquantumvjp!,
     transientnoisebaths, transientnoise, transientgain, transientquantumdiagnostics,

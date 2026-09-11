@@ -23,6 +23,12 @@ using Test
             JosephsonCircuits.calcspicesortperms(Dict("V" => ["v(1)", "v(2)", "v(3)"], "Hz" => ["frequency"])),
             Dict("Hz" => [1], "V" => [1, 2, 3]),
             )
+        # numbered and word named nodes may share a rawfile: the numbers
+        # sort numerically first and the words keep their order
+        @test isequal(
+            JosephsonCircuits.calcspicesortperms(Dict("V" => ["v(10)", "v(out)", "v(2)"])),
+            Dict("V" => [3, 1, 2]),
+            )
     end
 
     @testset "spice_raw_load" begin

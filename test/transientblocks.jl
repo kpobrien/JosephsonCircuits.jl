@@ -295,8 +295,8 @@ using Test
             @test verdict === :active
             @test_throws ArgumentError RationalScattering(Ah, Bh, Ch, Dh; zref = 50.0, atol = 1e-8)
             # and the enforcement brings it under
-            Ae, Be, Ce, De = JC.enforcepassivity(Ah, Bh, Ch, Dh,
-                2pi .* collect(range(0.01, 1.0; length = 200)))
+            Ae, Be, Ce, De = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
+                Ah, Bh, Ch, Dh, 2pi .* collect(range(0.01, 1.0; length = 200)))
             @test abs(only(De + Ce*((im*wpk*I - Ae) \ Be))) <= 1 + 1e-8
             # The level is a bound only where the pencil
             # resolves the crossings of it. Here it resolves none, the
@@ -327,8 +327,8 @@ using Test
             @test JC.passivityassessment(Ar2, Br2, Cr2, Dr2; atol = 1e-8)[1] === :active
             @test_throws ArgumentError RationalScattering(Ar2, Br2, Cr2, Dr2;
                 zref = 50.0, atol = 1e-8)
-            Ae2, Be2, Ce2, De2 = JC.enforcepassivity(Ar2, Br2, Cr2, Dr2,
-                exp.(range(log(1e-4), log(1e2); length = 101)))
+            Ae2, Be2, Ce2, De2 = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
+                Ar2, Br2, Cr2, Dr2, exp.(range(log(1e-4), log(1e2); length = 101)))
             @test abs(only(De2 + Ce2*((im*wpk2*I - Ae2) \ Be2))) <= 1 + 1e-8
         end
         # A block whose largest singular value is exactly one, which every
@@ -478,10 +478,12 @@ using Test
         S0e = real.(De .+ Ce*((0.0*I - Ae) \ Be))
         @test first(JC.hinfnorm(Ae, Be, Ce, De)) > 1.3
         @test opnorm(S0e) < 1
-        held = JC.enforcepassivity(Ae, Be, Ce, De, wse; dc = S0e)
+        held = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
+            Ae, Be, Ce, De, wse; dc = S0e)
         @test real.(held[4] .+ held[3]*((0.0*I - held[1]) \ held[2])) ≈ S0e atol=1e-12
         @test first(JC.hinfnorm(held...)) <= 1 + 1e-8
-        free = JC.enforcepassivity(Ae, Be, Ce, De, wse)
+        free = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
+            Ae, Be, Ce, De, wse)
         @test first(JC.hinfnorm(free...)) <= 1
         @test maximum(abs, real.(free[4] .+ free[3]*((0.0*I - free[1]) \ free[2])) .- S0e) > 0.05
         # Contracting toward a statement is a different step from
@@ -550,10 +552,12 @@ using Test
             Cd2 = [0.35 0.0; 0.0 0.35], Dd = [0.0 0.0; 0.0 0.0],
             wsd = collect(range(0.05, 4.0; length = 60))
             @test first(JC.hinfnorm(Ad, Bd, Cd2, Dd)) > 1
-            got = JC.enforcepassivity(Ad, Bd, Cd2, Dd, wsd)
+            got = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
+                Ad, Bd, Cd2, Dd, wsd)
             @test first(JC.hinfnorm(got...)) <= 1
             S0d = real.(Dd .+ Cd2*((0.0*I - Ad) \ Bd))
-            held = JC.enforcepassivity(Ad, Bd, Cd2, Dd, wsd; dc = S0d)
+            held = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
+                Ad, Bd, Cd2, Dd, wsd; dc = S0d)
             @test first(JC.hinfnorm(held...)) <= 1 + 1e-8
             @test real.(held[4] .+ held[3]*((0.0*I - held[1]) \ held[2])) ≈ S0d atol=1e-12
         end
@@ -717,7 +721,7 @@ using Test
         # scan: more poles do not always fit better, so the orders
         # meeting a tolerance are a window rather than a tail, and a
         # search which skips orders can step over the window entirely.
-        for np in 1:6
+        @test_logs (:warn,) match_mode = :any for np in 1:6
             reachable = try
                 JC.relativefiterror(RationalScattering(data, np), hb.S, fs)
             catch e
@@ -807,10 +811,10 @@ using Test
         catch e
             e isa ArgumentError ? Inf : rethrow()
         end
-        errs = [reach(np) for np in 1:16]
+        errs = @test_logs (:warn,) match_mode = :any [reach(np) for np in 1:16]
         window = [np for np in 2:15 if errs[np] < min(errs[np-1], errs[np+1])]
         @test !isempty(window)
-        for np in window
+        @test_logs (:warn,) match_mode = :any for np in window
             # a tolerance between what this order reaches and what the
             # better of its neighbours reaches: only this order meets it
             tol = sqrt(errs[np]*min(errs[np-1], errs[np+1]))
@@ -826,16 +830,18 @@ using Test
         # This delay needs six poles and is estimated at four once the
         # noise floor is put high enough, and the search finds the six.
         @test JC.supporteddegree(Sdelay, 2pi .* gs, 1e-2) == 4
-        expanded = RationalScattering(delayed; tol = 1e-8, noisefloor = 1e-2)
+        expanded = @test_logs (:warn,) match_mode = :any RationalScattering(
+            delayed; tol = 1e-8, noisefloor = 1e-2)
         @test size(expanded.provider.A, 1) ÷ 2 > 4
         @test JC.relativefiterror(expanded, Sdelay, gs) <= 1e-8
         # a `maxpoles` given by the caller is a wall, because the caller
         # made it one
-        @test_throws ArgumentError RationalScattering(delayed; tol = 1e-8,
-            noisefloor = 1e-2, maxpoles = 4)
+        @test_logs (:warn,) match_mode = :any @test_throws ArgumentError RationalScattering(
+            delayed; tol = 1e-8, noisefloor = 1e-2, maxpoles = 4)
         # and the expansion stops rather than running to the sample count:
         # a tolerance nothing reaches is still reported
-        @test_throws ArgumentError RationalScattering(delayed; tol = 1e-16, maxpoles = 8)
+        @test_logs (:warn,) match_mode = :any @test_throws ArgumentError RationalScattering(
+            delayed; tol = 1e-16, maxpoles = 8)
         # The degree the samples determine is a property of the data and
         # not of the unit its frequencies are written in. The two halves
         # of the Loewner pencil do not carry the same units, a divided
@@ -957,8 +963,12 @@ using Test
         # fit is scaled the rest of the way rather than returned as it is.
         # The near lossless case is the one which needs it: there the
         # enforcement's own level of `1 + atol/2` sits above the block's
-        # entire dissipation.
-        for (rr, nps) in ((Resistor(120.0), (2, 4, 8)), (Resistor(1e9), (2, 4, 8)))
+        # entire dissipation. Whether a given fit is contracted, which
+        # warns, or refused, which throws into the catch below, turns on
+        # the roundoff of the norm search, so the logs are captured
+        # without requiring a warning.
+        @test_logs match_mode = :any for (rr, nps) in (
+            (Resistor(120.0), (2, 4, 8)), (Resistor(1e9), (2, 4, 8)))
             lossless = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:l1, 1, 2, Inductor(2e-9)),
                 (:c, 2, 0, Capacitor(0.3e-12)), (:r, 2, 0, rr), (:l2, 2, 3, Inductor(2e-9)),
                 (:p2, 3, 0, Port(2; Z0 = 50.0))])
@@ -983,6 +993,37 @@ using Test
                 @test all(real.(eigvals(q.A)) .< 0)
             end
         end
+        # A network which is a perfect open at one port and a perfect
+        # short at the other at infinite frequency fits with its
+        # feedthrough exactly on the unit circle. The stamps snap the
+        # roundoff residues of I - S and I + S to the exact zeros the
+        # algebra has, so the endpoint's rate system sees zero rows
+        # rather than equations of machine epsilon; without the snap the
+        # reading amplifies the residual by their inverse at every step
+        # and the state overflows within tens of steps. The fitted block
+        # in front of a junction is checked against the same circuit as
+        # lumped elements.
+        embed = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:le, 1, 2, Inductor(1e-9)), (:re, 2, 3, Resistor(0.5)),
+            (:ce, 3, 0, Capacitor(1e-12)), (:p2, 3, 0, Port(2; Z0 = 50.0))])
+        ghz = collect(range(0.5e9, 10e9; length = 80))
+        hbe = hblinsolve(2pi .* ghz, embed; keyedarrays = false)
+        fite = @test_logs match_mode = :any RationalScattering(
+            ScatteringParameters((2pi .* ghz, hbe.S); nports = 2, zref = 50.0), 2)
+        @test maximum(abs.(abs.(diag(fite.provider.D)) .- 1)) < 1e-9
+        edrive(t) = 0.1e-6*sin(2pi*4e9*t)*(1 - exp(-t/0.5e-9))
+        eblock = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:cp, 1, 0, Capacitor(50e-15)), (:blk, 1, 2, fite),
+            (:jj, 2, 0, JosephsonJunction(1e-9)), (:cj, 2, 0, Capacitor(1e-12))])
+        elump = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
+            (:cp, 1, 0, Capacitor(50e-15)),
+            (:le, 1, 2, Inductor(1e-9)), (:re, 2, 3, Resistor(0.5)),
+            (:ce, 3, 0, Capacitor(1e-12)),
+            (:jj, 3, 0, JosephsonJunction(1e-9)), (:cj, 3, 0, Capacitor(1e-12))])
+        se = [transientsolve(transientproblem(c; sources = [TransientSource(1, edrive)]),
+            (0.0, 2e-9); dt = 1e-12, method = GaussLegendre()) for c in (eblock, elump)]
+        @test maximum(abs, se[1].voltage .- se[2].voltage) <
+            1e-3*maximum(abs, se[2].voltage)
         # a fit needs its last pole unless a constant reproduces the data:
         # one real pole and one conjugate pair fitted at their order and
         # above keep it, and constant data is refused as a rational block

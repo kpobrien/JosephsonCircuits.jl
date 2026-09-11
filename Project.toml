@@ -28,6 +28,7 @@ Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
 SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
 SymbolicUtils = "d1185830-fcd6-423d-90d6-eec64667417b"
 Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
+XicTools_jll = "05e36573-c726-5118-99be-97aa17437f28"
 
 [extensions]
 JosephsonCircuitsCUDAExt = "CUDA"
@@ -35,6 +36,7 @@ JosephsonCircuitsCUDSSExt = ["CUDA", "CUDSS"]
 JosephsonCircuitsKrylovExt = "Krylov"
 JosephsonCircuitsSciMLBaseExt = "SciMLBase"
 JosephsonCircuitsSymbolicsExt = ["Symbolics", "SymbolicUtils"]
+JosephsonCircuitsXicToolsExt = "XicTools_jll"
 
 [compat]
 Atomix = "0.1, 1"
@@ -59,4 +61,5 @@ SymbolicUtils = "4"
 Symbolics = "7"
 Touchstone = "0.1"
 UUIDs = "1"
+XicTools_jll = "4"
 julia = "1.10"

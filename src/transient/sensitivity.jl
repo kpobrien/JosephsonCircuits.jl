@@ -38,6 +38,8 @@ function junctionproduct!(y, sys::TransientSystem, phi, d, work)
 end
 
 function recordedsolution(sol::TransientSolution)
+    sol.method isa WRspice && throw(ArgumentError(
+        "the derivatives and the noise replay the package's own stepping rules; solve with Trapezoidal() or GaussLegendre() rather than WRspice()."))
     isnothing(sol.phases) && isnothing(sol.checkpoints) && throw(ArgumentError(
         "the derivatives read the junction phases at every step: solve with record = :phases, :states or :checkpoints and saveevery = 1."))
     isnothing(sol.phases) && !(sol.method isa GaussLegendre) && throw(ArgumentError("checkpoints are a record of the Gauss-Legendre rule."))
