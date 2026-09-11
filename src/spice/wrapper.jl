@@ -270,7 +270,7 @@ function wrspice_cmd()
         "/usr/local/xictools/bin/wrspice"
     (islink(wrspicecmd) || isfile(wrspicecmd)) && return wrspicecmd
     isnothing(wrspicedefaultcmd[]) || return wrspicedefaultcmd[]
-    error("WRSPICE executable not found. Please install WRSPICE, load XicTools_jll, or supply a path directly if installed elsewhere.")
+    error("WRSPICE executable not found. Please install WRSPICE, load XicTools_jll, or supply a path manually if installed elsewhere.")
 end
 
 """

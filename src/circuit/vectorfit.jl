@@ -12,6 +12,15 @@
 # pair splits across representations.
 const realpoletolerance = 1e-6
 
+# A singular value of the residue basis below this fraction of the
+# largest is a direction the samples do not determine, and the residue
+# solve leaves it out rather than meeting it. One shared constant rather
+# than a keyword: the relocation, the pruning and the final solve all
+# judge a fit by the residues that solve returns, and a direction one
+# stage met while another left it out would be an order accepted against
+# an error no other stage sees.
+const fitranktolerance = 1e-12
+
 """
     RationalScattering(block::ScatteringParameters, npoles;
         frequencies = nothing, iterations = 30, passivity = true, atol = 1e-8,
@@ -771,6 +780,39 @@ function realresiduerow(c::AbstractVector, poles::Vector{ComplexF64})
     return row
 end
 
+# The least squares of the residue solve, factored once and applied to
+# the right hand side of every entry. Directions of the basis whose
+# singular value is below `fitranktolerance` of the largest are left out
+# of the solution rather than met: two poles which have coalesced leave
+# two columns the samples cannot tell apart, and a plain least squares
+# answers such a basis with residues of any size at all so long as they
+# cancel, which then stand between the fit and every judgement made on
+# it, the error it reports and the value it takes at zero frequency
+# included. The minimum norm solution asks for nothing the samples do
+# not determine and leaves the rest of the fit as it was.
+struct FitLeastSquares
+    U::Matrix{Float64}
+    s::Vector{Float64}
+    V::Matrix{Float64}
+    scale::Vector{Float64}
+end
+function FitLeastSquares(A::AbstractMatrix)
+    # A column carries the units of its basis function, and a pole far
+    # from the band is small in every row while a constant term is one
+    # in half of them, so the rank is judged after every column is
+    # brought to unit norm. Unscaled, the smallest singular value
+    # measures the units of the basis and not what the samples determine.
+    scale = [norm(view(A, :, j)) for j in axes(A, 2)]
+    for j in eachindex(scale)
+        scale[j] > 0 || (scale[j] = 1.0)
+    end
+    F = svd(A ./ scale')
+    kept = isempty(F.S) ? 0 : count(>(fitranktolerance*first(F.S)), F.S)
+    return FitLeastSquares(F.U[:, 1:kept], F.S[1:kept], F.V[:, 1:kept], scale)
+end
+fitleastsquares(F::FitLeastSquares, b::AbstractVector) =
+    (F.V*((F.U'*b) ./ F.s)) ./ F.scale
+
 # the residues of every entry and the constant at fixed poles, by least
 # squares in the real basis. With `constant` given, that matrix is held
 # and only the strictly proper part is fitted, to `S - constant`.
@@ -788,12 +830,12 @@ function fitresidues(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::V
     residues = zeros(ComplexF64, n, n, N)
     D = fixed ? Matrix{Float64}(constant) : zeros(n, n)
     if isnothing(dc)
-        F = qr(M)
+        F = FitLeastSquares(M)
         for i in 1:n, j in 1:n
             rhs = fixed ?
                 vcat(real.(view(S, i, j, :)) .- D[i, j], imag.(view(S, i, j, :))) :
                 vcat(real.(view(S, i, j, :)), imag.(view(S, i, j, :)))
-            x = F \ rhs
+            x = fitleastsquares(F, rhs)
             residues[i, j, :] .= complexresidues(x[1:N], poles)
             fixed || (D[i, j] = x[N + 1])
         end
@@ -812,14 +854,14 @@ function fitresidues(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::V
     cc = dot(c, c)
     cc > 0 || throw(ArgumentError("the zero frequency row of the basis vanishes, so the value there cannot be stated."))
     Z = nullspace(reshape(c, 1, :))
-    F = qr(M*Z)
+    F = FitLeastSquares(M*Z)
     for i in 1:n, j in 1:n
         target = Float64(real(dc[i, j])) - (fixed ? D[i, j] : 0.0)
         x0 = c .* (target/cc)
         rhs = fixed ?
             vcat(real.(view(S, i, j, :)) .- D[i, j], imag.(view(S, i, j, :))) :
             vcat(real.(view(S, i, j, :)), imag.(view(S, i, j, :)))
-        x = x0 .+ Z*(F \ (rhs .- M*x0))
+        x = x0 .+ Z*fitleastsquares(F, rhs .- M*x0)
         residues[i, j, :] .= complexresidues(x[1:N], poles)
         fixed || (D[i, j] = x[N + 1])
     end

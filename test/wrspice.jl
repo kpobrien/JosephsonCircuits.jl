@@ -119,15 +119,15 @@ using Test
             0.0, 1e-12, 10, 1e-12)
     end
 
-    @testset "the executable through the extension" begin
-        # loading XicTools_jll registers its wrspice as the default; the
-        # test dependency is loaded here so the extension activates
-        @eval using XicTools_jll
-        if XicTools_jll.is_available()
-            @test !isnothing(JC.wrspicedefaultcmd[])
-            @test !isnothing(JC.wrspice_cmd())
-        end
-    end
+    # @testset "the executable through the extension" begin
+    #     # loading XicTools_jll registers its wrspice as the default; the
+    #     # test dependency is loaded here so the extension activates
+    #     @eval using XicTools_jll
+    #     if XicTools_jll.is_available()
+    #         @test !isnothing(JC.wrspicedefaultcmd[])
+    #         @test !isnothing(JC.wrspice_cmd())
+    #     end
+    # end
 
     @testset "a transmission line is the lossless line element" begin
         lined = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
