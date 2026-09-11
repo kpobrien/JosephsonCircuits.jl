@@ -2,7 +2,7 @@ using JosephsonCircuits, Test, LinearAlgebra, Random
 
 function testtransientiq(backend = JosephsonCircuits.CPU())
     device(x) = JosephsonCircuits.tobackend(backend, x)
-    rng = MersenneTwister(417)
+    rng = Random.default_rng()
     times = collect(range(0.31e-9; step = 2e-12, length = 401))
     frequencies = [5e9, 8e9, 6.7e9]
     ports = [1, 2, 1]
@@ -31,7 +31,15 @@ function testtransientiq(backend = JosephsonCircuits.CPU())
             weights = randn(rng, ComplexF64, size(expected))
             gradient = device(zeros(size(traces)))
             transientiqvjp!(gradient, plan, device(weights))
-            @test dot(Array(gradient), traces) ≈ real(dot(weights, expected)) rtol=2e-12 atol=1e-13
+            # The identity is exact; what it can be checked to is the
+            # roundoff of the two sums which meet in it, and how far
+            # those cancel is the draw's to decide. Measured against the
+            # size of their terms the difference stays within a few tens
+            # of the machine epsilon, where against the result alone it
+            # wanders with the draw.
+            cancellation = dot(abs.(Array(gradient)), abs.(traces)) +
+                sum(abs, weights .* expected)
+            @test dot(Array(gradient), traces) ≈ real(dot(weights, expected)) rtol=2e-12 atol=1e-12*cancellation
             direction = randn(rng, size(traces))
             epsilon = 1e-5
             plus = transientiq(plan, device(traces+epsilon*direction))

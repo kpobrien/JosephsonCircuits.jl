@@ -9,15 +9,30 @@
 # so a worker tests exactly what the master would have, and writes its own
 # coverage files, which the coverage tools merge.
 #
-# `JULIA_TEST_WORKERS` sets the worker count; `0` runs every job in this
-# process in sequence, which is what a session kept alive with Revise and
-# TestEnv wants, since the compilation then happens once per session.
+# As many workers run as this process has threads, each started with one
+# thread of its own, so the suite spends the budget its caller set and
+# not the size of the machine: `Pkg.test` gives the test process the
+# threads asked for by `JULIA_NUM_THREADS` or by its own `-t`, and a
+# machine shared with other work, a package evaluation or a build farm,
+# asks for few. `JULIA_TEST_WORKERS` overrides that count; `0` runs every
+# job in this process in sequence, which is what a session kept alive
+# with Revise and TestEnv wants, since the compilation then happens once
+# per session.
 
 using Test
 using Distributed
+using Random
 using JosephsonCircuits
 
 const TESTDIR = @__DIR__
+
+# The jobs run from one seed, drawn afresh each run so that the suite
+# keeps exploring the draws it has not taken, and printed so that a run
+# can be repeated exactly: the RNG which Test prints beneath a failing
+# summary is this process's, which runs none of the jobs itself.
+# `JULIA_TEST_SEED` runs from the seed it names instead.
+const SEED = haskey(ENV, "JULIA_TEST_SEED") ?
+    parse(UInt64, ENV["JULIA_TEST_SEED"]) : rand(RandomDevice(), UInt64)
 
 # Every `.jl` under `test/` which the job list does not name and which is
 # not a fixture the jobs include themselves.
@@ -128,13 +143,16 @@ end
 
 jobs = testjobs()
 nworkers = min(parse(Int, get(ENV, "JULIA_TEST_WORKERS",
-    string(Sys.CPU_THREADS))), length(jobs))
+    string(Threads.nthreads()))), length(jobs))
+
+println("running $(length(jobs)) jobs on $(nworkers) workers from seed $(repr(SEED))")
 
 if nworkers == 0
     include(joinpath(TESTDIR, "testcircuits.jl"))
     @testset verbose = true "JosephsonCircuits" begin
         for (name, code) in jobs
             @testset "$name" begin
+                Random.seed!(SEED)
                 include_string(Main, code)
             end
         end
@@ -144,7 +162,7 @@ else
     # on every process, the master included: the shared circuits, one BLAS
     # thread so the workers do not oversubscribe the machine
     @everywhere begin
-        using Test, JosephsonCircuits
+        using Test, Random, JosephsonCircuits
         using LinearAlgebra: BLAS
         BLAS.set_num_threads(1)
         include(joinpath($TESTDIR, "testcircuits.jl"))
@@ -176,7 +194,10 @@ else
     # name and not as `Test.DefaultTestSet` on the long term support
     # release.
     @everywhere const JobTestSet = Test.DefaultTestSet
-    @everywhere function runtestjob(name::String, code::String)
+    @everywhere function runtestjob(name::String, code::String, seed::UInt64)
+        # a testset takes the task's seed as it stands, so seeding before
+        # the job's outermost one seeds every testset under it
+        Random.seed!(seed)
         job = Ref{Any}(nothing)
         @testset SilentTestSet "worker" begin
             job[] = @testset JobTestSet "$name" begin
@@ -192,7 +213,7 @@ else
         @async while !isempty(queue)
             name, code = popfirst!(queue)
             results[name] = try
-                remotecall_fetch(runtestjob, w, name, code)
+                remotecall_fetch(runtestjob, w, name, code, SEED)
             catch e
                 e
             end

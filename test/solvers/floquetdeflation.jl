@@ -21,8 +21,8 @@ JC.escalatepreconditioner!(::DensePC) = false
 # inverse on the complement and is wrong by a large factor on `nbad` of the
 # singular directions, which is the low-rank-defect situation the
 # preconditioner is built for.
-function defectsystem(n, nbad; seed = 1, factor = 50.0)
-    rng = MersenneTwister(seed)
+function defectsystem(n, nbad; factor = 50.0)
+    rng = Random.default_rng()
     Q = Matrix(qr(randn(rng, n, n)).Q)
     d = collect(range(1.0, 2.0; length = n))
     J = Q*Diagonal(d)*Q'
@@ -79,7 +79,7 @@ end
         jvp!(y, v) = (mul!(y, J, v); y)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         # seed the bad directions themselves, plus noise
-        JC.seeddeflation!(pc, hcat(Q[:, 1:nbad], randn(MersenneTwister(3), n, 2));
+        JC.seeddeflation!(pc, hcat(Q[:, 1:nbad], randn(Random.default_rng(), n, 2));
             source = :test)
         JC._rebuildfloquet!(pc)
         @test JC.deflationsize(pc) >= nbad
@@ -156,7 +156,7 @@ end
         J, B0, _ = defectsystem(n, 2)
         jvp!(y, v) = (mul!(y, J, v); y)
         pc = JC.FloquetPreconditioner(Floquet(size = 4, candidates = 10), DensePC(B0), jvp!, zeros(n))
-        rng = MersenneTwister(11)
+        rng = Random.default_rng()
         for _ in 1:20
             JC.seeddeflation!(pc, randn(rng, n, 3); source = :test)
             @test JC.candidatecount(pc) <= 10
@@ -173,7 +173,7 @@ end
         # a full Arnoldi factorization of a matrix with two small
         # eigenvalues, built here so H is exactly the projection
         n = 24
-        rng = MersenneTwister(5)
+        rng = Random.default_rng()
         Qm = Matrix(qr(randn(rng, n, n)).Q)
         d = collect(range(1.0, 3.0; length = n))
         d[1] = 1e-3; d[2] = 2e-3
@@ -213,7 +213,7 @@ end
     # and the residual image picks a usable subspace.
     @testset "nonnormal harvesting keeps both families" begin
         n = 30
-        rng = MersenneTwister(7)
+        rng = Random.default_rng()
         # upper triangular with a large off-diagonal: eigenvectors are far
         # from orthogonal, so eigen and singular information disagree
         A = triu(randn(rng, n, n), 1)*8.0 + Diagonal(range(0.05, 2.0; length = n))
@@ -251,7 +251,7 @@ end
         rebuilds = JC.deflationrebuilds(pc)
         active = copy(pc.W)
         m = 8
-        rng = MersenneTwister(13)
+        rng = Random.default_rng()
         V = Matrix(qr(randn(rng, n, m)).Q)
         H = triu(randn(rng, m+1, m), -1)
         JC._harvestfloquet!(pc, V, H)
@@ -269,7 +269,7 @@ end
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
         JC.seeddeflation!(pc, Q[:, 1:3]; source = :test)
         JC._rebuildfloquet!(pc)
-        rng = MersenneTwister(17)
+        rng = Random.default_rng()
         r = randn(rng, n)
         z = similar(r)
         JC.applypreconditioner!(z, pc, r)
@@ -281,7 +281,7 @@ end
     @testset "a moved point is refreshed lazily" begin
         n = 30
         J, B0, Q = defectsystem(n, 2)
-        Jmoved = J + 0.01*Q*Diagonal(randn(MersenneTwister(19), n))*Q'
+        Jmoved = J + 0.01*Q*Diagonal(randn(Random.default_rng(), n))*Q'
         moved = Ref(false)
         jvp!(y, v) = (mul!(y, moved[] ? Jmoved : J, v); y)
         pc = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
@@ -295,7 +295,7 @@ end
         # stale until something asks for an application
         @test JC.deflationrebuilds(pc) == rebuilds
         z = zeros(n)
-        JC.applypreconditioner!(z, pc, randn(MersenneTwister(23), n))
+        JC.applypreconditioner!(z, pc, randn(Random.default_rng(), n))
         @test JC.deflationrebuilds(pc) == rebuilds + 1
         # the identity now holds against the *new* Jacobian
         @test Jmoved*pc.X ≈ pc.C atol = 1e-9
@@ -308,9 +308,9 @@ end
 
     @testset "gmres! converges faster with the correction" begin
         n, nbad = 60, 4
-        J, B0, Q = defectsystem(n, nbad; seed = 29, factor = 200.0)
+        J, B0, Q = defectsystem(n, nbad; factor = 200.0)
         jvp!(y, v) = (mul!(y, J, v); y)
-        rng = MersenneTwister(31)
+        rng = Random.default_rng()
         b = randn(rng, n)
 
         base = DensePC(B0)
@@ -336,11 +336,11 @@ end
     # between them, must beat a cold start at the second point.
     @testset "sweep reuse across a changing operator" begin
         n, nbad = 60, 3
-        J0, B0, Q = defectsystem(n, nbad; seed = 37, factor = 150.0)
+        J0, B0, Q = defectsystem(n, nbad; factor = 150.0)
         # a nearby point: the difficult directions move slowly
-        P = Q*Diagonal(1 .+ 0.02*randn(MersenneTwister(41), n))*Q'
+        P = Q*Diagonal(1 .+ 0.02*randn(Random.default_rng(), n))*Q'
         J1 = J0*P
-        rng = MersenneTwister(43)
+        rng = Random.default_rng()
         b = randn(rng, n)
         base = DensePC(B0)
 
@@ -386,7 +386,7 @@ end
         # base is imperfect everywhere, mildly, and badly wrong on `nbad`
         # directions, so the preconditioned spectrum is spread and the solve
         # takes several cycles.
-        rng = MersenneTwister(53)
+        rng = Random.default_rng()
         Q = Matrix(qr(randn(rng, n, n)).Q)
         d = collect(range(1.0, 2.0; length = n))
         J = Q*Diagonal(d)*Q'
@@ -394,7 +394,7 @@ end
         g[1:nbad] .= range(100.0, 500.0; length = nbad)
         B0 = Q*Diagonal(g ./ d)*Q'
         jvp!(y, v) = (mul!(y, J, v); y)
-        b = randn(MersenneTwister(59), n)
+        b = randn(Random.default_rng(), n)
         base = DensePC(B0)
         # a restart cycle short enough that the solve takes several of
         # them, which is the situation the per-cycle harvest exists for
@@ -442,12 +442,12 @@ end
         # operator alone until the point moves
         JC._bankcandidates!(pc, Q[:, 3:3]; source = :test)
         z = zeros(n)
-        JC.applypreconditioner!(z, pc, randn(MersenneTwister(67), n))
+        JC.applypreconditioner!(z, pc, randn(Random.default_rng(), n))
         @test pc.W == W
         @test JC.deflationrebuilds(pc) == rebuilds
         # an external seed between solves is active at the next application
         JC.seeddeflation!(pc, Q[:, 3:3]; source = :external)
-        JC.applypreconditioner!(z, pc, randn(MersenneTwister(71), n))
+        JC.applypreconditioner!(z, pc, randn(Random.default_rng(), n))
         @test JC.deflationrebuilds(pc) == rebuilds + 1
         @test JC.deflationsize(pc) == 3
         c = J*Q[:, 3]; c ./= norm(c)
@@ -457,7 +457,7 @@ end
         JC.seeddeflation!(pc, Q[:, 1:1]; source = :external)
         @test JC.candidatecount(pc) == 4
         @test !pc.fresh
-        JC.applypreconditioner!(z, pc, randn(MersenneTwister(73), n))
+        JC.applypreconditioner!(z, pc, randn(Random.default_rng(), n))
         @test JC.deflationsize(pc) == 3
     end
 
@@ -466,7 +466,7 @@ end
         # the harmonic Ritz pencil needs the Arnoldi relation, which only
         # `ws.Harnoldi` still satisfies after a cycle
         n = 24
-        rng = MersenneTwister(5)
+        rng = Random.default_rng()
         Qm = Matrix(qr(randn(rng, n, n)).Q)
         d = collect(range(1.0, 3.0; length = n))
         d[1] = 1e-3; d[2] = 2e-3

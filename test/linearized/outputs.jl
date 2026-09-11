@@ -72,7 +72,7 @@ using Test
 
         # the noise reduction against the explicit sums, with and without an
         # occupation, and against the diagonal of the noise covariance
-        rng = MersenneTwister(3)
+        rng = Random.default_rng()
         m = 3
         Snoise = randn(rng, ComplexF64, 5*m, 2*m)
         w = randn(rng, m)
@@ -158,7 +158,7 @@ using Test
 
             # generate the `S` matrices: a random unitary, the scattering
             # parameter matrix of a lossless network
-            S = Matrix(qr(randn(MersenneTwister(i), Complex{Float64}, N, N)).Q)
+            S = Matrix(qr(randn(Random.default_rng(), Complex{Float64}, N, N)).Q)
 
             # pick one port and imagine that it is a resistor with
             # resistance equal to the port impedance. Snoise represents noise emerging

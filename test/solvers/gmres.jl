@@ -1,6 +1,5 @@
 using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
 
-Random.seed!(20260905)
 
 # The Krylov solver itself: the basis it grows, the systems it is exact
 # on, restarting, preconditioning, its allocation, and the breakdowns and

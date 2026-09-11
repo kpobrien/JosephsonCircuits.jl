@@ -10,7 +10,7 @@ function testtransientquantum(backend = JosephsonCircuits.CPU())
     c = zeros(ComplexF64, fld(n-1, 2), 3)
     c[3, :] = [1, im, 1]
     plan = transientquantumplan(times, c; ports = [1, 1, 2], backend)
-    rng = MersenneTwister(87)
+    rng = Random.default_rng()
     @testset "Quantum temporal modes: $backend" begin
         X, P = 1.7, -0.4
         rf = sqrt(JC.planck_constant*f/period) .* (X .* cospi.(2f .* (times .- times[1])) .+

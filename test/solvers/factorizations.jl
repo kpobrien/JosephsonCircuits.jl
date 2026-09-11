@@ -83,7 +83,7 @@ end
 @testset verbose=true "kluordered: the ordering chosen by predicted fill" begin
     using SparseArrays, LinearAlgebra, Random
     JC = JosephsonCircuits
-    rng = MersenneTwister(3)
+    rng = Random.default_rng()
 
     @testset "symbolicfill matches a Cholesky factorization" begin
         # a random sparse SPD matrix; the fill of L under a permutation is

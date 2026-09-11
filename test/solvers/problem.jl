@@ -36,7 +36,6 @@ const HBNLP_PROBLEMS = hbnlp_testproblems()
 @testset verbose=true "hbnonlinearproblem" begin
 
 @testset "residual and jacobian-vector product" begin
-    Random.seed!(20260828)
     for (nm, prob) in HBNLP_PROBLEMS
         @testset "$nm" begin
             n = length(prob)
@@ -56,7 +55,6 @@ const HBNLP_PROBLEMS = hbnlp_testproblems()
 end
 
 @testset "transposed product" begin
-    Random.seed!(20260828)
     for (nm, prob) in HBNLP_PROBLEMS
         @testset "$nm" begin
             n = length(prob)
@@ -81,7 +79,6 @@ end
     # stored represents two harmonics and is counted twice. Getting this
     # wrong gives a vjp which is right on self-conjugate modes and wrong by
     # a factor of two elsewhere, so the test must fail when it is removed.
-    Random.seed!(20260828)
     _, prob = HBNLP_PROBLEMS[3]          # two tone, has FCONJ slots
     n = length(prob)
     u = 0.05 .* randn(n); w = randn(n)
@@ -101,7 +98,6 @@ end
     # an operator built at one point keeps evaluating there after the
     # problem's point has moved: a residual elsewhere, or a second
     # operator, in between
-    Random.seed!(20260828)
     _, prob = HBNLP_PROBLEMS[1]
     n = length(prob)
     u1 = 0.05 .* randn(n); u2 = 0.05 .* randn(n)
@@ -122,7 +118,6 @@ end
     # no slots, an empty Josephson output: the transposed product must
     # not launch the junction kernel (which read past its pointer array
     # under bounds checking) and must still carry the linear term
-    Random.seed!(20260828)
     circuit = [("P1","1","0",1), ("R1","1","0",50.0), ("C1","1","2",1e-13),
         ("L1","2","0",1e-9), ("C2","2","0",1e-12)]
     prob = JC.hbnonlinearproblem((2*pi*1e9,), (2,),
@@ -139,7 +134,6 @@ end
 end
 
 @testset "second and third derivatives" begin
-    Random.seed!(20260828)
     for (nm, prob) in HBNLP_PROBLEMS
         @testset "$nm" begin
             n = length(prob)
@@ -164,7 +158,6 @@ end
 end
 
 @testset "drive scaling and its derivative" begin
-    Random.seed!(20260828)
     for (nm, prob) in HBNLP_PROBLEMS
         @testset "$nm" begin
             n = length(prob)
@@ -197,7 +190,6 @@ end
 end
 
 @testset "JacobianOperator" begin
-    Random.seed!(20260828)
     _, prob = HBNLP_PROBLEMS[1]
     n = length(prob)
     u = 0.05 .* randn(n); v = randn(n); w = randn(n)
@@ -228,7 +220,7 @@ end
     @test !isnothing(pa.jacobian)
     @test isnothing(JC.jacobianprototype(pf))
     # the products are the same either way
-    Random.seed!(1); n = length(pf); u = 0.05 .* randn(n); v = randn(n)
+    n = length(pf); u = 0.05 .* randn(n); v = randn(n)
     @test hbnlp_relerr(JC.hbjvp!(zeros(n), pf, u, v),
                  JC.hbjvp!(zeros(n), pa, u, v)) < 1e-14
     # the transposed product needs no assembled Jacobian either
@@ -250,7 +242,6 @@ end
         y = zeros(length(u)); JC.hbvjp!(y, prob, u, w)
         return @allocated JC.hbvjp!(y, prob, u, w)
     end
-    Random.seed!(20260828)
     # The KernelAbstractions CPU backend spawns one task per thread when a
     # launch spans more than one workgroup of 64 items, a few kilobytes per
     # launch which is not the plan's doing. The unpadded grids keep every
@@ -274,7 +265,6 @@ end
     # factorizations, preallocated workspaces -- assumes the pattern of the
     # assembled Jacobian is fixed. If it ever moves, those are silently
     # invalid rather than wrong in a way that throws.
-    Random.seed!(20260828)
     for (nm, prob) in HBNLP_PROBLEMS
         @testset "$nm" begin
             n = length(prob)
@@ -303,7 +293,6 @@ end
     # The ecosystem disagrees: LinearSolve.jl calls the three argument
     # `ldiv!`, IterativeSolvers.jl the two argument in-place form (on a
     # view), Krylov.jl and KrylovKit `mul!`. All must agree.
-    Random.seed!(20260828)
     _, prob = HBNLP_PROBLEMS[1]
     n = length(prob)
     u = zeros(n)
@@ -391,7 +380,6 @@ end
     @test L.nvdc > 0
 
     n = length(prob)
-    Random.seed!(20)
     u = randn(n); v = randn(n); w = randn(n); z = randn(n)
 
     J = JC.hbjacobian!(copy(prob.jacobian), prob, u)

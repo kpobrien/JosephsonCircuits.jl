@@ -211,7 +211,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
     end
 
     @testset "the step Jacobian, the tangent and the adjoint" begin
-        rng = MersenneTwister(45)
+        rng = Random.default_rng()
         circuit = vcat(rc, [("Lj1", "1", "0", 1e-9)])
         drive(t) = 0.12e-6*sinpi(2*3e9*t) + 0.01e-6*sinpi(2*1.3e9*t)
         perturb(t) = 0.02e-6*sinpi(2*1.7e9*t)
@@ -276,12 +276,17 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         drive(t) = 0.1e-6*sinpi(2*3e9*t)
         prob = transientproblem(circuit; sources = [TransientSource(1, drive)])
         sol = transientsolve(prob, (0.0, 1e-9); dt = 2e-12, record = :phases, rtol = 1e-12)
-        rng = MersenneTwister(3)
+        rng = Random.default_rng()
         currents = [1e-8*sinpi(2*1.1e9*t + p) - 1e-8*sinpi(p) for p in 1:2, t in sol.times]
         response = transienttangent(sol, currents)
         weights = randn(rng, size(currents))
         adj = transientadjoint(sol, weights; quantity = :outgoing)
-        @test sum(weights .* response.outgoing) ≈ sum(adj.currents .* currents) rtol=1e-10
+        # exact as an identity, and checkable to the roundoff of the
+        # sums which meet in it, which cancel by an amount the draw
+        # decides; the tolerance is measured from their terms
+        cancellation = sum(abs, weights .* response.outgoing) +
+            sum(abs, adj.currents .* currents)
+        @test sum(weights .* response.outgoing) ≈ sum(adj.currents .* currents) rtol=1e-10 atol=1e-12*cancellation
         eps = 1e-3
         function loaded(sign)
             sources = [TransientSource(1, t -> drive(t) + sign*eps*1e-8*(sinpi(2*1.1e9*t + 1) - sinpi(1))),

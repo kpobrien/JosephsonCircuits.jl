@@ -1,7 +1,6 @@
 using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
 
 isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
-Random.seed!(20260905)
 
 # The Newton-Krylov engine over that solver: the forcing terms it picks,
 # the parameters it validates, and the reason every solve ends with.

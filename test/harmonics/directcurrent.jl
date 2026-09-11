@@ -775,7 +775,6 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         pc = JC.CanonicalPreconditioner(Passthrough(), w)
 
         n = JC.canonicaldim(L)
-        Random.seed!(9)
         r = randn(n)
         z = zeros(n)
         JC.applypreconditioner!(z, pc, r)

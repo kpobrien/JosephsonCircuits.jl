@@ -73,7 +73,6 @@ end
 end
 
 @testset "Krylov.jl drives the operator with no adapter" begin
-    Random.seed!(20260828)
     prob, circuit, defs = ext_problem()
     n = length(prob)
     u = 0.05 .* randn(n)

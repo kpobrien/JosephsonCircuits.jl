@@ -456,9 +456,9 @@ using Test
             d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
             d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
             d.modelayout; spec = spec, Amatrixmodes = d.Amatrixmodes, kw...)
-        x = 0.3*randn(MersenneTwister(11), n)
+        x = 0.3*randn(Random.default_rng(), n)
         d.fjreal(nothing, d.Jr, x)
-        r = randn(MersenneTwister(12), n)
+        r = randn(Random.default_rng(), n)
         z = similar(r)
 
         # the symbolic pieces on a small chain: KLU's order is a
@@ -753,7 +753,7 @@ using Test
         # graph and three trailing auxiliary rows (a short last block):
         # vector, matrix and transposed solves, refactorization on the
         # pattern, and single precision factors refined to double
-        rng = MersenneTwister(3)
+        rng = Random.default_rng()
         Nm = 7; Nn = 30
         pairs = [(i, i+1) for i in 1:Nn-1]
         append!(pairs, [(rand(rng, 1:Nn), rand(rng, 1:Nn)) for _ in 1:12])

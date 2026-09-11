@@ -1,6 +1,5 @@
 using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test
 include("layoutreference.jl")
-Random.seed!(20260905)
 
 
 @testset verbose=true "the mode layout and its real form" begin
@@ -352,7 +351,7 @@ end
 
 @testset "the package's conversions agree with the reference family" begin
     JC = JosephsonCircuits
-    rng = MersenneTwister(7)
+    rng = Random.default_rng()
     for isreal in ([true, false, false], [false, false], [true])
         nm = length(isreal)
         nnodes = 5
@@ -375,7 +374,7 @@ end
     @testset "the gather and scatter kernels are inverse permutations" begin
         # the device side of the canonical layout's permuted copies, run on
         # the CPU backend here
-        v = randn(MersenneTwister(5), 9)
+        v = randn(Random.default_rng(), 9)
         index = [4, 1, 9, 2, 7]
         got = zeros(2, 3)
         JosephsonCircuits.gathervalues!(got, v, reshape(vcat(index, 5), 2, 3))
@@ -442,7 +441,6 @@ end
         @test JC.voltagerange(L) == (ml.rdim + 1):(ml.rdim + 2)
         @test JC.windowindices(L) == vcat(L.dcpos, ml.rdim + 1, ml.rdim + 2)
         @test !JC.isinternal(L)
-        Random.seed!(11)
         r = randn(ml.rdim)
         u = zeros(ml.rdim + 2); u[end-1:end] .= (3.0, 4.0)
         JC.gathercanonical!(u, r, L)
@@ -493,7 +491,6 @@ end
         @test JC.isinternal(L)
         @test L.ndc > 0
 
-        Random.seed!(3)
         x = randn(L.rdim); v = randn(L.rdim)
         u = similar(x); vc = similar(v)
         JC.gathercanonical!(u, x, L); JC.gathercanonical!(vc, v, L)

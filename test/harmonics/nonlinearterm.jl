@@ -4,7 +4,6 @@ using SparseArrays
 using Random
 using Test
 
-Random.seed!(20260905)
 
 @testset verbose=true "nonlinearterm" begin
 

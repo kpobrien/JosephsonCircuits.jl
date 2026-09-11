@@ -157,7 +157,6 @@ using Test
         # relation those are `-sin`, `cos`, `-sin` and `-cos`, and for a
         # polynomial the differentiated polynomials. Each is checked
         # against a central difference of the one below it.
-        Random.seed!(20260907)
         prob = JC.hbnonlinearproblem((2*pi*4.75001e9,), (8,),
             [(mode = (1,), port = 1, current = 0.02e-6)],
             jpa(NonlinearInductor(L0, PolynomialCPR([1.0, 0.25, -1/6]))),
@@ -299,7 +298,6 @@ using Test
         # of each other: the Jacobian is the derivative of the residual and
         # the Hessian the derivative of the Jacobian, which is what pins
         # the second derivative of the polynomial and its sign
-        Random.seed!(20260907)
         w = 2*pi*4.75e9
         src = [(mode = (1,), port = 1, current = 4*0.00565e-6)]
         d = hbnlsolve((w,), (8,), src,
