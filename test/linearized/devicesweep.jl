@@ -12,7 +12,7 @@ const CPU = JosephsonCircuits.CPU
 # here against the host assembler; the device solve itself needs cuDSS and is
 # exercised where a device is available.
 
-@testset verbose=true "devicelinsolve" begin
+@testset verbose=true "the device sweep" begin
 
     # a chain with a Josephson junction per cell, two ports, and a resistor at
     # each end, so the linearized system has a pump modulation contribution,

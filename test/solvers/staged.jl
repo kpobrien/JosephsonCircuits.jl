@@ -1,4 +1,4 @@
-isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "testcircuits.jl"))
+isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
 using JosephsonCircuits, Test, LinearAlgebra
 
 @testset "method = Staged()" begin

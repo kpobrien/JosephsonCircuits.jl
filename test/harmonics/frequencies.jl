@@ -2,7 +2,7 @@ using JosephsonCircuits
 using Test
 using SpecialFunctions
 
-@testset verbose=true "fftutils" begin
+@testset verbose=true "the frequency grids" begin
 
     @testset "calcfreqsrdft" begin
 

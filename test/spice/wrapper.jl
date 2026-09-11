@@ -69,14 +69,20 @@ using XicTools_jll
         @test out1 == out2
     end
 
-    if haskey(ENV,"CI")
-        @testset "wrspice_cmd" begin
-            # only run this test if the XicTools_jll executable isn't found.
-            if !isdefined(XicTools_jll,:wrspice)
-                @test_throws(
-                    ErrorException("WRSPICE executable not found. Please install WRSPICE, load XicTools_jll, or supply a path manually if installed elsewhere."),
-                    JosephsonCircuits.wrspice_cmd())
-            end
+    @testset "wrspice_cmd" begin
+        # The refusal when there is nothing to find: no binary in the JLL
+        # for this platform and no installation at WRSPICE's own path.
+        # Those are the two places `wrspice_cmd` looks, so a machine with
+        # either has nothing to refuse and is not a case this can assert.
+        # The condition is that rather than the continuous integration
+        # environment, so that a developer on a platform the JLL does not
+        # cover runs it too, which is where its wording last drifted.
+        standard = JosephsonCircuits.wrspicestandardpath()
+        if !isdefined(XicTools_jll, :wrspice) &&
+                !isfile(standard) && !islink(standard)
+            @test_throws(
+                ErrorException("WRSPICE executable not found. Please install WRSPICE, load XicTools_jll, or supply a path manually if installed elsewhere."),
+                JosephsonCircuits.wrspice_cmd())
         end
     end
 

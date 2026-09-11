@@ -3,7 +3,7 @@ using LinearAlgebra
 using StaticArrays
 using Test
 
-@testset verbose=true "matutils" begin
+@testset verbose=true "the sparse harmonic matrices" begin
 
     @testset "diagrepeat!" begin
         A = [1 2;3 4]

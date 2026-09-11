@@ -19,6 +19,23 @@ using JosephsonCircuits
 
 const TESTDIR = @__DIR__
 
+# Every `.jl` under `test/` which the job list does not name and which is
+# not a fixture the jobs include themselves.
+function uncoveredtests(listed)
+    fixtures = ("runtests.jl", "testcircuits.jl", "docstringcheck.jl",
+        "harmonics/layoutreference.jl")
+    found = String[]
+    for (root, _, names) in walkdir(TESTDIR)
+        rel = relpath(root, TESTDIR)
+        first(splitpath(rel)) in ("gpu", "interop") && continue
+        for n in names
+            endswith(n, ".jl") || continue
+            push!(found, replace(rel == "." ? n : joinpath(rel, n), '\\' => '/'))
+        end
+    end
+    return sort(setdiff(found, listed, fixtures))
+end
+
 # the jobs: a name and the code which runs it, the files heaviest first so
 # the worker which draws the last job is not left with a large one
 function testjobs()
@@ -42,23 +59,48 @@ function testjobs()
             end
             """)
     end
-    for f in ("hbsolve.jl", "directcurrent.jl", "quantumoptics.jl",
-            "networkparamconversion.jl", "scatteringblocks.jl", "crosscheck.jl",
-            "problem.jl", "transient.jl", "transientblocks.jl", "transientnoise.jl", "transientpumped.jl",
-            "transientiq.jl", "transientquantum.jl", "nonlinearinductor.jl",
-            "modecoupling.jl", "builders.jl", "matrices.jl",
-            "exportnetlist.jl", "frequencies.jl", "graph.jl",
-            "JosephsonCircuits.jl", "networks.jl", "networkconnection.jl",
-            "sparse.jl", "newton.jl", "newtonkrylov.jl", "floquetdeflation.jl",
-            "staged.jl", "components.jl", "parse.jl", "bind.jl", "canonical.jl",
-            "legacy.jl", "outputs.jl", "layout.jl", "complexjacobian.jl",
-            "assembly.jl", "devicesweep.jl", "nonlinearterm.jl", "system.jl",
-            "mna.jl", "spiceraw.jl", "spiceutils.jl", "spicewrapper.jl", "wrspice.jl",
-            "wrspicecrosscheck.jl",
-            "testutils.jl", "docstringchecktests.jl", "unwrap.jl",
-            "deprecated.jl")
+    # The test tree mirrors src: the tests for the functions of
+    # `src/<folder>/<file>.jl` are in `test/<folder>/<file>.jl`. A test
+    # which compares functions from different files, or drives the whole
+    # package rather than one of its parts, stays at the top level.
+    #
+    # The files are heaviest first, so that the worker which draws the
+    # last job is not left with a large one; the order is measured rather
+    # than guessed, and is worth remeasuring when a file grows.
+    files = ("hbsolve.jl", "transient/solve.jl",
+            "harmonics/directcurrent.jl", "transient/noise.jl",
+            "networks/quantumoptics.jl", "transientpumped.jl",
+            "linearized/scatteringblocks.jl", "transient/system.jl",
+            "crosscheck.jl", "solvers/modecoupling.jl", "solvers/problem.jl",
+            "networks/parameters.jl", "circuit/mna.jl",
+            "circuit/vectorfit.jl", "solvers/floquetdeflation.jl",
+            "circuit/parse.jl", "nonlinearinductor.jl",
+            "linearized/devicesweep.jl", "harmonics/layout.jl",
+            "linearized/designsensitivities.jl", "solvers/cache.jl",
+            "networks/connections.jl", "solvers/gmres.jl",
+            "harmonics/assembly.jl", "circuit/components.jl",
+            "solvers/staged.jl", "transient/quantum.jl",
+            "harmonics/complexjacobian.jl", "harmonics/system.jl",
+            "networks/networks.jl", "solvers/newtonkrylov.jl",
+            "wrspicecrosscheck.jl", "harmonics/nonlinearterm.jl",
+            "circuit/values.jl", "spice/transient.jl",
+            "harmonics/frequencies.jl", "transient/iq.jl", "deprecated.jl",
+            "spice/export.jl", "circuit/legacy.jl", "linearized/outputs.jl",
+            "circuit/bind.jl", "circuit/graph.jl", "harmonics/sparse.jl",
+            "solvers/factorizations.jl", "JosephsonCircuits.jl",
+            "spice/raw.jl", "spice/wrapper.jl", "solvers/newton.jl",
+            "docstringchecktests.jl", "spice/utils.jl", "networks/unwrap.jl",
+            "circuit/matrices.jl", "solvers/solverinfo.jl", "testutils.jl",
+            "solvers/linesearch.jl")
+    for f in files
         push!(jobs, file(f))
     end
+    # A file which is in neither the list above nor `fixtures` is a file
+    # nobody runs, which is how an empty test file once sat in the tree
+    # unnoticed. The jobs of `gpu` and `interop` have their own runners.
+    push!(jobs, "the job list covers the test tree" =>
+        "@test $(repr(uncoveredtests(files))) == String[]")
+
     if !occursin("DEV", string(VERSION))
         push!(jobs, "Code quality (Aqua.jl)" => """
             using Aqua

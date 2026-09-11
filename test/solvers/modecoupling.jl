@@ -3,10 +3,10 @@ using LinearAlgebra
 using SparseArrays
 using Random
 
-isdefined(Main, :testchaincircuit) || include("testcircuits.jl")
+isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
 using Test
 
-@testset verbose=true "modepreconditioner" begin
+@testset verbose=true "the mode coupling preconditioner" begin
 
     circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
     push!(circuit,("P1","1","0",1))

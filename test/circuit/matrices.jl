@@ -1,7 +1,7 @@
 using JosephsonCircuits
 using Test
 
-@testset verbose=true "capindmat" begin
+@testset verbose=true "the circuit matrices" begin
 
     @testset "calcMb JJ as first inductor" begin
         Nmodes = 2

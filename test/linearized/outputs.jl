@@ -1,7 +1,7 @@
 using JosephsonCircuits, LinearAlgebra, Random
 using Test
 
-@testset verbose=true "qesparams" begin
+@testset verbose=true "the linearized outputs" begin
 
     @testset "calcimpedance errors" begin
 

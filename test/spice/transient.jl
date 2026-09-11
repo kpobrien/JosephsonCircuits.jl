@@ -1,5 +1,6 @@
 using JosephsonCircuits
 using Test
+using XicTools_jll
 
 # The WRspice back end of the transient without the executable: the
 # options, the refusals, and the input a run writes. The runs themselves,
@@ -119,15 +120,23 @@ using Test
             0.0, 1e-12, 10, 1e-12)
     end
 
-    # @testset "the executable through the extension" begin
-    #     # loading XicTools_jll registers its wrspice as the default; the
-    #     # test dependency is loaded here so the extension activates
-    #     @eval using XicTools_jll
-    #     if XicTools_jll.is_available()
-    #         @test !isnothing(JC.wrspicedefaultcmd[])
-    #         @test !isnothing(JC.wrspice_cmd())
-    #     end
-    # end
+    @testset "the executable through the extension" begin
+        # Loading XicTools_jll registers its wrspice as the default
+        # executable, through the package's extension; this file loads it
+        # at the top, as the other tests of the wrapper do, so that the
+        # extension is in place before any testset runs rather than part
+        # way through one. The artifact carries a binary only on the
+        # platforms WRSPICE is built for, and on the others the product
+        # is not defined, the extension registers nothing, and an
+        # executable has to be installed or given as a path, which
+        # wrapper.jl tests.
+        if isdefined(XicTools_jll, :wrspice)
+            @test !isnothing(JC.wrspicedefaultcmd[])
+            @test !isnothing(JC.wrspice_cmd())
+        else
+            @test isnothing(JC.wrspicedefaultcmd[])
+        end
+    end
 
     @testset "a transmission line is the lossless line element" begin
         lined = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)),
