@@ -15,7 +15,9 @@ argument names as sets. Argument names are the text before any `=` default
 and `::` type. A keyword splat (`kwargs...`) on either side stands for
 keywords documented elsewhere: with one in the definition, documented
 keywords it forwards are accepted, and with one in the docstring,
-definition keywords the docstring omits are accepted.
+definition keywords the docstring omits are accepted. A signature line
+which is a bare name, with no argument list, names its definition and
+has nothing further to compare.
 
 Reported issues are `Issue`s of kind `:name` (no signature line names the
 definition), `:args` (a signature names it but its arguments differ) or
@@ -284,7 +286,15 @@ function checkfile(path::AbstractString; wildcardunnamed::Bool = true)
             sname = leadingname(s2)
             sname === nothing && continue
             sargs = argnames(s2)
-            sargs === nothing && continue
+            if sargs === nothing
+                # a signature which is a bare name documents the
+                # definition without listing its arguments, as the device
+                # kernels are documented; naming it is all there is to
+                # check
+                sname == dname || continue
+                ok = true
+                break
+            end
             sname == dname || continue
             spos = [replace(x, "..." => "") for x in sargs[1]]
             skw, ssplat = splitsplat(sargs[2])

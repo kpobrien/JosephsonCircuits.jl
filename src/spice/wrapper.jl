@@ -254,6 +254,14 @@ end
 # extension fills with its wrspice
 const wrspicedefaultcmd = Ref{Any}(nothing)
 
+# Where WRSPICE installs itself, which `wrspice_cmd` prefers to any
+# provider. Named rather than written twice, since whether a machine has
+# an installation there decides what `wrspice_cmd` does and the tests
+# have to ask the same question of the same path.
+# Note: This code has been tested on Linux but not macOS or Windows.
+wrspicestandardpath() = Sys.iswindows() ?
+    "C:/usr/local/xictools/bin/wrspice.bat" : "/usr/local/xictools/bin/wrspice"
+
 """
     wrspice_cmd()
 
@@ -264,14 +272,6 @@ platforms its artifact supports. Throws when neither is available;
 [`WRspice`](@ref) and [`spice_run`](@ref) take an executable directly
 for one installed elsewhere.
 """
-# Where WRSPICE installs itself, which `wrspice_cmd` prefers to any
-# provider. Named rather than written twice, since whether a machine has
-# an installation there decides what `wrspice_cmd` does and the tests
-# have to ask the same question of the same path.
-# Note: This code has been tested on Linux but not macOS or Windows.
-wrspicestandardpath() = Sys.iswindows() ?
-    "C:/usr/local/xictools/bin/wrspice.bat" : "/usr/local/xictools/bin/wrspice"
-
 function wrspice_cmd()
     wrspicecmd = wrspicestandardpath()
     (islink(wrspicecmd) || isfile(wrspicecmd)) && return wrspicecmd

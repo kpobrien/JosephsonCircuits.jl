@@ -257,10 +257,13 @@ end
 
     @testset "the package itself" begin
         root = joinpath(@__DIR__, "..")
-        # accepted: docstrings which name an argument differently from the
-        # definition for readability, kernels documented by name only, and
-        # the deprecated or removed keywords the solver entry points still
-        # accept but document in prose rather than in their signature lines
+        # accepted: docstrings which name an argument differently from
+        # the definition for readability, and the deprecated or removed
+        # keywords the solver entry points still accept but document in
+        # prose rather than in their signature lines. A docstring which
+        # names no definition of its own is not accepted: that is a
+        # docstring which has drifted from what it documents, and it
+        # leaves the name it claims without one.
         deprecated = ("switchofflinesearchtol", "alphamin", "maxharmonics",
             "maxpumpharmonics", "returnZ",
             "returnZadjoint", "returnZsensitivity", "returnZsensitivityadjoint",
@@ -268,7 +271,6 @@ end
             "nsensitivityparameters", "sensitivitylabels")
         function accepted(iss)
             occursin("pos doc=", iss.detail) && return true
-            iss.kind === :name && return true
             m = match(r"undocumented kw=([\w,]+)", iss.detail)
             m !== nothing && all(in(deprecated), split(m.captures[1], ',')) &&
                 return true
