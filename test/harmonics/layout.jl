@@ -329,10 +329,9 @@ include("layoutreference.jl")
 
     @testset "real_to_complex rejects an incomplete row mode" begin
         # `complex_to_real` always stores both real slots of a complex row
-        # mode. If a caller passes a pattern where the second slot is stored
-        # but the first is not, the imaginary part has no entry to be folded
-        # into: the write used to land on an unrelated earlier entry, or on
-        # index 0 of a zero-length nzval, which `@inbounds` did not catch.
+        # mode. A pattern where the second slot is stored but the first is
+        # not leaves the imaginary part no entry to be folded into, and is
+        # refused rather than written elsewhere.
         mask = [false, false]
         Ar = JosephsonCircuits.SparseArrays.sparse([2], [1], [1.0], 4, 4)
         @test_throws ArgumentError LayoutReference.real_to_complex(Ar, mask)
@@ -543,14 +542,11 @@ end
     @testset "the assembled Jacobian survives a growing internal pattern" begin
         # The canonical Jacobian's pattern is the internal pattern under a
         # permutation plus the direct current block, and none of it moves.
-        # It used to be rebuilt from the *values* at each point, and sparse
-        # addition prunes exact zeros, so the pattern it produced was the
-        # one the starting point happened to have. A junction driven hard
-        # enough to develop harmonics fills in mode coupling entries which
-        # were zero at the origin, the pattern grew, and the solve stopped
-        # with the internal error which guarded against exactly that.
-        #
-        # The plan is built from the pattern alone, so it holds everywhere.
+        # A plan built from the values at one point would carry only the
+        # entries nonzero there, since sparse addition prunes exact zeros,
+        # and a junction driven hard enough to develop harmonics fills in
+        # mode coupling entries which are zero at the origin. The plan is
+        # built from the pattern alone, so it holds everywhere.
         # The check is that `:newton` reaches the same point `:newtonkrylov`
         # does, on a drive strong enough for the fill in to happen. The
         # drive is a few times the critical current, so the junction is

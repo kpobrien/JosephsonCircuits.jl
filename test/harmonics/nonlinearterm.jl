@@ -116,10 +116,10 @@ using Test
 
             # both representations must agree with the assembled exact real
             # Jacobian, which is built by an independent code path
-            # (planrealjacobian). Since the two representations now share the
+            # (planrealjacobian). Since the two representations share the
             # plan, this and the central finite difference checks in
-            # test/system.jl are what makes them independently verified
-            # rather than merely consistent with each other.
+            # test/harmonics/system.jl are what makes them independently
+            # verified rather than merely consistent with each other.
             Jasm = copy(d.Jr)
             JosephsonCircuits.setpoint!(sys, d.xr)
             JosephsonCircuits.jacobian!(Jasm, sys)

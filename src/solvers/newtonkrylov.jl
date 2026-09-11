@@ -119,8 +119,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # uses. The forcing sequence is Eisenstat-Walker choice 2 and its
     # parameters are only defined on these ranges; the line search halves
     # rather than interpolates, so only the upper safeguard acts; the
-    # stagnation and slow-solve thresholds were set by measurement (see
-    # the docstring).
+    # stagnation and slow solve thresholds are those the docstring
+    # describes.
     krylovrestart = restartlength(linearsolver)
     krylovmaxrestarts = maxrestarts(linearsolver)
     krylovrefreshiterations = refresh isa Never ? typemax(Int) : 1
@@ -218,16 +218,13 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # which trigger an escalation of the preconditioner
     linearfailures = 0
     # The forcing sequence is Eisenstat-Walker choice 2 clamped to
-    # [krylovrtolmin, krylovrtolmax] and nothing else. A slope-aware cap
-    # which tightened the clamp by a factor of four after every damped step
-    # used to sit here. It read a short step as a weak direction; on a long
-    # pumped line every step is short because the residual is nonlinear
-    # along a full-slope Newton direction, and the near-exact solve the cap
-    # then demanded returned a longer step in exactly the direction the
-    # line search had to damp: 1033 Arnoldi steps against 177 for the same
-    # 24 Newton steps on a 2048 cell line. The inexact Newton theory needs
-    # only eta < 1 and a sufficient-decrease line search, which is what
-    # remains.
+    # [krylovrtolmin, krylovrtolmax] and nothing else. A cap which
+    # tightened the clamp after a damped step would read a short step as a
+    # weak direction; on a long pumped line every step is short because
+    # the residual is nonlinear along a full Newton direction, and the near
+    # exact solve such a cap demands returns a longer step in exactly the
+    # direction the line search has to damp. The inexact Newton theory
+    # needs only eta < 1 and a sufficient decrease line search.
 
     # the preconditioner object itself is handed to the linear solve, so a
     # form which fuses its application with the operator product can

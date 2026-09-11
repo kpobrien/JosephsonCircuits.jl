@@ -254,10 +254,9 @@ const CPU = JosephsonCircuits.CPU
         end
     end
 
-    @testset "the shared impedance is what calcimpedance was" begin
-        # the power wave kernels and the host both go through `impedance` now,
-        # so there is one implementation; these pin its behaviour, which used
-        # to be spelled out twice
+    @testset "the shared impedance" begin
+        # the power wave kernels and the host both go through `impedance`,
+        # so there is one implementation; these pin its behaviour
         @test JosephsonCircuits.impedancecode(:R) == 1
         @test JosephsonCircuits.impedancecode(:C) == 2
         @test JosephsonCircuits.impedancecode(:L) == 3

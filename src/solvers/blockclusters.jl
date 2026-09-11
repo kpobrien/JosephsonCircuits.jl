@@ -101,11 +101,9 @@ function singletonfactorization(f::BlockFactorization, backend)
 end
 
 # Supernodes of a few hundred rows keep the dense kernels busy without
-# spending fill on merged zeros: on the measured circuits the factorization
-# time is flat between 256 and 1024 rows and the solve is six times cheaper
-# than with single node blocks. A kernel size, not a numerical parameter.
-# Measured on one system at a time; the batched device factorization of the
-# linearized solve does not amalgamate (see `factorize` for a sparse matrix).
+# spending fill on merged zeros. A kernel size, not a numerical parameter.
+# The batched device factorization of the linearized solve does not
+# amalgamate (see `factorize` for a sparse matrix).
 const BLOCKTARGETROWS = 512
 
 """

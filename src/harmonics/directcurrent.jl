@@ -474,14 +474,13 @@ end
 #
 # Eliminating the average voltages before Newton -- solving `Y v = j` once
 # and folding the resistor current `G0 P v` into the zero frequency source
-# -- is exact while the direct current devices are linear conductances and
-# the sources are prescribed, and it is how this began. It cannot go
-# further. A scattering block's direct current relation is a pencil between
-# its port voltages and its port currents, so the current is a genuine
-# unknown and there is nothing to eliminate; a short or an ideal through
-# has a free current direction and no determined value at all. Reaching
-# those needs `v` carried as an unknown with its equation as a row, which
-# is what this builds, and it is the only path now.
+# -- is exact only while the direct current devices are linear conductances
+# and the sources are prescribed. A scattering block's direct current
+# relation is a pencil between its port voltages and its port currents, so
+# the current is a genuine unknown and there is nothing to eliminate; a
+# short or an ideal through has a free current direction and no determined
+# value at all. Reaching those needs `v` carried as an unknown with its
+# equation as a row, which is what this builds.
 #
 # The row is the component sum. Adding the zero frequency Kirchhoff
 # equations over the nodes of one static flux component cancels every
@@ -1214,9 +1213,8 @@ function dcsubsystem(work::CanonicalWork)
     A = zeros(Float64, nc + nb, nc + nb)
     A[1:nc, 1:nc] .= t.Y
     # the reference rows are written last and unconditionally: the transport
-    # rows no longer carry one, so a circuit with no blocks still needs them.
-    # A block current is named by its window position, as the block rows
-    # name it.
+    # rows carry none, so a circuit with no blocks still needs them. A block
+    # current is named by its window position, as the block rows name it.
     slots = dcsubsystemlocal(work)
     local_ = Dict(slots[nc+k] => nc + k for k in 1:nb)
     if !isnothing(br)

@@ -1041,9 +1041,9 @@ using Test
     @testset "a block declared lossless carries no noise channels" begin
         # `Passive` gives a block channels unless its data can be shown to be
         # unitary, which a callable's cannot. A lossless callable therefore
-        # carries channels which are identically zero, and computing them was
-        # measured at a third of the run time of a five hundred cell line on
-        # the host and half of it on a backend. `Lossless` is how to say so.
+        # carries channels which are identically zero, and computing them is
+        # a large part of the run time of a long line. `Lossless` is how to
+        # say so.
         Z0 = 50.0
         capf(w) = fill((1 - im*w*1000.0e-15*Z0)/(1 + im*w*1000.0e-15*Z0), 1, 1)
         mk2(f, noise) = Circuit(
@@ -1728,10 +1728,9 @@ using Test
 
     @testset "one block definition used as several instances" begin
         # Elaboration deduplicates definitions by object identity so that a
-        # definition can be shared, and the stamp system used to group blocks
-        # by that same identity, which merged two instances of one shared
-        # definition into a single block. It failed with a complaint that a
-        # port appeared twice.
+        # definition can be shared, and the stamp system groups blocks by
+        # instance, so two instances of one shared definition stay two
+        # blocks.
         capS(C) = w -> fill((1 - im*w*C*50.0)/(1 + im*w*C*50.0), 1, 1)
         mk(shared) = begin
             b1 = ScatteringParameters(capS(1e-12); nports = 1)
@@ -1763,11 +1762,8 @@ using Test
 
     @testset "stamp system from the compiled blocks" begin
         # A compiled block is one instance with its own terminal map, and it
-        # is the only place a block appears. Its ports used to be one flat
-        # component each, every one carrying the whole definition, and the
-        # stamp system was rebuilt by scanning for runs of them; this
-        # asserted that the two agreed. There is one now, so what is
-        # asserted is that it produces the instances the circuit describes.
+        # is the only place a block appears; what is asserted is that the
+        # stamp system produces the instances the circuit describes.
         JC = JosephsonCircuits
         one = ScatteringParameters(
             w -> fill((1 - im*w*1e-12*50.0)/(1 + im*w*1e-12*50.0), 1, 1);

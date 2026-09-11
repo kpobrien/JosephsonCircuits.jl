@@ -289,8 +289,7 @@ function checkfile(path::AbstractString; wildcardunnamed::Bool = true)
             if sargs === nothing
                 # a signature which is a bare name documents the
                 # definition without listing its arguments, as the device
-                # kernels are documented; naming it is all there is to
-                # check
+                # kernels are; naming it is all there is to check
                 sname == dname || continue
                 ok = true
                 break

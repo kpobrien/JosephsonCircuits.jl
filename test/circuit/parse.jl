@@ -722,9 +722,8 @@ using Test
         cc = JC.compile(cshared); b = JC.bind(cc)
         cg = calccircuitgraph(cc)
         nm = JC.assemblematrices(JC.circuitmatrixplan(cc, cg, b; Nmodes = 1), b)
-        # the geometric rule refused this circuit, because it could only read
-        # a resistor across a port's terminals as that port's environment;
-        # now both assemblies take the roles from the ports and agree
+        # both assemblies take the port roles from the ports rather than
+        # from a resistor across a port's terminals, and agree
         ref = numericmatrices(cc, cg, Dict{Any,Any}(); Nmodes = 1)
         @test nm.portimpedances == ref.portimpedances
         @test nm.portenvironmentindices == ref.portenvironmentindices

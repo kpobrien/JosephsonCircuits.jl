@@ -214,8 +214,8 @@ using Test
         @test any(startswith("C1 "), lines)
         @test any(startswith("B1 "), lines)
 
-        # and a typed circuit is now readable, where its instance paths used
-        # to be written out verbatim
+        # and a typed circuit's instance paths are written as names SPICE
+        # reads
         c = Circuit([:p1 => Port(1; termination = nothing),
                      :foo => Resistor(50.0), :bar => Capacitor(100e-15),
                      :baz => Inductor(1e-9)],

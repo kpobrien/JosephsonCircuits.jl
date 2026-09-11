@@ -578,8 +578,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
                         curvedpriority = curvedpriority)
                 if !accepted && !curvedpriority
                     # both searches failed: permanently set to curved priority,
-                    # the option observed to converge when this occurs, and
-                    # reset backtrackfailures
+                    # which recovers from this, and reset backtrackfailures
                     curvedpriority = true
                     # after the count below this will be set to 0.
                     tr.backtrackfailures = -1

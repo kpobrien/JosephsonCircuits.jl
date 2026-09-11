@@ -31,8 +31,8 @@ function transientquantumgrid(times)
     ts = Float64.(collect(times))
     length(ts) >= 4 && all(isfinite, ts) ||
         throw(ArgumentError("At least four finite RF sample times are required."))
-    # A late measurement window can lose several digits when subtracting
-    # its first two RF times. Estimate the spacing over the full record.
+    # the spacing is estimated over the whole record rather than from its
+    # first two times, whose difference loses precision late in a record
     dt = (last(ts)-first(ts))/(length(ts)-1)
     spacingatol = 64eps(maximum(abs, ts))
     dt > 0 &&

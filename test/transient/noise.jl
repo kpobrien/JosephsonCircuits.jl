@@ -43,8 +43,8 @@ using Test
         @test adjoint.gain ≈ forward.gain rtol=1e-10
         # the pulsed gain of a probe applied inside the window against the
         # periodic gain: a rectangular probe of three cycles in the 1 ns
-        # window differs by its edges, five percent here, and the
-        # difference falls as the inverse of the window
+        # window differs by its edges, and the difference falls as the
+        # inverse of the window
         pulsed = transientgain(sol, plan, plan)
         @test pulsed ≈ adjoint.gain rtol=6e-2
         long = transientsolve(prob, (0.0, 4T*(4n - 1)/(4n)); dt = T/n, record = :phases)

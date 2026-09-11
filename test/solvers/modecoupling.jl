@@ -261,10 +261,8 @@ using Test
         end
         # With direct current injected the state is canonical and the
         # recycler wraps the canonical preconditioner; the harvest must
-        # build a subspace there (it used to sit inside the wrapper, where
-        # no harvest reached it and recycling was inert on every such
-        # circuit). One vector per solve is enough to show it, with
-        # escalation off so the deflation is what is used.
+        # build a subspace there. One vector per solve is enough to show
+        # it, with escalation off so the deflation is what is used.
         # The block diagonal is exact on this circuit (one Arnoldi step per
         # solve), so the benefit filter would rightly leave every harvested
         # direction inactive; it is switched off here so that the active
@@ -378,8 +376,8 @@ using Test
         on = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
             circuitdefs; method = Newton(), keyedarrays = false)
         # a solver object carrying preconditioner options, which are not
-        # options of the inner Newton-Krylov loop and used to be forwarded
-        # to it regardless
+        # options of the inner Newton-Krylov loop and must not be forwarded
+        # to it
         ok = JosephsonCircuits.hbnlsolve((wp,), (8,), sources, circuit,
             circuitdefs; method = JosephsonCircuits.NewtonKrylov(
                 preconditioner = Floquet(size = 6, harvest = 2),
@@ -388,7 +386,7 @@ using Test
         @test isapprox(ok.nodeflux, on.nodeflux;
             rtol = 1e-6, atol = 1e-12*maximum(abs, on.nodeflux))
         @test any(k -> k.deflationsize > 0, ok.solverinfo.stages[1].krylov)
-        # and through hbsolve, which used to drop them
+        # and through hbsolve
         hs = JosephsonCircuits.hbsolve(2*pi*4.5e9, (wp,), sources, (1,), (8,),
             circuit, circuitdefs; method = NewtonKrylov(preconditioner =
                 Floquet(size = 6, harvest = 2)), keyedarrays = false)
@@ -460,6 +458,14 @@ using Test
         d.fjreal(nothing, d.Jr, x)
         r = randn(Random.default_rng(), n)
         z = similar(r)
+        # The block factorization inverts its diagonal blocks explicitly
+        # and does not pivot across supernodes, so its accuracy is set by
+        # the conditioning of those blocks rather than of the matrix; the
+        # residual is measured against that.
+        blockcond(pre) = maximum(cond(Array(view(Dp, :, :, b)))
+            for c in pre.P.clusters for Dp in c.lu.D for b in axes(Dp, 3))
+        residualbound(pre, zz, T = Float64) =
+            100*eps(T)*blockcond(pre)*norm(d.Jr)*norm(zz)
 
         # the symbolic pieces on a small chain: KLU's order is a
         # permutation with no fill, and along the chain the elimination
@@ -493,14 +499,17 @@ using Test
         @test isnothing(pb.P.singletons)
         JosephsonCircuits.updatepreconditioner!(pb, x)
         JosephsonCircuits.applypreconditioner!(z, pb, r)
-        @test d.Jr*z ≈ r rtol=1e-9
+        @test norm(d.Jr*z - r) <= residualbound(pb, z)
         @test JosephsonCircuits.isexactpreconditioner(pb)
         # in single precision it is a preconditioner
         p32 = mk(FullJacobian(factorization = BlockFactorization(;
             precision = Float32)))
         JosephsonCircuits.updatepreconditioner!(p32, x)
         JosephsonCircuits.applypreconditioner!(z, p32, r)
-        @test norm(d.Jr*z - r) < 5e-2*norm(r)
+        # single precision leaves a fixed fraction of the right hand side,
+        # or what the conditioning of its blocks allows when that is more
+        @test norm(d.Jr*z - r) <=
+            max(5e-2*norm(r), residualbound(p32, z, Float32))
         @test eltype(p32.P.clusters[1].lu.D[1]) == Float32
 
         # a mask made of clusters: the block solve equals the sparse
@@ -514,25 +523,25 @@ using Test
         @test !isnothing(pc.P.singletons)
         JosephsonCircuits.updatepreconditioner!(pc, x)
         JosephsonCircuits.applypreconditioner!(z, pc, r)
-        @test z ≈ zm rtol=1e-10
+        @test norm(z - zm) <= 100*eps()*blockcond(pc)*norm(zm)
         # a band is factorized on its closure, here everything
         pa = mk(HarmonicBand(1; factorization = BlockFactorization()))
         @test length(pa.P.clusters) == 1
         @test isnothing(pa.P.singletons)
         JosephsonCircuits.updatepreconditioner!(pa, x)
         JosephsonCircuits.applypreconditioner!(z, pa, r)
-        @test d.Jr*z ≈ r rtol=1e-9
+        @test norm(d.Jr*z - r) <= residualbound(pa, z)
         # escalation from a mask rebuilds the structure on the full set
         @test JosephsonCircuits.escalatepreconditioner!(pc)
         @test length(pc.P.clusters) == 1
         JosephsonCircuits.updatepreconditioner!(pc, x)
         JosephsonCircuits.applypreconditioner!(z, pc, r)
-        @test d.Jr*z ≈ r rtol=1e-9
+        @test norm(d.Jr*z - r) <= residualbound(pc, z)
         # a rebound structure gives the same solve
         JosephsonCircuits.rebind!(pb, d.sys)
         JosephsonCircuits.updatepreconditioner!(pb, x)
         JosephsonCircuits.applypreconditioner!(z, pb, r)
-        @test d.Jr*z ≈ r rtol=1e-9
+        @test norm(d.Jr*z - r) <= residualbound(pb, z)
 
         # end to end, against Newton, with the rebuild decided by the count
         # rule and by the probe

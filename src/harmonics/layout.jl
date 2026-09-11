@@ -300,13 +300,10 @@ end
 # directly, through a view, and only the window is gathered, worked on and
 # scattered back.
 #
-# The earlier layout grouped the state by role, `[phiac | phidc | vdc]`, to
-# make the block contiguous, and bracketed every residual, product and
-# preconditioner application with a permutation of the whole state to get
-# there. Measured on a 2048 cell line with a direct current bias those
-# passes were under one percent of the solve on the host, so this is not a
-# change made for time there; the copies were overhead with nothing behind
-# them, and on a device each was a kernel launch and a synchronization.
+# Grouping the state by role instead, to make the block contiguous, would
+# bracket every residual, product and preconditioner application with a
+# permutation of the whole state, which on a device is a kernel launch and
+# a synchronization each.
 
 """
     CompositeLayout
@@ -680,8 +677,8 @@ function CanonicalWork(L::CompositeLayout, proto::AbstractVector{T};
         nnodaldc, dcpinning(w), dcsubsystemindices(w), dcsubsystemlocal(w),
         window, w.Fwindow, w.uwindow, nothing)
     # the matrix form, on the backend the state is on. On the host the
-    # scalar walk is already the cheaper of the two at these sizes, so it is
-    # built only where the state is not host resident.
+    # scalar walk is the cheaper of the two, so it is built only where the
+    # state is not host resident.
     _onhost(proto) && return full
     up = dcupdate(full)
     isnothing(up) && return full

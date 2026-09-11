@@ -13,12 +13,10 @@
 const realpoletolerance = 1e-6
 
 # A singular value of the residue basis below this fraction of the
-# largest is a direction the samples do not determine, and the residue
-# solve leaves it out rather than meeting it. One shared constant rather
-# than a keyword: the relocation, the pruning and the final solve all
-# judge a fit by the residues that solve returns, and a direction one
-# stage met while another left it out would be an order accepted against
-# an error no other stage sees.
+# largest is a direction the samples do not determine, which the residue
+# solve leaves out. One shared constant rather than a keyword: the
+# relocation, the pruning and the final solve all judge a fit by the
+# residues this solve returns, so they must leave out the same directions.
 const fitranktolerance = 1e-12
 
 """
@@ -174,10 +172,9 @@ function supporteddegree(S::AbstractArray{<:Complex,3}, ws::AbstractVector,
     # The two halves of the pencil carry different units, a divided
     # difference of the response being an inverse frequency and a
     # shifted one dimensionless, so a rank threshold on the stacked pair
-    # counts differently as the unit of frequency changes; on the
-    # connector data in the tests, 34 in rad/s and 36 in units 1e12
-    # smaller. Normalizing to the geometric centre of the band makes the
-    # count unit independent.
+    # counts differently as the unit of frequency changes. Normalizing
+    # to the geometric centre of the band makes the count unit
+    # independent.
     lo = findfirst(>(0), ws)
     isnothing(lo) && return typemax(Int)
     wref = sqrt(ws[lo]*maximum(ws))
@@ -452,8 +449,7 @@ function converge(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vect
     # whose poles last moved least: a relocation which is circling can
     # pass its best fit on an iteration where the poles are moving
     # quickly. Every iterate is measured, at the cost of one residue
-    # solve each, a few percent of a fit, and the best iterate is often
-    # one that lies between the settling tests.
+    # solve each.
     best, besterror = copy(poles), Inf
     bestchange, stalled = Inf, 0
     for _ in 1:iterations
@@ -783,13 +779,10 @@ end
 # The least squares of the residue solve, factored once and applied to
 # the right hand side of every entry. Directions of the basis whose
 # singular value is below `fitranktolerance` of the largest are left out
-# of the solution rather than met: two poles which have coalesced leave
-# two columns the samples cannot tell apart, and a plain least squares
-# answers such a basis with residues of any size at all so long as they
-# cancel, which then stand between the fit and every judgement made on
-# it, the error it reports and the value it takes at zero frequency
-# included. The minimum norm solution asks for nothing the samples do
-# not determine and leaves the rest of the fit as it was.
+# of the solution: poles which have coalesced give columns the samples
+# cannot tell apart, and a plain least squares answers them with large
+# cancelling residues which corrupt the fit error and the value at zero
+# frequency. The minimum norm solution leaves those directions at zero.
 struct FitLeastSquares
     U::Matrix{Float64}
     s::Vector{Float64}
@@ -797,11 +790,10 @@ struct FitLeastSquares
     scale::Vector{Float64}
 end
 function FitLeastSquares(A::AbstractMatrix)
-    # A column carries the units of its basis function, and a pole far
-    # from the band is small in every row while a constant term is one
-    # in half of them, so the rank is judged after every column is
-    # brought to unit norm. Unscaled, the smallest singular value
-    # measures the units of the basis and not what the samples determine.
+    # the rank is judged with every column at unit norm: a column
+    # carries the scale of its basis function, and the smallest singular
+    # value of the unscaled basis measures that scale rather than what
+    # the samples determine
     scale = [norm(view(A, :, j)) for j in axes(A, 2)]
     for j in eachindex(scale)
         scale[j] > 0 || (scale[j] = 1.0)

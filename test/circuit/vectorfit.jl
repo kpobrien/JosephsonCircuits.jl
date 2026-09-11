@@ -349,10 +349,9 @@ using Test
     # meeting a tolerance are a window rather than a tail, and a
     # search which skips orders can step over the window entirely.
     # Whether any of these orders provokes the passivity enforcement on
-    # the way is a matter of where a machine's arithmetic leaves them, so
-    # the logs are captured to keep the suite quiet and not asserted;
-    # that the enforcement warns when it perturbs is asserted above, on
-    # systems which are active by construction.
+    # the way depends on roundoff, so the logs are captured to keep the
+    # suite quiet rather than asserted; that the enforcement warns when
+    # it perturbs is asserted above, on systems active by construction.
     @test_logs match_mode = :any for np in 1:6
         reachable = try
             JC.relativefiterror(RationalScattering(data, np), hb.S, fs)
@@ -404,24 +403,20 @@ using Test
         resk, Dk = JC.fitresidues(hb.S, xr, kept; dc = thru)
         reached = real.(Dk .+ sum(resk[:, :, q] ./ (0.0 - kept[q]) for q in eachindex(kept)))
         # The value at zero is reached to the roundoff of reading it
-        # back, which is the size of the terms that cancel to give
-        # it and not an absolute figure: where the relocation leaves
-        # two poles close together the residues are large and
-        # opposite, and no way of stating the value survives summing
-        # them. Which pole set a machine's arithmetic settles on is
-        # its own business, so the tolerance is measured from the
-        # set in hand.
+        # back, which is the size of the terms which cancel in the sum
+        # rather than an absolute figure: where the relocation leaves
+        # two poles close together the residues are large and opposite.
+        # The pole set depends on roundoff, so the tolerance is measured
+        # from the set in hand.
         cancellation = maximum(abs, Dk) +
             sum(opnorm(view(resk, :, :, q))/abs(kept[q]) for q in eachindex(kept))
         @test reached ≈ thru atol = 1e-10 + 1e-12*cancellation
     end
-    # Two poles which have coalesced leave the residue basis two
-    # columns the samples cannot tell apart, and the solve leaves
-    # that direction out rather than meeting it with residues of any
-    # size at all which cancel. The residues stay the size of the
-    # response and the value stated at zero is reached, where a plain
-    # least squares answers this basis with residues near 1e15 and
-    # misses the stated value by tenths.
+    # Two poles which have coalesced give the residue basis two columns
+    # the samples cannot tell apart, and the solve leaves that direction
+    # out rather than meeting it with large cancelling residues: the
+    # residues stay the size of the response and the value stated at
+    # zero is reached.
     let xr = 2pi .* fs ./ sqrt(2pi*fs[1]*2pi*fs[end]),
         thru = JC.dcscatteringmatrix(JC.ThroughDC(), 2),
         coalesced = ComplexF64[-4.17712, -4.17712,
@@ -444,8 +439,7 @@ using Test
     # better than either of their neighbours. A tolerance only such
     # an order meets is found only by a scan. The orders and the
     # tolerances here are measured rather than written down, so this
-    # does not depend on where a particular machine's arithmetic
-    # puts the noise floor.
+    # does not depend on where roundoff puts the noise floor.
     delay = 40e-12
     gs = collect(range(0.5e9, 12e9; length = 200))
     Sdelay = zeros(ComplexF64, 2, 2, length(gs))
@@ -481,10 +475,8 @@ using Test
     errs = @test_logs match_mode = :any [reach(np) for np in 1:16]
     window = [np for np in 2:15 if errs[np] < min(errs[np-1], errs[np+1])]
     @test !isempty(window)
-    # whether an order in the window warns on the way to its fit is
-    # a matter of where a machine's arithmetic puts the enforcement,
-    # so the logs are captured to keep the suite quiet and not
-    # asserted
+    # whether an order in the window warns on the way to its fit depends
+    # on roundoff, so the logs are captured rather than asserted
     @test_logs match_mode = :any for np in window
         # a tolerance between what this order reaches and what the
         # better of its neighbours reaches: only this order meets it

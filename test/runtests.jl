@@ -9,15 +9,13 @@
 # so a worker tests exactly what the master would have, and writes its own
 # coverage files, which the coverage tools merge.
 #
-# As many workers run as this process has threads, each started with one
-# thread of its own, so the suite spends the budget its caller set and
-# not the size of the machine: `Pkg.test` gives the test process the
-# threads asked for by `JULIA_NUM_THREADS` or by its own `-t`, and a
-# machine shared with other work, a package evaluation or a build farm,
-# asks for few. `JULIA_TEST_WORKERS` overrides that count; `0` runs every
-# job in this process in sequence, which is what a session kept alive
-# with Revise and TestEnv wants, since the compilation then happens once
-# per session.
+# As many workers run as this process has threads, each with one thread
+# of its own, so that the suite uses the budget its caller set rather
+# than the whole machine: `Pkg.test` gives the test process the threads
+# named by `JULIA_NUM_THREADS` or its own `-t`, and a shared machine asks
+# for few. `JULIA_TEST_WORKERS` overrides that count; `0` runs every job
+# in this process in sequence, so that a session kept alive with Revise
+# and TestEnv compiles once.
 
 using Test
 using Distributed
@@ -26,16 +24,16 @@ using JosephsonCircuits
 
 const TESTDIR = @__DIR__
 
-# The jobs run from one seed, drawn afresh each run so that the suite
-# keeps exploring the draws it has not taken, and printed so that a run
-# can be repeated exactly: the RNG which Test prints beneath a failing
-# summary is this process's, which runs none of the jobs itself.
-# `JULIA_TEST_SEED` runs from the seed it names instead.
+# The jobs all run from one seed, drawn afresh each run so that the
+# suite keeps exploring new draws, and printed so that a run can be
+# repeated: the RNG Test prints beneath a failing summary is this
+# process's, which runs none of the jobs itself. `JULIA_TEST_SEED` gives
+# the seed instead.
 const SEED = haskey(ENV, "JULIA_TEST_SEED") ?
     parse(UInt64, ENV["JULIA_TEST_SEED"]) : rand(RandomDevice(), UInt64)
 
-# Every `.jl` under `test/` which the job list does not name and which is
-# not a fixture the jobs include themselves.
+# every `.jl` under `test/` which the job list does not name and which is
+# not a fixture the jobs include themselves
 function uncoveredtests(listed)
     fixtures = ("runtests.jl", "testcircuits.jl", "docstringcheck.jl",
         "harmonics/layoutreference.jl")
@@ -74,14 +72,12 @@ function testjobs()
             end
             """)
     end
-    # The test tree mirrors src: the tests for the functions of
-    # `src/<folder>/<file>.jl` are in `test/<folder>/<file>.jl`. A test
-    # which compares functions from different files, or drives the whole
-    # package rather than one of its parts, stays at the top level.
-    #
-    # The files are heaviest first, so that the worker which draws the
-    # last job is not left with a large one; the order is measured rather
-    # than guessed, and is worth remeasuring when a file grows.
+    # The test tree mirrors src: the tests for `src/<folder>/<file>.jl`
+    # are in `test/<folder>/<file>.jl`. A test which compares functions
+    # from different files, or drives the whole package, stays at the
+    # top level. The files are heaviest first so that the worker which
+    # draws the last job is not left with a large one; the order is
+    # measured, and worth remeasuring when a file grows.
     files = ("hbsolve.jl", "transient/solve.jl",
             "harmonics/directcurrent.jl", "transient/noise.jl",
             "networks/quantumoptics.jl", "transientpumped.jl",
@@ -110,9 +106,8 @@ function testjobs()
     for f in files
         push!(jobs, file(f))
     end
-    # A file which is in neither the list above nor `fixtures` is a file
-    # nobody runs, which is how an empty test file once sat in the tree
-    # unnoticed. The jobs of `gpu` and `interop` have their own runners.
+    # a file in neither the list above nor `fixtures` is a file nobody
+    # runs; the jobs of `gpu` and `interop` have their own runners
     push!(jobs, "the job list covers the test tree" =>
         "@test $(repr(uncoveredtests(files))) == String[]")
 

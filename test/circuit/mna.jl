@@ -180,11 +180,9 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
 
     @testset "hbnlsolve mna dc excitation through a resistor" begin
 
-        # This threw while a resistor was an open circuit at DC: the direct
-        # current had nowhere to go and no periodic solution existed. The
-        # port resistor carries it now, so the driven node sits at I*R and
-        # the node inside the grounded static component sits at zero,
-        # because a junction to ground holds it there.
+        # the port resistor carries the direct current, so the driven node
+        # sits at I*R and the node inside the grounded static component
+        # sits at zero, because a junction to ground holds it there
         circuit, circuitdefs = jpacircuit()
         wp = (2*pi*4.75001*1e9,)
         Idc = 1.0e-7
@@ -737,12 +735,10 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         push!(cir,("K1","L1","L2",:K)); push!(cir,("C1","2","0",:C))
         push!(cir,("Lj1","2","0",:Lj))
         d = Dict(:R=>50.0,:L=>1e-9,:K=>1.0,:C=>1e-12,:Lj=>1e-9)
-        # this previously threw a SingularException from the inverse of the
-        # singular branch inductance matrix in numericmatrices. with the
-        # coupled branches excluded from the inverse inductance matrix and
-        # represented by auxiliary branch currents with the un-inverted
-        # branch inductance matrix, the perfectly coupled pair is well
-        # posed and solves.
+        # the coupled branches are excluded from the inverse inductance
+        # matrix and represented by auxiliary branch currents with the
+        # un-inverted branch inductance matrix, so the perfectly coupled
+        # pair is well posed and solves
         outk = hbnlsolve((2*pi*5.0001e9,),(4,),
             [(mode=(1,),port=1,current=1e-6)],cir,d)
         @test outk.solverinfo.converged
@@ -1368,8 +1364,8 @@ end
         @test o1.solverinfo.converged && o2.solverinfo.converged
         @test isapprox(o1.nodeflux[:], o2.nodeflux[:], atol = 1e-10)
 
-        # the flux-pumping regression: a floating loop biased through a
-        # mutual inductor at dc still solves with a coupled branch promoted
+        # a floating loop biased through a mutual inductor at dc solves
+        # with a coupled branch promoted
         circuit = Tuple{String,String,String,Union{Complex{Float64},Symbol,Int64}}[]
         push!(circuit,("P1","1","0",1))
         push!(circuit,("R1","1","0",:Rl))

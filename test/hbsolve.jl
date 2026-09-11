@@ -289,12 +289,10 @@ using Test
 
     @testset "hbnlsolve simple testcase dc" begin
 
-        # a port and resistor with no inductive path to ground used to make
-        # the nodal system matrix structurally singular when a DC mode was
-        # included, producing a NaN in the line search under the previous
-        # solver and a SingularException under the current one. with the
-        # modified nodal analysis formulation the DC node flux is gauge
-        # fixed and the circuit solves exactly.
+        # a port and resistor with no inductive path to ground: a nodal
+        # system matrix with a DC mode would be structurally singular, but
+        # with the modified nodal analysis formulation the DC node flux is
+        # gauge fixed and the circuit solves exactly.
         circuit = [("P1","1","0",1),("R1","1","0",50.0)]
         circuitdefs = Dict()
         Idc = 50e-5
@@ -864,8 +862,8 @@ using Test
             # a purely linear circuit: the linearized matrix does not depend
             # on the operating point, so the total sensitivity equals the
             # fixed operating point sensitivity, in every contraction mode,
-            # and the (formerly junction shaped) operating point machinery
-            # must not be constructed at all.
+            # and the operating point machinery must not be constructed at
+            # all.
             JosephsonCircuits.@params Rl Ll Cs
             circuit = Tuple{String,String,String,Any}[]
             push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",Rl))
@@ -1123,10 +1121,8 @@ using Test
     end
 
     @testset "outputs do not depend on whether S is retained" begin
-        # requestS used to be forced true by returnQE and returnSsensitivity,
-        # so the scattering cube survived the frequency loop even when the
-        # caller never asked for it. Everything now consumes the per frequency
-        # view instead, and these outputs must be unchanged either way.
+        # every output consumes the per frequency view of S, so whether the
+        # scattering cube is retained changes none of them
         JosephsonCircuits.@params R1v R2v C1v L1v C2v Ljv
         circuit = Tuple{String,String,String,Any}[]
         push!(circuit,("P1","1","0",1)); push!(circuit,("R1","1","0",R1v))

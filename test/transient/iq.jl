@@ -31,12 +31,9 @@ function testtransientiq(backend = JosephsonCircuits.CPU())
             weights = randn(rng, ComplexF64, size(expected))
             gradient = device(zeros(size(traces)))
             transientiqvjp!(gradient, plan, device(weights))
-            # The identity is exact; what it can be checked to is the
-            # roundoff of the two sums which meet in it, and how far
-            # those cancel is the draw's to decide. Measured against the
-            # size of their terms the difference stays within a few tens
-            # of the machine epsilon, where against the result alone it
-            # wanders with the draw.
+            # exact as an identity, and checkable to the roundoff of the
+            # two sums which meet in it, which cancel by an amount the
+            # draw decides; the tolerance is measured from their terms
             cancellation = dot(abs.(Array(gradient)), abs.(traces)) +
                 sum(abs, weights .* expected)
             @test dot(Array(gradient), traces) ≈ real(dot(weights, expected)) rtol=2e-12 atol=1e-12*cancellation

@@ -47,7 +47,7 @@ end
 #
 # The circuits the systematic comparisons of test/crosscheck.jl run over: one
 # of each class the package handles, each small enough that the whole matrix
-# costs about as much as one large test file used to. A case records the
+# costs about as much as one large test file. A case records the
 # circuit, its pump and sources, the signal frequencies, the harmonic counts
 # and the solver options it needs, and what is true of it (whether it has a
 # pump solve, whether it is lossless, whether it is linear), so that the

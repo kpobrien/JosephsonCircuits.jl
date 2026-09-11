@@ -5,10 +5,10 @@ using Test
 
 # Direct current through resistors. The harmonic balance state is periodic
 # node flux, so a voltage is its time derivative and vanishes at zero
-# frequency: a resistor was an open circuit at DC and a current source
-# driving one could not develop I*R. The missing coordinate is the average
-# voltage, which is constant on each static flux component because an
-# inductor or a zero-voltage junction is a short there.
+# frequency: on the flux alone a resistor is an open circuit at DC and a
+# current source driving one cannot develop I*R. The missing coordinate is
+# the average voltage, which is constant on each static flux component
+# because an inductor or a zero-voltage junction is a short there.
 
 # an inner preconditioner which does nothing, so what is asserted below is
 # the direct current step and not the mode coupling solve around it
@@ -121,8 +121,8 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
 
     @testset "no direct current, no voltage" begin
         # the common case: the block is classified and not carried, the
-        # answer is what it always was, and the average voltage it reports
-        # is the zero every node sits at
+        # answer is that of the flux alone, and the average voltage it
+        # reports is the zero every node sits at
         c = Circuit([:p1 => Port(1), :cc => Capacitor(100e-15),
                      :jj => JosephsonJunction(1000e-12),
                      :cj => Capacitor(1000e-15)],
@@ -174,10 +174,9 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test go(loop(finite()), pump).solverinfo.converged
 
         # every node held at ground by an inductor: there is no voltage to
-        # find, and there is still a current to classify. It was not, once,
-        # because a circuit with no floating component had no direct current
-        # block at all, and this loop solved with all of its direct current
-        # through the inductors.
+        # find, and there is still a current to classify. The classification
+        # runs with no floating component in the circuit, or this loop would
+        # solve with all of its direct current through the inductors.
         grounded(t) = Circuit(
             [:p1 => Port(1; Z0 = R), :lg => Inductor(1e-9),
              :l => Inductor(1e-9), :t => t,
@@ -360,11 +359,10 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
             atol = 1e-12*maximum(abs, t.Y))
     end
 
-    # The capability the explicit block exists for. A scattering block used
-    # to be an open circuit at direct current, because its zero frequency
-    # row was `i = 0`; with an average voltage to respond to it obeys its
-    # own relation instead, and a block which is a resistor carries what
-    # that resistor would.
+    # The capability the explicit block exists for. With an average voltage
+    # to respond to, a scattering block obeys its own relation at direct
+    # current rather than the open circuit row `i = 0`, and a block which
+    # is a resistor carries what that resistor would.
     @testset "a scattering block carries direct current" begin
         JC = JosephsonCircuits
         Rb, Idc, Zbig = 100.0, 1.0e-6, 1.0e9
@@ -405,10 +403,9 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test isapprox(maximum(abs, got.dcnodevoltage),
             maximum(abs, r.dcnodevoltage); rtol = 1e-6)
 
-        # the number to beat: were the block an open, as it was before the
-        # explicit rows, the whole current would go through the port
-        # environment instead and the voltage would be Idc*Zbig, seven
-        # orders larger
+        # the number to beat: were the block an open, the whole current
+        # would go through the port environment instead and the voltage
+        # would be Idc*Zbig, seven orders larger
         @test Idc*Zbig / (Idc*Rb) > 1e6
 
         # the relative test is drive independent, which the absolute one is
@@ -451,9 +448,9 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
              [(:p1,2),(:c1,2),(:c2,2), Ground]])
 
         # a path to ground through a scattering block is not in the
-        # conductance graph, which is why this circuit was refused before
-        # the block's own row existed. It solves now: the driven node sits
-        # at I*R and the shorted one at zero.
+        # conductance graph, so it is the block's own row which makes this
+        # circuit solvable: the driven node sits at I*R and the shorted one
+        # at zero.
         s = go(withshort)
         @test s.solverinfo.converged
         v = s.dcnodevoltage
@@ -741,12 +738,10 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test isapprox(only(a.dcnodevoltage), only(b.dcnodevoltage);
             rtol = 1e-6)
         # and it stops where single precision runs out rather than at the
-        # tolerance it was handed. The two are an order of magnitude apart --
-        # `rtol` would accept a relative residual of 1e-6 and the arithmetic
-        # reaches a few times `eps(Float32)` -- so the bound sits between
-        # them rather than at one ulp, which is not a quantity a residual
-        # summed over the modes lands on exactly and which fell on either
-        # side of the line depending on the platform's arithmetic.
+        # tolerance it was handed: `rtol` would accept a relative residual
+        # of 1e-6 and the arithmetic reaches a few times `eps(Float32)`, so
+        # the bound sits between them rather than at one ulp, which a
+        # residual summed over the modes does not land on exactly
         r = b.solverinfo.finalresidual/b.solverinfo.initialresidual
         @test r <= 4*eps(Float32)
     end

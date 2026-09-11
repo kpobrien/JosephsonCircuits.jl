@@ -669,14 +669,11 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # includes those couplings (the sum couplings of hbconjmatind always
     # alias). The exact real Jacobian of method = :newton is assembled from
     # the aliased difference indices, so it is the exact derivative of the
-    # residual for multi-tone problems as well; this was established with
-    # the matrix-free Jacobian-vector products of HBSystem as the ground
-    # truth, which the assembled Jacobian matches to machine precision. The
-    # complex holomorphic Jacobian of method = :quasinewton deliberately
-    # keeps the truncated (non-aliased) indices: it is an approximation to
-    # the exact Jacobian either way, the truncation does not change its
-    # iteration counts in practice, and the aliased couplings would densify
-    # it and slow its factorization.
+    # residual for multi-tone problems as well, matching the matrix free
+    # Jacobian-vector products of HBSystem. The complex holomorphic
+    # Jacobian of method = :quasinewton keeps the truncated (non-aliased)
+    # indices: it is an approximation to the exact Jacobian either way, and
+    # the aliased couplings would densify it and slow its factorization.
     # what a previous solve of this circuit built and this one takes over;
     # see `HBReuse`. Only the matrix free path is built to be rebound.
     Amatrixindicesaliased = if reusing && !isnothing(reuse.indicesaliased)
@@ -1114,8 +1111,8 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # method == :newton
     # `xr` is read and not rewritten: the real representation has one slot
     # per real entry and no redundant ones, so the round trip through the
-    # complex form is a copy and writing it back was a pass over the state,
-    # and on a device a crossing of the bus, per residual for nothing
+    # complex form is a copy, and writing it back would be a pass over the
+    # state, and on a device a crossing of the bus, per residual for nothing
     function fjreal!(Fr, Jr, xr)
         setpoint!(sys, xr)
         isnothing(Fr) || residual!(Fr, sys)
@@ -1258,35 +1255,24 @@ function solvenewtonkrylov!(method::NewtonKrylov;
         # rather than one large sparse factorization, and the full Jacobian
         # in single precision block factors for two or more tones when they
         # fit in memory (see `resolveautomatic`). On a strongly pumped line
-        # the block diagonal alone stalls; what rescues it is escalation,
-        # which grows the base only on repeated linear failures and in
-        # practice fires once or twice.
+        # the block diagonal alone stalls; escalation rescues it, growing
+        # the base only on repeated linear failures.
         #
-        # `HarmonicBand(p)` restricts the retained coupling by
-        # harmonic *offset* rather than by column (see `modebandmask`). That is
-        # the restriction the Toeplitz structure of the nonlinear term asks for,
-        # and at equal fill it is not close: on an eight mode chain driven to
-        # max|phi| = 1.9 rad a bandwidth of one converges a Newton path in 118
-        # GMRES iterations where a two column selection storing the same number
-        # of nonzeros fails to converge in 1051. Its fill grows linearly in the
-        # mode count where the full Jacobian's grows quadratically, so it
-        # overtakes the full factorization once there are enough modes: measured
-        # on a fixed circuit at max|phi| ~ 1.75 rad, the ratio of banded to full
-        # total solve time is 1.28 at 8 modes, 0.75 at 16, 0.61 at 24 and 0.31
-        # at 32, while the bandwidth that wins stays at one. It escalates by one
-        # offset at a time rather than jumping to the full operator. Measured on a two tone line, this is the only configuration
-        # whose standing improves with problem size: at 288 cells it is 3.72 s
-        # against 8.19 s for mode selection and 5.48 s for the direct solve,
-        # having been the slower of the two at 128 cells.
+        # `HarmonicBand(p)` restricts the retained coupling by harmonic
+        # *offset* rather than by column (see `modebandmask`), which is the
+        # restriction the Toeplitz structure of the nonlinear term asks for.
+        # Its fill grows linearly in the mode count where the full
+        # Jacobian's grows quadratically, so it overtakes the full
+        # factorization once there are enough modes, and it escalates by
+        # one offset at a time rather than jumping to the full operator.
         #
         # `Floquet(...)` additionally wraps the base in a deflation
         # subspace. It also rescues the block diagonal, and needs no sparse
-        # factorization at all, which makes it the natural fit for a GPU;
-        # but it is a second answer to the same problem and measured a net
-        # loss against escalation at 192 cells and above, so it is off by
-        # default. `CoupledModes(1:12)` with no deflation recovers the
-        # earlier frequency based mode selection, which is still the fastest
-        # option on moderately sized lines.
+        # factorization at all, which suits a GPU; but it is a second
+        # answer to the same problem as escalation, and is off by default.
+        # `CoupledModes(1:12)` with no deflation selects the retained modes
+        # by frequency.
+        #
         # the preconditioner the method asks for: a mode coupling
         # preconditioner, possibly wrapped in a deflation below
         spec = method.preconditioner

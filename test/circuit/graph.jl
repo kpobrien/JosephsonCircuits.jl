@@ -104,10 +104,9 @@ import SparseArrays
 end
 
 # The loop of a closure branch is the unique path through the spanning tree
-# between its endpoints. It used to be found by adding the branch back and
-# enumerating cycles of at most ten edges, so a longer loop was reported as
-# no loop at all -- silently, since the empty entry is also what a branch
-# with no loop produces.
+# between its endpoints, whatever its length: a search bounded in the number
+# of edges would report a longer loop as no loop at all, silently, since the
+# empty entry is also what a branch with no loop produces.
 @testset verbose=true "fundamental loops of any length" begin
     JC = JosephsonCircuits
 
@@ -127,10 +126,9 @@ end
     end
 
     # two inductors between one pair of nodes are one edge of a simple
-    # graph, so there is no closure branch and no loop to report. That is
-    # what the graph did before this too, and the two vertex guard in the
-    # walk is there for the case where a closure branch and a tree edge
-    # join the same pair for some other reason
+    # graph, so there is no closure branch and no loop to report; the two
+    # vertex guard in the walk is there for the case where a closure branch
+    # and a tree edge join the same pair for some other reason
     @test isempty(JC.calcgraphs([(1,2), (1,2)], 2; loops = true).lvarray)
 
     # a tree has no closure branches and so no loops

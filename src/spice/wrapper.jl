@@ -254,10 +254,8 @@ end
 # extension fills with its wrspice
 const wrspicedefaultcmd = Ref{Any}(nothing)
 
-# Where WRSPICE installs itself, which `wrspice_cmd` prefers to any
-# provider. Named rather than written twice, since whether a machine has
-# an installation there decides what `wrspice_cmd` does and the tests
-# have to ask the same question of the same path.
+# where WRSPICE installs itself, which `wrspice_cmd` prefers to a loaded
+# provider; the tests ask whether an installation is there too.
 # Note: This code has been tested on Linux but not macOS or Windows.
 wrspicestandardpath() = Sys.iswindows() ?
     "C:/usr/local/xictools/bin/wrspice.bat" : "/usr/local/xictools/bin/wrspice"

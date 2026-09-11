@@ -122,14 +122,13 @@ using XicTools_jll
 
     @testset "the executable through the extension" begin
         # Loading XicTools_jll registers its wrspice as the default
-        # executable, through the package's extension; this file loads it
+        # executable through the package's extension; this file loads it
         # at the top, as the other tests of the wrapper do, so that the
-        # extension is in place before any testset runs rather than part
-        # way through one. The artifact carries a binary only on the
-        # platforms WRSPICE is built for, and on the others the product
-        # is not defined, the extension registers nothing, and an
-        # executable has to be installed or given as a path, which
-        # wrapper.jl tests.
+        # extension is in place before any testset runs. The artifact
+        # carries a binary only on the platforms WRSPICE is built for;
+        # on the others the product is not defined, the extension
+        # registers nothing, and an executable has to be installed or
+        # given as a path, which wrapper.jl tests.
         if isdefined(XicTools_jll, :wrspice)
             @test !isnothing(JC.wrspicedefaultcmd[])
             @test !isnothing(JC.wrspice_cmd())

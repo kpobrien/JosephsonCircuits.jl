@@ -151,8 +151,7 @@ end
                        maximum(abs.(ref.nodeflux)); rtol = 1e-8)
     end
     # with the full Jacobian as the preconditioner and with deflation
-    # recycling, which is the path a dead reference in the extension once
-    # hid because every benchmark left the preconditioner nothing
+    # recycling, so that the extension's preconditioned path runs
     for pc in (FullJacobian(), Floquet(BlockDiagonal(); size = 12))
         s = JCX.hbnlsolve(wp, (8,), src, circuit, defs; keyedarrays = false,
             ftol = 1e-14, method = NewtonKrylov(preconditioner = pc,

@@ -260,10 +260,8 @@ end
         # accepted: docstrings which name an argument differently from
         # the definition for readability, and the deprecated or removed
         # keywords the solver entry points still accept but document in
-        # prose rather than in their signature lines. A docstring which
-        # names no definition of its own is not accepted: that is a
-        # docstring which has drifted from what it documents, and it
-        # leaves the name it claims without one.
+        # prose. A docstring which names no definition of its own has
+        # drifted from what it documents and is not accepted.
         deprecated = ("switchofflinesearchtol", "alphamin", "maxharmonics",
             "maxpumpharmonics", "returnZ",
             "returnZadjoint", "returnZsensitivity", "returnZsensitivityadjoint",

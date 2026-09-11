@@ -96,11 +96,10 @@ end
 # and dropping `Jpd` leaves an error whose range is the columns of `Jpd`,
 # one per direct current unknown, and a Krylov iteration removes an error
 # of that rank in as many steps. The exact triangular form, `d` first and
-# `Jpd d` taken off the nodal rows before the inner solve, was measured to
-# save no iterations on junction chains with a resistive bias network or
-# on a bridge between nearly open ports, and with an exact inner
-# preconditioner both take one step per solve; it cost a pass over the
-# nodal rows per application, so it is not here.
+# `Jpd d` taken off the nodal rows before the inner solve, saves no
+# iterations with an exact inner preconditioner, where both take one step
+# per solve, and costs a pass over the nodal rows per application, so it
+# is not here.
 function applypreconditioner!(z::AbstractVector, pc::CanonicalPreconditioner,
         r::AbstractVector)
     L = pc.work.layout
@@ -113,8 +112,7 @@ function _solvedcblock!(z::AbstractVector, pc::CanonicalPreconditioner,
         r::AbstractVector)
     isnothing(pc.Yfact) && return z
     # where the state is not on the host, the same factors and the same
-    # substitutions run there; the subsystem used to cross the bus three
-    # times for this and that cost more than the residual it preconditions
+    # substitutions run there, so the subsystem never crosses the bus
     if !isnothing(pc.device)
         applydcsolve!(z, r, pc.device)
         return z

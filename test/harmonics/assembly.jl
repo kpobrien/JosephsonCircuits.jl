@@ -4,10 +4,10 @@ using SparseArrays
 using Test
 
 # The structure aware assembly reads the circuit's structure directly rather
-# than a precomputed segmented gather, and is now the only assembly there is.
-# Its correctness against the physics is established in test/realjacobian.jl,
-# which checks it against the exact matrix-free Jacobian-vector product of
-# HBSystem and against central finite differences of the residual.
+# than a precomputed segmented gather. Its correctness against the physics
+# is established in test/harmonics/system.jl, which checks it against the
+# exact matrix-free Jacobian-vector product of HBSystem and against central
+# finite differences of the residual.
 #
 # What is checked here is what those cannot see: that the two orientations
 # describe the same matrix, that the transposed assembly really is the row

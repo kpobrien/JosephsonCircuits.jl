@@ -53,9 +53,9 @@ using Test
         @test isequal(psc.componentvalues[1], Rleft)
 
         # the value vector is narrowed from Vector{Any} to the tightest
-        # element type the netlist admits. Every entry is a quantity, so
-        # that is the parameter type here; it used to be `Real`, the join of
-        # a quantity with the port number the port slot carried
+        # element type the netlist admits. Every entry is a quantity, the
+        # port slot carrying its impedance rather than the port number, so
+        # that is the parameter type here
         @test eltype(psc.componentvalues) ===
             JosephsonCircuits.CircuitValues.Parameter
 
@@ -149,11 +149,10 @@ using Test
     end
 
     # A legacy netlist has no way to say which resistor is a port's
-    # environment, so two across one port was refused and must stay refused:
-    # picking one silently would reinterpret a netlist which used to be an
-    # error. The typed format has no such restriction, because a port states
-    # its own termination.
-    @testset "two resistors across a legacy port are still refused" begin
+    # environment, so two across one port are refused: picking one silently
+    # would reinterpret a netlist that is an error. The typed format has no
+    # such restriction, because a port states its own termination.
+    @testset "two resistors across a legacy port are refused" begin
         @test_throws ArgumentError Circuit([("P1","1","0",1),
             ("R1","1","0",50.0), ("R2","1","0",50.0), ("C1","1","0",1e-12)])
 

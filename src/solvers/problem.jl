@@ -473,7 +473,7 @@ Base.eltype(::SizedPreconditioner) = Float64
 # subtyping `AbstractPreconditioner` inherits the whole interface: the two
 # and three argument `ldiv!`, `\\` and `mul!`. IterativeSolvers.jl calls the
 # two argument in-place form on a view, KrylovKit and Krylov.jl call `mul!`,
-# LinearSolve calls the three argument `ldiv!`; all of them now work.
+# LinearSolve calls the three argument `ldiv!`.
 applypreconditioner!(z::AbstractVector, p::SizedPreconditioner,
     r::AbstractVector) = applypreconditioner!(z, p.pc, r)
 updatepreconditioner!(p::SizedPreconditioner, u::AbstractVector) =

@@ -284,12 +284,11 @@ julia> JosephsonCircuits.@params Lj1 Lj2;JosephsonCircuits.componentvaluestonumb
 ```
 """
 function componentvaluestonumber(componentvalues::Vector,circuitdefs::Dict)
-    # A comprehension over a vector of known length preallocates its result;
-    # `map` over `zip(values, Iterators.repeated(dict))` cannot, and widens
-    # the result element by element, which is far slower on a large circuit.
-    # The definitions a parameterized value substitutes are normalized once
-    # for the whole table rather than once per value, which was quadratic
-    # in the circuit size times the definition count.
+    # A comprehension over a vector of known length preallocates its result,
+    # where `map` over `zip(values, Iterators.repeated(dict))` widens the
+    # result element by element. The definitions a parameterized value
+    # substitutes are normalized once for the whole table rather than once
+    # per value.
     any(v -> v isa CircuitValue, componentvalues) ||
         return Any[valuetonumber(value,circuitdefs) for value in componentvalues]
     d = normalizedefinitions(circuitdefs)

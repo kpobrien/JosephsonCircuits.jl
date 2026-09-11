@@ -85,7 +85,7 @@ end
                 # approximation either way; see fourierindices), so its
                 # exactness is a single-tone property; the exact multi-tone
                 # real Jacobian is validated against the matrix-free
-                # product and finite differences in test/system.jl.
+                # product and finite differences in test/harmonics/system.jl.
                 if length(wp) == 1 && trial == 1
                     JosephsonCircuits.setpoint!(d.sys, xr)
                     A = zeros(Complex{Float64}, n, n)

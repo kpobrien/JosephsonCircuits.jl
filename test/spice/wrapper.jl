@@ -71,12 +71,12 @@ using XicTools_jll
 
     @testset "wrspice_cmd" begin
         # The refusal when there is nothing to find: no binary in the JLL
-        # for this platform and no installation at WRSPICE's own path.
-        # Those are the two places `wrspice_cmd` looks, so a machine with
-        # either has nothing to refuse and is not a case this can assert.
-        # The condition is that rather than the continuous integration
-        # environment, so that a developer on a platform the JLL does not
-        # cover runs it too, which is where its wording last drifted.
+        # for this platform and no installation at WRSPICE's standard
+        # path. Those are the two places `wrspice_cmd` looks, so a
+        # machine with either cannot test the refusal. The condition is
+        # on those rather than on the continuous integration environment,
+        # so that a developer on a platform the JLL does not cover runs
+        # it too.
         standard = JosephsonCircuits.wrspicestandardpath()
         if !isdefined(XicTools_jll, :wrspice) &&
                 !isfile(standard) && !islink(standard)
