@@ -265,7 +265,7 @@ wrspicestandardpath() = Sys.iswindows() ?
 
 The command which runs WRSPICE: the executable at WRSPICE's standard
 installation path if one is installed there, else the one a loaded
-provider registered, which loading the XicTools_jll package does on the
+provider registered, which loading the `XicTools_jll` package does on the
 platforms its artifact supports. Throws when neither is available;
 [`WRspice`](@ref) and [`spice_run`](@ref) take an executable directly
 for one installed elsewhere.

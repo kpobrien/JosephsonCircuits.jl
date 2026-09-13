@@ -37,7 +37,7 @@ not apply. `jjaccel` selects WRSPICE's accelerated convergence testing
 for Josephson circuits, and `maxdata` its limit on the exported data in
 kilobytes. `executable` is the path of the `wrspice` executable, or
 `nothing` for the one [`wrspice_cmd`](@ref) finds; loading the
-XicTools_jll package provides one.
+`XicTools_jll` package provides one.
 
 Supported are the circuits of [`transientproblem`](@ref) without
 scattering blocks, with the sinusoidal junction relation only, from the

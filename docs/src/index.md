@@ -1,5 +1,41 @@
+```@raw html
+---
+layout: home
 
-# JosephsonCircuits.jl
+hero:
+  name: JosephsonCircuits.jl
+  text: Superconducting circuits in frequency and time
+  tagline: Harmonic balance and time domain simulation of a nonlinear circuit, the linearized response about an operating point with quantum noise.
+  image:
+    light: /logo.svg
+    dark: /logo-dark.svg
+    alt: JosephsonCircuits.jl
+  actions:
+    - theme: brand
+      text: Get started
+      link: /circuits
+    - theme: alt
+      text: Examples
+      link: /examples
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/kpobrien/JosephsonCircuits.jl
+
+features:
+  - title: Circuits
+    details: Netlists and connection groups, subcircuits, scattering blocks, transmission lines, noise models and temperatures.
+    link: /circuits
+  - title: Harmonic balance
+    details: The nonlinear operating point, the linearized sweep about it, scattering parameters, quantum efficiency and sensitivities.
+    link: /harmonicbalance
+  - title: Time domain
+    details: Pulsed and multi-tone drives, the exact tangent and adjoint of the recorded steps, and quantum noise in temporal modes.
+    link: /transient
+  - title: Reference
+    details: Every exported function and type.
+    link: /reference
+---
+```
 
 [![Code coverage](https://codecov.io/gh/kpobrien/JosephsonCircuits.jl/branch/main/graphs/badge.svg)](https://codecov.io/gh/kpobrien/JosephsonCircuits.jl)
 [![Build Status](https://github.com/kpobrien/JosephsonCircuits.jl/actions/workflows/CI.yml/badge.svg
