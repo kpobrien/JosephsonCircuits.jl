@@ -1,0 +1,19 @@
+/* docs/src/assets/custom.css */
+
+/*.VPHero .image-bg {
+    display: none !important;
+}
+*/
+.VPHero .image-bg {
+    /* Change these hex codes to your own brand colors */
+    background-image: linear-gradient(
+        135deg, 
+        #4477AA 20%, /* Color 1 */
+        #4477AA 50%, /* Color 2 */
+        #4477AA 80%  /* Color 3 */
+    ) !important;
+    
+    /* Keeps the nice soft blur effect */
+    filter: blur(60px); 
+    opacity: 0.4; /* Control how intense the glow looks */
+}
