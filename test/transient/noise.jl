@@ -440,4 +440,88 @@ using Test
         @test metricsc.QE ≈ hbc.linearized.QE((0,), 1, (0,), 1, 1) rtol=1e-4
         @test metricsc.QE > metrics.QE
     end
+
+    @testset "a block which states its noise" begin
+        # an amplifier given by its scattering parameters states the noise
+        # it adds with a NoiseCovariance: its ports are channels correlated
+        # by a group whose covariance is the stated V and whose commutator
+        # is I - S S', so in time it adds the noise the linearized solver
+        # gives it and its output obeys the commutation relations; a
+        # passive block whose stated covariance is that of its temperature
+        # equals the block in equilibrium, and less than the commutator
+        # requires is refused
+        block(x) = [real(x) imag(x); -imag(x) real(x)]
+        quadratures(M) = reduce(vcat, [reduce(hcat, [block(M[j, k]) for k in 1:2]) for j in 1:2])
+        n, T = 512, 1e-9
+        mk(b) = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.3e-12)), (:b, 1, 2, b),
+            (:c2, 2, 0, Capacitor(0.5e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
+        function noiseof(c; method = :adjoint)
+            sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = GaussLegendre())
+            plan = transientquantumplan(sol.times, [3e9, 3e9]; ports = [1, 2])
+            return transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan, method), plan
+        end
+        G = 100.0
+        amp(V) = ScatteringParameters([0.0 0.0; sqrt(G) 0.0]; zref = 50.0, noise = NoiseCovariance(V), dcmodel = OpenDC())
+        for V in ([1.0 0.0; 0.0 G - 1], [3.0 0.0; 0.0 5G])
+            na, plan = noiseof(mk(amp(V)))
+            hb = hblinsolve(2pi*[3e9], mk(amp(V)); keyedarrays = false, returnCnoise = true, returnCM = true)
+            @test hb.CM ≈ ones(2, 1) atol=1e-10
+            @test na.diagnostics.passed
+            @test na.covariance ≈ quadratures(hb.S[:, :, 1]*hb.S[:, :, 1]' + hb.Cnoise[:, :, 1])/2 rtol=1e-6
+            @test na.commutator ≈ plan.commutator rtol=1e-5
+            @test na.gain ≈ quadratures(hb.S[:, :, 1]) rtol=1e-6
+            nf, _ = noiseof(mk(amp(V)); method = :forward)
+            @test nf.covariance ≈ na.covariance rtol=1e-10
+        end
+        baths = transientnoisebaths(transientproblem(mk(amp([1.0 0.0; 0.0 G - 1]))))
+        @test length(baths) == 4 && length(baths.groups) == 1 && all(iszero, b.temperature for b in baths.channels)
+        # the analysis temperature warms the ports and not the block,
+        # whose stated covariance is the whole of its noise
+        warmed = transientnoisebaths(transientproblem(mk(amp([1.0 0.0; 0.0 G - 1]))); temperature = 0.3)
+        @test [b.temperature for b in warmed.channels] == [0.3, 0.3, 0.0, 0.0]
+        S = [0.0 0.6; 0.6 0.0]
+        K = I - S*S'
+        stated = ScatteringParameters(S; zref = 50.0, noise = NoiseCovariance(w -> JosephsonCircuits.thermaloccupation(w, 0.3) .* K))
+        ns, _ = noiseof(mk(stated))
+        nt, _ = noiseof(mk(ScatteringParameters(S; zref = 50.0, noise = ThermalEquilibrium(0.3))))
+        @test ns.covariance ≈ nt.covariance rtol=1e-8
+        @test ns.commutator ≈ nt.commutator rtol=1e-8
+        starved = ScatteringParameters([0.0 0.0; 10.0 0.0]; zref = 50.0, noise = NoiseCovariance(w -> [1.0 0.0; 0.0 98.0]))
+        @test_throws ArgumentError noiseof(mk(starved))
+        # a covariance which is not Hermitian is refused as supplied,
+        # before one triangle of it stands for the whole; a callable, since
+        # a constant is checked when the block is built
+        skewed = ScatteringParameters([0.0 0.0; sqrt(G) 0.0]; zref = 50.0, noise = NoiseCovariance(w -> [1.0 0.0; 10.0 G - 1]), dcmodel = OpenDC())
+        @test_throws ArgumentError noiseof(mk(skewed))
+        # a covariance completed to the commutation relations: stated
+        # below the quantum limit, the amplifier emits the limit, in both
+        # solvers alike
+        under = ScatteringParameters([0.0 0.0; sqrt(G) 0.0]; zref = 50.0, noise = NoiseCovariance([1.0 0.0; 0.0 0.5(G - 1)]; completed = true), dcmodel = OpenDC())
+        nc, planc = noiseof(mk(under))
+        hbc = hblinsolve(2pi*[3e9], mk(under); keyedarrays = false, returnCnoise = true, returnCM = true)
+        hbq = hblinsolve(2pi*[3e9], mk(amp([1.0 0.0; 0.0 G - 1])); keyedarrays = false, returnCnoise = true)
+        @test hbc.Cnoise ≈ hbq.Cnoise atol=1e-10
+        @test hbc.CM ≈ ones(2, 1) atol=1e-10
+        @test nc.diagnostics.passed
+        @test nc.covariance ≈ quadratures(hbc.S[:, :, 1]*hbc.S[:, :, 1]' + hbc.Cnoise[:, :, 1])/2 rtol=1e-6
+        @test nc.commutator ≈ planc.commutator rtol=1e-5
+        # an amplifier whose gain rolls off, fitted to a rational block
+        # without the passivity its gain forbids and realized in time
+        # with its state: the noise and the gain of the linearized solve
+        # of the same fitted block, with a covariance above the minimum
+        # by a margin the fit's error does not reach
+        w0, g0 = 2pi*8e9, 10.0
+        rolloff(w) = [0.0 0.0; g0*w0/(w0 + im*w) 0.0]
+        rolloffnoise(w) = (K = I - rolloff(w)*rolloff(w)'; [1.05*abs(K[1, 1]) 0.0; 0.0 1.05*abs(K[2, 2]) + 0.1])
+        ampfit = RationalScattering(ScatteringParameters(rolloff; nports = 2, zref = 50.0, noise = NoiseCovariance(rolloffnoise)), 4;
+            frequencies = collect(range(0.1e9, 40e9; length = 300)))
+        nr, plan = noiseof(mk(ampfit))
+        hbr = hblinsolve(2pi*[3e9], mk(ampfit); keyedarrays = false, returnCnoise = true, returnCM = true)
+        @test abs(hbr.S[2, 1, 1]) > 3
+        @test hbr.CM ≈ ones(2, 1) atol=1e-10
+        @test nr.diagnostics.passed
+        @test nr.covariance ≈ quadratures(hbr.S[:, :, 1]*hbr.S[:, :, 1]' + hbr.Cnoise[:, :, 1])/2 rtol=1e-5
+        @test nr.commutator ≈ plan.commutator rtol=1e-5
+        @test nr.gain ≈ quadratures(hbr.S[:, :, 1]) rtol=1e-5
+    end
 end

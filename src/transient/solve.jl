@@ -288,11 +288,14 @@ function transientsystem(p::TransientProblem, h::Real, method::AbstractTransient
         imvals = gaussimaginary(gc, h, C, G, Jrs, devicej)
         cjacobian = devicej ? DeviceValuedSparseMatrix(Jrs, tobackend(backend, zeros(ComplexF64, nnz(Jrs)))) :
             SparseMatrixCSC(size(Jrs)..., copy(SparseArrays.getcolptr(Jrs)), copy(rowvals(Jrs)), zeros(ComplexF64, nnz(Jrs)))
-        rationalvals = rationalvalues(p, gc.mu/h, Lscale, Jrs, devicej)
+        stageterms = rationalstageterms(p, gc.mu/h)
+        rationalvals = zeros(ComplexF64, nnz(Jrs))
+        rationalvalues!(rationalvals, p, gc.mu/h, Lscale, Jrs, devicej, stageterms, nothing)
         stages = rationalstages(p, gc, h)
         coupling = isempty(stages) ? nothing : rationalcoupling(p, stages, gc, h, Lscale, blockgather, blockscatter, backend)
+        pumped = any(b -> !isempty(b.modulations), p.blocks)
         gaussstage(gc, v(imvals), cjacobian, gaussprojection(p, G, L, RJ, lmolj, injection, constant, lineinjection, blockscatter, backend),
-            v(rationalvals), stages, coupling, backend)
+            v(rationalvals), stages, coupling, backend, (terms = stageterms, pattern = Jrs), rationalvals, devicej, pumped)
     else
         nothing
     end
@@ -609,7 +612,10 @@ function transientsolve(problems::AbstractVector{TransientProblem}, tspan; dt::R
     end
     fact = isnothing(factorization) ? transientfactorization(backend) : factorization
     sys = transientsystem(reuse, p, h, method, backend, fact)
-    return gaussbatchintegrate(sys, collect(problems), t0, tf, nsteps, states, saveevery, record, checkpointevery,
+    # a kept system is held untyped, and a call on it would be compiled
+    # over every kind of system there is; invoked dynamically instead, so
+    # that only the one in hand is
+    return Base.invokelatest(gaussbatchintegrate, sys, collect(problems), t0, tf, nsteps, states, saveevery, record, checkpointevery,
         Float64(rtol), Float64(atol), maxiters, reuse)
 end
 
@@ -669,13 +675,16 @@ function transientsolve(p::TransientProblem, tspan; dt::Real,
         "a circuit with scattering blocks or transmission lines steps under GaussLegendre()."))
     fact = isnothing(factorization) ? transientfactorization(backend) : factorization
     sys = transientsystem(reuse, p, h, method, backend, fact)
+    # a kept system is held untyped, and a call on it would be compiled
+    # over every kind of system there is; invoked dynamically instead, so
+    # that only the one in hand is
     if method isa GaussLegendre
         isnothing(linearsolver) || throw(ArgumentError("the Gauss-Legendre rule solves its stages on its complex factorization; it takes no linearsolver."))
-        return unbatch(gaussbatchintegrate(sys, [p], t0, tf, nsteps, [initialstate], saveevery, record, checkpointevery,
+        return unbatch(Base.invokelatest(gaussbatchintegrate, sys, [p], t0, tf, nsteps, [initialstate], saveevery, record, checkpointevery,
             Float64(rtol), Float64(atol), maxiters, reuse))
     end
     record == :checkpoints && throw(ArgumentError("checkpoints are a record of the Gauss-Legendre rule."))
-    return transientintegrate(sys, t0, tf, nsteps, initialstate, saveevery, record,
+    return Base.invokelatest(transientintegrate, sys, t0, tf, nsteps, initialstate, saveevery, record,
         Float64(rtol), Float64(atol), maxiters, linearsolver, reuse)
 end
 

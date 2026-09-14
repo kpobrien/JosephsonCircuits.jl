@@ -357,7 +357,7 @@ end
 function netlistendpoints(def, name)
     return [(name, t) for t in 1:nterminals(def)]
 end
-function netlistendpoints(def::Union{ScatteringParameters,GaussianChannel},
+function netlistendpoints(def::Union{ScatteringParameters,LinearizedScattering,GaussianChannel},
         name)
     np = componentnports(def)
     isgrounded(def) && return [(name, p) for p in 1:np]
@@ -406,6 +406,7 @@ nterminals(::Port) = 2
 nterminals(::NonlinearInductor) = 2
 nterminals(::MutualInductor) = 0
 nterminals(c::ScatteringParameters) = 2*c.nports
+nterminals(c::LinearizedScattering) = 2*c.nports
 nterminals(c::GaussianChannel) = 2*c.nmodes
 function nterminals(c::Circuit)
     if isnothing(c.interface)
@@ -422,6 +423,7 @@ Whether the component exposes bundled two terminal port views addressable
 in pair connections.
 """
 hasports(c::ScatteringParameters) = true
+hasports(c::LinearizedScattering) = true
 hasports(c::GaussianChannel) = true
 hasports(c::Circuit) = !isnothing(c.interface) && !isnothing(c.interface.ports)
 hasports(c) = false
@@ -435,6 +437,7 @@ Part of the connector protocol with [`nterminals`](@ref) and
 [`hasports`](@ref).
 """
 componentnports(c::ScatteringParameters) = c.nports
+componentnports(c::LinearizedScattering) = c.nports
 componentnports(c::GaussianChannel) = c.nmodes
 
 """
@@ -445,6 +448,7 @@ so that only its first terminals connect (`grounded = true` at
 construction).
 """
 isgrounded(c::ScatteringParameters) = c.grounded
+isgrounded(c::LinearizedScattering) = c.grounded
 isgrounded(c::GaussianChannel) = c.grounded
 
 # === component table ===
@@ -524,7 +528,7 @@ function scalarterminal(def::MutualInductor, id, k)
     throw(ArgumentError(lazy"The mutual inductor $(id) couples two inductor branches and has no terminals; it must not appear in connections."))
 end
 
-function scalarterminal(def::Union{ScatteringParameters,GaussianChannel}, id, k)
+function scalarterminal(def::Union{ScatteringParameters,LinearizedScattering,GaussianChannel}, id, k)
     if isgrounded(def)
         if !(k isa Integer) || !(1 <= k <= componentnports(def))
             throw(ArgumentError(lazy"The grounded multiport $(id) has ports 1:$(componentnports(def)); got $(k)."))
@@ -549,7 +553,7 @@ function portterminal(def, id, p, t)
     throw(ArgumentError(lazy"The instance $(id) has no ports; address its terminals as ($(repr(id)), terminal)."))
 end
 
-function portterminal(def::Union{ScatteringParameters,GaussianChannel}, id, p, t)
+function portterminal(def::Union{ScatteringParameters,LinearizedScattering,GaussianChannel}, id, p, t)
     np = componentnports(def)
     if !(p isa Integer) || !(1 <= p <= np)
         throw(ArgumentError(lazy"The multiport $(id) has ports 1:$(np); got port $(p)."))
@@ -571,7 +575,7 @@ function portview(def, id, p)
     throw(ArgumentError(lazy"The instance $(id) exposes no ports, so $(p) cannot be used as a port in a pair connection."))
 end
 
-function portview(def::Union{ScatteringParameters,GaussianChannel}, id, p)
+function portview(def::Union{ScatteringParameters,LinearizedScattering,GaussianChannel}, id, p)
     np = componentnports(def)
     if !(p isa Integer) || !(1 <= p <= np)
         throw(ArgumentError(lazy"The multiport $(id) has ports 1:$(np); got port $(p)."))
@@ -845,7 +849,8 @@ end
 function parsegroundties(table::ComponentTable)
     ties = Tuple{Int,Int}[]
     for (i, def) in enumerate(table.defs)
-        if (def isa ScatteringParameters || def isa GaussianChannel) && isgrounded(def)
+        if (def isa ScatteringParameters || def isa LinearizedScattering ||
+                def isa GaussianChannel) && isgrounded(def)
             for p in 1:componentnports(def)
                 push!(ties, (i, 2*(p-1) + 2))
             end

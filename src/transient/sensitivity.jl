@@ -138,7 +138,8 @@ function transienttangent(sol::TransientSolution, currents::AbstractArray{<:Real
     n, np, nt = length(p), length(p.portimpedances), length(sol.times)
     nq = length(targets)
     ndir = currentshape(currents, nq, nt)
-    sys.method isa GaussLegendre && return gaussbatchtangent(sol, currents, targets, initialstate, sys, outputsink)
+    # invoked dynamically on the untyped kept system (see transientsolve)
+    sys.method isa GaussLegendre && return Base.invokelatest(gaussbatchtangent, sol, currents, targets, initialstate, sys, outputsink)
     h = sys.h
     trapezoidal = sys.method isa Trapezoidal
     injection = devicesparse((sys.Lscale/phi0) .* transientinjection(p, targets), backend)
@@ -318,7 +319,8 @@ function transientadjoint(sol::TransientSolution, weights::AbstractArray{<:Real}
     ndims(weights) in (2, 3) && size(weights, 1) == np && size(weights, 2) == nt || throw(DimensionMismatch(
         lazy"weights must have one row per port ($(np)), one column per recorded time ($(nt)) and optionally a third dimension of objectives."))
     all(isfinite, weights) || throw(ArgumentError("the weights must be finite."))
-    sys.method isa GaussLegendre && return gaussbatchadjoint(sol, weights, quantity, targets, sys, sink, stagesink)
+    # invoked dynamically on the untyped kept system (see transientsolve)
+    sys.method isa GaussLegendre && return Base.invokelatest(gaussbatchadjoint, sol, weights, quantity, targets, sys, sink, stagesink)
     h = sys.h
     trapezoidal = sys.method isa Trapezoidal
     w, cv, injectiont, ring, currents = adjointsetup(sol, weights, quantity, targets, sys, sink)

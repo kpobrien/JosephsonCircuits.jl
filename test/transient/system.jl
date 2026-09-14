@@ -582,3 +582,324 @@ using Test
         @test transientadjoint(cb, cweights).currents[:, :, 1] == cad.currents
     end
 end
+
+# A pumped device as a block in time: the fit of its harmonic transfer
+# functions to filters whose outputs the step modulates at the harmonics
+# of the pump. The references are the tabulated block itself in harmonic
+# balance, the device as junctions in time, and the linearized solve of
+# the fitted block for the noise, which runs the tangent and the adjoint
+# through the modulated coupling.
+@testset "a pumped block realized in time" begin
+    JC = JosephsonCircuits
+    Z0 = 50.0
+    jpa = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:cc, 1, 2, Capacitor(100.0e-15)),
+        (:jj, 2, 0, JosephsonJunction(1000.0e-12)), (:cj, 2, 0, Capacitor(1000.0e-15))])
+    fp, ip = 4.75e9, 0.00565e-6
+    ws = 2pi*collect(range(4.0e9, 5.5e9; length = 76))
+    sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (4,), (8,), jpa; ftol = 1e-14)
+    blk = LinearizedScattering(sol.linearized, 2pi*fp)
+    # an unfitted block has no realization in time
+    @test_throws ArgumentError transientproblem(Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, blk)]))
+    fit = RationalScattering(blk, 10)
+    @test fit.harmonics == blk.harmonics && fit.phase == 0.0
+    # the fit is not lossless, and states the noise its commutator requires
+    @test fit.noise isa NoiseCovariance && fit.noise.completed && fit.atol == blk.atol
+    @test fit.providers[1] isa JC.RationalScatteringProvider
+    @test all(p -> p isa JC.ModulatedRationalProvider, fit.providers[2:end])
+    @test all(p -> maximum(abs, p.cosine.D) == 0 && maximum(abs, p.sine.D) == 0, fit.providers[2:end])
+    @test_throws ArgumentError RationalScattering(blk, 0)
+    # the fit against the tables it came from, at their knots
+    for (j, k) in enumerate(blk.harmonics)
+        nus = JC.piecewisefrequencies(blk.providers[j])
+        Ht = zeros(ComplexF64, 1, 1, length(blk.harmonics), length(nus))
+        Hf = similar(Ht)
+        JC.evaluateharmonics!(Ht, blk, nus)
+        JC.evaluateharmonics!(Hf, fit, nus)
+        @test maximum(abs, Hf[1, 1, j, :] .- Ht[1, 1, j, :]) < 1e-4*max(1.0, maximum(abs, Ht[1, 1, j, :]))
+    end
+    # the fitted block in harmonic balance against the junctions
+    c = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, fit)])
+    hb = hbsolve(ws, (2pi*fp,), [], (4,), (8,), c)
+    @test maximum(abs, Array(hb.linearized.S) .- Array(sol.linearized.S)) < 1e-4
+    # a weak signal through the block in time, demodulated at the signal
+    # and the idler after the block has settled, against the scattering
+    # matrix of the fitted block in power waves, and against the
+    # junctions in time with their pump ramped on
+    fs, Is, dt = 4.6e9, 1e-9, 2.5e-12
+    fi = 2fp - fs
+    a0 = Is*sqrt(Z0)/2
+    tsol = transientsolve(transientproblem(c; sources = [TransientSource(1, t -> Is*sinpi(2fs*t))]), (0.0, 80e-9);
+        dt, method = GaussLegendre())
+    plan = transientiqplan(tsol.times, [fs, fi]; duration = 4/(fp - fs), ports = [1, 1], stride = 400)
+    iq = transientiq(plan, tsol.outgoing)
+    k = argmin(abs.(ws .- 2pi*fs))
+    Ss = hb.linearized.S((0,), 1, (0,), 1, k)
+    Si = hb.linearized.S((-2,), 1, (0,), 1, k)
+    @test isapprox(abs(iq[1, end])/a0, abs(Ss); rtol = 1e-3)
+    @test isapprox(abs(iq[2, end])/a0, abs(Si)*sqrt(fi/fs); rtol = 1e-2)
+    ramp(t) = t <= 0 ? 0.0 : t >= 10e-9 ? 1.0 : (1 - cospi(t/10e-9))/2
+    jsol = transientsolve(transientproblem(jpa; sources = [TransientSource(1, t -> 2ip*ramp(t)*cospi(2fp*t) + Is*sinpi(2fs*t))]),
+        (0.0, 80e-9); dt, method = GaussLegendre())
+    jiq = transientiq(plan, jsol.outgoing)
+    @test isapprox(abs(jiq[1, end]), abs(iq[1, end]); rtol = 1e-2)
+    @test isapprox(abs(jiq[2, end]), abs(iq[2, end]); rtol = 1e-2)
+    @test abs(angle(jiq[2, end]/iq[2, end])) < 0.02
+    # the noise of the block with its conversion ramped on, the tangent
+    # and the adjoint through the modulated coupling: the gain and the
+    # quantum efficiency of the linearized solve, and the two methods
+    # agree with each other
+    ramped = RationalScattering(LinearizedScattering(sol.linearized, 2pi*fp; envelope = ramp), 10)
+    cr = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, ramped)])
+    fn = 4.7e9
+    hbn = hbsolve([2pi*fn], (2pi*fp,), [], (4,), (8,), cr)
+    # a settling time which is not a whole number of pump periods, so
+    # that the reference of the bath quadratures, the start of the
+    # record, is not a zero of the pump's phase
+    settle, record = 60.0625e-9, 20e-9
+    nsol = transientsolve(transientproblem(cr), (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
+    first = round(Int, settle/dt) + 1
+    nplan = transientquantumplan(nsol.times[first:end], [fn])
+    nfreqs = sort!(abs.([fn + 2m*fp for m in -2:2]))
+    noise = transientnoise(nsol, nplan; frequencies = nfreqs, weights = fill(1/record, 5), inputs = nplan, commutationrtol = 3e-3)
+    @test noise.diagnostics.passed
+    metrics = transientquantumefficiency(noise.gain, noise.covariance; rtol = 3e-3)
+    @test isapprox(metrics.gain, abs2(hbn.linearized.S((0,), 1, (0,), 1, 1)); rtol = 1e-4)
+    @test isapprox(metrics.QE, hbn.linearized.QE((0,), 1, (0,), 1, 1); rtol = 1e-4)
+    forward = transientnoise(nsol, nplan; frequencies = nfreqs, weights = fill(1/record, 5), inputs = nplan, method = :forward, commutationrtol = 3e-3)
+    @test forward.covariance ≈ noise.covariance rtol=1e-10
+    @test forward.gain ≈ noise.gain rtol=1e-10
+    # a device with loss states its noise, which in time is the pair
+    # terms of its group: the bath frequencies a harmonic apart, and
+    # those summing to one, the signal and the idler, are correlated as
+    # the block's harmonic covariances say, and the quantum efficiency is
+    # that of the linearized solve of the fitted block, and of the
+    # junctions
+    lossy = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:cc, 1, 2, Capacitor(100.0e-15)),
+        (:jj, 2, 0, JosephsonJunction(1000.0e-12)), (:cj, 2, 0, Capacitor(1000.0e-15)), (:r, 2, 0, Resistor(2.0e4))])
+    soll = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (4,), (8,), lossy; ftol = 1e-14, returnCnoise = true)
+    stated = RationalScattering(LinearizedScattering(soll.linearized, 2pi*fp; noise = NoiseCovariance(soll.linearized.Cnoise), envelope = ramp), 10)
+    @test stated.noise isa NoiseCovariance && stated.noise.completed && stated.atol == 1e-6 && stated.noise.atol == 1e-8
+    cl = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, stated)])
+    hbl = hbsolve([2pi*fn], (2pi*fp,), [], (4,), (8,), cl; returnCnoise = true)
+    bathsl = transientnoisebaths(transientproblem(cl))
+    @test length(bathsl) == 2 && length(bathsl.groups) == 1 && bathsl.channels[2].temperature == 0.0
+    lsol = transientsolve(transientproblem(cl), (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
+    lplan = transientquantumplan(lsol.times[first:end], [fn])
+    lnoise = transientnoise(lsol, lplan; frequencies = nfreqs, weights = fill(1/record, 5), inputs = lplan, commutationrtol = 3e-3)
+    @test lnoise.diagnostics.passed
+    lmetrics = transientquantumefficiency(lnoise.gain, lnoise.covariance; rtol = 3e-3)
+    @test isapprox(lmetrics.gain, abs2(hbl.linearized.S((0,), 1, (0,), 1, 1)); rtol = 1e-4)
+    @test isapprox(lmetrics.QE, hbl.linearized.QE((0,), 1, (0,), 1, 1); rtol = 1e-4)
+    @test isapprox(lmetrics.QE, hbsolve([2pi*fn], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (4,), (8,), lossy;
+        ftol = 1e-14).linearized.QE((0,), 1, (0,), 1, 1); rtol = 1e-4)
+end
+
+@testset "the checks and the stage solve of a pumped block in time" begin
+    JC = JosephsonCircuits
+    Z0 = 50.0
+    wp = 2pi*1e9
+    zero1 = zeros(ComplexF64, 1, 1)
+    # a stable one state block converting by one harmonic, without a fit
+    function model(; amp = 0.1, direct = 0.0, noise = Lossless(), envelope = nothing)
+        p0 = JC.RationalScatteringProvider(zeros(0, 0), zeros(0, 1), zeros(1, 0), fill(direct, 1, 1))
+        pc = JC.RationalScatteringProvider(fill(-wp, 1, 1), fill(wp, 1, 1), fill(amp, 1, 1), zeros(1, 1))
+        pz = JC.RationalScatteringProvider(zeros(0, 0), zeros(0, 1), zeros(1, 0), zeros(1, 1))
+        return LinearizedScattering([p0, JC.ModulatedRationalProvider(pc, pz)], wp; harmonics = [0, 1], nports = 1, zref = Z0, noise, envelope)
+    end
+    one(b, rest...) = Circuit([(:p, 1, 0, Port(1; Z0 = Z0)), (:b, 1, b), rest...])
+    dt = 2e-11
+    # the noise model of a pumped block is checked over the modes its
+    # pair terms are read from: a covariance below the commutation
+    # relations, and a declared losslessness the block does not have
+    for b in (model(noise = NoiseCovariance([zero1, zero1])), model())
+        sol = transientsolve(transientproblem(one(b)), (0.0, 40e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints)
+        plan = transientquantumplan(sol.times, [0.4e9])
+        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [0.4e9, 0.6e9], weights = fill(1/40e-9, 2))
+    end
+    # the pair terms correlate the bath frequencies, which are not split
+    # over tiles: a budget too small for them is refused
+    stated = model(noise = NoiseCovariance([fill(10.0, 1, 1), zero1]))
+    sol = transientsolve(transientproblem(one(stated)), (0.0, 40e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints)
+    plan = transientquantumplan(sol.times, [0.4e9])
+    JC.noisememorybudget[] = 1
+    try
+        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [0.4e9, 0.6e9], weights = fill(1/40e-9, 2))
+    finally
+        JC.noisememorybudget[] = 0
+    end
+    # two outputs which share an input are correlated whatever harmonic
+    # apart they are: the outputs at 0.4 and 2.4 GHz of a block
+    # converting by one harmonic are both fed by the input at 1.4 GHz,
+    # so the pair terms are read from the family of the bath frequencies
+    # at once, and the whole commutator matrix of the two outputs is
+    # canonical and their covariance the family's
+    shared = model(amp = 0.5, noise = NoiseCovariance([fill(10.0, 1, 1), zero1]))
+    ssol = transientsolve(transientproblem(one(shared)), (0.0, 20e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints)
+    splan = transientquantumplan(ssol.times[501:end], [0.4e9, 2.4e9]; ports = [1, 1])
+    sfreqs = [0.4e9, 0.6e9, 1.4e9, 2.4e9, 3.4e9]
+    sn = transientnoise(ssol, splan; frequencies = sfreqs, weights = fill(1/10e-9, 5))
+    @test sn.diagnostics.passed
+    # 0.4 and 2.4 GHz are two pump frequencies apart, so one ladder of
+    # the bath holds both
+    onladder(b, fs, f) = only(filter(L -> any(r -> abs(r - 2pi*f) < 1e-3, L.rows), JC.bathfamily(b, fs)))
+    # the bath falls into the ladders of the pump: the modes at 0.4 and
+    # 0.6 GHz sum to the pump frequency, so the ladder which holds the
+    # positive mode of one holds the negative mode of the other, and the
+    # anomalous term of that pair is an entry of its matrix
+    fam = sort(JC.bathfamily(shared, sfreqs); by = L -> length(L.positive))
+    @test length(fam) == 2
+    @test fam[1].positive == [2] && fam[1].negative == [1, 3, 4, 5]
+    @test fam[2].positive == [1, 3, 4, 5] && fam[2].negative == [2]
+    # the pair terms of a two port block, against the one family over
+    # every signed bath frequency they were read from before: a block
+    # which converts, with a pump phase and a reference time, over
+    # frequencies on independent ladders, a chain a pump apart, a signal
+    # and its idler, and the degenerate pair at half the pump, whose
+    # difference and whose sum are both a multiple of it
+    function densepairs(blk, fs, reference)
+        np = blk.nports
+        rows, cols, Kd = JC.pumpedfamily(blk, vcat(2pi .* fs, -2pi .* fs); reach = false)
+        Sd, Kcd, Vd = JC.pumpednoisematrices(blk, rows, cols, Kd)
+        isnothing(Vd) && (Vd = zeros(ComplexF64, size(Kcd)))
+        nrd = length(rows)
+        at(nu) = findfirst(r -> abs(r - nu) <= 1e-9*(abs(nu) + blk.wp), rows)
+        block2(A, ia, ib) = (isnothing(ia) || isnothing(ib)) ? zeros(ComplexF64, np, np) :
+            ComplexF64[A[(p - 1)*nrd + ia, (q - 1)*nrd + ib] for p in 1:np, q in 1:np]
+        multiple(d) = abs(d - round(d/blk.wp)*blk.wp) <= 1e-6*blk.wp
+        quads = (X, Y) -> (real.(X .+ Y) ./ 2, (imag.(X) .- imag.(Y)) ./ 2, .-(imag.(X) .+ imag.(Y)) ./ 2, real.(X .- Y) ./ 2)
+        out = Tuple{Int,Int,NTuple{4,Matrix{Float64}},NTuple{4,Matrix{Float64}}}[]
+        for (a, fa) in enumerate(fs), (b, fb) in enumerate(fs)
+            nua, nub = 2pi*fa, 2pi*fb
+            normal, anomalous = multiple(nua - nub), multiple(nua + nub)
+            (normal || anomalous) || continue
+            ia, ib, ibm = at(nua), at(nub), at(-nub)
+            zed = zeros(ComplexF64, np, np)
+            N, Kn = normal ? (block2(Vd, ia, ib), block2(Kcd, ia, ib)) : (zed, zed)
+            M, Km = anomalous ? (block2(Vd, ia, ibm), block2(Kcd, ia, ibm)) : (zed, zed)
+            rn, ra = cis((nua - nub)*reference), cis((nua + nub)*reference)
+            push!(out, (a, b, quads(rn .* N, ra .* M), quads(2im .* rn .* Kn, 2im .* ra .* Km)))
+        end
+        return out
+    end
+    q0 = JC.RationalScatteringProvider(zeros(0, 0), zeros(0, 2), zeros(2, 0), [0.3 0.1; 0.2 0.4])
+    qc = JC.RationalScatteringProvider(fill(-wp, 1, 1), [0.4wp 0.1wp], reshape([0.2, 0.15], 2, 1), zeros(2, 2))
+    qz = JC.RationalScatteringProvider(zeros(0, 0), zeros(0, 2), zeros(2, 0), zeros(2, 2))
+    pfreqs = [0.3e9, 0.42e9, 0.5e9, 0.7e9, 1.3e9]
+    for (noise, stated) in ((NoiseCovariance([[8.0 1.0; 1.0 9.0], [0.5 0.2; 0.2 0.4]]), true),
+            (NoiseCovariance([zeros(2, 2), zeros(2, 2)]; completed = true), false))
+        blk = LinearizedScattering([q0, JC.ModulatedRationalProvider(qc, qz)], wp; harmonics = [0, 1],
+            nports = 2, zref = Z0, phase = 0.73, noise)
+        for reference in (0.0, 1.7e-9)
+            got = JC.pumpedpairterms(blk, pfreqs, JC.CPU(), reference)
+            want = densepairs(blk, pfreqs, reference)
+            @test [(t.a, t.b) for t in got] == [(w[1], w[2]) for w in want]
+            @test all(zip(got, want)) do (t, w)
+                all(isapprox.(t.E, w[3]; rtol = 1e-10, atol = 1e-10)) && all(isapprox.(t.C, w[4]; rtol = 1e-10, atol = 1e-10))
+            end
+            # the pair at half the pump is one term and not two, and it
+            # carries both correlations: the covariance a harmonic apart
+            # is its anomalous one, which is why its two quadratures
+            # differ where the block states it
+            degenerate = only(filter(t -> t.a == 3 && t.b == 3, got))
+            if stated
+                @test !isapprox(degenerate.E[1], degenerate.E[4]; rtol = 1e-3)
+            end
+        end
+    end
+    L4 = onladder(shared, sfreqs, 0.4e9)
+    rows = L4.rows
+    Sf, Kc, Vf = JC.pumpednoisematrices(shared, rows, L4.cols, L4.K)
+    i4, i24 = argmin(abs.(rows .- 2pi*0.4e9)), argmin(abs.(rows .- 2pi*2.4e9))
+    @test abs(Kc[i4, i24]) > 0.1
+    @test isapprox(sn.covariance[1, 1] + sn.covariance[2, 2], sum(abs2, Sf[i4, :]) + real(Vf[i4, i4]); rtol = 1e-4)
+    @test isapprox(norm(sn.covariance[1:2, 3:4]), abs(Vf[i4, i24] + dot(Sf[i24, :], Sf[i4, :]))/sqrt(2); rtol = 1e-4)
+    # a covariance completed over the padded ladder of the modes of a
+    # solve, of a block far from lossless: the transient emits the
+    # completed covariance of the family of its bath frequencies, which
+    # is the harmonic balance solve's over its modes whatever modes
+    # either keeps, since both restrict one padded completion
+    bare = model(amp = 0.5, direct = 1.0, noise = NoiseCovariance([zero1, zero1]; completed = true, padding = 8))
+    bsol = transientsolve(transientproblem(one(bare)), (0.0, 20e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints)
+    bplan = transientquantumplan(bsol.times[501:end], [0.4e9])
+    v2 = Float64[]
+    for nm in (2, 4)
+        bath = sort!(abs.([0.4e9 + m*1e9 for m in -nm:nm]))
+        bn = transientnoise(bsol, bplan; frequencies = bath, weights = fill(1/10e-9, length(bath)))
+        @test bn.diagnostics.passed
+        Lb = onladder(bare, bath, 0.4e9)
+        rows = Lb.rows
+        Sf, _, Vf = JC.pumpednoisematrices(bare, rows, Lb.cols, Lb.K)
+        i = argmin(abs.(rows .- 2pi*0.4e9))
+        @test isapprox(bn.covariance[1, 1] + bn.covariance[2, 2], sum(abs2, Sf[i, :]) + real(Vf[i, i]); rtol = 1e-4)
+        hbb = hbsolve([2pi*0.4e9], (wp,), [], (nm,), (4,), one(bare); threewavemixing = true, returnCnoise = true)
+        @test isapprox(real(Vf[i, i]), real(hbb.linearized.Cnoise((0,), 1, (0,), 1, 1)); rtol = 1e-10)
+        push!(v2, real(Vf[i, i]))
+    end
+    @test isapprox(v2[1], v2[2]; rtol = 1e-4)
+    # the noise of an idler survives export, fitting and the transient:
+    # a solve holds its idler at a negative frequency, and the noise
+    # there is the noise at the positive frequency a transient measures,
+    # transposed, so the fitted block emits what the source does rather
+    # than the vacuum its commutator alone would require
+    src = RationalScattering(fill(-wp, 1, 1), fill(wp, 1, 1), fill(0.5, 1, 1), zeros(1, 1);
+        noise = NoiseCovariance(fill(10.0, 1, 1)))
+    sideband = hbsolve(wp .* collect(range(0.35, 0.45; length = 5)), (wp,), [], (1,), (2,), one(src);
+        threewavemixing = true, returnCnoise = true).linearized
+    fit = RationalScattering(LinearizedScattering(sideband, wp; noise = NoiseCovariance(sideband.Cnoise)), 1; noisetol = 1e-6)
+    var = Float64[]
+    for blk in (src, fit)
+        isol = transientsolve(transientproblem(one(blk)), (0.0, 20e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints)
+        iplan = transientquantumplan(isol.times[501:end], [0.6e9])
+        inoise = transientnoise(isol, iplan; frequencies = [0.6e9], weights = [1/10e-9])
+        @test inoise.diagnostics.passed
+        push!(var, tr(inoise.covariance))
+    end
+    @test isapprox(var[1], var[2]; rtol = 1e-10)
+    @test var[1] > 10
+    # the stage values of a pumped block belong to the factor of the
+    # batch which steps it, so batches on one system do not share them
+    p = transientproblem(one(model()))
+    sys = JC.transientsystem(p, dt, GaussLegendre(), JC.CPU(), JC.KLUfactorization())
+    bf1, bf2 = JC.gaussbatchfactor(sys, 1), JC.gaussbatchfactor(sys, 1)
+    r1, r2 = JC.rationalwork(p, JC.CPU(), length(p), 1), JC.rationalwork(p, JC.CPU(), length(p), 1)
+    JC.stageweights!(r1, sys, dt, 2dt)
+    JC.refreshstageoperator!(r1, sys, bf1)
+    v1 = copy(bf1.rationalvals)
+    JC.stageweights!(r2, sys, 20dt, 21dt)
+    JC.refreshstageoperator!(r2, sys, bf2)
+    @test bf1.rationalvals == v1 && bf1.rationalvals != bf2.rationalvals
+    @test !(bf1.rationalvals === sys.gauss.rationalvals) && !(bf1.hostvals === sys.gauss.hostvals)
+    # the stage correction is rebuilt with the factorization when the
+    # junctions of the circuit ask for a fresh one
+    cj = one(model(amp = 0.5, noise = NoiseCovariance([fill(10.0, 1, 1), zero1])), (:jj, 1, 0, JosephsonJunction(1e-9)), (:cap, 1, 0, Capacitor(1e-12)))
+    pj = transientproblem(cj)
+    sysj = JC.transientsystem(pj, dt, GaussLegendre(), JC.CPU(), JC.KLUfactorization())
+    bfj = JC.gaussbatchfactor(sysj, 1)
+    st = JC.gaussstepper(sysj, [pj], 1e-12, 1e-13, 100, bfj)
+    JC.setstate!(st, zeros(length(pj), 1), zeros(length(pj), 1), nothing)
+    JC.stageweights!(st.rw, sysj, 0.18e-9, 0.22e-9)
+    JC.refreshstageoperator!(st.rw, sysj, st.bf)
+    st.refresh!()
+    Kold = copy(st.rw.correction.K)
+    fill!(st.phi, 1.2)
+    st.refresh!()
+    @test norm(st.rw.correction.K .- Kold) > 0
+    r = randn(size(st.delta))
+    a, b = zero(r), zero(r)
+    st.solve!(a, r)
+    JC.stagecorrection!(st.rw, sysj, st.bf, sysj.gauss.coefficients, st.rc, st.zc, false)
+    st.solve!(b, r)
+    @test a == b
+    # and that circuit in time, a weak signal through the block beside
+    # the junction, against the linearized solve of the same circuit
+    fs, Is = 0.4e9, 1e-9
+    fi = 1e9 - fs
+    a0 = Is*sqrt(Z0)/2
+    hb = hbsolve([2pi*fs], (wp,), [], (2,), (4,), cj; threewavemixing = true)
+    tsol = transientsolve(transientproblem(cj; sources = [TransientSource(1, t -> Is*sinpi(2fs*t))]), (0.0, 400e-9);
+        dt, method = GaussLegendre())
+    iqplan = transientiqplan(tsol.times, [fs, fi]; duration = 40e-9, ports = [1, 1], stride = 400)
+    iq = transientiq(iqplan, tsol.outgoing)
+    @test isapprox(abs(iq[1, end])/a0, abs(hb.linearized.S((0,), 1, (0,), 1, 1)); rtol = 1e-3)
+    @test isapprox(abs(iq[2, end])/a0, abs(hb.linearized.S((-1,), 1, (0,), 1, 1))*sqrt(fi/fs); rtol = 1e-2)
+end

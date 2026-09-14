@@ -1693,14 +1693,148 @@ using Test
             cold.Cnoise[:, :, 1]; rtol = 1e-12)
     end
 
+    @testset "a block which states its noise" begin
+        # An active block, an amplifier given by its scattering parameters,
+        # states the noise it adds with a NoiseCovariance V, in the units of
+        # Cnoise. With K = I - S S' the noise has the commutator K, so V is
+        # realizable only when V - K and V + K are positive semidefinite,
+        # and the block carries the channels of both kinds: (V + K)/2 of
+        # those which emit like modes and (V - K)/2 of those which emit like
+        # their conjugates, which enter the commutation relations with the
+        # opposite sign. Their sum is the noise the block states and their
+        # difference K, so the commutation relations come back to one.
+        Z0 = 50.0
+        w0 = 2*pi*[5.0e9]
+        two(x) = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:x, 1, 2, x),
+            (:p2, 2, 0, Port(2; Z0 = Z0))])
+        run(c; kw...) = hblinsolve(w0, c; keyedarrays = false,
+            returnSnoise = true, returnCnoise = true, returnQE = true,
+            returnCM = true, kw...)
+        # a quantum limited amplifier of power gain G: its output port has
+        # K[2,2] = 1 - G, so it must emit at least G - 1 there, and its
+        # input, a perfect absorber, emits the vacuum backward
+        for G in (2.0, 100.0, 1.0e4)
+            S = [0.0 0.0; sqrt(G) 0.0]
+            amp = ScatteringParameters(S; zref = Z0,
+                noise = NoiseCovariance([1.0 0.0; 0.0 G - 1]), dcmodel = OpenDC())
+            o = run(two(amp))
+            @test isapprox(abs2(o.S[2, 1, 1]), G; rtol = 1e-12)
+            @test isapprox(o.CM, [1.0, 1.0]; atol = 1e-12*G)
+            # the total noise at the output is 2G - 1 vacua, half a photon
+            # referred to the input, which is the ideal quantum efficiency
+            Nout = sum(abs2, o.S[2, :, 1]) + real(o.Cnoise[2, 2, 1])
+            @test isapprox(Nout, 2G - 1; rtol = 1e-12)
+            @test isapprox(o.QE[2, 1, 1], G/(2G - 1); rtol = 1e-12)
+            @test isapprox(o.QE[2, 1, 1],
+                JosephsonCircuits.calcqeideal(o.S[:, :, 1])[2, 1]; rtol = 1e-12)
+            # a channel of each kind per port, the second kind primed
+            @test size(o.Snoise, 1) == 4
+        end
+        keyed = hblinsolve(w0, two(ScatteringParameters([0.0 0.0; 3.0 0.0];
+            zref = Z0, noise = NoiseCovariance([1.0 0.0; 0.0 8.0]))); returnSnoise = true)
+        @test collect(JosephsonCircuits.AxisKeys.axiskeys(keyed.Snoise, 2)) ==
+            ["x/port1#1", "x/port1#2", "x/port1#1'", "x/port1#2'"]
+
+        # an amplifier with an input referred added noise of nadd photons
+        # states V[2,2] = 2 G nadd, and behind a cold attenuator of
+        # transmission eta the noise referred to the attenuator's input is
+        # the Friis cascade, nadd/eta plus the attenuator's own
+        # (1 - eta)/(2 eta)
+        G, nadd, eta = 400.0, 7.0, 0.5
+        hemt = ScatteringParameters([0.0 0.0; sqrt(G) 0.0]; zref = Z0,
+            noise = NoiseCovariance([1.0 0.0; 0.0 2G*nadd]), dcmodel = OpenDC())
+        att = ScatteringParameters([0.0 sqrt(eta); sqrt(eta) 0.0]; zref = Z0)
+        chain = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:att, 1, 2, att),
+            (:hemt, 2, 3, hemt), (:p2, 3, 0, Port(2; Z0 = Z0))])
+        o = run(chain)
+        Gtot = abs2(o.S[2, 1, 1])
+        @test isapprox(Gtot, eta*G; rtol = 1e-12)
+        Nout = sum(abs2, o.S[2, :, 1]) + real(o.Cnoise[2, 2, 1])
+        @test isapprox((Nout/Gtot - 1)/2, nadd/eta + (1 - eta)/(2eta); rtol = 1e-12)
+        @test isapprox(o.CM, [1.0, 1.0]; atol = 1e-10)
+        # the amplifier's channels carry no temperature: the analysis
+        # temperature warms the attenuator and nothing else
+        warm = run(chain; temperature = 1.0)
+        f = JosephsonCircuits.thermaloccupation(w0[1], 1.0)
+        Nwarm = sum(abs2, warm.S[2, :, 1]) + real(warm.Cnoise[2, 2, 1])
+        @test isapprox(Nwarm - Nout, (1 - eta)*G*(f - 1); rtol = 1e-10)
+        @test isapprox(warm.CM, [1.0, 1.0]; atol = 1e-10)
+
+        # a passive block in equilibrium is the stated covariance
+        # V = coth(hbar w/2kT) K, whether V is given as a callable, as a
+        # table, or as a constant at one frequency
+        T = 0.3
+        Sp = ComplexF64[0.2 0.5im; 0.6 0.1]
+        Kp = I - Sp*Sp'
+        Vf(w) = JosephsonCircuits.thermaloccupation(w, T) .* Kp
+        ws2 = 2*pi*[3.0e9, 5.0e9, 8.0e9]
+        run2(c) = hblinsolve(ws2, c; keyedarrays = false, returnSnoise = true,
+            returnCnoise = true, returnQE = true, returnCM = true)
+        ref = run2(two(ScatteringParameters(Sp; zref = Z0, noise = ThermalEquilibrium(T))))
+        @test isapprox(ref.CM, ones(2, 3); atol = 1e-12)
+        ftab = 2*pi*collect(range(1e9, 10e9; length = 19))
+        Vtab = cat([Vf(w) for w in ftab]...; dims = 3)
+        for noise in (NoiseCovariance(Vf), NoiseCovariance((ftab, Vtab)),
+                NoiseCovariance(Vf; interpolation = :linear))
+            o = run2(two(ScatteringParameters(Sp; zref = Z0, noise = noise)))
+            @test isapprox(o.Cnoise, ref.Cnoise; rtol = 1e-6)
+            @test isapprox(o.QE, ref.QE; rtol = 1e-6)
+            @test isapprox(o.CM, ones(2, 3); atol = 1e-12)
+            # the channels of the conjugate kind carry the nbar of the
+            # occupation, so they vanish in the vacuum and not otherwise
+            @test sum(abs2, o.Snoise[3:4, :, :]) > 0
+        end
+        cold = run2(two(ScatteringParameters(Sp; zref = Z0, noise = NoiseCovariance(Matrix(Kp)))))
+        @test isapprox(cold.Cnoise,
+            run2(two(ScatteringParameters(Sp; zref = Z0))).Cnoise; rtol = 1e-12)
+        @test sum(abs2, cold.Snoise[3:4, :, :]) < 1e-24
+
+        # less than the commutation relations require is refused: at
+        # construction where the data is stored, and at the frequency it
+        # is evaluated at where it is not
+        @test_throws ArgumentError ScatteringParameters([0.0 2.0; 2.0 0.0];
+            noise = NoiseCovariance([1.0 0.0; 0.0 1.0]))
+        @test_throws ArgumentError ScatteringParameters(Sp; zref = Z0,
+            noise = NoiseCovariance((ftab, 0.5 .* Vtab)))
+        @test ScatteringParameters(Sp; zref = Z0,
+            noise = NoiseCovariance((ftab, 0.5 .* Vtab), atol = 1.0)) isa ScatteringParameters
+        starved = ScatteringParameters([0.0 0.0; 10.0 0.0]; zref = Z0,
+            noise = NoiseCovariance(w -> [1.0 0.0; 0.0 98.0]))
+        @test_throws ArgumentError run(two(starved))
+        # and without noise outputs the block is stamped and solved
+        @test isapprox(abs2(hblinsolve(w0, two(starved); keyedarrays = false,
+            returnQE = false, returnCM = false).S[2, 1, 1]), 100.0; rtol = 1e-12)
+
+        # a pumped amplifier read out through a circulator by such a block:
+        # every output mode obeys the commutation relations, signed by its
+        # frequency, and the added noise is the cascade of the two
+        jpa = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)),
+            (:cc, 1, 2, Capacitor(100.0e-15)), (:jj, 2, 0, JosephsonJunction(1000.0e-12)),
+            (:cj, 2, 0, Capacitor(1000.0e-15))])
+        circulator = ScatteringParameters([0.0 0.0 1.0; 1.0 0.0 0.0; 0.0 1.0 0.0]; zref = Z0)
+        chain = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:circ, 1, 2, 3, circulator),
+            (:cc, 2, 4, Capacitor(100.0e-15)), (:jj, 4, 0, JosephsonJunction(1000.0e-12)),
+            (:cj, 4, 0, Capacitor(1000.0e-15)),
+            (:hemt, 3, 5, hemt), (:p2, 5, 0, Port(2; Z0 = Z0))])
+        fp, fs, ip = 4.75e9, 4.7e9, 0.00565e-6
+        alone = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)],
+            (8,), (16,), jpa; ftol = 1e-14, returnCnoise = true)
+        both = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)],
+            (8,), (16,), chain; ftol = 1e-14, returnCnoise = true)
+        @test all(x -> isapprox(abs(x), 1.0; atol = 1e-8), both.linearized.CM)
+        Ga = abs2(alone.linearized.S((0,), 1, (0,), 1, 1))
+        # the noise leaving the signal mode of a port: every input mode of
+        # every port in its vacuum, plus what the circuit adds there
+        Na = sum(abs2(alone.linearized.S((0,), 1, (m,), 1, 1)) for m in -8:2:8) +
+            real(alone.linearized.Cnoise((0,), 1, (0,), 1, 1))
+        Gb = abs2(both.linearized.S((0,), 2, (0,), 1, 1))
+        Nb = sum(abs2(both.linearized.S((0,), 2, (m,), p, 1)) for m in -8:2:8, p in 1:2) +
+            real(both.linearized.Cnoise((0,), 2, (0,), 2, 1))
+        @test isapprox(Gb, G*Ga; rtol = 1e-8)
+        @test isapprox((Nb/Gb - 1)/2, (Na/Ga - 1)/2 + nadd/Ga; rtol = 1e-8)
+    end
+
     @testset "unsupported cases still error clearly" begin
-        # arbitrary noise covariance permits active blocks: not supported
-        active = ScatteringParameters([0.0 2.0; 2.0 0.0];
-            noise = NoiseCovariance([1.0 0.0; 0.0 1.0]), grounded = true)
-        c = Circuit([:a => active, :p => Port(1; Z0 = 50.0)],
-            [((:p, 1), (:a, 1)), ((:a, 2), Ground),
-             ((:p, 2), Ground)])
-        @test_throws ComponentNotSupportedError compile(c)
         # a scattering block has no scalar value to perturb, so a
         # sensitivity with respect to one is rejected; sensitivities with
         # respect to the lumped components of a circuit which contains a
@@ -1802,6 +1936,248 @@ using Test
 
 end
 
+# A pumped device as a block: a linear time-periodic multiport described
+# by its harmonic transfer functions, stamped as a coupling between the
+# modes of the circuit whose frequencies differ by harmonics of its pump.
+# The reference is exact and free: the device simulated as junctions
+# against the same device inserted as a block built from its own solve.
+@testset verbose=true "a pumped device as a scattering block" begin
+    JC = JosephsonCircuits
+    Z0 = 50.0
+    S(sol) = Array(sol.linearized.S)
+
+    @testset "the stamp against analytic harmonic transfer functions" begin
+        # the block's transfer functions act on power waves, and the
+        # solver reports its scattering matrix in waves of photons per
+        # second, so a conversion entry differs by the square root of the
+        # frequency ratio; and H_{-k}(nu) = conj(H_k(-nu))
+        fp = 4.75e9; wp = 2pi*fp
+        tau = 3e-11
+        H0(nu) = fill(0.6*cis(-nu*tau), 1, 1)
+        H2(nu) = fill(0.3*cis(nu*2tau) + 0.1im, 1, 1)
+        # an analytic block, which is neither lossless nor stating its
+        # noise: the checks of its declaration are switched off with atol
+        blk = LinearizedScattering([H0, H2], wp; harmonics = [0, 2], nports = 1, atol = 10.0)
+        @test blk.harmonics == [0, 2] && blk.nports == 1
+        c = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, blk)])
+        ws = 2pi*[4.6e9, 4.9e9]
+        sb = hbsolve(ws, (wp,), [], (3,), (6,), c)
+        for (i, w) in enumerate(ws), mo in (0, 2, -2), mi in (0, 2, -2)
+            k = mo - mi
+            nu = w + mi*wp
+            h = k == 0 ? H0(nu)[1] : k == 2 ? H2(nu)[1] : k == -2 ? conj(H2(-nu)[1]) : 0.0
+            @test isapprox(sb.linearized.S((mo,), 1, (mi,), 1, i),
+                h*sqrt(abs(nu)/abs(w + mo*wp)); atol = 1e-13)
+        end
+        # the harmonics must begin with zero and ascend, the providers
+        # match them, and only a lossless block is admitted
+        @test_throws ArgumentError LinearizedScattering([H0, H2], wp; harmonics = [2, 0], nports = 1)
+        @test_throws DimensionMismatch LinearizedScattering([H0], wp; harmonics = [0, 2], nports = 1)
+        @test_throws ArgumentError LinearizedScattering([H0, H2], -wp; harmonics = [0, 2], nports = 1)
+        @test_throws ArgumentError LinearizedScattering([H0, H2], wp; harmonics = [0, 2], nports = 1, noise = Passive())
+        # a solve without the block's pump cannot represent it
+        @test_throws ArgumentError hblinsolve(ws, c)
+        @test_throws ArgumentError hbsolve(ws, (2pi*4.0e9,), [], (3,), (6,), c)
+        # nor can the transient, yet
+        @test_throws ArgumentError transientproblem(c)
+    end
+
+    @testset "a one port amplifier against its junctions" begin
+        jpa = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:cc, 1, 2, Capacitor(100.0e-15)),
+            (:jj, 2, 0, JosephsonJunction(1000.0e-12)), (:cj, 2, 0, Capacitor(1000.0e-15))])
+        fp, ip = 4.75e9, 0.00565e-6
+        # a band which does not contain the pump, where a signal solve is
+        # degenerate
+        ws = 2pi*collect(range(4.5e9, 5.0e9; length = 12))
+        sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; ftol = 1e-14)
+        blk = LinearizedScattering(sol.linearized, 2pi*fp)
+        @test blk.harmonics == collect(0:2:16)
+        @test all(p -> p isa JC.PiecewiseTabulatedProvider && all(t -> t.extrapolation == :zero, p.tables), blk.providers)
+        # the block alone, solved with the pump frequency and no source
+        alone = hbsolve(ws, (2pi*fp,), [], (8,), (16,), Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, blk)]))
+        @test maximum(abs, S(alone) .- S(sol)) < 1e-9
+        @test all(x -> isapprox(abs(x), 1.0; atol = 1e-12), alone.linearized.CM)
+        # behind a matched pad and a line: the pump reaches the junction
+        # attenuated by the pad and delayed by the line, so the source is
+        # raised by the pad and the block's pump phase is the line's delay
+        g = 10^(-3/20); len = 0.02; vp = 2.0e8; tau = len/vp
+        front = [(:p1, 1, 0, Port(1; Z0 = Z0)), (:pad, 1, 2, ScatteringParameters([0.0 g; g 0.0]; zref = Z0)),
+            (:line, 2, 3, TransmissionLine(Z0, len; vp = vp))]
+        cj = Circuit(vcat(front, [(:cc, 3, 4, Capacitor(100.0e-15)), (:jj, 4, 0, JosephsonJunction(1000.0e-12)),
+            (:cj, 4, 0, Capacitor(1000.0e-15))]))
+        sj = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip/g)], (8,), (16,), cj; ftol = 1e-14)
+        cb = Circuit(vcat(front, [(:b, 3, LinearizedScattering(sol.linearized, 2pi*fp; phase = -2pi*fp*tau))]))
+        sb = hbsolve(ws, (2pi*fp,), [], (8,), (16,), cb)
+        @test maximum(abs, S(sb) .- S(sj)) < 1e-8
+        # the phase keyword is the phase of the pump: a source of that
+        # phase rotates the conversion entries the same way
+        solp = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip*cis(0.4))], (8,), (16,), jpa; ftol = 1e-14)
+        sp = hbsolve(ws, (2pi*fp,), [], (8,), (16,),
+            Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, LinearizedScattering(sol.linearized, 2pi*fp; phase = 0.4))]))
+        @test maximum(abs, S(sp) .- S(solp)) < 1e-9
+        # a device with loss is refused, since its noise is not yet a
+        # block's, and a solve of several pumps is not one pump
+        lossy = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:cc, 1, 2, Capacitor(100.0e-15)),
+            (:jj, 2, 0, JosephsonJunction(1000.0e-12)), (:cj, 2, 0, Capacitor(1000.0e-15)), (:r, 2, 0, Resistor(2.0e4))])
+        soll = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), lossy; ftol = 1e-14)
+        @test_throws ArgumentError LinearizedScattering(soll.linearized, 2pi*fp)
+        @test_throws ArgumentError LinearizedScattering(sol.linearized, 2pi*fp; ports = [2])
+        @test_throws ArgumentError LinearizedScattering(sol.linearized, 2pi*fp; noise = Passive())
+        # the data must be keyed
+        plain = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; ftol = 1e-14, keyedarrays = false)
+        @test_throws ArgumentError LinearizedScattering(plain.linearized, 2pi*fp)
+    end
+
+    @testset "a two port chain against its junctions" begin
+        cells = vcat([(Symbol(:lj, i), i, i + 1, JosephsonJunction(100e-12)) for i in 1:4],
+            [(Symbol(:c, i + 1), i + 1, 0, Capacitor(40e-15)) for i in 1:4])
+        chain = Circuit(vcat([(:p1, 1, 0, Port(1; Z0 = Z0)), (:c1, 1, 0, Capacitor(40e-15))], cells, [(:p2, 5, 0, Port(2; Z0 = Z0))]))
+        fp, ip = 7.0e9, 0.6e-6
+        ws = 2pi*collect(range(5.0e9, 6.0e9; length = 7))
+        sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (6,), (12,), chain; ftol = 1e-14)
+        blk = LinearizedScattering(sol.linearized, 2pi*fp)
+        @test blk.nports == 2 && blk.harmonics == collect(0:2:12)
+        alone = hbsolve(ws, (2pi*fp,), [], (6,), (12,),
+            Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 2, blk), (:p2, 2, 0, Port(2; Z0 = Z0))]))
+        @test maximum(abs, S(alone) .- S(sol)) < 1e-12
+        # a line and a pad after the chain: the pump leaves through them
+        # without reflection, so the operating point is the chain's own
+        g = 10^(-3/20)
+        after = [(:line, 5, 6, TransmissionLine(Z0, 0.03)), (:pad, 6, 7, ScatteringParameters([0.0 g; g 0.0]; zref = Z0)),
+            (:p2, 7, 0, Port(2; Z0 = Z0))]
+        sj = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (6,), (12,),
+            Circuit(vcat([(:p1, 1, 0, Port(1; Z0 = Z0)), (:c1, 1, 0, Capacitor(40e-15))], cells, after)); ftol = 1e-14)
+        sb = hbsolve(ws, (2pi*fp,), [], (6,), (12,),
+            Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 5, blk), after...]))
+        @test maximum(abs, S(sb) .- S(sj)) < 1e-12
+        @test all(x -> isapprox(abs(x), 1.0; atol = 1e-12), sb.linearized.CM)
+        # the ports of the block are selected and ordered by the keyword
+        rev = LinearizedScattering(sol.linearized, 2pi*fp; ports = [2, 1])
+        srev = hbsolve(ws, (2pi*fp,), [], (6,), (12,),
+            Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 2, 1, rev), (:p2, 2, 0, Port(2; Z0 = Z0))]))
+        @test maximum(abs, S(srev) .- S(sol)) < 1e-12
+        # the block is linear, so a pumped junction elsewhere in the
+        # circuit is solved with it in place: the chain's output stage as
+        # a block in front of a junction resonator driven by the circuit's
+        # pump
+        mixed = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 2, blk), (:cc, 2, 3, Capacitor(100.0e-15)),
+            (:jj, 3, 0, JosephsonJunction(1000.0e-12)), (:cj, 3, 0, Capacitor(1000.0e-15))])
+        sm = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = 1.0e-9)], (6,), (12,), mixed; ftol = 1e-12)
+        @test all(x -> isapprox(abs(x), 1.0; atol = 1e-10), sm.linearized.CM)
+    end
+
+    @testset "a pumped block with loss states its noise" begin
+        # a device with internal loss is not lossless, so it states the
+        # covariance its solve reports, which becomes the block's
+        # harmonic covariances; its channels of both kinds span all its
+        # modes at once, and the block reproduces the junctions' added
+        # noise, quantum efficiency and commutation relations, alone and
+        # inside a circuit, the covariance's correlations between the
+        # modes included
+        d(a, b) = maximum(abs, Array(a) .- Array(b))
+        cmoff(sol) = maximum(abs, abs.(Array(sol.linearized.CM)) .- 1)
+        lossy = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:cc, 1, 2, Capacitor(100.0e-15)),
+            (:jj, 2, 0, JosephsonJunction(1000.0e-12)), (:cj, 2, 0, Capacitor(1000.0e-15)), (:r, 2, 0, Resistor(2.0e4))])
+        fp, ip = 4.75e9, 0.00565e-6
+        ws = 2pi*collect(range(4.5e9, 5.0e9; length = 12))
+        sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), lossy; ftol = 1e-14, returnCnoise = true)
+        # without its noise the device is refused as not lossless, and
+        # with too little of it as violating the commutation relations
+        @test_throws ArgumentError LinearizedScattering(sol.linearized, 2pi*fp)
+        @test_throws ArgumentError LinearizedScattering(sol.linearized, 2pi*fp; noise = NoiseCovariance(0.5 .* sol.linearized.Cnoise))
+        @test_throws ArgumentError LinearizedScattering(sol.linearized, 2pi*fp; noise = NoiseCovariance([1.0 0.0; 0.0 1.0]))
+        blk = LinearizedScattering(sol.linearized, 2pi*fp; noise = NoiseCovariance(sol.linearized.Cnoise))
+        @test blk.noise isa NoiseCovariance && length(blk.noise.provider) == length(blk.harmonics)
+        alone = hbsolve(ws, (2pi*fp,), [], (8,), (16,), Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, blk)]);
+            returnCnoise = true, returnSnoise = true)
+        @test d(alone.linearized.S, sol.linearized.S) < 1e-9
+        @test d(alone.linearized.Cnoise, sol.linearized.Cnoise) < 1e-9
+        @test d(alone.linearized.QE, sol.linearized.QE) < 1e-9
+        @test cmoff(alone) < 1e-9
+        # two channel slots per port, of the two kinds, with the rows of
+        # every mode used
+        @test collect(JosephsonCircuits.AxisKeys.axiskeys(alone.linearized.Snoise, 2)) == ["b/port1", "b/port1'"]
+        @test count(x -> abs(x) > 1e-6, Array(alone.linearized.Snoise)) > length(ws)
+        # behind a pad and a line, with the pump phase of the line's delay
+        g = 10^(-3/20); len = 0.02; vp = 2.0e8; tau = len/vp
+        front = [(:p1, 1, 0, Port(1; Z0 = Z0)), (:pad, 1, 2, ScatteringParameters([0.0 g; g 0.0]; zref = Z0)),
+            (:line, 2, 3, TransmissionLine(Z0, len; vp = vp))]
+        cj = Circuit(vcat(front, [(:cc, 3, 4, Capacitor(100.0e-15)), (:jj, 4, 0, JosephsonJunction(1000.0e-12)),
+            (:cj, 4, 0, Capacitor(1000.0e-15)), (:r, 4, 0, Resistor(2.0e4))]))
+        sj = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip/g)], (8,), (16,), cj; ftol = 1e-14, returnCnoise = true)
+        blkp = LinearizedScattering(sol.linearized, 2pi*fp; noise = NoiseCovariance(sol.linearized.Cnoise), phase = -2pi*fp*tau)
+        sb = hbsolve(ws, (2pi*fp,), [], (8,), (16,), Circuit(vcat(front, [(:b, 3, blkp)])); returnCnoise = true)
+        @test d(sb.linearized.S, sj.linearized.S) < 1e-8
+        @test d(sb.linearized.Cnoise, sj.linearized.Cnoise) < 1e-8
+        @test d(sb.linearized.QE, sj.linearized.QE) < 1e-9
+        @test cmoff(sb) < 1e-9
+        # a lossy two port, whose covariance is far from full rank, alone
+        # and with a pad after it
+        cells = vcat([(Symbol(:lj, i), i, i + 1, JosephsonJunction(100e-12)) for i in 1:4],
+            [(Symbol(:c, i + 1), i + 1, 0, Capacitor(40e-15)) for i in 1:4])
+        head = [(:p1, 1, 0, Port(1; Z0 = Z0)), (:c1, 1, 0, Capacitor(40e-15)), (:r3, 3, 0, Resistor(3.0e3))]
+        fp2, ip2 = 7.0e9, 0.6e-6
+        ws2 = 2pi*collect(range(5.0e9, 6.0e9; length = 5))
+        s2 = hbsolve(ws2, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
+            Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); ftol = 1e-14, returnCnoise = true)
+        blk2 = LinearizedScattering(s2.linearized, 2pi*fp2; noise = NoiseCovariance(s2.linearized.Cnoise))
+        alone2 = hbsolve(ws2, (2pi*fp2,), [], (6,), (12,),
+            Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 2, blk2), (:p2, 2, 0, Port(2; Z0 = Z0))]); returnCnoise = true)
+        @test d(alone2.linearized.Cnoise, s2.linearized.Cnoise) < 1e-9
+        @test d(alone2.linearized.QE, s2.linearized.QE) < 1e-9
+        after = [(:line, 5, 6, TransmissionLine(Z0, 0.03)), (:pad, 6, 7, ScatteringParameters([0.0 g; g 0.0]; zref = Z0)),
+            (:p2, 7, 0, Port(2; Z0 = Z0))]
+        sj2 = hbsolve(ws2, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
+            Circuit(vcat(head, cells, after)); ftol = 1e-14, returnCnoise = true)
+        sb2 = hbsolve(ws2, (2pi*fp2,), [], (6,), (12,),
+            Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 5, blk2), after...]); returnCnoise = true)
+        @test d(sb2.linearized.Cnoise, sj2.linearized.Cnoise) < 1e-9
+        @test d(sb2.linearized.QE, sj2.linearized.QE) < 1e-9
+        @test cmoff(sb2) < 1e-9
+        # the covariance must come from the same solve as the scattering
+        # matrix, and from one which returned it
+        other = hbsolve(ws2, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
+            Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); ftol = 1e-14)
+        @test_throws ArgumentError LinearizedScattering(s2.linearized, 2pi*fp2; noise = NoiseCovariance(sol.linearized.Cnoise))
+        @test_throws ArgumentError LinearizedScattering(other.linearized, 2pi*fp2; noise = NoiseCovariance(other.linearized.Cnoise))
+        # the same device solved behind a line, fitted with the line's
+        # delay taken out of port 2 within the band of the signal and
+        # its idler: at the modes in the band the fit is the device
+        # without the line, its stated covariance rotated by the delay
+        # of the emitted waves, and with the line put back it is the
+        # device behind the line; the modes outside the band are the
+        # fit's extrapolation, to which the covariance check is relaxed
+        len3, vp3 = 0.03, 2.0e8
+        ws3 = 2pi*collect(range(5.0e9, 6.0e9; length = 21))
+        s3 = hbsolve(ws3, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
+            Circuit(vcat(head, cells, [(:line, 5, 6, TransmissionLine(Z0, len3; vp = vp3)), (:p2, 6, 0, Port(2; Z0 = Z0))])); ftol = 1e-14, returnCnoise = true)
+        bare = hbsolve(ws3, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
+            Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); ftol = 1e-14, returnCnoise = true)
+        blk3 = LinearizedScattering(s3.linearized, 2pi*fp2; noise = NoiseCovariance(s3.linearized.Cnoise))
+        fit3 = RationalScattering(blk3, 20; band = (4.5e9, 9.5e9), delays = [0.0, len3/vp3], tol = 0.1, noisetol = 0.1)
+        @test fit3.noise isa NoiseCovariance && fit3.noise.completed && fit3.atol == blk3.atol && fit3.noise.atol == blk3.noise.atol
+        # the tables of a solve, declared lossless anew, are checked as
+        # any data is, and the device has loss
+        @test_throws ArgumentError RationalScattering(LinearizedScattering(blk3.providers, 2pi*fp2;
+            harmonics = blk3.harmonics, nports = 2, zref = Z0, noise = Lossless()), 4; band = (4.5e9, 9.5e9))
+        modes = collect(JosephsonCircuits.AxisKeys.axiskeys(s3.linearized.S, 1))
+        inband = [findfirst(==(m), modes) for m in ((0,), (-2,))]
+        db(a, b) = maximum(abs, Array(a)[inband, :, inband, :, :] .- Array(b)[inband, :, inband, :, :])
+        fb = hbsolve(ws3, (2pi*fp2,), [], (6,), (12,),
+            Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 2, fit3), (:p2, 2, 0, Port(2; Z0 = Z0))]); returnCnoise = true)
+        @test db(fb.linearized.S, bare.linearized.S) < 1e-6
+        @test db(fb.linearized.Cnoise, bare.linearized.Cnoise) < 1e-5
+        @test db(fb.linearized.QE, bare.linearized.QE) < 1e-5
+        fl = hbsolve(ws3, (2pi*fp2,), [], (6,), (12,),
+            Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 2, fit3), (:line, 2, 3, TransmissionLine(Z0, len3; vp = vp3)), (:p2, 3, 0, Port(2; Z0 = Z0))]); returnCnoise = true)
+        @test db(fl.linearized.S, s3.linearized.S) < 1e-6
+        @test db(fl.linearized.Cnoise, s3.linearized.Cnoise) < 1e-5
+        @test maximum(abs, abs.(Array(fl.linearized.CM)[inband, :, :]) .- 1) < 1e-5
+        @test_throws ArgumentError RationalScattering(blk3, 8; delays = [0.0])
+        @test_throws ArgumentError RationalScattering(blk3, 8; band = (6e9, 5e9))
+    end
+end
+
 # The zero frequency pencil, which is what makes a block visible at direct
 # current. `evaluatehybrid!` writes `i = 0` there; the descriptor reads the
 # block's own relation instead, and the classification of what it leaves
@@ -1879,4 +2255,285 @@ end
     @test_throws ArgumentError ScatteringParameters(([2*pi*1e9, 2*pi*3e9],
         reshape(ComplexF64[1, -1], 1, 1, 2)); nports = 1, grounded = true,
         noise = Lossless())
+end
+
+@testset "the checks of a pumped block in harmonic balance" begin
+    JC = JosephsonCircuits
+    Z0 = 50.0
+    wp = 2pi*1e9
+    zero1 = zeros(ComplexF64, 1, 1)
+    one(b) = Circuit([(:p, 1, 0, Port(1; Z0 = Z0)), (:b, 1, b)])
+    # a block with its unconverted response alone is an ordinary block:
+    # a short, an attenuator stating the noise of its loss, and an
+    # amplifier stating its noise, against the same as scattering
+    # parameters
+    for (H0, V) in ((fill(-1.0, 1, 1), nothing), (fill(0.5, 1, 1), fill(0.75, 1, 1)), (fill(2.0, 1, 1), fill(3.0, 1, 1)))
+        b = LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0,
+            noise = isnothing(V) ? Lossless() : NoiseCovariance([V]))
+        r = ScatteringParameters(H0; zref = Z0, noise = isnothing(V) ? Lossless() : NoiseCovariance(V))
+        ob = hblinsolve([2pi*0.4e9], one(b); keyedarrays = false, returnCnoise = true)
+        or = hblinsolve([2pi*0.4e9], one(r); keyedarrays = false, returnCnoise = true)
+        @test maximum(abs, ob.S .- or.S) < 1e-12
+        @test maximum(abs, ob.Cnoise .- or.Cnoise) < 1e-12
+    end
+    # a block with very little loss emits very little noise, not none
+    delta = 1e-9
+    b = LinearizedScattering([fill(sqrt(1 - delta), 1, 1), zero1], wp; harmonics = [0, 1], nports = 1, zref = Z0,
+        noise = NoiseCovariance([fill(delta, 1, 1), zero1]))
+    o = hbsolve([2pi*0.4e9], (wp,), [], (2,), (4,), one(b); keyedarrays = false, returnCnoise = true, threewavemixing = true)
+    @test all(m -> abs(o.linearized.Cnoise[m, m, 1] - delta) < 1e-3*delta, axes(o.linearized.Cnoise, 1))
+    # the factors of a stated covariance reconstruct it and the commutator
+    V = [3.0 0.5im; -0.5im 2.0]
+    K = [1.0 0.2; 0.2 -1.5]
+    L, M = JC.psdfactor((V + K)/2), JC.psdfactor((V - K)/2)
+    @test L*L' + M*M' ≈ V atol = 1e-12
+    @test L*L' - M*M' ≈ K atol = 1e-12
+    # a declared lossless block is checked over the modes of the solve,
+    # whatever outputs the solve is asked for
+    active = LinearizedScattering([fill(2.0, 1, 1), zero1], wp; harmonics = [0, 1], nports = 1, zref = Z0)
+    @test_throws ArgumentError hbsolve([2pi*0.4e9], (wp,), [], (2,), (4,), one(active); threewavemixing = true)
+    # a callable which does not convert, whose gain the solve finds
+    # itself, so that the refusal is the declaration's and not the
+    # harmonic map's
+    gain = LinearizedScattering([w -> fill(2.0, 1, 1)], wp; harmonics = [0], nports = 1, zref = Z0)
+    @test_throws ArgumentError hblinsolve([0.4wp], one(gain); returnQE = false, returnCM = false, returnCnoise = false, returnSnoise = false)
+    # a completed covariance is checked for finite, Hermitian entries
+    # where it is stated: the completion repairs a covariance and does
+    # not stand in for one
+    for completed in (false, true)
+        skew = LinearizedScattering([w -> fill(0.5, 1, 1)], wp; harmonics = [0], nports = 1, zref = Z0,
+            noise = NoiseCovariance([w -> fill(2.0 + 1im, 1, 1)]; completed))
+        @test_throws ArgumentError hblinsolve([0.4wp], one(skew); keyedarrays = false, returnCnoise = true)
+    end
+    # stored data is checked when the block is built: a block of
+    # constants which does not convert, and a table at its knots; a
+    # callable is checked at the solve
+    @test_throws ArgumentError LinearizedScattering([fill(2.0, 1, 1)], wp; harmonics = [0], nports = 1, zref = Z0)
+    wknots = 2pi .* collect(range(0.1e9, 0.9e9; length = 5))
+    @test_throws ArgumentError LinearizedScattering([(wknots, fill(2.0 + 0im, 1, 1, 5))], wp; harmonics = [0], nports = 1, zref = Z0)
+    @test LinearizedScattering([(wknots, fill(2.0 + 0im, 1, 1, 5))], wp; harmonics = [0], nports = 1, zref = Z0, atol = 4.0) isa LinearizedScattering
+    @test LinearizedScattering([w -> fill(2.0, 1, 1)], wp; harmonics = [0], nports = 1, zref = Z0) isa LinearizedScattering
+    # a stated covariance below the commutation relations is refused there
+    starved = LinearizedScattering([fill(2.0, 1, 1), zero1], wp; harmonics = [0, 1], nports = 1, zref = Z0,
+        noise = NoiseCovariance([fill(1.0, 1, 1), zero1]))
+    @test_throws ArgumentError hbsolve([2pi*0.4e9], (wp,), [], (2,), (4,), one(starved); threewavemixing = true)
+    # the pump solve carries a block which couples a retained mode to the
+    # conjugate of another only without a source, where every mode is zero
+    conv = LinearizedScattering([zero1, fill(0.1, 1, 1)], wp; harmonics = [0, 2], nports = 1, zref = Z0,
+        noise = NoiseCovariance([fill(10.0, 1, 1), zero1]))
+    @test_throws ArgumentError hbnlsolve((wp,), (6,), [(mode = (1,), port = 1, current = 1e-9)], one(conv))
+    @test maximum(abs, hbnlsolve((wp,), (6,), [], one(conv); keyedarrays = false).S) == 0
+    # the refusal holds for a solve on a reused operator too, built by a
+    # solve without a source
+    psc = JC.compile(one(conv))
+    cg = JC.calccircuitgraph(psc)
+    fs = JC.removeconjfreqs(JC.truncfreqs(JC.calcfreqsrdft((12,)); maxharmonics = (6,), dc = false, odd = true, even = false))
+    indices = JC.fourierindices(fs)
+    nm = JC.numericmatrices(psc, cg, Dict{Symbol,Float64}(); Nmodes = length(fs.modes))
+    reuse = JC.HBReuse()
+    hbnlsolve((wp,), [], fs, indices, psc, cg, nm; reuse, method = NewtonKrylov(), keyedarrays = false)
+    @test_throws ArgumentError hbnlsolve((wp,), [(mode = (1,), port = 1, current = 1e-9)], fs, indices, psc, cg, nm; reuse, method = NewtonKrylov(), keyedarrays = false)
+    # and for a conversion through a negative harmonic on a multi-tone
+    # grid, whose retained modes have negative frequencies: the conjugate
+    # of the mode at -0.4 wp converts into itself through the harmonic -2
+    # of a block pumped at 0.4 wp, with H_2 resonant at -0.4 wp
+    gamma = 1e-8*wp
+    H2(w) = fill(0.1*gamma/(gamma + im*(w + 0.4wp)), 1, 1)
+    resonant = LinearizedScattering([zero1, H2], 0.4wp; harmonics = [0, 2], nports = 1, zref = Z0,
+        noise = NoiseCovariance([fill(10.0, 1, 1), zero1]))
+    @test_throws ArgumentError hbnlsolve((wp, 1.7wp), (8, 4), [(mode = (3, -2), port = 1, current = 1e-9)], one(resonant))
+    # fitting a block whose data violates its declaration is refused, so
+    # that the fitted block's tolerance covers the fit's error alone; a
+    # declaration the data meets is fitted and reproduced
+    H0(w) = fill(2*(wp - im*w)/(wp + im*w), 1, 1)
+    fsfit = collect(range(0.1e9, 0.9e9; length = 10))
+    for noise in (Lossless(), NoiseCovariance([fill(1.0, 1, 1)]))
+        @test_throws ArgumentError RationalScattering(LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0, noise), 2; frequencies = fsfit)
+    end
+    valid = RationalScattering(LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0,
+        noise = NoiseCovariance([fill(3.0, 1, 1)])), 2; frequencies = fsfit)
+    @test valid.atol == 1e-6
+    ov = hblinsolve([0.4wp], one(valid); keyedarrays = false, returnCnoise = true)
+    @test abs(ov.Cnoise[1, 1, 1] - 3) < 1e-9 && abs(abs(ov.CM[1, 1]) - 1) < 1e-9
+    # a covariance's own tolerance admits the data as the solve does
+    close = LinearizedScattering([H0], wp; harmonics = [0], nports = 1, zref = Z0,
+        noise = NoiseCovariance([fill(3.0 - 1e-4, 1, 1)]; atol = 1e-3))
+    @test RationalScattering(close, 2; frequencies = fsfit).noise.atol == 1e-3
+    # a sample at which the response is zero is data, a notch, and a
+    # notch is not lossless
+    w0 = 0.5wp
+    notch(w) = fill((w0^2 - w^2)/(w0^2 - w^2 + 2im*1e-8*wp*w), 1, 1)
+    @test_throws ArgumentError RationalScattering(LinearizedScattering([notch], wp; harmonics = [0], nports = 1, zref = Z0), 2;
+        frequencies = [0.1e9, 0.3e9, 0.5e9, 0.7e9, 0.9e9])
+    # a fit states the noise its commutator requires, a covariance
+    # completed to the commutation relations, so its output obeys them
+    # exactly and what it adds is what the fit costs: a fit which adds
+    # more than tol accepts is refused, and accepted, the block's atol
+    # stays the data's, so that the pump solve still sees a conjugate
+    # coupling the fit has, whatever the fit's accuracy
+    allpass(w) = fill(prod((a*wp - im*w)/(a*wp + im*w) for a in (0.2, 0.7, 1.5)), 1, 1)
+    fswide = collect(range(0.1e9, 2e9; length = 30))
+    @test_throws ArgumentError RationalScattering(LinearizedScattering([allpass], wp; harmonics = [0], nports = 1, zref = Z0), 1; frequencies = fswide)
+    coarse = RationalScattering(LinearizedScattering([allpass], wp; harmonics = [0], nports = 1, zref = Z0), 1; frequencies = fswide, tol = 10.0, noisetol = 10.0)
+    @test coarse.atol == 1e-6 && coarse.noise isa NoiseCovariance && coarse.noise.completed
+    oc = hblinsolve([0.4wp], one(coarse); keyedarrays = false, returnCnoise = true)
+    @test abs(abs(oc.CM[1, 1]) - 1) < 1e-9
+    @test real(oc.Cnoise[1, 1, 1]) ≈ 1 - abs2(oc.S[1, 1, 1]) atol = 1e-9
+    fine = RationalScattering(LinearizedScattering([allpass], wp; harmonics = [0], nports = 1, zref = Z0), 3; frequencies = fswide)
+    of = hblinsolve([0.4wp], one(fine); keyedarrays = false, returnCnoise = true)
+    @test abs(abs(of.CM[1, 1]) - 1) < 1e-9 && abs(of.Cnoise[1, 1, 1]) < 1e-2
+    H2c(w) = fill(0.1wp/(wp + im*w), 1, 1)
+    coupled = RationalScattering(LinearizedScattering([allpass, H2c], wp; harmonics = [0, 2], nports = 1, zref = Z0,
+        noise = NoiseCovariance([fill(100.0, 1, 1), zero1])), 1; frequencies = fswide, tol = 10.0, noisetol = 10.0)
+    @test_throws ArgumentError hbnlsolve((wp,), (6,), [(mode = (1,), port = 1, current = 1e-9)], one(coupled))
+    # the noise a fit adds says nothing of its accuracy: a covariance
+    # large enough covers the commutator of a poor fit at no noise, so
+    # the fit is held to the data as well, to tol of the largest response
+    delayed(w) = fill(0.5*cis(-w*0.3e-9), 1, 1)
+    fsdelay = collect(range(0.1e9, 2e9; length = 60))
+    @test_throws ArgumentError RationalScattering(LinearizedScattering([delayed], wp; harmonics = [0], nports = 1, zref = Z0,
+        noise = NoiseCovariance([ones(1, 1)])), 2; frequencies = fsdelay, noisetol = 0.0)
+    loose = RationalScattering(LinearizedScattering([delayed], wp; harmonics = [0], nports = 1, zref = Z0,
+        noise = NoiseCovariance([ones(1, 1)])), 2; frequencies = fsdelay, noisetol = 0.0, tol = 0.2)
+    @test loose.noise.completed
+    # a constant unconverted response beside a dynamic conversion, or
+    # none, is realized as its constant with no state
+    H1c(w) = fill(0.1wp/(wp + im*w), 1, 1)
+    for H0c in (ones(1, 1), zeros(1, 1))
+        constant = RationalScattering(LinearizedScattering([H0c, H1c], wp; harmonics = [0, 1], nports = 1, zref = Z0,
+            noise = NoiseCovariance([fill(100.0, 1, 1), zero1])), 2; frequencies = fsfit)
+        @test size(constant.providers[1].A) == (0, 0) && constant.providers[1].D ≈ H0c
+        @test constant.providers[2] isa JC.ModulatedRationalProvider && size(constant.providers[2].cosine.A, 1) > 0
+    end
+    # a harmonic tabulated at one sign of frequency alone is read there,
+    # the unconverted response mirrored from it, without extrapolation
+    wsfit = 2pi .* fsfit
+    Hall = reshape([(wp - im*w)/(wp + im*w) for w in wsfit], 1, 1, :)
+    for (w, H) in ((wsfit, Hall), (-reverse(wsfit), conj.(reverse(Hall; dims = 3))))
+        onesided = RationalScattering(LinearizedScattering([(w, H)], wp; harmonics = [0], nports = 1, zref = Z0), 1)
+        Hf = zeros(ComplexF64, 1, 1, length(wsfit))
+        JC.evaluateprovider!(Hf, onesided.providers[1], wsfit)
+        @test maximum(abs, Hf .- Hall) < 1e-8
+    end
+    # the completion of a lossless block's fit is the least noise a
+    # Gaussian channel with its map can add, the Ymin of the quantum
+    # optics functions in the quadrature basis
+    nq = 3
+    Aq, Bq = randn(ComplexF64, nq, nq), 0.3 .* randn(ComplexF64, nq, nq)
+    Mq = [Aq Bq; conj.(Bq) conj.(Aq)]
+    Jq = Diagonal([ones(nq); -ones(nq)])
+    Kq = Matrix(Jq) - Mq*Jq*Mq'
+    Rq = JC.R_ladder_to_quadrature_block(nq)
+    Yq = JC.Ymin_from_X_quadrature_block(real(JC.ladder_to_quadrature_block(Mq)))
+    @test real(Rq*JC.completecovariance(zeros(2nq, 2nq), Kq)*Rq') ≈ Yq atol = 1e-10
+    # a completed pumped block's covariance over the modes of a solve is
+    # the restriction of the completion over the padded ladder, one
+    # model whatever modes the solve keeps: the modes of a solve with
+    # two and with four modes on either side agree to the padding,
+    # where the completions over the modes alone differ
+    pc = JC.RationalScatteringProvider(fill(-wp, 1, 1), fill(wp, 1, 1), fill(0.5, 1, 1), zeros(1, 1))
+    pz = JC.RationalScatteringProvider(zeros(0, 0), zeros(0, 1), zeros(1, 0), zeros(1, 1))
+    p1 = JC.RationalScatteringProvider(zeros(0, 0), zeros(0, 1), zeros(1, 0), ones(1, 1))
+    padded(pad) = LinearizedScattering([p1, JC.ModulatedRationalProvider(pc, pz)], wp; harmonics = [0, 1], nports = 1, zref = Z0,
+        noise = NoiseCovariance([zero1, zero1]; completed = true, padding = pad))
+    function centre(b, keep)
+        modes = [0.4wp + m*wp for m in -keep:keep]
+        Kp = JC.pumpedharmonics(b, modes)
+        V = JC.pumpednoisematrices(b, modes, Kp)[3]
+        return real(V[keep + 1, keep + 1])
+    end
+    @test abs(centre(padded(0), 1) - centre(padded(0), 4)) > 1e-3
+    @test abs(centre(padded(8), 1) - centre(padded(8), 4)) < 1e-4
+    @test abs(centre(padded(16), 4) - centre(padded(8), 4)) < 1e-5
+    # the outputs the data reaches are validated with every input which
+    # feeds them: a two mode squeezer, transparent outside its bands,
+    # meets its losslessness only with the input its edge mode converts
+    u, v = cosh(0.5), sinh(0.5)
+    bogo0(w) = fill(0.35 <= abs(w/wp) <= 0.65 ? u : 1.0, 1, 1)
+    bogo1(w) = fill(-0.65 <= w/wp <= -0.35 ? v*sqrt(abs((w + wp)/w)) : 0.0, 1, 1)
+    squeezer = LinearizedScattering([bogo0, bogo1], wp; harmonics = [0, 1], nports = 1, zref = Z0)
+    rows, cols, Kf = JC.pumpedfamily(squeezer, (1.4wp,))
+    @test rows ≈ [0.4wp, 1.4wp, 2.4wp] && cols ≈ [-0.6wp, 0.4wp, 1.4wp, 2.4wp, 3.4wp]
+    @test JC.pumpedviolation(squeezer, rows, cols, Kf) < 1e-12
+    @test JC.pumpedviolation(squeezer, rows, Kf[:, 2:4]) > 0.1
+    # the covariance a solve reports holds its rows at the modes of the
+    # solve, so an idler is stored at a negative frequency; the noise at
+    # the conjugate of a mode is that of the mode transposed,
+    # V_k(-nu - k wp) = transpose(V_k(nu)), and the block states it
+    # there, as its data and as its fit, rather than leaving the
+    # completion to supply the vacuum in its place
+    lti = RationalScattering(fill(-wp, 1, 1), fill(wp, 1, 1), fill(0.5, 1, 1), zeros(1, 1);
+        noise = NoiseCovariance(fill(10.0, 1, 1)))
+    sidebands = hbsolve(wp .* collect(range(0.35, 0.45; length = 5)), (wp,), [], (1,), (2,), one(lti);
+        threewavemixing = true, returnCnoise = true).linearized
+    stored = LinearizedScattering(sidebands, wp; noise = NoiseCovariance(sidebands.Cnoise))
+    idler = RationalScattering(stored, 1; noisetol = 1e-6)
+    for blk in (stored, idler), s in (-1, 1)
+        rw, cl, Ki = JC.pumpedfamily(blk, [s*0.6wp]; reach = false)
+        @test real(JC.pumpednoisematrices(blk, rw, cl, Ki)[3][1, 1]) ≈ 10 atol = 1e-8
+    end
+    # the transpose is the port order and not the conjugate: a harmonic
+    # covariance with a complex off diagonal read at both signs, and a
+    # table which holds a knot and its image and disagrees there refused
+    Vc = ComplexF64[3.0 0.4+0.7im; 0.4-0.7im 2.5]
+    Hc = ComplexF64[0.2 0.1; 0.1 0.3]
+    knots = collect(range(0.2wp, 0.8wp; length = 5))
+    tab(M, ws) = (ws, reshape(repeat(M, 1, length(ws)), 2, 2, length(ws)))
+    twoport = LinearizedScattering([tab(Hc, knots)], wp; harmonics = [0], nports = 2, zref = Z0,
+        noise = NoiseCovariance([tab(Vc, knots)]))
+    Vq = Array{ComplexF64,4}(undef, 2, 2, 1, 2)
+    JC.evaluatecoveredharmonics!(Vq, twoport, [0.5wp, -0.5wp]; covariance = true)
+    @test Vq[:, :, 1, 1] ≈ Vc atol = 1e-12
+    @test Vq[:, :, 1, 2] ≈ transpose(Vc) atol = 1e-12
+    both = vcat(-reverse(knots), knots)
+    @test_throws ArgumentError LinearizedScattering([tab(Hc, both)], wp; harmonics = [0], nports = 2, zref = Z0,
+        noise = NoiseCovariance([tab(Vc, both)]))
+    @test LinearizedScattering([tab(Hc, both)], wp; harmonics = [0], nports = 2, zref = Z0,
+        noise = NoiseCovariance([tab(complex(real(Vc)), both)])) isa LinearizedScattering
+    # every mode a solve asks of a completed block is completed, one the
+    # block scatters nothing at carrying the vacuum its commutator
+    # requires: a tabulated export solved with more sidebands than its
+    # data holds, and one whose modes lie wholly outside it
+    exported = LinearizedScattering(sidebands, wp; noise = NoiseCovariance(sidebands.Cnoise; completed = true))
+    for (w, keep, expected) in ((0.4wp, 2, [1.0, 10.0, 10.0, 10.0, 1.0]), (7.4wp, 1, [1.0, 1.0, 1.0]))
+        hw = hbsolve([w], (wp,), [], (keep,), (2,), one(exported); threewavemixing = true, returnCnoise = true).linearized
+        @test all(x -> abs(abs(x) - 1) < 1e-8, Array(hw.CM))
+        @test [real(hw.Cnoise((k,), 1, (k,), 1, 1)) for k in -keep:keep] ≈ expected atol = 1e-8
+    end
+    # the completion runs one ladder at a time, the block coupling
+    # nothing between frequencies which are not a multiple of the pump
+    # apart, so a ladder is completed the same beside another or alone
+    ladders = JC.completedcovariance(padded(4), [0.4wp, 1.4wp, 0.31wp], [0.4wp, 1.4wp, 0.31wp])
+    alone = JC.completedcovariance(padded(4), [0.4wp, 1.4wp], [0.4wp, 1.4wp, 0.31wp])
+    @test ladders[1:2, 1:2] ≈ alone atol = 1e-12
+    @test maximum(abs, ladders[1:2, 3]) == 0
+    @test JC.pumpladders(wp, [0.4wp, 1.4wp, 0.31wp, -0.6wp]) == [[1, 2, 4], [3]]
+    # the two ends of a pump period are one ladder: a frequency and its
+    # conjugate at half the pump are a pump apart, which the bath of a
+    # degenerate amplifier is made of
+    @test JC.pumpladders(wp, [0.5wp, -0.5wp, 1.5wp]) == [[1, 2, 3]]
+    @test JC.pumpladders(wp, [0.5wp, 0.2wp, -0.5wp]) == [[1, 3], [2]]
+    # a frequency the mirror or the padding carries an ulp past an end
+    # knot is on the knot, as the coverage test takes it, and one truly
+    # beyond the table is still refused
+    knots = 2pi .* collect(range(0.2e9, 0.8e9; length = 5))
+    vals = fill(0.1 + 0im, 1, 1, length(knots))
+    @test LinearizedScattering([zeros(1, 1), zeros(1, 1)], wp; harmonics = [0, 1], nports = 1, zref = Z0,
+        noise = NoiseCovariance([fill(10.0, 1, 1), (knots, vals)]; completed = true)) isa LinearizedScattering
+    onesided = JC.matrixprovider((knots, vals), ComplexF64; n = 1)
+    buf = zeros(ComplexF64, 1, 1, 1)
+    @test JC.evaluateprovider!(buf, onesided, [prevfloat(knots[1], 2)])[1] ≈ 0.1
+    @test JC.evaluateprovider!(buf, onesided, [nextfloat(knots[end], 2)])[1] ≈ 0.1
+    @test_throws ArgumentError JC.evaluateprovider!(buf, onesided, [0.9*knots[1]])
+    # the whole domain the completion reads is held to the entries of a
+    # covariance, not the modes of the solve alone: a callable which is
+    # Hermitian on every retained mode and not on a padding mode
+    onpad(w) = fill(abs(w) > 2wp ? 2.0 + 1im : 2.0 + 0im, 1, 1)
+    padinvalid = LinearizedScattering([p1, JC.ModulatedRationalProvider(pc, pz)], wp; harmonics = [0, 1], nports = 1, zref = Z0,
+        noise = NoiseCovariance([onpad, zero1]; completed = true, padding = 4))
+    retained = [0.4wp + m*wp for m in -1:1]
+    Vr = JC.statedcovariance(padinvalid, retained)
+    @test maximum(abs, Vr .- Vr') == 0
+    @test maximum(abs, let V = JC.statedcovariance(padinvalid, JC.paddedladder(padinvalid, retained)); V .- V' end) ≈ 2
+    @test_throws ArgumentError hbsolve([0.4wp], (wp,), [], (1,), (2,), one(padinvalid); threewavemixing = true, returnCnoise = true)
 end

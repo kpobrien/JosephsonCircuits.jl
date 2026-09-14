@@ -125,30 +125,50 @@ end
 # with no per-block or per-condition work on the host. With `G` the
 # gather of the rates across the ports and the port currents, `S` the
 # scatter onto the blocks' rows, `W_d`, `W_x` the incident waves from
-# the gathered increments and values, `C Z_u`, `C Z_z` the reflected
-# waves from the incident waves and the states, and `E_z`, `E_u` the
-# states' update: `M_d = S C Z_u W_d G`, `M_x = S C Z_u W_x G`,
-# `M_s = S C Z_z`, `E_d = E_u W_d G`, `E_x = E_u W_x G`, their
-# transposes, and `R' = (S_1 C)'` for the cotangent of the resting waves
-# the endpoint reading sees, `S_1` the scatter of one stage.
+# the gathered increments and values, `Z_u`, `Z_z` the stacked states at
+# the stages from the incident waves and the states, and `E_z`, `E_u`
+# the states' update: `P_d = Z_u W_d G`, `P_x = Z_u W_x G`, `P_z = Z_z`
+# give the stacked states, the reflected waves at a stage are
+# `sum_j w_j(t) C_j` times the states of that stage, `C_0` the output
+# matrix of every block's unconverted response with the weight one and
+# the rest the modulated outputs of the pumped blocks with the weights
+# of the stage's time (see [`BlockModulation`](@ref)), scattered by `S`;
+# `E_d = E_u W_d G`, `E_x = E_u W_x G`; their transposes; and on the
+# host the output matrices `C_j` for the resting waves. A circuit
+# without a pumped block has the one term `S C_0`, which is the coupling
+# of a block which does not convert.
 struct RationalCoupling{M}
     nstates::Int
-    Md::M
-    Mx::M
-    Ms::M
+    Pd::M
+    Px::M
+    Pz::M
     Ez::M
     Ed::M
     Ex::M
-    Mdt::M
-    Mxt::M
-    Mst::M
+    Pdt::M
+    Pxt::M
+    Pzt::M
     Ezt::M
     Edt::M
     Ext::M
-    Rt::M
-    # the output matrices of every block on the host, `(nports, nstates)`,
+    # the scatter of the output of each term onto the blocks' rows,
+    # `(n, nstates)`, and its transpose
+    SC::Vector{M}
+    SCt::Vector{M}
+    # which block and which modulated output each term after the first
+    # is, for its weight at a time
+    terms::Vector{Tuple{Int,Int}}
+    # the output matrices of every term on the host, `(nports, nstates)`,
     # for the resting waves
-    Cblk::SparseMatrixCSC{Float64,Int}
+    Cblk::Vector{SparseMatrixCSC{Float64,Int}}
+    # on the host, the scatter onto the blocks' rows and the stacked
+    # states from the stage unknowns, `P_d + P_x`, for the exact stage
+    # solve of a pumped block (see [`StageCorrection`](@ref))
+    Shost::SparseMatrixCSC{Float64,Int}
+    Phost::SparseMatrixCSC{Float64,Int}
+    # the port rows with a modulated output term, the only rows the
+    # stage correction acts on
+    modulated::Vector{Int}
 end
 
 function rationalcoupling(p::TransientProblem, stages::Vector{RationalStage}, gc::GaussCoefficients, h, Lscale,
@@ -177,55 +197,92 @@ function rationalcoupling(p::TransientProblem, stages::Vector{RationalStage}, gc
     Wd = sparse(di, dj, dv, 2nports, 4nports)
     Wx = sparse(xi, xj, xv, 2nports, 4nports)
     Gs = blockdiag(blockgather, blockgather)
-    Ss = blockdiag(blockscatter, blockscatter)
-    # the reflected waves from the incident waves and the states, the
-    # states' update, and the output matrices
+    # the stacked states at the stages from the incident waves and from
+    # the states, and the states' update
     ui, uj, uv = Int[], Int[], Float64[]
     zi, zj, zv = Int[], Int[], Float64[]
     ei, ej, ev = Int[], Int[], Float64[]
     fi, fj, fv = Int[], Int[], Float64[]
-    ci, cj, cv = Int[], Int[], Float64[]
     prows = cumsum([0; [length(b.signal) for b in p.blocks]])
     for rs in stages
         b = p.blocks[rs.block]
         np, nzb = length(b.signal), size(b.A, 1)
         pr, zb = prows[rs.block], b.zbase
         ucol = (i, q) -> (i - 1)*nports + pr + q
-        CZu = kron(Matrix(1.0I, 2, 2), b.C)*rs.Zu
-        CZz = kron(Matrix(1.0I, 2, 2), b.C)*rs.Zz
-        for i in 1:2, q in 1:np
+        zrow = (i, k) -> (i - 1)*nz + zb + k
+        # the stage algebra of a block whose realization is several
+        # filters side by side, a pumped block's, is block diagonal over
+        # them, and its structural zeros are not stored
+        for i in 1:2, k in 1:nzb
             for l in 1:2, r in 1:np
-                push!(ui, ucol(i, q)); push!(uj, ucol(l, r)); push!(uv, CZu[(i - 1)*np + q, (l - 1)*np + r])
+                v = rs.Zu[(i - 1)*nzb + k, (l - 1)*np + r]
+                iszero(v) || (push!(ui, zrow(i, k)); push!(uj, ucol(l, r)); push!(uv, v))
             end
-            for k in 1:nzb
-                push!(zi, ucol(i, q)); push!(zj, zb + k); push!(zv, CZz[(i - 1)*np + q, k])
+            for l in 1:nzb
+                v = rs.Zz[(i - 1)*nzb + k, l]
+                iszero(v) || (push!(zi, zrow(i, k)); push!(zj, zb + l); push!(zv, v))
             end
         end
         for k in 1:nzb, l in 1:nzb
-            push!(ei, zb + k); push!(ej, zb + l); push!(ev, rs.Ez[k, l])
+            v = rs.Ez[k, l]
+            iszero(v) || (push!(ei, zb + k); push!(ej, zb + l); push!(ev, v))
         end
         for k in 1:nzb, i in 1:2, q in 1:np
-            push!(fi, zb + k); push!(fj, ucol(i, q)); push!(fv, rs.Eu[k, (i - 1)*np + q])
-        end
-        for q in 1:np, k in 1:nzb
-            push!(ci, pr + q); push!(cj, zb + k); push!(cv, b.C[q, k])
+            v = rs.Eu[k, (i - 1)*np + q]
+            iszero(v) || (push!(fi, zb + k); push!(fj, ucol(i, q)); push!(fv, v))
         end
     end
-    CZu = sparse(ui, uj, uv, 2nports, 2nports)
-    CZz = sparse(zi, zj, zv, 2nports, nz)
+    Zu = sparse(ui, uj, uv, 2nz, 2nports)
+    Zz = sparse(zi, zj, zv, 2nz, nz)
     Ezb = sparse(ei, ej, ev, nz, nz)
     Eub = sparse(fi, fj, fv, nz, 2nports)
-    Cblk = sparse(ci, cj, cv, nports, nz)
-    Md = Ss*CZu*Wd*Gs
-    Mx = Ss*CZu*Wx*Gs
-    Ms = Ss*CZz
+    Pd = Zu*Wd*Gs
+    Px = Zu*Wx*Gs
     Ed = Eub*Wd*Gs
     Ex = Eub*Wx*Gs
-    Rt = sparse(transpose(blockscatter*Cblk))
+    # the output terms: the unconverted response of every block, then
+    # each modulated output of the pumped blocks
+    Cblk = SparseMatrixCSC{Float64,Int}[]
+    terms = Tuple{Int,Int}[]
+    ci, cj, cv = Int[], Int[], Float64[]
+    for rs in stages
+        b = p.blocks[rs.block]
+        np, nzb = length(b.signal), size(b.A, 1)
+        for q in 1:np, k in 1:nzb
+            iszero(b.C[q, k]) || (push!(ci, prows[rs.block] + q); push!(cj, b.zbase + k); push!(cv, b.C[q, k]))
+        end
+    end
+    push!(Cblk, sparse(ci, cj, cv, nports, nz))
+    push!(terms, (0, 0))
+    for rs in stages
+        b = p.blocks[rs.block]
+        np, nzb = length(b.signal), size(b.A, 1)
+        for (mi, m) in enumerate(b.modulations)
+            ci, cj, cv = Int[], Int[], Float64[]
+            for q in 1:np, k in 1:nzb
+                iszero(m.C[q, k]) || (push!(ci, prows[rs.block] + q); push!(cj, b.zbase + k); push!(cv, m.C[q, k]))
+            end
+            push!(Cblk, sparse(ci, cj, cv, nports, nz))
+            push!(terms, (rs.block, mi))
+        end
+    end
     t = A -> sparse(transpose(A))
     d = A -> devicesparse(sparse(A), backend)
-    return RationalCoupling(nz, d(Md), d(Mx), d(Ms), d(Ezb), d(Ed), d(Ex),
-        d(t(Md)), d(t(Mx)), d(t(Ms)), d(t(Ezb)), d(t(Ed)), d(t(Ex)), d(Rt), Cblk)
+    SC = [blockscatter*C for C in Cblk]
+    return RationalCoupling(nz, d(Pd), d(Px), d(Zz), d(Ezb), d(Ed), d(Ex),
+        d(t(Pd)), d(t(Px)), d(t(Zz)), d(t(Ezb)), d(t(Ed)), d(t(Ex)),
+        [d(M) for M in SC], [d(t(M)) for M in SC], terms, Cblk,
+        sparse(blockscatter), sparse(Pd + Px),
+        sort!(unique!(reduce(vcat, [rowvals(C) for C in Cblk[2:end]]; init = Int[]))))
+end
+
+# the weight of every output term at the time `t`: one for the
+# unconverted response, and the modulation of each converted output
+function modulationweights!(w::AbstractVector, p::TransientProblem, cp::RationalCoupling, t)
+    for (j, (bi, mi)) in enumerate(cp.terms)
+        w[j] = j == 1 ? 1.0 : modulationweight(p.blocks[bi], p.blocks[bi].modulations[mi], t)
+    end
+    return w
 end
 
 
@@ -267,12 +324,41 @@ function rationalmatrix(p::TransientProblem, s, Lscale, n)
     return sparse(rows, cols, vals, n, n)
 end
 
-# the complex entries of the rational blocks at the complex frequency
-# `s` on the pattern: on the block's rows, `-s Lscale C (s I - A)^(-1) B R^(-1/2)`
-# on its port nodes and `-C (s I - A)^(-1) B R^(1/2)` on its port
-# currents, the frequency dependent parts of the hybrid stamp
-function rationalvalues(p::TransientProblem, s, Lscale, Jrs, transposed)
-    vals = zeros(ComplexF64, nnz(Jrs))
+# The transfer of every rational block at the complex stage frequency
+# `s`, `C (s I - A)^(-1) B` per output term: the first the unconverted
+# response, then each modulated output of a pumped block, in the order
+# of the coupling's terms, so that the stage operator can carry the
+# converted coupling at a step's weights (see [`rationalvalues!`](@ref)).
+# `nothing` for a block without states.
+function rationalstageterms(p::TransientProblem, s)
+    terms = Vector{Union{Nothing,Vector{Matrix{ComplexF64}}}}(undef, length(p.blocks))
+    for (bi, b) in enumerate(p.blocks)
+        if size(b.A, 1) == 0
+            terms[bi] = nothing
+            continue
+        end
+        X = (s*I - b.A) \ b.B
+        terms[bi] = vcat([b.C*X], [m.C*X for m in b.modulations])
+    end
+    return terms
+end
+
+"""
+    rationalvalues!(vals, p, s, Lscale, Jrs, transposed, terms, weights)
+
+Overwrite `vals`, the entries of the rational blocks on the Jacobian's
+pattern at the complex stage frequency `s`, from the blocks' stage
+transfers `terms` (see `rationalstageterms`) weighted: the
+unconverted response with one, and each modulated output of a pumped
+block with its entry of `weights`, in the order of the coupling's terms
+after the first, or with nothing of the modulated outputs when `weights`
+is `nothing`. A pumped block's stage operator is refreshed this way at
+every step with the mean of its two stages' weights, since its
+converted coupling can be as large as its unconverted one, which the
+frozen operator of the simplified Newton would not converge without.
+"""
+function rationalvalues!(vals, p::TransientProblem, s, Lscale, Jrs, transposed, terms, weights)
+    fill!(vals, 0)
     colptr, rowval = patterncolumns(Jrs)
     place = (r, c, val) -> begin
         pos = 0
@@ -283,10 +369,16 @@ function rationalvalues(p::TransientProblem, s, Lscale, Jrs, transposed)
         pos > 0 || error("an entry of a rational block is absent from the Jacobian's pattern.")
         vals[pos] += val
     end
-    for b in p.blocks
-        size(b.A, 1) == 0 && continue
+    j = 1
+    for (bi, b) in enumerate(p.blocks)
+        isnothing(terms[bi]) && continue
         n = length(b.signal)
-        Sr = b.C*((s*I - b.A) \ b.B)
+        Sr = copy(terms[bi][1])
+        for (mi, m) in enumerate(b.modulations)
+            j += 1
+            isnothing(weights) && continue
+            Sr .+= weights[j] .* terms[bi][mi + 1]
+        end
         Bb = -s*Lscale .* Sr .* transpose(1 ./ sqrt.(b.R))
         Cb = -Sr .* transpose(sqrt.(b.R))
         for q in 1:n
@@ -492,22 +584,32 @@ struct GaussStage{V, M, R, SM, SV}
     rationalvals::R
     rational::Vector{RationalStage}
     coupling::Union{Nothing, RationalCoupling{SM}}
+    # the stage transfers of the blocks' output terms with the host
+    # pattern of the Jacobian, the host copy of the values and whether
+    # they are laid out transposed, for the refresh of a pumped block's
+    # coupling at every step; and whether any block is pumped, which is
+    # when the refresh happens
+    stageterms::Any
+    hostvals::Vector{ComplexF64}
+    transposedvals::Bool
+    pumped::Bool
     # The only constructor, and it takes the parameters: `SM` and `SV`
     # appear in the union fields alone, so a circuit with neither a
     # projection nor a coupling passes `nothing` for both and leaves them
     # with nothing to infer from. `gaussstage` reads them off the backend.
     GaussStage{V, M, R, SM, SV}(coefficients, imvals, cjacobian, projection,
-            rationalvals, rational, coupling) where {V, M, R, SM, SV} =
+            rationalvals, rational, coupling, stageterms, hostvals, transposedvals, pumped) where {V, M, R, SM, SV} =
         new{V, M, R, SM, SV}(coefficients, imvals, cjacobian, projection,
-            rationalvals, rational, coupling)
+            rationalvals, rational, coupling, stageterms, hostvals, transposedvals, pumped)
 end
 
 # the stage with its union fields' types taken from the backend
-function gaussstage(gc, imvals, cjacobian, projection, rationalvals, stages, coupling, backend)
+function gaussstage(gc, imvals, cjacobian, projection, rationalvals, stages, coupling, backend,
+        stageterms, hostvals, transposedvals, pumped)
     SM = typeof(devicesparse(sparse(zeros(1, 1)), backend))
     SV = typeof(tobackend(backend, zeros(1)))
     return GaussStage{typeof(imvals), typeof(cjacobian), typeof(rationalvals), SM, SV}(gc, imvals, cjacobian,
-        projection, rationalvals, stages, coupling)
+        projection, rationalvals, stages, coupling, stageterms, hostvals, transposedvals, pumped)
 end
 
 function projectionwork(pr::GaussProjection, backend, n::Int, N::Int, m::Int)

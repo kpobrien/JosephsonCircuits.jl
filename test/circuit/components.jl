@@ -109,14 +109,20 @@ using Test
         JosephsonCircuits.evaluatescattering!(d2, cblk, [2*pi*5e9])
         @test d2[2,1,1] ≈ exp(-im*2*pi*5e9*1e-12)
 
-        # passivity validation
+        # passivity validation; an active block declares its noise, which
+        # is held to the minimum the commutation relations require, here
+        # |I - S S'| = 3 I
         @test_throws ArgumentError ScatteringParameters([0.0 2.0; 2.0 0.0])
         active = ScatteringParameters([0.0 2.0; 2.0 0.0];
-            noise = NoiseCovariance([1.0 0.0; 0.0 1.0]))
+            noise = NoiseCovariance([3.0 0.0; 0.0 3.0]))
         @test active.nports == 2
+        @test active.noise.provider isa JosephsonCircuits.ConstantMatrixProvider
+        @test_throws ArgumentError ScatteringParameters([0.0 2.0; 2.0 0.0];
+            noise = NoiseCovariance([1.0 0.0; 0.0 1.0]))
+        @test_throws ArgumentError NoiseCovariance([3.0 0.0; 0.0 3.0]; atol = -1.0)
         # noise covariance must be Hermitian
         @test_throws ArgumentError ScatteringParameters([0.0 2.0; 2.0 0.0];
-            noise = NoiseCovariance([1.0 1.0; 0.0 1.0]))
+            noise = NoiseCovariance([3.0 1.0; 0.0 3.0]))
         # thermal equilibrium noise model carries the temperature
         blkT = ScatteringParameters(S; noise = ThermalEquilibrium(20e-3))
         @test blkT.noise.temperature == 20e-3

@@ -163,7 +163,44 @@ A block's temperature is its `ThermalEquilibrium(T)`, a resistor's its
 `temperature`, and the rest the analysis default, in both solvers
 alike, so a warm attenuator in time has the covariance
 [`hblinsolve`](@ref) gives it, and equals its own resistive network at
-the same temperature.
+the same temperature. A block which states its noise with a
+[`NoiseCovariance`](@ref), an amplifier given by its scattering
+parameters, has its ports as correlated channels of the same kind,
+contracted with the covariance it states and with the commutator
+`I - S S'` of its gain, which differ; it adds the noise the linearized
+solver gives it and its output obeys the commutation relations, at
+whatever temperature the analysis runs. A pumped block which states
+its noise is contracted over pairs of bath frequencies on one ladder
+of its pump, those differing by a multiple of the pump frequency and
+those summing to one, with the covariance and the commutator of its
+noise over all the bath frequencies at once, its harmonic covariances
+and its multi-mode scattering matrix assembled over them with every
+input which feeds them and, for a fitted block, completed there, so
+the correlations of an amplifier's noise between its signal and its
+idler are kept, and those the completion adds, and referred to the
+start of the record as the bath quadratures are; the bath frequencies
+must include the partners. A completed covariance is completed over
+the padded ladder of the bath frequencies as the linearized solver
+completes it over the padded ladder of a sweep's modes, so the two
+read one noise model. The block couples nothing between frequencies
+which are not a multiple of the pump apart, so the bath frequencies are
+grouped into the ladders of the pump and the block's scattering matrix,
+its commutator and its covariance are assembled, completed and read one
+ladder at a time, and no matrix spans two of them. At a given number of
+ports and a given width of ladder that cost grows with the number of
+ladders, the grouping of the frequencies and the ordering of the pairs
+adding their sort. A ladder is as wide as the bath frequencies it
+holds, so a bath whose frequencies are all a multiple of the pump apart
+is one ladder, whose covariance and pair list grow with the square of
+its width and whose completion with the cube. Every pumped
+block is checked over the bath frequencies before the calculation, as
+the linearized solver checks it over the modes of a sweep, which a
+fitted block, its covariance completed to the commutation relations of
+its own filters, passes but for the finite, Hermitian entries any
+covariance must have; and since the pair terms
+correlate the bath frequencies the frequencies of a calculation with
+a pumped block are contracted in one tile, which the memory budget
+must hold.
 
 A transmission line stores the fluctuations that entered it before the
 record began. The stationary response of the circuit to each bath tone

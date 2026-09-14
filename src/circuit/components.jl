@@ -211,7 +211,12 @@ the same way as a ground referenced one.
 
 `termination = nothing` keeps `Z0` for wave normalization but adds no
 physical loading, which is the right form when the circuit already contains
-the resistor that terminates the port.
+the resistor that terminates the port. Such a port is an ideal current
+source and an impedance probe: a source on it drives its whole current into
+the circuit, and since the incident wave is that of the source current with
+nothing to absorb it, the reflection reported at the port is
+`S = 2Z/Z0 - 1` with `Z` the impedance across its terminals, so the
+impedance at the node is `Z = Z0 (1 + S)/2`.
 
 Any further [`Resistor`](@ref) across the same terminals is an ordinary
 device resistor: it loads the port in parallel with the environment, it
@@ -779,11 +784,13 @@ entry's magnitude, say -- can exceed the bound a little between them; a
 bound guaranteed at every frequency takes a passive fit, see
 [`RationalScattering`](@ref).
 
-`extrapolation` may be `:error` (the default), `:constant`, or `:linear`.
-With `:error`, any requested frequency outside the tabulated range throws an
-error listing the offending frequencies; extrapolation of tabulated data is
-deliberately opt-in. `:constant` holds the end values beyond the ends, and
-`:linear` continues from them with the interpolant's end slopes.
+`extrapolation` may be `:error` (the default), `:constant`, `:linear` or
+`:zero`. With `:error`, any requested frequency outside the tabulated
+range throws an error listing the offending frequencies; extrapolation of
+tabulated data is deliberately opt-in. `:constant` holds the end values
+beyond the ends, `:linear` continues from them with the interpolant's end
+slopes, and `:zero` is zero beyond them, the data of a response known to
+vanish outside the band it was sampled over.
 """
 struct TabulatedMatrixProvider{T} <: AbstractMatrixProvider
     frequencies::Vector{Float64}
@@ -819,8 +826,8 @@ function TabulatedMatrixProvider(frequencies::AbstractVector,
     if !(interpolation in (:linear, :cubic))
         throw(ArgumentError(lazy"Unknown interpolation $(interpolation). Supported: :cubic, :linear."))
     end
-    if !(extrapolation in (:error, :constant, :linear))
-        throw(ArgumentError(lazy"Unknown extrapolation $(extrapolation). Supported: :error, :constant, :linear."))
+    if !(extrapolation in (:error, :constant, :linear, :zero))
+        throw(ArgumentError(lazy"Unknown extrapolation $(extrapolation). Supported: :error, :constant, :linear, :zero."))
     end
     f = collect(Float64, frequencies)
     vals = Array{T,3}(values)
@@ -943,14 +950,33 @@ function evaluateprovider!(dest::AbstractArray{T,3},
         p::TabulatedMatrixProvider, ws::AbstractVector) where T
     checkdestsize(dest, providersize(p), length(ws))
     f = p.frequencies
+    # a frequency within roundoff of an end knot is on it: the edge knots
+    # of a table assembled from several sources can differ from the
+    # frequencies a solver forms by an ulp, and so can a frequency
+    # carried to the conjugate ladder and back, or padded by the pump and
+    # back. This is the tolerance the coverage test admits (see
+    # `tablecovers`), so what a solver takes the table to hold it can
+    # evaluate
+    edgetol = 8eps(Float64)*max(abs(f[1]), abs(f[end]))
     if p.extrapolation == :error
-        outofrange = [w for w in ws if w < f[1] || w > f[end]]
+        outofrange = [w for w in ws if w < f[1] - edgetol || w > f[end] + edgetol]
         if !isempty(outofrange)
             throw(ArgumentError(lazy"The angular frequencies $(outofrange) are outside the tabulated range [$(f[1]), $(f[end])] rad/s. Extrapolation of tabulated data is opt-in: pass extrapolation = :constant or :linear if extrapolation is intended, or fit the block with RationalScattering, which extrapolates as a passive rational function."))
         end
     end
     for i in eachindex(ws)
         w = ws[i]
+        if p.extrapolation == :zero && (w < f[1] - edgetol || w > f[end] + edgetol)
+            dest[:,:,i] .= zero(T)
+            continue
+        end
+        # a frequency beyond an end knot by that roundoff alone is
+        # evaluated at the knot, whatever the block extrapolates by
+        if f[1] - edgetol <= w < f[1]
+            w = f[1]
+        elseif f[end] < w <= f[end] + edgetol
+            w = f[end]
+        end
         if w <= f[1]
             if p.extrapolation == :constant || length(f) == 1 || w == f[1]
                 dest[:,:,i] .= view(p.values,:,:,1)
@@ -1017,6 +1043,64 @@ function edgeslices!(dest, p::TabulatedMatrixProvider, e::Int, w)
     s = view(p.endslopes,:,:,e)
     @. dest = A + s*dw
     return dest
+end
+
+"""
+    PiecewiseTabulatedProvider(tables::Vector{TabulatedMatrixProvider})
+
+Tabulated data in several disjoint bands, each a
+[`TabulatedMatrixProvider`](@ref) over its own frequencies, evaluated by
+the band a frequency falls in and zero between and beyond them, the
+data of a response known only in the bands it was sampled over. The
+harmonic transfer functions of a [`LinearizedScattering`](@ref) block built
+from a solve are of this kind: the signal band shifted by every
+harmonic of the pump, with nothing in between, across which one spline
+would swing wildly.
+"""
+struct PiecewiseTabulatedProvider{T} <: AbstractMatrixProvider
+    tables::Vector{TabulatedMatrixProvider{T}}
+end
+providersize(p::PiecewiseTabulatedProvider) = providersize(p.tables[1])
+function evaluateprovider!(dest::AbstractArray{T,3},
+        p::PiecewiseTabulatedProvider, ws::AbstractVector) where T
+    checkdestsize(dest, providersize(p), length(ws))
+    buf = Array{T,3}(undef, providersize(p), providersize(p), 1)
+    for i in eachindex(ws)
+        w = ws[i]
+        dest[:, :, i] .= zero(T)
+        for t in p.tables
+            f = t.frequencies
+            edgetol = 8eps(Float64)*max(abs(f[1]), abs(f[end]))
+            if f[1] - edgetol <= w <= f[end] + edgetol
+                evaluateprovider!(buf, t, [clamp(w, f[1], f[end])])
+                dest[:, :, i] .= view(buf, :, :, 1)
+                break
+            end
+        end
+    end
+    return dest
+end
+# the frequencies of every band of a piecewise table, ascending
+piecewisefrequencies(p::PiecewiseTabulatedProvider) = sort!(vcat([t.frequencies for t in p.tables]...))
+
+# tabulated data in disjoint bands: the knots split where a gap exceeds
+# `gapfactor` times the median spacing, one table per band, each with
+# the interpolation given and zero beyond it
+function piecewisetable(nus::Vector{Float64}, values::Array{T,3}; interpolation::Symbol = :cubic,
+        gapfactor::Real = 10) where T
+    n = length(nus)
+    spacings = diff(nus)
+    median = isempty(spacings) ? 0.0 : sort(spacings)[(length(spacings) + 1) ÷ 2]
+    tables = TabulatedMatrixProvider{T}[]
+    start = 1
+    for k in 1:n
+        if k == n || spacings[k] > gapfactor*median
+            push!(tables, TabulatedMatrixProvider(nus[start:k], values[:, :, start:k];
+                interpolation = interpolation, extrapolation = :zero))
+            start = k + 1
+        end
+    end
+    return PiecewiseTabulatedProvider(tables)
 end
 
 function checkdestsize(dest, n::Int, nf::Int)
@@ -1129,8 +1213,10 @@ struct Passive end
     Lossless()
 
 A noise model for a [`ScatteringParameters`](@ref) asserting that its
-scattering matrix is unitary at every frequency, so that it absorbs nothing
-and adds no noise.
+scattering matrix is unitary at every frequency, or for a
+[`LinearizedScattering`](@ref) that its multi-mode scattering matrix `S`
+satisfies `J - S J S' = 0` with `J` the signs of the mode frequencies,
+so that the block absorbs nothing and adds no noise.
 
 With the default [`Passive`](@ref) model a block gets noise channels unless
 its data can be shown to be unitary, which is possible for a constant
@@ -1144,7 +1230,11 @@ construction, with a fixed tolerance of `1e-10` rather than the block's
 `atol`, and is an error if false. For a callable it is taken on trust,
 and asserting it of a block which does absorb omits the noise the block
 should add, making the quantum efficiency and the commutation relations
-wrong by that much.
+wrong by that much. A pumped block is checked when it is built and
+again over the modes of every solve which evaluates it, to the block's
+`atol`; a fit of a pumped block is not lossless to better than its
+error, and states the noise it needs instead (see
+[`NoiseCovariance`](@ref)).
 """
 struct Lossless end
 
@@ -1280,22 +1370,89 @@ struct ThermalEquilibrium{T}
 end
 
 """
-    NoiseCovariance(V; interpolation = :cubic, extrapolation = :error)
+    NoiseCovariance(V; interpolation = :cubic, extrapolation = :error,
+        atol = 1e-8, completed = false, padding = 4)
 
-An arbitrary user specified noise covariance for a
-[`ScatteringParameters`](@ref). `V` may be a matrix, a callable of angular
-frequency, or a tuple `(frequencies, values)` of tabulated data, following
-the same provider forms as the scattering data. Constant and tabulated
-covariances are validated for Hermitian symmetry at construction.
+The noise a [`ScatteringParameters`](@ref) adds, stated outright rather
+than derived from its loss, which is how an active block, an amplifier
+given by its scattering parameters, declares its noise. `V` is the
+symmetrized covariance of the noise wave the block emits at its ports, in
+the units of the rest of the noise outputs, where a vacuum channel counts
+as one and a channel at temperature `T` as `coth(hbar*w/(2*k*T))`, that is
+`2*nbar + 1`: the same units as `Cnoise`. It may be a matrix, a callable
+of angular frequency, or a tuple `(frequencies, values)` of tabulated
+data, following the same provider forms as the scattering data, and is
+evaluated with the block's negative frequency rule.
+
+The block's output must obey the commutation relations, so with
+`K = I - S S'` the added noise has the commutator `K`, and a covariance is
+realizable only when `V - K` and `V + K` are both positive semidefinite.
+`(V + K)/2` is then the covariance of channels which emit like a mode in
+its vacuum and `(V - K)/2` of channels which emit like the conjugate of
+one, the idler channels of an amplifier; a passive block in thermal
+equilibrium is the case `V = coth(hbar*w/(2*k*T)) K`. A phase insensitive
+amplifier of power gain `G` from port 1 to port 2 has `K[2,2] = 1 - G`, so
+`V[2,2] >= G - 1`, the noise of a quantum limited amplifier, and one with
+an input referred added noise of `nadd` photons has `V[2,2] = 2*G*nadd`;
+`V[1,1]` is what it emits backward out of its input, `(2*nbar + 1)*K[1,1]`
+for an input matched at its physical temperature.
+
+The condition is checked on the eigenvalues to `atol` at construction
+where both the scattering data and `V` are stored, and at every frequency
+a solver evaluates the block at. `V` is also validated for Hermitian
+symmetry. A block with this model carries no temperature: its noise is
+`V`, whatever the analysis temperature.
+
+With `completed = true` the covariance is completed to the commutation
+relations rather than held to them: `V` is replaced by
+`V + neg(V - K) + neg(V + K)`, `neg` taking the negative part of a
+Hermitian matrix, the sum of `-lambda v v'` over its negative
+eigenvalues, which makes `V - K` and `V + K` positive semidefinite and
+adds nothing where they are. For `V = 0` the addition is `|K|`, the
+least total noise a Gaussian channel with the block's map can add, the
+`Ymin` of the quantum optics functions in the basis of the modes; for
+a stated `V` it is a sufficient addition, the least being a
+semidefinite program with no closed form. The block then adds the
+noise it states and what more its commutator requires, and its output
+obeys the commutation relations exactly, whatever `V` and `S` are. An
+ordinary block is completed at each frequency. A pumped block's
+covariance spans the modes of a solve at once, and the negative part
+of a matrix is not that of its parts, so it is completed over the
+ladder of the modes padded by `padding` multiples of the pump
+frequency on either side, with every input which feeds it, and
+restricted to the modes of the solve (see
+[`completedcovariance`](@ref)): the block's noise is then one model
+whatever modes a solve keeps, to the precision of the padding, which
+converges since a fit's conversion vanishes at high frequency, and the
+inputs a solve lacks are traced out in their vacuum. `padding` is that
+precision and not a bound on it, so a device whose conversion reaches
+far is checked by raising it and comparing the covariance the solve
+keeps. Every mode a solve
+asks for is completed, including one beyond the sidebands the block's
+data holds, which it scatters nothing at and so carries the vacuum its
+commutator requires, as its stamp takes it. This is how a fit
+of a pumped block states its noise (see [`RationalScattering`](@ref)):
+a fit is neither lossless nor consistent with a stated covariance to
+better than its error, and the completion turns that error into noise
+the block emits, where a tolerance would only excuse it.
 """
 struct NoiseCovariance{P}
     provider::P
     interpolation::Symbol
     extrapolation::Symbol
+    atol::Float64
+    completed::Bool
+    # the multiples of the pump frequency a pumped block's ladder is
+    # padded by on either side of the modes of a solve before its
+    # completion
+    padding::Int
 end
 function NoiseCovariance(V; interpolation::Symbol = :cubic,
-        extrapolation::Symbol = :error)
-    return NoiseCovariance(V, interpolation, extrapolation)
+        extrapolation::Symbol = :error, atol::Real = 1e-8, completed::Bool = false,
+        padding::Integer = 4)
+    (isfinite(atol) && atol >= 0) || throw(ArgumentError("atol must be finite and nonnegative."))
+    padding >= 0 || throw(ArgumentError("padding must be nonnegative."))
+    return NoiseCovariance(V, interpolation, extrapolation, Float64(atol), completed, Int(padding))
 end
 
 # === scattering block ===
@@ -1348,9 +1505,10 @@ or differential.
 [`ThermalEquilibrium`](@ref), or [`NoiseCovariance`](@ref). A dissipative
 block adds noise, which the noise scattering parameters, the quantum
 efficiency and the commutation relations account for. A `NoiseCovariance`
-block is accepted by the circuit representation but cannot be compiled
-for the harmonic balance solvers. `Lossless` is how a unitary callable
-says so, since unlike stored data it cannot be checked.
+states the added noise outright, which is what an active block, an
+amplifier given by its scattering parameters, needs, and is held to the
+minimum the commutation relations require of it. `Lossless` is how a
+unitary callable says so, since unlike stored data it cannot be checked.
 `negative_frequency` is [`ConjugateSymmetry`](@ref) (default) or
 [`Native`](@ref). `form` says how a callable `S` is called; see
 [`CallableMatrixProvider`](@ref). Passivity of constant and tabulated
@@ -1439,7 +1597,7 @@ function ScatteringParameters(S; nports = nothing, zref = nothing,
         checkpassive(provider; atol = atol)
     end
     checklossless(noise, provider)
-    checknoise(noise, n)
+    noise = preparenoise(noise, provider, n)
     dprov = NamedTuple(k => begin
             dp = matrixprovider(v, Complex{Float64}; n = n, form = form)
             providersize(dp) == n || throw(DimensionMismatch(lazy"the derivative for parameter $(k) has dimension $(providersize(dp)) but the block has $(n) ports."))
@@ -1481,17 +1639,85 @@ function zrefvector(zref, n::Int)
     return z
 end
 
-function checknoise(noise::NoiseCovariance, n::Int)
-    provider = matrixprovider(noise.provider, Complex{Float64}; n = n,
+"""
+    preparenoise(noise, provider, n)
+
+The noise model of a block as it is stored: a [`NoiseCovariance`](@ref)
+with its data as a matrix provider of the block's dimension `n`, validated
+for Hermitian symmetry and, where both it and the scattering `provider`
+are stored data, for the minimum noise the commutation relations require
+(see [`quantumnoisemargin`](@ref)); any other model unchanged.
+"""
+function preparenoise(noise::NoiseCovariance, provider, n::Int)
+    vp = matrixprovider(noise.provider, Complex{Float64}; n = n,
         interpolation = noise.interpolation,
         extrapolation = noise.extrapolation)
-    if providersize(provider) != n
-        throw(DimensionMismatch(lazy"The noise covariance dimension $(providersize(provider)) does not match the number of ports $(n)."))
+    if providersize(vp) != n
+        throw(DimensionMismatch(lazy"The noise covariance dimension $(providersize(vp)) does not match the number of ports $(n)."))
     end
-    checkhermitian(provider)
+    checkhermitian(vp)
+    prepared = NoiseCovariance(vp, noise.interpolation, noise.extrapolation,
+        noise.atol, noise.completed, noise.padding)
+    checkquantum(prepared, provider, n)
+    return prepared
+end
+preparenoise(noise, provider, n::Int) = noise
+
+"""
+    quantumnoisemargin(V::AbstractMatrix, S::AbstractMatrix)
+
+The smallest eigenvalue of `V - K` and of `V + K`, with `K = I - S S'`,
+which is nonnegative when the noise covariance `V` is one a block with
+the scattering matrix `S` can add without violating the commutation
+relations: `(V + K)/2` and `(V - K)/2` are then the covariances of its
+channels of either kind (see [`NoiseCovariance`](@ref)).
+"""
+function quantumnoisemargin(V::AbstractMatrix, S::AbstractMatrix)
+    n = size(S, 1)
+    K = Matrix{Complex{Float64}}(I, n, n) - S*S'
+    Vh = Matrix{Complex{Float64}}(V)
+    return min(minimum(real.(eigvals(Hermitian(Vh - K)))),
+        minimum(real.(eigvals(Hermitian(Vh + K)))))
+end
+
+# The frequencies at which stored data of both providers can be
+# compared: the knots of whichever is tabulated, within the range of the
+# other. A callable is unknown between evaluations, so a pair with one is
+# checked only where a solver evaluates it.
+function storedfrequencies(a, b)
+    ta = a isa TabulatedMatrixProvider
+    tb = b isa TabulatedMatrixProvider
+    ta || tb || return Float64[0.0]
+    fs = Float64[]
+    ta && append!(fs, a.frequencies)
+    tb && append!(fs, b.frequencies)
+    inrange(p, f) = !(p isa TabulatedMatrixProvider) ||
+        p.extrapolation != :error || (p.frequencies[1] <= f <= p.frequencies[end])
+    return unique!(sort!([f for f in fs if inrange(a, f) && inrange(b, f)]))
+end
+
+# whether the check can run on data alone
+storedprovider(p) = p isa ConstantMatrixProvider || p isa TabulatedMatrixProvider
+
+function checkquantum(noise::NoiseCovariance, provider, n::Int)
+    # a covariance completed to the commutation relations meets them by
+    # construction
+    noise.completed && return nothing
+    storedprovider(provider) && storedprovider(noise.provider) || return nothing
+    fs = storedfrequencies(provider, noise.provider)
+    isempty(fs) && return nothing
+    S = Array{Complex{Float64},3}(undef, n, n, length(fs))
+    V = Array{Complex{Float64},3}(undef, n, n, length(fs))
+    evaluateprovider!(S, provider, fs)
+    evaluateprovider!(V, noise.provider, fs)
+    for k in eachindex(fs)
+        margin = quantumnoisemargin(view(V, :, :, k), view(S, :, :, k))
+        if margin < -noise.atol
+            throw(ArgumentError(lazy"The noise covariance is less than the commutation relations require of this block: at $(fs[k]) rad/s the smallest eigenvalue of V - K or V + K, with K = I - S S', is $(margin). An amplifier of power gain G has to emit at least G - 1 at its output; see NoiseCovariance."))
+        end
+    end
     return nothing
 end
-checknoise(noise, n::Int) = nothing
 
 # whether the provider's matrices are Hermitian to `atol` at every sample, the
 # validation of a `NoiseCovariance`
@@ -1581,12 +1807,38 @@ function evaluateprovider!(dest::AbstractArray{T,3},
     n = size(p.D, 1)
     checkdestsize(dest, n, length(ws))
     nz = size(p.A, 1)
-    for i in eachindex(ws)
-        if nz == 0
+    if nz == 0
+        for i in eachindex(ws)
             dest[:, :, i] .= p.D
-        else
-            dest[:, :, i] .= p.D .+ p.C*((im*ws[i]*I - p.A) \ p.B)
         end
+        return dest
+    end
+    # over many frequencies the resolvent is taken through the Schur form
+    # of the state matrix, `A = Q T Q'` with `T` upper triangular, once,
+    # each frequency then costing a triangular solve of the states squared
+    # rather than a factorization of the states cubed, and as accurately,
+    # the Schur vectors being unitary whatever the conditioning of the
+    # eigenvectors, which a nearly defective realization, an all pass, has
+    # no usable set of
+    if T <: Complex && length(ws) > 8
+        F = schur(Matrix{Complex{Float64}}(p.A))
+        QB = F.Z'*p.B
+        CQ = p.C*F.Z
+        M = similar(F.T)
+        X = similar(QB)
+        for i in eachindex(ws)
+            M .= .-F.T
+            for k in axes(M, 1)
+                M[k, k] += im*ws[i]
+            end
+            X .= QB
+            ldiv!(UpperTriangular(M), X)
+            dest[:, :, i] .= p.D .+ CQ*X
+        end
+        return dest
+    end
+    for i in eachindex(ws)
+        dest[:, :, i] .= p.D .+ p.C*((im*ws[i]*I - p.A) \ p.B)
     end
     return dest
 end
@@ -1856,14 +2108,16 @@ multiport, with `A` the `nz` by `nz` state matrix, `B` `nz` by `nports`,
 `C` `nports` by `nz` and `D` `nports` by `nports`, all real and finite,
 `A` stable. The block is validated as passive by the bounded real
 lemma's Hamiltonian test, or by sampling where its feedthrough is
-lossless, and it is rejected otherwise; an active block is not a
-scattering block of this kind. It is evaluated by the harmonic balance
-solvers at every frequency and realized in time by the transient solver
-with its states, so the two describe the same block, and its noise is
-the noise of its loss at every frequency by Bosma's relation. The
-realization is what a vector fit of measured or simulated data
-delivers; a lossless line is [`TransmissionLine`](@ref) instead, which
-needs no states.
+lossless, and it is rejected otherwise, unless it states its noise with
+a [`NoiseCovariance`](@ref), which is how an active block, an amplifier
+given by its scattering parameters, declares it; stability is required
+of every realization. It is evaluated by the harmonic balance solvers
+at every frequency and realized in time by the transient solver with
+its states, so the two describe the same block, and its noise is the
+noise of its loss at every frequency by Bosma's relation, or the noise
+it states. The realization is what a vector fit of measured or
+simulated data delivers; a lossless line is [`TransmissionLine`](@ref)
+instead, which needs no states.
 """
 function RationalScattering(A, B, C, D; zref = 50.0, grounded::Bool = true, noise = Passive(), atol::Real = 1e-8)
     Am, Bm, Cm, Dm = Matrix{Float64}(A), Matrix{Float64}(B), Matrix{Float64}(C), Matrix{Float64}(D)
@@ -1874,8 +2128,9 @@ function RationalScattering(A, B, C, D; zref = 50.0, grounded::Bool = true, nois
     nz == 0 || maximum(real.(eigvals(Am))) < 0 || throw(ArgumentError(
         lazy"the realization is unstable: the largest real part of an eigenvalue of A is $(maximum(real.(eigvals(Am)))) per second."))
     provider = RationalScatteringProvider(Am, Bm, Cm, Dm)
-    checkpassive(provider; atol = atol)
+    noise isa NoiseCovariance || checkpassive(provider; atol = atol)
     checklossless(noise, provider)
+    noise = preparenoise(noise, provider, n)
     z = zref isa Number ? fill(Float64(zref), n) : Float64.(collect(zref))
     length(z) == n && all(x -> isfinite(x) && x > 0, z) || throw(ArgumentError("give one positive reference impedance per port."))
     return ScatteringParameters(provider, n, z, grounded, noise, ConjugateSymmetry())
@@ -1946,8 +2201,8 @@ provablylossless(p::ConstantMatrixProvider; atol = 1e-10) =
     unitaritydeviation(p.A) <= atol
 function provablylossless(p::TabulatedMatrixProvider; atol = 1e-10)
     # linear extrapolation leaves the stored range unbounded, so nothing
-    # can be proved about it
-    p.extrapolation == :linear && return false
+    # can be proved about it, and zero beyond the band absorbs everything
+    (p.extrapolation == :linear || p.extrapolation == :zero) && return false
     return worstunitaritydeviation(p) <= atol
 end
 provablylossless(b::ScatteringParameters; atol = 1e-10) =
@@ -2041,6 +2296,44 @@ function evaluatescattering!(dest::AbstractArray{Complex{Float64},3},
     return dest
 end
 
+"""
+    evaluatecovariance!(dest::AbstractArray{Complex{Float64},3},
+        block::ScatteringParameters, ws::AbstractVector,
+        absbuffer = nothing)
+
+Evaluate the stated noise covariance of `block`, whose noise model is a
+[`NoiseCovariance`](@ref), at the signed angular frequencies `ws` with the
+block's negative frequency rule, as [`evaluatescattering!`](@ref) does
+the scattering parameters: the covariance of a wave at a negative
+frequency is the conjugate of that at the positive one.
+"""
+function evaluatecovariance!(dest::AbstractArray{Complex{Float64},3},
+        block::ScatteringParameters, ws::AbstractVector,
+        absbuffer::Union{Nothing,Vector{Float64}} = nothing)
+    provider = block.noise.provider
+    if block.negative_frequency isa Native
+        evaluateprovider!(dest, provider, ws)
+    else
+        absws = if isnothing(absbuffer)
+            abs.(ws)
+        else
+            resize!(absbuffer, length(ws))
+            @inbounds for i in eachindex(ws)
+                absbuffer[i] = abs(ws[i])
+            end
+            absbuffer
+        end
+        evaluateprovider!(dest, provider, absws)
+        for i in eachindex(ws)
+            if ws[i] < 0
+                dv = view(dest,:,:,i)
+                dv .= conj.(dv)
+            end
+        end
+    end
+    return dest
+end
+
 # A block loaded from a Touchstone file. The reference impedance is read
 # from the file's option line; an explicit `zref` which disagrees with it
 # is an error, since it is ambiguous between correcting a mislabeled file
@@ -2071,7 +2364,7 @@ function touchstonescatteringblock(path::AbstractString; nports, zref,
     if !(noise isa NoiseCovariance)
         checkpassive(provider; atol = atol)
     end
-    checknoise(noise, n)
+    noise = preparenoise(noise, provider, n)
     checkdcmodel(dcmodel, n, noise, atol)
     return ScatteringParameters(provider, n, filezref, grounded, noise,
         negative_frequency, NamedTuple(), dcmodel)
@@ -2127,7 +2420,7 @@ function TransmissionLine(Z0, len; vp = speed_of_light,
     end
     provider = TransmissionLineProvider(Float64(Z0), Float64(len)/Float64(vp))
     return ScatteringParameters(provider, 2, fill(Float64(Z0), 2), grounded,
-        noise, Native())
+        preparenoise(noise, provider, 2), Native())
 end
 
 # === Gaussian channels ===
@@ -2304,3 +2597,504 @@ function checkchannelpoint(X, Y, atol, k)
     end
     return nothing
 end
+
+# === a pumped scattering block ===
+
+"""
+    LinearizedScattering(linearized, wp; ports = nothing, zref = 50.0,
+        grounded = true, noise = Lossless(), phase = 0.0,
+        interpolation = :cubic, atol = 1e-6, dcmodel = ScatteringLimit(),
+        envelope = nothing)
+    LinearizedScattering(H, wp; harmonics, nports, zref = 50.0,
+        grounded = true, noise = Lossless(), phase = 0.0,
+        dcmodel = ScatteringLimit(), envelope = nothing)
+
+The linearized scattering of a pumped device, a linear time-periodic
+multiport: a parametric amplifier, converter or isolator in its
+periodic steady state, whose small signal response converts between
+frequencies separated by harmonics of its pump `wp` (radians per
+second). It is described by
+harmonic transfer functions `H_k(nu)`, the wave leaving at the absolute
+frequency `nu + k*wp` per unit wave incident at `nu`, for the harmonics
+`k >= 0` it converts by; a real device has `H_{-k}(nu) = conj(H_k(-nu))`,
+which supplies the rest. `H_0` is an ordinary scattering matrix, and
+every `H_k` is a function of the signed frequency, so the block is
+evaluated natively at negative frequencies.
+
+The harmonic transfer functions act on power waves, as the hybrid stamp
+does; the scattering matrix the solvers report is in waves of photons
+per second, so a conversion entry of the two differs by the square root
+of the ratio of the frequencies, which the first form applies.
+
+The first form builds one from the `linearized` output of
+[`hbsolve`](@ref) of the device, with its keyed scattering matrix over
+the modes of one pump and its frequencies: the entry from input mode
+`n` to output mode `m` at the signal frequency `w` is a sample of
+`H_{m-n}` at `w + n*wp`, and the samples of every harmonic from every
+mode pair are collected, folded onto `k >= 0`, and tabulated band by
+band over the shifted bands with `interpolation`, zero between and
+beyond them, since the data says nothing there (see
+[`PiecewiseTabulatedProvider`](@ref)). Samples which fall on the same
+frequency from different mode pairs must agree to `atol`, relative to
+the largest entry, which is what makes the data that of one periodic
+steady state, and the block built from the tables is checked against
+its declaration over the modes of the solve at every frequency, as
+every solve checks it, since the tables hold at one frequency samples
+from solves of neighboring signal frequencies whose mode truncations
+differ; a device whose mode truncation was too tight fails both, and
+`atol` admits the discrepancy of one which was nearly so.
+`ports` selects and orders the device's ports which become the block's,
+by default all of them, and `zref` gives their reference impedances.
+`phase` rotates `H_k` by `exp(im*k*phase)`, the phase of the block's
+pump relative to the one the data was computed with, which matters when
+other elements of the circuit share the pump.
+
+The second form takes the harmonic transfer functions directly: `H` is a
+vector of providers, one per entry of `harmonics` (nonnegative, ascending,
+beginning with zero), each a matrix, a callable of the signed angular
+frequency, or a tuple `(frequencies, values)` tabulated over signed
+frequencies.
+
+The block is stamped by the harmonic balance solvers as a coupling
+between the modes of the circuit whose frequencies differ by its
+harmonics, so the circuit must be solved with the block's pump: its
+`wp` must be a harmonic combination of the circuit's pump frequencies
+and the mode set must reach the harmonics the block converts by, which
+is how a circuit with no junctions is solved with a pumped block, by
+giving `hbsolve` the pump frequency and no source at it. The block is
+linear, so it acts on the circuit's own pump harmonics the same way.
+
+`noise = Lossless()` asserts that the device is lossless: its
+multi-mode scattering matrix `S` satisfies `J - S J S' = 0` with `J` the
+signs of the mode frequencies, which is checked on the block as built
+and again over the modes of every solve which evaluates it, in harmonic
+balance at every signal frequency and in time at every bath frequency,
+and the block then emits no noise. A device with loss states the noise it adds
+with `noise = NoiseCovariance(linearized.Cnoise)`, the covariance its
+solve reports with `returnCnoise = true`, over the same modes, ports
+and frequencies: in the units of `Cnoise`, where a vacuum channel counts
+as one, it becomes the harmonic covariances
+`V_k(nu) = <n(nu + k wp) n(nu)'>`, sampled like the transfer functions,
+and is held to the minimum the commutation relations require,
+`V - K` and `V + K` positive semidefinite with `K = J - S J S'`, on the
+data and again at every frequency of a sweep. The block then carries
+channels of both kinds over all its modes at once, as an active block
+does (see [`NoiseCovariance`](@ref)), so it adds the noise its solve
+found, correlated across the modes, and its output obeys the
+commutation relations. Given by its harmonic transfer functions, the
+stated noise is one covariance provider per harmonic. `atol` is the
+tolerance of the block's data, relative to the square of the largest
+entry of the multi-mode scattering matrix: the consistency of the data
+of one periodic steady state, the losslessness declared or the
+commutation relations a stated covariance must satisfy, which the
+block is checked for on its stored data when it is built, a table at
+its knots and a block of constants which does not convert at any one
+frequency, and over the modes of every solve, whatever outputs the
+solve is asked for, a callable and constants which convert being
+checkable only there, and an entry of the data below it is zero where
+the pump solve asks whether the block converts the conjugate of a
+mode; a covariance's own `atol` counts for its checks as well. A fit of the
+block is held to no tolerance: it states the noise its own commutator
+requires, a covariance completed to the commutation relations (see
+[`NoiseCovariance`](@ref)). `grounded` and
+`dcmodel` are as for [`ScatteringParameters`](@ref); the direct current
+behavior is that of `H_0` at zero unless stated.
+
+In time the block is realized by [`RationalScattering`](@ref)`(block,
+npoles)`, which fits every harmonic transfer function to stable filters:
+`H_0` as an ordinary rational block, and each `H_k` as the pair of real
+filters of its cosine and sine parts, strictly proper, whose outputs the
+transient multiplies by `2 cos(k wp t)` and `-2 sin(k wp t)`. `envelope`
+is a callable of the time in seconds which multiplies every harmonic but
+the zeroth there, a prescribed gate of the conversion and not a model
+of the pump being switched: `H_0`, the filters and a stated covariance
+stay those of the pumped device while the conversion is scaled, so the
+block satisfies the commutation relations only where the envelope is
+one, or zero for a device whose `H_0` is that of the device unpumped.
+What the gate is for is the start of a record: ramped from zero, it
+leaves the circuit time invariant before the record a noise calculation
+needs, as the pumps of the junction circuits are, and the noise is read
+once the conversion has been on longer than the block's memory.
+`nothing` is a conversion always on, which a noise calculation then
+takes as periodic from the start of its record with the fluctuations
+before it those of the unconverted response, not of the periodic
+device.
+"""
+struct LinearizedScattering{N,DM<:AbstractDCModel} <: AbstractComponent
+    harmonics::Vector{Int}
+    providers::Vector{AbstractMatrixProvider}
+    wp::Float64
+    phase::Float64
+    nports::Int
+    zref::Vector{Float64}
+    grounded::Bool
+    noise::N
+    dcmodel::DM
+    # the gate of the conversion in time, a callable of the time in
+    # seconds multiplying every harmonic but the zeroth, or nothing for
+    # a block whose conversion is always on
+    envelope::Any
+    # the tolerance of the block's data, relative to the square of the
+    # largest entry of its multi-mode scattering matrix: the consistency
+    # of the data, the declaration it must meet, with a covariance's own
+    # tolerance, when it is built and at every frequency a solve
+    # evaluates it at, and the entries taken as zero where the pump solve
+    # asks whether the block converts the conjugate of a mode
+    atol::Float64
+end
+
+function LinearizedScattering(H::AbstractVector, wp::Real; harmonics::AbstractVector{<:Integer},
+        nports::Integer, zref = 50.0, grounded::Bool = true, noise = Lossless(),
+        phase::Real = 0.0, dcmodel::AbstractDCModel = ScatteringLimit(),
+        envelope = nothing, atol::Real = 1e-6)
+    (isfinite(wp) && wp > 0) || throw(ArgumentError("the pump frequency must be positive and finite."))
+    (isfinite(atol) && atol >= 0) || throw(ArgumentError("atol must be finite and nonnegative."))
+    ks = collect(Int, harmonics)
+    (!isempty(ks) && ks[1] == 0 && issorted(ks; lt = <=) && all(>=(0), ks)) || throw(ArgumentError(
+        "the harmonics must be nonnegative, strictly increasing, and begin with zero."))
+    length(H) == length(ks) || throw(DimensionMismatch(lazy"give one provider per harmonic; $(length(H)) providers for $(length(ks)) harmonics."))
+    n = Int(nports)
+    providers = AbstractMatrixProvider[]
+    for h in H
+        p = matrixprovider(h, Complex{Float64}; n = n)
+        providersize(p) == n || throw(DimensionMismatch(lazy"a harmonic transfer function has dimension $(providersize(p)) but the block has $(n) ports."))
+        push!(providers, p)
+    end
+    if noise isa NoiseCovariance
+        V = noise.provider
+        (V isa AbstractVector && length(V) == length(ks)) || throw(ArgumentError(
+            "the stated noise of a pumped block given by its harmonic transfer functions is one covariance provider per harmonic, V_k(nu) = <n(nu + k wp) n(nu)'> in the units of Cnoise."))
+        vps = AbstractMatrixProvider[]
+        for v in V
+            vp = matrixprovider(v, Complex{Float64}; n = n)
+            providersize(vp) == n || throw(DimensionMismatch(lazy"a harmonic covariance has dimension $(providersize(vp)) but the block has $(n) ports."))
+            push!(vps, vp)
+        end
+        noise = NoiseCovariance(vps, noise.interpolation, noise.extrapolation, noise.atol, noise.completed, noise.padding)
+    else
+        noise isa Lossless || throw(ArgumentError("a pumped block declares noise = Lossless(), or states its noise with a NoiseCovariance over its harmonics."))
+    end
+    isfinite(phase) || throw(ArgumentError("the pump phase must be finite."))
+    checkdcmodel(dcmodel, n, noise, 1e-8)
+    built = LinearizedScattering(ks, providers, Float64(wp), Float64(phase), n,
+        zrefvector(zref, n), grounded, noise, dcmodel, envelope, Float64(atol))
+    # the stored data is checked where it is stored: a table at its
+    # knots, over the modes the harmonics reach from each with every
+    # input which feeds them, and a block of constants which does not
+    # convert at any one frequency, its data being the same at every;
+    # a callable, and constants which convert, whose entries carry the
+    # photon factors of the modes, are checked at the solve
+    conjugateladder(built)
+    stored = vcat(providers, noise isa NoiseCovariance ? noise.provider : AbstractMatrixProvider[])
+    nus = Float64[]
+    for p in stored
+        append!(nus, tableknots(p))
+    end
+    isempty(nus) && ks == [0] && all(p -> p isa ConstantMatrixProvider, stored) && push!(nus, Float64(wp))
+    declared = noise isa NoiseCovariance ? max(Float64(atol), noise.atol) : Float64(atol)
+    for nu in unique!(sort!(nus))
+        rows, cols, K = pumpedfamily(built, (nu,))
+        v = pumpedviolation(built, rows, cols, K)
+        v <= declared || throw(ArgumentError(lazy"the block's data does not meet what it declares: over the modes its harmonics reach from $(nu) rad/s the violation of its losslessness or of the commutation relations of its stated covariance is $(v) of the square of its largest entry, against the $(declared) of atol and its noise model's. A device with loss or gain states its noise with NoiseCovariance; raise atol to admit a discrepancy of the data."))
+    end
+    return built
+end
+
+function LinearizedScattering(lin, wp::Real; ports = nothing, zref = 50.0,
+        grounded::Bool = true, noise = Lossless(), phase::Real = 0.0,
+        interpolation::Symbol = :cubic, atol::Real = 1e-6,
+        dcmodel::AbstractDCModel = ScatteringLimit(), envelope = nothing)
+    (hasproperty(lin, :S) && hasproperty(lin, :w)) || throw(ArgumentError(
+        "give the linearized output of hbsolve, which carries the scattering matrix and its frequencies, or the harmonic transfer functions with their harmonics."))
+    S = lin.S
+    S isa AxisKeys.KeyedArray || throw(ArgumentError(
+        "the scattering matrix must be keyed by mode and port; solve with keyedarrays = true."))
+    (isfinite(wp) && wp > 0) || throw(ArgumentError("the pump frequency must be positive and finite."))
+    (isfinite(atol) && atol >= 0) || throw(ArgumentError("atol must be finite and nonnegative."))
+    noise isa Lossless || noise isa NoiseCovariance || throw(ArgumentError(
+        "a pumped block declares noise = Lossless(), or states the covariance its solve reports with noise = NoiseCovariance(linearized.Cnoise)."))
+    outmodes = collect(AxisKeys.axiskeys(S, 1))
+    outports = collect(AxisKeys.axiskeys(S, 2))
+    inmodes = collect(AxisKeys.axiskeys(S, 3))
+    inports = collect(AxisKeys.axiskeys(S, 4))
+    all(m -> length(m) == 1, outmodes) && all(m -> length(m) == 1, inmodes) || throw(ArgumentError(
+        "a pumped block has one pump; the data has the modes of several."))
+    outmodes == inmodes || throw(ArgumentError("the output and input modes of the data differ."))
+    modes = Int[m[1] for m in outmodes]
+    selected = isnothing(ports) ? outports : collect(ports)
+    all(p -> p in outports && p in inports, selected) || throw(ArgumentError(
+        lazy"the ports $(selected) are not all ports of the data, $(outports)."))
+    allunique(selected) || throw(ArgumentError("a port is selected twice."))
+    n = length(selected)
+    n >= 1 || throw(ArgumentError("select at least one port."))
+    po = [findfirst(==(p), outports) for p in selected]
+    qi = [findfirst(==(p), inports) for p in selected]
+    A = Array(S)
+    wv = Float64.(collect(lin.w))
+    length(wv) == size(A, 5) || throw(DimensionMismatch("the frequencies do not match the scattering data."))
+    nm = length(modes)
+    wp = Float64(wp)
+    # the samples of each harmonic from every mode pair at every
+    # frequency, folded onto nonnegative harmonics by the realness of the
+    # device
+    samples = Dict{Int,Vector{Tuple{Float64,Matrix{Complex{Float64}}}}}()
+    mirrored = Tuple{Float64,Matrix{Complex{Float64}}}[]
+    for (a, mo) in enumerate(modes), (b, mi) in enumerate(modes), i in eachindex(wv)
+        k = mo - mi
+        nu = wv[i] + mi*wp
+        # the solver's waves are in photons per second, the stamp's in
+        # power: a conversion between frequencies carries the ratio of
+        # the photon energies
+        power = sqrt(abs(nu + k*wp)/abs(nu))
+        M = Matrix{Complex{Float64}}(undef, n, n)
+        for q in 1:n, p in 1:n
+            M[p, q] = power*A[a, po[p], b, qi[q], i]
+        end
+        if k >= 0
+            push!(get!(samples, k, Tuple{Float64,Matrix{Complex{Float64}}}[]), (nu, M))
+        else
+            push!(get!(samples, -k, Tuple{Float64,Matrix{Complex{Float64}}}[]), (-nu, conj(M)))
+        end
+        # the unconverted response is a real function, `H_0(-nu) =
+        # conj(H_0(nu))`, so its table holds both signs of every sample,
+        # and is evaluated at a mode the data reached only at the other
+        # sign, an idler's; a mirrored sample is added only where the data
+        # has none of its own
+        k == 0 && push!(mirrored, (-nu, conj(M)))
+    end
+    if haskey(samples, 0)
+        direct = sort!([nu for (nu, M) in samples[0]])
+        for (nu, M) in mirrored
+            i = searchsortedfirst(direct, nu)
+            near = (i <= length(direct) && abs(direct[i] - nu) <= 1e-9*(abs(nu) + wp)) ||
+                (i > 1 && abs(direct[i - 1] - nu) <= 1e-9*(abs(nu) + wp))
+            near || push!(samples[0], (nu, M))
+        end
+    end
+    scale = max(1.0, maximum(abs, A))
+    ks = sort!(collect(keys(samples)))
+    providers = AbstractMatrixProvider[]
+    for k in ks
+        list = sort!(samples[k]; by = first)
+        nus = Float64[]
+        mats = Matrix{Complex{Float64}}[]
+        for (nu, M) in list
+            if !isempty(nus) && abs(nu - nus[end]) <= 1e-9*(abs(nu) + wp)
+                # the same frequency reached from two mode pairs: one
+                # periodic steady state gives the same value from both
+                d = maximum(abs, M .- mats[end])
+                d <= atol*scale || throw(ArgumentError(lazy"the data is not that of one periodic steady state: the samples of the harmonic $(k) at $(nu) rad/s from two mode pairs differ by $(d) against the largest entry $(scale). A tighter mode truncation, or data not from the linearized solve of one pumped device, does this; atol admits a discrepancy."))
+                continue
+            end
+            push!(nus, nu)
+            push!(mats, M)
+        end
+        values = Array{Complex{Float64},3}(undef, n, n, length(nus))
+        for j in eachindex(nus)
+            values[:, :, j] .= mats[j]
+        end
+        push!(providers, piecewisetable(nus, values; interpolation = interpolation))
+    end
+    # the stated noise: the covariance the solve reports, over the same
+    # modes, ports and frequencies, as harmonic covariances
+    # V_k(nu) = <n(nu + k wp) n(nu)'> for k >= 0, in the units of Cnoise,
+    # the entry from mode n to mode m at the signal frequency w being a
+    # sample of V_{m-n} at w + n*wp and the Hermitian symmetry supplying
+    # the negative harmonics
+    stated = if noise isa NoiseCovariance
+        C = noise.provider
+        C isa AxisKeys.KeyedArray || throw(ArgumentError(
+            "the stated noise of a pumped block is the keyed covariance its solve reports, noise = NoiseCovariance(linearized.Cnoise), from hbsolve with returnCnoise = true."))
+        (collect(AxisKeys.axiskeys(C, 1)) == outmodes && collect(AxisKeys.axiskeys(C, 2)) == outports &&
+            collect(AxisKeys.axiskeys(C, 3)) == inmodes && collect(AxisKeys.axiskeys(C, 4)) == inports &&
+            size(C, 5) == length(wv) && collect(AxisKeys.axiskeys(C, 5)) == collect(AxisKeys.axiskeys(S, 5))) || throw(ArgumentError(
+            "the stated covariance does not share the modes, ports and frequencies of the scattering matrix; take both from one solve."))
+        Ca = Array(C)
+        vsamples = Dict{Int,Vector{Tuple{Float64,Matrix{Complex{Float64}}}}}()
+        for (a, mo) in enumerate(modes), (b, mi) in enumerate(modes), i in eachindex(wv)
+            k = mo - mi
+            nu = wv[i] + mi*wp
+            M = Matrix{Complex{Float64}}(undef, n, n)
+            for q in 1:n, p in 1:n
+                M[p, q] = Ca[a, po[p], b, qi[q], i]
+            end
+            if k >= 0
+                push!(get!(vsamples, k, Tuple{Float64,Matrix{Complex{Float64}}}[]), (nu, M))
+            else
+                push!(get!(vsamples, -k, Tuple{Float64,Matrix{Complex{Float64}}}[]), (nu + k*wp, Matrix(M')))
+            end
+        end
+        vscale = max(1.0, maximum(abs, Ca))
+        vproviders = AbstractMatrixProvider[]
+        for k in ks
+            list = sort!(get(vsamples, k, Tuple{Float64,Matrix{Complex{Float64}}}[]); by = first)
+            nus = Float64[]
+            mats = Matrix{Complex{Float64}}[]
+            for (nu, M) in list
+                if !isempty(nus) && abs(nu - nus[end]) <= 1e-9*(abs(nu) + wp)
+                    d = maximum(abs, M .- mats[end])
+                    d <= noise.atol*vscale || throw(ArgumentError(lazy"the stated covariance is not Hermitian over the modes: the samples of the harmonic $(k) at $(nu) rad/s from two mode pairs differ by $(d) against the largest entry $(vscale)."))
+                    continue
+                end
+                push!(nus, nu)
+                push!(mats, M)
+            end
+            values = Array{Complex{Float64},3}(undef, n, n, length(nus))
+            for j in eachindex(nus)
+                values[:, :, j] .= mats[j]
+            end
+            push!(vproviders, piecewisetable(nus, values; interpolation = interpolation))
+        end
+        NoiseCovariance(vproviders, noise.interpolation, noise.extrapolation, noise.atol, noise.completed, noise.padding)
+    else
+        noise
+    end
+    isfinite(phase) || throw(ArgumentError("the pump phase must be finite."))
+    checkdcmodel(dcmodel, n, stated, 1e-8)
+    built = LinearizedScattering(ks, providers, wp, Float64(phase), n,
+        zrefvector(zref, n), grounded, stated, dcmodel, envelope, Float64(atol))
+    # the block as every solve evaluates it, from its tables, over the
+    # modes of the solve at each of its frequencies: a lossless device
+    # has a symplectic multi-mode scattering matrix there, and a stated
+    # covariance is held to the minimum the commutation relations
+    # require of that matrix; the tables hold, at one frequency, samples
+    # from solves of neighboring signal frequencies, whose mode
+    # truncations differ, so the block meets its declaration only to
+    # the discrepancy of the data, which atol admits and which is found
+    # here, when the block is built, rather than at its first solve
+    conjugateladder(built)
+    declared = stated isa NoiseCovariance ? max(Float64(atol), stated.atol) : Float64(atol)
+    sq = Vector{Float64}(undef, nm)
+    for i in eachindex(wv)
+        sq .= wv[i] .+ modes .* wp
+        v = pumpedviolation(built, sq, pumpedharmonics(built, sq))
+        v <= declared || throw(ArgumentError(lazy"the block does not meet what it declares: at the frequency index $(i), over the modes of the solve, the violation of its losslessness or of the commutation relations of its stated covariance is $(v) of the square of its largest entry, against the $(declared) of atol and its noise model's. Declare its noise with noise = NoiseCovariance(linearized.Cnoise) from a solve with returnCnoise = true, leave a pump port out with the ports keyword, or raise atol to admit the discrepancy between the solves the tables hold at one frequency."))
+    end
+    return built
+end
+
+"""
+    evaluateharmoniccovariances!(dest::AbstractArray{Complex{Float64},4},
+        block::LinearizedScattering, ws::AbstractVector)
+
+Evaluate the harmonic covariances of the stated noise of `block`, whose
+noise model is a [`NoiseCovariance`](@ref) over its harmonics, at the
+signed angular frequencies `ws`: `dest[:, :, j, i]` is
+`V_k(ws[i]) = <n(ws[i] + k wp) n(ws[i])'>` for `k = block.harmonics[j]`,
+in the units of `Cnoise`, where a vacuum channel counts as one, rotated
+by the block's pump phase as the transfer functions are. The negative
+harmonics follow from `V_{-k}(nu) = V_k(nu - k wp)'`, and the conjugate
+ladder of a frequency from `V_k(-nu - k wp) = transpose(V_k(nu))` (see
+[`conjugateladder`](@ref)), which is how the covariance a solve reports,
+whose rows are the modes of the solve, states the noise at their
+conjugates.
+
+This is the covariance every solve reads, zero at a frequency neither
+the data nor its conjugate ladder reaches.
+"""
+function evaluateharmoniccovariances!(dest::AbstractArray{Complex{Float64},4},
+        block::LinearizedScattering, ws::AbstractVector)
+    n = block.nports
+    nk = length(block.harmonics)
+    size(dest) == (n, n, nk, length(ws)) || throw(DimensionMismatch(lazy"the destination has size $(size(dest)) but ($(n), $(n), $(nk), $(length(ws))) is required."))
+    return evaluatecoveredharmonics!(dest, block, ws; covariance = true)
+end
+
+"""
+    evaluateharmonics!(dest::AbstractArray{Complex{Float64},4},
+        block::LinearizedScattering, ws::AbstractVector)
+
+Evaluate the harmonic transfer functions of `block` at the signed
+angular frequencies `ws`: `dest[:, :, j, i]` is `H_k(ws[i])` for the
+harmonic `k = block.harmonics[j]`, rotated by the block's pump phase.
+The negative harmonics follow from `H_{-k}(nu) = conj(H_k(-nu))`, which a
+caller evaluates at the negated frequencies.
+"""
+function evaluateharmonics!(dest::AbstractArray{Complex{Float64},4},
+        block::LinearizedScattering, ws::AbstractVector)
+    n = block.nports
+    nk = length(block.harmonics)
+    size(dest) == (n, n, nk, length(ws)) || throw(DimensionMismatch(lazy"the destination has size $(size(dest)) but ($(n), $(n), $(nk), $(length(ws))) is required."))
+    buf = Array{Complex{Float64},3}(undef, n, n, length(ws))
+    for (j, k) in enumerate(block.harmonics)
+        evaluateprovider!(buf, block.providers[j], ws)
+        rot = cis(k*block.phase)
+        @inbounds for i in eachindex(ws), q in 1:n, p in 1:n
+            dest[p, q, j, i] = rot*buf[p, q, i]
+        end
+    end
+    return dest
+end
+
+# the scattering matrix a pumped block has without conversion, `H_0`,
+# which is what its zero frequency rows and its share of an ordinary
+# stamp read; natively valid at signed frequencies
+function evaluatescattering!(dest::AbstractArray{Complex{Float64},3},
+        block::LinearizedScattering, ws::AbstractVector,
+        absbuffer::Union{Nothing,Vector{Float64}} = nothing)
+    return evaluateprovider!(dest, block.providers[1], ws)
+end
+
+"""
+    pumpedharmonics(block::LinearizedScattering, offsets::AbstractVector)
+
+The harmonic of `block` which couples each pair of modes of a circuit, as
+a matrix over (output mode, input mode) of the multiple of the block's
+pump by which the modes' frequency `offsets` differ, or `typemin(Int)`
+where they differ by no such multiple or by one the block does not
+convert by. Throws if the block converts and no pair of modes is a pump
+apart, which is a circuit solved without the block's pump.
+"""
+function pumpedharmonics(block::LinearizedScattering, offsets::AbstractVector)
+    nm = length(offsets)
+    K = fill(typemin(Int), nm, nm)
+    found = false
+    for m in 1:nm, n in 1:nm
+        d = Float64(offsets[m]) - Float64(offsets[n])
+        k = round(Int, d/block.wp)
+        abs(d - k*block.wp) <= 1e-6*block.wp || continue
+        abs(k) in block.harmonics || continue
+        K[m, n] = k
+        k == 0 || (found = true)
+    end
+    # a block with no positive harmonic does not convert and needs no
+    # pair of modes a harmonic apart; its unconverted response is stamped
+    # on the diagonal like any other block's
+    (found || !any(>(0), block.harmonics)) || throw(ArgumentError(lazy"a pumped block converts by harmonics of its pump at $(block.wp) rad/s, but no two modes of this solve differ by one of them: solve the circuit with the block's pump frequency and modes which reach its harmonics, as hbsolve does when given the pump frequency."))
+    return K
+end
+
+"""
+    ModulatedRationalProvider(cosine::RationalScatteringProvider,
+        sine::RationalScatteringProvider)
+
+The harmonic transfer function of a [`LinearizedScattering`](@ref) block for a
+harmonic `k > 0` as fitted for the transient: `H_k(nu) = G_c(i nu) +
+i G_s(i nu)` with `G_c` and `G_s` real rational functions, the cosine and
+sine parts `G_c(nu) = (H_k(nu) + conj(H_k(-nu)))/2` and
+`G_s(nu) = (H_k(nu) - conj(H_k(-nu)))/(2i)`, each realized as a stable
+state space with no feedthrough, since a conversion vanishes at infinite
+frequency. Natively valid at signed frequencies. In time the block
+multiplies the output of the cosine filter by `2 cos(k wp t)` and that of
+the sine filter by `-2 sin(k wp t)`, which is `2 Re[exp(i k wp t) (h_k * a)]`,
+the sum of the harmonics `k` and `-k` of a real system.
+"""
+struct ModulatedRationalProvider <: AbstractMatrixProvider
+    cosine::RationalScatteringProvider
+    sine::RationalScatteringProvider
+end
+providersize(p::ModulatedRationalProvider) = size(p.cosine.D, 1)
+function evaluateprovider!(dest::AbstractArray{T,3},
+        p::ModulatedRationalProvider, ws::AbstractVector) where T
+    n = providersize(p)
+    checkdestsize(dest, n, length(ws))
+    buf = Array{Complex{Float64},3}(undef, n, n, length(ws))
+    evaluateprovider!(dest, p.cosine, ws)
+    evaluateprovider!(buf, p.sine, ws)
+    dest .+= im .* buf
+    return dest
+end
+
+# whether every harmonic of a pumped block has a realization in time
+realizedintime(block::LinearizedScattering) = all(p -> p isa RationalScatteringProvider ||
+    p isa ModulatedRationalProvider, block.providers)

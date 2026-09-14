@@ -368,8 +368,8 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
         portimpedances, vvn, modes, Nlumpedpairs, sensitivitynames,
         sensitivityindices, stampgrouping, stampslots, Nports, bnm,
         noiseportimpedanceindices, ssys, lsys, factorization, refine,
-        noiseplan, Nnoisechannels, channeltemperatures, noiseportimpedances,
-        pumpfactorization) = s
+        noiseplan, Nnoisechannels, channeltemperatures, channelsigns,
+        noiseportimpedances, pumpfactorization) = s
     sens = linearizedsensitivity(; psc, cg, nonlinear, sensitivitynodeflux,
         sensitivityresidual, sensitivitypairs, sensitivityblockpairs,
         Nsignalmodes, signalnm, phimatrix, Nnodes, coupledbranches,
@@ -400,10 +400,10 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
         Nsignalmodes, wpumpmodes, Nnodes, nodeindices, componenttypes,
         portindices, portimpedances, sensitivitynames, Nports, bnm,
         noiseportimpedanceindices, ssys, lsys, factorization, refine,
-        noiseplan, Nnoisechannels, channeltemperatures, noiseportimpedances,
-        sensitivitystamps, sensitivityblockentries, sensitivitydAop,
-        sensitivityreverse, returnS, returnSnoise, returnCnoise,
-        returnSsensitivity, returnQE, returnCM, returnnodeflux,
+        noiseplan, Nnoisechannels, channeltemperatures, channelsigns,
+        noiseportimpedances, sensitivitystamps, sensitivityblockentries,
+        sensitivitydAop, sensitivityreverse, returnS, returnSnoise,
+        returnCnoise, returnSsensitivity, returnQE, returnCM, returnnodeflux,
         returnnodefluxadjoint, returnvoltage, returnvoltageadjoint)
 
     return linearizedoutputs(; outputarrays, w, keyedarrays,
@@ -722,7 +722,7 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     # constitutive equations assembled per frequency.
     ssys = scatteringstampsystem(psc.scatteringblocks, Nsignalmodes;
         auxoffset = Nnodalmna + Nauxmna - Nauxscattering,
-        Ntotal = Nnodalmna + Nauxmna, scale = 1.0)
+        Ntotal = Nnodalmna + Nauxmna, scale = 1.0, modeoffsets = wpumpmodes)
     if !isnothing(ssys)
         Amna0 = spaddkeepzeros(Amna0, ssys.kcl)
     end
@@ -744,11 +744,18 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
 
     # the vacuum noise channels of the dissipative scattering blocks, which
     # follow the lumped noise channels in the rows of the noise scattering
-    # matrix; a block declared lossless has none
+    # matrix; a block declared lossless has none. A pumped block's
+    # declaration, its losslessness or its stated covariance, is checked
+    # over the modes of every solve whatever outputs are asked for, so
+    # that the block is accepted or refused on its declaration and not
+    # on the outputs
     checklosslessblocks(ssys, w, wpumpmodes)
+    checkpumpedblockmodels(ssys, w, wpumpmodes)
     # every output derived from the noise waves needs the channels planned,
-    # the covariance included
+    # the covariance included, and the noise a block states admitted at
+    # every frequency they are formed at
     noiseplan = if wantsnoise
+        checkblocknoisemodels(ssys, w, wpumpmodes)
         planscatteringnoise(ssys)
     else
         nothing
@@ -759,6 +766,11 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     # one a component or block states for itself
     channeltemperatures = noisechanneltemperatures(psc,
         noiseportimpedanceindices, noiseplan, ssys, temperature)
+    # the sign of each channel in the commutation relations, which only
+    # the channels of the conjugate kind of a block which states its noise
+    # reverse
+    channelsigns = noisechannelsigns(noiseportimpedanceindices, noiseplan,
+        ssys)
 
     noiseportimpedances = [vvn[i] for i in noiseportimpedanceindices]
 
@@ -773,7 +785,7 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
         KLUfactorization() : factorization
     # the derivative of the system matrix with respect to a relative
     # perturbation of each sensitivity component, at a fixed operating point
-    return (; Nsignalmodes, signalnm, phimatrix, wpumpmodes, wmodes, Nnodes, nodenames, nodeindices, componentnames, componentnamedict, componenttypes, mutualinductorbranchnames, Nbranches, edge2indexdict, coupledbranches, Nauxmna, Nnodalmna, portindices, portnumbers, portimpedances, vvn, modes, Nlumpedpairs, sensitivitynames, sensitivityindices, stampgrouping, stampslots, Nports, bnm, noiseportimpedanceindices, ssys, lsys, factorization, refine, noiseplan, Nnoisechannels, channeltemperatures, noiseportimpedances, pumpfactorization)
+    return (; Nsignalmodes, signalnm, phimatrix, wpumpmodes, wmodes, Nnodes, nodenames, nodeindices, componentnames, componentnamedict, componenttypes, mutualinductorbranchnames, Nbranches, edge2indexdict, coupledbranches, Nauxmna, Nnodalmna, portindices, portnumbers, portimpedances, vvn, modes, Nlumpedpairs, sensitivitynames, sensitivityindices, stampgrouping, stampslots, Nports, bnm, noiseportimpedanceindices, ssys, lsys, factorization, refine, noiseplan, Nnoisechannels, channeltemperatures, channelsigns, noiseportimpedances, pumpfactorization)
 end
 
 """
@@ -963,11 +975,11 @@ function linearizedsweep!(;
         Nnodes, nodeindices, componenttypes, portindices, portimpedances,
         sensitivitynames, Nports, bnm, noiseportimpedanceindices, ssys, lsys,
         factorization, refine, noiseplan, Nnoisechannels,
-        channeltemperatures, noiseportimpedances, sensitivitystamps,
-        sensitivityblockentries, sensitivitydAop, sensitivityreverse,
-        returnS, returnSnoise, returnCnoise, returnSsensitivity, returnQE,
-        returnCM, returnnodeflux, returnnodefluxadjoint, returnvoltage,
-        returnvoltageadjoint)
+        channeltemperatures, channelsigns, noiseportimpedances,
+        sensitivitystamps, sensitivityblockentries, sensitivitydAop,
+        sensitivityreverse, returnS, returnSnoise, returnCnoise,
+        returnSsensitivity, returnQE, returnCM, returnnodeflux,
+        returnnodefluxadjoint, returnvoltage, returnvoltageadjoint)
     outputarrays = LinearizedArrays(;
         requestS = returnS,
         requestSnoise = returnSnoise,
@@ -1028,13 +1040,19 @@ function linearizedsweep!(;
         # can be evaluated there (the same condition as for their stamps);
         # otherwise the whole adjoint solution comes back and every channel
         # is formed on the host.
+        # a block which states its noise has channels of both kinds, which
+        # the kernels do not form, so its circuit's channels stay on the host
         blocknoiseondevice = isnothing(noiseplan) ||
-            candeviceevaluate(lsys.scattering)
+            (candeviceevaluate(lsys.scattering) && isnothing(channelsigns))
         wantsnoise = !isempty(outputarrays.Snoise) ||
             !isempty(outputarrays.QE) || !isempty(outputarrays.CM) ||
             !isempty(outputarrays.Cnoise)
         if wantsnoise && !blocknoiseondevice
-            @warn "A scattering block of this circuit has scattering parameters which cannot be evaluated on the backend, so its noise channels are formed on the host and the whole adjoint solution is copied back at every frequency, which is the largest transfer in the sweep. Give the block's data as a constant matrix, as tabulated data, or as a callable of one entry at a time (`ScatteringParameters(f; nports, form = :entry)`) to keep the noise on the backend." maxlog=1
+            if isnothing(channelsigns)
+                @warn "A scattering block of this circuit has scattering parameters which cannot be evaluated on the backend, so its noise channels are formed on the host and the whole adjoint solution is copied back at every frequency, which is the largest transfer in the sweep. Give the block's data as a constant matrix, as tabulated data, or as a callable of one entry at a time (`ScatteringParameters(f; nports, form = :entry)`) to keep the noise on the backend." maxlog=1
+            else
+                @warn "A scattering block of this circuit states its noise with a NoiseCovariance, whose channels are formed on the host, so the whole adjoint solution is copied back at every frequency, which is the largest transfer in the sweep." maxlog=1
+            end
         end
         devicenoiseplan = if wantsnoise && blocknoiseondevice &&
                 (!isempty(noiseportimpedanceindices) || !isnothing(noiseplan))
@@ -1096,7 +1114,8 @@ function linearizedsweep!(;
                 (i, phin) -> adjointsolution!(phin, solutions, i),
             presolvednoise = isnothing(noisecbs) ? nothing : noisecbs[t],
             noiseplan = noiseplan,
-            channeltemperatures = channeltemperatures)
+            channeltemperatures = channeltemperatures,
+            channelsigns = channelsigns)
         for lo in 1:nb:length(w)
             hi = min(lo + nb - 1, length(w))
             # only this touches the device, serially; the outputs of the
@@ -1133,7 +1152,7 @@ function linearizedsweep!(;
                     w, wpumpmodes, Nsignalmodes, Nnodes, symfreqvar, batch,
                     factorization; noiseplan = noiseplan,
                     channeltemperatures = channeltemperatures,
-                    refine = refine)
+                    channelsigns = channelsigns, refine = refine)
             end
         finally
             limitblas && BLAS.set_num_threads(blasthreads)
@@ -1428,8 +1447,8 @@ end
         portimpedances, noiseportimpedances, nodeindices, componenttypes,
         w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization;
         noiseplan = nothing, channeltemperatures = nothing,
-        presolved = nothing, presolvedadjoint = nothing,
-        presolvednoise = nothing, refine = true)
+        channelsigns = nothing, presolved = nothing,
+        presolvedadjoint = nothing, presolvednoise = nothing, refine = true)
 
 Solve the linearized problem at the frequencies `w[wi]`, using the
 workspace `ws`, assembling each system matrix from the
@@ -1442,8 +1461,10 @@ computed but not stored (`S` when only the quantum efficiency needs it).
 `sensitivity` is a named tuple with the fixed operating point `stamps`,
 the operating point `dAop` stamps of the forward contraction order, and
 the [`ReverseSensitivity`](@ref) of the reverse order, or `nothing`.
-`noiseplan` and `channeltemperatures` describe the noise channels of the
-scattering blocks and the temperature of every channel. `presolved`,
+`noiseplan`, `channeltemperatures` and `channelsigns` describe the noise
+channels of the scattering blocks, the temperature of every channel and
+the sign of each in the commutation relations (see
+[`noisechannelsigns`](@ref)). `presolved`,
 `presolvedadjoint` and `presolvednoise` are callbacks which replace the
 assemble, factorize and solve of a frequency, the transposed solve, and
 the noise scattering calculation with solutions computed elsewhere, which
@@ -1460,7 +1481,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     portimpedances, noiseportimpedances, nodeindices,
     componenttypes, w, wpumpmodes, Nmodes, Nnodes, symfreqvar, wi, factorization;
     noiseplan = nothing, channeltemperatures = nothing,
-    presolved = nothing, presolvedadjoint = nothing,
+    channelsigns = nothing, presolved = nothing, presolvedadjoint = nothing,
     presolvednoise = nothing, refine::Bool = true)
 
     # everything downstream of the solve is the same whether the solution
@@ -1678,7 +1699,8 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
                     occupation)
             end
             if wantsreduction && isnothing(presolvednoise)
-                noisereduction!(noise, Snoiseview, wmodes, occupation)
+                noisereduction!(noise, Snoiseview, wmodes, occupation,
+                    channelsigns)
             end
             if !isempty(arrays.QE)
                 calcqe!(view(arrays.QE,:,:,i), Sview, noise;

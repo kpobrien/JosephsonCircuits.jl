@@ -1,28 +1,25 @@
-# The circuit in time
+# Time domain or transient simulations.
 
-Harmonic balance solves for the amplitudes of a set of tones. When the
-drive is a pulse, or carries more tones than a harmonic grid can hold, the
-alternative is to integrate the circuit directly in physical time. The
-transient solver does that on the same compiled circuit and the same
-unknowns as harmonic balance: the node fluxes, with the auxiliary branch
-currents of the mutually coupled inductors and the gauge rows of the
-floating subnetworks, at one mode. Every source acts on one state, so
-pump harmonics, idlers, depletion and intermodulation products need no
-additional unknowns, and the state size is that of the circuit and not of
-the number of tones. It is a deterministic solver with the exact tangent
-and adjoint of its time steps; it does not by itself compute added
-thermal or quantum noise.
+The time domain simulators in `transientsolve` numerically integrates the
+differential equations describing the system given the initial conditions and
+time dependent current sources. Time domain simulation is a natural choice
+when the user is interested in the transient behavior of a nonlinear
+circuit (eg. pulsing the pump of an amplifier). Time domain simulations can
+also be useful in approximating periodic steady state solutions to highly
+multi-tone harmonic balance problems. The size of the system solved by the
+harmonic balance method scales exponentially in the number of tones, so,
+depending on the system, a highly multi-tone simulation may be faster to
+simulate in the time domain. The time domain solver computes the analytic
+tangent and adjoint of the system at each step, which is useful for noise
+and sensitivity analysis.
 
-
-This page is the usage guide: how to set a circuit up in time, what a
-solve returns, how to run many drive conditions at once, how to take the
-tangent and the adjoint of a recorded solve, and how to run on a GPU,
-with worked examples. The [theory and implementation](transienttheory.md)
-page explains what the solver does and why, and the
+This page is a guide to setting a time domain simulation and interpreting the
+results. The [theory and implementation](transienttheory.md)
+page explains how the solver works, and the
 [quantum noise](transientnoise.md) page how fluctuations are propagated
 through a recorded trajectory.
 
-## A first pulse
+## Example
 
 ```julia
 using JosephsonCircuits
@@ -47,21 +44,18 @@ solution.incident, solution.outgoing   # instantaneous waves in sqrt(W)
 solution.stats
 ```
 
-`TransientSource(1, drive)` is an instantaneous Norton current in Amperes,
-positive into the positive terminal of port 1, and it adds no termination:
-the port's own termination is already part of the compiled circuit. For a
-matched port of resistance `R` a sinusoidal peak current `Ip` launches the
-available power `Ip^2*R/8`. Unlike a harmonic balance source, the callable
-returns the physical waveform, not a Fourier coefficient.
+`TransientSource(1, drive)` is an instantaneous Norton current in Amperes into
+the positive terminal of port 1. For a matched port of resistance `R` a
+sinusoidal peak current `Ip` launches the available power `Ip^2*R/8`.
 
-`TransientSource("I1", waveform)` instead replaces the constant value of a
-named `CurrentSource`; that component's current flows out of its first
-terminal and into its second. Several waveforms on one target add. A source
-callable must return finite real values and must be deterministic, because
-the tangent and adjoint evaluate it again on the recorded grid.
+`TransientSource("I1", waveform)` replaces the constant value of a
+named `CurrentSource`. Multiple waveforms on the same target component sum
+together. A source function must return finite real values and must be
+deterministic, because the tangent and adjoint evaluate it again on the
+recorded grid.
 
 The circuit may be a typed [`Circuit`](@ref), a compiled circuit, or a
-legacy netlist, exactly as for [`hbsolve`](@ref).
+legacy netlist.
 
 
 ## Choosing the rule, the step and the record
@@ -190,7 +184,22 @@ as many poles as the data might need, since the poles it does not need
 are dropped. A delay is not a rational function, so a cable is a line in
 cascade with a fit of the data with that delay removed. A block's
 `ThermalEquilibrium(T)` sets the temperature of the noise its loss
-emits, and a declared `Lossless()` is validated. A
+emits, a declared `Lossless()` is validated, and a block which states
+its noise with a `NoiseCovariance`, an amplifier given by its
+scattering parameters, constant or fitted without the passivity its
+gain forbids, is realized in time with that noise. A pumped device as
+a [`LinearizedScattering`](@ref) block is realized by
+`RationalScattering(block, npoles)`, the fit of its harmonic transfer
+functions to filters whose outputs are modulated at the harmonics of
+its pump, with an `envelope` to switch the conversion on, and with the
+noise the fit's own commutator requires, its stated covariance
+completed to the commutation relations; a long device is fitted with
+its `delays` taken out and a line put back. The
+modulation changes the stage operator within a step, and by as much as
+the operator itself for an amplifier, so the step's frozen operator
+carries the block at the mean of its two stages' weights and the
+difference, of the rank of the block's port rows, is solved exactly
+on it, in the step, its tangent and its adjoint. A
 [`transientstate`](@ref) of a circuit with lines takes their direct
 currents as `linecurrents`, and holds the waves on the lines and the
 states of the blocks as its third and fourth members.

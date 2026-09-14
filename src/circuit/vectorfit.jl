@@ -51,7 +51,12 @@ bound of the largest singular value, so a returned fit can have a true
 norm above one by up to twice the norm search's relative tolerance;
 [`passivityassessment`](@ref) reports that uncertainty, and a solve
 which cannot tolerate a block active within it should ask for a `margin`
-above it.
+above it. A block which states its noise with a
+[`NoiseCovariance`](@ref) may be active, so it is fitted as it is, with
+neither the enforcement nor the validation, and `passivity` is moot;
+the fit is still stable by construction, and the stated covariance is
+held to what the fitted scattering matrix requires wherever a solver
+evaluates it.
 
 If `block` states its zero frequency behavior, through the `dcmodel` it
 was built with, the fit meets the statement exactly: the value at zero
@@ -144,12 +149,14 @@ function fitsampled(block::ScatteringParameters, S, fs, npoles::Int; iterations:
     dc = block.dcmodel isa ScatteringLimit ? nothing :
         dcscatteringmatrix(block.dcmodel, block.nports)
     # the constant term is repaired only for a caller who asked for the
-    # fit to be made passive, and to that caller's tolerances
+    # fit to be made passive, and to that caller's tolerances; a block
+    # which states its noise may be active and is fitted as it is
+    enforce = passivity && !(block.noise isa NoiseCovariance)
     poles, residues, D = vectorfit(S, 2pi .* fs, npoles, iterations;
         pruneslack = pruneslack, dc = dc,
-        constanttol = passivity ? atol : nothing, constantmargin = margin)
+        constanttol = enforce ? atol : nothing, constantmargin = margin)
     A, B, C = realization(poles, residues, block.nports)
-    if passivity
+    if enforce
         A, B, C, D = enforcepassivity(A, B, C, D, 2pi .* fs; atol = atol,
             margin = margin, rounds = rounds, dc = dc)
     end
@@ -366,10 +373,15 @@ end
 # solution is excluded; complex poles come in conjugate pairs and enter
 # through the real basis, so every unknown is real. Returns the poles,
 # the residue matrices `(n, n, npoles)` and the constant `(n, n)`.
+# `lastpole` is what becomes of the last pole when a constant reproduces
+# the data: `:refuse` throws, since the data is then no rational block,
+# `:drop` returns no poles and the constant, and `:keep` keeps the pole,
+# for a strictly proper fit which cannot be a constant.
 function vectorfit(S::AbstractArray{<:Complex,3}, ws::AbstractVector, npoles::Int, iterations::Int;
         pruneslack::Real = 0.05, dc::Union{Nothing,AbstractMatrix} = nothing,
         constanttol::Union{Nothing,Real} = nothing, constantmargin::Real = 1e-6,
-        startdamping::Real = 0.01)
+        startdamping::Real = 0.01, proper::Bool = false, lastpole::Symbol = :refuse)
+    lastpole in (:refuse, :drop, :keep) || throw(ArgumentError("lastpole is :refuse, :drop or :keep."))
     # a real rational function is real at zero frequency, so a complex
     # statement there cannot be met by any fit
     isnothing(dc) || maximum(abs, imag.(dc)) == 0 || throw(ArgumentError(
@@ -406,10 +418,14 @@ function vectorfit(S::AbstractArray{<:Complex,3}, ws::AbstractVector, npoles::In
     # finite; fail here, naming the fit, rather than in a factorization
     # built from them
     all(isfinite, poles) || throw(ArgumentError(lazy"the pole relocation diverged at $(npoles) poles: the relocated poles are not finite. Fit with fewer poles, or over a narrower band."))
-    poles = prunepoles(S, xs, poles, iterations, pruneslack; dc = dc)
+    poles = prunepoles(S, xs, poles, iterations, pruneslack; dc = dc, lastpole = lastpole)
     # the poles are settled from the data before the value at zero is
-    # stated, so a condition outside the band never moves them
-    residues, D = fitresidues(S, xs, poles; dc = dc)
+    # stated, so a condition outside the band never moves them; a
+    # strictly proper fit, one which vanishes at infinite frequency, has
+    # its constant term held at zero
+    n = size(S, 1)
+    residues, D = fitresidues(S, xs, poles; dc = dc,
+        constant = proper ? zeros(n, n) : nothing)
     (all(isfinite, residues) && all(isfinite, D)) || throw(ArgumentError(lazy"the residues at $(length(poles)) poles are not finite: the least squares of the fit is singular. Fit with fewer poles, or over a narrower band."))
     # A constant term above one is unreachable by the enforcement,
     # which perturbs over a band and cannot reach infinite frequency, so
@@ -518,7 +534,8 @@ end
 # within `pruneslack` of the error before any pole was dropped -- a
 # budget for the whole pruning, not for each deletion.
 function prunepoles(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Vector{ComplexF64},
-        iterations::Int, pruneslack::Real = 0.05; dc::Union{Nothing,AbstractMatrix} = nothing)
+        iterations::Int, pruneslack::Real = 0.05; dc::Union{Nothing,AbstractMatrix} = nothing,
+        lastpole::Symbol = :refuse)
     # the budget is measured from before any pole was dropped
     baseline = fiterror(S, ws, poles; dc = dc)
     limit = (1 + pruneslack)*baseline + roundoff(S)
@@ -526,7 +543,7 @@ function prunepoles(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Ve
     before = baseline
     while true
         n0 = length(poles)
-        poles, before = dropneedless(S, ws, poles, before, acceptable; dc = dc)
+        poles, before = dropneedless(S, ws, poles, before, acceptable; dc = dc, lastpole = lastpole)
         poles, before = mergeclusters(S, ws, poles, iterations, before, acceptable; dc = dc)
         length(poles) == n0 && break
     end
@@ -534,7 +551,7 @@ function prunepoles(S::AbstractArray{<:Complex,3}, ws::AbstractVector, poles::Ve
 end
 # a pole and its conjugate are dropped when the fit without them is as
 # close, the pole contributing least to the fit tried first
-function dropneedless(S, ws, poles, before, acceptable; dc = nothing)
+function dropneedless(S, ws, poles, before, acceptable; dc = nothing, lastpole::Symbol = :refuse)
     while true
         residues, _ = fitresidues(S, ws, poles; dc = dc)
         # the norm of the residue does not vary over the samples, so it
@@ -549,8 +566,12 @@ function dropneedless(S, ws, poles, before, acceptable; dc = nothing)
             err = fiterror(S, ws, trial; dc = dc)
             if acceptable(err, before)
                 # the last pole is needless only if a constant reproduces
-                # the data, which is then no rational block
-                isempty(trial) && throw(ArgumentError("no pole is needed: a constant reproduces the data, so give it as a ScatteringParameters matrix."))
+                # the data, which is then no rational block: refused,
+                # returned as the constant, or kept as the caller asked
+                if isempty(trial)
+                    lastpole == :refuse && throw(ArgumentError("no pole is needed: a constant reproduces the data, so give it as a ScatteringParameters matrix."))
+                    lastpole == :keep && continue
+                end
                 poles, before, dropped = trial, err, true
                 break
             end
@@ -1498,5 +1519,256 @@ function sampledviolations(rf::ResolventFactors, C, D, ws; atol = 1e-8, density:
         end
     end
     return bands
+end
+
+
+"""
+    RationalScattering(block::LinearizedScattering, npoles; frequencies = nothing,
+        band = nothing, delays = nothing, tol = 1e-2, noisetol = 1e-2,
+        padding = 4, iterations = 30, pruneslack = 0.05)
+
+The [`LinearizedScattering`](@ref) block with every harmonic transfer
+function fitted to a stable rational realization, which is how the
+transient realizes it: `H_0` as an ordinary rational function with its
+constant term, or as its constant alone with no state where the data
+needs no pole, and each `H_k` for `k > 0` as the pair of real rational
+functions of its cosine and sine parts (see
+[`ModulatedRationalProvider`](@ref)), strictly proper, since a
+conversion vanishes at infinite frequency. Each is fitted at `npoles`
+poles by the vector fit of the `ScatteringParameters` method, at the
+`frequencies` in Hz, by default the magnitudes of the frequencies the
+harmonic is tabulated at, within `band = (flo, fhi)` in Hz when given:
+a block built from a solve carries every sideband its mode truncation
+reached, far above the band a signal occupies, and a harmonic with no
+sample in the band is realized as zero; no passivity is enforced, since
+a pumped block is lossless as a whole and its parts are not. A
+harmonic is read where its data covers a frequency and is zero beyond
+its tables, and `H_0`, a real function, is read at whichever sign of a
+frequency its data holds and mirrored to the other,
+`H_0(-nu) = conj(H_0(nu))`, so a table of one sign fits. A fit
+within a band is an approximation within it: a solve evaluates the
+block at every sideband its harmonics reach from a signal, where such
+a fit only extrapolates, so it serves signals and pulses in the band
+and states, through its completed noise, that it is no better outside
+it. A lumped device fits over all of its sidebands at a few poles
+each; a long line does not, its sidebands being dispersive delay of
+many turns of phase. `delays`, one per port in seconds, removes a
+delay from the data before the fit, as a cable's is removed before its
+fit: the entry from port `q` to port `p` at the harmonic `k` is fitted
+with `exp(i (nu + k wp) tau_p + i nu tau_q)` taken out, so the fitted
+block is the device with a lossless line of delay `tau_p` cut off each
+port, and is put back with a [`TransmissionLine`](@ref) of that delay
+in cascade at the port; the delay of a line's signal band is not that
+of its sidebands, which keep the difference. The pump phase of
+`block` is folded into the fitted functions, and the fitted block keeps
+its pump, ports, noise model and envelope; a stated covariance is
+rotated by the phase and the delays as the functions are.
+
+The data must meet what the block declares, that it is lossless or the
+covariance it states, over the modes its harmonics reach from every
+frequency it holds, each output against every input which feeds it
+(see [`pumpedfamily`](@ref)), to the block's `atol` and a covariance's,
+which the fit checks first and refuses otherwise. The fit itself meets
+the declaration no better than its error, so the fitted block does not
+declare it: its noise is the covariance the block states, zero for a
+lossless one, completed to the commutation relations of the fitted
+functions over the ladder of the modes of a solve padded by `padding`
+multiples of the pump frequency (see [`NoiseCovariance`](@ref)), so
+that it adds, whatever modes a solve keeps, the noise its own
+commutator requires, the least a channel with the fitted functions can
+add for a lossless device, and its output obeys the commutation
+relations exactly. That noise is what the fit costs, and the fit is
+refused when it exceeds `noisetol` of the square of the largest entry
+over the modes the data reaches from its frequencies and from the
+midpoints between them; the block's `atol` stays that of the data. The fit is held to the data as
+well, and refused where it misses a sample by more than `tol` of the
+largest response, in the spectral norm, as the `ScatteringParameters`
+method measures a fit: a stated covariance large enough covers the
+commutator of a poor fit at no noise, so the noise a fit adds says
+nothing of its accuracy, and the two are held apart. A `band` must leave the
+unconverted response a sample. A `dcmodel` the block states is met by
+the fit of `H_0` exactly. The harmonic balance solvers evaluate the
+fitted block too, so the two describe the same block.
+"""
+function RationalScattering(block::LinearizedScattering, npoles::Integer; frequencies = nothing,
+        band = nothing, delays = nothing, tol::Real = 1e-2, noisetol::Real = 1e-2, padding::Integer = 4,
+        iterations::Integer = 30, pruneslack::Real = 0.05)
+    npoles >= 1 || throw(ArgumentError("fit at least one pole."))
+    padding >= 0 || throw(ArgumentError("padding must be nonnegative."))
+    (isfinite(tol) && tol >= 0) || throw(ArgumentError("tol must be finite and nonnegative."))
+    (isfinite(noisetol) && noisetol >= 0) || throw(ArgumentError("noisetol must be finite and nonnegative."))
+    isnothing(band) || (length(band) == 2 && 0 <= band[1] < band[2]) || throw(ArgumentError("band is (flo, fhi) in Hz with 0 <= flo < fhi."))
+    taus = isnothing(delays) ? zeros(block.nports) : Float64.(collect(delays))
+    length(taus) == block.nports && all(t -> isfinite(t) && t >= 0, taus) || throw(ArgumentError(
+        lazy"give one finite nonnegative delay per port ($(block.nports))."))
+    iterations >= 1 || throw(ArgumentError("give at least one relocation iteration."))
+    (isfinite(pruneslack) && pruneslack >= 0) || throw(ArgumentError("pruneslack must be finite and nonnegative."))
+    n = block.nports
+    providers = AbstractMatrixProvider[]
+    # the delays taken out: of the output port at the output frequency
+    # and of the input port at the input frequency
+    undelay!(H, nus, k) = for (i, nu) in enumerate(nus), q in 1:n, pp in 1:n
+        H[pp, q, i] *= cis((nu + k*block.wp)*taus[pp] + nu*taus[q])
+    end
+    # a harmonic at the frequencies its data covers, and zero beyond
+    sample(p, nus) = evaluatecovered!(Array{Complex{Float64},3}(undef, n, n, length(nus)), p, nus)
+    # the largest deviation of a fitted function from its data over the
+    # samples, in the spectral norm, and the largest response, the data
+    # as it is fitted, with the pump phase and the delays folded in
+    fiterr, datascale = 0.0, 0.0
+    function measure!(provider, nus, H)
+        F = Array{Complex{Float64},3}(undef, n, n, length(nus))
+        evaluateprovider!(F, provider, nus)
+        for i in eachindex(nus)
+            fiterr = max(fiterr, opnorm(view(F, :, :, i) .- view(H, :, :, i)))
+            datascale = max(datascale, opnorm(view(H, :, :, i)))
+        end
+        return nothing
+    end
+    for (j, k) in enumerate(block.harmonics)
+        p = block.providers[j]
+        fs = if !isnothing(frequencies)
+            Float64.(collect(frequencies))
+        elseif p isa TabulatedMatrixProvider
+            sort!(unique!(filter(>(0), abs.(p.frequencies ./ (2pi)))))
+        elseif p isa PiecewiseTabulatedProvider
+            sort!(unique!(filter(>(0), abs.(piecewisefrequencies(p) ./ (2pi)))))
+        else
+            throw(ArgumentError(lazy"give the frequencies in Hz to sample the harmonic $(k) at; only a tabulated harmonic has its own."))
+        end
+        isnothing(band) || filter!(f -> band[1] <= f <= band[2], fs)
+        if isempty(fs)
+            # a harmonic with nothing in the band converts nothing there;
+            # the unconverted response is the block's reflection and
+            # transmission, which the fit cannot leave out
+            k == 0 && throw(ArgumentError("the band leaves the unconverted response of the block without a sample; widen it to the frequencies the block is tabulated at."))
+            push!(providers, ModulatedRationalProvider(RationalScatteringProvider(zeros(0, 0), zeros(0, n), zeros(n, 0), zeros(n, n)),
+                RationalScatteringProvider(zeros(0, 0), zeros(0, n), zeros(n, 0), zeros(n, n))))
+            continue
+        end
+        checkfrequencies(fs)
+        ws = 2pi .* fs
+        # the harmonic at the positive and the negative frequencies where
+        # its data covers them and zero beyond, the data being the
+        # samples and what lies between them, with the block's pump phase
+        # folded in
+        rot = cis(k*block.phase)
+        Hp = sample(p, ws)
+        Hp .*= rot
+        undelay!(Hp, ws, k)
+        Hm = sample(p, -ws)
+        Hm .*= rot
+        undelay!(Hm, -ws, k)
+        if k == 0
+            # the unconverted response is a real function, `H_0(-nu) =
+            # conj(H_0(nu))`, so a frequency the data holds at one sign
+            # alone, an idler's, which a block built from a solve holds
+            # at the negative frequency of its mode, or a table of one
+            # sign, is fitted from that sign
+            for i in eachindex(ws)
+                providercovers(p, ws[i]) || (Hp[:, :, i] .= conj.(view(Hm, :, :, i)))
+            end
+            # a block which states what it does at zero frequency has the
+            # fit of its unconverted response meet it exactly; a response
+            # which needs no pole is its constant, with no state
+            dc = block.dcmodel isa ScatteringLimit ? nothing : dcscatteringmatrix(block.dcmodel, n)
+            poles, residues, D = vectorfit(Hp, ws, Int(npoles), Int(iterations); pruneslack = Float64(pruneslack), dc = dc, lastpole = :drop)
+            A, B, C = realization(poles, residues, n)
+            push!(providers, RationalScatteringProvider(A, B, C, D))
+            measure!(providers[end], ws, Hp)
+            continue
+        end
+        Gc = (Hp .+ conj.(Hm)) ./ 2
+        Gs = (Hp .- conj.(Hm)) ./ (2im)
+        scale = max(maximum(abs, Hp), maximum(abs, Hm), floatmin(Float64))
+        parts = RationalScatteringProvider[]
+        for G in (Gc, Gs)
+            if maximum(abs, G) <= 1e-12*scale
+                push!(parts, RationalScatteringProvider(zeros(0, 0), zeros(0, n), zeros(n, 0), zeros(n, n)))
+                continue
+            end
+            poles, residues, D = vectorfit(G, ws, Int(npoles), Int(iterations); pruneslack = Float64(pruneslack), proper = true, lastpole = :keep)
+            A, B, C = realization(poles, residues, n)
+            push!(parts, RationalScatteringProvider(A, B, C, zeros(n, n)))
+        end
+        push!(providers, ModulatedRationalProvider(parts[1], parts[2]))
+        measure!(providers[end], ws, Hp)
+        measure!(providers[end], -ws, Hm)
+    end
+    # the fit against its data: refused where it misses a sample by more
+    # than tol of the largest response
+    fiterr <= tol*datascale || throw(ArgumentError(lazy"the fit misses the data by $(fiterr/datascale) of the largest response over the samples, against the tol of $(tol): fit with more poles or over a narrower band, take a delay out, or raise tol to accept a fit that far from the data."))
+    # the pump phase and the delays are folded into the fitted functions,
+    # so a stated covariance is rotated the same way, `<n(nu + k wp) n(nu)'>`
+    # between the ports `p` and `q` by the delays of both emitted waves;
+    # a lossless block states no noise, a covariance of zero
+    noise = block.noise
+    if noise isa NoiseCovariance
+        vps = AbstractMatrixProvider[]
+        for (j, k) in enumerate(block.harmonics)
+            v = noise.provider[j]
+            if block.phase != 0 || any(!iszero, taus)
+                rotate(t::TabulatedMatrixProvider) = begin
+                    values = cis(k*block.phase) .* t.values
+                    for (i, nu) in enumerate(t.frequencies), q in 1:n, pp in 1:n
+                        values[pp, q, i] *= cis((nu + k*block.wp)*taus[pp] - nu*taus[q])
+                    end
+                    TabulatedMatrixProvider(t.frequencies, values; interpolation = t.interpolation, extrapolation = t.extrapolation)
+                end
+                v = v isa TabulatedMatrixProvider ? rotate(v) :
+                    v isa PiecewiseTabulatedProvider ? PiecewiseTabulatedProvider([rotate(t) for t in v.tables]) :
+                    throw(ArgumentError("the stated covariance of a pumped block with a pump phase or with delays taken out must be tabulated to be fitted."))
+            end
+            push!(vps, v)
+        end
+        noise = NoiseCovariance(vps, noise.interpolation, noise.extrapolation, noise.atol, true, Int(padding))
+    else
+        noise = NoiseCovariance(AbstractMatrixProvider[ConstantMatrixProvider(zeros(Complex{Float64}, n, n)) for _ in block.harmonics],
+            :cubic, :error, 1e-8, true, Int(padding))
+    end
+    # the fitted block with its covariance completed, over which the
+    # noise the completion adds is measured against the covariance as
+    # stated
+    fitted = LinearizedScattering(block.harmonics, providers, block.wp, 0.0, n, block.zref,
+        block.grounded, noise, block.dcmodel, block.envelope, block.atol)
+    nus = Float64[]
+    for p in block.providers
+        p isa TabulatedMatrixProvider && append!(nus, p.frequencies)
+        p isa PiecewiseTabulatedProvider && append!(nus, piecewisefrequencies(p))
+    end
+    isempty(nus) && !isnothing(frequencies) && (nus = 2pi .* Float64.(collect(frequencies)))
+    nus = sort!(unique!(abs.(nus)))
+    filter!(>(0), nus)
+    probes = isempty(nus) ? nus : vcat(nus, (nus[1:end - 1] .+ nus[2:end]) ./ 2)
+    # the data must meet the declaration itself, at its own frequencies
+    # and over the modes it holds there, each output with every input
+    # which feeds it, to the tolerance of the block and of a covariance,
+    # so that what the fit adds is its own error alone and never a
+    # declaration the data violated: every block is checked here,
+    # whatever kind its data is, since the declaration is the block's and
+    # not its data's
+    declared = block.noise isa NoiseCovariance ? max(block.atol, block.noise.atol) : block.atol
+    for nu in nus
+        rows, cols, K = pumpedfamily(block, (nu,))
+        isempty(rows) && continue
+        v = pumpedviolation(block, rows, cols, K)
+        v <= declared || throw(ArgumentError(lazy"the block's data does not meet what it declares: over the modes its harmonics reach from $(rows[argmin(abs.(rows))]) rad/s the violation of its losslessness or of the commutation relations of its stated covariance is $(v) of the square of its largest entry, against the $(declared) of its atol and its noise model's; state its noise, or raise atol if that is meant."))
+    end
+    # the noise the completion adds to the fit, the completed covariance
+    # of the fitted functions less the stated one, over the modes the
+    # data reaches from its frequencies and from the midpoints between
+    # them, since a solve evaluates the fit at frequencies of its own,
+    # relative to the square of the largest entry: what the fit costs,
+    # refused beyond what is accepted
+    added = 0.0
+    for nu in probes
+        rows, cols, K = pumpedfamily(block, (nu,))
+        isempty(rows) && continue
+        S, Kc, V = pumpednoisematrices(fitted, rows, cols, K; complete = false)
+        extra = pumpednoisematrices(fitted, rows, cols, K)[3] - V
+        added = max(added, maximum(real.(eigvals(Hermitian(extra))))/max(1.0, maximum(abs, S))^2)
+    end
+    added <= noisetol || throw(ArgumentError(lazy"the fit adds noise of $(added) of the square of its largest entry to obey the commutation relations, against the noisetol of $(noisetol) accepted: fit with more poles or over a narrower band, or raise noisetol to accept a block which adds that much."))
+    return fitted
 end
 

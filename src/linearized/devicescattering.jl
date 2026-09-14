@@ -360,6 +360,8 @@ and stays on the host.
 function candeviceevaluate(ssys)
     isnothing(ssys) && return false
     isempty(ssys.blocks) && return false
+    # a pumped block's coupling between modes is formed on the host
+    isempty(ssys.pumped) || return false
     first = ssys.blocks[1].block.provider
     if first isa CallableMatrixProvider
         # a callable can be called from a kernel only in the `:entry` form,

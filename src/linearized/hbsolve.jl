@@ -286,7 +286,10 @@ const _DOC_TEMPERATURE = """
     vacuum by definition. A component may state its own temperature in
     the typed format (`Resistor(R; temperature = T)`, or a
     [`ScatteringParameters`](@ref) with `noise = ThermalEquilibrium(T)`);
-    a tuple netlist cannot, and takes this default throughout."""
+    a tuple netlist cannot, and takes this default throughout. A block
+    which states its noise with a [`NoiseCovariance`](@ref), as an
+    amplifier given by its scattering parameters does, adds that
+    covariance whatever the temperature."""
 
 const _DOC_SENSNAMES = """
 - `sensitivitynames::Vector{String} = String[]`: the names of the

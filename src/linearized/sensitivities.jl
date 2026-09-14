@@ -132,9 +132,14 @@ A block with the same ports, reference impedances and conventions whose
 scattering matrix is identically zero. Constructed directly rather than
 through the public constructor: it needs no passivity check.
 """
-zeroscatteringblock(b) = ScatteringParameters(
+zeroscatteringblock(b::ScatteringParameters) = ScatteringParameters(
     ConstantMatrixProvider(zeros(Complex{Float64}, b.nports, b.nports)),
     b.nports, b.zref, b.grounded, b.noise, b.negative_frequency)
+# a pumped block with every harmonic transfer function zero
+zeroscatteringblock(b::LinearizedScattering) = LinearizedScattering(b.harmonics,
+    AbstractMatrixProvider[ConstantMatrixProvider(zeros(Complex{Float64}, b.nports, b.nports))
+        for _ in b.harmonics],
+    b.wp, b.phase, b.nports, b.zref, b.grounded, b.noise, b.dcmodel, b.envelope, b.atol)
 
 """
     derivativestampsystems(ssys, target::Integer, dblock)
@@ -157,7 +162,9 @@ function derivativestampsystems(ssys, target::Integer, dblock)
          for (k, sb) in enumerate(ssys.blocks)],
         ssys.kcl, ssys.pattern, ssys.patternindex, ssys.Aindex,
         ssys.blockindex, ssys.pindex, ssys.qindex, ssys.coeff, ssys.sign,
-        ssys.modeindex, ssys.Nmodes, ssys.Nauxports, ssys.scale)
+        ssys.modeindex, ssys.inmodeindex, ssys.coupled, ssys.pumped,
+        ssys.pumpedk, ssys.modeoffsets, ssys.Nmodes, ssys.Nauxports,
+        ssys.scale)
     dsys = swap((k, b) -> k == target ? dblock : zeroscatteringblock(b))
     zsys = swap((k, b) -> zeroscatteringblock(b))
     return dsys, zsys
@@ -273,7 +280,8 @@ function calcblockresidualsensitivity(op::HBOperatingPoint,
     Nmodes = op.Nmodes
     Nsc = countscatteringports(psc)*Nmodes
     pumpssys = scatteringstampsystem(psc.scatteringblocks, Nmodes;
-        auxoffset = Ntot - Nsc, Ntotal = Ntot, scale = real(op.Lscale))
+        auxoffset = Ntot - Nsc, Ntotal = Ntot, scale = real(op.Lscale),
+        modeoffsets = op.wmodes)
     isnothing(pumpssys) && throw(ArgumentError(
         "the circuit has no scattering blocks to take a block sensitivity of"))
 

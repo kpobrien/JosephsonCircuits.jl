@@ -914,7 +914,8 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
             # it produces is what every backend then solves
             ssys = scatteringstampsystem(psc.scatteringblocks, Nmodes;
                 auxoffset = Nnodal + Naux - Nauxscattering,
-                Ntotal = Nnodal + Naux, scale = Lscale)
+                Ntotal = Nnodal + Naux, scale = Lscale,
+                modeoffsets = wmodes)
             append!(stampedblocks, ssys.blocks)
             Amna = spaddkeepzeros(Amna, scatteringlinearterm(psc, wmodes,
                 Nmodes; auxoffset = Nnodal + Naux - Nauxscattering,
@@ -953,6 +954,10 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         wmodes2m = linear.wmodes2m
         stampedblocks = linear.stampedblocks
     end
+    # a pumped block which converts the conjugate of a retained mode into
+    # another is beyond the complex linear term, and is refused with a
+    # source, whether the operator is new or reused (see checkpumpconjugates)
+    isempty(sources) || checkpumpconjugates(stampedblocks, wmodes)
     if length(x) == Nnodal
         # accept a nodal initial guess, materializing keyed arrays or
         # other array types into a plain vector. transform it into the

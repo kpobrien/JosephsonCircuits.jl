@@ -569,9 +569,8 @@ default to `:number` instead).
 
 Only components the solvers support can be lowered: a
 [`GaussianChannel`](@ref), a [`VoltageSource`](@ref), a non-sinusoidal
-[`NonlinearInductor`](@ref), a [`ScatteringParameters`](@ref) with a
-[`NoiseCovariance`](@ref) noise model, or any component with other than
-two terminals throws a [`ComponentNotSupportedError`](@ref) naming the
+[`NonlinearInductor`](@ref), or any component with other than two
+terminals throws a [`ComponentNotSupportedError`](@ref) naming the
 instance. A circuit with no connection to [`Ground`](@ref) throws an
 `ArgumentError`.
 """
@@ -609,11 +608,9 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
 
         # A scattering block has two terminals per port and is not a two
         # terminal component, so it gets no table entry: it is compiled as
-        # one `CompiledScatteringBlock` holding the nodes of every port.
-        if def isa ScatteringParameters
-            if def.noise isa NoiseCovariance
-                throw(ComponentNotSupportedError(lazy"the ScatteringParameters at $(path) has an arbitrary noise covariance, which the harmonic balance solvers do not yet support. Use Passive, Lossless, or ThermalEquilibrium."))
-            end
+        # one `CompiledScatteringBlock` holding the nodes of every port; a
+        # pumped block is one too, its mode coupling the stamp's affair.
+        if def isa ScatteringParameters || def isa LinearizedScattering
             terminals = instanceterminals(elab, i)
             n = def.nports
             signalnodes = Vector{Int}(undef, n)

@@ -438,6 +438,12 @@ function plandeviceblocknoise(ssys, noiseplan::ScatteringNoisePlan,
     Nmodes::Integer, backend)
 
     ne = length(noiseplan.blockindices)
+    # the kernels form the channels of a block's loss and not the two
+    # kinds of a block which states its noise, whose circuit stays on
+    # the host
+    all(e -> noiseplan.channelcounts[e] ==
+        ssys.blocks[noiseplan.blockindices[e]].block.nports, 1:ne) ||
+        throw(ArgumentError("a block which states its noise with a NoiseCovariance has its channels formed on the host."))
     blockindex = Int32[bi for bi in noiseplan.blockindices]
     auxbase = Int32[ssys.blocks[bi].auxbase for bi in noiseplan.blockindices]
     factoroff = Vector{Int32}(undef, ne)

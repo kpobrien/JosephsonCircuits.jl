@@ -786,7 +786,9 @@ question. See [`dcblockdescriptor`](@ref).
 """
 function dclimit(sb::StampedScatteringBlock, n::Integer, atol::Real)
     blk = sb.block
-    pr = blk.provider
+    # a pumped block's zero frequency behavior is that of its unconverted
+    # response
+    pr = blk isa LinearizedScattering ? blk.providers[1] : blk.provider
     if pr isa TabulatedMatrixProvider && pr.extrapolation == :error &&
             !(pr.frequencies[1] <= 0.0 <= pr.frequencies[end])
         return nothing, :range

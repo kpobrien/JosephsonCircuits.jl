@@ -193,6 +193,102 @@ method of characteristics with a history of the waves. A delay is not a
 rational function, so a lossy cable is a line in cascade with a fit of
 its data with the delay removed.
 
+A pumped device in its periodic steady state, a parametric amplifier,
+converter or isolator, is a linear time-periodic multiport: it converts
+between frequencies a harmonic of its pump apart. [`LinearizedScattering`](@ref)
+is such a block, described by harmonic transfer functions `H_k(nu)`,
+the wave leaving at `nu + k*wp` per unit wave incident at `nu`, and is
+built from the `linearized` output of `hbsolve` of the device, whose
+multi-mode scattering matrix is the same data indexed by mode:
+
+```julia
+device = hbsolve(ws, (wp,), [(mode = (1,), port = 1, current = Ip)], (8,), (16,), jpa)
+block = LinearizedScattering(device.linearized, wp; phase = -wp*delay)
+chain = Circuit([(:p1, 1, 0, Port(1)), (:line, 1, 2, TransmissionLine(50.0, len)), (:amp, 2, block)])
+sol = hbsolve(ws, (wp,), [], (8,), (16,), chain)
+```
+
+The harmonic balance solvers stamp it as a coupling between the modes
+of the circuit whose frequencies differ by its harmonics, so the
+circuit is solved with the block's pump frequency, with no source at it
+when the block is the only pumped element; `phase` is the phase of the
+block's pump relative to the data's, the delay of the pump line for
+instance, which the conversion entries carry. The block keeps the
+device's idler and every other mode it converts to, and interacts with
+the rest of the circuit at all of them. The pump solve carries the
+block as a coupling between its retained modes alone, and a block also
+couples a retained mode to the conjugate of another when their
+frequencies sum to a harmonic of its pump, which a drive would excite,
+so a pump solve with a source and such a block is refused; without a
+source every mode is zero and the linearized solve is unaffected. A
+lossless device emits no noise, which is checked on its stored data
+and again over the modes of every solve which evaluates the block,
+whatever outputs the solve is asked for; one with loss
+states the covariance its solve reports,
+`noise = NoiseCovariance(device.linearized.Cnoise)` from a
+solve with `returnCnoise = true`, which becomes the block's harmonic
+covariances and is held to the minimum the commutation relations
+require, on the data and at every solve; the block then adds the noise
+its solve found, its correlations between the modes included, through
+channels which span all its modes at once. A solve reports its
+covariance at its own modes, so an idler is held at a negative
+frequency; the noise between the conjugates of two modes is the noise
+between the modes, transposed, `V_k(-nu - k wp) = transpose(V_k(nu))`,
+so the block states the noise at the conjugate of a mode as well as at
+the mode, and refuses data which holds both and disagrees. The block's `atol` is the
+tolerance of its data in these checks, with a covariance's own `atol`
+counting as well, and it is what the pump solve takes an entry of the
+data below as zero when it asks whether the block converts the
+conjugate of a mode. A fit of the block meets the declaration no better
+than its error, so it declares nothing: its noise is the covariance the
+block states, zero for a lossless one, completed to the commutation
+relations of the fitted functions over the ladder of the modes of a
+solve, padded so that the noise is one model whatever modes the solve
+keeps, the least a channel with the fitted functions can add for a
+lossless device (see [`NoiseCovariance`](@ref)). Every mode a solve
+asks for is completed, one beyond the sidebands the data holds carrying
+the vacuum its commutator requires, and the ladders of the pump are
+completed one at a time, the block coupling nothing between frequencies
+which are not a multiple of the pump apart. Its output then obeys the commutation
+relations exactly, and what it adds is what the fit costs, which the
+fit refuses beyond its `noisetol`, as it refuses a fit which misses
+the data by more than its `tol`, since a covariance large enough
+covers the commutator of a poor fit at no noise; the block's `atol`
+stays that of the data.
+
+In time the block is `RationalScattering(block, npoles)`: every
+harmonic transfer function fitted to stable filters, `H_0` as an
+ordinary rational block and each `H_k` as the real filters of its cosine
+and sine parts, whose outputs the transient multiplies by
+`2 cos(k wp t)` and `-2 sin(k wp t)`. A block built from a solve holds
+every sideband the mode truncation reached, so the fit takes a `band`
+of frequencies in Hz, and a long device, a traveling wave amplifier,
+is mostly delay, which the fit takes out per port with `delays` and
+which goes back as a `TransmissionLine` in cascade at the port. A
+lumped device fits over all of its sidebands at a few poles each, and
+is then the device in time, noise included. A long line does not: its
+sidebands are dispersive delay of many turns of phase, which no
+rational function of a practical order follows, so it is fitted within
+its signal band, where it serves signals and pulses, and outside it
+the fit extrapolates and states through its completed noise that it
+is no better than that. The fitted block is evaluated by
+the harmonic balance solvers too, so the two solvers describe the same
+block, and a `transientnoise` of a circuit with one agrees with the
+linearized solve of the same circuit, the stated noise of a lossy
+device included, which in time correlates the bath frequencies on one
+ladder of the pump, those a multiple of its frequency apart and those
+summing to one. Its `envelope`, a callable of
+the time multiplying the conversion, is a prescribed gate of the
+conversion rather than a model of the pump being switched, since the
+unconverted response, the filters and a stated covariance stay those
+of the pumped device while the conversion is scaled: ramped from zero,
+it leaves the circuit time invariant before the record a noise
+calculation needs, as the pumps of the junction circuits are ramped,
+and the noise is read once the conversion has been on longer than the
+block's memory. Without one the conversion is on from the start, and a
+noise calculation takes the fluctuations before its record as those of
+the unconverted response.
+
 ## Noise models and temperatures
 
 Every dissipative element is a bath at a temperature: a
@@ -207,3 +303,19 @@ rational block's loss, which keeps its noise channels however small it
 is. The same models and temperatures set the noise of the linearized
 solver and of the time domain solver, so the two compare on the same
 circuit.
+
+An active block, an amplifier given by its scattering parameters, has
+no equilibrium noise and states its own with
+[`NoiseCovariance`](@ref)`(V)`: the symmetrized covariance of the wave
+it emits, in the units of `Cnoise`, where a vacuum channel counts as
+one. With `K = I - S S'` the added noise has the commutator `K`, so `V`
+is admitted only when `V - K` and `V + K` are both positive
+semidefinite, which is the noise quantum mechanics requires of the
+block's gain: an amplifier of power gain `G` from port 1 to port 2 has
+`K[2,2] = 1 - G` and must emit at least `G - 1` there, and one with an
+input referred added noise of `nadd` photons states `V[2,2] = 2 G nadd`.
+The block then carries channels of both kinds, `(V + K)/2` emitting
+like modes and `(V - K)/2` like their conjugates, so it adds the noise
+it states and its output obeys the commutation relations, and both
+solvers treat it alike. A passive block may state its noise the same
+way, `V = coth(hbar w/2kT) K` being its equilibrium.

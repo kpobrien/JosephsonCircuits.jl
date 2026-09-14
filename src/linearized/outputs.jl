@@ -719,9 +719,11 @@ efficiency reads `sum_c occupation[c]*abs2(Snoise[c,i])`, the noise power at
 output `i` with each channel's occupation (`2*nbar + 1`); the commutation
 relations read `sum_c sign(w_c)*abs2(Snoise[c,i])`, the same power weighted
 by the sign of the channel's mode frequency and without the occupation,
-which is why the commutation relations do not depend on temperature. The
-first is also the diagonal of the noise covariance matrix of
-[`calcnoisecovariance!`](@ref).
+which is why the commutation relations do not depend on temperature. A
+channel of the conjugate kind, one of a block which states its noise
+(see [`noisechannelsigns`](@ref)), enters the second sum with its sign
+reversed. The first is also the diagonal of the noise covariance matrix
+of [`calcnoisecovariance!`](@ref).
 
 On a circuit whose loss is spread along the line that is a reduction of
 thousands of rows to one number per port mode, so when the noise scattering
@@ -741,32 +743,42 @@ struct NoiseReduction{V}
 end
 
 function noisereduction(Snoise::AbstractMatrix{T}, w,
-    occupation = nothing) where {T}
+    occupation = nothing, channelsigns = nothing) where {T}
     np = size(Snoise, 2)
     R = float(real(T))
     return noisereduction!(NoiseReduction(zeros(R, np), zeros(R, np)),
-        Snoise, w, occupation)
+        Snoise, w, occupation, channelsigns)
 end
 
 """
-    noisereduction(Snoise::AbstractMatrix, w, occupation = nothing)
-    noisereduction!(noise::NoiseReduction, Snoise, w, occupation = nothing)
+    noisereduction(Snoise::AbstractMatrix, w, occupation = nothing,
+        channelsigns = nothing)
+    noisereduction!(noise::NoiseReduction, Snoise, w, occupation = nothing,
+        channelsigns = nothing)
 
 Reduce the noise scattering matrix `Snoise`, a row per noise channel mode
 and a column per output port mode, to the two sums the quantum efficiency
 and the commutation relations read; see [`NoiseReduction`](@ref). `w` holds
-the mode frequencies, the mode of row `c` being `(c-1) % length(w) + 1`, and
-`occupation` the occupation of each row, one everywhere when `nothing`. Each
-sum is compensated (Kahan-Babuska-Neumaier).
+the mode frequencies, the mode of row `c` being `(c-1) % length(w) + 1`,
+`occupation` the occupation of each row, one everywhere when `nothing`,
+and `channelsigns` the sign kind of each channel, the channel of row `c`
+being `(c-1) ÷ length(w) + 1`, in the second sum, one everywhere when
+`nothing`: `1` and `-1` multiply the sign of the row's mode frequency,
+`2` and `-2` are the fixed signs `1` and `-1` (see
+[`noisechannelsigns`](@ref)). Each sum is compensated
+(Kahan-Babuska-Neumaier).
 
 # Examples
 ```jldoctest
 julia> n = JosephsonCircuits.noisereduction([1 2; 3 4; 5 6; 7 8], [1, -1]); (n.denom, n.signed)
 ([84.0, 120.0], [-32.0, -40.0])
+
+julia> n = JosephsonCircuits.noisereduction([1 2; 3 4; 5 6; 7 8], [1, -1], nothing, [1.0, -1.0]); (n.denom, n.signed)
+([84.0, 120.0], [16.0, 16.0])
 ```
 """
 function noisereduction!(noise::NoiseReduction, Snoise::AbstractMatrix, w,
-    occupation = nothing)
+    occupation = nothing, channelsigns = nothing)
     m = length(w)
     np = size(Snoise, 2)
     if mod(size(Snoise, 1), m) != 0
@@ -777,6 +789,9 @@ function noisereduction!(noise::NoiseReduction, Snoise::AbstractMatrix, w,
     end
     if !isnothing(occupation) && length(occupation) != size(Snoise, 1)
         throw(DimensionMismatch(lazy"The occupation has $(length(occupation)) entries but the noise scattering matrix has $(size(Snoise, 1)) noise channel modes."))
+    end
+    if !isnothing(channelsigns) && length(channelsigns)*m != size(Snoise, 1)
+        throw(DimensionMismatch(lazy"The channel signs have $(length(channelsigns)) entries but the noise scattering matrix has $(size(Snoise, 1) ÷ m) noise channels."))
     end
     R = eltype(noise.denom)
     # the sum over the noise index runs down each column, in memory order,
@@ -789,7 +804,11 @@ function noisereduction!(noise::NoiseReduction, Snoise::AbstractMatrix, w,
             t = d + f
             dc += ifelse(abs(d) >= abs(f), (d - t) + f, (f - t) + d)
             d = t
-            g = R(sign(real(w[(c-1) % m + 1]))*a)
+            # the row's sign: that of its mode frequency for a channel of
+            # either mode signed kind, and fixed for a channel of a pumped
+            # block, whose kinds are 2 and -2 (see `noisechannelsigns`)
+            cs = isnothing(channelsigns) ? one(R) : R(channelsigns[(c-1) ÷ m + 1])
+            g = abs(cs) == 2 ? R(cs/2*a) : R(sign(real(w[(c-1) % m + 1]))*cs*a)
             t = s + g
             sc += ifelse(abs(s) >= abs(g), (s - t) + g, (g - t) + s)
             s = t

@@ -56,6 +56,21 @@ TransientDrive(portindex::Integer, waveform) =
     TransientDrive(Int(portindex), transientwaveform(waveform), waveform)
 
 """
+    BlockModulation
+
+One modulated output of a pumped block realized in time: the output
+matrix `C` over the block's states of the cosine (`quadrature = 1`) or
+sine (`quadrature = 2`) filter of the harmonic `k`, whose output the
+reflected wave carries multiplied by `2 cos(k wp t)` or `-2 sin(k wp t)`
+and by the block's envelope.
+"""
+struct BlockModulation
+    harmonic::Int
+    quadrature::Int
+    C::Matrix{Float64}
+end
+
+"""
     TransientBlock
 
 A scattering parameter block as the transient realizes it: the real
@@ -71,7 +86,9 @@ an open is stamped exactly, and a scattering entry within roundoff of
 one is snapped to it, so a fitted feedthrough on the unit circle
 carries the exact zeros of its hybrid coefficients (see
 [`snapscattering`](@ref)). A block whose matrix depends on frequency
-needs a causal realization, which the transient does not yet have.
+carries its rational part as states, and a pumped block the states of
+every filter of its harmonics, the unconverted output on `C` and the
+converted ones modulated (see [`BlockModulation`](@ref)).
 """
 struct TransientBlock
     definition::Any
@@ -88,6 +105,20 @@ struct TransientBlock
     B::Matrix{Float64}
     C::Matrix{Float64}
     zbase::Int
+    # the modulated outputs of a pumped block (see
+    # [`BlockModulation`](@ref)), its pump frequency and the envelope of
+    # its conversion in time; empty, zero and nothing for a block which
+    # does not convert
+    modulations::Vector{BlockModulation}
+    wp::Float64
+    envelope::Any
+end
+
+# the weight of a modulated output at the time `t`: the modulation, and
+# the envelope of the block's conversion
+function modulationweight(b::TransientBlock, m::BlockModulation, t)
+    env = isnothing(b.envelope) ? 1.0 : Float64(b.envelope(t))
+    return m.quadrature == 1 ? 2env*cos(m.harmonic*b.wp*t) : -2env*sin(m.harmonic*b.wp*t)
 end
 
 """
@@ -320,6 +351,7 @@ end
 function transientlines(psc::CompiledCircuit)
     lines = TransientLine[]
     for cb in psc.scatteringblocks
+        cb.definition isa LinearizedScattering && continue
         provider = cb.definition.provider
         provider isa TransmissionLineProvider || continue
         (isfinite(provider.Z0) && provider.Z0 > 0 && isfinite(provider.delay) && provider.delay >= 0) || throw(ArgumentError(
@@ -361,11 +393,57 @@ function transientblocks(psc::CompiledCircuit, offset::Int)
     zbase = 0
     for cb in psc.scatteringblocks
         def = cb.definition
+        if def isa LinearizedScattering
+            # a pumped block fitted for time: the states of every filter
+            # in one realization, the unconverted output on the constant
+            # rows, and the converted outputs modulated
+            realizedintime(def) || throw(ArgumentError(
+                lazy"the pumped scattering block at $(cb.path) has no realization in time; fit it with RationalScattering(block, npoles)."))
+            n = def.nports
+            As, Bs = Matrix{Float64}[], Matrix{Float64}[]
+            modulations = BlockModulation[]
+            p0 = def.providers[1]
+            push!(As, p0.A); push!(Bs, p0.B)
+            outputs = Tuple{Int,Int,Matrix{Float64}}[]
+            for (j, k) in enumerate(def.harmonics)
+                j == 1 && continue
+                p = def.providers[j]
+                for (q, part) in enumerate((p.cosine, p.sine))
+                    push!(As, part.A); push!(Bs, part.B)
+                    push!(outputs, (k, q, part.C))
+                end
+            end
+            nz = sum(size(A, 1) for A in As)
+            A = zeros(nz, nz)
+            B = zeros(nz, n)
+            z = 0
+            for (Ab, Bb) in zip(As, Bs)
+                m = size(Ab, 1)
+                A[z + 1:z + m, z + 1:z + m] .= Ab
+                B[z + 1:z + m, :] .= Bb
+                z += m
+            end
+            C = zeros(n, nz)
+            C[:, 1:size(p0.A, 1)] .= p0.C
+            z = size(p0.A, 1)
+            for (k, q, Cpart) in outputs
+                m = size(Cpart, 2)
+                Cm = zeros(n, nz)
+                Cm[:, z + 1:z + m] .= Cpart
+                push!(modulations, BlockModulation(k, q, Cm))
+                z += m
+            end
+            push!(blocks, TransientBlock(def, snapscattering(p0.D), Float64.(def.zref), cb.signalnodes .- 1, cb.refnodes .- 1,
+                offset, cb.path, A, B, C, zbase, modulations, def.wp, def.envelope))
+            zbase += nz
+            offset += n
+            continue
+        end
         provider = def.provider
         provider isa TransmissionLineProvider && continue
         if provider isa RationalScatteringProvider
             push!(blocks, TransientBlock(def, snapscattering(provider.D), Float64.(def.zref), cb.signalnodes .- 1, cb.refnodes .- 1,
-                offset, cb.path, copy(provider.A), copy(provider.B), copy(provider.C), zbase))
+                offset, cb.path, copy(provider.A), copy(provider.B), copy(provider.C), zbase, BlockModulation[], 0.0, nothing))
             zbase += size(provider.A, 1)
         else
             provider isa ConstantMatrixProvider || throw(ArgumentError(
@@ -374,7 +452,7 @@ function transientblocks(psc::CompiledCircuit, offset::Int)
             all(x -> isreal(x) && isfinite(x), S) || throw(ArgumentError(
                 lazy"the scattering block at $(cb.path) has a complex or nonfinite matrix; a block realized in time is real."))
             push!(blocks, TransientBlock(def, snapscattering(S), Float64.(def.zref), cb.signalnodes .- 1, cb.refnodes .- 1,
-                offset, cb.path, zeros(0, 0), zeros(0, def.nports), zeros(def.nports, 0), zbase))
+                offset, cb.path, zeros(0, 0), zeros(0, def.nports), zeros(def.nports, 0), zbase, BlockModulation[], 0.0, nothing))
         end
         offset += def.nports
     end

@@ -547,29 +547,39 @@ using Test
     # since that is a different problem from a tolerance too tight
     @test occursin("could not be fitted at all", cannot) ||
           occursin("closest was", cannot)
-    # A block may state an active value at zero frequency, as it may
-    # be active at any other, so long as it declares its own noise.
-    # No fit of one can be made passive, and the search says which of
-    # the orders it tried failed and why rather than only that none
-    # met the tolerance.
-    Nz = zeros(ComplexF64, 2, 2, length(fs))
-    for k in eachindex(fs)
-        Nz[:, :, k] .= 0.5*Matrix(I, 2, 2)
-    end
-    active = ScatteringParameters((2pi .* fs, hb.S); nports = 2, zref = 50.0,
-        noise = JC.NoiseCovariance((2pi .* fs, Nz)),
-        dcmodel = JC.ScatteringDC([1.4 0.0; 0.0 1.4]))
-    @test_throws ArgumentError RationalScattering(active, 4)
-    why = try
-        RationalScattering(active; tol = 1e-3, minpoles = 2, maxpoles = 6); ""
-    catch e
-        sprint(showerror, e)
-    end
-    @test occursin("could not be fitted at all", why)
-    # and without a declared noise the same statement is refused by
-    # the block itself, before any fitting
+    # A block may be active, at zero frequency as at any other, so long
+    # as it declares its own noise; without one an active statement is
+    # refused by the block itself, before any fitting, and an active
+    # realization by the block's constructor.
     @test_throws ArgumentError ScatteringParameters((2pi .* fs, hb.S); nports = 2,
         zref = 50.0, dcmodel = JC.ScatteringDC([1.4 0.0; 0.0 1.4]))
+    @test_throws ArgumentError RationalScattering(zeros(0, 0), zeros(0, 2), zeros(2, 0), [0.0 0.0; 3.0 0.0]; zref = 50.0)
+    @test RationalScattering(zeros(0, 0), zeros(0, 2), zeros(2, 0), [0.0 0.0; 3.0 0.0]; zref = 50.0,
+        noise = JC.NoiseCovariance([1.0 0.0; 0.0 8.0])) isa ScatteringParameters
+    # An amplifier whose gain rolls off, stating the noise a quantum
+    # limited one has, |I - S S'|, and its active value at zero
+    # frequency, is fitted as it is, without the passivity enforcement,
+    # which could not meet the statement, and without the validation:
+    # the fit is stable, meets the statement exactly, has the gain of
+    # the samples, and carries the stated noise, whichever way it is
+    # asked for.
+    w0, g0 = 2pi*8e9, 10.0
+    amp(w) = [0.0 0.0; g0*w0/(w0 + im*w) 0.0]
+    ampnoise(w) = (K = I - amp(w)*amp(w)'; [abs(K[1, 1]) 0.0; 0.0 abs(K[2, 2])])
+    ampdata = ScatteringParameters(amp; nports = 2, zref = 50.0, noise = JC.NoiseCovariance(ampnoise),
+        dcmodel = JC.ScatteringDC([0.0 0.0; g0 0.0]))
+    ampfs = collect(range(0.1e9, 40e9; length = 300))
+    for ampfit in (RationalScattering(ampdata, 4; frequencies = ampfs),
+            RationalScattering(ampdata; tol = 1e-6, minpoles = 1, maxpoles = 6, frequencies = ampfs),
+            RationalScattering(ampdata, 4; frequencies = ampfs, passivity = false))
+        @test ampfit.noise isa JC.NoiseCovariance
+        @test size(ampfit.provider.A) == (1, 1) && maximum(real.(eigvals(ampfit.provider.A))) < 0
+        Sa = zeros(ComplexF64, 2, 2, 4)
+        JC.evaluateprovider!(Sa, ampfit.provider, 2pi .* [0.0, 1e9, 5e9, 20e9])
+        @test Sa ≈ cat([amp(2pi*f) for f in (0.0, 1e9, 5e9, 20e9)]...; dims = 3) rtol=1e-8
+        @test abs(Sa[2, 1, 2]) > 1
+        @test_throws ArgumentError JC.checkpassive(ampfit.provider)
+    end
     # A feedthrough over one which the stated value cannot be
     # contracted toward: both are positive here, so every step along
     # the path moves away from one rather than toward it, and there is
@@ -724,4 +734,49 @@ using Test
     sb = transientsolve(pb, (0.0, 1.5e-9); dt = 2e-12, method = GaussLegendre(), rtol = 1e-12)
     se = transientsolve(pe, (0.0, 1.5e-9); dt = 2e-12, method = GaussLegendre(), rtol = 1e-12)
     @test sb.outgoing ≈ se.outgoing rtol=1e-8
+end
+
+@testset "a pumped block fitted with its zero frequency statement" begin
+    wp = 2pi*1e9
+    zero1 = zeros(ComplexF64, 1, 1)
+    # the fit of the unconverted response meets the stated open at zero
+    # frequency, which the data's extrapolation would not; the statement
+    # contradicts the data near zero, so the fit is far from the data
+    # there and the noise it adds to obey the commutation relations is
+    # large
+    b = LinearizedScattering([w -> fill(im*w/(wp + im*w), 1, 1), zero1], wp; harmonics = [0, 1], nports = 1,
+        noise = NoiseCovariance([fill(2.0, 1, 1), zero1]), dcmodel = OpenDC())
+    f = RationalScattering(b, 2; frequencies = collect(range(0.1e9, 0.9e9; length = 10)), tol = 10.0, noisetol = 10.0)
+    H = zeros(ComplexF64, 1, 1, 1)
+    JosephsonCircuits.evaluateprovider!(H, f.providers[1], [0.0])
+    @test H[1] ≈ 1
+    @test f.dcmodel isa OpenDC
+    @test f.atol == b.atol && f.noise.completed && f.noise.atol == b.noise.atol
+    # a band which leaves the unconverted response no sample is refused
+    lossless = LinearizedScattering([w -> fill((wp - im*w)/(wp + im*w), 1, 1), zero1], wp; harmonics = [0, 1], nports = 1, dcmodel = OpenDC())
+    @test_throws ArgumentError RationalScattering(lossless, 2; frequencies = [0.1e9, 0.2e9, 0.3e9], band = (0.5e9, 0.9e9))
+end
+
+@testset "a nearly defective realization is evaluated accurately" begin
+    # an all pass whose state matrix is within 3e-10 of a Jordan block:
+    # its eigenvectors are nearly parallel, and the resolvent over many
+    # frequencies must be as accurate as a solve at each one, and as
+    # lossless
+    delta = 3e-10
+    A = [-1.0 1.0; 0.0 -1.0 - delta]
+    B = reshape([0.0, 1.0], 2, 1)
+    C = reshape([4 + 2delta, -4 - 2delta], 1, 2)
+    D = ones(1, 1)
+    b = RationalScattering(A, B, C, D; noise = Lossless())
+    ws = collect(range(0.01, 2.0; length = 1000))
+    a = zeros(ComplexF64, 1, 1, length(ws))
+    JosephsonCircuits.evaluateprovider!(a, b.provider, ws)
+    direct = [only(D + C*((im*w*I - A) \ B)) for w in ws]
+    @test maximum(abs, vec(a) .- direct) < 1e-12
+    @test maximum(abs, abs2.(a) .- 1) < 1e-12
+    c = Circuit([(:p, 1, 0, Port(1)), (:b, 1, b)])
+    for count in (8, 9)
+        o = hblinsolve(collect(range(0.01, 2.0; length = count)), c; keyedarrays = false)
+        @test maximum(abs, abs.(o.S) .- 1) < 1e-10
+    end
 end

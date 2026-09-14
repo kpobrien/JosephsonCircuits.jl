@@ -669,18 +669,20 @@ end
 
 """
     scatteringstampsystem(blocks::Vector{CompiledScatteringBlock}, Nmodes;
-        auxoffset, Ntotal, scale = 1.0)
+        auxoffset, Ntotal, scale = 1.0, modeoffsets = nothing)
 
 The stamp system of the compiled scattering blocks of a circuit.
 
 A compiled block is one instance carrying its own terminal map, so this
 needs no regrouping and none of the checks which the per port form does: a
 block cannot be missing a port, cannot repeat one, and cannot be confused
-with another instance of the same definition.
+with another instance of the same definition. `modeoffsets` are the
+frequency offsets of the modes, which a pumped block's coupling between
+them reads; see [`scatteringstampsystem`](@ref).
 """
 function scatteringstampsystem(blocks::Vector{CompiledScatteringBlock},
     Nmodes::Integer; auxoffset::Integer, Ntotal::Integer,
-    scale::Real = 1.0)
+    scale::Real = 1.0, modeoffsets = nothing)
 
     isempty(blocks) && return nothing
     stamped = StampedScatteringBlock[]
@@ -692,5 +694,6 @@ function scatteringstampsystem(blocks::Vector{CompiledScatteringBlock},
             b.path*"/port1"))
         auxbase += n*Nmodes
     end
-    return scatteringstampsystem(stamped, Nmodes, Ntotal, scale)
+    return scatteringstampsystem(stamped, Nmodes, Ntotal, scale;
+        modeoffsets = modeoffsets)
 end
