@@ -14,6 +14,9 @@ makedocs(
         # for the root of that domain rather than for a repository subpath
         deploy_url = "https://josephsoncircuits.org",
         description = "Frequency and time domain simulation of superconducting circuits with Josephson junctions",
+        # with DOCS_LIVE set only the markdown is rendered, for a running
+        # VitePress development server to pick up
+        build_vitepress = !haskey(ENV, "DOCS_LIVE"),
     ),
     pages = [
         "Home" => "index.md",

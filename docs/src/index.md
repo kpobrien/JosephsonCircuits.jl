@@ -4,8 +4,9 @@ layout: home
 
 hero:
   name: JosephsonCircuits.jl
-  text: Superconducting circuits in frequency and time
-  tagline: Harmonic balance and time domain simulation of a nonlinear circuit, the linearized response about an operating point with quantum noise.
+  <!-- text: Frequency and time domain simulations of superconducting circuits -->
+  text: Microwave engineering of Gaussian bosonic quantum systems
+  tagline: Multi-tone harmonic balance and time domain simulations of nonlinear circuits. The linearized response, noise, and sensitivity about the operating point.
   image:
     light: /logo.svg
     dark: /logo-dark.svg
@@ -22,27 +23,24 @@ hero:
       link: https://github.com/kpobrien/JosephsonCircuits.jl
 
 features:
-  - title: Circuits
-    details: Netlists and connection groups, subcircuits, scattering blocks, transmission lines, noise models and temperatures.
+  - title: Circuits and components
+    details: Netlists and connections, subcircuits, scattering blocks, transmission lines, and noise models.
     link: /circuits
-  - title: Harmonic balance
-    details: The nonlinear operating point, the linearized sweep about it, scattering parameters, quantum efficiency and sensitivities.
+  - title: Frequency domain
+    details: Nonlinear and linearized multi-tone harmonic balance simulations, scattering parameters, quantum efficiency, and sensitivities.
     link: /harmonicbalance
   - title: Time domain
-    details: Pulsed and multi-tone drives, the exact tangent and adjoint of the recorded steps, and quantum noise in temporal modes.
+    details: Pulsed and multi-tone drives, the tangent and adjoint of the recorded steps, and quantum noise in temporal modes.
     link: /transient
+  - title: Extensions
+    details: Enable GPU support by loading CUDA.jl and cuDSS.jl. Use external solvers and optimizers from Krylov.jl and NonlinearSolve.jl. Time domain simulations with WRspice by loading XicTools.jll.
   - title: Reference
     details: Every exported function and type.
     link: /reference
 ---
 ```
 
-[![Code coverage](https://codecov.io/gh/kpobrien/JosephsonCircuits.jl/branch/main/graphs/badge.svg)](https://codecov.io/gh/kpobrien/JosephsonCircuits.jl)
-[![Build Status](https://github.com/kpobrien/JosephsonCircuits.jl/actions/workflows/CI.yml/badge.svg
-)](https://github.com/kpobrien/JosephsonCircuits.jl/actions?query=workflow) [![PkgEval](https://juliaci.github.io/NanosoldierReports/pkgeval_badges/J/JosephsonCircuits.svg)](https://juliaci.github.io/NanosoldierReports/pkgeval_badges/J/JosephsonCircuits.html) [![Stable docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://josephsoncircuits.org/stable)
- [![Dev docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://josephsoncircuits.org/dev)
-
-[JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) is a high-performance frequency domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. [JosephsonCircuits.jl](https://github.com/kpobrien/JosephsonCircuits.jl) simulates the frequency domain behavior using a modified nodal analysis formulation in the flux basis [1,2], with mutually coupled inductors assigned auxiliary branch currents and floating inductive or Josephson subnetworks gauge fixed at DC, so nodes do not require an inductive path to ground) and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
+JosephsonCircuits or "JC" is a high-performance frequency domain and time domain simulator for nonlinear circuits containing Josephson junctions, capacitors, inductors, mutual inductors, and resistors. JC simulates the frequency domain behavior using a modified nodal analysis formulation in the flux basis [1,2], with mutually coupled inductors assigned auxiliary branch currents and floating inductive or Josephson subnetworks gauge fixed at DC, so nodes do not require an inductive path to ground) and the harmonic balance method [3-5] with an analytic Jacobian. Noise performance, quantified by quantum efficiency, is efficiently simulated through an adjoint method.
 
 Frequency dependent circuit parameters are supported to model realistic impedance environments or dissipative components. Dissipation can be modeled by capacitors with an imaginary capacitance or frequency dependent resistors. 
 
