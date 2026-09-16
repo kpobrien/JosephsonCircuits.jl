@@ -722,7 +722,10 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     # constitutive equations assembled per frequency.
     ssys = scatteringstampsystem(psc.scatteringblocks, Nsignalmodes;
         auxoffset = Nnodalmna + Nauxmna - Nauxscattering,
-        Ntotal = Nnodalmna + Nauxmna, scale = 1.0, modeoffsets = wpumpmodes)
+        Ntotal = Nnodalmna + Nauxmna, scale = 1.0,
+        modeoffsets = wpumpmodes,
+        iscale = auxcurrentscale(calcsolverscale(w, psc.componenttypes,
+            signalnm.vvn, signalnm.portimpedances, signalnm.Lmean)))
     if !isnothing(ssys)
         Amna0 = spaddkeepzeros(Amna0, ssys.kcl)
     end

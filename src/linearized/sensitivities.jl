@@ -164,7 +164,7 @@ function derivativestampsystems(ssys, target::Integer, dblock)
         ssys.blockindex, ssys.pindex, ssys.qindex, ssys.coeff, ssys.sign,
         ssys.modeindex, ssys.inmodeindex, ssys.coupled, ssys.pumped,
         ssys.pumpedk, ssys.modeoffsets, ssys.Nmodes, ssys.Nauxports,
-        ssys.scale)
+        ssys.scale, ssys.iscale)
     dsys = swap((k, b) -> k == target ? dblock : zeroscatteringblock(b))
     zsys = swap((k, b) -> zeroscatteringblock(b))
     return dsys, zsys

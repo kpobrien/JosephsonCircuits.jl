@@ -270,7 +270,8 @@ function numericmatrices(psc::CompiledCircuit, cg::CircuitGraph,
 
     # mutual branch inductance matrix
     Mb = calcMb(psc.componenttypes, psc.nodeindices, vvn, psc.componentnamedict,
-        psc.mutualinductorbranchnames, cg.edge2indexdict, 1, cg.Nbranches)
+        psc.mutualinductorbranchnames, cg.edge2indexdict, cg.Rbn, 1,
+        cg.Nbranches)
 
     # inverse nodal inductance matrix from branch inductance vector and branch
     # inductance matrix
@@ -573,13 +574,127 @@ combine_sum(x1,x2)= x1+x2
 combine_error(x1,x2) = throw(ArgumentError(lazy"Components $(x1) and $(x2) cannot be combined to a single element. Please place the two components between different nodes."))
 
 """
+    branchendpoints(Rbn::SparseMatrixCSC, Nbranches::Int)
+
+The two nodes of every branch in the order the incidence matrix `Rbn`
+oriented it, as `(from, to)`: branch `b` leaves `from[b]` and enters
+`to[b]`. `Rbn` carries `-1` at a branch's source and `1` at its
+destination, and has no column for the ground node, which is node 1, so a
+branch with a terminal there keeps the initial value at that end.
+
+One walk over the stored entries names the endpoints of every branch at
+once, which is where the mutual couplings read theirs from.
+"""
+function branchendpoints(Rbn::SparseMatrixCSC, Nbranches::Int)
+    from = fill(1, Nbranches)
+    to = fill(1, Nbranches)
+    rows = rowvals(Rbn)
+    vals = nonzeros(Rbn)
+    for j in axes(Rbn, 2)
+        for p in nzrange(Rbn, j)
+            if vals[p] < 0
+                from[rows[p]] = j + 1
+            else
+                to[rows[p]] = j + 1
+            end
+        end
+    end
+    return from, to
+end
+
+"""
+    coupledbranches(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+        componentnamedict::Dict, mutualinductorbranchnames::Vector,
+        edge2indexdict::Dict, n::Int)
+
+The structural part of the `n`th mutual coupling: the indices of the two
+components it names, the branches they lie on, and the nodes each was
+declared between. Throws if either named component is not an inductor.
+
+[`mutualorientations`](@ref) and [`calcMb`](@ref) both go through this, so
+they resolve the same components and raise the same errors.
+"""
+function coupledbranches(componenttypes::Vector{Symbol},
+    nodeindices::Matrix{Int}, componentnamedict::Dict,
+    mutualinductorbranchnames::Vector, edge2indexdict::Dict, n::Int)
+
+    inductor1name = mutualinductorbranchnames[2*n-1]
+    inductor2name = mutualinductorbranchnames[2*n]
+    inductor1index = componentnamedict[inductor1name]
+    inductor2index = componentnamedict[inductor2name]
+
+    if componenttypes[inductor1index] != :L
+        throw(ArgumentError(lazy"Mutual coupling coefficient K must couple two inductors. $(inductor1name) is not an inductor."))
+    end
+    if componenttypes[inductor2index] != :L
+        throw(ArgumentError(lazy"Mutual coupling coefficient K must couple two inductors. $(inductor2name) is not an inductor."))
+    end
+
+    edge1 = (nodeindices[1,inductor1index],nodeindices[2,inductor1index])
+    edge2 = (nodeindices[1,inductor2index],nodeindices[2,inductor2index])
+    return (inductor1index = inductor1index, inductor2index = inductor2index,
+        branch1 = edge2indexdict[edge1], branch2 = edge2indexdict[edge2],
+        edge1 = edge1, edge2 = edge2)
+end
+
+"""
+    mutualorientations(componenttypes::Vector{Symbol},
+        nodeindices::Matrix{Int}, componentnamedict::Dict,
+        mutualinductorbranchnames::Vector, edge2indexdict::Dict,
+        Rbn::SparseMatrixCSC, Nbranches)
+
+The orientation of each mutual coupling, in the order the couplings appear
+in `componenttypes`: `1` where both coupled branches carry the currents the
+netlist declared, and `-1` where the graph turned exactly one of them
+around.
+
+An orientation depends on the declared terminal order and on the
+orientation the incidence matrix gave each branch, and on no value, so a
+[`CircuitMatrixPlan`](@ref) holds it across refills; only `K` and the two
+self inductances are read again.
+"""
+function mutualorientations(componenttypes::Vector{Symbol},
+    nodeindices::Matrix{Int}, componentnamedict::Dict,
+    mutualinductorbranchnames::Vector, edge2indexdict::Dict,
+    Rbn::SparseMatrixCSC, Nbranches)
+
+    orientations = Vector{Int8}(undef, count(==(:K), componenttypes))
+    # a circuit with no couplings has no endpoints to look up
+    isempty(orientations) && return orientations
+
+    from, to = branchendpoints(Rbn, Nbranches)
+    declared(b, edge) = (from[b], to[b]) == edge ? Int8(1) : Int8(-1)
+
+    n = 1
+    @inbounds for type in componenttypes
+        type == :K || continue
+        cb = coupledbranches(componenttypes, nodeindices, componentnamedict,
+            mutualinductorbranchnames, edge2indexdict, n)
+        orientations[n] = declared(cb.branch1, cb.edge1)*
+            declared(cb.branch2, cb.edge2)
+        n += 1
+    end
+    return orientations
+end
+
+"""
     calcMb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
         componentvalues::Vector, componentnamedict::Dict,
-        mutualinductorbranchnames::Vector, edge2indexdict::Dict, Nmodes,
-        Nbranches)
+        mutualinductorbranchnames::Vector, edge2indexdict::Dict,
+        Rbn::SparseMatrixCSC, Nmodes, Nbranches)
 
 Returns the branch mutual inductance matrix. Note that `nodeindices` is
 "one indexed" so 1 is the ground node.
+
+The sign of a mutual inductance says whether the two coupled currents,
+taken in the direction each inductor's terminals were declared in, add or
+oppose. The incidence matrix `Rbn` orients each branch by the spanning tree
+rather than by that declaration, so each entry is multiplied by the
+orientation of its two branches against the netlist (see
+[`mutualorientations`](@ref)). The orientations may be given in place of
+`Rbn`, as the `Vector{Int8}` [`mutualorientations`](@ref) returns and a
+[`CircuitMatrixPlan`](@ref) holds, so that a refill does not walk the
+incidence matrix.
 
 # Examples
 ```jldoctest
@@ -590,8 +705,9 @@ nodeindices = [2 0 3 3; 1 0 1 1]
 componentvalues = [1e-9, 0.2, 2e-9, 1e-12]
 componentnamedict = Dict{Symbol, Int}(:C2 => 4,:L2 => 3,:L1 => 1,:K1 => 2)
 edge2indexdict = Dict{Tuple{Int, Int}, Int}((1, 2) => 1,(3, 1) => 2,(1, 3) => 2,(2, 1) => 1)
+Rbn = JosephsonCircuits.SparseArrays.sparse([1, 2], [1, 2], [1, 1], 2, 2)
 mutualinductorbranchnames = [ :L1, :L2]
-Mb = JosephsonCircuits.calcMb(componenttypes,nodeindices,componentvalues,componentnamedict,mutualinductorbranchnames,edge2indexdict,Nmodes,Nbranches)
+Mb = JosephsonCircuits.calcMb(componenttypes,nodeindices,componentvalues,componentnamedict,mutualinductorbranchnames,edge2indexdict,Rbn,Nmodes,Nbranches)
 
 # output
 2×2 SparseArrays.SparseMatrixCSC{Float64, Int64} with 2 stored entries:
@@ -601,19 +717,30 @@ Mb = JosephsonCircuits.calcMb(componenttypes,nodeindices,componentvalues,compone
 """
 function calcMb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
     componentvalues::Vector, componentnamedict::Dict,
-    mutualinductorbranchnames::Vector, edge2indexdict::Dict, Nmodes,
-    Nbranches)
+    mutualinductorbranchnames::Vector, edge2indexdict::Dict,
+    Rbn::SparseMatrixCSC, Nmodes, Nbranches)
+    return calcMb(componenttypes, nodeindices, componentvalues,
+        componentnamedict, mutualinductorbranchnames, edge2indexdict,
+        mutualorientations(componenttypes, nodeindices, componentnamedict,
+            mutualinductorbranchnames, edge2indexdict, Rbn, Nbranches),
+        Nmodes, Nbranches)
+end
+
+function calcMb(componenttypes::Vector{Symbol}, nodeindices::Matrix{Int},
+    componentvalues::Vector, componentnamedict::Dict,
+    mutualinductorbranchnames::Vector, edge2indexdict::Dict,
+    orientations::Vector{Int8}, Nmodes, Nbranches)
     return calcMb_inner(componenttypes, nodeindices, componentvalues,
         calcvaluetype(componenttypes, componentvalues, [:L,:K]),
-        componentnamedict, mutualinductorbranchnames, edge2indexdict, Nmodes,
-        Nbranches)
+        componentnamedict, mutualinductorbranchnames, edge2indexdict,
+        orientations, Nmodes, Nbranches)
 end
 
 function calcMb_inner(componenttypes::Vector{Symbol},
     nodeindices::Matrix{Int}, componentvalues::Vector,
     valuecomponenttypes::Vector, componentnamedict::Dict,
-    mutualinductorbranchnames::Vector, edge2indexdict::Dict, Nmodes,
-    Nbranches)
+    mutualinductorbranchnames::Vector, edge2indexdict::Dict,
+    orientations::Vector{Int8}, Nmodes, Nbranches)
 
     # define empty vectors of zero length for the row indices, column indices,
     # and values
@@ -622,62 +749,30 @@ function calcMb_inner(componenttypes::Vector{Symbol},
     Vb = Vector{eltype(valuecomponenttypes)}(undef, 0)
 
     n = 1
-    #loop through componenttypes for mutual inductors
+    # loop through componenttypes for mutual inductors. the branches a
+    # coupling lies on and the orientation carrying `K` over to them are
+    # structural; the mutual inductance is formed from the values of `K`
+    # and of the two inductors it couples
     @inbounds for (i,type) in enumerate(componenttypes)
-        # when we find a mutual inductor:
-        # -find the value of the mutual inductor in componentvalues[i]
-        # -find the names of the two inductors it couples together from
-        #   mutualinductorbranchnames[n]
-        #  -look up the index of the inductors in
-        #     index=componentnamedict[inductorsymbol] for each inductor symbol
-        #  -given the index of the inductor, look of the value of the inductor
-        #     from componentvalues
-        #  -then compute the value of the mutual inductance from the two
-        #     inductor values and K
-
-        # then use the index of the inductors to get the nodes from
-        # nodeindices. use that as a key in edge2indexdict to look up the
-        # branch index then assign those to I, J, V for the sparse array.
-        # then do the usual step of expanding that to Nmodes after finishing
-        # this loop.
-
         if type == :K
-            # value of K
+            cb = coupledbranches(componenttypes, nodeindices,
+                componentnamedict, mutualinductorbranchnames, edge2indexdict,
+                n)
+
+            # value of the mutual inductance Lm, in the direction each
+            # inductor's terminals were declared in
             K = componentvalues[i]
-            # names of inductors
-            inductor1name = mutualinductorbranchnames[2*n-1]
-            inductor2name = mutualinductorbranchnames[2*n]
+            Lm = K*sqrt(componentvalues[cb.inductor1index]*
+                componentvalues[cb.inductor2index])
 
-            # indices of inductors
-            inductor1index = componentnamedict[inductor1name]
-            inductor2index = componentnamedict[inductor2name]
+            # add the edges, in the orientation the graph gave the branches
+            push!(Ib,cb.branch1)
+            push!(Jb,cb.branch2)
+            pushval!(Vb,Lm,orientations[n],false)
 
-            # values of inductors
-            inductor1value = componentvalues[inductor1index]
-            inductor2value = componentvalues[inductor2index]
-
-            # check the two components coupled are actually inductors
-            if componenttypes[inductor1index] != :L
-               throw(ArgumentError(lazy"Mutual coupling coefficient K must couple two inductors. $(inductor1name) is not an inductor."))
-            end
-            if componenttypes[inductor2index] != :L
-               throw(ArgumentError(lazy"Mutual coupling coefficient K must couple two inductors. $(inductor2name) is not an inductor."))
-            end
-
-            # values of mutual inductance Lm
-            Lm = K*sqrt(inductor1value*inductor2value)
-
-            inductor1edge = (nodeindices[1,inductor1index],nodeindices[2,inductor1index])
-            inductor2edge = (nodeindices[1,inductor2index],nodeindices[2,inductor2index])
-
-            # add the edges
-            push!(Ib,edge2indexdict[inductor1edge])
-            push!(Jb,edge2indexdict[inductor2edge])
-            pushval!(Vb,Lm,1,false)
-
-            push!(Ib,edge2indexdict[inductor2edge])
-            push!(Jb,edge2indexdict[inductor1edge])
-            pushval!(Vb,Lm,1,false)
+            push!(Ib,cb.branch2)
+            push!(Jb,cb.branch1)
+            pushval!(Vb,Lm,orientations[n],false)
 
             n+=1
         end

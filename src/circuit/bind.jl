@@ -441,10 +441,16 @@ end
 Everything about a circuit's matrices which depends on its topology but not
 on its values, for one mode count.
 
-Holds the nodal and branch stamp plans and the mode expanded incidence
-matrix. Rebinding at new component values reuses all of it; only the values
-are refilled. See [`circuitmatrixplan`](@ref) and
-[`assemblematrices`](@ref).
+Holds the nodal and branch stamp plans, the orientation of each mutual
+coupling and the mode expanded incidence matrix. Rebinding at new component
+values reuses all of it; only the values are refilled. See
+[`circuitmatrixplan`](@ref) and [`assemblematrices`](@ref).
+
+`mutualorientations` is the sign which carries each coupling from the
+terminal order the netlist declared to the orientation the graph gave its
+two branches (see [`mutualorientations`](@ref)). It depends on the
+topology and the declared terminal order alone, so a refill reads it
+rather than the incidence matrix.
 """
 struct CircuitMatrixPlan{Ti<:Integer}
     circuit::CompiledCircuit
@@ -455,6 +461,7 @@ struct CircuitMatrixPlan{Ti<:Integer}
     inductance::BranchStampPlan{Ti}
     junction::BranchStampPlan{Ti}
     invinductance::InverseInductancePlan{Ti}
+    mutualorientations::Vector{Int8}
     Rbnm::SparseMatrixCSC{Int,Int}
 end
 
@@ -473,12 +480,18 @@ function circuitmatrixplan(c::CompiledCircuit, cg::CircuitGraph,
         b::BoundCircuit; Nmodes::Int = 1)
     inductance = branchstampplan(c, c.inductors, cg.edge2indexdict,
         cg.Nbranches)
+    # the orientation of each coupling depends on the topology alone, so it
+    # is found once and held by the plan; the mutual inductance matrix built
+    # below reads it too
+    orientations = mutualorientations(c.componenttypes, c.nodeindices,
+        c.componentnamedict, c.mutualinductorbranchnames, cg.edge2indexdict,
+        cg.Rbn, cg.Nbranches)
     # which branches are mutually coupled is read off the mutual inductance
     # matrix, so the plan is built from a bound circuit and is valid while
     # `structuralkey` is unchanged
     Mb = calcMb(c.componenttypes, c.nodeindices, b.values,
         c.componentnamedict, c.mutualinductorbranchnames, cg.edge2indexdict,
-        1, cg.Nbranches)
+        orientations, 1, cg.Nbranches)
     Lb = assemblebranch(eltype(b.inductors), inductance, b.inductors,
         combine_reciprocal_sum, 1)
     return CircuitMatrixPlan(c, cg, Nmodes,
@@ -487,6 +500,7 @@ function circuitmatrixplan(c::CompiledCircuit, cg::CircuitGraph,
         inductance,
         branchstampplan(c, c.junctions, cg.edge2indexdict, cg.Nbranches),
         inverseinductanceplan(c, cg, Lb, mnacoupledbranches(Mb)),
+        orientations,
         diagrepeat(cg.Rbn, Nmodes))
 end
 
@@ -526,7 +540,8 @@ function assemblematrices(plan::CircuitMatrixPlan, b::BoundCircuit)
         Nmodes)
 
     Mb = calcMb(ct, ni, vvn, c.componentnamedict,
-        c.mutualinductorbranchnames, cg.edge2indexdict, 1, cg.Nbranches)
+        c.mutualinductorbranchnames, cg.edge2indexdict,
+        plan.mutualorientations, 1, cg.Nbranches)
     checkcoupledbranchinductors(c.componentnames, ct, ni, cg.edge2indexdict,
         Mb)
     invLnm = assembleinvinductance(TL, plan.invinductance, Lb, Nmodes)
@@ -613,7 +628,8 @@ function assemblematrices!(nm::CircuitMatrices, plan::CircuitMatrixPlan,
     branch!(nm.Ljb, nm.Ljbm, plan.junction, b.junctions, combine_error)
 
     Mb = calcMb(ct, ni, vvn, c.componentnamedict,
-        c.mutualinductorbranchnames, cg.edge2indexdict, 1, cg.Nbranches)
+        c.mutualinductorbranchnames, cg.edge2indexdict,
+        plan.mutualorientations, 1, cg.Nbranches)
     checkcoupledbranchinductors(c.componentnames, ct, ni, cg.edge2indexdict,
         Mb)
     if !isempty(plan.invinductance.positions)
@@ -669,7 +685,7 @@ end
 
 """
     scatteringstampsystem(blocks::Vector{CompiledScatteringBlock}, Nmodes;
-        auxoffset, Ntotal, scale = 1.0, modeoffsets = nothing)
+        auxoffset, Ntotal, scale = 1.0, modeoffsets = nothing, iscale = 1.0)
 
 The stamp system of the compiled scattering blocks of a circuit.
 
@@ -678,11 +694,12 @@ needs no regrouping and none of the checks which the per port form does: a
 block cannot be missing a port, cannot repeat one, and cannot be confused
 with another instance of the same definition. `modeoffsets` are the
 frequency offsets of the modes, which a pumped block's coupling between
-them reads; see [`scatteringstampsystem`](@ref).
+them reads, and `iscale` the scale of the auxiliary port current unknowns;
+see [`scatteringstampsystem`](@ref).
 """
 function scatteringstampsystem(blocks::Vector{CompiledScatteringBlock},
     Nmodes::Integer; auxoffset::Integer, Ntotal::Integer,
-    scale::Real = 1.0, modeoffsets = nothing)
+    scale::Real = 1.0, modeoffsets = nothing, iscale::Real = 1.0)
 
     isempty(blocks) && return nothing
     stamped = StampedScatteringBlock[]
@@ -695,5 +712,5 @@ function scatteringstampsystem(blocks::Vector{CompiledScatteringBlock},
         auxbase += n*Nmodes
     end
     return scatteringstampsystem(stamped, Nmodes, Ntotal, scale;
-        modeoffsets = modeoffsets)
+        modeoffsets = modeoffsets, iscale = iscale)
 end

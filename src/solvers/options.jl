@@ -28,6 +28,16 @@ abstract type AbstractFactorization end
 refactorize!(::AbstractFactorization, F, A) = nothing
 
 """
+    solverkwargs(factorization)
+
+The options a factorization hands to the solver it wraps, so a caller which
+does not know which factorization it has can forward them unconditionally.
+Every factorization carries its own `kwargs` to its own `factorize`; this is
+for the batched paths, which reach their solver without one.
+"""
+solverkwargs(::Union{Nothing,AbstractFactorization}) = NamedTuple()
+
+"""
     KLUfactorization(; kwargs...)
 
 The [`AbstractFactorization`](@ref) using KLU.jl, a sparse LU factorization

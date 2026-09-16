@@ -1138,6 +1138,23 @@ end
                 inputmode=(0,),inputport=1), atol = 1e-6)
     end
 
+    @testset "auxiliary port current scale" begin
+
+        # one over the solver inductance scale, which is what puts a port
+        # current in the same units as a node flux
+        @test JosephsonCircuits.auxcurrentscale(2e-9) == 1/2e-9
+        @test JosephsonCircuits.auxcurrentscale(1e-12 + 0.0im) == 1e12
+        # the same scale the nonlinear solve writes its node fluxes in
+        @test JosephsonCircuits.auxcurrentscale(
+            JosephsonCircuits.calcsolverscale((2*pi*5e9,), [:P,:R],
+                Any[1,50.0], Any[50.0], 1e-9)) ≈ (2*pi*5e9)/50.0
+        # a circuit with no scale to take leaves the unknowns as they are
+        # rather than dividing by zero
+        for L in (0.0, -0.0, NaN, Inf)
+            @test JosephsonCircuits.auxcurrentscale(L) == 1.0
+        end
+    end
+
     @testset "solver scale" begin
 
         # Z0/w0 with geometric means over the port reference impedances and

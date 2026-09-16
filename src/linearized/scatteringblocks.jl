@@ -187,6 +187,15 @@ a kernel; see [`DeviceScatteringStamps`](@ref).
 - `Nmodes`, `Nauxports`: the mode count and the number of auxiliary port
     current unknowns.
 - `scale`: the solver scale the rows are written in.
+- `iscale`: the scale of the auxiliary port current unknowns. The stored
+    unknown is `i/iscale`, so every auxiliary column is `iscale` times the
+    unscaled one; with `iscale` one over the solver inductance scale (see
+    [`auxcurrentscale`](@ref)) a port current is written in the same units
+    as a node flux. The outputs are unaffected: they are read from the nodal
+    components of a solution, and the block noise is contracted against the
+    auxiliary rows of an adjoint solution, which a scale on the unknowns
+    leaves alone. Anything which reads a forward auxiliary component as a
+    current multiplies it by `iscale`.
 """
 struct ScatteringStampSystem
     blocks::Vector{StampedScatteringBlock}
@@ -202,7 +211,8 @@ struct ScatteringStampSystem
     blockindex::Vector{Int32}
     pindex::Vector{Int32}
     qindex::Vector{Int32}
-    # 1 for a B entry (times sign*im*w_m*scale), 2 for a C entry (times -1)
+    # 1 for a B entry (times sign*im*w_m*scale), 2 for a C entry (times
+    # -iscale)
     coeff::Vector{Int8}
     sign::Vector{Int8}
     modeindex::Vector{Int32}
@@ -221,6 +231,7 @@ struct ScatteringStampSystem
     Nmodes::Int
     Nauxports::Int
     scale::Float64
+    iscale::Float64
 end
 
 """
@@ -234,7 +245,7 @@ countscatteringports(psc::CompiledCircuit) =
 
 """
     scatteringstampsystem(blocks::Vector{StampedScatteringBlock}, Nmodes,
-        Ntotal, scale; modeoffsets = nothing)
+        Ntotal, scale; modeoffsets = nothing, iscale = 1.0)
 
 The positional inner form of [`scatteringstampsystem`](@ref), everything
 past the point where the blocks and their terminals are known: the
@@ -248,9 +259,13 @@ whose offsets differ by a harmonic of its pump, so with one present the
 offsets are required, and the contributions between such pairs are
 entered on top of the diagonal ones; a block which does not convert
 takes no notice of them.
+
+`iscale` is the scale of the auxiliary port current unknowns; see
+[`ScatteringStampSystem`](@ref).
 """
 function scatteringstampsystem(blocks::Vector{StampedScatteringBlock},
-    Nmodes::Integer, Ntotal::Integer, scale::Real; modeoffsets = nothing)
+    Nmodes::Integer, Ntotal::Integer, scale::Real; modeoffsets = nothing,
+    iscale::Real = 1.0)
 
     # how many auxiliary port currents the blocks occupy in total: each has
     # one per port per mode, laid out consecutively from its own base
@@ -323,12 +338,12 @@ function scatteringstampsystem(blocks::Vector{StampedScatteringBlock},
                 if sb.signalnodes[p] != 1
                     noderow = (sb.signalnodes[p]-2)*Nmodes + m
                     push!(kclrows, noderow); push!(kclcols, auxp)
-                    push!(kclvals, 1)
+                    push!(kclvals, iscale)
                 end
                 if sb.refnodes[p] != 1
                     noderow = (sb.refnodes[p]-2)*Nmodes + m
                     push!(kclrows, noderow); push!(kclcols, auxp)
-                    push!(kclvals, -1)
+                    push!(kclvals, -iscale)
                 end
                 for q in 1:n
                     contribute!(bi, sb, p, m, q, m, j)
@@ -364,7 +379,7 @@ function scatteringstampsystem(blocks::Vector{StampedScatteringBlock},
     return ScatteringStampSystem(blocks, kcl, pattern, patternindex,
         copy(patternindex), blockindex, pindex, qindex, coeff, sign,
         modeindex, inmodeindex, coupled, pumped, pumpedk, offsets,
-        Int(Nmodes), naux, Float64(scale))
+        Int(Nmodes), naux, Float64(scale), Float64(iscale))
 end
 
 """
@@ -653,7 +668,7 @@ function scatteringvalues!(values::AbstractVector,
             values[c] = if ssys.coeff[c] == 1
                 ssys.sign[c] * (im*wmodes[m]*ssys.scale) * Bs[bi][p, q, m]
             else
-                -Cs[bi][p, q, m]
+                -ssys.iscale * Cs[bi][p, q, m]
             end
         else
             # a pumped block: the column's own mode frequency scales the
@@ -662,7 +677,7 @@ function scatteringvalues!(values::AbstractVector,
             values[c] = if ssys.coeff[c] == 1
                 ssys.sign[c] * (im*wmodes[nn]*ssys.scale) * Bp[j][p, q, m, nn]
             else
-                -Cp[j][p, q, m, nn]
+                -ssys.iscale * Cp[j][p, q, m, nn]
             end
         end
     end

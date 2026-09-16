@@ -124,7 +124,9 @@ end
 
 Build a [`FrequencySweepPlan`](@ref) for `lsys` on `backend`, together with the
 compressed sparse row structure a device direct solver factorizes, as
-`(plan, rowptr, colind)`.
+`(plan, rowptr, colind, colindhost)`. The column index array comes back on
+the host as well, which is where the grouping of
+[`planequilibration`](@ref) is built.
 
 With `adjoint` the structure and the coefficients describe the transpose of
 the system matrix, whose solutions are the adjoint ones the noise, quantum
@@ -181,7 +183,7 @@ function planfrequencysweep(lsys::HBLinearizedSystem, backend;
         tobackend(backend, lsys.wpumpmodes), assemble!, backend,
         Int(lsys.Nmodes), nz)
     return plan, tobackend(backend, rowptrhost),
-        tobackend(backend, colindhost)
+        tobackend(backend, colindhost), colindhost
 end
 
 """
@@ -205,6 +207,132 @@ function assemblesweep!(nzval::AbstractMatrix, plan::FrequencySweepPlan,
         plan.wpump, ws, plan.nmodes, plan.nnz; ndrange = length(nzval))
     KernelAbstractions.synchronize(plan.backend)
     return nzval
+end
+
+"""
+    ColumnEquilibration
+
+The column scaling of the system matrices of one direction of a batch.
+
+cuDSS chooses its pivots within the blocks its ordering fixes, by the size
+of the candidates, so the units the unknowns are written in decide which
+candidates it can tell apart. The columns of the linearized system as
+assembled vary in size with the elements which meet a node and with the
+frequency of the column's mode, so each system of a batch is scaled here:
+every column is divided by its largest entry, which makes the pivot
+candidates of every column comparable, and the solution is divided by the
+same scale on the way out. cuDSS's matching, which permutes and scales the
+matrix ahead of the factorization, is not supported for a uniform batch.
+
+# Fields
+- `order`, `segptr`: the stored entries of the matrix the solver is handed,
+    grouped by its column, so one work item owns a column and no two write
+    the same scale.
+- `scale`: the scale of each column of each system of the batch.
+"""
+struct ColumnEquilibration{VI,VS}
+    order::VI
+    segptr::VI
+    scale::VS
+end
+
+# one work item per (column, system): the largest entry of the column, then
+# the column divided by it
+@kernel function columnequilibratekernel!(nzval, scale, @Const(order),
+        @Const(segptr), n)
+    gid = @index(Global)
+    @inbounds begin
+        j = (gid - 1) % n + 1
+        k = (gid - 1) ÷ n + 1
+        lo = Int(segptr[j]); hi = Int(segptr[j+1]) - 1
+        m = zero(real(eltype(nzval)))
+        for q in lo:hi
+            m = max(m, abs(nzval[Int(order[q]), k]))
+        end
+        s = m > 0 ? m : one(m)
+        scale[j, k] = s
+        for q in lo:hi
+            nzval[Int(order[q]), k] /= s
+        end
+    end
+end
+
+# one work item per solution entry, undoing the change of variable
+@kernel function unscalesolutionkernel!(X, @Const(scale), n, nrhs)
+    gid = @index(Global)
+    @inbounds begin
+        i = (gid - 1) % n + 1
+        r = ((gid - 1) ÷ n) % nrhs + 1
+        k = (gid - 1) ÷ (n*nrhs) + 1
+        X[i, r, k] /= scale[i, k]
+    end
+end
+
+# the stored entries of each column of the structure handed to the solver,
+# grouped by column: a counting sort of the column index array
+function groupstoredcolumns(colind::AbstractVector{<:Integer}, n::Integer)
+    segptr = zeros(Int32, n + 1)
+    @inbounds for c in colind
+        segptr[c + 1] += 1
+    end
+    segptr[1] = 1
+    @inbounds for j in 1:n
+        segptr[j+1] += segptr[j]
+    end
+    next = copy(segptr)
+    order = Vector{Int32}(undef, length(colind))
+    @inbounds for k in eachindex(colind)
+        c = colind[k]
+        order[next[c]] = k
+        next[c] += 1
+    end
+    return order, segptr
+end
+
+"""
+    planequilibration(colind::AbstractVector{<:Integer}, n, nb, backend)
+
+The [`ColumnEquilibration`](@ref) of a batch of `nb` systems of order `n`
+whose stored entries lie in the columns `colind` names.
+"""
+function planequilibration(colind::AbstractVector{<:Integer}, n::Integer,
+    nb::Integer, backend)
+    order, segptr = groupstoredcolumns(colind, n)
+    return ColumnEquilibration(tobackend(backend, order),
+        tobackend(backend, segptr),
+        KernelAbstractions.allocate(backend, Float64, Int(n), Int(nb)))
+end
+
+"""
+    equilibratecolumns!(nzval::AbstractMatrix, eq::ColumnEquilibration,
+        backend)
+
+Divide each column of each system of the batch by its largest entry,
+recording the scales in `eq`.
+"""
+function equilibratecolumns!(nzval::AbstractMatrix, eq::ColumnEquilibration,
+    backend)
+    n, nb = size(eq.scale)
+    columnequilibratekernel!(backend, 64)(nzval, eq.scale, eq.order,
+        eq.segptr, n; ndrange = n*nb)
+    KernelAbstractions.synchronize(backend)
+    return nzval
+end
+
+"""
+    unscalesolution!(X::AbstractArray{<:Any,3}, eq::ColumnEquilibration,
+        backend)
+
+Undo on the solutions of a batch the column scaling
+[`equilibratecolumns!`](@ref) applied to its matrices.
+"""
+function unscalesolution!(X::AbstractArray{<:Any,3}, eq::ColumnEquilibration,
+    backend)
+    n, nrhs, nb = size(X)
+    unscalesolutionkernel!(backend, 64)(X, eq.scale, n, nrhs;
+        ndrange = n*nrhs*nb)
+    KernelAbstractions.synchronize(backend)
+    return X
 end
 
 """
@@ -318,17 +446,19 @@ where it was computed, for the noise scattering parameters.
     mode offsets, and the frequencies of the current batch on the host and
     on the device.
 - `fwd`, `adj`: the batch of each direction, `(plan, rowptr, colind,
-    nzval, X, B)` on the sparse device factorization path or `(X,)` on
-    the block path, and `nothing` when no adjoint was asked for.
+    nzval, X, B, equil)` on the sparse device factorization path or `(X,)`
+    on the block path, and `nothing` when no adjoint was asked for.
 - `fstage`, `astage`: the staging of each direction, `(full, rows, rowsd,
     gathered, host)`.
 - `blocks`: the block path's `(plan, nzval, B, F, X, Xadj)`, or `nothing`.
 - `scatstamps`, `scatstampsadjoint`, `providers`: the scattering block
     stamps of each direction and the providers they are evaluated through.
 - `sweeps`: the cuDSS sweep of each direction, made on the first batch.
+- `solverkwargs`: the factorization's options, forwarded to each sweep as
+    it is made so a caller can override the sweep's own defaults.
 - `batchlo`: the first signal frequency of the batch currently staged.
 """
-struct DeviceSweep{TB,TFw,TAd,TFs,TAs,TBl,TSt,TSa,TPr}
+struct DeviceSweep{TB,TFw,TAd,TFs,TAs,TBl,TSt,TSa,TPr,TK<:NamedTuple}
     backend::TB
     nb::Int
     F::Int
@@ -347,6 +477,7 @@ struct DeviceSweep{TB,TFw,TAd,TFs,TAs,TBl,TSt,TSa,TPr}
     scatstampsadjoint::TSa
     providers::TPr
     sweeps::Vector{Any}
+    solverkwargs::TK
     batchlo::Base.RefValue{Int}
 end
 
@@ -491,7 +622,7 @@ function devicesolutions(lsys::HBLinearizedSystem, bnm, w, backend, forward,
     return DeviceSweep(backend, nb, F, n, nrhs, collect(Float64, w),
         collect(Float64, lsys.wpumpmodes), wshost, wsdev, fwd, adj, fstage,
         astage, blocks, scatstamps, scatstampsadjoint, scatproviders,
-        Any[nothing, nothing], Ref(0))
+        Any[nothing, nothing], solverkwargs(factorization), Ref(0))
 end
 
 # the uniform batch of one direction on the sparse device factorization
@@ -500,7 +631,7 @@ function devicebatch(lsys, backend, isadjoint::Bool, bhost::Matrix, nb::Int)
     T = eltype(bhost)
     n = size(lsys.Asparse, 1)
     nrhs = size(bhost, 2)
-    plan, rowptr, colind = planfrequencysweep(lsys, backend;
+    plan, rowptr, colind, colindhost = planfrequencysweep(lsys, backend;
         adjoint = isadjoint)
     nzval = KernelAbstractions.allocate(backend, T, nnz(lsys.Asparse), nb)
     X = KernelAbstractions.allocate(backend, T, n, nrhs, nb)
@@ -511,7 +642,7 @@ function devicebatch(lsys, backend, isadjoint::Bool, bhost::Matrix, nb::Int)
         copyto!(view(B, :, :, k), bd)
     end
     return (plan = plan, rowptr = rowptr, colind = colind, nzval = nzval,
-        X = X, B = B)
+        X = X, B = B, equil = planequilibration(colindhost, n, nb, backend))
 end
 
 # The staging for one direction. A whole batch is brought back at once and
@@ -574,14 +705,18 @@ function runblockbatch!(ds::DeviceSweep, stamps)
 end
 
 # the sparse device factorization path of one direction: the batch is
-# assembled, analyzed once on the first batch, refactorized and solved
+# assembled, equilibrated, analyzed once on the first batch, refactorized
+# and solved, and the solutions are returned to the unscaled unknowns
 function runbatch!(ds::DeviceSweep, slot::Int, b, stage, stamps)
     assemblesweep!(b.nzval, b.plan, ds.wsdev)
     isnothing(stamps) || applyscatteringstamps!(b.nzval, stamps)
+    equilibratecolumns!(b.nzval, b.equil, ds.backend)
     if isnothing(ds.sweeps[slot])
-        ds.sweeps[slot] = _cudss_sweep(b.rowptr, b.colind, b.nzval, b.X, b.B)
+        ds.sweeps[slot] = _cudss_sweep(b.rowptr, b.colind, b.nzval, b.X, b.B;
+            ds.solverkwargs...)
     end
     _cudss_sweepsolve!(ds.sweeps[slot])
+    unscalesolution!(b.X, b.equil, ds.backend)
     stagebatch!(ds, b, stage)
     return nothing
 end

@@ -12,6 +12,36 @@ const CPU = JosephsonCircuits.CPU
 # here against the host assembler; the device solve itself needs cuDSS and is
 # exercised where a device is available.
 
+# A host stand-in for the batched cuDSS solver, dispatched on host arrays,
+# which no production path hands it: it keeps the options it was made with
+# and solves each system of the batch with the host factorization, so the
+# sweep can be followed through `solvebatch!` on CPU() and its solutions
+# compared with the host's.
+struct HostSweep
+    n::Int
+    colptr::Vector{Int}
+    rowval::Vector{Int}
+    nzval::Matrix{ComplexF64}
+    X::Array{ComplexF64,3}
+    B::Array{ComplexF64,3}
+    options::NamedTuple
+end
+function JosephsonCircuits._cudss_sweep(rowptr::Vector{<:Integer},
+    colind::Vector{<:Integer}, nzval::Matrix{ComplexF64},
+    X::Array{ComplexF64,3}, B::Array{ComplexF64,3}; kwargs...)
+    return HostSweep(length(rowptr) - 1, Vector{Int}(rowptr),
+        Vector{Int}(colind), nzval, X, B, NamedTuple(kwargs))
+end
+function JosephsonCircuits._cudss_sweepsolve!(S::HostSweep)
+    for k in axes(S.nzval, 2)
+        # the structure is compressed sparse row, so read as compressed
+        # sparse column it is the transpose
+        At = SparseMatrixCSC(S.n, S.n, S.colptr, S.rowval, S.nzval[:, k])
+        S.X[:, :, k] .= sparse(transpose(At)) \ S.B[:, :, k]
+    end
+    return S
+end
+
 @testset verbose=true "the device sweep" begin
 
     # a chain with a Josephson junction per cell, two ports, and a resistor at
@@ -122,6 +152,92 @@ const CPU = JosephsonCircuits.CPU
         @test !JosephsonCircuits.cansweepondevice(d.lsys)
         @test_throws ArgumentError JosephsonCircuits.planfrequencysweep(d.lsys,
             CPU())
+    end
+
+    @testset "the factorization's options reach the batched solver" begin
+        JC = JosephsonCircuits
+        # every factorization answers, so a caller which does not know
+        # which one it has can forward unconditionally
+        @test JC.solverkwargs(nothing) == NamedTuple()
+        @test JC.solverkwargs(JC.KLUfactorization()) == NamedTuple()
+        @test JC.solverkwargs(JC.CUDSSFactorization()) == NamedTuple()
+        @test JC.solverkwargs(JC.CUDSSFactorization(pivot_epsilon = 0.0,
+            ir_n_steps = 0)) == (pivot_epsilon = 0.0, ir_n_steps = 0)
+
+        # and the sweep holds them for the call which makes each
+        # direction's solver, which is what lets a caller turn the sweep's
+        # own defaults off
+        wp = (2*pi*5e9,)
+        psc, cg, circuitdefs, sf, nl = buildcase((4,), wp, (6,))
+        ws = 2*pi*[3.11e9, 6.61e9]
+        d = JC.hblinsolve(ws, psc, cg, circuitdefs, sf; nonlinear = nl,
+            debuglsys = true)
+        spec = (full = true, rows = Int[])
+        f = JC.CUDSSFactorization(pivot_epsilon = 0.0, ir_n_steps = 0)
+        @test JC.devicesolutions(d.lsys, d.bnm, ws, CPU(), spec;
+            factorization = f).solverkwargs ==
+            (pivot_epsilon = 0.0, ir_n_steps = 0)
+        # both directions are made from the one record
+        @test JC.devicesolutions(d.lsys, d.bnm, ws, CPU(), spec, spec;
+            factorization = f).solverkwargs ==
+            (pivot_epsilon = 0.0, ir_n_steps = 0)
+        @test JC.devicesolutions(d.lsys, d.bnm, ws, CPU(),
+            spec).solverkwargs == NamedTuple()
+    end
+
+    @testset "the sweep followed through solvebatch! on the host" begin
+        JC = JosephsonCircuits
+        # a circuit with a scattering block, whose auxiliary port current
+        # rows the batch carries, and more frequencies than one batch
+        # holds, so the last batch is short
+        Z0 = 50.0
+        circuit = Circuit([
+            (:p1, 1, 0, Port(1; Z0 = Z0)),
+            (:b, 1, 2, ScatteringParameters(ComplexF64[0 1; 1 0]; zref = Z0,
+                noise = Lossless())),
+            (:cc, 2, 3, Capacitor(100e-15)),
+            (:jj, 3, 0, JosephsonJunction(1000e-12)),
+            (:cj, 3, 0, Capacitor(1000e-15))])
+        wp = (2*pi*5e9,)
+        src = [(mode = (1,), port = 1, current = 0.8e-6)]
+        nl = hbnlsolve(wp, (6,), src, circuit; keyedarrays = false)
+        psc = JC.compile(circuit)
+        cg = JC.calccircuitgraph(psc)
+        sf = JC.removeconjfreqs(JC.truncfreqs(JC.calcfreqsrdft((4,));
+            dc = true, odd = true, even = false, maxintermodorder = Inf))
+        ws = 2*pi*collect(range(4.0e9, 6.0e9,
+            length = JC.uniformbatchlimit(1) + 2))
+        d = JC.hblinsolve(ws, psc, cg, Dict{Any,Any}(), sf; nonlinear = nl,
+            debuglsys = true)
+        lsys = d.lsys
+        b = Matrix{ComplexF64}(d.bnm)
+        spec = (full = true, rows = Int[])
+        f = JC.CUDSSFactorization(pivot_epsilon = 1e-6, ir_n_steps = 3)
+        ds = JC.devicesolutions(lsys, b, ws, CPU(), spec, spec;
+            factorization = f)
+        @test isnothing(ds.blocks)
+        @test ds.nb < length(ws)
+        # each direction's solution of each frequency is the host's solution
+        # of the equations assembled at that frequency, the column scaling
+        # of the batch undone
+        A = copy(lsys.Asparse)
+        X = similar(b)
+        for lo in 1:ds.nb:length(ws)
+            JC.solvebatch!(ds, lo)
+            for i in lo:min(lo + ds.nb - 1, length(ws))
+                JC.assemblesystemmatrix!(A, lsys, ws[i] .+ d.wpumpmodes)
+                JC.forwardsolution!(X, ds, i)
+                @test X ≈ A \ b rtol = 1e-10
+                JC.adjointsolution!(X, ds, i)
+                @test X ≈ sparse(transpose(A)) \ b rtol = 1e-10
+            end
+        end
+        # the options were handed to the call which made each direction's
+        # solver
+        for slot in 1:2
+            @test ds.sweeps[slot].options ==
+                (pivot_epsilon = 1e-6, ir_n_steps = 3)
+        end
     end
 
     @testset "the gathered rows are the ones the ports read" begin
@@ -277,6 +393,59 @@ const CPU = JosephsonCircuits.CPU
         @test JosephsonCircuits.portwavescale(complex(50.0), 0.0) == 0
         @test JosephsonCircuits.portwavescale(complex(50.0), 2*pi*5e9) ==
             1/sqrt(Complex(50.0))/sqrt(2*pi*5e9)
+    end
+
+    @testset "the column equilibration and the solutions it scales" begin
+        # the grouping is the stored entries of each column of the structure
+        # handed to the solver, which is compressed sparse row, so a column
+        # index array with the entries of a column scattered through it
+        for (m, dens) in ((40, 0.1), (17, 0.4), (6, 1.0))
+            A = sprandn(m, m, dens) + I
+            colind = rowvals(sparse(transpose(A)))
+            order, segptr = JosephsonCircuits.groupstoredcolumns(colind, m)
+            @test sort(order) == collect(1:length(colind))
+            @test segptr[1] == 1 && segptr[end] == length(colind) + 1
+            for j in 1:m
+                @test all(colind[order[q]] == j
+                    for q in segptr[j]:(segptr[j+1]-1))
+            end
+        end
+
+        # a batch of systems whose columns are orders of magnitude apart:
+        # each comes out with a largest entry of one, and a solution of the
+        # scaled system unscales to one of the original
+        n, nb, nrhs = 24, 3, 2
+        A = sprandn(ComplexF64, n, n, 0.2) + I
+        colind = rowvals(sparse(transpose(A)))
+        eq = JosephsonCircuits.planequilibration(colind, n, nb, CPU())
+        nzval = Matrix{ComplexF64}(undef, nnz(A), nb)
+        Ds = [Diagonal(exp10.(range(-6, 6, length = n))*k) for k in 1:nb]
+        for k in 1:nb
+            nzval[:,k] .= nonzeros(sparse(transpose(A*Ds[k])))
+        end
+        JosephsonCircuits.equilibratecolumns!(nzval, eq, CPU())
+        for k in 1:nb, j in 1:n
+            @test maximum(abs(nzval[eq.order[q], k])
+                for q in eq.segptr[j]:(eq.segptr[j+1]-1)) ≈ 1
+        end
+        B = randn(ComplexF64, n, nrhs)
+        X = Array{ComplexF64}(undef, n, nrhs, nb)
+        for k in 1:nb
+            X[:,:,k] .= (A*Ds[k]*Diagonal(1 ./ view(eq.scale, :, k)))\B
+        end
+        JosephsonCircuits.unscalesolution!(X, eq, CPU())
+        for k in 1:nb
+            @test X[:,:,k] ≈ (A*Ds[k])\B
+        end
+
+        # a column of zeros is left alone rather than divided by nothing
+        Z = spzeros(ComplexF64, 3, 3)
+        Z[1,1] = 2.0; Z[3,3] = 4.0
+        Zt = sparse(transpose(Z))
+        eqz = JosephsonCircuits.planequilibration(rowvals(Zt), 3, 1, CPU())
+        nz = reshape(collect(nonzeros(Zt)), :, 1)
+        JosephsonCircuits.equilibratecolumns!(nz, eqz, CPU())
+        @test eqz.scale[:,1] == [2.0, 1.0, 4.0]
     end
 
     @testset "the batch size cap avoids two cuDSS faults at sixteen" begin

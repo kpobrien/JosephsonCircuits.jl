@@ -6,17 +6,54 @@
 # the scattering block stamps on a backend
 # ---------------------------------------------------------------------------
 
-# add one value per (contribution, frequency of the batch) into the stored
-# values of that frequency's system matrix
-@kernel function scatteringstampkernel!(nzval, @Const(index), @Const(values),
-        ncontrib, nzA)
+# Add the contributions of one stored entry, for one frequency of the batch,
+# into that frequency's system matrix.
+#
+# Contributions can share a destination: two ports of a block tied to the
+# same node put their entries at the same row and column. The contributions
+# are grouped by destination when the plan is built and a work item owns a
+# whole group, so each address is written by one work item and the sum
+# needs no atomic.
+@kernel function scatteringstampkernel!(nzval, @Const(dest), @Const(order),
+        @Const(segptr), @Const(values), ndest, nzA)
     gid = @index(Global)
     @inbounds begin
         q = gid - 1
-        c = q % ncontrib + 1
-        f = q ÷ ncontrib + 1
-        nzval[Int(index[c]) + (f-1)*nzA] += values[c, f]
+        k = q % ndest + 1
+        f = q ÷ ndest + 1
+        acc = zero(eltype(values))
+        for s in Int(segptr[k]):(Int(segptr[k+1]) - 1)
+            acc += values[Int(order[s]), f]
+        end
+        nzval[Int(dest[k]) + (f-1)*nzA] += acc
     end
+end
+
+"""
+    groupdestinations(destinations)
+
+Group scalar contributions by the stored entry they are added to, as
+`(order, dest, segptr)`: the contributions sorted by destination, the
+distinct destinations, and the offset of each one's run in `order`, so that
+group `k` is `order[segptr[k]:segptr[k+1]-1]` and every one of its members
+has destination `dest[k]`.
+
+This is what lets `scatteringstampkernel!` accumulate without an atomic:
+distinct groups write distinct addresses.
+"""
+function groupdestinations(destinations::AbstractVector{Int})
+    order = sortperm(destinations)
+    dest = Int[]
+    segptr = Int[]
+    @inbounds for i in eachindex(order)
+        d = destinations[order[i]]
+        if isempty(dest) || d != dest[end]
+            push!(dest, d)
+            push!(segptr, i)
+        end
+    end
+    push!(segptr, length(order) + 1)
+    return order, dest, segptr
 end
 
 """
@@ -62,7 +99,10 @@ no host at all; see [`plandeviceproviders`](@ref).
 """
 struct DeviceScatteringStamps{VI,M,H,B}
     ssys::Any
-    index::VI
+    # the contributions grouped by destination; see `groupdestinations`
+    dest::VI
+    order::VI
+    segptr::VI
     values::M               # ncontrib by nbatch, on the backend
     host::H
     wmodes::Vector{Float64}
@@ -86,8 +126,10 @@ function plandevicescattering(ssys, Aindexcsr::AbstractVector{Int},
     Ti = nzA*nbatch < typemax(Int32) ? Int32 : Int
     values = KernelAbstractions.allocate(backend, Complex{Float64}, n, nbatch)
     host = Matrix{Complex{Float64}}(undef, n, nbatch)
-    return DeviceScatteringStamps(ssys,
-        tobackend(backend, convert(Vector{Ti}, Aindexcsr)), values, host,
+    order, dest, segptr = groupdestinations(Aindexcsr)
+    d = x -> tobackend(backend, convert(Vector{Ti}, x))
+    return DeviceScatteringStamps(ssys, d(dest), d(order), d(segptr),
+        values, host,
         zeros(Float64, Nmodes), ScatteringWorkspace(), backend, Int(nzA))
 end
 
@@ -102,10 +144,11 @@ providers be evaluated once for both directions.
 """
 function transposedestinations(st::DeviceScatteringStamps,
     Aindexcsr::AbstractVector{Int}, backend)
-    Ti = eltype(st.index)
-    return DeviceScatteringStamps(st.ssys,
-        tobackend(backend, convert(Vector{Ti}, Aindexcsr)), st.values,
-        st.host, st.wmodes, st.work, backend, st.nzA)
+    Ti = eltype(st.dest)
+    order, dest, segptr = groupdestinations(Aindexcsr)
+    d = x -> tobackend(backend, convert(Vector{Ti}, x))
+    return DeviceScatteringStamps(st.ssys, d(dest), d(order), d(segptr),
+        st.values, st.host, st.wmodes, st.work, backend, st.nzA)
 end
 
 # compute the values of the batch beginning at `lo` into host buffer `buf`.
@@ -151,8 +194,10 @@ system matrices. [`stagescatteringstamps!`](@ref) must have run for the batch
 """
 function applyscatteringstamps!(nzval::AbstractMatrix,
     st::DeviceScatteringStamps)
-    scatteringstampkernel!(st.backend, 64)(nzval, st.index, st.values,
-        size(st.values, 1), st.nzA; ndrange = length(st.values))
+    ndest = length(st.dest)
+    scatteringstampkernel!(st.backend, 64)(nzval, st.dest, st.order,
+        st.segptr, st.values, ndest, st.nzA;
+        ndrange = ndest*size(st.values, 2))
     KernelAbstractions.synchronize(st.backend)
     return nzval
 end
@@ -209,7 +254,7 @@ end
 # two kernels below differ only in where that entry comes from: a table or a
 # callable.
 @inline function hybridcontribution(::Type{T}, S, wm, samepq::Bool, zrefq,
-        coeffc, sgnc, scale) where {T}
+        coeffc, sgnc, scale, iscale) where {T}
     Bpq = zero(T); Cpq = zero(T)
     if iszero(wm)
         # the zero frequency rows are i = 0
@@ -226,7 +271,7 @@ end
             Cpq += r2
         end
     end
-    return coeffc == 1 ? sgnc*(im*wm*scale)*Bpq : -Cpq
+    return coeffc == 1 ? sgnc*(im*wm*scale)*Bpq : -iscale*Cpq
 end
 
 # one work item per (contribution, frequency of the batch): interpolate the
@@ -237,7 +282,7 @@ end
         @Const(sgn), @Const(nports), @Const(zrefoff), @Const(zref),
         @Const(freqoff), @Const(nfreq), @Const(freqs), @Const(valoff),
         @Const(vals), @Const(curv), @Const(slopeoff), @Const(eslopes),
-        @Const(conjsym), @Const(wpump), @Const(ws), scale, ncontrib)
+        @Const(conjsym), @Const(wpump), @Const(ws), scale, iscale, ncontrib)
     gid = @index(Global)
     @inbounds begin
         g = gid - 1
@@ -260,7 +305,7 @@ end
             end
         end
         values[c, f] = hybridcontribution(T, S, wm, p == q,
-            zref[Int(zrefoff[bi]) + q], coeff[c], sgn[c], scale)
+            zref[Int(zrefoff[bi]) + q], coeff[c], sgn[c], scale, iscale)
     end
 end
 
@@ -271,7 +316,7 @@ end
 @kernel function deviceentrykernel!(values, @Const(modeindex),
         @Const(blockindex), @Const(pindex), @Const(qindex), @Const(coeff),
         @Const(sgn), @Const(zrefoff), @Const(zref), @Const(funcs),
-        @Const(conjsym), @Const(wpump), @Const(ws), scale, ncontrib)
+        @Const(conjsym), @Const(wpump), @Const(ws), scale, iscale, ncontrib)
     gid = @index(Global)
     @inbounds begin
         g = gid - 1
@@ -291,7 +336,7 @@ end
             end
         end
         values[c, f] = hybridcontribution(T, S, wm, p == q,
-            zref[Int(zrefoff[bi]) + q], coeff[c], sgn[c], scale)
+            zref[Int(zrefoff[bi]) + q], coeff[c], sgn[c], scale, iscale)
     end
 end
 
@@ -341,6 +386,7 @@ struct DeviceProviders{VI,VZ,VR,VC,VF,B}
     ws::VR
     wshost::Vector{Float64}
     scale::Float64
+    iscale::Float64
     ncontrib::Int
     ranges::Vector{Tuple{Float64,Float64}}
     strict::Vector{Bool}
@@ -554,6 +600,7 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
         d(Int32.(ssys.pindex)), d(Int32.(ssys.qindex)), d(Int8.(ssys.coeff)),
         d(Int8.(ssys.sign)), d(collect(Float64, wpumpmodes)),
         d(zeros(Float64, nbatch)), zeros(Float64, nbatch), Float64(scale),
+        Float64(ssys.iscale),
         ncontrib, ranges, strict, conjhost, names, ssys, backend)
 end
 
@@ -608,12 +655,12 @@ function stagedeviceproviders!(values::AbstractMatrix, dp::DeviceProviders,
             dp.blockindex, dp.pindex, dp.qindex, dp.coeff, dp.sgn, dp.nports,
             dp.zrefoff, dp.zref, dp.freqoff, dp.nfreq, dp.freqs, dp.valoff,
             dp.vals, dp.curv, dp.slopeoff, dp.eslopes, dp.conjsym, dp.wpump,
-            dp.ws, dp.scale, dp.ncontrib; ndrange = length(values))
+            dp.ws, dp.scale, dp.iscale, dp.ncontrib; ndrange = length(values))
     else
         deviceentrykernel!(dp.backend, 64)(values, dp.modeindex,
             dp.blockindex, dp.pindex, dp.qindex, dp.coeff, dp.sgn,
             dp.zrefoff, dp.zref, dp.funcs, dp.conjsym, dp.wpump, dp.ws,
-            dp.scale, dp.ncontrib; ndrange = length(values))
+            dp.scale, dp.iscale, dp.ncontrib; ndrange = length(values))
     end
     KernelAbstractions.synchronize(dp.backend)
     return values

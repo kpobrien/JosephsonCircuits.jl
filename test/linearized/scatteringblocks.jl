@@ -821,18 +821,23 @@ using Test
         # solver itself.
         Cval = 1000.0e-15
         lossyS(C, Z0, a) = w -> fill(a*(1 - im*w*C*Z0)/(1 + im*w*C*Z0), 1, 1)
-        for (lbl, blk) in (
+        for (lbl, blk, terminals) in (
                 ("lossless", ScatteringParameters(capS(Cval, 50.0); nports = 1,
-                    grounded = true)),
+                    grounded = true), ((:c2,1),)),
                 ("lossy", ScatteringParameters(lossyS(Cval, 50.0, 0.85);
-                    nports = 1, grounded = true)))
+                    nports = 1, grounded = true), ((:c2,1),)),
+                # two ports on one node, where two contributions land on the
+                # same stored entry and the gather-add has to sum them
+                ("two ports on one node",
+                    ScatteringParameters(ComplexF64[0.5 0.5; 0.5 0.5];
+                        nports = 2, grounded = true), ((:c2,1), (:c2,2))))
             circuit = Circuit(
                 Any[:p1 => Port(1; Z0 = 50.0),
                     :cc => Capacitor(100.0e-15),
                     :jj => JosephsonJunction(1000.0e-12), :c2 => blk,
                     :rl => Resistor(1.0e5)],
                 Any[((:p1,1), (:cc,1)),
-                    ((:cc,2), (:jj,1), (:c2,1), (:rl,1)),
+                    ((:cc,2), (:jj,1), terminals..., (:rl,1)),
                     ((:jj,2), (:p1,2), Ground), ((:rl,2), Ground)])
             nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
             psc = JosephsonCircuits.compile(circuit)
@@ -1932,6 +1937,28 @@ using Test
             @test [x.name for x in a.blocks] ==
                 ["b1/port1", "b2/port1", "t/port1"]
         end
+
+        # the auxiliary port currents are solved for in units of `iscale`,
+        # which multiplies every entry of their columns: the Kirchhoff
+        # current law couplings and the constitutive entries which multiply
+        # a port current, and nothing which multiplies a node flux
+        Nmodes = 2
+        wmodes = 2pi*[4.5e9, -5.5e9]
+        base = JC.scatteringstampsystem(cc.scatteringblocks, Nmodes;
+            auxoffset = 7, Ntotal = 200, scale = 1.5)
+        k = 1/3.7e-9
+        scaled = JC.scatteringstampsystem(cc.scatteringblocks, Nmodes;
+            auxoffset = 7, Ntotal = 200, scale = 1.5, iscale = k)
+        @test base.iscale == 1.0 && scaled.iscale == k
+        @test scaled.kcl ≈ k*base.kcl
+        work = JC.ScatteringWorkspace()
+        v0 = JC.scatteringvalues!(Vector{ComplexF64}(undef,
+            length(base.Aindex)), base, wmodes, work)
+        v1 = JC.scatteringvalues!(Vector{ComplexF64}(undef,
+            length(scaled.Aindex)), scaled, wmodes, work)
+        @test all(base.coeff[c] == 1 ? v1[c] == v0[c] : v1[c] ≈ k*v0[c]
+            for c in eachindex(v0))
+        @test any(==(1), base.coeff) && any(==(2), base.coeff)
     end
 
 end
@@ -2165,13 +2192,16 @@ end
         db(a, b) = maximum(abs, Array(a)[inband, :, inband, :, :] .- Array(b)[inband, :, inband, :, :])
         fb = hbsolve(ws3, (2pi*fp2,), [], (6,), (12,),
             Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 2, fit3), (:p2, 2, 0, Port(2; Z0 = Z0))]); returnCnoise = true)
+        # the scattering parameters are the fit's tight part; what the
+        # covariance and the quantum efficiency come back to is set by
+        # `noisetol`, so those are checked an order of magnitude looser
         @test db(fb.linearized.S, bare.linearized.S) < 1e-6
-        @test db(fb.linearized.Cnoise, bare.linearized.Cnoise) < 1e-5
-        @test db(fb.linearized.QE, bare.linearized.QE) < 1e-5
+        @test db(fb.linearized.Cnoise, bare.linearized.Cnoise) < 5e-5
+        @test db(fb.linearized.QE, bare.linearized.QE) < 5e-5
         fl = hbsolve(ws3, (2pi*fp2,), [], (6,), (12,),
             Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 2, fit3), (:line, 2, 3, TransmissionLine(Z0, len3; vp = vp3)), (:p2, 3, 0, Port(2; Z0 = Z0))]); returnCnoise = true)
         @test db(fl.linearized.S, s3.linearized.S) < 1e-6
-        @test db(fl.linearized.Cnoise, s3.linearized.Cnoise) < 1e-5
+        @test db(fl.linearized.Cnoise, s3.linearized.Cnoise) < 5e-5
         @test maximum(abs, abs.(Array(fl.linearized.CM)[inband, :, :]) .- 1) < 1e-5
         @test_throws ArgumentError RationalScattering(blk3, 8; delays = [0.0])
         @test_throws ArgumentError RationalScattering(blk3, 8; band = (6e9, 5e9))

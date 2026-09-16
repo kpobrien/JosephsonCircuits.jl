@@ -70,14 +70,13 @@ mutable struct CUDSSSolve{TS,TM,TV,TD,Tv<:Union{AbstractFloat,Complex}}
     vals::Vector{Tv}
 end
 
-# one sparse system: the analysis, the first numeric factorization and the
-# descriptors bound to owned buffers
+# one sparse system from the host: the matrix crosses to the device, with
+# the permutation which reorders its column major values into the row
+# major order stored there
 function _cudss_factorize(A::SparseMatrixCSC{Tv,<:Integer};
     kwargs...) where {Tv<:AbstractFloat}
-    n = size(A, 1)
-    Agpu = CuSparseMatrixCSR(A)
-    F = newsolver(Agpu, Tv, n, cscvaluepermutation(A); kwargs...)
-    return F
+    return _cudss_factorize(CuSparseMatrixCSR(A), cscvaluepermutation(A);
+        kwargs...)
 end
 
 # ---------------------------------------------------------------------------
@@ -93,7 +92,6 @@ end
 # stored values are never read.
 function _cudss_factorize(A::JosephsonCircuits.DeviceValuedSparseMatrix{Tv};
     kwargs...) where {Tv<:Union{AbstractFloat,Complex}}
-    n = size(A, 1)
     # the structure is already a row pointer and a column index array, so the
     # device matrix is built from it directly: no conversion, and nothing of
     # the values crosses to the host
@@ -102,30 +100,32 @@ function _cudss_factorize(A::JosephsonCircuits.DeviceValuedSparseMatrix{Tv};
     Agpu = CuSparseMatrixCSR{Tv,Int32}(
         CuVector(convert(Vector{Int32}, rowpointer(A))),
         CuVector(convert(Vector{Int32}, columnindices(A))), nzval, size(A))
-    return newsolver(Agpu, Tv, n; kwargs...)
+    return _cudss_factorize(Agpu; kwargs...)
 end
 
-# the analysis and the first numeric factorization, shared by both entry
-# points. The descriptors start bound to the owned buffers, which is what the
+# a matrix already on the device: the analysis and the first numeric
+# factorization, which the methods above reach after converting theirs.
+# The descriptors start bound to the owned buffers, which is what the
 # analysis and every later refactorization use. The keywords of the
 # factorization object are cuDSS configuration settings applied after the
 # defaults below, so a caller whose system needs none of the refinement
 # (the transient's diagonally dominant step matrix) can turn it off.
-function newsolver(Agpu, ::Type{Tv}, n::Integer,
+function _cudss_factorize(Agpu::CuSparseMatrixCSR{Tv},
     perm::Vector{Int} = Int[]; kwargs...) where {Tv}
+    n = size(Agpu, 1)
     x = CUDA.zeros(Tv, n)
     b = CUDA.zeros(Tv, n)
     solver = CudssSolver(Agpu, "G", 'F')
     # An ideal short scattering block has S = -1, so its constitutive
     # coefficient C = R^(1/2)(I + S) is exactly zero: the block's auxiliary
     # port current appears with a zero diagonal, a pure constraint row.
-    # Host KLU pivots through that structure; cuDSS with its defaults
-    # produces a factorization whose preconditioned residual grows by
-    # orders of magnitude, which stalls the Newton-Krylov solve. Perturbing
-    # zero pivots and cleaning up with two iterative refinement steps makes
-    # the device factorization follow the host path exactly (same iteration
-    # count, same final residual). The perturbation is below the O(1)
-    # scaled Jacobian entries, so well pivoted systems are unaffected.
+    # Host KLU pivots through that structure; on such systems cuDSS with
+    # its defaults has returned a factorization whose solves fall short of
+    # the host's, which stalls the Newton-Krylov solve. Pivots below a
+    # threshold are perturbed and two steps of iterative refinement clean
+    # up after the perturbation. The threshold is below the scaled Jacobian
+    # entries, which are of order one, so a well pivoted system is
+    # unaffected.
     CUDSS.cudss_set(solver, "pivot_epsilon", 1e-8)
     CUDSS.cudss_set(solver, "ir_n_steps", 2)
     for (k, v) in kwargs
@@ -234,6 +234,26 @@ function _cudss_sweep(rowptr::CuVector{INT}, colind::CuVector{INT},
     size(nzval, 2) == nbatch || throw(DimensionMismatch(
         "the value matrix and the solution array must agree on the batch size."))
     solver = CudssSolver(rowptr, colind, vec(nzval), "G", 'F')
+    # The settings of a batched solve, shared by the frequency sweep and
+    # the transient batch and applied before the caller's own so that
+    # either can be overridden. A scattering block's auxiliary port current
+    # can appear with a zero diagonal, a pure constraint row. cuDSS pivots
+    # within a supernode, and on such systems that search has left the
+    # batched factorization without a number, so pivots below a threshold
+    # are perturbed and two steps of iterative refinement clean up after
+    # the perturbation, as in the unbatched `_cudss_factorize`; the
+    # matching which would permute
+    # and scale the matrix ahead of the factorization is not supported for
+    # a uniform batch. The threshold is absolute, so it is meaningful
+    # against the size of the entries: the frequency sweep
+    # divides each column by its largest entry before the solve (see
+    # `ColumnEquilibration`), while the transient batch carries the scale
+    # of its own systems and asks for no refinement, since its Newton
+    # residual check catches what a solve leaves (`transientfactorization`).
+    #
+    # https://docs.nvidia.com/cuda/cudss/advanced_features.html#numerical-pivoting
+    cudss_set(solver, "pivot_epsilon", 1e-8)
+    cudss_set(solver, "ir_n_steps", 2)
     for (k, v) in kwargs
         cudss_set(solver, string(k), v)
     end

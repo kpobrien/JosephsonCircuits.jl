@@ -54,6 +54,7 @@ end
 CUDSSFactorization(; kwargs...) = CUDSSFactorization(NamedTuple(kwargs))
 factorize(f::CUDSSFactorization, A) = _cudss_factorize(A; f.kwargs...)
 refactorize!(f::CUDSSFactorization, F, A) = _cudss_factorize!(F, A; f.kwargs...)
+solverkwargs(f::CUDSSFactorization) = f.kwargs
 
 # Overridden by the CUDSS extension. The error names the missing packages
 # rather than failing with a MethodError somewhere inside the solver.

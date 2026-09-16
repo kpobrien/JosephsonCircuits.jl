@@ -319,6 +319,26 @@ function mnavalidatekcl(F::AbstractVector, x::AbstractVector,
 end
 
 """
+    auxcurrentscale(Lscale)
+
+The scale of the auxiliary port current unknowns of the scattering blocks in
+the linearized system, one over the solver inductance scale (see
+[`calcsolverscale`](@ref)).
+
+A node unknown is a flux and an auxiliary unknown is a current, and flux over
+current is an inductance, so this writes the two in the same units, which
+puts the auxiliary columns of the system on the scale of the nodal ones.
+The nonlinear solve carries the same relation on its node fluxes, since
+those are its Newton unknowns; the linearized solve carries it on the port
+currents, which nothing outside the solve reads. A circuit with no scale to
+take leaves the unknowns as they are.
+"""
+function auxcurrentscale(Lscale)
+    L = abs(float(real(Lscale)))
+    return (isfinite(L) && L > 0) ? 1/L : 1.0
+end
+
+"""
     calcsolverscale(w, componenttypes::Vector{Symbol}, vvn::Vector,
         portimpedances::Vector, Lscale)
 
