@@ -324,7 +324,7 @@ function warmup()
     Npumpharmonics = (4,)
 
     return hbsolve(ws, wp, sources, Nmodulationharmonics,
-        Npumpharmonics, circuit, circuitdefs;ftol=1e-12)
+        Npumpharmonics, circuit, circuitdefs;atol=1e-12)
 end
 
 
@@ -343,7 +343,7 @@ function warmupsyms()
     Npumpharmonics = (4,)
 
     return hbsolve(ws, wp, sources, Nmodulationharmonics,
-        Npumpharmonics, circuit, circuitdefs;ftol=1e-12)
+        Npumpharmonics, circuit, circuitdefs;atol=1e-12)
 end
 
 # Connecting scattering parameter networks, with symbol and string names,
@@ -448,7 +448,7 @@ export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
     ComponentNotSupportedError
 
 # the circuit integrated in time
-export TransientSource, transientproblem, transientstate, transientsolve,
+export TransientSource, TransientState, transientproblem, transientstate, transientsolve, transientsensitivity,
     transientdemodulate, transienttangent, transientadjoint, transientinjection,
     Trapezoidal, GaussLegendre, BackwardEuler, WRspice, TransientReuse, TransientBatchSolution,
     transientiqplan, transientiq!, transientiq, transientiqvjp!,
@@ -489,7 +489,7 @@ function warmuptransient()
     transienttangent(checkpointed, currents)
     transientadjoint(checkpointed, weights)
     # the measured tone on a bin of the record, and the bath on two bins
-    plan = transientquantumplan(solution.times, [9/T])
+    plan = transientquantumplan(solution, solution.times, [9/T])
     transientnoise(solution, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
     batch = transientsolve([problem, transientproblem(base; sources = [TransientSource(1, t -> pump(t)/2)])],
         (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
@@ -512,7 +512,7 @@ function warmuptransient()
     transienttangent(solution, [currents[1, i] for _ in 1:1, _ in 1:3, i in 1:n, _ in 1:1])
     # a windowed measurement with an envelope
     half = solution.times[1:n÷2]
-    windowed = transientquantumplan(half, [9/T]; envelopes = reshape(sinpi.((half .- half[1]) ./ (T/2)) .^ 2, :, 1))
+    windowed = transientquantumplan(solution, half, [9/T]; envelopes = reshape(sinpi.((half .- half[1]) ./ (T/2)) .^ 2, :, 1))
     transientnoise(solution, windowed; frequencies = [8/T, 9/T], weights = [1/T, 1/T])
     transientgain(solution, windowed, windowed)
     # a line and a lossy rational block ahead of the junction: the line

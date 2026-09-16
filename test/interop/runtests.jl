@@ -128,7 +128,7 @@ end
     @test its < 15
     ref = JCX.hbnlsolve((2*pi*4.75001e9,), (8,),
         [(mode=(1,),port=1,current=0.00565e-6)], circuit, defs;
-        keyedarrays = false, ftol = 1e-14)
+        keyedarrays = false, atol = 1e-14)
     @test ref.solverinfo.converged
     urefc = vec(collect(ref.nodeflux))
     uref = JCX.complex_to_real!(zeros(prob.modelayout.rdim), urefc,
@@ -140,11 +140,11 @@ end
     _, circuit, defs = ext_problem()
     wp = (2*pi*4.75001e9,); src = [(mode=(1,),port=1,current=0.00565e-6)]
     ref = JCX.hbnlsolve(wp, (8,), src, circuit, defs;
-                        keyedarrays = false, ftol = 1e-14)
+                        keyedarrays = false, atol = 1e-14)
     @test ref.solverinfo.converged
     for m in (:gmres, :fgmres, :bicgstab)
         s = JCX.hbnlsolve(wp, (8,), src, circuit, defs; keyedarrays = false,
-            ftol = 1e-14,
+            atol = 1e-14,
             method = NewtonKrylov(linearsolver = JCX.KrylovJL(m)))
         @test s.solverinfo.converged
         @test isapprox(maximum(abs.(s.nodeflux)),
@@ -154,7 +154,7 @@ end
     # recycling, so that the extension's preconditioned path runs
     for pc in (FullJacobian(), Floquet(BlockDiagonal(); size = 12))
         s = JCX.hbnlsolve(wp, (8,), src, circuit, defs; keyedarrays = false,
-            ftol = 1e-14, method = NewtonKrylov(preconditioner = pc,
+            atol = 1e-14, method = NewtonKrylov(preconditioner = pc,
                 linearsolver = JCX.KrylovJL(:gmres)))
         @test s.solverinfo.converged
         @test isapprox(maximum(abs.(s.nodeflux)),

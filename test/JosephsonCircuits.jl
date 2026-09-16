@@ -60,7 +60,7 @@ end
              Net("0", [("P1",2), ("Lj1",2), ("C2",2), Ground])])
         ref = hbsolve(2*pi*(4.5:0.5:5.0)*1e9, (2*pi*4.75001*1e9,),
             [(mode=(1,),port=1,current=0.00565e-6)], (2,), (4,), circuit;
-            ftol = 1e-12)
+            atol = 1e-12)
         @test JosephsonCircuits.compare(ref, JosephsonCircuits.warmup())
         @test JosephsonCircuits.compare(ref, JosephsonCircuits.warmupsyms())
     end

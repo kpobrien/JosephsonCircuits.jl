@@ -88,16 +88,93 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         # the auxiliary rates follow the node rates by the same constitutive
         # equations, and a restart at another step continues the solve
         state = transientstate(p2; flux = [F, 0], voltage = [V, 0])
-        @test state.x[3:4] ≈ (p2.Lscale/JC.phi0) .* ([L 0.3L; 0.3L L] \ [F, 0])
-        @test state.v[3:4] ≈ (p2.Lscale/JC.phi0) .* ([L 0.3L; 0.3L L] \ [V, 0])
+        @test state.flux[3:4] ≈ (p2.Lscale/JC.phi0) .* ([L 0.3L; 0.3L L] \ [F, 0])
+        @test state.rate[3:4] ≈ (p2.Lscale/JC.phi0) .* ([L 0.3L; 0.3L L] \ [V, 0])
         half = transientsolve(p2, (0.0, period); dt = period/800, initialstate = state)
-        rest = transientsolve(p2, (period, 2period); dt = period/800,
-            initialstate = (half.finalflux, half.finalrate))
+        # the end of one solve starts the next, as a state and not as a
+        # pair of arrays, whose units the solver could not tell
+        continued = transientstate(half)
+        @test continued isa TransientState && continued.flux == half.finalflux && continued.rate == half.finalrate
+        @test_throws TypeError transientsolve(p2, (period, 2period); dt = period/800, initialstate = (half.finalflux, half.finalrate))
+        @test_throws ArgumentError transientsolve([p2, p2], (period, 2period); dt = period/800, initialstate = (half.finalflux, half.finalrate))
+        rest = transientsolve(p2, (period, 2period); dt = period/800, initialstate = continued)
         whole = transientsolve(p2, (0.0, 2period); dt = period/800, initialstate = state)
         @test rest.finalflux ≈ whole.finalflux rtol=1e-9
         @test rest.finalrate ≈ whole.finalrate rtol=1e-9
         coarse = transientsolve(p2, (period, 2period); dt = period/400,
-            initialstate = (half.finalflux, half.finalrate))
+            initialstate = continued)
+        # across a transmission line the state carries the waves over the
+        # delay window, so a split solve is the uninterrupted one at the
+        # same step, and follows it at another step through the
+        # interpolation of the history, on a reactive load and past the
+        # delay
+        cabled = transientproblem(Circuit([(:p1, 1, 0, Port(1)), (:c1, 1, 0, Capacitor(10e-12)),
+            (:line, 1, 2, TransmissionLine(60.0, 0.09)), (:c2, 2, 0, Capacitor(20e-12)), (:p2, 2, 0, Port(2))]);
+            sources = [TransientSource(1, t -> 1e-6*sinpi(2e9*t))])
+        gl = (; method = GaussLegendre(), rtol = 1e-12, atol = 1e-13)
+        uninterrupted = transientsolve(cabled, (0.0, 2.4e-9); dt = 2e-12, gl...)
+        first = transientsolve(cabled, (0.0, 0.8e-9); dt = 2e-12, gl...)
+        restart = transientstate(first)
+        @test size(restart.waves, 2) == JC.lineprehistory(cabled, 2e-12) && restart.wavesdt == 2e-12
+        second = transientsolve(cabled, (0.8e-9, 2.4e-9); dt = 2e-12, initialstate = restart, gl...)
+        after = length(first.times):length(uninterrupted.times)
+        @test second.voltage ≈ uninterrupted.voltage[:, after] rtol=1e-8
+        @test second.finalrate ≈ uninterrupted.finalrate rtol=1e-8
+        finer = transientsolve(cabled, (0.8e-9, 2.4e-9); dt = 1e-12, initialstate = restart, gl...)
+        @test finer.voltage[:, 1:2:end] ≈ uninterrupted.voltage[:, after] rtol=1e-4
+        # a constant prehistory is not a continuation: it is wrong past
+        # the delay too
+        constant = TransientState(restart.flux, restart.rate, restart.waves[:, end:end], 0.0, restart.blockstates)
+        wrong = transientsolve(cabled, (0.8e-9, 2.4e-9); dt = 2e-12, initialstate = constant, gl...)
+        late = 4*150:length(after)
+        @test !isapprox(wrong.voltage[:, late], uninterrupted.voltage[:, after][:, late]; rtol = 1e-2)
+        # a solve keeps the history it started from, so a segment shorter
+        # than the delay still hands the next one a complete window; the
+        # segment's span is a whole number of steps, so the grid is the same
+        rng = Random.default_rng()
+        tmid = first.times[end] + 50*(first.times[2] - first.times[1])
+        short = transientsolve(cabled, (first.times[end], tmid); dt = 2e-12, initialstate = restart, gl...)
+        @test length(short.times) == 51
+        @test size(short.history) == size(restart.waves)
+        @test short.history ≈ restart.waves rtol=1e-12
+        third = transientsolve(cabled, (tmid, 2.4e-9); dt = 2e-12, initialstate = transientstate(short), gl...)
+        @test third.voltage ≈ uninterrupted.voltage[:, length(first.times) + length(short.times) - 1:end] rtol=1e-8
+        @test third.finalrate ≈ uninterrupted.finalrate rtol=1e-8
+        # a checkpointed solve started from that history replays its first
+        # window from it, so its sensitivities are those of the full record
+        rstates = transientsolve(cabled, (0.8e-9, 1.8e-9); dt = 2e-12, initialstate = restart, record = :states, gl...)
+        rcps = transientsolve(cabled, (0.8e-9, 1.8e-9); dt = 2e-12, initialstate = restart, record = :checkpoints, checkpointevery = 50, gl...)
+        @test transientsensitivity(rcps, ["c1"]).outgoing ≈ transientsensitivity(rstates, ["c1"]).outgoing rtol=1e-7
+        rweights = randn(rng, 2, length(rstates.times))
+        @test transientadjoint(rcps, rweights; components = ["c1"]).sensitivity ≈
+            transientadjoint(rstates, rweights; components = ["c1"]).sensitivity rtol=1e-7
+        # a line between algebraic terminals, no capacitor at either end:
+        # the check of the initial state reads the arriving waves from the
+        # history as the steps do, so the restart is accepted and exact
+        bare = transientproblem(Circuit([(:p1, 1, 0, Port(1)), (:line, 1, 2, TransmissionLine(60.0, 0.09)), (:p2, 2, 0, Port(2))]);
+            sources = [TransientSource(1, t -> 1e-6*sinpi(2e9*t))])
+        bwhole = transientsolve(bare, (0.0, 1.6e-9); dt = 2e-12, gl...)
+        bfirst = transientsolve(bare, (0.0, 0.8e-9); dt = 2e-12, gl...)
+        bsecond = transientsolve(bare, (0.8e-9, 1.6e-9); dt = 2e-12, initialstate = transientstate(bfirst), gl...)
+        @test bsecond.voltage ≈ bwhole.voltage[:, length(bfirst.times):end] rtol=1e-8
+        # the check reads those waves at the state's own step, so a restart
+        # at a coarser one is accepted: the interpolation which resamples
+        # the history is an error of the continuation and not an
+        # inconsistency of the state
+        fast = transientproblem(Circuit([(:p1, 1, 0, Port(1)), (:line, 1, 2, TransmissionLine(60.0, 0.09)), (:p2, 2, 0, Port(2))]);
+            sources = [TransientSource(1, t -> 1e-6*sinpi(20e9*t))])
+        ffirst = transientsolve(fast, (0.0, 0.8e-9); dt = 2e-12, gl...)
+        fstate = transientstate(ffirst)
+        fwhole = transientsolve(fast, (0.0, 1.6e-9); dt = 4e-12, gl...)
+        fcoarse = transientsolve(fast, (0.8e-9, 1.6e-9); dt = 4e-12, initialstate = fstate, gl...)
+        @test fcoarse.voltage[:, end] ≈ fwhole.voltage[:, end] rtol=1e-4
+        @test transientsolve(fast, (0.8e-9, 1.6e-9); dt = 1e-11, initialstate = fstate, gl...) isa JC.TransientSolution
+        # extracting a state reads the delay window alone, so it costs what
+        # the window does for a record of any length
+        brief = transientsolve(cabled, (0.0, 0.4e-9); dt = 2e-12, gl...)
+        transientstate(brief), transientstate(uninterrupted)
+        @test size(uninterrupted.linewaves, 2) > 5*size(brief.linewaves, 2)
+        @test (@allocated transientstate(uninterrupted)) < 2*(@allocated transientstate(brief))
         @test coarse.finalflux ≈ whole.finalflux rtol=1e-3
     end
 
@@ -205,7 +282,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
             ("Lj1", "1", "0", 1e-10), ("L1", "1", "0", 1e-9)]
         prob = transientproblem(circuit; sources = [TransientSource(1, t -> 2e-6*sinpi(2*5e9*t))])
         sol = transientsolve(prob, (0.0, 1e-9); dt = 2e-12)
-        tight = transientsolve(prob, (0.0, 1e-9); dt = 2e-12, rtol = 1e-12, atol = 1e-13, maxiters = 40)
+        tight = transientsolve(prob, (0.0, 1e-9); dt = 2e-12, rtol = 1e-12, atol = 1e-13, iterations = 40)
         @test sol.finalflux ≈ tight.finalflux rtol=1e-6
         @test sol.voltage ≈ tight.voltage rtol=1e-6 atol=1e-12
     end
@@ -251,6 +328,152 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
             adj = transientadjoint(sol, weights; quantity = :voltage)
             @test sum(weights .* initial.voltage) ≈ dot(adj.initialflux, dx0) + dot(adj.initialrate, dv0) rtol=1e-10
         end
+    end
+
+    @testset "the sensitivity to the component values" begin
+        rng = Random.default_rng()
+        # one component of each kind the linearized solve differentiates:
+        # a series capacitor, a junction, a capacitor and a resistor to
+        # ground, and an inductor to a second port
+        circuit = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "2", 100e-15),
+            ("Lj1", "2", "0", 1e-9), ("C2", "2", "0", 500e-15), ("R2", "2", "0", 2000.0),
+            ("L1", "2", "3", 2e-9), ("C3", "3", "0", 300e-15), ("R3", "3", "0", 50.0), ("P2", "3", "0", 2)]
+        names = ["C1", "Lj1", "C2", "R2", "L1"]
+        drive(t) = 0.15e-6*sinpi(2*3e9*t) + 0.01e-6*sinpi(2*1.3e9*t)
+        sources = [TransientSource(1, drive)]
+        prob = transientproblem(circuit; sources)
+        scaled(name, r) = transientproblem([c[1] == name ? (c[1], c[2], c[3], r*c[4]) : c for c in circuit]; sources)
+        tspan, dt = (0.0, 1e-9), 2e-12
+        tol = (; rtol = 1e-12, atol = 1e-13)
+        weights = randn(rng, 2, 501)
+        for method in (Trapezoidal(), BackwardEuler(), GaussLegendre())
+            sol = transientsolve(prob, tspan; dt, method, record = :states, tol...)
+            sens = transientsensitivity(sol, names)
+            @test size(sens.outgoing) == (2, length(sol.times), length(names))
+            # against a central difference of the solve in each value
+            eps = 1e-4
+            for (c, name) in enumerate(names)
+                plus = transientsolve(scaled(name, 1 + eps), tspan; dt, method, tol...)
+                minus = transientsolve(scaled(name, 1 - eps), tspan; dt, method, tol...)
+                fd = (plus.outgoing .- minus.outgoing) ./ (2eps)
+                @test sens.outgoing[:, :, c] ≈ fd rtol=1e-5 atol=1e-7*maximum(abs, fd)
+            end
+            # the adjoint's derivative of an objective is the weighted tangent
+            adj = transientadjoint(sol, weights; components = names)
+            @test adj.sensitivity ≈ [sum(weights .* sens.outgoing[:, :, c]) for c in eachindex(names)] rtol=1e-9
+            # the junction alone reads the phases
+            phases = transientsolve(prob, tspan; dt, method, record = :phases, tol...)
+            @test transientsensitivity(phases, ["Lj1"]).outgoing ≈ sens.outgoing[:, :, 2] rtol=1e-9
+            @test_throws ArgumentError transientsensitivity(phases, ["C1"])
+        end
+        # the Gauss-Legendre rule from its checkpoints, replaying the states
+        cps = transientsolve(prob, tspan; dt, method = GaussLegendre(), record = :checkpoints, tol...)
+        full = transientsolve(prob, tspan; dt, method = GaussLegendre(), record = :states, tol...)
+        @test transientsensitivity(cps, names).outgoing ≈ transientsensitivity(full, names).outgoing rtol=1e-7
+        @test transientadjoint(cps, weights; components = names).sensitivity ≈
+            transientadjoint(full, weights; components = names).sensitivity rtol=1e-7
+        # a batch, every condition on one pass
+        batch = transientsolve([prob, transientproblem(prob; sources = [TransientSource(1, t -> drive(t)/2)])], tspan;
+            dt, record = :states, tol...)
+        sb = transientsensitivity(batch, names)
+        ab = transientadjoint(batch, weights; components = names)
+        for j in 1:2
+            @test sb.outgoing[:, :, :, j] ≈ transientsensitivity(batch[j], names).outgoing rtol=1e-10
+            @test ab.sensitivity[:, j] ≈ transientadjoint(batch[j], weights; components = names).sensitivity rtol=1e-9
+        end
+        @test_throws ArgumentError transientsensitivity(full, ["nothere"])
+        @test_throws ArgumentError transientsensitivity(full, ["P1"])
+
+        # a port's own termination moves the port's reference impedance
+        # and conductance with it, which the port waves read directly: the
+        # legacy resistor a port inherits its impedance from, and the
+        # termination a typed port owns
+        for (name, portcircuit) in (("R1", [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12)]),
+                ("p1/termination", Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(1e-12))])))
+            psources = [TransientSource(1, t -> 1e-6*sinpi(2e9*t))]
+            pprob = transientproblem(portcircuit; sources = psources)
+            scaledport(r) = portcircuit isa Circuit ?
+                transientproblem(Circuit([(:p1, 1, 0, Port(1; Z0 = r*50.0)), (:c1, 1, 0, Capacitor(1e-12))]); sources = psources) :
+                transientproblem([("P1", "1", "0", 1), ("R1", "1", "0", r*50.0), ("C1", "1", "0", 1e-12)]; sources = psources)
+            for method in (Trapezoidal(), BackwardEuler(), GaussLegendre())
+                psol = transientsolve(pprob, (0.0, 1e-9); dt = 2e-12, method, record = :states, tol...)
+                ps = transientsensitivity(psol, [name])
+                eps = 1e-5
+                plus = transientsolve(scaledport(1 + eps), (0.0, 1e-9); dt = 2e-12, method, tol...)
+                minus = transientsolve(scaledport(1 - eps), (0.0, 1e-9); dt = 2e-12, method, tol...)
+                for q in (:voltage, :incident, :outgoing)
+                    fd = (getproperty(plus, q) .- getproperty(minus, q)) ./ (2eps)
+                    @test getproperty(ps, q)[:, :, 1] ≈ fd rtol=1e-5 atol=1e-7*maximum(abs, fd)
+                end
+                pweights = randn(rng, 1, length(psol.times))
+                for q in (:voltage, :incident, :outgoing)
+                    padj = transientadjoint(psol, pweights; quantity = q, components = [name])
+                    @test padj.sensitivity ≈ [sum(pweights .* getproperty(ps, q)[:, :, 1])] rtol=1e-9
+                end
+            end
+        end
+        # two ports declared out of numerical order with different
+        # impedances, each with its own branch and drive: the environments
+        # are listed by port number and the traces by compiled port, and
+        # each termination's derivative lands on its own port's row
+        twoport(z1, z2) = transientproblem(Circuit([(:p2, 1, 0, Port(2; Z0 = z2)), (:c2, 1, 0, Capacitor(1e-12)),
+            (:p1, 2, 0, Port(1; Z0 = z1)), (:c1, 2, 0, Capacitor(2e-12))]);
+            sources = [TransientSource(1, t -> 1e-6*sinpi(2e9*t)), TransientSource(2, t -> 0.5e-6*cospi(3e9*t))])
+        tp = twoport(50.0, 75.0)
+        @test tp.portimpedances == [75.0, 50.0]
+        tnames = ["p2/termination", "p1/termination"]
+        @test JC.componentperturbation(tp, tnames, JC.CPU(); forcing = true).ports == [1, 2]
+        tsol = transientsolve(tp, (0.0, 1e-9); dt = 2e-12, method = GaussLegendre(), record = :states, tol...)
+        ts = transientsensitivity(tsol, tnames)
+        eps = 1e-5
+        for (c, scaled) in enumerate((r -> twoport(50.0, r*75.0), r -> twoport(r*50.0, 75.0)))
+            plus = transientsolve(scaled(1 + eps), (0.0, 1e-9); dt = 2e-12, method = GaussLegendre(), tol...)
+            minus = transientsolve(scaled(1 - eps), (0.0, 1e-9); dt = 2e-12, method = GaussLegendre(), tol...)
+            for q in (:voltage, :incident, :outgoing)
+                fd = (getproperty(plus, q) .- getproperty(minus, q)) ./ (2eps)
+                @test getproperty(ts, q)[:, :, c] ≈ fd rtol=1e-5 atol=1e-7*maximum(abs, fd)
+            end
+        end
+        # an adjoint holds the entries of the components' derivatives and
+        # never the stacked derivatives, whose rows are the state times the
+        # components
+        adjcp = JC.componentperturbation(tp, tnames, JC.CPU(); forcing = false)
+        @test isnothing(adjcp.forcing)
+        @test adjcp.entries.G.count <= 4*length(tnames) && adjcp.entries.C.count == 0
+        @test size(JC.componentperturbation(tp, tnames, JC.CPU(); forcing = true).forcing.dG) == (2*length(tp), length(tp))
+
+        # a junction on a node without capacitor or resistor to ground, whose
+        # endpoint the Gauss-Legendre rule projects onto the constraint: the
+        # projection and the reading carry the perturbation too
+        L = 1e-9
+        floating(r) = Circuit([("p", "1", "0", Port(1; termination = nothing)),
+            ("jj", "1", "0", JosephsonJunction(r[1]*L)), ("l", "1", "2", Inductor(r[2]*2e-9)),
+            ("c", "2", "0", Capacitor(r[3]*300e-15)), ("r", "2", "0", Resistor(r[4]*200.0)), ("p2", "2", "0", Port(2))])
+        w = 2pi*1e9
+        fsources = [TransientSource(1, t -> JC.phi0/L*0.2*(1 - cos(w*t)))]
+        fprob = transientproblem(floating(ones(4)); sources = fsources)
+        @test !isempty(fprob.algebraic)
+        fnames = ["jj", "l", "c", "r"]
+        fsol = transientsolve(fprob, (0.0, 1e-9); dt = 1e-9/80, method = GaussLegendre(), record = :states, tol...)
+        fsens = transientsensitivity(fsol, fnames)
+        eps = 1e-5
+        for (c, name) in enumerate(fnames)
+            rp, rm = ones(4), ones(4)
+            rp[c] += eps; rm[c] -= eps
+            plus = transientsolve(transientproblem(floating(rp); sources = fsources), (0.0, 1e-9); dt = 1e-9/80, method = GaussLegendre(), tol...)
+            minus = transientsolve(transientproblem(floating(rm); sources = fsources), (0.0, 1e-9); dt = 1e-9/80, method = GaussLegendre(), tol...)
+            fd = (plus.voltage .- minus.voltage) ./ (2eps)
+            @test fsens.voltage[:, :, c] ≈ fd rtol=1e-5 atol=1e-7*maximum(abs, fd)
+        end
+        fweights = randn(rng, 2, length(fsol.times))
+        fadj = transientadjoint(fsol, fweights; quantity = :voltage, components = fnames)
+        @test fadj.sensitivity ≈ [sum(fweights .* fsens.voltage[:, :, c]) for c in eachindex(fnames)] rtol=1e-9
+        fcps = transientsolve(fprob, (0.0, 1e-9); dt = 1e-9/80, method = GaussLegendre(), record = :checkpoints, tol...)
+        @test transientsensitivity(fcps, fnames).voltage ≈ fsens.voltage rtol=1e-7
+        @test transientadjoint(fcps, fweights; quantity = :voltage, components = fnames).sensitivity ≈ fadj.sensitivity rtol=1e-7
+        # the junction alone, from the phases, through the projection
+        fph = transientsolve(fprob, (0.0, 1e-9); dt = 1e-9/80, method = GaussLegendre(), record = :phases, tol...)
+        @test transientsensitivity(fph, ["jj"]).voltage ≈ fsens.voltage[:, :, 1] rtol=1e-10
     end
 
     @testset "many tones, and their demodulation" begin

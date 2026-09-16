@@ -22,6 +22,53 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
     dcsolve(c, sources) = hbnlsolve(ws, (1,), sources, c, Dict{Any,Any}();
         keyedarrays = false, dc = true, odd = true)
 
+    @testset "a constant current source of the netlist" begin
+        # a junction biased by a current source component: the phase of
+        # the junction is the analytic one, the same source at a port
+        # gives the same static flux, and the transient settles to it
+        JC = JosephsonCircuits
+        Lj, I = 1e-9, 1e-7
+        phase = asin(I*Lj/JC.phi0)
+        probe = [(mode = (1,), port = 1, current = 1e-13)]
+        dcmode(out) = findfirst(m -> all(iszero, m), out.modes)
+        biased = Circuit([(:p1, 1, 0, Port(1; termination = nothing)),
+            (:jj, 1, 0, JosephsonJunction(Lj)), (:c, 1, 0, Capacitor(1e-12)),
+            (:i, 0, 1, CurrentSource(I))])
+        out = dcsolve(biased, probe)
+        @test out.solverinfo.converged
+        @test out.nodeflux[dcmode(out)] ≈ phase rtol=1e-8
+        ported = Circuit([(:p1, 1, 0, Port(1; termination = nothing)),
+            (:jj, 1, 0, JosephsonJunction(Lj)), (:c, 1, 0, Capacitor(1e-12))])
+        atport = dcsolve(ported, vcat(probe, [(mode = (0,), port = 1, current = I)]))
+        @test out.nodeflux ≈ atport.nodeflux rtol=1e-10
+        # the current leaves the source's first terminal: with the terminals
+        # the other way round it leaves the node, and the phase reverses
+        reversed = Circuit([(:p1, 1, 0, Port(1; termination = nothing)),
+            (:jj, 1, 0, JosephsonJunction(Lj)), (:c, 1, 0, Capacitor(1e-12)),
+            (:i, 1, 0, CurrentSource(I))])
+        rev = dcsolve(reversed, probe)
+        @test rev.nodeflux[dcmode(rev)] ≈ -phase rtol=1e-8
+        # the transient reads the same source, and settles to the same flux
+        damped = Circuit([(:p1, 1, 0, Port(1)), (:l1, 1, 2, Inductor(1e-9)),
+            (:jj, 2, 0, JosephsonJunction(Lj)), (:c2, 2, 0, Capacitor(1e-12)),
+            (:i, 0, 2, CurrentSource(I))])
+        hb = dcsolve(damped, probe)
+        nm = length(hb.modes)
+        sol = transientsolve(transientproblem(damped), (0.0, 5e-9); dt = 5e-12)
+        @test sol.finalflux[2] ≈ hb.nodeflux[(2 - 1)*nm + dcmode(hb)] rtol=1e-6
+        @test sol.finalflux[2] ≈ phase rtol=1e-6
+        # without the zero frequency mode a nonzero source is an error, a
+        # zero one is not, and a symbolic value is read from the definitions
+        @test_throws ArgumentError hbnlsolve(ws, (1,), probe, biased; keyedarrays = false)
+        @test hbnlsolve(ws, (1,), probe, Circuit([(:p1, 1, 0, Port(1)), (:jj, 1, 0, JosephsonJunction(Lj)),
+            (:c, 1, 0, Capacitor(1e-12)), (:i, 0, 1, CurrentSource(0.0))]); keyedarrays = false).solverinfo.converged
+        symbolic = Circuit([(:p1, 1, 0, Port(1; termination = nothing)),
+            (:jj, 1, 0, JosephsonJunction(Lj)), (:c, 1, 0, Capacitor(1e-12)),
+            (:i, 0, 1, CurrentSource(:Ibias))])
+        sym = hbnlsolve(ws, (1,), probe, symbolic, Dict(:Ibias => I); keyedarrays = false, dc = true, odd = true)
+        @test sym.nodeflux ≈ out.nodeflux rtol=1e-10
+    end
+
     @testset "a resistor obeys Ohm's law" begin
         # no inductor or junction on the driven node: either is a short at
         # DC and would hold it at zero, which is correct physics but would
@@ -232,7 +279,7 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         two = [(mode=(1,0), port=1, current=1.2e-6),
                (mode=(0,1), port=1, current=0.9e-6)]
         kw = (; keyedarrays = false, dc = true, odd = true, even = true,
-            ftol = 1e-11)
+            atol = 1e-11)
         a = hbnlsolve(ws2, (4,2), two, j, Dict{Any,Any}(); kw...)
         @test a.solverinfo.converged
         @test a.dcnodevoltage == zeros(5)

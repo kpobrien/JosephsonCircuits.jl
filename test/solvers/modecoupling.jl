@@ -733,12 +733,12 @@ using Test
         # mode grid, and the table's own count is not pinned to it)
         sol = @test_logs (:warn, r"singular supernode") match_mode = :any hbnlsolve(
             (case.wp..., ws), (6, 6), srcs,
-            case.circuit, case.defs; nonlinearkw(case.kw)..., ftol = 1e-12,
+            case.circuit, case.defs; nonlinearkw(case.kw)..., atol = 1e-12,
             method = NewtonKrylov(preconditioner =
                 FullJacobian(BlockFactorization(precision = Float32))))
         @test sol.solverinfo.converged
         ref = hbnlsolve((case.wp..., ws), (6, 6), srcs,
-            case.circuit, case.defs; nonlinearkw(case.kw)..., ftol = 1e-12,
+            case.circuit, case.defs; nonlinearkw(case.kw)..., atol = 1e-12,
             method = Newton())
         @test maximum(abs, Array(sol.S) .- Array(ref.S)) < 1e-9
 
@@ -747,13 +747,13 @@ using Test
         # the driver asks for is the double precision factorization of the
         # same full set, after which the solve converges
         sol4 = hbnlsolve((case.wp..., ws), (4, 4), srcs, case.circuit,
-            case.defs; nonlinearkw(case.kw)..., ftol = 1e-12,
+            case.defs; nonlinearkw(case.kw)..., atol = 1e-12,
             method = NewtonKrylov(preconditioner =
                 FullJacobian(BlockFactorization(precision = Float32))))
         @test sol4.solverinfo.converged
         @test count(k -> k.escalated, sol4.solverinfo.stages[end].krylov) >= 1
         ref4 = hbnlsolve((case.wp..., ws), (4, 4), srcs, case.circuit,
-            case.defs; nonlinearkw(case.kw)..., ftol = 1e-12, method = Newton())
+            case.defs; nonlinearkw(case.kw)..., atol = 1e-12, method = Newton())
         @test maximum(abs, Array(sol4.S) .- Array(ref4.S)) < 1e-9
     end
 

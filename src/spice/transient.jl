@@ -82,7 +82,7 @@ end
 # with their waveforms for the sources, and the port data for the waves.
 function wrspicetransient(p::TransientProblem, tspan, method::WRspice; dt,
         saveevery, record, initialstate, backend, linearsolver,
-        factorization, reuse, checkpointevery, rtol, atol, maxiters, maxsteps)
+        factorization, reuse, checkpointevery, rtol, atol, iterations, maxsteps)
     isempty(p.blocks) || throw(ArgumentError(
         "WRSPICE has no element for a scattering block; give the circuit as lumped elements and transmission lines only."))
     isnothing(p.relations) || throw(ArgumentError(
@@ -97,7 +97,7 @@ function wrspicetransient(p::TransientProblem, tspan, method::WRspice; dt,
     initialstate == transientstate(p) || throw(ArgumentError(
         "WRSPICE integrates from the zero state under its own initial conditions; shape the drive with a ramp instead of an initial state."))
     t0, tf, nsteps, h = transientgrid(tspan, dt, maxsteps, saveevery,
-        maxiters, rtol, atol, nothing, nothing)
+        iterations, rtol, atol, nothing, nothing)
     nsteps % saveevery == 0 || throw(ArgumentError(
         lazy"the $(nsteps) steps of the grid are not a whole number of saves of every $(saveevery); choose dt or saveevery so they divide."))
     printstep = h*saveevery
@@ -133,7 +133,7 @@ function wrspicetransient(p::TransientProblem, tspan, method::WRspice; dt,
 
     N = length(p)
     return TransientSolution(p, method, h, times, voltage, incident, outgoing,
-        phases, nothing, nothing, nothing, nothing, nothing,
+        phases, nothing, nothing, nothing, nothing, nothing, nothing, nothing,
         zeros(N), zeros(N), fill(NaN, N), fill(NaN, N),
         nothing, nothing, nothing, (; steps = length(times) - 1))
 end

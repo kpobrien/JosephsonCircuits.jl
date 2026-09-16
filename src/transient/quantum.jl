@@ -11,14 +11,17 @@ output are `(X1,P1,X2,P2,...)`, with `[X,P]=im` and vacuum variance `1/2`.
 `coefficients[:,j]` specifies mode j in the positive-frequency Fourier basis;
 `gram` accounts for overlapping modes on the same port. `vacuum` and
 `commutator` are the corresponding real covariance and commutator matrices.
-Numeric measurement weights live on `backend`; metadata remain on the host.
-Storage is O(samples*modes). Batch selected windows for long sliding records.
+`ports` are the port numbers of the modes and `rows` the compiled port
+index of each, the row of its trace. Numeric measurement weights live on
+`backend`; metadata remain on the host. Storage is O(samples*modes).
+Batch selected windows for long sliding records.
 """
 struct TransientQuantumPlan{B,W}
     backend::B
     times::Vector{Float64}
     frequencies::Vector{Float64}
     ports::Vector{Int}
+    rows::Vector{Int}
     coefficients::Matrix{ComplexF64}
     weights::W
     gram::Matrix{ComplexF64}
@@ -42,15 +45,19 @@ function transientquantumgrid(times)
 end
 
 """
-    transientquantumplan(times, coefficients::AbstractMatrix; ports, backend=CPU())
-    transientquantumplan(times, frequencies::AbstractVector; ports=fill(1,...),
-        envelopes=nothing, backend=CPU())
+    transientquantumplan(problem, times, coefficients::AbstractMatrix;
+        ports = the first port, backend = CPU())
+    transientquantumplan(problem, times, frequencies::AbstractVector;
+        ports = the first port, envelopes = nothing, backend = CPU())
 
 Define photon-normalized temporal modes on a uniformly sampled half-open record
 `[times[1], times[1]+length(times)*dt)`. Do not include the repeated right endpoint.
 For N samples the coefficient rows are Fourier bins `k=1:fld(N-1,2)` at
 `f=k/(N*dt)`; DC and a self-conjugate Nyquist bin are excluded. Each coefficient
 column must have unit Euclidean norm. Different columns may overlap.
+`problem` is the [`TransientProblem`](@ref) whose traces the plan measures,
+or a solution of it, and `ports` the port number each mode reads, which
+the plan resolves to the row of the trace.
 
 The frequency convenience form creates bin-aligned monochromatic modes when
 `envelopes=nothing`. Otherwise each column of `envelopes[sample,mode]` defines
@@ -70,15 +77,17 @@ Windows are finite-record mode definitions, not independent white-noise samples.
 Use `gram`, `vacuum` and `commutator` when modes/windows overlap. The plan is
 read-only after construction and has no mutable shared FFT workspace.
 """
-function transientquantumplan(times, coefficients::AbstractMatrix;
-        ports = fill(1, size(coefficients, 2)), backend::Backend = CPU())
+function transientquantumplan(problem, times, coefficients::AbstractMatrix;
+        ports = fill(porttargets(transientproblemof(problem))[1], size(coefficients, 2)),
+        backend::Backend = CPU())
+    p = transientproblemof(problem)
     ts, dt, fs = transientquantumgrid(times)
     c = ComplexF64.(Array(coefficients))
     m = size(c, 2)
     size(c, 1) == length(fs) && m > 0 ||
         throw(DimensionMismatch("Incorrect positive-frequency coefficient shape."))
-    length(ports) == m && all(p->p isa Integer && p>0, ports) ||
-        throw(ArgumentError("Supply one positive compiled port index per mode."))
+    length(ports) == m || throw(ArgumentError("Supply one port number per mode."))
+    rows = portrows(p, ports)
     all(isfinite, c) && all(j->isapprox(sum(abs2, view(c, :, j)), 1; rtol = 1e-10), 1:m) ||
         throw(ArgumentError("Each temporal-mode column must be finite and have unit norm."))
     n = length(ts)
@@ -105,12 +114,13 @@ function transientquantumplan(times, coefficients::AbstractMatrix;
         comm[2j-1, 2k] = r
         comm[2j, 2k-1] = -r
     end
-    return TransientQuantumPlan(backend, ts, fs, Int.(ports), c,
+    return TransientQuantumPlan(backend, ts, fs, Int.(ports), rows, c,
         tobackend(backend, weights), gram, vacuum, comm, dt)
 end
 
-function transientquantumplan(times, frequencies::AbstractVector;
-        ports = fill(1, length(frequencies)), envelopes = nothing, backend::Backend = CPU())
+function transientquantumplan(problem, times, frequencies::AbstractVector;
+        ports = fill(porttargets(transientproblemof(problem))[1], length(frequencies)),
+        envelopes = nothing, backend::Backend = CPU())
     ts, dt, fs = transientquantumgrid(times)
     f = Float64.(frequencies)
     all(x->isfinite(x) && 0<x<0.5/dt, f) ||
@@ -135,13 +145,13 @@ function transientquantumplan(times, frequencies::AbstractVector;
             c[:, j] ./= norm(view(c, :, j))
         end
     end
-    return transientquantumplan(ts, c; ports, backend)
+    return transientquantumplan(problem, ts, c; ports, backend)
 end
 
 function transientquantumcheck(plan, traces, out)
     traces isa AbstractMatrix{<:Real} && out isa AbstractVector{<:Real} ||
         throw(ArgumentError("Quantum readouts require real RF traces and real quadrature vectors."))
-    size(traces, 2) == length(plan.times) && size(traces, 1) >= maximum(plan.ports) &&
+    size(traces, 2) == length(plan.times) && size(traces, 1) >= maximum(plan.rows) &&
     length(out) == 2length(plan.ports) ||
         throw(DimensionMismatch("Quantum measurement dimensions do not match the plan."))
     b = KernelAbstractions.get_backend(plan.weights)
@@ -166,7 +176,7 @@ function transientquantum!(out, plan::TransientQuantumPlan, traces)
     transientquantumcheck(plan, traces, out)
     for j in eachindex(plan.ports)
         q = (2j-1):2j
-        mul!(view(out, q), transpose(view(plan.weights, :, q)), view(traces, plan.ports[j], :))
+        mul!(view(out, q), transpose(view(plan.weights, :, q)), view(traces, plan.rows[j], :))
     end
     return out
 end
@@ -198,7 +208,7 @@ function transientquantumvjp!(out, plan::TransientQuantumPlan, weights)
     fill!(out, 0)
     for j in eachindex(plan.ports)
         q = (2j-1):2j
-        mul!(view(out, plan.ports[j], :),
+        mul!(view(out, plan.rows[j], :),
             view(plan.weights, :, q), view(weights, q), 1.0, 1.0)
     end
     return out

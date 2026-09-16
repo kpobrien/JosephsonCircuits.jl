@@ -473,7 +473,8 @@ holds the port voltages in Volts and `incident` and `outgoing` the real
 instantaneous power waves in sqrt(W), one row per port in compiled port
 order and one column per saved time. `initialflux`, `initialrate`,
 `finalflux` and `finalrate` always hold the first and the last scaled
-state. With `record = :phases` or `:states`, `phases` holds the junction
+state, and [`transientstate`](@ref)`(solution)` is the state to continue
+from. With `record = :phases` or `:states`, `phases` holds the junction
 phases the tangent and the adjoint read, at every saved time under the
 trapezoidal rule and at the two stages of each step under
 [`GaussLegendre`](@ref), as `(junction, stage, time)`, and `endphases`
@@ -483,10 +484,14 @@ the wave leaving each port of each transmission line at every step, as
 `(port, time)` in sqrt(W), or `nothing` without lines, or with
 checkpoints when the history before each of them, kept as their
 `waves`, is smaller than the record, which is kept instead once the
-longest delay exceeds the checkpoint interval; on the solve's backend
-as every record is; with
+longest delay exceeds the checkpoint interval, and `history` the waves
+leaving each line port over the delay window before the start, which
+the lines read after it; on the solve's backend as every record is; with
 `record = :states`, `flux` and `rate` hold the scaled node fluxes and
-their rates at every saved time as well; with `record = :checkpoints`,
+their rates at every saved time as well, and under
+[`GaussLegendre`](@ref) `stages` the two stage increments of the step
+ending at each saved time, as `(state, stage, time)`, which the
+sensitivity to a component value reads; with `record = :checkpoints`,
 `checkpoints` holds the state and the stage predictor every
 `checkpointevery` steps, from which the responses replay the steps
 between, so that a record of any length costs the checkpoints and one
@@ -506,11 +511,15 @@ struct TransientSolution{P, M, V}
     phases::Any
     endphases::Any
     linewaves::Any
+    # the history of the waves leaving the line ports before the start,
+    # `(port, column)`, the columns at the step ending at the start
+    history::Any
     # the flux and rate records untyped, as the phases are, so that the
     # record level does not make a new solution type and the responses
     # compile once
     flux::Any
     rate::Any
+    stages::Any
     checkpoints::Any
     initialflux::V
     initialrate::V
@@ -522,6 +531,39 @@ struct TransientSolution{P, M, V}
     initialwaves::Any
     initialstates::Any
     stats::NamedTuple
+end
+
+function transientstate(sol::TransientSolution)
+    p = sol.problem
+    waves = if isempty(p.lines)
+        zeros(0, 1)
+    elseif !isnothing(sol.linewaves)
+        # the waves over the delay window before the end, as many columns
+        # as the lines read at this step: the last of the record, and, if
+        # the record is shorter than the window, the end of the history
+        # the solve started from before it, whose last column the record's
+        # first repeats. Only the window is read, so a long record is
+        # neither copied nor brought back from a device
+        nt = size(sol.linewaves, 2)
+        npre = lineprehistory(p, sol.dt)
+        if nt >= npre
+            Float64.(Array(view(sol.linewaves, :, nt - npre + 1:nt)))
+        else
+            nb = max(min(npre - nt, size(sol.history, 2) - 1), 0)
+            before = Float64.(Array(view(sol.history, :, size(sol.history, 2) - nb:size(sol.history, 2) - 1)))
+            hcat(before, Float64.(Array(sol.linewaves)))
+        end
+    else
+        throw(ArgumentError("the record holds no line waves to continue from; solve with a record other than checkpoints."))
+    end
+    states = if blockstates(p) == 0
+        zeros(0)
+    elseif !isnothing(sol.blockstates)
+        Float64.(Array(view(sol.blockstates, :, size(sol.blockstates, 2))))
+    else
+        throw(ArgumentError("the states of the rational blocks at the end of the solve are recorded with record = :states."))
+    end
+    return TransientState(Float64.(Array(sol.finalflux)), Float64.(Array(sol.finalrate)), waves, isempty(p.lines) ? 0.0 : sol.dt, states)
 end
 
 # the levels of the record: the port waves, the junction phases the
@@ -546,12 +588,12 @@ function portwaves!(voltage, incident, outgoing, sys::TransientSystem, v, drivev
 end
 
 # the checks of the arguments every solve makes, and the uniform grid
-function transientgrid(tspan, dt, maxsteps, saveevery, maxiters, rtol, atol, linearsolver, reuse)
+function transientgrid(tspan, dt, maxsteps, saveevery, iterations, rtol, atol, linearsolver, reuse)
     length(tspan) == 2 || throw(ArgumentError("tspan must have two endpoints."))
     t0, tf = Float64(tspan[1]), Float64(tspan[2])
     (isfinite(t0) && isfinite(tf) && tf > t0) || throw(ArgumentError("tspan must be finite and increasing."))
     (isfinite(dt) && dt > 0 && t0 + dt > t0) || throw(ArgumentError("dt must be finite, positive, and resolvable at tspan[1]."))
-    (saveevery > 0 && maxiters > 0 && maxsteps > 0) || throw(ArgumentError("saveevery, maxiters and maxsteps must be positive."))
+    (saveevery > 0 && iterations > 0 && maxsteps > 0) || throw(ArgumentError("saveevery, iterations and maxsteps must be positive."))
     (isfinite(rtol) && isfinite(atol) && rtol >= 0 && atol > 0) || throw(ArgumentError("rtol must be nonnegative and atol positive."))
     count = (tf - t0)/Float64(dt)
     (isfinite(count) && count <= maxsteps) || throw(ArgumentError(lazy"the transient needs more than maxsteps = $(maxsteps) steps."))
@@ -570,7 +612,7 @@ end
         method = GaussLegendre(), backend = CPU(), factorization = nothing,
         reuse = nothing, initialstate = transientstate of each, saveevery = 1,
         record = :ports, checkpointevery = 0, rtol = 1e-9, atol = 1e-10,
-        maxiters = 15, maxsteps = 10^7)
+        iterations = 15, maxsteps = 10^7)
 
 The same circuit under every drive condition of `problems`, built by
 [`transientproblem`](@ref)`(problem; sources)` so that they share one
@@ -581,7 +623,8 @@ stiffness and the factorization are one per condition, KLU on the CPU
 and the uniform cuDSS batch on a device, and the Newton engine accepts
 and refreshes per condition. On a device this is where the throughput
 lies, since the launches of a step serve every condition. `initialstate`
-is one pair for all conditions or a vector of pairs. Returns a
+is one [`TransientState`](@ref) for all conditions or a vector of them.
+Returns a
 [`TransientBatchSolution`](@ref), whose `solution[j]` is the ordinary
 solution of condition `j`.
 
@@ -598,17 +641,19 @@ function transientsolve(problems::AbstractVector{TransientProblem}, tspan; dt::R
         method::AbstractTransientIntegrator = GaussLegendre(), backend::Backend = CPU(),
         factorization = nothing, reuse = nothing, initialstate = nothing,
         saveevery::Integer = 1, record::Symbol = :ports, checkpointevery::Integer = 0, rtol::Real = 1e-9,
-        atol::Real = 1e-10, maxiters::Integer = 15, maxsteps::Integer = 10^7)
+        atol::Real = 1e-10, iterations::Integer = 15, maxsteps::Integer = 10^7)
     p = batchcompatible(problems)
     method isa GaussLegendre || throw(ArgumentError("a batch of conditions steps under GaussLegendre()."))
-    t0, tf, nsteps, h = transientgrid(tspan, dt, maxsteps, saveevery, maxiters, rtol, atol, nothing, reuse)
+    t0, tf, nsteps, h = transientgrid(tspan, dt, maxsteps, saveevery, iterations, rtol, atol, nothing, reuse)
     states = if isnothing(initialstate)
         [transientstate(q) for q in problems]
-    elseif initialstate isa AbstractVector && !isempty(initialstate) && first(initialstate) isa Union{Tuple,NamedTuple}
+    elseif initialstate isa TransientState
+        fill(initialstate, length(problems))
+    elseif initialstate isa AbstractVector && all(s -> s isa TransientState, initialstate)
         length(initialstate) == length(problems) || throw(DimensionMismatch("give one initial state per condition, or one for all."))
         collect(initialstate)
     else
-        fill(initialstate, length(problems))
+        throw(ArgumentError("initialstate is a TransientState, from transientstate, or one per condition."))
     end
     fact = isnothing(factorization) ? transientfactorization(backend) : factorization
     sys = transientsystem(reuse, p, h, method, backend, fact)
@@ -616,7 +661,7 @@ function transientsolve(problems::AbstractVector{TransientProblem}, tspan; dt::R
     # over every kind of system there is; invoked dynamically instead, so
     # that only the one in hand is
     return Base.invokelatest(gaussbatchintegrate, sys, collect(problems), t0, tf, nsteps, states, saveevery, record, checkpointevery,
-        Float64(rtol), Float64(atol), maxiters, reuse)
+        Float64(rtol), Float64(atol), iterations, reuse)
 end
 
 """
@@ -624,7 +669,7 @@ end
         factorization = nothing, linearsolver = nothing,
         initialstate = transientstate(problem), saveevery = 1,
         record = :ports, checkpointevery = 0, rtol = 1e-9, atol = 1e-10,
-        maxiters = 15, maxsteps = 10^7)
+        iterations = 15, maxsteps = 10^7)
 
 Integrate the circuit in physical time on a uniform grid of step at most
 `dt`, shortened slightly to land on `tspan[2]`. `method` is the stepping
@@ -635,8 +680,12 @@ and read its output back as the same solution; `backend` is
 where the solve runs, and `factorization` the sparse factorization, KLU
 on the CPU and cuDSS on a CUDA device by default. The
 Jacobian's pattern is fixed and its symbolic analysis done once; a linear
-circuit factorizes once. `rtol` and `atol` control the Newton residual,
-not the temporal error, and a Newton step that fails throws.
+circuit factorizes once. `atol` and `rtol` control the Newton residual
+of a step, not the temporal error, the absolute tolerance and one
+relative to the step's right hand side, and `iterations` bounds the
+corrections of a step, the names [`hbnlsolve`](@ref) uses, where `rtol`
+is relative to the initial residual instead; a Newton step that fails
+throws.
 
 With `linearsolver = GMRES()` (or another of the package's Krylov
 solvers) each Newton correction is solved iteratively and matrix free,
@@ -656,21 +705,23 @@ whole flux and rate history as well, and `record = :checkpoints`, under
 (the square root of the step count by default), from which the
 responses replay the steps between at the cost of one more solve, so
 the memory of a record of any length is bounded.
-`initialstate` is the pair of [`transientstate`](@ref); the solver checks
-that it satisfies the algebraic equations of the circuit at the start.
+`initialstate` is the [`TransientState`](@ref) of
+[`transientstate`](@ref), from physical values or from the end of
+another solution; the solver checks that it satisfies the algebraic
+equations of the circuit at the start.
 """
 function transientsolve(p::TransientProblem, tspan; dt::Real,
         method::AbstractTransientIntegrator = Trapezoidal(), backend::Backend = CPU(),
         factorization = nothing, linearsolver = nothing, reuse = nothing,
-        initialstate = transientstate(p),
+        initialstate::TransientState = transientstate(p),
         saveevery::Integer = 1, record::Symbol = :ports, checkpointevery::Integer = 0, rtol::Real = 1e-9,
-        atol::Real = 1e-10, maxiters::Integer = 15, maxsteps::Integer = 10^7)
+        atol::Real = 1e-10, iterations::Integer = 15, maxsteps::Integer = 10^7)
     if method isa WRspice
         return wrspicetransient(p, tspan, method; dt, saveevery, record,
             initialstate, backend, linearsolver, factorization, reuse,
-            checkpointevery, rtol, atol, maxiters, maxsteps)
+            checkpointevery, rtol, atol, iterations, maxsteps)
     end
-    t0, tf, nsteps, h = transientgrid(tspan, dt, maxsteps, saveevery, maxiters, rtol, atol, linearsolver, reuse)
+    t0, tf, nsteps, h = transientgrid(tspan, dt, maxsteps, saveevery, iterations, rtol, atol, linearsolver, reuse)
     (isempty(p.blocks) && isempty(p.lines)) || method isa GaussLegendre || throw(ArgumentError(
         "a circuit with scattering blocks or transmission lines steps under GaussLegendre()."))
     fact = isnothing(factorization) ? transientfactorization(backend) : factorization
@@ -681,11 +732,11 @@ function transientsolve(p::TransientProblem, tspan; dt::Real,
     if method isa GaussLegendre
         isnothing(linearsolver) || throw(ArgumentError("the Gauss-Legendre rule solves its stages on its complex factorization; it takes no linearsolver."))
         return unbatch(Base.invokelatest(gaussbatchintegrate, sys, [p], t0, tf, nsteps, [initialstate], saveevery, record, checkpointevery,
-            Float64(rtol), Float64(atol), maxiters, reuse))
+            Float64(rtol), Float64(atol), iterations, reuse))
     end
     record == :checkpoints && throw(ArgumentError("checkpoints are a record of the Gauss-Legendre rule."))
     return Base.invokelatest(transientintegrate, sys, t0, tf, nsteps, initialstate, saveevery, record,
-        Float64(rtol), Float64(atol), maxiters, linearsolver, reuse)
+        Float64(rtol), Float64(atol), iterations, linearsolver, reuse)
 end
 
 # The scaled node current of the drives and the constant sources of a
@@ -710,7 +761,7 @@ end
 # rather than decay. Returns the largest violation of both and the scale
 # to compare it with, on the host.
 function transientconsistency(sys::TransientSystem, x, v, t, p::TransientProblem = sys.problem, linevalues = zeros(2length(p.lines)),
-        blockwaves = nothing)
+        blockwaves = nothing, linerates = zeros(2length(p.lines)))
     isempty(p.inertialess) && return 0.0, 1.0
     G, L, RJ = hostsparse(sys.G), hostsparse(sys.L), hostsparse(sys.RJ)
     lmolj = Array(sys.lmolj)
@@ -723,9 +774,11 @@ function transientconsistency(sys::TransientSystem, x, v, t, p::TransientProblem
     # the violations are relative to the terms balanced
     scale = max(norm(b, Inf), norm(gv, Inf), norm(lx, Inf), norm(j, Inf), 1.0)
     worst = 0.0
-    # the rate of the drives, by a central difference far below the step
+    # the rate of the drives, by a central difference far below the step,
+    # the lines' forced currents carried along it at their own rate
     delta = 1e-3*sys.h
-    bdot = (hostdrivecurrent(sys, t + delta, p, linevalues, blockwaves) .- hostdrivecurrent(sys, t - delta, p, linevalues, blockwaves)) ./ (2delta)
+    bdot = (hostdrivecurrent(sys, t + delta, p, linevalues .+ delta .* linerates, blockwaves) .-
+        hostdrivecurrent(sys, t - delta, p, linevalues .- delta .* linerates, blockwaves)) ./ (2delta)
     lv, jv = L*vh, transpose(RJ)*(lmolj .* derivativeat(hr, phi) .* (RJ*vh))
     ratescale = max(norm(bdot, Inf), norm(lv, Inf), norm(jv, Inf), 1.0)
     lv .+= jv .- bdot
@@ -738,14 +791,14 @@ function transientconsistency(sys::TransientSystem, x, v, t, p::TransientProblem
 end
 
 function transientintegrate(sys::TransientSystem, t0, tf, nsteps, initialstate,
-        saveevery, record, rtol, atol, maxiters, linearsolver = nothing, reuse = nothing)
+        saveevery, record, rtol, atol, iterations, linearsolver = nothing, reuse = nothing)
     savephases, savestates, _ = recordlevel(record, saveevery)
     p = sys.problem
     backend = sys.backend
     n, np, nd = length(p), length(p.portimpedances), length(p.drives)
     h, alpha, beta = sys.h, sys.alpha, sys.beta
     trapezoidal = sys.method isa Trapezoidal
-    x0, v0 = initialstate
+    x0, v0 = initialstate.flux, initialstate.rate
     (length(x0) == n && length(v0) == n) || throw(DimensionMismatch(lazy"the state has $(n) entries; use transientstate."))
     (all(isfinite, x0) && all(isfinite, v0)) || throw(ArgumentError("the initial state must be finite."))
     allocate = () -> KernelAbstractions.zeros(backend, Float64, n)
@@ -870,7 +923,7 @@ function transientintegrate(sys::TransientSystem, t0, tf, nsteps, initialstate,
         xnew .= x .+ lastincrement
         converged, fresh, ncorr, nfact, nretry, nkrylov, stale = newtonsolve!(xnew, correction, trial,
             residual, trialresidual, baseresidual!, trialresidual!, refresh!, solve!,
-            tolerance, maxiters, stalefailed, nonlinear, iterative, newtonwork; accept!)
+            tolerance, iterations, stalefailed, nonlinear, iterative, newtonwork; accept!)
         corrections += ncorr
         factorizations += nfact
         retries += nretry
@@ -904,9 +957,9 @@ function transientintegrate(sys::TransientSystem, t0, tf, nsteps, initialstate,
         reuse.workspace = workspace
     end
     return TransientSolution(p, sys.method, h, times, voltage, incident, outgoing,
-        phases, nothing, nothing, flux, rate, nothing, initialflux, initialrate, copy(x), copy(v), nothing, nothing, nothing,
+        phases, nothing, nothing, nothing, flux, rate, nothing, nothing, initialflux, initialrate, copy(x), copy(v), nothing, nothing, nothing,
         (; steps = nsteps, newtoncorrections = corrections, factorizations,
-            retries, kryloviterations = krylov, rtol, atol, maxiters))
+            retries, kryloviterations = krylov, rtol, atol, iterations))
 end
 
 # the residual of the step at a trial state, `K*x + J(x) - rhs`, with the
@@ -969,7 +1022,7 @@ scalecolumns(steps, a::AbstractMatrix) = transpose(steps) .* a
 scalecolumns(steps, a::AbstractArray{<:Any,3}) = reshape(steps, 1, :, 1) .* a
 
 function newtonsolve!(x, correction, trial, residual, trialresidual, baseresidual!,
-        trialresidual!, refresh!, solve!, tol::AbstractVector, maxiters, stalefailed, nonlinear, iterative,
+        trialresidual!, refresh!, solve!, tol::AbstractVector, iterations, stalefailed, nonlinear, iterative,
         work::NewtonWork; simplified::Bool = false, accept! = nothing)
     norms, trialnorms, previous, steps = work.norms, work.trialnorms, work.previous, work.steps
     converged = false
@@ -978,14 +1031,14 @@ function newtonsolve!(x, correction, trial, residual, trialresidual, baseresidua
     laststale = false
     fill!(previous, Inf)
     adopted = false
-    for iteration in 0:maxiters
+    for iteration in 0:iterations
         adopted || baseresidual!(norms, residual, x)
         adopted = false
         if all(j -> isfinite(norms[j]) && norms[j] <= tol[j], eachindex(norms))
             converged = true
             break
         end
-        iteration == maxiters && break
+        iteration == iterations && break
         refreshnow = if simplified
             stalefailed || any(j -> norms[j] > tol[j] && norms[j] > 0.25*previous[j], eachindex(norms))
         else

@@ -351,7 +351,7 @@ using Test
             (:jj, 2, 0, JosephsonJunction(1e-9)), (:c2, 2, 0, Capacitor(0.5e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         pb = transientproblem(withblock; sources = [TransientSource(1, drive)])
         pe = transientproblem(explicit; sources = [TransientSource(1, drive)])
-        @test JC.blockstates(pb) == 1 && transientstate(pb).states == [0.0]
+        @test JC.blockstates(pb) == 1 && transientstate(pb).blockstates == [0.0]
         for dt in (4e-12, 1e-12)
             sb = transientsolve(pb, (0.0, 1.5e-9); dt, method = GaussLegendre(), rtol = 1e-12, record = :states)
             se = transientsolve(pe, (0.0, 1.5e-9); dt, method = GaussLegendre(), rtol = 1e-12)
@@ -596,7 +596,7 @@ end
         (:jj, 2, 0, JosephsonJunction(1000.0e-12)), (:cj, 2, 0, Capacitor(1000.0e-15))])
     fp, ip = 4.75e9, 0.00565e-6
     ws = 2pi*collect(range(4.0e9, 5.5e9; length = 76))
-    sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (4,), (8,), jpa; ftol = 1e-14)
+    sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (4,), (8,), jpa; atol = 1e-14)
     blk = LinearizedScattering(sol.linearized, 2pi*fp)
     # an unfitted block has no realization in time
     @test_throws ArgumentError transientproblem(Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, blk)]))
@@ -630,7 +630,7 @@ end
     a0 = Is*sqrt(Z0)/2
     tsol = transientsolve(transientproblem(c; sources = [TransientSource(1, t -> Is*sinpi(2fs*t))]), (0.0, 80e-9);
         dt, method = GaussLegendre())
-    plan = transientiqplan(tsol.times, [fs, fi]; duration = 4/(fp - fs), ports = [1, 1], stride = 400)
+    plan = transientiqplan(tsol, tsol.times, [fs, fi]; duration = 4/(fp - fs), ports = [1, 1], stride = 400)
     iq = transientiq(plan, tsol.outgoing)
     k = argmin(abs.(ws .- 2pi*fs))
     Ss = hb.linearized.S((0,), 1, (0,), 1, k)
@@ -658,7 +658,7 @@ end
     settle, record = 60.0625e-9, 20e-9
     nsol = transientsolve(transientproblem(cr), (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
     first = round(Int, settle/dt) + 1
-    nplan = transientquantumplan(nsol.times[first:end], [fn])
+    nplan = transientquantumplan(nsol, nsol.times[first:end], [fn])
     nfreqs = sort!(abs.([fn + 2m*fp for m in -2:2]))
     noise = transientnoise(nsol, nplan; frequencies = nfreqs, weights = fill(1/record, 5), inputs = nplan, commutationrtol = 3e-3)
     @test noise.diagnostics.passed
@@ -676,7 +676,7 @@ end
     # junctions
     lossy = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:cc, 1, 2, Capacitor(100.0e-15)),
         (:jj, 2, 0, JosephsonJunction(1000.0e-12)), (:cj, 2, 0, Capacitor(1000.0e-15)), (:r, 2, 0, Resistor(2.0e4))])
-    soll = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (4,), (8,), lossy; ftol = 1e-14, returnCnoise = true)
+    soll = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (4,), (8,), lossy; atol = 1e-14, returnCnoise = true)
     stated = RationalScattering(LinearizedScattering(soll.linearized, 2pi*fp; noise = NoiseCovariance(soll.linearized.Cnoise), envelope = ramp), 10)
     @test stated.noise isa NoiseCovariance && stated.noise.completed && stated.atol == 1e-6 && stated.noise.atol == 1e-8
     cl = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, stated)])
@@ -684,14 +684,14 @@ end
     bathsl = transientnoisebaths(transientproblem(cl))
     @test length(bathsl) == 2 && length(bathsl.groups) == 1 && bathsl.channels[2].temperature == 0.0
     lsol = transientsolve(transientproblem(cl), (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
-    lplan = transientquantumplan(lsol.times[first:end], [fn])
+    lplan = transientquantumplan(lsol, lsol.times[first:end], [fn])
     lnoise = transientnoise(lsol, lplan; frequencies = nfreqs, weights = fill(1/record, 5), inputs = lplan, commutationrtol = 3e-3)
     @test lnoise.diagnostics.passed
     lmetrics = transientquantumefficiency(lnoise.gain, lnoise.covariance; rtol = 3e-3)
     @test isapprox(lmetrics.gain, abs2(hbl.linearized.S((0,), 1, (0,), 1, 1)); rtol = 1e-4)
     @test isapprox(lmetrics.QE, hbl.linearized.QE((0,), 1, (0,), 1, 1); rtol = 1e-4)
     @test isapprox(lmetrics.QE, hbsolve([2pi*fn], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (4,), (8,), lossy;
-        ftol = 1e-14).linearized.QE((0,), 1, (0,), 1, 1); rtol = 1e-4)
+        atol = 1e-14).linearized.QE((0,), 1, (0,), 1, 1); rtol = 1e-4)
 end
 
 @testset "the checks and the stage solve of a pumped block in time" begin
@@ -713,14 +713,14 @@ end
     # relations, and a declared losslessness the block does not have
     for b in (model(noise = NoiseCovariance([zero1, zero1])), model())
         sol = transientsolve(transientproblem(one(b)), (0.0, 40e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints)
-        plan = transientquantumplan(sol.times, [0.4e9])
+        plan = transientquantumplan(sol, sol.times, [0.4e9])
         @test_throws ArgumentError transientnoise(sol, plan; frequencies = [0.4e9, 0.6e9], weights = fill(1/40e-9, 2))
     end
     # the pair terms correlate the bath frequencies, which are not split
     # over tiles: a budget too small for them is refused
     stated = model(noise = NoiseCovariance([fill(10.0, 1, 1), zero1]))
     sol = transientsolve(transientproblem(one(stated)), (0.0, 40e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints)
-    plan = transientquantumplan(sol.times, [0.4e9])
+    plan = transientquantumplan(sol, sol.times, [0.4e9])
     JC.noisememorybudget[] = 1
     try
         @test_throws ArgumentError transientnoise(sol, plan; frequencies = [0.4e9, 0.6e9], weights = fill(1/40e-9, 2))
@@ -735,7 +735,7 @@ end
     # canonical and their covariance the family's
     shared = model(amp = 0.5, noise = NoiseCovariance([fill(10.0, 1, 1), zero1]))
     ssol = transientsolve(transientproblem(one(shared)), (0.0, 20e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints)
-    splan = transientquantumplan(ssol.times[501:end], [0.4e9, 2.4e9]; ports = [1, 1])
+    splan = transientquantumplan(ssol, ssol.times[501:end], [0.4e9, 2.4e9]; ports = [1, 1])
     sfreqs = [0.4e9, 0.6e9, 1.4e9, 2.4e9, 3.4e9]
     sn = transientnoise(ssol, splan; frequencies = sfreqs, weights = fill(1/10e-9, 5))
     @test sn.diagnostics.passed
@@ -820,7 +820,7 @@ end
     # either keeps, since both restrict one padded completion
     bare = model(amp = 0.5, direct = 1.0, noise = NoiseCovariance([zero1, zero1]; completed = true, padding = 8))
     bsol = transientsolve(transientproblem(one(bare)), (0.0, 20e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints)
-    bplan = transientquantumplan(bsol.times[501:end], [0.4e9])
+    bplan = transientquantumplan(bsol, bsol.times[501:end], [0.4e9])
     v2 = Float64[]
     for nm in (2, 4)
         bath = sort!(abs.([0.4e9 + m*1e9 for m in -nm:nm]))
@@ -849,7 +849,7 @@ end
     var = Float64[]
     for blk in (src, fit)
         isol = transientsolve(transientproblem(one(blk)), (0.0, 20e-9 - dt); dt, method = GaussLegendre(), record = :checkpoints)
-        iplan = transientquantumplan(isol.times[501:end], [0.6e9])
+        iplan = transientquantumplan(isol, isol.times[501:end], [0.6e9])
         inoise = transientnoise(isol, iplan; frequencies = [0.6e9], weights = [1/10e-9])
         @test inoise.diagnostics.passed
         push!(var, tr(inoise.covariance))
@@ -898,7 +898,7 @@ end
     hb = hbsolve([2pi*fs], (wp,), [], (2,), (4,), cj; threewavemixing = true)
     tsol = transientsolve(transientproblem(cj; sources = [TransientSource(1, t -> Is*sinpi(2fs*t))]), (0.0, 400e-9);
         dt, method = GaussLegendre())
-    iqplan = transientiqplan(tsol.times, [fs, fi]; duration = 40e-9, ports = [1, 1], stride = 400)
+    iqplan = transientiqplan(tsol, tsol.times, [fs, fi]; duration = 40e-9, ports = [1, 1], stride = 400)
     iq = transientiq(iqplan, tsol.outgoing)
     @test isapprox(abs(iq[1, end])/a0, abs(hb.linearized.S((0,), 1, (0,), 1, 1)); rtol = 1e-3)
     @test isapprox(abs(iq[2, end])/a0, abs(hb.linearized.S((-1,), 1, (0,), 1, 1))*sqrt(fi/fs); rtol = 1e-2)

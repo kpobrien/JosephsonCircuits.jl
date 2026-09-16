@@ -20,7 +20,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
         mnadc = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true)
+            atol = 1e-12, dc = true, odd = true)
         @test mnadc.solverinfo.converged
 
         # the DC node flux of the gauge fixed node should be zero
@@ -30,7 +30,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # with no DC source, including the DC mode should not change the
         # nonzero frequency modes
         mnanodc = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
-            ftol = 1e-12)
+            atol = 1e-12)
         @test mnanodc.solverinfo.converged
         for m in mnanodc.modes
             for node in ["1", "2"]
@@ -68,7 +68,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
         mnadc = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true)
+            atol = 1e-12, dc = true, odd = true)
         @test mnadc.solverinfo.converged
 
         # the DC flux of the reference node of the floating component is
@@ -79,7 +79,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # with no DC source, the nonzero frequency modes are unchanged by
         # including the DC mode
         mnanodc = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12)
+            atol = 1e-12)
         @test mnanodc.solverinfo.converged
         for m in mnanodc.modes
             for node in ["1", "2", "3"]
@@ -114,7 +114,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
         mnadc = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true)
+            atol = 1e-12, dc = true, odd = true)
         @test mnadc.solverinfo.converged
 
         # both floating components are gauge fixed at their reference nodes
@@ -124,7 +124,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             atol = 1e-12)
 
         mnanodc = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12)
+            atol = 1e-12)
         @test mnanodc.solverinfo.converged
         for m in mnanodc.modes
             for node in ["1", "2", "3"]
@@ -167,7 +167,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         ]
 
         mnadc = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true)
+            atol = 1e-12, dc = true, odd = true)
         @test mnadc.solverinfo.converged
 
         # the DC branch flux of the island inductor equals L1*Idc. the
@@ -192,7 +192,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         ]
 
         sol = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true, keyedarrays = false)
+            atol = 1e-12, dc = true, odd = true, keyedarrays = false)
         @test sol.solverinfo.converged
         @test isapprox(maximum(sol.dcnodevoltage), Idc*50.0; rtol = 1e-9)
         @test count(!iszero, sol.dcnodevoltage) == 1
@@ -214,16 +214,16 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
         out = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
-            ftol = 1e-12)
+            atol = 1e-12)
         @test out.solverinfo.converged
         # the result must match the real-typed definitions
         ref = hbnlsolve(wp, (16,), sources, circuit, jpacircuit()[2];
-            ftol = 1e-12)
+            atol = 1e-12)
         @test isapprox(Array(out.nodeflux), Array(ref.nodeflux), atol = 1e-10)
 
         # and the DC gauge case with complex-typed definitions
         outdc = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true)
+            atol = 1e-12, dc = true, odd = true)
         @test outdc.solverinfo.converged
     end
 
@@ -251,7 +251,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
         out = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
-            ftol = 1e-12, symfreqvar = w)
+            atol = 1e-12, symfreqvar = w)
         @test out.solverinfo.converged
         # nodal formulation reference values, as in the first testset
         @test isapprox(Vector(out.nodeflux(outputmode=(1,))),
@@ -266,26 +266,26 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
         out = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
-            ftol = 1e-12)
+            atol = 1e-12)
         @test out.solverinfo.converged
 
         # the converged node fluxes supplied as a plain vector; the
         # auxiliary currents are initialized from the constitutive
         # relations
         outv = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
-            ftol = 1e-12, x0 = Vector(out.nodeflux[:]))
+            atol = 1e-12, x0 = Vector(out.nodeflux[:]))
         @test outv.solverinfo.converged
         @test isapprox(out.nodeflux, outv.nodeflux, atol = 1e-9)
 
         # the converged node fluxes supplied as a keyed array
         outk = hbnlsolve(wp, (16,), sources, circuit, circuitdefs;
-            ftol = 1e-12, x0 = out.nodeflux)
+            atol = 1e-12, x0 = out.nodeflux)
         @test outk.solverinfo.converged
         @test isapprox(out.nodeflux, outk.nodeflux, atol = 1e-9)
 
         # an initial value with an invalid length throws
         @test_throws DimensionMismatch hbnlsolve(wp, (16,), sources,
-            circuit, circuitdefs; ftol = 1e-12,
+            circuit, circuitdefs; atol = 1e-12,
             x0 = zeros(Complex{Float64}, 3))
     end
 
@@ -301,7 +301,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
         ref = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true)
+            atol = 1e-12, dc = true, odd = true)
         @test ref.solverinfo.converged
         Nmodes = length(ref.modes)
         dcindex = findfirst(==((0,)), collect(ref.modes))
@@ -311,7 +311,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         x0 = Vector(ref.nodeflux[:])
         x0[dcindex] += 5.0
         shifted = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true, x0 = x0)
+            atol = 1e-12, dc = true, odd = true, x0 = x0)
         @test shifted.solverinfo.converged
         @test isapprox(Vector(ref.nodeflux[:]),
             Vector(shifted.nodeflux[:]), atol = 1e-9)
@@ -351,7 +351,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # having nowhere to go, so this has a bounded solution: a net
         # Idc*1e-10 into a pair of 50 ohm paths to ground.
         solnb = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true, keyedarrays = false)
+            atol = 1e-12, dc = true, odd = true, keyedarrays = false)
         @test solnb.solverinfo.converged
         @test isapprox(maximum(solnb.dcnodevoltage), Idc*1e-10/(2/50.0);
             rtol = 1e-6)
@@ -363,7 +363,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             (mode=(0,),port=3,current=-Idc),
         ]
         out = hbnlsolve(wp, (8,), sources2, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true)
+            atol = 1e-12, dc = true, odd = true)
         @test out.solverinfo.converged
     end
 
@@ -384,7 +384,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
         out = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12, dc = true, odd = true, symfreqvar = w)
+            atol = 1e-12, dc = true, odd = true, symfreqvar = w)
         @test out.solverinfo.converged
         @test isapprox(abs(out.nodeflux(outputmode=(0,),node="1")), 0.0,
             atol = 1e-12)
@@ -415,9 +415,9 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
         many = hbnlsolve(wp, (16,), sources,
             circuitwith([30000.0, 30000.0, 30000.0]), circuitdefs;
-            ftol = 1e-12)
+            atol = 1e-12)
         one_ = hbnlsolve(wp, (16,), sources, circuitwith([10000.0]),
-            circuitdefs; ftol = 1e-12)
+            circuitdefs; atol = 1e-12)
         @test many.solverinfo.converged
         @test one_.solverinfo.converged
         @test isapprox(Vector(many.nodeflux[:]), Vector(one_.nodeflux[:]),
@@ -437,7 +437,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         push!(cmix,("R3","2","3",2.0e6 + 1e-3*w))
         push!(cmix,("C3","3","0",:Cj))
         mix = hbnlsolve(wp, (8,), sources, cmix, circuitdefs;
-            ftol = 1e-12, symfreqvar = w)
+            atol = 1e-12, symfreqvar = w)
         @test mix.solverinfo.converged
     end
 
@@ -467,39 +467,39 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # sides, independent of the auxiliary state and of the number of
         # driven rows, and rejecting non-finite residuals
         b = Complex{Float64}[1.0, 1.0, 0.0]
-        ftol = 1e-10
+        atol = 1e-10
         # a compatible residual well inside the tolerance is accepted
         Fok = Complex{Float64}[1e-11, 0.0, 0.0]
         xok = Complex{Float64}[0.0, 0.0, 0.0, 1e9]
         ok, nk, tol = JosephsonCircuits.mnavalidatekcl(Fok, xok, [1], 3,
-            b, ftol)
+            b, atol)
         @test ok
         @test nk == 1e-11
         # the applied tolerance is returned for diagnostics
-        @test tol == 10*ftol*(1 + 1.0)
+        @test tol == 10*atol*(1 + 1.0)
         # the surrogate-defeating case is rejected by the policy
         okbad, nkbad = JosephsonCircuits.mnavalidatekcl(
             Complex{Float64}[0.3, 0.0, 0.0], Complex{Float64}[1e-14, 0, 0, 0],
-            [1], 3, b, ftol)
+            [1], 3, b, atol)
         @test !okbad
         @test nkbad > 0.29
         # duplicating driven rows does not loosen the per-row tolerance
         # (infinity-norm source scale), unlike a Euclidean scale
         bmany = Complex{Float64}[fill(1.0, 100); 0.0]
         Fedge = zeros(Complex{Float64}, 101)
-        Fedge[1] = 25*ftol
+        Fedge[1] = 25*atol
         xz = zeros(Complex{Float64}, 102)
         okedge, = JosephsonCircuits.mnavalidatekcl(Fedge, xz, [1], 101,
-            bmany, ftol)
-        @test !okedge  # 25*ftol > 10*ftol*(1 + 1) regardless of row count
+            bmany, atol)
+        @test !okedge  # 25*atol > 10*atol*(1 + 1) regardless of row count
         # a non-finite reconstructed residual fails
         oknan, = JosephsonCircuits.mnavalidatekcl(
-            Complex{Float64}[NaN, 0.0, 0.0], xok, [1], 3, b, ftol)
+            Complex{Float64}[NaN, 0.0, 0.0], xok, [1], 3, b, atol)
         @test !oknan
         # a non-finite source scale would make the tolerance infinite and
         # accept anything, so it fails the validation
         okinf, = JosephsonCircuits.mnavalidatekcl(Fok, xok, [1], 3,
-            Complex{Float64}[Inf, 0.0, 0.0], ftol)
+            Complex{Float64}[Inf, 0.0, 0.0], atol)
         @test !okinf
     end
 
@@ -566,7 +566,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
         @test_throws ArgumentError hbnlsolve(wp, (8,), sources, circuit,
-            circuitdefs; ftol = 1e-12)
+            circuitdefs; atol = 1e-12)
 
         # end-to-end: an infinite inductance in a solve is rejected with
         # an informative error (an open circuit is represented by omitting
@@ -580,7 +580,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             :Cj => 1000.0e-15, :Rleft => 50.0, :L1 => 300.0e-12,
             :Linf => Inf)
         @test_throws ArgumentError hbnlsolve(wp, (8,), sources, circuit2,
-            circuitdefs2; ftol = 1e-12, dc = true, odd = true)
+            circuitdefs2; atol = 1e-12, dc = true, odd = true)
     end
 
     @testset "non-finite frequency and source inputs" begin
@@ -692,11 +692,11 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         ]
         # the mode (2,-1) has frequency 2*w1 - w2 = 0
         @test_throws ArgumentError hbnlsolve(wp, (2,2), sources, circuit,
-            circuitdefs; ftol = 1e-12)
+            circuitdefs; atol = 1e-12)
         # incommensurate drives are unaffected
         wp2 = (2*pi*5.0*1e9, 2*pi*10.00001*1e9)
         out = hbnlsolve(wp2, (2,2), sources, circuit, circuitdefs;
-            ftol = 1e-12)
+            atol = 1e-12)
         @test out.solverinfo.converged
     end
 
@@ -714,11 +714,11 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             (mode=(0,1),port=1,current=0.00265e-6),
         ]
         @test_throws ArgumentError hbsolve([2*pi*1.0], wp, sources, (1,1),
-            (2,2), circuit, circuitdefs; ftol = 1e-12,
+            (2,2), circuit, circuitdefs; atol = 1e-12,
             threewavemixing = false, fourwavemixing = true)
         # a signal well away from the beat is accepted
         out = hbsolve([2*pi*1.0e3], wp, sources, (1,1), (2,2), circuit,
-            circuitdefs; ftol = 1e-12, threewavemixing = false,
+            circuitdefs; atol = 1e-12, threewavemixing = false,
             fourwavemixing = true)
         @test out.nonlinear.solverinfo.converged
     end
@@ -768,9 +768,9 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
         keyed = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12)
+            atol = 1e-12)
         plain = hbnlsolve(wp, (8,), sources, circuit, circuitdefs;
-            ftol = 1e-12, keyedarrays = false)
+            atol = 1e-12, keyedarrays = false)
 
         # the output length is the number of node fluxes, without the
         # auxiliary variables, and the values match the keyed output
@@ -928,7 +928,7 @@ end
         ws = 2*pi*(4.6:0.1:4.9)*1e9
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
-        kwargs = (ftol = 1e-12, returnSnoise = true, returnnodeflux = true,
+        kwargs = (atol = 1e-12, returnSnoise = true, returnnodeflux = true,
             returnvoltage = true, returnnodefluxadjoint = true,
             keyedarrays = false)
         out = hbsolve(ws, wp, sources, (4,), (8,), circuit, circuitdefs;
@@ -975,7 +975,7 @@ end
         # (numerically) the pump frequency produces a zero total frequency
         ws = [wp[1]*(1 + 2*eps())]
         @test_throws ArgumentError hbsolve(ws, wp, sources, (4,), (8,),
-            circuit, circuitdefs; ftol = 1e-12, threewavemixing = true)
+            circuit, circuitdefs; atol = 1e-12, threewavemixing = true)
     end
 
     @testset "hblinsolve complex storage and symbolic resistor" begin
@@ -1124,13 +1124,13 @@ end
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
         withdc = hbsolve(ws, wp, sources, (4,), (8,), circuit,
-            circuitdefs; ftol = 1e-12, dc = true, threewavemixing = true)
+            circuitdefs; atol = 1e-12, dc = true, threewavemixing = true)
         @test withdc.nonlinear.solverinfo.converged
         @test all(isfinite, withdc.linearized.S)
         # with no DC drive, including the DC pump mode must not change the
         # scattering parameters
         plain = hbsolve(ws, wp, sources, (4,), (8,), circuit, circuitdefs;
-            ftol = 1e-12)
+            atol = 1e-12)
         @test isapprox(
             plain.linearized.S(outputmode=(0,),outputport=1,
                 inputmode=(0,),inputport=1),
@@ -1254,13 +1254,13 @@ end
             # bounded entries independent of k
             @test maximum(abs, d.invLnm.nzval) < 100
             out = JosephsonCircuits.hbnlsolve(wp, (4,), sources, circuit,
-                circuitdefs; ftol = 1e-10)
+                circuitdefs; atol = 1e-10)
             @test out.solverinfo.converged
             # warm restarting from the nodal solution converges immediately
             # to the same answer (the coupled inductor auxiliary currents
             # are initialized from the constitutive relations)
             out2 = JosephsonCircuits.hbnlsolve(wp, (4,), sources, circuit,
-                circuitdefs; ftol = 1e-10, x0 = out.nodeflux)
+                circuitdefs; atol = 1e-10, x0 = out.nodeflux)
             @test out2.solverinfo.converged
             @test isapprox(out2.nodeflux[:], out.nodeflux[:], atol = 1e-8)
             # the linearized solve produces finite, passive scattering
@@ -1294,7 +1294,7 @@ end
         Iflux = 2.0e-6
         outk1 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (2,),
             [(mode=(0,),port=2,current=Iflux)], ck1, dk1;
-            dc = true, odd = true, even = false, ftol = 1e-12)
+            dc = true, odd = true, even = false, atol = 1e-12)
         @test outk1.solverinfo.converged
         phik1 = real(outk1.nodeflux[1])
         @test isapprox(phi0*phik1 + (L1*phi0/Lj1v)*sin(phik1), L1*Iflux,
@@ -1374,10 +1374,10 @@ end
         dp = Dict(:Rl=>50.0, :Lx=>L1, :L2x=>2*L1, :Lj=>Lj1v, :Cs=>100.0e-15)
         o1 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (2,),
             [(mode=(1,),port=1,current=2.0e-6)], parcircuit(true), dp;
-            ftol = 1e-12)
+            atol = 1e-12)
         o2 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (2,),
             [(mode=(1,),port=1,current=2.0e-6)], parcircuit(false), dp;
-            ftol = 1e-12)
+            atol = 1e-12)
         @test o1.solverinfo.converged && o2.solverinfo.converged
         @test isapprox(o1.nodeflux[:], o2.nodeflux[:], atol = 1e-10)
 
@@ -1397,7 +1397,7 @@ end
             :Cc=>200.0e-15, :Cj=>900.0e-15, :Rl=>50.0, :K1=>0.999)
         out = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (4,),
             [(mode=(1,),port=1,current=1.0e-6)], circuit, circuitdefs;
-            dc = true, odd = true, even = true, ftol = 1e-10)
+            dc = true, odd = true, even = true, atol = 1e-10)
         @test out.solverinfo.converged
     end
 
@@ -1428,7 +1428,7 @@ end
         Idc = 1.0e-6
         out = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (1,),
             [(mode=(0,),port=1,current=Idc)], circuit, circuitdefs;
-            dc = true, odd = true, even = false, ftol = 1e-12)
+            dc = true, odd = true, even = false, atol = 1e-12)
         @test out.solverinfo.converged
         phidc = real(out.nodeflux[1])
         @test isapprox(phi0*phidc/L + phi0*sin(phidc)/Lj, Idc,
@@ -1461,7 +1461,7 @@ end
         out2 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (4,),
             [(mode=(0,),port=1,current=Idc),
              (mode=(1,),port=1,current=Irf)], circuit, circuitdefs;
-            dc = true, odd = true, even = true, ftol = 1e-12)
+            dc = true, odd = true, even = true, atol = 1e-12)
         @test out2.solverinfo.converged
         w = 2*pi*5.0e9
         Z = 1/(1/Rl + 1/(im*w*Leff) + im*w*C)
@@ -1488,7 +1488,7 @@ end
         Iflux = 2.0e-6
         out3 = JosephsonCircuits.hbnlsolve((2*pi*5.0e9,), (2,),
             [(mode=(0,),port=2,current=Iflux)], circuit2, circuitdefs2;
-            dc = true, odd = true, even = false, ftol = 1e-12)
+            dc = true, odd = true, even = false, atol = 1e-12)
         @test out3.solverinfo.converged
         phif = real(out3.nodeflux[1])
         @test isapprox(phi0*phif + (L*phi0/Lj)*sin(phif), M*Iflux,

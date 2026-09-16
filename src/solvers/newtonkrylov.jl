@@ -5,7 +5,7 @@
 """
     nlsolvekrylov!(fj!, jvp!, F, x, pc::AbstractPreconditioner,
         method::NewtonKrylov = NewtonKrylov(); iterations = 1000,
-        ftol = 1e-8, rtol = 0.0, workspace = nothing, label = "")
+        atol = 1e-8, rtol = 0.0, workspace = nothing, label = "")
 
 Inexact (Newton-Krylov) solver for a real system: the Newton step is taken
 from [`gmres!`](@ref) on the exact matrix-free product `jvp!(y, v)` rather
@@ -32,7 +32,7 @@ policy when a solve makes progress but misses its tolerance, when a step is
 not a descent direction, when the line search finds no decrease, and after
 a successful escalation. The linear tolerance follows the Eisenstat-Walker choice 2 forcing sequence
 `krylovgamma*(|F_k|/|F_{k-1}|)^krylovalpha` clamped to
-`[krylovrtolmin, krylovrtolmax]`, with an absolute floor of `ftol/10` so late
+`[krylovrtolmin, krylovrtolmax]`, with an absolute floor of `atol/10` so late
 solves are not pushed below the nonlinear tolerance. Because the assembled
 Jacobian can be stale, the linesearch slope is always taken from an exact
 matrix-free product, and a non-descent direction falls back to the exact
@@ -50,7 +50,7 @@ solver is kept simple.
 
 # Keywords
 - `iterations = 1000`: the maximum number of Newton iterations.
-- `ftol = 1e-8`: converged when `norm(F) <= ftol`.
+- `atol = 1e-8`: converged when `norm(F) <= atol`.
 - `rtol = 0.0`: an additional relative test, `norm(F) <= rtol*norm(F0)`
     with `F0` the initial residual, satisfied when either holds. A
     residual whose terms are of size `s` cannot be driven below about
@@ -97,7 +97,7 @@ solve if it persists.
 These are the settings `hbnlsolve` runs with; a caller changes them through
 the [`NewtonKrylov`](@ref) method object (`preconditioner`, `linearsolver`,
 `refresh`, `escalate`, `precision`) and through `hbnlsolve`'s own
-`iterations`, `ftol` and `rtol`.
+`iterations`, `atol` and `rtol`.
 
 Returns an [`IterationInfo`](@ref) with the same per-iteration diagnostics
 as [`nlsolve!`](@ref) (the `andersonaccepted` record is always false) and a
@@ -107,7 +107,7 @@ descent direction after the exact rescue), or `:progress`.
 """
 function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     x::AbstractVector{T}, pc::AbstractPreconditioner,
-    method::NewtonKrylov = NewtonKrylov(); iterations = 1000, ftol = 1e-8,
+    method::NewtonKrylov = NewtonKrylov(); iterations = 1000, atol = 1e-8,
     rtol = 0.0, workspace::Union{Nothing,Base.RefValue} = nothing,
     label = "") where {T<:AbstractFloat}
 
@@ -150,7 +150,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # same bounds and rationale as nlsolve!
     iterations >= 0 || throw(ArgumentError(
         lazy"`iterations` = $(iterations) must be nonnegative."))
-    ftol >= 0 || throw(ArgumentError(lazy"`ftol` = $(ftol) must be nonnegative."))
+    atol >= 0 || throw(ArgumentError(lazy"`atol` = $(atol) must be nonnegative."))
     0 < c1 < 1//2 || throw(ArgumentError(
         lazy"`c1` = $(c1) must be in (0, 1/2) for the Newton merit function."))
     0 < safeguard_low < 1//2 || throw(ArgumentError(
@@ -181,7 +181,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # absolute floor for the linear solves: once the linear residual is below
     # the nonlinear tolerance, further accuracy cannot help the Newton
     # iteration, and demanding it makes late GMRES solves "fail"
-    gmresatol = real(T)(ftol)/10
+    gmresatol = real(T)(atol)/10
 
     ### diagnostic info
     krylovrecord = KrylovSolveInfo[]
@@ -272,10 +272,10 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # the residual norm at the initial point; every later entry of normF is
     # pushed immediately after a step is accepted, so convergence is decided
     # on each fresh residual and no preconditioner is ever assembled at a
-    # final point. `ftol` is absolute; `rtol` adds a relative test beside
-    # it, and with the default `rtol = 0` the tolerance is exactly `ftol`
+    # final point. `atol` is absolute; `rtol` adds a relative test beside
+    # it, and with the default `rtol = 0` the tolerance is exactly `atol`
     residual!(F, x)
-    tracestart!(tr, F, ftol, rtol)
+    tracestart!(tr, F, atol, rtol)
 
     for n in 1:iterations
         tr.converged && break

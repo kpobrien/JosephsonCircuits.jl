@@ -303,7 +303,10 @@ function transientproblem(circuit, circuitdefs = Dict{Symbol,Any}();
     np = length(psc.ports)
     portpositive = [p.positivenode - 1 for p in psc.ports]
     portnegative = [p.negativenode - 1 for p in psc.ports]
-    portimpedances = [transientreal(nm.portimpedances[k], "the impedance of port $(psc.ports[k].number)") for k in 1:np]
+    # the matrices list the impedances by port number, the problem by
+    # compiled port, as it lists the terminals and the terminations
+    portimpedances = [transientreal(nm.portimpedances[findfirst(==(psc.ports[k].number), nm.portnumbers)],
+        "the impedance of port $(psc.ports[k].number)") for k in 1:np]
     all(>(0), portimpedances) || throw(ArgumentError("port reference impedances must be positive."))
     portconductances = [p.environment == 0 ? 0.0 : 1/vvn[p.environment] for p in psc.ports]
 
@@ -674,24 +677,60 @@ function transientfloatingcomponents(psc::CompiledCircuit, vvn::Vector)
 end
 
 """
-    transientstate(problem; flux = zeros(...), voltage = zeros(...))
+    TransientState
 
-The initial state of a transient from the node fluxes in Weber and the
-node voltages in Volts, in the compiled node order without ground: the
-pair `(x, v)` of the scaled fluxes `flux/phi0`, augmented with the
-auxiliary currents the coupled inductors' constitutive equations imply,
-in the problem's fixed units `Lscale*i/phi0`, and normalized into the
-gauge of the floating subnetworks, and of the scaled flux rates
-`voltage/phi0` with the auxiliary rates the same equations imply. The
-default is the zero state. A state does not depend on the step, so the
-final state of one solve starts another at any step.
-[`transientsolve`](@ref) checks that a state satisfies the algebraic
-equations of the circuit at the start; it does not project one that does
-not. With transmission lines the state has a third member, `waves`, the
-wave leaving each port of each line in sqrt(W), two per line in compiled
-order, from the port voltages and `linecurrents`, the direct current
-into the first port of each line, zero by default; before the start the
-lines carry those waves unchanged.
+The state a transient starts from or ends at, in the solver's units: the
+scaled node fluxes `flux/phi0` with the auxiliary currents of the coupled
+inductors and the scattering blocks appended in the problem's fixed units
+`Lscale*i/phi0`, their rates, the history of the wave leaving each port
+of each transmission line in sqrt(W), two per line in compiled order, as
+the columns of `waves` at the spacing `wavesdt` ending at the start, or a
+single column the lines carry unchanged before the start, and the states
+of the rational blocks. Built by [`transientstate`](@ref), from the
+physical node fluxes and voltages of a problem or from the end of a
+solution, and given to [`transientsolve`](@ref) as `initialstate`, which
+takes nothing else, since a bare pair of arrays does not say which units
+it is in. A state does not depend on the step: a history recorded at one
+step is read at another through the same interpolation the lines read
+their history with.
+"""
+struct TransientState{V}
+    flux::V
+    rate::V
+    waves::Matrix{Float64}
+    wavesdt::Float64
+    blockstates::Vector{Float64}
+end
+
+Base.:(==)(a::TransientState, b::TransientState) = a.flux == b.flux && a.rate == b.rate && a.waves == b.waves &&
+    a.wavesdt == b.wavesdt && a.blockstates == b.blockstates
+
+"""
+    transientstate(problem; flux = zeros(...), voltage = zeros(...),
+        linecurrents = zeros(...))
+    transientstate(solution)
+
+The initial state of a transient, a [`TransientState`](@ref), from the
+node fluxes in Weber and the node voltages in Volts, in the compiled node
+order without ground: the scaled fluxes `flux/phi0`, augmented with the
+auxiliary currents the coupled inductors' constitutive equations imply
+and normalized into the gauge of the floating subnetworks, and the scaled
+flux rates `voltage/phi0` with the auxiliary rates the same equations
+imply. The default is the zero state. [`transientsolve`](@ref) checks
+that a state satisfies the algebraic equations of the circuit at the
+start; it does not project one that does not. With transmission lines
+the waves leaving the ports of each line come from the port voltages and
+`linecurrents`, the direct current into the first port of each line,
+zero by default; before the start the lines carry those waves unchanged.
+
+From a solution, the state at its end, to start another solve from: its
+final fluxes and rates, the recorded waves leaving each line port over
+the delay window before the end, which is what the lines read after the
+start, so a continuation is the uninterrupted solve to the solver's
+tolerance at the same step and to the interpolation of the history at
+another, and the final states of the rational blocks, which need
+`record = :states`. A record without the line waves, checkpoints with
+the history kept at each of them, cannot be continued from.
 """
 function transientstate(p::TransientProblem; flux = zeros(p.Nnodal), voltage = zeros(p.Nnodal),
         linecurrents = zeros(length(p.lines)))
@@ -744,16 +783,44 @@ function transientstate(p::TransientProblem; flux = zeros(p.Nnodal), voltage = z
         waves[2l - 1] = (vp[1]/sqrt(line.Z) + sqrt(line.Z)*linecurrents[l])/2
         waves[2l] = (vp[2]/sqrt(line.Z) - sqrt(line.Z)*linecurrents[l])/2
     end
-    return (x = xr, v = real.(vc), waves = waves, states = zs)
+    return TransientState(xr, real.(vc), reshape(waves, :, 1), 0.0, zs)
 end
 
 # the initial states of the rational blocks of a state, zero when the
 # state has none
-initialblockstates(state, p::TransientProblem) = length(state) >= 4 ? Float64.(collect(state[4])) : zeros(blockstates(p))
+initialblockstates(state::TransientState, p::TransientProblem) = isempty(state.blockstates) ? zeros(blockstates(p)) : Float64.(collect(state.blockstates))
 
-# the initial waves of a state, zero for a circuit without lines and
-# for a state without them
-initialwaves(state, p::TransientProblem) = length(state) >= 3 ? Float64.(collect(state[3])) : zeros(2length(p.lines))
+# The history of the waves leaving the line ports before the start, the
+# `npre` columns at the step `h` a solve reads, from a state: a single
+# column carried unchanged, a history at the same step as it is, its
+# earliest column repeated before it begins, and a history at another
+# step read at the columns' times through the same stencil the lines
+# read their history with. Zero for a circuit without lines.
+function initialwaves(state::TransientState, p::TransientProblem, h, npre::Int)
+    nl = 2length(p.lines)
+    out = zeros(nl, npre)
+    (nl == 0 || isempty(state.waves)) && return out
+    w = state.waves
+    size(w, 1) == nl || throw(DimensionMismatch(lazy"the state needs $(nl) line waves; use transientstate."))
+    nh = size(w, 2)
+    if nh == 1 || state.wavesdt <= 0
+        out .= view(w, :, nh)
+    elseif state.wavesdt == h
+        for c in 1:npre
+            out[:, c] .= view(w, :, max(nh - (npre - c), 1))
+        end
+    else
+        weights = zeros(6)
+        tpre = -(nh - 1)*state.wavesdt
+        for c in 1:npre
+            first, nst = linestencil!(weights, -(npre - c)*h, tpre, state.wavesdt, nh)
+            for k in 1:nst
+                out[:, c] .+= weights[k] .* view(w, :, first + k)
+            end
+        end
+    end
+    return out
+end
 
 # the current each line port forces into its node from the far port's
 # wave a delay earlier, `2 q / sqrt(Z)` in Amperes, for the waves `q`
@@ -762,3 +829,31 @@ lineforcing(p::TransientProblem, q) = [2q[k]/sqrt(p.lines[(k + 1) ÷ 2].Z) for k
 # the waves arriving at the ports before the start: the far ports'
 # initial waves, which the lines carry unchanged
 arrivingwaves(p::TransientProblem, waves) = [waves[isodd(k) ? k + 1 : k - 1] for k in eachindex(waves)]
+
+# The waves arriving at the line ports at the start of a solve, at the
+# time `t` after it, from a state's own history at its own step: the far
+# port's wave a delay earlier, read with the same stencil the lines read
+# theirs with, and the far port's single wave for a constant history.
+# The check of the algebraic equations reads these, so a state is judged
+# against the history it carries; the interpolation which resamples that
+# history onto another step is an error of the continuation and not an
+# inconsistency of the state.
+function initialarrivals(state::TransientState, p::TransientProblem, t = 0.0)
+    nl = 2length(p.lines)
+    q = zeros(nl)
+    (nl == 0 || isempty(state.waves)) && return q
+    w = state.waves
+    nh = size(w, 2)
+    (nh == 1 || state.wavesdt <= 0) && return arrivingwaves(p, view(w, :, nh))
+    weights = zeros(6)
+    tpre = -(nh - 1)*state.wavesdt
+    for (l, line) in enumerate(p.lines), e in 1:2
+        row = 2(l - 1) + e
+        far = isodd(row) ? row + 1 : row - 1
+        first, nst = linestencil!(weights, t - line.delay, tpre, state.wavesdt, nh)
+        for k in 1:nst
+            q[row] += weights[k]*w[far, first + k]
+        end
+    end
+    return q
+end

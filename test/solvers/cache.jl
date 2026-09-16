@@ -18,11 +18,11 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
             ("P1","1","0",1), ("R1","1","0",50.0), ("C1","1","2",Cc),
             ("Lj1","2","0",Lj), ("C2","2","0",1000e-15)]
         p = (Lj = 1000.0e-12, Cc = 100.0e-15)
-        cache = hbcache(wp, (8,), src, make, p; ftol = 1e-12)
+        cache = hbcache(wp, (8,), src, make, p; atol = 1e-12)
         nl = hbsolve!(cache, p; warmstart = false)
         @test cache.converged
         @test cache.nsolves == 1
-        ref = hbnlsolve(wp, (8,), src, make(; p...); ftol = 1e-12,
+        ref = hbnlsolve(wp, (8,), src, make(; p...); atol = 1e-12,
             keyedarrays = false)
         @test isapprox(vec(collect(nl.nodeflux)),
             vec(collect(ref.nodeflux)); rtol = 1e-8)
@@ -40,7 +40,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         p2 = (Lj = 1050.0e-12, Cc = 100.0e-15)
         n2 = hbsolve!(cache, p2)
         @test cache.converged
-        ref2 = hbnlsolve(wp, (8,), src, make(; p2...); ftol = 1e-12,
+        ref2 = hbnlsolve(wp, (8,), src, make(; p2...); atol = 1e-12,
             keyedarrays = false)
         @test isapprox(vec(collect(n2.nodeflux)),
             vec(collect(ref2.nodeflux)); rtol = 1e-6)
@@ -61,7 +61,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         @test cache.reuse.preconditioner === pc
         @test cache.reuse.krylov[] === kv
         ref3 = hbnlsolve(wp, (8,), src, make(; Lj = 975.0e-12,
-            Cc = 110.0e-15); ftol = 1e-12, keyedarrays = false)
+            Cc = 110.0e-15); atol = 1e-12, keyedarrays = false)
         @test isapprox(vec(collect(n3.nodeflux)),
             vec(collect(ref3.nodeflux)); rtol = 1e-8)
         @test isapprox(Array(n3.S), Array(ref3.S); rtol = 1e-8)
@@ -70,18 +70,18 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         # values, not of the first point: the operating point of a cached
         # solve matches a cold one, and a direct Newton cache converges
         # like a cold solve
-        opc = hbcache(wp, (8,), src, make, p; ftol = 1e-12,
+        opc = hbcache(wp, (8,), src, make, p; atol = 1e-12,
             returnoperatingpoint = true)
         hbsolve!(opc, p; warmstart = false)
         o2 = hbsolve!(opc, p2).operatingpoint
-        r2 = hbnlsolve(wp, (8,), src, make(; p2...); ftol = 1e-12,
+        r2 = hbnlsolve(wp, (8,), src, make(; p2...); atol = 1e-12,
             keyedarrays = false, returnoperatingpoint = true).operatingpoint
         @test isapprox(o2.jacobian, r2.jacobian; rtol = 1e-8)
         @test norm(o2.jacobian - r2.jacobian) < 1e-8*norm(r2.jacobian)
-        nc = hbcache(wp, (8,), src, make, p; ftol = 1e-12, method = Newton())
+        nc = hbcache(wp, (8,), src, make, p; atol = 1e-12, method = Newton())
         hbsolve!(nc, p; warmstart = false)
         nn = hbsolve!(nc, p2; warmstart = false)
-        rn = hbnlsolve(wp, (8,), src, make(; p2...); ftol = 1e-12,
+        rn = hbnlsolve(wp, (8,), src, make(; p2...); atol = 1e-12,
             keyedarrays = false, method = Newton())
         @test isapprox(vec(collect(nn.nodeflux)),
             vec(collect(rn.nodeflux)); rtol = 1e-10)
@@ -117,7 +117,7 @@ isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircui
         end
         # what the cache does anyway is accepted
         @test hbcache(wp, (8,), src, make, p; keyedarrays = false) isa JosephsonCircuits.HBCache
-        loose = hbcache(wp, (8,), src, make, p; ftol = 1e-2, iterations = 2)
+        loose = hbcache(wp, (8,), src, make, p; atol = 1e-2, iterations = 2)
         hbsolve!(loose, p; warmstart = false)
         @test loose.nsolves == 1
         @test sum(st.iterations for st in

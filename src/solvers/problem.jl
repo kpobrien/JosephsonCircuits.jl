@@ -332,7 +332,7 @@ Krylov.gmres(J, -F; N = preconditioner(prob, u), atol = 0.0)
 
     Krylov.jl defaults to `atol = sqrt(eps())`, about 1.5e-8, which is
     sensible standalone and wrong here. This package's own `gmres!`
-    defaults to `atol = 0.0`, and `nlsolvekrylov!` passes `ftol/10`, tying
+    defaults to `atol = 0.0`, and `nlsolvekrylov!` passes `atol/10`, tying
     the floor to the nonlinear tolerance rather than to machine epsilon.
 """
 struct JacobianOperator{P<:HBNonlinearProblem,U<:AbstractVector}

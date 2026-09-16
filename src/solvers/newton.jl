@@ -314,7 +314,7 @@ function solveonbackend!(fj!::Function, F::AbstractVector, J,
 end
 
 """
-    nlsolve!(fj!, F, J, x; iterations = 1000, ftol = 1e-8, rtol = 0.0,
+    nlsolve!(fj!, F, J, x; iterations = 1000, atol = 1e-8, rtol = 0.0,
         factorization = KLUfactorization(), label = "", c1 = 1e-4,
         safeguard_low = 0.1, safeguard_high = 0.5, maxbacktracks = 10,
         maxbacktrackfailures = 2, andersondepth = 5, andersonbeta = 1.0,
@@ -349,9 +349,9 @@ solve) only the linear line search runs.
 
 # Keywords
 - `iterations = 1000`: the maximum number of Newton iterations.
-- `ftol = 1e-8`: converged when `norm(F) <= ftol`.
+- `atol = 1e-8`: converged when `norm(F) <= atol`.
 - `rtol = 0.0`: a relative tolerance; the effective tolerance is
-    `max(ftol, rtol*norm(F0))` with `F0` the initial residual.
+    `max(atol, rtol*norm(F0))` with `F0` the initial residual.
 - `factorization = KLUfactorization()`: the sparse factorization of `J`.
 - `label = ""`: label for the returned `IterationInfo`.
 - `c1 = 1e-4`: Armijo sufficient-decrease constant, in (0, 1/2); the
@@ -376,7 +376,7 @@ residual history projects no convergence within the remaining budget,
 [`projectedstall`](@ref)); see [`stallmessage`](@ref).
 """
 function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
-    x::AbstractVector{T}; iterations = 1000, ftol = 1e-8, rtol = 0.0,
+    x::AbstractVector{T}; iterations = 1000, atol = 1e-8, rtol = 0.0,
     factorization = KLUfactorization(), label = "",
     c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5,
     maxbacktracks::Integer = 10, maxbacktrackfailures::Integer = 2,
@@ -415,8 +415,8 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     if iterations < 0
         throw(ArgumentError(lazy"`iterations` = $(iterations) must be nonnegative."))
     end
-    if !(ftol >= 0)
-        throw(ArgumentError(lazy"`ftol` = $(ftol) must be nonnegative."))
+    if !(atol >= 0)
+        throw(ArgumentError(lazy"`atol` = $(atol) must be nonnegative."))
     end
     # for the exact Newton step dϕ0 = -2ϕ0, so the full-step Armijo bound
     # is (1 - 2c1)ϕ0: any c1 >= 1/2 makes full-step acceptance impossible
@@ -481,10 +481,10 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
         # convergence is decided on each fresh residual before the Jacobian
         # is refreshed and no Jacobian is ever evaluated at a final point.
         # `rtol` adds the relative test beside the absolute one, satisfied
-        # when either holds; at `rtol = 0` the tolerance is exactly `ftol`
+        # when either holds; at `rtol = 0` the tolerance is exactly `atol`
         # and nothing already measured moves. See `nlsolvekrylov!`.
         residual!(F, x)
-        if !tracestart!(tr, F, ftol, rtol)
+        if !tracestart!(tr, F, atol, rtol)
             # only a point from which a step will be taken needs a Jacobian.
             fj!(nothing, J, x)
             tryfactorize!(cache, factorization, J)

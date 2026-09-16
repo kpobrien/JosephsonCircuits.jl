@@ -82,11 +82,9 @@ using JosephsonCircuits
 problem = transientproblem(circuit; sources = [TransientSource(1, pump)])
 n, T = 20000, 100e-9
 solution = transientsolve(problem, (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
-measurement = transientquantumplan(solution.times, [5e9]; ports = [2])
-inputs = transientquantumplan(solution.times, [5e9]; ports = [1])
-df = 1/T
-frequencies = collect(df:df:25e9)   # a grid to refine, not a prescription
-noise = transientnoise(solution, measurement; frequencies, weights = fill(df, length(frequencies)), inputs)
+measurement = transientquantumplan(solution, solution.times, [5e9]; ports = [2])
+inputs = transientquantumplan(solution, solution.times, [5e9]; ports = [1])
+noise = transientnoise(solution, measurement; inputs)
 
 noise.diagnostics
 noise.covariance          # the symmetrized output covariance
@@ -94,6 +92,19 @@ noise.commutator          # the propagated bath commutator
 noise.expectedcommutator  # the measurement's own mode algebra
 noise.gain                # the incremental quadrature response to the inputs
 ```
+
+The bath is periodic over the record by default: every positive Fourier
+bin `k/T` of its duration `T` with the weight `1/T`, up to the record's
+Nyquist frequency, which is the complete bath of the recorded steps. Its
+cost grows with the frequency count: the adjoint method contracts a sum
+per bath, frequency and time, and the stationary prehistory of the
+baths is one factorization of the stationary operator per frequency and
+distinct initial state, so the complete bath of a long record is not
+cheap. A `cutoff` in Hz bounds it, and `frequencies` with `weights`
+replace it, which is what a circuit with loss spread along a line wants:
+a few bands around the tones and their idlers at the resolution of the
+window; the forward method, two directions per bath and frequency,
+wants a cutoff always.
 
 `method = :adjoint`, the default, propagates the measured quadratures
 backward through [`transientadjoint`](@ref): its derivatives with

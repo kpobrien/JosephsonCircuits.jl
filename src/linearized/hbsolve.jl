@@ -204,7 +204,7 @@ end
 # Docstring fragments shared by `hbsolve`, `hbnlsolve` and `hblinsolve`, so
 # that one keyword is described in one place.
 const _DOC_FTOL = """
-- `ftol = 1e-8`: the residual tolerance `norm(F) <= ftol` at which the
+- `atol = 1e-8`: the residual tolerance `norm(F) <= atol` at which the
     nonlinear solution is considered converged. `F` is scaled by `Z0/w0`;
     see [`calcsolverscale`](@ref). A tolerance below the rounding error of
     the scaled source, which a circuit whose interior is far from its port
@@ -225,7 +225,7 @@ const _DOC_METHOD = """
 
 const _DOC_NLKWARGS = """
 - `rtol = 0.0`: a relative residual tolerance; the solve is converged when
-    `norm(F) <= max(ftol, rtol*norm(F0))` with `F0` the initial residual.
+    `norm(F) <= max(atol, rtol*norm(F0))` with `F0` the initial residual.
 - `x0 = nothing`: an initial value for the node fluxes, either of the node
     flux length or of the full augmented length including the auxiliary
     variables of the modified nodal analysis formulation. `x0`, `rtol`,
@@ -392,7 +392,7 @@ end
         Nevaluationharmonics = map(i -> 2i, Npumpharmonics),
         frequencywindow = (0, Inf),
         maxmodulationharmonics = Nmodulationharmonics,
-        iterations = 1000, ftol = 1e-8, method = NewtonKrylov(),
+        iterations = 1000, atol = 1e-8, method = NewtonKrylov(),
         x0 = nothing,
         symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
         sorting = :number, returnS = true, returnSnoise = false,
@@ -419,7 +419,7 @@ and one gauge fixing equation per floating inductive or Josephson
 subnetwork and zero frequency mode makes circuits with no inductive path
 to ground solvable without workaround inductors (see `src/circuit/mna.jl`). The
 nonlinear system is nondimensionalized by the scale `Z0/w0` (see
-[`calcsolverscale`](@ref)), so `ftol` does not depend on the unit system.
+[`calcsolverscale`](@ref)), so `atol` does not depend on the unit system.
 The returned node fluxes and voltages contain only the node coordinates,
 not the auxiliary variables. The linearized solve throws an
 `ArgumentError` when any signal plus pump mode frequency is numerically
@@ -456,7 +456,10 @@ nonzero frequencies instead.
     component value is numeric.
 
 # Keywords
-- `dc = false`: retain the zero frequency mode in the nonlinear solve.
+- `dc = false`: retain the zero frequency mode in the nonlinear solve. A
+    `CurrentSource` component of the netlist is a constant current, out
+    of its first terminal and into its second, which drives this mode; a
+    nonzero one without the mode is an error.
 - `threewavemixing = false`: retain the even pump harmonics, which are
     what three wave mixing processes couple through.
 - `fourwavemixing = true`: retain the odd pump harmonics.
@@ -573,7 +576,7 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     maxpumpharmonics = nothing,
     frequencywindow = (0, Inf),
     maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
-    iterations = 1000, ftol = 1e-8, switchofflinesearchtol = nothing,
+    iterations = 1000, atol = 1e-8, ftol = nothing, switchofflinesearchtol = nothing,
     alphamin = nothing, method::AbstractHBNonlinearSolver = NewtonKrylov(),
     x0 = nothing, symfreqvar = nothing, nbatches = Base.Threads.nthreads(),
     returnS::Bool = true, returnSnoise::Bool = false,
@@ -598,6 +601,10 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     # took when the sampling grid became `Nevaluationharmonics`.
     if !isnothing(maxpumpharmonics)
         Base.depwarn(lazy"The `maxpumpharmonics` kwarg is deprecated and no longer used. `Npumpharmonics` is the retained set of pump modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions.", :hbsolve; force=true)
+    end
+    if !isnothing(ftol)
+        Base.depwarn(lazy"The `ftol` kwarg is deprecated: the absolute residual tolerance is `atol` in every solver of the package. Please use `atol` to avoid errors in future versions.", :hbsolve; force=true)
+        atol = ftol
     end
 
     all(map(>=, Nevaluationharmonics, Npumpharmonics)) || throw(ArgumentError(
@@ -634,7 +641,7 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     nonlinear = if method isa Staged
         stagedhbnlsolve(method, wp, Npumpharmonics, sources, psc, cg,
             circuitdefs;
-            iterations = iterations, ftol = ftol,
+            iterations = iterations, atol = atol,
             Nevaluationharmonics = Nevaluationharmonics,
             maxintermodorder = maxpumpintermodorder,
             frequencywindow = frequencywindow,
@@ -650,7 +657,7 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
             backend = backend)
     else
         hbnlsolve(wp, sources, freq, indices, psc, cg, nm;
-            iterations = iterations, x0 = initialguess(x0), ftol = ftol,
+            iterations = iterations, x0 = initialguess(x0), atol = atol,
             switchofflinesearchtol = switchofflinesearchtol,
             alphamin = alphamin, method = method,
             symfreqvar = symfreqvar, keyedarrays = keyedarrays,

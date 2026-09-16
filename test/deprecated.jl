@@ -76,4 +76,17 @@ using Test
         end
     end
 
+    @testset "ftol is atol" begin
+        circuit = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12), ("Lj1", "1", "0", 1e-9)]
+        wp = (2pi*5e9,)
+        src = [(mode = (1,), port = 1, current = 1e-8)]
+        old = @test_logs (:warn,) hbnlsolve(wp, (2,), src, circuit; ftol = 1e-10, keyedarrays = false)
+        new = hbnlsolve(wp, (2,), src, circuit; atol = 1e-10, keyedarrays = false)
+        @test old.nodeflux == new.nodeflux
+        ws = 2pi*[4e9]
+        olds = @test_logs (:warn,) hbsolve(ws, wp, src, (1,), (2,), circuit; ftol = 1e-10, keyedarrays = false)
+        news = hbsolve(ws, wp, src, (1,), (2,), circuit; atol = 1e-10, keyedarrays = false)
+        @test olds.linearized.S == news.linearized.S
+    end
+
 end

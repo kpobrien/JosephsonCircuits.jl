@@ -1457,7 +1457,7 @@ using Test
         # a capacitor and the junction: the junction goes through the
         # operating point's own residual term, which is a different path
         sens(c, m) = hbsolve(wsens, wpsens, srcsens, (8,), (16,), c;
-            keyedarrays = false, ftol = 1e-13,
+            keyedarrays = false, atol = 1e-13,
             sensitivitynames = ["cc", "jj"],
             returnSsensitivity = true, sensitivityoperatingpoint = true,
             sensitivitymode = m).linearized.Ssensitivity
@@ -1472,7 +1472,7 @@ using Test
             norm = v -> maximum(abs, v))
         # central finite differences of a relative perturbation
         S(c) = hbsolve(wsens, wpsens, srcsens, (8,), (16,), c;
-            keyedarrays = false, ftol = 1e-13).linearized.S
+            keyedarrays = false, atol = 1e-13).linearized.S
         h = 1e-6
         fd = (S(blockjpa(Cc0*(1+h))) .- S(blockjpa(Cc0*(1-h))))./(2*h)
         @test isapprox(fwd[:,:,1,:], fd; rtol = 1e-6,
@@ -1823,9 +1823,9 @@ using Test
             (:hemt, 3, 5, hemt), (:p2, 5, 0, Port(2; Z0 = Z0))])
         fp, fs, ip = 4.75e9, 4.7e9, 0.00565e-6
         alone = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)],
-            (8,), (16,), jpa; ftol = 1e-14, returnCnoise = true)
+            (8,), (16,), jpa; atol = 1e-14, returnCnoise = true)
         both = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)],
-            (8,), (16,), chain; ftol = 1e-14, returnCnoise = true)
+            (8,), (16,), chain; atol = 1e-14, returnCnoise = true)
         @test all(x -> isapprox(abs(x), 1.0; atol = 1e-8), both.linearized.CM)
         Ga = abs2(alone.linearized.S((0,), 1, (0,), 1, 1))
         # the noise leaving the signal mode of a port: every input mode of
@@ -2016,7 +2016,7 @@ end
         # a band which does not contain the pump, where a signal solve is
         # degenerate
         ws = 2pi*collect(range(4.5e9, 5.0e9; length = 12))
-        sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; ftol = 1e-14)
+        sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; atol = 1e-14)
         blk = LinearizedScattering(sol.linearized, 2pi*fp)
         @test blk.harmonics == collect(0:2:16)
         @test all(p -> p isa JC.PiecewiseTabulatedProvider && all(t -> t.extrapolation == :zero, p.tables), blk.providers)
@@ -2032,13 +2032,13 @@ end
             (:line, 2, 3, TransmissionLine(Z0, len; vp = vp))]
         cj = Circuit(vcat(front, [(:cc, 3, 4, Capacitor(100.0e-15)), (:jj, 4, 0, JosephsonJunction(1000.0e-12)),
             (:cj, 4, 0, Capacitor(1000.0e-15))]))
-        sj = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip/g)], (8,), (16,), cj; ftol = 1e-14)
+        sj = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip/g)], (8,), (16,), cj; atol = 1e-14)
         cb = Circuit(vcat(front, [(:b, 3, LinearizedScattering(sol.linearized, 2pi*fp; phase = -2pi*fp*tau))]))
         sb = hbsolve(ws, (2pi*fp,), [], (8,), (16,), cb)
         @test maximum(abs, S(sb) .- S(sj)) < 1e-8
         # the phase keyword is the phase of the pump: a source of that
         # phase rotates the conversion entries the same way
-        solp = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip*cis(0.4))], (8,), (16,), jpa; ftol = 1e-14)
+        solp = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip*cis(0.4))], (8,), (16,), jpa; atol = 1e-14)
         sp = hbsolve(ws, (2pi*fp,), [], (8,), (16,),
             Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, LinearizedScattering(sol.linearized, 2pi*fp; phase = 0.4))]))
         @test maximum(abs, S(sp) .- S(solp)) < 1e-9
@@ -2046,12 +2046,12 @@ end
         # block's, and a solve of several pumps is not one pump
         lossy = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:cc, 1, 2, Capacitor(100.0e-15)),
             (:jj, 2, 0, JosephsonJunction(1000.0e-12)), (:cj, 2, 0, Capacitor(1000.0e-15)), (:r, 2, 0, Resistor(2.0e4))])
-        soll = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), lossy; ftol = 1e-14)
+        soll = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), lossy; atol = 1e-14)
         @test_throws ArgumentError LinearizedScattering(soll.linearized, 2pi*fp)
         @test_throws ArgumentError LinearizedScattering(sol.linearized, 2pi*fp; ports = [2])
         @test_throws ArgumentError LinearizedScattering(sol.linearized, 2pi*fp; noise = Passive())
         # the data must be keyed
-        plain = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; ftol = 1e-14, keyedarrays = false)
+        plain = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; atol = 1e-14, keyedarrays = false)
         @test_throws ArgumentError LinearizedScattering(plain.linearized, 2pi*fp)
     end
 
@@ -2061,7 +2061,7 @@ end
         chain = Circuit(vcat([(:p1, 1, 0, Port(1; Z0 = Z0)), (:c1, 1, 0, Capacitor(40e-15))], cells, [(:p2, 5, 0, Port(2; Z0 = Z0))]))
         fp, ip = 7.0e9, 0.6e-6
         ws = 2pi*collect(range(5.0e9, 6.0e9; length = 7))
-        sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (6,), (12,), chain; ftol = 1e-14)
+        sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (6,), (12,), chain; atol = 1e-14)
         blk = LinearizedScattering(sol.linearized, 2pi*fp)
         @test blk.nports == 2 && blk.harmonics == collect(0:2:12)
         alone = hbsolve(ws, (2pi*fp,), [], (6,), (12,),
@@ -2073,7 +2073,7 @@ end
         after = [(:line, 5, 6, TransmissionLine(Z0, 0.03)), (:pad, 6, 7, ScatteringParameters([0.0 g; g 0.0]; zref = Z0)),
             (:p2, 7, 0, Port(2; Z0 = Z0))]
         sj = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (6,), (12,),
-            Circuit(vcat([(:p1, 1, 0, Port(1; Z0 = Z0)), (:c1, 1, 0, Capacitor(40e-15))], cells, after)); ftol = 1e-14)
+            Circuit(vcat([(:p1, 1, 0, Port(1; Z0 = Z0)), (:c1, 1, 0, Capacitor(40e-15))], cells, after)); atol = 1e-14)
         sb = hbsolve(ws, (2pi*fp,), [], (6,), (12,),
             Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 5, blk), after...]))
         @test maximum(abs, S(sb) .- S(sj)) < 1e-12
@@ -2089,7 +2089,7 @@ end
         # pump
         mixed = Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 2, blk), (:cc, 2, 3, Capacitor(100.0e-15)),
             (:jj, 3, 0, JosephsonJunction(1000.0e-12)), (:cj, 3, 0, Capacitor(1000.0e-15))])
-        sm = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = 1.0e-9)], (6,), (12,), mixed; ftol = 1e-12)
+        sm = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = 1.0e-9)], (6,), (12,), mixed; atol = 1e-12)
         @test all(x -> isapprox(abs(x), 1.0; atol = 1e-10), sm.linearized.CM)
     end
 
@@ -2107,7 +2107,7 @@ end
             (:jj, 2, 0, JosephsonJunction(1000.0e-12)), (:cj, 2, 0, Capacitor(1000.0e-15)), (:r, 2, 0, Resistor(2.0e4))])
         fp, ip = 4.75e9, 0.00565e-6
         ws = 2pi*collect(range(4.5e9, 5.0e9; length = 12))
-        sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), lossy; ftol = 1e-14, returnCnoise = true)
+        sol = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), lossy; atol = 1e-14, returnCnoise = true)
         # without its noise the device is refused as not lossless, and
         # with too little of it as violating the commutation relations
         @test_throws ArgumentError LinearizedScattering(sol.linearized, 2pi*fp)
@@ -2131,7 +2131,7 @@ end
             (:line, 2, 3, TransmissionLine(Z0, len; vp = vp))]
         cj = Circuit(vcat(front, [(:cc, 3, 4, Capacitor(100.0e-15)), (:jj, 4, 0, JosephsonJunction(1000.0e-12)),
             (:cj, 4, 0, Capacitor(1000.0e-15)), (:r, 4, 0, Resistor(2.0e4))]))
-        sj = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip/g)], (8,), (16,), cj; ftol = 1e-14, returnCnoise = true)
+        sj = hbsolve(ws, (2pi*fp,), [(mode = (1,), port = 1, current = ip/g)], (8,), (16,), cj; atol = 1e-14, returnCnoise = true)
         blkp = LinearizedScattering(sol.linearized, 2pi*fp; noise = NoiseCovariance(sol.linearized.Cnoise), phase = -2pi*fp*tau)
         sb = hbsolve(ws, (2pi*fp,), [], (8,), (16,), Circuit(vcat(front, [(:b, 3, blkp)])); returnCnoise = true)
         @test d(sb.linearized.S, sj.linearized.S) < 1e-8
@@ -2146,7 +2146,7 @@ end
         fp2, ip2 = 7.0e9, 0.6e-6
         ws2 = 2pi*collect(range(5.0e9, 6.0e9; length = 5))
         s2 = hbsolve(ws2, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
-            Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); ftol = 1e-14, returnCnoise = true)
+            Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); atol = 1e-14, returnCnoise = true)
         blk2 = LinearizedScattering(s2.linearized, 2pi*fp2; noise = NoiseCovariance(s2.linearized.Cnoise))
         alone2 = hbsolve(ws2, (2pi*fp2,), [], (6,), (12,),
             Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 2, blk2), (:p2, 2, 0, Port(2; Z0 = Z0))]); returnCnoise = true)
@@ -2155,7 +2155,7 @@ end
         after = [(:line, 5, 6, TransmissionLine(Z0, 0.03)), (:pad, 6, 7, ScatteringParameters([0.0 g; g 0.0]; zref = Z0)),
             (:p2, 7, 0, Port(2; Z0 = Z0))]
         sj2 = hbsolve(ws2, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
-            Circuit(vcat(head, cells, after)); ftol = 1e-14, returnCnoise = true)
+            Circuit(vcat(head, cells, after)); atol = 1e-14, returnCnoise = true)
         sb2 = hbsolve(ws2, (2pi*fp2,), [], (6,), (12,),
             Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, 5, blk2), after...]); returnCnoise = true)
         @test d(sb2.linearized.Cnoise, sj2.linearized.Cnoise) < 1e-9
@@ -2164,7 +2164,7 @@ end
         # the covariance must come from the same solve as the scattering
         # matrix, and from one which returned it
         other = hbsolve(ws2, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
-            Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); ftol = 1e-14)
+            Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); atol = 1e-14)
         @test_throws ArgumentError LinearizedScattering(s2.linearized, 2pi*fp2; noise = NoiseCovariance(sol.linearized.Cnoise))
         @test_throws ArgumentError LinearizedScattering(other.linearized, 2pi*fp2; noise = NoiseCovariance(other.linearized.Cnoise))
         # the same device solved behind a line, fitted with the line's
@@ -2177,9 +2177,9 @@ end
         len3, vp3 = 0.03, 2.0e8
         ws3 = 2pi*collect(range(5.0e9, 6.0e9; length = 21))
         s3 = hbsolve(ws3, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
-            Circuit(vcat(head, cells, [(:line, 5, 6, TransmissionLine(Z0, len3; vp = vp3)), (:p2, 6, 0, Port(2; Z0 = Z0))])); ftol = 1e-14, returnCnoise = true)
+            Circuit(vcat(head, cells, [(:line, 5, 6, TransmissionLine(Z0, len3; vp = vp3)), (:p2, 6, 0, Port(2; Z0 = Z0))])); atol = 1e-14, returnCnoise = true)
         bare = hbsolve(ws3, (2pi*fp2,), [(mode = (1,), port = 1, current = ip2)], (6,), (12,),
-            Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); ftol = 1e-14, returnCnoise = true)
+            Circuit(vcat(head, cells, [(:p2, 5, 0, Port(2; Z0 = Z0))])); atol = 1e-14, returnCnoise = true)
         blk3 = LinearizedScattering(s3.linearized, 2pi*fp2; noise = NoiseCovariance(s3.linearized.Cnoise))
         fit3 = RationalScattering(blk3, 20; band = (4.5e9, 9.5e9), delays = [0.0, len3/vp3], tol = 0.1, noisetol = 0.1)
         @test fit3.noise isa NoiseCovariance && fit3.noise.completed && fit3.atol == blk3.atol && fit3.noise.atol == blk3.noise.atol

@@ -263,7 +263,7 @@ end
         # prose. A docstring which names no definition of its own has
         # drifted from what it documents and is not accepted.
         deprecated = ("switchofflinesearchtol", "alphamin", "maxharmonics",
-            "maxpumpharmonics", "returnZ",
+            "maxpumpharmonics", "ftol", "returnZ",
             "returnZadjoint", "returnZsensitivity", "returnZsensitivityadjoint",
             "sensitivitypairs", "sensitivityblockpairs",
             "nsensitivityparameters", "sensitivitylabels")

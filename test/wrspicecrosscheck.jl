@@ -51,7 +51,7 @@ using XicTools_jll
             ds = transientdemodulate(spice, 1, w/(2pi))
             @test abs(dn - ds) < 0.02*abs(dn)
             # the I/Q measurement reads the WRSPICE traces unchanged
-            plan = transientiqplan(spice.times, [w/(2pi)]; duration = 1e-9)
+            plan = transientiqplan(spice, spice.times, [w/(2pi)]; duration = 1e-9)
             zn = transientiq(plan, native.outgoing)
             zs = transientiq(plan, spice.outgoing)
             @test maximum(abs, zn .- zs) < 0.02*maximum(abs, zn)

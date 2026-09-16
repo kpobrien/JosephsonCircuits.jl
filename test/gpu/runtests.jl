@@ -180,7 +180,7 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             ("C4","4","0",Cg), ("R2","4","0",50.0)]
         p0 = (Lj = 100e-12, Cg = 40e-15)
         cache = hbcache((w1,), (8,), src1, make, p0;
-            backend = CUDABackend(), ftol = 1e-10)
+            backend = CUDABackend(), atol = 1e-10)
         hbsolve!(cache, p0)
         @test cache.converged
         pm = cache.reuse.sys.phimatrix
@@ -189,9 +189,9 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             @test cache.converged
             @test cache.reuse.sys.phimatrix === pm
             fresh = hbnlsolve((w1,), (8,), src1, make(; Lj = Lj, Cg = Cg);
-                backend = CUDABackend(), ftol = 1e-10, keyedarrays = false)
+                backend = CUDABackend(), atol = 1e-10, keyedarrays = false)
             host = hbnlsolve((w1,), (8,), src1, make(; Lj = Lj, Cg = Cg);
-                ftol = 1e-10, keyedarrays = false)
+                atol = 1e-10, keyedarrays = false)
             @test agree(s.nodeflux, fresh.nodeflux; rtol = 1e-7)
             @test agree(s.nodeflux, host.nodeflux; rtol = 1e-7)
         end
@@ -333,6 +333,17 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         @test Array(ad.currents) ≈ ah.currents rtol=1e-8 atol=1e-14
         @test Array(ad.initialflux) ≈ ah.initialflux rtol=1e-8 atol=1e-14
         @test transientdemodulate(device, 2, 3e9) ≈ transientdemodulate(host, 2, 3e9) rtol=1e-8
+        # the sensitivity to the component values, under both rules, from
+        # the states and from checkpoints, and the adjoint's
+        names = ["c1", "jj", "l"]
+        for (method, record) in ((Trapezoidal(), :states), (GaussLegendre(), :states), (GaussLegendre(), :checkpoints))
+            sh = transientsolve(prob, (0.0, 0.5e-9); dt = 2e-12, method, record, rtol = 1e-12)
+            sd = transientsolve(prob, (0.0, 0.5e-9); dt = 2e-12, method, record, rtol = 1e-12,
+                backend = CUDABackend())
+            @test Array(transientsensitivity(sd, names).outgoing) ≈ transientsensitivity(sh, names).outgoing rtol=1e-7 atol=1e-14
+            @test Array(transientadjoint(sd, weights; components = names).sensitivity) ≈
+                transientadjoint(sh, weights; components = names).sensitivity rtol=1e-7
+        end
         # the noise on a device solution against the host: a record that
         # starts at equilibrium, and bath tones on its Fourier bins
         quiet = transientproblem(circuit; sources = [TransientSource(1, drive)])
@@ -340,8 +351,8 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         qd = transientsolve(quiet, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12,
             backend = CUDABackend())
         df = 1/(length(qh.times)*2e-12)
-        plan = transientquantumplan(qh.times, [2df, 2df]; ports = [1, 2])
-        dplan = transientquantumplan(qh.times, [2df, 2df]; ports = [1, 2], backend = CUDABackend())
+        plan = transientquantumplan(qh, qh.times, [2df, 2df]; ports = [1, 2])
+        dplan = transientquantumplan(qh, qh.times, [2df, 2df]; ports = [1, 2], backend = CUDABackend())
         nh = transientnoise(qh, plan; frequencies = [2df, 3df], weights = fill(df, 2))
         nd = transientnoise(qd, dplan; frequencies = [2df, 3df], weights = fill(df, 2))
         @test nd.covariance ≈ nh.covariance rtol=1e-8
@@ -401,8 +412,8 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
             (:att, 1, 2, ScatteringParameters([0.0 0.6; 0.6 0.0]; zref = 50.0, noise = ThermalEquilibrium(0.3))),
             (:jj, 2, 0, JosephsonJunction(1e-9)), (:c2, 2, 0, Capacitor(0.5e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         ap = transientproblem(ac; sources = [TransientSource(1, t -> t <= 0 ? 0.0 : 0.05e-6*sinpi(2*3e9*t))])
-        aplan = transientquantumplan(qh.times, [2df, 3df]; ports = [1, 2])
-        adplan = transientquantumplan(qh.times, [2df, 3df]; ports = [1, 2], backend = CUDABackend())
+        aplan = transientquantumplan(qh, qh.times, [2df, 3df]; ports = [1, 2])
+        adplan = transientquantumplan(qh, qh.times, [2df, 3df]; ports = [1, 2], backend = CUDABackend())
         anh = transientnoise(transientsolve(ap, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12, method = GaussLegendre()), aplan;
             frequencies = [2df, 3df], weights = fill(df, 2))
         and = transientnoise(transientsolve(ap, (0.0, 0.5e-9); dt = 2e-12, record = :phases, rtol = 1e-12, method = GaussLegendre(), backend = CUDABackend()), adplan;

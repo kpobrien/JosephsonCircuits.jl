@@ -94,7 +94,7 @@ end
 Source continuation on an adaptively grown harmonic grid, reached through
 `hbnlsolve(...; method = Staged(...))`; the schedule is the [`Staged`](@ref)
 value `m`, validated at its construction. `kwargs` are the keywords of
-[`hbnlsolve`](@ref) (`iterations`, `ftol`, `Nevaluationharmonics`,
+[`hbnlsolve`](@ref) (`iterations`, `atol`, `Nevaluationharmonics`,
 `frequencywindow`, `maxintermodorder`, `dc`, `odd`, `even`, `symfreqvar`,
 `keyedarrays`, `sensitivitynames`, `returnoperatingpoint`,
 `backend`), which are forwarded to every stage.
@@ -113,10 +113,10 @@ own solvability boundary and the boundaries are not monotone in the grid:
 a stalled drive step is halved; a stall at the minimum step grows the grid
 at the current converged drive; and a carried point which fails to
 reconverge after growth retreats the drive on the new grid until it
-converges. Interior points converge only to `interiorftol` under a small
+converges. Interior points converge only to `interioratol` under a small
 iteration budget, since they exist to keep the iterate inside the basin,
 and the one expensive solve, the finest grid at full drive, starts inside
-the basin with the caller's `ftol` and `iterations`.
+the basin with the caller's `atol` and `iterations`.
 
 A point carried to the finest grid which stalls there without ever having
 converged on that grid is not diagnosed as a fold: the drive is retreated
@@ -141,7 +141,7 @@ converged, and records the whole walk in `solverinfo.stages`.
     retained harmonic caps, whose last entry must equal `Nharmonics`.
 - `s0 = 0.5`: the first drive fraction attempted.
 - `smin = 0.02`: the minimum drive step; a stall below it grows the grid.
-- `interiorftol = 1e-7`, `interioriterations = 60`: the tolerance and the
+- `interioratol = 1e-7`, `interioriterations = 60`: the tolerance and the
     Newton budget of the interior points. The budget is small on purpose: a
     stalled probe is evident within tens of iterations, and interior stalls
     are the overhead of the walk.
@@ -179,12 +179,12 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     Nevaluationharmonics::NTuple{N,Int} = map(i -> 2i, Nharmonics),
     frequencywindow = (0, Inf),
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
-    even::Bool = false, ftol = 1e-8, symfreqvar = nothing,
+    even::Bool = false, atol = 1e-8, symfreqvar = nothing,
     keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
     returnoperatingpoint::Bool = false, backend = CPU()) where {N}
 
-    (; s0, smin, interiorftol, interioriterations, interiorescalation,
+    (; s0, smin, interioratol, interioriterations, interiorescalation,
         maxattempts, verbose) = m
     # the ladder of retained harmonic caps: the default for this problem's
     # `Nharmonics`, or the one the schedule states, which must end at it
@@ -221,7 +221,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
         sensitivitynames = final ? sensitivitynames : String[],
         returnoperatingpoint = final ? returnoperatingpoint : false,
         backend = backend,
-        ftol = final ? ftol : interiorftol,
+        atol = final ? atol : interioratol,
         iterations = final ? iterations : interioriterations)
 
     gi = 1

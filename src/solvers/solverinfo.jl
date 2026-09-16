@@ -89,7 +89,7 @@ and records.
 - `alpha`, `backtracks`, `andersonaccepted`: per trial, the step length,
     the trial evaluations after the first, and whether the step lies on
     the accelerated path.
-- `ftol`: the tolerance in force, the absolute one or the relative one
+- `atol`: the tolerance in force, the absolute one or the relative one
     times the initial norm, whichever is larger.
 - `maxbacktrackfailures`, `backtrackfailures`: the stall threshold and the
     consecutive count against it.
@@ -100,7 +100,7 @@ mutable struct NewtonTrace{T<:Real}
     const alpha::Vector{T}
     const backtracks::Vector{Int}
     const andersonaccepted::Vector{Bool}
-    ftol::T
+    atol::T
     const maxbacktrackfailures::Int
     backtrackfailures::Int
     converged::Bool
@@ -113,27 +113,27 @@ function NewtonTrace{T}(maxbacktrackfailures::Integer) where {T<:Real}
 end
 
 """
-    tracestart!(tr::NewtonTrace, F, ftol, rtol)
+    tracestart!(tr::NewtonTrace, F, atol, rtol)
 
 Begin (or, on a restart, begin again) the record at a point whose residual
-`F` holds: the history is emptied, the tolerance fixed at `ftol` or
+`F` holds: the history is emptied, the tolerance fixed at `atol` or
 `rtol*norm(F)`, whichever is larger, and convergence decided on the
 residual before any Jacobian work. Returns whether it has converged.
 """
-function tracestart!(tr::NewtonTrace{T}, F, ftol, rtol) where {T}
+function tracestart!(tr::NewtonTrace{T}, F, atol, rtol) where {T}
     empty!(tr.normresidual); empty!(tr.alpha)
     empty!(tr.backtracks); empty!(tr.andersonaccepted)
     tr.backtrackfailures = 0
     tr.converged = false
     tr.reason = :iterations
     push!(tr.normresidual, norm(F))
-    tr.ftol = max(T(ftol), T(rtol)*tr.normresidual[1])
+    tr.atol = max(T(atol), T(rtol)*tr.normresidual[1])
     return traceconverged!(tr)
 end
 
 # whether the last residual meets the tolerance, recorded as the outcome
 function traceconverged!(tr::NewtonTrace)
-    if tr.normresidual[end] <= tr.ftol
+    if tr.normresidual[end] <= tr.atol
         tr.converged = true
         tr.reason = :converged
     end
@@ -189,7 +189,7 @@ end
 tolerance in force and `remaining` further steps.
 """
 tracestalled(tr::NewtonTrace, start::Integer, remaining::Integer) =
-    projectedstall(tr.normresidual, start, tr.ftol, remaining)
+    projectedstall(tr.normresidual, start, tr.atol, remaining)
 
 """
     IterationInfo(tr::NewtonTrace, label, krylov = [])
@@ -220,11 +220,11 @@ function stallmessage(reason::Symbol)
 end
 
 """
-    projectedstall(normF::AbstractVector, start::Integer, ftol::Real,
+    projectedstall(normF::AbstractVector, start::Integer, atol::Real,
         remaining::Integer)
 
 Whether the residual history `normF[start:end]` says the iteration will
-not reach `ftol` in `remaining` further steps. The window is split in
+not reach `atol` in `remaining` further steps. The window is split in
 half: the geometric reduction rate over the later half projects the steps
 still needed, and the verdict is a stall when they exceed `remaining` and
 the later rate is no better than the earlier one, so that an iteration
@@ -233,7 +233,7 @@ whose slow progress is steady or worsening. A window shorter than four
 steps is never a stall. No constant enters beyond the halving; the
 budget the projection is measured against is the caller's own.
 """
-function projectedstall(normF::AbstractVector, start::Integer, ftol::Real,
+function projectedstall(normF::AbstractVector, start::Integer, atol::Real,
     remaining::Integer)
     m = length(normF)
     npts = m - start + 1
@@ -245,5 +245,5 @@ function projectedstall(normF::AbstractVector, start::Integer, ftol::Real,
     r2 = (normF[end]/normF[mid])^(1/k2)
     r2 < r1 && return false
     r2 >= 1 && return true
-    return log(ftol/normF[end])/log(r2) > remaining
+    return log(atol/normF[end])/log(r2) > remaining
 end

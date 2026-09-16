@@ -10,6 +10,8 @@ Reusable causal I/Q measurement plan. `times` are the right edges of complete
 windows; `centertimes` subtract the filter's `groupdelay`. Frequencies and
 `bandwidth3db` are in Hz, times in seconds. `noisebandwidth` is
 one-sided, `sum(abs2, taps)/(2dt)`, for the unity-DC-gain low-pass filter.
+`ports` are the port numbers of the carriers and `rows` the compiled port
+index of each, the row of its trace.
 
 The FFT workspace is mutable. Use separate plans for concurrent measurements.
 """
@@ -17,6 +19,7 @@ struct TransientIQPlan{B,V,F,R}
     backend::B
     frequencies::Vector{Float64}
     ports::Vector{Int}
+    rows::Vector{Int}
     times::Vector{Float64}
     centertimes::Vector{Float64}
     groupdelay::Float64
@@ -61,15 +64,17 @@ function transientiqbandwidth(taps, dt)
 end
 
 """
-    transientiqplan(times, frequencies; duration, window=:hann,
-        ports=fill(1,length(frequencies)), stride=1, phasereference=first(times),
-        backend=CPU())
+    transientiqplan(problem, times, frequencies; duration, window = :hann,
+        ports = the first port, stride = 1, phasereference = first(times),
+        backend = CPU())
 
 Plan causal sliding I/Q measurements of uniformly sampled **real** port traces
-with shape `(port, time)`. `ports` selects a trace row for each carrier in Hz.
-For normalized window taps `h[k]`, the output is
+with shape `(port, time)` of `problem`, a [`TransientProblem`](@ref) or a
+solution of it. `ports` gives the port number each carrier in Hz reads,
+which the plan resolves to the row of the trace, `rows[c]`. For normalized
+window taps `h[k]`, the output is
 
-`z[c,n] = 2 sum(h[k] x[ports[c],n-k] exp(-2pi*im*f[c]*(t[n-k]-phasereference)))`.
+`z[c,n] = 2 sum(h[k] x[rows[c],n-k] exp(-2pi*im*f[c]*(t[n-k]-phasereference)))`.
 
 Thus a resolved cosine of peak amplitude `A` and phase `phi` gives approximately
 `A*exp(im*phi)` when the doubled-carrier image is rejected by the window. The
@@ -87,9 +92,10 @@ to control image leakage and aliasing. The input must already resolve the RF.
 CPU uses FFTW and CUDA uses cuFFT with KernelAbstractions kernels. One FFT
 workspace is reused across channels; this avoids a samples-by-window array.
 """
-function transientiqplan(times, frequencies; duration, window = :hann,
-        ports = fill(1, length(frequencies)), stride = 1,
+function transientiqplan(problem, times, frequencies; duration, window = :hann,
+        ports = fill(porttargets(transientproblemof(problem))[1], length(frequencies)), stride = 1,
         phasereference = first(times), backend = CPU())
+    p = transientproblemof(problem)
     ts, fs = Float64.(collect(times)), Float64.(collect(frequencies))
     length(ts) >= 4 && all(isfinite, ts) ||
         throw(ArgumentError("At least four finite sample times are required."))
@@ -99,8 +105,8 @@ function transientiqplan(times, frequencies; duration, window = :hann,
         throw(ArgumentError("Sample times must be uniformly increasing."))
     !isempty(fs) && all(f -> isfinite(f) && 0 < f < 0.5/dt, fs) ||
         throw(ArgumentError("Carrier frequencies must lie strictly between zero and Nyquist."))
-    length(ports) == length(fs) && all(p -> p isa Integer && p >= 1, ports) ||
-        throw(ArgumentError("Provide one positive integer trace row per carrier."))
+    length(ports) == length(fs) || throw(ArgumentError("Provide one port number per carrier."))
+    rows = portrows(p, ports)
     stride isa Integer && stride >= 1 ||
         throw(ArgumentError("stride must be a positive integer."))
     isfinite(duration) && 3dt <= duration <= (length(ts)-1)*dt*(1+1e-10) ||
@@ -128,7 +134,7 @@ function transientiqplan(times, frequencies; duration, window = :hann,
     outputtimes = ts[ntaps:stride:end]
     delay = (ntaps-1)*dt/2
     return TransientIQPlan(
-        backend, fs, Int.(collect(ports)), outputtimes, outputtimes .- delay,
+        backend, fs, Int.(collect(ports)), rows, outputtimes, outputtimes .- delay,
         delay, transientiqbandwidth(taps, dt), sum(abs2, taps)/(2dt), dt, first(ts),
         Float64(phasereference), length(ts), ntaps, Int(stride), taps, work, spectrum, forward, backward)
 end
@@ -159,7 +165,7 @@ end
 function transientiqcheck(plan, rf, iq)
     rf isa AbstractMatrix{<:Real} && iq isa AbstractMatrix{<:Complex} ||
         throw(ArgumentError("RF traces must be a real matrix and I/Q a complex matrix."))
-    size(rf, 2) == plan.nsamples && size(rf, 1) >= maximum(plan.ports) &&
+    size(rf, 2) == plan.nsamples && size(rf, 1) >= maximum(plan.rows) &&
     size(iq) == (length(plan.frequencies), length(plan.times)) ||
         throw(DimensionMismatch("Trace or I/Q dimensions do not match the measurement plan."))
     # Compare storage backends, not launch options such as CPU(static=true).
@@ -185,7 +191,7 @@ function transientiq!(out, plan::TransientIQPlan, traces)
     transientiqcheck(plan, traces, out)
     nfft = length(plan.work)
     for c in eachindex(plan.frequencies)
-        iqmixkernel!(plan.backend, 256)(plan.work, traces, plan.ports[c],
+        iqmixkernel!(plan.backend, 256)(plan.work, traces, plan.rows[c],
             plan.nsamples, plan.start-plan.phasereference, plan.dt, plan.frequencies[c]; ndrange = nfft)
         KernelAbstractions.synchronize(plan.backend)
         mul!(plan.work, plan.forward, plan.work)
@@ -232,7 +238,7 @@ function transientiqvjp!(out, plan::TransientIQPlan, weights)
         mul!(plan.work, plan.forward, plan.work)
         plan.work .*= conj.(plan.spectrum)
         mul!(plan.work, plan.backward, plan.work)
-        iqpullbackkernel!(plan.backend, 256)(out, plan.work, plan.ports[c],
+        iqpullbackkernel!(plan.backend, 256)(out, plan.work, plan.rows[c],
             plan.start-plan.phasereference, plan.dt, plan.frequencies[c], 2/nfft; ndrange = plan.nsamples)
         KernelAbstractions.synchronize(plan.backend)
     end

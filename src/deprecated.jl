@@ -93,7 +93,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     nm=numericmatrices(psc, cg, circuitdefs, Nmodes = Nmodes)
 
     nonlinear = hbnlsolve(w, sources, freq, indices, psc, cg, nm;
-        iterations = iterations, ftol = ftol,
+        iterations = iterations, atol = ftol,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames,
         method = NewtonKrylov(preconditioner = BlockDiagonal(

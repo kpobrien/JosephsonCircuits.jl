@@ -64,7 +64,7 @@ of `(name, node1, node2, value)` tuples with fully numeric values; a typed
 the builder's output. The harmonic selection keywords match
 [`hbnlsolve`](@ref); the remaining keywords are stored and forwarded to
 every solve as keywords of `hbnlsolve` on the compiled circuit, so they
-are the solver keywords (`method`, `ftol`, `rtol`, `iterations`,
+are the solver keywords (`method`, `atol`, `rtol`, `iterations`,
 `backend`, ...) and are validated here: a keyword the compiled circuit
 solve does not accept is an `ArgumentError` at construction rather than
 a failure at the first solve, as are `x0` and `reuse`, which the cache

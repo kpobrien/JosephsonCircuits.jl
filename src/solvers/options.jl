@@ -521,7 +521,7 @@ function QuasiNewton(; anderson::Integer = 5, factorization::MaybeFactorization 
 end
 
 """
-    Staged(; grids = nothing, s0 = 0.5, smin = 0.02, interiorftol = 1e-7,
+    Staged(; grids = nothing, s0 = 0.5, smin = 0.02, interioratol = 1e-7,
         interioriterations = 60, inner = NewtonKrylov(),
         interiorescalation = false, maxattempts = 60, verbose = false)
 
@@ -534,7 +534,7 @@ struct Staged <: AbstractHBNonlinearSolver
     grids::Union{Nothing,AbstractVector}
     s0::Float64
     smin::Float64
-    interiorftol::Float64
+    interioratol::Float64
     interioriterations::Int
     inner::AbstractHBNonlinearSolver
     interiorescalation::Bool
@@ -542,7 +542,7 @@ struct Staged <: AbstractHBNonlinearSolver
     verbose::Bool
 end
 function Staged(; grids = nothing, s0::Real = 0.5, smin::Real = 0.02,
-    interiorftol::Real = 1e-7, interioriterations::Integer = 60,
+    interioratol::Real = 1e-7, interioriterations::Integer = 60,
     inner::AbstractHBNonlinearSolver = NewtonKrylov(),
     interiorescalation::Bool = false, maxattempts::Integer = 60,
     verbose::Bool = false)
@@ -550,13 +550,13 @@ function Staged(; grids = nothing, s0::Real = 0.5, smin::Real = 0.02,
     0 < s0 <= 1 || throw(ArgumentError(lazy"`s0` = $(s0) must be in (0, 1]."))
     0 < smin <= s0 || throw(ArgumentError(
         lazy"`smin` = $(smin) must be in (0, `s0` = $(s0)]."))
-    interiorftol > 0 || throw(ArgumentError(
-        lazy"`interiorftol` = $(interiorftol) must be positive."))
+    interioratol > 0 || throw(ArgumentError(
+        lazy"`interioratol` = $(interioratol) must be positive."))
     interioriterations >= 1 || throw(ArgumentError(
         lazy"`interioriterations` = $(interioriterations) must be at least 1."))
     maxattempts >= 1 || throw(ArgumentError(
         lazy"`maxattempts` = $(maxattempts) must be at least 1."))
-    return Staged(grids, Float64(s0), Float64(smin), Float64(interiorftol),
+    return Staged(grids, Float64(s0), Float64(smin), Float64(interioratol),
         Int(interioriterations), inner, interiorescalation, Int(maxattempts),
         verbose)
 end

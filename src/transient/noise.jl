@@ -105,7 +105,7 @@ function groupnoise(baths::TransientNoiseBaths, group, frequency)
 end
 
 """
-    transientnoisebaths(problem; temperature = 0.0, porttemperatures = nothing)
+    transientnoisebaths(problem; temperature = 0.0)
 
 The independent equilibrium baths of a circuit in time: every matched,
 port owned termination is one external bath, every finite internal
@@ -125,24 +125,20 @@ require, and its output obeys them; a pumped block which states its
 noise is a group whose channels are correlated across the bath
 frequencies its harmonics relate (see [`PairTerm`](@ref)), and one
 declared lossless is no bath. `temperature` is the default in
-kelvin and `porttemperatures` overrides the external baths in compiled
-port order. Every port must own a matched finite termination; an open
-resistor adds no bath. The same temperatures and models set the noise
+kelvin, which a component's own stated temperature overrides. Every port
+must own a matched finite termination; an open resistor adds no bath. The same temperatures and models set the noise
 of [`hblinsolve`](@ref), so the two solvers compare.
 """
-function transientnoisebaths(p::TransientProblem; temperature = 0.0, porttemperatures = nothing)
+function transientnoisebaths(p::TransientProblem; temperature = 0.0)
     c, vvn = p.circuit, p.matrices.vvn
     t = Float64(temperature)
     isfinite(t) && t >= 0 || throw(ArgumentError("the bath temperature must be finite and nonnegative."))
-    isnothing(porttemperatures) || length(porttemperatures) == length(c.ports) || throw(DimensionMismatch(
-        "give one external temperature per port."))
     channels = TransientNoiseBath[]
     groups = @NamedTuple{channels::UnitRange{Int}, block::Int}[]
     for (j, port) in enumerate(c.ports)
         isapprox(p.portconductances[j]*p.portimpedances[j], 1; rtol = 1e-12) || throw(ArgumentError(
             lazy"port $(port.number) needs its own matched termination for a bath."))
-        temp = isnothing(porttemperatures) ? get(c.componenttemperatures, port.environment, t) :
-            Float64(porttemperatures[j])
+        temp = get(c.componenttemperatures, port.environment, t)
         push!(channels, TransientNoiseBath("port $(port.number)", noderows(p.portpositive[j], p.portnegative[j])...,
             j, p.portimpedances[j], temp))
     end
@@ -803,7 +799,7 @@ function accumulatenoisegain!(gain, response, inputs, bins, frequencies, baths)
     nb, nf = length(baths), length(frequencies)
     mixing = zeros(size(response, 2), 2length(inputs.ports))
     for f in 1:nf, b in 1:nb, k in eachindex(inputs.ports)
-        baths.channels[b].port == inputs.ports[k] || continue
+        baths.channels[b].port == inputs.rows[k] || continue
         c = inputs.coefficients[bins[f], k]
         j = (f - 1)*nb + b
         mixing[2j - 1, 2k - 1] = mixing[2j, 2k] = real(c)
@@ -873,8 +869,22 @@ function transientstationary(sys::TransientSystem, x, v, t, p::TransientProblem 
     return nothing
 end
 
+# the periodic bath of a record of `nt` samples at the step `dt`: the
+# positive Fourier bins `k/T` of the period `T = nt dt`, below the Nyquist
+# frequency and the cutoff, with the weights `1/T` of the sum over them
+function recordbath(sol, cutoff)
+    nt, dt = length(sol.times), sol.dt
+    T = nt*dt
+    c = isnothing(cutoff) ? Inf : Float64(cutoff)
+    (c > 0 && !isnan(c)) || throw(ArgumentError("the bath cutoff must be positive."))
+    fs = [k/T for k in 1:fld(nt - 1, 2) if k/T <= c]
+    isempty(fs) && throw(ArgumentError(lazy"no Fourier bin of the record lies below the cutoff of $(c) Hz; the first is at $(1/T) Hz."))
+    return fs, fill(1/T, length(fs))
+end
+
 """
-    transientnoise(solution, measurement; frequencies, weights,
+    transientnoise(solution, measurement; frequencies = the bins of the
+        record, weights = 1/T, cutoff = nothing,
         baths = transientnoisebaths(solution.problem), method = :adjoint,
         inputs = nothing, commutationrtol = 1e-3, reuse = nothing)
 
@@ -887,8 +897,16 @@ recorded trajectory, pump and signals together. For a batch the
 covariance, the commutator and the gain carry the conditions as the
 trailing dimension and the diagnostics are a vector. `frequencies` are the
 positive nodes in Hz of a quadrature over the bath spectrum and `weights`
-its weights in Hz; for a periodic bath over the record of duration `T`
-use `f = k/T` and weights `1/T`. Each bath at each frequency is a pair of
+its weights in Hz. By default the bath is periodic over the record, of
+duration `T = length(solution.times)*solution.dt`: its positive Fourier
+bins `f = k/T` with weights `1/T`, up to `cutoff` in Hz when one is
+given and to the Nyquist frequency of the record otherwise, which is the
+complete bath of the recorded steps. Its cost grows with the frequency
+count: the adjoint method contracts a sum per bath, frequency and time
+and factorizes the stationary operator once per frequency and distinct
+initial state, and the forward method drives two directions per bath
+and frequency, so a long record wants a cutoff, and loss spread along a
+line a few bands given as `frequencies`. Each bath at each frequency is a pair of
 cosine and sine Norton currents of amplitude `2 sqrt(h f df/R)`, whose
 independent quadratures have variance `nbar + 1/2`, started from the
 stationary response of the circuit to them at the initial state, so
@@ -919,10 +937,17 @@ independently before reading a quantum efficiency with
 [`transientquantumefficiency`](@ref).
 """
 function transientnoise(sol::Union{TransientSolution,TransientBatchSolution}, measurement::TransientQuantumPlan;
-        frequencies, weights, baths = nothing,
+        frequencies = nothing, weights = nothing, cutoff = nothing, baths = nothing,
         method::Symbol = :adjoint, inputs = nothing, commutationrtol = 1e-3,
         reuse = nothing)
     recordedsolution(sol)
+    if isnothing(frequencies)
+        isnothing(weights) || throw(ArgumentError("the weights go with the frequencies; give both, or neither for the periodic bath of the record."))
+        frequencies, weights = recordbath(sol, cutoff)
+    else
+        isnothing(weights) && throw(ArgumentError("give the weights of the bath frequencies in Hz."))
+        isnothing(cutoff) || throw(ArgumentError("a cutoff bounds the default bath; the frequencies given are the bath."))
+    end
     problems, _, x0s, v0s = batchview(sol)
     N = length(problems)
     p = first(problems)
@@ -948,7 +973,7 @@ function transientnoise(sol::Union{TransientSolution,TransientBatchSolution}, me
     checkpumpedblocks(baths.problem, fs)
     maximum(fs) < 0.5/measurement.dt || throw(ArgumentError("the bath cutoff must lie below the Nyquist frequency of the record."))
     np = length(p.portimpedances)
-    maximum(measurement.ports) <= np || throw(DimensionMismatch("a measurement port is absent from the circuit."))
+    maximum(measurement.rows) <= np || throw(DimensionMismatch("a measurement port is absent from the circuit."))
     bins = noiseinputbins(inputs, measurement, fs, ws)
     fact = transientfactorization(backend)
     sys = transientsystem(reuse, p, sol.dt, sol.method, backend, fact)
@@ -1014,7 +1039,7 @@ function transientnoise(sol::Union{TransientSolution,TransientBatchSolution}, me
         # respect to a current at each bath and recorded time
         weightsout = zeros(np, nt, m)
         w = Array(measurement.weights)
-        for (j, port) in enumerate(measurement.ports), q in 1:2
+        for (j, port) in enumerate(measurement.rows), q in 1:2
             weightsout[port, offset:offset + nm - 1, 2(j - 1) + q] .= w[:, 2(j - 1) + q]
         end
         # Each column of the bath kernels, as the adjoint hands it over
@@ -1149,7 +1174,7 @@ function measurementsink(measurement::TransientQuantumPlan, offset, ncolumns, ba
     sink = (k, voltage, incident, outgoing) -> begin
         offset <= k <= offset + nm - 1 || return nothing
         kk = k - offset + 1
-        for (j, port) in enumerate(measurement.ports), q in 1:2
+        for (j, port) in enumerate(measurement.rows), q in 1:2
             view(measured, 2(j - 1) + q, :) .+= w[kk, 2(j - 1) + q] .* view(outgoing, port, :)
         end
         nothing
@@ -1201,7 +1226,7 @@ function transientgain(sol::Union{TransientSolution,TransientBatchSolution}, mea
     (KernelAbstractions.get_backend(measurement.weights) == backend && KernelAbstractions.get_backend(inputs.weights) == backend) ||
         throw(ArgumentError("the plans and the solution must share a backend."))
     np = length(p.portimpedances)
-    (maximum(measurement.ports) <= np && maximum(inputs.ports) <= np) || throw(DimensionMismatch("a plan's port is absent from the circuit."))
+    (maximum(measurement.rows) <= np && maximum(inputs.rows) <= np) || throw(DimensionMismatch("a plan's port is absent from the circuit."))
     mo, io = windowoffset(sol, measurement), windowoffset(sol, inputs)
     nm, ni, nt = length(measurement.times), length(inputs.times), length(sol.times)
     nin, m = length(inputs.ports), 2length(measurement.ports)
@@ -1219,7 +1244,7 @@ function transientgain(sol::Union{TransientSolution,TransientBatchSolution}, mea
         spectrum[2:length(inputs.frequencies) + 1] .= sqrt.(planck_constant .* inputs.frequencies ./ T) .*
             view(inputs.coefficients, :, j) .* cispi.(-2 .* inputs.frequencies .* offsets[s])
         wave = FFTW.fft(spectrum)
-        port = inputs.ports[j]
+        port = inputs.rows[j]
         scale = 2/sqrt(p.portimpedances[port])
         last = s == 1 ? io + ni - 1 : min(io + ni - 1, nt - 1)
         currents[port, s, io:last, 2j - 1] .= scale .* real.(view(wave, 1:last - io + 1))

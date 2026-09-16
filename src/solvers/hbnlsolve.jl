@@ -51,7 +51,7 @@ HBReuse() = HBReuse(nothing, nothing, nothing, nothing, nothing, nothing,
         circuit, circuitdefs; iterations = 1000,
         Nevaluationharmonics = map(i -> 2i, Nharmonics),
         maxintermodorder = Inf, dc = false, odd = true, even = false,
-        ftol = 1e-8, rtol = 0.0, method = NewtonKrylov(), x0 = nothing,
+        atol = 1e-8, rtol = 0.0, method = NewtonKrylov(), x0 = nothing,
         symfreqvar = nothing, sorting = :number, keyedarrays = true,
         sensitivitynames = String[], returnoperatingpoint = false,
         frequencywindow = (0, Inf), backend = CPU(), debugJacobian = false,
@@ -74,7 +74,7 @@ coefficient approaches one, where the nodal inverse inductance entries
 diverge as `1/(1-k^2)`. The system is nondimensionalized by the solver
 inductance scale `Z0/w0` (see [`calcsolverscale`](@ref)), the geometric
 mean port impedance over the geometric mean nonzero drive frequency, so
-the residual tolerance `ftol` is independent of the unit system and the
+the residual tolerance `atol` is independent of the unit system and the
 auxiliary variables have magnitudes comparable to the node fluxes. One
 gauge fixing equation per floating inductive or Josephson subnetwork and
 zero frequency mode makes circuits which are singular at direct current in
@@ -145,7 +145,10 @@ rejected with an `ArgumentError`. See `src/circuit/mna.jl`.
 - `maxintermodorder = Inf`: keep only the modes whose harmonic indices
     have an absolute sum of at most this order, a diamond truncation of the
     multi-tone Fourier space.
-- `dc = false`: retain the zero frequency mode.
+- `dc = false`: retain the zero frequency mode. A `CurrentSource`
+    component of the netlist is a constant current, out of its first
+    terminal and into its second, which drives this mode; a nonzero one
+    without the mode is an error.
 - `odd = true`: retain the odd harmonics, which four wave mixing couples
     through.
 - `even = false`: retain the even harmonics, which three wave mixing
@@ -237,7 +240,7 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
     maxharmonics = nothing,
     frequencywindow = (0, Inf),
     maxintermodorder = Inf, dc::Bool = false, odd::Bool = true,
-    even::Bool = false, x0 = nothing, ftol = 1e-8,
+    even::Bool = false, x0 = nothing, atol = 1e-8, ftol = nothing,
     switchofflinesearchtol = nothing, alphamin = nothing,
     method::AbstractHBNonlinearSolver = NewtonKrylov(),
     symfreqvar = nothing, keyedarrays::Bool = true,
@@ -249,6 +252,10 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
 
     # deprecation warning for maxharmonics, whose role `Nharmonics` took
     # when the sampling grid became `Nevaluationharmonics`.
+    if !isnothing(ftol)
+        Base.depwarn(lazy"The `ftol` kwarg is deprecated: the absolute residual tolerance is `atol` in every solver of the package. Please use `atol` to avoid errors in future versions.", :hbnlsolve; force=true)
+        atol = ftol
+    end
     if !isnothing(maxharmonics)
         Base.depwarn(lazy"The `maxharmonics` kwarg is deprecated and no longer used. `Nharmonics` is the retained set of modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions.", :hbnlsolve; force=true)
     end
@@ -262,7 +269,7 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
             Nevaluationharmonics = Nevaluationharmonics,
             frequencywindow = frequencywindow,
             maxintermodorder = maxintermodorder, dc = dc, odd = odd,
-            even = even, ftol = ftol, symfreqvar = symfreqvar,
+            even = even, atol = atol, symfreqvar = symfreqvar,
             keyedarrays = keyedarrays,
             sensitivitynames = sensitivitynames,
             returnoperatingpoint = returnoperatingpoint, backend = backend)
@@ -288,7 +295,7 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
 
     return hbnlsolve(w, sources, freq, indices, psc, cg, nm;
         rtol = rtol,
-        iterations = iterations, x0 = initialguess(x0), ftol = ftol,
+        iterations = iterations, x0 = initialguess(x0), atol = atol,
         switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         method = method,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
@@ -398,7 +405,7 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     frequencies::Frequencies{N}, indices::FourierIndices{N},
     psc::CompiledCircuit, cg::CircuitGraph, nm::CircuitMatrices;
     iterations = 1000, x0::Vector{ComplexF64} = ComplexF64[],
-    ftol = 1e-8, rtol = 0.0, switchofflinesearchtol = nothing, alphamin = nothing,
+    atol = 1e-8, rtol = 0.0, ftol = nothing, switchofflinesearchtol = nothing, alphamin = nothing,
     method::AbstractHBNonlinearSolver = NewtonKrylov(),
     symfreqvar = nothing, keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
@@ -417,6 +424,10 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
         KLUfactorization())
 
     # deprecation warnings for switchofflinesearchtol and alphamin.
+    if !isnothing(ftol)
+        Base.depwarn(lazy"The `ftol` kwarg is deprecated: the absolute residual tolerance is `atol` in every solver of the package. Please use `atol` to avoid errors in future versions.", :hbnlsolve; force=true)
+        atol = ftol
+    end
     if !isnothing(switchofflinesearchtol)
         Base.depwarn(lazy"The `switchofflinesearchtol` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions.", :hbnlsolve; force=true)
     end
@@ -513,12 +524,12 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # sum. The scale (see `calcsolverscale`) comes from the port impedances,
     # and a circuit whose interior sits at a very different impedance is
     # left with a scaled source many orders above one and a rounding floor
-    # above the default `ftol`. Asking for less than the floor is asking the
+    # above the default `atol`. Asking for less than the floor is asking the
     # iteration to converge on noise, so the tolerance is raised to the
     # floor when the floor is larger. The floor is a `sqrt(n)*eps`
     # accumulation over the terms with room to spare; for a circuit driven
-    # near its characteristic impedance it is far below `ftol`.
-    ftol = max(ftol,
+    # near its characteristic impedance it is far below `atol`.
+    atol = max(atol,
         16*sqrt(length(xr))*eps(real(eltype(xr)))*norm(bnmsource))
 
     # Solve the nonlinear system. The canonical layout is supported by the
@@ -527,28 +538,28 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     # request is refused rather than ignored.
     info, dcsol, dccanonical = if method isa QuasiNewton
         solvequasinewton!(method; x, F, Jxb, dcsol, dccanonical, fj!,
-            backend, iterations, ftol, rtol, directfactorization)
+            backend, iterations, atol, rtol, directfactorization)
     elseif method isa Newton
         solvenewton!(method; x, F, xr, Fr, modelayout, Jr, canonwork, dcplan,
             dcsol, dccanonical, dcexplicit, fjreal!, backend, iterations,
-            ftol, rtol, directfactorization)
+            atol, rtol, directfactorization)
     elseif method isa NewtonKrylov
         solvenewtonkrylov!(method; sys, x, F, xr, Fr, modelayout, canonwork,
             dcplan, dcsol, dccanonical, dcexplicit, Lscale,
             Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes, Ljb,
             Rbnm, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq, fjreal!,
-            backend, iterations, ftol, rtol, reuse = reusing ? reuse : nothing, precision)
+            backend, iterations, atol, rtol, reuse = reusing ? reuse : nothing, precision)
     elseif method isa ExternalSolver
         solveexternal!(method; sys, x, F, xr, Fr, modelayout, Jr, canonwork,
             dcplan, dcsol, dccanonical, dcexplicit, Lscale,
             Amatrixindicesaliased, Amatrixconjindices, Amatrixmodes, Ljb,
             Rbnm, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq, backend,
-            iterations, ftol, rtol)
+            iterations, atol, rtol)
     else
         throw(ArgumentError("Method $(method) is not defined."))
     end
 
-    return nonlinearoutputs(; info, dcsol, dccanonical, w, frequencies, ftol,
+    return nonlinearoutputs(; info, dcsol, dccanonical, w, frequencies, atol,
         symfreqvar, keyedarrays, returnoperatingpoint, sys, x, F, modelayout,
         Jr, canonwork, dcplan, dcexplicit, bnm, bnmsource, Lscale,
         gaugeindices, coupledbranches, Nnodal, Amna, wmodes, wmodesm,
@@ -580,7 +591,7 @@ function nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes,
     Lscale = iszero(nm.Lmean) ? one(nm.Lmean) : nm.Lmean
     # Nondimensionalize with the solver inductance scale Z0/w0 (see
     # `calcsolverscale`): the scaled entries are of order one for circuits
-    # driven near their characteristic impedance and frequency, and `ftol`
+    # driven near their characteristic impedance and frequency, and `atol`
     # is independent of the unit system. The scale multiplies rows only, so
     # the node fluxes and all physical outputs are unchanged.
     Lscale = calcsolverscale(w, componenttypes, nm.vvn, nm.portimpedances,
@@ -741,9 +752,12 @@ function nonlinearsetup(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     wmodesm = Diagonal(repeat(wmodes, outer = Nnodes-1))
     wmodes2m = Diagonal(repeat(wmodes.^2, outer = Nnodes-1))
 
-    # calculate the source terms in the branch basis
+    # calculate the source terms in the branch basis, and the constant
+    # current sources of the netlist on the zero frequency mode
     bbm = calcsources(modes, sources, portindices, portnumbers,
         nodeindices, edge2indexdict, Lscale, Nnodes, Nbranches, Nmodes)
+    addconstantsources!(bbm, componenttypes, componentnames, nodeindices,
+        vvn, cg, modes, Lscale, Nmodes)
 
     # convert from the node basis to the branch basis
     bnm = transpose(Rbnm)*bbm
@@ -1184,12 +1198,12 @@ converged canonical state (the last two `nothing` when there is no explicit
 direct current block).
 """
 function solvequasinewton!(method::QuasiNewton;
-        x, F, Jxb, dcsol, dccanonical, fj!, backend, iterations, ftol, rtol,
+        x, F, Jxb, dcsol, dccanonical, fj!, backend, iterations, atol, rtol,
         directfactorization)
     info = begin
 
         solveonbackend!(fj!, F, Jxb, x, backend; iterations = iterations,
-            ftol = ftol, rtol = rtol, andersondepth = method.anderson,
+            atol = atol, rtol = rtol, andersondepth = method.anderson,
             factorization = directfactorization)
 
     end
@@ -1198,7 +1212,7 @@ end
 
 function solvenewton!(method::Newton;
         x, F, xr, Fr, modelayout, Jr, canonwork, dcplan, dcsol, dccanonical,
-        dcexplicit, fjreal!, backend, iterations, ftol, rtol,
+        dcexplicit, fjreal!, backend, iterations, atol, rtol,
         directfactorization)
     info = begin
 
@@ -1216,7 +1230,7 @@ function solvenewton!(method::Newton;
             gathercanonical!(uc, xr, Lc)
             out = solveonbackend!(
                 canonicalfj(fjreal!, canonwork, Jr, jplan), Fc, Jc, uc, backend;
-                iterations = iterations, ftol = ftol, rtol = rtol,
+                iterations = iterations, atol = atol, rtol = rtol,
                 andersondepth = 0, factorization = directfactorization)
             scattercanonical!(xr, uc, Lc)
             scattercanonical!(Fr, Fc, Lc)
@@ -1228,7 +1242,7 @@ function solvenewton!(method::Newton;
             out
         else
             solveonbackend!(fjreal!, Fr, Jr, xr, backend;
-                iterations = iterations, ftol = ftol, rtol = rtol,
+                iterations = iterations, atol = atol, rtol = rtol,
                 andersondepth = 0, factorization = directfactorization)
         end
         real_to_complex!(x,xr,modelayout.isreal)
@@ -1242,7 +1256,7 @@ function solvenewtonkrylov!(method::NewtonKrylov;
         sys, x, F, xr, Fr, modelayout, canonwork, dcplan, dcsol, dccanonical,
         dcexplicit, Lscale, Amatrixindicesaliased, Amatrixconjindices,
         Amatrixmodes, Ljb, Rbnm, invLnm, Gnm, Cnm, Nmodes, Nbranches, Nfreq,
-        fjreal!, backend, iterations, ftol, rtol, reuse, precision)
+        fjreal!, backend, iterations, atol, rtol, reuse, precision)
     reusing = !isnothing(reuse)
     info = begin
 
@@ -1356,7 +1370,7 @@ function solvenewtonkrylov!(method::NewtonKrylov;
         info = if dcexplicit
             out = nlsolvekrylov!(canonicalresidual(fjreal!, canonwork),
                 jvsolve, Fsolve, usolve, pc, method;
-                iterations = iterations, ftol = ftol, rtol = rtol,
+                iterations = iterations, atol = atol, rtol = rtol,
                 workspace = reusing ? reuse.krylovcanonical : nothing)
             L = canonwork.layout
             scattercanonical!(xrb, usolve, L)
@@ -1371,7 +1385,7 @@ function solvenewtonkrylov!(method::NewtonKrylov;
             out
         else
             nlsolvekrylov!(fjreal!, jvsolve, Fsolve, usolve, pc, method;
-                iterations = iterations, ftol = ftol, rtol = rtol,
+                iterations = iterations, atol = atol, rtol = rtol,
                 workspace = reusing ? reuse.krylov : nothing)
         end
         if reusing && !(spec isa AbstractModeCoupling) && info.converged
@@ -1392,7 +1406,7 @@ function solveexternal!(method::ExternalSolver;
         sys, x, F, xr, Fr, modelayout, Jr, canonwork, dcplan, dcsol,
         dccanonical, dcexplicit, Lscale, Amatrixindicesaliased,
         Amatrixconjindices, Amatrixmodes, Ljb, Rbnm, invLnm, Gnm, Cnm,
-        Nmodes, Nbranches, Nfreq, backend, iterations, ftol, rtol)
+        Nmodes, Nbranches, Nfreq, backend, iterations, atol, rtol)
     info = begin
         # hand the caller's root finder the system as a problem object. With
         # direct current the problem carries the augmentation too, so the
@@ -1436,7 +1450,7 @@ end
 
 
 """
-    nonlinearoutputs(; info, dcsol, dccanonical, w, frequencies, ftol,
+    nonlinearoutputs(; info, dcsol, dccanonical, w, frequencies, atol,
         symfreqvar, keyedarrays, returnoperatingpoint, ...)
 
 The [`NonlinearHB`](@ref) of a solve: the checks on the accepted point
@@ -1448,7 +1462,7 @@ direct current node voltages. The remaining keywords are the fields of
 `dccanonical` what the solve returned.
 """
 function nonlinearoutputs(;
-        info, dcsol, dccanonical, w, frequencies, ftol, symfreqvar,
+        info, dcsol, dccanonical, w, frequencies, atol, symfreqvar,
         keyedarrays, returnoperatingpoint, sys, x, F, modelayout, Jr,
         canonwork, dcplan, dcexplicit, bnm, bnmsource, Lscale, gaugeindices,
         coupledbranches, Nnodal, Amna, wmodes, wmodesm, wmodes2m, Ljb, Ljbm,
@@ -1503,7 +1517,7 @@ function nonlinearoutputs(;
             bnmkcl = applydcconductance(bnmsource, dcplan, dcsol, Nmodes)
         end
         kclok, normkcl, kcltol = mnavalidatekcl(F, x, gaugeindices,
-            Nnodal, bnmkcl, ftol)
+            Nnodal, bnmkcl, atol)
         if !kclok
             @warn "The original (ungauged) Kirchhoff current law equations are violated beyond the solver resolution at the returned solution, indicating that a gauge fixing equation absorbed an incompatibility, such as a net direct current injected into a floating subnetwork, into the arbitrary flux reference. Marking the solution as not converged." normkcl kcltol
             converged = false
@@ -1744,6 +1758,45 @@ function addsources!(bbm, modes, sources, portindices, portnumbers,
     end
 
     return nothing
+end
+
+"""
+    addconstantsources!(bbm, componenttypes, componentnames, nodeindices,
+        vvn, cg, modes, Lscale, Nmodes)
+
+Add the constant current sources of the netlist to the source vector in
+the branch basis: a `CurrentSource` component of value `I` drives the zero
+frequency mode with `I` flowing out of its first terminal and into its
+second, as the transient reads it, on its own branch and in the
+orientation the graph gave that branch. The mode must be retained: a
+nonzero source without it is an error, so that a netlist carrying a
+constant source is never solved without its bias in silence.
+"""
+function addconstantsources!(bbm, componenttypes, componentnames, nodeindices,
+    vvn, cg, modes, Lscale, Nmodes)
+
+    dcmode = findfirst(m -> all(iszero, m), modes)
+    endpoints = nothing
+    for (k, t) in enumerate(componenttypes)
+        t == :I || continue
+        value = vvn[k]
+        (value isa Number && !checkissymbolic(value)) || throw(ArgumentError(
+            lazy"The current source $(componentnames[k]) has the value $(value); a constant current source needs a numeric value."))
+        iszero(imag(value)) || throw(ArgumentError(
+            lazy"The current source $(componentnames[k]) has the complex value $(value); a constant current is real."))
+        current = real(value)
+        iszero(current) && continue
+        isnothing(dcmode) && throw(ArgumentError(
+            lazy"The circuit has the constant current source $(componentnames[k]) of $(current) A, which drives the zero frequency mode; retain the mode with dc = true, or remove the source."))
+        n1, n2 = nodeindices[1, k], nodeindices[2, k]
+        b = cg.edge2indexdict[(n1, n2)]
+        isnothing(endpoints) && (endpoints = branchendpoints(cg.Rbn, cg.Nbranches))
+        # the branch current is positive toward the branch's destination,
+        # the source's toward its second terminal
+        sign = (endpoints[1][b], endpoints[2][b]) == (n1, n2) ? 1 : -1
+        bbm[(b - 1)*Nmodes + dcmode] += sign*Lscale*current/phi0
+    end
+    return bbm
 end
 
 """

@@ -19,7 +19,7 @@ using Test
         prob = transientproblem(c)
         n, T = 512, 1e-9
         sol = transientsolve(prob, (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
-        plan = transientquantumplan(sol.times, [3e9, 3e9]; ports = [1, 2])
+        plan = transientquantumplan(sol, sol.times, [3e9, 3e9]; ports = [1, 2])
         hb = hblinsolve(2pi*[3e9], c; keyedarrays = false, returnSnoise = true, returnCnoise = true)
         S = hb.S[:, :, 1]
         expected = zeros(4, 4)
@@ -27,6 +27,18 @@ using Test
             s = S[j, k]
             expected[(2j - 1):2j, (2k - 1):2k] .= [real(s) imag(s); -imag(s) real(s)]
         end
+        # the default bath is every positive bin of the record at the
+        # weight 1/T, bounded by a cutoff; the frequencies given replace it
+        bins = collect((1:fld(n - 1, 2)) ./ T)
+        complete = transientnoise(sol, plan; inputs = plan)
+        @test complete.covariance ≈ transientnoise(sol, plan; frequencies = bins, weights = fill(1/T, length(bins)), inputs = plan).covariance rtol=1e-12
+        below = bins[bins .<= 10e9]
+        @test transientnoise(sol, plan; cutoff = 10e9).covariance ≈
+            transientnoise(sol, plan; frequencies = below, weights = fill(1/T, length(below))).covariance rtol=1e-12
+        @test_throws ArgumentError transientnoise(sol, plan; weights = [1/T])
+        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [3e9])
+        @test_throws ArgumentError transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], cutoff = 1e9)
+        @test_throws ArgumentError transientnoise(sol, plan; cutoff = 1e8)
         forward = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan, method = :forward)
         adjoint = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan)
         for r in (forward, adjoint)
@@ -48,13 +60,13 @@ using Test
         pulsed = transientgain(sol, plan, plan)
         @test pulsed ≈ adjoint.gain rtol=6e-2
         long = transientsolve(prob, (0.0, 4T*(4n - 1)/(4n)); dt = T/n, record = :phases)
-        longplan = transientquantumplan(long.times, [3e9, 3e9]; ports = [1, 2])
+        longplan = transientquantumplan(long, long.times, [3e9, 3e9]; ports = [1, 2])
         @test transientgain(long, longplan, longplan) ≈ expected rtol=2e-2
         @test norm(transientgain(long, longplan, longplan) .- expected) < norm(pulsed .- expected)
         # the probe has the support of its window: a window measured
         # before the input window starts sees nothing of it
-        before = transientquantumplan(sol.times[1:64], [1/(64*sol.dt)])
-        after = transientquantumplan(sol.times[65:128], [1/(64*sol.dt)])
+        before = transientquantumplan(sol, sol.times[1:64], [1/(64*sol.dt)])
+        after = transientquantumplan(sol, sol.times[65:128], [1/(64*sol.dt)])
         @test all(iszero, transientgain(sol, before, after))
         @test !all(iszero, transientgain(sol, after, before))
         # warm loss: the occupation weights the covariance and not the
@@ -83,7 +95,7 @@ using Test
             ("Lj1", "1", "0", 1e-9)]; sources = [TransientSource(1, 1e-6)])
         ms = transientsolve(moving, (0.0, T*(n - 1)/n); dt = T/n, record = :phases,
             initialstate = transientstate(moving; voltage = [50e-6]))
-        mplan = transientquantumplan(ms.times, [3e9])
+        mplan = transientquantumplan(ms, ms.times, [3e9])
         @test_throws ArgumentError transientnoise(ms, mplan; frequencies = [3e9], weights = [1/T])
         @test_throws ArgumentError transientnoise(sol, plan; frequencies = [2e9], weights = [1/T], inputs = plan)
         @test_throws ArgumentError transientnoise(sol, plan; frequencies = [3e9], weights = [2/T], inputs = plan)
@@ -117,7 +129,7 @@ using Test
         function noiseof(c; method = :adjoint)
             prob = transientproblem(c)
             sol = transientsolve(prob, (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = GaussLegendre())
-            plan = transientquantumplan(sol.times, [3e9, 3e9]; ports = [1, 2])
+            plan = transientquantumplan(sol, sol.times, [3e9, 3e9]; ports = [1, 2])
             return transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan, method), plan
         end
         cold, plan = noiseof(mk(ScatteringParameters(S; zref = 50.0)))
@@ -158,14 +170,14 @@ using Test
         jpa = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:pad, 1, 2, ScatteringParameters([0.0 ga; ga 0.0]; zref = 50.0)),
             (:cc, 2, 3, Capacitor(100e-15)), (:jj, 3, 0, JosephsonJunction(1000e-12)), (:cj, 3, 0, Capacitor(1000e-15))])
         fp, fs, ip = 4.75e9, 4.7e9, 0.00565e-6
-        jhb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; ftol = 1e-14)
+        jhb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; atol = 1e-14)
         jgain, jqe = abs2(jhb.linearized.S((0,), 1, (0,), 1, 1)), jhb.linearized.QE((0,), 1, (0,), 1, 1)
         ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
         jprob = transientproblem(jpa; sources = [TransientSource(1, t -> 2ip*ramp(t)*cospi(2fp*t))])
         settle, record, dt = 100e-9, 20e-9, 2.5e-12
         jsol = transientsolve(jprob, (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
         first = round(Int, settle/dt) + 1
-        jplan = transientquantumplan(jsol.times[first:end], [fs])
+        jplan = transientquantumplan(jsol, jsol.times[first:end], [fs])
         jfreqs = sort!(abs.([fs + 2k*fp for k in -2:2]))
         jnoise = transientnoise(jsol, jplan; frequencies = jfreqs, weights = fill(1/record, 5), inputs = jplan, commutationrtol = 3e-3)
         @test jnoise.diagnostics.passed
@@ -188,7 +200,7 @@ using Test
         c = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)),
             (:line, 1, 2, TransmissionLine(60.0, tau*3e8; vp = 3e8)), (:c2, 2, 0, Capacitor(0.4e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = GaussLegendre())
-        plan = transientquantumplan(sol.times, [3e9, 3e9]; ports = [1, 2])
+        plan = transientquantumplan(sol, sol.times, [3e9, 3e9]; ports = [1, 2])
         adjoint = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan)
         forward = transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan, method = :forward)
         hb = hblinsolve(2pi*[3e9], c; keyedarrays = false)
@@ -201,14 +213,14 @@ using Test
         jpa = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:cable, 1, 2, TransmissionLine(60.0, tau*3e8; vp = 3e8)),
             (:cc, 2, 3, Capacitor(100e-15)), (:jj, 3, 0, JosephsonJunction(1000e-12)), (:cj, 3, 0, Capacitor(1000e-15))])
         fp, fs, ip = 4.75e9, 4.7e9, 0.00565e-6
-        jhb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; ftol = 1e-14)
+        jhb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; atol = 1e-14)
         jgain, jqe = abs2(jhb.linearized.S((0,), 1, (0,), 1, 1)), jhb.linearized.QE((0,), 1, (0,), 1, 1)
         ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
         jprob = transientproblem(jpa; sources = [TransientSource(1, t -> 2ip*ramp(t)*cospi(2fp*t))])
         settle, record, dt = 100e-9, 20e-9, 2.5e-12
         jsol = transientsolve(jprob, (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
         first = round(Int, settle/dt) + 1
-        jplan = transientquantumplan(jsol.times[first:end], [fs])
+        jplan = transientquantumplan(jsol, jsol.times[first:end], [fs])
         jfreqs = sort!(abs.([fs + 2k*fp for k in -2:2]))
         jnoise = transientnoise(jsol, jplan; frequencies = jfreqs, weights = fill(1/record, 5), inputs = jplan, commutationrtol = 3e-3)
         @test jnoise.diagnostics.passed
@@ -238,7 +250,7 @@ using Test
         explicit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.3e-12)), (:l, 1, 2, Inductor(L)), (:c2, 2, 0, Capacitor(0.5e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         function noiseof(c; method = :adjoint)
             sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = GaussLegendre())
-            plan = transientquantumplan(sol.times, [3e9, 3e9]; ports = [1, 2])
+            plan = transientquantumplan(sol, sol.times, [3e9, 3e9]; ports = [1, 2])
             return transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan, method), plan
         end
         ni, plan = noiseof(mk(ind))
@@ -289,7 +301,7 @@ using Test
         one(b) = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)), (:b, 1, b)])
         function noiseone(c)
             sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = GaussLegendre())
-            plan1 = transientquantumplan(sol.times, [3e9]; ports = [1])
+            plan1 = transientquantumplan(sol, sol.times, [3e9]; ports = [1])
             return transientnoise(sol, plan1; frequencies = [3e9], weights = [1/T], inputs = plan1), plan1
         end
         @test length(transientnoisebaths(transientproblem(one(notch(Passive()))))) == 2
@@ -309,14 +321,14 @@ using Test
         jpa = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:b, 1, 2, lossy(Passive())), (:cc, 2, 3, Capacitor(100e-15)),
             (:jj, 3, 0, JosephsonJunction(1000e-12)), (:cj, 3, 0, Capacitor(1000e-15))])
         fp, fs, ip = 4.75e9, 4.7e9, 0.00565e-6
-        jhb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; ftol = 1e-14)
+        jhb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa; atol = 1e-14)
         jgain, jqe = abs2(jhb.linearized.S((0,), 1, (0,), 1, 1)), jhb.linearized.QE((0,), 1, (0,), 1, 1)
         ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
         jprob = transientproblem(jpa; sources = [TransientSource(1, t -> 2ip*ramp(t)*cospi(2fp*t))])
         settle, record, dt = 100e-9, 20e-9, 2.5e-12
         jsol = transientsolve(jprob, (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
         first = round(Int, settle/dt) + 1
-        jplan = transientquantumplan(jsol.times[first:end], [fs])
+        jplan = transientquantumplan(jsol, jsol.times[first:end], [fs])
         jfreqs = sort!(abs.([fs + 2k*fp for k in -2:2]))
         jnoise = transientnoise(jsol, jplan; frequencies = jfreqs, weights = fill(1/record, 5), inputs = jplan, commutationrtol = 3e-3)
         @test jnoise.diagnostics.passed
@@ -339,7 +351,7 @@ using Test
         biased = transientstate(dc; voltage = [25e-6, 25e-6], linecurrents = [0.5e-6])
         ds = transientsolve(dc, (0.0, T*(n - 1)/n); dt, record = :phases, method = GaussLegendre(), initialstate = biased, rtol = 1e-12, atol = 1e-13)
         @test maximum(abs.(ds.voltage .- 25e-6)) < 1e-15
-        plan = transientquantumplan(ds.times, [3e9, 3e9]; ports = [1, 2])
+        plan = transientquantumplan(ds, ds.times, [3e9, 3e9]; ports = [1, 2])
         nd = transientnoise(ds, plan; frequencies = [3e9], weights = [1/T], inputs = plan)
         @test nd.covariance ≈ plan.vacuum rtol=1e-6
         @test_throws ArgumentError transientnoise(transientsolve(dc, (0.0, T*(n - 1)/n); dt, record = :phases, method = GaussLegendre(),
@@ -356,7 +368,7 @@ using Test
         @test maximum(abs.(bs.voltage .- vb)) < 1e-6*maximum(abs, vb)
         nb = transientnoise(bs, plan; frequencies = [3e9], weights = [1/T], inputs = plan)
         @test nb.covariance ≈ plan.vacuum rtol=1e-6
-        moved = (rest.x, rest.v, rest.waves, rest.states .* 0.5)
+        moved = TransientState(rest.flux, rest.rate, rest.waves, rest.wavesdt, rest.blockstates .* 0.5)
         @test_throws ArgumentError transientnoise(transientsolve(bdc, (0.0, T*(n - 1)/n); dt, record = :phases, method = GaussLegendre(),
             initialstate = moved), plan; frequencies = [3e9], weights = [1/T])
     end
@@ -380,7 +392,7 @@ using Test
             (:c2, 2, 0, Capacitor(0.3e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         function noiseof(c)
             sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = GaussLegendre())
-            plan = transientquantumplan(sol.times, [3e9, 3e9]; ports = [1, 2])
+            plan = transientquantumplan(sol, sol.times, [3e9, 3e9]; ports = [1, 2])
             return transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan), plan
         end
         nc, plan = noiseof(mk(fitted(Passive())))
@@ -412,14 +424,14 @@ using Test
             (:line2, 3, 4, TransmissionLine(40.0, 0.05)), (:cc, 4, 5, Capacitor(100e-15)),
             (:jj, 5, 0, JosephsonJunction(1000e-12)), (:cj, 5, 0, Capacitor(1000e-15))])
         fp, fsig, ip = 4.75e9, 4.7e9, 0.00565e-6
-        hbr = hbsolve([2pi*fsig], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), front; ftol = 1e-14)
+        hbr = hbsolve([2pi*fsig], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), front; atol = 1e-14)
         hgain, hqe = abs2(hbr.linearized.S((0,), 1, (0,), 1, 1)), hbr.linearized.QE((0,), 1, (0,), 1, 1)
         ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
         prob = transientproblem(front; sources = [TransientSource(1, t -> 2ip*ramp(t)*cospi(2fp*t))])
         settle, record, dt = 100e-9, 20e-9, 2.5e-12
         sol = transientsolve(prob, (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
         first = round(Int, settle/dt) + 1
-        plan = transientquantumplan(sol.times[first:end], [fsig])
+        plan = transientquantumplan(sol, sol.times[first:end], [fsig])
         freqs = sort!(abs.([fsig + 2k*fp for k in -2:2]))
         noise = transientnoise(sol, plan; frequencies = freqs, weights = fill(1/record, 5), inputs = plan, commutationrtol = 3e-3)
         @test noise.diagnostics.passed
@@ -431,7 +443,7 @@ using Test
         frontcold = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:line1, 1, 2, TransmissionLine(60.0, 0.09)), (:b, 2, 3, cold),
             (:line2, 3, 4, TransmissionLine(40.0, 0.05)), (:cc, 4, 5, Capacitor(100e-15)),
             (:jj, 5, 0, JosephsonJunction(1000e-12)), (:cj, 5, 0, Capacitor(1000e-15))])
-        hbc = hbsolve([2pi*fsig], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), frontcold; ftol = 1e-14)
+        hbc = hbsolve([2pi*fsig], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (16,), frontcold; atol = 1e-14)
         @test hqe < hbc.linearized.QE((0,), 1, (0,), 1, 1)
         solc = transientsolve(transientproblem(frontcold; sources = [TransientSource(1, t -> 2ip*ramp(t)*cospi(2fp*t))]),
             (0.0, settle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
@@ -457,7 +469,7 @@ using Test
             (:c2, 2, 0, Capacitor(0.5e-12)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         function noiseof(c; method = :adjoint)
             sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases, method = GaussLegendre())
-            plan = transientquantumplan(sol.times, [3e9, 3e9]; ports = [1, 2])
+            plan = transientquantumplan(sol, sol.times, [3e9, 3e9]; ports = [1, 2])
             return transientnoise(sol, plan; frequencies = [3e9], weights = [1/T], inputs = plan, method), plan
         end
         G = 100.0

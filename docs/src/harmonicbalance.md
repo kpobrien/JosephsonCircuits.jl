@@ -134,7 +134,7 @@ sol = hbsolve(ws, wp, sources, (2,), (8,), circuit; method = Staged())
 sol.nonlinear.solverinfo.converged
 ```
 
-`ftol` is the residual tolerance of the scaled system, independent of
+`atol` is the residual tolerance of the scaled system, independent of
 the units, and is raised to the rounding floor of the source when that
 is larger. A solve that does not converge returns its last iterate with
 `solverinfo.converged = false` and warns with the reason it stopped: the
@@ -208,8 +208,11 @@ out, dSdp = designsensitivities(make, (Lj = 1e-9, Cc = 100e-15), ws, wp, sources
 
 `dc = true` retains the zero frequency mode, whose flux is the static
 flux setting the inductor currents and junction phases; a direct
-current bias is a source with `mode = (0,)`, and a flux pump a current
-source through a mutual inductor. The average node voltages, which the
+current bias is a source with `mode = (0,)` at a port, or a
+`CurrentSource` component of the netlist, a constant current out of its
+first terminal and into its second, which the transient reads the same
+way (a nonzero one is an error without the mode), and a flux pump a
+current source through a mutual inductor. The average node voltages, which the
 periodic state alone does not carry, are solved beside it and returned
 as `dcnodevoltage`; a resistor is open at direct current in the periodic
 state and carries its direct current there. A subnetwork no inductor or

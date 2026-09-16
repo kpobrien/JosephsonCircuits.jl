@@ -100,7 +100,7 @@ using Test
             [("jj$k", k == 1 ? "2" : "n$(k-1)", k == N ? "0" : "n$k",
                 JosephsonJunction(Lj)) for k in 1:N]))
         run(c) = hbsolve([2*pi*fs], (2*pi*fp,),
-            [(mode = (1,), port = 1, current = ip)], (8,), (16,), c; ftol = 1e-14)
+            [(mode = (1,), port = 1, current = ip)], (8,), (16,), c; atol = 1e-14)
         a = run(explicit)
         gain = abs2(a.linearized.S((0,),1,(0,),1,1))
         @test gain > 2                      # the array is driven into gain
@@ -122,7 +122,7 @@ using Test
         fs, ip = 4.74e9, 0.1e-6
         run(jj) = hbsolve([2*pi*fs], (2*pi*2*4.75e9,),
             [(mode = (1,), port = 1, current = ip)], (8,), (16,), jpa(jj);
-            ftol = 1e-14, threewavemixing = true)
+            atol = 1e-14, threewavemixing = true)
         snail = run(NonlinearInductor(L0, PolynomialCPR([1.0, 0.3, -1/6])))
         junction = run(JosephsonJunction(L0))
         @test abs2(snail.linearized.S((0,),1,(0,),1,1)) > 3
@@ -193,7 +193,7 @@ using Test
                 ("lj","2","0",NonlinearInductor(L0,
                     PolynomialCPR([1.0, 0.0, -1/6, 0.0, 1/120]))),
                 ("c2","2","0",Capacitor(1e-12))]);
-            ftol = 1e-14, keyedarrays = false, kw...)
+            atol = 1e-14, keyedarrays = false, kw...)
         s = run(Cc; returnSsensitivity = true, sensitivitynames = ["c1"])
         @test size(s.linearized.Ssensitivity, 3) == 1
         dS = s.linearized.Ssensitivity[1, 1, 1]
@@ -285,7 +285,7 @@ using Test
             NonlinearInductor(L, PolynomialCPR([1.0, 0.0, -1/6, 0.0, 1/120]))))
         nsol = transientsolve(rest, (0.0, 1e-9 - 2e-12); dt = 2e-12,
             record = :phases, method = GaussLegendre())
-        plan = transientquantumplan(nsol.times, [4/1e-9])
+        plan = transientquantumplan(nsol, nsol.times, [4/1e-9])
         noise = transientnoise(nsol, plan; frequencies = [3/1e-9, 4/1e-9],
             weights = [1e9, 1e9], inputs = plan)
         @test noise.diagnostics.passed

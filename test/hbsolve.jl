@@ -8,7 +8,7 @@ using Test
 
     @testset "hbsolve-hbnlsolve comparison" begin
 
-        ftol = 5e-17
+        atol = 5e-17
 
         JosephsonCircuits.@params R Cc Lj Cj
         circuit = [
@@ -36,7 +36,7 @@ using Test
             Npumpharmonics = (6,)
             Nmodulationharmonics = (6,)
             sol1 = hbsolve(ws, (wp,), sources, Nmodulationharmonics,
-                Npumpharmonics, circuit, circuitdefs, ftol = ftol)
+                Npumpharmonics, circuit, circuitdefs, atol = atol)
             S1ss = sol1.linearized.S((0,),1,(0,),1,1)
             S1is = sol1.linearized.S((-2,),1,(0,),1,1)
 
@@ -44,7 +44,7 @@ using Test
             w = (wp,ws)
             Nharmonics = (6,6)
             sources = [(mode=(1,0),port=1,current=Ip),(mode=(0,1),port=1,current=Is)]
-            sol2 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = ftol)
+            sol2 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, atol = atol)
             S2ss = sol2.S((0,1),1,(0,1),1)
             S2is = sol2.S((2,-1),1,(0,1),1)
 
@@ -52,7 +52,7 @@ using Test
             w = (ws,wp)
             Nharmonics = (6,6)
             sources = [(mode=(0,1),port=1,current=Ip),(mode=(1,0),port=1,current=Is)]
-            sol3 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, ftol = ftol)
+            sol3 = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs, atol = atol)
             S3ss = sol3.S((1,0),1,(1,0),1)
             S3is = sol3.S((1,-2),1,(1,0),1)
             
@@ -85,13 +85,13 @@ using Test
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
         base = hbsolve(ws, wp, sources, (8,), (16,), circuit, circuitdefs;
-            ftol = 1e-12, returnnodeflux = true, returnvoltage = true,
+            atol = 1e-12, returnnodeflux = true, returnvoltage = true,
             keyedarrays = false)
         # a symbolic frequency variable, four batches, and every output
         # flag the other way round must give the same numbers where both
         # computed them, and nothing where they were not asked for
         other = hbsolve(ws, wp, sources, (8,), (16,), circuit, circuitdefs;
-            ftol = 1e-12, symfreqvar = w, returnS = false,
+            atol = 1e-12, symfreqvar = w, returnS = false,
             returnSnoise = true, returnQE = false, returnnodeflux = true,
             returnnodefluxadjoint = true, returnCM = false,
             returnvoltage = true, returnvoltageadjoint = true,
@@ -681,7 +681,7 @@ using Test
             names = ["C1","C2","Lj1","R1"]
             syms = Dict("C1"=>Cc,"C2"=>Cj,"Lj1"=>Lj,"R1"=>Rl)
             solve(d; op=false) = hbsolve(ws, wp, sources, (4,), (8,),
-                circuit, d; keyedarrays=false, ftol=1e-13,
+                circuit, d; keyedarrays=false, atol=1e-13,
                 sensitivitynames=names, returnSsensitivity=true,
                 sensitivityoperatingpoint=op)
 
@@ -764,7 +764,7 @@ using Test
             for (label, wp, sources, Nsig, Npump) in pumps
                 @testset "$label" begin
                     solve(d, m) = hbsolve(ws, wp, sources, Nsig, Npump,
-                        circuit, d; keyedarrays=false, ftol=1e-13,
+                        circuit, d; keyedarrays=false, atol=1e-13,
                         sensitivitynames=names, returnSsensitivity=true,
                         sensitivityoperatingpoint=true, sensitivitymode=m)
 
@@ -780,9 +780,9 @@ using Test
                     dp = copy(defs); dp[Cg1v] *= (1+h)
                     dm = copy(defs); dm[Cg1v] *= (1-h)
                     Sp = hbsolve(ws, wp, sources, Nsig, Npump, circuit, dp;
-                        keyedarrays=false, ftol=1e-13).linearized.S
+                        keyedarrays=false, atol=1e-13).linearized.S
                     Sm = hbsolve(ws, wp, sources, Nsig, Npump, circuit, dm;
-                        keyedarrays=false, ftol=1e-13).linearized.S
+                        keyedarrays=false, atol=1e-13).linearized.S
                     fd = (Sp .- Sm)./(2*h)
                     for wi in eachindex(ws)
                         for sol in (fwd, rev)
@@ -917,7 +917,7 @@ using Test
             names = ["C2","Lj1"]
             syms = Dict("C2"=>Cj,"Lj1"=>Lj)
             solve(d, m) = hbsolve(ws, wp, sources, (4,), (8,), circuit, d;
-                dc=true, keyedarrays=false, ftol=1e-13,
+                dc=true, keyedarrays=false, atol=1e-13,
                 sensitivitynames=names, returnSsensitivity=true,
                 sensitivityoperatingpoint=true, sensitivitymode=m)
             fwd = solve(defs, :forward)
@@ -932,9 +932,9 @@ using Test
                 dp = copy(defs); dp[syms[name]] *= (1+h)
                 dm = copy(defs); dm[syms[name]] *= (1-h)
                 Sp = hbsolve(ws, wp, sources, (4,), (8,), circuit, dp;
-                    dc=true, keyedarrays=false, ftol=1e-13).linearized.S
+                    dc=true, keyedarrays=false, atol=1e-13).linearized.S
                 Sm = hbsolve(ws, wp, sources, (4,), (8,), circuit, dm;
-                    dc=true, keyedarrays=false, ftol=1e-13).linearized.S
+                    dc=true, keyedarrays=false, atol=1e-13).linearized.S
                 fd = (Sp .- Sm)./(2*h)
                 for sol in (fwd, rev)
                     @test isapprox(sol.linearized.Ssensitivity[:,:,k,1],

@@ -323,11 +323,11 @@ end
     @test JC.QuasiNewton(anderson = 3).anderson == 3
 
     ref = JC.hbnlsolve(wp, (8,), src, circuit, defs;
-                       keyedarrays=false, ftol=1e-14)
+                       keyedarrays=false, atol=1e-14)
     @test ref.solverinfo.converged
     for m in (JC.NewtonKrylov(), JC.Newton())
         s = JC.hbnlsolve(wp, (8,), src, circuit, defs;
-                         keyedarrays=false, ftol=1e-14, method=m)
+                         keyedarrays=false, atol=1e-14, method=m)
         @test s.solverinfo.converged
         @test isapprox(maximum(abs.(s.nodeflux)),
                        maximum(abs.(ref.nodeflux)); rtol=1e-8)

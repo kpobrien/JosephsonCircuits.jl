@@ -286,14 +286,14 @@ end
 
 """
     mnavalidatekcl(F::AbstractVector, x::AbstractVector,
-        gaugeindices::Vector{Int}, Nnodal::Int, bnm::AbstractVector, ftol)
+        gaugeindices::Vector{Int}, Nnodal::Int, bnm::AbstractVector, atol)
 
 Validate the original, ungauged Kirchhoff current law equations at a
 converged solution by reconstructing their residuals with
 [`mnaungaugedkcl`](@ref) and comparing their infinity norm against a
 block-relative infinity-norm tolerance,
 
-`10*ftol*(1 + norm(bnm[1:Nnodal], Inf)),`
+`10*atol*(1 + norm(bnm[1:Nnodal], Inf)),`
 
 so both sides have the same per-row interpretation and the accepted error
 in any one equation does not grow with the number of driven rows. The
@@ -308,12 +308,12 @@ validation. Returns `(ok, normkcl, kcltol)` so a diagnostic can report
 the achieved residual against the applied tolerance.
 """
 function mnavalidatekcl(F::AbstractVector, x::AbstractVector,
-    gaugeindices::Vector{Int}, Nnodal::Int, bnm::AbstractVector, ftol)
+    gaugeindices::Vector{Int}, Nnodal::Int, bnm::AbstractVector, atol)
     Fkcl = mnaungaugedkcl(F, x, gaugeindices, Nnodal)
     normkcl = norm(Fkcl, Inf)
     T = real(eltype(Fkcl))
     sourcescale = norm(view(bnm, 1:Nnodal), Inf)
-    kcltol = 10*ftol*(one(T) + sourcescale)
+    kcltol = 10*atol*(one(T) + sourcescale)
     ok = isfinite(normkcl) && isfinite(sourcescale) && normkcl <= kcltol
     return ok, normkcl, kcltol
 end
@@ -360,7 +360,7 @@ dimensionless and of order one for circuits driven near their characteristic
 impedance and frequency, the auxiliary branch currents have magnitudes
 comparable to the node fluxes (in particular in circuits without inductors,
 where the previous mean-inductance scale degenerated to one henry and
-produced auxiliary values of order 1e9), and the residual tolerance `ftol`
+produced auxiliary values of order 1e9), and the residual tolerance `atol`
 becomes independent of the unit system of the problem. Because the scale
 multiplies rows only, and the auxiliary variables are internal, the returned
 node fluxes and all physical quantities are unchanged in exact arithmetic.

@@ -33,7 +33,7 @@ for case in CASES
     np = length(case.wp)
     nlkw = nonlinearkw(case.kw)
     solve(; kw...) = hbsolve(case.ws, case.wp, case.sources, case.Nmod,
-        case.Npump, case.circuit, case.defs; case.kw..., ftol = 1e-12, kw...)
+        case.Npump, case.circuit, case.defs; case.kw..., atol = 1e-12, kw...)
 
     if case.pumped
         # A. the weak second tone of the nonlinear solve against the
@@ -45,10 +45,10 @@ for case in CASES
         # the residual tolerance over that ratio, so the two are compared
         # to ten times the sum of both, on the scale of the largest entry
         @testset "weak tone against the linearized solve" begin
-            ftol = 1e-14
-            lin = solve(ftol = ftol)
+            atol = 1e-14
+            lin = solve(atol = atol)
             ratio = case.Is/maximum(s.current for s in case.sources)
-            tol = 10*(ratio + ftol/ratio)
+            tol = 10*(ratio + atol/ratio)
             modes = lin.linearized.modes
             ports = lin.linearized.portnumbers
             nzero = ntuple(_ -> 0, np)
@@ -56,7 +56,7 @@ for case in CASES
                 # (pump..., signal) order
                 nl = hbnlsolve((case.wp..., ws), (case.Npump..., case.Nmod[1]),
                     twotonesources(case), case.circuit, case.defs;
-                    nlkw..., ftol = ftol)
+                    nlkw..., atol = atol)
                 @test nl.solverinfo.converged
                 smax = maximum(abs(lin.linearized.S(m, p, n, q, i))
                     for m in modes, p in ports, n in modes, q in ports)
@@ -89,7 +89,7 @@ for case in CASES
                 ("NewtonKrylov+Floquet", NewtonKrylov(preconditioner = Floquet())),
                 ("Staged", Staged())]
             ref = hbnlsolve(case.wp, case.Npump, case.sources, case.circuit,
-                case.defs; nlkw..., ftol = 1e-14, keyedarrays = false,
+                case.defs; nlkw..., atol = 1e-14, keyedarrays = false,
                 method = Newton())
             @test ref.solverinfo.converged
             nm = length(ref.modes)
@@ -99,7 +99,7 @@ for case in CASES
             for (name, m) in methods
                 @testset "$name" begin
                     sol = hbnlsolve(case.wp, case.Npump, case.sources,
-                        case.circuit, case.defs; nlkw..., ftol = 1e-14,
+                        case.circuit, case.defs; nlkw..., atol = 1e-14,
                         keyedarrays = false, method = m)
                     @test sol.solverinfo.converged
                     @test maximum(abs, sol.S .- ref.S) < 1e-8
@@ -241,10 +241,10 @@ end
             (:jj, 2, 0, JosephsonJunction(1000e-12)),
             (:cj, 2, 0, Capacitor(1000e-15)), (:p2, 2, 0, Port(2; Z0 = R))])
         a = hbsolve(ws, lossy.wp, lossy.sources, lossy.Nmod, lossy.Npump,
-            lossy.circuit, lossy.defs; lossy.kw..., ftol = 1e-14,
+            lossy.circuit, lossy.defs; lossy.kw..., atol = 1e-14,
             returnSnoise = true, returnCnoise = true, keyedarrays = false)
         b = hbsolve(ws, lossy.wp, lossy.sources, lossy.Nmod, lossy.Npump,
-            ported, lossy.defs; lossy.kw..., ftol = 1e-14,
+            ported, lossy.defs; lossy.kw..., atol = 1e-14,
             keyedarrays = false)
         nm = length(a.linearized.modes)
         @test size(a.linearized.Snoise) == (nm, nm, length(ws))
@@ -262,7 +262,7 @@ end
         # the circuit with the block inside it
         case = CASES[findfirst(c -> c.name == "scattering block JPA", CASES)]
         total = hbsolve(ws, case.wp, case.sources, case.Nmod, case.Npump,
-            case.circuit, case.defs; case.kw..., ftol = 1e-14,
+            case.circuit, case.defs; case.kw..., atol = 1e-14,
             returnSnoise = true, returnCnoise = true, keyedarrays = false)
         Stot, Ctot = total.linearized.S, total.linearized.Cnoise
         nm = length(total.linearized.modes)
@@ -277,7 +277,7 @@ end
         Ip = only(case.sources).current
         alone = hbsolve(ws, case.wp, [(mode = (1,), port = 1, current = tau*Ip)],
             case.Nmod, case.Npump, jpa.circuit, jpa.defs; jpa.kw...,
-            ftol = 1e-14, returnCnoise = true, keyedarrays = false)
+            atol = 1e-14, returnCnoise = true, keyedarrays = false)
         @test alone.linearized.modes == total.linearized.modes
         Sm, Cm = multimode(Satt, nm), bosma(multimode(Satt, nm))
         for i in eachindex(ws)
@@ -322,7 +322,7 @@ end
         for phip in (0.4, 1.2)
             Ip = phip*phi0/Ls
             sol = hbnlsolve((w,), (7,), [(mode = (1,), port = 1, current = Ip)],
-                circuit, Dict{Any,Any}(); ftol = 1e-12, keyedarrays = false)
+                circuit, Dict{Any,Any}(); atol = 1e-12, keyedarrays = false)
             @test sol.solverinfo.converged
             modes = sol.modes
             A(n) = sol.nodeflux[findfirst(==((n,)), modes)]
@@ -355,7 +355,7 @@ end
             (mode = (1,), port = 1, current = 1e-15)]
         ws = case.ws
         sol = hbsolve(ws, case.wp, sources, case.Nmod, case.Npump, case.circuit,
-            case.defs; case.kw..., ftol = 1e-14, keyedarrays = false)
+            case.defs; case.kw..., atol = 1e-14, keyedarrays = false)
         @test sol.nonlinear.solverinfo.converged
         nm = length(sol.nonlinear.modes)
         dc = findfirst(==((0,)), sol.nonlinear.modes)

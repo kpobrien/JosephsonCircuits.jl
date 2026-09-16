@@ -130,18 +130,25 @@ other blocks are rejected, since they need a causal realization in
 time. An infinite resistance is an open.
 
 
-[`transientstate`](@ref) builds the initial state, the pair of the scaled
-fluxes and their rates, from node fluxes in Weber and node voltages in
+[`transientstate`](@ref) builds the initial state, a
+[`TransientState`](@ref), from node fluxes in Weber and node voltages in
 Volts in the compiled order; the auxiliary currents follow from the
 constitutive equations and the gauge is normalized as harmonic balance
-normalizes an initial guess. The default is the zero state. The solver
-checks that the state satisfies the algebraic rows at the start, the
-nodes without capacitance and the augmentation, and otherwise throws: it
-does not look for an operating point or project the state. A resistor
-driven by a nonzero current at the first sample needs its initial voltage
-supplied; a shunt capacitor can start charging from zero. An adapter
-from a harmonic balance operating point to a transient initial state is
-future work.
+normalizes an initial guess. The default is the zero state, and
+`transientstate(solution)` is the state at the end of a solve, to
+continue from: with transmission lines it carries the recorded waves
+over the delay window before the end, so the continuation is the
+uninterrupted solve at the same step, and reads that history through
+the lines' own interpolation at another. The state holds the solver's scaled quantities, which is
+why `initialstate` takes only a `TransientState` and not a pair of
+arrays; the solution's `finalflux` and `finalrate` are those scaled
+quantities too. The solver checks that the state satisfies the algebraic
+rows at the start, the nodes without capacitance and the augmentation,
+and otherwise throws: it does not look for an operating point or project
+the state. A resistor driven by a nonzero current at the first sample
+needs its initial voltage supplied; a shunt capacitor can start charging
+from zero. An adapter from a harmonic balance operating point to a
+transient initial state is future work.
 
 
 ## Scattering blocks, transmission lines and fitted data
@@ -286,6 +293,35 @@ The tangent and the adjoint take any targets, port numbers or component
 names, and a trailing dimension of directions or objectives propagated
 together on each step's factorization; the [quantum noise](transientnoise.md)
 is built on them, with the baths as targets.
+
+The derivative with respect to a component value is the same machinery
+with the component's own contribution to the equations as the forcing,
+so it is exact for the recorded steps as well. `transientsensitivity`
+takes the names of `C`, `L`, `R` and `Lj` components, the ones
+`hblinsolve` differentiates `S` with respect to, and returns the
+derivative of the port responses with respect to a relative change of
+each value, `p -> r*p` at `r = 1`, with the components as the trailing
+dimension; the `components` keyword of `transientadjoint` gives the
+derivative of the adjoint's objective with respect to the same
+perturbations as `sensitivity`, contracted on the few entries each
+component touches, so the work of every step and the memory it holds
+grow with the components and not with the state times the components;
+the entries are read once, before the steps, from the stamps the
+linearized solve builds its matrices from. A port's own termination
+moves the port's reference impedance and conductance with it, as the
+linearized solve has it, and the port waves carry that directly.
+A capacitor, inductor or resistor reads
+the recorded states, so solve with `record = :states`, or with
+`record = :checkpoints` under `GaussLegendre()`, which replays them; a
+junction reads only the phases.
+
+```julia
+solution = transientsolve(problem, (0.0, 2e-9); dt = 1e-12, record = :states)
+sensitivity = transientsensitivity(solution, ["Lj1", "C1"])
+sensitivity.outgoing[:, :, 1]   # d(outgoing)/dr for r*Lj1, port rows and time columns
+adjoint = transientadjoint(solution, weights; components = ["Lj1", "C1"])
+adjoint.sensitivity             # the derivative of the objective, one per component
+```
 
 ## GPU execution
 

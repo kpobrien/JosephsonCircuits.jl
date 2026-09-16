@@ -31,7 +31,7 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
         F = zeros(2)
         info = JosephsonCircuits.nlsolvekrylov!(fj!, jvp!, F, x,
             ExactP(zeros(2, 2), nothing),
-            NewtonKrylov(refresh = refresh, linearsolver = ls); ftol = 1e-10)
+            NewtonKrylov(refresh = refresh, linearsolver = ls); atol = 1e-10)
         @test info.converged
         @test isapprox(x, [sqrt(2), cbrt(3)]; rtol = 1e-6)
         @test length(info.krylov) >= info.iterations
@@ -78,7 +78,7 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
         pc = EscalatingP(false, false, 0)
         info = JosephsonCircuits.nlsolvekrylov!(fj!, jvp!, F, x, pc,
             NewtonKrylov(refresh = refresh, escalate = true,
-                linearsolver = HalfStepLS(pc)); ftol = 1e-10)
+                linearsolver = HalfStepLS(pc)); atol = 1e-10)
         @test info.converged
         @test pc.escalated
         @test isapprox(x, [sqrt(2), cbrt(3)]; rtol = 1e-6)
