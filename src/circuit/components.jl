@@ -275,6 +275,12 @@ list with no entries in the connections:
 The referenced identifiers are resolved within the containing circuit during
 elaboration, so each instance of a subcircuit couples its own inductors.
 
+The sign of `K` follows the order each inductor's terminals are declared
+in: with `K > 0` currents entering the first terminal of each inductor add
+flux to both, as with the dots of a SPICE coupling statement at the first
+named nodes, and reversing the terminals of one inductor, or the sign of
+`K`, opposes them.
+
 In the netlist form of [`Circuit`](@ref) the entry names the two inductors
 in place of nodes, and the component is written `MutualInductor(K)` alone:
 

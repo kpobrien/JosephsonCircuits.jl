@@ -865,12 +865,16 @@ end
 A SQUID made of four `snakes`, flux biased through a port: two arms in
 parallel from the single signal pin, each arm two snakes in series
 through `L3`, each arm ending in an inductor `Lb` to ground which is
-mutually coupled (coefficient `K`) to one of the two bias inductors in
-series across the bias port.
+mutually coupled to one of the two bias inductors in series across the
+bias port. A positive coupling coefficient adds flux for currents in the
+direction the inductors' terminals are declared in, and with both arm
+inductors declared toward ground the SQUID loop runs down one arm and up
+the other, so the bias current threads the loop through a coupling of
+`K` on one arm and `-K` on the other.
 
     pin 1 o---snake---L3---snake---Lb---gnd   (K to Lb1)
           |
-          o---snake---L3---snake---Lb---gnd   (K to Lb2)
+          o---snake---L3---snake---Lb---gnd   (-K to Lb2)
 
     Port 2 o--R--gnd, with Lb1 and Lb2 in series across it
 """
@@ -883,11 +887,12 @@ function snakesquid(L1, L2, L3, Lj, Lb, K, R, Nstages)
         (:b1, 1, 5, snake(L1, L2, Lj, Nstages)), (:l3b, 5, 6, Inductor(L3)),
         (:b2, 6, 7, snake(L1, L2, Lj, Nstages)), (:lbb, 7, 0, Inductor(Lb)),
         # the bias port, with its two inductors in series across it, each
-        # coupled to one arm
+        # coupled to one arm; the loop runs down arm a and up arm b, so the
+        # bias current threads it through couplings of opposite sign
         (:p2, 8, 0, Port(2; Z0 = R)),
         (:lb1, 8, 9, Inductor(Lb)), (:lb2, 9, 0, Inductor(Lb)),
         (:kb1, :lba, :lb1, MutualInductor(K)),
-        (:kb2, :lbb, :lb2, MutualInductor(K))]
+        (:kb2, :lbb, :lb2, MutualInductor(-K))]
     return Circuit(netlist; pins = [1 => (:a1, 1)])
 end
 

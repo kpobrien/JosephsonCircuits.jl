@@ -49,6 +49,11 @@ nets, names the two inductors in place of nodes:
 (:k1, :l1, :l2, MutualInductor(0.9))
 ```
 
+The sign of the coupling coefficient follows the order each inductor's
+terminals are declared in: with a positive coefficient currents entering
+the first terminal of each inductor add flux to both, and reversing the
+terminals of one inductor, or the sign of the coefficient, opposes them.
+
 ## The connection-group form
 
 The same circuit written as a list of named components and a list of
