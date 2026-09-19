@@ -662,16 +662,50 @@ using Test
             Nmodes, layout) == 2*pred
         @test JosephsonCircuits.freememory(JosephsonCircuits.CPU()) > 0
         @test_throws ArgumentError JosephsonCircuits.freememory(nothing)
-        # one tone: the block diagonal; two tones: the full block factors in
-        # single precision when they fit, the measured band when they do not
+        # one tone: the full Jacobian with the backend's sparse
+        # factorization, whatever the memory margin; two tones: the full
+        # block factors in single precision when they fit, the measured
+        # band when they do not
         res(modes; kw...) = JosephsonCircuits.resolveautomatic(sys, d.Rbnm,
             Nmodes, d.Nbranches, layout, modes, JosephsonCircuits.CPU(); kw...)
-        @test res(nothing) isa BlockDiagonal
+        @test res(nothing) isa FullJacobian
+        @test res(nothing).factorization === nothing    # the backend's default
+        @test res(nothing; budget = 0) isa FullJacobian
         @test res(d.Amatrixmodes) isa FullJacobian &&
             res(d.Amatrixmodes).factorization isa BlockFactorization
         @test res(d.Amatrixmodes).factorization.precision == Float32
         @test res(d.Amatrixmodes; budget = pred) isa FullJacobian
         @test res(d.Amatrixmodes; budget = pred - 1) isa MeasuredBand
+        # the factors may be held in another precision than the
+        # iteration: only cuDSS can, since KLU and UMFPACK are compiled for
+        # double and would promote, and a `BlockFactorization` sizes its
+        # own dense blocks rather than the matrix it is handed
+        @test JosephsonCircuits.factorizationprecision(KLUfactorization()) === nothing
+        @test JosephsonCircuits.factorizationprecision(LUfactorization()) === nothing
+        @test JosephsonCircuits.factorizationprecision(
+            BlockFactorization(precision = Float32)) === nothing
+        @test CUDSSFactorization().precision === nothing
+        @test CUDSSFactorization(precision = Float32).precision === Float32
+        @test JosephsonCircuits.factorizationprecision(
+            CUDSSFactorization(precision = Float32)) === Float32
+        # and a preconditioner whose factors are single precision still
+        # inverts a double precision residual, through the conversion in
+        # `applypreconditioner!`
+        pc32 = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
+            d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
+            layout; spec = FullJacobian(), precision = Float32,
+            Amatrixmodes = d.Amatrixmodes)
+        x32 = 0.3*randn(length(d.xr))
+        JosephsonCircuits.updatepreconditioner!(pc32, x32)
+        d.fjreal(nothing, d.Jr, x32)
+        @test eltype(pc32.P) === Float32
+        r32 = randn(length(d.xr))
+        z32 = similar(r32)
+        JosephsonCircuits.applypreconditioner!(z32, pc32, r32)
+        @test eltype(z32) === Float64          # the iteration keeps its own
+        @test d.Jr*z32 ≈ r32 rtol=1e-4         # single precision accuracy
+
         @test Automatic().factorization === nothing
         @test JosephsonCircuits.withfactorization(Automatic(),
             KLUfactorization()) === Automatic()
@@ -713,6 +747,93 @@ using Test
         @test JosephsonCircuits.escalatepreconditioner!(pcb)
         @test pcb.coupling isa FullJacobian
         @test pcb.escalations == 1
+    end
+
+    @testset "factors held in less precision than the iteration" begin
+        # a factorization holding single precision factors of a double
+        # precision iteration is a preconditioner, not an exact solve,
+        # whether it is the block factorization or cuDSS: the
+        # classification is by the precision of the factors against the
+        # iteration's, and the escalation is the same coupling set in the
+        # iteration's precision, with the factorization's settings kept.
+        # The cuDSS factorization itself needs a device; the
+        # classification, the sizing and the rebuild of the matrix do not.
+        d = chain2
+        mk(spec; kw...) = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
+            d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
+            d.modelayout; spec = spec, Amatrixmodes = d.Amatrixmodes, kw...)
+        @test JosephsonCircuits.iterationprecision(d.sys) === Float64
+        f32 = CUDSSFactorization(precision = Float32, ir_n_steps = 0)
+        pc = mk(FullJacobian(f32))
+        @test JosephsonCircuits.factorprecision(pc) === Float32
+        @test eltype(pc.P) === Float32
+        @test JosephsonCircuits.isfullcoupling(pc)
+        @test JosephsonCircuits.reducedprecision(pc)
+        @test !JosephsonCircuits.isexactpreconditioner(pc)
+        # the promotion is held to the budget like any escalation
+        pc.budget = 0
+        @test !JosephsonCircuits.escalatepreconditioner!(pc)
+        @test pc.factorization === f32
+        pc.budget = nothing
+        @test JosephsonCircuits.escalatepreconditioner!(pc)
+        @test pc.escalations == 1
+        @test pc.factorization isa CUDSSFactorization
+        @test pc.factorization.precision === Float64
+        @test pc.factorization.kwargs == (; ir_n_steps = 0)
+        @test pc.coupling.factorization === pc.factorization
+        @test pc.plan.precision === Float64
+        @test JosephsonCircuits.factorprecision(pc) === Float64
+        @test eltype(pc.P) === Float64
+        @test JosephsonCircuits.isexactpreconditioner(pc)
+        @test !JosephsonCircuits.escalatepreconditioner!(pc)
+        # the preconditioner's own precision keyword is the same case for
+        # a factorization which has none of its own
+        pk = mk(FullJacobian(); precision = Float32)
+        @test eltype(pk.P) === Float32
+        @test !JosephsonCircuits.isexactpreconditioner(pk)
+        @test JosephsonCircuits.escalatepreconditioner!(pk)
+        @test pk.factorization isa KLUfactorization
+        @test eltype(pk.P) === Float64
+        @test JosephsonCircuits.isexactpreconditioner(pk)
+        # single precision block factors of the full set promote to
+        # double, and the promotion is sized as the double precision
+        # factors it builds
+        pb = mk(FullJacobian(BlockFactorization(precision = Float32)))
+        @test !JosephsonCircuits.isexactpreconditioner(pb)
+        pb.budget = JosephsonCircuits.couplingbytes(pb,
+            FullJacobian(BlockFactorization(precision = Float64))) - 1
+        @test !JosephsonCircuits.escalatepreconditioner!(pb)
+        pb.budget += 1
+        @test JosephsonCircuits.escalatepreconditioner!(pb)
+        @test pb.factorization.precision === Float64
+        @test pb.coupling.factorization === pb.factorization
+        @test JosephsonCircuits.isexactpreconditioner(pb)
+        # a direct solve factorizes in the precision of its iteration and
+        # refuses a factorization asking for another
+        @test_throws ArgumentError Newton(factorization = f32)
+        @test_throws ArgumentError QuasiNewton(factorization = f32)
+        @test_throws "precision" JosephsonCircuits.factorize(f32,
+            sparse(1.0I, 2, 2))
+        @test JosephsonCircuits.withprecision(KLUfactorization(), Float64) isa
+            KLUfactorization
+        # and factors in the iteration's own precision are exact, whatever
+        # it is
+        s = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
+            defs2; debugJacobian = true, dc = true, odd = true, even = true,
+            keyedarrays = false, method = NewtonKrylov(precision = Float32))
+        @test JosephsonCircuits.iterationprecision(s.sys) === Float32
+        for spec in (FullJacobian(CUDSSFactorization(precision = Float32)),
+                     FullJacobian(BlockFactorization(precision = Float32)))
+            p = JosephsonCircuits.ModeCouplingPreconditioner(s.sys,
+                s.Amatrixindicesaliased, s.Amatrixconjindices, s.Ljb, s.Lscale,
+                s.Rbnm, s.Nmodes, s.Nbranches, s.Nfreq, s.invLnm, s.Gnm,
+                s.Cnm, s.modelayout; spec = spec, Amatrixmodes = s.Amatrixmodes)
+            @test JosephsonCircuits.factorprecision(p) === Float32
+            @test !JosephsonCircuits.reducedprecision(p)
+            @test JosephsonCircuits.isexactpreconditioner(p)
+            @test !JosephsonCircuits.escalatepreconditioner!(p)
+        end
     end
 
     @testset "a singular supernode falls back to the sparse factorization" begin

@@ -92,6 +92,8 @@ function BlockFactorization(singletons::Union{Nothing,AbstractFactorization} = n
         "the singleton modes are factorized by a sparse factorization, not a block one."))
     return BlockFactorization(singletons, precision, refine)
 end
+withprecision(f::BlockFactorization, ::Type{T}) where {T<:AbstractFloat} =
+    BlockFactorization(f.singletons, T, f.refine)
 
 # the sparse factorization of the singleton modes' block diagonal: the one
 # given, or the backend's default as `hbnlsolve` picks it

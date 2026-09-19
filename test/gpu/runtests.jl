@@ -271,6 +271,63 @@ include(joinpath(@__DIR__, "..", "transient", "quantum.jl"))
         @test JosephsonCircuits.freememory(CUDABackend()) > 0
     end
 
+    @testset "single precision cuDSS factors as the preconditioner" begin
+        # A preconditioner's factors only have to make the Krylov solve
+        # converge, not carry the accuracy of the answer, so they may be
+        # held in single precision while the iteration stays double;
+        # `applypreconditioner!` converts the residual down and the
+        # correction back. cuDSS is the only factorization here which
+        # honours a precision: KLU and UMFPACK are compiled for double and
+        # promote a single precision matrix.
+        ra = hbnlsolve((w1,), (8,), src1, circuit, defs; method = NewtonKrylov())
+        its = Int[]
+        for prec in (nothing, Float32)
+            f = CUDSSFactorization(; precision = prec)
+            @test JosephsonCircuits.factorizationprecision(f) === prec
+            rb = hbnlsolve((w1,), (8,), src1, circuit, defs;
+                backend = CUDABackend(),
+                method = NewtonKrylov(preconditioner = FullJacobian(f)))
+            @test rb.solverinfo.converged
+            # the preconditioner does not enter the answer, only the path
+            @test agree(ra.S, rb.S)
+            push!(its, sum(st.iterations for st in rb.solverinfo.stages))
+        end
+        # and it does not cost the solve any Newton steps
+        @test its[2] <= its[1] + 2
+
+        # single precision factors of a double precision iteration are a
+        # preconditioner, not an exact solve, and their escalation
+        # refactorizes the same coupling set in the iteration's precision,
+        # after which the preconditioner solve is exact
+        d = hbnlsolve((w1,), (8,), src1, circuit, defs;
+            backend = CUDABackend(), debugJacobian = true)
+        pc = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+            d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
+            d.Rbnm, d.Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
+            d.modelayout; Amatrixmodes = d.Amatrixmodes,
+            spec = FullJacobian(CUDSSFactorization(precision = Float32)))
+        @test !JosephsonCircuits.isexactpreconditioner(pc)
+        x = CuArray(0.3*randn(length(d.xr)))
+        r = CuArray(randn(length(d.xr)))
+        z = similar(r); Jz = similar(r)
+        # the relative residual of the preconditioner solve against the
+        # exact matrix-free product at the same point
+        function pcresidual()
+            JosephsonCircuits.updatepreconditioner!(pc, x)
+            JosephsonCircuits.applypreconditioner!(z, pc, r)
+            JosephsonCircuits.jacobianvectorproduct!(Jz, d.sys, z)
+            return norm(Jz - r)/norm(r)
+        end
+        single = pcresidual()
+        @test single < 1e-3
+        @test JosephsonCircuits.escalatepreconditioner!(pc)
+        @test JosephsonCircuits.isexactpreconditioner(pc)
+        @test pc.factorization.precision === Float64
+        double = pcresidual()
+        @test double < 1e-9
+        @test double < single/100
+    end
+
     # the circuit in time on the device: the solve through the device
     # sparse products, the assembly plan and cuDSS, its tangent and its
     # adjoint, against the host

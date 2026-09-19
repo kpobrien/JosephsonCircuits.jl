@@ -51,7 +51,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     returnSsensitivity::Bool = false, returnZ = nothing,
     returnZadjoint = nothing, returnZsensitivity = nothing,
     returnZsensitivityadjoint = nothing,
-    factorization = KLUfactorization())
+    factorization = nothing)
 
     Base.depwarn("""
     This form of hbsolve, with a single pump frequency and integer harmonic
@@ -62,6 +62,10 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     (Nmodulationharmonics,), (Npumpharmonics,), circuit, circuitdefs).
         """, :hbsolve; force=true)
 
+    # `factorization = nothing` leaves the preconditioner to `Automatic`; a
+    # factorization pins the block diagonal, the only preconditioner this
+    # form builds with one
+    #
     # the single pump as a one element frequency tuple
     w = (wp,)
     Nharmonics = (2*Npumpmodes,)
@@ -96,8 +100,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         iterations = iterations, atol = ftol,
         symfreqvar = symfreqvar, keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames,
-        method = NewtonKrylov(preconditioner = BlockDiagonal(
-            factorization = factorization)))
+        method = NewtonKrylov(preconditioner = isnothing(factorization) ?
+            Automatic() : BlockDiagonal(factorization = factorization)))
 
     # the signal modes: the signal and the even pump harmonics on either
     # side of it

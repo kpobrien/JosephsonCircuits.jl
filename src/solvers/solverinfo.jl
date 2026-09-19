@@ -1,5 +1,5 @@
 # The per-stage diagnostic records every solver returns, and the stall
-# diagnostics (`stallmessage`, `projectedstall`) they are read with.
+# diagnostics (`stallmessage`, `residualstalled`) they are read with.
 
 """
     AbstractStageInfo
@@ -48,11 +48,13 @@ Diagnostics recorded for a call of [`nlsolve!`](@ref).
     rebuilt preconditioner, and which also reports a direction that is not
     a descent direction after its exact rescue here) or twice in a row with
     a decrease short of the Armijo condition, which is a stall; `:progress`
-    when the residual history projected no convergence within the remaining
-    budget without accelerating (`nlsolvekrylov!` first takes one recovery,
-    a rebuilt preconditioner and exact Newton steps, and reports it only if
-    the stall persists); `:external` for a failed [`ExternalSolver`](@ref).
-    [`stallmessage`](@ref) spells each out.
+    when the residual stopped coming down and its rate is not improving,
+    or in `nlsolvekrylov!` comes down too slowly to reach the tolerance
+    within the remaining budget ([`residualstalled`](@ref); that loop
+    first takes one recovery, a rebuilt preconditioner and exact Newton
+    steps, and reports the stall only if it persists); `:external` for a
+    failed [`ExternalSolver`](@ref). [`stallmessage`](@ref) spells each
+    out.
 """
 struct IterationInfo <: AbstractStageInfo
     label::String
@@ -183,13 +185,14 @@ function tracestep!(tr::NewtonTrace, F, accepted::Bool)
 end
 
 """
-    tracestalled(tr::NewtonTrace, start::Integer, remaining::Integer)
+    tracestalled(tr::NewtonTrace, start::Integer; remaining = nothing)
 
-[`projectedstall`](@ref) on the recorded history from `start`, against the
-tolerance in force and `remaining` further steps.
+[`residualstalled`](@ref) on the recorded history from `start`, against
+the tolerance in force and `remaining` further steps when a budget is
+given.
 """
-tracestalled(tr::NewtonTrace, start::Integer, remaining::Integer) =
-    projectedstall(tr.normresidual, start, tr.atol, remaining)
+tracestalled(tr::NewtonTrace, start::Integer; remaining = nothing) =
+    residualstalled(tr.normresidual, start; atol = tr.atol, remaining)
 
 """
     IterationInfo(tr::NewtonTrace, label, krylov = [])
@@ -214,36 +217,59 @@ function stallmessage(reason::Symbol)
     reason === :iterations && return "the Newton iteration budget was spent"
     reason === :work && return "the Krylov work budget (`iterations` restart lengths of Arnoldi steps) was spent"
     reason === :linesearch && return "the line search found no sufficient decrease along the Newton direction (a stall)"
-    reason === :progress && return "the residual reduction rate projects no convergence within the remaining budget (a stall; the recovery did not help)"
+    reason === :progress && return "the residual stopped coming down, or comes down too slowly for the remaining budget, and its rate is not improving (a stall; the recovery did not help)"
     reason === :external && return "the external solver reported failure"
     return "reason $(reason)"
 end
 
-"""
-    projectedstall(normF::AbstractVector, start::Integer, atol::Real,
-        remaining::Integer)
+# the residual history the stall rule needs before it judges: long enough
+# for the plateaus a solve crosses on its way into a Newton basin to end
+# within it
+const STALLHISTORY = 20
 
-Whether the residual history `normF[start:end]` says the iteration will
-not reach `atol` in `remaining` further steps. The window is split in
-half: the geometric reduction rate over the later half projects the steps
-still needed, and the verdict is a stall when they exceed `remaining` and
-the later rate is no better than the earlier one, so that an iteration
-which is accelerating into a Newton basin is never stopped, only one
-whose slow progress is steady or worsening. A window shorter than four
-steps is never a stall. No constant enters beyond the halving; the
-budget the projection is measured against is the caller's own.
 """
-function projectedstall(normF::AbstractVector, start::Integer, atol::Real,
-    remaining::Integer)
+    residualstalled(normF::AbstractVector, start::Integer,
+        history::Integer = STALLHISTORY; atol = nothing, remaining = nothing)
+
+Whether the residual history `normF[start:end]` has stalled. The whole
+history from `start` is judged, once it is at least `history` points
+long: it is split in half and a geometric rate taken over each. A later
+rate better than the earlier one is an iteration accelerating into a
+Newton basin, never a stall. Otherwise the residual has stalled when it
+is flat or rising, and, given the tolerance `atol` and a budget of
+`remaining` further steps, when the steps its later rate projects to the
+tolerance, `log(atol/normF)/log(rate)`, exceed the budget. A plateau
+after a long descent is judged against the whole descent, so it is a
+stall only once it is long enough to bring the later rate to one; a
+caller which wants a fresh judgement moves `start` forward, as the Krylov
+loop does after its recovery.
+
+The projection is what ends a solve whose line search keeps finding a
+decrease: along a descent direction a short enough step always meets the
+Armijo condition, and with an inexact direction the residual can creep
+for the whole iteration budget without its rate reaching one. Near a
+plateau the projection diverges, so only a loop which gives a first
+stall a recovery over a fresh history takes it, as the Krylov loop does.
+The direct loop judges the rate alone: a direct solve whose residual
+keeps coming down, however slowly, runs to its iteration budget.
+"""
+function residualstalled(normF::AbstractVector, start::Integer,
+    history::Integer = STALLHISTORY; atol = nothing, remaining = nothing)
     m = length(normF)
     npts = m - start + 1
-    npts >= 5 || return false
+    npts >= history || return false
     mid = start + (npts - 1) ÷ 2
     k1 = mid - start
     k2 = m - mid
     r1 = (normF[mid]/normF[start])^(1/k1)
     r2 = (normF[end]/normF[mid])^(1/k2)
+    # still accelerating: the second half is coming down faster than the
+    # first, so whatever it is doing it is not stalled
     r2 < r1 && return false
+    # a residual which is not coming down at all is a stall
     r2 >= 1 && return true
+    # and without a budget nothing else is; with one, so is a rate which
+    # cannot reach the tolerance within it
+    isnothing(remaining) && return false
     return log(atol/normF[end])/log(r2) > remaining
 end

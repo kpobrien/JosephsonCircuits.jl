@@ -117,10 +117,11 @@ lands on zero frequency is refused.
 [`NewtonKrylov`](@ref) is matrix free: Newton steps whose linear
 systems GMRES solves with the exact Jacobian-vector product through the
 transforms and a preconditioner, [`Automatic`](@ref) by default, which
-picks the mode block diagonal for one pump and the full Jacobian in
-single precision block factors for two or more when they fit in half the
-free memory. A preconditioner that stalls is grown, so the method is
-never less robust than a direct solve. [`Newton`](@ref) assembles the
+picks the full Jacobian with the backend's sparse factorization for one
+pump, and for two or more the full Jacobian in single precision block
+factors when they fit in half the free memory and a measured harmonic
+band when they do not. A preconditioner that stalls is grown, so the
+method is never less robust than a direct solve. [`Newton`](@ref) assembles the
 exact real Jacobian and factorizes it, [`QuasiNewton`](@ref) uses the
 holomorphic approximation with Anderson acceleration, and
 [`Staged`](@ref) is source continuation on a ladder of harmonic grids,
@@ -139,10 +140,13 @@ the units, and is raised to the rounding floor of the source when that
 is larger. A solve that does not converge returns its last iterate with
 `solverinfo.converged = false` and warns with the reason it stopped: the
 iterations spent, the work budget spent, a line search without decrease,
-or a residual history that projects no convergence. Check the flag
-before using a result. `NewtonKrylov(precision = Float32)` iterates in
-single precision, and `refresh = Probe()` rebuilds the preconditioner
-only when a measurement says it pays.
+or a residual that has stopped coming down or comes down too slowly for
+the budget left. Check the flag before using a result.
+`NewtonKrylov(precision = Float32)` iterates in single precision,
+`refresh = Probe()` rebuilds the preconditioner only when a measurement
+says it pays, and `linesearch = Backtracking(...)` sets how the step is
+shortened, by interpolation unless asked to halve, which is faster with
+an inexact preconditioner such as the block diagonal.
 
 ## The linearized sweep
 

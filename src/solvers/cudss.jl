@@ -25,10 +25,24 @@ function cscvaluepermutation(A::SparseMatrixCSC)
 end
 
 """
-    CUDSSFactorization(; kwargs...)
+    CUDSSFactorization(; precision = nothing, kwargs...)
 
 An [`AbstractFactorization`](@ref) backed by NVIDIA's cuDSS direct sparse
 solver, for use on a GPU.
+
+`precision` is the floating point type the factors are held and the
+triangular solves run in, `nothing` for the iteration's own. It is a
+setting of a [`NewtonKrylov`](@ref) preconditioner: the factors of a
+preconditioner need only make the Krylov solve converge, so `Float32`
+halves their memory and runs them at a device's single precision rate,
+the preconditioner assembling its matrix in that precision and
+converting the residual and the correction around each solve. Such a
+preconditioner is not exact, and a Krylov solve it fails is escalated to
+the same factors in the iteration's precision
+([`escalatepreconditioner!`](@ref)). A direct solve factorizes in the
+precision of its iteration and refuses a factorization asking for
+another. cuDSS is the only factorization here which honours a precision;
+KLU and UMFPACK factorize in double whatever they are handed.
 
 Requires `CUDSS.jl` and `CUDA.jl` to be loaded; without them the returned
 factorization raises an informative error when used, so the constructor itself
@@ -49,10 +63,23 @@ together, and measured faster that way than when handed the blocks as a
 uniform batch.
 """
 struct CUDSSFactorization <: AbstractFactorization
+    precision::Union{Nothing,Type{<:AbstractFloat}}
     kwargs::NamedTuple
 end
-CUDSSFactorization(; kwargs...) = CUDSSFactorization(NamedTuple(kwargs))
-factorize(f::CUDSSFactorization, A) = _cudss_factorize(A; f.kwargs...)
+CUDSSFactorization(; precision::Union{Nothing,Type{<:AbstractFloat}} = nothing,
+    kwargs...) = CUDSSFactorization(precision, NamedTuple(kwargs))
+factorizationprecision(f::CUDSSFactorization) = f.precision
+withprecision(f::CUDSSFactorization, ::Type{T}) where {T<:AbstractFloat} =
+    CUDSSFactorization(T, f.kwargs)
+# a factorization asking for a precision is handed a matrix built in it,
+# which only a preconditioner does; any other matrix is refused rather
+# than factorized in its own precision as if nothing had been asked
+function factorize(f::CUDSSFactorization, A)
+    isnothing(f.precision) || real(eltype(A)) === f.precision ||
+        throw(ArgumentError(
+            lazy"a CUDSSFactorization with `precision` = $(f.precision) was handed a matrix of $(eltype(A)); the precision is a setting of a NewtonKrylov preconditioner, and a direct solve factorizes in the precision of its iteration."))
+    return _cudss_factorize(A; f.kwargs...)
+end
 refactorize!(f::CUDSSFactorization, F, A) = _cudss_factorize!(F, A; f.kwargs...)
 solverkwargs(f::CUDSSFactorization) = f.kwargs
 

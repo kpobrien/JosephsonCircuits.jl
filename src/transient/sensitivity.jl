@@ -403,7 +403,7 @@ end
 # the contraction work.
 function endpointwork(cp::ComponentPerturbation, sys::TransientSystem, p::TransientProblem, N::Int, nobj::Int; forcing::Bool)
     n, nj, nc = cp.n, length(sys.lmolj), length(cp.names)
-    pr = sys.gauss.projection
+    pr = sys.projection
     RJ, _ = junctionincidence(p)
     relations = isnothing(p.relations) ? emptyrelations(zeros(0)) : hostrelations(p.relations)
     Q = endpointinjection(pr, sparse(1.0I, n, n))
@@ -580,13 +580,18 @@ or a component name, see [`transientinjection`](@ref)) at recorded time
 flux and rate at the start. A third dimension of `currents` is a set of
 directions propagated together, each step's factorization serving them
 all. Under [`GaussLegendre`](@ref) a current on the grid is read at the
-stage times through a cubic Lagrange stencil; a current given as
-`currents[q, s, k, direction]`, with `s = 1` its value at recorded time
-`k` and `s = 2, 3` its values at the two stage times of the step from
-`k` to `k + 1`, is read as it is, so a pulse keeps its support and a
-tone its exact phase at the stages; the trapezoidal rule reads the grid
-values of either form. Returns `(voltage, incident, outgoing,
-finalflux, finalrate)` in the units of the solve, on its backend, with
+stage times through a cubic Lagrange stencil, through the line between
+the step's grid values on a record shorter than four points; a current
+given as `currents[q, s, k, direction]`, with `s = 1` its value at
+recorded time `k` and `s = 2, 3` its values at the two stage times of
+the step from `k` to `k + 1`, is read as it is, so a pulse keeps its
+support and a tone its exact phase at the stages; the trapezoidal rule
+reads the grid values of either form. The rate of a current on the
+grid, which the reading of the rate along an algebraic direction
+carries, is that of the cubic through four grid values, of the
+quadratic through three or of the line through two. Returns `(voltage,
+incident, outgoing, finalflux, finalrate)` in the units of the solve,
+on its backend, with
 the directions as the trailing dimension; with an `outputsink`, a
 function `outputsink(k, voltage, incident, outgoing)` receiving the
 three port by direction matrices of recorded time `k` on the backend,
@@ -640,8 +645,49 @@ function transienttangent(sol::TransientSolution, currents::Union{Nothing,Abstra
         [k for (k, q) in enumerate(targetports(p, targets)) if q > 0], ones(count(>(0), targetports(p, targets))), np, nq), backend)
     directwork = allocate(np, ndir)
     outwork = isnothing(outputsink) ? nothing : [allocate(np, ndir) for _ in 1:3]
+    # where a port reads a rate along an algebraic direction, the port
+    # waves come from the tangent rate read as the solve's is, the reading
+    # linearized at the recorded phases and read rates of the projected
+    # junctions, with the tangent currents' rate and the components'
+    # perturbation of the constraints
+    reading = sys.portsread ? outputreading(sys, backend, n, 1, ndir) : nothing
+    withstates = !isnothing(perturbation) && perturbation.states
+    injh = (sys.Lscale/phi0) .* transientinjection(p, targets)
+    dIh = Array(dI)
+    delta = ratedelta(sys)
+    problems = [p]
+    xk = allocate(n, 1)
+    # the projection of the endpoint linearized at the recorded endpoint,
+    # with the constraints perturbed there by the components and by the
+    # tangent currents: `dx -= Z (Z' (L + J'(x)) Z)^-1 Z' ((L + J'(x)) dx + f)`
+    pr = sys.projection
+    projecting = !isnothing(pr) && !isempty(pr.directions)
+    cw = projecting ? projectionwork(pr, backend, n, 1, ndir) : nothing
+    pend = (projecting && !isnothing(perturbation)) ? endpointwork(perturbation, sys, p, 1, ndir; forcing = true) : nothing
+    fdev, fh = projecting ? (allocate(n, ndir), allocate(n, ndir)) : (nothing, nothing)
+    statewindow = (state! = (x, v, k) -> (copyto!(x, view(sol.flux, :, k)); copyto!(v, view(sol.rate, :, k)); nothing),)
+    # the projected junctions' phases and read rates at time `k` from the
+    # record, and the state where the perturbation reads it, its rate read
+    function readingat!(o, k)
+        prj = sys.projection
+        if !isnothing(prj) && !isempty(prj.pj)
+            copyto!(o.hphi, Array(view(sol.phases, prj.pj, k)))
+            copyto!(o.er, Array(view(sol.endrates, :, k)))
+        end
+        if withstates
+            copyto!(xk, view(sol.flux, :, k))
+            isnothing(prj) || drivedotz!(o.rn.bdotz, prj, problems, sol.times[k], delta, o.rn.hv1, o.rn.hv2)
+            readrate!(o.wk, reshape(view(sol.rate, :, k), n, 1), xk, sys, o.rn)
+        end
+        nothing
+    end
     function outputs!(k)
-        stepmul!(portwork, sys.ports, dv)
+        if !isnothing(reading)
+            readingat!(reading, k)
+            readoutputs!(reading, sys, k, dv, dx, dIh, injh, withstates ? Array(xk) : zeros(0, 0),
+                withstates ? Array(reading.wk) : zeros(0, 0), perturbation, backend)
+        end
+        stepmul!(portwork, sys.ports, isnothing(reading) ? dv : reading.dvread)
         portwork .*= phi0
         stepmul!(directwork, portmap, view(dI, :, kcol(k), :))
         outs = isnothing(outputsink) ? (view(voltage, :, k, :), view(incident, :, k, :), view(outgoing, :, k, :)) : outwork
@@ -668,6 +714,7 @@ function transienttangent(sol::TransientSolution, currents::Union{Nothing,Abstra
             stepmul!(work, injection, view(dI, :, kcol(k - 1), :)); rhs .+= work
         end
         stepmul!(work, injection, view(dI, :, kcol(k), :)); rhs .+= work
+        projecting && (fdev .= .-work)
         if !isnothing(perturbation)
             stepquantities!(pwork, perturbation, sys, sol, k)
             perturbationforcing!(pwork.F, perturbation, pwork, pwork.work)
@@ -677,6 +724,18 @@ function transienttangent(sol::TransientSolution, currents::Union{Nothing,Abstra
         copyto!(phi, view(sol.phases, :, k))
         factor = stepjacobian!(sys, phi, factor)
         matrixsolve!(dxnew, factor, rhs)
+        if projecting
+            if !isnothing(pend)
+                endpointquantities!(pend, perturbation, statewindow, Array(view(sol.phases, pr.pj, k)), pr.pj, k)
+                endpointforcing!(pend, perturbation)
+                copyto!(fh, pend.F)
+                fdev .-= fh
+            end
+            copyto!(cw.hphi, Array(view(sol.phases, pr.pj, k)))
+            constrainttangent!(cw, pr, dxnew, fdev)
+            constraintcorrection!(cw, pr)
+            dxnew .+= cw.work
+        end
         if trapezoidal
             dv .= (2/h) .* (dxnew .- dx) .- dv
         else
@@ -687,9 +746,16 @@ function transienttangent(sol::TransientSolution, currents::Union{Nothing,Abstra
     end
     KernelAbstractions.synchronize(backend)
     isnothing(reuse) || (reuse.factor = factor)
+    # the tangent's rate along the algebraic directions read as the
+    # solve's is, the constraints' rows perturbed as its directions
+    # perturb them
+    finalrate = copy(dv)
+    (isnothing(sys.invariant) && isnothing(sys.projection)) ||
+        readtangentrate!(finalrate, dv, dx, sys, sol, 1, ndir, perturbation, Array(dI),
+            (sys.Lscale/phi0) .* transientinjection(p, targets), backend)
     squeeze = a -> isnothing(a) ? nothing : (!isnothing(currents) && ndims(currents) == 2) ? reshape(a, size(a)[1:end-1]...) : a
     return (; voltage = squeeze(voltage), incident = squeeze(incident), outgoing = squeeze(outgoing),
-        finalflux = squeeze(copy(dx)), finalrate = squeeze(copy(dv)))
+        finalflux = squeeze(copy(dx)), finalrate = squeeze(finalrate))
 end
 
 # the directions of a tangent: those of its currents, or, along the
@@ -707,12 +773,15 @@ end
 
 # The columns of an adjoint's currents at the recorded times are final a
 # few steps after a step first touches them, the trapezoidal step touching
-# its own two endpoints and the Gauss-Legendre stencil up to four grid
-# points: a ring of five columns holds the pending ones, and a column is
-# handed to the sink, with the direct feedthrough of a port's current into
-# its own wave added, once no remaining step touches it, in decreasing
-# time. A sink that stores every column is the default; the noise sinks
-# each column into its bath contraction and stores none.
+# its own two endpoints, the Gauss-Legendre stencil up to four grid
+# points ahead, and the reading of a rate along an algebraic direction
+# the four grid points behind a time: a ring of eight columns holds the
+# pending ones, and a column is handed to the sink, with the direct
+# feedthrough of a port's current into its own wave added, once no
+# remaining step touches it, in decreasing time. A sink that stores every
+# column is the default; the noise sinks each column into its bath
+# contraction and stores none.
+const RINGSLOTS = 8
 struct CurrentRing{A, M, S, F}
     slots::A
     column::M
@@ -720,13 +789,13 @@ struct CurrentRing{A, M, S, F}
     feedthrough!::F
 end
 function CurrentRing(backend, nq, nobj, sink, feedthrough!)
-    slots = KernelAbstractions.zeros(backend, Float64, nq, nobj, 5)
+    slots = KernelAbstractions.zeros(backend, Float64, nq, nobj, RINGSLOTS)
     column = KernelAbstractions.zeros(backend, Float64, nq, nobj)
     return CurrentRing(slots, column, sink, feedthrough!)
 end
-ringadd!(ring::CurrentRing, j, values, weight) = (view(ring.slots, :, :, mod1(j, 5)) .+= weight .* values; nothing)
+ringadd!(ring::CurrentRing, j, values, weight) = (view(ring.slots, :, :, mod1(j, RINGSLOTS)) .+= weight .* values; nothing)
 function ringemit!(ring::CurrentRing, j)
-    slot = view(ring.slots, :, :, mod1(j, 5))
+    slot = view(ring.slots, :, :, mod1(j, RINGSLOTS))
     ring.column .= slot
     ring.feedthrough!(ring.column, j)
     ring.sink(j, ring.column)
@@ -836,11 +905,55 @@ function transientadjoint(sol::TransientSolution, weights::AbstractArray{<:Real}
     phi, jwork = allocate(nj), allocate(nj, nobj)
     portwork = allocate(np, nobj)
     targetwork = allocate(nq, nobj)
-    # the adjoint of an output at time k: the rate receives phi0*P'*(cv.*w)
+    # The adjoint of an output at time `k`: the rate receives
+    # `phi0 P' (cv .* w)`. Where a port reads a rate along an algebraic
+    # direction, through the transpose of the reading: the rate before
+    # the reading, the flux through the curvature of the projected
+    # junctions' stiffness, the currents whose rate the reading read, at
+    # the points of the stencil, and the components whose perturbation of
+    # the constraints it read, on the read rate at the time.
+    transposing = sys.portsread ? outputtranspose(sys, backend, n, 1, nobj) : nothing
+    withstates = !isnothing(perturbation) && perturbation.states
+    delta = ratedelta(sys)
+    problems = [p]
+    xk = allocate(n, 1)
+    # the projection of the endpoint transposed (see `constrainttranspose!`):
+    # the cotangent of the flux before it, and through the cotangent of
+    # the projection's forcing the current at the endpoint time and the
+    # components, contracted on the host
+    pr = sys.projection
+    projecting = !isnothing(pr) && !isempty(pr.directions)
+    cw = projecting ? projectionwork(pr, backend, n, 1, nobj) : nothing
+    fbar = projecting ? allocate(n, nobj) : nothing
+    pend = (projecting && !isnothing(perturbation)) ? endpointwork(perturbation, sys, p, 1, nobj; forcing = false) : nothing
+    sensh = isnothing(pend) ? nothing : zeros(length(perturbation.names), nobj, 1)
+    statewindow = (state! = (x, v, k) -> (copyto!(x, view(sol.flux, :, k)); copyto!(v, view(sol.rate, :, k)); nothing),)
+    function readingat!(o, k)
+        prj = sys.projection
+        if !isnothing(prj) && !isempty(prj.pj)
+            copyto!(o.hphi, Array(view(sol.phases, prj.pj, k)))
+            copyto!(o.er, Array(view(sol.endrates, :, k)))
+        end
+        if withstates
+            copyto!(xk, view(sol.flux, :, k))
+            isnothing(prj) || drivedotz!(o.rn.bdotz, prj, problems, sol.times[k], delta, o.rn.hv1, o.rn.hv2)
+            readrate!(o.wk, reshape(view(sol.rate, :, k), n, 1), xk, sys, o.rn)
+        end
+        nothing
+    end
     function output!(k)
         portwork .= cv .* view(w, :, k, :)
         stepmul!(work, sys.portst, portwork)
-        vbar .+= phi0 .* work
+        if isnothing(transposing)
+            vbar .+= phi0 .* work
+            return nothing
+        end
+        o = transposing
+        o.rbar .= phi0 .* work
+        readingat!(o, k)
+        readoutputstranspose!(o, sys, k, nt, vbar, xbar, ring, injectiont, targetwork, perturbation, pcwork, sensitivity,
+            xk, backend)
+        nothing
     end
     output!(nt)
     factor = isnothing(reuse) ? nothing : reuse.factor
@@ -848,6 +961,16 @@ function transientadjoint(sol::TransientSolution, weights::AbstractArray{<:Real}
         # the rate update feeds the flux adjoint, then the step's solve is
         # transposed on the symmetric step matrix at the recorded phases
         xbar .+= (trapezoidal ? 2/h : 1/h) .* vbar
+        if projecting
+            copyto!(cw.hphi, Array(view(sol.phases, pr.pj, k)))
+            constrainttranspose!(xbar, fbar, cw, pr, sys, backend)
+            stepmul!(targetwork, injectiont, fbar)
+            ringadd!(ring, k, targetwork, -1.0)
+            if !isnothing(pend)
+                endpointquantities!(pend, perturbation, statewindow, Array(view(sol.phases, pr.pj, k)), pr.pj, k)
+                endpointcontract!(sensh, pend, perturbation, Array(fbar), -1.0)
+            end
+        end
         copyto!(phi, view(sol.phases, :, k))
         factor = stepjacobian!(sys, phi, factor)
         matrixsolve!(lambda, factor, xbar)
@@ -857,11 +980,13 @@ function transientadjoint(sol::TransientSolution, weights::AbstractArray{<:Real}
             contractperturbation!(sensitivity, perturbation, perturbation.entries, pcwork, pwork, lambda, 1.0)
         end
         # the current perturbations the step read; the column at k is
-        # final once this step has added to it
+        # final once this step has added to it, except for the first four,
+        # which the reading of a rate along an algebraic direction at the
+        # first three times still reaches
         stepmul!(targetwork, injectiont, lambda)
         ringadd!(ring, k, targetwork, 1.0)
         trapezoidal && ringadd!(ring, k - 1, targetwork, 1.0)
-        ringemit!(ring, k)
+        k > 4 && ringemit!(ring, k)
         # the previous state's adjoints; A and B are symmetric
         stepmul!(xbar, sys.A, lambda)
         if trapezoidal
@@ -875,9 +1000,12 @@ function transientadjoint(sol::TransientSolution, weights::AbstractArray{<:Real}
         end
         output!(k - 1)
     end
-    ringemit!(ring, 1)
+    for j in min(4, nt):-1:1
+        ringemit!(ring, j)
+    end
     KernelAbstractions.synchronize(backend)
     isnothing(reuse) || (reuse.factor = factor)
+    isnothing(sensh) || (sensitivity .+= tobackend(backend, sensh))
     squeeze = a -> isnothing(a) ? nothing : ndims(weights) == 2 ? reshape(a, size(a)[1:end-1]...) : a
     return (; currents = squeeze(currents), initialflux = squeeze(xbar), initialrate = squeeze(vbar), initialwaves = nothing, initialstates = nothing,
         sensitivity = isnothing(sensitivity) ? nothing : squeeze(reshape(sensitivity, size(sensitivity, 1), nobj)))

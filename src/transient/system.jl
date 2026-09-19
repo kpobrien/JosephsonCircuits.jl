@@ -208,7 +208,6 @@ struct TransientProblem
     algebraic::Vector{Vector{Int}}
     directions::Matrix{Float64}
     constraints::Matrix{Float64}
-    rateextraction::Matrix{Float64}
     injection::SparseMatrixCSC{Float64,Int}
     drives::Vector{TransientDrive}
     constantcurrent::Vector{Float64}
@@ -296,7 +295,7 @@ function transientproblem(circuit, circuitdefs = Dict{Symbol,Any}();
     # capacitance, or a picosecond
     Lscale = transientscale(psc, vvn, nm)
     _, Gs, Ls, _ = transientlinearmatrices(nm, coupledbranches, cg.Rbn, gaugeindices, blocks, lines, Lscale, Nnodal, Naux)
-    inertialess, algebraic, directions, constraints, rateextraction =
+    inertialess, algebraic, directions, constraints =
         transientclassification(psc, vvn, Gs, Ls, Nnodal, length(coupledbranches), blocks)
 
     # the port terminals and terminations, for the port waves
@@ -344,7 +343,7 @@ function transientproblem(circuit, circuitdefs = Dict{Symbol,Any}();
         n2 > 0 && (constantcurrent[n2] -= vvn[c])
     end
     return TransientProblem(psc, cg, nm, Nnodal, Naux, Lscale, coupledbranches,
-        floatingcomponents, gaugeindices, inertialess, algebraic, directions, constraints, rateextraction,
+        floatingcomponents, gaugeindices, inertialess, algebraic, directions, constraints,
         injection, drives, constantcurrent, portpositive, portnegative, portimpedances, portconductances, blocks, lines,
         calcjunctionrelations(psc.componenttypes, psc.nodeindices,
             psc.junctioncprs, cg.edge2indexdict, nm.Ljb))
@@ -502,9 +501,8 @@ end
 # the equations say rather than as a graph of the ports would guess. A
 # coupled inductor current is an algebraic direction of its own, its row
 # constraining the flux. Returns the inertialess subnetworks, the
-# supports of the algebraic directions, the directions as columns, the
-# constraints as rows over every equation, and the rows that extract the
-# rate along each direction from a rate of the state.
+# supports of the algebraic directions, the directions as columns, and
+# the constraints as rows over every equation.
 function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMatrixCSC, L::SparseMatrixCSC,
         Nnodal::Int, Naux::Int, blocks = TransientBlock[])
     n = size(G, 1)
@@ -547,19 +545,16 @@ function transientclassification(psc::CompiledCircuit, vvn::Vector, G::SparseMat
     constraints = size(rows, 1) == 0 ? zeros(0, n) : Matrix(transpose(cl)*rows)
     size(constraints, 1) == d || throw(ArgumentError(
         "a scattering block ties the rate of a node with capacitance to a constraint on a node without one; that coupling is not supported in time."))
-    D0 = [1.0/length(z) for z in islands]
-    rateextraction = Matrix(transpose(Valpha)*(D0 .* transpose(Z0)))
     algebraic = [sort!([node for (c, z) in enumerate(islands) if abs(Valpha[c, j]) > 1e-8 for node in z]) for j in 1:d]
     # the coupled inductor currents, each its own direction
     for k in 1:Naux
         e = zeros(n); e[Nnodal + k] = 1.0
         directions = hcat(directions, e)
         constraints = vcat(constraints, transpose(e))
-        rateextraction = vcat(rateextraction, transpose(e))
         push!(algebraic, [Nnodal + k])
     end
     order = sortperm(algebraic; by = z -> (first(z), length(z)))
-    return inertialess, algebraic[order], directions[:, order], constraints[order, :], rateextraction[order, :]
+    return inertialess, algebraic[order], directions[:, order], constraints[order, :]
 end
 
 # The rate system along the capacitor free islands `Z0` and the block

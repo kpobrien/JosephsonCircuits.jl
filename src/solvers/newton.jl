@@ -203,8 +203,8 @@ end
 
 """
     dualsearch!(f!, F, xcandidate, x, deltax, ϕ0, dϕ0dα, ϕcand,
-        correction, betak, Fbest, Fspare, Fatx; c1, safeguard_low,
-        safeguard_high, maxbacktracks, curvedpriority = false)
+        correction, betak, Fbest, Fspare, Fatx; ls = Backtracking(),
+        curvedpriority = false)
 
 Search selection for a rejected Anderson candidate: Both the curvilinear
 search `x + α*deltax - betak*α²*correction` and the plain damped-Newton search
@@ -234,17 +234,14 @@ function dualsearch!(f!, F::AbstractVector,
     deltax::AbstractVector, ϕ0::Real, dϕ0dα::Real, ϕcand::Real,
     correction::AbstractVector, betak::Real, Fbest::AbstractVector,
     Fspare::AbstractVector, Fatx::AbstractVector;
-    c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5,
-    maxbacktracks::Integer = 10, curvedpriority::Bool = false)
+    ls::Backtracking = Backtracking(), curvedpriority::Bool = false)
 
     # preserve F(x): the searches overwrite Fbest with best trials
     copyto!(Fatx, Fbest)
 
     # curved search first (it is the seeded one)
     αc, ϕc, accc, btc = backtracking_linesearch!(
-        f!, F, xcandidate, x, deltax, ϕ0, dϕ0dα;
-        c1 = c1, safeguard_low = safeguard_low,
-        safeguard_high = safeguard_high, maxbacktracks = maxbacktracks,
+        f!, F, xcandidate, x, deltax, ϕ0, dϕ0dα; ls = ls,
         correction = correction, beta = betak,
         Fbest = Fbest, ϕfullstep = ϕcand)
     # Accept a curvilinear Anderson step that passed the Armijo test at the
@@ -260,10 +257,7 @@ function dualsearch!(f!, F::AbstractVector,
     copyto!(Fspare, F)
     copyto!(Fbest, Fatx)
     αp, ϕp, accp, btp = backtracking_linesearch!(
-        f!, F, xcandidate, x, deltax, ϕ0, dϕ0dα;
-        c1 = c1, safeguard_low = safeguard_low,
-        safeguard_high = safeguard_high, maxbacktracks = maxbacktracks,
-        Fbest = Fbest)
+        f!, F, xcandidate, x, deltax, ϕ0, dϕ0dα; ls = ls, Fbest = Fbest)
     backtracks = btc + 1 + btp
 
     # Select the point to use. If only curvilinear fulfills the Armijo
@@ -315,9 +309,8 @@ end
 
 """
     nlsolve!(fj!, F, J, x; iterations = 1000, atol = 1e-8, rtol = 0.0,
-        factorization = KLUfactorization(), label = "", c1 = 1e-4,
-        safeguard_low = 0.1, safeguard_high = 0.5, maxbacktracks = 10,
-        maxbacktrackfailures = 2, andersondepth = 5, andersonbeta = 1.0,
+        factorization = KLUfactorization(), label = "",
+        linesearch = Backtracking(), andersondepth = 5, andersonbeta = 1.0,
         andersonacceptfactor = 0.9)
 
 Newton's method with a line search and Anderson acceleration, suited to
@@ -354,12 +347,11 @@ solve) only the linear line search runs.
     `max(atol, rtol*norm(F0))` with `F0` the initial residual.
 - `factorization = KLUfactorization()`: the sparse factorization of `J`.
 - `label = ""`: label for the returned `IterationInfo`.
-- `c1 = 1e-4`: Armijo sufficient-decrease constant, in (0, 1/2); the
-  upper bound keeps the full Newton step acceptable near a root.
-- `safeguard_low = 0.1`, `safeguard_high = 0.5`: backtracking step
-  clamp as fractions of the previous trial.
-- `maxbacktracks = 10`: trial-point budget per line search.
-- `maxbacktrackfailures = 2`: consecutive-failure stall threshold.
+- `linesearch = Backtracking()`: the [`Backtracking`](@ref) of every
+  search of the iteration, the curvilinear one included: the Armijo
+  constant, the safeguards, the trial budget, whether a backtrack is
+  fitted or halved, and the count of consecutive failed searches which
+  is a stall.
 - `andersondepth = 5`: the history depth; `0` disables the acceleration.
 - `andersonbeta = 1.0`: correction strength.
 - `andersonacceptfactor = 0.9`: candidate accept threshold, in (0, 1);
@@ -372,16 +364,14 @@ evaluations after each iteration's first), `andersonaccepted` (true when
 the taken step lies on the curved path), and `reason`, why the iteration
 ended: `:converged`, `:iterations`, `:linesearch` (no decrease at all, or
 two consecutive steps short of the Armijo condition), or `:progress` (the
-residual history projects no convergence within the remaining budget,
-[`projectedstall`](@ref)); see [`stallmessage`](@ref).
+residual stopped coming down and its rate is not improving,
+[`residualstalled`](@ref)); see [`stallmessage`](@ref).
 """
 function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     x::AbstractVector{T}; iterations = 1000, atol = 1e-8, rtol = 0.0,
     factorization = KLUfactorization(), label = "",
-    c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5,
-    maxbacktracks::Integer = 10, maxbacktrackfailures::Integer = 2,
-    andersondepth::Integer = 5, andersonbeta = 1.0,
-    andersonacceptfactor = 0.9) where T
+    linesearch::Backtracking = Backtracking(), andersondepth::Integer = 5,
+    andersonbeta = 1.0, andersonacceptfactor = 0.9) where T
 
     if size(J, 1) != size(J, 2)
         throw(DimensionMismatch(lazy"The Jacobian `J` matrix must be square."))
@@ -411,30 +401,13 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     # andersoncorrection!, and andersonrestart!
     anderson = andersondepth > 0 ? AndersonState(x, andersondepth) : nothing
 
-    # validate every option before the first residual evaluation
+    # validate every option before the first residual evaluation; the line
+    # search validated its own when it was built
     if iterations < 0
         throw(ArgumentError(lazy"`iterations` = $(iterations) must be nonnegative."))
     end
     if !(atol >= 0)
         throw(ArgumentError(lazy"`atol` = $(atol) must be nonnegative."))
-    end
-    # for the exact Newton step dϕ0 = -2ϕ0, so the full-step Armijo bound
-    # is (1 - 2c1)ϕ0: any c1 >= 1/2 makes full-step acceptance impossible
-    # for a nonnegative merit, destroying the fast local convergence
-    if !(0 < c1 < 1//2)
-        throw(ArgumentError(lazy"`c1` = $(c1) must be in (0, 1/2) for the Newton merit function."))
-    end
-    if !(0 < safeguard_low < 1//2)
-        throw(ArgumentError(lazy"`safeguard_low` = $(safeguard_low) must be in (0, 1/2)."))
-    end
-    if !(safeguard_low < safeguard_high < 1)
-        throw(ArgumentError(lazy"`safeguard_high` = $(safeguard_high) must satisfy `safeguard_low < safeguard_high < 1`."))
-    end
-    if maxbacktracks < 0
-        throw(ArgumentError(lazy"`maxbacktracks` = $(maxbacktracks) must be nonnegative."))
-    end
-    if maxbacktrackfailures < 1
-        throw(ArgumentError(lazy"`maxbacktrackfailures` = $(maxbacktrackfailures) must be positive."))
     end
     if andersondepth < 0
         throw(ArgumentError(lazy"`andersondepth` = $(andersondepth) must be nonnegative."))
@@ -451,7 +424,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     residual!(Fv, xv) = fj!(Fv, nothing, xv)
 
     # the record and the acceptance rules shared with `nlsolvekrylov!`
-    tr = NewtonTrace{real(T)}(maxbacktrackfailures)
+    tr = NewtonTrace{real(T)}(linesearch.maxfailures)
     normF = tr.normresidual
 
     # run the fast comparison first. on a stall (the failure-counter or
@@ -571,10 +544,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
                 alpha1, ϕα, accepted, backtracks, usecorrection =
                     dualsearch!(residual!, F, xcandidate, x,
                         deltax, ϕ0, dϕ0dα, ϕcand, anderson.correction,
-                        betak, Fbest, Fspare, Fatx;
-                        c1 = c1, safeguard_low = safeguard_low,
-                        safeguard_high = safeguard_high,
-                        maxbacktracks = maxbacktracks,
+                        betak, Fbest, Fspare, Fatx; ls = linesearch,
                         curvedpriority = curvedpriority)
                 if !accepted && !curvedpriority
                     # both searches failed: permanently set to curved priority,
@@ -588,9 +558,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
                 usecorrection = false
                 alpha1, ϕα, accepted, backtracks = backtracking_linesearch!(
                     residual!, F, xcandidate, x, deltax, ϕ0, dϕ0dα;
-                    c1 = c1, safeguard_low = safeguard_low,
-                    safeguard_high = safeguard_high,
-                    maxbacktracks = maxbacktracks, Fbest = Fbest)
+                    ls = linesearch, Fbest = Fbest)
             end
             tracetrial!(tr, alpha1, backtracks, usecorrection)
 
@@ -622,7 +590,7 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
                 break
             end
 
-            if tracestalled(tr, 1, iterations - n)
+            if tracestalled(tr, 1)
                 stalled = true
                 tr.reason = :progress
                 break

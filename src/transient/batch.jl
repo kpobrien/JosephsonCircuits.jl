@@ -49,7 +49,7 @@ function transientproblem(p::TransientProblem; sources)
         n2 > 0 && (constantcurrent[n2] -= vvn[c])
     end
     return TransientProblem(psc, p.graph, p.matrices, p.Nnodal, p.Naux, p.Lscale, p.coupledbranches,
-        p.floatingcomponents, p.gaugeindices, p.inertialess, p.algebraic, p.directions, p.constraints, p.rateextraction,
+        p.floatingcomponents, p.gaugeindices, p.inertialess, p.algebraic, p.directions, p.constraints,
         injection, drives, constantcurrent, p.portpositive, p.portnegative, p.portimpedances, p.portconductances, p.blocks, p.lines,
         p.relations)
 end
@@ -100,6 +100,7 @@ struct TransientBatchSolution{P, M, V}
     outgoing::M
     phases::Any
     endphases::Any
+    endrates::Any
     linewaves::Any
     history::Any
     # the flux and rate records untyped, as the phases are, so that the
@@ -128,7 +129,7 @@ function Base.getindex(b::TransientBatchSolution, js::AbstractVector{<:Integer})
         rate = slice(b.checkpoints.rate), increment = slice(b.checkpoints.increment), states = slice(b.checkpoints.states),
         waves = slice(b.checkpoints.waves))
     return TransientBatchSolution(b.problems[js], b.method, b.dt, b.times, slice(b.voltage), slice(b.incident),
-        slice(b.outgoing), slice(b.phases), slice(b.endphases), slice(b.linewaves), slice(b.history), slice(b.flux), slice(b.rate), slice(b.stages), cp, slice(b.initialflux),
+        slice(b.outgoing), slice(b.phases), slice(b.endphases), slice(b.endrates), slice(b.linewaves), slice(b.history), slice(b.flux), slice(b.rate), slice(b.stages), cp, slice(b.initialflux),
         slice(b.initialrate), slice(b.finalflux), slice(b.finalrate), slice(b.blockstates), slice(b.initialwaves), slice(b.initialstates), b.stats)
 end
 function Base.getindex(b::TransientBatchSolution, j::Integer)
@@ -138,7 +139,7 @@ function Base.getindex(b::TransientBatchSolution, j::Integer)
         rate = slice(b.checkpoints.rate), increment = slice(b.checkpoints.increment), states = slice(b.checkpoints.states),
         waves = slice(b.checkpoints.waves))
     return TransientSolution(b.problems[j], b.method, b.dt, b.times, slice(b.voltage), slice(b.incident),
-        slice(b.outgoing), slice(b.phases), slice(b.endphases), slice(b.linewaves), slice(b.history), slice(b.flux), slice(b.rate), slice(b.stages), cp, copy(view(b.initialflux, :, j)),
+        slice(b.outgoing), slice(b.phases), slice(b.endphases), slice(b.endrates), slice(b.linewaves), slice(b.history), slice(b.flux), slice(b.rate), slice(b.stages), cp, copy(view(b.initialflux, :, j)),
         copy(view(b.initialrate, :, j)), copy(view(b.finalflux, :, j)), copy(view(b.finalrate, :, j)), slice(b.blockstates),
         slice(b.initialwaves), slice(b.initialstates), b.stats)
 end
@@ -369,10 +370,20 @@ function gaussbatchstagesolve!(d, r, sys::TransientSystem, gc::GaussCoefficients
     # the convergence per column: each direction of each condition against
     # its own right hand side, so a weak direction is not left at the
     # tolerance of a strong one, down to the roundoff floor of the terms
-    # the residual sums, the unit roundoff times their magnitudes
+    # the residual sums
     colmax = a -> vec(Array(maximum(abs, a; dims = (1, 3))))
     scale = max.(colmax(r), floatmin(Float64))
     cmax, gmax = maximum(abs, gc.ainv2)/h^2, maximum(abs, gc.ainv)/h
+    # the rounding of the terms the residual sums, per unit of the
+    # increment: the row or column sums of each matrix, whichever is
+    # larger, since the adjoint multiplies by the transposes, at the
+    # rule's weights, and the junction stamp at the steepest slope of the
+    # relations at the stages. A product's own size would understate it
+    # along an algebraic direction, where `C d` cancels. The eight units
+    # of roundoff allow for the order of the summation; they are not a
+    # bound for rows of every length.
+    cs, gs, ls, js = sys.rowsums
+    rounding = 2cmax*cs + 2gmax*gs + ls + js*relationslope(sys, phi, dwork)
     # the contraction of the first correction, the measure of how well the
     # frozen operator fits this step's two stiffnesses, returned for the
     # caller to decide whether to refresh it
@@ -391,7 +402,7 @@ function gaussbatchstagesolve!(d, r, sys::TransientSystem, gc::GaussCoefficients
             transposed ? rationalsourcestranspose!(rw, sys, d) : rationalsources!(rw, sys, d, d; withstate = false)
             res .-= rw.source
         end
-        floor = 8eps(Float64) .* (scale .+ 2cmax .* colmax(cwork) .+ 2gmax .* colmax(gwork) .+ colmax(lwork) .+ colmax(res))
+        floor = 8eps(Float64) .* (scale .+ rounding .* colmax(d) .+ colmax(res))
         for i in 1:2
             ri = stage(res, i)
             ri .+= stage(lwork, i)
@@ -412,18 +423,33 @@ function gaussbatchstagesolve!(d, r, sys::TransientSystem, gc::GaussCoefficients
     error("the stage equations of a Gauss-Legendre step did not converge in the tangent or the adjoint: the two stage stiffnesses differ too much from their mean; reduce dt.")
 end
 
+# the steepest slope of the junctions' relations at the stage phases,
+# `(nj, N, 2)`: one for the sinusoidal relation, and the largest
+# derivative otherwise, `dwork` being `(nj, N)` work
+function relationslope(sys::TransientSystem, phi, dwork)
+    r = sys.relations
+    allsinusoidal(r) && return 1.0
+    slope = 0.0
+    for i in 1:2
+        derivativeinto!(dwork, r, view(phi, :, :, i))
+        slope = max(slope, maximum(abs, dwork; init = 0.0))
+    end
+    return slope
+end
+
 # a solution as a batch of one for the responses: its problems, its
 # phases as `(nj, 2, nt, N)`, its initial states as `(n, N)`, and its
 # endpoint phases as `(npj, nt, N)`
 function batchview(sol::TransientSolution)
     phases = isnothing(sol.phases) || ndims(sol.phases) != 3 ? sol.phases : reshape(sol.phases, size(sol.phases)..., 1)
     endphases = isnothing(sol.endphases) ? nothing : reshape(sol.endphases, size(sol.endphases)..., 1)
+    endrates = isnothing(sol.endrates) ? nothing : reshape(sol.endrates, size(sol.endrates)..., 1)
     linewaves = isnothing(sol.linewaves) ? nothing : reshape(sol.linewaves, size(sol.linewaves)..., 1)
     w0 = isnothing(sol.initialwaves) ? zeros(2length(sol.problem.lines), 1) : reshape(sol.initialwaves, :, 1)
     z0 = isnothing(sol.initialstates) ? zeros(blockstates(sol.problem), 1) : reshape(sol.initialstates, :, 1)
-    return [sol.problem], phases, reshape(sol.initialflux, :, 1), reshape(sol.initialrate, :, 1), endphases, linewaves, w0, z0
+    return [sol.problem], phases, reshape(sol.initialflux, :, 1), reshape(sol.initialrate, :, 1), endphases, linewaves, w0, z0, endrates
 end
-batchview(b::TransientBatchSolution) = b.problems, b.phases, b.initialflux, b.initialrate, b.endphases, b.linewaves, b.initialwaves, b.initialstates
+batchview(b::TransientBatchSolution) = b.problems, b.phases, b.initialflux, b.initialrate, b.endphases, b.linewaves, b.initialwaves, b.initialstates, b.endrates
 # the recorded states, the fluxes, the rates and the stage increments,
 # with the conditions as the trailing dimension
 statesview(sol::TransientSolution) = (isnothing(sol.flux) ? nothing : reshape(sol.flux, size(sol.flux)..., 1),
@@ -451,7 +477,7 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
     # projected, of the endpoint, from the recorded or replayed states,
     # and the direct term of the port waves along a port's own termination
     pwork = isnothing(perturbation) ? nothing : perturbationwork(perturbation, sys, N; forcing = true)
-    pend = (isnothing(perturbation) || isnothing(sys.gauss.projection)) ? nothing :
+    pend = (isnothing(perturbation) || isnothing(sys.projection)) ? nothing :
         endpointwork(perturbation, sys, p, N, ndir; forcing = true)
     dterm = isnothing(perturbation) ? nothing : directterm(perturbation, sys, N, ndir)
     withstates = !isnothing(perturbation) && perturbation.states
@@ -541,10 +567,51 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
         ones(count(>(0), tp)), np, nq), backend)
     directwork, directall = allocate(np, ndir), allocate(np, m)
     # the port outputs of a time, stored, or handed to the sink as the
-    # three port by column matrices
+    # three port by column matrices; where a port reads a rate along an
+    # algebraic direction, from the tangent rate read as the solve's is,
+    # the reading linearized at the projected junctions' recorded phases
+    # and read rates, with the tangent currents' rate and the components'
+    # perturbation of the constraints
     outwork = isnothing(outputsink) ? nothing : [allocate(np, m) for _ in 1:3]
-    function outputs!(k)
-        stepmul!(portwork, sys.ports, dv)
+    reading = sys.portsread ? outputreading(sys, backend, n, N, m) : nothing
+    injh = (sys.Lscale/phi0) .* transientinjection(p, targets)
+    dIh = Array(reshape(grid, nq, size(grid, 2), ndir))
+    delta = ratedelta(sys)
+    xs0, vs0 = tobackend(backend, Float64.(collect(x0s))), tobackend(backend, Float64.(collect(v0s)))
+    # the projected junctions' phases and read rates at time `k`, and the
+    # states where the perturbation reads them, their rate read: at the
+    # start from the initial state, later from the window
+    function readingat!(o, k, window)
+        prj, pwn = sys.projection, o.rn.pw
+        if k == 1
+            isnothing(pwn) || (stepmul!(pwn.phip, prj.RJp, xs0); copyto!(o.hphi, pwn.phip))
+            isnothing(prj) || drivedotz!(o.rn.bdotz, prj, problems, sol.times[1], delta, o.rn.hv1, o.rn.hv2)
+            readrate!(o.wk, vs0, xs0, sys, o.rn)
+            isnothing(pwn) || (stepmul!(pwn.phip, prj.RJp, o.wk); copyto!(o.er, pwn.phip))
+            withstates && (copyto!(pwork.x, xs0); copyto!(pwork.v, o.wk))
+        else
+            if !isnothing(pwn)
+                window.endphases!(o.erdev, k)
+                copyto!(o.hphi, o.erdev)
+                window.endrates!(o.erdev, k)
+                copyto!(o.er, o.erdev)
+            end
+            if withstates
+                window.state!(pwork.x, pwork.v, k)
+                isnothing(prj) || drivedotz!(o.rn.bdotz, prj, problems, sol.times[k], delta, o.rn.hv1, o.rn.hv2)
+                readrate!(o.wk, pwork.v, pwork.x, sys, o.rn)
+                copyto!(pwork.v, o.wk)
+            end
+        end
+        nothing
+    end
+    function outputs!(k, window = nothing)
+        if !isnothing(reading)
+            readingat!(reading, k, window)
+            readoutputs!(reading, sys, k, dv, dx, dIh, injh, withstates ? Array(pwork.x) : zeros(0, 0),
+                withstates ? Array(pwork.v) : zeros(0, 0), perturbation, backend)
+        end
+        stepmul!(portwork, sys.ports, isnothing(reading) ? dv : reading.dvread)
         portwork .*= phi0
         stepmul!(directwork, portmap, view(dI, :, kcol(k), :))
         reshape(directall, np, ndir, N) .= reshape(directwork, np, ndir, 1)
@@ -565,10 +632,9 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
     stale = true
     # the projection of the endpoint, linearized about the recorded
     # endpoint: `Z' (K dx - inj dI)` per column, solved with the small
-    # Jacobians of the condition, then the rate along the directions
-    pr = sys.gauss.projection
+    # Jacobians of the condition
+    pr = sys.projection
     pw = isnothing(pr) ? nothing : projectionwork(pr, backend, n, N, m)
-    dIh = isnothing(pr) ? nothing : Array(reshape(grid, nq, size(grid, 2), ndir))
     Zti = isnothing(pr) ? nothing : pr.Zth*((sys.Lscale/phi0) .* transientinjection(p, targets))
     # the direction's current along the rows of the endpoint reading
     Qinji = isnothing(pr) ? nothing : endpointinjection(pr, (sys.Lscale/phi0) .* transientinjection(p, targets))
@@ -578,17 +644,7 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
         isnothing(pend) || (endpointquantities!(pend, perturbation, window, pw.hphi, pr.pj, k + 1); endpointforcing!(pend, perturbation))
         if !isempty(pr.directions)
             Ms = projectionmatrices(pr, pw.hphi)
-            stepmul!(pw.zwork, pr.ZtL, dxnew)
-            copyto!(pw.g, pw.zwork)
-            if !isempty(pr.pj)
-                stepmul!(pw.phim, pr.RJp, dxnew)
-                hphim = Array(pw.phim)
-                for j in 1:N
-                    cols = (j - 1)*ndir + 1:j*ndir
-                    view(pw.g, :, cols) .+= transpose(pr.RJZl)*(pr.lmoljp .*
-                        derivativeat(pr.relationsp, view(pw.hphi, :, j)) .* view(hphim, :, cols))
-                end
-            end
+            constrainttangent!(pw, pr, dxnew)
             dIz = repeat(Zti*view(dIh, :, kcol(k + 1), :), 1, N)
             nl2 > 0 && (dIz .+= pr.Ztline*Array(ddlinevalues))
             isnothing(rwt) || (dIz .+= pr.Ztblock*restingwaves(sys, rwt.z, sol.times[k + 1]))
@@ -601,7 +657,7 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
             copyto!(pw.dalpha, pw.alpha)
             stepmul!(pw.work, pr.Z, pw.dalpha)
             dxnew .+= pw.work
-            projectrate!(dv, pr, pw, gc, h, stage(d, 1), stage(d, 2), dxnew, dx)
+            pr.cubic && projectrate!(dv, pr, pw, gc, h, stage(d, 1), stage(d, 2), dxnew, dx)
         end
         if !isempty(pr.readrows) || !isempty(pr.auxrows)
             # the linearized reading: the junction term is the stiffness at
@@ -693,7 +749,7 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
             view(dwaves, :, ringslot(npre + k, nring), :) .= phi0 .* dlinerates ./ sqrtz .- ddlinevalues .* sqrtz ./ 2
         end
         copyto!(dx, dxnew)
-        outputs!(k + 1)
+        outputs!(k + 1, window)
       end
     end
     KernelAbstractions.synchronize(backend)
@@ -704,8 +760,14 @@ function gaussbatchtangent(sol, currents, targets, initialstate, sys::TransientS
         sol isa TransientSolution ? (single ? reshape(b, size(b)[1:end-2]...) : reshape(b, size(b)[1:end-1]...)) :
             (single ? reshape(b, size(b)[1:end-2]..., N) : b)
     end
+    # the tangent's rate along the algebraic directions read as the
+    # solve's is, the constraints' rows perturbed as its directions
+    # perturb them
+    finalrate = copy(dv)
+    (isnothing(sys.invariant) && isnothing(sys.projection)) ||
+        readtangentrate!(finalrate, dv, dx, sys, sol, N, ndir, perturbation, dIh, injh, backend)
     return (; voltage = shape(voltage), incident = shape(incident), outgoing = shape(outgoing),
-        finalflux = shape(copy(dx)), finalrate = shape(copy(dv)))
+        finalflux = shape(copy(dx)), finalrate = shape(finalrate))
 end
 
 # the adjoint of a Gauss-Legendre solve or batch, the weights shared by
@@ -730,7 +792,7 @@ function gaussbatchadjoint(sol, weights, quantity::Symbol, targets, sys::Transie
     nc = isnothing(perturbation) ? 0 : length(perturbation.names)
     pwork = isnothing(perturbation) ? nothing : perturbationwork(perturbation, sys, N; forcing = false)
     pcwork = isnothing(perturbation) ? nothing : contractionwork(perturbation, perturbation.entries, N, nobj, backend)
-    pend = (isnothing(perturbation) || isnothing(sys.gauss.projection)) ? nothing :
+    pend = (isnothing(perturbation) || isnothing(sys.projection)) ? nothing :
         endpointwork(perturbation, sys, p, N, nobj; forcing = false)
     withstates = !isnothing(perturbation) && perturbation.states
     sensd = isnothing(perturbation) ? nothing : KernelAbstractions.zeros(backend, Float64, nc, nobj, N)
@@ -761,10 +823,56 @@ function gaussbatchadjoint(sol, weights, quantity::Symbol, targets, sys::Transie
     rc, zc = [KernelAbstractions.zeros(backend, ComplexF64, n, m) for _ in 1:2]
     portwork = allocate(np, nobj)
     objectivestate = allocate(n, nobj)
-    function output!(k)
+    # The adjoint of an output at time `k`: the rate receives
+    # `phi0 P' (cv .* w)`. Where a port reads a rate along an algebraic
+    # direction, through the transpose of the reading: the rate before
+    # the reading, the flux through the curvature of the projected
+    # junctions' stiffness, the currents whose rate the reading read, at
+    # the points of the stencil, and the components whose perturbation of
+    # the constraints it read, on the read rate at the time.
+    transposing = sys.portsread ? outputtranspose(sys, backend, n, N, m) : nothing
+    delta = ratedelta(sys)
+    xf, wf = tobackend(backend, Array(reshape(sol.finalflux, n, N))), tobackend(backend, Array(reshape(sol.finalrate, n, N)))
+    function readingat!(o, k, window)
+        prj, pwn = sys.projection, o.rn.pw
+        if k == nt
+            if !isnothing(pwn)
+                stepmul!(pwn.phip, prj.RJp, xf)
+                copyto!(o.hphi, pwn.phip)
+                stepmul!(pwn.phip, prj.RJp, wf)
+                copyto!(o.er, pwn.phip)
+            end
+            copyto!(o.wk, wf)
+            withstates && (copyto!(pwork.x, xf); copyto!(pwork.v, wf))
+        else
+            if !isnothing(pwn)
+                window.endphases!(o.erdev, k)
+                copyto!(o.hphi, o.erdev)
+                window.endrates!(o.erdev, k)
+                copyto!(o.er, o.erdev)
+            end
+            if withstates
+                window.state!(pwork.x, pwork.v, k)
+                isnothing(prj) || drivedotz!(o.rn.bdotz, prj, problems, sol.times[k], delta, o.rn.hv1, o.rn.hv2)
+                readrate!(o.wk, pwork.v, pwork.x, sys, o.rn)
+                copyto!(pwork.v, o.wk)
+            end
+        end
+        nothing
+    end
+    function output!(k, window = nothing)
         portwork .= cv .* view(w, :, k, :)
         stepmul!(objectivestate, sys.portst, portwork)
-        reshape(vbar, n, nobj, N) .+= phi0 .* reshape(objectivestate, n, nobj, 1)
+        if isnothing(transposing)
+            reshape(vbar, n, nobj, N) .+= phi0 .* reshape(objectivestate, n, nobj, 1)
+            return nothing
+        end
+        o = transposing
+        reshape(o.rbar, n, nobj, N) .= phi0 .* reshape(objectivestate, n, nobj, 1)
+        readingat!(o, k, window)
+        readoutputstranspose!(o, sys, k, nt, vbar, xbar, ring, injectiont, targetwork, perturbation, pcwork, sensd,
+            withstates ? pwork.x : o.wk, backend)
+        nothing
     end
     output!(nt)
     bf = gaussbatchfactor(sys, N; nrhs = nobj)
@@ -803,14 +911,16 @@ function gaussbatchadjoint(sol, weights, quantity::Symbol, targets, sys::Transie
         forcedbar .*= sys.Lscale/phi0
         nothing
     end
-    # the projection transposed: the rate along the directions first, the
-    # part of the objective's rate the cubic carries to the stages and to
-    # the state, then the endpoint, whose multiplier `gamma` reads the
-    # current at time `k + 1` and moves the objective by `K Z gamma`
-    pr = sys.gauss.projection
+    # the projection transposed: where a block is on a direction the rate
+    # along the directions first, the part of the objective's rate the
+    # cubic carries to the stages and to the state, then the endpoint,
+    # whose multiplier `gamma` reads the current at time `k + 1` and moves
+    # the objective by `K Z gamma`
+    pr = sys.projection
     pw = isnothing(pr) ? nothing : projectionwork(pr, backend, n, N, m)
-    vrecbar = isnothing(pr) ? nothing : allocate(n, m)
-    er = gc.endrate
+    cubic = !isnothing(pr) && pr.cubic
+    vrecbar = cubic ? allocate(n, m) : nothing
+    ew = gc.endrate
     function projectbefore!(k, endat!, window)
         endat!(pw.phip, k + 1)
         copyto!(pw.hphi, pw.phip)
@@ -832,11 +942,13 @@ function gaussbatchadjoint(sol, weights, quantity::Symbol, targets, sys::Transie
         end
         isempty(pr.directions) && return nothing
         Ms = projectionmatrices(pr, pw.hphi)
-        # the rate along the directions transposed: `v += Z R (vrec - v)`
-        stepmul!(pw.zwork, pr.Zt, vbar)
-        stepmul!(vrecbar, pr.Zratet, pw.zwork)
-        vbar .-= vrecbar
-        xbar .+= (er[4]/h) .* vrecbar
+        if cubic
+            # the rate along the directions transposed: `v += Z R (vrec - v)`
+            stepmul!(pw.zwork, pr.Zt, vbar)
+            stepmul!(vrecbar, pr.Zratet, pw.zwork)
+            vbar .-= vrecbar
+            xbar .+= (ew[4]/h) .* vrecbar
+        end
         # the Newton step transposed: the multiplier from the flux along
         # the directions, carried by the constraints' rows to the flux,
         # the current, the lines' forced currents and the resting waves
@@ -892,7 +1004,7 @@ function gaussbatchadjoint(sol, weights, quantity::Symbol, targets, sys::Transie
         isnothing(pr) || projectbefore!(k, endat!, window)
         for i in 1:2
             stage(wst, i) .= gc.ex[i] .* xbar .+ (gc.ev[i]/h) .* vbar
-            (isnothing(pr) || isempty(pr.directions)) || (stage(wst, i) .+= (er[i + 1]/h) .* vrecbar)
+            cubic && (stage(wst, i) .+= (ew[i + 1]/h) .* vrecbar)
         end
         if !isnothing(rwa)
             # the states after the step depend on the stage unknowns
@@ -933,9 +1045,9 @@ function gaussbatchadjoint(sol, weights, quantity::Symbol, targets, sys::Transie
             stepmul!(cmu, sys.C, mui)
             vbar .+= (gc.ainvone[i]/h) .* cmu
         end
-        (isnothing(pr) || isempty(pr.directions)) || (xbar .-= (er[4]/h) .* vrecbar)
+        cubic && (xbar .-= (ew[4]/h) .* vrecbar)
         isnothing(rwa) || (xbar .+= xextra)
-        output!(k)
+        output!(k, window)
         k + 3 <= nt && ringemit!(ring, k + 3)
       end
     end
@@ -1775,7 +1887,7 @@ function gaussstepper(sys::TransientSystem, problems, rtol, atol, iterations, bf
         isnothing(rw) || stagecorrection!(rw, sys, bf, gc, rc, zc, false); nothing)
     solve! = (c, r) -> (gaussbatchtransform!(c, r, bf, gc, rc, zc); isnothing(rw) || stagecorrect!(c, rw, sys); (false, 0))
     accept! = mask -> (maskcolumns!(phi, trialphi, mask); maskcolumns!(junction, trialjunction, mask); nothing)
-    pr = sys.gauss.projection
+    pr = sys.projection
     pw = isnothing(pr) ? nothing : projectionwork(pr, backend, n, N, N)
     nl = 2length(p.lines)
     far, readscale, sqrtz = linetables(p, backend)
@@ -1798,26 +1910,47 @@ function sethistory!(st::GaussStepper, times, tail, k)
     return st
 end
 
+# the rate of a stepper's state at time `t` read along the algebraic
+# directions into `dst`, with the work `rw` of `ratereadwork`: the
+# drives' rate by the central difference of `delta`, the lines' forced
+# currents' rate by the same difference of their histories
+function readstepper!(dst, st::GaussStepper, rw, t, delta)
+    sys = st.sys
+    if !isnothing(sys.projection)
+        linerate = if !isempty(sys.problem.lines)
+            lr = Array(linevalues!(st, t + delta))
+            lr .= (lr .- Array(linevalues!(st, t - delta))) ./ (2delta)
+        else
+            nothing
+        end
+        drivedotz!(rw.bdotz, sys.projection, st.problems, t, delta, rw.hv1, rw.hv2, linerate)
+    end
+    return readrate!(dst, st.v, st.x, sys, rw)
+end
+
 # the phases of the projected junctions at a state, for the record
 function projectedphases!(st::GaussStepper, x)
-    pr = st.sys.gauss.projection
+    pr = st.sys.projection
     isempty(pr.pj) || stepmul!(st.pw.phip, pr.RJp, x)
     return st.pw.phip
 end
 
 # The projection of every condition's endpoint onto the algebraic
-# constraints along the projected directions, and the rate along them.
+# constraints along the projected directions (see `projectendpoint!`):
 # Newton on the coefficients `alpha` of `Z` per condition, the residual
-# `Z' (L x + J(x) - b(t))` and its Jacobians `Z' (L + J'(x)) Z` on the host
-# from two small products on the backend, to the step's tolerance, the
-# predictor moved with the state; a linear constraint is met by one
-# correction. Then the rate along `Z` is replaced by the derivative at
-# the endpoint of the cubic through the state, the stages and the
-# projected endpoint, all of which satisfy the constraint. Leaves the
-# projected junctions' phases at the endpoint in the work buffer.
+# `Z' (L x + J(x) - b(t))` and its Jacobians `Z' (L + J'(x)) Z` on the
+# host from two small products on the backend, to the roundoff of the
+# terms the constraint balances, the predictor moved with the state. The
+# step's tolerance is set in the stage equations' units and is far
+# looser for the constraint, so the drift of the endpoints would
+# accumulate below it. The rate along `Z`
+# is left to the reading at the read-outs, except where a block is on a
+# direction, when it is the derivative of the cubic through the state,
+# the stages and the projected endpoint. Leaves the projected junctions'
+# phases at the endpoint in the work buffer.
 function gaussproject!(st::GaussStepper, t)
     sys, pw = st.sys, st.pw
-    pr = sys.gauss.projection
+    pr = sys.projection
     gc = sys.gauss.coefficients
     h = sys.h
     N = st.N
@@ -1825,30 +1958,24 @@ function gaussproject!(st::GaussStepper, t)
     isempty(sys.problem.lines) || linevalues!(st, t)
     linedrive = isempty(sys.problem.lines) ? nothing : Array(st.linevalues)
     if !isempty(pr.directions)
+        # the drive along the constraints' rows, and the magnitudes of its
+        # terms for the residual's floor
         gb = pr.Ztinj*st.hostvalues .+ pr.Ztconstant
-        isnothing(linedrive) || (gb .+= pr.Ztline*linedrive)
-        isnothing(st.rw) || (gb .+= pr.Ztblock*restingwaves(sys, st.rw.z, t))
-        converged = false
-        for iteration in 1:st.iterations + 1
-            projectedphases!(st, st.xnew)
-            copyto!(pw.hphi, pw.phip)
-            stepmul!(pw.zwork, pr.ZtL, st.xnew)
-            copyto!(pw.g, pw.zwork)
-            pw.g .+= transpose(pr.RJZl)*(pr.lmoljp .* relationat(pr.relationsp, pw.hphi)) .- gb
-            converged = all(j -> maximum(abs, view(pw.g, :, j)) <= st.tolerance[j], 1:N)
-            (converged || iteration > st.iterations) && break
-            for (j, M) in enumerate(projectionmatrices(pr, pw.hphi))
-                pw.alpha[:, j] .= -(M \ view(pw.g, :, j))
-            end
-            copyto!(pw.dalpha, pw.alpha)
-            stepmul!(pw.work, pr.Z, pw.dalpha)
-            st.xnew .+= pw.work
-            stage(st.lastdelta, 1) .-= pw.work
-            stage(st.lastdelta, 2) .-= pw.work
-            isempty(pr.pj) && (converged = true; break)
+        gbabs = pr.Ztinjabs*abs.(st.hostvalues) .+ abs.(pr.Ztconstant)
+        if !isnothing(linedrive)
+            gb .+= pr.Ztline*linedrive
+            gbabs .+= pr.Ztlineabs*abs.(linedrive)
         end
-        converged || error(lazy"the projection onto the algebraic constraints at t = $(t) s did not converge; reduce dt or check the state.")
-        projectrate!(st.v, pr, pw, gc, h, stage(st.delta, 1), stage(st.delta, 2), st.xnew, st.x)
+        if !isnothing(st.rw)
+            waves = restingwaves(sys, st.rw.z, t)
+            gb .+= pr.Ztblock*waves
+            gbabs .+= pr.Ztblockabs*abs.(waves)
+        end
+        # the predictor moves with the state
+        moved! = w -> (stage(st.lastdelta, 1) .-= w; stage(st.lastdelta, 2) .-= w; nothing)
+        projectendpoint!(st.xnew, pw, pr, gb, gbabs, st.iterations, moved!) ||
+            error(lazy"the projection onto the algebraic constraints at t = $(t) s did not converge; reduce dt or check the state.")
+        pr.cubic && projectrate!(st.v, pr, pw, gc, h, stage(st.delta, 1), stage(st.delta, 2), st.xnew, st.x)
     end
     # the index one unknowns of the endpoint from their equations
     if !isempty(pr.readrows) || !isempty(pr.auxrows)
@@ -1967,7 +2094,7 @@ function gaussbatchoutputs(sys::TransientSystem, N, nsteps, saveevery, record, c
     nl = 2length(p.lines)
     npre = lineprehistory(p, sys.h)
     nzs = blockstates(p)
-    pr = sys.gauss.projection
+    pr = sys.projection
     npj = isnothing(pr) ? 0 : length(pr.pj)
     nsaved = cld(nsteps, saveevery) + 1
     # the checkpoints, and the history of the line waves before each of
@@ -1980,6 +2107,7 @@ function gaussbatchoutputs(sys::TransientSystem, N, nsteps, saveevery, record, c
     return (; voltage, incident, outgoing,
         phases = savephases ? zeroed(nj, 2, nsaved, N) : nothing,
         endphases = savephases && npj > 0 ? zeroed(npj, nsaved, N) : nothing,
+        endrates = savephases && npj > 0 ? zeroed(npj, nsaved, N) : nothing,
         linewaves = nl > 0 && (!savecheckpoints || !tails) ? zeroed(nl, nsteps + 1, N) : nothing,
         history = nl > 0 ? zeroed(nl, npre, N) : nothing,
         flux = savestates ? KernelAbstractions.allocate(backend, Float64, n, nsaved, N) : nothing,
@@ -2003,7 +2131,7 @@ function chunkoutputs(out, ch)
         increment = slice(out.checkpoints.increment), states = slice(out.checkpoints.states),
         waves = slice(out.checkpoints.waves))
     return (; voltage = slice(out.voltage), incident = slice(out.incident), outgoing = slice(out.outgoing),
-        phases = slice(out.phases), endphases = slice(out.endphases), linewaves = slice(out.linewaves), history = slice(out.history),
+        phases = slice(out.phases), endphases = slice(out.endphases), endrates = slice(out.endrates), linewaves = slice(out.linewaves), history = slice(out.history),
         flux = slice(out.flux), rate = slice(out.rate), stages = slice(out.stages), blockstates = slice(out.blockstates), checkpoints = cp,
         initialflux = slice(out.initialflux), initialrate = slice(out.initialrate),
         finalflux = slice(out.finalflux), finalrate = slice(out.finalrate),
@@ -2046,51 +2174,46 @@ function gaussbatchintegrate(sys::TransientSystem, problems, t0, tf, nsteps, ini
     times = [k == nsteps ? tf : t0 + k*h for k in 0:nsteps]
     savedtimes = [times[1]; [times[step + 1] for step in 1:nsteps if step % saveevery == 0 || step == nsteps]]
     out = gaussbatchoutputs(sys, length(problems), nsteps, saveevery, record, checkpointevery)
+    init = batchinitial(sys, problems, initialstates, t0, rtol, atol)
     factors = batchfactors(sys, chunks, reuse)
     stats = if length(chunks) == 1
-        gaussbatchrun!(out, sys, problems, initialstates, times, saveevery, rtol, atol, iterations, factors[1])
+        gaussbatchrun!(out, sys, problems, init, times, saveevery, rtol, atol, iterations, factors[1])
     else
         each = Vector{Any}(undef, length(chunks))
         # the chunks share the system, which they read and do not write,
         # and nothing else: their steppers, factors and arrays are their own
-        Base.Threads.@sync for (k, ch) in enumerate(chunks)
-            Base.Threads.@spawn each[k] = gaussbatchrun!(chunkoutputs(out, ch), sys, problems[ch],
-                initialstates[ch], times, saveevery, rtol, atol, iterations, factors[k])
+        try
+            Base.Threads.@sync for (k, ch) in enumerate(chunks)
+                Base.Threads.@spawn each[k] = gaussbatchrun!(chunkoutputs(out, ch), sys, problems[ch],
+                    chunkinitial(init, ch), times, saveevery, rtol, atol, iterations, factors[k])
+            end
+        catch err
+            throw(chunkerror(err))
         end
         mergebatchstats(each)
     end
     isnothing(reuse) || (reuse.factor = factors)
     return TransientBatchSolution(problems, sys.method, h, savedtimes, out.voltage, out.incident, out.outgoing,
-        out.phases, out.endphases, out.linewaves, out.history, out.flux, out.rate, out.stages, out.checkpoints, out.initialflux,
+        out.phases, out.endphases, out.endrates, out.linewaves, out.history, out.flux, out.rate, out.stages, out.checkpoints, out.initialflux,
         out.initialrate, out.finalflux, out.finalrate, out.blockstates, out.initialwaves, out.initialstates, stats)
 end
 
-# One chunk of a batch stepped along `times` into the arrays `out`, on
-# the factorizations `bf`: the initial states read, the algebraic
-# equations checked, and every step advanced and saved. The record is
-# whichever arrays of `out` are there to be filled. Returns the chunk's
-# statistics.
-function gaussbatchrun!(out, sys::TransientSystem, problems, initialstates, times, saveevery,
-        rtol, atol, iterations, bf::GaussBatchFactor)
+# The initial states of every condition of a batch, read on the host and
+# checked against the algebraic equations before any chunk steps, so that
+# a state a condition refuses is refused from the caller's task before a
+# thread has begun stepping another: the fluxes and the rates, the
+# history of the line waves before the start of every condition and its
+# last column, the waves at the start, and the block states. The
+# currents the lines force at the start and their rates, read from each
+# state's own history at its own step, are what the check reads, by the
+# difference it reads the rate of the drives with.
+function batchinitial(sys::TransientSystem, problems, initialstates, t0, rtol, atol)
     p = sys.problem
-    backend = sys.backend
     N = length(problems)
     n = length(p)
     h = sys.h
-    t0, nsteps = first(times), length(times) - 1
-    savephases, savestates = !isnothing(out.phases), !isnothing(out.flux)
-    checkpoints = out.checkpoints
-    savecheckpoints = !isnothing(checkpoints)
-    K = savecheckpoints ? checkpoints.every : 0
-    tails = savecheckpoints && size(checkpoints.waves, 2) > 0
-    st = gaussstepper(sys, problems, rtol, atol, iterations, bf)
     nl = 2length(p.lines)
-    npre = st.npre
-    # the history of the line waves before the start of every condition,
-    # and its last column, the waves at the start; the currents the lines
-    # force at the start and their rates, read from each state's own
-    # history at its own step, which the check of the algebraic equations
-    # reads, by the difference it reads the rate of the drives with
+    npre = lineprehistory(p, h)
     x0, v0, w0, tailh = zeros(n, N), zeros(n, N), zeros(nl, N), zeros(nl, npre, N)
     q0, qdot = zeros(nl, N), zeros(nl, N)
     delta = 1e-3*h
@@ -2111,43 +2234,104 @@ function gaussbatchrun!(out, sys::TransientSystem, problems, initialstates, time
         end
     end
     z0 = zeros(blockstates(p), N)
-    if !isnothing(st.rw)
+    withblocks = !isempty(sys.gauss.rational)
+    if withblocks
         for (j, state) in enumerate(initialstates)
             zj = initialblockstates(state, p)
             length(zj) == size(z0, 1) && all(isfinite, zj) || throw(DimensionMismatch(lazy"the state needs $(size(z0, 1)) finite block states; use transientstate."))
             z0[:, j] .= zj
         end
-        copyto!(st.rw.z, z0)
     end
-    copyto!(out.initialwaves, w0)
-    copyto!(out.initialstates, z0)
-    setstate!(st, x0, v0, nothing)
-    # the history of the line waves before the start; the record of the
-    # waves leaving every port at every step, or with checkpoints the
-    # history before each of them
-    tail = tobackend(backend, tailh)
-    sethistory!(st, times, tail, 0)
-    isnothing(out.history) || copyto!(out.history, tail)
-    isnothing(out.linewaves) || (view(out.linewaves, :, 1, :) .= tobackend(backend, w0))
     # the check of the algebraic equations at the start, per condition
     # under its own drives, the lines forcing what their history says
     # arrives at the start
-    resting = isnothing(st.rw) ? nothing : restingwaves(sys, st.rw.z, t0)
+    resting = withblocks ? restingwaves(sys, z0, t0) : nothing
     for j in 1:N
-        violation, _ = transientconsistency(sys, view(st.x, :, j), view(st.v, :, j), t0, problems[j],
+        violation, _ = transientconsistency(sys, view(x0, :, j), view(v0, :, j), t0, problems[j],
             q0[:, j], isnothing(resting) ? nothing : resting[:, j], qdot[:, j])
         violation <= atol + rtol || throw(ArgumentError(
             lazy"the initial state of condition $(j) violates the algebraic equations of the circuit along a direction without capacitance to ground (a node no capacitor touches, a capacitive island, a coupled inductor or gauge row); supply a consistent transientstate, or start the drive from an equilibrium."))
     end
-    isnothing(out.endphases) || copyto!(view(out.endphases, :, 1, :), projectedphases!(st, st.x))
-    isnothing(out.blockstates) || (view(out.blockstates, :, 1, :) .= st.rw.z)
-    batchdrivecurrent!(st.bend, st, t0)
-    portwaves!(view(out.voltage, :, 1, :), view(out.incident, :, 1, :), view(out.outgoing, :, 1, :),
-        sys, st.v, st.values, st.portwork)
-    if savestates
-        copyto!(view(out.flux, :, 1, :), st.x)
-        copyto!(view(out.rate, :, 1, :), st.v)
+    return (; x0, v0, w0, tailh, z0)
+end
+
+# the initial arrays of the conditions `ch` of a batch, copied so that a
+# chunk moves plain host arrays to its backend
+chunkinitial(init, ch) = (; x0 = init.x0[:, ch], v0 = init.v0[:, ch], w0 = init.w0[:, ch],
+    tailh = init.tailh[:, :, ch], z0 = init.z0[:, ch])
+
+# the error a chunk's task met, out of the failure of the task the
+# threaded batch reports it as
+chunkerror(err::CompositeException) = isempty(err.exceptions) ? err : chunkerror(first(err.exceptions))
+chunkerror(err::TaskFailedException) = chunkerror(err.task.result)
+chunkerror(err) = err
+
+# One chunk of a batch stepped along `times` into the arrays `out`, on
+# the factorizations `bf`, from the initial arrays `init` of its
+# conditions: every step advanced and saved. The record is whichever
+# arrays of `out` are there to be filled. Returns the chunk's statistics.
+function gaussbatchrun!(out, sys::TransientSystem, problems, init, times, saveevery,
+        rtol, atol, iterations, bf::GaussBatchFactor)
+    p = sys.problem
+    backend = sys.backend
+    N = length(problems)
+    n = length(p)
+    t0, nsteps = first(times), length(times) - 1
+    savephases, savestates = !isnothing(out.phases), !isnothing(out.flux)
+    checkpoints = out.checkpoints
+    savecheckpoints = !isnothing(checkpoints)
+    K = savecheckpoints ? checkpoints.every : 0
+    tails = savecheckpoints && size(checkpoints.waves, 2) > 0
+    st = gaussstepper(sys, problems, rtol, atol, iterations, bf)
+    nl = 2length(p.lines)
+    npre = st.npre
+    # the rate along the algebraic directions, read from the
+    # differentiated constraints wherever the state is reported, the
+    # lines' forced currents' rate by the same difference the drives' is
+    rw = ratereadwork(sys, backend, n, N, N)
+    delta = ratedelta(sys)
+    vread = KernelAbstractions.zeros(backend, Float64, n, N)
+    reading = savestates || sys.portsread || !isnothing(out.endrates)
+    readout!(dst, t) = readstepper!(dst, st, rw, t, delta)
+    # the outputs of a saved time: the port waves from the read rate where
+    # a port reads one along an algebraic direction, the rate across the
+    # projected junctions, and the states
+    saveoutputs!(saved, t) = begin
+        reading && readout!(vread, t)
+        portwaves!(view(out.voltage, :, saved, :), view(out.incident, :, saved, :),
+            view(out.outgoing, :, saved, :), sys, sys.portsread ? vread : st.v, st.values, st.portwork)
+        if savephases
+            view(out.phases, :, 1, saved, :) .= stage(st.phi, 1)
+            view(out.phases, :, 2, saved, :) .= stage(st.phi, 2)
+        end
+        isnothing(out.endphases) || copyto!(view(out.endphases, :, saved, :), st.pw.phip)
+        if !isnothing(out.endrates)
+            stepmul!(rw.pw.phip, sys.projection.RJp, vread)
+            copyto!(view(out.endrates, :, saved, :), rw.pw.phip)
+        end
+        if savestates
+            copyto!(view(out.flux, :, saved, :), st.x)
+            copyto!(view(out.rate, :, saved, :), saved == 1 ? st.v : vread)
+            view(out.stages, :, 1, saved, :) .= stage(st.delta, 1)
+            view(out.stages, :, 2, saved, :) .= stage(st.delta, 2)
+            isnothing(out.blockstates) || (view(out.blockstates, :, saved, :) .= st.rw.z)
+        end
+        nothing
     end
+    isnothing(st.rw) || copyto!(st.rw.z, init.z0)
+    copyto!(out.initialwaves, init.w0)
+    copyto!(out.initialstates, init.z0)
+    setstate!(st, init.x0, init.v0, nothing)
+    # the history of the line waves before the start; the record of the
+    # waves leaving every port at every step, or with checkpoints the
+    # history before each of them
+    tail = tobackend(backend, init.tailh)
+    sethistory!(st, times, tail, 0)
+    isnothing(out.history) || copyto!(out.history, tail)
+    isnothing(out.linewaves) || (view(out.linewaves, :, 1, :) .= tobackend(backend, init.w0))
+    isnothing(out.endphases) || projectedphases!(st, st.x)
+    batchdrivecurrent!(st.bend, st, t0)
+    saveoutputs!(1, t0)
     copyto!(out.initialflux, st.x)
     copyto!(out.initialrate, st.v)
     saved = 1
@@ -2170,25 +2354,12 @@ function gaussbatchrun!(out, sys::TransientSystem, problems, initialstates, time
         if step % saveevery == 0 || step == nsteps
             saved += 1
             batchdrivecurrent!(st.bend, st, t)
-            portwaves!(view(out.voltage, :, saved, :), view(out.incident, :, saved, :),
-                view(out.outgoing, :, saved, :), sys, st.v, st.values, st.portwork)
-            if savephases
-                view(out.phases, :, 1, saved, :) .= stage(st.phi, 1)
-                view(out.phases, :, 2, saved, :) .= stage(st.phi, 2)
-            end
-            isnothing(out.endphases) || copyto!(view(out.endphases, :, saved, :), st.pw.phip)
-            if savestates
-                copyto!(view(out.flux, :, saved, :), st.x)
-                copyto!(view(out.rate, :, saved, :), st.v)
-                view(out.stages, :, 1, saved, :) .= stage(st.delta, 1)
-                view(out.stages, :, 2, saved, :) .= stage(st.delta, 2)
-                isnothing(out.blockstates) || (view(out.blockstates, :, saved, :) .= st.rw.z)
-            end
+            saveoutputs!(saved, t)
         end
     end
     KernelAbstractions.synchronize(backend)
     copyto!(out.finalflux, st.x)
-    copyto!(out.finalrate, st.v)
+    readout!(out.finalrate, tprev)
     return (; steps = nsteps, newtoncorrections = st.corrections, factorizations = st.factorizations,
         retries = st.retries, kryloviterations = 0, rtol = Float64(rtol), atol = Float64(atol), iterations = Int(iterations))
 end
@@ -2204,7 +2375,7 @@ end
 # the replay to run before the window, if any.
 function responsewindows(sol, problems, sys::TransientSystem, forward::Bool; withstates::Bool = false)
     nt = length(sol.times)
-    pr = sys.gauss.projection
+    pr = sys.projection
     npj = isnothing(pr) ? 0 : length(pr.pj)
     if !isnothing(sol.phases)
         phases, endphases = batchview(sol)[2], batchview(sol)[5]
@@ -2214,6 +2385,8 @@ function responsewindows(sol, problems, sys::TransientSystem, forward::Bool; wit
             nothing
         end
         endphases! = (buffer, k) -> (npj > 0 && copyto!(buffer, view(endphases, :, k, :)); nothing)
+        endrates = batchview(sol)[9]
+        endrates! = (buffer, k) -> (npj > 0 && copyto!(buffer, view(endrates, :, k, :)); nothing)
         # the states and the stage increments of the record, when asked for
         flux, rate, stages = statesview(sol)
         withstates && isnothing(stages) && throw(ArgumentError("the record holds no states; solve with record = :states or :checkpoints."))
@@ -2223,7 +2396,7 @@ function responsewindows(sol, problems, sys::TransientSystem, forward::Bool; wit
             view(buffer, :, :, 2) .= view(stages, :, 2, k + 1, :)
             nothing
         end
-        return [(; steps = 1:nt - 1, phases!, endphases!, replay = nothing, state!, stages!)]
+        return [(; steps = 1:nt - 1, phases!, endphases!, endrates!, replay = nothing, state!, stages!)]
     end
     cp = sol.checkpoints
     cps = sol isa TransientSolution ? (; every = cp.every, flux = reshape(cp.flux, size(cp.flux)..., 1),
@@ -2238,6 +2411,18 @@ function responsewindows(sol, problems, sys::TransientSystem, forward::Bool; wit
     record = batchview(sol)[6]
     buffer = KernelAbstractions.zeros(sys.backend, Float64, nj, 2, K + 1, N)
     ebuffer = KernelAbstractions.zeros(sys.backend, Float64, npj, K + 2, N)
+    # the rate across the projected junctions at every time of the
+    # window, read as the solve read it
+    rbuffer = KernelAbstractions.zeros(sys.backend, Float64, npj, K + 2, N)
+    rw = npj > 0 ? ratereadwork(sys, sys.backend, length(sys.problem), N, N) : nothing
+    vread = npj > 0 ? KernelAbstractions.zeros(sys.backend, Float64, length(sys.problem), N) : nothing
+    delta = ratedelta(sys)
+    readrates! = (column, t) -> begin
+        readstepper!(vread, st, rw, t, delta)
+        stepmul!(rw.pw.phip, pr.RJp, vread)
+        copyto!(view(rbuffer, :, column, :), rw.pw.phip)
+        nothing
+    end
     # the states of the window and the stage increments of its steps, for
     # the responses which read them
     n = length(sys.problem)
@@ -2270,6 +2455,7 @@ function responsewindows(sol, problems, sys::TransientSystem, forward::Bool; wit
                 st.accepted = npre + kstart - 1
             end
             npj > 0 && copyto!(view(ebuffer, :, 1, :), projectedphases!(st, st.x))
+            npj > 0 && readrates!(1, sol.times[kstart])
             if withstates
                 copyto!(view(xbuffer, :, 1, :), st.x)
                 copyto!(view(vbuffer, :, 1, :), st.v)
@@ -2279,6 +2465,7 @@ function responsewindows(sol, problems, sys::TransientSystem, forward::Bool; wit
                 view(buffer, :, 1, k - kstart + 2, :) .= stage(st.phi, 1)
                 view(buffer, :, 2, k - kstart + 2, :) .= stage(st.phi, 2)
                 npj > 0 && copyto!(view(ebuffer, :, k - kstart + 2, :), st.pw.phip)
+                npj > 0 && readrates!(k - kstart + 2, sol.times[k + 1])
                 if withstates
                     view(dbuffer, :, 1, k - kstart + 1, :) .= stage(st.delta, 1)
                     view(dbuffer, :, 2, k - kstart + 1, :) .= stage(st.delta, 2)
@@ -2301,6 +2488,7 @@ function responsewindows(sol, problems, sys::TransientSystem, forward::Bool; wit
             nothing
         end
         endphases! = (b, k) -> (npj > 0 && copyto!(b, view(ebuffer, :, k - kstart + 1, :)); nothing)
+        endrates! = (b, k) -> (npj > 0 && copyto!(b, view(rbuffer, :, k - kstart + 1, :)); nothing)
         state! = !withstates ? nothing : (x, v, k) -> begin
             copyto!(x, view(xbuffer, :, k - kstart + 1, :))
             copyto!(v, view(vbuffer, :, k - kstart + 1, :))
@@ -2311,7 +2499,7 @@ function responsewindows(sol, problems, sys::TransientSystem, forward::Bool; wit
             view(b, :, :, 2) .= view(dbuffer, :, 2, k - kstart + 1, :)
             nothing
         end
-        (; steps = kstart:kend, phases!, endphases!, replay, state!, stages!)
+        (; steps = kstart:kend, phases!, endphases!, endrates!, replay, state!, stages!)
     end
     return forward ? windows : reverse(windows)
 end
@@ -2323,6 +2511,6 @@ function unbatch(b::TransientBatchSolution)
         rate = squeeze(b.checkpoints.rate), increment = squeeze(b.checkpoints.increment), states = squeeze(b.checkpoints.states),
         waves = squeeze(b.checkpoints.waves))
     return TransientSolution(b.problems[1], b.method, b.dt, b.times, squeeze(b.voltage), squeeze(b.incident),
-        squeeze(b.outgoing), squeeze(b.phases), squeeze(b.endphases), squeeze(b.linewaves), squeeze(b.history), squeeze(b.flux), squeeze(b.rate), squeeze(b.stages), cp, vec(b.initialflux),
+        squeeze(b.outgoing), squeeze(b.phases), squeeze(b.endphases), squeeze(b.endrates), squeeze(b.linewaves), squeeze(b.history), squeeze(b.flux), squeeze(b.rate), squeeze(b.stages), cp, vec(b.initialflux),
         vec(b.initialrate), vec(b.finalflux), vec(b.finalrate), squeeze(b.blockstates), squeeze(b.initialwaves), squeeze(b.initialstates), b.stats)
 end

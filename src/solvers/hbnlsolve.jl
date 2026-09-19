@@ -55,7 +55,8 @@ HBReuse() = HBReuse(nothing, nothing, nothing, nothing, nothing, nothing,
         symfreqvar = nothing, sorting = :number, keyedarrays = true,
         sensitivitynames = String[], returnoperatingpoint = false,
         frequencywindow = (0, Inf), backend = CPU(), debugJacobian = false,
-        returnsystem = false, assemblejacobian = true)
+        returnsystem = false, assemblejacobian = true,
+        warnnotconverged = true)
 
 Solve the nonlinear harmonic balance problem of a circuit driven by any
 number of strong tones (pumps) at any number of ports, including direct
@@ -159,6 +160,9 @@ $(_DOC_NLKWARGS)
 - `symfreqvar = nothing`: the symbolic frequency variable, such as `w`,
     when component values are expressions in the frequency.
 $(_DOC_SORTING)
+- `warnnotconverged = true`: warn when the solve does not converge. A
+    continuation whose stage solves are expected to fail passes `false`
+    and reports its own outcome.
 
 # Returns
 - `NonlinearHB`: A simple structure to hold the harmonic balance solutions.
@@ -248,6 +252,7 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
     returnoperatingpoint::Bool = false,
     backend = CPU(), debugJacobian = false,
     returnsystem::Bool = false, assemblejacobian::Bool = true,
+    warnnotconverged::Bool = true,
     ) where {N}
 
     # deprecation warning for maxharmonics, whose role `Nharmonics` took
@@ -272,7 +277,8 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
             even = even, atol = atol, symfreqvar = symfreqvar,
             keyedarrays = keyedarrays,
             sensitivitynames = sensitivitynames,
-            returnoperatingpoint = returnoperatingpoint, backend = backend)
+            returnoperatingpoint = returnoperatingpoint, backend = backend,
+            warnnotconverged = warnnotconverged)
     end
 
     # calculate the frequency struct
@@ -304,6 +310,7 @@ function hbnlsolve(w::NTuple{N,Float64}, Nharmonics::NTuple{N,Int},
         backend = backend, debugJacobian = debugJacobian,
         returnsystem = returnsystem,
         assemblejacobian = assemblejacobian,
+        warnnotconverged = warnnotconverged,
         )
 end
 
@@ -413,6 +420,7 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
     backend = CPU(), debugJacobian = false,
     returnsystem::Bool = false, assemblejacobian::Bool = true,
     reuse::Union{Nothing,HBReuse} = nothing,
+    warnnotconverged::Bool = true,
     ) where {N}
 
     method isa Staged && throw(ArgumentError(
@@ -561,7 +569,7 @@ function hbnlsolve(w::NTuple{N,Float64}, sources::Vector{SourceTuple{N}},
 
     return nonlinearoutputs(; info, dcsol, dccanonical, w, frequencies, atol,
         symfreqvar, keyedarrays, returnoperatingpoint, sys, x, F, modelayout,
-        Jr, canonwork, dcplan, dcexplicit, bnm, bnmsource, Lscale,
+        warnnotconverged, Jr, canonwork, dcplan, dcexplicit, bnm, bnmsource, Lscale,
         gaugeindices, coupledbranches, Nnodal, Amna, wmodes, wmodesm,
         wmodes2m, Ljb, Ljbm, Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm, Nmodes,
         Nbranches, phimatrix, modes, portindices, portnumbers,
@@ -1204,7 +1212,8 @@ function solvequasinewton!(method::QuasiNewton;
 
         solveonbackend!(fj!, F, Jxb, x, backend; iterations = iterations,
             atol = atol, rtol = rtol, andersondepth = method.anderson,
-            factorization = directfactorization)
+            factorization = directfactorization,
+            linesearch = method.linesearch)
 
     end
     return info, dcsol, dccanonical
@@ -1231,7 +1240,8 @@ function solvenewton!(method::Newton;
             out = solveonbackend!(
                 canonicalfj(fjreal!, canonwork, Jr, jplan), Fc, Jc, uc, backend;
                 iterations = iterations, atol = atol, rtol = rtol,
-                andersondepth = 0, factorization = directfactorization)
+                andersondepth = 0, factorization = directfactorization,
+                linesearch = method.linesearch)
             scattercanonical!(xr, uc, Lc)
             scattercanonical!(Fr, Fc, Lc)
             if dcexplicit
@@ -1243,7 +1253,8 @@ function solvenewton!(method::Newton;
         else
             solveonbackend!(fjreal!, Fr, Jr, xr, backend;
                 iterations = iterations, atol = atol, rtol = rtol,
-                andersondepth = 0, factorization = directfactorization)
+                andersondepth = 0, factorization = directfactorization,
+                linesearch = method.linesearch)
         end
         real_to_complex!(x,xr,modelayout.isreal)
         real_to_complex!(F,Fr,modelayout.isreal)
@@ -1269,13 +1280,12 @@ function solvenewtonkrylov!(method::NewtonKrylov;
         # Jacobian-vector product and the solution are always those of the
         # requested truncation.
         #
-        # The default is `Automatic()`: the mode block diagonal for one tone,
-        # whose factorization is a batch of small independent per mode solves
-        # rather than one large sparse factorization, and the full Jacobian
-        # in single precision block factors for two or more tones when they
-        # fit in memory (see `resolveautomatic`). On a strongly pumped line
-        # the block diagonal alone stalls; escalation rescues it, growing
-        # the base only on repeated linear failures.
+        # The default is `Automatic()`: the full Jacobian with the backend's
+        # sparse factorization for one tone, and the full Jacobian in single
+        # precision block factors for two or more tones when they fit in
+        # memory (see `resolveautomatic`). On a strongly pumped line a block
+        # diagonal alone stalls; escalation rescues it, growing the base
+        # only on repeated linear failures.
         #
         # `HarmonicBand(p)` restricts the retained coupling by harmonic
         # *offset* rather than by column (see `modebandmask`), which is the
@@ -1469,14 +1479,17 @@ function nonlinearoutputs(;
         Lb, Rbnm, Rbnmout, invLnm, Gnm, Cnm, Nmodes, Nbranches, phimatrix,
         modes, portindices, portnumbers, portimpedances, nodeindices,
         nodenames, componenttypes, componentnames, edge2indexdict,
-        freqindexmap, conjsourceindices, conjtargetindices, Nnodes)
+        freqindexmap, conjsourceindices, conjtargetindices, Nnodes,
+        warnnotconverged::Bool = true)
     # the diagnostics of each solver invocation, returned in the output
     solverstages = IterationInfo[]
 
     # a direct solve is at the full drive
     push!(solverstages, with(info; parameter = 1.0))
 
-    if !info.converged
+    # a source continuation probes with solves which are expected to fail
+    # and reports its own outcome, so it asks for these to stay quiet
+    if !info.converged && warnnotconverged
         @warn lazy"Solver did not converge: $(stallmessage(info.reason))."
     end
 

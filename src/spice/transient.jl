@@ -133,7 +133,7 @@ function wrspicetransient(p::TransientProblem, tspan, method::WRspice; dt,
 
     N = length(p)
     return TransientSolution(p, method, h, times, voltage, incident, outgoing,
-        phases, nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+        phases, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing,
         zeros(N), zeros(N), fill(NaN, N), fill(NaN, N),
         nothing, nothing, nothing, (; steps = length(times) - 1))
 end

@@ -16,9 +16,10 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         prob = transientproblem(rc; sources = [TransientSource(1, 1e-6)])
         exact = 50e-6*(1 - exp(-4))
         errors = map((5e-12, 2.5e-12, 1.25e-12)) do dt
-            abs(transientsolve(prob, (0.0, 200e-12); dt).voltage[1, end] - exact)
+            abs(transientsolve(prob, (0.0, 200e-12); dt, method = Trapezoidal()).voltage[1, end] - exact)
         end
-        # second order: the error falls by four per halving
+        # the trapezoidal rule is second order: the error falls by four per
+        # halving
         @test errors[1]/errors[2] ≈ 4 rtol=0.01
         @test errors[2]/errors[3] ≈ 4 rtol=0.01
         coarse = transientsolve(prob, (0.0, 200e-12); dt = 5e-12)
@@ -101,6 +102,18 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         whole = transientsolve(p2, (0.0, 2period); dt = period/800, initialstate = state)
         @test rest.finalflux ≈ whole.finalflux rtol=1e-9
         @test rest.finalrate ≈ whole.finalrate rtol=1e-9
+        # the rate along the inductor constraint is read from it wherever
+        # the state is reported, under either rule, so the end of a long
+        # solve satisfies the constraint and restarts
+        for method in (GaussLegendre(), Trapezoidal())
+            long = transientsolve(p2, (0.0, 16period); dt = period/800, initialstate = state,
+                record = :states, method)
+            sysm = JC.transientsystem(p2, period/800, method, JC.CPU(), KLUfactorization())
+            @test JC.transientconsistency(sysm, long.finalflux, long.finalrate, 16period)[1] < 1e-12
+            @test JC.transientconsistency(sysm, long.flux[:, end], long.rate[:, end], 16period)[1] < 1e-12
+            @test transientsolve(p2, (16period, 17period); dt = period/800, method,
+                initialstate = transientstate(long)).stats.steps == 800
+        end
         coarse = transientsolve(p2, (period, 2period); dt = period/400,
             initialstate = continued)
         # across a transmission line the state carries the waves over the
@@ -566,7 +579,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         gauss = transientsolve(pa, (0.0, 300e-9); dt = 10e-12, method = GaussLegendre())
         @test transientdemodulate(gauss, 1, fp; quantity = :voltage, window) ≈ expected rtol=2e-2
         @test gauss.stats.factorizations == 1
-        trap = transientsolve(pa, (0.0, 300e-9); dt = 10e-12)
+        trap = transientsolve(pa, (0.0, 300e-9); dt = 10e-12, method = Trapezoidal())
         @test !isapprox(transientdemodulate(trap, 1, fp; quantity = :voltage, window), expected; rtol = 0.5)
         # the tangent against finite differences and the adjoint against the
         # tangent, on the full stage equations with their two stiffnesses
@@ -622,8 +635,9 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         # a junction alone across an unterminated port: the flux is the
         # constraint's own solution and the voltage its derivative, which
         # the projected endpoint holds to the Newton tolerance and the
-        # reconstructed rate recovers at third order, where the plain
-        # rule's rate would not converge
+        # reading of the rate from the differentiated constraint holds to
+        # roundoff at every step, where the plain rule's rate would not
+        # converge
         L, w, a = 1e-9, 2pi*1e9, 0.2
         jj = transientproblem(Circuit([("p", "1", "0", Port(1; termination = nothing)),
             ("jj", "1", "0", JosephsonJunction(L))]); sources = [TransientSource(1, t -> JC.phi0/L*a*(1 - cos(w*t)))])
@@ -635,8 +649,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
             (maximum(abs.(s.flux[1, :] .- phase)), maximum(abs.(s.voltage[1, :] .- voltage))/(JC.phi0*w))
         end
         @test all(e -> e[1] < 1e-10, errors)
-        @test 7 < errors[1][2]/errors[2][2] < 9 && 7 < errors[2][2]/errors[3][2] < 9
-        @test errors[3][2] < 2e-6
+        @test all(e -> e[2] < 1e-11, errors)
         # The classification reads the rate system of the equations, not a
         # graph of the ports. An open block on the junction's node adds no
         # conductance: the node stays algebraic and the solution and its
@@ -656,7 +669,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
             voltage = JC.phi0 .* (a*w .* sin.(w .* s.times)) ./ sqrt.(1 .- (a .* (1 .- cos.(w .* s.times))) .^ 2)
             maximum(abs.(s.voltage[1, :] .- voltage))/(JC.phi0*w)
         end
-        @test all(k -> isapprox(oerrors[k], errors[k][2]; rtol = 1e-6), 1:3)
+        @test all(<(1e-11), oerrors)
         jjs = transientproblem(Circuit([("p", "1", "0", Port(1; termination = nothing)), ("jj", "1", "0", JosephsonJunction(L)),
             ("short", "1", ScatteringParameters(-ones(1, 1)))]); sources = [TransientSource(1, t -> JC.phi0/L*a*(1 - cos(w*t)))])
         @test isempty(jjs.algebraic) && jjs.inertialess == [[1], [2]]
@@ -691,7 +704,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         end
         @test 3.5 < rdiffs[1]/rdiffs[2] < 4.5 && 3.5 < rdiffs[2]/rdiffs[3] < 4.5 && rdiffs[3] < 2e-5
         # a driven inductor without capacitance: a linear constraint, met by
-        # one correction, and the same third order in the voltage
+        # one correction, and the voltage read to roundoff
         ind = transientproblem(Circuit([("p", "1", "0", Port(1; termination = nothing)), ("l", "1", "0", Inductor(L))]);
             sources = [TransientSource(1, t -> 1e-6*(1 - cos(w*t)))])
         @test ind.algebraic == [[1]]
@@ -699,7 +712,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
             s = transientsolve(ind, (0.0, 1e-9); dt = 1e-9/n, method = GaussLegendre(), rtol = 1e-12, atol = 1e-13)
             maximum(abs.(s.voltage[1, :] .- L*1e-6*w .* sin.(w .* s.times)))/(L*1e-6*w)
         end
-        @test 7 < verrors[1]/verrors[2] < 9 && verrors[2] < 3e-5
+        @test all(<(1e-11), verrors)
         # the index one unknowns of the endpoint are read from their
         # equations: a terminated port on an inductor, whose node has no
         # capacitance, keeps fourth order in its voltage, where the
@@ -713,7 +726,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         pulse(t) = t <= 0 ? 0.0 : 1e-6*sinpi(t/1e-9)^2*sinpi(2*4e9*t)
         for (c, resistive, aux) in ((indport, [[1]], Int[]), (blockport, [[1], [2]], [4, 5]))
             p = transientproblem(c; sources = [TransientSource(1, pulse)])
-            pr = JC.transientsystem(p, 1e-12, GaussLegendre(), JC.CPU(), KLUfactorization()).gauss.projection
+            pr = JC.transientsystem(p, 1e-12, GaussLegendre(), JC.CPU(), KLUfactorization()).projection
             @test pr.readrows == resistive && pr.auxrows == aux && isempty(pr.directions)
             ref = transientsolve(p, (0.0, 1e-9); dt = 1e-9/4096, method = GaussLegendre(), rtol = 1e-13, atol = 1e-15)
             errs = [maximum(abs.(transientsolve(p, (0.0, 1e-9); dt = 1e-9/n, method = GaussLegendre(), rtol = 1e-13, atol = 1e-15).voltage[1, :] .-
@@ -738,7 +751,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         # the coupled tanks and the lossless LC project nothing
         @test isnothing(JC.transientsystem(transientproblem([("C1", "1", "0", 1e-12), ("C2", "2", "0", 1e-12),
             ("L1", "1", "0", L), ("L2", "2", "0", L), ("K1", "L1", "L2", 0.3)]), 1e-12, GaussLegendre(), JC.CPU(),
-            KLUfactorization()).gauss.projection)
+            KLUfactorization()).projection)
         # the tangent against finite differences and the adjoint against
         # the tangent through the projection, on the record, on the
         # checkpoints and on a batch: a junction from a driven capacitive
@@ -749,7 +762,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         probe(t, k) = 1e-8*sinpi(2*1.1e9*t)^2*cospi(2*0.7e9*t + k)
         lp = transientproblem(c; sources = [TransientSource(1, drive), TransientSource(2, t -> 0.0)])
         sys = JC.transientsystem(lp, 2e-12, GaussLegendre(), JC.CPU(), KLUfactorization())
-        @test sys.gauss.projection.directions == [[2]] && sys.gauss.projection.pj == [1]
+        @test sys.projection.directions == [[2]] && sys.projection.pj == [1]
         dt, T = 2e-12, 0.5e-9
         rec = transientsolve(lp, (0.0, T); dt, record = :phases, rtol = 1e-12, method = GaussLegendre())
         @test size(rec.endphases) == (1, length(rec.times))
@@ -872,7 +885,7 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         auto = transientsolve(problems[1], (0.0, 5e-9); dt = 5e-12, method = GaussLegendre(), record = :checkpoints)
         @test auto.checkpoints.every == 32 && size(auto.checkpoints.flux) == (2, 32)
         @test transientadjoint(auto, weights).currents ≈ ab.currents[:, :, 1] rtol=1e-7
-        @test_throws ArgumentError transientsolve(problems[1], (0.0, 1e-9); dt = 5e-12, record = :checkpoints)
+        @test_throws ArgumentError transientsolve(problems[1], (0.0, 1e-9); dt = 5e-12, method = Trapezoidal(), record = :checkpoints)
         # by default only the ports are recorded
         ports = transientsolve(problems, (0.0, 1e-9); dt = 5e-12)
         @test isnothing(ports.phases) && isnothing(ports.flux) && size(ports.voltage, 3) == 3
@@ -900,6 +913,16 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         @test rb.voltage[1, :, 2] ≈ fill(100e-6, 11) rtol=1e-9
         @test_throws ArgumentError transientsolve([r1, r2], (0.0, 10e-12); dt = 1e-12, initialstate = rstates[1])
         @test_throws ArgumentError transientsolve([r1, r2], (0.0, 10e-12); dt = 1e-12, initialstate = reverse(rstates))
+        # the chunks of a threaded batch: the states are checked before any
+        # chunk steps, and an error inside a chunk's steps is thrown as it
+        # is rather than as the failure of the task which met it
+        sys = JC.transientsystem(r1, 1e-12, GaussLegendre(), JC.CPU(), KLUfactorization())
+        chunked(ps, states) = JC.gaussbatchintegrate(sys, ps, 0.0, 10e-12, 10, states, 1, :ports, 0,
+            1e-9, 1e-10, 15, nothing; chunks = [1:1, 2:2])
+        @test chunked([r1, r2], rstates).voltage ≈ rb.voltage
+        @test_throws ArgumentError chunked([r1, r2], reverse(rstates))
+        blowup = transientproblem(r1; sources = [TransientSource(1, t -> t > 5e-12 ? NaN : 1e-6)])
+        @test_throws ArgumentError chunked([r1, blowup], rstates)
         two = transientproblem([("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12),
             ("I1", "1", "0", 1e-6), ("I2", "1", "0", 2e-6)]; sources = [TransientSource(:I1, 0.0)])
         @test_throws ArgumentError transientsolve([two, transientproblem(two; sources = [TransientSource(:I2, 0.0)])],
@@ -917,20 +940,252 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         @test_throws BoundsError batch[4]
     end
 
+    @testset "the rate along the algebraic constraints and its tangent" begin
+        # an inductive divider: node 2 has neither capacitance nor a
+        # source, so the rate along it is read from the differentiated
+        # constraint, whose row a perturbed inductor moves with it; the
+        # whole final rate against a central difference, under either
+        # rule, from a record of the states, from checkpoints and in a
+        # batch
+        divider = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12),
+            ("L1", "1", "2", 1e-9), ("L2", "2", "0", 1e-9)]
+        sources = [TransientSource(1, t -> 1e-6*sinpi(2*2e9*t))]
+        prob = transientproblem(divider; sources)
+        scaled(r) = transientproblem([c[1] == "L1" ? (c[1], c[2], c[3], r*c[4]) : c for c in divider]; sources)
+        tspan, dt = (0.0, 153e-12), 1e-12
+        eps = 1e-4
+        for method in (GaussLegendre(), Trapezoidal())
+            fd = (transientsolve(scaled(1 + eps), tspan; dt, method).finalrate .-
+                transientsolve(scaled(1 - eps), tspan; dt, method).finalrate) ./ (2eps)
+            sens = transientsensitivity(transientsolve(prob, tspan; dt, method, record = :states), ["L1"])
+            @test sens.finalrate[:, 1] ≈ fd rtol=1e-6
+            method isa GaussLegendre || continue
+            sens = transientsensitivity(transientsolve(prob, tspan; dt, record = :checkpoints), ["L1"])
+            @test sens.finalrate[:, 1] ≈ fd rtol=1e-6
+            sb = transientsensitivity(transientsolve([prob, prob], tspan; dt, record = :states), ["L1"])
+            @test sb.finalrate[:, 1, 1] ≈ fd rtol=1e-6
+            @test sb.finalrate[:, 1, 2] ≈ fd rtol=1e-6
+        end
+        # a tangent current into a direction the solve leaves undriven: an
+        # unterminated port on an inductor, at rest, with a quadratic
+        # current whose rate at the end the reading carries, against a
+        # central difference and the analytic rate
+        L, T, Iprobe = 1e-9, 100e-12, 1e-8
+        rest = Circuit([(:p, 1, 0, Port(1; termination = nothing)), (:l, 1, 0, Inductor(L))])
+        probe(t) = Iprobe*(t/T)^2
+        shifted(a) = transientproblem(rest; sources = [TransientSource(1, t -> a*probe(t))])
+        for method in (GaussLegendre(), Trapezoidal()), record in (:states, :checkpoints)
+            record == :checkpoints && !(method isa GaussLegendre) && continue
+            s = transientsolve(transientproblem(rest), (0.0, T); dt = 1e-12, record, method)
+            tg = transienttangent(s, reshape(probe.(s.times), 1, :))
+            fd = (transientsolve(shifted(1e-3), (0.0, T); dt = 1e-12, method).finalrate .-
+                transientsolve(shifted(-1e-3), (0.0, T); dt = 1e-12, method).finalrate) ./ 2e-3
+            @test tg.finalrate ≈ fd rtol=1e-9
+            @test tg.finalrate[1] ≈ 2L*Iprobe/(T*JC.phi0) rtol=1e-9
+        end
+        # a constraint a junction touches, and one a source drives: the
+        # reported rate satisfies the differentiated constraint to
+        # roundoff under either rule, where the rules' own rates do not
+        ratepart(p, sys, x, v, t) = begin
+            Lm, RJ = JC.hostsparse(sys.L), JC.hostsparse(sys.RJ)
+            lmolj, hr = Array(sys.lmolj), JC.hostrelations(sys.relations)
+            delta = 1e-3*sys.h
+            bdot = (JC.hostdrivecurrent(sys, t + delta, p) .- JC.hostdrivecurrent(sys, t - delta, p)) ./ (2delta)
+            lv = Lm*v .+ transpose(RJ)*(lmolj .* JC.derivativeat(hr, RJ*x) .* (RJ*v)) .- bdot
+            norm(p.constraints*lv, Inf)/max(norm(bdot, Inf), norm(Lm*v, Inf), 1.0)
+        end
+        Lc, C = 1e-9, 1e-12
+        junction = transientproblem([("C1", "1", "2", C), ("L1", "1", "0", Lc), ("L2", "2", "0", Lc), ("Lj1", "1", "0", Lc)])
+        wj = sqrt(3/(Lc*C))
+        jstate = transientstate(junction; voltage = [1e-6, -2e-6])
+        wd = 0.37*sqrt(2/(Lc*C))
+        driven = transientproblem([("C1", "1", "2", C), ("L1", "1", "0", Lc), ("L2", "2", "0", Lc), ("I1", "1", "0", 0.0)];
+            sources = [TransientSource(:I1, t -> 1e-6*(1 - cos(wd*t)))])
+        for (p, w, state) in ((junction, wj, jstate), (driven, wd, transientstate(driven))), method in (GaussLegendre(), Trapezoidal())
+            @test length(p.algebraic) == 1
+            period = 2pi/w
+            sol = transientsolve(p, (0.0, 4period); dt = period/800, method, initialstate = state, record = :states)
+            sys = JC.transientsystem(p, sol.dt, method, JC.CPU(), KLUfactorization())
+            # to the accuracy of this check's own difference of the drive
+            @test ratepart(p, sys, sol.finalflux, sol.finalrate, 4period) < 1e-10
+            @test ratepart(p, sys, sol.flux[:, end - 1], sol.rate[:, end - 1], sol.times[end - 1]) < 1e-10
+        end
+        # the tangent's reading on a constraint a junction and a source
+        # touch, from rest so that the start stays consistent whatever the
+        # inductances: along the inductances, with the junction's stiffness
+        # and its curvature in the constraint's row, and along the source's
+        # own current, whose rate at the end the reading carries, under
+        # either rule. The stage iteration of the Gauss-Legendre tangent
+        # stops at a roundoff floor that allows for the cancellation of
+        # `C d` along the direction; on the island's two nodes the product
+        # itself is a thousandth of its rounding.
+        both = [("C1", "1", "2", C), ("L1", "1", "0", Lc), ("L2", "2", "0", Lc), ("Lj1", "1", "0", Lc), ("I1", "1", "0", 0.0)]
+        wb = 0.37*sqrt(3/(Lc*C))
+        bdrive = t -> 1e-7*(1 - cos(wb*t))
+        bspan, bdt = (0.0, 8pi/wb), 2pi/wb/800
+        bdI = t -> 1e-8*(1 - cos(2wb*t))
+        for method in (GaussLegendre(), Trapezoidal())
+            bsol = transientsolve(transientproblem(both; sources = [TransientSource(:I1, bdrive)]), bspan; dt = bdt,
+                method, record = :states)
+            bsens = transientsensitivity(bsol, ["Lj1", "L1"])
+            for (k, name) in enumerate(["Lj1", "L1"])
+                fd = (transientsolve(transientproblem([c[1] == name ? (c[1], c[2], c[3], (1 + 1e-4)*c[4]) : c for c in both];
+                        sources = [TransientSource(:I1, bdrive)]), bspan; dt = bdt, method).finalrate .-
+                    transientsolve(transientproblem([c[1] == name ? (c[1], c[2], c[3], (1 - 1e-4)*c[4]) : c for c in both];
+                        sources = [TransientSource(:I1, bdrive)]), bspan; dt = bdt, method).finalrate) ./ 2e-4
+                @test bsens.finalrate[:, k] ≈ fd rtol=1e-5
+            end
+            btg = transienttangent(bsol, reshape(bdI.(bsol.times), 1, :); targets = [:I1])
+            bfd = (transientsolve(transientproblem(both; sources = [TransientSource(:I1, t -> bdrive(t) + 1e-3*bdI(t))]), bspan;
+                    dt = bdt, method).finalrate .-
+                transientsolve(transientproblem(both; sources = [TransientSource(:I1, t -> bdrive(t) - 1e-3*bdI(t))]), bspan;
+                    dt = bdt, method).finalrate) ./ 2e-3
+            @test btg.finalrate ≈ bfd rtol=1e-4
+            # every recorded state satisfies the constraint to the roundoff
+            # of the terms the projection balances, under either rule, and
+            # its differentiated form to the rounding of the difference
+            # which reads the drive's rate; so a restart from the end is
+            # accepted
+            bsys = JC.transientsystem(bsol.problem, bdt, method, JC.CPU(), KLUfactorization())
+            @test maximum(JC.transientconsistency(bsys, bsol.flux[:, k], bsol.rate[:, k], bsol.times[k])[1]
+                for k in eachindex(bsol.times)) < 1e-10
+            @test transientsolve(bsol.problem, (bspan[2], bspan[2] + 8bdt); dt = bdt, method,
+                initialstate = transientstate(bsol)).stats.steps == 8
+        end
+        # two junctions in series on a capacitor free node balance their
+        # currents in the constraint, so the residual's floor comes from
+        # the sizes of the terms and not from their sum, under either rule
+        series = Circuit([("p1", "1", "0", Port(1)), ("c1", "1", "2", Capacitor(100e-15)),
+            ("jj", "2", "3", JosephsonJunction(1e-9)), ("lj", "3", "0", NonlinearInductor(1e-9, PolynomialCPR([1.0, 0.25, -1/6]))),
+            ("c2", "2", "0", Capacitor(1e-12))])
+        sprob = transientproblem(series; sources = [TransientSource(1, t -> 0.3e-6*sinpi(2*3e9*t))])
+        for method in (GaussLegendre(), Trapezoidal())
+            ssol = transientsolve(sprob, (0.0, 0.1e-9); dt = 2e-12, method, record = :states)
+            ssys = JC.transientsystem(sprob, 2e-12, method, JC.CPU(), KLUfactorization())
+            @test maximum(JC.transientconsistency(ssys, ssol.flux[:, k], ssol.rate[:, k], ssol.times[k])[1]
+                for k in eachindex(ssol.times)) < 1e-10
+        end
+        # a tangent current on a record of two or three samples: its rate
+        # at each time from the line or the quadratic through them, under
+        # every rule, against the exact voltage `L dI/dt` of a ramp across
+        # an unterminated port on an inductor, and the adjoint's
+        # contraction against the same reference
+        ramp = Circuit([(:p, 1, 0, Port(1; termination = nothing)), (:l, 1, 0, Inductor(1e-9))])
+        rprob = transientproblem(ramp)
+        T, Iprobe = 100e-12, 1e-8
+        for method in (GaussLegendre(), Trapezoidal(), BackwardEuler()), steps in 1:3
+            rsol = transientsolve(rprob, (0.0, T); dt = T/steps, method, record = :states)
+            di = reshape(Iprobe .* rsol.times ./ T, 1, :)
+            initial = ([0.0], [1e-9*Iprobe/(T*JC.phi0)])
+            rtg = transienttangent(rsol, di; initialstate = initial)
+            @test rtg.voltage ≈ fill(1e-9*Iprobe/T, 1, steps + 1) rtol=1e-8
+            @test JC.phi0 .* rtg.finalrate ≈ [1e-9*Iprobe/T] rtol=1e-8
+            rw = reshape([1.0 + k for k in 0:steps], 1, :)
+            rad = transientadjoint(rsol, rw; quantity = :voltage)
+            @test dot(vec(rad.currents), vec(di)) + dot(rad.initialflux, initial[1]) + dot(rad.initialrate, initial[2]) ≈
+                sum(rw)*1e-9*Iprobe/T rtol=1e-8
+        end
+        # a subcircuit the stiffness couples to nothing touched keeps its
+        # invariant reading: coupled pairs beside a junction on a winding
+        # add invariant directions and leave the projected ones alone
+        core = [("Lj1", "1", "0", 1e-9), ("L1", "1", "0", 1e-9), ("L2", "2", "0", 1e-9), ("K1", "L1", "L2", 0.3),
+            ("C2", "2", "0", 1e-12)]
+        pairs(m) = vcat(core, [c for j in 1:m for c in (("La$j", "$(2j + 1)", "0", 1e-9), ("Ca$j", "$(2j + 1)", "0", 1e-12),
+            ("Lb$j", "$(2j + 2)", "0", 1e-9), ("Cb$j", "$(2j + 2)", "0", 1e-12), ("Kab$j", "La$j", "Lb$j", 0.3))])
+        for m in (0, 4)
+            csys = JC.transientsystem(transientproblem(pairs(m)), 1e-12, GaussLegendre(), JC.CPU(), KLUfactorization())
+            @test length(csys.projection.directions) == 3
+            @test (isnothing(csys.invariant) ? 0 : size(csys.invariant.Z, 2)) == 2m
+        end
+        # the bases of the directions and of the constraints are chosen
+        # apart, so a coupling's sign can differ from its transpose's: a
+        # resistor dangling from the junction's node changes the bases and
+        # nothing else, and the partition, the port voltage under every
+        # rule and the constraints at every state are those of the
+        # circuit without it; nor does the partition depend on the sign of
+        # any constraint's row
+        hanging(dangling) = Circuit(vcat([(:jj, 1, 0, JosephsonJunction(1e-9)), (:l1, 1, 0, Inductor(1e-9)),
+            (:l3, 3, 0, Inductor(1e-9)), (:k, :l1, :l3, MutualInductor(0.3)), (:c3, 3, 0, Capacitor(1e-12)),
+            (:p, 1, 0, Port(1; termination = nothing))], dangling ? [(:r12, 1, 2, Resistor(50.0))] : []))
+        hsources = [TransientSource(1, t -> 0.2e-6*(1 - cos(2pi*1e9*t)))]
+        hprob = transientproblem(hanging(true); sources = hsources)
+        hsys = JC.transientsystem(hprob, 50e-12, GaussLegendre(), JC.CPU(), KLUfactorization())
+        @test length(hsys.projection.directions) == 3 && isnothing(hsys.invariant)
+        for method in (GaussLegendre(), Trapezoidal(), BackwardEuler())
+            with = transientsolve(hprob, (0.0, 1e-9); dt = 50e-12, method, rtol = 1e-12, record = :states)
+            without = transientsolve(transientproblem(hanging(false); sources = hsources), (0.0, 1e-9);
+                dt = 50e-12, method, rtol = 1e-12)
+            @test with.voltage ≈ without.voltage rtol=1e-8
+            msys = JC.transientsystem(hprob, 50e-12, method, JC.CPU(), KLUfactorization())
+            @test maximum(JC.transientconsistency(msys, with.flux[:, k], with.rate[:, k], with.times[k])[1]
+                for k in eachindex(with.times)) < 1e-10
+        end
+        hmats = (JC.hostsparse(hsys.L), JC.hostsparse(hsys.RJ), JC.hostsparse(hsys.injection),
+            JC.hostsparse(hsys.lineinjection), JC.hostsparse(hsys.blockscatter))
+        hZ, hZt = droptol!(sparse(hprob.directions), 1e-14), droptol!(sparse(hprob.constraints), 1e-14)
+        htouched = JC.touchedalgebraic(hZ, hZt, hmats..., JC.statefulcolumns(hprob, hmats[5]))[1]
+        @test length(htouched) == 3
+        for i in axes(hZt, 1)
+            flipped = copy(hZt)
+            flipped[i, :] .*= -1
+            @test JC.touchedalgebraic(hZ, flipped, hmats..., JC.statefulcolumns(hprob, hmats[5]))[1] == htouched
+        end
+        # a port on an algebraic direction reads the rate at every time, so
+        # its voltage's sensitivity to the junction and the inductor on the
+        # direction goes through the reading at every time, under either
+        # rule, from the record and from checkpoints, and the adjoint
+        # through the reading's transpose
+        island(rj, rl) = Circuit([("p1", "1", "0", Port(1)), ("c1", "1", "0", Capacitor(1e-12)),
+            ("jj", "1", "2", JosephsonJunction(rj*1e-9)), ("l2", "2", "0", Inductor(rl*2e-9)),
+            ("p2", "2", "0", Port(2; termination = nothing))])
+        isources = [TransientSource(1, t -> 0.3e-6*sinpi(2*3e9*t)), TransientSource(2, t -> 0.0)]
+        ispan, idt = (0.0, 0.5e-9), 2e-12
+        iweights = [cospi(2*1.7e9*t + q) for q in 1:2, t in 0:idt:ispan[2]]
+        for method in (GaussLegendre(), Trapezoidal())
+            isol = transientsolve(transientproblem(island(1.0, 1.0); sources = isources), ispan; dt = idt, method,
+                record = :states, rtol = 1e-12)
+            isens = transientsensitivity(isol, ["jj", "l2"])
+            for (k, scaled) in enumerate((r -> island(r, 1.0), r -> island(1.0, r)))
+                fd = (transientsolve(transientproblem(scaled(1 + 1e-4); sources = isources), ispan; dt = idt, method, rtol = 1e-12).voltage .-
+                    transientsolve(transientproblem(scaled(1 - 1e-4); sources = isources), ispan; dt = idt, method, rtol = 1e-12).voltage) ./ 2e-4
+                @test isens.voltage[:, :, k] ≈ fd rtol=1e-5 atol=1e-7*maximum(abs, fd)
+            end
+            iad = transientadjoint(isol, iweights; quantity = :voltage, components = ["jj", "l2"])
+            @test iad.sensitivity ≈ [sum(iweights .* isens.voltage[:, :, k]) for k in 1:2] rtol=1e-8
+            method isa GaussLegendre || continue
+            icps = transientsolve(transientproblem(island(1.0, 1.0); sources = isources), ispan; dt = idt, method,
+                record = :checkpoints, checkpointevery = 16, rtol = 1e-12)
+            @test transientsensitivity(icps, ["jj", "l2"]).voltage ≈ isens.voltage rtol=1e-7
+            @test transientadjoint(icps, iweights; quantity = :voltage, components = ["jj", "l2"]).sensitivity ≈ iad.sensitivity rtol=1e-7
+        end
+    end
+
     @testset "the stationary limit agrees with harmonic balance" begin
         circuit = vcat(rc, [("Lj1", "1", "0", 1e-9)])
         f, ip = 3e9, 0.12e-6
         prob = transientproblem(circuit; sources = [TransientSource(1, t -> ip*cospi(2f*t))])
-        sol = transientsolve(prob, (0.0, 12e-9); dt = 0.5e-12)
+        sol = transientsolve(prob, (0.0, 12e-9); dt = 0.5e-12, method = Trapezoidal())
         # a factorization is kept while Newton converges in one correction
         @test sol.stats.factorizations < 10
         # the iterative step, on the package's GMRES with the factorization
         # as its preconditioner, gives the same trajectory from one
         # factorization, to the Newton tolerance accumulated over the steps
-        iterative = transientsolve(prob, (0.0, 12e-9); dt = 0.5e-12, linearsolver = GMRES())
+        iterative = transientsolve(prob, (0.0, 12e-9); dt = 0.5e-12, method = Trapezoidal(), linearsolver = GMRES())
         @test iterative.stats.factorizations == 1
         @test iterative.stats.kryloviterations > 0
         @test iterative.voltage ≈ sol.voltage rtol=1e-4 atol=1e-12
+        # a pumped junction whose steps take a second correction: the
+        # iterative step converges it as the direct one does
+        jpa = Circuit([("p1","1","0",Port(1)), ("c1","1","2",Capacitor(100e-15)),
+            ("lj","2","0",JosephsonJunction(1e-9)), ("c2","2","0",Capacitor(1e-12))])
+        ramp(t) = t <= 0 ? 0.0 : t >= 2e-9 ? 1.0 : (1 - cospi(t/2e-9))/2
+        strong = transientproblem(jpa; sources = [TransientSource(1,
+            t -> 2*4*0.00565e-6*ramp(t)*cospi(2*4.75e9*t))])
+        direct = transientsolve(strong, (0.0, 4e-9); dt = 2e-12, method = Trapezoidal())
+        @test direct.stats.newtoncorrections > direct.stats.steps
+        krylov = transientsolve(strong, (0.0, 4e-9); dt = 2e-12, method = Trapezoidal(), linearsolver = GMRES())
+        @test krylov.stats.newtoncorrections > krylov.stats.steps
+        @test krylov.voltage ≈ direct.voltage rtol=1e-4 atol=1e-12
         @test_throws ArgumentError transientsolve(prob, (0.0, 1e-9); dt = 1e-12, linearsolver = :gmres)
         # a reuse object carries the system, its factorization and the Krylov
         # workspace to the next solve, tangent and adjoint of the problem
@@ -938,12 +1193,12 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         a = transientsolve(prob, (0.0, 2e-9); dt = 2e-12, record = :phases, reuse)
         b = transientsolve(prob, (0.0, 2e-9); dt = 2e-12, record = :phases, reuse)
         @test a.voltage == b.voltage
-        @test reuse.system === JC.transientsystem(reuse, prob, 2e-12, Trapezoidal(), JC.CPU(), KLUfactorization())
+        @test reuse.system === JC.transientsystem(reuse, prob, 2e-12, GaussLegendre(), JC.CPU(), KLUfactorization())
         currents = [1e-8*sinpi(2*1.7e9*t) for _ in 1:1, t in a.times]
         weights = ones(1, length(a.times))
         @test transienttangent(a, currents; reuse).voltage ≈ transienttangent(a, currents).voltage
         @test transientadjoint(a, weights; reuse).currents ≈ transientadjoint(a, weights).currents
-        g = transientsolve(prob, (0.0, 2e-9); dt = 2e-12, linearsolver = GMRES(), reuse)
+        g = transientsolve(prob, (0.0, 2e-9); dt = 2e-12, method = Trapezoidal(), linearsolver = GMRES(), reuse)
         @test reuse.workspace isa JC.GMRESWorkspace
         # a different step replaces the kept system
         transientsolve(prob, (0.0, 2e-9); dt = 1e-12, reuse)

@@ -484,11 +484,23 @@ end
 planprecision(::Nothing) = Nothing
 planprecision(::Type{T}) where {T<:AbstractFloat} = Type{T}
 
+# the floating point type the iteration runs in: the working precision of
+# the system, that of its point on the backend
+iterationprecision(sys) = real(eltype(sys.xr))
+
 # the floating point type of the factors: the requested precision, or the
-# real type of the system's scale and Josephson inductances
-factorprecision(plan::PreconditionerPlan, sys) = isnothing(plan.precision) ?
-    real(promote_type(typeof(sys.Lscale), real(eltype(sys.Ljb)))) :
-    plan.precision
+# iteration's
+factorprecision(precision::Union{Nothing,Type{<:AbstractFloat}}, sys) =
+    isnothing(precision) ? iterationprecision(sys) : precision
+factorprecision(plan::PreconditionerPlan, sys) =
+    factorprecision(plan.precision, sys)
+
+# the plan with its precision replaced by `T`: what a promotion of the
+# factors to the iteration's precision rebuilds the matrix from
+withprecision(plan::PreconditionerPlan, ::Type{T}) where {T<:AbstractFloat} =
+    PreconditionerPlan{typeof(plan.Amatrixmodes), Type{T}}(
+        plan.Amatrixindices, plan.Amatrixconjindices, plan.Rbnm, plan.Nmodes,
+        plan.Nbranches, plan.Nfreq, plan.layout, plan.Amatrixmodes, T)
 
 """
     buildcoupling(plan::PreconditionerPlan, S::AbstractModeCoupling, sys,
@@ -636,7 +648,8 @@ strongly pumped device the block diagonal alone stalls, and
 - `plan`: the [`PreconditionerPlan`](@ref), the structural ingredients
     from which [`buildcoupling`](@ref) rebuilds the pattern, the assembly
     plan and the values for a new coupling set, so the set can be grown
-    after construction.
+    after construction; it carries the precision of the factors, and is
+    replaced when they are promoted to the iteration's.
 - `Nmodes`: the number of modes.
 - `autoindices`, `autotol`, `autobudget`:
     the ingredients of a [`MeasuredBand`](@ref)'s bandwidth measurement,
@@ -658,8 +671,9 @@ mutable struct ModeCouplingPreconditioner{TS} <: AbstractPreconditioner
     factorization::AbstractFactorization
     # the structural ingredients from which `buildcoupling` rebuilds
     # `(P, plan, nzval)` for a coupling set, so the set can be grown after
-    # construction
-    const plan::PreconditionerPlan
+    # construction; replaced when the factors are promoted to the
+    # iteration's precision, since it carries theirs
+    plan::PreconditionerPlan
     const Nmodes::Int
     # the harmonic offset of every mode pair, `modes[m1] .- modes[m2]`, kept so
     # a bandwidth restriction can be rebuilt and stepped after construction.
@@ -685,6 +699,12 @@ mutable struct ModeCouplingPreconditioner{TS} <: AbstractPreconditioner
     # the memory an escalation may take; `nothing` for half the backend's
     # free memory at the time
     budget::Union{Nothing,Int}
+    # scratch in the factors' precision, for the case where the factors are
+    # held in a different one than the iteration; `nothing` when they agree,
+    # which is every solve that does not ask for a mixed precision
+    # preconditioner
+    rT
+    xT
 end
 
 """
@@ -778,6 +798,12 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
         withfactorization(spec, factorization)
     end
 
+    # a factorization carrying its own precision overrides the requested
+    # one: the factors of a preconditioner need only make the Krylov solve
+    # converge, and `applypreconditioner!` converts around them
+    precision = something(factorizationprecision(factorization), precision,
+        Some(nothing))
+
     # the structural ingredients of every rebuild; the values are read from
     # the system at the time
     plan = PreconditionerPlan{typeof(Amatrixmodes), planprecision(precision)}(
@@ -787,7 +813,7 @@ function ModeCouplingPreconditioner(sys, Amatrixindices::Matrix,
     return ModeCouplingPreconditioner(P, sys, FactorizationCache(),
         factorization, plan, Int(Nmodes), Amatrixmodes,
         isnothing(autotol) ? nothing : Amatrixindices, autotol, autobudget,
-        coupling, 0, 0, dp, nzval, clusterprobe, nothing)
+        coupling, 0, 0, dp, nzval, clusterprobe, nothing, nothing, nothing)
 end
 
 couplingbytes(pc::ModeCouplingPreconditioner, S::AbstractModeCoupling,
@@ -805,22 +831,29 @@ defaultfactorization(backend) = backend isa CPU ? KLUfactorization() :
         backend; budget = freememory(backend) ÷ 2)
 
 The member of the mode coupling family an [`Automatic`](@ref) request
-stands for on this problem: [`BlockDiagonal`](@ref) for one tone;
-otherwise [`FullJacobian`](@ref) with single precision block factors when
-[`blockfactorbytes`](@ref) is within `budget`, and [`MeasuredBand`](@ref)
-when it is not.
+stands for on this problem: [`FullJacobian`](@ref) with the backend's
+sparse factorization for one tone; otherwise [`FullJacobian`](@ref) with
+single precision block factors when [`blockfactorbytes`](@ref) is within
+`budget`, and [`MeasuredBand`](@ref) when it is not.
+
+One tone takes the full Jacobian for one Krylov iteration per Newton step
+and no escalation, without sizing its factors first: they grow with the
+square of the mode count, which one tone keeps low, and a problem too
+large for them wants `preconditioner = BlockDiagonal()`. The exact step
+is no more robust from a cold start than an inexact one; a cold start no
+line search reaches is the continuation problem [`Staged`](@ref) exists
+for.
 """
 function resolveautomatic(sys, Rbnm::SparseMatrixCSC, Nmodes::Integer,
     Nbranches::Integer, layout::ModeLayout, Amatrixmodes, backend;
     budget::Integer = freememory(backend) ÷ 2)
     ntones = isnothing(Amatrixmodes) ? 1 : length(first(Amatrixmodes))
-    ntones == 1 && return BlockDiagonal()
+    ntones == 1 && return FullJacobian()
     adj, order = circuitorder(sys, Rbnm, Nmodes, Nbranches, layout)
     bytes = blockfactorbytes(Float32, modecouplingmask(Nmodes, 1:Nmodes), adj,
         order, Nmodes, layout)
     bytes <= budget && return FullJacobian(BlockFactorization(;
         precision = Float32))
-    isnothing(Amatrixmodes) && return BlockDiagonal()
     return MeasuredBand()
 end
 
@@ -866,14 +899,14 @@ averages it away. The full set is exact, so the method is never less robust
 than a direct solve, only faster when the block diagonal suffices. In practice
 this fires once or twice on a strongly pumped line and not at all otherwise.
 
-A single precision block factorization of the full set is not exact
-either: its factors approximate the Jacobian to single precision, and on a
-node whose stiffness at some mode frequency lives in a promoted branch
-current they can be poor enough to stall the Krylov solve (see
-[`refactorize!`](@ref) for the singular limit of the same). Its escalation
-is the double precision factorization of the same coupling set, which is
-exact; a single precision factorization of a smaller set grows the set
-first, keeping its speed, and escalates its precision once the set is
+The full set held in less precision than the iteration, single precision
+block factors or a [`CUDSSFactorization`](@ref) with a `precision`, is
+not exact either: its factors approximate the Jacobian to their own
+precision and can be too poor to converge the Krylov solve. Its
+escalation is the same coupling set in the iteration's precision, the
+factorization and the plan the matrix is assembled from promoted by
+[`withprecision`](@ref); a reduced precision factorization of a smaller
+set grows the set first and escalates its precision once the set is
 full.
 
 See [`FloquetPreconditioner`](@ref) for the alternative, which absorbs the
@@ -882,20 +915,26 @@ factorization.
 """
 function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
     isexactpreconditioner(pc) && return false
-    if isfullcoupling(pc) && singleprecision(pc.factorization)
-        f = pc.factorization
-        newf = BlockFactorization(f.singletons; precision = Float64,
-            refine = f.refine)
-        bytes = couplingbytes(pc, pc.coupling, newf)
+    if isfullcoupling(pc) && reducedprecision(pc)
+        # the full set held in less precision than the iteration: the
+        # factorization, the plan the matrix is assembled from and the
+        # coupling set which carries the factorization are all promoted
+        T = iterationprecision(pc.sys)
+        newf = withprecision(pc.factorization, T)
+        newplan = withprecision(pc.plan, T)
+        S = setfactorization(pc.coupling, newf)
+        bytes = couplingbytes(newplan, S, pc.sys, newf)
         budget = something(pc.budget,
             freememory(pc.sys.nonlineartermplan.backend) ÷ 2)
         if bytes > budget
-            @debug "escalation refused: the double precision factors would take $(bytes) bytes of a budget of $(budget)"
+            @debug "escalation refused: the factors in $(T) would take $(bytes) bytes of a budget of $(budget)"
             return false
         end
         pc.factorization = newf
-        pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan, pc.coupling,
-            pc.sys, newf)
+        pc.plan = newplan
+        pc.coupling = S
+        pc.P, pc.deviceplan, pc.nzval = buildcoupling(newplan, S, pc.sys,
+            newf)
         pc.escalations += 1
         pc.cache.factorization = nothing
         return true
@@ -904,7 +943,7 @@ function escalatepreconditioner!(pc::ModeCouplingPreconditioner)
     # full mode set once it covers the grid. Every other coupling set jumps
     # straight to the full Jacobian, since nothing identifies which modes
     # carried the deficiency.
-    f = pc.coupling.factorization
+    f = pc.factorization
     S = if pc.coupling isa HarmonicBand
         p = pc.coupling.p
         next = p isa Integer ? p + 1 : map(x -> x + 1, p)
@@ -944,13 +983,23 @@ function isfullcoupling(pc::ModeCouplingPreconditioner)
     return false
 end
 
-# a single precision block factorization approximates the matrix it
-# factorizes; its escalation is the double precision one
-singleprecision(f) = f isa BlockFactorization && f.precision === Float32
+# the floating point type the factors are held in: a block factorization's
+# own for the dense blocks it builds, the plan's for a factorization of
+# the matrix the plan assembles
+function factorprecision(pc::ModeCouplingPreconditioner)
+    Tv = factorprecision(pc.plan, pc.sys)
+    f = pc.factorization
+    return f isa BlockFactorization ? something(f.precision, Tv) : Tv
+end
 
-# exact: the full coupling set factorized in double precision
+# whether the factors are held in less precision than the iteration, so
+# that they approximate the matrix they factorize
+reducedprecision(pc::ModeCouplingPreconditioner) =
+    eps(factorprecision(pc)) > eps(iterationprecision(pc.sys))
+
+# exact: the full coupling set, held in the iteration's precision
 isexactpreconditioner(pc::ModeCouplingPreconditioner) =
-    isfullcoupling(pc) && !singleprecision(pc.factorization)
+    isfullcoupling(pc) && !reducedprecision(pc)
 
 """
     updatepreconditioner!(pc::ModeCouplingPreconditioner, x)
@@ -1059,6 +1108,8 @@ function refactorize!(pc::ModeCouplingPreconditioner)
         @warn "the block factorization of the preconditioner met a singular supernode; the coupling set is factorized by the backend's sparse factorization from here on, which pivots across the whole matrix" maxlog = 1
         backend = pc.sys.nonlineartermplan.backend
         pc.factorization = singletonfactorization(pc.factorization, backend)
+        # the coupling set carries the factorization of its factors
+        pc.coupling = setfactorization(pc.coupling, pc.factorization)
         pc.cache.factorization = nothing
         pc.P, pc.deviceplan, pc.nzval = buildcoupling(pc.plan, pc.coupling,
             pc.sys, pc.factorization)
@@ -1070,7 +1121,20 @@ end
 
 function applypreconditioner!(z::AbstractVector,
     pc::ModeCouplingPreconditioner, r::AbstractVector)
-    return trysolve!(z, pc.cache.factorization, r)
+    Tf = factorprecision(pc.plan, pc.sys)
+    eltype(r) === Tf && return trysolve!(z, pc.cache.factorization, r)
+    # the factors are held in another precision than the iteration: convert
+    # the residual down and the correction back up through scratch in the
+    # factors' type; the Krylov solve keeps its own precision, so this
+    # costs the accuracy of the preconditioner and not of the answer
+    if isnothing(pc.rT) || length(pc.rT) != length(r) || eltype(pc.rT) !== Tf
+        pc.rT = similar(r, Tf)
+        pc.xT = similar(z, Tf)
+    end
+    pc.rT .= r
+    trysolve!(pc.xT, pc.cache.factorization, pc.rT)
+    z .= pc.xT
+    return z
 end
 
 """

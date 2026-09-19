@@ -60,15 +60,15 @@ legacy netlist.
 
 ## Choosing the rule, the step and the record
 
-[`Trapezoidal`](@ref), the default, applies the trapezoidal rule to the
-flux and to its rate, which is Newmark's rule with the averaging
-parameters: second order, and free of numerical damping, so a lossless LC
-oscillation keeps its energy. [`GaussLegendre`](@ref) is the two stage
-Gauss-Legendre collocation, fourth order, A-stable and symplectic, with
-the same freedom from damping; on a resonator it is the rule to use, see
-below. [`BackwardEuler`](@ref) is first order and strongly damping, a
-reference for checking that a result does not depend on the rule. A
-trapezoidal step is one implicit equation in the new flux,
+[`GaussLegendre`](@ref), the default, is the two stage Gauss-Legendre
+collocation: fourth order, A-stable and symplectic, and free of
+numerical damping, so a lossless LC oscillation keeps its energy.
+[`Trapezoidal`](@ref) applies the trapezoidal rule to the flux and to
+its rate, which is Newmark's rule with the averaging parameters: second
+order, with the same freedom from damping, one implicit equation in the
+new flux per step, and the rule which takes a `linearsolver`.
+[`BackwardEuler`](@ref) is first order and strongly damping, a reference
+for checking that a result does not depend on the rule.
 
 The choice of rule is a matter of samples per period. The trapezoidal
 rule warps every frequency by `(2 pi f dt)^2/12`, a fifth of a percent
@@ -101,7 +101,7 @@ amplitude. A smooth window suppresses leakage from a strong pump; close
 products still need enough observation time.
 
 
-With `linearsolver = GMRES()` each trapezoidal Newton correction is
+Under `Trapezoidal()` with `linearsolver = GMRES()` each Newton correction is
 instead solved matrix free by the package's Krylov solver, with the last factorization
 as the preconditioner and a refresh of it only when the iteration count
 says the phases have moved away from it, so a whole solve can run on one

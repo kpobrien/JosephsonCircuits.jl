@@ -75,17 +75,37 @@ between a driven junction and an inductor are one direction, as the
 equations say rather than as a graph of the ports would guess. A
 constraint no source drives, a coupled inductor's row, a gauge row or
 an inductor between two nodes, is an invariant of both rules and holds
-exactly, while a
-junction on such a direction or a source driving it is not. There the
-trapezoidal rule, which solves the constraint at every endpoint, keeps
-second order from a consistent start, and the Gauss-Legendre rule, whose
-endpoint is the collocation quadratic extrapolated, would not converge in
-the rate at all, so it projects each endpoint onto the constraint and
-takes the rate along the direction from the derivative of the cubic
-through the state, the two stages and the projected endpoint, third
-order; the tangent and the adjoint differentiate the projection with the
-step. A junction across an unterminated port with no capacitance is
-the smallest such circuit, and its flux is then the constraint's own
+exactly. A junction on such a direction or a source driving it is not:
+there every rule projects each endpoint onto the constraint, to the
+roundoff of the terms it balances, the tangent and the adjoint
+differentiating the projection with the step. The Gauss-Legendre
+endpoint is the collocation quadratic extrapolated, which satisfies the
+constraint only to the order of the extrapolation; the trapezoidal and
+backward Euler endpoints are Newton solutions whose tolerance is set by
+the stiff rows, so the constraint's rows, which carry no capacitance
+term, are left where that tolerance allows, and the trapezoidal average
+of the two ends would carry that to the next end with its sign reversed
+and never damp it. Along
+every algebraic direction the rate is not what either rule's update
+gives, which carries the rounding of every solve forward along a
+direction nothing damps: wherever a state is reported its rate along
+these directions is read from the differentiated constraints,
+`Z' (L + J'(x)) v = Z' b'(t)`, the rate of the drives by a central
+difference far below the step; the voltage of an unterminated port on
+such a direction is that rate, and a tangent's rate is read with the
+constraints perturbed as its directions perturb them, by a component of
+the stiffness or a junction, or by the rate of its current, that of the
+cubic through four grid values, of the quadratic through three or of
+the line through two, the adjoint applying the transposes. Where a
+scattering block is on a direction its
+states move the constraint at a rate the reading would have to solve for
+together with the block's port currents, so the Gauss-Legendre rule
+takes the rate along its projected directions from the derivative of
+the cubic through the state, the two stages and the projected endpoint,
+third order, the tangent and the adjoint differentiating that with the
+step. A
+junction across an unterminated port with no capacitance is the
+smallest such circuit, and its flux is then the constraint's own
 solution to the Newton tolerance.
 
 
@@ -131,10 +151,12 @@ endpoint where the circuit has an algebraic direction to project, with
 the endpoint phases of its junctions recorded as `endphases`, and solve
 them exactly by iteration on the same complex factorization; a current
 on the recorded grid is read at the stage times through a cubic Lagrange
-stencil, so a smooth current keeps the fourth order, and a current given
-at the grid and the stage times of each step is read as it is, which is
-how the pulsed gain and the noise drive their probes and baths, so a
-pulse keeps its support and a tone its exact phase.
+stencil, so a smooth current keeps the fourth order, through the line
+between the step's grid values on a record shorter than four points,
+and a current given at the grid and the stage times of each step is
+read as it is, which is how the pulsed gain and the noise drive their
+probes and baths, so a pulse keeps its support and a tone its exact
+phase.
 
 The step of the Gauss-Legendre rule, in the scaled unknowns, solves for
 the two stage increments `d_1, d_2` of the flux from the state `x_n`
@@ -173,19 +195,24 @@ matrix.
 Along an algebraic direction the Gauss-Legendre endpoint, the
 collocation quadratic extrapolated, satisfies the constraint only to the
 order of the extrapolation, and the rate along it does not converge at
-all, so every endpoint is projected. The directions `Z` and the
+all, so every endpoint is projected; the endpoints of the other rules
+are projected the same way, out of the residual their Newton leaves on
+the constraint's rows. The directions `Z` and the
 constraints `Z'`, the right and left null vectors of the rate system,
 are kept apart, since a block makes the operator unsymmetric: Newton on
 the coefficients `alpha` of `Z` solves `Z' (L (x + Z alpha) + J(x + Z alpha) - b) = 0`
 per condition with the small Jacobians `Z' (L + J'(x)) Z` on the host,
-from two products on the backend, to the step's tolerance; a linear
+from two products on the backend, to the roundoff of the terms the
+constraint balances, since the step's tolerance is set in the stage
+equations' units and is far looser for the constraint; a linear
 constraint is met by one correction, and a direction no junction,
 drive, line or block touches is left alone, since the stages keep a
 linear constraint with a constant right hand side exactly. The rate
-along the direction is then the derivative at the endpoint of the cubic
-through the state, the two stages and the projected endpoint, all of
-which satisfy the constraint, extracted along each direction and put
-back through `Z`. Last the index one unknowns, the rates along the
+along the directions is left to the reading at the read-outs described
+above, except where a block is on a direction, when it is the
+derivative at the endpoint of the cubic through the state, the two
+stages and the projected endpoint, extracted along each direction and
+put back through `Z`. Last the index one unknowns, the rates along the
 capacitor free islands and the block port currents, are read from their
 equations at the endpoint through the pseudoinverse of the rate system
 on its range, which determines what the equations determine and leaves
@@ -381,7 +408,7 @@ inverse.
 The tangent linearizes the recorded steps about the recorded junction
 phases: on each step it solves the linearized stage equations with the
 same frozen operator, iterating to the exact solution, reads a current
-on the recorded grid at the stage times through a cubic Lagrange
+on the recorded grid at the stage times through the solve's Lagrange
 stencil or takes it at the stages when it is given there, carries the
 perturbation of the block states and of the line histories, and
 differentiates the projection of the endpoint. The adjoint is the exact

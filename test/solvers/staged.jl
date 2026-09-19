@@ -68,6 +68,11 @@ using JosephsonCircuits, Test, LinearAlgebra
         @test !r.solverinfo.converged
         @test length(r.solverinfo.stages) == 1
         @test isnan(r.solverinfo.sourcefold)
+        # the flag which silences a solve silences the schedule too
+        q = @test_logs min_level=Base.CoreLogging.Warn hbnlsolve(
+            (w1,w2), (8,4), src, circuit, defs; dc = true, odd = true,
+            even = true, method = Staged(maxattempts = 1), warnnotconverged = false)
+        @test !q.solverinfo.converged
     end
 
 end

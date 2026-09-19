@@ -133,12 +133,13 @@ keeps the truncated differences and is an approximation.
 The default is Jacobian-free Newton-Krylov: each Newton step solves
 `J d = -F` by restarted GMRES over the matrix-free product, right
 preconditioned, to the Eisenstat-Walker forcing tolerance clamped to
-`[1e-10, 0.9]`, and takes the step through an Armijo line search with
-halving and safeguards. The solve ends promptly when it cannot succeed
-and says why: the Newton steps spent, the Arnoldi steps beyond the work
-budget of one restart length per step, a line search that finds no
-decrease after a rebuilt preconditioner, or a residual history that
-projects no convergence within the budget after a recovery of exact
+`[1e-10, 0.9]`, and takes the step through an Armijo backtracking line
+search, interpolating by default and halving on request. The solve ends
+promptly when it cannot succeed and says why: the Newton steps spent,
+the Arnoldi steps beyond the work budget of one restart length per step,
+a line search that finds no decrease after a rebuilt preconditioner, or
+a residual that has stopped coming down, or comes down too slowly to
+reach the tolerance within the budget left, after a recovery of exact
 Newton steps. A stall outside the Newton basin is the continuation
 problem the staged method exists for.
 

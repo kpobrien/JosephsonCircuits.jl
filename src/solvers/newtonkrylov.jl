@@ -40,11 +40,11 @@ Newton step through a fresh factorization before the iteration is declared
 stalled.
 
 The globalization is the plain damped-Newton path of [`nlsolve!`](@ref):
-the [`backtracking_linesearch!`](@ref) of [`nlsolve!`](@ref) run in halving
-mode (`interpolate = false`), which on Armijo failure
-still takes the best decreasing trial, with consecutive failures counted
-against `maxbacktrackfailures` and a no-decrease step retried once from a
-fresh preconditioner before stopping. There is deliberately no Anderson
+the [`backtracking_linesearch!`](@ref) of [`nlsolve!`](@ref) with the
+method's [`Backtracking`](@ref), which on Armijo failure still takes the
+best decreasing trial, with consecutive failures counted against its
+`maxfailures` and a no-decrease step retried once from a fresh
+preconditioner before stopping. There is deliberately no Anderson
 acceleration here: the Krylov steps are near-exact Newton steps, and the
 solver is kept simple.
 
@@ -77,27 +77,27 @@ carries on.
 
 The forcing sequence is Eisenstat-Walker choice 2 with `gamma = 0.9` and
 `alpha = (1 + sqrt(5))/2`, clamped to `[1e-10, 0.9]` and started at 0.3;
-the line search is Armijo backtracking with constant 1e-4, halving with
-safeguards 0.1 and 0.5, at most ten trials and two consecutive failures;
 a solve which does not bring the linear residual below 0.9 of the residual
 norm is treated as stagnated and the preconditioner solve taken as the
 step; and a solve whose residual came down by less than 0.5 per Arnoldi
 step is reported to the preconditioner as slow ([`stalled!`](@ref); off
 under [`Never`](@ref), which also disables the count rule). These are
 fixed: none has been changed in any measured case, and each was set by the
-inexact Newton theory or by a measurement recorded beside it. Two budgets
-bound the work: `iterations` Newton steps, and `iterations` restart
-lengths of Arnoldi steps in total, so that a preconditioner which runs
-every linear solve to its limit cannot turn the step budget into hours.
-A residual history which projects no convergence within the remaining
-budget without accelerating ([`projectedstall`](@ref)) gets one recovery,
-a rebuilt preconditioner and exact Newton steps from then on, and ends the
-solve if it persists.
+inexact Newton theory or by a measurement recorded beside it. The line
+search is the method's [`Backtracking`](@ref), interpolating by default.
+Two budgets bound the work: `iterations` Newton steps, and `iterations`
+restart lengths of Arnoldi steps in total, so that a preconditioner which
+runs every linear solve to its limit cannot turn the step budget into
+hours. A residual which has stopped coming down, or comes down too slowly
+to reach the tolerance within the remaining budget, and whose rate is not
+improving ([`residualstalled`](@ref)) gets one recovery, a rebuilt
+preconditioner and exact Newton steps from then on, and ends the solve if
+it persists.
 
 These are the settings `hbnlsolve` runs with; a caller changes them through
 the [`NewtonKrylov`](@ref) method object (`preconditioner`, `linearsolver`,
-`refresh`, `escalate`, `precision`) and through `hbnlsolve`'s own
-`iterations`, `atol` and `rtol`.
+`refresh`, `escalate`, `linesearch`, `precision`) and through
+`hbnlsolve`'s own `iterations`, `atol` and `rtol`.
 
 Returns an [`IterationInfo`](@ref) with the same per-iteration diagnostics
 as [`nlsolve!`](@ref) (the `andersonaccepted` record is always false) and a
@@ -117,10 +117,8 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
 
     # The fixed constants of the iteration, under the names the loop below
     # uses. The forcing sequence is Eisenstat-Walker choice 2 and its
-    # parameters are only defined on these ranges; the line search halves
-    # rather than interpolates, so only the upper safeguard acts; the
-    # stagnation and slow solve thresholds are those the docstring
-    # describes.
+    # parameters are only defined on these ranges; the stagnation and slow
+    # solve thresholds are those the docstring describes.
     krylovrestart = restartlength(linearsolver)
     krylovmaxrestarts = maxrestarts(linearsolver)
     krylovrefreshiterations = refresh isa Never ? typemax(Int) : 1
@@ -133,11 +131,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     krylovalpha = (1 + sqrt(5))/2
     krylovstagnation = 0.9
     krylovescalate = escalate ? 1 : typemax(Int)
-    c1 = 1e-4
-    safeguard_low = 0.1
-    safeguard_high = 0.5
-    maxbacktracks = 10
-    maxbacktrackfailures = 2
+    linesearch = method.linesearch
 
     length(F) == length(x) || throw(DimensionMismatch(
         lazy"The residual `F` has length $(length(F)) but the point `x` has length $(length(x))."))
@@ -146,21 +140,11 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # so the loop below and the pluggable linear solver see one interface
     jvp = asoperator(jvp!, length(x))
 
-    # validate every option before the first residual evaluation, with the
-    # same bounds and rationale as nlsolve!
+    # validate every option before the first residual evaluation; the line
+    # search validated its own when it was built
     iterations >= 0 || throw(ArgumentError(
         lazy"`iterations` = $(iterations) must be nonnegative."))
     atol >= 0 || throw(ArgumentError(lazy"`atol` = $(atol) must be nonnegative."))
-    0 < c1 < 1//2 || throw(ArgumentError(
-        lazy"`c1` = $(c1) must be in (0, 1/2) for the Newton merit function."))
-    0 < safeguard_low < 1//2 || throw(ArgumentError(
-        lazy"`safeguard_low` = $(safeguard_low) must be in (0, 1/2)."))
-    safeguard_low < safeguard_high < 1 || throw(ArgumentError(
-        lazy"`safeguard_high` = $(safeguard_high) must satisfy `safeguard_low < safeguard_high < 1`."))
-    maxbacktracks >= 0 || throw(ArgumentError(
-        lazy"`maxbacktracks` = $(maxbacktracks) must be nonnegative."))
-    maxbacktrackfailures >= 1 || throw(ArgumentError(
-        lazy"`maxbacktrackfailures` = $(maxbacktrackfailures) must be positive."))
     krylovrestart >= 1 || throw(ArgumentError(
         lazy"`krylovrestart` = $(krylovrestart) must be at least 1."))
     krylovmaxrestarts >= 1 || throw(ArgumentError(
@@ -187,7 +171,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     krylovrecord = KrylovSolveInfo[]
     tstart = time()
     # the record and the acceptance rules shared with `nlsolve!`
-    tr = NewtonTrace{real(T)}(maxbacktrackfailures)
+    tr = NewtonTrace{real(T)}(linesearch.maxfailures)
     normF = tr.normresidual
     refresh = true
     refreshedforstall = false
@@ -197,10 +181,10 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # step budget into hours
     work = 0
     workbudget = iterations*krylovrestart
-    # the progress projection (`projectedstall`) measures the residual
-    # history from `progressstart`; its one recovery rebuilds the
-    # preconditioner and takes exact Newton steps from then on, ruling out
-    # inexact directions before a stall is declared
+    # the progress rule (`residualstalled`) judges the residual history
+    # from `progressstart` against the budget left; its one recovery
+    # rebuilds the preconditioner and takes exact Newton steps from then
+    # on, ruling out inexact directions before a stall is declared
     progressstart = 1
     exactforcing = false
     # why the next rebuild was asked for: `:forced` by a failure of the
@@ -462,21 +446,14 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             end
         end
 
-        # interpolated backtracking linesearch shared with nlsolve!: on
-        # Armijo failure it returns the best decreasing trial (alpha > 0)
-        # with F and xcandidate restored there, or alpha == 0 when no trial
-        # decreased the merit at all
-        # halving rather than interpolating: a trial here costs two
-        # transforms, one Arnoldi step of the direction it tests, and the
-        # interpolated first backtrack is the floor step whenever the full
-        # step overshoots, which on a long pumped line it does at every
-        # step (see backtracking_linesearch!)
+        # the backtracking linesearch shared with nlsolve!, fitted or halved
+        # as the method's `Backtracking` says: on Armijo failure it returns
+        # the best decreasing trial (alpha > 0) with F and xcandidate
+        # restored there, or alpha == 0 when no trial decreased the merit
+        # at all
         alpha1, ϕα, accepted, backtracks = backtracking_linesearch!(
             residual!, F, xcandidate, x, deltax, ϕ0, dϕ0dα;
-            c1 = c1, safeguard_low = safeguard_low,
-            safeguard_high = safeguard_high,
-            maxbacktracks = maxbacktracks, Fbest = Fbest,
-            interpolate = false)
+            ls = linesearch, Fbest = Fbest)
         tracetrial!(tr, alpha1, backtracks)
         if !isempty(krylovrecord) && krylovrecord[end].iteration == n
             krylovrecord[end] = with(krylovrecord[end];
@@ -512,9 +489,10 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         end
         # Armijo accepts a step which reduces the merit by a hair, so a
         # hopeless iteration can satisfy it for its whole budget; the
-        # projection stops it once its own rate says the budget cannot
-        # suffice, after one recovery
-        if tracestalled(tr, progressstart, iterations - n)
+        # progress rule stops it once the residual has stopped coming
+        # down, or comes down too slowly for the budget left, after one
+        # recovery
+        if tracestalled(tr, progressstart; remaining = iterations - n)
             if exactforcing
                 tr.reason = :progress
                 break

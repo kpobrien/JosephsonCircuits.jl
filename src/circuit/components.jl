@@ -517,6 +517,23 @@ function derivativeinto!(out, r::JunctionRelations, phi)
 end
 
 """
+    negsecondat(r::JunctionRelations, phi)
+
+The negative of the second derivative of the relation of every junction
+at the branch phases `phi`, `sin.(phi)` for the Josephson relation: the
+change of the differential inductance with the phase, which the
+derivative of a linearization with respect to the phases carries. The
+counterpart of [`derivativeat`](@ref).
+"""
+negsecondat(r::JunctionRelations, phi) = negsecondinto!(similar(phi), r, phi)
+
+function negsecondinto!(out, r::JunctionRelations, phi)
+    allsinusoidal(r) && return out .= sin.(phi)
+    return applyrelationfirst!(out, phi, r.negsecond, r.sinusoidal,
+        r.anysinusoidal, sin)
+end
+
+"""
     hostrelations(r::JunctionRelations)
     hostrelations(r::JunctionRelations, rows::AbstractVector{Int})
 

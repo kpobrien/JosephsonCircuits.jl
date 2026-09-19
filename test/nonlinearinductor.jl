@@ -217,9 +217,14 @@ using Test
                    NonlinearInductor(L0, PolynomialCPR(taylor(9))),
                    NonlinearInductor(L0, PolynomialCPR([1.0, 0.25, -1/6])))
             c = jpa(jj)
+            # `Staged` because one of these relations is quadratic, and a
+            # quadratic relation at this drive is a hard cold start which
+            # not every line search reaches; continuation always does. What
+            # is under test is the transient stepping against harmonic
+            # balance, so the reference has to be a converged one.
             hb = hbnlsolve((2*pi*fp,), (10,), [(mode = (1,), port = 1, current = ip)],
                 c, Dict{Symbol,Float64}(); keyedarrays = false, dc = true,
-                even = true, odd = true)
+                even = true, odd = true, method = Staged())
             k = findfirst(==((1,)), hb.frequencies.modes)
             expected = 2im*2*pi*fp*JC.phi0*hb.nodeflux[k]
             sol = transientsolve(transientproblem(c;

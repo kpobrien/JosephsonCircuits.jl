@@ -210,6 +210,7 @@ include("linearized/keyed.jl")   # keyed array output helpers
 # many tone drives; the Jacobian of a step is the real Jacobian of
 # harmonic balance with the step's linear term folded in.
 include("transient/system.jl")
+include("transient/constraints.jl")
 include("transient/solve.jl")
 include("transient/gauss.jl")
 include("transient/batch.jl")
@@ -434,8 +435,8 @@ export FrequencyDependent, designsensitivities, designjacobian,
     ExternalSolver, GMRES, KrylovJL, Staged,
     BlockDiagonal, FullJacobian, HarmonicBand, MeasuredBand, Clusters,
     CoupledModes, CouplingMask, Automatic,
-    Floquet, Always, Probe, Never, KLUfactorization, LUfactorization,
-    QRfactorization, CUDSSFactorization, BlockFactorization
+    Floquet, Always, Probe, Never, Backtracking, KLUfactorization,
+    LUfactorization, QRfactorization, CUDSSFactorization, BlockFactorization
 
 # the typed circuit representation and its component models
 export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,

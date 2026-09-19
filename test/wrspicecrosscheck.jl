@@ -23,7 +23,10 @@ using XicTools_jll
                 (:jj, 2, 0, JosephsonJunction(1000e-12)),
                 (:cj, 2, 0, Capacitor(1000e-15))])
             p = transientproblem(circuit; sources = [TransientSource(1, drive)])
-            native = transientsolve(p, ts; dt = 1e-12, record = :phases)
+            # the trapezoidal rule records the phases once per time, as
+            # WRSPICE does
+            native = transientsolve(p, ts; dt = 1e-12, record = :phases,
+                method = Trapezoidal())
             spice = transientsolve(p, ts; dt = 1e-12, record = :phases,
                 method = WRspice())
             @test spice.times == native.times
@@ -101,7 +104,8 @@ using XicTools_jll
                 (:ib, 2, 0, CurrentSource(0.0))])
             p = transientproblem(circuit; sources = [TransientSource(1, drive),
                 TransientSource(:ib, t -> 2e-8*(1 - exp(-t/1e-9)))])
-            native = transientsolve(p, ts; dt = 1e-12, record = :phases)
+            native = transientsolve(p, ts; dt = 1e-12, record = :phases,
+                method = Trapezoidal())
             spice = transientsolve(p, ts; dt = 1e-12, record = :phases,
                 method = WRspice())
             @test size(spice.phases, 1) == 2

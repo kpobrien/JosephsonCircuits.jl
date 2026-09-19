@@ -41,7 +41,7 @@ using Test
         @test st.outgoing ≈ sw.outgoing rtol=1e-4
         @test st.voltage[1, :] ≈ st.voltage[2, :] rtol=1e-12
         @test st.stats.factorizations == 1
-        @test_throws ArgumentError transientsolve(pt, (0.0, T); dt)
+        @test_throws ArgumentError transientsolve(pt, (0.0, T); dt, method = Trapezoidal())
         for (g, R) in ((0.5, [50.0, 50.0]), (0.7, [50.0, 75.0]))
             Sa = [0.0 g; g 0.0]
             r1, rs, r2 = pinetwork(Sa, R)
@@ -438,7 +438,7 @@ using Test
         @test sm.times[argmax(abs.(sm.outgoing[2, :]))] ≈ 0.1e-9 + tau atol=1e-12
         @test size(sm.linewaves) == (2, 501)
         @test_throws ArgumentError transientsolve(pm, (0.0, 1e-9); dt = 0.5e-9, method = GaussLegendre())
-        @test_throws ArgumentError transientsolve(pm, (0.0, 1e-9); dt = 2e-12)
+        @test_throws ArgumentError transientsolve(pm, (0.0, 1e-9); dt = 2e-12, method = Trapezoidal())
         @test_throws ArgumentError transientproblem(Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:line, 1, 2, TransmissionLine(50.0, 0.0)),
             (:p2, 2, 0, Port(2; Z0 = 50.0))]))
         # the order of the transmitted pulse through a fractional delay (an

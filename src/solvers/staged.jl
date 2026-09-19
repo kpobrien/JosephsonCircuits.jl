@@ -154,6 +154,9 @@ converged, and records the whole walk in `solverinfo.stages`.
     smaller step. The final solve keeps the caller's escalation behavior.
 - `maxattempts = 60`: a bound on the total number of stage solves.
 - `verbose = false`: print one line per stage solve.
+- `warnnotconverged = true`: warn when the schedule ends without the
+    requested point. The stage solves never warn: a stage which does not
+    converge is how the schedule finds its step.
 """
 function stagedhbnlsolve(m::Staged, w::NTuple{N,Float64},
     Nharmonics::NTuple{N,Int}, sources::Vector{SourceTuple{N}},
@@ -182,7 +185,8 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     even::Bool = false, atol = 1e-8, symfreqvar = nothing,
     keyedarrays::Bool = true,
     sensitivitynames::Vector{String} = String[],
-    returnoperatingpoint::Bool = false, backend = CPU()) where {N}
+    returnoperatingpoint::Bool = false, backend = CPU(),
+    warnnotconverged::Bool = true) where {N}
 
     (; s0, smin, interioratol, interioriterations, interiorescalation,
         maxattempts, verbose) = m
@@ -214,6 +218,10 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
         frequencywindow = frequencywindow,
         method = (final || interiorescalation) ? inner :
             withescalation(inner, false),
+        # a stage solve which does not converge is how the continuation
+        # finds its step rather than a failure of the solve the caller
+        # asked for, and the outcome of the schedule is warned about here
+        warnnotconverged = false,
         # typed here, whatever the loop below inferred for its carried point,
         # so the stage solve is called with keywords of known type
         x0 = initialguess(x0), symfreqvar = symfreqvar,
@@ -246,7 +254,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     while true
         attempts += 1
         if attempts > maxattempts
-            @warn lazy"the staged schedule did not converge in `maxattempts` = $(maxattempts) stage solves; last converged drive fraction $(s) on grid $(grids[gi])."
+            warnnotconverged && @warn lazy"the staged schedule did not converge in `maxattempts` = $(maxattempts) stage solves; last converged drive fraction $(s) on grid $(grids[gi])."
             gaveup = true
             break
         end
@@ -291,7 +299,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
             # the converged drive, retreating the drive on the new grid if
             # the carried point does not reconverge there
             if isnothing(x)
-                @warn "the first stage stalled at its first drive step; lower `s0`."
+                warnnotconverged && @warn "the first stage stalled at its first drive step; lower `s0`."
                 gaveup = true
                 break
             end
@@ -318,7 +326,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
                 end
             end
             if !reconverged
-                @warn lazy"the carried point did not reconverge on grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid."
+                warnnotconverged && @warn lazy"the carried point did not reconverge on grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid."
                 gaveup = true
                 break
             end
@@ -351,7 +359,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
                 end
             end
             if !reconverged
-                @warn lazy"the carried point did not reconverge on the finest grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid."
+                warnnotconverged && @warn lazy"the carried point did not reconverge on the finest grid $(grids[gi]) even at half its drive; the truncation boundaries of the ladder are too far apart. Add an intermediate grid."
                 gaveup = true
                 break
             end
@@ -377,7 +385,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
                     break
                 end
             end
-            @warn lazy"no harmonic balance solution was found at the requested drive: the source continuation converged at $(round(s, digits = 4)) of the requested amplitudes on the finest grid $(grids[end]) and stalled at $(round(starget, digits = 4)), and a direct solve at full drive from the last converged point also failed. This is what a fold of the solution branch between those two drives (the self oscillation threshold) looks like, but a failed search is not a proof that no operating point exists: a tighter continuation, another initial point or a different method may still reach one."
+            warnnotconverged && @warn lazy"no harmonic balance solution was found at the requested drive: the source continuation converged at $(round(s, digits = 4)) of the requested amplitudes on the finest grid $(grids[end]) and stalled at $(round(starget, digits = 4)), and a direct solve at full drive from the last converged point also failed. This is what a fold of the solution branch between those two drives (the self oscillation threshold) looks like, but a failed search is not a proof that no operating point exists: a tighter continuation, another initial point or a different method may still reach one."
             fold = s
             gaveup = true
             break

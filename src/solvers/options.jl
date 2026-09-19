@@ -28,6 +28,30 @@ abstract type AbstractFactorization end
 refactorize!(::AbstractFactorization, F, A) = nothing
 
 """
+    factorizationprecision(f::AbstractFactorization)
+
+The floating point type the matrix handed to `f` is built and factorized
+in, `nothing` when it follows the iteration's. Only
+[`CUDSSFactorization`](@ref) has one; KLU and UMFPACK factorize in double
+precision whatever they are handed. [`BlockFactorization`](@ref) also
+takes a `precision`, but for the dense blocks it builds itself, while the
+sparse matrix it is handed stays in the iteration's type, so it has none
+here.
+"""
+factorizationprecision(::AbstractFactorization) = nothing
+
+"""
+    withprecision(f::AbstractFactorization, T)
+
+The factorization `f` holding its factors in `T`: a
+[`CUDSSFactorization`](@ref) or a [`BlockFactorization`](@ref) with its
+`precision` replaced, any other unchanged, since it factorizes in the
+precision of the matrix it is handed. This is how a preconditioner whose
+factors are held in less precision than its iteration is escalated.
+"""
+withprecision(f::AbstractFactorization, ::Type{<:AbstractFloat}) = f
+
+"""
     solverkwargs(factorization)
 
 The options a factorization hands to the solver it wraps, so a caller which
@@ -115,10 +139,12 @@ const MaybeFactorization = Union{Nothing,AbstractFactorization}
 """
     BlockDiagonal(; factorization = nothing)
 
-The mode block diagonal, what [`Automatic`](@ref) picks for one tone: one
-small independent factorization per mode, and no coupling. Cheap, and
-sufficient for one tone and for weak drives; on a strongly pumped device
-it stalls and is grown to the full Jacobian by escalation.
+The mode block diagonal: one small independent factorization per mode,
+and no coupling. Cheap, and sufficient for weak drives; on a strongly
+pumped device it stalls and is grown to the full Jacobian by escalation.
+Its factors grow linearly with the mode count where the full Jacobian's
+grow with its square, so this is the setting for a one tone problem too
+large for the full Jacobian [`Automatic`](@ref) picks.
 """
 struct BlockDiagonal <: AbstractModeCoupling
     factorization::MaybeFactorization
@@ -195,12 +221,11 @@ Clusters(; factorization::MaybeFactorization = nothing) = Clusters(factorization
 """
     Automatic()
 
-The fastest robust preconditioner measured for the problem which fits in
-memory, chosen when the preconditioner is built, by the number of tones and
+The preconditioner chosen when it is built, by the number of tones and
 the memory the factors would take:
 
-- one tone: [`BlockDiagonal`](@ref) with the backend's sparse
-  factorization, which the escalation to the full Jacobian backs up;
+- one tone: [`FullJacobian`](@ref) with the backend's sparse
+  factorization, whatever the memory;
 - two or more tones: [`FullJacobian`](@ref) with a single precision
   [`BlockFactorization`](@ref) when its factors, sized exactly from the
   symbolic analysis by [`blockfactorbytes`](@ref), take at most half the
@@ -208,12 +233,13 @@ the memory the factors would take:
   the system, the Krylov basis and the products; otherwise
   [`MeasuredBand`](@ref) with the backend's sparse factorization.
 
-Measured on a GPU, the full block factors solve three tones at 128
-junctions in 4.3 s against 38.9 s for the measured band, at a quarter of
-its memory, and match the band on two tones; on the mild 1024-junction
-two-tone line they take 4.8 s against 7.9 s. The choice does not look at
-the mixing order of the tones or the circuit's topology, so that it
-generalizes; nothing about it is tuned beyond the memory margin.
+The choice looks at nothing else, neither the mixing order of the tones
+nor the circuit's topology, so that it generalizes. On one tone the full
+Jacobian's sparse factors give one Krylov iteration per Newton step
+where the block diagonal needs many, and no escalation; they are taken
+without sizing them first, since they grow with the square of the mode
+count and one tone keeps it low, and a problem too large for them wants
+an explicit [`BlockDiagonal`](@ref). See [`resolveautomatic`](@ref).
 """
 struct Automatic <: AbstractModeCoupling
     factorization::Nothing
@@ -305,24 +331,28 @@ had none; a deflation applies this to what it wraps. An [`Automatic`](@ref)
 is returned unchanged: it carries no factorization, and the member it
 resolves to takes the backend's default (`resolveautomatic`).
 """
-withfactorization(s::BlockDiagonal, f) =
-    isnothing(s.factorization) ? BlockDiagonal(f) : s
-withfactorization(s::FullJacobian, f) =
-    isnothing(s.factorization) ? FullJacobian(f) : s
-withfactorization(s::HarmonicBand, f) =
-    isnothing(s.factorization) ? HarmonicBand(s.p, f) : s
-withfactorization(s::MeasuredBand, f) =
-    isnothing(s.factorization) ? MeasuredBand(s.tol, s.budget, f) : s
-withfactorization(s::Clusters, f) =
-    isnothing(s.factorization) ? Clusters(f) : s
-withfactorization(s::CoupledModes, f) =
-    isnothing(s.factorization) ? CoupledModes(s.indices, f) : s
-withfactorization(s::CouplingMask, f) =
-    isnothing(s.factorization) ? CouplingMask(s.mask, f) : s
+withfactorization(s::AbstractModeCoupling, f) =
+    isnothing(s.factorization) ? setfactorization(s, f) : s
 withfactorization(s::Automatic, f) = s
 withfactorization(s::Floquet, f) = Floquet(withfactorization(s.inner, f),
     s.size, s.harvest, s.ritz, s.candidates, s.ranktol, s.benefittol,
     s.cycleharvest)
+
+"""
+    setfactorization(s::AbstractModeCoupling, f)
+
+The mode coupling set `s` with its factorization replaced by `f`, whatever
+it carried: what a preconditioner applies to its coupling set when it
+changes the factorization it is built with, so that the set always
+carries the factorization of its factors.
+"""
+setfactorization(s::BlockDiagonal, f) = BlockDiagonal(f)
+setfactorization(s::FullJacobian, f) = FullJacobian(f)
+setfactorization(s::HarmonicBand, f) = HarmonicBand(s.p, f)
+setfactorization(s::MeasuredBand, f) = MeasuredBand(s.tol, s.budget, f)
+setfactorization(s::Clusters, f) = Clusters(f)
+setfactorization(s::CoupledModes, f) = CoupledModes(s.indices, f)
+setfactorization(s::CouplingMask, f) = CouplingMask(s.mask, f)
 
 # ---------------------------------------------------------------- the refresh policy
 
@@ -395,6 +425,66 @@ end
 
 abstract type AbstractHBLinearSolver end
 
+# ---------------------------------------------------------------- the line search
+
+"""
+    Backtracking(; interpolate = true, safeguardlow = 0.1,
+        safeguardhigh = 0.5, c1 = 1e-4, maxbacktracks = 10, maxfailures = 2)
+
+Armijo backtracking along the step, the line search of every method. A
+trial which meets the Armijo condition with constant `c1` is accepted;
+otherwise the step is shortened and retried, at most `maxbacktracks`
+times, and `maxfailures` consecutive steps which return the best
+decreasing trial rather than an Armijo step are a stall.
+
+`interpolate` chooses how the step is shortened. Interpolating fits the
+merit function along the step, a quadratic through the full step for the
+first proposal and a cubic through the two latest trials for each one
+after, and clamps every proposal to `[safeguardlow, safeguardhigh]` of
+the trial before it; it suits an exact step, whose usable length is a
+particular number. Halving makes no fit: the first backtrack is to half
+the step and each later one multiplies it by `safeguardhigh`, so only
+that safeguard acts; it suits an inexact step, which is perturbed enough
+that a power of one half lands acceptably. Halving ends a hopeless solve
+by itself, since its coarse trials soon fail the Armijo condition, where
+interpolation always finds a step short enough to meet it and leaves the
+ending to the stall rule ([`residualstalled`](@ref)).
+
+`safeguardlow` bounds how far one interpolated trial may cut. A Newton
+step in [`NewtonKrylov`](@ref) refreshes the preconditioner and a
+backtrack does not, so too deep a cut buys fewer trials at the price of
+more steps.
+"""
+struct Backtracking
+    interpolate::Bool
+    safeguardlow::Float64
+    safeguardhigh::Float64
+    c1::Float64
+    maxbacktracks::Int
+    maxfailures::Int
+end
+function Backtracking(; interpolate::Bool = true, safeguardlow::Real = 0.1,
+    safeguardhigh::Real = 0.5, c1::Real = 1e-4, maxbacktracks::Integer = 10,
+    maxfailures::Integer = 2)
+    # the bounds the Armijo test and the safeguarded fits need, refused
+    # here rather than inside a solve; for the exact Newton step
+    # dϕ0 = -2ϕ0, so a c1 of one half or more could never accept the full
+    # step
+    0 < safeguardlow < 1//2 || throw(ArgumentError(
+        lazy"`safeguardlow` = $(safeguardlow) must be in (0, 1/2)."))
+    safeguardlow < safeguardhigh < 1 || throw(ArgumentError(
+        lazy"`safeguardhigh` = $(safeguardhigh) must satisfy `safeguardlow` < `safeguardhigh` < 1."))
+    0 < c1 < 1//2 || throw(ArgumentError(
+        lazy"`c1` = $(c1) must be in (0, 1/2) for the Newton merit function."))
+    maxbacktracks >= 0 || throw(ArgumentError(
+        lazy"`maxbacktracks` = $(maxbacktracks) must be nonnegative."))
+    maxfailures >= 1 || throw(ArgumentError(
+        lazy"`maxfailures` = $(maxfailures) must be at least 1."))
+    return Backtracking(interpolate, Float64(safeguardlow),
+        Float64(safeguardhigh), Float64(c1), Int(maxbacktracks),
+        Int(maxfailures))
+end
+
 # ---------------------------------------------------------------- the methods
 
 """
@@ -409,12 +499,14 @@ abstract type AbstractHBNonlinearSolver end
 
 """
     NewtonKrylov(; preconditioner = Automatic(), linearsolver = GMRES(),
-        refresh = Always(), escalate = true, precision = Float64)
+        refresh = Always(), escalate = true, linesearch = Backtracking(),
+        precision = Float64)
 
 Jacobian-free Newton-Krylov with the mode coupling preconditioner: the
 default. `preconditioner` is an [`AbstractPreconditionerSpec`](@ref); the
-default [`Automatic`](@ref) picks the fastest one measured that fits in
-memory. `linearsolver` is a [`GMRES`](@ref) or a [`KrylovJL`](@ref)
+default [`Automatic`](@ref) picks the full Jacobian for one tone and,
+for more, the set whose factors fit in memory. `linearsolver` is a
+[`GMRES`](@ref) or a [`KrylovJL`](@ref)
 solver, `refresh` [`Always`](@ref) (the default), [`Probe`](@ref) (which
 rebuilds the preconditioner only when a measured probe says a rebuild
 pays, and is faster by a fifth to a third on the hard cases, at the price
@@ -435,21 +527,24 @@ sufficient decrease can be found (a step with no decrease at all is
 retried once from a rebuilt preconditioner and ends the solve if it fails
 again, as does a direction which is still not a descent direction after
 the exact rescue, or two consecutive steps short of the Armijo
-condition); `:progress` when the residual history
-projects no convergence within the remaining budget and is not
-accelerating, after one recovery which rebuilds the preconditioner and
-takes exact Newton steps from then on ([`projectedstall`](@ref)). A stall
-outside the Newton basin is the continuation problem [`Staged`](@ref)
-exists for. `precision` is the floating point type
-of the iteration: the system on the backend, the Krylov vectors, and the
-factors of a sparse preconditioner; a single precision solve needs a
-relative tolerance `rtol` it can meet.
+condition); `:progress` when the residual history stopped coming down or
+comes down too slowly to reach the tolerance within the remaining
+budget, its rate is not improving and it is not accelerating, after one
+recovery which rebuilds the preconditioner and takes exact Newton steps
+from then on ([`residualstalled`](@ref)). A stall outside the Newton
+basin is the continuation problem [`Staged`](@ref) exists for.
+`linesearch` is the [`Backtracking`](@ref) which chooses the length of
+every step, interpolating by default; halving
+(`Backtracking(interpolate = false)`) suits an inexact preconditioner
+such as [`BlockDiagonal`](@ref). `precision` is the floating
+point type of the iteration: the system on the backend, the Krylov
+vectors, and the factors of a sparse preconditioner; a single precision
+solve needs a relative tolerance `rtol` it can meet.
 
 The forcing sequence (Eisenstat-Walker choice 2 clamped to `[1e-10, 0.9]`,
-starting at 0.3), the line search (Armijo with constant 1e-4, halving
-with safeguards 0.1 and 0.5, ten trials, two failures) and the stagnation
-threshold (a solve which does not bring the linear residual below 0.9 of
-the residual norm) are fixed; see [`nlsolvekrylov!`](@ref).
+starting at 0.3) and the stagnation threshold (a solve which does not
+bring the linear residual below 0.9 of the residual norm) are fixed; see
+[`nlsolvekrylov!`](@ref).
 """
 struct NewtonKrylov{T<:AbstractFloat} <: AbstractHBNonlinearSolver
     # the precision is the one parameter kept: it sets the element types of
@@ -459,49 +554,63 @@ struct NewtonKrylov{T<:AbstractFloat} <: AbstractHBNonlinearSolver
     linearsolver::AbstractHBLinearSolver
     refresh::AbstractRefresh
     escalate::Bool
+    linesearch::Backtracking
     precision::Type{T}
 end
 function NewtonKrylov(; preconditioner::AbstractPreconditionerSpec = Automatic(),
     linearsolver = GMRES(), refresh::AbstractRefresh = Always(),
-    escalate::Bool = true, precision::Type{<:AbstractFloat} = Float64)
+    escalate::Bool = true, linesearch::Backtracking = Backtracking(),
+    precision::Type{<:AbstractFloat} = Float64)
     linearsolver isa AbstractHBLinearSolver || throw(ArgumentError(
         lazy"`linearsolver` = $(linearsolver) must be a `GMRES()` or a `KrylovJL` solver."))
     return NewtonKrylov(preconditioner, linearsolver, refresh, escalate,
-        precision)
+        linesearch, precision)
 end
 
 """
-    Newton(; factorization = nothing)
+    Newton(; factorization = nothing, linesearch = Backtracking())
 
 Newton's method on the equivalent real system with the exact assembled
 real Jacobian, factorized by `factorization` (the host's KLU when
-`nothing`).
+`nothing`), the length of every step chosen by `linesearch`, a
+[`Backtracking`](@ref), interpolating by default.
 """
 struct Newton <: AbstractHBNonlinearSolver
     factorization::MaybeFactorization
+    linesearch::Backtracking
 end
-function Newton(; factorization::MaybeFactorization = nothing)
+function Newton(; factorization::MaybeFactorization = nothing,
+    linesearch::Backtracking = Backtracking())
     checkdirectfactorization(factorization, "Newton")
-    return Newton(factorization)
+    return Newton(factorization, linesearch)
 end
 
-# a direct solve factorizes the assembled sparse Jacobian; the block
-# factorization is a preconditioner's (through `NewtonKrylov`) or the
-# linearized sweep's, and would fail deep inside the first factorization
-# for want of a block size
+# a direct solve factorizes the assembled sparse Jacobian in the precision
+# of its iteration: the block factorization is a preconditioner's (through
+# `NewtonKrylov`) or the linearized sweep's, and would fail deep inside
+# the first factorization for want of a block size, and a factorization
+# precision is a preconditioner's too (see `CUDSSFactorization`)
 function checkdirectfactorization(f, method)
     f isa BlockFactorization && throw(ArgumentError(
         lazy"$(method) factorizes the assembled sparse Jacobian and takes a sparse factorization (KLUfactorization(), LUfactorization(), CUDSSFactorization()); BlockFactorization() is the factorization of a NewtonKrylov preconditioner or of the linearized solve."))
+    f isa AbstractFactorization && !isnothing(factorizationprecision(f)) &&
+        throw(ArgumentError(
+            lazy"$(method) factorizes the assembled sparse Jacobian in the precision of its iteration; a factorization `precision` is a setting of a NewtonKrylov preconditioner."))
     return f
 end
 
 """
-    QuasiNewton(; anderson = 5, factorization = nothing)
+    QuasiNewton(; anderson = 5, factorization = nothing,
+        linesearch = Backtracking())
 
 The holomorphic Jacobian approximation with Anderson acceleration of depth
 `anderson` (the maximum number of previous iterates used for the
-extrapolation; less than one disables it). The harmonic balance residual is
-not complex differentiable, so this Jacobian is an approximation.
+extrapolation; less than one disables it), factorized by `factorization`
+(the host's KLU when `nothing`), the length of every step chosen by
+`linesearch`, a [`Backtracking`](@ref), interpolating by default; the
+curvilinear search of a rejected Anderson candidate follows it too. The
+harmonic balance residual is not complex differentiable, so this Jacobian
+is an approximation.
 
 !!! warning "The zero frequency flux is complex"
     This method solves for a complex flux at every mode, the zero frequency
@@ -514,10 +623,13 @@ not complex differentiable, so this Jacobian is an approximation.
 struct QuasiNewton <: AbstractHBNonlinearSolver
     anderson::Int
     factorization::MaybeFactorization
+    linesearch::Backtracking
 end
-function QuasiNewton(; anderson::Integer = 5, factorization::MaybeFactorization = nothing)
+function QuasiNewton(; anderson::Integer = 5,
+    factorization::MaybeFactorization = nothing,
+    linesearch::Backtracking = Backtracking())
     checkdirectfactorization(factorization, "QuasiNewton")
-    return QuasiNewton(Int(anderson), factorization)
+    return QuasiNewton(Int(anderson), factorization, linesearch)
 end
 
 """
@@ -579,7 +691,7 @@ The method with its `escalate` set to `flag`, for the interior stages of
 [`Staged`](@ref); methods without escalation are returned unchanged.
 """
 withescalation(m::NewtonKrylov, flag::Bool) = NewtonKrylov(m.preconditioner,
-    m.linearsolver, m.refresh, flag, m.precision)
+    m.linearsolver, m.refresh, flag, m.linesearch, m.precision)
 withescalation(m::AbstractHBNonlinearSolver, ::Bool) = m
 
 """

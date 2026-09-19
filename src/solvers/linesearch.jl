@@ -3,7 +3,8 @@
 # evaluation, and the Armijo acceptance.
 
 """
-    quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard = 0.1)
+    quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard_low = 0.1,
+        safeguard_high = 0.5)
 
 Return a tuple `(αfit, ϕfit, measured)` with the proposed step `αfit`, the
 estimated merit function value `ϕfit`, and `measured` a boolean indicating if
@@ -27,10 +28,12 @@ Based on Nocedal and Wright, chapter 3 section 5.
 - `c1 = 1e-4`: the constant in the Armijo sufficient-decrease check which
      is typically (heuristicaly) set to be 1e-4,
     `ϕ(1) <= ϕ(0) + c1 dϕ(α)/dα|α = 0`.
-- `safeguard = 0.1`: the smallest value we allow the step to take. This
-    protects against large (eg. order of magnitude) reductions in the step
-    size without an additional function evaluation, which would occur outside
-    of this function.
+- `safeguard_low = 0.1`, `safeguard_high = 0.5`: the bounds of the
+    proposed step. The lower one protects against large (eg. order of
+    magnitude) reductions in the step size without an additional function
+    evaluation, which would occur outside of this function; the fitted
+    minimizer of a full step which fails the Armijo condition is below
+    `1/(2(1 - c1))`, so the upper one acts only when it is set below that.
 
 # Returns
 - `αtrial`: `αtrial` is the trial step predicted to minimize the merit
@@ -43,15 +46,17 @@ Based on Nocedal and Wright, chapter 3 section 5.
 - `measured`: `true` if the returned `ϕtrial` has been measured and `false` if it
     is an estimate value based on a fit.
 """
-function quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard = 0.1)
+function quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard_low = 0.1,
+    safeguard_high = 0.5)
     T = float(promote_type(typeof(ϕ0),typeof(ϕ1),typeof(dϕ0dα)))
     ϕ0, ϕ1, dϕ0dα = T(ϕ0), T(ϕ1), T(dϕ0dα)
-    safeguard = T(safeguard)
+    safeguard_low = T(safeguard_low)
+    safeguard_high = T(safeguard_high)
     c1 = T(c1)
 
-    # check that safeguard is in (0,0.5)
-    if !(zero(T) < safeguard < one(T)/2)
-        throw(ArgumentError(lazy"`safeguard` = $(safeguard) must be in (0,0.5)."))
+    # check that the safeguards satisfy 0 < low < high < 1
+    if !(zero(T) < safeguard_low < safeguard_high < one(T))
+        throw(ArgumentError(lazy"`safeguard_low` = $(safeguard_low) and `safeguard_high` = $(safeguard_high) must satisfy 0 < low < high < 1."))
     end
 
     # check that c1 is in (0,1)
@@ -78,9 +83,10 @@ function quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard = 0.1)
 
     if !isfinite(ϕ1)
         # the residual at the full step overflowed, so the full step is too
-        # large. halve the step. Estimate the function value from a linear
-        # fit.
-        return one(T)/2, muladd(one(T)/2,dϕ0dα,ϕ0), false
+        # large: halve the step, within the safeguards, and estimate the
+        # function value from a linear fit
+        αtrial = clamp(one(T)/2, safeguard_low, safeguard_high)
+        return αtrial, muladd(αtrial, dϕ0dα, ϕ0), false
     end
 
     # coefficients of the quadratic equation ϕ(α) = a α² + b α + c to
@@ -90,12 +96,12 @@ function quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = 1e-4, safeguard = 0.1)
     b = dϕ0dα
     c = ϕ0
 
-    # compute the fitted value of alpha and phi. clamp it such that if the
-    # fitted step is below the minimum step, take the minimum step and return
-    # the fitted function value at that step. clamp to 0.5 on the upper side
-    # in case floating point errors push it above 1/(2*(1-c1)) ≈ 0.5 for
-    # c1 = 1e-4.
-    αtrial = clamp(-(b/2)/a, safeguard, one(T) / 2)
+    # compute the fitted value of alpha and phi, clamped to the safeguards:
+    # a fitted step outside them is replaced by the bound and the fitted
+    # function value is returned at that step. The minimizer is below
+    # 1/(2*(1-c1)) ≈ 0.5 for c1 = 1e-4, so an upper safeguard of one half
+    # only catches the floating point error which pushes it above.
+    αtrial = clamp(-(b/2)/a, safeguard_low, safeguard_high)
     ϕtrial = muladd(αtrial, muladd(a, αtrial, b), c)
 
     return αtrial, ϕtrial, false
@@ -298,9 +304,8 @@ end
 
 """
     backtracking_linesearch!(f!, F, xcandidate, x0, deltax, ϕ0, dϕ0dα;
-        c1 = 1e-4, safeguard_low = 0.1, safeguard_high = 0.5,
-        maxbacktracks = 10, correction = nothing, beta = 1.0,
-        Fbest = copy(F), ϕfullstep = nothing, interpolate = true)
+        ls = Backtracking(), correction = nothing, beta = 1.0,
+        Fbest = copy(F), ϕfullstep = nothing)
 
 Backtracking line search on the curvilinear trial path:
 
@@ -337,10 +342,11 @@ step. Return this step `α` and exit the function.
 Otherwise loop over proposed trial step evaluations and cubic interpolations
 with [`cubic_trial_step`](@ref). Once a successful trial step is identified
 return that or return the best identified once `maxbacktracks` is reached.
-With `interpolate = false` neither fit is made: the first backtrack is to
-`α = 1/2` and every later one multiplies `α` by `safeguard_high`, with the
-Armijo test at each trial. That is the choice for a caller whose residual
-evaluations are cheap next to the direction they test.
+The Armijo constant `c1`, the safeguards of the fits, the trial budget
+`maxbacktracks` and whether the fits are made at all are the fields of
+`ls`, a [`Backtracking`](@ref). Without interpolation neither fit is made:
+the first backtrack is to `α = 1/2` and every later one multiplies `α` by
+`safeguardhigh`, with the Armijo test at each trial.
 
 This function always leaves`xcandidate == x(α)` and `F` holds the residual
 there (for `α == 0` that is the residual at `x0`).
@@ -359,18 +365,20 @@ Returns `(α, ϕα, accepted, backtracks)`:
 """
 function backtracking_linesearch!(f!, F::AbstractVector,
     xcandidate::AbstractVector, x0::AbstractVector, deltax::AbstractVector,
-    ϕ0::Real, dϕ0dα::Real; c1 = 1e-4, safeguard_low = 0.1,
-    safeguard_high = 0.5, maxbacktracks::Integer = 10,
+    ϕ0::Real, dϕ0dα::Real; ls::Backtracking = Backtracking(),
     correction::Union{Nothing, AbstractVector} = nothing, beta::Real = 1.0,
     Fbest::AbstractVector = copy(F),
-    ϕfullstep::Union{Nothing, Real} = nothing, interpolate::Bool = true)
+    ϕfullstep::Union{Nothing, Real} = nothing)
 
-    if maxbacktracks < 0
-        throw(ArgumentError(lazy"`maxbacktracks` = $(maxbacktracks) must be nonnegative."))
-    end
     if !isfinite(beta) || beta < zero(beta)
         throw(ArgumentError(lazy"`beta` = $(beta) must be finite and nonnegative."))
     end
+    # the settings of the search, validated when `ls` was built
+    c1 = ls.c1
+    safeguard_low = ls.safeguardlow
+    safeguard_high = ls.safeguardhigh
+    maxbacktracks = ls.maxbacktracks
+    interpolate = ls.interpolate
 
     # First take a full step, unless the merit function value ϕfullstep is
     # already provided (with F and xcandidate left at that full step), in
@@ -389,22 +397,16 @@ function backtracking_linesearch!(f!, F::AbstractVector,
         ϕfullstep
     end
 
-    # run the quadratic trial step function, if it returns the accepted full
-    # step return that, we're done. otherwise, we will have to validate the
-    # proposed step. we will use the cubic trial step function for that
-    # validation since it checks the proposed step before fitting.
-    #
-    # The fit is only informative when the full step lands where the merit
-    # is still close to quadratic. When the full step overshoots badly the
-    # fitted minimizer falls below the floor and the floor is what gets
-    # taken, with nothing measured in between: on a long pumped line the
-    # merit along the Newton direction is minimized near 0.2 and the floor
-    # step of 0.1 is accepted sixty times in a row. A caller whose trials
-    # are cheap next to its directions therefore halves instead
-    # (`interpolate = false`): two evaluations reach 0.25, and a trial costs
-    # the Newton-Krylov path about as much as one Arnoldi step.
+    # the quadratic fit through the full step proposes the first trial, and
+    # an accepted full step returns at once; otherwise the cubic fit
+    # validates each proposal before making the next. The fit is only
+    # informative where the merit is still close to quadratic: when the
+    # full step overshoots badly the fitted minimizer falls to the floor
+    # with nothing measured in between, which is what halving avoids for a
+    # caller whose trials are cheap next to the direction they test.
     α, ϕpred, accepted = if interpolate
-        quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = c1, safeguard = safeguard_low)
+        quadratic_trial_step(ϕ0, ϕ1, dϕ0dα; c1 = c1, safeguard_low = safeguard_low,
+            safeguard_high = safeguard_high)
     else
         armijo = isfinite(ϕ1) && ϕ1 <= muladd(c1, dϕ0dα, ϕ0)
         (armijo ? one(ϕ0) : one(ϕ0)/2, ϕ1, armijo)
