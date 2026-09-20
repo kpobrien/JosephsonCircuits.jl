@@ -210,11 +210,20 @@ relationparameters(::JunctionRelations{RM, RB}) where {RM, RB} = (RM, RB)
 What a transient solve builds and a later solve, tangent or adjoint of
 the same problem at the same step, rule and backend takes over rather
 than building again: the scaled [`TransientSystem`](@ref) with its
-Jacobian plan, the factorization of the step matrix as it was left, and
-the Krylov workspace of the iterative step. Pass one as `reuse` to
-[`transientsolve`](@ref), [`transienttangent`](@ref) and
-[`transientadjoint`](@ref); a solve whose problem, step, rule or backend
-differ from the kept system replaces it. The counterpart of the
+Jacobian plan, the factorization of the step matrix as it was left, the
+Krylov workspace of the iterative step, and the workspaces of the
+Gauss-Legendre tangent and adjoint, one per chunk of conditions, with
+their stage factorizations and the stepper a record of checkpoints is
+replayed on, taken over by a later tangent or adjoint of the same shape
+and, for a sensitivity, the same components in the same order; and for
+the noise and the gain on the host, the reuses of the other threads'
+workers, kept the same way. Pass one as
+`reuse` to [`transientsolve`](@ref), [`transienttangent`](@ref) and
+[`transientadjoint`](@ref). The kept system serves every problem of one
+compiled circuit driving the same targets, the problems of one batch
+(see [`transientproblem`](@ref)), so a sweep of drives keeps it; a solve
+of another circuit, or at another step, rule or backend, replaces it.
+The counterpart of the
 harmonic balance solver's reuse between the solves of an [`hbcache`](@ref).
 The kept objects are mutable and belong to one solve at a time: do not
 share a reuse between concurrent solves.
@@ -223,20 +232,28 @@ mutable struct TransientReuse
     system::Any
     factor::Any
     workspace::Any
+    tangent::Any
+    adjoint::Any
+    # the reuses of the other workers of a noise or a gain on the host,
+    # on the same system
+    children::Any
 end
-TransientReuse() = TransientReuse(nothing, nothing, nothing)
+TransientReuse() = TransientReuse(nothing, nothing, nothing, nothing, nothing, nothing)
 
 # the kept system when it is the one asked for, or a new one, kept
 function transientsystem(reuse::Union{Nothing,TransientReuse}, p::TransientProblem, h::Real,
         method::AbstractTransientIntegrator, backend::Backend, factorization::AbstractFactorization)
     if !isnothing(reuse) && !isnothing(reuse.system)
         s = reuse.system
-        if s.problem === p && s.h == Float64(h) && s.method === method &&
+        if sharedsystem(s.problem, p) && s.h == Float64(h) && s.method === method &&
                 s.backend == backend && s.factorization == factorization
             return s
         end
         reuse.factor = nothing
         reuse.workspace = nothing
+        reuse.tangent = nothing
+        reuse.adjoint = nothing
+        reuse.children = nothing
     end
     s = transientsystem(p, h, method, backend, factorization)
     isnothing(reuse) || (reuse.system = s)
@@ -493,9 +510,10 @@ function transientdrift!(y, sys::TransientSystem, x, v, junction, work)
     return y
 end
 
-# the scaled node current of the drives at a time, and the drive values
-function drivecurrent!(b, sys::TransientSystem, values, hostvalues, t)
-    p = sys.problem
+# the scaled node current of the drives of the problem `p` at a time,
+# and the drive values; the problem is the solve's, which the system
+# holds only in its injection and its scale
+function drivecurrent!(b, sys::TransientSystem, p::TransientProblem, values, hostvalues, t)
     @inbounds for (k, d) in enumerate(p.drives)
         hostvalues[k] = d.current(t)
     end
@@ -554,14 +572,18 @@ steps, the Newton corrections, the numeric factorizations, the retries
 of a rejected correction after a fresh factorization at its base point,
 and the Krylov iterations. The arrays live on the backend of the solve.
 """
-struct TransientSolution{P, M, V}
-    problem::P
+struct TransientSolution
+    problem::TransientProblem
     method::AbstractTransientIntegrator
     dt::Float64
     times::Vector{Float64}
-    voltage::M
-    incident::M
-    outgoing::M
+    # every array untyped, the outputs and the states as the records, so
+    # that a solution is one type whatever its backend and its record
+    # level, a condition of a batch, a view of its arrays, is the type a
+    # solve returns, and the responses compile once
+    voltage::Any
+    incident::Any
+    outgoing::Any
     phases::Any
     endphases::Any
     endrates::Any
@@ -569,17 +591,14 @@ struct TransientSolution{P, M, V}
     # the history of the waves leaving the line ports before the start,
     # `(port, column)`, the columns at the step ending at the start
     history::Any
-    # the flux and rate records untyped, as the phases are, so that the
-    # record level does not make a new solution type and the responses
-    # compile once
     flux::Any
     rate::Any
     stages::Any
     checkpoints::Any
-    initialflux::V
-    initialrate::V
-    finalflux::V
-    finalrate::V
+    initialflux::Any
+    initialrate::Any
+    finalflux::Any
+    finalrate::Any
     blockstates::Any
     # the initial waves of the lines and states of the blocks, the rest
     # of the state the solve started from, which the noise checks
@@ -792,7 +811,7 @@ function transientsolve(p::TransientProblem, tspan; dt::Real,
             Float64(rtol), Float64(atol), iterations, reuse))
     end
     record == :checkpoints && throw(ArgumentError("checkpoints are a record of the Gauss-Legendre rule."))
-    return Base.invokelatest(transientintegrate, sys, t0, tf, nsteps, initialstate, saveevery, record,
+    return Base.invokelatest(transientintegrate, sys, p, t0, tf, nsteps, initialstate, saveevery, record,
         Float64(rtol), Float64(atol), iterations, linearsolver, reuse)
 end
 
@@ -848,10 +867,9 @@ function transientconsistency(sys::TransientSystem, x, v, t, p::TransientProblem
     return worst, 1.0
 end
 
-function transientintegrate(sys::TransientSystem, t0, tf, nsteps, initialstate,
+function transientintegrate(sys::TransientSystem, p::TransientProblem, t0, tf, nsteps, initialstate,
         saveevery, record, rtol, atol, iterations, linearsolver = nothing, reuse = nothing)
     savephases, savestates, _ = recordlevel(record, saveevery)
-    p = sys.problem
     backend = sys.backend
     n, np, nd = length(p), length(p.portimpedances), length(p.drives)
     h, alpha, beta = sys.h, sys.alpha, sys.beta
@@ -876,11 +894,11 @@ function transientintegrate(sys::TransientSystem, t0, tf, nsteps, initialstate,
     portwork = KernelAbstractions.zeros(backend, Float64, np)
     # the drive and the junction current at the start, and the check of
     # the algebraic equations along the inertialess directions
-    drivecurrent!(b, sys, values, hostvalues, t0)
+    drivecurrent!(b, sys, p, values, hostvalues, t0)
     copyto!(prevvalues, hostvalues)
     junctionphases!(phi, sys, x)
     junctioncurrent!(junction, sys, phi, jwork)
-    violation, _ = transientconsistency(sys, x, v, t0)
+    violation, _ = transientconsistency(sys, x, v, t0, p)
     violation <= atol + rtol || throw(ArgumentError(
         "the initial state violates the algebraic equations of the circuit along a direction without capacitance to ground (a node no capacitor touches, a capacitive island, a coupled inductor or gauge row); supply a consistent transientstate, or start the drive from an equilibrium."))
     # The Jacobian and its factorization at the start. A factorization is
@@ -999,7 +1017,7 @@ function transientintegrate(sys::TransientSystem, t0, tf, nsteps, initialstate,
     for step in 1:nsteps
         t = step == nsteps ? tf : t0 + step*h
         copyto!(bprev, b)
-        drivecurrent!(b, sys, values, hostvalues, t)
+        drivecurrent!(b, sys, p, values, hostvalues, t)
         # the right hand side of the step from the previous state. For the
         # trapezoidal rule on x' = v and C v' = b - G v - L x - J(x), with
         # the rate update v_{n+1} = (2/h)(x_{n+1} - x_n) - v_n substituted,

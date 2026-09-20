@@ -271,18 +271,12 @@ function componentperturbation(p::TransientProblem, names, backend; forcing::Boo
     return ComponentPerturbation(String.(collect(names)), n, entries(backend), entries(CPU()), stacked, states, ports)
 end
 
-# the quantities a step's residual reads, over `N` conditions: the
-# acceleration, the rate, the flux and the relation values, their
-# derivative's forcing when a tangent asks for one, and the state and the
-# stage increments of a Gauss-Legendre step
-function perturbationwork(cp::ComponentPerturbation, sys::TransientSystem, N::Int; forcing::Bool)
-    allocate = (dims...) -> KernelAbstractions.zeros(sys.backend, Float64, dims...)
-    nc, n = length(cp.names), cp.n
-    nj = length(sys.lmolj)
-    return (F = forcing ? allocate(nc*n, N) : nothing, work = forcing ? allocate(nc*n, N) : nothing,
-        a = allocate(n, N), w = allocate(n, N), X = allocate(n, N), f = allocate(nj, N), fprev = allocate(nj, N),
-        x = allocate(n, N), v = allocate(n, N), delta = allocate(n, N, 2))
-end
+# whether two perturbations built on one system are the same: a response
+# builds its perturbation anew from the names it is given, so a kept
+# workspace is matched on the names, in order, which resolve to the same
+# components and the same entries on the system the workspace holds
+sameperturbation(a, b) = isnothing(a) && isnothing(b)
+sameperturbation(a::ComponentPerturbation, b::ComponentPerturbation) = a.names == b.names
 
 # The forcing of the linearized equations by the perturbations, the
 # negative of the derivative of the residual, `-(dC a + dG w + dL X + dJ f)`
@@ -299,16 +293,6 @@ function perturbationforcing!(F, cp::ComponentPerturbation, pw, work)
     end
     stepmul!(work, st.dJ, pw.f); F .-= work
     return F
-end
-
-# the work of the contraction of every kind of entries over `N`
-# conditions and `nobj` objectives: the gathered state and multipliers,
-# their product and the sum into the components
-function contractionwork(cp::ComponentPerturbation, entries, N::Int, nobj::Int, backend)
-    allocate = (dims...) -> KernelAbstractions.zeros(backend, Float64, dims...)
-    nc = length(cp.names)
-    one = e -> (GA = allocate(e.count, N), GM = allocate(e.count, nobj*N), prod = allocate(e.count, nobj), out = allocate(nc, nobj))
-    return (C = one(entries.C), G = one(entries.G), L = one(entries.L), J = one(entries.J))
 end
 
 # `S[:, :, j] += weight * (the forcing of condition j)' * (the multipliers
@@ -393,24 +377,6 @@ function stepquantities!(pw, cp::ComponentPerturbation, sys::TransientSystem, so
         pw.f .+= pw.fprev
     end
     return pw
-end
-
-# The work of the endpoint of a Gauss-Legendre step, whose projection and
-# reading are host computations: the state on the backend and on the
-# host, the junction phases and relation values, the host junction
-# incidence and relation table, the reading's rows `Q`, and for a tangent
-# the forcing `(n, ncomponents N)` with its stacked buffer, for an adjoint
-# the contraction work.
-function endpointwork(cp::ComponentPerturbation, sys::TransientSystem, p::TransientProblem, N::Int, nobj::Int; forcing::Bool)
-    n, nj, nc = cp.n, length(sys.lmolj), length(cp.names)
-    pr = sys.projection
-    RJ, _ = junctionincidence(p)
-    relations = isnothing(p.relations) ? emptyrelations(zeros(0)) : hostrelations(p.relations)
-    Q = endpointinjection(pr, sparse(1.0I, n, n))
-    return (F = forcing ? zeros(n, nc*N) : nothing, work = forcing ? zeros(nc*n, N) : nothing,
-        cw = forcing ? nothing : contractionwork(cp, cp.hostentries, N, nobj, CPU()),
-        x = KernelAbstractions.zeros(sys.backend, Float64, n, N), v = KernelAbstractions.zeros(sys.backend, Float64, n, N),
-        xh = zeros(n, N), vh = zeros(n, N), phi = zeros(nj, N), f = zeros(nj, N), RJ, relations, Q)
 end
 
 # The quantities the endpoint of a Gauss-Legendre step at time `k` reads,
@@ -604,47 +570,61 @@ are held fixed.
 function transienttangent(sol::TransientSolution, currents::Union{Nothing,AbstractArray{<:Real}};
         targets = porttargets(sol.problem), initialstate = nothing,
         factorization = nothing, reuse = nothing, outputsink = nothing, perturbation = nothing)
+    # the Gauss-Legendre responses run on a batch, of which a solution is
+    # one condition
+    sol.method isa GaussLegendre && return map(dropcondition, transienttangent(batchof(sol), currents;
+        targets, initialstate, factorization, reuse, outputsink, perturbation))
     recordedsolution(sol)
     p = sol.problem
     backend = KernelAbstractions.get_backend(sol.finalflux)
     fact = isnothing(factorization) ? transientfactorization(backend) : factorization
     sys = transientsystem(reuse, p, sol.dt, sol.method, backend, fact)
-    n, np, nt = length(p), length(p.portimpedances), length(sol.times)
-    nq = length(targets)
+    nq, nt = length(targets), length(sol.times)
     ndir = tangentdirections(currents, perturbation, nq, nt)
+    injection, ports = targetinjection(p, targets)
+    initial = tangentinitial(initialstate, length(p), ndir, 1, 0, 0, 0)
     # invoked dynamically on the untyped kept system (see transientsolve)
-    sys.method isa GaussLegendre && return Base.invokelatest(gaussbatchtangent, sol, currents, targets, initialstate, sys, outputsink, perturbation)
+    return Base.invokelatest(steptangent, sol, tangentcurrents(currents, nq, nt, ndir), injection, ports, initial, sys,
+        outputsink, perturbation, reuse)
+end
+
+# the tangent of a trapezoidal or backward Euler solve, on the forms the
+# entry made of its arguments
+function steptangent(sol::TransientSolution, currents::TangentCurrents, injh::SparseMatrixCSC{Float64, Int},
+        tp::Vector{Int}, initial::TangentInitial, sys::TransientSystem, @nospecialize(outputsink), perturbation, reuse)
+    p = sol.problem
+    backend = sys.backend
+    n, np, nt = length(p), length(p.portimpedances), length(sol.times)
+    nq, ndir = size(injh, 2), directions(currents)
     h = sys.h
     trapezoidal = sys.method isa Trapezoidal
     # the components' forcing of each step, from the recorded states, and
     # the direct term of the port waves along a port's own termination
     pwork = isnothing(perturbation) ? nothing : perturbationwork(perturbation, sys, 1; forcing = true)
     dterm = isnothing(perturbation) ? nothing : directterm(perturbation, sys, 1, ndir)
-    injection = devicesparse((sys.Lscale/phi0) .* transientinjection(p, targets), backend)
-    ports = tobackend(backend, [q > 0 ? q : 0 for q in targetports(p, targets)])
+    injection = devicesparse(injh, backend)
     # the trapezoidal step reads the grid values of a staged current; a
     # tangent along the components alone carries one zero column of them
-    dI = isnothing(currents) ? KernelAbstractions.zeros(backend, Float64, nq, 1, ndir) :
-        tobackend(backend, reshape(Float64.(collect(ndims(currents) == 4 ? selectdim(currents, 2, 1) : currents)), nq, nt, ndir))
-    kcol = isnothing(currents) ? (k -> 1) : identity
+    dI = tobackend(backend, currents.grid)
+    kcol = k -> gridcolumn(currents, k)
     allocate = (dims...) -> KernelAbstractions.zeros(backend, Float64, dims...)
     dx, dv, dxnew, rhs, work = allocate(n, ndir), allocate(n, ndir), allocate(n, ndir), allocate(n, ndir), allocate(n, ndir)
-    if !isnothing(initialstate)
-        x0, v0 = initialstate
-        (size(x0, 1) == n && size(v0, 1) == n) || throw(DimensionMismatch(lazy"the state has $(n) entries."))
-        copyto!(dx, reshape(Float64.(collect(x0)), n, :))
-        copyto!(dv, reshape(Float64.(collect(v0)), n, :))
+    if initial.given
+        copyto!(dx, conditionslice(initial.flux, 1))
+        copyto!(dv, conditionslice(initial.rate, 1))
     end
     nj = length(sys.lmolj)
     phi, jwork = allocate(nj), allocate(nj, ndir)
-    voltage, incident, outgoing = isnothing(outputsink) ? [allocate(np, nt, ndir) for _ in 1:3] : (nothing, nothing, nothing)
+    # the port outputs of every time, stored, or of none where a sink
+    # receives them, empty then, as in the Gauss-Legendre tangent
+    voltage, incident, outgoing = [allocate(np, isnothing(outputsink) ? nt : 0, ndir) for _ in 1:3]
     coefficients = Dict(q => outputcoefficients(sys, q) for q in (:voltage, :incident, :outgoing))
     portwork = allocate(np, ndir)
     # the current of the targets that are ports, into their port waves
-    portmap = devicesparse(sparse([q for q in targetports(p, targets) if q > 0],
-        [k for (k, q) in enumerate(targetports(p, targets)) if q > 0], ones(count(>(0), targetports(p, targets))), np, nq), backend)
+    portmap = devicesparse(sparse([q for q in tp if q > 0], [k for (k, q) in enumerate(tp) if q > 0],
+        ones(count(>(0), tp)), np, nq), backend)
     directwork = allocate(np, ndir)
-    outwork = isnothing(outputsink) ? nothing : [allocate(np, ndir) for _ in 1:3]
+    outwork = [allocate(np, ndir) for _ in 1:3]
     # where a port reads a rate along an algebraic direction, the port
     # waves come from the tangent rate read as the solve's is, the reading
     # linearized at the recorded phases and read rates of the projected
@@ -652,8 +632,7 @@ function transienttangent(sol::TransientSolution, currents::Union{Nothing,Abstra
     # perturbation of the constraints
     reading = sys.portsread ? outputreading(sys, backend, n, 1, ndir) : nothing
     withstates = !isnothing(perturbation) && perturbation.states
-    injh = (sys.Lscale/phi0) .* transientinjection(p, targets)
-    dIh = Array(dI)
+    dIh = currents.grid
     delta = ratedelta(sys)
     problems = [p]
     xk = allocate(n, 1)
@@ -665,7 +644,8 @@ function transienttangent(sol::TransientSolution, currents::Union{Nothing,Abstra
     cw = projecting ? projectionwork(pr, backend, n, 1, ndir) : nothing
     pend = (projecting && !isnothing(perturbation)) ? endpointwork(perturbation, sys, p, 1, ndir; forcing = true) : nothing
     fdev, fh = projecting ? (allocate(n, ndir), allocate(n, ndir)) : (nothing, nothing)
-    statewindow = (state! = (x, v, k) -> (copyto!(x, view(sol.flux, :, k)); copyto!(v, view(sol.rate, :, k)); nothing),)
+    statewindow = ResponseWindow(1:nt, nothing, nothing, nothing, nothing,
+        (x, v, k) -> (copyto!(x, view(sol.flux, :, k)); copyto!(v, view(sol.rate, :, k)); nothing), nothing)
     # the projected junctions' phases and read rates at time `k` from the
     # record, and the state where the perturbation reads it, its rate read
     function readingat!(o, k)
@@ -751,11 +731,11 @@ function transienttangent(sol::TransientSolution, currents::Union{Nothing,Abstra
     # perturb them
     finalrate = copy(dv)
     (isnothing(sys.invariant) && isnothing(sys.projection)) ||
-        readtangentrate!(finalrate, dv, dx, sys, sol, 1, ndir, perturbation, Array(dI),
-            (sys.Lscale/phi0) .* transientinjection(p, targets), backend)
-    squeeze = a -> isnothing(a) ? nothing : (!isnothing(currents) && ndims(currents) == 2) ? reshape(a, size(a)[1:end-1]...) : a
-    return (; voltage = squeeze(voltage), incident = squeeze(incident), outgoing = squeeze(outgoing),
-        finalflux = squeeze(copy(dx)), finalrate = squeeze(finalrate))
+        readtangentrate!(finalrate, dv, dx, sys, sol, 1, ndir, perturbation, dIh, injh, backend)
+    squeeze = a -> isnothing(a) ? nothing : currents.single ? reshape(a, size(a)[1:end-1]...) : a
+    stored = isnothing(outputsink)
+    return (; voltage = stored ? squeeze(voltage) : nothing, incident = stored ? squeeze(incident) : nothing,
+        outgoing = stored ? squeeze(outgoing) : nothing, finalflux = squeeze(copy(dx)), finalrate = squeeze(finalrate))
 end
 
 # the directions of a tangent: those of its currents, or, along the
@@ -771,50 +751,17 @@ function tangentdirections(currents, perturbation, nq, nt)
     return ndir
 end
 
-# The columns of an adjoint's currents at the recorded times are final a
-# few steps after a step first touches them, the trapezoidal step touching
-# its own two endpoints, the Gauss-Legendre stencil up to four grid
-# points ahead, and the reading of a rate along an algebraic direction
-# the four grid points behind a time: a ring of eight columns holds the
-# pending ones, and a column is handed to the sink, with the direct
-# feedthrough of a port's current into its own wave added, once no
-# remaining step touches it, in decreasing time. A sink that stores every
-# column is the default; the noise sinks each column into its bath
-# contraction and stores none.
-const RINGSLOTS = 8
-struct CurrentRing{A, M, S, F}
-    slots::A
-    column::M
-    sink::S
-    feedthrough!::F
-end
-function CurrentRing(backend, nq, nobj, sink, feedthrough!)
-    slots = KernelAbstractions.zeros(backend, Float64, nq, nobj, RINGSLOTS)
-    column = KernelAbstractions.zeros(backend, Float64, nq, nobj)
-    return CurrentRing(slots, column, sink, feedthrough!)
-end
-ringadd!(ring::CurrentRing, j, values, weight) = (view(ring.slots, :, :, mod1(j, RINGSLOTS)) .+= weight .* values; nothing)
-function ringemit!(ring::CurrentRing, j)
-    slot = view(ring.slots, :, :, mod1(j, RINGSLOTS))
-    ring.column .= slot
-    ring.feedthrough!(ring.column, j)
-    ring.sink(j, ring.column)
-    fill!(slot, 0)
-    return nothing
-end
-
 # the pieces of an adjoint every rule shares: the transposed injection and
 # port map, the output coefficients, the feedthrough, and the ring with the
 # storing sink when none is given
-function adjointsetup(sol::TransientSolution, weights, quantity::Symbol, targets, sys::TransientSystem, sink)
-    p = sol.problem
+function adjointsetup(wh::Array{Float64, 3}, quantity::Symbol, injh::SparseMatrixCSC{Float64, Int}, tp::Vector{Int},
+        sys::TransientSystem, @nospecialize(sink))
     backend = sys.backend
-    n, np, nt = length(p), length(p.portimpedances), length(sol.times)
-    nq, nobj = length(targets), (ndims(weights) == 3 ? size(weights, 3) : 1)
-    w = tobackend(backend, reshape(Float64.(collect(weights)), np, nt, nobj))
+    np, nt, nobj = size(wh)
+    nq = size(injh, 2)
+    w = tobackend(backend, wh)
     cv, cd = outputcoefficients(sys, quantity)
-    injectiont = devicesparse(sparse(transpose((sys.Lscale/phi0) .* transientinjection(p, targets))), backend)
-    tp = targetports(p, targets)
+    injectiont = devicesparse(sparse(transpose(injh)), backend)
     portmapt = devicesparse(sparse([k for (k, q) in enumerate(tp) if q > 0], [q for q in tp if q > 0],
         ones(count(>(0), tp)), nq, np), backend)
     allocate = (dims...) -> KernelAbstractions.zeros(backend, Float64, dims...)
@@ -874,23 +821,35 @@ function transientadjoint(sol::TransientSolution, weights::AbstractArray{<:Real}
         quantity::Symbol = :outgoing, targets = porttargets(sol.problem),
         factorization = nothing, reuse = nothing, sink = nothing, stagesink = nothing,
         components = String[])
+    # the Gauss-Legendre responses run on a batch, of which a solution is
+    # one condition
+    sol.method isa GaussLegendre && return map(dropcondition, transientadjoint(batchof(sol), weights;
+        quantity, targets, factorization, reuse, sink, stagesink, components))
     recordedsolution(sol)
     p = sol.problem
     backend = KernelAbstractions.get_backend(sol.finalflux)
     fact = isnothing(factorization) ? transientfactorization(backend) : factorization
     sys = transientsystem(reuse, p, sol.dt, sol.method, backend, fact)
-    n, np, nt = length(p), length(p.portimpedances), length(sol.times)
-    nq, nobj = length(targets), (ndims(weights) == 3 ? size(weights, 3) : 1)
-    ndims(weights) in (2, 3) && size(weights, 1) == np && size(weights, 2) == nt || throw(DimensionMismatch(
-        lazy"weights must have one row per port ($(np)), one column per recorded time ($(nt)) and optionally a third dimension of objectives."))
-    all(isfinite, weights) || throw(ArgumentError("the weights must be finite."))
+    wh = adjointweights(weights, length(p.portimpedances), length(sol.times))
     perturbation = isempty(components) ? nothing : componentperturbation(p, components, backend; forcing = false)
     isnothing(perturbation) || recordedstates(sol, perturbation)
+    injection, ports = targetinjection(p, targets)
     # invoked dynamically on the untyped kept system (see transientsolve)
-    sys.method isa GaussLegendre && return Base.invokelatest(gaussbatchadjoint, sol, weights, quantity, targets, sys, sink, stagesink, perturbation)
+    return Base.invokelatest(stepadjoint, sol, wh, ndims(weights) == 2, quantity, injection, ports, sys, sink,
+        perturbation, reuse)
+end
+
+# the adjoint of a trapezoidal or backward Euler solve, on the forms the
+# entry made of its arguments
+function stepadjoint(sol::TransientSolution, wh::Array{Float64, 3}, single::Bool, quantity::Symbol,
+        injh::SparseMatrixCSC{Float64, Int}, tp::Vector{Int}, sys::TransientSystem, @nospecialize(sink), perturbation, reuse)
+    p = sol.problem
+    backend = sys.backend
+    n, np, nt = length(p), length(p.portimpedances), length(sol.times)
+    nq, nobj = size(injh, 2), size(wh, 3)
     h = sys.h
     trapezoidal = sys.method isa Trapezoidal
-    w, cv, injectiont, ring, currents = adjointsetup(sol, weights, quantity, targets, sys, sink)
+    w, cv, injectiont, ring, currents = adjointsetup(wh, quantity, injh, tp, sys, sink)
     allocate = (dims...) -> KernelAbstractions.zeros(backend, Float64, dims...)
     # the components' forcing of each step, contracted against the step's
     # multipliers on the entries of the components, and the direct term of
@@ -899,7 +858,7 @@ function transientadjoint(sol::TransientSolution, weights::AbstractArray{<:Real}
     pcwork = isnothing(perturbation) ? nothing : contractionwork(perturbation, perturbation.entries, 1, nobj, backend)
     sensitivity = isnothing(perturbation) ? nothing : allocate(length(perturbation.names), nobj, 1)
     isnothing(perturbation) || (sensitivity .+= tobackend(backend,
-        adddirectsensitivity!(zeros(length(perturbation.names), nobj, 1), perturbation, sys, sol, [p], weights, quantity)))
+        adddirectsensitivity!(zeros(length(perturbation.names), nobj, 1), perturbation, sys, sol, [p], wh, quantity)))
     xbar, vbar, lambda, work = allocate(n, nobj), allocate(n, nobj), allocate(n, nobj), allocate(n, nobj)
     nj = length(sys.lmolj)
     phi, jwork = allocate(nj), allocate(nj, nobj)
@@ -927,7 +886,8 @@ function transientadjoint(sol::TransientSolution, weights::AbstractArray{<:Real}
     fbar = projecting ? allocate(n, nobj) : nothing
     pend = (projecting && !isnothing(perturbation)) ? endpointwork(perturbation, sys, p, 1, nobj; forcing = false) : nothing
     sensh = isnothing(pend) ? nothing : zeros(length(perturbation.names), nobj, 1)
-    statewindow = (state! = (x, v, k) -> (copyto!(x, view(sol.flux, :, k)); copyto!(v, view(sol.rate, :, k)); nothing),)
+    statewindow = ResponseWindow(1:nt, nothing, nothing, nothing, nothing,
+        (x, v, k) -> (copyto!(x, view(sol.flux, :, k)); copyto!(v, view(sol.rate, :, k)); nothing), nothing)
     function readingat!(o, k)
         prj = sys.projection
         if !isnothing(prj) && !isempty(prj.pj)
@@ -1006,7 +966,7 @@ function transientadjoint(sol::TransientSolution, weights::AbstractArray{<:Real}
     KernelAbstractions.synchronize(backend)
     isnothing(reuse) || (reuse.factor = factor)
     isnothing(sensh) || (sensitivity .+= tobackend(backend, sensh))
-    squeeze = a -> isnothing(a) ? nothing : ndims(weights) == 2 ? reshape(a, size(a)[1:end-1]...) : a
+    squeeze = a -> isnothing(a) ? nothing : single ? reshape(a, size(a)[1:end-1]...) : a
     return (; currents = squeeze(currents), initialflux = squeeze(xbar), initialrate = squeeze(vbar), initialwaves = nothing, initialstates = nothing,
         sensitivity = isnothing(sensitivity) ? nothing : squeeze(reshape(sensitivity, size(sensitivity, 1), nobj)))
 end

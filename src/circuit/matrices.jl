@@ -1158,6 +1158,9 @@ julia> JosephsonCircuits.calcvaluetype([:R,:C,:R],[1,2,3],[:R])
 Float64[]
 
 julia> JosephsonCircuits.calcvaluetype([:R,:C,:R],[1,2,3+0.0im],[:R])
+Float64[]
+
+julia> JosephsonCircuits.calcvaluetype([:R,:C,:R],[1,2,3+1.0im],[:R])
 ComplexF64[]
 ```
 """

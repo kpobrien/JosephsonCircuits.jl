@@ -8,6 +8,16 @@ using Test
 # one chunk its uniform batch already is, without needing a device
 struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
 
+# an adjoint with a sink which captures a buffer, and a weak reference to
+# the buffer, for the check that a workspace kept by a reuse holds
+# nothing of the call once it returns
+@noinline function capturingsink(batch, weights, reuse)
+    buffer = zeros(1000)
+    sink = (k, c) -> (buffer[1] += sum(c); nothing)
+    transientadjoint(batch, weights; sink, reuse)
+    return WeakRef(buffer)
+end
+
 @testset "the circuit in time" begin
     JC = JosephsonCircuits
     rc = [("P1", "1", "0", 1), ("R1", "1", "0", 50.0), ("C1", "1", "0", 1e-12)]
@@ -796,6 +806,16 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         cps = transientsolve(lp, (0.0, T); dt, record = :checkpoints, checkpointevery = 16, rtol = 1e-12, method = GaussLegendre())
         @test transienttangent(cps, currents).outgoing ≈ tg.outgoing rtol=1e-7
         @test transientadjoint(cps, weights).currents ≈ ad.currents rtol=1e-7
+        # a reuse keeps the stepper the checkpoints are replayed on, with
+        # its factorizations, across the responses of one shape
+        reuse = TransientReuse()
+        tc1, ac1 = transienttangent(cps, currents; reuse), transientadjoint(cps, weights; reuse)
+        kept = (only(reuse.tangent).replay, only(reuse.adjoint).replay)
+        @test kept[1] isa JC.GaussStepper && kept[2] isa JC.GaussStepper
+        tc2, ac2 = transienttangent(cps, currents; reuse), transientadjoint(cps, weights; reuse)
+        @test only(reuse.tangent).replay === kept[1] && only(reuse.adjoint).replay === kept[2]
+        @test tc2.outgoing == tc1.outgoing && ac2.currents == ac1.currents
+        @test isnothing(JC.replaystepper!(only(reuse.tangent), JC.batchof(rec), reuse.system))
         half = transientproblem(lp; sources = [TransientSource(1, t -> drive(t)/2), TransientSource(2, t -> 0.0)])
         b = transientsolve([lp, half], (0.0, T); dt, record = :phases, rtol = 1e-12)
         @test b.voltage[:, :, 1] == rec.voltage
@@ -830,6 +850,10 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
             @test member.phases ≈ single.phases rtol=1e-12
             @test member.finalrate ≈ single.finalrate rtol=1e-12
             @test transientadjoint(member, weights).currents ≈ transientadjoint(single, weights).currents rtol=1e-10
+            # a condition taken as a batch of one is a view of the batch's
+            # arrays, of the type a range of conditions is
+            @test typeof(JosephsonCircuits.batchof(member).phases) === typeof(batch[j:j].phases)
+            @test JosephsonCircuits.batchof(member).phases == batch[j:j].phases
         end
         @test batch.stats.factorizations == 1
         # A host batch splits its conditions across the threads of the
@@ -868,7 +892,134 @@ struct NotTheHost <: JosephsonCircuits.KernelAbstractions.GPU end
         sink = (k, v, i, o) -> (measured .+= o; nothing)
         ts = transienttangent(batch, currents; outputsink = sink)
         @test isnothing(ts.outgoing) && isnothing(ts.voltage)
-        @test measured ≈ sum(tb.outgoing; dims = 2)[:, 1, :] rtol=1e-12
+        # the stored tangent runs in chunks across the threads of the
+        # session and the one with a sink on one task, whose stage
+        # operators are refreshed on the worst column of their own chunk
+        @test measured ≈ sum(tb.outgoing; dims = 2)[:, 1, :] rtol=1e-10
+        # a reuse keeps the workspaces of the tangent and the adjoint for a
+        # response of the same shape, which gives the same results on them;
+        # another shape builds its own
+        reuse = TransientReuse()
+        t1 = transienttangent(batch, currents; reuse)
+        a1 = transientadjoint(batch, weights; reuse)
+        kept = (reuse.tangent, reuse.adjoint)
+        t2 = transienttangent(batch, 2 .* currents; reuse)
+        a2 = transientadjoint(batch, 2 .* weights; reuse)
+        @test reuse.tangent === kept[1] && reuse.adjoint === kept[2]
+        @test t1.outgoing ≈ tb.outgoing rtol=1e-12
+        @test t2.outgoing ≈ 2 .* t1.outgoing rtol=1e-12
+        @test a1.currents ≈ ab.currents rtol=1e-12
+        @test a2.currents ≈ 2 .* a1.currents rtol=1e-12
+        transienttangent(batch, cat(currents, currents; dims = 3); reuse)
+        @test reuse.tangent !== kept[1]
+        # a sensitivity keys its workspace on the components, in order,
+        # which every call resolves anew from the names: the same list
+        # takes the kept workspace, and another list or order builds its
+        # own, on both paths to the components
+        s1 = transientsensitivity(batch, ["C1", "Lj1"]; reuse)
+        c1 = transientadjoint(batch, weights; components = ["C1", "Lj1"], reuse)
+        kept = (reuse.tangent, reuse.adjoint)
+        s2 = transientsensitivity(batch, [:C1, :Lj1]; reuse)
+        c2 = transientadjoint(batch, weights; components = [:C1, :Lj1], reuse)
+        @test reuse.tangent === kept[1] && reuse.adjoint === kept[2]
+        @test s2.outgoing ≈ s1.outgoing rtol=1e-12
+        @test c2.sensitivity ≈ c1.sensitivity rtol=1e-12
+        s3 = transientsensitivity(batch, ["Lj1", "C1"]; reuse)
+        c3 = transientadjoint(batch, weights; components = ["Lj1", "C1"], reuse)
+        @test reuse.tangent !== kept[1] && reuse.adjoint !== kept[2]
+        @test s3.outgoing[:, :, [2, 1], :] ≈ s1.outgoing rtol=1e-12
+        @test c3.sensitivity[[2, 1], :] ≈ c1.sensitivity rtol=1e-12
+        kept = (reuse.tangent, reuse.adjoint)
+        transientsensitivity(batch, ["C1"]; reuse)
+        transientadjoint(batch, weights; components = ["C1"], reuse)
+        @test reuse.tangent !== kept[1] && reuse.adjoint !== kept[2]
+        # On the host a batch's stored responses are split into chunks of
+        # conditions across the threads of the session, each chunk on its
+        # own workspace, and joined; the conditions are independent, so
+        # any split gives the same responses to the roundoff of the stage
+        # solves, which stop when every column of a chunk has converged.
+        # A reuse keeps one workspace per chunk.
+        let sys = reuse.system, p = first(batch.problems), nt = length(batch.times),
+            (injh, tp) = JC.targetinjection(p, JC.porttargets(p)),
+            tc = JC.tangentcurrents(currents, 1, nt, 1), init = JC.tangentinitial(nothing, length(p), 1, 3, 0, 1, 0),
+            wh = JC.adjointweights(weights, 1, nt), cp = JC.componentperturbation(p, ["C1"], JC.CPU(); forcing = false)
+            split = TransientReuse()
+            whole = JC.gaussbatchtangent(batch, tc, injh, tp, init, sys, nothing, nothing, nothing; chunks = [1:3])
+            parts = JC.gaussbatchtangent(batch, tc, injh, tp, init, sys, nothing, nothing, split; chunks = [1:1, 2:3])
+            @test length(split.tangent) == 2 && split.tangent[1].N == 1 && split.tangent[2].N == 2
+            @test parts.outgoing ≈ whole.outgoing rtol=1e-10
+            @test parts.finalflux ≈ whole.finalflux rtol=1e-10
+            kept = split.tangent
+            JC.gaussbatchtangent(batch, tc, injh, tp, init, sys, nothing, nothing, split; chunks = [1:1, 2:3])
+            @test split.tangent === kept
+            aw = JC.gaussbatchadjoint(batch, wh, true, :outgoing, injh, tp, sys, nothing, nothing, cp, nothing; chunks = [1:3])
+            ap = JC.gaussbatchadjoint(batch, wh, true, :outgoing, injh, tp, sys, nothing, nothing, cp, split; chunks = [1:2, 3:3])
+            @test length(split.adjoint) == 2
+            @test ap.currents ≈ aw.currents rtol=1e-10
+            @test ap.sensitivity ≈ aw.sensitivity rtol=1e-10
+            @test ap.initialflux ≈ aw.initialflux rtol=1e-10
+            # the outputs of a chunked response are the call's result, each
+            # chunk writing its own columns, and a later call leaves the
+            # result of an earlier one as it was
+            again = JC.gaussbatchtangent(batch, tc, injh, tp, init, sys, nothing, nothing, split; chunks = [1:1, 2:3])
+            @test all(c -> pointer(parent(split.tangent[c].outgoing)) == pointer(again.outgoing), 1:2)
+            @test again.outgoing == parts.outgoing && again.outgoing !== parts.outgoing
+            @test pointer(parent(split.adjoint[1].currents)) == pointer(ap.currents)
+            # the schedule of the noise: the memory's tiles one after another,
+            # whole on a device and split across the threads on the host, so
+            # that the accumulators live at once are one tile's
+            @test JC.conditionschedule(NotTheHost(), 5, 2) == [(1:2, [1:2]), (3:4, [3:4]), (5:5, [5:5])]
+            schedule = JC.conditionschedule(JC.CPU(), 5, 2)
+            @test [t[1] for t in schedule] == [1:2, 3:4, 5:5]
+            @test all(t -> vcat(t[2]...) == t[1] && length(t[2]) <= Threads.nthreads(), schedule)
+            # a workspace kept by a reuse holds nothing of a call once the
+            # call returns: the adjoint's sink and what it captured are
+            # collectible, and the tangent's host currents are dropped,
+            # after a return and after an error alike
+            # (in a function of its own, so that the frame which held the
+            # sink is gone when the collector looks)
+            captured = capturingsink(batch, weights, split)
+            GC.gc(); GC.gc()
+            @test isnothing(captured.value)
+            @test all(w -> isnothing(w.ring.sink) && isnothing(w.ring.feedthrough!), split.adjoint)
+            @test all(w -> size(w.dIh, 2) == 0, split.tangent)
+            @test_throws ErrorException transientadjoint(batch, weights; sink = (k, c) -> error("the sink failed"), reuse = split)
+            @test all(w -> isnothing(w.ring.sink), split.adjoint)
+            # a call which fails in the reset itself releases as one which
+            # fails in a step: an initial perturbation of two conditions
+            # handed to the workspace of three
+            bad = JC.TangentInitial(zeros(length(p), 1, 2), zeros(length(p), 1, 2), zeros(0, 1, 1, 0), zeros(0, 1, 0), true)
+            @test_throws BoundsError JC.gaussbatchtangent(batch, tc, injh, tp, bad, sys, sink, nothing, split; chunks = [1:3])
+            @test all(w -> size(w.dIh, 2) == 0, split.tangent)
+            # the entry refuses a line history or a block state given for
+            # other than one or every condition before any workspace sees it
+            x0, v0 = zeros(length(p), 1), zeros(length(p), 1)
+            @test_throws DimensionMismatch JC.tangentinitial((x0, v0, zeros(2, 4, 1, 2)), length(p), 1, 3, 2, 4, 0)
+            @test_throws DimensionMismatch JC.tangentinitial((x0, v0, zeros(2, 4, 1, 3), zeros(5, 1, 2)), length(p), 1, 3, 2, 4, 5)
+            @test JC.tangentinitial((x0, v0, zeros(2, 4, 1, 3), zeros(5, 1, 3)), length(p), 1, 3, 2, 4, 5).given
+            @test transientadjoint(batch, weights; reuse = split).currents ≈ aw.currents rtol=1e-10
+            # the workers' reuses are the caller's children on its system,
+            # kept across calls and dropped with the system
+            rs = JC.workerreuses(split, sys, 3)
+            @test rs[1] === split && length(split.children) == 2 && all(c -> c.system === sys, split.children)
+            @test JC.workerreuses(split, sys, 3)[2:3] == rs[2:3] && JC.workerreuses(split, sys, 2)[2] === rs[2]
+            @test isnothing(JC.workerreuses(nothing, sys, 2)[1].children[1].children)
+        end
+        # a reuse serves every problem of one compiled circuit driving the
+        # same targets: a solve of another drive of the base, under either
+        # rule, keeps the system and steps under its own drives, and a
+        # problem of another compiled circuit replaces it
+        for method in (GaussLegendre(), Trapezoidal())
+            reuse = TransientReuse()
+            transientsolve(problems[1], (0.0, 1e-9); dt = 5e-12, method, reuse)
+            kept = reuse.system
+            shared = transientsolve(problems[2], (0.0, 1e-9); dt = 5e-12, method, reuse)
+            @test reuse.system === kept
+            @test shared.outgoing == transientsolve(problems[2], (0.0, 1e-9); dt = 5e-12, method).outgoing
+            @test shared.outgoing != transientsolve(problems[1], (0.0, 1e-9); dt = 5e-12, method).outgoing
+            transientsolve(transientproblem(circuit; sources = [TransientSource(1, t -> 0.0)]), (0.0, 1e-9); dt = 5e-12, method, reuse)
+            @test reuse.system !== kept
+        end
         @test ts.finalflux ≈ tb.finalflux
         # a record of checkpoints: the phases of every window are replayed
         # from its checkpoint, so the responses equal the full record's to

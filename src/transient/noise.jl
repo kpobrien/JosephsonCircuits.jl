@@ -576,32 +576,185 @@ end
 # the drive to come, which starting the responses from zero would drop.
 # The real and imaginary parts of the complex response are the initial
 # flux and rate of the cosine and sine quadratures.
-# The stationary operator of the circuit linearized at `x0` at the
-# angular frequency `w`, on the flux phasors and, with lines, the phasors
-# of the waves leaving the line ports: the step's own equations in
-# frequency, `-w^2 C + i w G + L + J'(x0)` on the nodes with the lines'
-# forced currents `2 q / sqrt(Z)` from the far ports' waves a delay
-# earlier, `q = P a` with `P` the swap times `exp(-i w tau)`, and the
-# waves' own equations `a = i w phi0 (E' x) / sqrt(Z) - P a`. Nothing is
-# inverted in the lines, so the operator is regular at a line's half wave
-# resonances, where its admittance is not.
-function stationaryoperator(sys::TransientSystem, x0, w)
+# The stationary operator of the circuit linearized at an initial state
+# at an angular frequency `w`, on the flux phasors and, with lines, the
+# phasors of the waves leaving the line ports: the step's own equations
+# in frequency, `-w^2 C + i w G + L + J'(x0)` on the nodes with the
+# lines' forced currents `2 q / sqrt(Z)` from the far ports' waves a
+# delay earlier, `q = P a` with `P` the swap times `exp(-i w tau)`, and
+# the waves' own equations `a = i w phi0 (E' x) / sqrt(Z) - P a`. Nothing
+# is inverted in the lines, so the operator is regular at a line's half
+# wave resonances, where its admittance is not.
+#
+# The pattern is the circuit's, so it is built once, with the position
+# in its values of every entry of every term, and refilled in place at
+# each state and frequency, and the factorization keeps its symbolic
+# analysis across the frequencies of a bath, as the stage operator of
+# the Gauss-Legendre rule keeps its pattern across the steps.
+mutable struct StationaryOperator
+    problem::TransientProblem
+    Lscale::Float64
+    n::Int
+    F::SparseMatrixCSC{ComplexF64, Int}
+    # the capacitance, the conductance and the stiffness: the position of
+    # each entry and its value
+    cmap::Vector{Int}
+    cvals::Vector{Float64}
+    gmap::Vector{Int}
+    gvals::Vector{Float64}
+    lmap::Vector{Int}
+    lvals::Vector{Float64}
+    # the junction stiffness: the position of each entry, its coefficient
+    # `RJ[k, i] RJ[k, j] Lscale/Lj` and its junction `k`, and the
+    # derivative of the relations at the state
+    jmap::Vector{Int}
+    jcoef::Vector{Float64}
+    jjunction::Vector{Int}
+    dphi::Vector{Float64}
+    RJ::SparseMatrixCSC{Float64, Int}
+    relations::JunctionRelations
+    # the rational blocks' term, in the order `rationalmatrix` lays it out
+    rmap::Vector{Int}
+    # the lines: the forced currents from the far ports' waves, each entry
+    # with its coefficient and the delay it carries, the waves from the
+    # port rates, each with its coefficient, the far ports' waves in the
+    # waves' own rows with their delays, and the waves' identity
+    bmap::Vector{Int}
+    bcoef::Vector{Float64}
+    bdelay::Vector{Float64}
+    emap::Vector{Int}
+    ecoef::Vector{Float64}
+    dmap::Vector{Int}
+    ddelay::Vector{Float64}
+    imap::Vector{Int}
+    factor::Union{Nothing, SparseArrays.UMFPACK.UmfpackLU{ComplexF64, Int}}
+end
+
+# the positions in the values of `F` of the entries `(rows[k], cols[k])`,
+# every one of which `F` holds
+function patternpositions(F::SparseMatrixCSC, rows, cols)
+    rv = rowvals(F)
+    return [begin
+        r = nzrange(F, cols[k])
+        i = first(r) + searchsortedfirst(view(rv, r), rows[k]) - 1
+        i in r && rv[i] == rows[k] || error("the pattern of the stationary operator lacks an entry of a term.")
+        i
+    end for k in eachindex(rows)]
+end
+# the entries of a sparse matrix appended to the pattern's lists, offset
+function patternentries!(rows, cols, A::SparseMatrixCSC, r0::Int, c0::Int)
+    for j in axes(A, 2), k in nzrange(A, j)
+        push!(rows, r0 + rowvals(A)[k])
+        push!(cols, c0 + j)
+    end
+    return nothing
+end
+
+function stationaryoperator(sys::TransientSystem)
     p = sys.problem
     n = length(p)
-    C, G, L = hostsparse(sys.C), hostsparse(sys.G), hostsparse(sys.L)
-    RJ = hostsparse(sys.RJ)
-    phi = RJ*Array(x0)
-    dphi = derivativeat(hostrelations(sys.relations), phi)
-    F = -w^2 .* C .+ (im*w) .* G .+ L .+ transpose(RJ)*Diagonal(Array(sys.lmolj) .* dphi)*RJ
-    blockstates(p) == 0 || (F = F .+ rationalmatrix(p, im*w, sys.Lscale, n))
-    isempty(p.lines) && return F
     nl2 = 2length(p.lines)
-    E = hostsparse(sys.linescatter)
-    Linj = hostsparse(sys.lineinjection)
+    C, G, L, RJ = hostsparse(sys.C), hostsparse(sys.G), hostsparse(sys.L), hostsparse(sys.RJ)
+    lmolj = Array(sys.lmolj)
+    rows, cols = Int[], Int[]
+    patternentries!(rows, cols, C, 0, 0)
+    patternentries!(rows, cols, G, 0, 0)
+    patternentries!(rows, cols, L, 0, 0)
+    # the junction stiffness `RJ' diag(Lscale/Lj dphi) RJ`: an entry for
+    # every pair of nodes of every junction
+    RJt = sparse(transpose(RJ))
+    jrows, jcols, jcoef, jjunction = Int[], Int[], Float64[], Int[]
+    for k in axes(RJt, 2), a in nzrange(RJt, k), b in nzrange(RJt, k)
+        push!(jrows, rowvals(RJt)[a]); push!(jcols, rowvals(RJt)[b])
+        push!(jcoef, nonzeros(RJt)[a]*nonzeros(RJt)[b]*lmolj[k]); push!(jjunction, k)
+    end
+    append!(rows, jrows); append!(cols, jcols)
+    # the rational blocks' term at a reference frequency, whose pattern is
+    # every frequency's
+    R = blockstates(p) > 0 ? rationalmatrix(p, im, sys.Lscale, n) : spzeros(ComplexF64, n, n)
+    patternentries!(rows, cols, R, 0, 0)
+    # the lines: `P` swaps the two ports of a line with the phase of its
+    # delay, so column `q` of the forced currents is column `swap(q)` of
+    # the injection, and the waves' rows carry the swap in the same way
+    Linj, E = hostsparse(sys.lineinjection), hostsparse(sys.linescatter)
     z = [line.Z for line in p.lines for _ in 1:2]
-    P = sparse([2l - 1 for l in eachindex(p.lines)], [2l for l in eachindex(p.lines)], [cis(-w*line.delay) for line in p.lines], nl2, nl2)
-    P = P + transpose(P)
-    return [F  (-Linj*Diagonal(2 ./ sqrt.(z))*P); (-(im*w*phi0) .* Diagonal(1 ./ sqrt.(z))*sparse(transpose(E)))  (I + P)]
+    delays = [line.delay for line in p.lines for _ in 1:2]
+    swap = [isodd(q) ? q + 1 : q - 1 for q in 1:nl2]
+    brows, bcols, bcoef, bdelay = Int[], Int[], Float64[], Float64[]
+    for q in 1:nl2, k in nzrange(Linj, swap[q])
+        push!(brows, rowvals(Linj)[k]); push!(bcols, n + q)
+        push!(bcoef, -2/sqrt(z[swap[q]])*nonzeros(Linj)[k]); push!(bdelay, delays[q])
+    end
+    # the waves from the port rates, `i w phi0 E' x / sqrt(Z)`: `E` is
+    # `(state, port)`, so an entry of it goes to the row of its port and
+    # the column of its state, scaled by the port's impedance
+    erows, ecols, ecoef = Int[], Int[], Float64[]
+    for q in 1:nl2, k in nzrange(E, q)
+        state = rowvals(E)[k]
+        push!(erows, n + q); push!(ecols, state); push!(ecoef, -phi0/sqrt(z[q])*nonzeros(E)[k])
+    end
+    drows, dcols, ddelay = [n + swap[q] for q in 1:nl2], [n + q for q in 1:nl2], delays
+    irows = [n + q for q in 1:nl2]
+    append!(rows, brows, erows, drows, irows); append!(cols, bcols, ecols, dcols, irows)
+    F = sparse(rows, cols, ones(ComplexF64, length(rows)), n + nl2, n + nl2)
+    position = (r, c) -> patternpositions(F, r, c)
+    crows, ccols = Int[], Int[]; patternentries!(crows, ccols, C, 0, 0)
+    grows, gcols = Int[], Int[]; patternentries!(grows, gcols, G, 0, 0)
+    lrows, lcols = Int[], Int[]; patternentries!(lrows, lcols, L, 0, 0)
+    rrows, rcols = Int[], Int[]; patternentries!(rrows, rcols, R, 0, 0)
+    return StationaryOperator(p, sys.Lscale, n, F,
+        position(crows, ccols), copy(nonzeros(C)), position(grows, gcols), copy(nonzeros(G)),
+        position(lrows, lcols), copy(nonzeros(L)),
+        position(jrows, jcols), jcoef, jjunction, zeros(length(lmolj)), RJ, hostrelations(sys.relations),
+        position(rrows, rcols),
+        position(brows, bcols), bcoef, bdelay, position(erows, ecols), ecoef, position(drows, dcols), ddelay,
+        position(irows, irows), nothing)
+end
+
+# the operator at the initial state `x0`: the derivative of the junction
+# relations there, which the stiffness reads
+function stationarystate!(op::StationaryOperator, x0)
+    op.dphi .= derivativeat(op.relations, op.RJ*Array(x0))
+    return op
+end
+
+# `values[positions[k]] += scale[k] * coefficients[k]`, with one scale
+# for every entry or one each
+function addentries!(values, positions, coefficients, scale::AbstractVector)
+    for k in eachindex(positions)
+        values[positions[k]] += scale[k]*coefficients[k]
+    end
+    return nothing
+end
+function addentries!(values, positions, coefficients, scale::Number)
+    for k in eachindex(positions)
+        values[positions[k]] += scale*coefficients[k]
+    end
+    return nothing
+end
+
+# the operator refilled at the angular frequency `w` and factorized, on
+# the analysis of the first factorization
+function stationaryfactor!(op::StationaryOperator, w)
+    values = nonzeros(op.F)
+    fill!(values, 0)
+    addentries!(values, op.cmap, op.cvals, -w^2)
+    addentries!(values, op.gmap, op.gvals, im*w)
+    addentries!(values, op.lmap, op.lvals, 1.0)
+    addentries!(values, op.jmap, op.jcoef, view(op.dphi, op.jjunction))
+    if !isempty(op.rmap)
+        R = rationalmatrix(op.problem, im*w, op.Lscale, op.n)
+        nnz(R) == length(op.rmap) || error("the rational blocks' term changed its pattern with the frequency.")
+        addentries!(values, op.rmap, nonzeros(R), 1.0)
+    end
+    addentries!(values, op.bmap, op.bcoef, cis.(-w .* op.bdelay))
+    addentries!(values, op.emap, op.ecoef, im*w)
+    addentries!(values, op.dmap, cis.(-w .* op.ddelay), 1.0)
+    for k in op.imap
+        values[k] += 1
+    end
+    op.factor = isnothing(op.factor) ? lu(op.F) : lu!(op.factor, op.F)
+    return op.factor
 end
 
 # The stationary response of the circuit at the initial state to a
@@ -650,44 +803,42 @@ function stationaryresponses(sys::TransientSystem, x0, injection, frequencies, t
     nzs = blockstates(p)
     npre = lineprehistory(p, sys.h)
     # the injection in the scaled system, as the tangent scales it
-    injection = (sys.Lscale/phi0) .* injection
-    nb = size(injection, 2)
+    inj = Matrix((sys.Lscale/phi0) .* injection)
+    nb = size(inj, 2)
     nf = length(frequencies)
     flux = zeros(n, 2nb*nf)
     rate = zeros(n, 2nb*nf)
     waves = zeros(nl2, npre, 2nb*nf)
     states = zeros(nzs, 2nb*nf)
     tpre = [t0 - (npre - j)*sys.h for j in 1:npre]
+    op = stationarystate!(stationaryoperator(sys), x0)
+    rhs = zeros(ComplexF64, n + nl2, nb)
     for (f, frequency) in enumerate(frequencies)
         w = 2pi*frequency
-        F = lu(stationaryoperator(sys, x0, w))
-        Ga = nzs > 0 ? incidentmap(sys, w, n + nl2) : nothing
-        for b in 1:nb
-            # a unit cosine current `cos(w (t - reference))` at the bath: the
-            # complex amplitude `exp(-i w reference)`, and the sine `-i`
-            # times it, whose response is `-i` times the cosine's; at time
-            # t the response is Re(x exp(i w t)) and its rate
-            # Re(i w x exp(i w t))
-            rhs = zeros(ComplexF64, n + nl2)
-            rhs[1:n] .= cispi(-2frequency*reference) .* Vector(injection[:, b])
-            y = F \ rhs
-            x = y[1:n]
-            z = x .* cispi(2frequency*t0)
-            col = 2*((f - 1)*nb + b - 1)
-            flux[:, col + 1] .= real.(z)
-            rate[:, col + 1] .= real.(im*w .* z)
-            flux[:, col + 2] .= real.(-im .* z)
-            rate[:, col + 2] .= real.(w .* z)
-            for j in 1:npre
-                a = y[n + 1:n + nl2] .* cispi(2frequency*tpre[j])
-                waves[:, j, col + 1] .= real.(a)
-                waves[:, j, col + 2] .= real.(-im .* a)
-            end
-            if nzs > 0
-                zc = statephasors(p, w, Ga*y) .* cispi(2frequency*t0)
-                states[:, col + 1] .= real.(zc)
-                states[:, col + 2] .= real.(-im .* zc)
-            end
+        F = stationaryfactor!(op, w)
+        # a unit cosine current `cos(w (t - reference))` at every bath, one
+        # column each: the complex amplitude `exp(-i w reference)`, and the
+        # sine `-i` times it, whose response is `-i` times the cosine's; at
+        # time t the response is Re(x exp(i w t)) and its rate
+        # Re(i w x exp(i w t)); the cosine and the sine of a bath are
+        # adjacent columns of the responses
+        rhs[1:n, :] .= cispi(-2frequency*reference) .* inj
+        Y = F \ rhs
+        cosines, sines = 2*(f - 1)*nb .+ (1:2:2nb), 2*(f - 1)*nb .+ (2:2:2nb)
+        Z = view(Y, 1:n, :) .* cispi(2frequency*t0)
+        flux[:, cosines] .= real.(Z)
+        rate[:, cosines] .= real.(im*w .* Z)
+        flux[:, sines] .= real.(-im .* Z)
+        rate[:, sines] .= real.(w .* Z)
+        for j in 1:npre
+            A = view(Y, n + 1:n + nl2, :) .* cispi(2frequency*tpre[j])
+            waves[:, j, cosines] .= real.(A)
+            waves[:, j, sines] .= real.(-im .* A)
+        end
+        if nzs > 0
+            ZC = statephasors(p, w, incidentmap(sys, w, n + nl2)*Y) .* cispi(2frequency*t0)
+            states[:, cosines] .= real.(ZC)
+            states[:, sines] .= real.(-im .* ZC)
         end
     end
     all(isfinite, flux) && all(isfinite, rate) && all(isfinite, waves) && all(isfinite, states) || throw(ArgumentError(
@@ -731,18 +882,20 @@ function stationaryinitialterms(sys::TransientSystem, x0s, injection, frequencie
     lz = nzs > 0 ? Array(initialstates) : zeros(0, size(lx, 2), size(lx, 3))
     m, N = size(lx, 2), size(lx, 3)
     terms = [zeros(m, 2nb*nf) for _ in 1:N]
+    op = stationaryoperator(sys)
     for group in initialstategroups(x0s)
         LX = reshape(view(lx, :, :, group), :, m*length(group))
         LV = reshape(view(lv, :, :, group), :, m*length(group))
         LA = reshape(view(la, :, :, :, group), nl2, npre, m*length(group))
         LZ = reshape(view(lz, :, :, group), nzs, m*length(group))
+        stationarystate!(op, view(x0s, :, first(group)))
         for (f, frequency) in enumerate(frequencies)
             w = 2pi*frequency
             # the adjoint's stationary solve is the transposed system, the
             # same as the system where the operator is symmetric; the
             # prehistory's cotangents enter on the wave rows with the
             # phase of each sample's time relative to the start
-            F = lu(stationaryoperator(sys, view(x0s, :, first(group)), w))
+            F = stationaryfactor!(op, w)
             rhs = zeros(ComplexF64, n + nl2, m*length(group))
             rhs[1:n, :] .= LX .+ (im*w) .* LV
             for j in 1:npre
@@ -895,7 +1048,9 @@ the recorded times: the physical baths, the port terminations and the internal
 resistors, propagated through the linearization about the complete
 recorded trajectory, pump and signals together. For a batch the
 covariance, the commutator and the gain carry the conditions as the
-trailing dimension and the diagnostics are a vector. `frequencies` are the
+trailing dimension and the diagnostics are a vector; on the host the
+conditions are tiled across the threads of the session, each tile its
+own responses, as the solve splits them. `frequencies` are the
 positive nodes in Hz of a quadrature over the bath spectrum and `weights`
 its weights in Hz. By default the bath is periodic over the record, of
 duration `T = length(solution.times)*solution.dt`: its positive Fourier
@@ -936,7 +1091,14 @@ the bath cutoff, the frequency spacing, the record and the step
 independently before reading a quantum efficiency with
 [`transientquantumefficiency`](@ref).
 """
-function transientnoise(sol::Union{TransientSolution,TransientBatchSolution}, measurement::TransientQuantumPlan;
+function transientnoise(sol::TransientSolution, measurement::TransientQuantumPlan; kwargs...)
+    # the noise runs on a batch, of which a solution is one condition
+    r = transientnoise(batchof(sol), measurement; kwargs...)
+    return (; covariance = r.covariance[:, :, 1], commutator = r.commutator[:, :, 1],
+        expectedcommutator = r.expectedcommutator, diagnostics = r.diagnostics[1], gain = r.gain[:, :, 1],
+        r.measurement, r.inputs, r.baths, r.frequencies, r.weights)
+end
+function transientnoise(sol::TransientBatchSolution, measurement::TransientQuantumPlan;
         frequencies = nothing, weights = nothing, cutoff = nothing, baths = nothing,
         method::Symbol = :adjoint, inputs = nothing, commutationrtol = 1e-3,
         reuse = nothing)
@@ -948,7 +1110,7 @@ function transientnoise(sol::Union{TransientSolution,TransientBatchSolution}, me
         isnothing(weights) && throw(ArgumentError("give the weights of the bath frequencies in Hz."))
         isnothing(cutoff) || throw(ArgumentError("a cutoff bounds the default bath; the frequencies given are the bath."))
     end
-    problems, _, x0s, v0s = batchview(sol)
+    problems, x0s, v0s = sol.problems, sol.initialflux, sol.initialrate
     N = length(problems)
     p = first(problems)
     baths = isnothing(baths) ? transientnoisebaths(p) : baths
@@ -977,9 +1139,31 @@ function transientnoise(sol::Union{TransientSolution,TransientBatchSolution}, me
     bins = noiseinputbins(inputs, measurement, fs, ws)
     fact = transientfactorization(backend)
     sys = transientsystem(reuse, p, sol.dt, sol.method, backend, fact)
+    # invoked dynamically on the untyped kept system (see transientsolve)
+    return Base.invokelatest(noisecore, sol, measurement, fs, ws, baths, method, inputs, Float64(commutationrtol),
+        reuse, sys, offset, bins)
+end
+
+# the noise on the forms the entry made of its arguments and on the
+# system in hand; the input plan and the reuse unspecialized, since each
+# is read at the setup and at a tile, not at a step
+function noisecore(sol::TransientBatchSolution, measurement::TransientQuantumPlan, fs::Vector{Float64},
+        ws::Vector{Float64}, baths::TransientNoiseBaths, method::Symbol, @nospecialize(inputs), commutationrtol::Float64,
+        @nospecialize(reuse), sys::TransientSystem, offset::Int, bins::Vector{Int})
+    problems = sol.problems
+    N = length(problems)
+    p = first(problems)
+    backend = sys.backend
+    nm = length(measurement.times)
+    reference = first(measurement.times)
+    np = length(p.portimpedances)
+    # the initial states of the conditions on the host, where the
+    # stationary setup reads them
+    x0s, v0s = hostmatrix(sol.initialflux, length(p), N), hostmatrix(sol.initialrate, length(p), N)
+    w0s = isnothing(sol.initialwaves) ? zeros(2length(p.lines), N) : hostmatrix(sol.initialwaves, 2length(p.lines), N)
+    z0s = isnothing(sol.initialstates) ? zeros(blockstates(p), N) : hostmatrix(sol.initialstates, blockstates(p), N)
     # the classical equilibrium at the start of every condition, whose
     # stationary response to the baths is the circuit's prehistory
-    w0s, z0s = batchview(sol)[7], batchview(sol)[8]
     for j in 1:N
         transientstationary(sys, view(x0s, :, j), view(v0s, :, j), first(sol.times), problems[j], view(w0s, :, j), view(z0s, :, j))
     end
@@ -1023,9 +1207,7 @@ function transientnoise(sol::Union{TransientSolution,TransientBatchSolution}, me
             states0s[:, :, j] .= states0 .* transpose(scale)
         end
         # the responses measured as the tangent produces them
-        measured, outputsink = measurementsink(measurement, offset, ndir*N, backend)
-        transienttangent(sol, currents; targets = baths, initialstate = (flux0s, rate0s, waves0s, states0s), reuse, outputsink)
-        response .= reshape(Array(measured), m, ndir, N)
+        response .= measuredtangent(sol, sys, currents, baths, (flux0s, rate0s, waves0s, states0s), measurement, offset, reuse)
         for j in 1:N
             if !isnothing(correction)
                 groupcorrection!(view(covariance, :, :, j), view(commutator, :, :, j), view(response, :, :, j), correction)
@@ -1072,13 +1254,35 @@ function transientnoise(sol::Union{TransientSolution,TransientBatchSolution}, me
         if nft < nf && any(g -> baths.problem.blocks[g.block].definition isa LinearizedScattering, baths.groups)
             throw(ArgumentError(lazy"the noise of a pumped block correlates the bath frequencies, which must be contracted in one tile: $(nf) frequencies over one condition need $(16*nb*m*nf) bytes against a budget of $(budget); use fewer frequencies or measured quadratures, or a larger noisememorybudget."))
         end
+        # the memory's tiles one after another, so that no more than one
+        # tile's accumulators are live; on the host a tile is split across
+        # the threads of the session, each chunk on a worker of its own
+        # with its own reuse on the shared system and its own group
+        # correction, whose work is its own
+        schedule = conditionschedule(backend, N, ctile)
+        nworkers = maximum(t -> length(t[2]), schedule)
+        reuses = workerreuses(reuse, sys, nworkers)
         for ftile in [f:min(f + nft - 1, nf) for f in 1:nft:nf]
-            correction = isempty(baths.groups) ? nothing : groupcorrection(baths, fs[ftile], m, backend, reference)
-            for conditions in [j:min(j + ctile - 1, N) for j in 1:ctile:N]
+            corrections = [isempty(baths.groups) ? nothing : groupcorrection(baths, fs[ftile], m, backend, reference) for _ in 1:nworkers]
+            tile! = (c, conditions) -> begin
                 sub = length(conditions) == N ? sol : sol[conditions]
                 noisetile!(view(dcov, :, :, conditions), view(dcomm, :, :, conditions), view(dgain, :, :, conditions),
                     sub, sys, view(x0s, :, conditions), weightsout, baths, injection, fs, ftile, amplitudes,
-                    reference, stageoffsets, inputs, bins, reuse, correction)
+                    reference, stageoffsets, inputs, bins, reuses[c], corrections[c])
+                nothing
+            end
+            for (tile, chunks) in schedule
+                if length(chunks) == 1
+                    tile!(1, tile)
+                    continue
+                end
+                try
+                    Base.Threads.@sync for (c, conditions) in enumerate(chunks)
+                        Base.Threads.@spawn tile!(c, conditions)
+                    end
+                catch err
+                    throw(chunkerror(err))
+                end
             end
         end
         covariance .= Array(dcov)
@@ -1089,12 +1293,69 @@ function transientnoise(sol::Union{TransientSolution,TransientBatchSolution}, me
     diagnostics = map(1:N) do j
         transientquantumdiagnostics(covariance[:, :, j], commutator[:, :, j], expected; rtol = commutationrtol)
     end
-    if sol isa TransientSolution
-        return (; covariance = covariance[:, :, 1], commutator = commutator[:, :, 1], expectedcommutator = expected,
-            diagnostics = diagnostics[1], gain = gain[:, :, 1], measurement, inputs, baths, frequencies = fs, weights = ws)
-    end
     return (; covariance, commutator, expectedcommutator = expected, diagnostics, gain,
         measurement, inputs, baths, frequencies = fs, weights = ws)
+end
+
+# The schedule of the conditions of a batch: the tiles of at most
+# `ctile` conditions the memory allows, taken one after another, each
+# with the chunks its workers step at once, the tile split across the
+# threads of the session on the host and whole on a device. The
+# accumulators live at once are one tile's, whatever the threads.
+function conditionschedule(backend, N::Int, ctile::Int)
+    schedule = Tuple{UnitRange{Int}, Vector{UnitRange{Int}}}[]
+    for j in 1:ctile:N
+        first, last = j, min(j + ctile - 1, N)
+        push!(schedule, (first:last, [first + ch.start - 1:first + ch.stop - 1 for ch in batchchunks(backend, last - first + 1)]))
+    end
+    return schedule
+end
+# The reuse of every worker of a noise or a gain: the caller's for the
+# first, and for the rest the caller's children, one of their own on
+# the same system, kept by the caller's across its calls so that their
+# workspaces and their replay steppers are taken over as the first's
+# are; a call without a reuse keeps nothing, as before.
+function workerreuses(@nospecialize(reuse), sys::TransientSystem, nworkers::Int)
+    parent = isnothing(reuse) ? TransientReuse(sys, nothing, nothing, nothing, nothing, nothing) : reuse
+    children = parent.children isa Vector ? filter(c -> c.system === sys, parent.children) : TransientReuse[]
+    while length(children) < nworkers - 1
+        push!(children, TransientReuse(sys, nothing, nothing, nothing, nothing, nothing))
+    end
+    parent.children = children
+    return Any[parent; children[1:nworkers - 1]]
+end
+
+# The outgoing waves of a tangent of every condition of a batch along
+# `currents` at `targets`, from an initial perturbation or none, measured
+# in the modes of `measurement` on its window at `offset`, as `(2 nports,
+# directions, conditions)` on the host. On the host the conditions are
+# split across the threads of the session, each chunk its own tangent on
+# a worker's reuse and its own sink, as the solve steps its chunks; a
+# device takes the batch at once.
+function measuredtangent(sol::TransientBatchSolution, sys::TransientSystem, currents, targets, initial, measurement::TransientQuantumPlan,
+        offset::Int, @nospecialize(reuse))
+    N, ndir, m = length(sol.problems), size(currents, ndims(currents)), 2length(measurement.ports)
+    backend = sys.backend
+    tiles = batchchunks(backend, N)
+    reuses = workerreuses(reuse, sys, length(tiles))
+    response = zeros(m, ndir, N)
+    tile! = (c, conditions) -> begin
+        sub = length(conditions) == N ? sol : sol[conditions]
+        measured, outputsink = measurementsink(measurement, offset, ndir*length(conditions), backend)
+        initialstate = isnothing(initial) ? nothing : map(a -> collect(selectdim(a, ndims(a), conditions)), initial)
+        transienttangent(sub, currents; targets, initialstate, reuse = reuses[c], outputsink)
+        response[:, :, conditions] .= reshape(Array(measured), m, ndir, length(conditions))
+        nothing
+    end
+    length(tiles) == 1 && (tile!(1, tiles[1]); return response)
+    try
+        Base.Threads.@sync for (c, conditions) in enumerate(tiles)
+            Base.Threads.@spawn tile!(c, conditions)
+        end
+    catch err
+        throw(chunkerror(err))
+    end
+    return response
 end
 
 # One tile of the noise contraction: the adjoint of the conditions of
@@ -1104,8 +1365,9 @@ end
 # the conditions through the adjoint's initial flux and rate, and the
 # responses formed on the backend, scaled by the amplitudes, and
 # accumulated into the covariance, the commutator and the gain.
-function noisetile!(covariance, commutator, gain, sub, sys, x0s, weightsout, baths, injection, fs, ftile, amplitudes,
-        reference, stageoffsets, inputs, bins, reuse, correction)
+function noisetile!(covariance, commutator, gain, sub::TransientBatchSolution, sys::TransientSystem, x0s, weightsout,
+        baths::TransientNoiseBaths, injection, fs, ftile, amplitudes, reference, stageoffsets, @nospecialize(inputs), bins,
+        @nospecialize(reuse), @nospecialize(correction))
     backend = KernelAbstractions.get_backend(covariance)
     nb, m, Nt = length(baths), size(covariance, 1), size(covariance, 3)
     fsl = fs[ftile]
@@ -1216,10 +1478,14 @@ started stationary, which is what a stationary amplifier's harmonic
 balance gain is. The two agree as the window grows past the circuit's
 memory.
 """
-function transientgain(sol::Union{TransientSolution,TransientBatchSolution}, measurement::TransientQuantumPlan,
+function transientgain(sol::TransientSolution, measurement::TransientQuantumPlan, inputs::TransientQuantumPlan; reuse = nothing)
+    # the gain runs on a batch, of which a solution is one condition
+    return transientgain(batchof(sol), measurement, inputs; reuse)[:, :, 1]
+end
+function transientgain(sol::TransientBatchSolution, measurement::TransientQuantumPlan,
         inputs::TransientQuantumPlan; reuse = nothing)
     recordedsolution(sol)
-    problems, _, _, _ = batchview(sol)
+    problems = sol.problems
     N = length(problems)
     p = first(problems)
     backend = KernelAbstractions.get_backend(sol.finalflux)
@@ -1251,8 +1517,7 @@ function transientgain(sol::Union{TransientSolution,TransientBatchSolution}, mea
         currents[port, s, io:last, 2j] .= -scale .* imag.(view(wave, 1:last - io + 1))
     end
     # the modes measured as the tangent produces the waves
-    measured, outputsink = measurementsink(measurement, mo, 2nin*N, backend)
-    transienttangent(sol, currents; reuse, outputsink)
-    gain = reshape(Array(measured), m, 2nin, N)
-    return sol isa TransientSolution ? gain[:, :, 1] : gain
+    fact = transientfactorization(backend)
+    sys = transientsystem(reuse, p, sol.dt, sol.method, backend, fact)
+    return measuredtangent(sol, sys, currents, porttargets(p), nothing, measurement, mo, reuse)
 end

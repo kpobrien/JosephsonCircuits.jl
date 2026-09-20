@@ -602,8 +602,10 @@ function nonlinearmatrices(nm::CircuitMatrices, w, componenttypes, wmodes,
     # driven near their characteristic impedance and frequency, and `atol`
     # is independent of the unit system. The scale multiplies rows only, so
     # the node fluxes and all physical outputs are unchanged.
-    Lscale = calcsolverscale(w, componenttypes, nm.vvn, nm.portimpedances,
-        Lscale)
+    # a real number of one type, so that what is built from it is compiled
+    # once
+    Lscale = Float64(calcsolverscale(w, componenttypes, nm.vvn, nm.portimpedances,
+        Lscale))
     # substitute in the mode frequencies for components which have
     # frequency defined symbolically; the result is complex whatever the
     # input

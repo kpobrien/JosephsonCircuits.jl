@@ -130,7 +130,7 @@ function plancomplexjacobian(Amatrixindices::Matrix, Ljb::SparseVector,
     Tc = Complex{float(T)}
 
     junctions = junctionstructure(T, Amatrixindices,
-        zeros(Int, Nmodes, Nmodes), Ljb, Lscale, Rbnm, Nmodes, Nbranches,
+        zeros(Int, Nmodes, Nmodes), Ljb, T(Lscale), Rbnm, Nmodes, Nbranches,
         Nfreq, CPU())
     nodesandsigns = junctions.nodesandsigns
 

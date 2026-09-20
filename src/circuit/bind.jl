@@ -51,14 +51,17 @@ function Base.show(io::IO, b::BoundCircuit)
         length(b.circuit.ports), " ports)")
 end
 
-# The element type of a value group. Numbers are held as `Float64` or
-# `ComplexF64` however the netlist wrote them (`1` or `1.0f0` for an
-# inductance, `50` for a resistance), empty groups included, so that a
-# circuit has one matrix type per real or complex distinction rather than
-# one per way of writing its values; every solver method downstream is
-# compiled once per matrix type. A group with a value which is not a plain
-# number (symbolic, or a frequency dependent provider) keeps the promotion
-# of the types present, with the inverse of each when `checkinverse` is set.
+# The element type of a value group. Numbers are held as `Float64` however
+# the netlist wrote them (`1` or `1.0f0` for an inductance, `50` for a
+# resistance, `50 + 0im` in a table of complex numbers), empty groups
+# included, and as `ComplexF64` only where a value has an imaginary part,
+# so that a circuit has one matrix type per real or complex distinction
+# of its values rather than one per way of writing them; every solver
+# method downstream is compiled once per matrix type, and a circuit whose
+# values are real runs on the code compiled for real values whatever
+# table they came in. A group with a value which is not a plain number
+# (symbolic, or a frequency dependent provider) keeps the promotion of the
+# types present, with the inverse of each when `checkinverse` is set.
 function grouptype(values, idx, checkinverse::Bool)
     isempty(idx) && return Float64
     complex = false
@@ -66,7 +69,7 @@ function grouptype(values, idx, checkinverse::Bool)
     for i in idx
         v = values[i]
         if v isa Complex && plainnumber(real(v))
-            complex = true
+            complex |= !iszero(imag(v))
         elseif !plainnumber(v)
             plain = false
             break

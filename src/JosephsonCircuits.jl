@@ -489,6 +489,12 @@ function warmuptransient()
     transientadjoint(solution, weights)
     transienttangent(checkpointed, currents)
     transientadjoint(checkpointed, weights)
+    # the sensitivities: a junction alone reads the phases, a capacitor
+    # the states, which the checkpoints replay
+    transientsensitivity(solution, ["Lj1"])
+    transientsensitivity(checkpointed, ["C1", "Lj1"])
+    transientadjoint(solution, weights; components = ["Lj1"])
+    transientadjoint(checkpointed, weights; components = ["C1", "Lj1"])
     # the measured tone on a bin of the record, and the bath on two bins
     plan = transientquantumplan(solution, solution.times, [9/T])
     transientnoise(solution, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
@@ -496,6 +502,7 @@ function warmuptransient()
         (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
     transienttangent(batch, currents)
     transientadjoint(batch, weights)
+    transientsensitivity(batch, ["Lj1"])
     # the batch's noise on both methods, of a member and of a range of
     # members, which are views of the batch, and of a checkpointed batch;
     # the pulsed gain of the solution and of the batch
@@ -530,6 +537,10 @@ function warmuptransient()
     transientadjoint(fronted, weights)
     transientnoise(fronted, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan)
     transientnoise(fronted, plan; frequencies = [8/T, 9/T], weights = [1/T, 1/T], inputs = plan, method = :forward)
+    # the sensitivity with a line and a block, whose endpoint the
+    # components perturb
+    transientsensitivity(fronted, ["jj"])
+    transientadjoint(fronted, weights; components = ["jj"])
     return nothing
 end
 

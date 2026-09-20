@@ -1,5 +1,6 @@
 using JosephsonCircuits
 using LinearAlgebra
+using SparseArrays
 using Test
 
 # The quantum noise of a transient against harmonic balance: a passive two
@@ -227,6 +228,118 @@ using Test
         jmetrics = transientquantumefficiency(jnoise.gain, jnoise.covariance; rtol = 3e-3)
         @test jmetrics.gain ≈ jgain rtol=1e-5
         @test jmetrics.QE ≈ jqe rtol=1e-5
+    end
+
+    @testset "the stationary operator carries the lines on their own rows" begin
+        # the operator's plan lays every term on a fixed pattern; against
+        # the terms written out as sparse expressions, at a state and a few
+        # frequencies, for lines whose incidence on the states is not the
+        # identity: two lines sharing a node, a line behind an RC section,
+        # a line whose far reference is a node, and a junction behind a
+        # cable, whose stiffness the state sets
+        oracle = (sys, x0, w) -> begin
+            p = sys.problem
+            n = length(p)
+            C, G, L, RJ = JC.hostsparse(sys.C), JC.hostsparse(sys.G), JC.hostsparse(sys.L), JC.hostsparse(sys.RJ)
+            dphi = JC.derivativeat(JC.hostrelations(sys.relations), RJ*x0)
+            F = -w^2 .* C .+ (im*w) .* G .+ L .+ transpose(RJ)*Diagonal(Array(sys.lmolj) .* dphi)*RJ
+            JC.blockstates(p) == 0 || (F = F .+ JC.rationalmatrix(p, im*w, sys.Lscale, n))
+            isempty(p.lines) && return F
+            nl2 = 2length(p.lines)
+            E, Linj = JC.hostsparse(sys.linescatter), JC.hostsparse(sys.lineinjection)
+            z = [line.Z for line in p.lines for _ in 1:2]
+            P = sparse([2l - 1 for l in eachindex(p.lines)], [2l for l in eachindex(p.lines)], [cis(-w*line.delay) for line in p.lines], nl2, nl2)
+            P = P + transpose(P)
+            return [F  (-Linj*Diagonal(2 ./ sqrt.(z))*P); (-(im*w*JC.phi0) .* Diagonal(1 ./ sqrt.(z))*sparse(transpose(E)))  (I + P)]
+        end
+        cascade = Circuit([(:p1, 1, 0, Port(1)), (:line1, 1, 2, TransmissionLine(60.0, 10e-12; vp = 1.0)),
+            (:line2, 2, 3, TransmissionLine(40.0, 15e-12; vp = 1.0)), (:p2, 3, 0, Port(2))])
+        behind = Circuit([(:p1, 1, 0, Port(1)), (:r, 1, 2, Resistor(20.0)), (:c, 2, 0, Capacitor(0.1e-12)),
+            (:line, 2, 3, TransmissionLine(50.0, 10e-12; vp = 1.0)), (:p2, 3, 0, Port(2))])
+        lifted = Circuit([:p1 => Port(1), :line => TransmissionLine(50.0, 10e-12; vp = 1.0, grounded = false),
+                :c => Capacitor(0.2e-12), :p2 => Port(2)],
+            [((:p1, 1), (:line, 1, 1)), ((:line, 2, 1), (:p2, 1)), ((:line, 2, 2), (:c, 1)),
+             ((:line, 1, 2), (:c, 2), (:p1, 2), (:p2, 2), Ground)])
+        jpa = Circuit([(:p1, 1, 0, Port(1)), (:cable, 1, 2, TransmissionLine(60.0, 90e-12; vp = 1.0)),
+            (:cc, 2, 3, Capacitor(100e-15)), (:jj, 3, 0, JosephsonJunction(1000e-12)), (:cj, 3, 0, Capacitor(1000e-15))])
+        for c in (cascade, behind, lifted, jpa)
+            sys = JC.transientsystem(transientproblem(c), 2e-12, GaussLegendre(), JC.CPU(), JC.transientfactorization(JC.CPU()))
+            x0 = 0.3 .* sin.(1:length(sys.problem))
+            op = JC.stationarystate!(JC.stationaryoperator(sys), x0)
+            for f in (1e9, 3e9, 7e9)
+                JC.stationaryfactor!(op, 2pi*f)
+                @test op.F ≈ oracle(sys, x0, 2pi*f) rtol=1e-12
+            end
+        end
+        # cold and passive, each leaves the vacuum the vacuum and has the
+        # linearized solver's gain
+        block(x) = [real(x) imag(x); -imag(x) real(x)]
+        quadratures(M) = reduce(vcat, [reduce(hcat, [block(M[j, k]) for k in 1:2]) for j in 1:2])
+        n, T = 256, 0.5e-9
+        for c in (cascade, behind, lifted)
+            sol = transientsolve(transientproblem(c), (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
+            plan = transientquantumplan(sol, sol.times, [4e9, 4e9]; ports = [1, 2])
+            noise = transientnoise(sol, plan; frequencies = [4e9], weights = [1/T], inputs = plan)
+            hb = hblinsolve(2pi*[4e9], c; keyedarrays = false)
+            @test noise.diagnostics.passed
+            @test noise.covariance ≈ plan.vacuum rtol=1e-6
+            @test noise.gain ≈ quadratures(hb.S[:, :, 1]) rtol=1e-6
+        end
+    end
+
+    @testset "the tiles of a batch's conditions" begin
+        # the noise of a batch tiled by the memory, or across the threads
+        # of the session, equals the noise of the whole batch condition
+        # by condition, on both methods: a budget of a few bytes makes
+        # every condition a tile of its own, each on its own task
+        c = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:c1, 1, 0, Capacitor(0.2e-12)),
+            (:line, 1, 2, TransmissionLine(60.0, 0.09)), (:jj, 2, 0, JosephsonJunction(1000e-12)), (:cj, 2, 0, Capacitor(1000e-15)),
+            (:p2, 2, 0, Port(2; Z0 = 50.0))])
+        n, T, fp = 256, 1e-9, 4.75e9
+        base = transientproblem(c; sources = [TransientSource(1, t -> 0.0)])
+        ramp(t) = t <= 0 ? 0.0 : t >= 0.4e-9 ? 1.0 : (1 - cospi(t/0.4e-9))/2
+        problems = [transientproblem(base; sources = [TransientSource(1, let ip = ip; t -> 2ip*ramp(t)*cospi(2fp*t); end)]) for ip in (0.0, 1e-9, 2e-9)]
+        batch = transientsolve(problems, (0.0, T*(n - 1)/n); dt = T/n, record = :phases)
+        plan = transientquantumplan(batch, batch.times, [3/T]; ports = [2])
+        args = (; frequencies = [2/T, 3/T, 4/T], weights = fill(1/T, 3), inputs = plan)
+        whole = transientnoise(batch, plan; args...)
+        wholeforward = transientnoise(batch, plan; args..., method = :forward)
+        JC.noisememorybudget[] = 1
+        try
+            tiled = transientnoise(batch, plan; args...)
+            @test tiled.covariance ≈ whole.covariance rtol=1e-10
+            @test tiled.gain ≈ whole.gain rtol=1e-10
+        finally
+            JC.noisememorybudget[] = 0
+        end
+        @test wholeforward.covariance ≈ whole.covariance rtol=1e-8
+        for j in 1:3
+            @test transientnoise(batch[j], plan; args...).covariance ≈ whole.covariance[:, :, j] rtol=1e-10
+        end
+        # the pulsed gain of the batch, tiled across the threads, equals
+        # the members' own
+        pulsed = transientgain(batch, plan, plan)
+        for j in 1:3
+            @test pulsed[:, :, j] ≈ transientgain(batch[j], plan, plan) rtol=1e-10
+        end
+        # a reuse keeps the workers' reuses, and every worker its
+        # workspaces and replay steppers, across the noise and the gain of
+        # a checkpointed batch, the last tile a different size
+        cps = transientsolve(problems, (0.0, T*(n - 1)/n); dt = T/n, record = :checkpoints, checkpointevery = 32)
+        reuse = TransientReuse()
+        n1 = transientnoise(cps, plan; args..., reuse)
+        g1 = transientgain(cps, plan, plan; reuse)
+        workers = [reuse; reuse.children]
+        kept = [(w.adjoint, w.tangent, isnothing(w.adjoint) ? nothing : only(w.adjoint).replay,
+            isnothing(w.tangent) ? nothing : only(w.tangent).replay) for w in workers]
+        @test length(workers) == length(JC.conditionschedule(JC.CPU(), 3, 3)[1][2])
+        n2 = transientnoise(cps, plan; args..., reuse)
+        g2 = transientgain(cps, plan, plan; reuse)
+        @test [reuse; reuse.children] == workers
+        @test all(((w, k),) -> w.adjoint === k[1] && w.tangent === k[2] && only(w.adjoint).replay === k[3] && only(w.tangent).replay === k[4],
+            zip(workers, kept))
+        @test n2.covariance == n1.covariance && g2 == g1
+        @test n1.covariance ≈ whole.covariance rtol=1e-6
     end
 
     @testset "rational blocks emit the noise of their loss at every frequency" begin
