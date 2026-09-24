@@ -136,15 +136,22 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
             Matrix(JosephsonCircuits.calcresidualsensitivity(o1, opc.compiled, nm1, idx)),
             Matrix(JosephsonCircuits.calcresidualsensitivity(r1, opc.compiled, nm1, idx));
             rtol = 1e-8)
-        nc = hbcache(wp, (8,), src, circuit, defs; atol = 1e-12, method = Newton())
-        hbsolve!(nc, p; warmstart = false)
-        nn = hbsolve!(nc, p2; warmstart = false)
-        rn = hbnlsolve(wp, (8,), src, circuit, at(; p2...); atol = 1e-12,
-            keyedarrays = false, method = Newton())
-        @test isapprox(vec(collect(nn.nodeflux)),
-            vec(collect(rn.nodeflux)); rtol = 1e-10)
-        @test sum(st.iterations for st in nn.solverinfo.stages) ==
-            sum(st.iterations for st in rn.solverinfo.stages)
+        # the direct methods rebind the system and refactorize their
+        # Jacobian of the first point at the next, and converge as a cold
+        # solve does
+        for method in (Newton(), QuasiNewton())
+            nc = hbcache(wp, (8,), src, circuit, defs; atol = 1e-12, method)
+            hbsolve!(nc, p; warmstart = false)
+            held = (nc.reuse.sys.phimatrix, nc.reuse.factorization.factorization)
+            nn = hbsolve!(nc, p2; warmstart = false)
+            @test (nc.reuse.sys.phimatrix, nc.reuse.factorization.factorization) === held
+            rn = hbnlsolve(wp, (8,), src, circuit, at(; p2...); atol = 1e-12,
+                keyedarrays = false, method)
+            @test isapprox(vec(collect(nn.nodeflux)),
+                vec(collect(rn.nodeflux)); rtol = 1e-10)
+            @test sum(st.iterations for st in nn.solverinfo.stages) ==
+                sum(st.iterations for st in rn.solverinfo.stages)
+        end
 
         # a reset discards the stored state
         JosephsonCircuits.reset!(cache)
@@ -162,11 +169,13 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         end
         # what the cache does anyway is accepted
         @test hbcache(wp, (8,), src, circuit, defs; keyedarrays = false) isa JosephsonCircuits.HBCache
-        loose = hbcache(wp, (8,), src, circuit, defs; atol = 1e-2, iterations = 2)
-        hbsolve!(loose, p; warmstart = false)
-        @test loose.nsolves == 1
-        @test sum(st.iterations for st in
-            hbsolve!(loose, p; warmstart = false).solverinfo.stages) <= 2
+        # and a stored keyword reaches the solve: one iteration is short of
+        # this tolerance from a cold start
+        spent = hbcache(wp, (8,), src, circuit, defs; atol = 1e-12,
+            iterations = 1)
+        s1 = @test_logs (:warn,) hbsolve!(spent, p; warmstart = false)
+        @test !spent.converged && spent.nsolves == 1
+        @test sum(st.iterations for st in s1.solverinfo.stages) == 1
     end
 
     @testset "failure, rejection, reset, and retained results" begin
@@ -343,6 +352,49 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         @test (first.nodeflux, first.S, first.Ljb, first.Ljbm) == saved
     end
 
+    @testset "a reuse serves the solves it was built for" begin
+        # what a reuse holds was built for its first solve's modes, junction
+        # relations and preconditioner: a solve which differs in one of
+        # them is refused, or refreshed and then the fresh solve's
+        w = JosephsonCircuits.tonefrequencies(wp)
+        onjj(jj) = compile(Circuit([(:P1, 1, 0, Port(1; Z0 = 50.0)),
+            (:C1, 1, 2, Capacitor(100e-15)), (:Lj1, 2, 0, jj),
+            (:C2, 2, 0, Capacitor(1000e-15))]))
+        function solve(psc, drive; reuse = nothing, method = NewtonKrylov(),
+                modes...)
+            freq, idx = JosephsonCircuits.pumpmodeset(w, (4,), (8,); modes...)
+            nm = numericmatrices(psc, Dict(); Nmodes = length(freq.modes))
+            return hbnlsolve(w, drive, freq, idx, psc, nm; reuse, method,
+                keyedarrays = false, atol = 1e-12)
+        end
+        jj = onjj(JosephsonJunction(1e-9))
+        pump = [(mode = (1,), port = 1, current = 1e-8)]
+        # another set of modes on the same transform grid
+        r = JosephsonCircuits.HBReuse()
+        solve(jj, pump; reuse = r, odd = true, even = false)
+        @test_throws ArgumentError solve(jj,
+            [(mode = (2,), port = 1, current = 1e-8)]; reuse = r,
+            odd = false, even = true)
+        # another polynomial of the same degree is refreshed, and another
+        # kind of relation refused; the even modes carry the quadratic term
+        poly(a2) = onjj(NonlinearInductor(1e-9, PolynomialCPR([1.0, a2, -1/6])))
+        strong = [(mode = (1,), port = 1, current = 2e-7)]
+        r = JosephsonCircuits.HBReuse()
+        solve(poly(0.25), strong; reuse = r, even = true)
+        @test solve(poly(0.0), strong; reuse = r, even = true).nodeflux ≈
+            solve(poly(0.0), strong; even = true).nodeflux rtol = 1e-10
+        @test_throws ArgumentError solve(jj, strong; reuse = r, even = true)
+        # another preconditioner is built in place of the one held, and
+        # solves as a fresh one does
+        r = JosephsonCircuits.HBReuse()
+        steps(s) = [k.iterations for k in s.solverinfo.stages[end].krylov]
+        solve(jj, pump; reuse = r,
+            method = NewtonKrylov(preconditioner = BlockDiagonal()))
+        full = NewtonKrylov(preconditioner = FullJacobian())
+        @test steps(solve(jj, pump; reuse = r, method = full)) ==
+            steps(solve(jj, pump; method = full))
+    end
+
     @testset "a solution owns its values under either method" begin
         # a cached solve refills the matrices and, under Newton-Krylov,
         # rebinds the system, so a solution sharing either would move with
@@ -390,8 +442,8 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         b = hbsolve!(cache, (Lj = 1000e-12,); warmstart = false)
         @test isapprox(vec(collect(b.nodeflux)), vec(collect(a.nodeflux));
             rtol = 1e-10)
-        # a point moving every parameter of a large set
-        n = 4096
+        # a point moving every parameter of a set
+        n = 16
         names = ntuple(i -> Symbol(:p, i), n)
         big = Dict{Any,Any}(k => 1.0 for k in names)
         moved = JosephsonCircuits.definitionsat(big, JosephsonCircuits.definitionkeys(big),

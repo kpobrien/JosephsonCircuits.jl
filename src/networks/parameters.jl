@@ -173,12 +173,16 @@ porttype(d::PortDiagonal) = eltype(d.values)
 
 # the checks of the driver, and its scratch matrix, of the element type of
 # the output: the output like the input, and every port argument with one
-# column per frequency of the input or none
+# row per port, when it is a diagonal of port values, and one column per
+# frequency of the input or none
 function checkconversion(y, x, args...)
     axes(y) == axes(x) || throw(DimensionMismatch(
         lazy"Sizes of output $(size(y)) and input $(size(x)) must be equal."))
     trailing = axes(x)[3:end]
     for a in args
+        if a isa PortDiagonal && size(a.values, 1) != size(x, 1)
+            throw(DimensionMismatch(lazy"The $(size(a.values, 1)) port impedances do not match the $(size(x, 1)) ports of the input of size $(size(x))."))
+        end
         fa = frequencyaxes(a)
         (isnothing(fa) || fa == trailing) || throw(ArgumentError(
             lazy"A port argument of size $(size(a isa PortDiagonal ? a.values : a)) does not have one column per frequency of the input of size $(size(x))."))
@@ -228,6 +232,16 @@ function checktwoport(A::AbstractMatrix)
     return nothing
 end
 
+# the port impedances of a two port at one frequency: a number, or one or
+# two values, the first for the source port and the last for the load port
+checktwoportimpedances(a::Number) = nothing
+function checktwoportimpedances(a::AbstractVector)
+    if !(length(a) in (1, 2))
+        throw(DimensionMismatch(lazy"A two port takes one or two port impedances, not $(length(a))."))
+    end
+    return nothing
+end
+
 # the per frequency forms: allocating, and in place through a copy
 
 StoT(x::AbstractArray) = convertperfrequency(StoT!, x)
@@ -260,7 +274,8 @@ ZtoY!(x::AbstractArray) = copy!(x, ZtoY(x))
 YtoZ!(x::AbstractArray) = copy!(x, YtoZ(x))
 
 # the chain matrix conversions of a two port work on a copy of the input
-# with the port impedances as they are
+# with the port impedances as they are: one for both ports, or one for
+# each, per frequency or for every frequency
 ABCDtoS(x::AbstractArray; portimpedances = 50.0) =
     convertcopy(ABCDtoS!, x, portimpedances)
 StoABCD(x::AbstractArray; portimpedances = 50.0) =
@@ -311,7 +326,11 @@ BtoS!(x::AbstractArray; portimpedances = 50.0) =
     StoT(S)
 
 Convert the scattering parameter matrix `S` to a transmission matrix
-`T` and return the result.
+`T` and return the result. The first half of the ports are the inputs and
+the second half the outputs, and `T` relates the waves at the inputs to
+those at the outputs, `[b1; a1] = T*[a2; b2]`, so that the transmission
+matrix of networks in cascade, the outputs of each joined to the inputs of
+the next, is the product of theirs, `T1*T2`.
 
 # Examples
 ```jldoctest
@@ -426,7 +445,9 @@ end
 
 Convert the scattering parameter matrix `S` to an admittance parameter matrix
 `Y` and return the result. Assumes a port impedance of 50 Ohms unless
-specified with the `portimpedances` keyword argument.
+specified with the `portimpedances` keyword argument, a scalar, vector, or
+matrix of port impedances. A complex port impedance defines pseudo-waves,
+as described in [`ZtoS`](@ref).
 
 # Examples
 ```jldoctest
@@ -484,6 +505,10 @@ return the result. The first half of the ports are the inputs of the chain
 matrix and the second half its outputs, each with its own port impedances:
 `portimpedances` is a scalar, a vector with one value per port, or a matrix
 with one row per port and one column per frequency, 50 Ohms unless specified.
+With the voltages `V` and the currents `I` into the ports,
+`[V1; I1] = A*[V2; -I2]`: the output currents are taken flowing out of the
+output ports, so that the chain matrix of networks in cascade is the
+product of theirs.
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -540,7 +565,9 @@ end
 
 Convert the scattering parameter matrix `S` to the inverse chain (ABCD) matrix
 `B` and return the result. Note that despite the name, the inverse of the
-chain matrix is not equal to the inverse chain matrix, inv(A) ≠ B. The first
+chain matrix is not equal to the inverse chain matrix, inv(A) ≠ B: with the
+currents into the ports, `[V2; I2] = B*[V1; -I1]`, the chain matrix of the
+network seen from its outputs. The first
 half of the ports are the inputs of the chain matrix and the second half its
 outputs, each with its own port impedances: `portimpedances` is a scalar, a
 vector with one value per port, or a matrix with one row per port and one
@@ -599,7 +626,9 @@ end
 @doc """
     TtoS(T)
 
-Convert the transmission matrix `T` to a scattering parameter matrix `S` and return the result.
+Convert the transmission matrix `T` to a scattering parameter matrix `S` and
+return the result; the inverse of [`StoT`](@ref), which gives the
+convention.
 
 # Examples
 ```jldoctest
@@ -873,8 +902,8 @@ julia> Y = Complex{Float64}[1/50 1/50;1/50 1/50];JosephsonCircuits.YtoA(Y)
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
-Communications Engineering, Second Edition. Artech House, 2006
-with change of overall sign on (suspected typo).
+Communications Engineering, Second Edition. Artech House, 2006,
+with the overall sign changed (a suspected typo there).
 """ YtoA
 
 """
@@ -973,6 +1002,8 @@ return the result. The first half of the ports are the inputs of the chain
 matrix and the second half its outputs, each with its own port impedances:
 `portimpedances` is a scalar, a vector with one value per port, or a matrix
 with one row per port and one column per frequency, 50 Ohms unless specified.
+`A` is the chain matrix of [`StoA`](@ref), `[V1; I1] = A*[V2; -I2]` with the
+currents into the ports.
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -1386,7 +1417,11 @@ end
 
 Convert the 2 port chain (ABCD) matrix `ABCD` to the scattering parameter
 matrix `S` and return the result. Assumes a port impedance of 50 Ohms unless
-specified with the `portimpedances` keyword argument.
+specified with the `portimpedances` keyword argument: a number for both
+ports, a vector of one or two impedances, the first for the input port and
+the last for the output port, or a matrix of such columns, one per
+frequency. The waves are the pseudo-waves of [`ZtoS`](@ref), with the
+square root of each port impedance.
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -1394,6 +1429,7 @@ Communications Engineering, Second Edition. Artech House, 2006.
 """ ABCDtoS
 
 function ABCDtoS!(ABCD::AbstractMatrix,portimpedances)
+    checktwoportimpedances(portimpedances)
     return ABCDtoS!(ABCD,first(portimpedances),last(portimpedances))
 end
 
@@ -1404,9 +1440,13 @@ function ABCDtoS!(A::AbstractMatrix,RS,RL)
     A21 = A[2,1]
     A22 = A[2,2]
 
+    # the square root of each port impedance, as the pseudo-waves take it
+    sRS = sqrt(RS)
+    sRL = sqrt(RL)
+
     A[1,1] = (A11*RL+A12-A21*RS*RL-A22*RS)/(A11*RL+A12+A21*RS*RL+A22*RS)
-    A[1,2] = 2*sqrt(RS*RL)*(A11*A22-A12*A21)/(A11*RL+A12+A21*RS*RL+A22*RS)
-    A[2,1] = 2*sqrt(RS*RL)/(A11*RL+A12+A21*RS*RL+A22*RS)
+    A[1,2] = 2*sRS*sRL*(A11*A22-A12*A21)/(A11*RL+A12+A21*RS*RL+A22*RS)
+    A[2,1] = 2*sRS*sRL/(A11*RL+A12+A21*RS*RL+A22*RS)
     A[2,2] = (-A11*RL+A12-A21*RS*RL+A22*RS)/(A11*RL+A12+A21*RS*RL+A22*RS)
     return A
 end
@@ -1417,7 +1457,9 @@ end
 
 Convert the scattering parameter matrix `S` to the 2 port chain (ABCD) matrix and
 return the result. Assumes a port impedance of 50 Ohms unless specified with the
-`portimpedances` keyword argument.
+`portimpedances` keyword argument, one impedance for both ports or one for
+each, as for [`ABCDtoS`](@ref). A two port which transmits nothing,
+`S[2,1] == 0`, has no chain matrix, and a `SingularException` is thrown.
 
 # References
 Russer, Peter. Electromagnetics, Microwave Circuit, And Antenna Design for
@@ -1425,6 +1467,7 @@ Communications Engineering, Second Edition. Artech House, 2006.
 """ StoABCD
 
 function StoABCD!(S::AbstractMatrix,portimpedances)
+    checktwoportimpedances(portimpedances)
     return StoABCD!(S,first(portimpedances),last(portimpedances))
 end
 
@@ -1435,9 +1478,19 @@ function StoABCD!(S::AbstractMatrix,RS,RL)
     S21 = S[2,1]
     S22 = S[2,2]
 
-    S[1,1] = sqrt(RS/RL)*((1+S11)*(1-S22)+S21*S12)/(2*S21)
-    S[1,2] = sqrt(RS*RL)*((1+S11)*(1+S22)-S21*S12)/(2*S21)
-    S[2,1] = 1/sqrt(RS*RL)*((1-S11)*(1-S22)-S21*S12)/(2*S21)
-    S[2,2] = sqrt(RL/RS)*((1-S11)*(1+S22)+S21*S12)/(2*S21)
+    # a two port which transmits nothing has no chain matrix; the
+    # factorization of `StoA` finds its second pivot zero
+    if iszero(S21)
+        throw(SingularException(2))
+    end
+
+    # the square root of each port impedance, as the pseudo-waves take it
+    sRS = sqrt(RS)
+    sRL = sqrt(RL)
+
+    S[1,1] = sRS/sRL*((1+S11)*(1-S22)+S21*S12)/(2*S21)
+    S[1,2] = sRS*sRL*((1+S11)*(1+S22)-S21*S12)/(2*S21)
+    S[2,1] = 1/(sRS*sRL)*((1-S11)*(1-S22)-S21*S12)/(2*S21)
+    S[2,2] = sRL/sRS*((1-S11)*(1+S22)+S21*S12)/(2*S21)
     return S
 end

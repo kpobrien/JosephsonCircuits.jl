@@ -5,7 +5,8 @@
 #     julia --project=. benchmark/smoke.jl
 const PROJECT = Base.active_project()
 
-for file in ("frontend-followup.jl", "circuit-preparation.jl", "sensitivities.jl")
+for file in ("frontend-followup.jl", "circuit-preparation.jl", "sensitivities.jl",
+        "solve.jl", "latency.jl")
     withenv("OPENBLAS_NUM_THREADS" => "1") do
         run(`$(Base.julia_cmd()) --startup-file=no --project=$(PROJECT)
             --threads=1 $(joinpath(@__DIR__, file)) smoke --smoke`)

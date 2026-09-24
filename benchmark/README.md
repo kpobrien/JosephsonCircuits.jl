@@ -18,13 +18,23 @@ julia --startup-file=no --project=. benchmark/circuit-preparation.jl main
 - `sensitivities.jl`: the residual derivatives of a pumped junction chain
   and the sensitivity sweeps from its operating point, for two components,
   where the setup of each call is most of the cost, and for every one.
+- `solve.jl`: the hard solves of a resonantly phase matched JTWPA: the
+  pumped gain sweep of a 512 cell line, the pump solve of two tones of
+  equal strength and of a strong pump on a long line, and a batch of four
+  pumped transients. Each row ends with whether the solve converged.
+- `latency.jl`: the load time, the first solves of a JPA in frequency and
+  in time and of a two tone JTWPA, their compile times, and the number of
+  methods the package defines and of method instances each first solve
+  compiled. With `--precompile` it first builds the precompiled image and
+  times that too.
 
-`--smoke` runs every case at a small size with few samples. Nothing it
-prints is a measurement; it is what `benchmark/smoke.jl` and the continuous
-integration job use to check that the scripts still run.
+`--smoke` runs every case at a small size with few samples, and does not
+precompile. Nothing it prints is a measurement; it is what
+`benchmark/smoke.jl` and the continuous integration job use to check that
+the scripts still run.
 
 Compare two revisions by running the same script in a fresh process for
 each, with one Julia thread and one BLAS thread, from the same depot, and
 take several samples: the single-shot figures are noisy, the allocation
-counts are not. A revision's precompilation, load time and first solve are
-measured from a clean depot, in a process which does nothing else.
+counts are not. `latency.jl` in particular needs a fresh process of its
+own, since what it measures is what that process compiles.

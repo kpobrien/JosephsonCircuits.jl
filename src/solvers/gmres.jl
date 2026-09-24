@@ -10,8 +10,10 @@ system of dimension `n`. Holds the `n x (m+1)` Arnoldi basis `V`, the
 `(m+1) x m` Hessenberg matrix `H` as the Givens rotations leave it, the raw
 Arnoldi Hessenberg `Harnoldi` beside it, the Givens rotations `cs` and `sn` which
 reduce it, the least squares right hand side `s`, its solution `y`, three
-length `n` work vectors, and the two length `m` staging buffers `hd` and
-`cd` of the block Gram-Schmidt projection, allocated like `V`.
+length `n` work vectors, the two length `m` staging buffers `hd` and
+`cd` of the block Gram-Schmidt projection, allocated like `V`, and
+`external`, the workspace an external linear solver ([`KrylovJL`](@ref))
+keeps between the solves of one system, `nothing` until one is made.
 
 The dominant cost is `V`, which is `n*(m+1)` numbers, so `m` trades memory and
 orthogonalization work against restart frequency. It is not paid up front:
@@ -50,6 +52,9 @@ mutable struct GMRESWorkspace{T<:AbstractFloat,TV<:AbstractVector{T},TM<:Abstrac
     # `V`, so that only the finished column of `H` crosses to the host
     hd::TV
     cd::TV
+    # an external solver's own workspace, made at its first solve and kept
+    # for the next; never read by `gmres!`
+    external::Any
 end
 
 function GMRESWorkspace(n::Integer, m::Integer, ::Type{T} = Float64) where {T<:AbstractFloat}
@@ -75,7 +80,7 @@ function GMRESWorkspace(b::AbstractVector{T}, m::Integer) where {T<:AbstractFloa
         zeros(T, m + 1, m), zeros(T, m + 1, m),
         Vector{T}(undef, m), Vector{T}(undef, m),
         Vector{T}(undef, m + 1), Vector{T}(undef, m),
-        similar(b, m), similar(b, m))
+        similar(b, m), similar(b, m), nothing)
 end
 
 # the columns a basis is born with. Sixteen covers the Arnoldi steps of a
@@ -273,7 +278,9 @@ end
 Solve the reduced `j x j` triangular least squares problem by back
 substitution, assemble the correction `u = V[:, 1:j]*y` in the Krylov basis,
 undo the right preconditioning once with `Mop!` (or not at all when
-`Mop! === nothing`), and add the result to `x` in place. A zero diagonal
+`Mop! === nothing`), and add the result to `x` in place. After a cycle of
+one step the preconditioned basis vector its Arnoldi step left in `ws.z`
+is scaled and added instead, without applying `Mop!` again. A zero diagonal
 entry, which can only arise from an exact breakdown, contributes a zero
 coefficient rather than a division by zero. Allocation free.
 """
@@ -314,6 +321,15 @@ function gmres_correction!(x::AbstractVector{T}, ws::GMRESWorkspace{T},
             acc -= H[i, k]*y[k]
         end
         y[i] = acc/H[i, i]
+    end
+    if j == 1 && !isnothing(Mop!)
+        # a cycle of one Arnoldi step, which is every step against an exact
+        # preconditioner: `z` still holds `inv(M)*V[:, 1]` from that step,
+        # so the correction is a multiple of it and needs no second
+        # application. The test is on the cycle's length, not on the rank:
+        # after a longer cycle `z` holds the image of its last vector.
+        rank == 1 && axpy!(y[1], z, x)
+        return x
     end
     j = rank
     fill!(u, zero(T))
@@ -408,7 +424,8 @@ Preconditioning is applied on the right, solving `A*inv(M)*u = b` and then
 equal to the true residual of the original system, so the stopping test is on
 `norm(b - A*x)` and does not depend on the quality of `M`. Because `M` is held
 fixed across a solve, the preconditioner is applied once per Arnoldi step and
-once more per restart, rather than being stored for every basis vector.
+once more per cycle of two or more steps, rather than being stored for every
+basis vector; a cycle of one step reuses the application its step made.
 
 The Arnoldi basis is built by block classical Gram-Schmidt with an
 unconditional second pass, CGS2 ([`gmres_orthogonalize!`](@ref)). A
@@ -427,7 +444,9 @@ steps across all cycles, `cycles` the number of restart cycles begun,
 workspace still holds, `reason` is one of
 `:converged`, `:breakdown` (an unhappy breakdown: the Krylov space went
 invariant without the residual coming down), `:stagnation` (a cycle failed
-to reduce the explicit residual, or produced a non-finite one), or
+to reduce the explicit residual, or produced a non-finite one; a
+non-finite product or preconditioner application ends its cycle at that
+Arnoldi step and leaves `x` where the cycle started), or
 `:iterationlimit`, `precondtime` the seconds spent applying the
 preconditioner, and `residualvector` the final residual `b - A*x` when it
 was formed explicitly (`nothing` otherwise; the caller reads it with `get`,
@@ -522,6 +541,7 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
         s[1] = beta
 
         j = 0
+        nonfinite = false
         while j < m
             j += 1
             # the Arnoldi step on A*inv(M)
@@ -540,6 +560,15 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
             resnorm = gmres_applyrotations!(H, cs, sn, s, j)
             totaliterations += 1
             products += 1
+
+            # A non-finite value from the operator or the preconditioner
+            # reaches the recurrence residual at once, and makes both tests
+            # below false: every later step would build on it and the
+            # correction would write it into `x`. The cycle ends here.
+            if !isfinite(resnorm)
+                nonfinite = true
+                break
+            end
 
             # A subdiagonal which collapsed relative to the incoming vector
             # means the Krylov space is invariant and there is no valid next
@@ -560,6 +589,17 @@ function gmres!(x::AbstractVector{T}, Aop_, b::AbstractVector{T},
 
             V = ensurecolumns!(ws, j + 1)
             @views V[:, j+1] .= w ./ hsub
+        end
+
+        if nonfinite
+            # nothing of this cycle is usable: `x` is left where the cycle
+            # started, whose explicit residual is `beta*V[:, 1]`, and no
+            # cycle is left in the workspace for a harvest
+            @views w .= beta .* V[:, 1]
+            resnorm = beta
+            lastcycle = 0
+            stagnated = true
+            break
         end
 
         lastcycle = j
@@ -662,7 +702,10 @@ preconditioner escalation and the stagnation handling are untouched, and
 the mode coupling preconditioner is passed through unchanged because it is
 applied by `mul!`, which is what Krylov.jl's `N` argument consumes.
 Deflation recycling is unavailable, since it depends on the internal
-workspace.
+workspace. The Krylov.jl workspace, which allocates a restarting method's
+whole basis when it is made, is made at the first linear solve of a system
+and kept for the rest; `kwargs` naming its size (`memory`, `window`) go to
+it, the others to each solve.
 """
 struct KrylovJL <: AbstractHBLinearSolver
     method::Symbol

@@ -27,6 +27,10 @@ end
 # tasks only when there are more of them than tasks
 connectbatchsize(n, nbatches) = nbatches > 1 && n > nbatches ? cld(n, nbatches) : n
 
+# the size of an array of `n` by `n` matrices with the dimensions after the
+# first two of `S`, one matrix per frequency as in `S`
+squaresize(n, S) = (n, n, Base.tail(Base.tail(size(S)))...)
+
 # the checks of a connection of the ports `k` and `l` of `Sa` into `Sout`
 function checkintraconnect(Sout, Sa, k::Int, l::Int)
     if ndims(Sa) != ndims(Sout)
@@ -82,7 +86,7 @@ end
 # `S`, which the messages name `Cname` and `Sname`
 function checkcovariance(C, S, Cname, Sname)
     if size(C) != size(S)
-        throw(DimensionMismatch(lazy"The size of `$(Cname)` must the same as the size of `$(Sname)`."))
+        throw(DimensionMismatch(lazy"The size of `$(Cname)` must be the same as the size of `$(Sname)`."))
     end
     return nothing
 end
@@ -99,7 +103,7 @@ function checkinterconnect(Sout, Sa, Sb, k::Int, l::Int)
     end
 
     if ndims(Sa) < 2
-        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have atleast two dimensions."))
+        throw(DimensionMismatch(lazy"`Sout`, `Sa`, and `Sb` must have at least two dimensions."))
     end
 
     if size(Sa,1) != size(Sa,2)
@@ -197,11 +201,10 @@ in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 function intraconnectS(Sa::AbstractArray{T,N}, k::Int, l::Int;
     nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
-    # make a tuple with the size of the array
-    # the first two dimensions are two smaller
-    sizeS = NTuple{N}(ifelse(i<=2,size(Sa,i)-2,size(Sa,i)) for i in 1:ndims(Sa))
+    # the size of the output: the first two dimensions are two smaller
+    sizeS = squaresize(size(Sa,1)-2, Sa)
 
-    # allocate an array of zeros of the same type as Sa
+    # an uninitialized array like Sa, which the connection fills
     Sout = similar(Sa,sizeS)
 
     # remove the self loop
@@ -340,11 +343,10 @@ in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 function intraconnectS(Sa::AbstractArray{T,N}, Ca::AbstractArray{T,N}, k::Int,
     l::Int; nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
-    # make a tuple with the size of the array
-    # the first two dimensions are two smaller
-    sizeS = NTuple{N}(ifelse(i<=2,size(Sa,i)-2,size(Sa,i)) for i in 1:ndims(Sa))
+    # the size of the output: the first two dimensions are two smaller
+    sizeS = squaresize(size(Sa,1)-2, Sa)
 
-    # allocate an array of zeros of the same type as Sa
+    # uninitialized arrays like Sa and Ca, which the connection fills
     Sout = similar(Sa,sizeS)
     Cout = similar(Ca,sizeS)
 
@@ -390,8 +392,10 @@ function intraconnectS_inner!(Sout, Cout, Sa, Ca, k::Int, l::Int,
     range3 = l+1:m
     ranges = (range1,range2,range3)
 
-    il_lk_ll_ik = similar(Sa,m-2)
-    ik_kl_kk_il = similar(Sa,m-2)
+    # the rows of the solve, of the element type of the output, which
+    # holds the products of the inputs
+    il_lk_ll_ik = similar(Sout,m-2)
+    ik_kl_kk_il = similar(Sout,m-2)
 
     @inbounds for b in batch
         # the transpose of gammaii - Sii, whose solves give rows
@@ -524,13 +528,11 @@ function interconnectS(Sa::AbstractArray{T,N}, Sb::AbstractArray{T,N},
     Ca::AbstractArray{T,N}, Cb::AbstractArray{T,N}, k::Int, l::Int;
     nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
-    # make a tuple with the size of the array
-    # the first two dimensions are two smaller
-    sizeSa = size(Sa)
-    sizeSb = size(Sb)
-    sizeS = NTuple{N}(ifelse(i<=2,sizeSa[i]+sizeSb[i]-2,sizeSa[i]) for i in 1:length(sizeSa))
+    # the size of the output: the first two dimensions are the sums of
+    # those of Sa and Sb less two
+    sizeS = squaresize(size(Sa,1)+size(Sb,1)-2, Sa)
 
-    # allocate an array of zeros of the same type as Sa
+    # uninitialized arrays like the inputs, which the connection fills
     Sout = similar(Sa,sizeS)
     Cout = similar(Ca,sizeS)
 
@@ -591,10 +593,12 @@ function interconnectS_inner!(Sout, Cout, Sa, Sb, Ca, Cb, k::Int, l::Int,
     # this indexes across the second part
     ranges2 = (range2a, range2b)
 
-    a_ik = similar(Sa,m)
-    a_ik_b_ll = similar(Sa,m)
-    b_il = similar(Sb,n)
-    b_il_a_kk = similar(Sb,n)
+    # the rows of the solve, of the element type of the output: they mix
+    # the entries of Sa and Sb, which may differ in element type
+    a_ik = similar(Sout,m)
+    a_ik_b_ll = similar(Sout,m)
+    b_il = similar(Sout,n)
+    b_il_a_kk = similar(Sout,n)
 
     # loop over the axes of the scattering parameter matrices after the first
     # two (eg. frequencies).
@@ -780,13 +784,11 @@ in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 function interconnectS(Sa::AbstractArray{T,N}, Sb::AbstractArray{T,N}, k::Int,
     l::Int; nbatches::Int = Base.Threads.nthreads()) where {T,N}
 
-    # make a tuple with the size of the array
-    # the first two dimensions are two smaller
-    sizeSa = size(Sa)
-    sizeSb = size(Sb)
-    sizeS = NTuple{N}(ifelse(i<=2,sizeSa[i]+sizeSb[i]-2,sizeSa[i]) for i in 1:length(sizeSa))
+    # the size of the output: the first two dimensions are the sums of
+    # those of Sa and Sb less two
+    sizeS = squaresize(size(Sa,1)+size(Sb,1)-2, Sa)
 
-    # allocate an array of zeros of the same type as Sa
+    # an uninitialized array like Sa, which the connection fills
     Sout = similar(Sa,sizeS)
 
     # connect the networks
@@ -1062,7 +1064,9 @@ Cascade the scattering parameter matrix `Sa` with the scattering matrix `Sb`
 and return the combined scattering matrix. Each is a `2n` port network
 whose first `n` ports are its inputs and last `n` its outputs, and the
 outputs of `Sa` are joined to the inputs of `Sb`, all at one reference
-impedance.
+impedance. Arrays of matrices, one per frequency along the dimensions
+after the first two, must have the same such dimensions; the element type
+of the result is that of the solves of the entries of both.
 
 # Examples
 ```jldoctest
@@ -1086,6 +1090,15 @@ Theory and Techniques, vol. 9, no. 5, pp. 454-454, September 1961, doi:
 """
 function cascadeS(Sa, Sb)
 
+    if size(Sa)[3:end] != size(Sb)[3:end]
+        throw(DimensionMismatch(lazy"`Sa` and `Sb` must have the same dimensions after the first two, not sizes $(size(Sa)) and $(size(Sb))."))
+    end
+    # both in the element type of the solves of the entries of both, which
+    # copies only an input of another type
+    T = promote_type(eltype(Sa), eltype(Sb))
+    Tout = typeof(one(T) / one(T))
+    Sa = convert(AbstractArray{Tout}, Sa)
+    Sb = convert(AbstractArray{Tout}, Sb)
     S = similar(Sa)
     # loop over the dimensions of the array greater than 2
     for i in CartesianIndices(axes(S)[3:end])
@@ -1466,6 +1479,36 @@ function checknetworknames(networks::AbstractVector{<:PassiveNetwork})
     return nothing
 end
 
+# the network and the index within it of every port of `networks`, keyed
+# by the name of the port; a port named twice is refused
+function portindices(networks::AbstractVector{PassiveNetwork{T,N}}) where {T,N}
+    portdict = Dict{Tuple{T,Int},Tuple{Int,Int}}()
+    for i in eachindex(networks)
+        for (j,port) in enumerate(networks[i].port_names)
+            if haskey(portdict,port)
+                throw(ArgumentError(lazy"Duplicate port $(port) in network $(networks[i].network_name)."))
+            end
+            portdict[port] = (i,j)
+        end
+    end
+    return portdict
+end
+
+# the entries of `portdict` of the two ports the connection
+# `(src_name, dst_name, src_port, dst_port)` joins, refusing a port not in it
+function connectionports(portdict, connection)
+    src_name, dst_name, src_port, dst_port = connection
+    src = (src_name,src_port)
+    dst = (dst_name,dst_port)
+    if !haskey(portdict,src)
+        throw(ArgumentError(lazy"Source (network name, port number) ($(src_name), $(src_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+    end
+    if !haskey(portdict,dst)
+        throw(ArgumentError(lazy"Destination (network name, port number) ($(dst_name), $(dst_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
+    end
+    return portdict[src], portdict[dst]
+end
+
 function calc_port_names(network_name,scattering_parameters)
     return [(network_name,i) for i in 1:size(scattering_parameters,1)]
 end
@@ -1499,9 +1542,11 @@ end
 
 """
     get_ports(network::Tuple{T, N}) where {T,N}
+    get_ports(network::Tuple{T, N, N}) where {T,N}
 
-Return the ports for a network `network`. The ports are generated based on
-the network name.
+Return the ports for a network `network` given without port names,
+`(name, S)` or `(name, S, C)`. The ports are generated based on the network
+name, numbered in order.
 
 # Examples
 ```jldoctest
@@ -1511,19 +1556,8 @@ julia> JosephsonCircuits.get_ports((:S1,[0.0 1.0;1.0 0.0]))
  (:S1, 2)
 ```
 """
-function get_ports(network::Tuple{T, N}) where {T,N}
-    # a vector of tuples containing the ports for each of the networks in the
-    # same order the networks were supplied. eg.
-    # [(:S1,1),(:S1,2)]
-    return [(network[1],i) for i in 1:size(network[2],1)]
-end
-
-function get_ports(network::Tuple{T, N, N}) where {T,N}
-    # a vector of tuples containing the ports for each of the networks in the
-    # same order the networks were supplied. eg.
-    # [(:S1,1),(:S1,2)]
-    return [(network[1],i) for i in 1:size(network[2],1)]
-end
+get_ports(network::Union{Tuple{T, N}, Tuple{T, N, N}}) where {T,N} =
+    calc_port_names(network[1], network[2])
 
 """
     get_ports(network::Tuple{T, N, Vector{Tuple{T, Int}}}) where {T,N}
@@ -1727,16 +1761,19 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
 
     # Store the scattering parameter matrices of the splitters, so we can
     # reuse the matrices if the same splitter is used twice. The key is the
-    # size the scattering matrix and the value is the matrix itself.
+    # number of ports of the splitter and the value is the matrix itself.
     splitters = Dict{Int,N}()
     splitter_covariances = Dict{Int,N}()
 
-    # the names taken, so that each splitter gets a new one
+    # the names taken, by the networks and by their ports, whose names need
+    # not be those of their networks, so that each splitter gets a new one
     names = Set{T}(network.network_name for network in networks)
+    for network in networks, port in network.port_names
+        push!(names, first(port))
+    end
 
     # loop over the connections, converting to the flattened format and adding
     # splitters where more than two ports are connected.
-    # for c in connections
     for k in eachindex(connections)
         c = connections[k]
         # if less than two tuples, not a valid connection
@@ -1758,23 +1795,9 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
                 # make all of the splitters
                 for i in 1:Nsplitters
 
-                    # make a new name for the splitter
-                    id = splittername!(names)
-
-                    # compute the size of the splitter
-                    # assume we will always make a 3 port splitter
-                    sizeS = NTuple{ndims(netflat[1].scattering_parameters)}(ifelse(j<=2,3,size(netflat[1].scattering_parameters,j)) for j in 1:ndims(netflat[1].scattering_parameters))
-
-                    # check if we have already made this splitter and make a new
-                    # one if not.
-                    if !haskey(splitters,2)
-                        splitters[2] = S_splitter!(similar(N,sizeS))
-                        splitter_covariances[2] = zeros(eltype(N),sizeS)
-                    end
-
-                    # add the splitter to the vector of networks
-                    # push!(netflat,(id,splitters[2],get_ports((id,splitters[2]))))
-                    push!(netflat,PassiveNetwork(id,splitters[2],splitter_covariances[2],get_ports((id,splitters[2]))))
+                    # a 3 port splitter with a new name
+                    pushsplitter!(netflat, splitters, splitter_covariances,
+                        splittername!(names), 3)
 
                 end
 
@@ -1811,23 +1834,12 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
                 end
 
             else
-                # make a new name
+                # a splitter of as many ports as the connection, with a
+                # new name
                 id = splittername!(names)
+                pushsplitter!(netflat, splitters, splitter_covariances, id,
+                    length(c))
 
-                # compute the size of the splitter
-                sizeS = NTuple{ndims(netflat[1].scattering_parameters)}(ifelse(j<=2,length(c),size(netflat[1].scattering_parameters,j)) for j in 1:ndims(netflat[1].scattering_parameters))
-
-                # check if we have already made this splitter and make a new one
-                # if not.
-                if !haskey(splitters,length(c))
-                    splitters[length(c)] = S_splitter!(similar(N,sizeS))
-                    splitter_covariances[length(c)] = zeros(eltype(N),sizeS)
-                end
-
-                # add the splitter to the vector of networks
-                # push!(netflat,(id,splitters[length(c)],get_ports((id,splitters[length(c)]))))
-                push!(netflat,PassiveNetwork(id,splitters[length(c)],splitter_covariances[length(c)],get_ports((id,splitters[length(c)]))))
-        
                 # add the connections to the splitter
                 for j in eachindex(c)
                     push!(conflat,(id,c[j][1],j,c[j][2]))
@@ -1837,6 +1849,22 @@ function add_splitters(networks::AbstractVector{PassiveNetwork{T,N}},
     end
 
     return netflat, conflat
+end
+
+# add to `netflat` a splitter of `nports` ports named `id`, of the array
+# type and frequencies of the networks, whose scattering matrix and zero
+# covariance are made on the first use of that number of ports and shared
+# by every splitter of it after
+function pushsplitter!(netflat::AbstractVector{PassiveNetwork{T,N}},
+        splitters, splitter_covariances, id, nports) where {T,N}
+    if !haskey(splitters, nports)
+        sizeS = squaresize(nports, netflat[1].scattering_parameters)
+        splitters[nports] = S_splitter!(similar(N, sizeS))
+        splitter_covariances[nports] = zeros(eltype(N), sizeS)
+    end
+    push!(netflat, PassiveNetwork(id, splitters[nports],
+        splitter_covariances[nports], calc_port_names(id, splitters[nports])))
+    return netflat
 end
 
 # a network name for a splitter which no other network has, recorded in
@@ -1925,13 +1953,13 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
         # connect the networks and find the ports of the connected network
         if noise
             connected_network, connected_noise = intraconnectS(scattering_parameters[src_node],noise_covariances[src_node],src_port_index,dst_port_index;nbatches=nbatches)
-            # update the noise_covariances for the src and replace the src with an empty array.
+            # the source takes the connected noise covariances
             noise_covariances[src_node] = connected_noise
         else
             connected_network = intraconnectS(scattering_parameters[src_node],src_port_index,dst_port_index;nbatches=nbatches)
         end
 
-        # update the networkdata for the src and replace the src with an empty array.
+        # the source takes the connected network
         scattering_parameters[src_node] = connected_network
 
         connected_ports = intraconnectSports(ports[src_node],src_port_index,dst_port_index)
@@ -1952,13 +1980,12 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
                 connected_noise = pop!(noise_covariance_storage,d)
             end
         else
-            # make a tuple with the size of the array
-            # the first two dimensions are two smaller
-            sizeSx = size(scattering_parameters[src_node])
-            sizeSy = size(scattering_parameters[dst_node])
-            sizeS = NTuple{length(sizeSx)}(ifelse(i<=2,sizeSx[i]+sizeSy[i]-2,sizeSx[i]) for i in 1:length(sizeSx))
+            # the size of the connected network: the first two dimensions
+            # are the sums of those of the two networks less two
+            sizeS = squaresize(d, scattering_parameters[src_node])
 
-            # allocate an array of zeros of the same type as Sx
+            # uninitialized arrays like those of the source, which the
+            # connection fills
             connected_network = similar(scattering_parameters[src_node],sizeS)
             if noise
                 connected_noise = similar(noise_covariances[src_node],sizeS)
@@ -1992,7 +2019,8 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
             end
         end
 
-        # update the networkdata for the src and replace the src with an empty array.
+        # the source takes the connected network and the destination an
+        # empty array
         scattering_parameters[src_node] = connected_network
         scattering_parameters[dst_node] = Array{eltype(connected_network)}(undef,ntuple(zero,ndims(connected_network)))
         
@@ -2016,37 +2044,27 @@ function make_connection!(g::Graphs.SimpleGraphs.SimpleDiGraph{Int},
     # for each connection originating there, so loop over those, and
     # update the weights
     for k in eachindex(g.fadjlist[src_node])
-        # update the weights of fweightlist[src_node][k]
-        if src_node == g.fadjlist[src_node][k]
-            # self connections always reduce the size so give them zero weight
-            fweightlist[src_node][k] = 0
-        else
-            src_weight = size(scattering_parameters[src_node],1)-1
-            dst_weight = size(scattering_parameters[g.fadjlist[src_node][k]],1)-1
-            connection_weight = src_weight*dst_weight
-            fweightlist[src_node][k] = connection_weight
-        end
+        fweightlist[src_node][k] = connectionweight(scattering_parameters,
+            src_node, g.fadjlist[src_node][k])
     end
     # also update the weights for any connection that ends at the
     # src_node. those nodes are found in g.badjlist[src_node]
     for k in g.badjlist[src_node]
         for l in eachindex(g.fadjlist[k])
             if g.fadjlist[k][l] == src_node
-                 # update the weights of fweightlist[k][l]
-                if src_node == k
-                    # self connections always reduce the size so give them zero weight
-                    fweightlist[k][l] = 0
-                else
-                    src_weight = size(scattering_parameters[src_node],1)-1
-                    dst_weight = size(scattering_parameters[k],1)-1
-                    connection_weight = src_weight*dst_weight
-                    fweightlist[k][l] = connection_weight
-                end
+                fweightlist[k][l] = connectionweight(scattering_parameters,
+                    k, src_node)
             end
         end
     end
     return dst_node
 end
+
+# the weight of a connection between the networks `i` and `j`, by which the
+# connections are ordered: the product of their numbers of ports less one,
+# and zero for a self connection, which always makes a network smaller
+connectionweight(scattering_parameters, i, j) = i == j ? 0 :
+    (size(scattering_parameters[i],1)-1)*(size(scattering_parameters[j],1)-1)
 
 # the networks as `PassiveNetwork`s with their ports named, and splitters
 # added where more than two ports meet, and the connections between pairs
@@ -2139,17 +2157,8 @@ function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
     # where the index is the node index
     ports = [network.port_names for network in networks]
 
-    # make the port dictionary
-    portdict = Dict{Tuple{T,Int},Tuple{Int,Int}}()
-    for i in eachindex(networks)
-        for (j,port) in enumerate(networks[i].port_names)
-            if haskey(portdict,port)
-                throw(ArgumentError(lazy"Duplicate port $(port) in network $(networks[i].network_name)."))
-            else
-                portdict[port] = (i,j)
-            end
-        end
-    end
+    # the network and the index within it of each port
+    portdict = portindices(networks)
 
     # make the adjacency lists for the connections
     fadjlist = Vector{Vector{Int}}(undef,length(networks))
@@ -2173,21 +2182,11 @@ function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
     end
 
     # loop through the connections and populate the adjacency lists
-    for (src_name, dst_name, src_port, dst_port) in connections
+    for connection in connections
 
-        src = (src_name,src_port)
-        dst = (dst_name,dst_port)
-
-        # check if the source and destination networks exist
-        if !haskey(portdict,src)
-            throw(ArgumentError(lazy"Source (network name, port number) ($(src_name), $(src_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
-        end
-        if !haskey(portdict,dst)
-            throw(ArgumentError(lazy"Destination (network name, port number) ($(dst_name), $(dst_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
-        end
-
-        src_index, src_port_index = portdict[src]
-        dst_index, dst_port_index = portdict[dst]
+        src_name, dst_name, src_port, dst_port = connection
+        (src_index, src_port_index), (dst_index, dst_port_index) =
+            connectionports(portdict, connection)
 
         # the source node entry points to the destination node 
         push!(fadjlist[src_index],dst_index)
@@ -2198,13 +2197,8 @@ function connectS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
         # only store the source connections
         push!(fconnectionlist[src_index],(src_name, dst_name, src_port, dst_port))
 
-        src_weight = size(scattering_parameters[src_index],1)-1
-        dst_weight = size(scattering_parameters[dst_index],1)-1
-        connection_weight = src_weight*dst_weight
-        if src_index == dst_index
-            connection_weight = 0
-        end
-        push!(fweightlist[src_index],connection_weight)
+        push!(fweightlist[src_index],
+            connectionweight(scattering_parameters, src_index, dst_index))
 
     end
 
@@ -2339,15 +2333,20 @@ end
         noise::Bool = false, Nmodes::Integer = 1,
         nbatches::Int = Base.Threads.nthreads())
 
-Return the network and ports resulting from connecting the networks in
+Return the networks and ports resulting from connecting the networks in
 `networks` according to the connections in `connections`. `networks` is a
 vector of tuples of the network name and scattering parameter matrix such as
-[("network1name",rand(Complex{Float64},2,2),
-("network2name",rand(Complex{Float64},2,2)]. `connections` is a vector of
-vectors of tuples of networks names and ports such as [[("network1name",1),
-("network2name",2)]] where network1 and network2 are the two networks being
-connected and 1 and 2 are integers describing the ports to connect. The
-scattering parameters of all the networks are `Array`s of one type.
+[("network1name",rand(Complex{Float64},2,2)),
+("network2name",rand(Complex{Float64},2,2))], optionally with the
+names of the ports as a third element, or with a noise covariance matrix as
+the third element and the port names as a fourth. `connections` is a
+vector of vectors of tuples of networks names and ports such as
+[[("network1name",1),("network2name",2)]] where network1 and network2 are
+the two networks being connected and 1 and 2 are integers describing the
+ports to connect, or a vector of pairwise connections
+`(network1, network2, port1, port2)` such as [("network1name",
+"network2name",1,2)]. The scattering parameters of all the networks are
+`Array`s of one type.
 
 The ports joined by a connection must share one real reference impedance.
 This function supports connections between more than two ports by
@@ -2356,7 +2355,20 @@ impedance (see [`S_splitter!`](@ref)). With `noise = true` the noise covariance
 matrices are connected as well, the passive covariance `I - S S'` being
 used for a network given without one; with `Nmodes > 1` the scattering
 matrices are multi-mode and `connections` names physical ports, each
-expanded to its `Nmodes` modes (see [`add_modes`](@ref)).
+expanded to its `Nmodes` modes (see [`add_modes`](@ref)). The frequencies
+are split into `nbatches` batches run on threads when there are more of
+them than batches; one or fewer batches run on the calling task.
+
+# Returns
+A named tuple with one entry per set of networks the connections join,
+and one per network they leave unconnected:
+- `S`: the vector of the scattering parameter arrays of the connected
+    networks.
+- `C`: with `noise = true`, the vector of their noise covariance arrays.
+- `ports`: the vector of the vectors of their ports, each a tuple of
+    network name and port number.
+A network which no connection touches is returned as the array it was
+given, not a copy, and so is its covariance.
 
 # Examples
 ```jldoctest
@@ -2432,23 +2444,10 @@ function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
     # a vector of tuples containing the ports for each of the networks in the
     # same order the networks were supplied. eg.
     # [(:S1,1),(:S1,2),(:S2,1),(:S2,2)]
-    ports = Vector{Tuple{T,Int}}(undef,m)
+    ports = Tuple{T,Int}[port for network in networks for port in network.port_names]
 
-    # make the port dictionary
-    portdict = Dict{Tuple{T,Int},Int}()
-
-    k = 1
-    for i in eachindex(networks)
-        for port in networks[i].port_names
-            if haskey(portdict,port)
-                throw(ArgumentError(lazy"Duplicate port $(port) in network $(networks[i].network_name)."))
-            else
-                portdict[port] = k
-                ports[k] = port
-            end
-            k+=1
-        end
-    end
+    # the network and the index within it of each port
+    portdict = portindices(networks)
 
     # Compute the sparse connection matrix gamma and the port indices as which
     # connections occur which are also called internal ports.
@@ -2464,21 +2463,13 @@ function parse_connections_sparse(networks::AbstractVector{PassiveNetwork{T,N}},
 
     # loop through the connections and compute the sparse connection matrix
     # gamma
-    for (src_name, dst_name, src_port, dst_port) in connections
+    for connection in connections
 
-        src = (src_name,src_port)
-        dst = (dst_name,dst_port)
-
-        # check if the source and destination networks exist
-        if !haskey(portdict,src)
-            throw(ArgumentError(lazy"Source (network name, port number) ($(src_name), $(src_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
-        end
-        if !haskey(portdict,dst)
-            throw(ArgumentError(lazy"Destination (network name, port number) ($(dst_name), $(dst_port)) not found for connection ($(src_name),$(dst_name),$(src_port),$(dst_port))."))
-        end
-
-        src_index = portdict[src]
-        dst_index = portdict[dst]
+        # the indices of the two ports among the ports of all the networks
+        (src_network, src_port_index), (dst_network, dst_port_index) =
+            connectionports(portdict, connection)
+        src_index = networkdataindices[src_network] + src_port_index - 1
+        dst_index = networkdataindices[dst_network] + dst_port_index - 1
 
         push!(Igamma,src_index)
         push!(Jgamma,dst_index)
@@ -2550,8 +2541,9 @@ end
 Build the arrays [`solveS!`](@ref) works on, from the same arguments as
 [`solveS`](@ref): the external and internal port lists and scattering and
 covariance outputs, the connection matrix `gammaii` with the index maps
-into the networks' matrices, and the networks' scattering parameters and
-noise covariances. Returned as a tuple to be splatted into `solveS!`.
+into the networks' matrices, the networks' scattering parameters and
+noise covariances, and the fill reducing ordering of the connection
+matrix. Returned as a tuple to be splatted into `solveS!`.
 """
 function solveS_initialize(networks::AbstractVector,
         connections::AbstractVector; small_splitters::Bool = true,
@@ -2613,10 +2605,15 @@ function solveS_initialize(networks::AbstractVector{PassiveNetwork{T,N}},
     gammaii_indexmap = sparseaddmap(gammaii_Sii,gammaii)
     Sii_indexmap = sparseaddmap(gammaii_Sii,Sii)
 
+    # the fill reducing ordering depends only on the pattern of
+    # gammaii - Sii, which is fixed from here on, so it is chosen once for
+    # every batch of every call
+    ordering = fillordering(factorization, gammaii_Sii)
+
     return Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
         See_indices, Sei_indices, Sie_indices, Sii_indices, gammaii_indexmap,
         Sii_indexmap, scattering_parameters, noise_covariances, nbatches,
-        factorization, internal_ports, noise
+        factorization, internal_ports, noise, ordering
 end
 
 
@@ -2630,31 +2627,48 @@ are indices into `networkdata` with frequency index `i`.
 """
 function solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
     Sie_indices, Sii_indices, networkdata, i)
-
-    for (j,c) in enumerate(See_indices.nzval)
-        See.nzval[j] = networkdata[c[1]][c[2],c[3],i]
-    end
-
-    for (j,c) in enumerate(Sei_indices.nzval)
-        Sei.nzval[j] = networkdata[c[1]][c[2],c[3],i]
-    end
-
-    for (j,c) in enumerate(Sie_indices.nzval)
-        Sie.nzval[j] = networkdata[c[1]][c[2],c[3],i]
-    end
-
-    for (j,c) in enumerate(Sii_indices.nzval)
-        Sii.nzval[j] = networkdata[c[1]][c[2],c[3],i]
-    end
-
+    updatestored!(See, See_indices, networkdata, i)
+    updatestored!(Sei, Sei_indices, networkdata, i)
+    updatestored!(Sie, Sie_indices, networkdata, i)
+    updatestored!(Sii, Sii_indices, networkdata, i)
     return nothing
+end
+
+# the stored entries of the sparse matrix `A` at the frequency index `i`,
+# from the arrays `networkdata` of the networks, each at the network, row
+# and column its entry of `indices` holds
+function updatestored!(A, indices, networkdata, i)
+    for (j,c) in enumerate(indices.nzval)
+        A.nzval[j] = networkdata[c[1]][c[2],c[3],i]
+    end
+    return A
+end
+
+# write the stored entries of the sparse matrix `A` into the dense matrix
+# `B`, whose other entries are left as they are; with `adjoint`, those of
+# the adjoint of `A`
+function copystored!(B, A::SparseMatrixCSC; adjoint::Bool = false)
+    if adjoint
+        for k in 1:length(A.colptr)-1
+            for l in A.colptr[k]:(A.colptr[k+1]-1)
+                B[k,A.rowval[l]] = conj(A.nzval[l])
+            end
+        end
+    else
+        for k in 1:length(A.colptr)-1
+            for l in A.colptr[k]:(A.colptr[k+1]-1)
+                B[A.rowval[l],k] = A.nzval[l]
+            end
+        end
+    end
+    return B
 end
 
 
 function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
             See_indices, Sei_indices, Sie_indices, Sii_indices,
             gammaii_indexmap, Sii_indexmap, scattering_parameters,
-            noise_covariances, batch, factorization, noise)
+            noise_covariances, batch, factorization, noise, ordering)
 
     # make a copy of the scattering matrices for each thread
     See = copy(See)
@@ -2686,9 +2700,6 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
         partner = [gammaii.rowval[gammaii.colptr[q]] for q in 1:ni]
     end
 
-    # generate an empty FactorizationCache struct
-    cache = FactorizationCache()
-
     # update the scattering matrices for the first element in the batch
     solveS_update!(See, Sei, Sie, Sii, See_indices, Sei_indices,
         Sie_indices, Sii_indices, scattering_parameters, first(batch))
@@ -2703,6 +2714,11 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
     # frequency). we want to retain these structural zeros because the
     # scattering matrix structure must not change.
     gammaii_Sii = spaddkeepzeros(gammaii,-Sii)
+
+    # a factorization cache for the batch, which takes the fill reducing
+    # ordering chosen for the pattern by solveS_initialize
+    cache = FactorizationCache()
+    isnothing(ordering) || seedordering!(cache, gammaii_Sii, ordering)
 
     # loop over the dimensions of the array greater than 2
     for (i,j) in enumerate(batch)
@@ -2724,6 +2740,16 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
             sparseadd!(gammaii_Sii,-1,Sii,Sii_indexmap)
         end
 
+        # with no connections there are no internal ports and nothing to
+        # solve: the result is the external ports' block as it is
+        if iszero(size(Sii, 1))
+            Se[:,:,j] .= See
+            if noise
+                Ce[:,:,j] .= Cee
+            end
+            continue
+        end
+
         # perform a factorization or update the factorization
         tryfactorize!(cache, factorization, gammaii_Sii)
 
@@ -2731,11 +2757,7 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
             # use this identity to evaluate using ldiv instead of rdiv, so
             # we can use the same factorization
             # A*inv(B)*C == A*(B \ C) == (A / B) * C == (B' \ A')' * C
-            for k in 1:length(Sei.colptr)-1
-                for l in Sei.colptr[k]:(Sei.colptr[k+1]-1)
-                    Sie_dense[k,Sei.rowval[l]] = conj(Sei.nzval[l])
-                end
-            end
+            copystored!(Sie_dense, Sei; adjoint = true)
             trysolve!(ai, cache.factorization', Sie_dense)
 
             # Eq. 3.9 from Wedge thesis
@@ -2760,12 +2782,7 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
 
             # copy only the nonzero elements. the rest of the temporary array
             # is always zero
-            # Sietmp .= Sie
-            for k in 1:length(Sie.colptr)-1
-                for l in Sie.colptr[k]:(Sie.colptr[k+1]-1)
-                    Sie_dense[Sie.rowval[l],k] = Sie.nzval[l]
-                end
-            end
+            copystored!(Sie_dense, Sie)
 
             # solve the linear system
             # Eq. 26
@@ -2794,11 +2811,7 @@ function solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
             # gammaii*M*ci with M = inv(gammaii - Sii), whose covariance is
             # gammaii*M*Cii*M'*gammaii
             fill!(Cii_dense, zero(eltype(Cii_dense)))
-            for k in 1:length(Cii.colptr)-1
-                for l in Cii.colptr[k]:(Cii.colptr[k+1]-1)
-                    Cii_dense[Cii.rowval[l],k] = Cii.nzval[l]
-                end
-            end
+            copystored!(Cii_dense, Cii)
             # M*Cii*M' = (M*(M*Cii)')'
             trysolve!(Yii, cache.factorization, Cii_dense)
             adjoint!(Yiit, Yii)
@@ -2817,15 +2830,18 @@ end
     solveS!(Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
         See_indices, Sei_indices, Sie_indices, Sii_indices, gammaii_indexmap,
         Sii_indexmap, scattering_parameters, noise_covariances, nbatches,
-        factorization, internal_ports, noise)
+        factorization, internal_ports, noise, ordering)
 
 In place version of [`solveS`](@ref), taking the arrays returned by
 [`solveS_initialize`](@ref), which it is meant to be called with as
-`solveS!(init...)`. It allows a network connection to be updated in place:
-change the arrays referenced by `networks`, then recompute the scattering
+`solveS!(init...)`. `ordering` is the fill reducing ordering of the
+connection matrix, chosen once by `solveS_initialize` (see
+[`fillordering`](@ref)), which every batch's factorization takes. It
+allows a network connection to be updated in place: change the arrays referenced by `networks`, then recompute the scattering
 parameters of the connected system. With noise, the passive covariances of
 the networks given without covariances are computed from their scattering
-parameters at each call.
+parameters at each call. The arrays returned are those of the tuple, which
+the next call overwrites: copy a result to keep it.
 
 # Examples
 ```jldoctest
@@ -2846,7 +2862,7 @@ in IEEE Transactions on Microwave Theory and Techniques, vol. 22, no. 3, pp.
 function solveS!(Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
     See_indices, Sei_indices, Sie_indices, Sii_indices, gammaii_indexmap,
     Sii_indexmap, scattering_parameters, noise_covariances, nbatches,
-    factorization, internal_ports, noise)
+    factorization, internal_ports, noise, ordering)
 
     # solve the linear system for the specified frequencies. the response for
     # each frequency is independent, so the frequencies are split into
@@ -2859,11 +2875,12 @@ function solveS!(Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
         noise_covariances = passivecovariances(scattering_parameters,
             noise_covariances)
     end
-    foreachbatch(indices, cld(length(indices), nbatches)) do batch
+    # fewer than one batch is one batch, as for the connections
+    foreachbatch(indices, cld(length(indices), max(nbatches, 1))) do batch
         solveS_inner!(Se, Si, Ce, Ci, gammaii, See, Sei, Sie, Sii,
             See_indices, Sei_indices, Sie_indices, Sii_indices,
             gammaii_indexmap, Sii_indexmap, scattering_parameters,
-            noise_covariances, batch, factorization, noise)
+            noise_covariances, batch, factorization, noise, ordering)
     end
 
     if noise
@@ -2893,12 +2910,16 @@ a connection of more than two ports is an ideal lossless junction for it
     [("network1name",rand(Complex{Float64},2,2))] or
     [("S1",[0.0 1.0;1.0 0.0]),("S2",[0.5 0.5;0.5 0.5])]. The scattering
     parameters of all the networks are arrays of one type, such as
-    `Array`s; views of arrays are not supported.
-- `connections::AbstractVector{<:AbstractVector{Tuple{T,Int}}}`: a vector of
-    vectors of tuples of networks names and ports such as [[("S1",1),("S2",2)]]
-    or [[("network1name",1),("network2name",2)]] where network1 and network2
-    are the two networks being connected and 1 and 2 are integers describing
-    the ports to connect.
+    `Array`s; views of arrays are not supported. Other wrapped arrays, such
+    as `KeyedArray`s, are supported only when no connection joins more than
+    two ports, since the splitter of such a junction is built as an
+    `Array`.
+- `connections`: a vector of vectors of tuples of networks names and ports
+    such as [[("S1",1),("S2",2)]] or [[("network1name",1),("network2name",2)]]
+    where network1 and network2 are the two networks being connected and 1
+    and 2 are integers describing the ports to connect, or a vector of
+    pairwise connections `(network1, network2, port1, port2)` such as
+    [("S1","S2",1,2)].
 
 # Keywords
 - `small_splitters::Bool = true`: if true, then generate any N port splitter
@@ -2913,9 +2934,11 @@ a connection of more than two ports is an ideal lossless junction for it
     lossless loop of zero length, such as two ports of a lossless junction
     joined to each other, which [`connectS`](@ref) resolves;
     [`QRfactorization`](@ref) solves such a system. Near it, as for a
-    resonator between nearly lossless mirrors, the error of `solveS`
-    grows as the inverse of the distance to singularity, while the
-    pairwise connections of `connectS` stay accurate.
+    resonator between nearly lossless mirrors, both `solveS` and
+    `connectS` lose accuracy as the machine epsilon over the distance to
+    singularity, the noise covariances as well as the scattering
+    parameters; `connectS` does better only for the scattering
+    parameters, and only very close to a lossless loop.
 - `internal_ports::Bool = false`: also return the waves at the internal
     ports.
 - `Nmodes::Integer = 1`: the number of modes of each physical port when
@@ -2923,8 +2946,8 @@ a connection of more than two ports is an ideal lossless junction for it
     names physical ports and each is expanded to its modes (see
     [`add_modes`](@ref)).
 - `nbatches::Integer = Base.Threads.nthreads()`: the number of batches to run
-    on threads. Defaults to the number of threads with which Julia was
-    launched.
+    on threads, one or fewer being one. Defaults to the number of threads
+    with which Julia was launched.
 
 # Returns
 A named tuple of:
@@ -2989,7 +3012,10 @@ end
     ldiv_2x2(fact,b)
 
 Solve the linear system A*x = b for x using left division when given `fact`
-which is the LU factorization of `A`.
+which is the LU factorization of `A`. A singular `A` is solved when the
+system is consistent, with the unknown of a zero diagonal entry of the
+upper triangular factor taken as zero; otherwise an `ArgumentError` is
+thrown.
 """
 function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
     p1, p2 = fact.p
@@ -3006,21 +3032,31 @@ function ldiv_2x2(fact::Union{LU,StaticArrays.LU},b::AbstractVector)
         throw(ArgumentError(lazy"Unknown pivot."))
     end
 
-    # solve U*x = y where U = [u11 u12; 0 u22]
-    if iszero(fact.U[2,2])
-        # if U[2,2] is zero, the matrix is singular and the linear system
-        # has potentially no solution or no unique solution. assume the matrix
-        # is rank 1 (solution not unique) then check if the solution we find
-        # solves the linear system.
-        x2 = zero(y2)
+    # solve U*x = y where U = [u11 u12; 0 u22]. if u11 or u22 is zero, the
+    # matrix is singular and the linear system has potentially no solution
+    # or no unique solution. the unknown of a zero diagonal entry is then
+    # taken as zero, as for a matrix of rank one (a solution which is not
+    # unique), and the solution found is checked against the system below.
+    u11 = fact.U[1,1]
+    u12 = fact.U[1,2]
+    u22 = fact.U[2,2]
+    if iszero(u11)
+        # the first column of the matrix is zero: x2 from the row holding it
+        x1 = zero(y1)
+        if !iszero(u22)
+            x2 = y2/u22
+        elseif !iszero(u12)
+            x2 = y1/u12
+        else
+            x2 = zero(y2)
+        end
     else
-        x2 = y2/fact.U[2,2]
+        x2 = iszero(u22) ? zero(y2) : y2/u22
+        x1 = (y1-x2*u12)/u11
     end
-
-    x1 = (y1-x2*fact.U[1,2])/fact.U[1,1]
     x = StaticArrays.SVector{2}(x1, x2)
 
-    if iszero(fact.U[2,2])
+    if iszero(u11) || iszero(u22)
         # if the matrix is singular, check that we are returning a valid
         # solution to the linear system
         if p1 == 1 && p2 == 2

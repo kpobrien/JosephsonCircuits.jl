@@ -33,11 +33,12 @@ not a descent direction, when the line search finds no decrease, and after
 a successful escalation. The linear tolerance follows the Eisenstat-Walker choice 2 forcing sequence
 `krylovgamma*(|F_k|/|F_{k-1}|)^krylovalpha` clamped to
 `[krylovrtolmin, krylovrtolmax]`, with an absolute floor of `atol/10` so late
-solves are not pushed below the nonlinear tolerance. Because the assembled
-Jacobian can be stale, the linesearch slope is always taken from an exact
-matrix-free product, and a non-descent direction falls back to the exact
-Newton step through a fresh factorization before the iteration is declared
-stalled.
+solves are not pushed below the nonlinear tolerance. Because the
+preconditioner can be stale, the linesearch slope is always taken from an
+exact matrix-free product, and a direction which is not a descent
+direction is solved for again, at the same forcing, from a rebuilt
+preconditioner before the iteration is declared stalled; for an exact
+preconditioner that is the exact Newton step.
 
 The globalization is the plain damped-Newton path of [`nlsolve!`](@ref):
 the [`backtracking_linesearch!`](@ref) of [`nlsolve!`](@ref) with the
@@ -109,6 +110,47 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     rtol = 0.0,
     workspace::Union{Nothing,Base.RefValue} = nothing) where {T<:AbstractFloat}
 
+    krylovrestart = restartlength(method.linearsolver)
+    krylovmaxrestarts = maxrestarts(method.linearsolver)
+
+    length(F) == length(x) || throw(DimensionMismatch(
+        lazy"The residual `F` has length $(length(F)) but the point `x` has length $(length(x))."))
+
+    # a bare in-place product is normalized to a `mul!`-able operator once,
+    # so the loop below and the pluggable linear solver see one interface
+    jvp = asoperator(jvp!, length(x))
+
+    # validate every option before the first residual evaluation; the line
+    # search validated its own when it was built
+    iterations >= 0 || throw(ArgumentError(
+        lazy"`iterations` = $(iterations) must be nonnegative."))
+    atol >= 0 || throw(ArgumentError(lazy"`atol` = $(atol) must be nonnegative."))
+    0 <= rtol < Inf || throw(ArgumentError(
+        lazy"`rtol` = $(rtol) must be finite and nonnegative."))
+    krylovrestart >= 1 || throw(ArgumentError(
+        lazy"`krylovrestart` = $(krylovrestart) must be at least 1."))
+    krylovmaxrestarts >= 1 || throw(ArgumentError(
+        lazy"`krylovmaxrestarts` = $(krylovmaxrestarts) must be at least 1."))
+    m = min(krylovrestart, length(x))
+    kv = if isnothing(workspace) || isnothing(workspace[])
+        KrylovVectors(x, F, m)
+    else
+        workspace[]
+    end
+    (length(kv.deltax) == length(x) && size(kv.ws.H, 2) == m &&
+        length(kv.Fbest) == length(F)) || throw(ArgumentError(
+        "the Krylov workspace handed in is for a different system or restart length; hand in a `Ref` to `nothing` to allocate one."))
+    isnothing(workspace) || (workspace[] = kv)
+    # the iteration behind a function barrier, so that it is compiled for
+    # the concrete type of a workspace which a reuse holds untyped
+    return _nlsolvekrylov!(fj!, jvp, F, x, pc, method, kv;
+        iterations = iterations, atol = atol, rtol = rtol)
+end
+
+function _nlsolvekrylov!(fj!::Function, jvp, F::AbstractVector{T},
+    x::AbstractVector{T}, pc::AbstractPreconditioner, method::NewtonKrylov,
+    kv::KrylovVectors; iterations, atol, rtol) where {T<:AbstractFloat}
+
     linearsolver = method.linearsolver
     policy = method.refresh
     escalate = method.escalate
@@ -131,32 +173,6 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     krylovescalate = escalate ? 1 : typemax(Int)
     linesearch = method.linesearch
 
-    length(F) == length(x) || throw(DimensionMismatch(
-        lazy"The residual `F` has length $(length(F)) but the point `x` has length $(length(x))."))
-
-    # a bare in-place product is normalized to a `mul!`-able operator once,
-    # so the loop below and the pluggable linear solver see one interface
-    jvp = asoperator(jvp!, length(x))
-
-    # validate every option before the first residual evaluation; the line
-    # search validated its own when it was built
-    iterations >= 0 || throw(ArgumentError(
-        lazy"`iterations` = $(iterations) must be nonnegative."))
-    atol >= 0 || throw(ArgumentError(lazy"`atol` = $(atol) must be nonnegative."))
-    krylovrestart >= 1 || throw(ArgumentError(
-        lazy"`krylovrestart` = $(krylovrestart) must be at least 1."))
-    krylovmaxrestarts >= 1 || throw(ArgumentError(
-        lazy"`krylovmaxrestarts` = $(krylovmaxrestarts) must be at least 1."))
-    m = min(krylovrestart, length(x))
-    kv = if isnothing(workspace) || isnothing(workspace[])
-        KrylovVectors(x, F, m)
-    else
-        workspace[]
-    end
-    (length(kv.deltax) == length(x) && size(kv.ws.H, 2) == m &&
-        length(kv.Fbest) == length(F)) || throw(ArgumentError(
-        "the Krylov workspace handed in is for a different system or restart length; hand in a `Ref` to `nothing` to allocate one."))
-    isnothing(workspace) || (workspace[] = kv)
     ws, deltax, xcandidate = kv.ws, kv.deltax, kv.xcandidate
     Jv, Fbest = kv.Jv, kv.Fbest
 
@@ -242,13 +258,17 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
     # rebuilding, so it is resynchronized afterwards. Returns the time the
     # rebuild took and, under the probe rule, the one-step reduction of the
     # fresh preconditioner, which calibrate the probe of later steps; the
-    # caller assigns them, so no variable is shared with the closure
+    # caller assigns them, so no variable is shared with the closure. An
+    # exact preconditioner's reduction is roundoff, against which any stale
+    # one predicts a rebuild, so it is not measured, and without the
+    # calibration no probe is taken: the rebuild is made as under `Always`
     function refreshpreconditioner!()
         t0 = time()
         updatepreconditioner!(pc, x)
         fj!(nothing, nothing, x)
         t = time() - t0
-        return t, krylovrefresh === :probe ? onestepreduction() : NaN
+        probe = krylovrefresh === :probe && !isexactpreconditioner(pc)
+        return t, probe ? onestepreduction() : NaN
     end
 
     # the residual norm at the initial point; every later entry of normF is
@@ -309,8 +329,9 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         tstep = tsolve/max(out.iterations, 1)
         justrefreshed && (kfresh = max(out.iterations, 1))
         harvestafter!(out)
+        # a residual which is not finite counts as stagnated
         stagnated = !out.converged &&
-            out.residual > krylovstagnation*normF[end]
+            !(out.residual <= krylovstagnation*normF[end])
         push!(krylovrecord, krylovsolverecord(out, n, :step, normF[end],
             forcing, justrefreshed, stagnated, tstart, pc))
         # `!justrefreshed` matters: a retry only makes sense against a
@@ -329,10 +350,13 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
                 rtol = forcing, atol = gmresatol,
                 maxrestarts = krylovmaxrestarts, oncycle = oncycle)
+            # the fresh preconditioner's reduction and Arnoldi count, which
+            # calibrate the probe, are this solve's
+            kfresh = max(out.iterations, 1)
             harvestafter!(out)
             work += out.iterations
             stagnated = !out.converged &&
-                out.residual > krylovstagnation*normF[end]
+                !(out.residual <= krylovstagnation*normF[end])
             push!(krylovrecord, krylovsolverecord(out, n, :retry, normF[end],
                 forcing, true, stagnated, tstart, pc))
         end
@@ -414,6 +438,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
             out = hblinearsolve!(linearsolver, deltax, jvp, F, ws, Mop!;
                 rtol = forcing, atol = gmresatol,
                 maxrestarts = krylovmaxrestarts, oncycle = oncycle)
+            kfresh = max(out.iterations, 1)
             # the rescue is often the most informative solve of the step,
             # and its Arnoldi steps count against the work budget like any
             # other solve's
@@ -488,7 +513,7 @@ function nlsolvekrylov!(fj!::Function, jvp!, F::AbstractVector{T},
         end
     end
 
-    return IterationInfo(tr, "", krylovrecord)
+    return IterationInfo(tr, krylovrecord)
 end
 
 # the record of a linear solve `o` of Newton step `n` at the residual norm

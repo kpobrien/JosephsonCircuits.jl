@@ -12,19 +12,27 @@
 # format: the name prefix table with the two functions that read it, the
 # convention that a port's reference impedance is the resistor placed
 # across it and the port termination which records that resistor, the
-# tuple forms of every entry point, which sort the nodes by number as the
-# format always did, and the tuple netlist file reader and writer.
+# tuple forms of the entry points which took a tuple netlist in v0.5.4,
+# which sort the nodes by number as the format always did, and the tuple
+# netlist file reader and writer.
 #
 # A value written as an expression in a parameter named by the
 # `symfreqvar` keyword of the solvers, rewritten as a
 # `FrequencyDependent` closure.
 #
+# The keywords of the nonlinear solvers which v0.5.4 had and the solvers
+# no longer read: `ftol`, the absolute residual tolerance under its old
+# name, the line search settings `switchofflinesearchtol` and `alphamin`,
+# and `maxharmonics` and `maxpumpharmonics`, whose role the retained
+# harmonics took.
+#
 # Outside this file, the `Circuit(netlist)` constructor in
 # circuit/parse.jl hands a netlist whose entries end in values rather than
 # components to `legacycircuit`, the Symbolics extension unwraps a `Num`
-# port number for `legacyportnumber`, and the three solver entry points
+# port number for `legacyportnumber`, the three solver entry points
 # which hold a compiled circuit beside its definitions hand a
-# `symfreqvar` to `frequencydependentcircuit`.
+# `symfreqvar` to `frequencydependentcircuit`, and `hbnlsolve` and
+# `hbsolve` hand their deprecated keywords to `deprecatedsolverkeywords`.
 
 # Unwrap a wrapped symbolic value to whatever it holds. The Symbolics
 # extension adds the method for `Num`; everything else is already unwrapped.
@@ -132,7 +140,7 @@ function legacycomponent(typesymbol::Symbol, name, node1, node2, value)
     elseif typesymbol == :R
         return Resistor(value)
     elseif typesymbol == :Lj
-        return NonlinearInductor(value, sin, cos)
+        return NonlinearInductor(value, sin)
     elseif typesymbol == :I
         return CurrentSource(value)
     elseif typesymbol == :P
@@ -336,8 +344,13 @@ component rather than failing later inside a closure.
 function frequencydependentcircuit(psc::CompiledCircuit, circuitdefs,
         symfreqvar, caller::Symbol)
     Base.depwarn(symfreqvarmessage, caller; force = true)
-    values = Any[frequencydependentvalue(v, circuitdefs, symfreqvar)
-        for v in psc.componentvalues]
+    # the definitions resolved first, once for the table, so that only the
+    # frequency is left for a closure to give, and a value named by a symbol
+    # whose definition is written in the variable is found
+    partials = componentvaluestonumber(psc.componentvalues,
+        definitiontable(circuitdefs))
+    values = Any[frequencydependentvalue(v, partial, symfreqvar)
+        for (v, partial) in zip(psc.componentvalues, partials)]
     return CompiledCircuit(psc.nodenames, psc.nodeindices, psc.Nnodes,
         psc.componentnames, psc.componenttypes, values,
         psc.componentnamedict, psc.componenttemperatures, psc.junctioncprs,
@@ -347,16 +360,14 @@ function frequencydependentcircuit(psc::CompiledCircuit, circuitdefs,
         psc.couplings, psc.topology)
 end
 
-function frequencydependentvalue(value, circuitdefs, symfreqvar)
-    checkissymbolic(value) || return value
-    any(v -> isequal(v, symfreqvar), circuitvariables(value)) || return value
-    # the definitions resolved once, so that only the frequency is left for
-    # the closure to give
-    partial = valuetonumber(value, circuitdefs)
-    if checkissymbolic(partial) &&
-            any(v -> !isequal(v, symfreqvar), circuitvariables(partial))
-        return value
-    end
+# the value `value`, resolved at the definitions to `partial`, as a closure
+# of the frequency when `partial` depends on the variable and on nothing
+# else
+function frequencydependentvalue(value, partial, symfreqvar)
+    checkissymbolic(partial) || return value
+    variables = circuitvariables(partial)
+    any(v -> isequal(v, symfreqvar), variables) || return value
+    all(v -> isequal(v, symfreqvar), variables) || return value
     # the frequency reaches the value two ways: as the symbolic variable it
     # substitutes, and as the argument of any frequency dependent leaf the
     # same expression already carries, which `substitutefreq` evaluates.
@@ -365,16 +376,45 @@ function frequencydependentvalue(value, circuitdefs, symfreqvar)
             valuetonumber(partial, Dict{Any,Any}(symfreqvar => w)), w))
 end
 
+# === the deprecated keywords of the nonlinear solvers ===
+
+"""
+    deprecatedsolverkeywords(caller::Symbol, atol; ftol = nothing,
+        switchofflinesearchtol = nothing, alphamin = nothing,
+        maxharmonics = nothing, maxpumpharmonics = nothing)
+
+The absolute residual tolerance of a solve given the deprecated keywords
+of the nonlinear solvers: `ftol` when it is given, which is `atol` under
+its old name, and `atol` otherwise. Each deprecated keyword given warns,
+attributed to `caller`; `switchofflinesearchtol` and `alphamin`, which the
+line search no longer has, and `maxharmonics` of `hbnlsolve` and
+`maxpumpharmonics` of `hbsolve`, whose role the retained harmonics took,
+are ignored.
+"""
+function deprecatedsolverkeywords(caller::Symbol, atol; ftol = nothing,
+        switchofflinesearchtol = nothing, alphamin = nothing,
+        maxharmonics = nothing, maxpumpharmonics = nothing)
+    if !isnothing(ftol)
+        Base.depwarn("The `ftol` kwarg is deprecated: the absolute residual tolerance is `atol` in every solver of the package. Please use `atol` to avoid errors in future versions.", caller; force = true)
+        atol = ftol
+    end
+    unused(name) = Base.depwarn(lazy"The `$(name)` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions.", caller; force = true)
+    isnothing(switchofflinesearchtol) || unused(:switchofflinesearchtol)
+    isnothing(alphamin) || unused(:alphamin)
+    retained(name, by) = Base.depwarn(lazy"The `$(name)` kwarg is deprecated and no longer used. `$(by)` is the retained set of modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions.", caller; force = true)
+    isnothing(maxharmonics) || retained(:maxharmonics, :Nharmonics)
+    isnothing(maxpumpharmonics) || retained(:maxpumpharmonics, :Npumpharmonics)
+    return atol
+end
+
 # === the tuple forms of the entry points ===
 #
-# Each converts the netlist, which warns, compiles it with the nodes
-# sorted by number as the tuple format always did, and forwards the
-# compiled circuit to the typed form. The solvers and the matrix builders
-# of the tuple format took the order as their keyword `sorting`, which is
-# now `compile`'s, and still take it here.
-
-compile(netlist::AbstractVector; sorting::Symbol = :number) =
-    compile(legacycircuit(netlist, nothing; caller = :compile); sorting = sorting)
+# Each entry point of v0.5.4 which took a tuple netlist converts it, which
+# warns, compiles it with the nodes sorted by number as the tuple format
+# always did, and forwards the compiled circuit to the typed form. The
+# solvers and the matrix builders of the tuple format took the order as
+# their keyword `sorting`, which is now `compile`'s, and still take it
+# here.
 
 # the netlist compiled the way the tuple format ordered its nodes
 legacycompiled(netlist, caller::Symbol; sorting::Symbol = :number) =
@@ -402,12 +442,6 @@ function hblinsolve(w, netlist::AbstractVector,
         sorting::Symbol = :number, kwargs...)
     return hblinsolve(w, legacycompiled(netlist, :hblinsolve; sorting = sorting),
         circuitdefs; kwargs...)
-end
-
-function transientproblem(netlist::AbstractVector,
-        circuitdefs::AbstractDict = Dict{Symbol,Any}(); sources = ())
-    return transientproblem(legacycompiled(netlist, :transientproblem),
-        circuitdefs; sources = sources)
 end
 
 function numericmatrices(netlist::AbstractVector, circuitdefs::AbstractDict;
@@ -480,6 +514,13 @@ function export_netlist!(io::IO, circuit::AbstractVector, circuitdefs::Dict)
         write(io,"\n")
     end
 end
+
+# A field of a netlist line with the definitions substituted, for writing:
+# a symbolic value resolved as far as the definitions go, and anything
+# else (a name, a node label, a number) as it is written, since a name
+# field is not a value to look up.
+substitutedefs(value, circuitdefs) =
+    checkissymbolic(value) ? valuetonumber(value, circuitdefs) : value
 
 """
     import_netlist(filename)
@@ -577,6 +618,17 @@ function connectS!(Sout, Sa, Sb, k::Int, l::Int;
     return interconnectS!(Sout, Sa, Sb, k, l; nbatches = nbatches)
 end
 
+# `X_Y_to_sympletic_pair` and `X_Y_to_sympletic_block` were misspelled.
+function X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+    Base.depwarn("`X_Y_to_sympletic_pair` is deprecated, use `X_Y_to_symplectic_pair` instead.", :X_Y_to_sympletic_pair; force=true)
+    return X_Y_to_symplectic_pair(X, Y)
+end
+
+function X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+    Base.depwarn("`X_Y_to_sympletic_block` is deprecated, use `X_Y_to_symplectic_block` instead.", :X_Y_to_sympletic_block; force=true)
+    return X_Y_to_symplectic_block(X, Y)
+end
+
 
 #     hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
 #         circuitdefs; pumpports = [1], keyword arguments...)
@@ -585,11 +637,15 @@ end
 # `wp`, applied to `pumpports` with the currents `Ip`, four wave mixing
 # only, and mode counts given as integers rather than tuples. It is
 # translated into a call of the current solvers and warns that it is
-# deprecated. Note that the signal modes of the result are ordered as
+# deprecated. A tuple netlist is compiled with its nodes sorted as
+# `sorting` says, and any other circuit as `compile` compiles it; the line
+# search keywords are handed to `hbnlsolve`, which warns that they are
+# ignored. Note that the signal modes of the result are ordered as
 # `hblinsolve` orders them (the signal at index 1, the rest as listed in
 # `modes`), which need not match the order the original solver used.
 function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     circuitdefs; pumpports = [1], iterations = 1000, ftol = 1e-8,
+    switchofflinesearchtol = nothing, alphamin = nothing,
     symfreqvar = nothing,
     nbatches = Base.Threads.nthreads(), sorting = :number,
     returnS::Bool = true, returnSnoise::Bool = false, returnQE::Bool = true,
@@ -627,7 +683,8 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
 
     Nmodes = length(freq.modes)
 
-    psc = compile(circuit; sorting = sorting)
+    psc = circuit isa AbstractVector ?
+        legacycompiled(circuit, :hbsolve; sorting = sorting) : compile(circuit)
     # the deprecated symbolic frequency variable, in circuit/legacy.jl
     isnothing(symfreqvar) || (psc = frequencydependentcircuit(psc,
         circuitdefs, symfreqvar, :hbsolve))
@@ -638,6 +695,7 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
     # form builds with one
     nonlinear = hbnlsolve(w, sources, freq, indices, psc, nm;
         iterations = iterations, atol = ftol,
+        switchofflinesearchtol = switchofflinesearchtol, alphamin = alphamin,
         keyedarrays = keyedarrays,
         sensitivitynames = sensitivitynames,
         method = NewtonKrylov(preconditioner = isnothing(factorization) ?
@@ -673,4 +731,19 @@ function hbsolve(ws, wp, Ip, Nsignalmodes::Int, Npumpmodes::Int, circuit,
         factorization = factorization)
 
     return HB(nonlinear, linearized)
+end
+
+# `solveS!` as v0.5.4 took it, without the fill reducing ordering that
+# `solveS_initialize` now chooses once and returns last in its tuple: the
+# ordering is chosen afresh by each batch's factorization
+function solveS!(Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie, Sii,
+    See_indices, Sei_indices, Sie_indices, Sii_indices, gammaii_indexmap,
+    Sii_indexmap, scattering_parameters, noise_covariances, nbatches,
+    factorization, internal_ports, noise)
+    Base.depwarn("`solveS!` takes the fill reducing ordering `solveS_initialize` returns as its last argument; call it as `solveS!(init...)` with the whole tuple `solveS_initialize` returns to avoid errors in future versions.", :solveS!; force = true)
+    return solveS!(Se, Si, Ce, Ci, portse, portsi, gammaii, See, Sei, Sie,
+        Sii, See_indices, Sei_indices, Sie_indices, Sii_indices,
+        gammaii_indexmap, Sii_indexmap, scattering_parameters,
+        noise_covariances, nbatches, factorization, internal_ports, noise,
+        nothing)
 end

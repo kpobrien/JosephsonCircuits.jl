@@ -49,10 +49,11 @@ end
     # a modified nodal analysis augmentation from the promoted port resistors,
     # and every linear term matrix populated.
     buildcasecache = Dict{Any,Any}()
-    buildcase(Nmod, wp, Npump) = get!(buildcasecache, (Nmod, wp, Npump)) do
-        buildcase_(Nmod, wp, Npump)
-    end
-    function buildcase_(Nmod, wp, Npump)
+    buildcase(Nmod, wp, Npump; dft = false) =
+        get!(buildcasecache, (Nmod, wp, Npump, dft)) do
+            buildcase_(Nmod, wp, Npump, dft)
+        end
+    function buildcase_(Nmod, wp, Npump, dft)
         circuit = Any[]
         push!(circuit,("P1_0", "1", "0", Port(1; Z0 = :Rleft)))
         push!(circuit,("C1_0", "1", "0", Capacitor(:Cghalf)))
@@ -73,7 +74,12 @@ end
             [(mode=ntuple(i->i==1 ? 1 : 0, length(wp)), port=1, current=1e-6)],
             circuit, circuitdefs; keyedarrays=false)
         psc = JosephsonCircuits.compile(circuit)
-        sf = JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(
+        # the full grid keeps the modes below the signal, whose frequencies
+        # are negative where the sidebands pass zero
+        sf = dft ? JosephsonCircuits.truncfreqs(
+            JosephsonCircuits.calcfreqsdft(Nmod); dc=true, odd=true,
+            even=false, maxintermodorder=Inf) :
+            JosephsonCircuits.removeconjfreqs(JosephsonCircuits.truncfreqs(
             JosephsonCircuits.calcfreqsrdft(Nmod); dc=true, odd=true,
             even=false, maxintermodorder=Inf))
         return psc, circuitdefs, sf, nl
@@ -81,24 +87,23 @@ end
 
     @testset "the sweep assembly matches the host assembler" begin
 
-        # single tone, and two tone, the latter having negative mode
-        # frequencies which exercise the conjugation of the stored values
-        for (wp, Npump, Nmod) in (((2*pi*5e9,), (6,), (4,)),
-                                  ((2*pi*5e9, 2*pi*3e9), (2,2), (2,2)))
-            psc, circuitdefs, sf, nl = buildcase(Nmod, wp, Npump)
+        # the modes above the signal, and the full grid, whose modes below
+        # the signal have negative frequencies, which exercise the
+        # conjugation of the stored values
+        wp = (2*pi*5e9,)
+        for dft in (false, true)
+            psc, circuitdefs, sf, nl = buildcase((4,), wp, (6,); dft = dft)
             # off the integer GHz grid, where a signal frequency plus a
-            # mode frequency would land on zero. The lowest is below the
-            # magnitude of the two tone case's negative mode offset, so the
-            # sweep reaches negative total mode frequencies there.
+            # mode frequency would land on zero
             ws = 2*pi*[0.43e9, 1.37e9, 3.11e9, 6.61e9, 9.29e9, 11.83e9]
             d = JosephsonCircuits.hblinsolve(ws, psc, circuitdefs, sf;
                 nonlinear=nl, debuglsys=true)
             lsys = d.lsys
             @test JosephsonCircuits.cansweepondevice(lsys)
-            # the two tone case must actually reach negative mode
-            # frequencies, or the conjugation of the stored values, which is
-            # the only branch in the assembly kernel, goes untested
-            if length(wp) > 1
+            # the full grid must actually reach negative mode frequencies,
+            # or the conjugation of the stored values, which is the only
+            # branch in the assembly kernel, goes untested
+            if dft
                 @test any(w -> any(<(0), w .+ d.wpumpmodes), ws)
             end
 
@@ -331,35 +336,68 @@ end
         @test t isa Matrix{Int} && t == m
     end
 
-    @testset "the noise reduction is what QE and CM read of Snoise" begin
-        # the device sums the noise scattering matrix over the noise index on
-        # the backend and returns the reduction; the host's reduction of the
-        # same matrix must agree with it, with and without an occupation
-        for (nport, nnoise, m) in ((2, 5, 3), (3, 40, 4))
-            np, nn = nport*m, nnoise*m
-            S = randn(ComplexF64, np, np)
-            Snoise = randn(ComplexF64, nn, np)
-            w = randn(m); w[1] = abs(w[1]); w[end] = -abs(w[end])
-            occ = 1 .+ rand(nn)
-            devicelike = JosephsonCircuits.NoiseReduction(
-                vec(sum(occ .* abs2.(Snoise); dims = 1)),
-                vec(sum([sign(w[(c-1) % m + 1]) for c in 1:nn] .*
-                    abs2.(Snoise); dims = 1)))
-            host = JosephsonCircuits.noisereduction(Snoise, w, occ)
-            @test isapprox(host.denom, devicelike.denom; rtol = 1e-12)
-            @test isapprox(host.signed, devicelike.signed; rtol = 1e-12,
-                norm = x -> maximum(abs, x))
-
-            qe1 = zeros(Float64, np, np); qe2 = similar(qe1)
-            JosephsonCircuits.calcqe!(qe1, S, devicelike)
-            JosephsonCircuits.calcqe!(qe2, S, host)
-            @test isapprox(qe1, qe2; rtol = 1e-12)
-
-            cm1 = zeros(Float64, np); cm2 = similar(cm1)
-            JosephsonCircuits.calccm!(cm1, S, w, devicelike)
-            JosephsonCircuits.calccm!(cm2, S, w, host)
-            @test isapprox(cm1, cm2; rtol = 1e-12,
-                norm = x -> maximum(abs, x))
+    @testset "the noise outputs formed on the backend are the host's" begin
+        # devicenoise forms the noise scattering matrix, its reductions and
+        # the added noise covariance where the adjoint solutions are. Run on
+        # CPU() against the host sweep, from the same adjoint solutions: the
+        # noise ports of a resistor and the channels of two instances of a
+        # lossy non-reciprocal block, which share their definition's
+        # factors, warm, in a pumped circuit whose modes reach negative
+        # frequencies, which sign the columns
+        JC = JosephsonCircuits
+        wp = (2*pi*4.75001e9,)
+        src = [(mode = (1,), port = 1, current = 0.00565e-6)]
+        ws = 2*pi*[4.5e9, 4.8e9, 5.0e9]
+        T = 0.1
+        blk = ScatteringParameters(ComplexF64[0.1 0.2im; 0.8 0.1]; zref = 50.0)
+        circuit = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:x, 1, 4, blk),
+            (:y, 4, 2, blk),
+            (:cc, 2, 3, Capacitor(100e-15)), (:jj, 3, 0, JosephsonJunction(1000e-12)),
+            (:cj, 3, 0, Capacitor(1000e-15)), (:r, 3, 0, Resistor(2.0e4))])
+        nl = hbnlsolve(wp, (8,), src, circuit; keyedarrays = false)
+        psc = JC.compile(circuit)
+        sf = JC.truncfreqs(JC.calcfreqsdft((4,)); dc = true, odd = true,
+            even = false, maxintermodorder = Inf)
+        host = JC.hblinsolve(ws, psc, Dict{Any,Any}(), sf; nonlinear = nl,
+            keyedarrays = false, returnSnoise = true, returnCnoise = true,
+            temperature = T)
+        d = JC.hblinsolve(ws, psc, Dict{Any,Any}(), sf; nonlinear = nl,
+            debuglsys = true, temperature = T)
+        @test any(w -> any(<(0), w .+ d.wpumpmodes), ws)
+        ssys = d.lsys.scattering
+        noiseplan = JC.planscatteringnoise(ssys)
+        plan = JC.plandevicenoise(d.nodeindices, d.componenttypes,
+            d.noiseportimpedanceindices,
+            [d.vvn[j] for j in d.noiseportimpedanceindices], d.Nmodes, CPU())
+        blockplan = JC.plandeviceblocknoise(ssys, noiseplan, d.Nmodes, CPU())
+        providers = JC.plandeviceproviders(ssys, length(ws), CPU(),
+            d.wpumpmodes, ssys.scale)
+        temperatures = JC.noisechanneltemperatures(psc,
+            d.noiseportimpedanceindices, noiseplan, ssys, T)
+        A = copy(d.lsys.Asparse)
+        adjoint = map(ws) do w
+            JC.assemblesystemmatrix!(A, d.lsys, w .+ d.wpumpmodes)
+            Matrix(sparse(transpose(A)) \ Matrix(d.bnm))
+        end
+        nrhs = size(d.bnm, 2)
+        noise = JC.devicenoise(plan, blockplan, providers, i -> adjoint[i],
+            nrhs, d.wpumpmodes, ws, true, temperatures)
+        sources = JC.portsourcecurrents(d.bnm, d.portindices, d.nodeindices,
+            d.Nmodes)
+        inputwave = zeros(ComplexF64, nrhs)
+        for i in eachindex(ws)
+            wmodes = ws[i] .+ d.wpumpmodes
+            JC.calcinputwaves!(inputwave, sources, d.portindices,
+                d.portimpedances, d.componenttypes, wmodes)
+            Snoise = similar(host.Snoise[:, :, i])
+            Cnoise = similar(host.Cnoise[:, :, i])
+            reduction = noise(i, inputwave, Snoise, Cnoise)
+            @test isapprox(Snoise, host.Snoise[:, :, i]; rtol = 1e-12)
+            @test isapprox(Cnoise, host.Cnoise[:, :, i]; rtol = 1e-12)
+            @test isapprox(JC.calcqe(host.S[:, :, i], reduction),
+                host.QE[:, :, i]; rtol = 1e-12)
+            @test isapprox(JC.calccm(host.S[:, :, i], wmodes, reduction),
+                host.CM[:, i]; rtol = 1e-12)
         end
     end
 
@@ -404,41 +442,53 @@ end
             end
         end
 
-        # a batch of systems whose columns are orders of magnitude apart:
-        # each comes out with a largest entry of one, and a solution of the
-        # scaled system unscales to one of the original
+        # a batch of systems whose rows and columns are orders of magnitude
+        # apart: each comes out with a largest entry of one in every column
+        # and none larger, and the solution of the scaled system, from the
+        # right-hand side the equilibration writes, unscales to one of the
+        # original
         n, nb, nrhs = 24, 3, 2
         A = sprandn(ComplexF64, n, n, 0.2) + I
-        colind = rowvals(sparse(transpose(A)))
-        eq = JosephsonCircuits.planequilibration(colind, n, nb, CPU())
+        At = sparse(transpose(A))
+        rowptr, colind = SparseArrays.getcolptr(At), rowvals(At)
+        eq = JosephsonCircuits.planequilibration(rowptr, colind, n, nb, CPU())
         nzval = Matrix{ComplexF64}(undef, nnz(A), nb)
+        Rs = [Diagonal(exp10.(range(6, -6, length = n))/k) for k in 1:nb]
         Ds = [Diagonal(exp10.(range(-6, 6, length = n))*k) for k in 1:nb]
         for k in 1:nb
-            nzval[:,k] .= nonzeros(sparse(transpose(A*Ds[k])))
+            nzval[:,k] .= nonzeros(sparse(transpose(Rs[k]*A*Ds[k])))
         end
-        JosephsonCircuits.equilibratecolumns!(nzval, eq, CPU())
-        for k in 1:nb, j in 1:n
-            @test maximum(abs(nzval[eq.order[q], k])
-                for q in eq.segptr[j]:(eq.segptr[j+1]-1)) ≈ 1
-        end
-        B = randn(ComplexF64, n, nrhs)
+        B0 = randn(ComplexF64, n, nrhs)
+        B = Array{ComplexF64}(undef, n, nrhs, nb)
+        JosephsonCircuits.equilibrate!(nzval, B, B0, eq, CPU())
+        # the structure is compressed sparse row, so read as compressed
+        # sparse column it is the transpose
+        scaled(k) = sparse(transpose(SparseMatrixCSC(n, n, rowptr, colind,
+            nzval[:,k])))
         X = Array{ComplexF64}(undef, n, nrhs, nb)
         for k in 1:nb
-            X[:,:,k] .= (A*Ds[k]*Diagonal(1 ./ view(eq.scale, :, k)))\B
+            M = scaled(k)
+            @test all(j -> maximum(abs, M[:, j]) ≈ 1, 1:n)
+            @test maximum(abs, M) <= 1 + 1e-12
+            X[:,:,k] .= M\B[:,:,k]
         end
         JosephsonCircuits.unscalesolution!(X, eq, CPU())
         for k in 1:nb
-            @test X[:,:,k] ≈ (A*Ds[k])\B
+            @test X[:,:,k] ≈ (Rs[k]*A*Ds[k])\B0
         end
 
-        # a column of zeros is left alone rather than divided by nothing
+        # a row or a column of zeros is left alone rather than divided by
+        # nothing
         Z = spzeros(ComplexF64, 3, 3)
         Z[1,1] = 2.0; Z[3,3] = 4.0
         Zt = sparse(transpose(Z))
-        eqz = JosephsonCircuits.planequilibration(rowvals(Zt), 3, 1, CPU())
+        eqz = JosephsonCircuits.planequilibration(SparseArrays.getcolptr(Zt),
+            rowvals(Zt), 3, 1, CPU())
         nz = reshape(collect(nonzeros(Zt)), :, 1)
-        JosephsonCircuits.equilibratecolumns!(nz, eqz, CPU())
-        @test eqz.scale[:,1] == [2.0, 1.0, 4.0]
+        JosephsonCircuits.equilibrate!(nz, zeros(ComplexF64, 3, 1, 1),
+            ones(ComplexF64, 3, 1), eqz, CPU())
+        @test eqz.rowscale[:,1] == [2.0, 1.0, 4.0]
+        @test eqz.scale[:,1] == [1.0, 1.0, 1.0]
     end
 
     @testset "the batch size cap avoids two cuDSS faults at sixteen" begin

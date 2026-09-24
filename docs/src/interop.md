@@ -1,9 +1,10 @@
 # Using other solvers
 
 The nonlinear system this package solves is available as an object, so a
-solver it has never heard of can drive it. Nothing on this page needs a
-package extension: the interface is `mul!`, `ldiv!` and a handful of
-in-place functions.
+solver it has never heard of can drive it. The problem object needs no
+package extension: its interface is `mul!`, `ldiv!` and a handful of
+in-place functions. Two of the calls below do: [`KrylovJL`](@ref) needs
+Krylov.jl loaded, and `SciMLBase.NonlinearProblem(prob)` SciMLBase.
 
 ## The problem object
 
@@ -13,10 +14,9 @@ prob = hbnonlinearproblem(wp, Nharmonics, sources, circuit, circuitdefs)
 
 builds the harmonic balance system without solving it. Pass
 `assemblejacobian = false` for a matrix-free solver, which skips building
-the real Jacobian plan. On a multi-tone problem that plan is the largest
-object in the solve; on a 1024 cell travelling wave amplifier with twenty
-pump harmonics, building without it took 0.03 s against 0.27 s with, and
-avoided allocating a matrix of 1.26 million entries.
+the real Jacobian plan. That plan holds the structure of the whole real
+Jacobian, every pair of coupled modes at every junction, which on a long
+line or a multi-tone grid is the largest object of the solve.
 
 Everything a solver asks for is a method on `prob`:
 
@@ -69,14 +69,15 @@ dx, stats = Krylov.gmres(J, -F; N = P, rtol = 1e-6, atol = 0.0)
     failure.
 
     Krylov.jl defaults to `atol = sqrt(eps())`, about `1.5e-8`, which is
-    sensible standalone but causes issues here. On a JPA: with the default, 40
-    Newton iterations and a final residual of `3.2e-10`, never converged;
-    with `atol = 0.0`, 7 iterations and `7.4e-17`.
+    sensible standalone but lies above the package's default tolerance of
+    `1e-8`: once the residual falls below it, every linear solve returns a
+    zero step, and the Newton iteration stalls short of converging.
 
 To use an external Krylov solver for the Newton step of this package's own
 solver, rather than writing the loop yourself:
 
 ```julia
+using Krylov
 hbsolve(ws, wp, sources, Nmod, Npump, circuit, circuitdefs;
         method = NewtonKrylov(linearsolver = KrylovJL(:fgmres)))
 ```
@@ -149,10 +150,10 @@ bp = BifurcationProblem(F, zeros(length(prob)), (s = 0.0,), (@optic _.s);
     `DimensionMismatch`. `BorderingBLS` decomposes it into two `n`
     dimensional solves, where the preconditioner fits.
 
-    This matters at scale. On a 2560 unknown travelling wave amplifier with
-    no Jacobian assembled, preconditioned matrix-free continuation reaches
-    full drive in twelve steps; the same run without a preconditioner fails
-    to compute even the initial tangent.
+    This matters at scale: on a travelling wave amplifier with no Jacobian
+    assembled, preconditioned matrix-free continuation reaches full drive,
+    and without a preconditioner it fails to compute even the initial
+    tangent.
 
 !!! danger "Eigenvalues of the harmonic balance Jacobian are not stability"
     `∂F/∂u` is the derivative of an *algebraic* residual, not a linearized

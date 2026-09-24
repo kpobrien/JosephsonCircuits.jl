@@ -24,9 +24,9 @@ Set the evaluation point with [`setpoint!`](@ref), then evaluate any of:
 where `A` is the linear map from the unknowns to the time domain branch
 fluxes on the Josephson junctions, `B` the linear map from a time domain
 signal back to the node vector, and `K` the frequency dependent linear
-terms. Each entry point has a complex representation method and an
-equivalent real representation method, dispatched on the element type of the
-output (and direction) vectors, so the same object serves both the
+terms. Each entry point evaluates in the complex representation or in the
+equivalent real one, whichever the element type of the output (and
+direction) vectors is, so the same object serves both the
 [`QuasiNewton`](@ref) and [`Newton`](@ref) methods of [`hbnlsolve`](@ref) as
 well as matrix-free solvers.
 
@@ -35,9 +35,9 @@ current point are cached, so repeated products at the same point (eg. the
 many Jacobian-vector products of a Krylov solve) cost only two Fourier
 transforms and the linear term each.
 
-The fields are intentionally loosely typed; all performance critical loops
-are behind function barriers which specialize on the concrete argument
-types. The workspaces of the residual and the matrix-free products are
+Every field is typed by a parameter of the struct, and the loops are
+behind function barriers which specialize on the concrete argument types.
+The workspaces of the residual and the matrix-free products are
 parameterized on their array types rather than fixed to `Array`, so they can
 live on whichever KernelAbstractions backend the system was built for.
 """
@@ -194,8 +194,9 @@ function HBSystem(Rbnm, invLnm, Gnm, Cnm, wmodesm, wmodes2m, bnm,
         realjacobianplan, complexjacobianplan, nonlineartermplan,
         tobackend(backend, convert(Vector{TF},
             complex_to_real(bnm, modelayout.isreal))),
-        tobackend(backend, zeros(Complex{TF}, n)),
-        tobackend(backend, zeros(TF, modelayout.rdim)),
+        # no point is held until one is set
+        tobackend(backend, fill(Complex{TF}(NaN), n)),
+        tobackend(backend, fill(TF(NaN), modelayout.rdim)),
         similar(phimatrixtd), similar(phimatrixtd), similar(phimatrixtd),
         Ref(false), Ref(false),
         # the second derivative is cached only where it is not the sine
@@ -220,20 +221,27 @@ end
 
 """
     rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
-        maps = nothing, realjacobianplan = sys.realjacobianplan,
+        maps::ValueMaps, relations, realjacobianplan = sys.realjacobianplan,
         complexjacobianplan = sys.complexjacobianplan)
 
 The same system at new component values: the linear term matrices, the
-source, the junction inductances and the scale are replaced by the new
-ones, in place where the arrays live and by a new struct sharing them where
-a scalar does. The transforms, the index maps, the kernels and every
+source, the junction inductances, the coefficients of the junctions'
+current-phase relations and the scale are replaced by the new ones, in
+place where the arrays live and by a new struct sharing them where a
+scalar does. The transforms, the index maps, the kernels and every
 workspace stay, and the values are written through `maps`, the
-[`ValueMaps`](@ref) of the system, so the only allocations are the two
-temporaries of the source vector.
+[`ValueMaps`](@ref) of the system, so what it allocates is the two
+temporaries of the source vector, the junction length vectors of the
+refreshed coefficients, and the temporaries of the relations. `relations`
+are the new [`JunctionRelations`](@ref) on the host, or `nothing` when
+every junction is sinusoidal, as the constructor takes them.
 
 The structure must not have moved: a sparse pattern which differs from the
 one the system was built on is refused, because the plans are built on the
 pattern and a value which moves it is a new circuit and not a new point.
+So are relations of another shape, a junction which turned from the
+sinusoidal relation to a polynomial one or back, or a polynomial of
+another degree, whose tables and workspaces the system was not built with.
 
 The assembly plans of the Jacobians hold the gathered linear term and, in
 their [`JunctionStructure`](@ref), `Lscale/Lj`; a plan the system holds is
@@ -242,7 +250,7 @@ or `complexjacobianplan`, built for the new values by a solve which needs
 a Jacobian the system did not hold, is installed instead.
 """
 function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
-        maps::ValueMaps,
+        maps::ValueMaps, relations,
         realjacobianplan = sys.realjacobianplan,
         complexjacobianplan = sys.complexjacobianplan)
     for (old, new, what) in ((sys.invLnm, invLnm, "inverse inductance"),
@@ -255,6 +263,7 @@ function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
         throw(ArgumentError("the junctions changed between points, which a reused system cannot follow; build a new one."))
     copyto!(sys.Ljb.nzval, Ljb.nzval)
     copyto!(sys.Ljbm.nzval, Ljbm.nzval)
+    rel = rebindrelations!(sys.relations, relations)
     TF = real(eltype(sys.phimatrix))
     linearterm!(sys.Knm, maps, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
         sys.wmodes2m)
@@ -272,8 +281,8 @@ function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
     copyto!(sys.bnm, convert(Vector{Complex{TF}}, bnm))
     copyto!(sys.bnmr, convert(Vector{TF},
         complex_to_real(bnm, sys.modelayout.isreal)))
-    # nothing evaluated at the old point is kept: a rebound system is solved
-    # from the point its caller sets next
+    # nothing evaluated at the old values is kept; the branch fluxes at the
+    # held point depend on the point alone and stay with it
     invalidate!(sys)
     return HBSystem(sys.Rbnm, sys.invLnm, sys.Gnm, sys.Cnm, sys.wmodesm,
         sys.wmodes2m, sys.Knm, sys.bnm, sys.Ljb, sys.Ljbm, Lscale,
@@ -282,8 +291,28 @@ function rebind!(sys::HBSystem, invLnm, Gnm, Cnm, bnm, Ljb, Ljbm, Lscale;
         complexjacobianplan, sys.nonlineartermplan, sys.bnmr, sys.x,
         sys.xr, sys.phitd, sys.sintd, sys.costd, sys.sincurrent,
         sys.coscurrent, sys.negsecondtd, sys.negsecondcurrent,
-        sys.thirdtd, sys.thirdcurrent, sys.relations, sys.phimatrix, sys.dirtd, sys.dirtd2, sys.worktd,
-        sys.cosfd, sys.cosfdcurrent)
+        sys.thirdtd, sys.thirdcurrent, rel, sys.phimatrix, sys.dirtd,
+        sys.dirtd2, sys.worktd, sys.cosfd, sys.cosfdcurrent)
+end
+
+# the relations `new` (host, or `nothing` for every junction sinusoidal)
+# written into the table `r` a system holds, in its precision and on its
+# backend; a table of another shape is refused
+function rebindrelations!(r::JunctionRelations, new)
+    if isnothing(new)
+        allsinusoidal(r) && return r
+    elseif size(r.value) == size(new.value) &&
+            Array(r.polynomialjunctions) == Array(new.polynomialjunctions)
+        # the same junctions are polynomial and of the same degree, so only
+        # the coefficients move
+        T = eltype(r.value)
+        for (a, b) in ((r.value, new.value), (r.derivative, new.derivative),
+                (r.negsecond, new.negsecond), (r.third, new.third))
+            copyto!(a, convert(Matrix{T}, b))
+        end
+        return r
+    end
+    throw(ArgumentError("the junctions' current-phase relations changed their kind or their degree between points, which a reused system cannot follow; build a new one."))
 end
 
 """
@@ -302,7 +331,8 @@ function workspacetwin(sys::HBSystem)
         sys.wmodes2m, sys.Knm, sys.bnm, sys.Ljb, sys.Ljbm, sys.Lscale,
         sys.freqindexmap, sys.conjsourceindices, sys.conjtargetindices,
         sys.irfftplan, sys.rfftplan, sys.modelayout, nothing, nothing,
-        sys.nonlineartermplan, sys.bnmr, similar(sys.x), similar(sys.xr),
+        sys.nonlineartermplan, sys.bnmr, fill!(similar(sys.x), NaN),
+        fill!(similar(sys.xr), NaN),
         similar(sys.phitd), similar(sys.sintd), similar(sys.costd),
         Ref(false), Ref(false), similar(sys.negsecondtd), Ref(false),
         similar(sys.thirdtd), Ref(false), sys.relations,
@@ -449,9 +479,8 @@ hand in a cached time domain array directly.
 function applyfft!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
     rfftplan) where T
     mul!(fd, rfftplan, td)
-    invnormalization = 1/prod(size(td)[1:end-1])
     # broadcasting keeps this device generic
-    fd .*= invnormalization
+    fd .*= fftscale(td)
     return fd
 end
 
@@ -460,20 +489,32 @@ end
 applyfft!(fd::AbstractArray{Complex{T}}, ::AbstractArray{T},
     ::Nothing) where T = fd
 
+# the normalization `1/N` of the forward transform of a time domain array,
+# `N` the number of time samples per junction
+fftscale(td::AbstractArray) = 1/prod(size(td)[1:end-1])
+
+# the forward transform without its normalization, for a caller which has
+# folded `fftscale` into the time domain signal it transforms
+applyfftunscaled!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
+    rfftplan) where T = mul!(fd, rfftplan, td)
+applyfftunscaled!(fd::AbstractArray{Complex{T}}, ::AbstractArray{T},
+    ::Nothing) where T = fd
+
 """
     plan_applyffttranspose(td::Array{T})
 
 Create the complex transform plan for [`applyffttranspose!`](@ref), the
 transpose of [`applyfft!`](@ref) on the same grid. A work array the size of
 the time domain grid is allocated for planning and discarded; the caller
-passes its own `padded` at apply time. The plan is created with
-`FFTW.UNALIGNED` so it can be executed against per-thread work arrays
-allocated elsewhere.
+passes its own `padded` at apply time. The plan assumes the alignment every
+array Julia allocates has, so it serves the per-thread work arrays each
+caller allocates; FFTW refuses an array without it rather than computing
+on it.
 """
 function plan_applyffttranspose(td::Array{T}) where T
     padded = zeros(Complex{T}, size(td))
-    fftplan = FFTW.plan_fft(padded, 1:ndims(td)-1;
-        flags = FFTW.ESTIMATE | FFTW.UNALIGNED, timelimit = Inf)
+    fftplan = FFTW.plan_fft(padded, 1:ndims(td)-1; flags = FFTW.ESTIMATE,
+        timelimit = Inf)
     return fftplan
 end
 
@@ -550,8 +591,7 @@ function _ensuresin!(sys::HBSystem)
         if allsinusoidal(r)
             _ensuresincos!(sys)
         else
-            applyrelationlast!(sys.sintd, sys.phitd, r.value, r.sinusoidal,
-                r.anysinusoidal, sin)
+            applyrelationlast!(sys.sintd, sys.phitd, r.value, r, sin)
             sys.sincurrent[] = true
         end
     end
@@ -564,8 +604,7 @@ function _ensurecos!(sys::HBSystem)
         if allsinusoidal(r)
             _ensuresincos!(sys)
         else
-            applyrelationlast!(sys.costd, sys.phitd, r.derivative,
-                r.sinusoidal, r.anysinusoidal, cos)
+            applyrelationlast!(sys.costd, sys.phitd, r.derivative, r, cos)
             sys.coscurrent[] = true
         end
     end
@@ -590,8 +629,7 @@ function _negsecond!(sys::HBSystem)
         return sys.sintd
     end
     if !sys.negsecondcurrent[]
-        applyrelationlast!(sys.negsecondtd, sys.phitd, r.negsecond,
-            r.sinusoidal, r.anysinusoidal, sin)
+        applyrelationlast!(sys.negsecondtd, sys.phitd, r.negsecond, r, sin)
         sys.negsecondcurrent[] = true
     end
     return sys.negsecondtd
@@ -604,8 +642,7 @@ end
 function _third!(sys::HBSystem)
     r = sys.relations
     if !sys.thirdcurrent[]
-        applyrelationlast!(sys.thirdtd, sys.phitd, r.third, r.sinusoidal,
-            r.anysinusoidal, x -> -cos(x))
+        applyrelationlast!(sys.thirdtd, sys.phitd, r.third, r, x -> -cos(x))
         sys.thirdcurrent[] = true
     end
     return sys.thirdtd
@@ -619,18 +656,32 @@ Set the point at which [`residual!`](@ref), [`jacobianvectorproduct!`](@ref),
 harmonic balance nonlinear system, and cache the time domain branch fluxes
 there. Accepts the complex vector of node fluxes or the equivalent real
 representation, dispatched on the element type. Returns `sys`.
+
+A point equal to the one the system holds, handed in as an array of the
+type the system holds it in, is not set again: the branch fluxes and every
+evaluation cached at it (the sine, the cosine and its transform) stay. A
+solver resynchronizing the system after a step, or a preconditioner
+setting the point it is rebuilt at, pays an O(n) comparison rather than a
+transform. The point a system is built with is `NaN`, which no point
+equals.
 """
 function setpoint!(sys::HBSystem, x::AbstractVector{<:Complex})
+    heldpoint(sys.x, x) && return sys
     copyto!(sys.x, x)
     applycomplextoreal!(sys.xr, sys.nonlineartermplan, sys.x)
     return _setpoint!(sys, sys.x)
 end
 
 function setpoint!(sys::HBSystem, xr::AbstractVector{<:Real})
+    heldpoint(sys.xr, xr) && return sys
     copyto!(sys.xr, xr)
     applyrealtocomplex!(sys.x, sys.nonlineartermplan, sys.xr)
     return _setpoint!(sys, sys.xr)
 end
+
+# whether `x` is the point `held`, compared only where the two are arrays
+# of one type, and so on one backend
+heldpoint(held, x) = typeof(held) === typeof(x) && held == x
 
 # the time domain branch fluxes at the point, from the forward map of the
 # plan in the representation `z` is in
@@ -696,22 +747,26 @@ function jacobianvectorproduct!(Jv::AbstractVector, sys::HBSystem,
     plan = sys.nonlineartermplan
     applyforwardterm!(sys.phimatrix, plan, v)
     applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
-    _multiplyintowork!(sys.worktd, sys.costd, sys.dirtd)
-    applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
+    _scaledproduct!(sys.worktd, fftscale(sys.worktd), sys.costd, sys.dirtd)
+    applyfftunscaled!(sys.phimatrix, sys.worktd, sys.rfftplan)
     applybackwardterm!(Jv, plan, sys.phimatrix, v)
     return Jv
 end
 
-# out .= a .* b and out .= -a .* b .* c behind function barriers
-function _multiplyintowork!(out::AbstractArray{T}, a::AbstractArray{T},
+# out .= a .* b .* s and out .= a .* b .* c .* s behind function barriers:
+# the time domain product of a matrix-free product, with the normalization
+# `s` of the forward transform which follows it folded in (and its sign,
+# where the product is negated), so that the transform needs no pass of its
+# own. Only the backward map reads the transformed product.
+function _scaledproduct!(out::AbstractArray{T}, s, a::AbstractArray{T},
     b::AbstractArray{T}) where T
-    out .= a .* b
+    out .= a .* b .* T(s)
     return out
 end
 
-function _multiplyintowork!(out::AbstractArray{T}, a::AbstractArray{T},
+function _scaledproduct!(out::AbstractArray{T}, s, a::AbstractArray{T},
     b::AbstractArray{T}, c::AbstractArray{T}) where T
-    out .= .-a .* b .* c
+    out .= a .* b .* c .* T(s)
     return out
 end
 
@@ -736,8 +791,9 @@ function hessianvectorproduct!(Hvw::AbstractVector, sys::HBSystem,
     applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
     applyforwardterm!(sys.phimatrix, plan, w)
     applyifft!(sys.dirtd2, sys.phimatrix, sys.irfftplan)
-    _multiplyintowork!(sys.worktd, negsecond, sys.dirtd, sys.dirtd2)
-    applyfft!(sys.phimatrix, sys.worktd, sys.rfftplan)
+    _scaledproduct!(sys.worktd, -fftscale(sys.worktd), negsecond, sys.dirtd,
+        sys.dirtd2)
+    applyfftunscaled!(sys.phimatrix, sys.worktd, sys.rfftplan)
     # the linear terms are linear in x so they do not contribute
     applybackwardterm!(Hvw, plan, sys.phimatrix, v; addlinearterm = false)
     return Hvw
@@ -766,11 +822,8 @@ function cosdirectionalderivative!(dcos::Array, sys::HBSystem,
     negsecond = _negsecond!(sys)
     applyforwardterm!(sys.phimatrix, sys.nonlineartermplan, v)
     applyifft!(sys.dirtd, sys.phimatrix, sys.irfftplan)
-    _multiplyintowork!(sys.worktd, negsecond, sys.dirtd)
-    applyfft!(dcos, sys.worktd, sys.rfftplan)
-    @inbounds for i in eachindex(dcos)
-        dcos[i] = -dcos[i]
-    end
+    _scaledproduct!(sys.worktd, -fftscale(sys.worktd), negsecond, sys.dirtd)
+    applyfftunscaled!(dcos, sys.worktd, sys.rfftplan)
     return dcos
 end
 

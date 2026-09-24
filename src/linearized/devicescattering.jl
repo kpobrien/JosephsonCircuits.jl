@@ -518,9 +518,12 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     istable = isnothing(callables)
     # size everything first and fill it in place: a line whose every cell is
     # its own block has hundreds of thousands of table points, and growing
-    # the flat arrays a block at a time would be slow
+    # the flat arrays a block at a time would be slow. A definition's data
+    # is laid out once, at its first instance, and its other instances
+    # read it there
     ntot = 0; vtot = 0; ztot = 0; stot = 0
-    for sb in ssys.blocks
+    for (bi, sb) in enumerate(ssys.blocks)
+        ssys.firstof[bi] == bi || continue
         p = sb.block.provider
         n = sb.block.nports
         ztot += n
@@ -549,6 +552,17 @@ function plandeviceproviders(ssys, nbatch::Integer, backend, wpumpmodes,
     names = String[sb.name for sb in ssys.blocks]
     zi = 0; fi = 0; vi = 0; si = 0
     for (bi, sb) in enumerate(ssys.blocks)
+        f = ssys.firstof[bi]
+        if f != bi
+            # an instance of a definition laid out already, whose range
+            # that instance's check covers
+            zrefoff[bi] = zrefoff[f]; freqoff[bi] = freqoff[f]
+            nfreq[bi] = nfreq[f]; valoff[bi] = valoff[f]
+            slopeoff[bi] = slopeoff[f]; zeroout[bi] = zeroout[f]
+            ranges[bi] = ranges[f]; strict[bi] = false
+            conjhost[bi] = conjhost[f]; conjsym[bi] = conjsym[f]
+            continue
+        end
         blk = sb.block
         n = blk.nports
         zrefoff[bi] = zi
@@ -643,7 +657,7 @@ function checkdeviceranges(dp::DeviceProviders, k::Integer)
         # a frequency within roundoff of an end knot is on it, as on the host
         tol = 8eps(Float64)*max(abs(lo), abs(hi))
         if l < lo - tol || h > hi + tol
-            throw(ArgumentError(lazy"The scattering block at $(dp.names[bi]) is evaluated over [$(l), $(h)] rad/s but its tabulated range is [$(lo), $(hi)] rad/s. Extrapolation of tabulated data is opt-in: pass extrapolation = :constant or :linear if extrapolation is intended."))
+            throw(ArgumentError(lazy"The scattering block at $(dp.names[bi]) is evaluated over [$(l), $(h)] rad/s but its tabulated range is [$(lo), $(hi)] rad/s. Extrapolation of tabulated data is opt-in: pass extrapolation = :constant, :linear or :zero if extrapolation is intended, or fit the block with RationalScattering, which extrapolates as a passive rational function."))
         end
     end
     return nothing

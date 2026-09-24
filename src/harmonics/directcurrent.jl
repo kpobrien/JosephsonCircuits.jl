@@ -284,7 +284,7 @@ ground, so that the block relations and the classification have the nodal
 rows and the conductance to work from.
 
 # Fields
-- `modeindex`, `dcrows`: the zero frequency mode and its nodal rows.
+- `modeindex`: the zero frequency mode.
 - `components`: the nodes of each floating static flux component.
 - `componentof`: the component index of each node, zero for a node whose
     average voltage is fixed at zero by a path to ground through inductance.
@@ -295,7 +295,6 @@ rows and the conductance to work from.
 """
 struct DCConductancePlan{Tv,Ti}
     modeindex::Int
-    dcrows::Vector{Int}
     components::Vector{Vector{Int}}
     componentof::Vector{Int}
     lift::SparseMatrixCSC{Tv,Ti}
@@ -409,7 +408,7 @@ function dcconductanceplan(floatingcomponents::Vector{Vector{Int}},
         n, nc)
 
 
-    return DCConductancePlan(Int(m0), dcrows, [Int.(c) for c in
+    return DCConductancePlan(Int(m0), [Int.(c) for c in
         floatingcomponents], componentof, lift, G0, Y)
 end
 
@@ -693,8 +692,8 @@ end
 # and each scattering block's zero frequency row is replaced by the same
 # pencil it satisfies at every other frequency,
 #
-#     B(0) V - C(0) i = 0,   B(0) = R^(-1/2)(I - S(0)),
-#                            C(0) = R^(1/2)(I + S(0)),
+#     B(0) V - C(0) i = 0,   B(0) = (I - S(0)) R^(-1/2),
+#                            C(0) = (I + S(0)) R^(1/2),
 #
 # with `V` the average port voltage and `i` the average port current, the
 # auxiliary unknown the `i = 0` row would otherwise pin to zero. This adds
@@ -712,13 +711,10 @@ end
 The zero frequency constitutive pencil of one scattering block.
 
 # Fields
-- `B0`, `C0`: `R^(-1/2)(I - S(0))` and `R^(1/2)(I + S(0))`, so the block's
+- `B0`, `C0`: `(I - S(0)) R^(-1/2)` and `(I + S(0)) R^(1/2)`, so the block's
   rows read `B0 V - C0 i = 0`.
 - `signalnodes`, `refnodes`: the terminals of each port.
 - `auxbase`: the auxiliary index base, as in [`StampedScatteringBlock`](@ref).
-- `freecurrents`: the dimension of the null space of `C0`, the number of
-  port current directions the block leaves undetermined. Zero for a block
-  whose current is fixed by its voltages.
 - `name`: the block's first port, for messages.
 """
 struct DCBlockDescriptor
@@ -727,7 +723,6 @@ struct DCBlockDescriptor
     signalnodes::Vector{Int}
     refnodes::Vector{Int}
     auxbase::Int
-    freecurrents::Int
     name::String
 end
 
@@ -832,11 +827,8 @@ function dcblockdescriptor(sb::StampedScatteringBlock; atol::Real = 1e-10,
         B0[p,q] = (d - S0[p,q]) / r2[q]
         C0[p,q] = (d + S0[p,q]) * r2[q]
     end
-    # the current directions the block does not determine: an ideal short
-    # has C0 = 0 and leaves all of them free
-    free = n - rank(C0; atol = atol*max(1, maximum(abs, C0)))
     return DCBlockDescriptor(B0, C0, sb.signalnodes, sb.refnodes, sb.auxbase,
-        free, sb.name)
+        sb.name)
 end
 
 """

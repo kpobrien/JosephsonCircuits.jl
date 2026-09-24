@@ -98,6 +98,26 @@ using Test
         @test isapprox(out.Ssensitivity[:, :, 2, :], fd; rtol = 1e-5)
     end
 
+    @testset "a block derivative is exact in any unit of its parameter" begin
+        # a reflection which depends on a delay puts its derivative on the
+        # diagonal of the hybrid coefficients, beside their identity parts:
+        # the derivative per second and per 1e-22 second, whose entries are
+        # of order 1e-12, agree to rounding after the unit factor
+        S(w) = ComplexF64[0.2*cis(-w*1e-11) 0.7; 0.7 0.2*cis(-w*1e-11)]
+        dS(u) = w -> (-im*w*u)*ComplexF64[0.2*cis(-w*1e-11) 0; 0 0.2*cis(-w*1e-11)]
+        c = Circuit([(:p1, 1, 0, Port(1)), (:b, 1, 2,
+            ScatteringParameters(S; nports = 2)), (:c2, 2, 0, Capacitor(1e-12)),
+            (:p2, 2, 0, Port(2))])
+        psc = compile(c)
+        sf = JosephsonCircuits.truncfreqs(JosephsonCircuits.calcfreqsdft((0,));
+            dc = true)
+        dSdtheta(u) = hblinsolve(2*pi*[4.0e9, 5.0e9], psc, Dict{Symbol,Number}(),
+            sf; keyedarrays = false, returnSsensitivity = true,
+            nsensitivityparameters = 1, sensitivityblockpairs = [("b", 1,
+                ScatteringParameters(dS(u); nports = 2))]).Ssensitivity
+        @test isapprox(dSdtheta(1e-22)./1e-22, dSdtheta(1.0); rtol = 1e-12)
+    end
+
     @testset "a block pair names one instance of a shared definition" begin
         # two instances built from one ScatteringParameters object: the
         # derivative with respect to the second is the finite difference
@@ -450,22 +470,27 @@ using Test
         Cval = 1000.0e-15
         ftab = 2*pi*collect(range(0.5e9, 30e9, length = 200))
         capval(w) = (1 - im*w*Cval*50.0)/(1 + im*w*Cval*50.0)
-        # the last is zero beyond a band which the sidebands two and four
-        # pump harmonics up leave
+        # the third is zero beyond a band which the sidebands two and four
+        # pump harmonics up leave, and the last is two instances of one
+        # definition, whose table is laid out once
         fband = 2*pi*collect(range(3e9, 12e9, length = 60))
-        for (lbl, scale, f, extrapolation) in (("lossless", 1.0, ftab, :constant),
-                ("lossy", 0.85, ftab, :constant),
-                ("zero beyond the band", 1.0, fband, :zero))
+        for (lbl, scale, f, extrapolation, twice) in (
+                ("lossless", 1.0, ftab, :constant, false),
+                ("lossy", 0.85, ftab, :constant, false),
+                ("zero beyond the band", 1.0, fband, :zero, false),
+                ("one definition twice", 0.85, ftab, :constant, true))
             tab = reshape([scale*capval(w) for w in f], 1, 1, :)
             blk = ScatteringParameters((f, tab); nports = 1, grounded = true,
                 extrapolation = extrapolation)
+            shunt = twice ? Any[:c2 => blk, :c3 => blk] : Any[:c2 => blk]
             circuit = Circuit(
                 Any[:p1 => Port(1; Z0 = 50.0),
                     :cc => Capacitor(100.0e-15),
-                    :jj => JosephsonJunction(1000.0e-12), :c2 => blk,
+                    :jj => JosephsonJunction(1000.0e-12), shunt...,
                     :rl => Resistor(1.0e5)],
                 Any[((:p1,1), (:cc,1)),
-                    ((:cc,2), (:jj,1), (:c2,1), (:rl,1)),
+                    ((:cc,2), (:jj,1), [(first(b), 1) for b in shunt]...,
+                        (:rl,1)),
                     ((:jj,2), (:p1,2), Ground), ((:rl,2), Ground)])
             nl = hbnlsolve(wp, (16,), sources, circuit; keyedarrays = false)
             psc = JosephsonCircuits.compile(circuit)
@@ -496,6 +521,7 @@ using Test
             dp = JosephsonCircuits.plandeviceproviders(ssys, length(wsweep),
                 JosephsonCircuits.CPU(), d.wpumpmodes, ssys.scale)
             @test !isnothing(dp)
+            @test length(dp.vals) == length(tab)
             JosephsonCircuits.stagedeviceproviders!(st.values, dp, wsweep, 1,
                 length(wsweep))
             JosephsonCircuits.applyscatteringstamps!(got, st)
@@ -1089,8 +1115,7 @@ using Test
             noise = Lossless()).nports == 2
 
         # a callable cannot be held to the declaration when it is built, so
-        # it is looked at when a sweep is asked for: sampling can show that a
-        # block dissipates, which is the direction that matters here
+        # it is held to it at the frequencies a sweep evaluates it at
         lossyf(w) = fill(0.8*(1 - im*w*1e-12*Z0)/(1 + im*w*1e-12*Z0), 1, 1)
         wl = 2*pi*collect(range(4e9, 6e9, length = 8))
         @test_throws ArgumentError hblinsolve(wl,
@@ -1107,29 +1132,73 @@ using Test
         @test all(x -> isapprox(x, 1.0; atol = 1e-12), clean.CM)
     end
 
+    @testset "data construction cannot check is held to its declaration" begin
+        # the same data gets the same verdict whether construction reads it,
+        # as a matrix, or the sweep does, as a callable: an amplifier
+        # declared passive, the default, and a lossy through declared
+        # lossless, against the block's own atol either way
+        w2 = 2*pi*[4.0e9, 5.0e9]
+        two(x) = Circuit([(:p1, 1, 0, Port(1)), (:x, 1, 2, x),
+            (:p2, 2, 0, Port(2))])
+        through(loss) = ComplexF64[0 sqrt(1 - loss); sqrt(1 - loss) 0]
+        cases = ((ComplexF64[0 0; 3 0], Passive(), 1e-8),
+            (through(1e-5), Lossless(), 1e-3), (through(1e-7), Lossless(), 1e-10),
+            (through(1e-2), Passive(), 1e-8))
+        for (S, noise, atol) in cases
+            built = try
+                ScatteringParameters(S; noise = noise, atol = atol); true
+            catch e
+                e isa ArgumentError || rethrow()
+                false
+            end
+            solved = try
+                hblinsolve(w2, two(ScatteringParameters(w -> S; nports = 2,
+                    noise = noise, atol = atol)); keyedarrays = false); true
+            catch e
+                e isa ArgumentError || rethrow()
+                false
+            end
+            @test built == solved
+        end
+        # a passive table continued linearly beyond its knots turns active
+        # there, which no sample shows when it is built
+        ft = 2*pi*[4.0e9, 5.0e9, 6.0e9]
+        St = cat([ComplexF64[0 s; s 0] for s in (0.7, 0.8, 0.9)]...; dims = 3)
+        table = ScatteringParameters((ft, St); extrapolation = :linear)
+        @test_throws ArgumentError hblinsolve([2*pi*9.0e9], two(table))
+        @test abs(hblinsolve([2*pi*4.5e9], two(table);
+            keyedarrays = false).S[2, 1, 1]) < 1
+    end
+
     @testset "a pumped circuit with a dissipative block" begin
         # the noise source of each mode is scaled by that mode's frequency,
         # which a single mode circuit cannot show. A parametric amplifier
-        # with a lossy non-reciprocal block in its line has several, at
-        # frequencies which differ by the pump.
+        # read through a lossy non-reciprocal block has several, at
+        # frequencies which differ by the pump, and the block transmits
+        # both ways, so the port sees the amplifier and the block's noise.
         c = Circuit(
             Any[:p1 => Port(1; Z0 = 50.0),
-                :x => ScatteringParameters(ComplexF64[0 0; 0.8 0]; grounded = false),
-                :c1 => Capacitor(100.0e-15),
-                :jj => JosephsonJunction(1.0e-6),
-                :cj => Capacitor(100.0e-15)],
+                :x => ScatteringParameters(ComplexF64[0.1 0.6im; 0.7 0.1];
+                    grounded = false),
+                :cc => Capacitor(100.0e-15),
+                :jj => JosephsonJunction(1000.0e-12),
+                :cj => Capacitor(1000.0e-15)],
             Any[((:p1,1), (:x,1,1)),
-                ((:x,2,1), (:c1,1)),
-                ((:c1,2), (:jj,1), (:cj,1)),
+                ((:x,2,1), (:cc,1)),
+                ((:cc,2), (:jj,1), (:cj,1)),
                 ((:x,1,2), (:x,2,2), (:jj,2), (:cj,2), (:p1,2),
                  Ground)])
-        sol = hbsolve(2*pi*[4.5e9], (2*pi*5.0e9,),
-            [(mode=(1,), port=1, current=1.0e-6)], (4,), (8,), c)
+        sol = hbsolve(2*pi*[4.5e9, 4.7e9], (2*pi*4.75001e9,),
+            [(mode=(1,), port=1, current=0.00565e-6/0.7)], (4,), (8,), c)
         # one per mode: the commutation relations are signed by the mode
         # frequency, so the conjugated modes come back to minus one
         @test all(x -> isapprox(abs(x), 1.0; atol = 1e-12), sol.linearized.CM)
-        @test all(x -> 0 <= x <= 1 + 1e-12, sol.linearized.QE ./
-            sol.linearized.QEideal)
+        # the signal reaches the port, and the block's loss keeps the
+        # quantum efficiency below the ideal of its gain
+        L = sol.linearized
+        @test all(>(0.1), abs2.(L.S((0,), 1, (0,), 1, :)))
+        @test all(x -> 0 < x < 1, L.QE((0,), 1, (0,), 1, :) ./
+            L.QEideal((0,), 1, (0,), 1, :))
     end
 
     @testset "the noise covariance factorization" begin
@@ -1232,16 +1301,16 @@ using Test
             got = zeros(ComplexF64, nrows, nrhs)
             if isnothing(dp.funcs)
                 JosephsonCircuits.blocknoisefactorkernel!(backend, 64)(
-                    bp.factors, bp.blockindex, bp.factoroff, dp.nports,
-                    dp.freqoff, dp.nfreq, dp.freqs, dp.valoff, dp.vals,
-                    dp.curv, dp.slopeoff, dp.eslopes,
-                    dp.conjsym, dp.zeroout, wmodes, Nmodes, bp.nentries;
-                    ndrange = bp.nentries*Nmodes)
+                    bp.factors, bp.factorentries, bp.blockindex,
+                    bp.factoroff, dp.nports, dp.freqoff, dp.nfreq, dp.freqs,
+                    dp.valoff, dp.vals, dp.curv, dp.slopeoff, dp.eslopes,
+                    dp.conjsym, dp.zeroout, wmodes, Nmodes;
+                    ndrange = bp.nfactors*Nmodes)
             else
                 JosephsonCircuits.blocknoiseentryfactorkernel!(backend, 64)(
-                    bp.factors, bp.blockindex, bp.factoroff, dp.nports,
-                    dp.funcs, dp.conjsym, wmodes, Nmodes, bp.nentries;
-                    ndrange = bp.nentries*Nmodes)
+                    bp.factors, bp.factorentries, bp.blockindex,
+                    bp.factoroff, dp.nports, dp.funcs, dp.conjsym, wmodes,
+                    Nmodes; ndrange = bp.nfactors*Nmodes)
             end
             JosephsonCircuits.blocknoisecontractkernel!(backend, 64)(got,
                 phiadj, bp.factors, bp.blockindex, bp.factoroff, bp.auxbase,
@@ -1259,11 +1328,11 @@ using Test
             @test other.factors !== bp.factors
             @test length(other.factors) == length(bp.factors)
             for f in (:blockindex, :factoroff, :auxbase, :channelentry,
-                      :channellocal)
+                      :channellocal, :factorentries)
                 @test getfield(other, f) === getfield(bp, f)
             end
-            @test (other.nentries, other.nchannels, other.nmodes) ==
-                (bp.nentries, bp.nchannels, bp.nmodes)
+            @test (other.nfactors, other.nchannels, other.nmodes) ==
+                (bp.nfactors, bp.nchannels, bp.nmodes)
         end
     end
 
@@ -1399,11 +1468,10 @@ using Test
                 d.wpumpmodes, ssys.scale)
             got = zeros(ComplexF64, size(want)...)
             JosephsonCircuits.blocknoisefactorkernel!(backend, 64)(
-                bp.factors, bp.blockindex, bp.factoroff, dp.nports,
-                dp.freqoff, dp.nfreq, dp.freqs, dp.valoff, dp.vals,
-                dp.curv, dp.slopeoff, dp.eslopes,
-                dp.conjsym, dp.zeroout, wmodes, Nmodes, bp.nentries;
-                ndrange = bp.nentries*Nmodes)
+                bp.factors, bp.factorentries, bp.blockindex, bp.factoroff,
+                dp.nports, dp.freqoff, dp.nfreq, dp.freqs, dp.valoff, dp.vals,
+                dp.curv, dp.slopeoff, dp.eslopes, dp.conjsym, dp.zeroout,
+                wmodes, Nmodes; ndrange = bp.nfactors*Nmodes)
             JosephsonCircuits.blocknoisecontractkernel!(backend, 64)(got,
                 phiadj, bp.factors, bp.blockindex, bp.factoroff, bp.auxbase,
                 dp.nports, bp.channelentry, bp.channellocal, wmodes, Nmodes,
@@ -1466,23 +1534,6 @@ using Test
         @test isapprox(fwd[:,:,1,:], fd; rtol = 1e-6,
             norm = v -> maximum(abs, v))
         @test maximum(abs, fwd[:,:,2,:]) > 1   # the junction column is live
-
-        # An operating point is a host object whichever backend solved for
-        # it: what differentiates it evaluates transforms one direction at a
-        # time, so it needs a working system rather than a snapshot, and a
-        # system on a backend would put a transfer in every caller where no
-        # test without a device could see it. A solve on a backend gets a
-        # host twin instead, so the contraction below is the host code these
-        # tests run.
-        op = hbsolve(wsens, wpsens, srcsens, (8,), (16,), blockjpa(Cc0);
-            keyedarrays = false, sensitivitynames = ["cc"],
-            returnSsensitivity = true,
-            sensitivityoperatingpoint = true).nonlinear.operatingpoint
-        @test op.sys.phimatrix isa Array
-        @test op.sys.phitd isa Array
-        @test op.sys.sintd isa Array
-        @test op.jacobian isa
-            JosephsonCircuits.SparseArrays.SparseMatrixCSC{Float64,Int}
     end
 
     @testset "a block whose data the backend cannot evaluate" begin
@@ -1792,9 +1843,10 @@ using Test
         starved = ScatteringParameters([0.0 0.0; 10.0 0.0]; zref = Z0,
             noise = NoiseCovariance(w -> [1.0 0.0; 0.0 98.0]))
         @test_throws ArgumentError run(two(starved))
-        # and without noise outputs the block is stamped and solved
-        @test isapprox(abs2(hblinsolve(w0, two(starved); keyedarrays = false,
-            returnQE = false, returnCM = false).S[2, 1, 1]), 100.0; rtol = 1e-12)
+        # and without noise outputs too: a block is refused on what it
+        # declares, not on the outputs asked of the solve
+        @test_throws ArgumentError hblinsolve(w0, two(starved);
+            keyedarrays = false, returnQE = false, returnCM = false)
 
         # a pumped amplifier read out through a circulator by such a block:
         # every output mode obeys the commutation relations, signed by its
@@ -1945,6 +1997,18 @@ using Test
         @test all(base.coeff[c] == 1 ? v1[c] == v0[c] : v1[c] ≈ k*v0[c]
             for c in eachindex(v0))
         @test any(==(1), base.coeff) && any(==(2), base.coeff)
+
+        # the constant term of a pump solve is the contribution a system
+        # matrix the stamp system is mapped into receives, formed without
+        # moving that map
+        A = JC.SparseArrays.spdiagm(0 => ones(ComplexF64, 200)) + base.pattern
+        JC.setscatteringindexmap!(base, A)
+        mapped = copy(base.Aindex)
+        term = JC.scatteringlinearterm(base, wmodes)
+        @test base.Aindex == mapped
+        fill!(JC.SparseArrays.nonzeros(A), 0)
+        JC.assemblescattering!(A, base, wmodes)
+        @test term ≈ A + base.kcl
     end
 
 end
@@ -1982,6 +2046,18 @@ end
             @test isapprox(sb.linearized.S((mo,), 1, (mi,), 1, i),
                 h*sqrt(abs(nu)/abs(w + mo*wp)); atol = 1e-13)
         end
+        # the same transfer functions as tables which cover the frequencies
+        # an entry reads them at and no more: H0 at every mode of the sweep
+        # and of the pump solve, whose modes are wp, 3wp and 5wp, and H2 at
+        # the inputs it converts, up to 3wp and down to -5wp
+        tab(f, lo, hi) = (fs = collect(range(lo, hi; length = 400));
+            (fs, cat([f(x) for x in fs]...; dims = 3)))
+        tabulated = LinearizedScattering([tab(H0, -5wp - 1e8, 5wp + 1e8),
+            tab(H2, -5wp - 1e8, 3wp + 1e8)], wp; harmonics = [0, 2],
+            nports = 1, atol = 10.0)
+        st = hbsolve(ws, (wp,), [], (3,), (6,),
+            Circuit([(:p1, 1, 0, Port(1; Z0 = Z0)), (:b, 1, tabulated)]))
+        @test isapprox(S(st), S(sb); rtol = 1e-8)
         # the harmonics must begin with zero and ascend, the providers
         # match them, and only a lossless block is admitted
         @test_throws ArgumentError LinearizedScattering([H0, H2], wp; harmonics = [2, 0], nports = 1)
@@ -2272,7 +2348,7 @@ end
         r = sqrt(50.0)
         @test d.B0 ≈ [0.5 -0.5; -0.5 0.5] ./ r
         @test d.C0 ≈ [1.5 0.5; 0.5 1.5] .* r
-        @test d.freecurrents == 0        # I + S(0) is invertible
+        @test rank(d.C0) == 2            # I + S(0) is invertible
     end
 
     @testset "an open block reproduces the row it replaces" begin
@@ -2282,7 +2358,6 @@ end
         d = descr("open", mk(w -> Matrix{Complex{Float64}}(I, 2, 2)))
         @test all(iszero, d.B0)
         @test d.C0 ≈ 2*sqrt(50.0)*Matrix(I, 2, 2)
-        @test d.freecurrents == 0
     end
 
     @testset "a short constrains the voltage and frees the current" begin
@@ -2291,7 +2366,6 @@ end
         d = descr("short", mk(JC.S_short!(ones(Complex{Float64}, 1, 1)); n = 1))
         @test all(iszero, d.C0)
         @test d.B0 ≈ fill(2/sqrt(50.0), 1, 1)
-        @test d.freecurrents == 1
     end
 
     @testset "an ideal through leaves one current direction free" begin
@@ -2299,7 +2373,6 @@ end
         # port currents is undetermined while the voltages are tied together
         d = descr("through", mk(w -> JC.ABCDtoS(JC.ABCD_seriesZ(0.0 + 0im))))
         @test rank(d.C0) == 1
-        @test d.freecurrents == 1
         @test d.B0 ≈ [1.0 -1.0; -1.0 1.0] ./ sqrt(50.0)
     end
 

@@ -30,10 +30,8 @@ using Test
             cache = JosephsonCircuits.FactorizationCache()
             factorization = JosephsonCircuits.KLUfactorization()
             J3 = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2],2,3)
-            @test_throws(
-                DimensionMismatch(""),
-                JosephsonCircuits.tryfactorize!(cache,factorization,J3),
-            )
+            @test_throws DimensionMismatch JosephsonCircuits.tryfactorize!(
+                cache, factorization, J3)
         end
 
         begin
@@ -43,10 +41,8 @@ using Test
             JosephsonCircuits.tryfactorize!(cache,factorization,J1)
             J3 = JosephsonCircuits.sparse([1, 1, 2],[1, 2, 1],[1.3, 0.5, 0.1],2,2)
 
-            @test_throws(
-                DimensionMismatch(""),
-                JosephsonCircuits.tryfactorize!(cache,factorization,J3),
-            )
+            @test_throws DimensionMismatch JosephsonCircuits.tryfactorize!(
+                cache, factorization, J3)
         end
 
     end
@@ -148,8 +144,11 @@ end
         # the chosen permutation is a permutation and its predicted flops
         # are at most AMD's
         S = JC._symmetricpattern(A)
-        perm = JC._bestordering(A)
+        best = JC._bestordering(A)
+        perm = best.perm
         @test isperm(perm)
+        # with the fill it predicts, which is the elimination tree's
+        @test best.fill == JC.symbolicfill(S, perm)[1]
         common = JC.CHOLMOD.getcommon()
         pamd = Vector{Int64}(undef, n)
         @test JC.LibSuiteSparse.cholmod_l_amd(JC.CHOLMOD.Sparse(S, 1), C_NULL, 0, pamd, common) == 1
@@ -168,12 +167,17 @@ end
         end
         G = sparse(I3, J3, -1.0, m^3, m^3)
         G = G + G' + 7I
-        permg = JC._bestordering(G)
+        permg = JC._bestordering(G).perm
         Sg = JC._symmetricpattern(G)
         pamdg = Vector{Int64}(undef, m^3)
         JC.LibSuiteSparse.cholmod_l_amd(JC.CHOLMOD.Sparse(Sg, 1), C_NULL, 0, pamdg, common)
         pamdg .+= 1
-        @test JC.symbolicfill(Sg, permg)[2] <= JC.symbolicfill(Sg, pamdg)[2]
+        @test JC.symbolicfill(Sg, permg)[2] < JC.symbolicfill(Sg, pamdg)[2]
+        # the symmetric pattern of both is that of X + X', whether X is
+        # structurally symmetric, as the grid is, or not
+        pattern(X) = (X = sparse(X); (SparseArrays.getcolptr(X), rowvals(X)))
+        @test pattern(Sg) == pattern(G + G')
+        @test pattern(S) == pattern(abs.(A) + abs.(A)')
         Fg = JC.kluordered(G)
         bg = randn(rng, m^3)
         @test norm(G*(Fg\bg) - bg) <= 1e-10*norm(bg)
@@ -189,7 +193,8 @@ end
         cache = JC.FactorizationCache()
         JC.tryfactorize!(cache, f, A)
         ordering = cache.ordering
-        @test isperm(ordering)
+        @test ordering isa JC.FillOrdering
+        @test isperm(ordering.perm)
         # a fresh factorization of the same pattern, with new values, takes
         # the ordering the cache holds and solves as a fresh choice does
         A2 = copy(A)
@@ -198,17 +203,42 @@ end
         JC.tryfactorize!(cache, f, A2)
         @test cache.ordering === ordering
         @test cache.factorization\b ≈ JC.kluordered(A2)\b
-        # a cache seeded with it factorizes as the one which chose it
+        # a cache seeded with it factorizes as the one which chose it, and
+        # so does one seeded with the bare permutation
         seeded = JC.seedordering!(JC.FactorizationCache(), A2, ordering)
         JC.tryfactorize!(seeded, f, A2)
         @test seeded.ordering === ordering
         @test seeded.factorization.q == cache.factorization.q
+        bare = JC.seedordering!(JC.FactorizationCache(), A2, ordering.perm)
+        JC.tryfactorize!(bare, f, A2)
+        @test bare.factorization.q == cache.factorization.q
         @test_throws ArgumentError JC.seedordering!(JC.FactorizationCache(), A, 1:n-1)
+        @test_throws ArgumentError JC.seedordering!(JC.FactorizationCache(), A,
+            JC.FillOrdering(collect(1:n-1), n))
         # another pattern gets an ordering of its own
         B = A + sparse(1:n-1, 2:n, 1.0, n, n)
         cache.factorization = nothing
         JC.tryfactorize!(cache, f, B)
         @test cache.ordering == JC.fillordering(f, B)
+        @test cache.ordering != ordering
         @test cache.factorization\b ≈ Matrix(B)\b
+    end
+
+    @testset "KLU sizes the factors of a given ordering by its fill" begin
+        # handed only a permutation, KLU reserves ten times the matrix for
+        # each factor; handed the fill the ordering choice predicted, it
+        # reserves that. A banded matrix fills little, so the reservation
+        # is most of what a fresh factorization allocates
+        n = 20000
+        A = spdiagm(-2 => fill(-1.0, n - 2), -1 => fill(0.5, n - 1),
+            0 => fill(4.0, n), 1 => fill(0.5, n - 1), 2 => fill(-1.0, n - 2))
+        o = JC.fillordering(JC.KLUfactorization(), A)
+        JC.kluordered(A, o); JC.kluordered(A, o.perm)
+        sized = @allocated JC.kluordered(A, o)
+        unsized = @allocated JC.kluordered(A, o.perm)
+        @test sized < unsized/2
+        b = randn(rng, n)
+        @test JC.kluordered(A, o)\b ≈ JC.kluordered(A, o.perm)\b
+        @test norm(A*(JC.kluordered(A, o)\b) - b) <= 1e-12*norm(b)
     end
 end

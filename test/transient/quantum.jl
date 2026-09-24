@@ -46,8 +46,12 @@ function testtransientquantum(backend = JosephsonCircuits.CPU())
         gradient = device(zeros(3, n))
         transientquantumvjp!(gradient, plan, device(weights))
         direction = randn(rng, 3, n) .* 1e-6
-        @test dot(Array(gradient), direction) ≈
-              dot(weights, Array(transientquantum(plan, device(direction)))) rtol=1e-13
+        # exact as an identity, and checkable to the roundoff of the two
+        # sums which meet in it, which cancel by an amount the draw
+        # decides; the tolerance is measured from their terms
+        measured = Array(transientquantum(plan, device(direction)))
+        cancellation = dot(abs.(Array(gradient)), abs.(direction)) + sum(abs, weights .* measured)
+        @test dot(Array(gradient), direction) ≈ dot(weights, measured) rtol=1e-13 atol=1e-12*cancellation
         @test iszero(Array(gradient)[3, :])
         envelope = reshape(sinpi.((0:(n-1)) ./ n) .^ 2, :, 1)
         windowed = transientquantumplan(prob, times, [3.4/period]; envelopes = envelope, backend)
@@ -67,6 +71,13 @@ function testtransientquantum(backend = JosephsonCircuits.CPU())
             @test metrics.addednoise ≈ (1-1/g)/2 atol=1e-14
             @test metrics.QE ≈ g/(2g-1)
             @test metrics.normalizedQE ≈ 1
+            # the phase conjugating gain from the idler input, a scaled
+            # reflection, with the same output noise
+            if g > 1
+                conjugate = transientquantumefficiency(h[:, 3:4], v)
+                @test conjugate.gain ≈ g - 1
+                @test conjugate.QE ≈ (g - 1)/(2g - 1)
+            end
         end
         @test !transientquantumdiagnostics(2Matrix(1.0I, 2, 2), 4J, J).passed
         @test !transientquantumdiagnostics(0.4Matrix(1.0I, 2, 2), J, J).passed
@@ -98,11 +109,12 @@ function testquantumcontracts()
             [((:p, 1), (:Rloss, 1), (:Ropen, 1), (:c, 1)),
                 ((:p, 2), (:Rloss, 2), (:Ropen, 2), (:c, 2), Ground)])
         prob = transientproblem(circuit)
-        # the port takes the default temperature and the resistor its own
+        # the port is vacuum whatever the default temperature, and the
+        # resistor takes its own
         baths = transientnoisebaths(prob; temperature = 0.05)
         @test length(baths.channels) == 2
         @test [b.port for b in baths.channels] == [1, 0]
-        @test [b.temperature for b in baths.channels] == [0.05, 0.1]
+        @test [b.temperature for b in baths.channels] == [0.0, 0.1]
         @test baths.channels[2].name == "Rloss"
         @test_throws ArgumentError transientnoisebaths(prob; temperature = -1)
         unmatched = Circuit(

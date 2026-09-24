@@ -325,8 +325,8 @@ function warmup()
 end
 
 
-# The same solve with `CircuitValue` parameters, which is the form a
-# Symbolics `Num` is lowered to.
+# The same solve with the `CircuitValue` parameters of `@params`, which
+# resolve through the expression path rather than a name lookup.
 function warmupsyms()
 
     @params R Cc Lj Cj
@@ -442,16 +442,20 @@ export hbsolve, hbnlsolve, hblinsolve, compile,
     calccircuitgraph, symbolicmatrices, numericmatrices, LjtoIc, IctoLj,
     connectS, solveS
 
-# The `CircuitValues` expression type is internal: it is what a Symbolics
-# `Num` and a parameterized netlist file expression are lowered to. It is
-# deliberately not exported as a user facing symbolic type, because its
-# closed operator set (see circuit/values.jl) would make a confusing public
-# boundary; users parameterize circuits with symbols, numbers, and ordinary
-# Julia functions. `@params`, which declares parameters as `CircuitValues`
-# symbols, is available as `JosephsonCircuits.@params`.
+# The `CircuitValues` expression type is internal: it is what the
+# parameters of `@params` build and what a parameterized netlist file
+# expression parses to. It is deliberately not exported as a user facing
+# symbolic type, because its closed operator set (see circuit/values.jl)
+# would make a confusing public boundary; users parameterize circuits with
+# symbols, numbers, and ordinary Julia functions. `@params`, which declares
+# parameters as `CircuitValues` symbols, is available as
+# `JosephsonCircuits.@params`.
 import .CircuitValues: @params
+# `reset!(cache)` is not exported: packages as common as DataStructures
+# export a `reset!` of their own, and a script using both would have to
+# qualify it; the docstrings name it `JosephsonCircuits.reset!`.
 export FrequencyDependent, designsensitivities, designjacobian,
-    hbcache, hbsolve!,
+    hbcache, hbsolve!, HBCache, HBReuse,
     hbnonlinearproblem, JacobianOperator, preconditioner, hbresidual!,
     hbjvp!, hbvjp!, hbjacobian!, hbd2F!, hbd3F!, hbdFdp!, jacobianprototype,
     setdrive!, drivenresidual!, NewtonKrylov, Newton, QuasiNewton,
@@ -465,7 +469,8 @@ export FrequencyDependent, designsensitivities, designjacobian,
 export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
     Inductor, Capacitor, Resistor, CurrentSource, VoltageSource, Port,
     MutualInductor, JosephsonJunction, NonlinearInductor, PolynomialCPR,
-    ScatteringParameters, GaussianChannel, TransmissionLine, RationalScattering, LinearizedScattering, Passive, Lossless,
+    ScatteringParameters, GaussianChannel, TransmissionLine, RationalScattering, VectorFitting,
+    PassivityEnforcement, LinearizedScattering, Passive, Lossless,
     ScatteringLimit, OpenDC, ShortDC, ThroughDC, ScatteringDC,
     ThermalEquilibrium, NoiseCovariance, ConjugateSymmetry, Native,
     elaborate, ElaboratedCircuit, quadraturetransform,
@@ -474,7 +479,7 @@ export Circuit, Interface, Instance, Ground, Net, PortRef, PinRef,
 # the circuit integrated in time
 export TransientSource, TransientState, transientproblem, transientstate, transientsolve, transientsensitivity,
     transientdemodulate, transienttangent, transientadjoint, transientinjection,
-    Trapezoidal, GaussLegendre, BackwardEuler, WRspice, TransientReuse, TransientBatchSolution, TransientStepError,
+    Trapezoidal, GaussLegendre, BackwardEuler, WRspice, TransientReuse, TransientSolution, TransientBatchSolution, TransientStepError,
     transientiqplan, transientiq!, transientiq, transientiqvjp!,
     transientquantumplan, transientquantum, transientquantum!, transientquantumvjp!,
     transientnoisebaths, transientnoise, transientgain, transientquantumdiagnostics,

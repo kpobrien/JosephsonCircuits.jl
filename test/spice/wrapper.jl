@@ -92,6 +92,17 @@ using XicTools_jll
         @test out1 == out2
     end
 
+    @testset "wrspice_input_ac points" begin
+        # one frequency from a range is written as from a vector, and two
+        # are refused, since WRSPICE answers a sweep of no intermediate
+        # steps with three points
+        ac(freqs) = JosephsonCircuits.wrspice_input_ac("* SPICE Simulation", freqs, [1, 2], 1e-6)
+        @test ac((4:1:4)*1e9) == ac([4.0e9]) == ac(4.0e9)
+        @test_throws ArgumentError ac([4.0e9, 5.0e9])
+        @test_throws ArgumentError ac((4:1:5)*1e9)
+        @test_throws ArgumentError ac(Float64[])
+    end
+
     @testset "wrspice_cmd" begin
         # The refusal when there is nothing to find: no binary in the JLL
         # for this platform and no installation at WRSPICE's standard
@@ -143,6 +154,13 @@ using XicTools_jll
                     JosephsonCircuits.wrspice_input_ac(rc, 5.0e9, [1, 2], I),
                     JosephsonCircuits.wrspice_cmd())
                 @test ac.values["V"][1, 1] ≈ I/(1/50 + im*2pi*5e9*1e-12) rtol = 1e-6
+            end
+            # a sweep is answered at the frequencies asked for
+            for freqs in ([4e9, 4.5e9, 5e9], (4:0.1:5)*1e9)
+                ac = JosephsonCircuits.spice_run(
+                    JosephsonCircuits.wrspice_input_ac(rc, freqs, [1, 2], 1e-6),
+                    JosephsonCircuits.wrspice_cmd())
+                @test vec(real.(ac.values["Hz"])) ≈ freqs rtol = 1e-12
             end
 
             # an element of a model the input does not define: WRSPICE

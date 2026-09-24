@@ -107,8 +107,15 @@ using XicTools_jll
              Net("0", [(:P1, 2), (:Lj1, 2), (:C2, 2), (:I1, 2), (:gnd, 1)])])
         pbias = transientproblem(biased)
         inputb, _ = JC.wrspiceinput(pbias, WRspice(), 0.0, 1e-12, 10, 1e-12)
-        @test occursin("isrcc2 0 2 -1.0e-8", inputb) ||
-            occursin("isrcc2 0 2 1.0e-8", inputb)
+        # the source draws its current out of its first terminal, node 2,
+        # and into ground, as the drive of the same source named by
+        # `TransientSource`, which the cross check steps against the
+        # package, writes it
+        @test occursin("isrcc2 0 2 -1.0e-8", inputb)
+        pnamed = transientproblem(biased; sources = [TransientSource(:I1, 1e-8)])
+        inputn, _ = JC.wrspiceinput(pnamed, WRspice(), 0.0, 1e-12, 10, 1e-12)
+        @test occursin("isrcd1 2 0 1.0e-8", inputn)
+        @test !occursin("isrcc", inputn)
         # a net named as an integer past the node count: the phase node is
         # numbered past it, and the run keeps both traces
         skipping = Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)), ("Lj1", "2", "0", JosephsonJunction(1000e-12)),

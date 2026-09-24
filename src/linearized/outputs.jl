@@ -238,7 +238,8 @@ function thermaloccupation(w, temperature)
 end
 
 """
-    calcnoisecovariance!(Cnoise, Snoise, occupation = nothing)
+    calcnoisecovariance!(Cnoise, Snoise, occupation = nothing,
+        work = similar(Snoise))
 
 The added noise covariance at the output ports,
 
@@ -252,25 +253,27 @@ the two meet and where a temperature shows up.
 In the normalization of the rest of these outputs a vacuum channel counts as
 one, so at zero temperature the diagonal is `sum(abs2, Snoise[:,i])`, which
 is exactly the noise term in the denominator of [`calcqe!`](@ref).
+
+Formed as one matrix product, `transpose(Snoise)*work` with `work` the
+occupation scaled conjugate of `Snoise`, as the device sweep forms it;
+`work` is scratch of the size of `Snoise`, which a sweep holds in its
+workspace.
 """
 function calcnoisecovariance!(Cnoise::AbstractMatrix, Snoise::AbstractMatrix,
-    occupation = nothing)
+    occupation = nothing, work::AbstractMatrix = similar(Snoise))
     np = size(Snoise, 2)
     if size(Cnoise) != (np, np)
         throw(DimensionMismatch(lazy"`Cnoise` has size $(size(Cnoise)) but the $(np) output port modes need ($(np), $(np))."))
     end
-    fill!(Cnoise, zero(eltype(Cnoise)))
-    @inbounds for c in axes(Snoise, 1)
-        f = isnothing(occupation) ? 1.0 : occupation[c]
-        iszero(f) && continue
-        for ip in 1:np
-            a = f*Snoise[c, ip]
-            for iq in 1:np
-                Cnoise[ip, iq] += a*conj(Snoise[c, iq])
-            end
-        end
+    if size(work) != size(Snoise)
+        throw(DimensionMismatch(lazy"`work` has size $(size(work)) but `Snoise` has size $(size(Snoise))."))
     end
-    return Cnoise
+    if isnothing(occupation)
+        work .= conj.(Snoise)
+    else
+        work .= occupation .* conj.(Snoise)
+    end
+    return mul!(Cnoise, transpose(Snoise), work)
 end
 
 """
@@ -515,8 +518,8 @@ end
 The impedance of a component of value `c` and type `code` at frequency `w`,
 conjugating the stored value at a negative frequency.
 
-The numeric implementation, called by the numeric method of [`calcimpedance`](@ref) on the host and
-directly from the kernels which compute power waves on a backend.
+The numeric implementation, called by [`calcimpedance`](@ref) on the host
+and directly from the kernels which compute power waves on a backend.
 """
 @inline function impedance(c, code::Integer, w)
     cc = real(w) >= 0 ? c : conj(c)

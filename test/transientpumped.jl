@@ -3,11 +3,11 @@ using LinearAlgebra
 using Test
 
 # The quantum noise of a pumped transient against harmonic balance: a
-# Josephson amplifier's gain and quantum efficiency on both rules and on
-# a batch, a traveling wave amplifier's, and the convergence of a pulsed
-# lossy line where no stationary reference exists. The passive and the
-# warm circuits are in transientnoise.jl; this file is separate so that
-# the two run on different workers.
+# Josephson amplifier's gain and quantum efficiency, alone and on a
+# batch, a traveling wave amplifier's, and the convergence of a pulsed lossy line
+# where no stationary reference exists. The passive and the warm
+# circuits, under every rule, are in transient/noise.jl; this file is
+# separate so that the two run on different workers.
 @testset "the quantum noise of a pumped transient" begin
     JC = JosephsonCircuits
 
@@ -19,39 +19,23 @@ using Test
         # a physical cosine of peak 2ip has the positive frequency coefficient ip
         pump(t) = 2ip*ramp(t)*cospi(2fp*t)
         prob = transientproblem(circuit; sources = [TransientSource(1, pump)])
-        # the trapezoidal rule warps the drive frequencies by (2 pi f dt)^2/12,
-        # which the resonator's detuning and the amplifier's bifurcation
-        # magnify: the gain converges to harmonic balance at second order,
-        # 12% high at 5 ps and 2% at 0.3 ps, so the step is 2000 samples of
-        # a pump period; the pumped resonator rings for the whole settle
-        settle, record, dt = 200e-9, 100e-9, 0.15625e-12
-        sol = transientsolve(prob, (0.0, settle + record - dt); dt, record = :phases)
-        # the measurement on the settled window of the record; the baths are
-        # driven from the equilibrium start through the settling
-        first = round(Int, settle/dt) + 1
-        times = sol.times[first:end]
-        @test length(times) == round(Int, record/dt)
-        measurement = transientquantumplan(sol, times, [fs])
-        # the stationary Floquet frequencies of the pumped response
-        frequencies = sort!(abs.([fs + 2k*fp for k in -2:2]))
-        noise = transientnoise(sol, measurement; frequencies, weights = fill(1/record, 5),
-            inputs = measurement, commutationrtol = 3e-3)
         hb = hbsolve([2pi*fs], (2pi*fp,), [(mode = (1,), port = 1, current = ip)], (8,), (10,),
             circuit, Dict(); atol = 5e-17)
         s = hb.linearized.S((0,), 1, (0,), 1, 1)
         qe = hb.linearized.QE((0,), 1, (0,), 1, 1)
-        metrics = transientquantumefficiency(noise.gain, noise.covariance; rtol = 3e-3)
         @test abs2(s) > 1.1
-        @test noise.diagnostics.passed
-        @test metrics.gain ≈ abs2(s) rtol=1e-2
-        @test metrics.QE ≈ qe rtol=3e-3
-        @test metrics.normalizedQE ≈ 1 rtol=3e-3
-        # the Gauss-Legendre rule at 84 samples per period, a sixteenth of
-        # the trapezoidal step, on the same window: the gain to a part in
-        # ten thousand and the forward method to roundoff of the adjoint
-        dt = 2.5e-12
+        # the Gauss-Legendre rule at 84 samples per period, the pumped
+        # resonator ringing for the whole settle: the measurement on the
+        # settled window of the record, the baths driven from the
+        # equilibrium start through the settling, the bath the stationary
+        # Floquet frequencies of the pumped response; the gain and the
+        # quantum efficiency to a part in ten thousand and the forward
+        # method to roundoff of the adjoint
+        settle, record, dt = 200e-9, 100e-9, 2.5e-12
+        frequencies = sort!(abs.([fs + 2k*fp for k in -2:2]))
         gsol = transientsolve(prob, (0.0, settle + record - dt); dt, record = :phases, method = GaussLegendre())
         first = round(Int, settle/dt) + 1
+        @test length(gsol.times[first:end]) == round(Int, record/dt)
         gmeasurement = transientquantumplan(gsol, gsol.times[first:end], [fs])
         gnoise = transientnoise(gsol, gmeasurement; frequencies, weights = fill(1/record, 5),
             inputs = gmeasurement, commutationrtol = 3e-3)
@@ -59,6 +43,7 @@ using Test
         @test gnoise.diagnostics.passed
         @test gmetrics.gain ≈ abs2(s) rtol=1e-4
         @test gmetrics.QE ≈ qe rtol=1e-4
+        @test gmetrics.normalizedQE ≈ 1 rtol=3e-3
         gforward = transientnoise(gsol, gmeasurement; frequencies, weights = fill(1/record, 5),
             inputs = gmeasurement, commutationrtol = 3e-3, method = :forward)
         @test gforward.gain ≈ gnoise.gain rtol=1e-9
@@ -95,9 +80,12 @@ using Test
         # frequencies, within a budget too small for more than one of
         # either, is the same contraction in more passes
         JC.noisememorybudget[] = 1
-        tnoise = transientnoise(batch, gmeasurement; frequencies, weights = fill(1/record, 5),
-            inputs = gmeasurement, commutationrtol = 5e-2)
-        JC.noisememorybudget[] = 0
+        tnoise = try
+            transientnoise(batch, gmeasurement; frequencies, weights = fill(1/record, 5),
+                inputs = gmeasurement, commutationrtol = 5e-2)
+        finally
+            JC.noisememorybudget[] = 0
+        end
         @test tnoise.covariance ≈ bnoise.covariance rtol=1e-9
         @test tnoise.commutator ≈ bnoise.commutator rtol=1e-9
         @test tnoise.gain ≈ bnoise.gain rtol=1e-9

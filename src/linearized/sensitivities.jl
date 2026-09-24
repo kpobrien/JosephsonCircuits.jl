@@ -57,8 +57,8 @@ quantities which enter inversely.
     ([`blocksensitivitystamp`](@ref)).
 
 The stamp is the triplet `(rows, cols, vals)` of the component's own
-contribution, built by `tripletstamp`, and each value is scaled by the
-mode frequency of its column at assembly. `portindex` is the
+contribution, built by [`calcsensitivitystamps`](@ref), and each value is
+scaled by the mode frequency of its column at assembly. `portindex` is the
 index of the port whose impedance this component is, or zero, which selects
 the additional wave normalization term of [`calcSsensitivity!`](@ref).
 
@@ -119,64 +119,59 @@ end
 # A block's contribution to the system matrix is the hybrid stamp of
 # B = R^(-1/2)(I - S) and C = R^(1/2)(I + S), affine in S, and the
 # assembly is linear in B and C, so the derivative of the stamped values
-# with respect to a parameter is the assembly run with S replaced by
-# dS/dtheta minus the assembly with S replaced by zero: the subtraction
-# removes the identity parts of B and C and cancels the zero frequency
-# rows, which do not depend on S. The stamp values depend on the signal
-# frequency through S itself, so unlike the lumped stamps they are
-# rebuilt at every frequency, by each worker into its own buffers, because
-# the workers of hblinsolve run concurrently.
+# with respect to a parameter is the assembly of the derivatives of B and
+# C, -R^(-1/2) dS/dtheta and R^(1/2) dS/dtheta, with the zero frequency
+# rows, which do not depend on S, zero. It is stamped as it stands, with
+# no identity part beside it to lose its digits to however small it is.
+# The stamp values depend on the signal frequency through S itself, so
+# unlike the lumped stamps they are rebuilt at every frequency, by each
+# worker into its own buffers, because the workers of hblinsolve run
+# concurrently.
 
 """
-    zeroscatteringblock(b::ScatteringParameters)
+    checkblockpair(block, derivative, name)
 
-A block with the same ports, reference impedances and conventions whose
-scattering matrix is identically zero. Constructed directly rather than
-through the public constructor: it needs no passivity check.
+Refuse a block pair, for the block instance `name`, whose block or
+derivative is not a [`ScatteringParameters`](@ref): the derivative is
+stamped in the block's place, and only an ordinary block states one
+(see [`designblockjacobian`](@ref)); a pumped block
+([`LinearizedScattering`](@ref)) has none.
 """
-zeroscatteringblock(b::ScatteringParameters) = ScatteringParameters(
-    ConstantMatrixProvider(zeros(Complex{Float64}, b.nports, b.nports)),
-    b.nports, b.zref, b.grounded, b.noise, b.negative_frequency)
-# a pumped block with every harmonic transfer function zero
-zeroscatteringblock(b::LinearizedScattering) = LinearizedScattering(b.harmonics,
-    AbstractMatrixProvider[ConstantMatrixProvider(zeros(Complex{Float64}, b.nports, b.nports))
-        for _ in b.harmonics],
-    b.wp, b.phase, b.nports, b.zref, b.grounded, b.noise, b.dcmodel, b.envelope, b.atol)
+function checkblockpair(block, derivative, name)
+    (block isa ScatteringParameters && derivative isa ScatteringParameters) ||
+        throw(ArgumentError(lazy"The block pair of $(name) pairs a $(nameof(typeof(block))) with a derivative given as a $(nameof(typeof(derivative))); a block sensitivity is taken of a ScatteringParameters block, with its derivative given as one."))
+    return nothing
+end
 
 """
     targetstampsystems(ssys, target::Integer, dblock)
 
-The stamp systems whose value difference is the derivative of the block
-contribution with respect to a parameter of the block instance at ordinal
-`target` (its position among the compiled scattering blocks, which the
-stamped blocks follow), as `(dsys, zsys, position, rows, cols)`. The
-contributions are affine in the block's S and no other instance's depend
-on the parameter, so both systems hold that instance's contributions
-alone: `dsys` evaluates `dblock` (the block whose S is dS/dtheta) and
-`zsys` a zero block, which leaves the parts that do not depend on S to
-cancel. `position` places each contribution among the entries of the
-stamp, which are the pattern entries at `rows` and `cols` those
-contributions reach. The instance is selected by its ordinal and not by
-its definition, because two instances may share one definition object and
-a parameter belongs to one of them.
+The stamp system of the derivative of the block contribution with
+respect to a parameter of the block instance at ordinal `target` (its
+position among the compiled scattering blocks, which the stamped blocks
+follow), as `(dsys, position, rows, cols)`. The contributions are affine
+in the block's S and no other instance's depend on the parameter, so
+`dsys` holds that instance's contributions alone, with `dblock`, the
+block whose S is dS/dtheta, in its place (see [`blockstampvals!`](@ref)).
+`position` places each contribution among the entries of the stamp,
+which are the pattern entries at `rows` and `cols` those contributions
+reach. The instance is selected by its ordinal and not by its
+definition, because two instances may share one definition object and a
+parameter belongs to one of them.
 """
 function targetstampsystems(ssys, target::Integer, dblock)
-    cs = findall(==(target), ssys.blockindex)
-    # the target's place among the pumped blocks, when it is one
-    j = findfirst(==(target), ssys.pumped)
     sb = ssys.blocks[target]
-    own(block) = ScatteringStampSystem(
-        [StampedScatteringBlock(block, sb.signalnodes, sb.refnodes,
+    checkblockpair(sb.block, dblock, sb.name)
+    cs = findall(==(target), ssys.blockindex)
+    dsys = ScatteringStampSystem(
+        [StampedScatteringBlock(dblock, sb.signalnodes, sb.refnodes,
             sb.auxbase, sb.name)],
         ssys.kcl, ssys.pattern, ssys.patternindex[cs], ssys.Aindex[cs],
         ones(Int32, length(cs)), ssys.pindex[cs], ssys.qindex[cs],
         ssys.coeff[cs], ssys.sign[cs], ssys.modeindex[cs],
-        ssys.inmodeindex[cs], Int32[iszero(k) ? Int32(0) : Int32(1)
-            for k in ssys.coupled[cs]],
-        isnothing(j) ? Int[] : [1],
-        isnothing(j) ? Matrix{Int}[] : [ssys.pumpedk[j]],
-        ssys.modeoffsets, ssys.Nmodes, ssys.Nauxports, ssys.scale,
-        ssys.iscale, [1])
+        ssys.inmodeindex[cs], zeros(Int32, length(cs)), Int[],
+        Matrix{Int}[], ssys.modeoffsets, ssys.Nmodes, ssys.Nauxports,
+        ssys.scale, ssys.iscale, [1])
     # the pattern entries the contributions reach, in pattern order, and
     # their rows and columns
     entries = sort!(unique(ssys.patternindex[cs]))
@@ -184,29 +179,26 @@ function targetstampsystems(ssys, target::Integer, dblock)
     colptr = SparseArrays.getcolptr(ssys.pattern)
     rows = rowvals(ssys.pattern)[entries]
     cols = [searchsortedlast(colptr, k) for k in entries]
-    return own(dblock), own(zeroscatteringblock(sb.block)), position, rows,
-        cols
+    return dsys, position, rows, cols
 end
 
 """
-    blockstampvals!(vals, dsys, zsys, wmodes, workd, workz, dbuf, zbuf,
-        position)
+    blockstampvals!(vals, dsys, wmodes, work, buf, position)
 
-Add to `vals` (the entries of a block parameter's stamp) the derivative of
-the block contribution at the signed mode frequencies `wmodes`: the values
-of the dS system minus the values of the zero system (see
-[`targetstampsystems`](@ref)), scattered through `position`. The instances
-of one parameter share a stamp, each through positions of its own. `dbuf`
-and `zbuf` are scratch at least as long as the systems' contributions.
+Add to `vals` (the entries of a block parameter's stamp) the derivative
+of the block contribution at the signed mode frequencies `wmodes`: the
+values of the derivative system `dsys` (see
+[`targetstampsystems`](@ref)), whose block's data is dS/dtheta, with its
+hybrid coefficients the derivatives of `B` and `C` (see
+[`evaluatehybrid!`](@ref)), scattered through `position`. The instances
+of one parameter share a stamp, each through positions of its own.
+`buf` is scratch at least as long as the system's contributions.
 """
-function blockstampvals!(vals, dsys, zsys, wmodes, workd, workz, dbuf,
-        zbuf, position)
-    n = length(position)
-    d = view(dbuf, 1:n); z = view(zbuf, 1:n)
-    scatteringvalues!(d, dsys, wmodes, workd)
-    scatteringvalues!(z, zsys, wmodes, workz)
+function blockstampvals!(vals, dsys, wmodes, work, buf, position)
+    d = view(buf, 1:length(position))
+    scatteringvalues!(d, dsys, wmodes, work; derivative = true)
     @inbounds for c in eachindex(position)
-        vals[position[c]] += d[c] - z[c]
+        vals[position[c]] += d[c]
     end
     return vals
 end
@@ -217,18 +209,15 @@ end
 One worker's private state for the scattering block sensitivity stamps:
 its own copy of the stamp vector (the lumped stamps are shared read only,
 the `:S` stamps' values are private because they are rebuilt at every
-signal frequency), the provider-swapped systems, and the evaluation
-scratch.
+signal frequency), the derivative systems, and the evaluation scratch.
 """
 struct WorkerBlockSensitivity
     stamps::Vector{SensitivityStamp}
-    # (index into stamps, dsys, zsys, the stamp position of each of the
-    # target's contributions), one per block parameter pair
-    entries::Vector{Tuple{Int,Any,Any,Vector{Int}}}
-    workd::ScatteringWorkspace
-    workz::ScatteringWorkspace
-    dbuf::Vector{Complex{Float64}}
-    zbuf::Vector{Complex{Float64}}
+    # (index into stamps, the derivative system, the stamp position of each
+    # of the target's contributions), one per block parameter pair
+    entries::Vector{Tuple{Int,Any,Vector{Int}}}
+    work::ScatteringWorkspace
+    buf::Vector{Complex{Float64}}
 end
 
 function WorkerBlockSensitivity(stamps::Vector{SensitivityStamp},
@@ -237,10 +226,9 @@ function WorkerBlockSensitivity(stamps::Vector{SensitivityStamp},
         SensitivityStamp(st.kind, st.rows, st.cols, copy(st.vals),
             st.portindex, st.parameter, st.portscale) : st
         for st in stamps]
-    m = maximum(e -> length(e[4]), blockentries; init = 0)
+    m = maximum(e -> length(e[3]), blockentries; init = 0)
     return WorkerBlockSensitivity(private, collect(blockentries),
-        ScatteringWorkspace(), ScatteringWorkspace(),
-        Vector{Complex{Float64}}(undef, m), Vector{Complex{Float64}}(undef, m))
+        ScatteringWorkspace(), Vector{Complex{Float64}}(undef, m))
 end
 
 """
@@ -250,12 +238,12 @@ Rebuild this worker's `:S` stamp values at the signed mode frequencies
 `wmodes`.
 """
 function refreshblockstamps!(wbs::WorkerBlockSensitivity, wmodes)
-    for (idx, _, _, _) in wbs.entries
+    for (idx, _, _) in wbs.entries
         fill!(wbs.stamps[idx].vals, 0)
     end
-    for (idx, dsys, zsys, position) in wbs.entries
-        blockstampvals!(wbs.stamps[idx].vals, dsys, zsys, wmodes,
-            wbs.workd, wbs.workz, wbs.dbuf, wbs.zbuf, position)
+    for (idx, dsys, position) in wbs.entries
+        blockstampvals!(wbs.stamps[idx].vals, dsys, wmodes, wbs.work,
+            wbs.buf, position)
     end
     return wbs
 end
@@ -291,8 +279,8 @@ state: the linear term enters the residual with a plus sign, and unlike
 the lumped `:invL` case -- whose minus encodes `d(1/L)/d(ln L) = -1/L`,
 the derivative of the component law, not a residual sign -- the block
 derivative is computed directly. The derivative
-matrix comes from the same affine subtraction as the linearized stamps,
-on a stamp system rebuilt for the pump mode grid with the geometry the
+matrix is stamped as the linearized stamps are (see
+[`blockstampvals!`](@ref)), on a stamp system rebuilt for the pump mode grid with the geometry the
 operating point already determines: the augmented dimension is the state
 length and the block auxiliary variables occupy its tail.
 
@@ -324,19 +312,14 @@ function calcblockresidualsensitivity(op::HBOperatingPoint,
     # rows of its own instance alone
     Ir, Jr, Vr = Int[], Int[], Float64[]
     work = ScatteringWorkspace()
-    workz = ScatteringWorkspace()
-    m = length(pumpssys.patternindex)
-    dbuf = Vector{Complex{Float64}}(undef, m)
-    zbuf = Vector{Complex{Float64}}(undef, m)
+    buf = Vector{Complex{Float64}}(undef, length(pumpssys.patternindex))
     dAx = zeros(Complex{Float64}, Ntot)
     for (col, bp) in enumerate(blockpairs)
         bi = scatteringblockindex(psc, bp[1])
         iszero(bi) && throw(ArgumentError(lazy"the block pair names $(bp[1]), which is not a scattering block of this circuit"))
-        dsys, zsys, position, rows, cols = targetstampsystems(pumpssys, bi,
-            bp[3])
+        dsys, position, rows, cols = targetstampsystems(pumpssys, bi, bp[3])
         vals = zeros(Complex{Float64}, length(rows))
-        blockstampvals!(vals, dsys, zsys, op.wmodes, work, workz, dbuf,
-            zbuf, position)
+        blockstampvals!(vals, dsys, op.wmodes, work, buf, position)
         # the derivative matrix, of the target's entries alone, applied to
         # the state, over the rows those entries reach
         @inbounds for k in eachindex(vals)
@@ -359,53 +342,39 @@ function calcblockresidualsensitivity(op::HBOperatingPoint,
     L = op.dc.work.layout
     N = canonicaldim(L)
     keep = op.dc.keep
-    Ic, Jc, Vc = Int[], Int[], Float64[]
-    gathered = zeros(Float64, N)
-    dense = zeros(Float64, Nreal)
-    for col in axes(dFr, 2)
-        fill!(gathered, 0.0)
-        fill!(dense, 0.0)
-        for t in nzrange(dFr, col)
-            dense[rowvals(dFr)[t]] = nonzeros(dFr)[t]
-        end
-        gathercanonical!(gathered, dense, L)
-        for i in eachindex(gathered)
-            v = gathered[i]*keep[i]
-            iszero(v) || (push!(Ic, i); push!(Jc, col); push!(Vc, v))
-        end
-    end
+    dFc = canonicalresidual(dFr, keep, N)
     br = op.dc.work.blockrows
-    if !isnothing(br)
-        window = windowindices(L)
-        u = op.dc.u
-        v = view(u, voltagerange(L))
-        for (col, bp) in enumerate(blockpairs)
-            sb = pumpssys.blocks[scatteringblockindex(psc, bp[1])]
-            dcmodelof(sb.block) isa ScatteringLimit || continue
-            b = findfirst(d -> d.auxbase == sb.auxbase, br.descriptors)
-            isnothing(b) && continue
-            idx = br.currentindex[b]
-            n = length(idx)
-            dS0 = Array{Complex{Float64},3}(undef, n, n, 1)
-            evaluatescattering!(dS0, bp[3], [0.0])
-            r2 = sqrt.(float.(sb.block.zref))
-            sc, rc = br.signalcomponent[b], br.refcomponent[b]
-            # the derivative of B0 (scale dv) - C0 i, with
-            # B0 = R^(-1/2)(I - S(0)) and C0 = R^(1/2)(I + S(0))
-            for p in 1:n
-                row = window[idx[p]]
-                acc = 0.0
-                for q in 1:n
-                    dS = real(dS0[p, q, 1])
-                    acc -= dS/r2[q]*br.scale*(_vof(v, sc[q]) - _vof(v, rc[q]))
-                    acc -= dS*r2[q]*u[window[idx[q]]]
-                end
-                acc *= keep[row]
-                iszero(acc) || (push!(Ic, row); push!(Jc, col); push!(Vc, acc))
+    isnothing(br) && return dFc
+    Ic, Jc, Vc = Int[], Int[], Float64[]
+    window = windowindices(L)
+    u = op.dc.u
+    v = view(u, voltagerange(L))
+    for (col, bp) in enumerate(blockpairs)
+        sb = pumpssys.blocks[scatteringblockindex(psc, bp[1])]
+        dcmodelof(sb.block) isa ScatteringLimit || continue
+        b = findfirst(d -> d.auxbase == sb.auxbase, br.descriptors)
+        isnothing(b) && continue
+        idx = br.currentindex[b]
+        n = length(idx)
+        dS0 = Array{Complex{Float64},3}(undef, n, n, 1)
+        evaluatescattering!(dS0, bp[3], [0.0])
+        r2 = sqrt.(float.(sb.block.zref))
+        sc, rc = br.signalcomponent[b], br.refcomponent[b]
+        # the derivative of B0 (scale dv) - C0 i, with
+        # B0 = (I - S(0)) R^(-1/2) and C0 = (I + S(0)) R^(1/2)
+        for p in 1:n
+            row = window[idx[p]]
+            acc = 0.0
+            for q in 1:n
+                dS = real(dS0[p, q, 1])
+                acc -= dS/r2[q]*br.scale*(_vof(v, sc[q]) - _vof(v, rc[q]))
+                acc -= dS*r2[q]*u[window[idx[q]]]
             end
+            acc *= keep[row]
+            iszero(acc) || (push!(Ic, row); push!(Jc, col); push!(Vc, acc))
         end
     end
-    return sparse(Ic, Jc, Vc, N, length(blockpairs))
+    return dFc + sparse(Ic, Jc, Vc, N, length(blockpairs))
 end
 
 """
@@ -473,24 +442,23 @@ function mergestamps(stamps::AbstractVector{SensitivityStamp}, grouping)
 end
 """
     calcsensitivitystamps(sensitivityindices, psc, nm, lsys, phimatrix,
-        coupledbranches, Nnodalmna, Nmodes, Nnodes)
+        coupledbranches, Nmodes)
 
 Build the [`SensitivityStamp`](@ref) of each component in
-`sensitivityindices`. The classification and the raw one-component matrices
-come from [`componentstamp`](@ref), which is shared with the residual
-derivatives of [`calcresidualsensitivity`](@ref), so the two grids cannot
-disagree on which components are supported or how they are built. The
-Josephson junction stamp is the pump modulated contribution of that
-junction alone, obtained by scattering the Fourier coefficients of
-`cos(phi(t))` of that junction through the same plan
+`sensitivityindices`. The classification and the entries of a capacitor,
+an inductor or a resistor come from [`componentstamp`](@ref), which is
+shared with the residual derivatives of [`calcresidualsensitivity`](@ref),
+so the two grids cannot disagree on which components are supported or how
+they are built; the node rows lead the augmented state, so the entries
+need no padding. The Josephson junction stamp is the pump modulated
+contribution of that junction alone, obtained by scattering the Fourier
+coefficients of `cos(phi(t))` of that junction through the same plan
 ([`addjosephsonterm!`](@ref)) which assembles the system matrix, so the mode
 coupling and its truncation agree exactly.
 """
 function calcsensitivitystamps(sensitivityindices, psc::CompiledCircuit,
-    nm::CircuitMatrices, lsys,
-    phimatrix, coupledbranches, Nnodalmna, Nmodes, Nnodes)
+    nm::CircuitMatrices, lsys, phimatrix, coupledbranches, Nmodes)
 
-    Ntot = size(lsys.Asparse, 1)
     stamps = Vector{SensitivityStamp}(undef, length(sensitivityindices))
     lookups = componentlookups(coupledbranches, nm.Ljb)
     # a sensitivity taken with respect to a port's own environment also
@@ -499,23 +467,22 @@ function calcsensitivitystamps(sensitivityindices, psc::CompiledCircuit,
     portordinal = Dict(idx => p
         for (p, idx) in enumerate(nm.portenvironmentindices) if !iszero(idx))
 
-    kinds = [componentstamp(idx, psc, nm, lookups, Nmodes, Nnodes)
+    kinds = [componentstamp(idx, psc, nm, lookups, Nmodes)
         for idx in sensitivityindices]
     ljstamps = junctionstamps(lsys, phimatrix, nm.Ljb,
-        [info for (kind, info) in kinds if kind == :Lj], Nmodes)
+        [s.junction for s in kinds if s.kind == :Lj], Nmodes)
     for (k, idx) in enumerate(sensitivityindices)
         portindex = get(portordinal, idx, 0)
-        kind, info = kinds[k]
-        if kind == :C
-            stamps[k] = tripletstamp(:C, mnapadto(info, Ntot), portindex)
-        elseif kind == :G
-            stamps[k] = tripletstamp(:G, mnapadto(info, Ntot), portindex)
-        elseif kind == :invL
-            stamps[k] = tripletstamp(:invL, mnapadto(info, Ntot), portindex)
-        else # :Lj
-            rows, cols, vals = ljstamps[info]
-            stamps[k] = SensitivityStamp(:Lj, copy(rows), copy(cols),
-                copy(vals), portindex)
+        s = kinds[k]
+        stamps[k] = if s.kind == :Lj
+            rows, cols, vals = ljstamps[s.junction]
+            SensitivityStamp(:Lj, copy(rows), copy(cols), copy(vals),
+                portindex)
+        else
+            # the entries of a zero value contribute nothing
+            keep = .!iszero.(s.vals)
+            SensitivityStamp(s.kind, s.rows[keep], s.cols[keep],
+                s.vals[keep], portindex)
         end
     end
     return stamps
@@ -557,26 +524,6 @@ function junctionstamps(lsys, phimatrix, Ljb, js, Nmodes)
         end
     end
     return stamps
-end
-
-# pad a matrix with empty rows and columns for the auxiliary variables of the
-# modified nodal analysis formulation, and convert to the element type of the
-# system matrix.
-function mnapadto(M::SparseMatrixCSC, Ntot::Integer)
-    padded = size(M,1) == Ntot ? M : mnapad(M, Ntot - size(M,1))
-    return SparseMatrixCSC{Complex{Float64},Int}(padded)
-end
-
-# convert a component matrix to the compact triplet form of a
-# SensitivityStamp, dropping structural zeros. The stamps of the individual
-# components are extremely sparse compared with the system matrix (a
-# capacitor to ground touches one node), so the contraction is driven by
-# these entries rather than by the sparsity structure of the system matrix.
-function tripletstamp(kind::Symbol, M::SparseMatrixCSC, portindex::Integer)
-    I, J, V = findnz(M)
-    keep = .!iszero.(V)
-    return SensitivityStamp(kind, I[keep], J[keep],
-        Complex{Float64}.(V[keep]), portindex)
 end
 
 """

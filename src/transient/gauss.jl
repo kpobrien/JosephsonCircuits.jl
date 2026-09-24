@@ -12,7 +12,7 @@
 # imaginary part on the same pattern.
 
 """
-    GaussLegendre()
+    GaussLegendre(; stagertol = 1e-12, stageiterations = 100)
 
 The two stage Gauss-Legendre collocation on the flux and its rate, the
 default of [`transientsolve`](@ref): fourth order, A-stable, symplectic,
@@ -42,12 +42,26 @@ derivative of the cubic through the state, the two stages and the
 projected endpoint, third order. The tangent and the adjoint of a
 Gauss-Legendre solve differentiate the full stage equations, the
 projection and the readings included, and are exact for the recorded
-steps.
+steps: each step's linearized stage equations are solved by a fixed
+point iteration on the frozen complex operator, refreshed within the
+step when it drifts, until every direction's residual is within
+`stagertol` of its right hand side or at the roundoff of its terms, in
+at most `stageiterations` corrections. The responses of a solution read
+these from the rule it was solved under.
 """
-struct GaussLegendre <: AbstractTransientIntegrator end
+struct GaussLegendre <: AbstractTransientIntegrator
+    stagertol::Float64
+    stageiterations::Int
+end
+function GaussLegendre(; stagertol::Real = 1e-12, stageiterations::Integer = 100)
+    (isfinite(stagertol) && stagertol >= 0 && stageiterations >= 2) || throw(ArgumentError(
+        "stagertol must be finite and nonnegative and stageiterations at least 2."))
+    return GaussLegendre(Float64(stagertol), Int(stageiterations))
+end
 
-# The tableau, and what a step reads of it: the abscissae `c`, the inverse
-# `A^{-1}` and its square as column major tuples, `A^{-1} 1`, the endpoint
+# The tableau, and what a step reads of it: the abscissae `c`, the
+# tableau `A`, which the rational blocks' stages read, its inverse
+# `A^{-1}` and the square of that as column major tuples, `A^{-1} 1`, the endpoint
 # weights `b' A^{-1}` of the flux and `b' A^{-2}` of the rate, the
 # predictor of the next stages from the last increments, and the
 # eigenvalue `mu` of `A^{-1}` in the upper half plane with the entries of
@@ -57,6 +71,7 @@ struct GaussLegendre <: AbstractTransientIntegrator end
 # four, for the rate along an algebraic direction a block is on.
 struct GaussCoefficients
     c::NTuple{2,Float64}
+    a::NTuple{4,Float64}
     ainv::NTuple{4,Float64}
     ainv2::NTuple{4,Float64}
     ainvone::NTuple{2,Float64}
@@ -99,7 +114,7 @@ function gausscoefficients()
             for m in 1:4 if m != j)
     end
     isapprox(sum(endrate[j]*nodes[j]^3 for j in 1:4), 3.0; atol = 1e-12) || error("the endpoint derivative is inconsistent.")
-    return GaussCoefficients(c, (Ainv[1, 1], Ainv[2, 1], Ainv[1, 2], Ainv[2, 2]),
+    return GaussCoefficients(c, (A[1, 1], A[2, 1], A[1, 2], A[2, 2]), (Ainv[1, 1], Ainv[2, 1], Ainv[1, 2], Ainv[2, 2]),
         (Ainv2[1, 1], Ainv2[2, 1], Ainv2[1, 2], Ainv2[2, 2]), (sum(Ainv[1, :]), sum(Ainv[2, :])),
         (ex[1], ex[2]), (ev[1], ev[2]), (P[1, 1], P[2, 1], P[1, 2], P[2, 2]), endrate, mu, T[1, 1], T[2, 1], Tinv[1, 1], Tinv[1, 2])
 end
@@ -313,7 +328,7 @@ end
 
 
 function rationalstages(p::TransientProblem, gc::GaussCoefficients, h)
-    tableau = [1/4 1/4-sqrt(3)/6; 1/4+sqrt(3)/6 1/4]
+    tableau = [entry(gc.a, i, j) for i in 1:2, j in 1:2]
     stages = RationalStage[]
     for (k, b) in enumerate(p.blocks)
         nz = size(b.A, 1)
@@ -372,19 +387,35 @@ struct GaussStage{V, M, R, SM}
     rationalvals::R
     coupling::Union{Nothing, RationalCoupling{SM}}
     pumped::Bool
+    # The fill reducing ordering of the stage matrix's pattern for a host
+    # factorization, chosen once for the system: every fresh factorization
+    # of a condition, a chunk, a checkpoint window, a tangent or an adjoint
+    # on the system takes it, and only reads it, so the chunks of a batch
+    # share it across threads. Empty on a device, which orders its batch
+    # itself.
+    ordering::FactorizationCache
+    # the tolerance and the bound of the responses' stage solves, the
+    # rule's
+    stagertol::Float64
+    stageiterations::Int
     # The only constructor, and it takes the parameters: `SM` appears in
     # the union field alone, so a circuit without a coupling passes
     # `nothing` and leaves it with nothing to infer from. `gaussstage`
     # reads it off the backend.
-    GaussStage{V, M, R, SM}(coefficients, imvals, cjacobian, rationalvals, coupling, pumped) where {V, M, R, SM} =
-        new{V, M, R, SM}(coefficients, imvals, cjacobian, rationalvals, coupling, pumped)
+    GaussStage{V, M, R, SM}(coefficients, imvals, cjacobian, rationalvals, coupling, pumped, ordering, stagertol,
+        stageiterations) where {V, M, R, SM} =
+        new{V, M, R, SM}(coefficients, imvals, cjacobian, rationalvals, coupling, pumped, ordering, stagertol, stageiterations)
 end
 
-# the stage with its union field's type taken from the backend
-function gaussstage(gc, imvals, cjacobian, rationalvals, coupling, backend, pumped)
+# the stage with its union field's type taken from the backend, on the
+# host the ordering `factorization` chooses for its pattern, and the
+# stage solve settings of the rule `method`
+function gaussstage(gc, imvals, cjacobian, rationalvals, coupling, backend, pumped, factorization, method::GaussLegendre)
     SM = typeof(devicesparse(sparse(zeros(1, 1)), backend))
+    ordering = FactorizationCache()
+    backend isa CPU && seedordering!(ordering, cjacobian, fillordering(factorization, cjacobian))
     return GaussStage{typeof(imvals), typeof(cjacobian), typeof(rationalvals), SM}(gc, imvals, cjacobian,
-        rationalvals, coupling, pumped)
+        rationalvals, coupling, pumped, ordering, method.stagertol, method.stageiterations)
 end
 
 # The entries of a sparse matrix `A` placed on the pattern of the real

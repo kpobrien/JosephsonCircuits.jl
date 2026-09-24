@@ -133,13 +133,18 @@ indices with ground as index 1: the source draws its current from
 `portnodes[1]` and injects it into `portnodes[2]`, each decremented to its
 SPICE node label, so `[1, 2]` drives the SPICE node `1` from ground, with
 the magnitude and the phase of `portcurrent`, the phase written in degrees
-as SPICE reads it. The analysis is `.ac lin nsteps fstart fstop`, over
-linearly spaced frequencies from `fstart` to `fstop` in Hz. The second
-form takes the frequencies as a single number, or as a vector or range of
-which only the first and last entries are used, with `length(freqs) - 2`
-passed as `nsteps`, which WRSPICE answers with `length(freqs)` points.
-`maxdata` is the WRSPICE limit on the size of the data written, in
-kilobytes.
+as SPICE reads it. The indices address the nets named by the integers
+`0` to `N-1`, index `k` the net `k-1`; a net named by a word cannot be
+driven. The analysis is `.ac lin nsteps fstart fstop`, over linearly
+spaced frequencies from `fstart` to `fstop` in Hz, which WRSPICE answers
+with `nsteps + 2` points when `fstart < fstop`. The second form takes the
+frequencies as a single number, or as a vector or range of which only the
+first and last entries are used: one frequency is written from itself to
+itself, which WRSPICE answers with that one point, and more with
+`length(freqs) - 2` passed as `nsteps`, so that WRSPICE answers with
+`length(freqs)` points. Two frequencies are refused, since WRSPICE
+answers `nsteps = 0` with three points. `maxdata` is the WRSPICE limit on
+the size of the data written, in kilobytes.
 
 # Examples
 ```jldoctest
@@ -203,15 +208,11 @@ function wrspice_input_ac(netlist::String,freqs::AbstractArray{Float64,1},
     portnodes,portcurrent; maxdata = 2e9)
     if length(freqs) == 1
         return wrspice_input_ac(netlist,1,freqs[1],freqs[1],portnodes,portcurrent; maxdata = maxdata)
-    else
+    elseif length(freqs) >= 3
         return wrspice_input_ac(netlist,length(freqs)-2,freqs[1],freqs[end],portnodes,portcurrent; maxdata = maxdata)
+    else
+        throw(ArgumentError(lazy"WRSPICE answers a linear AC sweep with one point or with three or more, not with $(length(freqs)); give one frequency or at least three."))
     end
-end
-
-function wrspice_input_ac(netlist::String,freqs::AbstractRange{Float64},
-    portnodes,portcurrent; maxdata = 2e9)
-
-    return wrspice_input_ac(netlist,length(freqs)-2,freqs[1],freqs[end],portnodes,portcurrent; maxdata = maxdata)
 end
 
 function wrspice_input_ac(netlist::String,freqs::Float64,

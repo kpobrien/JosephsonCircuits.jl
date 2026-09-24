@@ -1,6 +1,6 @@
 
 """
-    CircuitMatrices(Cnm::SparseMatrixCSC, Gnm::SparseMatrixCSC, Lb::SparseVector
+    CircuitMatrices(Cnm::SparseMatrixCSC, Gnm::SparseMatrixCSC, Lb::SparseVector,
         Lbm::SparseVector, Ljb::SparseVector, Ljbm::SparseVector,
         Mb::SparseMatrixCSC, invLnm::SparseMatrixCSC,
         Rbnm::SparseMatrixCSC{Int, Int}, portindices::Vector{Int},
@@ -228,7 +228,6 @@ function calcjunctionrelations(componenttypes::Vector{Symbol},
 end
 
 combine_reciprocal_sum(x1,x2) = x1*x2/(x1+x2)
-combine_error(x1,x2) = throw(ArgumentError(lazy"Components $(x1) and $(x2) cannot be combined to a single element. Please place the two components between different nodes."))
 
 """
     branchendpoints(Rbn::SparseMatrixCSC, Nbranches::Int)

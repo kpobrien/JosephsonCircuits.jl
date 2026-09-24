@@ -25,13 +25,6 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
             return nothing
         end
 
-        # x = [ 0.1, 1.2]
-        # F = [0.0, 0.0]
-        # J = JosephsonCircuits.sparse([1, 1, 2, 2],[1, 2, 1, 2],[1.3, 0.5, 0.1, 1.2])
-        # @test_throws(
-        #     DimensionMismatch("Number of columns in C must equal number of columns in B."),
-        #     JosephsonCircuits.nlsolve!(fj!, F, J, x)
-        # )
         begin
             x = [ 0.1, 1.2]
             F = [0.0, 0.0, 0.0]
@@ -60,6 +53,13 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
                 DimensionMismatch("The Jacobian `J` matrix must be square."),
                 JosephsonCircuits.nlsolve!(fj!, F, J, x)
             )
+        end
+
+        # a relative tolerance which is not finite and nonnegative
+        for rtol in (NaN, -1.0)
+            @test_throws ArgumentError JosephsonCircuits.nlsolve!(fj!,
+                [0.0, 0.0], JosephsonCircuits.sparse([1, 1, 2, 2],
+                [1, 2, 1, 2], [1.3, 0.5, 0.1, 1.2]), [0.1, 1.2]; rtol)
         end
     end
 
@@ -132,7 +132,9 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
         # after the budget's last step, and the record reports the steps
         # of both attempts, all but the one an attempt may end at, a
         # direction which is not a descent direction, taken with a
-        # Jacobian of its own
+        # Jacobian of its own. A retry which ends above where the first
+        # attempt did returns the first attempt's point, whose residual
+        # closes the record; the retry starts again at the initial norm
         circuit, defs = testchaincircuit()
         d = hbnlsolve((2*pi*4.75e9,), (8,), [(mode = (1,), port = 1,
             current = 2e-5)], circuit, defs; debugJacobian = true)
@@ -145,6 +147,10 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
             @test !info.converged
             @test njac[] <= budget
             @test njac[] <= info.iterations + 2
+            nr = info.normresidual
+            retry = findnext(==(nr[1]), nr, 2)
+            isnothing(retry) || @test nr[end] <= nr[retry-1]
+            @test norm(F) == nr[end]
         end
     end
 

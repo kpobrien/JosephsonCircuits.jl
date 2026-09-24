@@ -10,20 +10,12 @@ using Test
 
         atol = 5e-17
 
-        JosephsonCircuits.@params R Cc Lj Cj
-        circuit = Circuit([
-            ("P1", "1", "0", Port(1; Z0 = R)),
-            ("C1", "1", "2", Capacitor(Cc)),
-            ("Lj1", "2", "0", JosephsonJunction(Lj)),
-            ("C2", "2", "0", Capacitor(Cj))])
+        circuit, jpadefs = testjpacircuit()
 
         for tandelta in [0,1e-3]
 
-            circuitdefs = Dict(
-                Lj =>1000.0e-12,
-                Cc => 100.0e-15,
-                Cj => 1000.0e-15/(1+im*tandelta),
-                R => 50.0)
+            circuitdefs = merge(jpadefs,
+                Dict(:Cj => 1000.0e-15/(1+im*tandelta)))
 
             ws = 2*pi*4.74*1e9
             wp = 2*pi*4.75001*1e9
@@ -70,15 +62,7 @@ using Test
 
     @testset "uncommon options give the same numbers" begin
 
-        JosephsonCircuits.@params Rleft Cc Lj Cj w
-        circuit = Any[]
-        push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
-        push!(circuit,("C1", "1", "2", Capacitor(Cc)))
-        push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
-        push!(circuit,("C2", "2", "0", Capacitor(Cj)))
-        circuit = Circuit(circuit)
-        circuitdefs = Dict(Lj => 1000.0e-12, Cc => 100.0e-15,
-            Cj => 1000.0e-15, Rleft => 50.0)
+        circuit, circuitdefs = testjpacircuit()
         ws = 2*pi*(4.5:0.05:5.0)*1e9
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
@@ -156,23 +140,16 @@ using Test
             circuit,circuitdefs;dc=true,odd=true,even=false,
             x0 = out1.nodeflux[:]);
         @test isapprox(out1.nodeflux[:],out2.nodeflux[:])
+        # it starts at the point it was handed, which is converged already
+        @test out2.solverinfo.initialresidual < 1e-8
+        @test out2.solverinfo.stages[end].iterations == 0
     end
 
 
     @testset verbose=true "hbsolve return flags" begin
 
-        JosephsonCircuits.@params R Cc Lj Cj
-        circuit = Circuit([
-            ("P1", "1", "0", Port(1; Z0 = R)),
-            ("C1", "1", "2", Capacitor(Cc)),
-            ("Lj1", "2", "0", JosephsonJunction(Lj)),
-            ("C2", "2", "0", Capacitor(Cj))])
-
-        circuitdefs = Dict(
-            Lj =>1000.0e-12,
-            Cc => 100.0e-15,
-            Cj => 1000.0e-15/(1+1e-3im),
-            R => 50.0)
+        circuit, jpadefs = testjpacircuit()
+        circuitdefs = merge(jpadefs, Dict(:Cj => 1000.0e-15/(1+1e-3im)))
 
         ws = 2*pi*(4.5:0.5:5.0)*1e9
         wp = (2*pi*4.75001*1e9,)
@@ -234,22 +211,9 @@ using Test
         end
     end
 
-    @testset verbose=true "hbnlsolve lossless error" begin
+    @testset verbose=true "hbnlsolve stops at its iteration budget" begin
 
-        JosephsonCircuits.@params Rleft Cc Lj Cj w L1
-        circuit = Any[]
-        push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
-        push!(circuit,("C1", "1", "2", Capacitor(Cc)))
-        push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
-        push!(circuit,("C2", "2", "0", Capacitor(Cj)))
-        circuit = Circuit(circuit)
-        circuitdefs = Dict(
-            Lj =>1000.0e-12,
-            Cc => 100.0e-15,
-            Cj => 1000.0e-15,
-            Rleft => 50.0,
-        )
-        ws = 2*pi*(4.5:0.01:5.0)*1e9
+        circuit, circuitdefs = testjpacircuit()
         wp = 2*pi*4.75001*1e9
         Ip = 0.00565e-6
         Nsignalmodes = 8
@@ -308,6 +272,20 @@ using Test
         @test out.solverinfo.converged
         @test isapprox(out.nodeflux[1], 0.0, atol = 1e-15)
         @test isapprox(im*out.nodeflux[2]*wp*JosephsonCircuits.phi0/(50),Ip)
+    end
+
+    @testset "a relative tolerance with and without gauge rows" begin
+        # the Kirchhoff check of the accepted point holds it to the
+        # tolerance the solve stopped at, so a solve which meets `rtol` is
+        # converged whether or not a zero frequency mode adds gauge rows
+        circuit, defs = testjpacircuit()
+        src = [(mode = (1,), port = 1, current = 1e-8)]
+        for dc in (false, true)
+            r = @test_logs min_level=Base.CoreLogging.Warn hbnlsolve(
+                (2*pi*4.75e9,), (8,), src, circuit, defs; dc, even = true,
+                rtol = 0.5, keyedarrays = false)
+            @test r.solverinfo.converged
+        end
     end
 
     @testset "undefined symbolic component values" begin
@@ -462,20 +440,13 @@ using Test
 
         JosephsonCircuits.@params Rleft Rright Cc Lj Cj Lla Llb Kab
 
-        # a JPA: one port, so one promoted port resistor
-        circuitjpa = Any[]
-        push!(circuitjpa,("P1", "1", "0", Port(1; Z0 = Rleft)))
-        push!(circuitjpa,("C1", "1", "2", Capacitor(Cc)))
-        push!(circuitjpa,("Lj1", "2", "0", JosephsonJunction(Lj)))
-        push!(circuitjpa,("C2", "2", "0", Capacitor(Cj)))
-        circuitjpa = Circuit(circuitjpa)
-        circuitdefsjpa = Dict(Lj=>1000.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
-            Rleft=>50.0)
+        # a JPA: one port
+        circuitjpa, circuitdefsjpa = testjpacircuit()
 
         # a lossy JPA: the complex capacitance adds a noise port, which is the
         # consumer of the adjoint solution we most care about here
-        circuitdefsjpalossy = Dict(Lj=>1000.0e-12, Cc=>100.0e-15,
-            Cj=>1000.0e-15/(1+1e-3im), Rleft=>50.0)
+        circuitdefsjpalossy = merge(circuitdefsjpa,
+            Dict(:Cj => 1000.0e-15/(1+1e-3im)))
 
         # two ports and a mutually coupled inductor pair, which is promoted to
         # auxiliary branch currents as well. exercises both auxiliary blocks at
@@ -527,41 +498,25 @@ using Test
                     signalfreq; nonlinear=nonlinear, debuglsys=true)
                 lsys = d.lsys
 
-                # the diagonal of the similarity transformation: one on the node
-                # flux rows, the assembled conductance entry of the constitutive
-                # equation on the auxiliary rows of the promoted resistors, and
-                # one on the auxiliary rows of the promoted coupled inductors.
-                # the promoted resistances are constant and real, so the negative
-                # frequency conjugation of sparseaddconjsubst!, which acts on the
-                # stored conductance and not on the frequency factor, is trivial.
-                function similaritydiagonal(d, wmodes)
-                    D = ones(Complex{Float64}, d.Nnodalmna + d.Nauxmna)
-                    return Diagonal(D)
-                end
-
+                # the diagonal of the similarity transformation is the
+                # identity: resistors are node conductances rather than
+                # promoted currents, and the rows of the promoted coupled
+                # inductors are real and frequency independent, so the
+                # conjugated pump system is the transpose of the forward one
                 for wsi in ws
-                    wmodes = wsi .+ d.wpumpmodes
                     A = copy(lsys.Asparse)
                     Aconj = copy(lsys.Asparse)
                     JosephsonCircuits.assemblesystemmatrix!(A, lsys, wsi)
                     JosephsonCircuits.assemblesystemmatrix!(Aconj, lsys, wsi;
                         conjugatepump = true)
-                    D = similaritydiagonal(d, wmodes)
-
-                    # the documented similarity relation
-                    @test isapprox(Matrix(Aconj), D*Matrix(transpose(A))*inv(D),
+                    @test isapprox(Matrix(Aconj), Matrix(transpose(A)),
                         rtol = 1e-10, norm = v->maximum(abs,v))
 
-                    # the solutions agree exactly in the node flux rows, which
-                    # are the only rows the noise, quantum efficiency and
-                    # adjoint output calculations read, and differ by the
-                    # similarity diagonal in the auxiliary rows.
+                    # so the adjoint solutions are transposed solves on the
+                    # forward system, in every row
                     xconj = Matrix(Aconj)\Matrix(d.bnm)
                     xtrans = Matrix(transpose(A))\Matrix(d.bnm)
-                    nodal = 1:d.Nnodalmna
-                    @test isapprox(xconj[nodal,:], xtrans[nodal,:], rtol = 1e-8,
-                        norm = v->maximum(abs,v))
-                    @test isapprox(xconj, D*xtrans, rtol = 1e-8,
+                    @test isapprox(xconj, xtrans, rtol = 1e-8,
                         norm = v->maximum(abs,v))
                 end
 
@@ -681,18 +636,12 @@ using Test
         end
 
         @testset "pumped junction" begin
-            JosephsonCircuits.@params Rl Cc Lj Cj
-            circuit = Any[]
-            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
-            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
-            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
-            circuit = Circuit(circuit)
-            defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>1000e-12, Cj=>1000e-15)
+            circuit, defs = testjpacircuit()
             wp = (2*pi*4.75001e9,)
             sources = [(mode=(1,),port=1,current=0.00565e-6)]
             ws = 2*pi*[4.5e9, 4.75e9]
             names = ["C1","C2","Lj1","P1/termination"]
-            syms = Dict("C1"=>Cc,"C2"=>Cj,"Lj1"=>Lj,"P1/termination"=>Rl)
+            syms = Dict("C1"=>:Cc,"C2"=>:Cj,"Lj1"=>:Lj,"P1/termination"=>:Rleft)
 
             sol = hbsolve(ws, wp, sources, (4,), (8,), circuit, defs;
                 keyedarrays=false, sensitivitynames=names,
@@ -739,18 +688,12 @@ using Test
             # which the pump is re-solved. At this operating point the
             # operating point contribution is comparable to or larger than the
             # frozen pump term, so the two must differ substantially.
-            JosephsonCircuits.@params Rl Cc Lj Cj
-            circuit = Any[]
-            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
-            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
-            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
-            circuit = Circuit(circuit)
-            defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>1000e-12, Cj=>1000e-15)
+            circuit, defs = testjpacircuit()
             wp = (2*pi*4.75001e9,)
             sources = [(mode=(1,),port=1,current=0.00565e-6)]
             ws = 2*pi*[4.5e9, 4.75e9]
             names = ["C1","C2","Lj1","P1/termination"]
-            syms = Dict("C1"=>Cc,"C2"=>Cj,"Lj1"=>Lj,"P1/termination"=>Rl)
+            syms = Dict("C1"=>:Cc,"C2"=>:Cj,"Lj1"=>:Lj,"P1/termination"=>:Rleft)
             solve(d; op=false) = hbsolve(ws, wp, sources, (4,), (8,),
                 circuit, d; keyedarrays=false, atol=1e-13,
                 sensitivitynames=names, returnSsensitivity=true,
@@ -875,17 +818,32 @@ using Test
             end
         end
 
+        @testset "a single precision pump in either order" begin
+            # the operating point is differentiated in double precision
+            # whatever precision the pump was solved in, so the two orders
+            # agree with each other to roundoff, and with a double precision
+            # pump to what single precision holds of the point, amplified
+            # near the gain peak
+            circuit, defs = testjpacircuit()
+            wp = (2*pi*4.75001e9,)
+            sources = [(mode=(1,),port=1,current=0.00565e-6)]
+            ws = 2*pi*[4.5e9, 4.75e9]
+            solve(m; kw...) = hbsolve(ws, wp, sources, (2,), (8,), circuit,
+                defs; keyedarrays=false, sensitivitynames=["C1", "Lj1"],
+                returnSsensitivity=true, sensitivitymode=m,
+                kw...).linearized.Ssensitivity
+            single(m) = solve(m; method = NewtonKrylov(precision = Float32))
+            forward = single(:forward)
+            @test isapprox(single(:reverse), forward; rtol = 1e-10)
+            @test isapprox(forward, solve(:forward); rtol = 1e-2)
+        end
+
         @testset "operating point input validation" begin
             # malformed low level inputs must be rejected at the boundary,
             # not discovered as out of bounds indexing inside the
             # contractions (the contraction loops are @inbounds).
-            JosephsonCircuits.@params Rl Cc Lj Cj
-            circuit = Any[]
-            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
-            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
-            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
-            circuit = Circuit(circuit)
-            defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>1000e-12, Cj=>200e-15)
+            circuit, jpadefs = testjpacircuit()
+            defs = merge(jpadefs, Dict(:Cj => 200e-15))
             wp = (2*pi*5e9,)
             sources = [(mode=(1,),port=1,current=1e-7)]
             ws = 2*pi*[4.5e9]
@@ -1022,13 +980,7 @@ using Test
             # directly after those waves are formed and be independent of
             # which other outputs are requested, including when S itself is
             # not returned.
-            JosephsonCircuits.@params Rl Cc Lj Cj
-            circuit = Any[]
-            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
-            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
-            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
-            circuit = Circuit(circuit)
-            defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>1000e-12, Cj=>1000e-15)
+            circuit, defs = testjpacircuit()
             wp = (2*pi*4.75001e9,)
             sources = [(mode=(1,),port=1,current=0.00565e-6)]
             ws = 2*pi*[4.5e9, 4.75e9]
@@ -1048,13 +1000,7 @@ using Test
         @testset "sensitivity mode validation" begin
             # an unknown contraction order is rejected even when no operating
             # point derivatives are in play
-            JosephsonCircuits.@params Rl Cc Lj Cj
-            circuit = Any[]
-            push!(circuit,("P1", "1", "0", Port(1; Z0 = Rl)))
-            push!(circuit,("C1", "1", "2", Capacitor(Cc))); push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
-            push!(circuit,("C2", "2", "0", Capacitor(Cj)))
-            circuit = Circuit(circuit)
-            defs = Dict(Rl=>50.0, Cc=>100e-15, Lj=>1000e-12, Cj=>1000e-15)
+            circuit, defs = testjpacircuit()
             @test_throws ArgumentError hblinsolve(2*pi*[4.5e9], circuit,
                 defs; keyedarrays=false, sensitivitynames=["C1"],
                 returnSsensitivity=true, sensitivitymode=:sideways)
@@ -1215,6 +1161,97 @@ using Test
         @test resolved((w1,), (8,), (4,), [(mode=(1,), port=1, current=1.0e-6)]) isa KLUfactorization
     end
 
+    # the block factorization of the linearized solve on its own, beside
+    # the sweeps through it above, which compile the same factorization
+    @testset "block factorization of a sparse matrix" begin
+        # a random complex matrix with dense node blocks on a random node
+        # graph and three trailing auxiliary rows (a short last block):
+        # vector, matrix and transposed solves, refactorization on the
+        # pattern, and single precision factors refined to double
+        rng = Random.default_rng()
+        Nm = 7; Nn = 30
+        pairs = [(i, i+1) for i in 1:Nn-1]
+        append!(pairs, [(rand(rng, 1:Nn), rand(rng, 1:Nn)) for _ in 1:12])
+        I_ = Int[]; J_ = Int[]; V_ = ComplexF64[]
+        function addblock!(a, b)
+            for r in 1:Nm, c in 1:Nm
+                push!(I_, (a-1)*Nm+r); push!(J_, (b-1)*Nm+c)
+                push!(V_, randn(rng, ComplexF64))
+            end
+        end
+        for a in 1:Nn; addblock!(a, a); end
+        for (a, b) in pairs; a == b && continue; addblock!(a, b); addblock!(b, a); end
+        n = Nn*Nm + 3
+        for r in 1:3
+            push!(I_, Nn*Nm+r); push!(J_, Nn*Nm+r); push!(V_, 5.0+0im)
+            push!(I_, Nn*Nm+r); push!(J_, r); push!(V_, randn(rng, ComplexF64))
+            push!(I_, r+Nm); push!(J_, Nn*Nm+r); push!(V_, randn(rng, ComplexF64))
+        end
+        A = sparse(I_, J_, V_, n, n) + 10I
+        F = JosephsonCircuits.factorize(BlockFactorization(), A; blocksize = Nm)
+        @test F isa JosephsonCircuits.SparseBlockFactorization
+        @test !F.refine
+        @test F.lu.N < Nn        # amalgamated
+        B = randn(rng, ComplexF64, n, 5); X = similar(B)
+        JosephsonCircuits.myldiv!(X, F, B)
+        @test norm(A*X - B)/norm(B) < 1e-12
+        JosephsonCircuits.myldiv!(X, transpose(F), B)
+        @test norm(transpose(A)*X - B)/norm(B) < 1e-12
+        JosephsonCircuits.trysolvetranspose!(X, F, B)
+        @test norm(transpose(A)*X - B)/norm(B) < 1e-12
+        A2 = copy(A); nonzeros(A2) .*= (1 .+ 0.1*randn(rng, nnz(A)))
+        @test JosephsonCircuits.refactorize!(BlockFactorization(), F, A2) === F
+        JosephsonCircuits.myldiv!(X, F, B)
+        @test norm(A2*X - B)/norm(B) < 1e-12
+        cache = JosephsonCircuits.FactorizationCache()
+        JosephsonCircuits.tryfactorize!(cache, BlockFactorization(), A; blocksize = Nm)
+        @test cache.factorization isa JosephsonCircuits.SparseBlockFactorization
+        JosephsonCircuits.tryfactorize!(cache, BlockFactorization(), A2; blocksize = Nm)
+        JosephsonCircuits.myldiv!(X, cache.factorization, B)
+        @test norm(A2*X - B)/norm(B) < 1e-12
+        F32 = JosephsonCircuits.factorize(BlockFactorization(precision = Float32), A;
+            blocksize = Nm)
+        @test F32.refine
+        @test eltype(F32.lu.D[1]) == ComplexF32
+        JosephsonCircuits.myldiv!(X, F32, B)
+        @test norm(A*X - B)/norm(B) < 1e-12
+        JosephsonCircuits.myldiv!(X, transpose(F32), B)
+        @test norm(transpose(A)*X - B)/norm(B) < 1e-12
+        # the pattern is checked on refactorization
+        @test_throws DimensionMismatch JosephsonCircuits.refactorize!(
+            BlockFactorization(), F, A[1:n-3, 1:n-3])
+        @test_throws DimensionMismatch JosephsonCircuits.factorize(
+            BlockFactorization(), A[:, 1:n-1]; blocksize = Nm)
+        # refinement judges each system of a batch on its own residual:
+        # a moderately conditioned system next to a badly conditioned one
+        # reaches the accuracy it reaches alone
+        r5 = (4*Nm+1):(5*Nm); c6 = (5*Nm+1):(6*Nm)
+        scaled(s) = (D1 = ones(n); D1[r5] .= s; D2 = ones(n); D2[c6] .= s;
+            sparse(Diagonal(D1)*A*Diagonal(D2)))
+        A1 = scaled(1e-3); Abad = scaled(1e-9)
+        Fb = JosephsonCircuits.factorize(BlockFactorization(precision = Float32),
+            A1; blocksize = Nm, nb = 2)
+        JosephsonCircuits.fillandfactorize!(Fb, hcat(nonzeros(A1), nonzeros(Abad)))
+        Xb = zeros(ComplexF64, n, 3, 2)
+        JosephsonCircuits.refinedsolve!(Xb, Fb, B[:, 1:3])
+        F1 = JosephsonCircuits.factorize(BlockFactorization(precision = Float32),
+            A1; blocksize = Nm)
+        X1 = zeros(ComplexF64, n, 3, 1)
+        JosephsonCircuits.refinedsolve!(X1, F1, B[:, 1:3])
+        r1 = norm(A1*Xb[:, :, 1] - B[:, 1:3])/norm(B[:, 1:3])
+        @test r1 < 1e-12
+        @test r1 <= 2*norm(A1*X1[:, :, 1] - B[:, 1:3])/norm(B[:, 1:3]) + 1e-15
+        @test norm(Abad*Xb[:, :, 2] - B[:, 1:3])/norm(B[:, 1:3]) < 1e-6
+
+        # and not only by size and nonzero count: the same count in a
+        # different place is a different pattern
+        Amoved = copy(A); Amoved[Nn*Nm+1, 1] = 0; Amoved[Nn*Nm+1, 2] = 1.0
+        Amoved = dropzeros!(Amoved)
+        @test nnz(Amoved) == nnz(A)
+        @test_throws DimensionMismatch JosephsonCircuits.refactorize!(
+            BlockFactorization(), F, Amoved)
+    end
+
     @testset "outputs do not depend on whether S is retained" begin
         # every output consumes the per frequency view of S, so whether the
         # scattering cube is retained changes none of them
@@ -1285,24 +1322,48 @@ end
         @test_throws ArgumentError hbnlsolve(wp, (4,), sources, lossyjunction;
             method = method)
     end
+    # a truncation which retains no pump mode, however it is reached
+    @test_throws ArgumentError hbnlsolve(wp, (4,), sources, circuit,
+        circuitdefs; odd = false, even = false)
+    @test_throws ArgumentError hbnlsolve(wp, (4,), sources, circuit,
+        circuitdefs; frequencywindow = (1e20, Inf))
+    @test_throws ArgumentError hbsolve(ws, wp, sources, (2,), (4,), circuit,
+        circuitdefs; fourwavemixing = false)
+    @test_throws ArgumentError hbcache(wp, (4,), sources, circuit,
+        circuitdefs; odd = false)
+    # the options of the sweep, refused before the pump is solved, which
+    # given one iteration would warn that it did not converge
+    for bad in ((temperature = -1.0,), (temperature = NaN,),
+            (factorization = CUDSSFactorization(),),
+            (sensitivitymode = :sideways,),
+            (sensitivitynames = ["P1"], returnSsensitivity = true),
+            (sensitivitypairs = [("C1", 1, 1.0)], returnSsensitivity = true),
+            (sensitivitypairs = [("C1", 1, 1.0)], sensitivitynames = ["C1"],
+                nsensitivityparameters = 1, returnSsensitivity = true))
+        @test_logs min_level=Base.CoreLogging.Warn @test_throws(
+            ArgumentError, hbsolve(ws, wp, sources, (2,), (4,), circuit,
+                circuitdefs; iterations = 1, bad...))
+    end
+end
+
+@testset "hbsolve hands the pump solve its tolerance and its warnings" begin
+    circuit, circuitdefs = testjpacircuit()
+    ws = 2*pi*[4.5e9]
+    wp = (2*pi*4.75001e9,)
+    sources = [(mode = (1,), port = 1, current = 0.00565e-6)]
+    loose = hbnlsolve(wp, (4,), sources, circuit, circuitdefs; rtol = 0.5,
+        keyedarrays = false)
+    @test hbsolve(ws, wp, sources, (2,), (4,), circuit, circuitdefs;
+        rtol = 0.5, keyedarrays = false).nonlinear.nodeflux == loose.nodeflux
+    quiet = @test_logs min_level=Base.CoreLogging.Warn hbsolve(ws, wp,
+        sources, (2,), (4,), circuit, circuitdefs; iterations = 1,
+        warnnotconverged = false)
+    @test !quiet.nonlinear.solverinfo.converged
 end
 
 @testset "the frequency window of the pump modes" begin
     JC = JosephsonCircuits
-    circuit = Any[]
-    push!(circuit, ("P1", "1", "0", Port(1; Z0 = :R)))
-    for i in 1:6
-        push!(circuit, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(:Lj)))
-        push!(circuit, ("C$(i)", "$(i)", "0", Capacitor(:Cg)))
-    end
-    push!(circuit, ("C7", "7", "0", Capacitor(:Cg))); push!(circuit, ("R2", "7", "0", Resistor(:R)))
-    circuit = Circuit(circuit)
-    defs = Dict{Symbol,Complex{Float64}}(:Lj => 100e-12, :Cg => 40e-15, :R => 50.0)
-    # the same circuit in the typed form, for the cache
-    typed = Circuit(Any[(:P1, 1, 0, Port(1; Z0 = :R)),
-        [(Symbol(:Lj, i), i, i + 1, JosephsonJunction(:Lj)) for i in 1:6]...,
-        [(Symbol(:C, i), i, 0, Capacitor(:Cg)) for i in 1:6]...,
-        (:C7, 7, 0, Capacitor(:Cg)), (:R2, 7, 0, Resistor(:R))])
+    circuit, defs = testchaincircuit(6)
     w = (2*pi*5.0e9, 2*pi*1.19e9)
     src = [(mode=(1,0),port=1,current=0.6e-6), (mode=(0,1),port=1,current=0.6e-6)]
     full = JC.hbnlsolve(w, (8,4), src, circuit, defs; dc = true, odd = true, even = true,
@@ -1335,7 +1396,7 @@ end
         threewavemixing = true, fourwavemixing = true, keyedarrays = false,
         frequencywindow = (2*pi*0.5e9, 2*pi*30e9))
     @test hs.nonlinear.modes == box.modes
-    cache = JC.hbcache(w, (8,4), src, typed, defs; dc = true, odd = true, even = true,
+    cache = JC.hbcache(w, (8,4), src, circuit, defs; dc = true, odd = true, even = true,
         frequencywindow = (2*pi*0.5e9, 2*pi*30e9), method = Newton())
     @test length(cache.frequencies.modes) == length(box.modes)
     st = JC.hbnlsolve(w, (8,4), src, circuit, defs; dc = true, odd = true, even = true,
@@ -1346,20 +1407,7 @@ end
 
 @testset "the evaluation grid of the pump modes" begin
     JC = JosephsonCircuits
-    circuit = Any[]
-    push!(circuit, ("P1", "1", "0", Port(1; Z0 = :R)))
-    for i in 1:6
-        push!(circuit, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(:Lj)))
-        push!(circuit, ("C$(i)", "$(i)", "0", Capacitor(:Cg)))
-    end
-    push!(circuit, ("C7", "7", "0", Capacitor(:Cg))); push!(circuit, ("R2", "7", "0", Resistor(:R)))
-    circuit = Circuit(circuit)
-    defs = Dict{Symbol,Complex{Float64}}(:Lj => 100e-12, :Cg => 40e-15, :R => 50.0)
-    # the same circuit in the typed form, for the cache
-    typed = Circuit(Any[(:P1, 1, 0, Port(1; Z0 = :R)),
-        [(Symbol(:Lj, i), i, i + 1, JosephsonJunction(:Lj)) for i in 1:6]...,
-        [(Symbol(:C, i), i, 0, Capacitor(:Cg)) for i in 1:6]...,
-        (:C7, 7, 0, Capacitor(:Cg)), (:R2, 7, 0, Resistor(:R))])
+    circuit, defs = testchaincircuit(6)
     w = (2*pi*5.0e9, 2*pi*1.19e9)
     src = [(mode=(1,0),port=1,current=0.6e-6), (mode=(0,1),port=1,current=0.6e-6)]
     kw = (; dc = true, odd = true, even = true, method = Newton(), keyedarrays = false)
@@ -1382,7 +1430,7 @@ end
     @test_throws ArgumentError JC.hbnlsolve(w, (8,4), src, circuit, defs; kw..., method = Staged(), Nevaluationharmonics = (8,3))
     @test_throws ArgumentError JC.hbsolve(2*pi*5.1e9, w, src, (1,1), (8,4), circuit, defs; dc = true,
         threewavemixing = true, fourwavemixing = true, keyedarrays = false, Nevaluationharmonics = (7,4))
-    @test_throws ArgumentError JC.hbcache(w, (8,4), src, typed, defs;
+    @test_throws ArgumentError JC.hbcache(w, (8,4), src, circuit, defs;
         dc = true, odd = true, even = true, Nevaluationharmonics = (8,3))
     # the grid travels through hbsolve, hbcache and the staged solver
     hs = JC.hbsolve(2*pi*5.1e9, w, src, (1,1), (8,4), circuit, defs; dc = true,
@@ -1396,7 +1444,7 @@ end
     st = JC.hbnlsolve(w, (8,4), src, circuit, defs; kw..., method = Staged(), Nevaluationharmonics = (24,12))
     @test st.frequencies.Nharmonics == (24,12)
     @test isapprox(st.nodeflux, wide.nodeflux; rtol = 1e-6)
-    cache = JC.hbcache(w, (8,4), src, typed, defs;
+    cache = JC.hbcache(w, (8,4), src, circuit, defs;
         dc = true, odd = true, even = true, Nevaluationharmonics = (24,12), keyedarrays = false)
     @test cache.frequencies.Nharmonics == (24,12)
     cached = JC.hbsolve!(cache, (Lj = 100e-12, Cg = 40e-15, R = 50.0))

@@ -130,8 +130,8 @@ using Logging
             :Cj => 1000e-15, :Rleft => 50.0)
         wp = (2*pi*5e9,)
         src = [(mode = (1,), port = 1, current = 2.0e-6)]
-        run(m; kw...) = hbnlsolve(wp, (8,), src, circuit, defs;
-            keyedarrays = false, method = m, kw...)
+        run(m; sources = src, kw...) = hbnlsolve(wp, (8,), sources, circuit,
+            defs; keyedarrays = false, method = m, kw...)
         # halving can only ever accept a power of one half; interpolating
         # is not so constrained, which is the whole of the difference
         halfpower(a) = a == 0 || isapprox(log2(a), round(log2(a)); atol = 1e-12)
@@ -140,10 +140,12 @@ using Logging
         # every loop takes the option, and it has to reach the line search
         # rather than merely be accepted by the method: the first step is
         # shortened, to a fitted length or to a power of one half. With a
-        # direct current block the direct loop takes its explicit direct
-        # current branch.
-        for kw in ((;), (; dc = true)),
-                M in (NewtonKrylov, Newton, QuasiNewton)
+        # direct current injected, which quasi-Newton refuses, the loops
+        # solve the explicit direct current block.
+        withdc = (; dc = true, sources = [src; (mode = (0,), port = 1,
+            current = 1.0e-7)])
+        for (kw, methods) in (((;), (NewtonKrylov, Newton, QuasiNewton)),
+                (withdc, (NewtonKrylov, Newton))), M in methods
             interp = run(M(linesearch = Backtracking(interpolate = true)); kw...)
             halve = run(M(linesearch = Backtracking(interpolate = false)); kw...)
             @test interp.solverinfo.converged && halve.solverinfo.converged

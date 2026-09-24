@@ -32,12 +32,18 @@ The solution of the nonlinear harmonic balance problem returned by
 - `modes`: the retained modes as tuples of harmonic indices; `(1,)` is
     the pump of a single pump solve, `(1,0)` the first of two pumps.
 - `S`: the scattering matrix at the pump frequencies, relating the inputs
-    and outputs at each combination of port and mode. Its zero frequency
-    entries are identically zero: the waves are in units of
-    `sqrt(photons/second)`, whose normalization `1/sqrt(|w|)` (see
-    [`portwavescale`](@ref)) has no limit at zero, so there is no direct
-    current wave to report. The direct current operating point is in
-    `dcnodevoltage`.
+    and outputs at each combination of port and mode. `S[i,j]` is the
+    output wave of the solution at the port mode `i` divided by the
+    incident wave at the driven port mode `j`, so a column is the column
+    of the scattering matrix only when its port mode is the only one a
+    source drives; with sources at several port modes, as commensurate
+    pumps are given (see [`hbsolve`](@ref)), each column holds the
+    response to all of them, and the columns of undriven port modes are
+    zero. Its zero frequency entries are identically zero: the waves are
+    in units of `sqrt(photons/second)`, whose normalization `1/sqrt(|w|)`
+    (see [`portwavescale`](@ref)) has no limit at zero, so there is no
+    direct current wave to report. The direct current operating point is
+    in `dcnodevoltage`.
 - `solverinfo`: diagnostics of the solution process; see
     [`SolverInfo`](@ref).
 - `operatingpoint`: the converged operating point with the exact real
@@ -82,12 +88,13 @@ end
 
 The solution of the linearized harmonic balance problem returned by
 [`hblinsolve`](@ref). An output which was not requested is an empty
-array. As plain arrays the scattering parameters, the quantum efficiencies
-and the sensitivities are indexed `[output, input, frequency]`, with the
-mode and the port of each flattened (mode fastest); with
-`keyedarrays = true` they are keyed arrays with the axes `outputmode`,
-`outputport`, `inputmode`, `inputport` and `freqindex`. `CM`, `Snoise` and
-the node outputs have axes of their own, named in their keys.
+array. As plain arrays the scattering parameters and the quantum
+efficiencies are indexed `[output, input, frequency]` and the
+sensitivities `[output, input, component, frequency]`, with the mode and
+the port of each flattened (mode fastest); with `keyedarrays = true` they
+are keyed arrays with the axes `outputmode`, `outputport`, `inputmode`,
+`inputport`, `component` and `freqindex`. `CM`, `Snoise`, `Cnoise` and the
+node outputs have axes of their own, named in their keys.
 
 # Fields
 - `w`: the signal angular frequencies in radians per second.
@@ -110,7 +117,10 @@ the node outputs have axes of their own, named in their keys.
     the circuit implements, taking an input covariance to
     `S*sigma*S' + Cnoise`; the temperature of each channel enters here
     through the occupation. At zero temperature its diagonal is the noise
-    term in the denominator of the quantum efficiency.
+    term in the denominator of the quantum efficiency. Both of its port
+    mode indices are outputs: keyed, its axes are `outputmode` and
+    `outputport` for `i`, `conjoutputmode` and `conjoutputport` for `j`,
+    and `freqindex` (see [`Cnoisetokeyed`](@ref)).
 - `Ssensitivity`: the derivative of `S` with respect to a relative
     (logarithmic) perturbation of each component in `sensitivitynames`, or
     of each design parameter when the sensitivity pair interface is used,
@@ -210,6 +220,19 @@ const _DOC_FTOL = """
     impedances can reach, is raised to it: no iteration resolves a residual
     below the rounding of the terms which make it."""
 
+const _DOC_RTOL = """
+- `rtol = 0.0`: a relative residual tolerance; the nonlinear solve is
+    converged when `norm(F) <= max(atol, rtol*norm(F0))` with `F0` the
+    initial residual. It applies to the direct and Krylov methods; a
+    `Staged` method holds its stages to `atol` and ignores it."""
+
+const _DOC_WARNNOTCONVERGED = """
+- `warnnotconverged = true`: warn when the nonlinear solve does not
+    converge, and run the checks of a converged point which warn (a
+    junction carrying nearly its critical current at direct current). A
+    continuation whose stage solves are expected to fail passes `false`,
+    and reports and checks its own outcome."""
+
 const _DOC_METHOD = """
 - `method = NewtonKrylov()`: the nonlinear solver, an
     [`AbstractHBNonlinearSolver`](@ref) carrying its own options:
@@ -221,44 +244,6 @@ const _DOC_METHOD = """
     [`stagedhbnlsolve`](@ref), the strategy for operating points the
     direct methods fail outright and the one that distinguishes a hard
     operating point from a nonexistent one) or [`ExternalSolver`](@ref)."""
-
-const _DOC_NLKWARGS = """
-- `rtol = 0.0`: a relative residual tolerance; the solve is converged when
-    `norm(F) <= max(atol, rtol*norm(F0))` with `F0` the initial residual.
-- `x0 = nothing`: an initial value for the node fluxes, either of the node
-    flux length or of the full augmented length including the auxiliary
-    variables of the modified nodal analysis formulation. `x0`, `rtol`,
-    `debugJacobian`, `returnsystem` and `assemblejacobian` apply to the
-    direct and Krylov methods; a `Staged` method builds and warm starts
-    its own stages and ignores them.
-- `keyedarrays = true`: return `nodeflux` and `S` as keyed arrays with named
-    axes rather than plain arrays.
-- `sensitivitynames = String[]`: the components, named by their
-    identifiers as symbols or strings, of a sensitivity calculation which
-    uses this solve's operating point. The pump solve takes no
-    sensitivities itself, and refuses a name the circuit does not have.
-- `returnoperatingpoint = false`: assemble and return the exact real
-    Jacobian at the converged solution in the `operatingpoint` field, for
-    sensitivities which include the shift of the operating point.
-- `backend = CPU()`: the KernelAbstractions backend the solve runs on.
-- `debugJacobian = false`: instead of solving, return a named tuple with
-    the residual and Jacobian functions and the ingredients they are
-    assembled from, for building reference implementations in tests.
-- `returnsystem = false`: instead of solving, return a named tuple with
-    the [`HBSystem`](@ref), the initial real state and residual, the real
-    representation layout and (when `assemblejacobian = true`) the
-    assembled real Jacobian, for driving an external solver.
-- `assemblejacobian = true`: assemble the real Jacobian for `returnsystem`
-    and for an [`ExternalSolver`](@ref); `false` skips the assembly when
-    the external solver is matrix free.
-- `switchofflinesearchtol`, `alphamin`: deprecated and ignored with a
-    warning.
-
-A solve which does not converge returns the last iterate with
-`solverinfo.converged = false` and warns with the reason it stopped, which
-is also the `reason` of its [`IterationInfo`](@ref) (`:iterations`,
-`:work`, `:linesearch`, `:progress` or `:external`; [`stallmessage`](@ref)
-spells each out). Check `solverinfo.converged` before using the result."""
 
 const _DOC_RETURNS = """
 - `returnS = true`: return the scattering parameters of the linearized
@@ -313,9 +298,12 @@ const _DOC_SENSMODE = """
     `:reverse` pushes the output functionals through the transposed pump
     Jacobian once per output port and mode pair, so its cost does not grow
     with the number of components. `:auto` chooses `:reverse` when the
-    components outnumber the output port and mode pairs eight times over
-    and none is a scattering block parameter, which `:reverse` does not
-    take. Both support any number of pumps."""
+    components outnumber the output port and mode pairs eight times over,
+    or when the forward order's stamps, a value per stored entry of the
+    linearized system per component, would exceed
+    [`FORWARDSENSITIVITYSTAMPBYTES`](@ref), and none is a scattering block
+    parameter, which `:reverse` does not take. Both support any number of
+    pumps."""
 
 const _DOC_SSENS = """
 - `returnSsensitivity = false`: return `dS/dr`, the derivative of the
@@ -348,6 +336,45 @@ const _DOC_LINBACKEND = """
     the whole adjoint solution copied back."""
 
 """
+    checksweepoptions(psc, backend, factorization, temperature,
+        sensitivitynames, sensitivitypairs, sensitivityblockpairs,
+        nsensitivityparameters, sensitivitymode, returnSsensitivity)
+
+Refuse, before the pump is solved, the options of the sweep which
+[`hblinsolve`](@ref) would refuse only after it: a temperature which is
+not finite and nonnegative, an unknown `sensitivitymode`, sensitivity
+pairs without `nsensitivityparameters` or beside `sensitivitynames`, a
+[`CUDSSFactorization`](@ref) for a sweep on the host, and, when the
+sensitivities are asked for, a component named for one which is not a
+capacitor, an inductor, a resistor or a junction.
+"""
+function checksweepoptions(psc::CompiledCircuit, backend, factorization,
+        temperature, sensitivitynames, sensitivitypairs,
+        sensitivityblockpairs, nsensitivityparameters, sensitivitymode,
+        returnSsensitivity::Bool)
+    checktemperature(temperature, "the keyword `temperature`")
+    sensitivitymode in (:auto, :forward, :reverse) || throw(ArgumentError(
+        lazy"sensitivitymode must be :auto, :forward or :reverse, not $(sensitivitymode)."))
+    if !isempty(sensitivitypairs) || !isempty(sensitivityblockpairs)
+        isempty(sensitivitynames) || throw(ArgumentError(
+            "pass either sensitivitynames or sensitivitypairs, not both"))
+        nsensitivityparameters > 0 || throw(ArgumentError(
+            "sensitivitypairs requires nsensitivityparameters"))
+    end
+    if returnSsensitivity
+        for name in Iterators.flatten((sensitivitynames,
+                (t[1] for t in sensitivitypairs)))
+            i = componentindex(psc, name)
+            psc.componenttypes[i] in (:C, :L, :R, :Lj) || throw(ArgumentError(
+                lazy"Sensitivities are only supported for C, L, R, and Lj components, not $(psc.componenttypes[i]), the type of $(psc.componentnames[i])."))
+        end
+    end
+    factorization isa CUDSSFactorization && backend isa CPU &&
+        throw(ArgumentError(lazy"the sweep runs on the host on the backend $(backend), and CUDSSFactorization factorizes on a device; leave `factorization` to its default or pass a host factorization such as KLUfactorization()."))
+    return nothing
+end
+
+"""
     hbsolve(ws, wp::NTuple{N,Number}, sources::Vector,
         Nmodulationharmonics::NTuple{M,Int}, Npumpharmonics::NTuple{N,Int},
         circuit, circuitdefs; dc = false, threewavemixing = false,
@@ -356,8 +383,8 @@ const _DOC_LINBACKEND = """
         Nevaluationharmonics = map(i -> 2i, Npumpharmonics),
         frequencywindow = (0, Inf),
         maxmodulationharmonics = Nmodulationharmonics,
-        iterations = 1000, atol = 1e-8, method = NewtonKrylov(),
-        x0 = nothing,
+        iterations = 1000, atol = 1e-8, rtol = 0.0, method = NewtonKrylov(),
+        x0 = nothing, warnnotconverged = true,
         nbatches = Base.Threads.nthreads(),
         returnS = true, returnSnoise = false,
         returnQE = true, returnCM = true, returnnodeflux = false,
@@ -398,7 +425,9 @@ nonzero frequencies instead.
     second, `(2*pi*5.0e9,)` for a single pump or `(2*pi*5.0e9, 2*pi*6.0e9)`
     for two, as real numbers. The pumps should be non-commensurate; for commensurate pumps
     give the lowest frequency here and add the others to `sources` with a
-    mode index equal to the frequency ratio.
+    mode index equal to the frequency ratio. The pump solution's `S` then
+    drives several port modes at once, so it is not a scattering matrix
+    (see [`NonlinearHB`](@ref)); the linearized solution's is.
 - `sources`: the sources, as named tuples `(mode, port, current)` in any
     iterable. `mode` is a tuple of harmonic indices, one per pump
     frequency, `port` the port number, and `current` the complex current
@@ -451,10 +480,12 @@ nonzero frequencies instead.
 - `iterations = 1000`: the maximum number of nonlinear solver iterations
     before it returns unconverged.
 $(_DOC_FTOL)
+$(_DOC_RTOL)
 $(_DOC_METHOD)
 - `x0 = nothing`: an initial value for the node fluxes of the nonlinear
     solve, used by the direct and Krylov methods; a `Staged` method builds
     its own warm starts and ignores it.
+$(_DOC_WARNNOTCONVERGED)
 $(_DOC_NBATCHES)
 $(_DOC_RETURNS)
 $(_DOC_TEMPERATURE)
@@ -465,9 +496,12 @@ $(_DOC_SENSMODE)
     rather than derivatives at a fixed operating point. Near the gain peak
     of a strongly pumped amplifier the operating point term is comparable
     to or larger than the fixed point term. Requires the exact real
-    Jacobian of the nonlinear solution, which is assembled and factorized
-    once. Without Josephson junctions the operating point contribution is
-    identically zero and is skipped.
+    Jacobian of the nonlinear solution, which is assembled once and
+    factorized once for the forward contraction order and once per batch
+    of signal frequencies for the reverse one, whose transposed solves run
+    on the batch's thread: a sparse factorization cannot be solved against
+    from several threads at once. Without Josephson junctions the
+    operating point contribution is identically zero and is skipped.
 $(_DOC_SSENS)
 - `factorization = nothing`: the factorization of the linearized solve at
     each signal frequency. `nothing` chooses by the number of tones and
@@ -492,6 +526,7 @@ $(_DOC_SSENS)
     nonlinear solve assembles, factorizes and iterates there; the
     linearized sweep solves batches of signal frequencies there and falls
     back to the host for what it cannot serve (see [`hblinsolve`](@ref)).
+- `ftol`: deprecated, read as `atol` with a warning.
 - `switchofflinesearchtol`, `alphamin`: deprecated and ignored with a
     warning.
 - `symfreqvar = nothing`: deprecated, the parameter a frequency dependent
@@ -541,9 +576,10 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
     maxpumpharmonics = nothing,
     frequencywindow = (0, Inf),
     maxmodulationharmonics::NTuple{M,Number} = Nmodulationharmonics,
-    iterations = 1000, atol = 1e-8, ftol = nothing, switchofflinesearchtol = nothing,
-    alphamin = nothing, method::AbstractHBNonlinearSolver = NewtonKrylov(),
-    x0 = nothing, nbatches = Base.Threads.nthreads(),
+    iterations = 1000, atol = 1e-8, rtol = 0.0, ftol = nothing,
+    switchofflinesearchtol = nothing, alphamin = nothing,
+    method::AbstractHBNonlinearSolver = NewtonKrylov(), x0 = nothing,
+    warnnotconverged::Bool = true, nbatches = Base.Threads.nthreads(),
     returnS::Bool = true, returnSnoise::Bool = false,
     returnQE::Bool = true, returnCM::Bool = true, returnnodeflux::Bool = false,
     returnvoltage::Bool = false, returnnodefluxadjoint::Bool = false,
@@ -567,28 +603,18 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
         circuitdefs, symfreqvar, :hbsolve))
 
     # the signal modes are modulation harmonics of each pump tone, so there
-    # is one count per tone; checked before the pump is solved
+    # is one count per tone; checked before the pump is solved, as is every
+    # input of the sweep which does not need the pump
     M == N || throw(ArgumentError(lazy"`Nmodulationharmonics` = $(Nmodulationharmonics) gives $(M) tones but there are $(N) pump frequencies."))
     checksweepinputs(ws, nbatches)
+    checksweepoptions(psc, backend, factorization, temperature,
+        sensitivitynames, sensitivitypairs, sensitivityblockpairs,
+        nsensitivityparameters, sensitivitymode, returnSsensitivity)
 
-    # deprecation warnings for the line search keywords, whichever method
-    # solves the pump
-    if !isnothing(switchofflinesearchtol)
-        Base.depwarn(lazy"The `switchofflinesearchtol` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions.", :hbsolve; force=true)
-    end
-    if !isnothing(alphamin)
-        Base.depwarn(lazy"The `alphamin` kwarg is deprecated and no longer used (and no longer necessary). Please remove it to avoid errors in future versions.", :hbsolve; force=true)
-    end
-
-    # deprecation warning for maxpumpharmonics, whose role `Npumpharmonics`
-    # took when the sampling grid became `Nevaluationharmonics`.
-    if !isnothing(maxpumpharmonics)
-        Base.depwarn(lazy"The `maxpumpharmonics` kwarg is deprecated and no longer used. `Npumpharmonics` is the retained set of pump modes and `Nevaluationharmonics` the grid on which the nonlinearity is sampled. Please remove it to avoid errors in future versions.", :hbsolve; force=true)
-    end
-    if !isnothing(ftol)
-        Base.depwarn(lazy"The `ftol` kwarg is deprecated: the absolute residual tolerance is `atol` in every solver of the package. Please use `atol` to avoid errors in future versions.", :hbsolve; force=true)
-        atol = ftol
-    end
+    # the deprecated keywords warn, whichever method solves the pump, and
+    # `ftol` is read as `atol`; in circuit/legacy.jl
+    atol = deprecatedsolverkeywords(:hbsolve, atol; ftol,
+        switchofflinesearchtol, alphamin, maxpumpharmonics)
 
     # the pump modes: harmonics of each pump and their intermodulation
     # products, truncated, with the conjugate (negative frequency) modes
@@ -628,15 +654,15 @@ function hbsolve(ws::Vector{Float64}, wp::NTuple{N,Float64},
             dc = dc, odd = fourwavemixing, even = threewavemixing,
             keyedarrays = keyedarrays, sensitivitynames = sensitivitynames,
             returnoperatingpoint = throughoperatingpoint,
-            backend = backend)
+            backend = backend, warnnotconverged = warnnotconverged)
     else
         hbnlsolve(wp, sources, freq, indices, psc, nm;
             iterations = iterations, x0 = initialguess(x0), atol = atol,
-            method = method,
+            rtol = rtol, method = method,
             keyedarrays = keyedarrays,
             sensitivitynames = sensitivitynames,
             returnoperatingpoint = throughoperatingpoint,
-            backend = backend)
+            backend = backend, warnnotconverged = warnnotconverged)
     end
 
     # The derivative of the harmonic balance residual with respect to each

@@ -44,6 +44,22 @@ using Test
             reshape(ComplexF64[1, 1], 1, 1, 2)); extrapolation = :linear))
         @test_throws ArgumentError ScatteringParameters(([1.0, 3.0],
             reshape(ComplexF64[1, -1], 1, 1, 2)); noise = Lossless())
+        # and a table declared lossless is held to a bound on its
+        # interpolant which is rigorous and close: a delay line sampled a
+        # hundred times a radian of its phase, whose spline departs from
+        # unitary by about 1e-9, is bounded within a small factor of what
+        # a dense sampling of the spline finds, and may be declared so
+        wl = collect(range(2pi*0.5e9, 2pi*1.5e9; length = 629))
+        Sl = zeros(ComplexF64, 2, 2, length(wl))
+        for (k, w) in enumerate(wl)
+            Sl[:, :, k] .= [0 cis(-w*1e-9); cis(-w*1e-9) 0]
+        end
+        line = ScatteringParameters((wl, Sl); noise = Lossless())
+        dense = collect(range(wl[1], wl[end]; length = 20*length(wl)))
+        Sd = zeros(ComplexF64, 2, 2, length(dense))
+        JC.evaluateprovider!(Sd, line.provider, dense)
+        actual = maximum(k -> JC.unitaritydeviation(view(Sd, :, :, k)), axes(Sd, 3))
+        @test actual <= JC.unitaritybound(line.provider) <= 3*actual
         # strictly increasing frequencies required, so a repeated knot,
         # which would put a zero interval under the interpolation, is out
         @test_throws ArgumentError ScatteringParameters(([2.0, 1.0],
@@ -174,9 +190,12 @@ using Test
         # a noiseless amplifier is not completely positive
         @test_throws ArgumentError GaussianChannel(
             sqrt(G)*Matrix(1.0I, 2, 2), zeros(2, 2); nmodes = 1)
-        # Y must be symmetric
+        # Y must be symmetric, to atol of its largest entry: a hot
+        # channel's covariance symmetric to a part in 1e12 is, where an
+        # absolute tolerance would refuse it
         @test_throws ArgumentError GaussianChannel(Matrix(1.0I, 2, 2),
             [0.5 0.1; -0.1 0.5]; nmodes = 1)
+        @test GaussianChannel(Matrix(1.0I, 2, 2), [1e6 1e-6; 0.0 1e6]; nmodes = 1).nmodes == 1
         # odd dimension is rejected
         @test_throws DimensionMismatch GaussianChannel(zeros(3,3),
             zeros(3,3))
@@ -220,10 +239,11 @@ using Test
         # the linear coefficient must be one
         @test_throws ArgumentError PolynomialCPR([2.0, 0.0])
         @test_throws ArgumentError PolynomialCPR(Float64[])
-        # unknown callables require an explicit derivative
+        # the solvers know the derivatives of the Josephson relation and
+        # of a polynomial, and of no other callable
         mycpr(x) = x - x^3/6
-        @test_throws ArgumentError NonlinearInductor(1e-9, mycpr)
-        nl = NonlinearInductor(1e-9, mycpr, x -> 1 - x^2/2)
+        @test_throws ArgumentError JosephsonCircuits.cprderivative(mycpr)
+        nl = NonlinearInductor(1e-9, mycpr)
         @test !JosephsonCircuits.issinusoidal(nl)
         # a snail written as its expansion compiles as a junction, with
         # the relation kept beside the table; see test/nonlinearinductor.jl
@@ -243,6 +263,24 @@ using Test
             [((:p1, 1), (:r, 1), (:nl, 1)),
              ((:p1, 2), (:r, 2), (:nl, 2), Ground)])
         @test_throws ComponentNotSupportedError compile(cn)
+        # a table of mixed relations evaluates each over its own
+        # junctions, on the layout of harmonic balance, the junction
+        # last, and of the transient, the junction first, and a subset
+        # of the junctions in another order reads its own rows
+        JC = JosephsonCircuits
+        cprs = [nothing, PolynomialCPR([1.0, 0.2, -1/6]), nothing,
+            PolynomialCPR([1.0, 0.0, -0.1, 0.0, 0.01])]
+        r = JC.junctionrelations(cprs)
+        f(j, x) = isnothing(cprs[j]) ? sin(x) : cprs[j](x)
+        df(j, x) = isnothing(cprs[j]) ? cos(x) : JC.cprderivative(cprs[j])(x)
+        phases = [0.3*t - 0.2*j for t in 1:5, j in 1:4]
+        @test JC.applyrelationlast!(similar(phases), phases, r.value, r, sin) ≈
+            [f(j, phases[t, j]) for t in 1:5, j in 1:4] atol = 1e-15
+        @test JC.derivativeat(r, permutedims(phases)) ≈
+            [df(j, phases[t, j]) for j in 1:4, t in 1:5] atol = 1e-15
+        @test JC.relationat(JC.hostrelations(r, [4, 1]), phases[2, [4, 1]]) ≈
+            [f(4, phases[2, 4]), f(1, phases[2, 1])] atol = 1e-15
+        @test JC.sinusoidalmask(r) == [true, false, true, false]
         # a sinusoidal junction lowers to the legacy Lj component
         c2 = Circuit([:jj => JosephsonJunction(100e-12), :p1 => Port(1; termination = nothing),
                       :r => Resistor(50.0)],
@@ -299,7 +337,8 @@ using Test
         for path in (file("z1.s1p", "# GHz Z RI R 50\n1.0 2.0 0.0\n2.0 2.0 0.0\n"),
                 file("y1.s1p", "# GHz Y RI R 50\n1.0 0.5 0.0\n2.0 0.5 0.0\n"),
                 file("z2.s1p", v2("Z", 25, ["100.0 0.0"])),
-                file("y2.s1p", v2("Y", 25, ["0.01 0.0"])))
+                file("y2.s1p", v2("Y", 25, ["0.01 0.0"])),
+                file("z2db.s1p", replace(v2("Z", 25, ["40.0 0.0"]), "RI" => "DB")))
             @test loaded((:x, 1, ScatteringParameters(path))) ≈ loaded((:x, 1, 0, Resistor(100.0))) atol = 1e-12
         end
         series(x) = hblinsolve([wt], Circuit([(:p1, 1, 0, Port(1)), (:x, 1, 2, x),
@@ -314,6 +353,11 @@ using Test
         @test dopen[1, 1, 1] ≈ 1
         @test_throws ArgumentError ScatteringParameters(file("h.s2p",
             "# GHz H RI R 50\n1.0 0 0 1 0 -1 0 0 0\n2.0 0 0 1 0 -1 0 0 0\n"))
+        # and a version 1 file of Y or Z parameters in dB, which the
+        # loader scales wrongly, is refused rather than read as another
+        # load: z = 2 is 6.02 dB
+        @test_throws ArgumentError ScatteringParameters(file("zdb.s1p",
+            "# GHz Z DB R 50\n1.0 6.020599913 0.0\n2.0 6.020599913 0.0\n"))
     end
 
     @testset "one contract for a block's data" begin
@@ -417,6 +461,9 @@ end
 
 @testset "shared signed provider evaluation and rational workspace" begin
     JC = JosephsonCircuits
+    # the response of a realization by a dense solve, the reference the
+    # Schur factors are held to
+    response(A, B, C, D, w) = D + C*((im*w*I - A) \ B)
     S = [0.1 0.2im; -0.2im 0.1]
     V = Matrix(1.0I,2,2)
     for rule in (ConjugateSymmetry(),Native())
@@ -444,14 +491,14 @@ end
         saved = copy(out1)
         JC.rationaltransfer!(out2,rf,C*rf.Z,D,w+1,work2)
         @test out1 == saved
-        @test out1 ≈ D+C*((im*w*I-A)\B)
-        @test out2 ≈ D+C*((im*(w+1)*I-A)\B)
+        @test out1 ≈ response(A,B,C,D,w)
+        @test out2 ≈ response(A,B,C,D,w+1)
     end
     provider = JC.RationalScatteringProvider(A,B,C,D)
     ws = collect(range(-4.,4.;length=21))
     out = zeros(ComplexF64,2,2,length(ws))
     JC.evaluateprovider!(out,provider,ws)
-    @test all(out[:,:,k] ≈ D+C*((im*w*I-A)\B) for (k,w) in enumerate(ws))
+    @test all(out[:,:,k] ≈ response(A,B,C,D,w) for (k,w) in enumerate(ws))
     # the provider holds a copy of its realization and the factors of it
     # it takes when it is built, so it evaluates the realization it was
     # given whatever becomes of the caller's matrices; another
@@ -461,7 +508,7 @@ end
     JC.evaluateprovider!(out,provider,ws)
     @test out == held
     JC.evaluateprovider!(out,JC.RationalScatteringProvider(A,B,C,D),ws)
-    @test all(out[:,:,k] ≈ D+C*((im*w*I-A)\B) for (k,w) in enumerate(ws))
+    @test all(out[:,:,k] ≈ response(A,B,C,D,w) for (k,w) in enumerate(ws))
     # complex pairs are 2 by 2 blocks of the real Schur form: a
     # realization of three damped resonances under a similarity which is
     # not orthogonal, against a dense solve at each frequency, at the
@@ -477,7 +524,7 @@ end
     D2 = [0.1 0.; 0. -0.2]
     p2 = JC.RationalScatteringProvider(A2,B2,C2,D2)
     wr = vcat(collect(range(-5.,5.;length=41)), [1.0,2.5,-2.5,4.0,2.5+1e-4])
-    dense(w) = D2+C2*((im*w*I-A2)\B2)
+    dense(w) = response(A2,B2,C2,D2,w)
     out2 = zeros(ComplexF64,2,2,length(wr))
     JC.evaluateprovider!(out2,p2,wr)
     @test all(isapprox(out2[:,:,k],dense(w);rtol=1e-10) for (k,w) in enumerate(wr))
@@ -491,4 +538,48 @@ end
     @test all(isapprox(JC.evaluateprovider!(one2,p2,[w])[:,:,1],dense(w);rtol=1e-10) for w in wr)
     @test sort(JC.schureigenvalues(p2.factors.T);by=x->(imag(x),real(x))) ≈
         sort(eigvals(A2);by=x->(imag(x),real(x))) rtol=1e-10
+end
+
+@testset "a pumped block given by its data" begin
+    JC = JosephsonCircuits
+    wp = 2pi*10e9
+    # given by its harmonic transfer functions, the covariance tables are
+    # interpolated and extrapolated as their NoiseCovariance states: along
+    # the chord between knots, and held beyond the table, where a table
+    # of the default kind refuses
+    nus = collect(range(-2pi*8e9, 2pi*8e9; length = 9))
+    x = nus ./ (2pi*8e9)
+    table(v) = (nus, reshape(complex.(v), 1, 1, :))
+    blk = LinearizedScattering([table(fill(0.5, 9)), table(zeros(9))], wp; harmonics = [0, 1], nports = 1,
+        noise = NoiseCovariance([table(0.75 .+ x.^2), table(zeros(9))]; interpolation = :linear,
+            extrapolation = :constant))
+    V = zeros(ComplexF64, 1, 1, 2)
+    JC.evaluateprovider!(V, blk.noise.provider[1], [(nus[6] + nus[7])/2, 2pi*9e9])
+    @test V[1] ≈ 0.75 + (x[6]^2 + x[7]^2)/2 rtol = 1e-12
+    @test V[2] ≈ 0.75 + x[9]^2 rtol = 1e-12
+    # built from a solve, they take the interpolation its NoiseCovariance
+    # states, and are zero beyond their bands as the transfer functions
+    # are, which no other extrapolation can change
+    ws = collect(range(2pi*4e9, 2pi*6e9; length = 5))
+    y = (ws .- 2pi*5e9) ./ (2pi*1e9)
+    keyed(A) = JC.AxisKeys.KeyedArray(reshape(A, 1, 1, 1, 1, :), ([(0,)], [1], [(0,)], [1], ws))
+    solved = (S = keyed(fill(0.5 + 0im, 5)), w = ws)
+    C = keyed(complex.(1 .+ y.^2))
+    fromsolve = LinearizedScattering(solved, wp; noise = NoiseCovariance(C; interpolation = :linear))
+    JC.evaluateprovider!(V, fromsolve.noise.provider[1], [(ws[1] + ws[2])/2, 2pi*7e9])
+    @test V[1] ≈ 1 + (y[1]^2 + y[2]^2)/2 rtol = 1e-12
+    @test V[2] == 0
+    @test_throws ArgumentError LinearizedScattering(solved, wp;
+        noise = NoiseCovariance(C; extrapolation = :constant))
+    # its unconverted response is that of a real system, H_0(-nu) =
+    # conj(H_0(nu)), which a constant meets only if it is real and a
+    # table of both signs only if it is conjugate at the pairs of its
+    # knots; the ordinary block of a complex constant conjugates it at
+    # negative frequencies, which a pumped block would not
+    pumped(H0) = LinearizedScattering([H0], wp; harmonics = [0], nports = 1)
+    @test_throws ArgumentError pumped(fill(cis(0.7), 1, 1))
+    @test pumped(fill(-1.0 + 0im, 1, 1)) isa LinearizedScattering
+    signed = collect(range(-2pi*8e9, 2pi*8e9; length = 9))
+    @test pumped((signed, reshape(cis.(-signed .* 1e-11), 1, 1, :))) isa LinearizedScattering
+    @test_throws ArgumentError pumped((signed, reshape(cis.(-abs.(signed) .* 1e-11), 1, 1, :)))
 end

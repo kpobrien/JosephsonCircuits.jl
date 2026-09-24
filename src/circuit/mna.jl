@@ -536,9 +536,10 @@ end
         Nmodes::Int, auxoffset::Int, Lscale)
 
 Initialize the auxiliary branch current variables of the mutually coupled
-inductors consistently with the node fluxes in `x`, by solving the small
-dense branch inductance system `(L/Lscale)*u = Rbn*phi` over the coupled
-branches, which zeros their constitutive rows exactly. If the branch
+inductors consistently with the node fluxes in `x`, by solving the branch
+inductance system `(L/Lscale)*u = Rbn*phi` over the coupled branches, with
+one sparse factorization for every mode, which zeros their constitutive
+rows exactly. If the branch
 inductance matrix is singular (a perfectly coupled pair, `|k| = 1`) the
 auxiliary variables are left unchanged: the full system can still be well
 posed and solvable in that case, because the constitutive equations use

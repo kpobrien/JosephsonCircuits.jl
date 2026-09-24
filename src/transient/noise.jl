@@ -106,10 +106,12 @@ end
 
 The independent equilibrium baths of a circuit in time: every matched,
 port owned termination is one external bath, every finite internal
-resistor one internal bath, and every lossy scattering block the
+resistor one internal bath, and every lossy constant scattering block the
 independent channels of its emitted noise wave, whose covariance is
 `I - S S'` (Bosma's relation, as the linearized solver has it), one
-channel per positive eigenvalue; from the compiler's termination
+channel per positive eigenvalue, while a rational block, whose `S`
+depends on frequency, has one channel per port, correlated by its group
+at each bath frequency; from the compiler's termination
 ownership, the bound values, the component temperatures and the
 blocks' noise models, `ThermalEquilibrium(T)` stating a block's
 temperature, `Passive()` taking the default, `Lossless()` asserting the
@@ -121,23 +123,24 @@ the noise it states, held to the minimum the commutation relations
 require, and its output obeys them; a pumped block which states its
 noise is a group whose channels are correlated across the bath
 frequencies its harmonics relate (see [`PairLadder`](@ref)), and one
-declared lossless is no bath. `temperature` is the default in
-kelvin, which a component's own stated temperature overrides. Every port
-must own a matched finite termination; an open resistor adds no bath. The same temperatures and models set the noise
-of [`hblinsolve`](@ref), so the two solvers compare.
+declared lossless is no bath. `temperature` is the default in kelvin
+of every internal resistor and block, which a component's own stated
+temperature overrides; the port terminations are vacuum, as the
+linearized solver's ports are by definition. Every port must own a
+matched finite termination; an open resistor adds no bath. The same
+temperatures and models set the noise of [`hblinsolve`](@ref), so the
+two solvers compare at any temperature.
 """
 function transientnoisebaths(p::TransientProblem; temperature = 0.0)
     c, vvn = p.circuit, p.matrices.vvn
-    t = Float64(temperature)
-    isfinite(t) && t >= 0 || throw(ArgumentError("the bath temperature must be finite and nonnegative."))
+    t = checktemperature(temperature, "the keyword `temperature`")
     channels = TransientNoiseBath[]
     groups = @NamedTuple{channels::UnitRange{Int}, block::Int}[]
     for (j, port) in enumerate(p.ports)
         isapprox(p.portconductances[j]*p.portimpedances[j], 1; rtol = 1e-12) || throw(ArgumentError(
             lazy"port $(port.number) needs its own matched termination for a bath."))
-        temp = get(c.componenttemperatures, port.environment, t)
         push!(channels, TransientNoiseBath("port $(port.number)", noderows(p.portpositive[j], p.portnegative[j])...,
-            j, p.portimpedances[j], temp))
+            j, p.portimpedances[j], 0.0))
     end
     for k in noiseindices(c, vvn)
         c.componenttypes[k] == :R || throw(ArgumentError("the transient baths are real resistors and scattering blocks."))
@@ -182,8 +185,8 @@ function transientnoisebaths(p::TransientProblem; temperature = 0.0)
                 2sqrt(values[c]) .* vectors[:, c], 0, 0.0, temp))
         end
     end
-    all(b -> isfinite(b.temperature) && b.temperature >= 0, channels) || throw(ArgumentError(
-        "the bath temperatures must be finite and nonnegative."))
+    # the stated temperatures were checked when their components and noise
+    # models were built
     isempty(channels) && throw(ArgumentError("the circuit has no dissipative element to be a bath."))
     return TransientNoiseBaths(p, channels, groups)
 end
@@ -731,12 +734,14 @@ function addentries!(values, positions, coefficients, scale::Number)
 end
 
 # the operator refilled at the angular frequency `w` and factorized, on
-# the analysis of the first factorization
-function stationaryfactor!(op::StationaryOperator, w)
+# the analysis of the first factorization, with `s` the rate a rule's
+# stationary response carries at it (see `stationaryrate`) on the
+# capacitance and the conductance
+function stationaryfactor!(op::StationaryOperator, w, s = im*w)
     values = nonzeros(op.F)
     fill!(values, 0)
-    addentries!(values, op.cmap, op.cvals, -w^2)
-    addentries!(values, op.gmap, op.gvals, im*w)
+    addentries!(values, op.cmap, op.cvals, s^2)
+    addentries!(values, op.gmap, op.gvals, s)
     addentries!(values, op.lmap, op.lvals, 1.0)
     addentries!(values, op.jmap, op.jcoef, view(op.dphi, op.jjunction))
     if !isempty(op.rmap)
@@ -793,6 +798,23 @@ function statephasors(p::TransientProblem, w, a)
     return z
 end
 
+# The rate of a rule's stationary response to a drive `cos(w t)`: the
+# response is `Re(X exp(i w t_n))` on the grid with rate `Re(s X exp(i w t_n))`,
+# `X` solving `(s^2 C + s G + L + J') X = B` for the drive's phasor `B`.
+# The trapezoidal rule's is the bilinear map `i (2/h) tan(w h/2)`, backward
+# Euler's `(1 - exp(-i w h))/h`, and a response of either started on its
+# own stationary state is periodic from the first step. The continuous
+# `i w` differs from the trapezoidal rule's by `(w h)^2/12`, which reaches
+# the whole response near the Nyquist frequency, where a bath's vacuum
+# weight is largest: started on the continuous state, each bath there
+# would ring at the circuit's own frequencies and leak into every
+# measured mode. The Gauss-Legendre rule starts on the continuous state,
+# which its stationary response matches to the fourth order warping
+# `(w h)^4/720` of the rule.
+stationaryrate(::GaussLegendre, w, h) = complex(0.0, w)
+stationaryrate(::Trapezoidal, w, h) = complex(0.0, (2/h)*tan(w*h/2))
+stationaryrate(::BackwardEuler, w, h) = (1 - cis(-w*h))/h
+
 function stationaryresponses(sys::TransientSystem, x0, injection, frequencies, t0, reference)
     p = sys.problem
     n = length(p)
@@ -812,21 +834,22 @@ function stationaryresponses(sys::TransientSystem, x0, injection, frequencies, t
     rhs = zeros(ComplexF64, n + nl2, nb)
     for (f, frequency) in enumerate(frequencies)
         w = 2pi*frequency
-        F = stationaryfactor!(op, w)
+        s = stationaryrate(sys.method, w, sys.h)
+        F = stationaryfactor!(op, w, s)
         # a unit cosine current `cos(w (t - reference))` at every bath, one
         # column each: the complex amplitude `exp(-i w reference)`, and the
         # sine `-i` times it, whose response is `-i` times the cosine's; at
         # time t the response is Re(x exp(i w t)) and its rate
-        # Re(i w x exp(i w t)); the cosine and the sine of a bath are
+        # Re(s x exp(i w t)); the cosine and the sine of a bath are
         # adjacent columns of the responses
         rhs[1:n, :] .= cispi(-2frequency*reference) .* inj
         Y = F \ rhs
         cosines, sines = 2*(f - 1)*nb .+ (1:2:2nb), 2*(f - 1)*nb .+ (2:2:2nb)
         Z = view(Y, 1:n, :) .* cispi(2frequency*t0)
         flux[:, cosines] .= real.(Z)
-        rate[:, cosines] .= real.(im*w .* Z)
+        rate[:, cosines] .= real.(s .* Z)
         flux[:, sines] .= real.(-im .* Z)
-        rate[:, sines] .= real.(w .* Z)
+        rate[:, sines] .= real.(-im*s .* Z)
         for j in 1:npre
             A = view(Y, n + 1:n + nl2, :) .* cispi(2frequency*tpre[j])
             waves[:, j, cosines] .= real.(A)
@@ -874,9 +897,10 @@ function stationaryinitialterms(sys::TransientSystem, x0s, injection, frequencie
             # same as the system where the operator is symmetric; the
             # prehistory's cotangents enter on the wave rows with the
             # phase of each sample's time relative to the start
-            F = stationaryfactor!(op, w)
+            s = stationaryrate(sys.method, w, sys.h)
+            F = stationaryfactor!(op, w, s)
             rhs = zeros(ComplexF64, n + nl2, m*length(group))
-            rhs[1:n, :] .= LX .+ (im*w) .* LV
+            rhs[1:n, :] .= LX .+ s .* LV
             for j in 1:npre
                 rhs[n + 1:n + nl2, :] .+= cispi(-2frequency*(npre - j)*sys.h) .* view(LA, :, j, :)
             end
@@ -1044,9 +1068,10 @@ frequency, so a long record wants a cutoff there, and loss spread along
 a line a few bands given as `frequencies`. Each bath at each frequency is a pair of
 cosine and sine Norton currents of amplitude `2 sqrt(h f df/R)`, whose
 independent quadratures have variance `nbar + 1/2`, started from the
-stationary response of the circuit to them at the initial state, so
-that the fluctuations stored before the record and their correlation
-with the forcing are kept; the trajectory must therefore start at a
+stationary response of the circuit to them at the initial state, under
+the trapezoidal and backward Euler rules the rule's own, so that the
+fluctuations stored before the record and their correlation with the
+forcing are kept; the trajectory must therefore start at a
 classical equilibrium under a constant drive, with no inductive flux or
 junction phase moving, and the measurement window may begin after the
 drive has settled. With an input plan the bath is the periodic Fourier
@@ -1229,13 +1254,15 @@ function noisecore(sol::TransientBatchSolution, measurement::TransientQuantumPla
         # are accumulated from each tile on the backend, so the host never
         # holds a kernel or a response. On the bins of the record the sums
         # over the times are discrete Fourier transforms, taken by fast
-        # ones over the columns of every grid and stage time kept for one
-        # adjoint, `96 nb m nt` bytes a condition with the transforms,
-        # which the conditions are then tiled by; a condition beyond the
-        # budget alone is contracted by the sums.
+        # real ones on the host over the columns of every grid and stage
+        # time kept for one adjoint: `24 nb m nt` bytes a condition for the
+        # columns, as much again for their copy on the host from a device,
+        # and the transform's `32 nb m nt` with its work, which the
+        # conditions are then tiled by; a condition beyond the budget
+        # alone is contracted by the sums.
         budget = noisebudget(backend)
-        onbins = onbins && 96*nb*m*nt <= budget
-        percondition = onbins ? 96*nb*m*nt + 16*nb*m*nf : 16*nb*m*nf
+        onbins = onbins && 80*nb*m*nt <= budget
+        percondition = onbins ? 80*nb*m*nt + 16*nb*m*nf : 16*nb*m*nf
         ctile = clamp(budget ÷ percondition, 1, N)
         dcov, dcomm = [KernelAbstractions.zeros(backend, Float64, m, m, N) for _ in 1:2]
         dgain = KernelAbstractions.zeros(backend, Float64, m, ngain, N)
@@ -1360,7 +1387,8 @@ function noisetile!(covariance, commutator, gain, sub::TransientBatchSolution, s
         stagesink = (k, i, values) -> (copyto!(view(kept, :, k, i + 1), vec(values)); nothing)
         adjoint = transientadjoint(sub, weightsout; quantity = :outgoing, targets = baths, factorization = sys.factorization,
             reuse, sink, stagesink)
-        accumulator = tobackend(backend, bincontraction(Array(kept), fsl, sub.times, sub.dt, stageoffsets, reference))
+        accumulator = tobackend(backend, bincontraction(kept isa Array ? kept : Array(kept), fsl, sub.times, sub.dt, stageoffsets,
+            reference))
     else
         accumulator = KernelAbstractions.zeros(backend, Float64, nb*m*Nt, 2nfl)
         fsb = tobackend(backend, fsl)
@@ -1448,11 +1476,13 @@ stagetimeoffsets(sol) = sol.method isa GaussLegendre ? (0.0, sol.dt*gausscoeffic
 # of the stages, `sum_k c_k exp(-2 pi i f (t_k + o_s - reference))` is the
 # phase of `t_1 + o_s - reference` times the discrete Fourier transform
 # of the columns at the bin, whose real part is the cosine sum and whose
-# imaginary part the sine sum negated.
+# imaginary part the sine sum negated. The columns are real and the bins
+# positive, so the transform is the real one, which holds the bins up to
+# the Nyquist frequency.
 function bincontraction(kept::Array{Float64,3}, fs, times, h, offsets, reference)
     nt = size(kept, 2)
     T = nt*h
-    F = FFTW.fft(kept, 2)
+    F = FFTW.rfft(kept, 2)
     nf = length(fs)
     out = zeros(size(kept, 1), 2nf)
     for (j, f) in enumerate(fs)

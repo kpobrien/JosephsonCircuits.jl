@@ -155,9 +155,9 @@ isexactpreconditioner(pc::CanonicalPreconditioner) =
 # rows, the coupling `G0 P`, the block pencils `B0` and `C0`, the boundary
 # currents and the reference rows do not depend on the periodic state. What
 # moves between Newton iterations is the internal Jacobian, and only its
-# values, since its pattern is fixed. So the whole assembly is a fixed pattern, a fixed scatter of the
-# internal values into it, and a fixed list of constant additions, found
-# once.
+# values, since its pattern is fixed. So the whole assembly is a fixed
+# pattern, a fixed scatter of the internal values into it, and a fixed list
+# of constant additions, found once.
 
 """
     CanonicalJacobianPlan

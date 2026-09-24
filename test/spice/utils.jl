@@ -48,5 +48,15 @@ using Test
             JosephsonCircuits.wrspice_calcS_paramp(out, [2*pi,2*pi*2], Nnodes;stepsperperiod = stepsperperiod, Is = Is),
             )
 
+        # the port traces are v(1) and v(Nnodes-1), found by name: a JPA
+        # whose nets are named by words has neither, and the rows of its
+        # rawfile, sorted numbered nodes first, start with the junction's
+        # phase node v(3)
+        V = zeros(3, length(t))
+        worded = [(variables = Dict("V" => ["v(3)", "v(in)", "v(mid)"]),
+            values = Dict("S" => t, "V" => V)) for _ in 1:3]
+        @test_throws ArgumentError JosephsonCircuits.wrspice_calcS_paramp(
+            worded, [ws], 3; stepsperperiod = stepsperperiod, Is = Is)
+
     end
 end

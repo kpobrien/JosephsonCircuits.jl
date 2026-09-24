@@ -1,43 +1,30 @@
 using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test
-include("layoutreference.jl")
-
 
 @testset verbose=true "the mode layout and its real form" begin
+    JC = JosephsonCircuits
 
     # the number of real slots of complex index i
     width(L, i) = Int(L.ptr[i+1] - L.ptr[i])
 
-    # simple block approach to serve as an independent reference for sparse matrices
-    function complex_to_real_ref(A, rl, cl; conj_input = false, rs = 1.0, cs = 1.0)
+    # the real form of a sparse matrix built from coordinates, one real block
+    # per stored entry, as an independent reference for `complex_to_real`
+    function complex_to_real_ref(A, rl, cl)
         I, J, V = Int[], Int[], Float64[]
-        Ai, Av = JosephsonCircuits.SparseArrays.rowvals(A), JosephsonCircuits.SparseArrays.nonzeros(A)
-        for j in 1:size(A,2), idx in JosephsonCircuits.SparseArrays.nzrange(A, j)
-            i = Ai[idx]
+        for j in 1:size(A,2), idx in nzrange(A, j)
+            i, a = rowvals(A)[idx], nonzeros(A)[idx]
             r0, wr = rl.ptr[i], width(rl, i)
             c0, wc = cl.ptr[j], width(cl, j)
-            a = Av[idx] * ((wr == 1 ? rs : 1.0) * (wc == 1 ? cs : 1.0))
-            d = conj_input ? -a : a
             push!(I, r0); push!(J, c0); push!(V, real(a))
             wr == 2 && (push!(I, r0+1); push!(J, c0); push!(V, imag(a)))
             if wc == 2
-                push!(I, r0); push!(J, c0+1); push!(V, -imag(d))
-                wr == 2 && (push!(I, r0+1); push!(J, c0+1); push!(V, real(d)))
+                push!(I, r0); push!(J, c0+1); push!(V, -imag(a))
+                wr == 2 && (push!(I, r0+1); push!(J, c0+1); push!(V, real(a)))
             end
         end
-        JosephsonCircuits.SparseArrays.sparse(I, J, V, rl.rdim, cl.rdim)
+        return sparse(I, J, V, rl.rdim, cl.rdim)
     end
 
     canon(xc, L) = [width(L, i) == 1 ? Complex(real(xc[i]), 0.0) : xc[i] for i in 1:L.dim]
-    # A with q dropped wherever both modes are real
-    function dropq(A, rl, cl)
-        B = copy(A); Bi, Bv = JosephsonCircuits.SparseArrays.rowvals(B), JosephsonCircuits.SparseArrays.nonzeros(B)
-        for j in 1:size(B,2), idx in JosephsonCircuits.SparseArrays.nzrange(B, j)
-            width(rl, Bi[idx]) == 1 && width(cl, j) == 1 &&
-                (Bv[idx] = Complex(real(Bv[idx]), 0.0))
-        end
-        B
-    end
-    shared(A, v) = JosephsonCircuits.SparseArrays.SparseMatrixCSC(size(A)..., A.colptr, A.rowval, v)   # same pattern object
 
     CASES = (([true,false,false,false,false], [true,false,false,false,false], 8, 8, 0.1),
                    ([true,false,false,false,false], [true,false,false,false,false], 12, 7, 0.2),
@@ -48,310 +35,99 @@ include("layoutreference.jl")
                    (rand(Bool, 6), rand(Bool, 6), 5, 4, 0.15))
 
     @testset "ModeLayout" begin
-        L = JosephsonCircuits.ModeLayout([true,false,false,false,false], 10)
+        L = JC.ModeLayout([true,false,false,false,false], 10)
         @test L.rdim == 18 && count(L.isreal) == 1 && L.nmodes == 5
         @test L.ptr == [1,2,4,6,8,10,11,13,15,17,19]
         @test L.inv == [1,2,2,3,3,4,4,5,5,6,7,7,8,8,9,9,10,10]
-        @test JosephsonCircuits.ModeLayout([true,false,true,false], 8).rdim == 12
-        @test JosephsonCircuits.ModeLayout(falses(4), 8).rdim == 16
-        @test JosephsonCircuits.ModeLayout(trues(4), 8).rdim == 8
-        @test_throws DimensionMismatch JosephsonCircuits.ModeLayout([true,false], 7)
+        @test JC.ModeLayout([true,false,true,false], 8).rdim == 12
+        @test JC.ModeLayout(falses(4), 8).rdim == 16
+        @test JC.ModeLayout(trues(4), 8).rdim == 8
+        @test_throws DimensionMismatch JC.ModeLayout([true,false], 7)
         # the bit per index of a real mode agrees with the slot ranges
         @test L.w isa BitVector
         for mask in ([true,true,false], falses(4), trues(3), rand(Bool, 7))
-            M = JosephsonCircuits.ModeLayout(mask, length(mask) * 9)
+            M = JC.ModeLayout(mask, length(mask) * 9)
             @test all(2 - M.w[i] == width(M, i) for i in 1:M.dim)
         end
     end
 
-    @testset "complex_to_real" begin
+    @testset "complex_to_real of a sparse matrix" begin
         for (rmask, cmask, mmul, nmul, p) in CASES
             m, n = length(rmask)*mmul, length(cmask)*nmul
-            rl, cl = JosephsonCircuits.ModeLayout(rmask, m), JosephsonCircuits.ModeLayout(cmask, n)
-            A = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, p)
+            rl, cl = JC.ModeLayout(rmask, m), JC.ModeLayout(cmask, n)
+            A = sprand(ComplexF64, m, n, p)
+            Ar = JC.complex_to_real(A, rl, cl)
+            R = complex_to_real_ref(A, rl, cl)
+            @test size(Ar) == (rl.rdim, cl.rdim)
+            # the values and the stored structure, a real block of every
+            # stored entry kept whatever its value
+            @test Ar == R
+            @test SparseArrays.getcolptr(Ar) == SparseArrays.getcolptr(R)
+            @test rowvals(Ar) == rowvals(R)
+            # the real form of the product
             xc = canon(rand(ComplexF64, n), cl)
-            for cj in (false, true)
-                Ar = LayoutReference.complex_to_real(A, rl, cl; conj_input = cj)
-                @test size(Ar) == (rl.rdim, cl.rdim)
-                @test Ar == complex_to_real_ref(A, rl, cl; conj_input = cj)
-                @test Ar * LayoutReference.complex_to_real(xc, cl.isreal) ≈ LayoutReference.complex_to_real(A * (cj ? conj(xc) : xc), rl.isreal)
-                @test LayoutReference.is_complex_to_real_pattern(Ar, A, rl, cl)
-                # in-place agrees and is exact
-                S = LayoutReference.complex_to_real(A, rl, cl); fill!(JosephsonCircuits.SparseArrays.nonzeros(S), 0)
-                @test LayoutReference.complex_to_real!(S, A, rl, cl; conj_input = cj) === S
-                @test S == Ar
-                # round trip, and idempotence of the second conversion
-                Ac = LayoutReference.real_to_complex(Ar, rl, cl; conj_input = cj)
-                @test Ac == dropq(A, rl, cl)
-                @test LayoutReference.complex_to_real(Ac, rl, cl; conj_input = cj) == Ar
-                C = copy(Ac); JosephsonCircuits.SparseArrays.nonzeros(C) .= 0
-                @test LayoutReference.real_to_complex!(C, Ar, rl, cl; conj_input = cj) == Ac
-            end
-            # both conventions share one pattern
-            @test JosephsonCircuits.SparseArrays.rowvals(LayoutReference.complex_to_real(A, rl, cl)) == JosephsonCircuits.SparseArrays.rowvals(LayoutReference.complex_to_real(A, rl, cl; conj_input = true))
-            # index type
-            @test LayoutReference.complex_to_real(A, rl, cl, Int32) isa JosephsonCircuits.SparseArrays.SparseMatrixCSC{Float64,Int32}
-            @test LayoutReference.complex_to_real(A, rl, cl, Int32) == LayoutReference.complex_to_real(A, rl, cl)
+            @test Ar * JC.complex_to_real(xc, cl.isreal) ≈
+                JC.complex_to_real(A * xc, rl.isreal)
+            # the index type
+            A32 = JC.complex_to_real(A, rl, cl, Int32)
+            @test A32 isa SparseMatrixCSC{Float64,Int32}
+            @test A32 == Ar
         end
-        @test LayoutReference.complex_to_real(JosephsonCircuits.SparseArrays.sprand(ComplexF32, 6, 6, 0.4), JosephsonCircuits.ModeLayout([true,false], 6),
-                      JosephsonCircuits.ModeLayout([true,false], 6)) isa JosephsonCircuits.SparseArrays.SparseMatrixCSC{Float32,Int}
-    end
-
-    @testset "realscale" begin
-        for (rmask, cmask, mmul, nmul, p) in CASES
-            m, n = length(rmask)*mmul, length(cmask)*nmul
-            rl, cl = JosephsonCircuits.ModeLayout(rmask, m), JosephsonCircuits.ModeLayout(cmask, n)
-            A = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, p)
-            base = LayoutReference.complex_to_real(A, rl, cl)
-            @test LayoutReference.complex_to_real(A, rl, cl; realrowscale = 1, realcolscale = 1) == base
-            s, xc = 0.5, canon(rand(ComplexF64, n), cl)
-            # colscale scales the real modes of the input, rowscale those of the output
-            xs = [width(cl, i) == 1 ? s*xc[i] : xc[i] for i in 1:n]
-            @test LayoutReference.complex_to_real(A, rl, cl; realcolscale = s) * LayoutReference.complex_to_real(xc, cl.isreal) ≈ LayoutReference.complex_to_real(A * xs, rl.isreal)
-            b  = A * xc
-            bs = [width(rl, i) == 1 ? s*b[i] : b[i] for i in 1:m]
-            @test LayoutReference.complex_to_real(A, rl, cl; realrowscale = s) * LayoutReference.complex_to_real(xc, cl.isreal) ≈ LayoutReference.complex_to_real(bs, rl.isreal)
-            # against the reference, independently and together
-            for (rr, cc) in ((2.0, 1.0), (1.0, 3.0), (2.0, 3.0), (0.0, 1.0), (1.0, 0.0))
-                @test LayoutReference.complex_to_real(A, rl, cl; realrowscale = rr, realcolscale = cc) ==
-                      complex_to_real_ref(A, rl, cl; rs = rr, cs = cc)
-                @test LayoutReference.complex_to_real!(copy(base), A, rl, cl; realrowscale = rr, realcolscale = cc) ==
-                      complex_to_real_ref(A, rl, cl; rs = rr, cs = cc)
-            end
-            Z = LayoutReference.complex_to_real(A, rl, cl; realrowscale = 0, realcolscale = 0)
-            @test JosephsonCircuits.SparseArrays.nnz(Z) == JosephsonCircuits.SparseArrays.nnz(base) && Z.colptr == base.colptr && JosephsonCircuits.SparseArrays.rowvals(Z) == JosephsonCircuits.SparseArrays.rowvals(base)
-            @test LayoutReference.complex_to_real(A, rl, cl; conj_input = true, realcolscale = s) ==
-                  complex_to_real_ref(A, rl, cl; conj_input = true, cs = s)
-        end
-    end
-
-
-    @testset "shape checks" begin
-        m, n = 20, 15
-        rl, cl = JosephsonCircuits.ModeLayout([true,false,false,false,false], m), JosephsonCircuits.ModeLayout([true,false,false,false,false], n)
-        A = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.2)
-        Ar = LayoutReference.complex_to_real(A, rl, cl)
-        @test_throws DimensionMismatch LayoutReference.complex_to_real(A, JosephsonCircuits.ModeLayout([true,false,false,false,false], 25), cl)
-        @test_throws DimensionMismatch LayoutReference.complex_to_real!(JosephsonCircuits.SparseArrays.spzeros(rl.rdim+1, cl.rdim), A, rl, cl)
-        @test_throws DimensionMismatch LayoutReference.real_to_complex!(A, JosephsonCircuits.SparseArrays.spzeros(rl.rdim, cl.rdim+2), rl, cl)
-        @test_throws DimensionMismatch LayoutReference.real_to_complex(JosephsonCircuits.SparseArrays.spzeros(rl.rdim, cl.rdim+2), rl, cl)
-        @test !LayoutReference.is_complex_to_real_pattern(LayoutReference.complex_to_real(A + JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.2), rl, cl), A, rl, cl)
-        @test !LayoutReference.is_complex_to_real_pattern(LayoutReference.complex_to_real(A, rl, cl), A + JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.2), rl, cl)
-    end
-
-    @testset "mask entry points" begin
+        @test JC.complex_to_real(sprand(ComplexF32, 6, 6, 0.4),
+            JC.ModeLayout([true,false], 6), JC.ModeLayout([true,false], 6)) isa
+            SparseMatrixCSC{Float32,Int}
+        # a layout of another dimension is refused
         mask = [true,false,false,false,false]
-        for (m, n) in ((20, 20), (30, 15), (5, 25))
-            A = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.3)
-            B = JosephsonCircuits.SparseArrays.sprand(ComplexF64, m, n, 0.3)
-            rl, cl = JosephsonCircuits.ModeLayout(mask, m), JosephsonCircuits.ModeLayout(mask, n)
-            @test LayoutReference.complex_to_real(A, mask) == LayoutReference.complex_to_real(A, rl, cl)
-            @test LayoutReference.complex_to_real(A, mask, Int32) == LayoutReference.complex_to_real(A, rl, cl, Int32)
-            @test LayoutReference.complex_to_real(A, mask; conj_input = true, realcolscale = 0.5) ==
-                  LayoutReference.complex_to_real(A, rl, cl; conj_input = true, realcolscale = 0.5)
-            @test LayoutReference.complex_to_real!(LayoutReference.complex_to_real(A, mask), A, mask; realrowscale = 2) ==
-                  LayoutReference.complex_to_real(A, rl, cl; realrowscale = 2)
-            Ar = LayoutReference.complex_to_real(A, mask)
-            @test LayoutReference.real_to_complex(Ar, mask) == LayoutReference.real_to_complex(Ar, rl, cl)
-            @test LayoutReference.real_to_complex!(copy(A), Ar, mask) == LayoutReference.real_to_complex(Ar, rl, cl)
-            @test LayoutReference.is_complex_to_real_pattern(Ar, A, mask)
-            # the square case shares one layout object between the two axes
-            pair = LayoutReference._layouts(mask, m, n)
-            m == n ? (@test pair[1] === pair[2]) : (@test pair[1] !== pair[2])
-        end
-        # dimensions must still divide
-        @test_throws DimensionMismatch LayoutReference.complex_to_real(JosephsonCircuits.SparseArrays.sprand(ComplexF64, 7, 10, 0.3), mask)
-        @test_throws DimensionMismatch LayoutReference.real_to_complex(JosephsonCircuits.SparseArrays.spzeros(10, 18), mask)  # 10 % 9 != 0
+        A = sprand(ComplexF64, 20, 15, 0.2)
+        rl, cl = JC.ModeLayout(mask, 20), JC.ModeLayout(mask, 15)
+        @test_throws DimensionMismatch JC.complex_to_real(A, JC.ModeLayout(mask, 25), cl)
+        @test_throws DimensionMismatch JC.complex_to_real(A, rl, JC.ModeLayout(mask, 25))
     end
-
-
-    #  vectors and dense matrices
 
     disr(mask, i) = mask[(i - 1) % length(mask) + 1]
-    dwid(mask, i) = disr(mask, i) ? 1 : 2
-
-    # simple block approach to serve as an independent reference for dense matrices
-    function dref(A, rm, cm; conj_input = false, rs = 1.0, cs = 1.0)
-        m, n = size(A)
-        Ar = zeros(Float64, JosephsonCircuits.realdim(m, rm), JosephsonCircuits.realdim(n, cm))
-        c0 = 1
-        for j in 1:n
-            wc = dwid(cm, j)
-            r0 = 1
-            for i in 1:m
-                wr = dwid(rm, i)
-                a = A[i,j] * ((wr == 1 ? rs : 1.0) * (wc == 1 ? cs : 1.0))
-                d = conj_input ? -a : a
-                Ar[r0, c0] = real(a)
-                wr == 2 && (Ar[r0+1, c0] = imag(a))
-                if wc == 2
-                    Ar[r0, c0+1] = -imag(d)
-                    wr == 2 && (Ar[r0+1, c0+1] = real(d))
-                end
-                r0 += wr
-            end
-            c0 += wc
-        end
-        Ar
-    end
     dcanon(x, mask) = [disr(mask, i) ? Complex(real(x[i]), 0.0) : x[i] for i in eachindex(x)]
-    ddropq(A, rm, cm) = [disr(rm, i) && disr(cm, j) ? Complex(real(A[i,j]), 0.0) : A[i,j]
-                        for i in 1:size(A,1), j in 1:size(A,2)]
 
-    DCASES = (([true,false,false,false,false], [true,false,false,false,false], 8, 8),
-                   ([true,false,false,false,false], [true,false,false,false,false], 12, 7),
-                   ([true,true,false], [false,false,false], 10, 6),
-                   ([false,false], [true,true], 9, 11),
-                   ([false], [false], 20, 15),               # no real modes
-                   ([true], [true], 13, 5),                  # every mode real
-                   (rand(Bool, 6), rand(Bool, 6), 5, 4))
-
-    @testset "dense: realdim / complexdim" begin
-        @test JosephsonCircuits.realdim(10, [true,false,false,false,false]) == 18
-        @test JosephsonCircuits.realdim(8, falses(4)) == 16
-        @test JosephsonCircuits.realdim(8, trues(4)) == 8
-        @test JosephsonCircuits.complexdim(JosephsonCircuits.realdim(30, [true,false,false]), [true,false,false]) == 30
-        @test_throws DimensionMismatch JosephsonCircuits.realdim(7, [true,false])
-        @test_throws DimensionMismatch JosephsonCircuits.complexdim(7, [true,false,false])
-        @test_throws ArgumentError JosephsonCircuits.realdim(0, Bool[])
+    @testset "realdim / complexdim" begin
+        @test JC.realdim(10, [true,false,false,false,false]) == 18
+        @test JC.realdim(8, falses(4)) == 16
+        @test JC.realdim(8, trues(4)) == 8
+        @test JC.complexdim(JC.realdim(30, [true,false,false]), [true,false,false]) == 30
+        @test_throws DimensionMismatch JC.realdim(7, [true,false])
+        @test_throws DimensionMismatch JC.complexdim(7, [true,false,false])
+        @test_throws ArgumentError JC.realdim(0, Bool[])
     end
 
     @testset "vectors" begin
         L = [true,false,false,false,false]
-        @test LayoutReference.complex_to_real(ComplexF64[1, 2+3im, 4+5im, 6+7im, 8+9im], L) == Float64[1,2,3,4,5,6,7,8,9]
+        @test JC.complex_to_real(ComplexF64[1, 2+3im, 4+5im, 6+7im, 8+9im], L) == Float64[1,2,3,4,5,6,7,8,9]
         for (mask, d) in ((( [true,false,false,false,false]), 20), ([false], 7), ([true], 6),
                           ([true,true,false], 12), (rand(Bool, 8), 32))
-            xr = rand(JosephsonCircuits.realdim(d, mask))
-            @test LayoutReference.complex_to_real(LayoutReference.real_to_complex(xr, mask), mask) == xr
+            xr = rand(JC.realdim(d, mask))
+            @test JC.complex_to_real(JC.real_to_complex(xr, mask), mask) == xr
             xc = rand(ComplexF64, d)
-            @test LayoutReference.real_to_complex(LayoutReference.complex_to_real(xc, mask), mask) == dcanon(xc, mask)
-            @test LayoutReference.real_to_complex!(fill(ComplexF64(NaN, NaN), d), xr, mask) == LayoutReference.real_to_complex(xr, mask)
-            # conj_input flips the stored imaginary parts, scale hits the real modes
-            @test LayoutReference.complex_to_real(xc, mask; conj_input = true) == LayoutReference.complex_to_real(conj(xc), mask)
-            s = 0.5
-            xs = [disr(mask, i) ? s*xc[i] : xc[i] for i in 1:d]
-            @test LayoutReference.complex_to_real(xc, mask; realscale = s) == LayoutReference.complex_to_real(xs, mask)
-            @test LayoutReference.real_to_complex(LayoutReference.complex_to_real(xc, mask), mask; realscale = s) == dcanon(xs, mask)
-            @test_throws DimensionMismatch LayoutReference.complex_to_real!(Vector{Float64}(undef, length(xr)+1), xc, mask)
+            @test JC.real_to_complex(JC.complex_to_real(xc, mask), mask) == dcanon(xc, mask)
+            @test JC.real_to_complex!(fill(ComplexF64(NaN, NaN), d), xr, mask) == JC.real_to_complex(xr, mask)
+            @test_throws DimensionMismatch JC.complex_to_real!(Vector{Float64}(undef, length(xr)+1), xc, mask)
+            @test_throws DimensionMismatch JC.real_to_complex!(Vector{ComplexF64}(undef, d+length(mask)), xr, mask)
         end
     end
-
-    @testset "dense: complex_to_real" begin
-        for (rm, cm, mmul, nmul) in DCASES
-            m, n = length(rm)*mmul, length(cm)*nmul
-            A = rand(ComplexF64, m, n)
-            xc = dcanon(rand(ComplexF64, n), cm)
-            for cj in (false, true)
-                Ar = LayoutReference.complex_to_real(A, rm, cm; conj_input = cj)
-                @test size(Ar) == (JosephsonCircuits.realdim(m, rm), JosephsonCircuits.realdim(n, cm))
-                @test Ar == dref(A, rm, cm; conj_input = cj)
-                @test Ar * LayoutReference.complex_to_real(xc, cm) ≈ LayoutReference.complex_to_real(A * (cj ? conj(xc) : xc), rm)
-                S = fill(NaN, size(Ar))
-                @test LayoutReference.complex_to_real!(S, A, rm, cm; conj_input = cj) === S
-                @test S == Ar
-                Ac = LayoutReference.real_to_complex(Ar, rm, cm; conj_input = cj)
-                @test Ac == ddropq(A, rm, cm)
-                @test LayoutReference.complex_to_real(Ac, rm, cm; conj_input = cj) == Ar
-                C = fill(ComplexF64(NaN, NaN), m, n)
-                @test LayoutReference.real_to_complex!(C, Ar, rm, cm; conj_input = cj) == Ac
-            end
-            @test LayoutReference.complex_to_real(Float32.(real(A)) .+ 0im .|> ComplexF32, rm, cm) isa Matrix{Float32}
-        end
-    end
-
-    @testset "dense: realscale" begin
-        for (rm, cm, mmul, nmul) in DCASES
-            m, n = length(rm)*mmul, length(cm)*nmul
-            A = rand(ComplexF64, m, n)
-            base = LayoutReference.complex_to_real(A, rm, cm)
-            @test LayoutReference.complex_to_real(A, rm, cm; realrowscale = 1, realcolscale = 1) == base
-            s, xc = 0.5, dcanon(rand(ComplexF64, n), cm)
-            xs = [disr(cm, i) ? s*xc[i] : xc[i] for i in 1:n]
-            @test LayoutReference.complex_to_real(A, rm, cm; realcolscale = s) * LayoutReference.complex_to_real(xc, cm) ≈ LayoutReference.complex_to_real(A * xs, rm)
-            b  = A * xc
-            bs = [disr(rm, i) ? s*b[i] : b[i] for i in 1:m]
-            @test LayoutReference.complex_to_real(A, rm, cm; realrowscale = s) * LayoutReference.complex_to_real(xc, cm) ≈ LayoutReference.complex_to_real(bs, rm)
-            for (rr, cc) in ((2.0, 1.0), (1.0, 3.0), (2.0, 3.0), (0.0, 1.0), (1.0, 0.0))
-                @test LayoutReference.complex_to_real(A, rm, cm; realrowscale = rr, realcolscale = cc) ==
-                      dref(A, rm, cm; rs = rr, cs = cc)
-            end
-            @test LayoutReference.complex_to_real(A, rm, cm; conj_input = true, realcolscale = s) ==
-                  dref(A, rm, cm; conj_input = true, cs = s)
-        end
-    end
-
-
-    @testset "dense: shape checks" begin
-        rm = [true,false,false,false,false]
-        m, n = 20, 15
-        A = rand(ComplexF64, m, n)
-        @test_throws DimensionMismatch LayoutReference.complex_to_real(A, rm, [true,false])          # 15 % 2 != 0
-        @test_throws DimensionMismatch LayoutReference.complex_to_real!(zeros(JosephsonCircuits.realdim(m,rm)+1, JosephsonCircuits.realdim(n,rm)), A, rm, rm)
-        @test_throws DimensionMismatch LayoutReference.real_to_complex!(A, zeros(JosephsonCircuits.realdim(m,rm), JosephsonCircuits.realdim(n,rm)+3), rm, rm)
-        # views work
-        Abig = rand(ComplexF64, m+4, n+4)
-        @test LayoutReference.complex_to_real(view(Abig, 1:m, 1:n), rm, rm) == LayoutReference.complex_to_real(Abig[1:m, 1:n], rm, rm)
-    end
-
-    @testset "real_to_complex rejects an incomplete row mode" begin
-        # `complex_to_real` always stores both real slots of a complex row
-        # mode. A pattern where the second slot is stored but the first is
-        # not leaves the imaginary part no entry to be folded into, and is
-        # refused rather than written elsewhere.
-        mask = [false, false]
-        Ar = JosephsonCircuits.SparseArrays.sparse([2], [1], [1.0], 4, 4)
-        @test_throws ArgumentError LayoutReference.real_to_complex(Ar, mask)
-
-        # the second slot of the second row mode, with the first absent
-        Ar2 = JosephsonCircuits.SparseArrays.sparse([1, 4], [1, 1], [1.0, 2.0], 4, 4)
-        @test_throws ArgumentError LayoutReference.real_to_complex(Ar2, mask)
-
-        # a well formed pattern still round trips
-        A = JosephsonCircuits.SparseArrays.sparse([1, 2], [1, 2], ComplexF64[1.0+2.0im, 3.0-1.0im], 2, 2)
-        Arok = LayoutReference.complex_to_real(A, mask)
-        @test LayoutReference.real_to_complex(Arok, mask) == A
-    end
-
 end
 
-@testset "the package's conversions agree with the reference family" begin
-    JC = JosephsonCircuits
-    rng = Random.default_rng()
-    for isreal in ([true, false, false], [false, false], [true])
-        nm = length(isreal)
-        nnodes = 5
-        xc = randn(rng, ComplexF64, nm*nnodes)
-        for t in 1:nm
-            isreal[t] && (xc[t:nm:end] .= real.(xc[t:nm:end]))
-        end
-        xr = JC.complex_to_real(xc, isreal)
-        @test xr == LayoutReference.complex_to_real(xc, isreal)
-        @test JC.real_to_complex(xr, isreal) == LayoutReference.real_to_complex(xr, isreal)
-        @test JC.real_to_complex(xr, isreal) == xc
-        A = sprandn(rng, ComplexF64, nm*nnodes, nm*nnodes, 0.3) + I
-        L = JC.ModeLayout(isreal, nm*nnodes)
-        Ar = JC.complex_to_real(A, L, L)
-        @test Ar == LayoutReference.complex_to_real(A, L, L)
-        @test Ar*xr ≈ JC.complex_to_real(A*xc, isreal)
-        @test JC.complex_to_real(A, L, L, Int32) isa SparseMatrixCSC{Float64,Int32}
-    end
-
-    @testset "the gather and scatter kernels are inverse permutations" begin
-        # the device side of the canonical layout's permuted copies, run on
-        # the CPU backend here
-        v = randn(Random.default_rng(), 9)
-        index = [4, 1, 9, 2, 7]
-        got = zeros(2, 3)
-        JosephsonCircuits.gathervalues!(got, v, reshape(vcat(index, 5), 2, 3))
-        @test vec(got) == v[vcat(index, 5)]
-        @test_throws DimensionMismatch JosephsonCircuits.gathervalues!(
-            zeros(1, 1), v, index)
-        w = fill(NaN, 9)
-        JosephsonCircuits.scattervalues!(w, v[index], index)
-        @test w[index] == v[index] && all(isnan, w[setdiff(1:9, index)])
-        @test_throws DimensionMismatch JosephsonCircuits.scattervalues!(
-            w, v[index], index[1:end-1])
-    end
+@testset "the gather and scatter kernels are inverse permutations" begin
+    # the device side of the canonical layout's permuted copies, run on
+    # the CPU backend here
+    v = randn(Random.default_rng(), 9)
+    index = [4, 1, 9, 2, 7]
+    got = zeros(2, 3)
+    JosephsonCircuits.gathervalues!(got, v, reshape(vcat(index, 5), 2, 3))
+    @test vec(got) == v[vcat(index, 5)]
+    @test_throws DimensionMismatch JosephsonCircuits.gathervalues!(
+        zeros(1, 1), v, index)
+    w = fill(NaN, 9)
+    JosephsonCircuits.scattervalues!(w, v[index], index)
+    @test w[index] == v[index] && all(isnan, w[setdiff(1:9, index)])
+    @test_throws DimensionMismatch JosephsonCircuits.scattervalues!(
+        w, v[index], index[1:end-1])
 end
 
 # The canonical state layout: which entries of the state a mode owns,
@@ -430,57 +206,6 @@ end
         @test_throws DimensionMismatch JC.gathercanonical!(zeros(3), zeros(ml.rdim), L)
         @test_throws DimensionMismatch JC.gathercanonical!(zeros(ml.rdim), zeros(3), L)
         @test_throws DimensionMismatch JC.scattercanonical!(zeros(ml.rdim), zeros(3), L)
-    end
-
-    @testset "residual and product are the same operator in the new basis" begin
-        # a small two tone circuit, taken to a point that is not the origin
-        circuit = Circuit(
-            [:p1 => Port(1), :cc => Capacitor(100e-15),
-             :jj => JosephsonJunction(1000e-12), :cj => Capacitor(1000e-15),
-             :gnd => Ground()],
-            [[(:p1, 1), (:cc, 1)],
-             [(:cc, 2), (:jj, 1), (:cj, 1)],
-             [(:p1, 2), (:jj, 2), (:cj, 2), (:gnd, 1)]])
-        srcs = [(mode = (1,), port = 1, current = 0.5e-6)]
-        # three iterations is a truncated solve on purpose: what this needs
-        # is a point away from the origin, not the solution, so the solver
-        # reports that it did not converge and that is asserted here rather
-        # than printed
-        s = @test_logs((:warn,), match_mode=:any,
-            JC.hbnlsolve((2*pi*4.75e9,), (4,), srcs, circuit;
-                dc = true, odd = true, even = true,
-                returnoperatingpoint = true, iterations = 3))
-        sys = s.operatingpoint.sys
-        ml = s.operatingpoint.modelayout
-        L = JC.compositelayout(ml, s.frequencies.modes)
-        @test iszero(L.nvdc)
-        @test L.ndc > 0
-
-        x = randn(L.rdim); v = randn(L.rdim)
-        u = similar(x); vc = similar(v)
-        JC.gathercanonical!(u, x, L); JC.gathercanonical!(vc, v, L)
-        work = JC.CanonicalWork(L, x)
-
-        # the residual in the new basis is the old one, gathered
-        Fi = zeros(L.rdim)
-        JC.setpoint!(sys, x); JC.residual!(Fi, sys)
-        want = similar(Fi); JC.gathercanonical!(want, Fi, L)
-        got = zeros(L.rdim); uu = copy(u)
-        JC.canonicalresidual(
-            (F, J, xx) -> (JC.setpoint!(sys, xx);
-                isnothing(F) || JC.residual!(F, sys); nothing), work)(got, nothing, uu)
-        @test got == want
-        @test uu == u                      # the point is handed back unchanged
-
-        # and so is the Jacobian vector product
-        Ji = zeros(L.rdim)
-        JC.setpoint!(sys, x); JC.jacobianvectorproduct!(Ji, sys, v)
-        wantj = similar(Ji); JC.gathercanonical!(wantj, Ji, L)
-        gotj = zeros(L.rdim)
-        JC.setpoint!(sys, x)
-        JC.canonicaljvp((o, vv) -> JC.jacobianvectorproduct!(o, sys, vv),
-            work)(gotj, vc)
-        @test gotj == wantj
     end
 
     @testset "the methods which can carry the block, and the one which cannot" begin

@@ -56,12 +56,12 @@ using Test
         @test isempty(JC.compile(jpa(JosephsonJunction(L0))).junctioncprs)
         # a relation the solvers cannot write down is refused
         @test_throws JC.ComponentNotSupportedError JC.compile(
-            jpa(NonlinearInductor(L0, tanh, x -> sech(x)^2)))
+            jpa(NonlinearInductor(L0, tanh)))
         # the transient carries the same relation, in the order of its
         # junction rows
         tp = transientproblem(jpa(NonlinearInductor(L0, PolynomialCPR(taylor(5)))))
         @test tp.relations.value[1, :] == [0.0; taylor(5)]
-        @test tp.relations.sinusoidal == [false]
+        @test JC.sinusoidalmask(tp.relations) == [false]
         @test isnothing(transientproblem(jpa(JosephsonJunction(L0))).relations)
     end
 

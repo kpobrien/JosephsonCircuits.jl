@@ -3,6 +3,8 @@ using LinearAlgebra
 using SparseArrays
 using Test
 
+isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
+
 # Test-local oracle: `A += c*As*Ad` with the diagonal `Ad` given explicitly,
 # every entry of `As` resolved at the mode frequency of its column and
 # conjugated in the columns `conjflag` marks, the route the mode indexed
@@ -45,19 +47,7 @@ end
 
     @testset "plan assembled Jx matches the holomorphic derivative" begin
 
-        JosephsonCircuits.@params Rleft Cc Lj Cj
-        circuit = Any[]
-        push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
-        push!(circuit,("C1", "1", "2", Capacitor(Cc)))
-        push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
-        push!(circuit,("C2", "2", "0", Capacitor(Cj)))
-        circuit = Circuit(circuit)
-        circuitdefs = Dict(
-            Lj =>1000.0e-12,
-            Cc => 100.0e-15,
-            Cj => 1000.0e-15,
-            Rleft => 50.0,
-        )
+        circuit, circuitdefs = testjpacircuit()
 
         # single-tone and two-tone (the latter has self-conjugate modes and
         # negative frequencies from the multi-dimensional RDFT).
@@ -130,15 +120,7 @@ end
         # (pump modulation) contribution, and the full per-frequency
         # assembly against the reference construction from the branch
         # matrices, the incidence matrix products, and the MNA stamps.
-        JosephsonCircuits.@params Rleft Cc Lj Cj
-        circuit = Any[]
-        push!(circuit,("P1", "1", "0", Port(1; Z0 = Rleft)))
-        push!(circuit,("C1", "1", "2", Capacitor(Cc)))
-        push!(circuit,("Lj1", "2", "0", JosephsonJunction(Lj)))
-        push!(circuit,("C2", "2", "0", Capacitor(Cj)))
-        circuit = Circuit(circuit)
-        circuitdefs = Dict(Lj=>1000.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
-            Rleft=>50.0)
+        circuit, circuitdefs = testjpacircuit()
         wp = (2*pi*4.75001*1e9,)
         sources = [(mode=(1,),port=1,current=0.00565e-6)]
 
@@ -212,19 +194,13 @@ end
             SparseArrays.getcolptr(Asparseref)
         @test rowvals(Asparse) == rowvals(Asparseref)
 
-        # the Josephson contribution and its conjugate match the reference
+        # the Josephson contribution matches the reference
         AoLjnmnzval = zeros(Complex{Float64}, nnz(Asparse))
         JosephsonCircuits.addjosephsonterm!(AoLjnmnzval,
             lsys.complexjacobianplan, phimatrix)
         A1 = copy(Asparse)
         copyto!(A1.nzval, AoLjnmnzval)
         @test isapprox(Matrix(A1), Matrix(AoLjnm), atol = 1e-14)
-
-        fill!(AoLjnmnzval, 0)
-        JosephsonCircuits.addjosephsonterm!(AoLjnmnzval,
-            lsys.complexjacobianplan, phimatrix, true)
-        copyto!(A1.nzval, AoLjnmnzval)
-        @test isapprox(Matrix(A1), conj.(Matrix(AoLjnm)), atol = 1e-14)
 
         # the full per-frequency assembly through HBLinearizedSystem
         # matches the reference construction, including the negative

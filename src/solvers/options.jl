@@ -195,7 +195,11 @@ struct HarmonicBand <: AbstractModeCoupling
     p::Union{Integer,Tuple{Vararg{Integer}}}
     factorization::MaybeFactorization
 end
-HarmonicBand(p; factorization::MaybeFactorization = nothing) = HarmonicBand(p, factorization)
+function HarmonicBand(p; factorization::MaybeFactorization = nothing)
+    all(>=(0), p) || throw(ArgumentError(
+        lazy"the bandwidth `p` = $(p) must be nonnegative."))
+    return HarmonicBand(p, factorization)
+end
 
 """
     MeasuredBand(; tol = 1e-2, budget = 0.25, factorization = nothing)
@@ -391,7 +395,10 @@ cost of a step are cheaper than the measured rebuild plus a fresh solve.
 Everything is measured, so the rule adapts to the device and the
 factorization; it pays when a rebuild is expensive next to a solve, as
 with a [`BlockFactorization`](@ref) of three tones. A rebuild forced by a failed, stalled or
-non-descent solve is never skipped.
+non-descent solve is never skipped. An exact preconditioner, the full
+coupling set factorized in the iteration's precision, is rebuilt at every
+step as under [`Always`](@ref) and not probed: its fresh reduction is
+roundoff, against which any stale one predicts a rebuild.
 Because the decision rests on measured times, the path a solve takes,
 and the answer within the tolerance, can differ between two runs of the
 same problem; the default [`Always`](@ref) is reproducible.
@@ -679,6 +686,8 @@ function Staged(; grids = nothing, s0::Real = 0.5, smin::Real = 0.02,
         lazy"`interioratol` = $(interioratol) must be positive."))
     interioriterations >= 1 || throw(ArgumentError(
         lazy"`interioriterations` = $(interioriterations) must be at least 1."))
+    isnothing(grids) || all(g -> all(>=(1), g), grids) || throw(ArgumentError(
+        lazy"every grid of `grids` = $(grids) retains at least one harmonic of each tone."))
     maxattempts >= 1 || throw(ArgumentError(
         lazy"`maxattempts` = $(maxattempts) must be at least 1."))
     return Staged(grids, Float64(s0), Float64(smin), Float64(interioratol),
@@ -727,7 +736,8 @@ homotopy all go here without an extension.
 The assembled real Jacobian is available on the problem unless
 `assemblejacobian = false` was passed, which is what a matrix-free solver
 wants: on a multi-tone problem that plan is the largest object in the
-solve.
+solve. The problem lives on the host, so a solve with an external solver
+runs on the default `backend = CPU()`.
 
 ```julia
 ExternalSolver() do prob, u0

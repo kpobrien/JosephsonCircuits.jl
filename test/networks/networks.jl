@@ -396,6 +396,9 @@ import StaticArrays
         A2 = stack(JosephsonCircuits.ABCD_coupled_tline.(Zeven,Zodd,neven*omega/c*l,nodd*omega/c*l))
         @test isapprox(A1,A2)
 
+        # no frequencies give no chain matrices
+        @test size(JosephsonCircuits.A_coupled_tlines(L, C, l, Float64[])) == (4, 4, 0)
+
     end
 
     @testset "Z_canonical_coupled_line_circuits" begin
@@ -474,26 +477,35 @@ import StaticArrays
         neven = 2.2
         nodd = 2.1
 
-        # 3
-        outa = (L1 = 1.1963832214440388e-7, L2 = 1.1963832214440388e-7, M = -3.780393078912389e-9, C1 = 1.4112327104537203e-10, C2 = 1.4112327104537203e-10, Cm = 2.4055103019097465e-12)
-        outb = JosephsonCircuits.canonical_coupled_line_circuits(3, Zeven, Zodd, neven, nodd)
-        @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
+        # the element values, by name
+        for (i, outa) in (
+                (3, (L1 = 1.1963832214440388e-7, L2 = 1.1963832214440388e-7, M = -3.780393078912389e-9, C1 = 1.4112327104537203e-10, C2 = 1.4112327104537203e-10, Cm = 2.4055103019097465e-12)),
+                (8, (L1 = 1.1941849319292907e-7, L2 = 3.5891496643321166e-7, M = -8.333511920257754e-9, C1 = 1.4352878134728178e-10)),
+                (9, (L1 = 3.5891496643321166e-7, L2 = 3.5891496643321166e-7, M = 2.268235847347433e-8)),
+                (10, (L1 = 1.1963832214440388e-7, L2 = 1.1963832214440388e-7, M = 7.560786157824777e-9, C1 = 1.4112327104537203e-10, C2 = 1.4112327104537203e-10, Cm = 2.4055103019097465e-12)))
+            outb = JosephsonCircuits.canonical_coupled_line_circuits(i, Zeven, Zodd, neven, nodd)
+            @test keys(outb) == keys(outa)
+            @test isapprox(collect(outb), collect(outa))
+        end
 
-        # 8
-        outa = (L1 = 1.1941849319292907e-7, L2 = 3.5891496643321166e-7, M = -8.333511920257754e-9, C1 = 1.4352878134728178e-10)
-        outb = JosephsonCircuits.canonical_coupled_line_circuits(8, Zeven, Zodd, neven, nodd)
-        @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
-
-        # 9
-        outa = (L1 = 3.5891496643321166e-7, L2 = 3.5891496643321166e-7, M = 2.268235847347433e-8)
-        outb = JosephsonCircuits.canonical_coupled_line_circuits(9, Zeven, Zodd, neven, nodd)
-        @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
-
-        # 10
-        outa = (L1 = 1.1963832214440388e-7, L2 = 1.1963832214440388e-7, M = 7.560786157824777e-9, C1 = 1.4112327104537203e-10, C2 = 1.4112327104537203e-10, Cm = 2.4055103019097465e-12)
-        outb = JosephsonCircuits.canonical_coupled_line_circuits(10, Zeven, Zodd, neven, nodd)
-        @test all([isapprox(outai,outbi) for (outai,outbi) in zip(outa,outb)])
-
+        # against the impedance matrices of the lines, of length l short
+        # against the wavelength: the inductances are the coefficients of
+        # im*w*l in the impedance matrix, and for the circuits with open
+        # ends, 3 and 10, the capacitances give the coefficient of im*w*l
+        # in the admittance matrix, [C1+Cm -Cm; -Cm C2+Cm]; the other terms,
+        # in 1/w, cancel between w and 2w
+        c = JosephsonCircuits.speed_of_light
+        l, w = 1e-5, 2*pi*1e9
+        for i in (3, 8, 9, 10)
+            m = JosephsonCircuits.canonical_coupled_line_circuits(i, Zeven, Zodd, neven, nodd)
+            Z1, Z2 = (JosephsonCircuits.Z_canonical_coupled_line_circuits(i,
+                Zeven, Zodd, neven*wk*l/c, nodd*wk*l/c) for wk in (w, 2w))
+            @test isapprox(imag.(2*Z2 - Z1)/(3*w*l), [m.L1 m.M; m.M m.L2]; rtol = 1e-5)
+            if i in (3, 10)
+                @test isapprox(imag.(2*inv(Z2) - inv(Z1))/(3*w*l),
+                    [m.C1+m.Cm -m.Cm; -m.Cm m.C2+m.Cm]; rtol = 1e-5)
+            end
+        end
 
         @test_throws(
             ArgumentError("The canonical coupled line circuits with a lumped element model are 3, 8, 9 and 10, not 11."),
@@ -611,6 +623,10 @@ import StaticArrays
             0.125 0.0 0.0 8.0]
         d = Dict((1, 2) => [0.0 1.0; 1.0 3.0], (1, 3) => [2.0 1.0; 1.0 5.0])
         @test JosephsonCircuits.maxwell_combine(3, d)[1, 1] == 1.0
+        # sets of terminals of different sizes
+        d = Dict((1, 2) => [1.0 2.0; 4.0 5.0],
+            (1, 2, 3) => [1.0 2.0 3.0; 4.0 5.0 6.0; 7.0 8.0 9.0])
+        @test JosephsonCircuits.maxwell_combine(3, d) == [1.0 2.0 3.0; 4.0 5.0 6.0; 7.0 8.0 9.0]
     end
 
 

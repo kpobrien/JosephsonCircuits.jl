@@ -26,9 +26,47 @@ struct Frequencies{N}
 end
 
 """
+    ModeDifferences{N} <: AbstractMatrix{NTuple{N,Int}}
+
+The mode difference `modes[i] .- modes[j]` of every pair of modes, the
+harmonic offset of each mode coupling, computed when an entry is read
+rather than stored.
+"""
+struct ModeDifferences{N} <: AbstractMatrix{NTuple{N,Int}}
+    modes::Vector{NTuple{N,Int}}
+end
+
+Base.size(D::ModeDifferences) = (length(D.modes), length(D.modes))
+Base.@propagate_inbounds Base.getindex(D::ModeDifferences, i::Int,
+    j::Int) = D.modes[i] .- D.modes[j]
+
+"""
+    ModeIndices{N} <: AbstractMatrix{Int}
+
+The index matrix of [`hbmatind`](@ref) without aliasing, computed when an
+entry is read rather than stored: the position of the mode difference of
+each pair in the frequency domain array of the untruncated grid, negative
+for a conjugate and zero for a difference the grid does not hold.
+
+# Fields
+- `differences`: the [`ModeDifferences`](@ref) of the modes.
+- `modesdict`: the position of each mode of the untruncated grid.
+- `Nt`: the time samples of each dimension of the grid.
+"""
+struct ModeIndices{N} <: AbstractMatrix{Int}
+    differences::ModeDifferences{N}
+    modesdict::Dict{NTuple{N,Int},Int}
+    Nt::NTuple{N,Int}
+end
+
+Base.size(M::ModeIndices) = size(M.differences)
+Base.@propagate_inbounds Base.getindex(M::ModeIndices, i::Int, j::Int) =
+    storedmodeindex(M.modesdict, M.differences[i, j], M.Nt, false)
+
+"""
     FourierIndices(vectomatmap::Vector{Int}, conjsourceindices::Vector{Int},
-        conjtargetindices::Vector{Int}, hbmatmodes::Matrix{NTuple{N, Int}},
-        hbmatindices::Matrix{Int}, hbconjmatindices::Matrix{Int})
+        conjtargetindices::Vector{Int}, hbmatmodes::ModeDifferences{N},
+        hbmatindices::ModeIndices{N}, hbconjmatindices::Matrix{Int})
 
 A simple structure to hold time and frequency domain information for the
 signals, particularly the indices for converting between the node flux vectors
@@ -38,16 +76,20 @@ derivative of the residual with respect to the node fluxes), while the
 `hbconjmatindices` matrix is built from the sums of the modes, aliased back
 onto the sampled grid, and describes the coupling between the modes and the
 complex conjugates of the modes (the derivative of the residual with respect
-to the complex conjugates of the node fluxes). The mode sums are not kept. See
-also
-[`fourierindices`](@ref).
+to the complex conjugates of the node fluxes).
+
+The first two are computed entry by entry when read
+([`ModeDifferences`](@ref), [`ModeIndices`](@ref)): a solve reads the
+differences to alias them and to select the preconditioner's bands, and
+the unaliased indices only for the holomorphic Jacobian, which collects
+them. See also [`fourierindices`](@ref).
 """
 struct FourierIndices{N}
     vectomatmap::Vector{Int}
     conjsourceindices::Vector{Int}
     conjtargetindices::Vector{Int}
-    hbmatmodes::Matrix{NTuple{N, Int}}
-    hbmatindices::Matrix{Int}
+    hbmatmodes::ModeDifferences{N}
+    hbmatindices::ModeIndices{N}
     hbconjmatindices::Matrix{Int}
 end
 
@@ -64,7 +106,11 @@ function fourierindices(freq::Frequencies)
 
     freqindexmap, conjsourceindices, conjtargetindices =
         calcphiindices(freq, conjsym(freq))
-    Amatrixmodes, Amatrixindices = hbmatind(freq)
+    # the differences of the modes and their unaliased positions, read from
+    # the untruncated grid as `hbmatind` reads them
+    Amatrixmodes = ModeDifferences(freq.modes)
+    grid = calcfreqs(freq.Nharmonics, freq.Nw, freq.Nt)
+    Amatrixindices = ModeIndices(Amatrixmodes, modeindexdict(grid), grid.Nt)
     Amatrixconjindices = hbconjmatind(freq)
 
     return FourierIndices(
@@ -656,40 +702,6 @@ function phivectortomatrix!(phivector::AbstractVector, phimatrix::AbstractArray,
 end
 
 """
-    applynl(fd::Array{Complex{Float64}}, f::Function)
-
-Perform the inverse discrete Fourier transform on an array `fd` of complex
-frequency domain data, apply the function `f` in the time domain, then perform
-the discrete Fourier transform to return to the frequency domain. Apply the
-Fourier transform on all but the last dimensions. See also [`applynl!`](@ref)
-and [`plan_applynl`](@ref).
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.applynl([[0, 0.2+0.0im];;],cos)
-2×1 Matrix{ComplexF64}:
-   0.9603980498951228 + 0.0im
- -0.01966852794611884 + 0.0im
-
-julia> JosephsonCircuits.applynl([0.0 + 0.0im 0.45 + 0.0im 0.45 + 0.0im; 0.55 + 0.0im 0.0 + 0.0im 0.0 + 0.0im; 0.0 + 0.0im 0.0 + 0.0im 0.0 + 0.0im;;;],sin)
-3×3×1 Array{ComplexF64, 3}:
-[:, :, 1] =
- -0.0201302+0.0im    0.292163+0.0im    0.292163+0.0im
-   0.380152+0.0im  -0.0423263+0.0im  -0.0423263+0.0im
- -0.0168084+0.0im  -0.0530698+0.0im  -0.0530698+0.0im
-```
-"""
-function applynl(fd::Array{Complex{Float64}}, f)
-
-    td, irfftplan, rfftplan = plan_applynl(fd)
-    fdcopy = copy(fd)
-
-    applynl!(fdcopy, td, f, irfftplan, rfftplan)
-
-    return fdcopy
-end
-
-"""
     plan_applynl(fd::AbstractArray{Complex{T}}, backend::Backend = CPU())
 
 Creates an empty time domain data array and the inverse and forward plans
@@ -799,16 +811,15 @@ applynl!(fd::AbstractArray{Complex{T}}, ::AbstractArray{T}, f, ::Nothing,
 
 [`applynl!`](@ref) with the per junction relation of `relations` in place
 of a single function: `coefficients` are the polynomial coefficients to
-evaluate, one junction per row, and `trig` is what the junctions the table
-marks sinusoidal take instead. `work` is a time domain array the size of
+evaluate, one row per polynomial junction of the table, and `trig` is what
+its sinusoidal junctions take instead. `work` is a time domain array the size of
 `td`, which the Horner loop reads while it writes `td`.
 """
 function applyrelationnl!(fd::AbstractArray{Complex{T}}, td::AbstractArray{T},
-        work::AbstractArray{T}, relations, coefficients, trig, irfftplan,
-        rfftplan) where T
+        work::AbstractArray{T}, relations, coefficients, trig::F, irfftplan,
+        rfftplan) where {T,F}
     applyifft!(work, fd, irfftplan)
-    applyrelationlast!(td, work, coefficients, relations.sinusoidal,
-        relations.anysinusoidal, trig)
+    applyrelationlast!(td, work, coefficients, relations, trig)
     applyfft!(fd, td, rfftplan)
     return nothing
 end

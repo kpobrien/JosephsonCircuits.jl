@@ -137,7 +137,9 @@ that make the line's admittance singular in frequency are the recursion
 through the history; a mismatch to the connected circuit is the shared
 node. The delay must be at least one step, so that every wave a step
 reads is accepted history, and the read interpolates the endpoint
-history with a cubic, centered when the delay allows.
+history with the centered Lagrange stencil of up to six samples, a
+quintic where the delay leaves three accepted samples past the query and
+of lower order for a shorter delay.
 """
 struct TransientLine
     Z::Float64
@@ -228,7 +230,7 @@ struct TransientProblem
     # nonzero entries of `matrices.Ljb`, which is the order of the junction
     # rows of `RJ` and of `lmolj`. `nothing` when every one of them is the
     # sinusoidal Josephson relation.
-    relations::Union{Nothing,JunctionRelations{Matrix{Float64},Vector{Bool}}}
+    relations::Union{Nothing,JunctionRelations{Matrix{Float64},Vector{Int}}}
     # the scaled matrices and the junction incidence, built once for the
     # classification and for every system of the problem
     C::SparseMatrixCSC{Float64,Int}
@@ -256,8 +258,7 @@ function transientreal(value, name)
 end
 
 """
-    transientproblem(circuit, circuitdefs = Dict(); sources = (),
-        )
+    transientproblem(circuit, circuitdefs = Dict(); sources = ())
 
 Compile a circuit for integration in time: the same compiler and
 [`numericmatrices`](@ref) as harmonic balance, at one mode, with the
@@ -269,11 +270,17 @@ unless a source names them. The circuit may be a typed [`Circuit`](@ref)
 or a compiled circuit.
 
 Supported are real, constant resistors, capacitors, inductors, mutual
-inductors, sinusoidal Josephson junctions, current sources and ports.
-Frequency dependent or complex values are rejected, since they need a
-causal realization in time. A [`ScatteringParameters`](@ref) block with a
-constant real matrix is realized as it is, see [`TransientBlock`](@ref);
-any other block is rejected for the same reason.
+inductors, Josephson junctions and nonlinear inductors with a polynomial
+current-phase relation (see [`PolynomialCPR`](@ref)), current sources and
+ports. Frequency dependent or complex values are rejected, since they
+need a causal realization in time, which a block may carry: a
+[`ScatteringParameters`](@ref) block with a constant real matrix is
+realized as it is, a [`RationalScattering`](@ref) block and a pumped
+block fitted for time with `RationalScattering(block, npoles)` by their
+states, see [`TransientBlock`](@ref), and an ideal
+[`TransmissionLine`](@ref) by its delay, see [`TransientLine`](@ref);
+circuits with blocks or lines step under [`GaussLegendre`](@ref). Any
+other block is rejected.
 """
 function transientproblem(circuit::CompilableCircuit,
         circuitdefs::AbstractDict = Dict{Symbol,Any}();

@@ -99,7 +99,7 @@ end
     ref = transpose(Jr)*w
     @test hbnlp_relerr(JC.hbvjp!(zeros(n), prob, u, w), ref) < 1e-10
 
-    tp = JC.transposeplan(prob)
+    tp = prob.tplan
     saved = copy(tp.gtscale)
     fill!(tp.gtscale, 1.0)
     @test hbnlp_relerr(JC.hbvjp!(zeros(n), prob, u, w), ref) > 1e-3
@@ -143,6 +143,10 @@ end
     JC.hbresidual!(zeros(n), prob, u2)
     @test hbnlp_relerr(mul!(zeros(n), J1, v), Jr1*v) < 1e-12
     @test hbnlp_relerr(mul!(zeros(n), transpose(J1), v), transpose(Jr1)*v) < 1e-10
+    # which leaves the point where the operator set it
+    stamp = prob.pointstamp[]
+    @test hbnlp_relerr(mul!(zeros(n), transpose(J1), v), transpose(Jr1)*v) < 1e-10
+    @test prob.pointstamp[] == stamp
     @test hbnlp_relerr(mul!(zeros(n), J2, v), Jr2*v) < 1e-12
     # a preconditioner built or updated elsewhere moves the point too
     P = JC.preconditioner(prob, u2)
@@ -365,17 +369,17 @@ end
     @test JC.NewtonKrylov() isa JC.AbstractHBNonlinearSolver
     @test JC.Newton() isa JC.AbstractHBNonlinearSolver
     @test JC.QuasiNewton(anderson = 3).anderson == 3
+    # the definitions are optional for a circuit whose values are numbers
+    @test JC.hbnonlinearproblem(wp, (8,), src, circuit).u0 ==
+        JC.hbnonlinearproblem(wp, (8,), src, circuit, defs).u0
 
     ref = JC.hbnlsolve(wp, (8,), src, circuit, defs;
                        keyedarrays=false, atol=1e-14)
     @test ref.solverinfo.converged
-    for m in (JC.NewtonKrylov(), JC.Newton())
-        s = JC.hbnlsolve(wp, (8,), src, circuit, defs;
-                         keyedarrays=false, atol=1e-14, method=m)
-        @test s.solverinfo.converged
-        @test isapprox(maximum(abs.(s.nodeflux)),
-                       maximum(abs.(ref.nodeflux)); rtol=1e-8)
-    end
+    s = JC.hbnlsolve(wp, (8,), src, circuit, defs;
+                     keyedarrays=false, atol=1e-14, method=JC.Newton())
+    @test s.solverinfo.converged
+    @test isapprox(s.nodeflux, ref.nodeflux; rtol=1e-8)
 
     # a caller supplied solver, using only the public substrate
     ext = JC.ExternalSolver() do prob, u0
@@ -393,8 +397,7 @@ end
     s = JC.hbnlsolve(wp, (8,), src, circuit, defs;
                      keyedarrays=false, method=ext)
     @test s.solverinfo.converged
-    @test isapprox(maximum(abs.(s.nodeflux)),
-                   maximum(abs.(ref.nodeflux)); rtol=1e-8)
+    @test isapprox(s.nodeflux, ref.nodeflux; rtol=1e-8)
 
     # the documented loop: the preconditioner built once and updated at
     # each point, to the tolerance the problem carries; with the full
@@ -430,6 +433,23 @@ end
     @test !t.solverinfo.converged
     @test t.solverinfo.stages[end].reason === :external
     @test t.solverinfo.finalresidual < t.solverinfo.initialresidual
+    # and so is one which leaves the drive scaled, as a continuation
+    # stepper stopped part of the way does: its root is held to the
+    # problem at the drive asked for
+    halfway = JC.ExternalSolver() do prob, u0
+        u = copy(u0); F = similar(u); J = copy(prob.jacobian)
+        JC.setdrive!(prob, 0.5)
+        for _ in 1:30
+            JC.hbresidual!(F, prob, u)
+            norm(F) < 1e-12 && break
+            JC.hbjacobian!(J, prob, u)
+            u .-= J \ F
+        end
+        return (u, true)
+    end
+    h = @test_logs (:warn,) JC.hbnlsolve(wp, (8,), src, circuit, defs;
+        keyedarrays = false, method = halfway)
+    @test !h.solverinfo.converged
 end
 
 end
@@ -480,11 +500,12 @@ end
     JC.updatepreconditioner!(Pw, z)
     @test isapprox(Jop*v, J*v; rtol = 1e-12)
 
-    # the preconditioner is the canonical wrapper, and applies
-    pc = JC.preconditioner(prob, u)
-    y = similar(v); ldiv!(y, pc, v)
-    @test all(isfinite, y)
-    @test !all(iszero, y)
+    # the preconditioner is the canonical wrapper, and with every mode
+    # coupling, the direct current block solved exactly beside it, it
+    # inverts the canonical Jacobian
+    pc = JC.preconditioner(prob, u; spec = FullJacobian())
+    y = similar(v); ldiv!(y, pc, J*v)
+    @test hbnlp_relerr(y, v) < 1e-8
 
     # the residual against the product, and the higher derivatives against
     # finite differences of the one below

@@ -36,7 +36,7 @@ const SEED = haskey(ENV, "JULIA_TEST_SEED") ?
 # not a fixture the jobs include themselves
 function uncoveredtests(listed)
     fixtures = ("runtests.jl", "testcircuits.jl", "docstringcheck.jl",
-        "harmonics/layoutreference.jl", "solvers/recoveryfixture.jl")
+        "solvers/recoveryfixture.jl")
     found = String[]
     for (root, _, names) in walkdir(TESTDIR)
         rel = relpath(root, TESTDIR)
@@ -97,6 +97,7 @@ function testjobs()
             "circuit/values.jl", "spice/transient.jl",
             "harmonics/frequencies.jl", "transient/iq.jl",
             "spice/export.jl", "circuit/legacy.jl", "linearized/outputs.jl",
+            "linearized/hblinsolve.jl",
             "circuit/bind.jl", "circuit/oracles.jl", "circuit/graph.jl",
             "harmonics/sparse.jl",
             "solvers/factorizations.jl", "JosephsonCircuits.jl",
@@ -203,28 +204,37 @@ else
         end
         return job[]
     end
-    # each worker draws the next job until none is left
+    # Each worker draws the next job until none is left. A worker which
+    # dies, on a segfault or killed for its memory, ends its job with it:
+    # the job is recorded as crashed, and the worker draws no more, so the
+    # jobs still queued go to the workers which are alive.
     queue = copy(jobs)
     results = Dict{String,Any}()
     @sync for w in workers()
-        @async while !isempty(queue)
+        @async while !isempty(queue) && w in workers()
             name, code = popfirst!(queue)
             results[name] = try
                 remotecall_fetch(runtestjob, w, name, code, SEED)
             catch e
                 e
             end
+            results[name] isa ProcessExitedException && break
         end
     end
     rmprocs(workers())
     # the suite's testset, with each job's testset nested in it in the
     # order of the job list, so the summary is the usual table and the
-    # exit status the usual one; a worker which failed outright is an error
+    # exit status the usual one; a worker which failed outright is an
+    # error, and so is a job left when every worker had died
     @testset verbose = true "JosephsonCircuits" begin
         for (name, _) in jobs
-            r = results[name]
+            r = get(results, name, nothing)
             if r isa Test.AbstractTestSet
                 Test.record(Test.get_testset(), r)
+            elseif isnothing(r)
+                @testset "$name" begin
+                    error("$name did not run: every worker had died before it")
+                end
             else
                 @testset "$name" begin
                     error("the worker running $name failed: $(sprint(showerror, r))")

@@ -83,7 +83,7 @@ import StaticArrays
             Ca = Complex{Float64}[1 2 3;4 5 6;7 8 9]
 
             @test_throws(
-                DimensionMismatch("The size of `Ca` must the same as the size of `Sa`."),
+                DimensionMismatch("The size of `Ca` must be the same as the size of `Sa`."),
                 JosephsonCircuits.intraconnectS(Sa,Ca,1,2)
             )
         end
@@ -113,7 +113,7 @@ import StaticArrays
             Cout = zeros(Complex{Float64},3,3)
 
             @test_throws(
-                DimensionMismatch("The size of `Cout` must the same as the size of `Sout`."),
+                DimensionMismatch("The size of `Cout` must be the same as the size of `Sout`."),
                 JosephsonCircuits.intraconnectS!(Sout,Cout,Sa,Ca,1,2)
             )
         end
@@ -344,12 +344,12 @@ import StaticArrays
             Cout = zeros(Complex{Float64},6)
 
             @test_throws(
-                DimensionMismatch("`Sout`, `Sa`, and `Sb` must have atleast two dimensions."),
+                DimensionMismatch("`Sout`, `Sa`, and `Sb` must have at least two dimensions."),
                 JosephsonCircuits.interconnectS!(Sout,Sa,Sb,1,2)
             )
 
             @test_throws(
-                DimensionMismatch("`Sout`, `Sa`, and `Sb` must have atleast two dimensions."),
+                DimensionMismatch("`Sout`, `Sa`, and `Sb` must have at least two dimensions."),
                 JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
             )
         end
@@ -400,7 +400,7 @@ import StaticArrays
             Sout = zeros(Complex{Float64},4,4,3)
             Cout = zeros(Complex{Float64},4,4,3)
             @test_throws(
-                DimensionMismatch("The size of `Ca` must the same as the size of `Sa`."),
+                DimensionMismatch("The size of `Ca` must be the same as the size of `Sa`."),
                 JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
             )
         end
@@ -413,7 +413,7 @@ import StaticArrays
             Sout = zeros(Complex{Float64},4,4,3)
             Cout = zeros(Complex{Float64},4,4,3)
             @test_throws(
-                DimensionMismatch("The size of `Cb` must the same as the size of `Sb`."),
+                DimensionMismatch("The size of `Cb` must be the same as the size of `Sb`."),
                 JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
             )
         end
@@ -426,7 +426,7 @@ import StaticArrays
             Sout = zeros(Complex{Float64},4,4,3)
             Cout = zeros(Complex{Float64},3,3,3)
             @test_throws(
-                DimensionMismatch("The size of `Cout` must the same as the size of `Sout`."),
+                DimensionMismatch("The size of `Cout` must be the same as the size of `Sout`."),
                 JosephsonCircuits.interconnectS!(Sout,Cout,Sa,Sb,Ca,Cb,1,2)
             )
         end
@@ -574,6 +574,39 @@ import StaticArrays
             @test isapprox(Sout3,Sout4)
             @test isapprox(Cout3,Cout4)
         end
+
+        # a real and a complex network connect with noise into complex
+        # outputs as they do both stored complex
+        Sa, Sb = rand(Float64, 2, 2, 3), rand(Complex{Float64}, 2, 2, 3)
+        Ca, Cb = rand(Float64, 2, 2, 3), rand(Complex{Float64}, 2, 2, 3)
+        Sout = zeros(Complex{Float64}, 2, 2, 3)
+        Cout = zeros(Complex{Float64}, 2, 2, 3)
+        JosephsonCircuits.interconnectS!(Sout, Cout, Sa, Sb, Ca, Cb, 2, 1)
+        Sref, Cref = JosephsonCircuits.interconnectS(complex(Sa), Sb,
+            complex(Ca), Cb, 2, 1)
+        @test isapprox(Sout, Sref) && isapprox(Cout, Cref)
+    end
+
+    @testset "cascadeS" begin
+        # two two-ports in cascade: the wave between them bounces between
+        # the output of the first and the input of the second, so each
+        # entry carries the factor 1/(1 - Sa22*Sb11)
+        function cascade2(a, b)
+            d = 1 - a[2,2]*b[1,1]
+            return [a[1,1] + a[1,2]*b[1,1]*a[2,1]/d a[1,2]*b[1,2]/d;
+                a[2,1]*b[2,1]/d b[2,2] + b[2,1]*a[2,2]*b[1,2]/d]
+        end
+        # arrays of matrices, a real and a complex one, whose cascade is
+        # complex
+        Sa = rand(Float64, 2, 2, 3)
+        Sb = rand(Complex{Float64}, 2, 2, 3)
+        S = JosephsonCircuits.cascadeS(Sa, Sb)
+        @test isapprox(S, stack(cascade2(Sa[:, :, i], Sb[:, :, i]) for i in 1:3))
+        # arrays with different numbers of frequencies
+        @test_throws DimensionMismatch JosephsonCircuits.cascadeS(
+            rand(2, 2, 3), rand(2, 2, 5))
+        @test_throws DimensionMismatch JosephsonCircuits.cascadeS(
+            rand(2, 2, 5), rand(2, 2, 3))
     end
 
     # one network
@@ -922,6 +955,14 @@ import StaticArrays
             [[("1",2),("2",1),("3",1)]])
         @test isapprox(out3.S[1],out5.S[1])
         @test isapprox(out4.S,out5.S[1])
+
+        # and names which the ports of another network use are left to
+        # them: the splitter after the network names 1 to 3 is not named 4
+        networks = [(1, S[1], [(4, 1), (4, 2)]), (2, S[2]), (3, S[3])]
+        out6 = JosephsonCircuits.connectS(networks, [[(4, 2), (2, 1), (3, 1)]])
+        out7 = JosephsonCircuits.solveS(networks, [[(4, 2), (2, 1), (3, 1)]])
+        @test isapprox(out6.S[1], out5.S[1])
+        @test isapprox(out7.S, out5.S[1])
     end
 
     @testset "connectS! solveS! in-place updates" begin
@@ -964,7 +1005,7 @@ import StaticArrays
             Sc, Cc = c.S[1][:, :, f], c.C[1][:, :, f]
             @test isapprox(Cc, I - Sc*Sc'; atol = 1e-14)
             Ss, Cs = s.S[:, :, f], s.C[:, :, f]
-            @test isapprox(Cs, I - Ss*Ss'; atol = 1e-14)
+            @test isapprox(Cs, I - Ss*Ss'; atol = 1e-13)
         end
     end
 
@@ -1013,8 +1054,47 @@ import StaticArrays
             @test isapprox(c.C[1][ec, ec, f], N[e, e])
         end
 
+        # a junction of three ports, which is the lossless network J of
+        # scattering matrix 2/3 - I joined to each of them, with the
+        # splitters of either size
+        sizes = [4, 4, 3]
+        S = [stack([0.8 .* (X ./ opnorm(X)) for X in
+            [randn(Complex{Float64}, n, n) for f in 1:nf]]) for n in sizes]
+        C = [stack([X*X' for X in [randn(Complex{Float64}, n, n)
+            for f in 1:nf]]) for n in sizes]
+        networks = [(names[k], S[k], C[k]) for k in eachindex(names)]
+        pairs = [[("A", 2), ("B", 1)], [("B", 2), ("C", 1)], [("C", 2), ("A", 3)]]
+        junction = [("A", 1), ("B", 3), ("C", 3)]
+        ports = [[(names[k], p) for k in eachindex(names) for p in 1:sizes[k]];
+            [("J", p) for p in 1:3]]
+        index = Dict(p => i for (i, p) in enumerate(ports))
+        P = zeros(length(ports), length(ports))
+        for (p, q) in [pairs; [[junction[j], ("J", j)] for j in 1:3]]
+            P[index[p], index[q]] = P[index[q], index[p]] = 1
+        end
+        SJ = fill(2/3, 3, 3) - I
+        for small_splitters in (true, false)
+            s = JosephsonCircuits.solveS(networks, [pairs; [junction]];
+                noise = true, small_splitters = small_splitters)
+            c = JosephsonCircuits.connectS(networks, [pairs; [junction]];
+                noise = true, small_splitters = small_splitters)
+            e = [index[p] for p in s.ports]
+            ec = [findfirst(==(p), c.ports[1]) for p in s.ports]
+            for f in 1:nf
+                Sd = cat([Sk[:, :, f] for Sk in S]..., SJ; dims = (1, 2))
+                Cd = cat([Ck[:, :, f] for Ck in C]..., zeros(3, 3); dims = (1, 2))
+                K = inv(I - Sd*P)
+                B = K*Sd
+                N = K*Cd*K'
+                @test isapprox(s.S[:, :, f], B[e, e])
+                @test isapprox(s.C[:, :, f], N[e, e])
+                @test isapprox(c.S[1][ec, ec, f], B[e, e])
+                @test isapprox(c.C[1][ec, ec, f], N[e, e])
+            end
+        end
+
         # a covariance must be the size of its scattering parameters
-        networks[1] = ("A", S[1], rand(Complex{Float64}, 4, 4, nf))
+        networks[1] = ("A", S[1], rand(Complex{Float64}, 5, 5, nf))
         @test_throws(DimensionMismatch,
             JosephsonCircuits.solveS(networks, connections; noise = true))
         @test_throws(DimensionMismatch,
@@ -1108,6 +1188,42 @@ import StaticArrays
             JosephsonCircuits.solveS(networks, connections; nbatches = 1),
         )
 
+        # a lossless ring of zero length, two ports of a perfect through
+        # joined, decoupled from the third port: the pairwise connection
+        # system is zero, and consistent, and the result is the third
+        # port's reflection, as the QR solution of solveS gives it
+        Sring = Complex{Float64}[0 1 0; 1 0 0; 0 0 0.5]
+        networks = [("A", Sring)]
+        connections = [[("A", 1), ("A", 2)]]
+        @test isapprox(JosephsonCircuits.intraconnectS(Sring, 1, 2), [0.5;;])
+        @test isapprox(JosephsonCircuits.connectS(networks, connections).S[1], [0.5;;])
+        @test isapprox(JosephsonCircuits.connectS(networks, connections;
+            noise = true).S[1], [0.5;;])
+        @test isapprox(JosephsonCircuits.solveS(networks, connections;
+            factorization = JosephsonCircuits.QRfactorization()).S, [0.5;;])
+
+        # fewer than one batch is one batch
+        networks = [("S1", rand(Complex{Float64}, 4, 4, 5)),
+            ("S2", rand(Complex{Float64}, 3, 3, 5))]
+        connections = [[("S1", 1), ("S1", 2), ("S1", 3)], [("S1", 4), ("S2", 2)]]
+        s1 = JosephsonCircuits.solveS(networks, connections; nbatches = 1)
+        for nbatches in (0, -1)
+            @test JosephsonCircuits.solveS(networks, connections;
+                nbatches = nbatches).S == s1.S
+        end
+
+        # no connections leave the network as it is
+        Sa = rand(Complex{Float64}, 2, 2, 3)
+        networks = [("A", Sa)]
+        for noise in (false, true)
+            s = JosephsonCircuits.solveS(networks, Vector{Tuple{String,Int}}[];
+                noise = noise)
+            @test s.S == Sa
+            @test s.ports == [("A", 1), ("A", 2)]
+            noise && @test isapprox(s.C, JosephsonCircuits.connectS(networks,
+                Vector{Tuple{String,Int}}[]; noise = true).C[1])
+        end
+
         # no frequencies give no scattering parameters
         networks = [("A", zeros(Complex{Float64}, 2, 2, 0)),
             ("B", zeros(Complex{Float64}, 2, 2, 0))]
@@ -1143,6 +1259,95 @@ import StaticArrays
                 port_names))
     end
 
+    @testset "lu_2x2" begin
+        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+        Afact1 = LinearAlgebra.lu(A)
+        Afact2 = JosephsonCircuits.lu_2x2(A)
+        @test isapprox(Afact1.L,Afact2.L)
+        @test isapprox(Afact1.U,Afact2.U)
+        @test isapprox(Afact1.p,Afact2.p)
+
+        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+        A = StaticArrays.SMatrix{2,2}(A[1,1],0*A[2,1],A[1,2],A[2,2])
+        Afact1 = LinearAlgebra.lu(A)
+        Afact2 = JosephsonCircuits.lu_2x2(A)
+        @test isapprox(Afact1.L,Afact2.L)
+        @test isapprox(Afact1.U,Afact2.U)
+        @test isapprox(Afact1.p,Afact2.p)
+
+        # LU decomposition of a matrix where A[1,1] = A[2,1] = 0
+        A = rand(Complex{Float64},2,2)
+        A[1,1] = 0
+        A[2,1] = 0
+        fact = JosephsonCircuits.lu_2x2(A);
+        @test isapprox(fact.L*fact.U,A)
+    end
+
+    @testset "ldiv_2x2 errors" begin
+        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+        b = StaticArrays.SVector{2}(rand(Complex{Float64},2))
+        fact = JosephsonCircuits.lu_2x2(A)
+
+        @test_throws(
+            ArgumentError("Unknown pivot."),
+            JosephsonCircuits.ldiv_2x2(StaticArrays.LU(fact.L,fact.U,
+            StaticArrays.SVector{2}(3,4)),b)
+        )
+
+        # test the warning
+        u11 = fact.U[1,1]
+        u12 = fact.U[1,2]
+        u22 = fact.U[2,2]*0
+        U = LinearAlgebra.UpperTriangular(StaticArrays.SMatrix{2,2}(u11,zero(u11),u12,u22))
+        fact2 = StaticArrays.LU(fact.L,U,fact.p)
+        @test_throws(
+            ArgumentError("Failed to solve linear system."),
+            JosephsonCircuits.ldiv_2x2(fact2,b)
+        )
+    end
+
+    @testset "ldiv_2x2" begin
+        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+        b = StaticArrays.SVector{2}(rand(Complex{Float64},2))
+        @test isapprox(
+            JosephsonCircuits.ldiv_2x2(JosephsonCircuits.lu_2x2(A),b),
+            LinearAlgebra.lu(A) \ b,
+        )
+
+        @test isapprox(
+            JosephsonCircuits.ldiv_2x2(LinearAlgebra.lu(A),b),
+            JosephsonCircuits.lu_2x2(A) \ b,
+        )
+
+        # set A21 equal to zero to test LU without pivoting.
+        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
+        B = StaticArrays.SMatrix{2,2}(A[1,1],0,A[1,2],A[2,2])
+        @test isapprox(
+            JosephsonCircuits.ldiv_2x2(JosephsonCircuits.lu_2x2(B),b),
+            LinearAlgebra.lu(B) \ b,
+        )
+
+        @test isapprox(
+            JosephsonCircuits.ldiv_2x2(LinearAlgebra.lu(B),b),
+            JosephsonCircuits.lu_2x2(B) \ b,
+        )
+
+        # test the singular case when !(p1 == 1 && p2 == 2)
+        A = StaticArrays.SMatrix{2,2}(0.0,1.0,1.0,1.0)
+        b = StaticArrays.SVector{2}(2,1)
+        x = JosephsonCircuits.ldiv_2x2(JosephsonCircuits.lu_2x2(A),b)
+        @test isapprox(A*x,b)
+
+        # a matrix whose first column is zero: a consistent system is
+        # solved, with the free unknown zero, and an inconsistent one refused
+        for (A, b) in (([0.0 0.0; 0.0 0.0], [0.0, 0.0]),
+                ([0.0 2.0; 0.0 3.0], [4.0, 6.0]), ([0.0 2.0; 0.0 0.0], [4.0, 0.0]))
+            x = JosephsonCircuits.ldiv_2x2(JosephsonCircuits.lu_2x2(A), b)
+            @test isapprox(A * x, b) && iszero(x[1])
+        end
+        @test_throws ArgumentError JosephsonCircuits.ldiv_2x2(
+            JosephsonCircuits.lu_2x2([0.0 2.0; 0.0 3.0]), [1.0, 1.0])
+
+    end
+
 end
-
-

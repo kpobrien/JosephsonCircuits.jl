@@ -117,10 +117,12 @@ setup once; it is the counterpart of the reuse between the solves of an
 ## Supported circuits and the initial state
 
 Supported are real, constant resistors, capacitors, inductors, mutual
-inductors, sinusoidal Josephson junctions, current sources, ports,
+inductors, Josephson junctions and nonlinear inductors with a
+[`PolynomialCPR`](@ref), current sources, ports,
 [`ScatteringParameters`](@ref) blocks with a constant real matrix,
-[`RationalScattering`](@ref) blocks, and ideal
-[`TransmissionLine`](@ref)s, the last three under
+[`RationalScattering`](@ref) blocks, pumped blocks fitted for time with
+`RationalScattering(block, npoles)`, and ideal
+[`TransmissionLine`](@ref)s, the last four under
 [`GaussLegendre`](@ref). Frequency dependent or complex values and
 other blocks are rejected, since they need a causal realization in
 time. An infinite resistance is an open.
@@ -497,9 +499,10 @@ WRspice simulations about twenty five. The three agree:
 | 4.90 | 0.0193 | 0.0194 | 0.0193 |
 
 The two time domain results are within 0.03 dB of each other and of
-harmonic balance across the band, and within 0.08 dB at the gain peak,
-where the amplifier sits nearest its threshold and the gain has not
-finished settling at 200 ns, as the next comparison shows.
+harmonic balance across the band, and at the gain peak within 0.08 dB of
+each other and 0.13 dB of harmonic balance, where the amplifier sits
+nearest its threshold and the gain has not finished settling at 200 ns,
+as the next comparison shows.
 
 The port response resolved in time at one signal frequency, 4.76 GHz,
 is the same demodulation slid along the record, one pump period at a

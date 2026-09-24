@@ -45,7 +45,15 @@ sequence of decreasing nonzero frequencies instead.
     around the signal, which sets the signal and idler modes; `(0,)` is
     the signal alone.
 - `nonlinear = nothing`: the [`NonlinearHB`](@ref) operating point to
-    linearize about, or `nothing` for a linear circuit.
+    linearize about, or `nothing` for a linear circuit. The sweep reads
+    the pump modulation, the Fourier coefficients of the derivative of
+    each junction's current-phase relation, off the operating point, and
+    every component value, the junction inductances included, from
+    `circuitdefs`. An operating point solved at other values is therefore
+    a pump held fixed while the values move, which is what the
+    sensitivities at a fixed operating point differentiate; for the
+    circuit's own operating point, solve it at the same values, as
+    [`hbsolve`](@ref) does.
 - `threewavemixing = false`: retain the odd pump harmonics around the
     signal, through which three wave mixing couples the modes.
 - `fourwavemixing = true`: retain the even pump harmonics around the
@@ -150,9 +158,17 @@ linearized = JosephsonCircuits.hblinsolve(ws,
     circuit, circuitdefs; Nmodulationharmonics = Nmodulationharmonics,
     nonlinear = nonlinear, threewavemixing=false,
     fourwavemixing=true, returnnodeflux=true, keyedarrays = false)
-isapprox(linearized.nodeflux,
-    ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
-    atol = 1e-6)
+isapprox(linearized.nodeflux[:, :, 1],
+    ComplexF64[9.9710247e-12 - 6.4969574e-14im 4.1038803e-15 - 5.4827649e-17im 1.8800941e-14 - 2.4486235e-16im;
+     4.1012274e-15 - 1.5739758e-16im 1.0122555e-11 - 1.9579258e-13im -1.3339106e-15 + 5.1109092e-17im;
+     1.8801186e-14 + 2.2521165e-16im -1.3347983e-15 - 1.5588056e-17im 9.9346965e-12 + 5.9535252e-14im;
+     -7.5189204e-12 + 4.9043116e-14im 9.429854e-13 - 6.4338888e-15im 5.1933438e-12 - 3.3701835e-14im;
+     7.5108044e-14 - 1.441184e-15im 1.5880415e-12 - 3.071641e-14im -3.0163552e-14 + 5.7628299e-16im;
+     6.7046559e-12 + 3.9870563e-14im -4.9349771e-13 - 2.786924e-15im -2.2848852e-11 - 1.3700897e-13im;
+     -1.6478932e-11 + 1.0742503e-13im 9.3800228e-13 - 6.3757553e-15im 5.1701213e-12 - 3.3440622e-14im;
+     7.0277033e-14 - 1.2778916e-15im -7.5160529e-12 + 1.4537689e-13im -2.8570197e-14 + 5.2285147e-16im;
+     6.6811977e-12 + 3.9629044e-14im -4.9182556e-13 - 2.7702393e-15im -3.1763778e-11 - 1.90433e-13im],
+    rtol = 1e-6)
 
 # output
 true
@@ -192,10 +208,10 @@ is what [`hbsolve`](@ref) passes so that the values are resolved once; the sweep
 This is what the other methods call after building those; it takes every keyword
 of the general method except the ones which describe the mode set
 (`Nmodulationharmonics`, `threewavemixing`, `fourwavemixing`,
-`maxharmonics`, `maxintermodorder`), plus the design parameter
+`maxharmonics`, `maxintermodorder`). Among them are the design parameter
 sensitivity keywords described under [`hbsolve`](@ref) (`sensitivitypairs`,
-`sensitivityblockpairs`, `nsensitivityparameters`, `sensitivitylabels`,
-which only this method accepts) and `debuglsys = false`, which returns
+`sensitivityblockpairs`, `nsensitivityparameters`, `sensitivitylabels`),
+which the general method passes on, and `debuglsys = false`, which returns
 the [`HBLinearizedSystem`](@ref) and its ingredients instead of solving,
 for building reference implementations in tests.
 
@@ -258,9 +274,17 @@ signalfreq =JosephsonCircuits.truncfreqs(
 )
 linearized = JosephsonCircuits.hblinsolve(ws, psc, circuitdefs,
     signalfreq;nonlinear = nonlinear, returnnodeflux=true, keyedarrays = false)
-isapprox(linearized.nodeflux,
-    ComplexF64[9.901008591291e-12 - 6.40587007644028e-14im 2.164688307719963e-14 - 2.90852607344097e-16im 6.671563044645655e-14 - 8.585524364135119e-16im; 2.1633104519765224e-14 - 8.251861334047893e-16im 1.0099063486905209e-11 - 1.948847859339803e-13im -8.532003011745068e-15 + 3.234788465760295e-16im; 6.671648606599472e-14 + 7.892709980649199e-16im -8.53757633177974e-15 - 9.748395563374129e-17im 9.856580758892428e-12 + 5.859984004390703e-14im; 1.5888896262186103e-11 - 1.0303480614499543e-13im -2.557126237504446e-12 + 1.759201163407723e-14im -8.475819811683215e-12 + 5.3531443609574795e-14im; -2.5781681021577177e-13 + 4.757590640631487e-15im 2.36818731889176e-12 - 4.569646499606389e-14im 1.116372367616482e-13 - 2.039935997276492e-15im; -1.0210743447568219e-11 - 5.905490368441375e-14im 1.3377918536056493e-12 + 7.190105205618706e-15im 2.5392856657302323e-11 + 1.5143842454586225e-13im; 2.4781693042536835e-11 - 1.6057018472176702e-13im -2.5342360504077476e-12 + 1.7306764301173096e-14im -8.40554044664581e-12 + 5.269404591748149e-14im; -2.348528974341763e-13 + 3.949450668269274e-15im 1.1449271118157543e-11 - 2.2093702114766968e-13im 1.0261871618968225e-13 - 1.7240213938923877e-15im; -1.0140560031409567e-11 - 5.828587508192886e-14im 1.3288225860409326e-12 + 7.0954601524623594e-15im 3.423954321087654e-11 + 2.0403371894291513e-13im],
-    atol = 1e-6)
+isapprox(linearized.nodeflux[:, :, 1],
+    ComplexF64[9.970981e-12 - 6.4969003e-14im 4.0916792e-15 - 5.4667846e-17im 1.8880731e-14 - 2.4587299e-16im;
+     4.0890344e-15 - 1.5692383e-16im 1.0122555e-11 - 1.9579255e-13im -1.2213006e-15 + 4.6803527e-17im;
+     1.8880977e-14 + 2.2613553e-16im -1.2221136e-15 - 1.4289686e-17im 9.9345856e-12 + 5.9533921e-14im;
+     -7.5316458e-12 + 4.9127007e-14im 9.388239e-13 - 6.4061256e-15im 5.2169479e-12 - 3.3849327e-14im;
+     7.4881532e-14 - 1.4367631e-15im 1.5880496e-12 - 3.0716563e-14im -2.8139989e-14 + 5.3766382e-16im;
+     6.7342779e-12 + 4.0036396e-14im -4.5607882e-13 - 2.5817544e-15im -2.2890664e-11 - 1.3725915e-13im;
+     -1.6491603e-11 + 1.0750831e-13im 9.3385621e-13 - 6.3481653e-15im 5.1936261e-12 - 3.3587035e-14im;
+     7.0064897e-14 - 1.2739631e-15im -7.5160441e-12 + 1.4537671e-13im -2.6679133e-14 + 4.8869432e-16im;
+     6.7107197e-12 + 3.9793888e-14im -4.5454621e-13 - 2.5664472e-15im -3.1805451e-11 - 1.9068175e-13im],
+    rtol = 1e-6)
 
 # output
 true
@@ -346,8 +370,8 @@ function hblinsolve(w::Vector{Float64}, psc::CompiledCircuit,
         noiseportimpedances, pumpfactorization, ondevice) = s
     sens = linearizedsensitivity(; psc, nonlinear, sensitivitynodeflux,
         sensitivityresidual, sensitivitypairs, sensitivityblockpairs,
-        Nsignalmodes, signalnm, phimatrix, Nnodes, coupledbranches,
-        Nnodalmna, Nlumpedpairs, sensitivitynames, sensitivityindices,
+        Nsignalmodes, signalnm, phimatrix, coupledbranches,
+        Nlumpedpairs, sensitivitynames, sensitivityindices,
         stampgrouping, stampslots, ssys, lsys, pumpfactorization,
         sensitivitymode, returnSsensitivity)
     (; sensitivitystamps, sensitivityblockentries, sensitivitydAop,
@@ -398,11 +422,15 @@ signalfrequencies(Nmodulationharmonics; threewavemixing, fourwavemixing,
         maxintermodorder = maxintermodorder, maxharmonics = maxharmonics)
 
 # the factorization of the pump Jacobian of the operating point
-# sensitivities: the linearized solve's, except that a block factorization
-# does not apply to it, since it has the real layout's blocks rather than
-# the signal modes'
+# sensitivities: the linearized solve's when it is a host sparse
+# factorization, and KLU otherwise. A block factorization does not apply,
+# since the Jacobian has the real layout's blocks rather than the signal
+# modes'; cuDSS factorizes on a device and has no transposed solve, while
+# the Jacobian and every right hand side it is solved against are on the
+# host.
 pumpjacobianfactorization(factorization) =
-    factorization isa BlockFactorization ? KLUfactorization() : factorization
+    factorization isa Union{BlockFactorization,CUDSSFactorization} ?
+        KLUfactorization() : factorization
 
 # the node voltages from the node fluxes: the voltage is the time
 # derivative of the flux, which in the frequency domain is multiplication by
@@ -424,6 +452,26 @@ function checksweepinputs(w, nbatches)
     all(isfinite, w) || throw(ArgumentError("All signal frequencies must be finite."))
     isempty(w) && throw(ArgumentError("At least one signal frequency is required."))
     nbatches >= 1 || throw(ArgumentError(lazy"`nbatches` = $(nbatches) must be at least 1."))
+    return nothing
+end
+
+"""
+    checkcoupledloss(psc::CompiledCircuit, vvn)
+
+Refuse the noise outputs of a circuit in which a mutual inductor, or an
+inductor it couples, has a lossy (complex) value. The noise channel of a
+lossy inductance is a source across its own terminals, normalized by its own
+impedance. The loss of a coupled inductance sits in its branch of the
+coupled group, and its noise would enter as correlated sources at the
+terminals of every branch the group couples, which these channels do not
+model. The scattering parameters of such a circuit are solved exactly.
+"""
+function checkcoupledloss(psc::CompiledCircuit, vvn)
+    for (k, i1, i2) in psc.couplings, i in (k, i1, i2)
+        v = vvn[i]
+        kind = i == k ? "mutual inductor" : "coupled inductor"
+        v isa Complex && !iszero(imag(v)) && throw(ArgumentError(lazy"the $kind $(psc.componentnames[i]) has the lossy value $(v), and the noise of a lossy coupled inductance is not modeled; ask for the scattering parameters alone, with `returnQE = false` and `returnCM = false` and without `returnSnoise` or `returnCnoise`."))
+    end
     return nothing
 end
 
@@ -450,6 +498,7 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
     sensitivityblockpairs::Vector{Tuple{String,Int,Any}};
     nbatches::Integer, nsensitivityparameters::Integer, wantsnoise::Bool)
     checksweepinputs(w, nbatches)
+    checkisolatedsubnetworks(psc)
     Nsignalmodes = length(signalfreq.modes)
     # the numeric matrices at the signal mode count, which differs from the
     # pump's
@@ -636,11 +685,7 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
         for t in sensitivityblockpairs
             b = scatteringblockindex(psc, t[1])
             iszero(b) && throw(ArgumentError(lazy"The block pair component $(t[1]) is not a scattering block of this circuit."))
-            # the derivative is stamped in the block's place, so it is of
-            # the block's kind
-            target = psc.scatteringblocks[b].definition
-            (t[3] isa LinearizedScattering) == (target isa LinearizedScattering) ||
-                throw(ArgumentError(lazy"The derivative in the block pair of $(t[1]) is a $(nameof(typeof(t[3]))) but the block is a $(nameof(typeof(target))); a derivative must be of its block's kind."))
+            checkblockpair(psc.scatteringblocks[b].definition, t[3], t[1])
             push!(sensitivityindices, b)
         end
         sensitivitynames = vcat(
@@ -774,7 +819,9 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
             length(first(signalfreq.modes)), ondevice ? backend : CPU();
             nbatches = nbatches)
     elseif factorization isa CUDSSFactorization && !ondevice
-        throw(ArgumentError("the sweep of this circuit runs on the host, because a component value depends on the frequency or a block sensitivity is asked for, and CUDSSFactorization factorizes on a device; leave `factorization` to its default or pass a host factorization such as KLUfactorization()."))
+        why = backend isa CPU ? lazy"the backend is $(backend)" :
+            "a component value depends on the frequency or a block sensitivity is asked for"
+        throw(ArgumentError(lazy"the sweep of this circuit runs on the host, because $(why), and CUDSSFactorization factorizes on a device; leave `factorization` to its default or pass a host factorization such as KLUfactorization()."))
     end
     # whether single precision block factors refine to double: the
     # factorization's choice, and moot for any other factorization
@@ -782,22 +829,17 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
 
     # the vacuum noise channels of the dissipative scattering blocks, which
     # follow the lumped noise channels in the rows of the noise scattering
-    # matrix; a block declared lossless has none. A pumped block's
-    # declaration, its losslessness or its stated covariance, is checked
-    # over the modes of every solve whatever outputs are asked for, so
-    # that the block is accepted or refused on its declaration and not
-    # on the outputs
-    checklosslessblocks(ssys, w, wpumpmodes)
+    # matrix; a block declared lossless has none. What a block declares,
+    # its passivity, its losslessness or its stated covariance, is checked
+    # where its construction could not, over the modes of every solve
+    # whatever outputs are asked for, so that the block is accepted or
+    # refused on its declaration and not on the outputs
+    checkblockdeclarations(ssys, w, wpumpmodes)
     checkpumpedblockmodels(ssys, w, wpumpmodes)
     # every output derived from the noise waves needs the channels planned,
-    # the covariance included, and the noise a block states admitted at
-    # every frequency they are formed at
-    noiseplan = if wantsnoise
-        checkblocknoisemodels(ssys, w, wpumpmodes)
-        planscatteringnoise(ssys)
-    else
-        nothing
-    end
+    # the covariance included
+    noiseplan = wantsnoise ? planscatteringnoise(ssys) : nothing
+    wantsnoise && checkcoupledloss(psc, vvn)
     Nnoisechannels = length(noiseportimpedanceindices) +
         (isnothing(noiseplan) ? 0 : noiseplan.Nchannels)
     # the temperature of each noise channel: the analysis default, or the
@@ -821,6 +863,18 @@ function linearizedsetup(w::Vector{Float64}, psc::CompiledCircuit,
 end
 
 """
+    FORWARDSENSITIVITYSTAMPBYTES
+
+The byte budget of the operating point stamps of the forward sensitivity
+contraction, one complex value per stored entry of the linearized system
+matrix per component, which the sweep holds throughout. With
+`sensitivitymode = :auto` the reverse order, whose memory does not grow
+with the number of components (see [`REVERSESENSITIVITYCHUNKBYTES`](@ref)),
+is taken when the stamps would exceed it.
+"""
+const FORWARDSENSITIVITYSTAMPBYTES = 256*2^20
+
+"""
     linearizedsensitivity(; ...)
 
 The second stage of [`hblinsolve`](@ref): the sensitivity stamps of the
@@ -834,7 +888,7 @@ sensitivity arrays.
 function linearizedsensitivity(;
         psc, nonlinear, sensitivitynodeflux, sensitivityresidual,
         sensitivitypairs, sensitivityblockpairs, Nsignalmodes, signalnm,
-        phimatrix, Nnodes, coupledbranches, Nnodalmna, Nlumpedpairs,
+        phimatrix, coupledbranches, Nlumpedpairs,
         sensitivitynames, sensitivityindices, stampgrouping, stampslots,
         ssys, lsys, pumpfactorization, sensitivitymode,
         returnSsensitivity)
@@ -842,23 +896,22 @@ function linearizedsensitivity(;
         st = calcsensitivitystamps(
             sensitivityindices[1:(isempty(sensitivityblockpairs) ?
                 end : Nlumpedpairs)],
-            psc, signalnm, lsys, phimatrix, coupledbranches, Nnodalmna,
-            Nsignalmodes, Nnodes)
+            psc, signalnm, lsys, phimatrix, coupledbranches, Nsignalmodes)
         if !isempty(sensitivitypairs)
             st = [reparameterize(st[k], sensitivitypairs[k][3],
                 sensitivitypairs[k][2]) for k in eachindex(st)]
         end
-        entries = Tuple{Int,Any,Any,Vector{Int}}[]
+        entries = Tuple{Int,Any,Vector{Int}}[]
         if !isempty(sensitivityblockpairs)
             isnothing(ssys) && throw(ArgumentError(
                 "the circuit has no scattering blocks to take a block sensitivity of"))
             for (bi, bp) in enumerate(sensitivityblockpairs)
                 # the block ordinal held by the block tail of
                 # `sensitivityindices`
-                dsys, zsys, position, rows, cols = targetstampsystems(ssys,
+                dsys, position, rows, cols = targetstampsystems(ssys,
                     sensitivityindices[Nlumpedpairs + bi], bp[3])
                 push!(st, blocksensitivitystamp(rows, cols, Int(bp[2])))
-                push!(entries, (0, dsys, zsys, position))
+                push!(entries, (0, dsys, position))
             end
         end
         if !isempty(stampgrouping)
@@ -871,8 +924,8 @@ function linearizedsensitivity(;
                 for i in g
                     if i > Nlumpedpairs
                         bi = i - Nlumpedpairs
-                        entries[bi] = (gi, entries[bi][2], entries[bi][3],
-                            entries[bi][4] .+ offset)
+                        entries[bi] = (gi, entries[bi][2],
+                            entries[bi][3] .+ offset)
                     end
                     offset += lengths[i]
                 end
@@ -958,12 +1011,17 @@ function linearizedsensitivity(;
         # the component count. A solve costs several times a product, so the
         # crossover is at a multiple of the pair count; the factor of eight
         # is an empirical estimate, and near the crossover either choice
-        # costs about the same.
+        # costs about the same. The forward order also holds a value per
+        # stored entry of the system matrix per component for the whole
+        # sweep, so past the byte budget of those stamps the reverse order
+        # is taken whatever the counts.
         Ncomponents = isnothing(sensitivityresidual) ?
             size(sensitivitynodeflux, 2) : size(sensitivityresidual, 2)
+        stampbytes = 16*Ncomponents*nnz(lsys.Asparse)
         !isnothing(sensitivityresidual) &&
-            isempty(sensitivityblockpairs) && Ncomponents >
-            8*(length(signalnm.portindices)*Nsignalmodes)^2
+            isempty(sensitivityblockpairs) && (Ncomponents >
+            8*(length(signalnm.portindices)*Nsignalmodes)^2 ||
+            stampbytes > FORWARDSENSITIVITYSTAMPBYTES)
     end
 
     sensitivitydAop = if useoperatingpoint && !usereverse
@@ -1064,7 +1122,9 @@ function linearizedsweep!(;
     # Solve the linear system at each frequency. The frequencies are
     # independent, so they are split into `nbatches` batches solved by
     # tasks in parallel, each batch reusing one workspace and one symbolic
-    # factorization. On a device backend the solve of a batch is done there
+    # factorization (see `runchunks`: a single batch runs on the calling
+    # task, and a failure is thrown as the error the batch met rather than
+    # wrapped in the tasks' failure). On a device backend the solve of a batch is done there
     # instead: the matrices of a batch share one sparsity pattern, so they
     # are assembled by one kernel and factorized and solved as a uniform
     # batch, while the frequency loop and every output it computes stay the
@@ -1074,6 +1134,12 @@ function linearizedsweep!(;
     sensitivitytuple = (stamps = sensitivitystamps, dAop = sensitivitydAop,
         reverse = sensitivityreverse,
         blockentries = sensitivityblockentries)
+    # with the reverse sensitivities every worker factorizes the same pump
+    # Jacobian, so its fill reducing ordering is chosen once here for every
+    # worker's first factorization
+    pumpordering = isnothing(sensitivityreverse) ? nothing :
+        fillordering(pumpjacobianfactorization(factorization),
+            sensitivityjacobian(sensitivityreverse.op))
     if ondevice
         # what the solutions are read for decides whether the whole solution
         # comes back from the device or only some rows: the scattering
@@ -1101,10 +1167,12 @@ function linearizedsweep!(;
             !isempty(outputarrays.QE) || !isempty(outputarrays.CM) ||
             !isempty(outputarrays.Cnoise)
         if wantsnoise && !blocknoiseondevice
-            if isnothing(channelsigns)
-                @warn "A scattering block of this circuit has scattering parameters which cannot be evaluated on the backend, so its noise channels are formed on the host and the whole adjoint solution is copied back at every frequency, which is the largest transfer in the sweep. Give the block's data as a constant matrix, as tabulated data, or as a callable of one entry at a time (`ScatteringParameters(f; nports, form = :entry)`) to keep the noise on the backend." maxlog=1
-            else
+            if !isnothing(channelsigns)
                 @warn "A scattering block of this circuit states its noise with a NoiseCovariance, whose channels are formed on the host, so the whole adjoint solution is copied back at every frequency, which is the largest transfer in the sweep." maxlog=1
+            elseif !isempty(lsys.scattering.pumped)
+                @warn "A pumped scattering block of this circuit couples its modes through values formed on the host, so the noise channels of the circuit's dissipative blocks are formed on the host as well and the whole adjoint solution is copied back at every frequency, which is the largest transfer in the sweep." maxlog=1
+            else
+                @warn "A scattering block of this circuit has scattering parameters which cannot be evaluated on the backend, so its noise channels are formed on the host and the whole adjoint solution is copied back at every frequency, which is the largest transfer in the sweep. Give the block's data as a constant matrix, as tabulated data, or as a callable of one entry at a time (`ScatteringParameters(f; nports, form = :entry)`) to keep the noise on the backend." maxlog=1
             end
         end
         devicenoiseplan = if wantsnoise && blocknoiseondevice &&
@@ -1143,7 +1211,8 @@ function linearizedsweep!(;
             max(1, min(nbatches, Base.Threads.nthreads()))
         wss = [LinearizedWorkspace(outputarrays, sensitivitytuple, lsys,
             Nports, Nsignalmodes, Nnoisechannels,
-            length(wpumpmodes), factorization; assembles = false)
+            length(wpumpmodes), factorization; assembles = false,
+            pumpordering = pumpordering)
             for _ in 1:nworkers]
         # the noise scattering parameters are reduced on the device against
         # scratch of their own, so each worker computing them needs its own
@@ -1160,7 +1229,7 @@ function linearizedsweep!(;
             sensitivitytuple, lsys, bnm,
             portindices, noiseportimpedanceindices,
             portimpedances, noiseportimpedances, nodeindices,
-            componenttypes, w, wpumpmodes, Nsignalmodes, Nnodes,
+            componenttypes, w, wpumpmodes, Nsignalmodes,
             batch, factorization;
             presolved = (i, phin) -> forwardsolution!(phin, solutions, i),
             presolvedadjoint = isnothing(solutions.adj) ? nothing :
@@ -1174,28 +1243,18 @@ function linearizedsweep!(;
             # only this touches the device, serially; the outputs of the
             # batch it staged are host work on disjoint frequencies
             solvebatch!(solutions, lo)
-            if nworkers == 1
-                inner!(1, lo:hi)
-            else
-                chunks = collect(Base.Iterators.partition(lo:hi,
-                    1 + (hi - lo) ÷ nworkers))
-                Base.Threads.@sync for (t, batch) in enumerate(chunks)
-                    Base.Threads.@spawn inner!(t, batch)
-                end
-            end
+            runchunks(inner!, collect(Base.Iterators.partition(lo:hi,
+                1 + (hi - lo) ÷ nworkers)))
         end
     else
-        batches = Base.Iterators.partition(1:length(w),1+(length(w)-1)÷nbatches)
-        # every worker factorizes the same pattern, and with the reverse
-        # sensitivities the same pump Jacobian, so their fill reducing
-        # orderings are chosen once here for every worker's first
+        batches = collect(Base.Iterators.partition(1:length(w),
+            1 + (length(w) - 1) ÷ nbatches))
+        # every worker factorizes the same pattern, so its fill reducing
+        # ordering is chosen once here for every worker's first
         # factorization
         ordering = fillordering(factorization, lsys.Asparse)
-        pumpordering = isnothing(sensitivityreverse) ? nothing :
-            fillordering(pumpjacobianfactorization(factorization),
-                sensitivityjacobian(sensitivityreverse.op))
-        runbatches() = Threads.@sync for batch in batches
-            Base.Threads.@spawn hblinsolve_inner!(
+        runbatches() = runchunks(batches) do _, batch
+            hblinsolve_inner!(
                 LinearizedWorkspace(outputarrays, sensitivitytuple, lsys,
                     Nports, Nsignalmodes, Nnoisechannels,
                     length(wpumpmodes), factorization;
@@ -1204,7 +1263,7 @@ function linearizedsweep!(;
                 lsys, bnm,
                 portindices, noiseportimpedanceindices,
                 portimpedances, noiseportimpedances, nodeindices, componenttypes,
-                w, wpumpmodes, Nsignalmodes, Nnodes, batch,
+                w, wpumpmodes, Nsignalmodes, batch,
                 factorization; noiseplan = noiseplan,
                 channeltemperatures = channeltemperatures,
                 channelsigns = channelsigns, refine = refine)
@@ -1264,8 +1323,9 @@ function linearizedoutputs(; psc,
             noiseportimpedanceindices, noiseplan, ssys), modes, portnumbers, w)
     end
     # the added noise covariance is indexed by output port mode on both
-    # sides, like the scattering matrix
-    Cnoiseout = keyed(byports, returnCnoise, outputarrays.Cnoise)
+    # sides, the second conjugated
+    Cnoiseout = keyed(a -> Cnoisetokeyed(a, modes, portnumbers, w),
+        returnCnoise, outputarrays.Cnoise)
     Ssensitivityout = keyed(returnSsensitivity, outputarrays.Ssensitivity) do a
         Ssensitivitytokeyed(a, modes, portnumbers, modes, portnumbers,
             isnothing(sensitivitylabels) ? sensitivitynames :
@@ -1386,6 +1446,9 @@ struct LinearizedWorkspace{TA,TC,TR}
     scatteringwork::ScatteringWorkspace
     # the occupation of each noise channel mode, rebuilt per frequency
     occupation::Vector{Float64}
+    # the occupation scaled conjugate of the noise scattering matrix, the
+    # second factor of the added noise covariance, when that is asked for
+    noiseweighted::Matrix{Complex{Float64}}
     # the reduction of the noise scattering matrix the quantum efficiency
     # and the commutation relations read, formed per frequency, and the
     # scratch of their compensated row sums
@@ -1456,6 +1519,7 @@ function LinearizedWorkspace(arrays::LinearizedArrays, sensitivity, lsys,
         A, cache, cplx(np, np), cplx(Nnoisechannels*Nmodes, np),
         ScatteringNoiseWorkspace(), ScatteringWorkspace(),
         zeros(Float64, Nnoisechannels*Nmodes),
+        isempty(arrays.Cnoise) ? cplx(0, 0) : cplx(Nnoisechannels*Nmodes, np),
         NoiseReduction(zeros(Float64, np), zeros(Float64, np)),
         zeros(Float64, np), zeros(Float64, np),
         isempty(sensitivity.blockentries) ? nothing :
@@ -1467,7 +1531,7 @@ end
     hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
         sensitivity, lsys, bnm, portindices, noiseportimpedanceindices,
         portimpedances, noiseportimpedances, nodeindices, componenttypes,
-        w, wpumpmodes, Nmodes, Nnodes, wi, factorization;
+        w, wpumpmodes, Nmodes, wi, factorization;
         noiseplan = nothing, channeltemperatures = nothing,
         channelsigns = nothing, presolved = nothing,
         presolvedadjoint = nothing, presolvednoise = nothing, refine = true)
@@ -1501,7 +1565,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
     sensitivity, lsys, bnm,
     portindices, noiseportimpedanceindices,
     portimpedances, noiseportimpedances, nodeindices,
-    componenttypes, w, wpumpmodes, Nmodes, Nnodes, wi, factorization;
+    componenttypes, w, wpumpmodes, Nmodes, wi, factorization;
     noiseplan = nothing, channeltemperatures = nothing,
     channelsigns = nothing, presolved = nothing, presolvedadjoint = nothing,
     presolvednoise = nothing, refine::Bool = true)
@@ -1716,7 +1780,7 @@ function hblinsolve_inner!(ws::LinearizedWorkspace, arrays::LinearizedArrays,
             end
             if wantscnoise && isnothing(presolvednoise)
                 calcnoisecovariance!(view(arrays.Cnoise,:,:,i), Snoiseview,
-                    occupation)
+                    occupation, ws.noiseweighted)
             end
             if wantsreduction && isnothing(presolvednoise)
                 noisereduction!(noise, Snoiseview, wmodes, occupation,

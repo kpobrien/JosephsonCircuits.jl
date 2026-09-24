@@ -181,19 +181,19 @@ function devicenoise(plan::DeviceNoisePlan, blockplan, providers,
             # then the contraction of the adjoint solution against it
             if isnothing(providers.funcs)
                 blocknoisefactorkernel!(backend, 64)(blockplan.factors,
-                    blockplan.blockindex, blockplan.factoroff,
-                    providers.nports, providers.freqoff, providers.nfreq,
-                    providers.freqs, providers.valoff, providers.vals,
-                    providers.curv, providers.slopeoff, providers.eslopes,
-                    providers.conjsym, providers.zeroout, wmodesd,
-                    plan.nmodes, blockplan.nentries;
-                    ndrange = blockplan.nentries*plan.nmodes)
+                    blockplan.factorentries, blockplan.blockindex,
+                    blockplan.factoroff, providers.nports, providers.freqoff,
+                    providers.nfreq, providers.freqs, providers.valoff,
+                    providers.vals, providers.curv, providers.slopeoff,
+                    providers.eslopes, providers.conjsym, providers.zeroout,
+                    wmodesd, plan.nmodes;
+                    ndrange = blockplan.nfactors*plan.nmodes)
             else
                 blocknoiseentryfactorkernel!(backend, 64)(blockplan.factors,
-                    blockplan.blockindex, blockplan.factoroff,
-                    providers.nports, providers.funcs, providers.conjsym,
-                    wmodesd, plan.nmodes, blockplan.nentries;
-                    ndrange = blockplan.nentries*plan.nmodes)
+                    blockplan.factorentries, blockplan.blockindex,
+                    blockplan.factoroff, providers.nports, providers.funcs,
+                    providers.conjsym, wmodesd, plan.nmodes;
+                    ndrange = blockplan.nfactors*plan.nmodes)
             end
             KernelAbstractions.synchronize(backend)
             blocknoisecontractkernel!(backend, 64)(out, adjointsolution(i),
@@ -252,8 +252,10 @@ end
     blocknoisefactorkernel!
 
 The factor `L` of the vacuum noise covariance `I - S S'` of each dissipative
-scattering block at each mode frequency, one work item per (block, mode),
-from tabulated or constant scattering data.
+scattering block definition at each mode frequency, one work item per
+(definition, mode), from tabulated or constant scattering data. The
+entries of `factorentries` are the first instances of the definitions,
+whose factors the other instances read.
 
 The factorization is [`psdcholesky!`](@ref), which the host path runs too, so
 the two agree on the channels themselves and not only on the sums over them.
@@ -261,16 +263,16 @@ Its covariance is built from `2 n^3` interpolations rather than caching the
 `n^2` scattering parameters, because a work item has nowhere to cache them
 and a block has few ports.
 """
-@kernel function blocknoisefactorkernel!(L, @Const(blockindex),
-        @Const(factoroff), @Const(nports), @Const(freqoff), @Const(nfreq),
-        @Const(freqs), @Const(valoff), @Const(vals), @Const(curv),
-        @Const(slopeoff), @Const(eslopes), @Const(conjsym), @Const(zeroout),
-        @Const(wmodes), Nmodes, nentries)
+@kernel function blocknoisefactorkernel!(L, @Const(factorentries),
+        @Const(blockindex), @Const(factoroff), @Const(nports),
+        @Const(freqoff), @Const(nfreq), @Const(freqs), @Const(valoff),
+        @Const(vals), @Const(curv), @Const(slopeoff), @Const(eslopes),
+        @Const(conjsym), @Const(zeroout), @Const(wmodes), Nmodes)
     gid = @index(Global)
     @inbounds begin
         g = gid - 1
         m = g % Nmodes + 1
-        e = g ÷ Nmodes + 1
+        e = Int(factorentries[g ÷ Nmodes + 1])
         bi = Int(blockindex[e])
         n = Int(nports[bi])
         zo = zeroout[bi] != 0
@@ -285,14 +287,14 @@ end
 
 # the same, for blocks whose scattering parameters come from a callable of the
 # `:entry` form
-@kernel function blocknoiseentryfactorkernel!(L, @Const(blockindex),
-        @Const(factoroff), @Const(nports), @Const(funcs), @Const(conjsym),
-        @Const(wmodes), Nmodes, nentries)
+@kernel function blocknoiseentryfactorkernel!(L, @Const(factorentries),
+        @Const(blockindex), @Const(factoroff), @Const(nports), @Const(funcs),
+        @Const(conjsym), @Const(wmodes), Nmodes)
     gid = @index(Global)
     @inbounds begin
         g = gid - 1
         m = g % Nmodes + 1
-        e = g ÷ Nmodes + 1
+        e = Int(factorentries[g ÷ Nmodes + 1])
         bi = Int(blockindex[e])
         n = Int(nports[bi])
         f = funcs[bi]
@@ -384,8 +386,9 @@ tables, so [`blocknoisefactorkernel!`](@ref) and
 [`blocknoisecontractkernel!`](@ref) can form them where the solution already
 is. The scattering data itself comes from the [`DeviceProviders`](@ref) the
 stamps are evaluated through, so this holds only what those do not: which
-block each entry is, where its auxiliary rows and its factor live, and which
-entry each channel belongs to.
+block each entry is, where its auxiliary rows and its factor live, which
+entry each channel belongs to, and which entries form the factors: the
+instances of one definition share its factors, formed at its first.
 """
 struct DeviceBlockNoisePlan{VI,VC,B}
     blockindex::VI
@@ -393,8 +396,9 @@ struct DeviceBlockNoisePlan{VI,VC,B}
     auxbase::VI
     channelentry::VI
     channellocal::VI
+    factorentries::VI
     factors::VC
-    nentries::Int
+    nfactors::Int
     nchannels::Int
     nmodes::Int
     backend::B
@@ -412,8 +416,9 @@ shared; the tables which say where each block is can be.
 """
 function withfactors(bp::DeviceBlockNoisePlan)
     return DeviceBlockNoisePlan(bp.blockindex, bp.factoroff, bp.auxbase,
-        bp.channelentry, bp.channellocal, similar(bp.factors), bp.nentries,
-        bp.nchannels, bp.nmodes, bp.backend)
+        bp.channelentry, bp.channellocal, bp.factorentries,
+        similar(bp.factors), bp.nfactors, bp.nchannels,
+        bp.nmodes, bp.backend)
 end
 
 """
@@ -438,11 +443,21 @@ function plandeviceblocknoise(ssys, noiseplan::ScatteringNoisePlan,
     factoroff = Vector{Int32}(undef, ne)
     channelentry = Vector{Int32}(undef, noiseplan.Nchannels)
     channellocal = Vector{Int32}(undef, noiseplan.Nchannels)
+    # the entry which forms each definition's factors, by the definition's
+    # first block
+    factorentries = Int32[]
+    formedat = Dict{Int,Int}()
     off = 0
     for (e, bi) in enumerate(noiseplan.blockindices)
         n = ssys.blocks[bi].block.nports
-        factoroff[e] = off
-        off += n*n*Nmodes
+        f = get!(formedat, ssys.firstof[bi], e)
+        if f == e
+            push!(factorentries, e)
+            factoroff[e] = off
+            off += n*n*Nmodes
+        else
+            factoroff[e] = factoroff[f]
+        end
         for c in 1:n
             channelentry[noiseplan.channelbase[e] + c] = e
             channellocal[noiseplan.channelbase[e] + c] = c
@@ -452,5 +467,6 @@ function plandeviceblocknoise(ssys, noiseplan::ScatteringNoisePlan,
     return DeviceBlockNoisePlan(tobackend(backend, blockindex),
         tobackend(backend, factoroff), tobackend(backend, auxbase),
         tobackend(backend, channelentry), tobackend(backend, channellocal),
-        factors, ne, noiseplan.Nchannels, Int(Nmodes), backend)
+        tobackend(backend, factorentries), factors, length(factorentries),
+        noiseplan.Nchannels, Int(Nmodes), backend)
 end

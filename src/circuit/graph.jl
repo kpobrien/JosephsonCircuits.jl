@@ -15,7 +15,8 @@ and the diagnostics of the same branches.
     [`CircuitTopology`](@ref).
 - `searray`: the edges of the spanning tree, as `(node1, node2)` tuples.
 - `cearray`: the closure branches, the edges not in the spanning tree.
-- `glearray`: all edges, spanning tree first and closure branches after.
+- `glearray`: all edges, one connected component after another, each from
+    its lower node to its higher.
 - `lvarray`: for each closure branch, the vertices of the loop it closes
     through the spanning tree (empty for a loop of only two vertices, and
     empty altogether unless `loops = true` was asked for).
@@ -89,9 +90,9 @@ Each connected component of the branch graph gets a minimum spanning tree
 (Kruskal, on unit weights) rooted at its first vertex. The edges not in
 the tree are the closure branches, and when `loops = true` the loop of
 each closure branch is the unique path between its endpoints through the
-tree. The oriented incidence matrix is assembled from the tree edges
-followed by the closure branches, with vertices added for any nodes which
-carry no branch so that the matrix has `Nnodes - 1` columns.
+tree. The topology, with the oriented incidence matrix, is that of
+[`circuittopology`](@ref), which does not depend on the tree: the branches
+in ascending order of their endpoints, over `Nnodes - 1` columns.
 """
 function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
         loops::Bool = false)
@@ -136,8 +137,7 @@ function calcgraphs(Ledgearray::Array{Tuple{Int, Int}, 1}, Nnodes::Int;
             # The loop of a closure branch is the unique path through the
             # spanning tree between its endpoints, closed by the branch
             # itself. Nothing in the solvers reads the loops, so they are
-            # only computed on request; the tree and the closure branches
-            # are always built because the incidence matrix needs them.
+            # only computed on request.
             loops || continue
 
             cyc = treepath(parent, depth, Graphs.src(cj), Graphs.dst(cj))

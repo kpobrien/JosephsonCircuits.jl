@@ -159,32 +159,36 @@ per contribution.
 - `colptr`, `rowval`: the stored structure, which is the Jacobian's
     transpose when `transposed`, so that a column of it is a row of the
     Jacobian.
-- `lin`: the constant frequency dependent linear contribution.
+- `lin`: the constant frequency dependent linear contribution of each
+    stored entry.
+- `linear`: the [`LinearTermGather`](@ref) which refreshes `lin`.
 - `junctions`: the [`JunctionStructure`](@ref), the incidence triple
     product, the junction coefficients and the mode coupling index
     matrices, shared with every other plan of the system.
-- `perrow`: whether the assembly runs one work item per stored row rather than
-    per stored entry, which is the better trade on a host.
 - `transposed`: whether the stored structure is the Jacobian's transpose, which
     it is on a device and is not for a matrix meant to be factorized directly.
-- `rlinv`, `rlptr`, `clinv`, `clptr`: the mode layout and its inverse, which
-    turn a stored entry back into a (node, mode) pair.
+- `linv`, `lptr`: the mode layout of the rows and the columns, the square
+    Jacobian having one, and its inverse, which turn a stored entry back
+    into a (node, mode) pair.
+- `slots`: on a host, the decode of every real index of the layout
+    ([`realslot`](@ref)), from which the assembly of a stored column reads
+    the side of its entries the column does not fix; `nothing` on a device,
+    whose kernel decodes both sides of each entry.
 - `assemble!`, `backend`: the compiled kernel, sized at plan time, and the
     KernelAbstractions backend it runs on.
 - `n`: the number of stored entries, checked by
     [`assemblerealjacobian!`](@ref).
 """
-struct StructureRealJacobianPlan{Ti<:Integer,T<:Real,VI,VT,JS<:JunctionStructure{T},K,B}
+struct StructureRealJacobianPlan{Ti<:Integer,T<:Real,VI,VT,LG,JS<:JunctionStructure{T},VS,K,B}
     colptr::VI
     rowval::VI
     lin::VT
+    linear::LG
     junctions::JS
-    perrow::Bool
     transposed::Bool
-    rlinv::VI
-    rlptr::VI
-    clinv::VI
-    clptr::VI
+    linv::VI
+    lptr::VI
+    slots::VS
     assemble!::K
     backend::B
     n::Int
@@ -192,31 +196,65 @@ end
 
 """
     realstructureentry(::Type{T}, rri, rci, Nmodes, Nfreq, ami, amc, pairptr,
-        pairrow, pairjunc, paircoef, lmolj, rlinv, rlptr, clinv, clptr,
-        phimatrix)
+        pairrow, pairjunc, paircoef, lmolj, linv, lptr, phimatrix)
 
 The Josephson contribution to the stored entry of the real Jacobian at row
-`rri` and column `rci`, which is what every real assembly computes, the two
-kernels and the host loop here and the block preconditioner's
-`blockassemblykernel!`, and the only thing they share.
-
-The entry is decoded to the (node, mode) pair of its row and of its column,
-the junctions incident on that node pair are looked up, and their
-contributions summed. `(r0, c0)` and `(r0+1, c0+1)` are the real part entries
-and `(r0+1, c0)` and `(r0, c0+1)` the imaginary part ones, so a stored entry
-belongs to exactly one of the two and only one kind of contribution can reach
-it.
+`rri` and column `rci`, both decoded here ([`realslot`](@ref)): what the
+device kernel and the block preconditioner's `blockassemblykernel!` compute
+for each entry. The host assembly decodes the side its stored column fixes
+once per column instead, and both sum the contribution with
+[`realjosephsonentry`](@ref).
 """
 @inline function realstructureentry(::Type{T}, rri, rci, Nmodes, Nfreq, ami,
-        amc, pairptr, pairrow, pairjunc, paircoef, lmolj, rlinv, rlptr, clinv,
-        clptr, phimatrix) where {T}
+        amc, pairptr, pairrow, pairjunc, paircoef, lmolj, linv, lptr,
+        phimatrix) where {T}
+    return realjosephsonentry(T, realslot(rri, linv, lptr, Nmodes),
+        realslot(rci, linv, lptr, Nmodes), Nfreq, ami, amc, pairptr, pairrow,
+        pairjunc, paircoef, lmolj, phimatrix)
+end
+
+"""
+    realslot(r, linv, lptr, Nmodes)
+
+The decode of the real index `r` of a layout with inverse `linv` and
+pointer `lptr`: the offset of `r` within the real block of its complex
+index, the width of that block, and the node and the mode of the complex
+index.
+"""
+@inline function realslot(r, linv, lptr, Nmodes)
     @inbounds begin
-        ci = Int(rlinv[rri]); r0 = Int(rlptr[ci])
-        dr = rri - r0; wr = Int(rlptr[ci+1]) - r0
-        n1 = (ci - 1) ÷ Nmodes + 1; m1 = (ci - 1) % Nmodes + 1
-        cj = Int(clinv[rci]); c0 = Int(clptr[cj])
-        dc = rci - c0; wc = Int(clptr[cj+1]) - c0
-        n2 = (cj - 1) ÷ Nmodes + 1; m2 = (cj - 1) % Nmodes + 1
+        ci = Int(linv[r]); r0 = Int(lptr[ci])
+        return (r - r0, Int(lptr[ci+1]) - r0, (ci - 1) ÷ Nmodes + 1,
+            (ci - 1) % Nmodes + 1)
+    end
+end
+
+# the decode of every real index of `layout` in `Int32`, which a host
+# assembly reads rather than decoding each entry
+realslottable(layout::ModeLayout, Nmodes::Integer) =
+    [map(Int32, realslot(r, layout.inv, layout.ptr, Nmodes))
+        for r in 1:layout.rdim]
+
+"""
+    realjosephsonentry(::Type{T}, rowslot, colslot, Nfreq, ami, amc, pairptr,
+        pairrow, pairjunc, paircoef, lmolj, phimatrix)
+
+The Josephson contribution to the stored entry of the real Jacobian whose row
+and column decode to `rowslot` and `colslot` ([`realslot`](@ref)), which is
+what every real assembly computes: the two kernels and the host loop here and
+the block preconditioner's `blockassemblykernel!`.
+
+The junctions incident on the node pair of the entry are looked up, and
+their contributions summed. `(r0, c0)` and `(r0+1, c0+1)` are the real part
+entries and `(r0+1, c0)` and `(r0, c0+1)` the imaginary part ones, so a
+stored entry belongs to exactly one of the two and only one kind of
+contribution can reach it.
+"""
+@inline function realjosephsonentry(::Type{T}, rowslot, colslot, Nfreq, ami,
+        amc, pairptr, pairrow, pairjunc, paircoef, lmolj, phimatrix) where {T}
+    @inbounds begin
+        dr, wr, n1, m1 = map(Int, rowslot)
+        dc, wc, n2, m2 = map(Int, colslot)
 
         acc = zero(T)
         ind = Int(ami[m1, m2]); indconj = Int(amc[m1, m2])
@@ -270,8 +308,7 @@ point addition is not associative, so that order is part of the result.
 @kernel function structureassemblykernel!(nzval, @Const(colptr), @Const(rowval),
         @Const(lin), @Const(phimatrix), @Const(pairptr), @Const(pairrow),
         @Const(pairjunc), @Const(paircoef), @Const(lmolj), @Const(ami),
-        @Const(amc), @Const(rlinv), @Const(rlptr), @Const(clinv),
-        @Const(clptr), Nmodes, Nfreq, transposed)
+        @Const(amc), @Const(linv), @Const(lptr), Nmodes, Nfreq, transposed)
 
     gid = @index(Global)
     T = eltype(nzval)
@@ -284,64 +321,89 @@ point addition is not associative, so that order is part of the result.
         rri = transposed ? lo : Int(rowval[q])
         rci = transposed ? Int(rowval[q]) : lo
         nzval[q] = realstructureentry(T, rri, rci, Nmodes, Nfreq, ami, amc,
-            pairptr, pairrow, pairjunc, paircoef, lmolj, rlinv, rlptr, clinv,
-            clptr, phimatrix) + lin[q]
+            pairptr, pairrow, pairjunc, paircoef, lmolj, linv, lptr,
+            phimatrix) + lin[q]
     end
 end
 
 """
     structureassemblerowkernel!(nzval, colptr, rowval, lin, phimatrix, ...)
 
-As [`structureassemblykernel!`](@ref), one work item per stored *row* rather
-than per stored entry.
+As [`structureassemblykernel!`](@ref), one work item per stored column
+rather than per stored entry, which is how a host assembles
+([`realjacobiancolumnitem!`](@ref)).
 
 The two differ in what they amortize against what they lose. Per entry, the
-row has to be found by a binary search and the row side of the decode is
-redone for every entry; per row, the binary search is paid once for the
-whole row (the row side decode is still redone per entry), but the
-entries a work item writes are contiguous rather than interleaved with its
+column has to be found by a binary search and both sides of the entry are
+decoded; per column, the search is paid once, the side the column fixes is
+decoded once, and the other side is read from a table, but the entries a
+work item writes are contiguous rather than interleaved with its
 neighbours', which costs coalescing on a device and nothing on a host.
 """
 @kernel function structureassemblerowkernel!(nzval, @Const(colptr), @Const(rowval),
         @Const(lin), @Const(phimatrix), @Const(pairptr), @Const(pairrow),
         @Const(pairjunc), @Const(paircoef), @Const(lmolj), @Const(ami),
-        @Const(amc), @Const(rlinv), @Const(rlptr), @Const(clinv),
-        @Const(clptr), Nmodes, Nfreq, transposed)
-
+        @Const(amc), @Const(slots), Nfreq, transposed)
     gid = @index(Global)
+    realjacobiancolumnitem!(nzval, gid, colptr, rowval, lin,
+        phimatrix, pairptr, pairrow, pairjunc, paircoef, lmolj, ami, amc,
+        slots, Nfreq, transposed)
+end
+
+"""
+    realjacobiancolumnitem!(nzval, rr, colptr, rowval, lin, phimatrix,
+        pairptr, pairrow, pairjunc, paircoef, lmolj, ami, amc, slots, Nfreq,
+        transposed)
+
+Assemble the stored column `rr` of a host plan, which the row kernel and the
+host loop share. The side of its entries the column fixes, the Jacobian's
+row when the structure is transposed and its column otherwise, is decoded
+once, and the other side of each entry read from `slots`, the decode of
+every real index (`realslottable`); the entry is then what
+[`realstructureentry`](@ref) gives, plus the linear term.
+"""
+@inline function realjacobiancolumnitem!(nzval, rr, colptr, rowval, lin,
+        phimatrix, pairptr, pairrow, pairjunc, paircoef, lmolj, ami, amc,
+        slots, Nfreq, transposed)
     T = eltype(nzval)
     @inbounds begin
-        rr = gid
-        for q in Int(colptr[rr]):Int(colptr[rr+1])-1
-            # the stored matrix is the transpose on a device, so its column is
-            # the Jacobian's row; for a normally oriented one it is reversed
-            rri = transposed ? rr : Int(rowval[q])
-            rci = transposed ? Int(rowval[q]) : rr
-            nzval[q] = realstructureentry(T, rri, rci, Nmodes, Nfreq, ami, amc,
-                pairptr, pairrow, pairjunc, paircoef, lmolj, rlinv, rlptr,
-                clinv, clptr, phimatrix) + lin[q]
+        fixed = slots[rr]
+        if transposed
+            for q in Int(colptr[rr]):Int(colptr[rr+1])-1
+                nzval[q] = realjosephsonentry(T, fixed, slots[Int(rowval[q])],
+                    Nfreq, ami, amc, pairptr, pairrow, pairjunc, paircoef,
+                    lmolj, phimatrix) + lin[q]
+            end
+        else
+            for q in Int(colptr[rr]):Int(colptr[rr+1])-1
+                nzval[q] = realjosephsonentry(T, slots[Int(rowval[q])], fixed,
+                    Nfreq, ami, amc, pairptr, pairrow, pairjunc, paircoef,
+                    lmolj, phimatrix) + lin[q]
+            end
         end
     end
+    return nothing
 end
 
 """
     planstructurerealjacobian(Jt, T::Type{<:Real}, junctions::JunctionStructure,
-        invLnm, Gnm, Cnm, wmodesm, wmodes2m, rl::ModeLayout, cl::ModeLayout,
-        backend; transposed = true)
+        invLnm, Gnm, Cnm, wmodesm, wmodes2m, layout::ModeLayout, backend;
+        transposed = true)
 
 Build a [`StructureRealJacobianPlan`](@ref) with values of type `T` for
-the real Jacobian whose structure is `Jt`, stored transposed (as a device
-factorization wants it) when `transposed = true` and in the natural
-orientation otherwise. Nothing here is proportional to the number of
-contributions: what is
-stored is [`junctionpairtable`](@ref), whose size is set by the circuit rather
-than by the mode count, and the constant linear term, which is gathered on
-`backend` by [`linearcontributionkernel!`](@ref).
+the real Jacobian whose structure is `Jt`, its rows and columns both in the
+real representation `layout`, stored transposed (as a device factorization
+wants it) when `transposed = true` and in the natural orientation
+otherwise. Nothing here is proportional to the number of contributions:
+what is stored is [`junctionpairtable`](@ref), whose size is set by the
+circuit rather than by the mode count, and the constant linear term, which
+is gathered on `backend` at the entries it reaches
+([`LinearTermGather`](@ref)) and is zero at the others.
 """
 function planstructurerealjacobian(Jt, ::Type{T},
     junctions::JunctionStructure{T}, invLnm::SparseMatrixCSC,
     Gnm::SparseMatrixCSC, Cnm::SparseMatrixCSC, wmodesm::Diagonal,
-    wmodes2m::Diagonal, rl::ModeLayout, cl::ModeLayout, backend;
+    wmodes2m::Diagonal, layout::ModeLayout, backend;
     transposed::Bool = true) where {T<:Real}
 
     n = nnz(Jt)
@@ -356,21 +418,22 @@ function planstructurerealjacobian(Jt, ::Type{T},
     end
 
     # the constant linear term, gathered on the backend
-    drlinv = d(collect(rl.inv)); drlptr = d(collect(rl.ptr))
-    dclinv = d(collect(cl.inv)); dclptr = d(collect(cl.ptr))
-    lin = KernelAbstractions.allocate(backend, T, n)
-    linearcontribution!(lin, dcolptr, drowval, drlinv, drlptr, dclinv,
-        dclptr, invLnm, Gnm, Cnm, wmodesm, wmodes2m, transposed, backend)
+    dlinv = d(collect(layout.inv)); dlptr = d(collect(layout.ptr))
+    linear = lineargather(Ti, dcolptr, drowval, invLnm, Gnm, Cnm, wmodesm,
+        wmodes2m, layout, dlptr, transposed, backend)
+    lin = gatherlinear!(fill!(KernelAbstractions.allocate(backend, T, n),
+        zero(T)), linear, backend)
 
     # one work item per entry on a device, where coalescing pays for the
-    # repeated decode, and one per row on a host, where it does not
-    perrow = backend isa CPU
-    assemble! = perrow ? structureassemblerowkernel!(backend, 64) :
-        structureassemblykernel!(backend, 64)
+    # repeated decode, and one per stored column on a host, where it does
+    # not and the decode of the column's other side is read from a table
+    slots = backend isa CPU ? realslottable(layout, junctions.nmodes) : nothing
+    assemble! = isnothing(slots) ? structureassemblykernel!(backend, 64) :
+        structureassemblerowkernel!(backend, 64)
     return StructureRealJacobianPlan{Ti,T,typeof(dcolptr),typeof(lin),
-        typeof(junctions),typeof(assemble!),typeof(backend)}(
-        dcolptr, drowval, lin, junctions, perrow, transposed, drlinv, drlptr,
-        dclinv, dclptr, assemble!, backend, n)
+        typeof(linear),typeof(junctions),typeof(slots),typeof(assemble!),
+        typeof(backend)}(dcolptr, drowval, lin, linear, junctions, transposed,
+        dlinv, dlptr, slots, assemble!, backend, n)
 end
 
 """
@@ -389,19 +452,26 @@ function assemblerealjacobian!(nzval::AbstractVector,
     length(nzval) == plan.n || throw(DimensionMismatch(
         lazy"`nzval` has length $(length(nzval)) but the plan assembles $(plan.n) entries."))
     js = plan.junctions
-    if hostloop(plan.backend, plan.n)
-        # the same per row assembly as a plain loop
-        hostassemblerealjacobian!(nzval, plan.colptr, plan.rowval, plan.lin,
-            phimatrix, js.pairptr, js.pairrow, js.pairjunc, js.paircoef,
-            js.lmolj, js.ami, js.amc, plan.rlinv, plan.rlptr, plan.clinv,
-            plan.clptr, js.nmodes, js.nfreq, plan.transposed)
+    colptr, rowval, lin, slots = plan.colptr, plan.rowval, plan.lin, plan.slots
+    if isnothing(slots)
+        # a device: one work item per entry, which decodes both sides
+        plan.assemble!(nzval, colptr, rowval, lin, phimatrix, js.pairptr,
+            js.pairrow, js.pairjunc, js.paircoef, js.lmolj, js.ami, js.amc,
+            plan.linv, plan.lptr, js.nmodes, js.nfreq, plan.transposed;
+            ndrange = plan.n)
+    elseif hostloop(plan.backend, plan.n)
+        # the per column assembly of the row kernel as a plain loop
+        for rr in 1:length(colptr)-1
+            realjacobiancolumnitem!(nzval, rr, colptr, rowval, lin,
+                phimatrix, js.pairptr, js.pairrow, js.pairjunc, js.paircoef,
+                js.lmolj, js.ami, js.amc, slots, js.nfreq, plan.transposed)
+        end
         return nzval
+    else
+        plan.assemble!(nzval, colptr, rowval, lin, phimatrix, js.pairptr,
+            js.pairrow, js.pairjunc, js.paircoef, js.lmolj, js.ami, js.amc,
+            slots, js.nfreq, plan.transposed; ndrange = length(colptr) - 1)
     end
-    plan.assemble!(nzval, plan.colptr, plan.rowval, plan.lin, phimatrix,
-        js.pairptr, js.pairrow, js.pairjunc, js.paircoef, js.lmolj,
-        js.ami, js.amc, plan.rlinv, plan.rlptr, plan.clinv, plan.clptr,
-        js.nmodes, js.nfreq, plan.transposed;
-        ndrange = plan.perrow ? length(plan.colptr) - 1 : plan.n)
     # a caller assembling many matrices in a row synchronizes once after
     synchronize && KernelAbstractions.synchronize(plan.backend)
     return nzval
@@ -419,24 +489,6 @@ hostloop(backend, n) = backend isa CPU &&
 # threads available: the launch costs more than the items
 const hostlooplimit = 1 << 16
 
-# the body of `structureassemblerowkernel!` over every stored row, on the
-# host, with no kernel launch
-function hostassemblerealjacobian!(nzval, colptr, rowval, lin, phimatrix,
-        pairptr, pairrow, pairjunc, paircoef, lmolj, ami, amc, rlinv, rlptr,
-        clinv, clptr, Nmodes, Nfreq, transposed)
-    T = eltype(nzval)
-    @inbounds for rr in 1:length(colptr)-1
-        for q in Int(colptr[rr]):Int(colptr[rr+1])-1
-            rri = transposed ? rr : Int(rowval[q])
-            rci = transposed ? Int(rowval[q]) : rr
-            nzval[q] = realstructureentry(T, rri, rci, Nmodes, Nfreq, ami, amc,
-                pairptr, pairrow, pairjunc, paircoef, lmolj, rlinv, rlptr,
-                clinv, clptr, phimatrix) + lin[q]
-        end
-    end
-    return nzval
-end
-
 # the stored column of entry `q` of a compressed structure, the last `j`
 # with `colptr[j] <= q`, by binary search: a stored column index per entry
 # would cost memory and save no time
@@ -453,48 +505,277 @@ end
     return lo
 end
 
-# the value of a sparse matrix at (i, j), or zero, by binary search in its
-# column. The linear term matrices are small and their columns short, so this
-# is a handful of cached reads.
-@inline function sparselookup(colptr, rowval, nzval, i, j)
-    lo = Int(colptr[j]); hi = Int(colptr[j+1]) - 1
-    z = zero(eltype(nzval))
-    lo > hi && return z
-    @inbounds while lo < hi
-        mid = (lo + hi) >>> 1
-        if Int(rowval[mid]) < i
-            lo = mid + 1
-        else
-            hi = mid
+# the stored entry at row `i` of column `j` of a compressed structure, or
+# zero where there is none, by binary search in the column
+@inline function storedposition(colptr, rowval, i, j)
+    @inbounds begin
+        lo = Int(colptr[j]); hi = Int(colptr[j+1]) - 1
+        lo > hi && return 0
+        while lo < hi
+            mid = (lo + hi) >>> 1
+            if Int(rowval[mid]) < i
+                lo = mid + 1
+            else
+                hi = mid
+            end
         end
+        return Int(rowval[lo]) == i ? lo : 0
     end
-    @inbounds return Int(rowval[lo]) == i ? nzval[lo] : z
 end
 
-# the launch of `linearcontributionkernel!`, shared by the plan builder and
-# its refresh: the constant linear contribution of every stored entry
-function linearcontribution!(lin, colptr, rowval, rlinv, rlptr, clinv,
-        clptr, invLnm, Gnm, Cnm, wmodesm, wmodes2m, transposed, backend)
-    linearcontributionkernel!(backend, 64)(lin, colptr, rowval,
-        rlinv, rlptr, clinv, clptr,
-        linearterminputs(eltype(colptr), invLnm, Gnm, Cnm, wmodesm,
-            wmodes2m, backend)..., transposed; ndrange = length(lin))
-    KernelAbstractions.synchronize(backend)
+# the value of a sparse matrix at (i, j), or zero. The linear term matrices
+# are small and their columns short, so this is a handful of cached reads.
+@inline function sparselookup(colptr, rowval, nzval, i, j)
+    q = storedposition(colptr, rowval, i, j)
+    return iszero(q) ? zero(eltype(nzval)) : @inbounds(nzval[q])
+end
+
+"""
+    linearentry(lcolptr, lrowval, lnzval, gcolptr, growval, gnzval, wm,
+        ccolptr, crowval, cnzval, wm2, ci, cj, dr, dc)
+    linearentry(lcolptr, lrowval, lnzval, gcolptr, growval, gnzval, wm,
+        ccolptr, crowval, cnzval, wm2, ci, cj)
+
+The constant linear term `invLnm + im*Gnm*wmodesm - Cnm*wmodes2m` at the
+complex position `(ci, cj)`: the entry at offset `(dr, dc)` of its real block
+([`realblockterm`](@ref)), or without an offset the complex value. The
+three matrices, compressed by columns, are looked up at the position, the
+last two scaled by the mode frequency diagonals `wm` and `wm2` at the
+column, and summed in the order `invLnm`, `Gnm`, `Cnm`: floating point
+addition is not associative, so the order is part of the result.
+"""
+@inline function linearentry(lcolptr, lrowval, lnzval, gcolptr, growval,
+        gnzval, wm, ccolptr, crowval, cnzval, wm2, ci, cj, dr, dc)
+    @inbounds begin
+        acc = realblockterm(sparselookup(lcolptr, lrowval, lnzval, ci, cj),
+            dr, dc)
+        acc += realblockterm((im * wm[cj]) *
+            sparselookup(gcolptr, growval, gnzval, ci, cj), dr, dc)
+        acc += realblockterm((-1 * wm2[cj]) *
+            sparselookup(ccolptr, crowval, cnzval, ci, cj), dr, dc)
+        return acc
+    end
+end
+
+@inline function linearentry(lcolptr, lrowval, lnzval, gcolptr, growval,
+        gnzval, wm, ccolptr, crowval, cnzval, wm2, ci, cj)
+    @inbounds begin
+        acc = sparselookup(lcolptr, lrowval, lnzval, ci, cj)
+        acc += (im * wm[cj]) * sparselookup(gcolptr, growval, gnzval, ci, cj)
+        acc += (-1 * wm2[cj]) * sparselookup(ccolptr, crowval, cnzval, ci, cj)
+        return acc
+    end
+end
+
+"""
+    LinearTermGather{VI,NT}
+
+The constant linear term `invLnm + im*Gnm*wmodesm - Cnm*wmodes2m` of an
+assembly plan: the stored entries of the plan it reaches, and the three
+matrices it is read from, on the plan's backend.
+
+A stored entry takes something from the linear term only if its complex
+position is stored in one of the three matrices, which the structure fixes
+whatever the values, and most entries of a Jacobian couple modes through the
+junctions alone. So the entries the linear term reaches are found once, when
+the plan is built, and [`refreshlinear!`](@ref) rewrites those and nothing
+else for new component values: every other entry takes zero, whatever the
+values.
+
+# Fields
+- `pos`: the stored entry of the plan each reached entry is, or zero where
+    the plan's structure does not store it.
+- `row`, `col`: the complex position it belongs to.
+- `part`: for a real plan, its offset `(dr, dc)` in the real block of that
+    position, as `2dr + dc`; empty for a complex plan.
+- `inputs`: the three matrices compressed by columns, each with the mode
+    frequency diagonal it multiplies, named and ordered as
+    [`linearentry`](@ref) takes them. The values are the plan's own copies,
+    which a refresh overwrites.
+"""
+struct LinearTermGather{VI,NT}
+    pos::VI
+    row::VI
+    col::VI
+    part::VI
+    inputs::NT
+end
+
+"""
+    lineargather(::Type{Ti}, colptr, rowval, invLnm, Gnm, Cnm, wmodesm,
+        wmodes2m, layout, lptr, transposed::Bool, backend)
+
+The [`LinearTermGather`](@ref) of a plan whose structure is `colptr`,
+`rowval` on `backend`, the Jacobian's transpose when `transposed`. Every
+position stored in one of the three matrices is expanded to the entries of
+its real block through `layout`, whose pointer `lptr` is on the backend, or
+kept whole for a complex plan (`layout = lptr = nothing`), and located in
+the structure. The walk is over the entries of the three matrices, so it
+costs their size and not the plan's.
+"""
+function lineargather(::Type{Ti}, colptr, rowval, invLnm::SparseMatrixCSC,
+        Gnm::SparseMatrixCSC, Cnm::SparseMatrixCSC, wmodesm::Diagonal,
+        wmodes2m::Diagonal, layout, lptr, transposed::Bool,
+        backend) where {Ti}
+    width(i) = isnothing(layout) ? 1 : Int(layout.ptr[i+1] - layout.ptr[i])
+    # the entries, counted and then listed by column, block column, row and
+    # block row, so that on a host a refresh writes the entries of an
+    # untransposed structure in the order they are stored
+    rows = Int[]
+    n = 0
+    for cj in axes(invLnm, 2)
+        unionrows!(rows, invLnm, Gnm, Cnm, cj)
+        n += width(cj) * sum(width, rows; init = 0)
+    end
+    row = Vector{Ti}(undef, n); col = Vector{Ti}(undef, n)
+    part = Vector{Ti}(undef, isnothing(layout) ? 0 : n)
+    k = 0
+    for cj in axes(invLnm, 2)
+        unionrows!(rows, invLnm, Gnm, Cnm, cj)
+        for dc in 0:width(cj)-1, ci in rows, dr in 0:width(ci)-1
+            k += 1
+            row[k] = ci; col[k] = cj
+            isnothing(layout) || (part[k] = 2dr + dc)
+        end
+    end
+    d = x -> tobackend(backend, x)
+    drow, dcol, dpart = d(row), d(col), d(part)
+    pos = KernelAbstractions.allocate(backend, Ti, n)
+    if hostloop(backend, n)
+        for k in 1:n
+            storedpositionitem!(pos, colptr, rowval, drow, dcol, dpart, lptr,
+                transposed, k)
+        end
+    elseif n > 0
+        storedpositionkernel!(backend, 64)(pos, colptr, rowval, drow, dcol,
+            dpart, lptr, transposed; ndrange = n)
+        KernelAbstractions.synchronize(backend)
+    end
+    # the values are the gather's own copies, which a refresh overwrites,
+    # held as complex and the frequencies as real doubles whatever the
+    # matrices hold, so that a gather has one type whichever of its
+    # matrices are real or complex
+    di = x -> tobackend(backend, convert(Vector{Ti}, x))
+    dv = x -> tobackend(backend, Vector{ComplexF64}(x))
+    df = x -> tobackend(backend, Vector{Float64}(x))
+    inputs = (lcolptr = di(SparseArrays.getcolptr(invLnm)),
+        lrowval = di(rowvals(invLnm)), lnzval = dv(nonzeros(invLnm)),
+        gcolptr = di(SparseArrays.getcolptr(Gnm)), growval = di(rowvals(Gnm)),
+        gnzval = dv(nonzeros(Gnm)), wm = df(wmodesm.diag),
+        ccolptr = di(SparseArrays.getcolptr(Cnm)), crowval = di(rowvals(Cnm)),
+        cnzval = dv(nonzeros(Cnm)), wm2 = df(wmodes2m.diag))
+    return LinearTermGather{typeof(pos),typeof(inputs)}(pos, drow, dcol,
+        dpart, inputs)
+end
+
+# the rows stored in column `j` of any of three sparse matrices, ascending
+# and each once, into `rows`
+function unionrows!(rows, A, B, C, j)
+    empty!(rows)
+    for M in (A, B, C)
+        append!(rows, view(rowvals(M), nzrange(M, j)))
+    end
+    return unique!(sort!(rows))
+end
+
+# the stored entry which entry `k` of a gather is, or zero where the
+# structure stores none: its real row and column from its complex position
+# and block offset (the complex position itself for a complex plan, with
+# `lptr === nothing`), searched for in the stored column, which is the
+# Jacobian's row when `transposed`
+@inline function storedpositionitem!(pos, colptr, rowval, row, col, part,
+        lptr, transposed, k)
+    @inbounds begin
+        ci = Int(row[k]); cj = Int(col[k])
+        if isnothing(lptr)
+            r, c = ci, cj
+        else
+            p = Int(part[k])
+            r = Int(lptr[ci]) + (p >> 1); c = Int(lptr[cj]) + (p & 1)
+        end
+        pos[k] = transposed ? storedposition(colptr, rowval, c, r) :
+            storedposition(colptr, rowval, r, c)
+    end
+    return nothing
+end
+
+@kernel function storedpositionkernel!(pos, @Const(colptr), @Const(rowval),
+        @Const(row), @Const(col), @Const(part), lptr, transposed)
+    gid = @index(Global)
+    storedpositionitem!(pos, colptr, rowval, row, col, part, lptr,
+        transposed, gid)
+end
+
+"""
+    refreshlinear!(lin, g::LinearTermGather, invLnm, Gnm, Cnm, wmodesm,
+        wmodes2m, backend)
+
+Write the linear term at the values of `invLnm`, `Gnm` and `Cnm` into the
+entries of `lin` it reaches: the new values are copied into the gather's
+own, and [`linearentry`](@ref) is evaluated at each reached entry, a plain
+loop on the host and a kernel on a device. The matrices must have the
+structure the gather was built on.
+"""
+function refreshlinear!(lin, g::LinearTermGather, invLnm, Gnm, Cnm,
+        wmodesm::Diagonal, wmodes2m::Diagonal, backend)
+    x = g.inputs
+    (length(x.lnzval) == nnz(invLnm) && length(x.gnzval) == nnz(Gnm) &&
+        length(x.cnzval) == nnz(Cnm)) || throw(DimensionMismatch(
+        "the linear term matrices do not have the structure the plan was built on; build a new plan."))
+    copyto!(x.lnzval, nonzeros(invLnm))
+    copyto!(x.gnzval, nonzeros(Gnm))
+    copyto!(x.cnzval, nonzeros(Cnm))
+    copyto!(x.wm, wmodesm.diag)
+    copyto!(x.wm2, wmodes2m.diag)
+    return gatherlinear!(lin, g, backend)
+end
+
+# the evaluation of `refreshlinear!`, on the values the gather holds
+function gatherlinear!(lin, g::LinearTermGather, backend)
+    x = g.inputs
+    args = (g.pos, g.row, g.col, g.part, x.lcolptr, x.lrowval, x.lnzval,
+        x.gcolptr, x.growval, x.gnzval, x.wm, x.ccolptr, x.crowval, x.cnzval,
+        x.wm2)
+    n = length(g.pos)
+    if hostloop(backend, n)
+        for k in 1:n
+            linearitem!(lin, k, args...)
+        end
+    elseif n > 0
+        linearkernel!(backend, 64)(lin, args...; ndrange = n)
+        KernelAbstractions.synchronize(backend)
+    end
     return lin
 end
 
-# the three linear term matrices, compressed by columns in the index type
-# `Ti`, with the mode frequency diagonals each multiplies, on `backend`, in
-# the order the linear contribution kernels take them
-function linearterminputs(::Type{Ti}, invLnm, Gnm, Cnm, wmodesm, wmodes2m,
-        backend) where {Ti}
-    d = x -> tobackend(backend, convert(Vector{Ti}, x))
-    return (d(SparseArrays.getcolptr(invLnm)), d(rowvals(invLnm)),
-        tobackend(backend, nonzeros(invLnm)),
-        d(SparseArrays.getcolptr(Gnm)), d(rowvals(Gnm)),
-        tobackend(backend, nonzeros(Gnm)), tobackend(backend, wmodesm.diag),
-        d(SparseArrays.getcolptr(Cnm)), d(rowvals(Cnm)),
-        tobackend(backend, nonzeros(Cnm)), tobackend(backend, wmodes2m.diag))
+# the reached entry `k` of a gather: the real block entry of its position
+# for a real `lin`, the complex value for a complex one
+@inline function linearitem!(lin, k, pos, row, col, part, lcolptr, lrowval,
+        lnzval, gcolptr, growval, gnzval, wm, ccolptr, crowval, cnzval, wm2)
+    @inbounds begin
+        q = Int(pos[k])
+        iszero(q) && return nothing
+        ci = Int(row[k]); cj = Int(col[k])
+        if eltype(lin) <: Complex
+            lin[q] = linearentry(lcolptr, lrowval, lnzval, gcolptr, growval,
+                gnzval, wm, ccolptr, crowval, cnzval, wm2, ci, cj)
+        else
+            p = Int(part[k])
+            lin[q] = eltype(lin)(linearentry(lcolptr, lrowval, lnzval,
+                gcolptr, growval, gnzval, wm, ccolptr, crowval, cnzval, wm2,
+                ci, cj, p >> 1, p & 1))
+        end
+    end
+    return nothing
+end
+
+@kernel function linearkernel!(lin, @Const(pos), @Const(row), @Const(col),
+        @Const(part), @Const(lcolptr), @Const(lrowval), @Const(lnzval),
+        @Const(gcolptr), @Const(growval), @Const(gnzval), @Const(wm),
+        @Const(ccolptr), @Const(crowval), @Const(cnzval), @Const(wm2))
+    gid = @index(Global)
+    linearitem!(lin, gid, pos, row, col, part, lcolptr, lrowval,
+        lnzval, gcolptr, growval, gnzval, wm, ccolptr, crowval, cnzval, wm2)
 end
 
 """
@@ -502,59 +783,16 @@ end
         wmodesm, wmodes2m, Ljb, Lscale)
 
 Rewrite the value arrays of an assembly plan for new component values under
-the same structure: the constant linear contribution of each stored entry,
-and `Lscale/Lj` per junction. The incidence products and the structure are
-what they were.
+the same structure: the constant linear term at the entries it reaches
+([`refreshlinear!`](@ref)), and `Lscale/Lj` per junction. The incidence
+products and the structure are what they were.
 """
-function refreshvalues!(plan::StructureRealJacobianPlan{Ti,T}, invLnm, Gnm,
-        Cnm, wmodesm, wmodes2m, Ljb::SparseVector, Lscale) where {Ti,T}
-    linearcontribution!(plan.lin, plan.colptr, plan.rowval, plan.rlinv,
-        plan.rlptr, plan.clinv, plan.clptr, invLnm, Gnm, Cnm, wmodesm,
-        wmodes2m, plan.transposed, plan.backend)
+function refreshvalues!(plan::StructureRealJacobianPlan, invLnm, Gnm, Cnm,
+        wmodesm, wmodes2m, Ljb::SparseVector, Lscale)
+    refreshlinear!(plan.lin, plan.linear, invLnm, Gnm, Cnm, wmodesm,
+        wmodes2m, plan.backend)
     refreshvalues!(plan.junctions, Ljb, Lscale)
     return plan
-end
-
-"""
-    linearcontributionkernel!(lin, colptr, rowval, ...)
-
-The constant frequency dependent contribution to each stored entry of the
-Jacobian: `invLnm + im*Gnm*wmodesm - Cnm*wmodes2m`, in the real
-representation.
-
-Scattering each stored entry of the three matrices into the Jacobian through a
-precomputed index map costs a map per matrix, a pass over a Jacobian sized
-array per matrix, and, on a device, an upload of the result. Each stored entry
-of the Jacobian takes at most one entry from each of the three, so it is
-gathered instead: decode the entry into the complex position it belongs to and
-look that position up in each. The three are summed in the order `invLnm`,
-`Gnm`, `Cnm`, because floating point addition is not associative and the order
-is part of the result.
-"""
-@kernel function linearcontributionkernel!(lin, @Const(colptr), @Const(rowval),
-        @Const(rlinv), @Const(rlptr), @Const(clinv), @Const(clptr),
-        @Const(lcolptr), @Const(lrowval), @Const(lnzval),
-        @Const(gcolptr), @Const(growval), @Const(gnzval), @Const(wm),
-        @Const(ccolptr), @Const(crowval), @Const(cnzval), @Const(wm2),
-        transposed)
-
-    gid = @index(Global)
-    T = eltype(lin)
-    @inbounds begin
-        q = gid
-        lo = storedcolumn(colptr, q)
-        rri = transposed ? lo : Int(rowval[q])
-        rci = transposed ? Int(rowval[q]) : lo
-        ci = Int(rlinv[rri]); dr = rri - Int(rlptr[ci])
-        cj = Int(clinv[rci]); dc = rci - Int(clptr[cj])
-
-        acc = realblockterm(sparselookup(lcolptr, lrowval, lnzval, ci, cj), dr, dc)
-        acc += realblockterm((im * wm[cj]) *
-            sparselookup(gcolptr, growval, gnzval, ci, cj), dr, dc)
-        acc += realblockterm((-1 * wm2[cj]) *
-            sparselookup(ccolptr, crowval, cnzval, ci, cj), dr, dc)
-        lin[q] = T(acc)
-    end
 end
 
 # ---------------------------------------------------------------------------
@@ -568,7 +806,7 @@ end
 # or not.
 
 """
-    StructureComplexJosephsonPlan{Ti,VI,VT,MI,K,B}
+    StructureComplexJosephsonPlan{Ti,VI,JS,K,B}
 
 The Josephson contribution to the complex Jacobian, as a linear map from the
 Fourier coefficients of `cos(phi(t))` to the stored entries of a matrix with a
@@ -584,7 +822,9 @@ rather than for the whole Jacobian.
 - `colptr`, `rowval`: the stored structure, the transpose when `transposed`.
 - `junctions`: the [`JunctionStructure`](@ref), of which the pair table,
     the junction coefficients and `ami` are read.
-- `perrow`, `transposed`: as in [`StructureRealJacobianPlan`](@ref).
+- `perrow`: whether the assembly runs one work item per stored column rather
+    than per stored entry, which is the better trade on a host.
+- `transposed`: as in [`StructureRealJacobianPlan`](@ref).
 - `assemble!`, `backend`: the compiled kernel and its backend.
 - `n`: the number of stored entries.
 """
@@ -599,16 +839,12 @@ struct StructureComplexJosephsonPlan{Ti<:Integer,VI,JS<:JunctionStructure,K,B}
     n::Int
 end
 
-# `conj(sum)` is the sum of conjugated terms, so `conjugate` flips which of the
-# two kinds of coupling is conjugated rather than conjugating afterwards
-@inline needsconj(ind::Int, conjugate::Bool) = (ind > 0) == conjugate
-
 # the Josephson contribution to the stored entry of the complex Jacobian at
 # row `ci` and column `cj`, the complex counterpart of `realstructureentry`:
-# one lookup of the coupling per incident junction, no conjugate partner
+# one lookup of the coupling per incident junction, no conjugate partner,
+# the Fourier coefficient conjugated where the coupling index is negative
 @inline function josephsonentry(::Type{T}, ci, cj, Nmodes, Nfreq, ami,
-        pairptr, pairrow, pairjunc, paircoef, lmolj, phimatrix,
-        conjugate) where {T}
+        pairptr, pairrow, pairjunc, paircoef, lmolj, phimatrix) where {T}
     @inbounds begin
         n1 = (ci - 1) ÷ Nmodes + 1; m1 = (ci - 1) % Nmodes + 1
         n2 = (cj - 1) ÷ Nmodes + 1; m2 = (cj - 1) % Nmodes + 1
@@ -619,8 +855,7 @@ end
             if Int(pairrow[k]) == n1
                 b = Int(pairjunc[k])
                 v = phimatrix[abs(ind) + Nfreq * (b - 1)]
-                acc += (paircoef[k] * lmolj[b]) *
-                    (needsconj(ind, conjugate) ? conj(v) : v)
+                acc += (paircoef[k] * lmolj[b]) * (ind < 0 ? conj(v) : v)
             end
         end
         return acc
@@ -631,7 +866,7 @@ end
 # `structureassemblykernel!`
 @kernel function complexjosephsonkernel!(nzval, @Const(colptr), @Const(rowval),
         @Const(phimatrix), @Const(pairptr), @Const(pairrow), @Const(pairjunc),
-        @Const(paircoef), @Const(lmolj), @Const(ami), Nmodes, Nfreq, conjugate,
+        @Const(paircoef), @Const(lmolj), @Const(ami), Nmodes, Nfreq,
         transposed)
     gid = @index(Global)
     T = eltype(nzval)
@@ -643,24 +878,36 @@ end
         ri = transposed ? lo : Int(rowval[q])
         ci = transposed ? Int(rowval[q]) : lo
         nzval[q] = josephsonentry(T, ri, ci, Nmodes, Nfreq, ami,
-            pairptr, pairrow, pairjunc, paircoef, lmolj, phimatrix, conjugate)
+            pairptr, pairrow, pairjunc, paircoef, lmolj, phimatrix)
     end
 end
 
-# one work item per stored row of the complex Jacobian, the counterpart of
-# `structureassemblerowkernel!`
+# one work item per stored column of the complex Jacobian, the counterpart
+# of `structureassemblerowkernel!`
 @kernel function complexjosephsonrowkernel!(nzval, @Const(colptr), @Const(rowval),
         @Const(phimatrix), @Const(pairptr), @Const(pairrow), @Const(pairjunc),
-        @Const(paircoef), @Const(lmolj), @Const(ami), Nmodes, Nfreq, conjugate,
+        @Const(paircoef), @Const(lmolj), @Const(ami), Nmodes, Nfreq,
         transposed)
     gid = @index(Global)
+    complexjosephsoncolumnitem!(nzval, gid, colptr, rowval,
+        phimatrix, pairptr, pairrow, pairjunc, paircoef, lmolj, ami, Nmodes,
+        Nfreq, transposed)
+end
+
+# the stored column `gid` of a host plan, which the row kernel and the host
+# loop share; a column of the stored structure is a column of the Jacobian,
+# or a row of it when the transpose is what is stored
+@inline function complexjosephsoncolumnitem!(nzval, gid, colptr, rowval,
+        phimatrix, pairptr, pairrow, pairjunc, paircoef, lmolj, ami, Nmodes,
+        Nfreq, transposed)
     T = eltype(nzval)
     @inbounds for q in Int(colptr[gid]):Int(colptr[gid+1])-1
         ri = transposed ? gid : Int(rowval[q])
         ci = transposed ? Int(rowval[q]) : gid
         nzval[q] = josephsonentry(T, ri, ci, Nmodes, Nfreq, ami,
-            pairptr, pairrow, pairjunc, paircoef, lmolj, phimatrix, conjugate)
+            pairptr, pairrow, pairjunc, paircoef, lmolj, phimatrix)
     end
+    return nothing
 end
 
 """
@@ -686,20 +933,27 @@ end
 
 """
     addjosephsonterm!(nzval::AbstractVector,
-        plan::StructureComplexJosephsonPlan, phimatrix, conjugate::Bool = false)
+        plan::StructureComplexJosephsonPlan, phimatrix)
 
-Write the Josephson contribution into `nzval`, overwriting it. With
-`conjugate` the map is the one whose source coefficients are conjugated, which
-is what the adjoint of the linearized system needs.
+Write the Josephson contribution into `nzval`, overwriting it.
 """
 function addjosephsonterm!(nzval::AbstractVector,
-    plan::StructureComplexJosephsonPlan, phimatrix, conjugate::Bool = false)
+    plan::StructureComplexJosephsonPlan, phimatrix)
     length(nzval) == plan.n || throw(DimensionMismatch(
         lazy"`nzval` has length $(length(nzval)) but the plan assembles $(plan.n) entries."))
     js = plan.junctions
+    if hostloop(plan.backend, plan.n)
+        # the per column assembly of the row kernel as a plain loop
+        for gid in 1:length(plan.colptr)-1
+            complexjosephsoncolumnitem!(nzval, gid, plan.colptr, plan.rowval,
+                phimatrix, js.pairptr, js.pairrow, js.pairjunc, js.paircoef,
+                js.lmolj, js.ami, js.nmodes, js.nfreq, plan.transposed)
+        end
+        return nzval
+    end
     plan.assemble!(nzval, plan.colptr, plan.rowval, phimatrix, js.pairptr,
         js.pairrow, js.pairjunc, js.paircoef, js.lmolj, js.ami,
-        js.nmodes, js.nfreq, conjugate, plan.transposed;
+        js.nmodes, js.nfreq, plan.transposed;
         ndrange = plan.perrow ? length(plan.colptr) - 1 : plan.n)
     KernelAbstractions.synchronize(plan.backend)
     return nzval
@@ -755,43 +1009,17 @@ function josephsonadjoint!(P, Q, plan::StructureComplexJosephsonPlan,
 end
 
 """
-    complexlinearcontributionkernel!(lin, colptr, rowval, ...)
-
-The constant frequency dependent contribution to each stored entry of the
-complex Jacobian: `invLnm + im*Gnm*wmodesm - Cnm*wmodes2m`.
-
-The real path's counterpart splits each complex value across a real block; here
-the stored entry is the complex value itself, so the three are simply summed,
-in the order `assemblecomplexjacobian!` adds them.
-"""
-@kernel function complexlinearcontributionkernel!(lin, @Const(colptr),
-        @Const(rowval), @Const(lcolptr), @Const(lrowval), @Const(lnzval),
-        @Const(gcolptr), @Const(growval), @Const(gnzval), @Const(wm),
-        @Const(ccolptr), @Const(crowval), @Const(cnzval), @Const(wm2),
-        transposed)
-    gid = @index(Global)
-    @inbounds begin
-        q = gid
-        lo = storedcolumn(colptr, q)
-        cj = transposed ? Int(rowval[q]) : lo
-        ci = transposed ? lo : Int(rowval[q])
-        acc = sparselookup(lcolptr, lrowval, lnzval, ci, cj)
-        acc += (im * wm[cj]) * sparselookup(gcolptr, growval, gnzval, ci, cj)
-        acc += (-1 * wm2[cj]) * sparselookup(ccolptr, crowval, cnzval, ci, cj)
-        lin[q] = acc
-    end
-end
-
-"""
-    StructureComplexJacobianPlan{TJ,VT}
+    StructureComplexJacobianPlan{TJ,VT,LG}
 
 The complex Jacobian on a backend: the Josephson map of
-[`StructureComplexJosephsonPlan`](@ref) and the constant linear term gathered
-once, which is what [`assemblecomplexjacobian!`](@ref) adds to it.
+[`StructureComplexJosephsonPlan`](@ref) and the constant linear term of each
+stored entry, gathered once where it reaches ([`LinearTermGather`](@ref)),
+which is what [`assemblecomplexjacobian!`](@ref) adds to it.
 """
-struct StructureComplexJacobianPlan{TJ,VT}
+struct StructureComplexJacobianPlan{TJ,VT,LG}
     josephson::TJ
     lin::VT
+    linear::LG
 end
 
 """
@@ -815,25 +1043,13 @@ function planstructurecomplexjacobian(Jx::SparseMatrixCSC,
         josephson = planstructurecomplexjosephson(Jx, junctions, backend;
             transposed = transposed)
     end
-    lin = KernelAbstractions.allocate(backend, Complex{T}, nnz(Jx))
-    complexlinearcontribution!(lin, josephson, invLnm, Gnm, Cnm, wmodesm,
-        wmodes2m)
-    return StructureComplexJacobianPlan{typeof(josephson),typeof(lin)}(
-        josephson, lin)
-end
-
-# the launch of `complexlinearcontributionkernel!` over a Josephson plan's
-# structure, shared by the builder and the refresh
-function complexlinearcontribution!(lin, josephson::StructureComplexJosephsonPlan,
-    invLnm, Gnm, Cnm, wmodesm, wmodes2m)
-    backend = josephson.backend
-    complexlinearcontributionkernel!(backend, 64)(lin, josephson.colptr,
-        josephson.rowval,
-        linearterminputs(eltype(josephson.colptr), invLnm, Gnm, Cnm, wmodesm,
-            wmodes2m, backend)..., josephson.transposed;
-        ndrange = length(lin))
-    KernelAbstractions.synchronize(backend)
-    return lin
+    linear = lineargather(eltype(josephson.colptr), josephson.colptr,
+        josephson.rowval, invLnm, Gnm, Cnm, wmodesm, wmodes2m, nothing,
+        nothing, josephson.transposed, backend)
+    lin = gatherlinear!(fill!(KernelAbstractions.allocate(backend,
+        Complex{T}, nnz(Jx)), zero(Complex{T})), linear, backend)
+    return StructureComplexJacobianPlan{typeof(josephson),typeof(lin),
+        typeof(linear)}(josephson, lin, linear)
 end
 
 """
@@ -845,8 +1061,8 @@ plan for new component values under the same structure.
 """
 function refreshvalues!(plan::StructureComplexJacobianPlan, invLnm, Gnm, Cnm,
         wmodesm, wmodes2m, Ljb::SparseVector, Lscale)
-    complexlinearcontribution!(plan.lin, plan.josephson, invLnm, Gnm, Cnm,
-        wmodesm, wmodes2m)
+    refreshlinear!(plan.lin, plan.linear, invLnm, Gnm, Cnm, wmodesm,
+        wmodes2m, plan.josephson.backend)
     refreshvalues!(plan.josephson.junctions, Ljb, Lscale)
     return plan
 end

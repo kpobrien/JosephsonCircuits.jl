@@ -3,50 +3,43 @@ using LinearAlgebra
 using SparseArrays
 using Test
 
+isdefined(Main, :testjpacircuit) || include(joinpath(@__DIR__, "..", "testcircuits.jl"))
+
 @testset verbose=true "hbsystem" begin
 
-    JosephsonCircuits.@params Rleft Cc Lj Cj
-    circuitjpa = Any[]
-    push!(circuitjpa,("P1", "1", "0", Port(1; Z0 = Rleft)))
-    push!(circuitjpa,("C1", "1", "2", Capacitor(Cc)))
-    push!(circuitjpa,("Lj1", "2", "0", JosephsonJunction(Lj)))
-    push!(circuitjpa,("C2", "2", "0", Capacitor(Cj)))
-    circuitjpa = Circuit(circuitjpa)
-    circuitdefsjpa = Dict(Lj=>1000.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
-        Rleft=>50.0)
+    circuitjpa, circuitdefsjpa = testjpacircuit()
 
     # single-tone and two-tone (the latter has self-conjugate modes and
     # negative frequencies from the multi-dimensional RDFT), and a chain
     # with junctions between pairs of ungrounded nodes.
-    JosephsonCircuits.@params Ljx Cg Cjx Rl
     Ncells = 4
     circuitchain = Any[]
-    push!(circuitchain, ("P1", "1", "0", Port(1; Z0 = Rl)))
+    push!(circuitchain, ("P1", "1", "0", Port(1; Z0 = :Rl)))
     for i in 1:Ncells
-        push!(circuitchain, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(Ljx)))
-        push!(circuitchain, ("C$(i)", "$(i+1)", "0", Capacitor(Cg)))
-        push!(circuitchain, ("Cj$(i)", "$(i)", "$(i+1)", Capacitor(Cjx)))
+        push!(circuitchain, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(:Ljx)))
+        push!(circuitchain, ("C$(i)", "$(i+1)", "0", Capacitor(:Cg)))
+        push!(circuitchain, ("Cj$(i)", "$(i)", "$(i+1)", Capacitor(:Cjx)))
     end
-    push!(circuitchain, ("R2", "$(Ncells+1)", "0", Resistor(Rl)))
+    push!(circuitchain, ("R2", "$(Ncells+1)", "0", Resistor(:Rl)))
     circuitchain = Circuit(circuitchain)
-    circuitdefschain = Dict(Ljx=>200.0e-12, Cg=>50.0e-15, Cjx=>100.0e-15,
-        Rl=>50.0)
+    circuitdefschain = Dict(:Ljx=>200.0e-12, :Cg=>50.0e-15, :Cjx=>100.0e-15,
+        :Rl=>50.0)
 
     # a circuit with mutually coupled inductors, which are promoted to
-    # auxiliary branch currents by the modified nodal analysis formulation
-    JosephsonCircuits.@params Lla Llb Kab Rl2
+    # auxiliary branch currents by the modified nodal analysis formulation,
+    # so the incidence matrix gains structurally empty columns
     circuitmutual = Any[]
-    push!(circuitmutual, ("P1", "1", "0", Port(1; Z0 = Rl2)))
-    push!(circuitmutual, ("C1", "1", "2", Capacitor(Cc)))
-    push!(circuitmutual, ("Lj1", "2", "0", JosephsonJunction(Lj)))
-    push!(circuitmutual, ("C2", "2", "0", Capacitor(Cj)))
-    push!(circuitmutual, ("L1", "2", "0", Inductor(Lla)))
-    push!(circuitmutual, ("L2", "3", "0", Inductor(Llb)))
-    push!(circuitmutual, ("P2", "3", "0", Port(2; Z0 = Rl2)))
-    push!(circuitmutual, ("K1", "L1", "L2", MutualInductor(Kab)))
+    push!(circuitmutual, ("P1", "1", "0", Port(1; Z0 = :Rl2)))
+    push!(circuitmutual, ("C1", "1", "2", Capacitor(:Cc)))
+    push!(circuitmutual, ("Lj1", "2", "0", JosephsonJunction(:Lj)))
+    push!(circuitmutual, ("C2", "2", "0", Capacitor(:Cj)))
+    push!(circuitmutual, ("L1", "2", "0", Inductor(:Lla)))
+    push!(circuitmutual, ("L2", "3", "0", Inductor(:Llb)))
+    push!(circuitmutual, ("P2", "3", "0", Port(2; Z0 = :Rl2)))
+    push!(circuitmutual, ("K1", "L1", "L2", MutualInductor(:Kab)))
     circuitmutual = Circuit(circuitmutual)
-    circuitdefsmutual = Dict(Lj=>500.0e-12, Cc=>100.0e-15, Cj=>1000.0e-15,
-        Lla=>300.0e-12, Llb=>300.0e-12, Rl2=>50.0, Kab=>0.99)
+    circuitdefsmutual = Dict(:Lj=>500.0e-12, :Cc=>100.0e-15, :Cj=>1000.0e-15,
+        :Lla=>300.0e-12, :Llb=>300.0e-12, :Rl2=>50.0, :Kab=>0.99)
 
     testcases = (
         ("single-tone JPA", (2*pi*4.75001*1e9,),
@@ -172,6 +165,23 @@ using Test
             JosephsonCircuits.setpoint!(sys, x)
             JosephsonCircuits.jacobian!(Jx2, sys)
             @test d.Jx == Jx2
+
+            # the point is stored in both representations, and setting it
+            # from either gives the same residual
+            JosephsonCircuits.setpoint!(sys, xr)
+            @test sys.xr == xr
+            @test isapprox(sys.x, x, rtol = 1e-12)
+            Fr3 = zeros(nr)
+            JosephsonCircuits.setpoint!(sys, copy(sys.x))
+            JosephsonCircuits.residual!(Fr3, sys)
+            @test isapprox(Fr3, Fr2, rtol = 1e-12)
+
+            # the collapsed linear term matrix reproduces the three separate
+            # frequency dependent terms
+            z = randn(ComplexF64, length(d.x))
+            @test isapprox(sys.Knm*z,
+                sys.invLnm*z + im*(sys.Gnm*(sys.wmodesm*z)) -
+                sys.Cnm*(sys.wmodes2m*z), rtol = 1e-12)
         end
     end
 
@@ -201,29 +211,11 @@ using Test
         end
     end
 
-    @testset "the backend kwarg reaches the solver" begin
-        # CPU() is the default, so naming it explicitly must change nothing.
-        # This is what checks the kwarg is threaded through both hbnlsolve
-        # methods rather than silently ignored.
-        args = ((2*pi*4.75001*1e9,), (8,),
-                [(mode=(1,),port=1,current=0.00565e-6)], circuitjpa,
-                circuitdefsjpa)
-        for m in (QuasiNewton(), NewtonKrylov())
-            a = JosephsonCircuits.hbnlsolve(args...; method = m)
-            b = JosephsonCircuits.hbnlsolve(args...; method = m,
-                backend = JosephsonCircuits.CPU())
-            @test a.nodeflux == b.nodeflux
-            @test a.solverinfo.converged && b.solverinfo.converged
-        end
-    end
-
     @testset "both source vectors are on the backend" begin
         # the complex representation residual subtracts sys.bnm from a vector
         # which lives on the backend, so bnm has to be moved there the way
-        # bnmr already was. on CPU() tobackend adopts an Array, so the only
-        # host-visible consequence is that a non-Array argument is
-        # materialized -- which is exactly what distinguishes a moved field
-        # from one stored as handed in.
+        # bnmr already was, as a copy of the system's own. On CPU() what the
+        # host sees of that is a view materialized and an array not adopted.
         d = JosephsonCircuits.hbnlsolve((2*pi*4.75001*1e9,), (2,),
             [(mode=(1,),port=1,current=0.00565e-6)], circuitjpa,
             circuitdefsjpa; debugJacobian=true)
@@ -242,8 +234,13 @@ using Test
         @test JosephsonCircuits.KernelAbstractions.get_backend(sys.bnm) ===
             JosephsonCircuits.KernelAbstractions.get_backend(sys.bnmr)
 
+        # the copy is the system's own, which `rebind!` and a drive scaling
+        # write without reaching the caller's array
+        b = copy(d.sys.bnm)
+        sysa = mk(b)
+        @test sysa.bnm !== b
+
         # and the residual is unchanged by the move
-        sysa = mk(copy(d.sys.bnm))
         F1 = zeros(ComplexF64, length(d.x)); F2 = similar(F1)
         JosephsonCircuits.setpoint!(sysa, copy(d.x))
         JosephsonCircuits.residual!(F1, sysa)

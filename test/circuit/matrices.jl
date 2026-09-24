@@ -25,17 +25,11 @@ using Test
         ref = numericmatrices(c, Dict(:C => 1e-12, :L => 1e-9))
         other = numericmatrices(c, IdDict{Any,Any}(:C => 1e-12, :L => 1e-9))
         @test other.Cnm == ref.Cnm && other.invLnm == ref.invLnm
-    end
-
-    @testset "combine" begin
-
-        a = rand()
-        b = rand()
-        @test(JosephsonCircuits.combine_reciprocal_sum(a,b) == a*b/(a+b))
-        @test_throws(
-            ArgumentError("Components 1 and 2 cannot be combined to a single element. Please place the two components between different nodes."),
-            JosephsonCircuits.combine_error(1,2),
-        )
+        # and the value table of the transient and the solver cache
+        cc = compile(c)
+        @test JosephsonCircuits.numericvalues(cc,
+            IdDict{Any,Any}(:C => 1e-12, :L => 1e-9)) ==
+            JosephsonCircuits.numericvalues(cc, Dict(:C => 1e-12, :L => 1e-9))
     end
 
     @testset "the sign of a mutual inductance does not follow the node names" begin
@@ -126,72 +120,19 @@ using Test
         @test isapprox(junctionphase(loop(K, K, (2, 0))), 0.0; atol = 1e-8)
     end
 
-    @testset "the mutual orientation cache" begin
-        JC = JosephsonCircuits
-        Z0 = 50.0
-        # the second inductor declared either way round, so the graph turns
-        # one of the two branches against the netlist in one case
-        chain(rev) = Circuit([
-            (:p1, 1, 0, Port(1; Z0 = Z0)),
-            (:p2, 3, 0, Port(2; Z0 = Z0)),
-            (:l1, 1, 2, Inductor(1e-9)),
-            (:l2, (rev ? 3 : 2), (rev ? 2 : 3), Inductor(2e-9)),
-            (:k, :l1, :l2, MutualInductor(0.3))])
-
-        function pieces(c, Nmodes)
-            cc = JC.compile(c)
-            vvn = JC.componentvaluestonumber(cc.componentvalues,
-                Dict{Any,Any}())
-            b = JC.bindvalues(cc, vvn)
-            return cc, b, vvn, JC.circuitmatrixplan(cc; Nmodes = Nmodes)
-        end
-
+    @testset "the endpoints of each branch" begin
         # one walk of the incidence matrix names each branch's endpoints the
         # way the matrix itself does
-        let (cc, b, vvn, plan) = pieces(chain(false), 1)
-            t = cc.topology
-            from, to = JC.branchendpoints(t.Rbn, t.Nbranches)
-            for bi in 1:t.Nbranches
-                from[bi] > 1 && @test t.Rbn[bi, from[bi]-1] == -1
-                to[bi] > 1 && @test t.Rbn[bi, to[bi]-1] == 1
-                @test from[bi] != to[bi]
-            end
-        end
-
-        # reversing the declared terminals flips the cached product, and it
-        # is the sign the matrix is actually filled with
-        let (_, _, _, p1) = pieces(chain(false), 1),
-            (_, _, _, p2) = pieces(chain(true), 1)
-            @test length(p1.mutualorientations) == 1
-            @test p1.mutualorientations[1] == -p2.mutualorientations[1]
-        end
-
-        # direct, planned and in place assembly agree on the mutual matrix
-        # at the plan's own values and at new ones, with the plan built once
-        # at the first: K through zero and both signs, and each self
-        # inductance moved on its own, so that the mutual inductance is
-        # formed from the new values of all three
-        for rev in (false, true), Nmodes in (1, 4)
-            cc, b, vvn, plan = pieces(chain(rev), Nmodes)
-            key(n) = keytype(cc.componentnamedict) === Symbol ?
-                Symbol(n) : string(n)
-            ki = cc.componentnamedict[key("k")]
-            l1i = cc.componentnamedict[key("l1")]
-            l2i = cc.componentnamedict[key("l2")]
-            nm = JC.assemblematrices(plan, b)
-            @test nm.Mb == numericmatrices(cc, vvn; Nmodes = Nmodes).Mb
-            for (K, s1, s2) in ((0.3, 1.0, 1.0), (-0.3, 1.0, 1.0),
-                    (0.0, 1.0, 1.0), (0.7, 2.5, 0.4), (0.3, 2.0, 1.0),
-                    (0.3, 1.0, 0.5))
-                v2 = copy(vvn)
-                v2[ki] = K
-                v2[l1i] = s1*vvn[l1i]
-                v2[l2i] = s2*vvn[l2i]
-                b2 = JC.bindvalues(cc, v2)
-                ref = numericmatrices(cc, v2; Nmodes = Nmodes).Mb
-                @test JC.assemblematrices(plan, b2).Mb == ref
-                @test JC.assemblematrices!(nm, plan, b2).Mb == ref
-            end
+        JC = JosephsonCircuits
+        cc = JC.compile(Circuit([(:p1, 1, 0, Port(1)), (:p2, 3, 0, Port(2)),
+            (:l1, 1, 2, Inductor(1e-9)), (:l2, 3, 2, Inductor(2e-9)),
+            (:k, :l1, :l2, MutualInductor(0.3))]))
+        t = cc.topology
+        from, to = JC.branchendpoints(t.Rbn, t.Nbranches)
+        for bi in 1:t.Nbranches
+            from[bi] > 1 && @test t.Rbn[bi, from[bi]-1] == -1
+            to[bi] > 1 && @test t.Rbn[bi, to[bi]-1] == 1
+            @test from[bi] != to[bi]
         end
     end
 end

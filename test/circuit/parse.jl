@@ -259,6 +259,15 @@ using Test
             ("cc", "1", "2", Capacitor(100e-15)),
             ("jj", :2, "0", JosephsonJunction(1000e-12)),
             ("cj", :2, 0, Capacitor(1000e-15))])))
+        # `Ground` is the ground net wherever it is written, and a node of
+        # another type is refused rather than made a net of its own
+        @test JosephsonCircuits.comparestruct(a, compile(Circuit([
+            (:p1, 1, Ground, Port(1; Z0 = 50.0)),
+            (:cc, 1, 2, Capacitor(100e-15)),
+            (:jj, 2, Ground, JosephsonJunction(1000e-12)),
+            (:cj, 2, 0, Capacitor(1000e-15))])))
+        @test_throws ArgumentError Circuit([(:p1, 1, 0.0, Port(1)),
+            (:c1, 1, 0, Capacitor(1e-12))])
 
         # a mutual inductor names its inductors in place of nodes
         km = compile(Circuit([
@@ -389,16 +398,17 @@ using Test
         @test psc.Nnodes == 2
 
         # a pin/port key collision requires PortRef or PinRef
-        c2 = Circuit([:a => r1, :b => r1], Any[]; validate = false)
+        unvalidated(connections) = Circuit([:a => r1, :b => r1], connections;
+            validate = false)
         @test_throws ArgumentError JosephsonCircuits.parsecircuitlevel(
-            [:a => r1, :b => r1], [(:a, 1) => (:b, 1)], nothing)
+            unvalidated([(:a, 1) => (:b, 1)]))
         # explicit PortRef resolves it
-        pl = JosephsonCircuits.parsecircuitlevel([:a => r1, :b => r1],
-            [PortRef(:a, 1) => PortRef(:b, 1)], nothing)
+        pl = JosephsonCircuits.parsecircuitlevel(
+            unvalidated([PortRef(:a, 1) => PortRef(:b, 1)]))
         @test length(pl.groups) == 2
         # explicit PinRef bonds single pins
-        pl2 = JosephsonCircuits.parsecircuitlevel([:a => r1, :b => r1],
-            [PinRef(:a, 1) => PinRef(:b, 1)], nothing)
+        pl2 = JosephsonCircuits.parsecircuitlevel(
+            unvalidated([PinRef(:a, 1) => PinRef(:b, 1)]))
         @test length(pl2.groups) == 1
     end
 
@@ -851,14 +861,10 @@ using Test
             Any[[(:p1,1),(:rload,1),(:cc,1)], [(:cc,2),(:jj,1)],
                 [(:p1,2),(:rload,2),(:jj,2),(:gnd,1)]])
         cc = JC.compile(cshared)
-        b = JC.bindvalues(cc, JC.componentvaluestonumber(cc.componentvalues, Dict{Any,Any}()))
-        nm = JC.assemblematrices(JC.circuitmatrixplan(cc; Nmodes = 1), b)
-        # both assemblies take the port roles from the ports rather than
-        # from a resistor across a port's terminals, and agree
-        ref = numericmatrices(cc, Dict{Any,Any}(); Nmodes = 1)
-        @test nm.portimpedances == ref.portimpedances
-        @test nm.portenvironmentindices == ref.portenvironmentindices
-        @test nm.noiseportimpedanceindices == ref.noiseportimpedanceindices
+        nm = numericmatrices(cc, Dict{Any,Any}(); Nmodes = 1)
+        # the port roles come from the ports rather than from a resistor
+        # across a port's terminals
+        @test nm.portimpedances == [50.0]
         @test cc.componentnames[only(nm.portenvironmentindices)] ==
             "p1/termination"
         @test [cc.componentnames[i] for i in nm.noiseportimpedanceindices] ==
@@ -969,6 +975,11 @@ using Test
         @test length(b.signalnodes) == 2
         # reference terminals lower to the ground node
         @test all(==(1), b.refnodes)
+        # a block is found by its instance id, an integer id included
+        ci = compile(Circuit([7 => gblk, :l => Inductor(1e-9)],
+            [((7, 1), (:l, 1)), ((:l, 2), Ground), ((7, 2), Ground)]))
+        @test JosephsonCircuits.scatteringblockindex(ci, 7) ==
+            JosephsonCircuits.scatteringblockindex(ci, "7/port1") == 1
     end
 
     @testset "voltage sources and ground requirement" begin
@@ -991,7 +1002,7 @@ using Test
         circuitdefs = Dict(:Lj => 1000e-12, :Cc => 100e-15, :Cj => 1000e-15)
         native = Circuit(
             [:p1 => Port(1; termination = nothing), :r1 => Resistor(50.0), :c1 => Capacitor(:Cc),
-             :jj => NonlinearInductor(:Lj, sin, cos),
+             :jj => NonlinearInductor(:Lj, sin),
              :c2 => Capacitor(:Cj)],
             [((:p1, 1), (:r1, 1), (:c1, 1)),
              ((:c1, 2), (:jj, 1), (:c2, 1)),

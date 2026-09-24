@@ -7,7 +7,8 @@
 Preallocated state for Anderson acceleration of the Newton fixed point
 iteration `G(x) = x + deltax`: the difference history, the previous
 iterate/update pair it is built from, the assembled correction vector, and the
-buffers for the extrapolation least squares problem.
+buffers of the thin QR factorization which solves the extrapolation least
+squares problem.
 
 The history lives in fixed n×depth matrices with circular column indexing.
 [`andersonhistory!`](@ref) overwrites one column per recorded step and updates
@@ -20,9 +21,9 @@ mutable struct AndersonState{T, RT, V, M}
     histcount::Int
     histpos::Int
     # the vectors and the history follow the iterate onto whatever backend it
-    # lives on; the Gram matrix and the coefficients are depth by depth and
-    # depth long, and stay on the host, where the back substitution that reads
-    # them element by element belongs
+    # lives on; the triangular factor and the coefficients are depth by depth
+    # and depth long, and stay on the host, where the back substitution that
+    # reads them element by element belongs
     xprev::V
     deltaxprev::V
     correction::V
@@ -30,7 +31,7 @@ mutable struct AndersonState{T, RT, V, M}
     deltafhistory::M
     agecols::Vector{Int}
     qrQ::M
-    gram::Matrix{RT}
+    qrR::Matrix{RT}
     gammabuf::Vector{RT}
 end
 
@@ -91,11 +92,14 @@ Assemble the Type-II Anderson correction `cₖ = (Sₖ + Yₖ)γₖ` into
 when the history is empty or the coefficient solve fails  or produces
 non-finite values, in which case `s.correction` must not be used.
 
-The real extrapolation coefficients γ minimize `||ΔF*γ - deltax||` via
-ridge-regularized normal equations (with a default `ridge = 1e-12` relative to
-the largest Gram diagonal), solved by LU with partial pivoting in place in the
-preallocated buffers. All history access is through age-ordered column indices
-(oldest first). The coefficients are constrained real because for the harmonic
+The real extrapolation coefficients γ minimize `||ΔF*γ - deltax||` through a
+thin QR factorization of the history `ΔF`, by two passes of modified
+Gram-Schmidt in the preallocated buffers, and back substitution. The history
+is truncated at the first column whose norm collapses after
+orthogonalization, below `rtol` times the largest norm seen, since it is
+linearly dependent on the older ones; the leading columns are well
+conditioned and the coefficients of the rest are zero. All history access is
+through age-ordered column indices (oldest first). The coefficients are constrained real because for the harmonic
 balance quasi-Newton map the error operator is antilinear (involves complex
 conjugation), so complex coefficients cannot cancel the error modes; real
 coefficients correspond to Anderson acceleration of the equivalent real
@@ -123,7 +127,7 @@ function andersoncorrection!(s::AndersonState{T}, deltax::AbstractVector;
     # keep the well conditioned leading columns; `rtol` is relative to the
     # largest norm seen, so the test is scale free.
     Q = s.qrQ
-    R = s.gram
+    R = s.qrR
     rank = 0
     maxnorm = zero(real(T))
     for j in 1:m
@@ -311,7 +315,7 @@ end
 
 """
     nlsolve!(fj!, F, J, x; iterations = 1000, atol = 1e-8, rtol = 0.0,
-        factorization = KLUfactorization(),
+        factorization = KLUfactorization(), cache = FactorizationCache(),
         linesearch = Backtracking(), andersondepth = 5, andersonbeta = 1.0,
         andersonacceptfactor = 0.9)
 
@@ -345,7 +349,9 @@ solve) only the linear line search runs.
 A stall of an iteration which took accelerated steps is retried once
 from the initial point with the curved path given priority, within the
 same budget of `iterations` steps; the record keeps both attempts, the
-second's residual norms following the first's.
+second's residual norms following the first's. A retry which fails and
+ends above where the first attempt ended returns the first attempt's
+point, whose residual norm then closes the record.
 
 # Keywords
 - `iterations = 1000`: the maximum number of Newton iterations, over both
@@ -354,6 +360,10 @@ second's residual norms following the first's.
 - `rtol = 0.0`: a relative tolerance; the effective tolerance is
     `max(atol, rtol*norm(F0))` with `F0` the initial residual.
 - `factorization = KLUfactorization()`: the sparse factorization of `J`.
+- `cache = FactorizationCache()`: the [`FactorizationCache`](@ref) `J` is
+  factorized into. A caller which solves again with a matrix of the same
+  pattern hands in the one of the last solve, whose fill reducing
+  ordering and symbolic analysis the refactorizations then reuse.
 - `linesearch = Backtracking()`: the [`Backtracking`](@ref) of every
   search of the iteration, the curvilinear one included: the Armijo
   constant, the safeguards, the trial budget, whether a backtrack is
@@ -380,6 +390,7 @@ history, and the attempt ends if the stall persists over it); see
 function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     x::AbstractVector{T}; iterations = 1000, atol = 1e-8, rtol = 0.0,
     factorization = KLUfactorization(),
+    cache::FactorizationCache = FactorizationCache(),
     linesearch::Backtracking = Backtracking(), andersondepth::Integer = 5,
     andersonbeta = 1.0, andersonacceptfactor = 0.9) where T
 
@@ -394,8 +405,6 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     if size(J, 1) != length(F)
         throw(DimensionMismatch(lazy"First axis of the Jacobian `J` must have the same length as the residual `F`."))
     end
-
-    cache = FactorizationCache()
 
     deltax = copy(x)
     xcandidate = copy(x)
@@ -418,6 +427,9 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     end
     if !(atol >= 0)
         throw(ArgumentError(lazy"`atol` = $(atol) must be nonnegative."))
+    end
+    if !(0 <= rtol < Inf)
+        throw(ArgumentError(lazy"`rtol` = $(rtol) must be finite and nonnegative."))
     end
     if andersondepth < 0
         throw(ArgumentError(lazy"`andersondepth` = $(andersondepth) must be nonnegative."))
@@ -444,9 +456,13 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
     curvedpriority = false
     stalled = false
     steps = 0
+    # where the first attempt ended, kept when a retry starts from the
+    # initial point, so that the better of the two is returned
+    firstend = nothing
 
     for attempt in 1:2
         if attempt == 2
+            firstend = (copy(x), copy(F), normF[end])
             # retry by resetting to initial values and setting curved priority
             # the motivation for this is some problems may require the
             # corrections from Anderson acceleration to converge.
@@ -636,6 +652,13 @@ function nlsolve!(fj!::Function, F::AbstractVector{T}, J::AbstractArray{T},
             break
         end
     end
+    # a retry which failed above where the first attempt ended returns the
+    # first attempt's point
+    if !isnothing(firstend) && !tr.converged && normF[end] > firstend[3]
+        copyto!(x, firstend[1])
+        copyto!(F, firstend[2])
+        push!(normF, firstend[3])
+    end
 
-    return IterationInfo(tr, "")
+    return IterationInfo(tr)
 end

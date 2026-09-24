@@ -87,7 +87,7 @@ conjugate at a negative one, since a physical impedance obeys
 environment through five centimeters of slightly mismatched cable -- a 50 ohm
 line terminated by a 40 ohm source -- so the port resistor becomes the
 complex input impedance of that line. The transformed environment reshapes
-the gain and moves the peak, and because the pump harmonics feel it too, the
+and lowers the gain, and because the pump harmonics feel it too, the
 operating point itself shifts, not just the readout.
 
 ```julia
@@ -202,7 +202,7 @@ plot!(wswrspice/(2*pi*1e9),10*log10.(abs2.(S11)),
 
 ## Flux-pumped Josephson parametric amplifier (JPA)
 Circuit and parameters from [here](https://doi.org/10.1063/1.2964182
-). Please note that three wave mixing (3WM) and flux-biasing are relatively untested, so you may encounter bugs. Please file issues or PRs.
+).
 
 ```julia
 using JosephsonCircuits
@@ -294,7 +294,7 @@ Simulate the JPA frequency as a function of DC bias current:
 
 ```julia
 ws = 2*pi*(8.0:0.01:11.0)*1e9
-currentvals = (-20:0.1:20)*1e-5
+currentvals = (-15:0.1:15)*1e-5
 outvals = zeros(Complex{Float64},length(ws),length(currentvals))
 Ip=0.0
 
@@ -425,7 +425,7 @@ p2 = plot(
         ),
     ),
     xlabel="Frequency (GHz)",
-    ylabel="Gain (dB)",
+    ylabel="Phase (rad)",
     label="pump on",
 )
 
@@ -1043,7 +1043,7 @@ plot(ws/(2*pi*1e9),
 ```
 
 ## Sensitivity to frequency dependent scattering parameters
-A [`ScatteringParameters`](https://josephsoncircuits.org/stable/reference/) block depends on a design parameter through the analytic derivative its `derivatives` keyword states: here a matched transmission line section in front of the amplifier, with the derivative of the gain with respect to the line length. A block which states no derivative (measured Touchstone data, say) is parameter independent and costs nothing.
+A [`ScatteringParameters`](https://josephsoncircuits.org/stable/reference/) block depends on a design parameter through the analytic derivative its `derivatives` keyword states: here a matched transmission line section in front of the amplifier, with the derivative of the reflection with respect to the line length. A matched lossless line delays the reflection on its way in and out, so the gain does not depend on the length, and the phase of `S11` turns by `-2*w*len/vphase` per fractional change of the length, which the example compares with. A block which states no derivative (measured Touchstone data, say) is parameter independent and costs nothing.
 
 ```julia
 using JosephsonCircuits
@@ -1072,15 +1072,25 @@ sources = [(mode=(1,),port=1,current=0.00565e-6)]
 # the parameters: the line length the block states a derivative for, and Lj
 @time r = designsensitivities(circuit, p, ws, wp, sources, (8,), (16,))
 
+# the derivative of the phase of S11 with respect to the fractional change
+# of the length, len*imag(dS/dlen/S), against the delay of the line there
+# and back
 S = r.out.linearized.S((0,),1,(0,),1,:)
-scale = Dict(:len => len, :Lj => p[:Lj])
-plot(ws/(2*pi*1e9),
-    [scale[q].*(20/log(10)).*
-     real.(conj.(S).*r.dSdp((0,),1,(0,),1,q,:))./abs2.(S)
-     for q in (:len, :Lj)],
-    label=["line length" "Lj"],
+dphase = len .* imag.(r.dSdp((0,),1,(0,),1,:len,:) ./ S)
+delay = -2 .* ws .* len ./ vphase
+println("largest difference from -2*w*len/vphase: ",
+    round(maximum(abs, dphase .- delay); sigdigits = 2), " rad")
+plot(ws/(2*pi*1e9), dphase,
+    label="JosephsonCircuits.jl",
     xlabel="Frequency (GHz)",
-    ylabel="dG/dln(p) (dB)")
+    ylabel="d arg(S11)/dln(len) (rad)")
+plot!(ws/(2*pi*1e9), delay,
+    label="-2*w*len/vphase",
+    linestyle=:dash)
+```
+
+```
+largest difference from -2*w*len/vphase: 1.3e-7 rad
 ```
 
 ## Direct current

@@ -29,15 +29,17 @@ function testjpacircuitnumeric()
     return circuit, Dict{Any,Any}()
 end
 
-# a four junction transmission line chain with a port at each end
-function testchaincircuit()
+# a transmission line chain of `n` junctions, four by default, with a port
+# at one end and a resistor at the other
+function testchaincircuit(n::Integer = 4)
     circuit = Any[]
     push!(circuit, ("P1", "1", "0", Port(1; Z0 = :R)))
-    for i in 1:4
+    for i in 1:n
         push!(circuit, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(:Lj)))
         push!(circuit, ("C$(i)", "$(i)", "0", Capacitor(:Cg)))
     end
-    push!(circuit, ("C5", "5", "0", Capacitor(:Cg))); push!(circuit, ("R2", "5", "0", Resistor(:R)))
+    push!(circuit, ("C$(n+1)", "$(n+1)", "0", Capacitor(:Cg)))
+    push!(circuit, ("R2", "$(n+1)", "0", Resistor(:R)))
     circuit = Circuit(circuit)
     circuitdefs = Dict{Symbol,Complex{Float64}}(
         :Lj => 100e-12, :Cg => 40e-15, :R => 50.0)

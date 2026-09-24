@@ -3,14 +3,14 @@
 # the operating point through the implicit function theorem.
 
 """
-    HBOperatingPoint(sys, x, jacobian, modelayout, Nnodal, Lscale, wmodes,
-        Amna, coupledbranches, Nmodes, Nnodes[, dc])
+    HBOperatingPoint(sys, x, jacobian, modelayout, Lscale, wmodes,
+        coupledbranches, Nmodes, Nnodes[, dc])
 
 The converged pump operating point of [`hbnlsolve`](@ref) together with
 everything needed to propagate a component perturbation through it: the
 [`HBSystem`](@ref) evaluation object, the converged augmented state, the
 exact Jacobian of the equivalent real system assembled there, and the
-scaled matrices and layout of the augmented system.
+scale and layout of the augmented system.
 
 Requested with `returnoperatingpoint = true`. The Jacobian is the exact
 Jacobian of the equivalent real system, assembled with
@@ -27,10 +27,8 @@ struct HBOperatingPoint
     x::Vector{Complex{Float64}}
     jacobian::SparseMatrixCSC{Float64,Int}
     modelayout
-    Nnodal::Int
     Lscale::Complex{Float64}
     wmodes::Vector{Float64}
-    Amna::SparseMatrixCSC
     coupledbranches::Vector{Int}
     Nmodes::Int
     Nnodes::Int
@@ -43,10 +41,10 @@ struct HBOperatingPoint
 end
 
 # an operating point of a circuit with no direct current block
-HBOperatingPoint(sys, x, jacobian, modelayout, Nnodal, Lscale, wmodes, Amna,
+HBOperatingPoint(sys, x, jacobian, modelayout, Lscale, wmodes,
     coupledbranches, Nmodes, Nnodes) =
-    HBOperatingPoint(sys, x, jacobian, modelayout, Nnodal, Lscale, wmodes,
-        Amna, coupledbranches, Nmodes, Nnodes, nothing)
+    HBOperatingPoint(sys, x, jacobian, modelayout, Lscale, wmodes,
+        coupledbranches, Nmodes, Nnodes, nothing)
 
 """
     pointsystem(op::HBOperatingPoint)
@@ -75,15 +73,13 @@ The explicit direct current block at a converged point.
 - `u`: the converged canonical state, `[phiac | phidc | vdc]`.
 - `jacobian`: the canonical Jacobian there, which is the one the implicit
   function theorem applies to when the block is active.
-- `plan`: the [`CanonicalJacobianPlan`](@ref) that filled it.
 - `keep`: the rows the block adds to rather than replaces
   ([`dckeep`](@ref)), which mask the harmonic part of a residual derivative.
 """
-struct DCOperatingPoint{W,P}
+struct DCOperatingPoint{W}
     work::W
     u::Vector{Float64}
     jacobian::SparseMatrixCSC{Float64,Int}
-    plan::P
     keep::Vector{Float64}
 end
 
@@ -193,22 +189,30 @@ function componentlookups(coupledbranches, Ljb)
 end
 
 """
-    componentstamp(idx::Integer, psc::CompiledCircuit,
-        nm::CircuitMatrices, lookups, Nmodes::Integer, Nnodes::Integer)
+    componentstamp(idx::Integer, psc::CompiledCircuit, nm::CircuitMatrices,
+        lookups, Nmodes::Integer)
 
 Classify the component at index `idx` for sensitivity analysis and build its
-raw one-component matrix, without any solver scaling, negative frequency
-conjugation, or padding, which the callers apply for their own grids. The
-component matrices are assembled on the stamp plans which assemble the
-system matrices ([`nodalstampplan`](@ref), [`branchstampplan`](@ref) and
-[`inverseinductanceplan`](@ref)), planned for the single component, so the
-node and mode conventions agree by construction. Returns one of
+raw one-component stamp, without any solver scaling, negative frequency
+conjugation, or padding, which the callers apply for their own grids.
+Returns a named tuple `(kind, rows, cols, vals, junction)`:
 
-- `(:C, M)`: the component's capacitance matrix,
-- `(:G, M)`: the component's conductance matrix,
-- `(:Lj, j)`: the ordinal `j` of a Josephson junction within the junction
-    branch vector `nm.Ljb`,
-- `(:invL, M)`: the component's inverse inductance matrix.
+- `kind = :C`, `:G` or `:invL`: `rows`, `cols` and `vals` are the entries
+    of the component's capacitance, conductance or inverse inductance
+    matrix over the node flux unknowns, ground dropped and the mode
+    fastest, in the order a compressed sparse column matrix stores them,
+    and `junction` is zero;
+- `kind = :Lj`: there are no entries, and `junction` is the ordinal of the
+    Josephson junction within the junction branch vector `nm.Ljb`.
+
+The entries are the ones the stamp plans of the system matrices
+([`nodalstampplan`](@ref) and [`inverseinductanceplan`](@ref)) give a
+single component, written from its own two terminals: its value on the
+diagonal of each of its nodes and its negative between them, a
+conductance being the reciprocal of the resistance, formed after the
+sign as the plan forms it, and an inverse inductance that of the
+inductance. So a stamp costs a constant, one to four entries per mode,
+whatever the size of the circuit.
 
 This is the single definition of which components are supported: `:C`, `:L`,
 `:R` and `:Lj` with numeric values. Mutually coupled inductors and
@@ -219,8 +223,7 @@ message from both the fixed operating point stamps
 tables of [`componentlookups`](@ref).
 """
 function componentstamp(idx::Integer, psc::CompiledCircuit,
-    nm::CircuitMatrices, lookups,
-    Nmodes::Integer, Nnodes::Integer)
+    nm::CircuitMatrices, lookups, Nmodes::Integer)
 
     topology = psc.topology
     componenttypes = psc.componenttypes
@@ -237,28 +240,67 @@ function componentstamp(idx::Integer, psc::CompiledCircuit,
     # for a plain number however it was written, so that the reciprocal of
     # an integer value has somewhere to go
     T = grouptype(vvn, (idx,), true)
+    v = convert(T, value)
     if componenttype == :C
-        return (:C, assemblenodal(T, nodalstampplan(psc, [idx], Nnodes), T[value], Nmodes))
+        rows, cols, vals = twoterminalstamp(n1, n2, v, -v, Nmodes)
+        return (kind = :C, rows, cols, vals, junction = 0)
     elseif componenttype == :R
-        return (:G, assemblenodal(T, nodalstampplan(psc, [idx], Nnodes; invert = true), T[value], Nmodes))
+        rows, cols, vals = twoterminalstamp(n1, n2, 1/v, 1/(-v), Nmodes)
+        return (kind = :G, rows, cols, vals, junction = 0)
     elseif componenttype == :L
         b = topology.edge2indexdict[(n1, n2)]
         if b in lookups.coupled
             throw(ArgumentError(lazy"Sensitivities are not supported for the mutually coupled inductor $(psc.componentnames[idx])."))
         end
-        Lb = assemblebranch(T, branchstampplan(psc, [idx], topology.edge2indexdict, topology.Nbranches), T[value],
-            combine_reciprocal_sum, 1)
-        return (:invL, assembleinvinductance(T, inverseinductanceplan(topology, Lb.nzind, Int[]), Lb, Nmodes))
+        y = 1/v
+        rows, cols, vals = twoterminalstamp(n1, n2, y, -y, Nmodes)
+        return (kind = :invL, rows, cols, vals, junction = 0)
     elseif componenttype == :Lj
         b = topology.edge2indexdict[(n1, n2)]
         j = get(lookups.junctionordinal, b, nothing)
         if isnothing(j)
             throw(ArgumentError(lazy"The Josephson junction $(psc.componentnames[idx]) was not found in the branch inductance vector."))
         end
-        return (:Lj, j)
+        return (kind = :Lj, rows = Int[], cols = Int[],
+            vals = Complex{Float64}[], junction = j)
     else
         throw(ArgumentError(lazy"Sensitivities are only supported for C, L, R, and Lj components, not $(componenttype), the type of $(psc.componentnames[idx])."))
     end
+end
+
+# The entries of a two terminal component between the nodes `n1` and `n2`
+# (`1` being ground) whose stamp is `d` on the diagonal of each of its
+# nodes and `o` between them, repeated for each of `Nmodes` modes, as the
+# rows, the columns and the values over the node flux unknowns with ground
+# dropped and the mode fastest, in the order a compressed sparse column
+# matrix stores them: the columns of the lower node and then of the higher,
+# each with its rows in order. A grounded component has one entry per mode,
+# a floating one four, and one whose terminals are one node, which carries
+# no current, none.
+function twoterminalstamp(n1::Integer, n2::Integer, d, o, Nmodes::Integer)
+    rows = Int[]; cols = Int[]; vals = Complex{Float64}[]
+    n1 == n2 && return rows, cols, vals
+    dc = Complex{Float64}(d)
+    if n1 == 1 || n2 == 1
+        a = max(n1, n2) - 1
+        sizehint!(rows, Nmodes); sizehint!(cols, Nmodes); sizehint!(vals, Nmodes)
+        for m in 1:Nmodes
+            k = (a-1)*Nmodes + m
+            push!(rows, k); push!(cols, k); push!(vals, dc)
+        end
+    else
+        oc = Complex{Float64}(o)
+        lo, hi = minmax(n1, n2) .- 1
+        sizehint!(rows, 4Nmodes); sizehint!(cols, 4Nmodes); sizehint!(vals, 4Nmodes)
+        for (c, first, second) in ((lo, dc, oc), (hi, oc, dc))
+            for m in 1:Nmodes
+                col = (c-1)*Nmodes + m
+                push!(rows, (lo-1)*Nmodes + m); push!(cols, col); push!(vals, first)
+                push!(rows, (hi-1)*Nmodes + m); push!(cols, col); push!(vals, second)
+            end
+        end
+    end
+    return rows, cols, vals
 end
 
 # the offset of each complex entry of the operating point in its real
@@ -288,9 +330,8 @@ the derivative of the operating point itself
 (see [`calcnodefluxsensitivity`](@ref)). Returns a sparse matrix whose
 columns are `dF/dr` for each component, in the real representation of the
 augmented residual: each component touches only its own rows (its nodes and
-modes, a promoted resistor's constitutive rows, or a junction branch's
-Kirchhoff rows), so the storage scales with the touched entries rather than
-with `Nstate*Ncomponents`.
+modes, or a junction branch's Kirchhoff rows), so the storage scales with
+the touched entries rather than with `Nstate*Ncomponents`.
 
 The residual is affine in `C`, `1/R` and `1/L`, so those parameter
 derivatives are that component's own contribution to the linear term applied
@@ -299,13 +340,14 @@ to the converged state, with a sign, built from the shared classification of
 frequency conjugation the solver applies. The Josephson junction term is
 the residual's own sine contribution restricted to that junction.
 
-Note that the auxiliary branch currents of the modified nodal analysis
-formulation are scaled by the solver scale (see [`calcsolverscale`](@ref)),
-which itself depends on the port impedances, so for a port resistor the
-auxiliary rows of the returned derivative differ from a finite difference of
-a re-solve by that change of normalization. The node flux rows, which are
-the physical quantity and the only rows the linearized system depends on,
-are unaffected.
+Note that the auxiliary unknowns of the modified nodal analysis
+formulation, the currents of the mutually coupled inductors and of the
+scattering block ports, are scaled by the solver scale (see
+[`calcsolverscale`](@ref)), which itself depends on the port impedances, so
+for a port's termination the auxiliary rows of the returned derivative
+differ from a finite difference of a re-solve by that change of
+normalization. The node flux rows, which are the physical quantity and the
+only rows the linearized system depends on, are unaffected.
 """
 function calcresidualsensitivity(op::HBOperatingPoint,
     psc::CompiledCircuit, nm::CircuitMatrices,
@@ -313,26 +355,18 @@ function calcresidualsensitivity(op::HBOperatingPoint,
     alphas::AbstractVector = ones(Complex{Float64},
         length(sensitivityindices)))
 
-    # a system of its own at the operating point: the Josephson term below
-    # reads its cached time domain branch fluxes
-    sys = pointsystem(op)
     Ntot = length(op.x)
     Nmodes = op.Nmodes
-    Nnodes = op.Nnodes
-    wmodes = op.wmodes
-
-    # the component's own matrix, nondimensionalized, negative frequency
-    # conjugated and padded exactly as hbnlsolve does with the full matrices
-    function scaledpadded(M, alpha = one(Complex{Float64}))
-        Ms = SparseMatrixCSC{Complex{Float64},Int}(copy(M))
-        # the design parameter rescale is a direction in component value
-        # space, so it multiplies the stored value before the negative
-        # frequency conjugation, exactly as in `reparameterize`
-        isone(alpha) || rmul!(Ms, alpha)
-        conjnegfreq!(Ms, wmodes)
-        rmul!(Ms, op.Lscale)
-        return mnapadto(Ms, Ntot)
-    end
+    lookups = componentlookups(op.coupledbranches, op.sys.Ljb)
+    stamps = [componentstamp(idx, psc, nm, lookups, Nmodes)
+        for idx in sensitivityindices]
+    # the Josephson terms of the junctions asked for, on their own rows,
+    # evaluated on a system of its own at the operating point, whose cached
+    # time domain branch fluxes they read
+    js = [s.junction for s in stamps if s.kind == :Lj]
+    ljterms = isempty(js) ?
+        Dict{Int,Vector{Tuple{Int,Complex{Float64}}}}() :
+        josephsonterms(pointsystem(op), js, Nmodes)
 
     # The residual derivatives are sparse: each component touches only its
     # own rows of the state (its nodes and modes, or one junction branch's
@@ -340,13 +374,39 @@ function calcresidualsensitivity(op::HBOperatingPoint,
     # representation and returned as a sparse matrix, where a dense array
     # would cost O(Nstate*Ncomponents), the many component regime the
     # reverse contraction order exists for. Duplicate triplets (a component
-    # matrix with several entries in one row) are summed by `sparse`, which
-    # is right because the real representation is linear.
+    # with several entries in one row) are summed by `sparse`, which is
+    # right because the real representation is linear.
     isrealmode = op.modelayout.isreal
-    nmd = length(isrealmode)
-    realindexmap = realoffsets(op)
-    Nreal = realdim(Ntot, isrealmode)
     Ir = Int[]; Jc = Int[]; Vr = Float64[]
+    residualentries!(Ir, Jc, Vr, stamps, ljterms, alphas, op.x, op.wmodes,
+        op.Lscale, realoffsets(op), isrealmode)
+    harmonic = sparse(Ir, Jc, Vr, realdim(Ntot, isrealmode),
+        length(sensitivityindices))
+    isnothing(op.dc) && return harmonic
+
+    # In canonical coordinates the residual is `D G F(S u) + M u`, so its
+    # parameter derivative is this gathered and masked by the rows the
+    # block replaces rather than adds to, plus the block's own dependence
+    # on the component values, which lands in the voltage rows the gather
+    # leaves alone.
+    dccols = dcresidualsensitivity(op.dc, psc, nm, op.Lscale,
+        sensitivityindices, alphas)
+    return canonicalresidual(harmonic, op.dc.keep,
+        canonicaldim(op.dc.work.layout)) + dccols
+end
+
+# The triplets of the residual derivative columns, in the real
+# representation of the augmented state, for the component stamps of
+# `componentstamp` and the Josephson terms of `josephsonterms`: the
+# component's own contribution to the linear term, `c*vals*w^power`
+# applied to the state `x` column by column, the value directed by
+# `alphas`, conjugated at the negative frequency modes and
+# nondimensionalized by `Lscale` as the solver does with the full
+# matrices, and the negative of a junction's term.
+function residualentries!(Ir, Jc, Vr, stamps, ljterms, alphas, x, wmodes,
+        Lscale, realindexmap, isrealmode)
+    Nm = length(wmodes)
+    nmd = length(isrealmode)
     function pushentry!(r, comp, v)
         kr = realindexmap[r]
         push!(Ir, kr); push!(Jc, comp); push!(Vr, real(v))
@@ -355,67 +415,54 @@ function calcresidualsensitivity(op::HBOperatingPoint,
         end
         return nothing
     end
-
-    x = op.x
-    Nm = length(wmodes)
-    lookups = componentlookups(op.coupledbranches, sys.Ljb)
-    stamps = [componentstamp(idx, psc, nm, lookups, Nmodes, Nnodes)
-        for idx in sensitivityindices]
-    # the Josephson terms of the junctions asked for, on their own rows
-    ljterms = josephsonterms(sys,
-        [info for (kind, info) in stamps if kind == :Lj], Nmodes)
-    for (comp, (kind, info)) in enumerate(stamps)
-        if kind == :C || kind == :G || kind == :invL
-            # dF_comp = c * Ms * Diagonal(w.^power) * x, accumulated per
-            # stored entry of the component's own (tiny) matrix.
-            Ms = scaledpadded(info, alphas[comp])
-            c, power = kind == :C ? (-1.0 + 0im, 2) :
-                kind == :G ? (0.0 - 1im, 1) : (-1.0 + 0im, 0)
-            rows = rowvals(Ms)
-            vals = nonzeros(Ms)
-            for col in axes(Ms, 2)
-                xc = x[col]
-                iszero(xc) && continue
-                w = wmodes[(col-1) % Nm + 1]
-                scale = power == 0 ? c*xc : power == 1 ? c*w*xc : c*w^2*xc
-                for pp in nzrange(Ms, col)
-                    pushentry!(rows[pp], comp, vals[pp]*scale)
-                end
+    for (comp, s) in enumerate(stamps)
+        alpha = alphas[comp]
+        if s.kind == :Lj
+            for (r, v) in ljterms[s.junction]
+                pushentry!(r, comp, -v*alpha)
             end
-        else # :Lj
-            for (r, v) in ljterms[info]
-                pushentry!(r, comp, -v*alphas[comp])
-            end
+            continue
+        end
+        c, power = s.kind == :C ? (-1.0 + 0im, 2) :
+            s.kind == :G ? (0.0 - 1im, 1) : (-1.0 + 0im, 0)
+        for t in eachindex(s.vals)
+            col = s.cols[t]
+            xc = x[col]
+            iszero(xc) && continue
+            w = wmodes[(col-1) % Nm + 1]
+            scale = power == 0 ? c*xc : power == 1 ? c*w*xc : c*w^2*xc
+            # the design parameter rescale is a direction in component
+            # value space, so it multiplies the stored value before the
+            # negative frequency conjugation, exactly as in `reparameterize`
+            v = s.vals[t]
+            isone(alpha) || (v *= alpha)
+            pushentry!(s.rows[t], comp, modevalue(v, w)*Lscale*scale)
         end
     end
-    harmonic = sparse(Ir, Jc, Vr, Nreal, length(sensitivityindices))
-    isnothing(op.dc) && return harmonic
+    return nothing
+end
 
-    # In canonical coordinates the residual is `D G F(S u) + M u`, so its
-    # parameter derivative is this gathered, masked by the rows the block
-    # replaces rather than adds to, plus the block's own dependence on the
-    # component values. The gather copies the flux rows and writes nothing
-    # into the voltage rows, which is where the block's part lands.
-    L = op.dc.work.layout
-    N = canonicaldim(L)
-    dccols = dcresidualsensitivity(op.dc, psc, nm, op.Lscale,
-        sensitivityindices, alphas)
-    Ic, Jc2, Vc = Int[], Int[], Float64[]
-    keep = op.dc.keep
-    col = zeros(Float64, Nreal)
-    gathered = zeros(Float64, N)
-    for k in axes(harmonic, 2)
-        fill!(col, 0.0)
-        col .= view(harmonic, :, k)
-        fill!(gathered, 0.0)
-        gathercanonical!(gathered, col, L)
-        for i in eachindex(gathered)
-            v = gathered[i]*keep[i]
-            iszero(v) && continue
-            push!(Ic, i); push!(Jc2, k); push!(Vc, v)
-        end
+"""
+    canonicalresidual(dF::SparseMatrixCSC, keep::Vector{Float64}, N)
+
+The harmonic residual derivative columns `dF` in the `N` canonical
+coordinates of the direct current block: the gather copies the harmonic
+rows, which lead the canonical vector, and the rows the block replaces
+rather than adds to are masked out by `keep` ([`dckeep`](@ref)). Linear in
+the stored entries of `dF`; the block's own dependence on the parameters
+is added by the caller.
+"""
+function canonicalresidual(dF::SparseMatrixCSC, keep::Vector{Float64},
+        N::Integer)
+    I = Int[]; J = Int[]; V = Float64[]
+    rows = rowvals(dF)
+    vals = nonzeros(dF)
+    for k in axes(dF, 2), p in nzrange(dF, k)
+        v = vals[p]*keep[rows[p]]
+        iszero(v) && continue
+        push!(I, rows[p]); push!(J, k); push!(V, v)
     end
-    return sparse(Ic, Jc2, Vc, N, length(sensitivityindices)) + dccols
+    return sparse(I, J, V, N, size(dF, 2))
 end
 
 """
@@ -628,8 +675,13 @@ struct ReverseSensitivityBuffers
     # the output functional covectors of a chunk of output pairs, and their
     # solutions through the transposed pump Jacobian, batched so the sparse
     # solver amortizes its per-call overhead over many right hand sides.
-    G::Matrix{Complex{Float64}}
-    Psi::Matrix{Complex{Float64}}
+    # The covectors are complex and the Jacobian real, so a chunk of `n`
+    # pairs is held as `2n` real columns, the real parts of its covectors
+    # followed by their imaginary parts, which one real solve takes as
+    # they are, where a complex right hand side would be split into real
+    # copies at every solve.
+    G::Matrix{Float64}
+    Psi::Matrix{Float64}
     eta::Matrix{Complex{Float64}}
     c::Matrix{Complex{Float64}}
     # the zero padded input and the single output grid of the transposed
@@ -637,19 +689,15 @@ struct ReverseSensitivityBuffers
     # eta one after the other, so their transforms need not coexist.
     padded::Array{Complex{Float64}}
     tgrid::Array{Complex{Float64}}
-    # the covector as the junction branches produce it, in the real
-    # representation of the harmonic state. With a direct current block the
-    # columns of `G` are canonical and this is gathered into one of them;
-    # without, it is copied straight across.
-    gint::Vector{Complex{Float64}}
     # the covector of one output pair per stored entry of the Josephson plan
     wcov::Vector{Complex{Float64}}
 end
 
-# The byte budget of the two `nr` by `chunk` complex right hand side and
-# solution buffers of one frequency batch of the reverse contraction.
-# Together they cost `32*nr*chunk` bytes, so a pump system of 8000 real
-# unknowns gets a chunk of about 128 columns and a system a hundred times
+# The byte budget of the right hand side and solution buffers of one
+# frequency batch of the reverse contraction, `nr` by `2*chunk` real
+# each for a chunk of `chunk` output pairs. Together they cost
+# `32*nr*chunk` bytes, so a pump system of 8000 real unknowns gets a
+# chunk of about 128 output pairs and a system a hundred times
 # larger degrades toward single column solves. Batching amortizes the per
 # call overhead of the sparse triangular solves, and a byte budget rather
 # than a fixed column count keeps the memory per batch bounded; one set of
@@ -670,13 +718,12 @@ function ReverseSensitivityBuffers(rev::ReverseSensitivity, NPM::Integer)
     chunk = clamp(REVERSESENSITIVITYCHUNKBYTES ÷ (32*nr), 1, NPM^2)
     return ReverseSensitivityBuffers(
         zeros(Complex{Float64}, NF), zeros(Complex{Float64}, NF),
-        zeros(Complex{Float64}, nr, chunk),
-        zeros(Complex{Float64}, nr, chunk),
+        zeros(Float64, nr, 2*chunk),
+        zeros(Float64, nr, 2*chunk),
         zeros(Complex{Float64}, size(rev.T, 1), NLj),
         zeros(Complex{Float64}, size(rev.T, 2), NLj),
         zeros(Complex{Float64}, size(sys.phitd)),
         zeros(Complex{Float64}, size(sys.phitd)),
-        zeros(Complex{Float64}, size(rev.op.jacobian, 1)),
         zeros(Complex{Float64}, length(rev.nzrow)))
 end
 
@@ -817,16 +864,15 @@ function calcSsensitivityreverse!(Ssensitivity, rev::ReverseSensitivity,
     sintd = reshape(_negsecond!(sys), :, NLj)
     return reversecontraction!(Ssensitivity, rev.dFr, rev.T, rev.fftplan,
         rev.nzrow, rev.nzcol, rev.realindexmap, rev.branchnodes, rev.slots,
-        lsys.complexjacobianplan, op.Nmodes, op.modelayout.isreal,
-        isnothing(op.dc) ? nothing : op.dc.work.layout, sintd,
+        lsys.complexjacobianplan, op.Nmodes, op.modelayout.isreal, sintd,
         size(sys.phimatrix), sys.Ljb.nzind, phin, phinadjoint, gamma, beta,
         cache, bufs)
 end
 
 # the loops of `calcSsensitivityreverse!`, with every argument concrete
 function reversecontraction!(Ssensitivity, dFr, T, fftplan, nzrow, nzcol,
-    realindexmap, branchnodes, slots, plan, Nmodes, isrealmode, dclayout,
-    sintd, wsize, junctionbranches, phin, phinadjoint, gamma, beta, cache,
+    realindexmap, branchnodes, slots, plan, Nmodes, isrealmode, sintd,
+    wsize, junctionbranches, phin, phinadjoint, gamma, beta, cache,
     bufs::ReverseSensitivityBuffers)
 
     NPM = size(phin, 2)
@@ -846,12 +892,14 @@ function reversecontraction!(Ssensitivity, dFr, T, fftplan, nzrow, nzcol,
 
     # The output pairs are independent, so their solves through the
     # transposed pump Jacobian are batched: the covectors of a chunk of
-    # pairs are accumulated as the columns of G and pushed through the
-    # factorization in one multi right hand side call, which amortizes the
-    # per-call overhead of the sparse triangular solves over the chunk.
+    # pairs are accumulated as the columns of G, their real parts and then
+    # their imaginary parts, and pushed through the factorization in one
+    # multi right hand side call, which amortizes the per-call overhead of
+    # the sparse triangular solves over the chunk.
     wcov = bufs.wcov
     pairs = vec(CartesianIndices((NPM, NPM)))
-    for chunk in Iterators.partition(eachindex(pairs), size(G, 2))
+    for chunk in Iterators.partition(eachindex(pairs), size(G, 2) ÷ 2)
+        ncols = length(chunk)
         for (col, pi) in enumerate(chunk)
             a, b = Tuple(pairs[pi])
             # the transpose of the Josephson scatter
@@ -886,57 +934,59 @@ function reversecontraction!(Ssensitivity, dFr, T, fftplan, nzrow, nzcol,
             mul!(c, transpose(T), eta)
 
             # the transpose of the branch flux map, into the real
-            # representation of the augmented state. The outputs depend on
-            # the state through the harmonic coordinates, so this is where
-            # the covector is built whether or not there is a direct current
-            # block; with one it is carried into the canonical coordinates
-            # afterwards, which is the transpose of the scatter the residual
-            # applies going the other way.
-            g = bufs.gint
-            fill!(g, 0)
+            # representation of the augmented state, its real part in
+            # column `col` and its imaginary part in column `ncols + col`.
+            # The outputs depend on the state through the harmonic
+            # coordinates, so this is where the covector is built whether or
+            # not there is a direct current block. The canonical coordinates
+            # of one lead with the harmonic ones, so the covector is already
+            # carried into them, which is the transpose of the scatter the
+            # residual applies going the other way; the voltage rows stay
+            # zero, since no output reads an average voltage directly, only
+            # through the state the block moves.
+            gre = view(G, :, col)
+            gim = view(G, :, ncols + col)
+            fill!(gre, 0)
+            fill!(gim, 0)
             @inbounds for (jj, branch) in enumerate(junctionbranches)
                 for m in 1:Nmodes
+                    # the covector of the real and of the imaginary part of
+                    # the mode's branch flux
                     cre = c[2*(m-1)+1, jj]
                     cim = c[2*(m-1)+2, jj]
-                    holo = (cre - im*cim)/2
-                    anti = (cre + im*cim)/2
                     for (node, sgn) in branchnodes[branch]
                         j = (node-1)*Nmodes + m
                         k = realindexmap[j]
-                        g[k] += sgn*(holo + anti)
+                        gre[k] += sgn*real(cre)
+                        gim[k] += sgn*imag(cre)
                         if !isrealmode[(j-1) % nmd + 1]
-                            g[k+1] += sgn*im*(holo - anti)
+                            gre[k+1] += sgn*real(cim)
+                            gim[k+1] += sgn*imag(cim)
                         end
                     end
                 end
             end
-            gcol = view(G, :, col)
-            if isnothing(dclayout)
-                copyto!(gcol, g)
-            else
-                # the gather leaves the voltage rows alone, and they are
-                # zero: no output reads an average voltage directly, only
-                # through the state the block moves
-                fill!(gcol, 0)
-                gathercanonical!(gcol, g, dclayout)
-            end
         end
 
         # through the transposed Jacobian once for the whole chunk
-        ncols = length(chunk)
-        Gc = view(G, :, 1:ncols)
-        Psic = view(Psi, :, 1:ncols)
+        Gc = view(G, :, 1:2*ncols)
+        Psic = view(Psi, :, 1:2*ncols)
         trysolvetranspose!(Psic, cache.factorization, Gc)
 
         # the sparse inner products with the residual derivatives
         for (col, pi) in enumerate(chunk)
             a, b = Tuple(pairs[pi])
             @inbounds for k in 1:Ncomponents
-                acc = zero(Complex{Float64})
+                accre = 0.0
+                accim = 0.0
                 for r in nzrange(dFr, k)
-                    acc += Psi[dFrows[r], col]*dFvals[r]
+                    row = dFrows[r]
+                    v = dFvals[r]
+                    accre += Psi[row, col]*v
+                    accim += Psi[row, ncols + col]*v
                 end
-                Ssensitivity[a,b,slots[k]] += gamma[a]*beta[b]*acc
+                Ssensitivity[a,b,slots[k]] +=
+                    gamma[a]*beta[b]*complex(accre, accim)
             end
         end
     end

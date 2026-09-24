@@ -604,7 +604,7 @@ function lowercomponent(def::VoltageSource, path)
     throw(ComponentNotSupportedError(lazy"the VoltageSource at $(path) is not supported by the solvers."))
 end
 function lowercomponent(def::GaussianChannel, path)
-    throw(ComponentNotSupportedError(lazy"the GaussianChannel at $(path) is not yet supported by the harmonic balance solvers. It parsed, validated, and elaborated successfully; solver support for Gaussian channels is planned. Currently solvable components: Inductor, Capacitor, Resistor, JosephsonJunction, MutualInductor, CurrentSource, and Port."))
+    throw(ComponentNotSupportedError(lazy"the GaussianChannel at $(path) is not yet supported by the harmonic balance solvers. It parsed, validated, and elaborated successfully; solver support for Gaussian channels is planned. Currently solvable components: Inductor, Capacitor, Resistor, JosephsonJunction and the other NonlinearInductors, MutualInductor, CurrentSource, Port, and the scattering blocks (ScatteringParameters, TransmissionLine, RationalScattering and LinearizedScattering)."))
 end
 function lowercomponent(def, path)
     throw(ComponentNotSupportedError(lazy"the component $(typeof(def)) at $(path) is not supported by the solver."))
@@ -785,6 +785,47 @@ function sortnodes(uniquenodevector::Vector{String},
 end
 
 """
+    shortednets(elab::ElaboratedCircuit)
+
+The net each net of `elab` is compiled as: the ground net (1) for a net
+whose every terminal belongs to a component, or a port of a scattering
+block, shorted across that net, and the net itself otherwise.
+
+A component whose two terminals are one node carries no current and
+couples no node, so a net which only such components touch is a node with
+no equation of its own: every frequency domain solve would meet it as an
+empty row. On the ground net the components are the self loops they are
+at any other node, and the node is gone.
+"""
+function shortednets(elab::ElaboratedCircuit)
+    shorted = falses(nnets(elab))   # a shorted pair's terminal is on the net
+    other = falses(nnets(elab))     # so is some other terminal
+    for i in 1:ninstances(elab)
+        def = instancedefinition(elab, i)
+        terminals = instanceterminals(elab, i)
+        # the terminals come in pairs for a two terminal component and for
+        # each port of a scattering block; any other component is compiled
+        # into a refusal, and its terminals keep their nets
+        if length(terminals) == 2 ||
+                def isa ScatteringParameters || def isa LinearizedScattering
+            for k in 1:2:length(terminals)
+                a, b = terminals[k], terminals[k+1]
+                if a == b
+                    shorted[a] = true
+                else
+                    other[a] = other[b] = true
+                end
+            end
+        else
+            for n in terminals
+                other[n] = true
+            end
+        end
+    end
+    return [n != 1 && shorted[n] && !other[n] ? 1 : n for n in 1:nnets(elab)]
+end
+
+"""
     compile(elab::ElaboratedCircuit; sorting = :name)
     compile(circuit::Circuit; sorting = :name)
     compile(c::CompiledCircuit; sorting = :name)
@@ -794,10 +835,12 @@ elaborated first; a `CompiledCircuit` is returned unchanged, and asking it
 for a node order other than the one it carries is an error.
 
 Components appear in the table in elaboration order, with a matched port's
-own termination emitted as a resistor entry directly after the port. Nodes
-are numbered by [`calcnodesorting`](@ref) with ground first; the default
-`sorting = :name` sorts the net names as strings, since hierarchical net
-names are not integers, and `:number` sorts integer node names by value.
+own termination emitted as a resistor entry directly after the port. A net
+which only components shorted across it touch is the ground net (see
+[`shortednets`](@ref)). Nodes are numbered by [`calcnodesorting`](@ref)
+with ground first; the default `sorting = :name` sorts the net names as
+strings, since hierarchical net names are not integers, and `:number`
+sorts integer node names by value.
 
 Only components the solvers support can be lowered: a
 [`GaussianChannel`](@ref), a [`VoltageSource`](@ref), or a component with
@@ -820,14 +863,20 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
     sizehint!(nodeindexvector, 2*N)
 
     # the nets are numbered in the order their terminals are met, by the
-    # dense net ids the elaboration resolved
+    # dense net ids the elaboration resolved, a net which only components
+    # shorted across it touch being the ground net
+    compiledas = shortednets(elab)
     netnumber = zeros(Int, nnets(elab))
     uniquenodevector = String[]
     for net in elab.terminalnets
+        net = compiledas[net]
         if netnumber[net] == 0
             push!(uniquenodevector, elab.netnames[net])
             netnumber[net] = length(uniquenodevector)
         end
+    end
+    for net in eachindex(compiledas)
+        netnumber[net] = netnumber[compiledas[net]]
     end
 
     ports = CompiledPort[]
@@ -940,13 +989,11 @@ function compile(elab::ElaboratedCircuit; sorting::Symbol = :name)
                 environment = length(componentnames)
             elseif !isnothing(namedtermination(def.termination))
                 # the termination names a resistor which already exists in
-                # the table. Its name is relative to the port's level, so a
-                # circuit instanced as a subcircuit still resolves; the
-                # index is looked up once the table is complete.
-                k = findlast('/', path)
-                prefix = isnothing(k) ? "" : path[1:k]
+                # the table (the resistor a tuple netlist places across a
+                # port, at the top level); the index is looked up once the
+                # table is complete
                 push!(namedenvironments, length(ports) + 1 =>
-                    prefix*string(namedtermination(def.termination)))
+                    string(namedtermination(def.termination)))
             end
             push!(ports, CompiledPort(def.number, n1, n2, environment,
                 marker))
@@ -1080,12 +1127,13 @@ const CompilableCircuit = Union{Circuit,ElaboratedCircuit,CompiledCircuit}
     scatteringblockindex(c::CompiledCircuit, name)
 
 The position in `c.scatteringblocks` of the block whose instance path is
-`name`, or zero when there is none. A block is also named by the
+`name`, a string, a symbol or an integer instance id, or zero when there
+is none. A block is also named by the
 `"<path>/port1"` spelling its stamp carries, which is what the solver
 messages and the sensitivity labels print.
 """
 function scatteringblockindex(c::CompiledCircuit, name)
-    s = String(name)
+    s = string(name)
     bare = endswith(s, "/port1") ? chop(s; tail = 6) : s
     for (k, b) in enumerate(c.scatteringblocks)
         (b.path == s || b.path == bare) && return k
@@ -1201,6 +1249,40 @@ plan computes once and passes in.
 function noiseindices(c::CompiledCircuit, values, candidates = noisecandidates(c))
     return [i for i in candidates if c.componenttypes[i] === :R ||
         (values[i] isa Complex && !iszero(values[i].im))]
+end
+
+"""
+    isolatedsubnetworks(c::CompiledCircuit)
+
+The subnetworks which no element connects to ground: the connected
+components of the nodes joined by every capacitor, resistor, inductor,
+junction and scattering block port, whatever their values, leaving out
+the one which holds ground. Each is a sorted vector of node indices.
+"""
+function isolatedsubnetworks(c::CompiledCircuit)
+    edges = Tuple{Int,Int}[]
+    for k in eachindex(c.componenttypes)
+        c.componenttypes[k] in (:C, :R, :L, :Lj) || continue
+        push!(edges, (c.nodeindices[1, k], c.nodeindices[2, k]))
+    end
+    for cb in c.scatteringblocks, q in eachindex(cb.signalnodes)
+        push!(edges, (cb.signalnodes[q], cb.refnodes[q]))
+    end
+    return nodecomponents(c.Nnodes, edges)
+end
+
+# Harmonic balance writes one equation per node and mode, the current law,
+# and the currents of an isolated subnetwork sum to zero whatever its
+# potential, so its equations leave that potential free at every mode and
+# the system is singular. The solvers refuse such a circuit by name; the
+# transient fixes the potential by a gauge row (see
+# `transientfloatingcomponents`).
+function checkisolatedsubnetworks(c::CompiledCircuit)
+    islands = isolatedsubnetworks(c)
+    isempty(islands) && return nothing
+    names = join(["(" * join(c.nodenames[island], ", ") * ")"
+        for island in islands], ", ")
+    throw(ArgumentError(lazy"the nodes $names form a subnetwork which no element connects to ground, whose potential harmonic balance cannot determine; connect it to ground (a resistor or a capacitor will do), or solve the circuit in time with `transientsolve`, which fixes that potential."))
 end
 
 # the components which can be noise channels whatever their values: the

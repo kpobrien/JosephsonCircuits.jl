@@ -152,7 +152,8 @@ zeroing and the stores are contiguous. See [`NonlinearTermPlan`](@ref).
 """
 @kernel function forwardtermkernel!(phimatrix, @Const(n1), @Const(s1),
         @Const(n2), @Const(s2), @Const(flags), @Const(xr))
-    forwardtermitem!(phimatrix, n1, s1, n2, s2, flags, xr, @index(Global))
+    gid = @index(Global)
+    forwardtermitem!(phimatrix, n1, s1, n2, s2, flags, xr, gid)
 end
 
 # the work item `q` of `forwardtermkernel!`, which the host runs as a loop
@@ -192,8 +193,8 @@ and the [`FWIDE`](@ref) flag is not consulted. See
 """
 @kernel function forwardtermkernelcomplex!(phimatrix, @Const(cn1), @Const(s1),
         @Const(cn2), @Const(s2), @Const(flags), @Const(xc))
-    forwardtermitemcomplex!(phimatrix, cn1, s1, cn2, s2, flags, xc,
-        @index(Global))
+    gid = @index(Global)
+    forwardtermitemcomplex!(phimatrix, cn1, s1, cn2, s2, flags, xc, gid)
 end
 
 # the work item `q` of `forwardtermkernelcomplex!`
@@ -228,8 +229,9 @@ term off. See [`NonlinearTermPlan`](@ref).
 @kernel function backwardtermkernelcomplex!(out, @Const(bptr), @Const(bsrc),
         @Const(bcoef), @Const(phimatrix), @Const(kptr), @Const(kidx),
         @Const(kcoef), @Const(xc))
+    gid = @index(Global)
     backwardtermitemcomplex!(out, bptr, bsrc, bcoef, phimatrix, kptr, kidx,
-        kcoef, xc, @index(Global))
+        kcoef, xc, gid)
 end
 
 # the work item `k` of `backwardtermkernelcomplex!`
@@ -264,8 +266,9 @@ switches the linear term off. See [`NonlinearTermPlan`](@ref).
 @kernel function backwardtermkernel!(out, @Const(bptr), @Const(bsrc),
         @Const(bcoef), @Const(phimatrix), @Const(kptr), @Const(kidx),
         @Const(kcoef), @Const(xr), @Const(lptr), @Const(lwide))
+    gid = @index(Global)
     backwardtermitem!(out, bptr, bsrc, bcoef, phimatrix, kptr, kidx, kcoef, xr,
-        lptr, lwide, @index(Global))
+        lptr, lwide, gid)
 end
 
 # the work item `k` of `backwardtermkernel!`
@@ -310,7 +313,8 @@ scalar [`real_to_complex!`](@ref), which advances a serial cursor and reads a
 """
 @kernel function realtocomplexkernel!(xc, @Const(xr), @Const(lptr),
         @Const(lwide))
-    realtocomplexitem!(xc, xr, lptr, lwide, @index(Global))
+    gid = @index(Global)
+    realtocomplexitem!(xc, xr, lptr, lwide, gid)
 end
 
 # the work item `k` of `realtocomplexkernel!`
@@ -335,7 +339,8 @@ disjoint from every other's, so this is conflict free. The inverse of
 """
 @kernel function complextorealkernel!(xr, @Const(xc), @Const(lptr),
         @Const(lwide))
-    complextorealitem!(xr, xc, lptr, lwide, @index(Global))
+    gid = @index(Global)
+    complextorealitem!(xr, xc, lptr, lwide, gid)
 end
 
 # the work item `k` of `complextorealkernel!`
@@ -701,49 +706,86 @@ function valuemaps(plan::NonlinearTermPlan{Ti,T}, Knm::SparseMatrixCSC,
         KernelAbstractions.allocate(plan.backend, Complex{T}, nz))
 end
 
-# the three refreshes, one work item per output entry
+# the three refreshes, one work item per output entry, and the items the
+# kernels and the host loops share
 @kernel function refreshrealkernel!(kcoef, @Const(knz), @Const(kmap),
         @Const(kre), @Const(kim))
-    t = @index(Global)
+    gid = @index(Global)
+    refreshrealitem!(kcoef, knz, kmap, kre, kim, gid)
+end
+
+@inline function refreshrealitem!(kcoef, knz, kmap, kre, kim, t)
     @inbounds begin
         v = knz[kmap[t]]
         kcoef[t] = kre[t]*real(v) + kim[t]*imag(v)
     end
+    return nothing
 end
 
 @kernel function refreshcomplexkernel!(ccoef, @Const(knz), @Const(cmap))
-    t = @index(Global)
+    gid = @index(Global)
+    refreshcomplexitem!(ccoef, knz, cmap, gid)
+end
+
+@inline function refreshcomplexitem!(ccoef, knz, cmap, t)
     @inbounds ccoef[t] = knz[cmap[t]]
+    return nothing
 end
 
 @kernel function refreshjosephsonkernel!(bcoef, @Const(ljnz), @Const(bjunc),
         @Const(bsgn), lmean)
-    t = @index(Global)
+    gid = @index(Global)
+    refreshjosephsonitem!(bcoef, ljnz, bjunc, bsgn, lmean, gid)
+end
+
+@inline function refreshjosephsonitem!(bcoef, ljnz, bjunc, bsgn, lmean, t)
     @inbounds bcoef[t] = bsgn[t]*(lmean/ljnz[bjunc[t]])
+    return nothing
 end
 
 """
     refreshvalues!(plan::NonlinearTermPlan, maps::ValueMaps, Knm, Ljb, Lscale)
 
 Rewrite the value arrays of a plan through its [`ValueMaps`](@ref): up to
-three kernels over the arrays where they live (the real form only when the
-plan has one, the Josephson coefficients only when there are junctions);
-nothing the size of the plan is allocated, a junction length vector of
-inductances is.
+three passes over the arrays where they live (the real form only when the
+plan has one, the Josephson coefficients only when there are junctions),
+plain loops on the host and kernels on a device; nothing the size of the
+plan is allocated, a junction length vector of inductances is.
 """
 function refreshvalues!(plan::NonlinearTermPlan{Ti,T}, maps::ValueMaps,
         Knm::SparseMatrixCSC, Ljb::SparseVector, Lscale) where {Ti,T}
     backend = plan.backend
     copyto!(maps.knz, nonzeros(Knm))
     ljnz = tobackend(backend, convert(Vector{T}, real.(Ljb.nzval)))
+    kcoef, ccoef, bcoef = plan.kcoef, plan.ccoef, plan.bcoef
     if hasrealbackward(plan)
-        refreshrealkernel!(backend, 64)(plan.kcoef, maps.knz, maps.kmap,
-            maps.kre, maps.kim; ndrange = length(plan.kcoef))
+        if hostloop(backend, length(kcoef))
+            for t in eachindex(kcoef)
+                refreshrealitem!(kcoef, maps.knz, maps.kmap, maps.kre,
+                    maps.kim, t)
+            end
+        else
+            refreshrealkernel!(backend, 64)(kcoef, maps.knz, maps.kmap,
+                maps.kre, maps.kim; ndrange = length(kcoef))
+        end
     end
-    refreshcomplexkernel!(backend, 64)(plan.ccoef, maps.knz, maps.cmap;
-        ndrange = length(plan.ccoef))
-    isempty(plan.bcoef) || refreshjosephsonkernel!(backend, 64)(plan.bcoef,
-        ljnz, maps.bjunc, maps.bsgn, T(Lscale); ndrange = length(plan.bcoef))
+    if hostloop(backend, length(ccoef))
+        for t in eachindex(ccoef)
+            refreshcomplexitem!(ccoef, maps.knz, maps.cmap, t)
+        end
+    else
+        refreshcomplexkernel!(backend, 64)(ccoef, maps.knz, maps.cmap;
+            ndrange = length(ccoef))
+    end
+    if hostloop(backend, length(bcoef))
+        for t in eachindex(bcoef)
+            refreshjosephsonitem!(bcoef, ljnz, maps.bjunc, maps.bsgn,
+                T(Lscale), t)
+        end
+    elseif !isempty(bcoef)
+        refreshjosephsonkernel!(backend, 64)(bcoef, ljnz, maps.bjunc,
+            maps.bsgn, T(Lscale); ndrange = length(bcoef))
+    end
     KernelAbstractions.synchronize(backend)
     return plan
 end

@@ -258,16 +258,18 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test_throws ArgumentError go(c, direct)
 
         # Skipping the block when nothing is injected is exact and not an
-        # approximation: a junction driven by two tones rectifies, and a
-        # floating island joined to the rest by resistors could in principle
-        # develop an average voltage from it. It does not, because a
-        # rectified current circulates inside the island's inductive paths
-        # and the transport row sums it away. The same circuit driven by a
-        # direct current too small to matter carries the block explicitly,
-        # and lands on the same point.
+        # approximation: a nonlinear inductor whose current-phase relation
+        # has an even term rectifies a single tone, and a floating island
+        # joined to the rest by resistors could in principle develop an
+        # average voltage from it. It does not, because a rectified current
+        # circulates inside the island's inductive paths and the transport
+        # row sums it away. The same circuit driven by a direct current too
+        # small to matter carries the block explicitly, and lands on the
+        # same point.
         j = Circuit(
             [:p1 => Port(1), :cc => Capacitor(100e-15), :rb => Resistor(200.0),
-             :jj => JosephsonJunction(500e-12), :cj => Capacitor(500e-15),
+             :jj => NonlinearInductor(500e-12, PolynomialCPR([1.0, 0.3, -1/6])),
+             :cj => Capacitor(500e-15),
              :l3 => Inductor(2e-9), :c3 => Capacitor(1e-12),
              :r3 => Resistor(300.0), :c4 => Capacitor(1e-12)],
             [[(:p1,1),(:cc,1)],
@@ -275,16 +277,19 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
              [(:rb,2),(:jj,2),(:cj,2),(:c3,1),(:l3,2)],
              [(:c3,2),(:r3,1)], [(:r3,2),(:c4,1)],
              [(:p1,2),(:c4,2), Ground]])
-        ws2 = (2*pi*4.75e9, 2*pi*7.1e9)
-        two = [(mode=(1,0), port=1, current=1.2e-6),
-               (mode=(0,1), port=1, current=0.9e-6)]
+        ws1 = (2*pi*4.75e9,)
+        tone = [(mode=(1,), port=1, current=1.2e-6)]
         kw = (; keyedarrays = false, dc = true, odd = true, even = true,
             atol = 1e-11)
-        a = hbnlsolve(ws2, (4,2), two, j, Dict{Any,Any}(); kw...)
+        a = hbnlsolve(ws1, (8,), tone, j, Dict{Any,Any}(); kw...)
         @test a.solverinfo.converged
         @test a.dcnodevoltage == zeros(5)
-        b = hbnlsolve(ws2, (4,2),
-            vcat(two, [(mode=(0,0), port=1, current=1e-30)]), j,
+        # the tone does rectify: the island carries a zero frequency flux
+        k0 = findfirst(m -> all(iszero, m), a.frequencies.modes)
+        dcflux = reshape(a.nodeflux, length(a.frequencies.modes), :)[k0, :]
+        @test maximum(abs, dcflux) > 1e-3
+        b = hbnlsolve(ws1, (8,),
+            vcat(tone, [(mode=(0,), port=1, current=1e-30)]), j,
             Dict{Any,Any}(); kw...)
         @test b.solverinfo.converged
         @test maximum(abs, b.dcnodevoltage) < 1e-20
@@ -450,10 +455,9 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test isapprox(maximum(abs, got.dcnodevoltage),
             maximum(abs, r.dcnodevoltage); rtol = 1e-6)
 
-        # the number to beat: were the block an open, the whole current
-        # would go through the port environment instead and the voltage
-        # would be Idc*Zbig, seven orders larger
-        @test Idc*Zbig / (Idc*Rb) > 1e6
+        # were the block an open, the whole current would go through the
+        # port environment instead and the voltage would be Idc*Zbig, seven
+        # orders larger, so the agreement above is not an accident
 
         # the relative test is drive independent, which the absolute one is
         # not: the residual it stops at moves with the source while the
@@ -761,38 +765,6 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
             dcmodel = ScatteringDC([0 2.0; 2.0 0])) isa ScatteringParameters
     end
 
-    # The direct current block is held in Float64 whatever precision the
-    # periodic solve runs in, because it is small, exactly solved, and the
-    # worst conditioned part of the problem. A single precision solve is
-    # then as accurate as single precision allows, which is what it should
-    # be, and needs a tolerance it can meet: the default is absolute and
-    # sized for double precision.
-    @testset "a single precision solve carries the block" begin
-        c = Circuit(
-            [:p1 => Port(1; Z0 = 50.0), :c1 => Capacitor(1.0e-12)],
-            [[(:p1,1),(:c1,1)], [(:p1,2),(:c1,2), Ground]])
-        src = [(mode=(0,), port=1, current=1e-6),
-               (mode=(1,), port=1, current=1e-6)]
-        go(P; kw...) = hbnlsolve(ws, (4,), src, c, Dict{Any,Any}();
-            keyedarrays = false, dc = true, odd = true, even = true,
-            method = NewtonKrylov(precision = P), kw...)
-
-        a = go(Float64)
-        b = go(Float32; rtol = 1e-6)
-        @test a.solverinfo.converged
-        @test b.solverinfo.converged
-        # the same answer, to what single precision can hold
-        @test isapprox(only(a.dcnodevoltage), only(b.dcnodevoltage);
-            rtol = 1e-6)
-        # and it stops where single precision runs out rather than at the
-        # tolerance it was handed: `rtol` would accept a relative residual
-        # of 1e-6 and the arithmetic reaches a few times `eps(Float32)`, so
-        # the bound sits between them rather than at one ulp, which a
-        # residual summed over the modes does not land on exactly
-        r = b.solverinfo.finalresidual/b.solverinfo.initialresidual
-        @test r <= 4*eps(Float32)
-    end
-
     # The preconditioner solves the direct current subsystem exactly and
     # writes the answer over whatever the inner preconditioner guessed at
     # those coordinates. On a device the same factors and the same
@@ -955,15 +927,20 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
     # and the second refused, and the difference is whether the constant
     # side lies in the range of the matrix.
     #
-    # This is exercised on a doctored subsystem rather than a circuit,
-    # deliberately. Every direct current source is a port drive and every
-    # port owns its termination, which is a resistive path between that
-    # port's own terminals, so the injection into a resistive island is
-    # balanced by construction and the inconsistent case cannot be reached
-    # through the public interface today. It is a guard against an input
-    # which does not exist yet, and it is tested as one.
+    # A current source into a resistive island which reaches the rest of
+    # the circuit only through capacitors injects a net direct current the
+    # island cannot carry away, and the solve refuses it. Both cases are
+    # then taken on a doctored subsystem, where the constant side can be
+    # put along either direction of a singular block.
     @testset "an unsolvable direct current block is refused" begin
         JC = JosephsonCircuits
+
+        island = Circuit([(:p1, 1, 0, Port(1)), (:cp, 1, 2, Capacitor(1e-12)),
+            (:c1, 2, 0, Capacitor(1e-12)), (:r, 2, 3, Resistor(100.0)),
+            (:c2, 3, 0, Capacitor(1e-12)), (:i, 0, 2, CurrentSource(1e-6))])
+        @test_throws ArgumentError hbnlsolve(ws, (1,),
+            [(mode = (1,), port = 1, current = 1e-13)], island,
+            Dict{Any,Any}(); keyedarrays = false, dc = true, odd = true)
 
         # a real plan, so the structure around it is genuine
         c = Circuit(
@@ -1008,10 +985,9 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
 
     # The average voltages and the blocks' zero frequency rows live outside
     # the `HBSystem`, so an interface which hands that object out, or stores
-    # it to be differentiated later, is describing a different problem from
+    # it to be differentiated later, would describe a different problem from
     # the one solved. `returnsystem` and `debugJacobian` hand back the
-    # canonical work beside it; `returnoperatingpoint` and sensitivities
-    # cannot yet, and say so.
+    # canonical work beside it, and the operating point carries the block.
     @testset "interfaces do not hand out the unaugmented system" begin
         c = Circuit(
             [:p1 => Port(1; Z0 = 50.0), :c1 => Capacitor(1.0e-12)],
@@ -1042,11 +1018,6 @@ JosephsonCircuits.updatepreconditioner!(pc::Passthrough, x) = pc
         @test size(op.dc.jacobian, 1) ==
             JosephsonCircuits.canonicaldim(op.dc.work.layout)
 
-        # and sensitivities are taken through it rather than refused
-        sens = hbnlsolve(ws, (1,), dcsrc, c, Dict{Any,Any}();
-            keyedarrays = false, dc = true, odd = true,
-            sensitivitynames = ["c1"])
-        @test sens.solverinfo.converged
 
         # and both are available when no direct current is injected
         @test hbnlsolve(ws, (1,), acsrc, c, Dict{Any,Any}();

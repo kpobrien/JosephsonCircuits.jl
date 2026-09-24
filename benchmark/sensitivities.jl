@@ -17,7 +17,7 @@ function measure(case, f, input)
     flush(stdout)
     return firstcall.value
 end
-# a chain of junctions with a port at each end
+# a chain of junctions between a port and a resistor of its impedance
 function chain(n)
     e = Any[("P1","1","0",Port(1;Z0=:R))]
     for i in 1:n

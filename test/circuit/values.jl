@@ -89,6 +89,17 @@ using Test
         @test_throws ArgumentError S(onec("Cq"), Dict())
         fd = FrequencyDependent(w -> 1e-12)
         @test S(onec(Cp), Dict(:Cp => fd)) ≈ S(onec(:Cp), Dict(:Cp => fd)) ≈ ref
+        # a name may be defined as an expression in parameters the
+        # definitions give as numbers, and a value which is neither a
+        # number nor symbolic is refused naming its component
+        for value in (:Cc, "Cc", JosephsonCircuits.CircuitValues.Parameter(:Cc))
+            @test S(onec(value), Dict(:Cc => Cp/2, :Cp => 2e-12)) ≈ ref
+        end
+        for d in (Dict(:Cc => nothing), Dict(:Cc => "1e-12"), Dict(:Cc => :C0))
+            e = try S(onec(:Cc), d); nothing catch err; err end
+            @test e isa ArgumentError && occursin("c1", sprint(showerror, e))
+        end
+        @test_throws ArgumentError S(onec(nothing), Dict())
     end
 
     @testset "two junctions on one branch" begin

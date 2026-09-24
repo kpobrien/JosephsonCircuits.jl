@@ -87,6 +87,8 @@ using Test
         C = zeros(ComplexF64, 2*m, 2*m)
         JosephsonCircuits.calcnoisecovariance!(C, Snoise, occ)
         @test n1.denom ≈ real(diag(C))
+        @test C ≈ [sum(occ[c]*Snoise[c, i]*conj(Snoise[c, j]) for c in axes(Snoise, 1))
+            for i in axes(Snoise, 2), j in axes(Snoise, 2)]
 
         # the three quantum efficiencies: from the reduction, from the
         # covariance, and from the explicit formula

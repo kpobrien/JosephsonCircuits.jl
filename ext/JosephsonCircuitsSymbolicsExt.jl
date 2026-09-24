@@ -25,19 +25,52 @@ const SymAny = Union{Num,SymbolicUtils.BasicSymbolic}
 # give stays in the value, for the check of the values to name. Each
 # variable is looked up under whichever key names it, its `Num`, its
 # symbol, its string or its parameter object, as a `CircuitValue` is.
-JC.valuetonumber(v::Num, circuitdefs) = Symbolics.value(Symbolics.substitute(v,
-    symbolicdefinitions(v, circuitdefs); fold=Val(true)))
-JC.valuetonumber(v::SymbolicUtils.BasicSymbolic, circuitdefs) =
-    Symbolics.value(Symbolics.substitute(v, symbolicdefinitions(v, circuitdefs);
-        fold=Val(true)))
+function JC.valuetonumber(v::SymAny, circuitdefs)
+    x = Symbolics.value(v)
+    x isa SymbolicUtils.BasicSymbolic || return x
+    return JC.resolvevalue(x, JC.definitionsbyname(circuitdefs), nothing,
+        circuitdefs)
+end
 
-# the definitions of the variables of `v`, keyed by the variables
-function symbolicdefinitions(v, circuitdefs)
-    byname = JC.definitionsbyname(circuitdefs)
+# A value of a table whose definitions are gathered by name once for the
+# whole table (see `componentvaluestonumber`), with the numbers among them
+# in `d` (or `nothing`, for them to be gathered when needed): only the
+# value's own variables are looked up. A bare variable is a name, and
+# resolves to its definition whatever that is, as a bare parameter does;
+# an expression substitutes the definitions of its variables.
+function JC.resolvevalue(v::SymAny, byname, d, circuitdefs)
+    x = Symbolics.value(v)
+    x isa SymbolicUtils.BasicSymbolic || return x
+    if SymbolicUtils.issym(x)
+        def = get(byname, Symbolics.tosymbol(x; escape = false), nothing)
+        (isnothing(def) || substitutable(def)) || return JC.resolvedefinition(
+            def, isnothing(d) ? JC.normalizedefinitions(byname) : d)
+    end
+    return Symbolics.value(Symbolics.substitute(x,
+        symbolicdefinitions(x, byname); fold = Val(true)))
+end
+
+# a definition Symbolics can substitute for a variable: a number, or a
+# symbolic expression
+substitutable(def) = def isa Number || def isa SymAny
+
+# The definitions of the variables of `v` which can be substituted into
+# it, keyed by the variables. A definition which is itself an expression
+# has the definitions of its own variables substituted once, when `nested`,
+# so that a parameter may be defined in terms of others the definitions
+# give as numbers. A variable defined as anything else (a frequency
+# dependent value) stays in the value, for the check of the values to name.
+function symbolicdefinitions(v, byname, nested::Bool = true)
     d = Dict{Any,Any}()
     for variable in Symbolics.get_variables(v)
-        name = Symbolics.tosymbol(variable; escape = false)
-        haskey(byname, name) && (d[variable] = byname[name])
+        def = get(byname, Symbolics.tosymbol(variable; escape = false), nothing)
+        substitutable(def) || continue
+        if JC.checkissymbolic(def)
+            nested || continue
+            def = Symbolics.substitute(def, symbolicdefinitions(def, byname,
+                false); fold = Val(true))
+        end
+        d[variable] = def
     end
     return d
 end
@@ -50,8 +83,6 @@ JC.unwrapvalue(v::Num) = Symbolics.value(v)
 # would reject them), or it still depends on a parameter the definitions
 # did not give and stays symbolic for the caller to diagnose.
 JC.substitutefreq(v::SymAny, w) = Symbolics.value(v)
-JC.substitutedefs(v::SymAny, circuitdefs) =
-    Symbolics.substitute(v, circuitdefs)
 
 # Both `Num` and the unwrapped `BasicSymbolic` must be covered: an
 # unwrapped symbolic value which is missed here is treated as numeric and

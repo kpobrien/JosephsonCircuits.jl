@@ -10,9 +10,16 @@ using JosephsonCircuits
 
         # complex values are not phases
         @test_throws(
-            MethodError,
+            ArgumentError,
             JosephsonCircuits.unwrap(exp.(im*theta)),
         )
+        @test_throws(
+            ArgumentError,
+            JosephsonCircuits.unwrap!(exp.(im*theta)),
+        )
+
+        # integer values unwrap as floating point numbers
+        @test JosephsonCircuits.unwrap([0, 7, 1]) ≈ [0, 7 - 2pi, 1]
 
         @test isapprox(
             JosephsonCircuits.unwrap!(zeros(10,10);dims=1),

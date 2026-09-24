@@ -168,8 +168,22 @@ end
             transientadjoint(sol[j], weights).currents rtol = 1e-8
     end
 
+    # a pump solve whose nonlinear term maps are longer than `hostlooplimit`,
+    # which a threaded process applies as KernelAbstractions kernels on the
+    # host rather than as plain loops
+    chain = Any[(:p1, 1, 0, Port(1))]
+    for i in 1:4096
+        push!(chain, (Symbol(:lj, i), i, i + 1, JosephsonJunction(100e-12)),
+            (Symbol(:c, i), i, 0, Capacitor(40e-15)))
+    end
+    push!(chain, (:r2, 4097, 0, Resistor(50.0)))
+    long = hbnlsolve((2*pi*7e9,), (16,),
+        [(mode = (1,), port = 1, current = 1e-7)], Circuit(chain);
+        keyedarrays = false)
+    @test long.solverinfo.converged
+
     serialize(ARGS[1], (; S = batched.S, Ssensitivity = batched.Ssensitivity,
         Snoise = batched.Snoise, fluxes, finalflux = sol.finalflux,
         tangent = tangent.outgoing, adjoint = adjoint.currents,
-        covariance = noise.covariance, gain))
+        covariance = noise.covariance, gain, longflux = long.nodeflux))
 end

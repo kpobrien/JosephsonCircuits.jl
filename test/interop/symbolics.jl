@@ -67,6 +67,12 @@ end
         symjpa(FrequencyDependent(law), 100.0e-15, 1000.0e-12, 1000.0e-15);
         keyedarrays = false).linearized.S
     @test isapprox(Array(Ssym), Array(Sfun), rtol = 1e-12)
+    # and a value named by a symbol whose definition is written in it
+    Snamed = (@test_logs (:warn,) match_mode = :any hbsolve(sym_ws, sym_wp,
+        sym_src, (2,), (8,), symjpa(:Z, 100.0e-15, 1000.0e-12, 1000.0e-15),
+        Dict(:Z => law(wsym)); symfreqvar = wsym,
+        keyedarrays = false)).linearized.S
+    @test isapprox(Array(Snamed), Array(Sfun), rtol = 1e-12)
 end
 
 @testset "design sensitivities of Num values" begin
@@ -148,6 +154,20 @@ end
     end
 end
 
+@testset "a Num value defined in other parameters or by a closure" begin
+    # a definition written in other parameters is resolved with their
+    # numbers, and a bare variable defined as a frequency dependent value
+    # takes that value, as a parameter does
+    @variables Lj0
+    ws = 2*pi*[4.5e9, 5.0e9]
+    S(c, d) = hblinsolve(ws, c, d; keyedarrays = false).S
+    ref = S(symjpa(50.0, 100.0e-15, 1000.0e-12, 1000.0e-15), Dict())
+    @test S(symjpa(50.0, 100.0e-15, Lj, 1000.0e-15),
+        Dict(Lj => 2*Lj0, Lj0 => 500.0e-12)) ≈ ref
+    @test S(symjpa(50.0, Cc, 1000.0e-12, 1000.0e-15),
+        Dict(Cc => FrequencyDependent(w -> 100.0e-15))) ≈ ref
+end
+
 @testset "the value handling methods" begin
     defs = Dict{Any,Any}(Lj => 1000.0e-12, Cc => 100.0e-15)
     @test JosephsonCircuits.valuetonumber(2*Lj, defs) ≈ 2000.0e-12
@@ -158,6 +178,8 @@ end
     @test JosephsonCircuits.definitionname(Lj) === :Lj
     # a symbolic value states no frequency of its own
     @test JosephsonCircuits.substitutefreq(Num(3.0), 1e9) == 3.0
+    # the deprecated netlist file writes a value resolved as a solve does
+    @test JosephsonCircuits.substitutedefs(2*Lj, Dict(:Lj => 1e-9)) ≈ 2e-9
 end
 
 @testset "a symbolic resistor across a port which owns its environment" begin

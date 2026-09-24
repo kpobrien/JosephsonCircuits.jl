@@ -232,9 +232,6 @@ mutable struct FloquetPreconditioner{TI,TJ,T<:AbstractFloat,TM<:AbstractMatrix{T
     C::TM
     W::TM
     coeff::TV
-    # the correction strength `eta` of each *active* column at the last
-    # rebuild, kept for diagnostics
-    strength::Vector{T}
     # the option this deflation was built from, and the rank threshold
     # resolved to the precision
     const spec::Floquet
@@ -259,7 +256,7 @@ function FloquetPreconditioner(spec::Floquet, inner::AbstractPreconditioner,
     ranktol = isnothing(spec.ranktol) ? eps(T)^(3//8) : T(spec.ranktol)
     return FloquetPreconditioner(inner, jvp!, st,
         similar(b, n, 0), similar(b, n, 0), similar(b, n, 0), similar(b, 0),
-        T[], spec, ranktol, 0, 0, size(st.X, 2) == 0)
+        spec, ranktol, 0, 0, size(st.X, 2) == 0)
 end
 
 function FloquetPreconditioner(spec::Floquet, inner::AbstractPreconditioner,
@@ -273,17 +270,8 @@ end
 deflationsize(pc::FloquetPreconditioner) = size(pc.C, 2)
 deflationrebuilds(pc::FloquetPreconditioner) = pc.rebuilds
 candidatecount(pc::FloquetPreconditioner) = size(pc.state.X, 2)
-deflationproducts(pc::FloquetPreconditioner) = pc.products
-
-"""
-    correctionstrengths(pc::FloquetPreconditioner)
-
-The correction strength `eta = norm(x - inv(P)*J*x)/norm(x)` of each active
-direction at the last rebuild. `eta` near zero means the base preconditioner
-already handles that channel, `eta` of order one that a substantial part of
-it is missing from the base. Diagnostic only.
-"""
-correctionstrengths(pc::FloquetPreconditioner) = pc.strength
+deflationproducts(pc::FloquetPreconditioner) =
+    pc.products + deflationproducts(pc.inner)
 
 innerpreconditioner(pc::FloquetPreconditioner) = pc.inner
 pointmoved!(pc::FloquetPreconditioner) = (pc.fresh = false; pc)
@@ -314,7 +302,6 @@ function _clearfloquet!(pc::FloquetPreconditioner{TI,TJ,T}) where {TI,TJ,T}
     pc.C = similar(Xc, n, 0)
     pc.W = similar(Xc, n, 0)
     pc.coeff = similar(Xc, 0)
-    pc.strength = T[]
     pc.fresh = true
     return pc
 end
@@ -335,6 +322,14 @@ end
 # at the next rebuild, which is triggered by `pointmoved!` at the next
 # Newton step, by a base refresh, or by an external `seeddeflation!` --
 # never from inside a solve.
+#
+# The bank is kept bounded at the option's `candidates`. The active
+# directions of the last rebuild are the proven ones and sit at the front
+# (`_rebuildfloquet!` writes them there), so the oldest *unproven*
+# candidates are the ones dropped; if the active set alone overruns the
+# bank the newest candidates go instead. The bank grown and trimmed is
+# written once, into a new matrix: the one it replaces may be the active
+# basis, or held by a reuse, and is never written.
 function _bankcandidates!(pc::FloquetPreconditioner{TI,TJ,T},
     Xnew::AbstractMatrix; source::Symbol = :external) where {TI,TJ,T}
     size(Xnew, 2) == 0 && return pc
@@ -345,43 +340,33 @@ function _bankcandidates!(pc::FloquetPreconditioner{TI,TJ,T},
     # image factorization below weights a column by the size of its image.
     # Columns are therefore normalized on the way in, and one which is
     # numerically zero is dropped rather than turned into noise.
-    B = copy(Xnew)
-    kept = Int[]
-    for j in axes(B, 2)
-        nj = norm(view(B, :, j))
-        if isfinite(nj) && nj > 0
-            view(B, :, j) ./= nj
-            push!(kept, j)
-        end
-    end
+    norms = [norm(view(Xnew, :, j)) for j in axes(Xnew, 2)]
+    kept = [j for j in axes(Xnew, 2) if isfinite(norms[j]) && norms[j] > 0]
     isempty(kept) && return pc
-    B = B[:, kept]
-    st = pc.state
-    st.X = size(st.X, 2) > 0 ? hcat(st.X, B) : B
-    append!(st.source, fill(source, size(B, 2)))
-    st.generation += 1
-    _trimcandidates!(pc)
-    return pc
-end
-
-# Keep the bank bounded. The active directions of the last rebuild are the
-# proven ones and sit at the front (`_rebuildfloquet!` writes them there),
-# so the oldest *unproven* candidates are the ones dropped.
-function _trimcandidates!(pc::FloquetPreconditioner)
     st = pc.state
     k = size(st.X, 2)
-    k <= pc.spec.candidates && return pc
-    nactive = min(size(pc.X, 2), k)
-    ndrop = k - pc.spec.candidates
-    # never drop an active direction; if the active set alone overruns the
-    # bank the newest candidates go instead
-    idx = if ndrop <= k - nactive
-        vcat(1:nactive, (nactive+ndrop+1):k)
+    total = k + length(kept)
+    idx = if total <= pc.spec.candidates
+        1:total
     else
-        1:pc.spec.candidates
+        nactive = min(size(pc.X, 2), total)
+        ndrop = total - pc.spec.candidates
+        ndrop <= total - nactive ? vcat(1:nactive, (nactive+ndrop+1):total) :
+            (1:pc.spec.candidates)
     end
-    st.X = st.X[:, idx]
-    st.source = st.source[idx]
+    X = similar(st.X, size(st.X, 1), length(idx))
+    tags = [i <= k ? st.source[i] : source for i in idx]
+    for (c, i) in enumerate(idx)
+        if i <= k
+            copyto!(view(X, :, c), view(st.X, :, i))
+        else
+            j = kept[i - k]
+            view(X, :, c) .= view(Xnew, :, j) ./ norms[j]
+        end
+    end
+    st.X = X
+    st.source = tags
+    st.generation += 1
     return pc
 end
 
@@ -423,56 +408,58 @@ function _rebuildfloquet!(pc::FloquetPreconditioner{TI,TJ,T}) where {TI,TJ,T}
     # same factor preserves `J*X0 = Y0`, so the identity the whole
     # construction rests on is untouched. A candidate whose image vanishes
     # is in the null space of `J` and cannot be given a residual image at
-    # all, so it is dropped here.
-    X0s = copy(X0)
+    # all, so it is dropped here. The scaling and the dropping are both
+    # applied to the small transforms below rather than to copies of the
+    # candidates and their images.
     ynorm = [norm(view(Y0, :, j)) for j in 1:k]
     ymax = maximum(ynorm; init = zero(T))
     live = [j for j in 1:k if isfinite(ynorm[j]) && ynorm[j] > eps(T)*ymax]
     isempty(live) && return _clearfloquet!(pc)
-    if length(live) < k
-        X0s = X0s[:, live]; Y0 = Y0[:, live]; ynorm = ynorm[live]
-    end
-    for (j, s) in enumerate(ynorm)
-        view(X0s, :, j) ./= s
-        view(Y0, :, j) ./= s
-    end
+    dinv = Diagonal(inv.(ynorm[live]))
 
-    # The rank-revealing step, through the `k` by `k` Gram matrix of the
-    # images: `Y0'*Y0 = V*S^2*V'` is formed where `Y0` lives and only the
-    # small matrix crosses to the host, where it is factorized; the `k` by
-    # `r` transform goes back and the two large products stay on the
-    # device. The Gram form squares the condition number, so its
+    # The rank-revealing step, through the Gram matrix of the equalized
+    # images: `Y0'*Y0` is formed where `Y0` lives and only the small matrix
+    # crosses to the host, where it is scaled and factorized,
+    # `V*S^2*V'`; the transform goes back and the large products stay on
+    # the device. The Gram form squares the condition number, so its
     # resolution is about `sqrt(k*eps)` on the singular values, below the
     # default `ranktol`; a cleanup pass below restores `C'C = I` to working
     # precision.
-    E = eigen(Symmetric(Array(Y0'*Y0)))
+    G0 = Array(Y0'*Y0)
+    E = eigen(Symmetric(dinv*G0[live, live]*dinv))
     sv = sqrt.(max.(E.values, zero(T)))
     smax = maximum(sv; init = zero(T))
     smax > 0 || return _clearfloquet!(pc)
     keep = [i for i in eachindex(sv) if sv[i] > pc.ranktol*smax]
     r = length(keep)
     r >= 1 || return _clearfloquet!(pc)
-    Tsmall = E.vectors[:, keep]*Diagonal(inv.(sv[keep]))
-    Tdev = _hostbuilt(X0, Tsmall)
-    X = X0s*Tdev
-    C = Y0*Tdev
-    Rc = cholesky(Symmetric(Array(C'*C)), check = false)
-    if issuccess(Rc)
-        Rinv = _hostbuilt(X0, Matrix(inv(Rc.U)))
-        C = C*Rinv
-        X = X*Rinv
+    # the transform from the candidates as they are in the bank: the
+    # equalization and the dropped columns folded in
+    Tsmall = zeros(T, k, r)
+    Tsmall[live, :] .= dinv*E.vectors[:, keep]*Diagonal(inv.(sv[keep]))
+    C1 = Y0*_hostbuilt(X0, Tsmall)
+    Rc = cholesky(Symmetric(Array(C1'*C1)), check = false)
+    # `X = X0*Tsmall*Rinv` and `C = C1*Rinv`, with `J*X = C` and `C'C = I`;
+    # the Cholesky factor's inverse is folded into the transform of `X`,
+    # and `C1` then serves as the scratch of the base solves below
+    Tx, C, scratch = if issuccess(Rc)
+        Rinv = Matrix(inv(Rc.U))
+        Tsmall*Rinv, C1*_hostbuilt(X0, Rinv), C1
+    else
+        Tsmall, C1, similar(C1)
     end
+    X = X0*_hostbuilt(X0, Tx)
 
     # `W = X - inv(P)*C` folds the base solve of `C` into the update, so an
     # application needs no solve beyond the base solve of the residual
     # itself.
-    BC = similar(C)
+    W = scratch
     for j in 1:r
         copyto!(cin, view(C, :, j))
         applypreconditioner!(cout, pc.inner, cin)
-        copyto!(view(BC, :, j), cout)
+        copyto!(view(W, :, j), cout)
     end
-    W = X .- BC
+    W .= X .- W
 
     # Rotate into the principal directions of `W'W` *before* measuring
     # anything. The rank-revealing factorization above fixes `range(C)` but
@@ -488,12 +475,14 @@ function _rebuildfloquet!(pc::FloquetPreconditioner{TI,TJ,T}) where {TI,TJ,T}
     # directions it handles. The eigenvectors of `W'W` are the basis in
     # which the correction is diagonal, so they are where the split between
     # the two is visible at all. The transform is orthonormal, so `J*X = C`
-    # and `C'C = I` both survive it.
-    G = Hermitian(Array(W'*W))
-    E = eigen(G)
-    ord = sortperm(E.values; rev = true)
-    R = _hostbuilt(X0, E.vectors[:, ord])
-    X = X*R; C = C*R; W = W*R
+    # and `C'C = I` both survive it. `X` is rotated from the bank through
+    # the composed transform, into its own storage, and `C` into the
+    # scratch once `W` has been rotated out of it.
+    E = eigen(Hermitian(Array(W'*W)))
+    R = E.vectors[:, sortperm(E.values; rev = true)]
+    W = W*_hostbuilt(X0, R)
+    mul!(X, X0, _hostbuilt(X0, Tx*R))
+    C = mul!(scratch, C, _hostbuilt(X0, R))
 
     # The correction strength test, now in the basis where it means
     # something: `eta` is the fraction of the direction the base
@@ -516,17 +505,16 @@ function _rebuildfloquet!(pc::FloquetPreconditioner{TI,TJ,T}) where {TI,TJ,T}
     length(keep) > pc.spec.size && (keep = keep[1:pc.spec.size])
     if length(keep) < r
         X = X[:, keep]; C = C[:, keep]; W = W[:, keep]
-        strength = strength[keep]
         r = length(keep)
     end
 
     pc.X = X; pc.C = C; pc.W = W
     pc.coeff = similar(X0, r)
-    pc.strength = strength
     # Carry the active corrections forward as the seed of the next point's
     # bank. They are the directions which survived both filters, and at a
     # neighboring operating point they are the best available guess at the
-    # same physical channels.
+    # same physical channels. The bank is never written in place, so it can
+    # share the active basis.
     pc.state.X = X
     pc.state.source = fill(:active, r)
     pc.rebuilds += 1

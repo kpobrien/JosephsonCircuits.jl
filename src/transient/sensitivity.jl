@@ -204,10 +204,10 @@ stackedderivative(t::PerturbationTriplets, n::Int, nc::Int) = sparse((t.c .- 1) 
 # `forcing`, the stacked derivatives a tangent's forcing is one product
 # of; an adjoint asks for the entries alone, so nothing it holds grows
 # with the state times the components. The entries are read here, once,
-# from each component's stamp padded to the state, which no step builds.
+# from each component's stamp, which no step builds.
 function componentperturbation(p::TransientProblem, names, backend; forcing::Bool)
     psc, nm = p.circuit, p.matrices
-    n, Nnodal, Lscale = length(p), p.Nnodal, p.Lscale
+    n, Lscale = length(p), p.Lscale
     Ljb = nm.Ljb
     nj = length(Ljb.nzval)
     RJ, lmolj = p.RJ, p.lmolj
@@ -219,18 +219,20 @@ function componentperturbation(p::TransientProblem, names, backend; forcing::Boo
     ports = zeros(Int, nc)
     for (c, name) in enumerate(names)
         idx = componentindex(psc, name)
-        kind, info = componentstamp(idx, psc, nm, lookups, 1, psc.Nnodes)
-        pad = M -> mnapad(SparseMatrixCSC{Float64,Int}(real.(M)), n - Nnodal)
+        s = componentstamp(idx, psc, nm, lookups, 1)
         # the capacitance enters as `r C`, the others inversely, so their
-        # derivatives carry the minus of `d(1/(r p))/dr`
-        if kind == :C
-            push!(tC, Lscale .* pad(info), c)
-        elseif kind == :G
-            push!(tG, -Lscale .* pad(info), c)
-        elseif kind == :invL
-            push!(tL, -Lscale .* pad(info), c)
-        else
+        # derivatives carry the minus of `d(1/(r p))/dr`; the entries are
+        # on the node rows, which lead the state
+        if s.kind == :Lj
+            info = s.junction
             push!(tJ, sparse(findnz(RJt[:, info])[1], fill(info, nnz(RJt[:, info])), -lmolj[info] .* findnz(RJt[:, info])[2], n, nj), c)
+        else
+            t, sc = s.kind == :C ? (tC, Lscale) : s.kind == :G ? (tG, -Lscale) : (tL, -Lscale)
+            for q in eachindex(s.vals)
+                v = sc*real(s.vals[q])
+                iszero(v) && continue
+                push!(t.i, s.rows[q]); push!(t.j, s.cols[q]); push!(t.v, v); push!(t.c, c)
+            end
         end
         # a port's own termination: the environments are listed by port
         # number, as the traces are

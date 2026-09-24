@@ -60,7 +60,7 @@ using Test
                 JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixconjindices, keep),
                 d.Ljb, d.Lscale, d.Rbnm, Nmodes, d.Nbranches, d.Nfreq,
-                d.invLnm, d.Gnm, d.Cnm, layout, layout)
+                d.invLnm, d.Gnm, d.Cnm, layout)
 
             x = 0.3*randn(length(d.xr))
             d.fjreal(nothing, d.Jr, x)
@@ -252,7 +252,7 @@ using Test
                 JosephsonCircuits.restrictmodecoupling(
                     d.Amatrixconjindices, keep),
                 d.Ljb, d.Lscale, d.Rbnm, Nmodes, d.Nbranches, d.Nfreq,
-                d.invLnm, d.Gnm, d.Cnm, d.modelayout, d.modelayout)
+                d.invLnm, d.Gnm, d.Cnm, d.modelayout)
             x = 0.3*randn(length(d.xr))
             d.fjreal(nothing, d.Jr, x)
             JosephsonCircuits.setpoint!(d.sys, x)
@@ -347,12 +347,13 @@ using Test
         Xcommitted = copy(committed.X)
         # the solve `hbsolve!` makes, cut off after one Newton step, which
         # it says
-        failed = @test_logs (:warn, r"did not converge: the Newton iteration budget") match_mode=:any JosephsonCircuits.hbnlsolve(
+        failed = @test_logs (:warn,) match_mode=:any JosephsonCircuits.hbnlsolve(
             cache.w, cache.sources,
             cache.frequencies, cache.indices, cache.compiled,
             cache.nm; keyedarrays = false, reuse = cache.reuse,
             iterations = 1, cache.kwargs...)
         @test !failed.solverinfo.converged
+        @test failed.solverinfo.stages[end].reason == :iterations
         @test cache.reuse.recycling === committed
         @test cache.reuse.recycling.X == Xcommitted
         again = JosephsonCircuits.hbsolve!(cache, (; Lj = 1005e-12))
@@ -516,6 +517,12 @@ using Test
         JosephsonCircuits.applypreconditioner!(z, pb, r)
         @test norm(d.Jr*z - r) <= residualbound(pb, z)
         @test JosephsonCircuits.isexactpreconditioner(pb)
+        # on the host the substitutions run as loops and allocate nothing;
+        # Julia 1.11 still allocates the view wrappers each `mul!` of a
+        # slice is handed, which later releases elide
+        if VERSION >= v"1.12"
+            @test (@allocated JosephsonCircuits.applypreconditioner!(z, pb, r)) == 0
+        end
         # in single precision it is a preconditioner
         p32 = mk(FullJacobian(factorization = BlockFactorization(;
             precision = Float32)))
@@ -557,6 +564,24 @@ using Test
         JosephsonCircuits.updatepreconditioner!(pb, x)
         JosephsonCircuits.applypreconditioner!(z, pb, r)
         @test norm(d.Jr*z - r) <= residualbound(pb, z)
+        # and rebound to a system of other component values, the sparse
+        # and the block factorizations of the full set invert that
+        # system's Jacobian: the constant values the rebind leaves to the
+        # refactorization are refreshed there
+        d2 = JosephsonCircuits.hbnlsolve((wpb, wsb), (4, 2), srcb, circuit2,
+            merge(defs2, Dict(:Lj => 120e-12 + 0im, :Cg => 45e-15 + 0im));
+            debugJacobian = true, dc = true, odd = true, even = true,
+            keyedarrays = false)
+        d2.fjreal(nothing, d2.Jr, x)
+        for pr in (mk(FullJacobian()), pb)
+            JosephsonCircuits.updatepreconditioner!(pr, x)
+            JosephsonCircuits.rebind!(pr, d2.sys)
+            JosephsonCircuits.updatepreconditioner!(pr, x)
+            JosephsonCircuits.applypreconditioner!(z, pr, r)
+            bound = pr.P isa JosephsonCircuits.BlockStructure ?
+                100*eps()*blockcond(pr)*norm(d2.Jr)*norm(z) : 1e-10*norm(r)
+            @test norm(d2.Jr*z - r) <= bound
+        end
 
         # end to end, against Newton, with the rebuild decided by the count
         # rule and by the probe
@@ -671,6 +696,9 @@ using Test
             @test ok.solverinfo.converged
             @test isapprox(ok.nodeflux, on.nodeflux; rtol = 1e-6,
                 atol = 1e-12*maximum(abs, on.nodeflux))
+            # the probe's products are among those the records count, one
+            # per mode at every probe
+            @test ok.solverinfo.stages[1].krylov[end].deflationproducts >= d.Nmodes
         end
     end
 
@@ -788,6 +816,52 @@ using Test
         @test JosephsonCircuits.escalatepreconditioner!(pcb)
         @test pcb.coupling isa FullJacobian
         @test pcb.escalations == 1
+        # a measured band and a cluster mask grow at an update only within
+        # the same budget: with room for the set they start from and no
+        # more, a strongly driven point leaves them as they are, where it
+        # grows them without the budget
+        xg = randn(MersenneTwister(5), length(d.xr))
+        for spec in (MeasuredBand(), Clusters())
+            pg = JosephsonCircuits.ModeCouplingPreconditioner(d.sys,
+                d.Amatrixindicesaliased, d.Amatrixconjindices, d.Ljb, d.Lscale,
+                d.Rbnm, Nmodes, d.Nbranches, d.Nfreq, d.invLnm, d.Gnm, d.Cnm,
+                layout; spec = spec, Amatrixmodes = d.Amatrixmodes)
+            start = pg.coupling
+            pg.budget = JosephsonCircuits.couplingbytes(pg, start)
+            JosephsonCircuits.updatepreconditioner!(pg, xg)
+            @test pg.coupling === start
+            zg = similar(xg)
+            JosephsonCircuits.applypreconditioner!(zg, pg, xg)
+            @test all(isfinite, zg)
+            pg.budget = nothing
+            spec isa Clusters && JosephsonCircuits.stalled!(pg)
+            JosephsonCircuits.updatepreconditioner!(pg, xg)
+            @test pg.coupling !== start
+        end
+
+        # the sparse factors are sized under the ordering the factorization
+        # takes: on the band of a two tone chain that is nested dissection,
+        # whose factors AMD's analysis overestimated twofold
+        chain40 = Any[("P1", "1", "0", Port(1; Z0 = :R))]
+        for i in 1:40
+            push!(chain40, ("Lj$(i)", "$(i)", "$(i+1)", JosephsonJunction(:Lj)),
+                ("C$(i)", "$(i)", "0", Capacitor(:Cg)))
+        end
+        push!(chain40, ("C41", "41", "0", Capacitor(:Cg)), ("R2", "41", "0", Resistor(:R)))
+        d40 = JosephsonCircuits.hbnlsolve((2*pi*7e9, 2*pi*7.3e9), (6, 6),
+            [(mode = (1, 0), port = 1, current = 1.0e-6),
+             (mode = (0, 1), port = 1, current = 1.0e-6)], Circuit(chain40), defs2;
+            method = Newton(), iterations = 0, debugJacobian = true,
+            keyedarrays = false)
+        pband = JosephsonCircuits.ModeCouplingPreconditioner(d40.sys,
+            d40.Amatrixindicesaliased, d40.Amatrixconjindices, d40.Ljb,
+            d40.Lscale, d40.Rbnm, d40.Nmodes, d40.Nbranches, d40.Nfreq,
+            d40.invLnm, d40.Gnm, d40.Cnm, d40.modelayout;
+            spec = HarmonicBand((1, 1)), Amatrixmodes = d40.Amatrixmodes)
+        predicted = JosephsonCircuits.couplingbytes(pband, pband.coupling)
+        JosephsonCircuits.updatepreconditioner!(pband, 0.3*randn(length(d40.xr)))
+        built = nnz(pband.cache.factorization)*(sizeof(Float64) + sizeof(Int))
+        @test 0.8 < predicted/built < 1.25
     end
 
     @testset "factors held in less precision than the iteration" begin
@@ -932,6 +1006,7 @@ using Test
         JosephsonCircuits.updatepreconditioner!(pb, d.xr)
         @test pb.factorization isa KLUfactorization
         @test pb.coupling isa BlockDiagonal
+        @test pb.fallbacks == 1
 
         # at four harmonics the same single precision factors are not
         # singular but poor: the Krylov solves stagnate, and the escalation
@@ -946,95 +1021,6 @@ using Test
         ref4 = hbnlsolve((case.wp..., ws), (4, 4), srcs, case.circuit,
             case.defs; nonlinearkw(case.kw)..., atol = 1e-12, method = Newton())
         @test maximum(abs, Array(sol4.S) .- Array(ref4.S)) < 1e-9
-    end
-
-    @testset "block factorization of a sparse matrix" begin
-        # a random complex matrix with dense node blocks on a random node
-        # graph and three trailing auxiliary rows (a short last block):
-        # vector, matrix and transposed solves, refactorization on the
-        # pattern, and single precision factors refined to double
-        rng = Random.default_rng()
-        Nm = 7; Nn = 30
-        pairs = [(i, i+1) for i in 1:Nn-1]
-        append!(pairs, [(rand(rng, 1:Nn), rand(rng, 1:Nn)) for _ in 1:12])
-        I_ = Int[]; J_ = Int[]; V_ = ComplexF64[]
-        function addblock!(a, b)
-            for r in 1:Nm, c in 1:Nm
-                push!(I_, (a-1)*Nm+r); push!(J_, (b-1)*Nm+c)
-                push!(V_, randn(rng, ComplexF64))
-            end
-        end
-        for a in 1:Nn; addblock!(a, a); end
-        for (a, b) in pairs; a == b && continue; addblock!(a, b); addblock!(b, a); end
-        n = Nn*Nm + 3
-        for r in 1:3
-            push!(I_, Nn*Nm+r); push!(J_, Nn*Nm+r); push!(V_, 5.0+0im)
-            push!(I_, Nn*Nm+r); push!(J_, r); push!(V_, randn(rng, ComplexF64))
-            push!(I_, r+Nm); push!(J_, Nn*Nm+r); push!(V_, randn(rng, ComplexF64))
-        end
-        A = sparse(I_, J_, V_, n, n) + 10I
-        F = JosephsonCircuits.factorize(BlockFactorization(), A; blocksize = Nm)
-        @test F isa JosephsonCircuits.SparseBlockFactorization
-        @test !F.refine
-        @test F.lu.N < Nn        # amalgamated
-        B = randn(rng, ComplexF64, n, 5); X = similar(B)
-        JosephsonCircuits.myldiv!(X, F, B)
-        @test norm(A*X - B)/norm(B) < 1e-12
-        JosephsonCircuits.myldiv!(X, transpose(F), B)
-        @test norm(transpose(A)*X - B)/norm(B) < 1e-12
-        JosephsonCircuits.trysolvetranspose!(X, F, B)
-        @test norm(transpose(A)*X - B)/norm(B) < 1e-12
-        A2 = copy(A); nonzeros(A2) .*= (1 .+ 0.1*randn(rng, nnz(A)))
-        @test JosephsonCircuits.refactorize!(BlockFactorization(), F, A2) === F
-        JosephsonCircuits.myldiv!(X, F, B)
-        @test norm(A2*X - B)/norm(B) < 1e-12
-        cache = JosephsonCircuits.FactorizationCache()
-        JosephsonCircuits.tryfactorize!(cache, BlockFactorization(), A; blocksize = Nm)
-        @test cache.factorization isa JosephsonCircuits.SparseBlockFactorization
-        JosephsonCircuits.tryfactorize!(cache, BlockFactorization(), A2; blocksize = Nm)
-        JosephsonCircuits.myldiv!(X, cache.factorization, B)
-        @test norm(A2*X - B)/norm(B) < 1e-12
-        F32 = JosephsonCircuits.factorize(BlockFactorization(precision = Float32), A;
-            blocksize = Nm)
-        @test F32.refine
-        @test eltype(F32.lu.D[1]) == ComplexF32
-        JosephsonCircuits.myldiv!(X, F32, B)
-        @test norm(A*X - B)/norm(B) < 1e-12
-        JosephsonCircuits.myldiv!(X, transpose(F32), B)
-        @test norm(transpose(A)*X - B)/norm(B) < 1e-12
-        # the pattern is checked on refactorization
-        @test_throws DimensionMismatch JosephsonCircuits.refactorize!(
-            BlockFactorization(), F, A[1:n-3, 1:n-3])
-        @test_throws DimensionMismatch JosephsonCircuits.factorize(
-            BlockFactorization(), A[:, 1:n-1]; blocksize = Nm)
-        # refinement judges each system of a batch on its own residual:
-        # a moderately conditioned system next to a badly conditioned one
-        # reaches the accuracy it reaches alone
-        r5 = (4*Nm+1):(5*Nm); c6 = (5*Nm+1):(6*Nm)
-        scaled(s) = (D1 = ones(n); D1[r5] .= s; D2 = ones(n); D2[c6] .= s;
-            sparse(Diagonal(D1)*A*Diagonal(D2)))
-        A1 = scaled(1e-3); Abad = scaled(1e-9)
-        Fb = JosephsonCircuits.factorize(BlockFactorization(precision = Float32),
-            A1; blocksize = Nm, nb = 2)
-        JosephsonCircuits.fillandfactorize!(Fb, hcat(nonzeros(A1), nonzeros(Abad)))
-        Xb = zeros(ComplexF64, n, 3, 2)
-        JosephsonCircuits.refinedsolve!(Xb, Fb, B[:, 1:3])
-        F1 = JosephsonCircuits.factorize(BlockFactorization(precision = Float32),
-            A1; blocksize = Nm)
-        X1 = zeros(ComplexF64, n, 3, 1)
-        JosephsonCircuits.refinedsolve!(X1, F1, B[:, 1:3])
-        r1 = norm(A1*Xb[:, :, 1] - B[:, 1:3])/norm(B[:, 1:3])
-        @test r1 < 1e-12
-        @test r1 <= 2*norm(A1*X1[:, :, 1] - B[:, 1:3])/norm(B[:, 1:3]) + 1e-15
-        @test norm(Abad*Xb[:, :, 2] - B[:, 1:3])/norm(B[:, 1:3]) < 1e-6
-
-        # and not only by size and nonzero count: the same count in a
-        # different place is a different pattern
-        Amoved = copy(A); Amoved[Nn*Nm+1, 1] = 0; Amoved[Nn*Nm+1, 2] = 1.0
-        Amoved = dropzeros!(Amoved)
-        @test nnz(Amoved) == nnz(A)
-        @test_throws DimensionMismatch JosephsonCircuits.refactorize!(
-            BlockFactorization(), F, Amoved)
     end
 
 end

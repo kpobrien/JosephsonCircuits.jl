@@ -1,4 +1,6 @@
-# Frontend benchmark. Run in a fresh process with one Julia/BLAS thread:
+# Circuit preparation benchmark: compiling a circuit, planning, assembling
+# and refilling its matrices, and evaluating a rational scattering block.
+# Run in a fresh process with one Julia/BLAS thread:
 # julia --startup-file=no --project=. benchmark/circuit-preparation.jl label
 # Package loading and input construction are outside the timers.
 using JosephsonCircuits, LinearAlgebra, SparseArrays, Statistics, Random

@@ -329,8 +329,9 @@ using Test
             @test JC.passivityassessment(Ar2, Br2, Cr2, Dr2; atol = 1e-8)[1] === :active
             @test_throws ArgumentError RationalScattering(Ar2, Br2, Cr2, Dr2;
                 zref = 50.0, atol = 1e-8)
-            Ae2, Be2, Ce2, De2 = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
+            Ae2, Be2, Ce2, De2, contraction2 = JC.enforcepassivity(
                 Ar2, Br2, Cr2, Dr2, exp.(range(log(1e-4), log(1e2); length = 101)))
+            @test !isnothing(contraction2)
             @test abs(only(De2 + Ce2*((im*wpk2*I - Ae2) \ Be2))) <= 1 + 1e-8
         end
         # A block whose largest singular value is exactly one, which every
@@ -433,11 +434,14 @@ using Test
         @test ss.outgoing[1, speak] ≈ -maximum(ss.incident[1, :]) rtol=1e-3
         matched = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:line, 1, 2, TransmissionLine(50.0, tau*3e8; vp = 3e8)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         pm = transientproblem(matched; sources = [TransientSource(1, pulse)])
-        sm = transientsolve(pm, (0.0, 1e-9); dt = 2e-12, method = GaussLegendre())
+        sm = transientsolve(pm, (0.0, 1e-9); dt = 2e-12, method = GaussLegendre(), record = :phases)
         @test sum(abs2, sm.outgoing[2, :]) ≈ sum(abs2, sm.incident[1, :]) rtol=1e-6
         @test maximum(abs.(sm.outgoing[1, :])) < 1e-15
         @test sm.times[argmax(abs.(sm.outgoing[2, :]))] ≈ 0.1e-9 + tau atol=1e-12
         @test size(sm.linewaves) == (2, 501)
+        # the waves of every step are kept for the responses, which a
+        # record of the ports does not serve
+        @test isnothing(ss.linewaves)
         @test_throws ArgumentError transientsolve(pm, (0.0, 1e-9); dt = 0.5e-9, method = GaussLegendre())
         @test_throws ArgumentError transientsolve(pm, (0.0, 1e-9); dt = 2e-12, method = Trapezoidal())
         # a delay taken out of a fit is carried in time by the lines it
@@ -451,7 +455,7 @@ using Test
         cableblock = ScatteringParameters(cable; nports = 2, zref = 50.0)
         cablefs = collect(range(0.0, 20e9; length = 200))
         core = RationalScattering(cableblock, 4; frequencies = cablefs, delays = (tau, tau))
-        whole = RationalScattering(cableblock, 4; frequencies = cablefs)
+        whole = RationalScattering(cableblock, 4; frequencies = cablefs, tol = 1.0)
         line() = TransmissionLine(50.0, tau*3e8; vp = 3e8)
         pulsed(c) = transientsolve(transientproblem(c; sources = [TransientSource(1, pulse)]),
             (0.0, 1.5e-9); dt = 2e-12, method = GaussLegendre())
@@ -490,7 +494,7 @@ using Test
         @test cps.linewaves ≈ sm.linewaves rtol=1e-12
         shortline = Circuit([(:p1, 1, 0, Port(1; Z0 = 50.0)), (:line, 1, 2, TransmissionLine(50.0, 10e-12; vp = 1.0)), (:p2, 2, 0, Port(2; Z0 = 50.0))])
         psh = transientproblem(shortline; sources = [TransientSource(1, pulse)])
-        ssh = transientsolve(psh, (0.0, 1e-9); dt = 2e-12, method = GaussLegendre())
+        ssh = transientsolve(psh, (0.0, 1e-9); dt = 2e-12, method = GaussLegendre(), record = :phases)
         csh = transientsolve(psh, (0.0, 1e-9); dt = 2e-12, method = GaussLegendre(), record = :checkpoints, checkpointevery = 50)
         npres = JC.lineprehistory(psh, 2e-12)
         @test isnothing(csh.linewaves) && size(csh.checkpoints.waves) == (2, npres, 10)
@@ -518,17 +522,24 @@ using Test
         ss = transientsolve(sp, (0.0, 200e-12); dt = 1e-12, method = GaussLegendre(), rtol = 1e-12, atol = 1e-13)
         early, late = maximum(abs, ss.voltage[:, ss.times .<= 10e-12]), maximum(abs, ss.voltage[:, ss.times .>= 150e-12])
         @test late < 1e-9*early
+        # a read's stencil as the column before its first sample and its
+        # weights
+        linestencil = (s, tpre, h, accepted) -> begin
+            local stencil = zeros(6)
+            local start, nst = JC.linestencil!(stencil, s, tpre, h, accepted)
+            (start, stencil[1:nst])
+        end
         worst = 0.0
         for delay in (1.0, 1.05, 1.2, 1.8, 2.5, 3.5, 4.0, 10.5), c in (JC.gausscoefficients().c..., 1.0), accepted in (2, 3, 4, 5, 6, 21)
-            first, weights = JC.linestencil(accepted - 1 + c - delay, 0.0, 1.0, accepted)
+            first, weights = linestencil(accepted - 1 + c - delay, 0.0, 1.0, accepted)
             @test length(weights) in (1, 2, 4, 6) && first >= 0 && first + length(weights) <= accepted
             worst = max(worst, maximum(abs(sum(weights[k]*cis(-w*(first + k - 1)) for k in eachindex(weights))) for w in range(0, pi; length = 2001)))
         end
         @test worst <= 1 + 1e-12
-        @test JC.linestencil(21 - 10.5, 0.0, 1.0, 21)[2] ≈ [3, -25, 150, 150, -25, 3] ./ 256 rtol=1e-12
+        @test linestencil(21 - 10.5, 0.0, 1.0, 21)[2] ≈ [3, -25, 150, 150, -25, 3] ./ 256 rtol=1e-12
         radius = 0.0
         for delay in (1.0, 1.2, 1.8, 2.5, 3.5), sign in (-1, 1)
-            first, weights = JC.linestencil(21.0 - delay, 0.0, 1.0, 21)
+            first, weights = linestencil(21.0 - delay, 0.0, 1.0, 21)
             lag = 21 .- (first .+ (0:length(weights) - 1))
             M = zeros(maximum(lag), maximum(lag))
             for k in eachindex(weights); M[1, lag[k]] += sign*(9/11)*weights[k]; end
@@ -691,9 +702,17 @@ end
     metrics = transientquantumefficiency(noise.gain, noise.covariance; rtol = 3e-3)
     @test isapprox(metrics.gain, abs2(hbn.linearized.S((0,), 1, (0,), 1, 1)); rtol = 1e-4)
     @test isapprox(metrics.QE, hbn.linearized.QE((0,), 1, (0,), 1, 1); rtol = 1e-4)
-    forward = transientnoise(nsol, nplan; frequencies = nfreqs, weights = fill(1/record, 5), inputs = nplan, method = :forward, commutationrtol = 3e-3)
-    @test forward.covariance ≈ noise.covariance rtol=1e-10
-    @test forward.gain ≈ noise.gain rtol=1e-10
+    # the forward method against the adjoint on a record settled for a
+    # twelfth of the time, which their agreement does not need
+    ssettle = 5.0625e-9
+    ssol = transientsolve(transientproblem(cr), (0.0, ssettle + record - dt); dt, method = GaussLegendre(), record = :checkpoints)
+    sfirst = round(Int, ssettle/dt) + 1
+    splan = transientquantumplan(ssol, ssol.times[sfirst:end], [fn])
+    sadjoint = transientnoise(ssol, splan; frequencies = nfreqs, weights = fill(1/record, 5), inputs = splan, commutationrtol = 3e-3)
+    forward = transientnoise(ssol, splan; frequencies = nfreqs, weights = fill(1/record, 5), inputs = splan, method = :forward,
+        commutationrtol = 3e-3)
+    @test forward.covariance ≈ sadjoint.covariance rtol=1e-10
+    @test forward.gain ≈ sadjoint.gain rtol=1e-10
     # a device with loss states its noise, which in time is the pair
     # terms of its group: the bath frequencies a harmonic apart, and
     # those summing to one, the signal and the idler, are correlated as

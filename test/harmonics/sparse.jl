@@ -1,18 +1,8 @@
 using JosephsonCircuits
 using LinearAlgebra
-using StaticArrays
 using Test
 
 @testset verbose=true "the sparse harmonic matrices" begin
-
-    @testset "diagrepeat!" begin
-        A = [1 2;3 4]
-        out = zeros(eltype(A),4,4)
-        @test_throws(
-            DimensionMismatch("Sizes not consistent"),
-            JosephsonCircuits.diagrepeat!(out,A,1)
-        )
-    end
 
     @testset "spaddkeepzeros" begin
         A = JosephsonCircuits.SparseArrays.sparse([1,2,1], [1,2,2], [1,2,0],2,2);
@@ -124,87 +114,6 @@ using Test
             @test B[3,3] == 2.0 && B[4,4] == 4.0
             @test B[1,3] == 3.0 && B[2,4] == 6.0
         end
-    end
-
-    @testset "lu_2x2" begin
-        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
-        Afact1 = LinearAlgebra.lu(A)
-        Afact2 = JosephsonCircuits.lu_2x2(A)
-        @test isapprox(Afact1.L,Afact2.L)
-        @test isapprox(Afact1.U,Afact2.U)
-        @test isapprox(Afact1.p,Afact2.p)
-
-        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
-        A = StaticArrays.SMatrix{2,2}(A[1,1],0*A[2,1],A[1,2],A[2,2])
-        Afact1 = LinearAlgebra.lu(A)
-        Afact2 = JosephsonCircuits.lu_2x2(A)
-        @test isapprox(Afact1.L,Afact2.L)
-        @test isapprox(Afact1.U,Afact2.U)
-        @test isapprox(Afact1.p,Afact2.p)
-
-        # LU decomposition of a matrix where A[1,1] = A[2,1] = 0
-        A = rand(Complex{Float64},2,2)
-        A[1,1] = 0
-        A[2,1] = 0
-        fact = JosephsonCircuits.lu_2x2(A);
-        @test isapprox(fact.L*fact.U,A)
-    end
-
-    @testset "ldiv_2x2 errors" begin
-        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
-        b = StaticArrays.SVector{2}(rand(Complex{Float64},2))
-        fact = JosephsonCircuits.lu_2x2(A)
-        
-        @test_throws(
-            ArgumentError("Unknown pivot."),
-            JosephsonCircuits.ldiv_2x2(StaticArrays.LU(fact.L,fact.U,
-            StaticArrays.SVector{2}(3,4)),b)
-        )
-
-        # test the warning
-        u11 = fact.U[1,1]
-        u12 = fact.U[1,2]
-        u22 = fact.U[2,2]*0
-        U = LinearAlgebra.UpperTriangular(StaticArrays.SMatrix{2,2}(u11,zero(u11),u12,u22))
-        fact2 = StaticArrays.LU(fact.L,U,fact.p)
-        @test_throws(
-            ArgumentError("Failed to solve linear system."),
-            JosephsonCircuits.ldiv_2x2(fact2,b)
-        )
-    end
-
-    @testset "ldiv_2x2" begin
-        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
-        b = StaticArrays.SVector{2}(rand(Complex{Float64},2))
-        @test isapprox(
-            JosephsonCircuits.ldiv_2x2(JosephsonCircuits.lu_2x2(A),b),
-            LinearAlgebra.lu(A) \ b,
-        )
-
-        @test isapprox(
-            JosephsonCircuits.ldiv_2x2(LinearAlgebra.lu(A),b),
-            JosephsonCircuits.lu_2x2(A) \ b,
-        )
-
-        # set A21 equal to zero to test LU without pivoting.
-        A = StaticArrays.SMatrix{2,2}(rand(Complex{Float64},2,2))
-        B = StaticArrays.SMatrix{2,2}(A[1,1],0,A[1,2],A[2,2])
-        @test isapprox(
-            JosephsonCircuits.ldiv_2x2(JosephsonCircuits.lu_2x2(B),b),
-            LinearAlgebra.lu(B) \ b,
-        )
-
-        @test isapprox(
-            JosephsonCircuits.ldiv_2x2(LinearAlgebra.lu(B),b),
-            JosephsonCircuits.lu_2x2(B) \ b,
-        )
-
-        # test the singular case when !(p1 == 1 && p2 == 2)
-        A = StaticArrays.SMatrix{2,2}(0.0,1.0,1.0,1.0)
-        b = StaticArrays.SVector{2}(2,1)
-        x = JosephsonCircuits.ldiv_2x2(JosephsonCircuits.lu_2x2(A),b)
-        @test isapprox(A*x,b)
-
     end
 
 end

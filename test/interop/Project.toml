@@ -12,6 +12,6 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 JosephsonCircuits = {path = "../.."}
 
 [compat]
-Krylov = "0.9, 0.10"
+Krylov = "0.10"
 SciMLBase = "3"
 Symbolics = "7"

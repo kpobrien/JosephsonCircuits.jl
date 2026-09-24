@@ -77,14 +77,17 @@ using JosephsonCircuits, LinearAlgebra, SparseArrays, Random, Test, Logging
 
     @testset "exact in at most n steps" begin
         # unpreconditioned GMRES on an n x n system reaches the exact solution
-        # in at most n Arnoldi steps in exact arithmetic
+        # in at most n Arnoldi steps in exact arithmetic; the restart length
+        # is twice that, so it is the solver which stops, at the breakdown
+        # of the n dimensional Krylov space at the latest
         n = 12
         A = randn(n, n) + 3n*I
         b = randn(n)
-        ws = JosephsonCircuits.GMRESWorkspace(n, n)
+        ws = JosephsonCircuits.GMRESWorkspace(n, 2n)
         x = zeros(n)
         out = JosephsonCircuits.gmres!(x, (w, v) -> mul!(w, A, v), b, ws;
             rtol = 1e-13, maxrestarts = 1)
+        @test out.converged
         @test out.iterations <= n
         @test isapprox(x, A \ b; rtol = 1e-7)
     end
@@ -257,6 +260,56 @@ end
     @test outv.cycles == length(lengths) >= 2
     @test first(lengths) < 30
     @test JosephsonCircuits.harvestdimension(wsv, outv) == last(lengths)
+
+    # a non-finite value from the preconditioner or the operator ends the
+    # cycle at the step which met it: the solve does not run the cycle out
+    # on a spoiled basis, `x` stays where the cycle started, and the
+    # residual reported is that point's
+    An = Matrix(Diagonal(1.0 .+ (1:40) ./ 40)) .+ 0.05 .* sin.((1:40) .* (1:40)')
+    bn = ones(40)
+    for poisoned in (:preconditioner, :operator)
+        calls = Ref(0)
+        Mn!(z, v) = (calls[] += 1; z .= v;
+            poisoned === :preconditioner && calls[] == 3 && (z[5] = NaN); z)
+        An!(w, v) = (mul!(w, An, v);
+            poisoned === :operator && calls[] == 3 && (w[1] = Inf); w)
+        xn = zeros(40)
+        outn = JosephsonCircuits.gmres!(xn, An!, bn,
+            JosephsonCircuits.GMRESWorkspace(40, 30, Float64); Mop! = Mn!,
+            rtol = 1e-12, maxrestarts = 4)
+        @test !outn.converged
+        @test outn.reason == :stagnation
+        @test outn.iterations == 3
+        @test xn == zeros(40)
+        @test outn.residual == norm(bn)
+        @test outn.residualvector ≈ bn
+        @test outn.lastcycle == 0
+    end
+
+    # a cycle of one step against an exact preconditioner takes its
+    # correction from the application its step made, so the solve applies
+    # the preconditioner once
+    Fe = lu(An)
+    applied = Ref(0)
+    Me!(z, v) = (applied[] += 1; ldiv!(z, Fe, v))
+    xe = zeros(40)
+    oute = JosephsonCircuits.gmres!(xe, (w, v) -> mul!(w, An, v), bn,
+        JosephsonCircuits.GMRESWorkspace(40, 30, Float64); Mop! = Me!,
+        rtol = 1e-12, maxrestarts = 4)
+    @test oute.converged && oute.lastcycle == 1
+    @test applied[] == 1
+    @test xe ≈ An \ bn rtol = 1e-12
+    # a longer cycle of rank one does not: its last step left the image of
+    # its second basis vector in the workspace. Here the second step is a
+    # breakdown of [1 0; 0 0], and the correction is the preconditioned
+    # multiple of the first basis vector, x = D*[1, 1]
+    D = [1.0, 2.0]
+    xd = zeros(2)
+    outd = JosephsonCircuits.gmres!(xd, (w, v) -> mul!(w, [1.0 0.0; 0.0 0.0], v),
+        [1.0, 1.0], JosephsonCircuits.GMRESWorkspace(2, 2, Float64);
+        Mop! = (z, v) -> (z .= D .* v), rtol = 1e-12, maxrestarts = 1)
+    @test outd.lastcycle == 2
+    @test xd ≈ [1.0, 2.0]
 
     # non-finite tolerances must be rejected rather than reporting a
     # convergence which did not happen

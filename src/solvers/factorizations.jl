@@ -98,8 +98,9 @@ end
     kluordered(A::SparseMatrixCSC, ordering; kwargs...)
 
 `KLU.klu(A)` with its fill reducing ordering chosen by measurement
-([`fillordering`](@ref)), or handed in as `ordering`, a permutation of
-the columns of `A` or `nothing` for KLU's own. KLU's
+([`fillordering`](@ref)), or handed in as `ordering`: a
+[`FillOrdering`](@ref), a bare permutation of the columns of `A`, or
+`nothing` for KLU's own. KLU's
 own default, AMD on the pattern of `A + A'`, is the right ordering for
 most circuit matrices and a pathological one for some of the mode-coupling
 patterns the preconditioners of this package factorize: the harmonic band
@@ -116,31 +117,70 @@ ordering. Should either ordering fail, KLU's default is used. Everything
 before the numeric factorization is symbolic and depends only on the
 sparsity pattern: the numeric refactorizations of the pattern reuse the
 whole analysis, and a [`FactorizationCache`](@ref) keeps the ordering for
-every fresh factorization of it. `kwargs` are `check` and `allowsingular`
-of `KLU.klu`.
+every fresh factorization of it.
+
+KLU has no estimate of the fill of an ordering it is handed, and reserves
+ten times the entries of `A` for each factor, which it trims once the
+factorization is done. A `FillOrdering` carries the fill its choice
+predicted, which is the size of each factor under it without pivoting, so
+KLU is asked for that, with the margin it gives its own AMD estimate, and
+grows a factor which pivoting fills beyond it. `kwargs` are `check` and
+`allowsingular` of `KLU.klu`.
 """
 function kluordered(A::SparseMatrixCSC{Tv,Ti},
     ordering = fillordering(KLUfactorization(), A); check::Bool = true,
     allowsingular::Bool = false) where {Tv,Ti}
     isnothing(ordering) && return KLU.klu(A; check = check, allowsingular = allowsingular)
+    perm = orderingpermutation(ordering)
     nzval = Tv <: Complex ? convert(Vector{ComplexF64}, A.nzval) :
         convert(Vector{Float64}, A.nzval)
     K = KLU.KLUFactorization(size(A, 1), A.colptr .- one(Ti), A.rowval .- one(Ti), nzval)
-    p = Ti.(ordering .- 1)
+    if ordering isa FillOrdering && nnz(A) > 0
+        # KLU reserves `initmem*nnz(A) + n` for each factor of a given
+        # ordering; `initmem_amd` is the margin it puts on its own estimate
+        K.common.initmem = K.common.initmem_amd*ordering.fill/nnz(A)
+    end
+    p = Ti.(perm .- 1)
     KLU.klu_analyze!(K, p, copy(p); check = check)
     return KLU.klu_factor!(K; check = check, allowsingular = allowsingular)
 end
+
+"""
+    FillOrdering(perm, fill)
+
+A fill reducing ordering of a sparsity pattern as [`fillordering`](@ref)
+chooses it: the permutation `perm`, `perm[k]` the original index of the
+`k`th pivot, and `fill`, the entries of one triangular factor of the
+pattern under it, diagonal included, as [`symbolicfill`](@ref) predicts
+them. [`kluordered`](@ref) sizes the first allocation of a fresh
+factorization from `fill`, and [`sparsefactorbytes`](@ref) the memory of
+the factors. The choice depends only on the pattern, so one serves every
+factorization of it: a [`FactorizationCache`](@ref) holds the one it was
+handed or chose ([`seedordering!`](@ref)).
+"""
+struct FillOrdering
+    perm::Vector{Int}
+    fill::Int
+end
+Base.:(==)(a::FillOrdering, b::FillOrdering) = a.perm == b.perm && a.fill == b.fill
+Base.hash(o::FillOrdering, h::UInt) = hash(o.fill, hash(o.perm, hash(FillOrdering, h)))
+
+# the permutation of an ordering handed to a factorization: a
+# `FillOrdering`'s, or a bare permutation
+orderingpermutation(o::FillOrdering) = o.perm
+orderingpermutation(o::AbstractVector{<:Integer}) = o
 
 """
     fillordering(factorization::AbstractFactorization, A)
 
 The fill reducing ordering `factorization` chooses for the sparsity pattern
 of `A`: for a [`KLUfactorization`](@ref) the better of AMD and METIS
-nested dissection by predicted flops ([`kluordered`](@ref)), or `nothing`
-for KLU's own when neither can be formed or `A` is not square; `nothing`
-for any other factorization, which orders a matrix itself. The ordering
-depends only on the pattern, so one choice serves every factorization of
-it: a [`FactorizationCache`](@ref) keeps the one it chose, and one chosen
+nested dissection by predicted flops ([`kluordered`](@ref)), as a
+[`FillOrdering`](@ref) carrying its predicted fill, or `nothing` for KLU's
+own when neither can be formed or `A` is not square; `nothing` for any
+other factorization, which orders a matrix itself. The ordering depends
+only on the pattern, so one choice serves every factorization of it: a
+[`FactorizationCache`](@ref) keeps the one it chose, and one chosen
 elsewhere can be handed to it ([`seedordering!`](@ref)).
 """
 fillordering(::AbstractFactorization, A) = nothing
@@ -151,15 +191,21 @@ function fillordering(::KLUfactorization, A::SparseMatrixCSC)
 end
 
 # the symmetric pattern of `A`, as CHOLMOD wants it: `A + A'` with unit
-# values, 64 bit indices, stored as its upper triangle
+# values and 64 bit indices. The Jacobians of this package are
+# structurally symmetric, and such a pattern is its own: it is then `A`'s
+# index arrays under unit values, shared when they are 64 bit already,
+# since nothing here writes them.
 function _symmetricpattern(A::SparseMatrixCSC)
-    ones_ = SparseMatrixCSC(A.m, A.n, copy(A.colptr), copy(A.rowval), ones(nnz(A)))
-    S = SparseMatrixCSC{Float64,Int64}(ones_ + sparse(transpose(ones_)))
-    return S
+    P = SparseMatrixCSC{Float64,Int64}(size(A, 1), size(A, 2),
+        convert(Vector{Int64}, SparseArrays.getcolptr(A)),
+        convert(Vector{Int64}, rowvals(A)), ones(nnz(A)))
+    issymmetric(P) && return P
+    return P + sparse(transpose(P))
 end
 
 # AMD and METIS nested dissection on the symmetric pattern, the one with
-# the smaller predicted flop count; `nothing` if neither could be formed
+# the smaller predicted flop count with its fill; `nothing` if neither
+# could be formed
 function _bestordering(A::SparseMatrixCSC)
     n = size(A, 1)
     n <= 1 && return nothing
@@ -177,9 +223,9 @@ function _bestordering(A::SparseMatrixCSC)
         end
         ok == 1 || continue
         perm .+= 1
-        _, flops = symbolicfill(S, perm)
+        fillcount, flops = symbolicfill(S, perm)
         if flops < bestflops
-            best = perm
+            best = FillOrdering(perm, fillcount)
             bestflops = flops
         end
     end
@@ -307,8 +353,9 @@ julia> JosephsonCircuits.FactorizationCache(JosephsonCircuits.KLU.klu(JosephsonC
 """
 mutable struct FactorizationCache
     factorization
-    # the fill reducing ordering and the pattern it was chosen for, the
-    # `colptr` and `rowval` of the matrix; `nothing` until one is chosen
+    # the fill reducing ordering, a `FillOrdering` or a bare permutation,
+    # and the pattern it was chosen for, the `colptr` and `rowval` of the
+    # matrix; `nothing` until one is chosen
     ordering
     pattern
 end
@@ -320,13 +367,17 @@ FactorizationCache(factorization = nothing) =
     seedordering!(cache::FactorizationCache, A::SparseMatrixCSC, ordering)
 
 Hand `cache` the fill reducing ordering `ordering` of the sparsity pattern
-of `A`, as [`fillordering`](@ref) chose it, so that its fresh
-factorizations of that pattern take it instead of choosing one: how the
-caches of several workers factorizing one pattern share one choice.
-Returns `cache`.
+of `A`, so that its fresh factorizations of that pattern take it instead
+of choosing one: how the caches of several workers factorizing one
+pattern, or the successive solves of one pattern, share one choice.
+`ordering` is what [`fillordering`](@ref) returns, a
+[`FillOrdering`](@ref) or `nothing`, or a bare permutation of the columns,
+which carries no fill for KLU to size its factors by. The ordering a
+cache holds, `cache.ordering`, is one to hand to another. Returns `cache`.
 """
 function seedordering!(cache::FactorizationCache, A::SparseMatrixCSC, ordering)
-    isnothing(ordering) || (length(ordering) == size(A, 2) && isperm(ordering)) ||
+    isnothing(ordering) || (length(orderingpermutation(ordering)) == size(A, 2) &&
+        isperm(orderingpermutation(ordering))) ||
         throw(ArgumentError(
             "an ordering is a permutation of the columns of the pattern it is seeded for."))
     cache.ordering = ordering

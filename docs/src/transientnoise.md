@@ -72,7 +72,16 @@ stationary response
 state starts the cosine and sine responses, so the noise already stored
 in the capacitors and inductors, and its correlation with the forcing to
 come, are kept; zero classical initial voltage does not mean zero
-quantum noise.
+quantum noise. The trapezoidal and backward Euler rules start on their
+own stationary response instead, the same operator with `i w` replaced
+by the rate of a sinusoid on their grid, `i (2/h) tan(w h/2)` and
+`(1 - exp(-i w h))/h`, so each bath's response is periodic from the first
+step. The continuous response differs from the trapezoidal rule's by
+`(w h)^2/12`, which near the Nyquist frequency, where the vacuum weight
+of a bath is largest, is the whole response: started there, the baths
+would ring at the circuit's frequencies and leak into every measured
+mode. The Gauss-Legendre rule's stationary response matches the
+continuous one to its fourth order warping, and it starts on that.
 
 ## The calculation
 
@@ -173,8 +182,9 @@ small its loss, and a declared `Lossless()` is validated by the norms
 of the block and of its inverse over all frequencies, which can only
 refuse it.
 A block's temperature is its `ThermalEquilibrium(T)`, a resistor's its
-`temperature`, and the rest the analysis default, in both solvers
-alike, so a warm attenuator in time has the covariance
+`temperature`, and the other internal elements' the analysis default,
+while the port terminations are vacuum, in both solvers alike, so a warm
+attenuator in time has the covariance
 [`hblinsolve`](@ref) gives it, and equals its own resistive network at
 the same temperature. A block which states its noise with a
 [`NoiseCovariance`](@ref), an amplifier given by its scattering
@@ -249,7 +259,7 @@ pump mixes into the measured band, a band stopping short of it missing
 a part in a thousand and one past it changing nothing further. A
 rectangular window converges slowly in the cutoff, since its sidelobes
 carry noise from far away; a smooth envelope does not. The test suite
-runs that case.
+runs the same case on a line of a hundred cells.
 
 The diagnostics check the commutator against the measurement's algebra
 and the uncertainty relation `covariance + im*expectedcommutator/2 >= 0`,
@@ -260,11 +270,13 @@ the quadrature gain agrees with [`hblinsolve`](@ref) to a part in ten
 thousand at 128 samples of a 3 GHz record and to three parts in a hundred
 thousand at 512, converging at second order with the step.
 
-[`transientquantumefficiency`](@ref) reduces a phase preserving single
-mode result, a scaled rotation for the gain and an isotropic covariance,
-to photon gain `G`, added noise `v/G - 1/2`, `QE = G/(2v)` and the
-package's ideal `G/(2G - 1)`; phase sensitive gain or anisotropic noise
-is rejected and the full matrices remain. On a pumped Josephson
+[`transientquantumefficiency`](@ref) reduces a phase insensitive single
+mode result, a scaled rotation for a phase preserving gain or a scaled
+reflection for a phase conjugating one, as from a signal to its idler,
+and an isotropic covariance, to photon gain `G`, added noise
+`v/G - 1/2`, `QE = G/(2v)` and the package's ideal `G/(2G - 1)`, which
+[`hbsolve`](@ref) reports for its idler outputs too; phase sensitive
+gain or anisotropic noise is rejected and the full matrices remain. On a pumped Josephson
 amplifier measured after 200 ns of settling with the stationary Floquet
 frequencies as the bath, the gain and the quantum efficiency converge to
 [`hbsolve`](@ref) at the order of the stepping rule: under the

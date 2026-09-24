@@ -99,16 +99,17 @@ function designjacobian(circuit::CompilableCircuit, circuitdefs::AbstractDict;
     end
     v0 = ComplexF64[vvn[i] for i in keep]
     J = zeros(ComplexF64, length(keep), length(names))
-    # the definitions an expression substitutes are normalized once for the
-    # whole Jacobian, as `componentvaluestonumber` normalizes them once for
-    # the whole value table; every other representation of a value takes
-    # the definitions as they were given.
-    normalized = normalizedefinitions(definitions)
+    # the definitions are gathered once for the whole Jacobian, as
+    # `componentvaluestonumber` gathers them once for the whole value
+    # table: by name for every representation of a value, and normalized
+    # for the expressions, which substitute them
+    byname = definitionsbyname(definitions)
+    normalized = normalizedefinitions(byname)
     for (j, name) in enumerate(names), (k, i) in enumerate(keep)
         value = psc.componentvalues[i]
         J[k, j] = value isa CircuitValue ?
             designderivative(value, name, normalized) :
-            designderivative(value, name, definitions)
+            designderivative(value, name, byname)
     end
     return String[psc.componentnames[i] for i in keep], v0, J
 end
@@ -193,19 +194,20 @@ mutable struct Objective; lastp; lastr; end
 const obj = Objective(nothing, nothing)
 function solveat(pvec)
     if obj.lastp != pvec
+        # the parameters in the order of pvec, not sorted by name
         obj.lastr = designsensitivities(circuit, Dict(:Lj => pvec[1], :Cc => pvec[2]),
-            ws, wp, sources, (2,), (8,))
+            ws, wp, sources, (2,), (8,); parameters = (:Lj, :Cc))
         obj.lastp = copy(pvec)
     end
     return obj.lastr
 end
 value(pvec) = [20*log10(abs(s))
-    for s in solveat(pvec).out.linearized.S((0,),2,(0,),1,:)]
+    for s in solveat(pvec).out.linearized.S((0,),1,(0,),1,:)]
 function jacobian(pvec)
     r = solveat(pvec)
-    S = r.out.linearized.S((0,),2,(0,),1,:)
+    S = r.out.linearized.S((0,),1,(0,),1,:)
     # the parameter axis precedes the frequency axis of dSdp
-    d = permutedims(r.dSdp((0,),2,(0,),1,:,:))
+    d = permutedims(r.dSdp((0,),1,(0,),1,:,:))
     return (20/log(10)).*real.(conj.(S).*d)./abs2.(S)
 end
 ```

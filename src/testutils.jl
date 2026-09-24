@@ -144,9 +144,7 @@ compare(x,y)::Bool = isequal(x,y)
 compare(x::AbstractArray{Complex{Float64}},y::AbstractArray{Complex{Float64}}) = comparearray(x,y)
 compare(x::AbstractArray{Float64},y::AbstractArray{Float64}) = comparearray(x,y)
 
-compare(x::Nothing,y::Nothing) = true
 compare(x::JosephsonCircuits.AbstractSparseVector,y::JosephsonCircuits.AbstractSparseVector) = compare(x.nzval,y.nzval) && compare(x.nzind,y.nzind)
-compare(x::JosephsonCircuits.SparseMatrixCSC{Nothing, Int64},y::JosephsonCircuits.SparseMatrixCSC{Nothing, Int64}) = true
 compare(x::JosephsonCircuits.HB,y::JosephsonCircuits.HB) = comparestruct(x,y)
 compare(x::JosephsonCircuits.NonlinearHB,y::JosephsonCircuits.NonlinearHB) = comparestruct(x,y)
 # the solver diagnostics depend on the solver method and the iteration
@@ -159,11 +157,10 @@ compare(x::JosephsonCircuits.CircuitGraph,y::JosephsonCircuits.CircuitGraph) = c
 compare(x::JosephsonCircuits.CircuitTopology,y::JosephsonCircuits.CircuitTopology) = comparestruct(x,y)
 compare(x::JosephsonCircuits.Frequencies,y::JosephsonCircuits.Frequencies) = comparestruct(x,y)
 compare(x::JosephsonCircuits.PassiveNetwork,y::JosephsonCircuits.PassiveNetwork) = comparestruct(x,y)
-compare(x::String,y::String) = isequal(x,y)
 
 """
     structurejacobian(d, Amatrixindices, Amatrixconjindices, Ljb, Lscale, Rbnm,
-        Nmodes, Nbranches, Nfreq, invLnm, Gnm, Cnm, rl, cl)
+        Nmodes, Nbranches, Nfreq, invLnm, Gnm, Cnm, layout)
 
 The sparsity structure of the real Jacobian restricted to the mode
 coupling described by `Amatrixindices` and `Amatrixconjindices`, together
@@ -174,15 +171,15 @@ solver performs. `d` is the named tuple returned by
 """
 function structurejacobian(d, Amatrixindices::Matrix,
     Amatrixconjindices::Matrix, Ljb, Lscale, Rbnm, Nmodes, Nbranches, Nfreq,
-    invLnm, Gnm, Cnm, rl, cl)
+    invLnm, Gnm, Cnm, layout)
 
     P, _ = realjacobianstructure(Amatrixindices,
         Amatrixconjindices, Ljb, Rbnm, Nmodes, Nbranches, invLnm, Gnm, Cnm,
-        rl)
+        layout)
     junctions = junctionstructure(eltype(P), Amatrixindices,
         Amatrixconjindices, Ljb, Lscale, Rbnm, Nmodes, Nbranches, Nfreq, CPU())
     plan = planstructurerealjacobian(P, eltype(P), junctions, d.sys.invLnm,
-        d.sys.Gnm, d.sys.Cnm, d.sys.wmodesm, d.sys.wmodes2m, rl, cl, CPU();
+        d.sys.Gnm, d.sys.Cnm, d.sys.wmodesm, d.sys.wmodes2m, layout, CPU();
         transposed = false)
     return P, plan
 end

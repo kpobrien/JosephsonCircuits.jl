@@ -72,8 +72,8 @@ struct HBLinearizedSystem{TinvL,TG,TC,TF}
     wpumpmodes::Vector{Float64}
     Nmodes::Int
     Nnodes::Int
-    # the multiport admittance contribution of the scattering block
-    # components (see ScatteringStampSystem), or nothing
+    # the hybrid stamps of the scattering block components (see
+    # ScatteringStampSystem), or nothing
     scattering
 end
 
@@ -98,7 +98,7 @@ structure. `scattering`
 is the [`ScatteringStampSystem`](@ref) of the circuit's scattering blocks,
 whose pattern is merged as well, or `nothing`. Builds the sparsity
 structure and Josephson map with [`plancomplexjacobian`](@ref) and assembles
-the pump modulation contribution and its conjugate with
+the pump modulation contribution (the adjoint takes its conjugate) with
 [`addjosephsonterm!`](@ref).
 """
 function HBLinearizedSystem(Amatrixindices::Matrix, Ljb::SparseVector,
@@ -256,12 +256,15 @@ function assemblesystemmatrix!(A::SparseMatrixCSC,
     end
 
     # the frequency independent augmentation: the coupled inductor and
-    # scattering block port current rows
-    sparseadd!(A, 1, lsys.Amna0, lsys.Amna0indexmap)
+    # scattering block port current rows. A complex (lossy) coupled
+    # inductance is a value like any other, conjugated in the columns of a
+    # negative frequency mode; the incidence entries are real.
+    sparseaddconjsubst!(A, 1, lsys.Amna0, lsys.Amna0indexmap, wmodes, 0)
 
-    # the multiport admittance contribution of the scattering block
-    # components: sign * im * w_m * Y[p,q](w_m) per contribution, the
-    # frequency dependent generalization of the conductance term
+    # the hybrid stamps of the scattering block components (see
+    # `ScatteringStampSystem`): `sign*im*w_m*scale*B[p,q](w_m)` on the node
+    # flux columns and `-iscale*C[p,q](w_m)` on the auxiliary port current
+    # columns of their constitutive rows, per contribution
     if !isnothing(lsys.scattering)
         assemblescattering!(A, lsys.scattering, wmodes, scatteringwork)
     end

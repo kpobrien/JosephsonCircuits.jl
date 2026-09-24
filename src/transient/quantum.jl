@@ -233,11 +233,14 @@ end
 """
     transientquantumefficiency(gain, covariance; rtol=1e-3)
 
-Phase-preserving single-mode metrics for a real 2x2 quadrature gain and an
-isotropic canonical output covariance (vacuum = I/2). `gain` is the incremental
+Phase-insensitive single-mode metrics for a real 2x2 quadrature gain and an
+isotropic canonical output covariance (vacuum = I/2). The gain is a scaled
+rotation, phase preserving, or a scaled reflection, phase conjugating, as
+from a signal to its idler. `gain` is the incremental
 response to a coherent displacement, not a ratio of large loaded amplitudes.
 Returns photon gain, input-referred added noise, QE, QEideal and QE/QEideal.
-Uses the existing HB ideal-efficiency convention. Phase-sensitive gain or
+Uses the existing HB ideal-efficiency convention, which `hbsolve` applies to
+its idler outputs too. Phase-sensitive gain or
 anisotropic noise is rejected: retain the full gain/covariance for those cases.
 The caller must also verify commutator closure and bath-basis convergence.
 """
@@ -248,8 +251,8 @@ function transientquantumefficiency(gain, covariance; rtol = 1e-3)
     all(isfinite, a) && all(isfinite, v) && isfinite(rtol) && rtol>0 ||
         throw(ArgumentError("Invalid quantum efficiency data."))
     g, s = sum(abs2, a)/2, tr(v)/2
-    g>0 && s>0 && det(a)>0 && isapprox(a*a', g*I; rtol) && isapprox(v, s*I; rtol) ||
-        throw(ArgumentError("Scalar QE requires phase-preserving gain and isotropic noise."))
+    g>0 && s>0 && isapprox(a*a', g*I; rtol) && isapprox(v, s*I; rtol) ||
+        throw(ArgumentError("Scalar QE requires phase-preserving or phase-conjugating gain and isotropic noise."))
     ideal = only(calcqeideal(reshape([sqrt(g)], 1, 1)))
     qe = g/(2s)
     return (;

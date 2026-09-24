@@ -22,8 +22,11 @@ assembly collapses to four constant coefficient vectors and one kernel:
 
 where `wm = ws + wpumpmodes[mode of q]` and `sel` conjugates when `wm < 0`.
 The terms which share a frequency power and a conjugation rule are summed
-into one coefficient at build time, `AoLjnm` with `Amna0`. Conjugation
-distributes over that sum, so this is exact.
+into one coefficient at build time: `Amna0`, the coupled inductances, is
+conjugated at a negative mode frequency as `invLnm` is, and goes with it,
+while `AoLjnm`, the pump's junction term, is evaluated at the signed modes
+and is not conjugated. Conjugation distributes over a sum, so this is
+exact.
 
 Because the coefficients do not depend on the signal frequency, one kernel
 fills the stored values of a whole batch of frequencies, which is what a
@@ -155,9 +158,9 @@ function planfrequencysweep(lsys::HBLinearizedSystem, backend;
 
     # the four coefficients, in the stored order of A
     cst = copy(lsys.AoLjnmnzval)
-    scattercoefficient!(cst, lsys.Amna0, lsys.Amna0indexmap)
     kinvL = zeros(Complex{Float64}, nz)
     scattercoefficient!(kinvL, lsys.invLnm, lsys.invLnmindexmap)
+    scattercoefficient!(kinvL, lsys.Amna0, lsys.Amna0indexmap)
     kG = zeros(Complex{Float64}, nz)
     scattercoefficient!(kG, lsys.Gnm, lsys.Gnmindexmap)
     kC = zeros(Complex{Float64}, nz)
@@ -212,30 +215,73 @@ function assemblesweep!(nzval::AbstractMatrix, plan::FrequencySweepPlan,
 end
 
 """
-    ColumnEquilibration
+    SweepEquilibration
 
-The column scaling of the system matrices of one direction of a batch.
+The row and column scaling of the system matrices of one direction of a
+batch.
 
 cuDSS chooses its pivots within the blocks its ordering fixes, by the size
-of the candidates, so the units the unknowns are written in decide which
-candidates it can tell apart. The columns of the linearized system as
-assembled vary in size with the elements which meet a node and with the
-frequency of the column's mode, so each system of a batch is scaled here:
-every column is divided by its largest entry, which makes the pivot
-candidates of every column comparable, and the solution is divided by the
-same scale on the way out. cuDSS's matching, which permutes and scales the
-matrix ahead of the factorization, is not supported for a uniform batch.
+of the candidates, and perturbs a pivot below an absolute threshold (see
+the extension's `configure!`), so the units the equations and the unknowns
+are written in decide which candidates it can tell apart and which it
+perturbs. The linearized system is assembled in physical units: a node's
+row holds admittances, while the constitutive row of a coupled inductor
+branch holds the incidence of its node fluxes and, on its diagonal, the
+inductance itself, many orders smaller. So each system of a batch is
+scaled here: every row is divided by its largest entry, then every column
+of the result by its largest, which makes the pivot candidates of every
+row and column comparable; the right-hand side of each system is divided
+by the same row scales, and its solution by the column scales on the way
+out. cuDSS's matching, which permutes and scales the matrix ahead of the
+factorization, is not supported for a uniform batch.
 
 # Fields
-- `order`, `segptr`: the stored entries of the matrix the solver is handed,
-    grouped by its column, so one work item owns a column and no two write
-    the same scale.
-- `scale`: the scale of each column of each system of the batch.
+- `rowptr`: the row pointer of the structure the solver is handed, whose
+    rows are contiguous in the stored values.
+- `order`, `segptr`: the stored entries of that structure grouped by its
+    column, so one work item owns a column and no two write the same scale.
+- `rowscale`, `scale`: the scale of each row and of each column of each
+    system of the batch.
 """
-struct ColumnEquilibration{VI,VS}
+struct SweepEquilibration{VR,VI,VS}
+    rowptr::VR
     order::VI
     segptr::VI
+    rowscale::VS
     scale::VS
+end
+
+# one work item per (row, system): the largest entry of the row, then the
+# row divided by it
+@kernel function rowequilibratekernel!(nzval, rowscale, @Const(rowptr), n)
+    gid = @index(Global)
+    @inbounds begin
+        i = (gid - 1) % n + 1
+        k = (gid - 1) ÷ n + 1
+        lo = Int(rowptr[i]); hi = Int(rowptr[i+1]) - 1
+        m = zero(real(eltype(nzval)))
+        for q in lo:hi
+            m = max(m, abs(nzval[q, k]))
+        end
+        s = m > 0 ? m : one(m)
+        rowscale[i, k] = s
+        for q in lo:hi
+            nzval[q, k] /= s
+        end
+    end
+end
+
+# one work item per right-hand side entry of each system: the unscaled
+# right-hand side divided by the system's row scale
+@kernel function scalerighthandsidekernel!(B, @Const(B0), @Const(rowscale),
+        n, nrhs)
+    gid = @index(Global)
+    @inbounds begin
+        i = (gid - 1) % n + 1
+        r = ((gid - 1) ÷ n) % nrhs + 1
+        k = (gid - 1) ÷ (n*nrhs) + 1
+        B[i, r, k] = B0[i, r]/rowscale[i, k]
+    end
 end
 
 # one work item per (column, system): the largest entry of the column, then
@@ -292,43 +338,54 @@ function groupstoredcolumns(colind::AbstractVector{<:Integer}, n::Integer)
 end
 
 """
-    planequilibration(colind::AbstractVector{<:Integer}, n, nb, backend)
+    planequilibration(rowptr, colind::AbstractVector{<:Integer}, n, nb,
+        backend)
 
-The [`ColumnEquilibration`](@ref) of a batch of `nb` systems of order `n`
-whose stored entries lie in the columns `colind` names.
+The [`SweepEquilibration`](@ref) of a batch of `nb` systems of order `n`
+handed to the solver as the structure `rowptr` (on the backend) and
+`colind` (on the host).
 """
-function planequilibration(colind::AbstractVector{<:Integer}, n::Integer,
-    nb::Integer, backend)
+function planequilibration(rowptr, colind::AbstractVector{<:Integer},
+    n::Integer, nb::Integer, backend)
     order, segptr = groupstoredcolumns(colind, n)
-    return ColumnEquilibration(tobackend(backend, order),
+    return SweepEquilibration(rowptr, tobackend(backend, order),
         tobackend(backend, segptr),
+        KernelAbstractions.allocate(backend, Float64, Int(n), Int(nb)),
         KernelAbstractions.allocate(backend, Float64, Int(n), Int(nb)))
 end
 
 """
-    equilibratecolumns!(nzval::AbstractMatrix, eq::ColumnEquilibration,
+    equilibrate!(nzval::AbstractMatrix, B, B0, eq::SweepEquilibration,
         backend)
 
-Divide each column of each system of the batch by its largest entry,
-recording the scales in `eq`.
+Divide each row of each system of the batch by its largest entry, then
+each column of the result by its largest, recording the scales in `eq`,
+and write into `B` the right-hand side `B0` of every system divided by
+that system's row scales.
 """
-function equilibratecolumns!(nzval::AbstractMatrix, eq::ColumnEquilibration,
+function equilibrate!(nzval::AbstractMatrix, B, B0, eq::SweepEquilibration,
     backend)
     n, nb = size(eq.scale)
+    rowequilibratekernel!(backend, 64)(nzval, eq.rowscale, eq.rowptr, n;
+        ndrange = n*nb)
     columnequilibratekernel!(backend, 64)(nzval, eq.scale, eq.order,
         eq.segptr, n; ndrange = n*nb)
+    nrhs = size(B0, 2)
+    scalerighthandsidekernel!(backend, 64)(B, B0, eq.rowscale, n, nrhs;
+        ndrange = n*nrhs*nb)
     KernelAbstractions.synchronize(backend)
     return nzval
 end
 
 """
-    unscalesolution!(X::AbstractArray{<:Any,3}, eq::ColumnEquilibration,
+    unscalesolution!(X::AbstractArray{<:Any,3}, eq::SweepEquilibration,
         backend)
 
-Undo on the solutions of a batch the column scaling
-[`equilibratecolumns!`](@ref) applied to its matrices.
+Undo on the solutions of a batch the column scaling [`equilibrate!`](@ref)
+applied to its matrices; the row scaling changes the equations and not
+the unknowns, so it has nothing to undo.
 """
-function unscalesolution!(X::AbstractArray{<:Any,3}, eq::ColumnEquilibration,
+function unscalesolution!(X::AbstractArray{<:Any,3}, eq::SweepEquilibration,
     backend)
     n, nrhs, nb = size(X)
     unscalesolutionkernel!(backend, 64)(X, eq.scale, n, nrhs;
@@ -639,12 +696,12 @@ function devicebatch(lsys, backend, isadjoint::Bool, bhost::Matrix, nb::Int)
     X = KernelAbstractions.allocate(backend, T, n, nrhs, nb)
     B = KernelAbstractions.allocate(backend, T, n, nrhs, nb)
     fill!(X, zero(T))
-    bd = tobackend(backend, bhost)
-    for k in 1:nb
-        copyto!(view(B, :, :, k), bd)
-    end
+    # the unscaled right-hand side, from which each batch writes every
+    # system's own scaled one into `B`
+    B0 = tobackend(backend, bhost)
     return (plan = plan, rowptr = rowptr, colind = colind, nzval = nzval,
-        X = X, B = B, equil = planequilibration(colindhost, n, nb, backend))
+        X = X, B = B, B0 = B0,
+        equil = planequilibration(rowptr, colindhost, n, nb, backend))
 end
 
 # The staging for one direction. A whole batch is brought back at once and
@@ -712,7 +769,7 @@ end
 function runbatch!(ds::DeviceSweep, slot::Int, b, stage, stamps)
     assemblesweep!(b.nzval, b.plan, ds.wsdev)
     isnothing(stamps) || applyscatteringstamps!(b.nzval, stamps)
-    equilibratecolumns!(b.nzval, b.equil, ds.backend)
+    equilibrate!(b.nzval, b.B, b.B0, b.equil, ds.backend)
     if isnothing(ds.sweeps[slot])
         ds.sweeps[slot] = _cudss_sweep(b.rowptr, b.colind, b.nzval, b.X, b.B;
             ds.solverkwargs...)

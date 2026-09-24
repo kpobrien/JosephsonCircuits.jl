@@ -60,7 +60,9 @@ the wrapping by identifying discontinuities: each value is moved by a
 multiple of `range` to within half of `range` of the value before it.
 `dims` is the dimension along which to unwrap, required for an array of
 more than one dimension; the array is unwrapped along that dimension only.
-Complex values are not phases and are refused: unwrap `angle.(z)`.
+The result is of floating point type, for integer values as well. Complex
+values are not phases and are refused with an `ArgumentError`: unwrap
+`angle.(z)`.
 
 A common usage is a phase measured over time or over frequency, such as
 the phase of a scattering parameter, which `angle` wraps to stay within
@@ -71,4 +73,14 @@ the phase of a scattering parameter, which `angle` wraps to stay within
 - `dims=nothing`: Dimension along which to unwrap.
 - `range=2pi`: Range of wrapped array.
 """
-unwrap(m::AbstractArray; kwargs...) = unwrap!(similar(m), m; kwargs...)
+function unwrap(m::AbstractArray; kwargs...)
+    # the unwrapped values are those of floating point numbers
+    x = float(m)
+    return unwrap!(similar(x), x; kwargs...)
+end
+
+# complex values are not phases
+unwrap(m::AbstractArray{<:Complex}; kwargs...) = throw(ArgumentError(
+    "`unwrap` takes real values such as phases, not complex ones; unwrap `angle.(z)`."))
+unwrap!(y::AbstractArray, m::AbstractArray{<:Complex}; kwargs...) = throw(ArgumentError(
+    "`unwrap!` takes real values such as phases, not complex ones; unwrap `angle.(z)`."))

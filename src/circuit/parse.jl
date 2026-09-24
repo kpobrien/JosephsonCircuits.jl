@@ -245,9 +245,9 @@ Construct a [`Circuit`](@ref) from a netlist: a vector of entries
 node of every terminal in terminal order, as a SPICE netlist does.
 
 - `name` is the instance identifier, a `Symbol` or a string.
-- The nodes are integers, strings or symbols. Node `0` (or `"0"`) is
-  ground. Every entry naming a node joins its net, and the nets carry the
-  node names.
+- The nodes are integers, strings or symbols. Node `0` (or `"0"`, or
+  [`Ground`](@ref)) is ground. Every entry naming a node joins its net, and
+  the nets carry the node names.
 - `component` is a typed component model, and the entry lists one node
   per terminal in terminal order: two for a lumped element or a port; for
   a [`ScatteringParameters`](@ref) block the signal and reference
@@ -366,11 +366,25 @@ function netlistterminalcount(def::Circuit, name)
     return length(def.interface.pins)
 end
 
-function appendnetlistnode!(groups, nodeorder, node, endpoint, name)
+# The net label of a node of the netlist form: `Ground` is the ground net
+# "0", and any other node is an integer, a string or a symbol, labelled by
+# its text. A node of another type is refused rather than labelled as a net
+# of its own. The node is read out of a heterogeneous entry, so it is
+# neither compiled nor inferred for its type: one method instance serves
+# every node, rather than one per type the entry holds, components included.
+Base.@nospecializeinfer function netlistnodelabel(@nospecialize(node), name)
+    node isa GroundType && return "0"
+    if !(node isa Union{Integer,AbstractString,Symbol})
+        throw(ArgumentError(lazy"The node $(repr(node)) of $(name) is not an integer, a string, a symbol or Ground."))
+    end
     label = string(node)
     if occursin('/', label)
         throw(ArgumentError(lazy"The node $(label) of $(name) contains the reserved hierarchical path separator \"/\"."))
     end
+    return label
+end
+
+function appendnetlistnode!(groups, nodeorder, label::String, endpoint)
     group = get!(() -> (push!(nodeorder, label); Any[]), groups, label)
     push!(group, endpoint)
     return nothing
@@ -378,7 +392,8 @@ end
 
 function appendnetlistnodes!(groups, nodeorder, entry, def, name)
     for t in 1:length(entry)-2
-        appendnetlistnode!(groups, nodeorder, entry[t+1], (name, t), name)
+        appendnetlistnode!(groups, nodeorder,
+            netlistnodelabel(entry[t+1], name), (name, t))
     end
     return nothing
 end
@@ -386,19 +401,21 @@ function appendnetlistnodes!(groups, nodeorder, entry,
         def::MultiportComponent, name)
     if isgrounded(def)
         for p in 1:componentnports(def)
-            appendnetlistnode!(groups, nodeorder, entry[p+1], (name, p), name)
+            appendnetlistnode!(groups, nodeorder,
+                netlistnodelabel(entry[p+1], name), (name, p))
         end
     else
         for p in 1:componentnports(def), t in 1:2
-            appendnetlistnode!(groups, nodeorder, entry[2*(p-1)+t+1],
-                (name, p, t), name)
+            appendnetlistnode!(groups, nodeorder,
+                netlistnodelabel(entry[2*(p-1)+t+1], name), (name, p, t))
         end
     end
     return nothing
 end
 function appendnetlistnodes!(groups, nodeorder, entry, def::Circuit, name)
     for (t, pin) in enumerate(def.interface.pins)
-        appendnetlistnode!(groups, nodeorder, entry[t+1], (name, pin.first), name)
+        appendnetlistnode!(groups, nodeorder,
+            netlistnodelabel(entry[t+1], name), (name, pin.first))
     end
     return nothing
 end
@@ -939,7 +956,6 @@ end
 # === one level parse (also the constructor validation) ===
 
 """
-    parsecircuitlevel(components, connections, interface)
     parsecircuitlevel(c::Circuit, interfacecache = IdDict{Any,InterfaceIndex}())
 
 Parse and validate one level of a circuit description into a
@@ -960,6 +976,3 @@ function parsecircuitlevel(c::Circuit,
     mutuals = parsemutuals(table)
     return ParsedLevel(table, groups, pinendpoints, groundties, mutuals)
 end
-
-parsecircuitlevel(components, connections, interface) =
-    parsecircuitlevel(Circuit(components, connections, interface; validate = false))

@@ -101,7 +101,7 @@ since the originals cost as much as the single precision factors.
 
 # Fields
 - `lu`: the [`BlockLU`](@ref), the factors and the Schur schedule shared
-    with the preconditioner's clusters; `blocksize`: the node block size.
+    with the preconditioner's clusters.
 - `fills`: per block, the stored entries which land in it.
 - `original`: the matrix's own blocks in its precision when refining.
 - `scale`, `diagidx`: the equilibration of single precision factors, the
@@ -116,7 +116,6 @@ since the originals cost as much as the single precision factors.
 """
 mutable struct SparseBlockFactorization{T,A3,VI}
     const lu::BlockLU{T,A3,VI}
-    const blocksize::Int
     # (slot, stored entry indices, linear indices in the block, rows,
     # columns): slot `P` is `D[P]`, `N + P` is `U[P]`, `2N + P` is `L[P]`
     const fills::Vector{Tuple{Int,VI,VI,VI,VI}}
@@ -274,7 +273,7 @@ function factorize(f::BlockFactorization, A::SparseMatrixCSC;
     else
         nothing
     end
-    F = SparseBlockFactorization{T,A3,VI}(lu, Int(blocksize), fills,
+    F = SparseBlockFactorization{T,A3,VI}(lu, fills,
         original, A, refine, refinesteps, scale, diagidx, backend, nothing)
     vals = tobackend(backend, repeat(nonzeros(A), 1, nb))
     return fillandfactorize!(F, vals)
@@ -522,8 +521,7 @@ keeps pace with cuDSS on a device; otherwise the sparse factorization.
 function linearizedfactorization(A::SparseMatrixCSC, Nmodes::Integer,
     ntones::Integer, backend; nbatches::Integer = 1,
     budget::Integer = freememory(backend) ÷ 2)
-    sparsefactorization = backend isa CPU ? KLUfactorization() :
-        CUDSSFactorization()
+    sparsefactorization = defaultfactorization(backend)
     ntones >= 2 || return sparsefactorization
     noderows, adj = blocknodegraph(A, Nmodes)
     sym = clustersymbolic(noderows, adj, klunodeorder(adj);

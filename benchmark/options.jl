@@ -15,15 +15,15 @@ end
 benchsize(n::Int) = BENCH_SMOKE ? max(4, n ÷ 128) : n
 
 # The timer of every script: `f(x)` timed on its first call, called once
-# more to warm up, and timed `BENCH_SAMPLES` times. Returns the first
-# call's `@timed` record, its compile time, which `@timed` reports from
-# Julia 1.11 on and is NaN before, and the samples.
-function benchtime(f, x)
+# more to warm up, and timed `samples` times. Returns the first call's
+# `@timed` record, its compile time, which `@timed` reports from Julia
+# 1.11 on and is NaN before, and the samples.
+function benchtime(f, x; samples::Int = BENCH_SAMPLES)
     @nospecialize f x
     GC.gc()
     first = @timed Base.invokelatest(f, x)
     Base.invokelatest(f, x)
-    samples = [@timed Base.invokelatest(f, x) for _ in 1:BENCH_SAMPLES]
+    records = [@timed Base.invokelatest(f, x) for _ in 1:samples]
     compile = hasproperty(first, :compile_time) ? first.compile_time : NaN
-    return first, compile, samples
+    return first, compile, records
 end

@@ -120,6 +120,11 @@ function indefinite_hermitian_form_block(n::Integer)
     return Diagonal(d)
 end
 
+# the default relative tolerance of the approximate checks, that of
+# `isapprox`: the square root of the machine epsilon of the element type
+# `T`, and zero when an absolute tolerance is given
+approxrtol(T, atol) = sqrt(eps(real(float(oneunit(T))))) * iszero(atol)
+
 """
     is_positive_semi_definite(M) -> Bool
 
@@ -130,23 +135,15 @@ otherwise.
 function is_positive_semi_definite(M)
     # a pivoted Cholesky with error checking off, so that a rank deficient
     # matrix does not throw; positive semidefiniteness is then judged by
-    # whether the factorization reproduces the matrix to numerical error
-    if isapprox(M, M')
-        C = cholesky(Hermitian(M), RowMaximum(); check=false)
-        if issuccess(C)
-            return true
-        else
-            if isempty(C.p)
-                L = C.L
-                return isapprox(M, L * L')
-            else
-                L = C.L[:, 1:C.rank]
-                return isapprox(M[C.p, C.p], L * L')
-            end
-        end
-    else
+    # whether the factorization of the rank it reports reproduces the
+    # matrix, in its pivoted order, to numerical error
+    if !isapprox(M, M')
         return false
     end
+    C = cholesky(Hermitian(M), RowMaximum(); check=false)
+    issuccess(C) && return true
+    L = C.L[:, 1:C.rank]
+    return isapprox(M[C.p, C.p], L * L')
 end
 
 """
@@ -427,57 +424,90 @@ end
 
 
 """
-    is_cptp(Omega, X, Y) -> Bool
+    is_cptp(Omega, X, Y; atol = 0, rtol = ...) -> Bool
 
 Return `true` if the Gaussian map with the transformation `X` and the noise
 `Y` is completely positive and trace preserving for the symplectic form
-`Omega`, that is if `Y + im*(Omega - X*Omega*X')` is Hermitian and positive
-semi-definite (Eq. 5.37 of Serafini), and `false` otherwise.
+`Omega`, that is if `K = Y + im*(Omega - X*Omega*X')` is Hermitian and
+positive semi-definite (Eq. 5.37 of Serafini), and `false` otherwise.
+
+`K` is a difference of terms which cancel, exactly so for a noiseless map
+(`Y = 0` with `X` symplectic), so it is judged against their scale
+`s = norm(Y) + norm(Omega)*(1 + opnorm(X)^2)` rather than against itself:
+`K` is Hermitian when `norm(K - K') <= tol` and positive semi-definite
+when the smallest eigenvalue of its Hermitian part is at least `-tol`, with
+`tol = max(atol, rtol*s)`. The default `rtol` is the square root of the
+machine epsilon of the element type, and zero when `atol` is given.
 
 # References
 A. Serafini, "Quantum Continuous Variables: A Primer of Theoretical
 Methods," CRC Press (2017).
 """
-function is_cptp(Omega, X, Y)
-    # Omega, X, and Y should be the same size. all should be square matrices
-
-    delta = Matrix(Omega) - X * Omega * X'
-    K = Y + im * delta
-    # check if the matrix is approximately Hermitian
-    if !isapprox(K, Hermitian(K))
-        return false
-    else
-        return is_positive_semi_definite(Hermitian(K))
+function is_cptp(Omega, X, Y; atol::Real = 0,
+        rtol::Real = approxrtol(promote_type(eltype(X), eltype(Y)), atol))
+    if size(X) != size(Omega) || size(Y) != size(Omega) || size(Omega, 1) != size(Omega, 2)
+        throw(DimensionMismatch(lazy"`Omega`, `X` and `Y` must be square matrices of one size; got $(size(Omega)), $(size(X)) and $(size(Y))."))
     end
+    Omegam = Matrix(Omega)
+    K = Y + im * (Omegam - X * Omegam * X')
+    tol = max(atol, rtol * (norm(Y) + norm(Omegam) * (1 + opnorm(X)^2)))
+    if norm(K - K') > tol
+        return false
+    end
+    return isempty(K) || eigmin(Hermitian((K + K') / 2)) >= -tol
 end
 
-function is_cptp_quadrature_block(X, Y)
+"""
+    is_cptp_quadrature_block(X, Y; atol = 0, rtol = ...) -> Bool
+
+[`is_cptp`](@ref) for the quadrature transformation `X` and noise `Y` in
+block operator order.
+"""
+function is_cptp_quadrature_block(X, Y; kwargs...)
     n = size(X, 1) ÷ 2
     Omega = symplectic_form_block(n)
-    return is_cptp(Omega, X, Y)
+    return is_cptp(Omega, X, Y; kwargs...)
 end
 
-function is_cptp_quadrature_pair(X, Y)
+"""
+    is_cptp_quadrature_pair(X, Y; atol = 0, rtol = ...) -> Bool
+
+[`is_cptp`](@ref) for the quadrature transformation `X` and noise `Y` in
+pair operator order.
+"""
+function is_cptp_quadrature_pair(X, Y; kwargs...)
     n = size(X, 1) ÷ 2
     Omega = symplectic_form_pair(n)
-    return is_cptp(Omega, X, Y)
+    return is_cptp(Omega, X, Y; kwargs...)
 end
 
-function is_cptp_ladder_pair(X, Y)
+"""
+    is_cptp_ladder_pair(X, Y; atol = 0, rtol = ...) -> Bool
+
+[`is_cptp`](@ref) for the ladder (Bogoliubov) transformation `X` and noise
+`Y` in pair operator order.
+"""
+function is_cptp_ladder_pair(X, Y; kwargs...)
     n = size(X, 1) ÷ 2
     # the ladder image of the quadrature symplectic form is -im*Σ, with Σ
     # the indefinite Hermitian form; +im*Σ, used here, gives the complex
     # conjugate of the condition in the quadrature basis, which has the same
     # eigenvalues, so the verdict is the same
     Omega = im * indefinite_hermitian_form_pair(n)
-    return is_cptp(Omega, X, Y)
+    return is_cptp(Omega, X, Y; kwargs...)
 end
 
-function is_cptp_ladder_block(X, Y)
+"""
+    is_cptp_ladder_block(X, Y; atol = 0, rtol = ...) -> Bool
+
+[`is_cptp`](@ref) for the ladder (Bogoliubov) transformation `X` and noise
+`Y` in block operator order.
+"""
+function is_cptp_ladder_block(X, Y; kwargs...)
     n = size(X, 1) ÷ 2
     # as in is_cptp_ladder_pair
     Omega = im * indefinite_hermitian_form_block(n)
-    return is_cptp(Omega, X, Y)
+    return is_cptp(Omega, X, Y; kwargs...)
 end
 
 function rand_positive_definite(T, n::Integer)
@@ -2293,8 +2323,6 @@ J. Phys., vol. 102, no. 10, pp. 497–507, Oct. 2024, doi: 10.1139/cjp-2024-0070
 """
 function polar(A::AbstractMatrix)
 
-    # matrix must be square
-
     F = svd(A)
     P = F.U * Diagonal(F.S) * F.U'
 
@@ -2304,15 +2332,28 @@ function polar(A::AbstractMatrix)
 end
 
 """
-    williamson_pair(M::AbstractMatrix{<:Real})
+    williamson_pair(M::AbstractMatrix{<:Real}; atol = 0, rtol = ...)
 
 For a symmetric positive semi-definite matrix `M`, return a vector of values `d`
 and a real symplectic matrix `S` such that `M = S Diagonal(d) S^T`. `S` is
 symplectic with respect to the pair ordered symplectic form `Ω`.
 
+Such a decomposition exists for a positive definite `M`, and for a
+positive semi-definite one on whose range the symplectic form is
+nondegenerate, which requires an even rank. Otherwise, as for
+`Diagonal([1, 0])` of rank one or `Diagonal([1, 0, 1, 0])`, whose range
+holds the positions alone, an `ArgumentError` is thrown.
+
 The values `d` are unique but the matrix `S` is not. `S` is computed from
 a Schur decomposition [2] rather than an eigendecomposition, which is
 robust to degenerate values.
+
+`M` must be symmetric to the tolerances `atol` and `rtol` of `isapprox`
+(the default `rtol` is the square root of the machine epsilon of its
+element type, and zero when `atol` is given), and its symmetric part
+`(M + transpose(M))/2` is decomposed, so that a covariance which rounding
+left slightly asymmetric, such as `S*Diagonal(d)*transpose(S)`, is
+accepted.
 
 # References
 [1] M. Idel, S. Soto Gaona, and M. M. Wolf, “Perturbation bounds for
@@ -2322,20 +2363,56 @@ vol. 525, pp. 45–58, Jul. 2017, doi: 10.1016/j.laa.2017.03.013.
 Optics: Takagi/Autonne, Bloch-Messiah/Euler, Iwasawa, and Williamson,” Can.
 J. Phys., vol. 102, no. 10, pp. 497–507, Oct. 2024, doi: 10.1139/cjp-2024-0070.
 """
-function williamson_pair(M::AbstractMatrix{<:Real})
+function williamson_pair(M::AbstractMatrix{<:Real}; atol::Real = 0,
+        rtol::Real = approxrtol(eltype(M), atol))
     n = size(M, 1) ÷ 2
     Omega = symplectic_form_pair(n)
-    d, S = _williamson(Omega, M)
+    d, S = _williamson(Omega, symmetricpart(M, atol, rtol))
     return d, S
 end
 
-function williamson_block(M::AbstractMatrix{<:Real})
+"""
+    williamson_block(M::AbstractMatrix{<:Real}; atol = 0, rtol = ...)
+
+The block ordered form of [`williamson_pair`](@ref): `d` is in block order
+and `S` is symplectic with respect to the block ordered symplectic form.
+"""
+function williamson_block(M::AbstractMatrix{<:Real}; atol::Real = 0,
+        rtol::Real = approxrtol(eltype(M), atol))
     n = size(M, 1) ÷ 2
     # computed directly in block ordering rather than through
     # `williamson_pair(block_to_pair(M))`
     Omega = symplectic_form_block(n)
-    d, S = _williamson(Omega, M)
+    d, S = _williamson(Omega, symmetricpart(M, atol, rtol))
     return pair_to_block(d), S * R_block_to_pair(n)
+end
+
+# the symmetric part (M + transpose(M))/2 of a matrix `M` which is
+# symmetric to the tolerances `atol` and `rtol`, exactly symmetric, as the
+# factorizations of a symmetric matrix require
+function symmetricpart(M, atol, rtol)
+    if !isapprox(M, transpose(M); atol = atol, rtol = rtol)
+        error(lazy"M must be symmetric.")
+    end
+    return (M + transpose(M)) / 2
+end
+
+# the 2x2 blocks of the real Schur form `T` of a real skew-symmetric matrix,
+# the first `nblocks` of them: the half difference `a` of the off-diagonal
+# entries of each, and the scaling of its two columns, `1/sqrt(|a|)` with
+# `inverse` and `sqrt(|a|)` without, the second column's times the sign of
+# `a`. The scaling with `inverse` takes the block to the symplectic form of
+# one mode in pair order; without, it is the factor which takes that form
+# to the block.
+function schurblockscaling(T, nblocks; inverse::Bool)
+    a = [(T[i, i+1] - T[i+1, i]) / 2 for i in 1:2:2*nblocks]
+    scaling = similar(a, 2 * nblocks)
+    for (k, ak) in enumerate(a)
+        s = inverse ? inv(sqrt(abs(ak))) : sqrt(abs(ak))
+        scaling[2k-1] = s
+        scaling[2k] = sign(ak) * s
+    end
+    return a, scaling
 end
 
 function _williamson(Omega, M::AbstractMatrix{<:Real})
@@ -2357,35 +2434,42 @@ function _williamson(Omega, M::AbstractMatrix{<:Real})
     T = Matrix(F.T)
     Z = Matrix(F.Z)
 
-    # loop through the blocks
-    d = zeros(eltype(T), 2 * r)
-    phi = zeros(eltype(T), 2 * r)
-
-    # this gives the pair ordering; the caller permutes to block ordering
-    for i in 1:2:2*r
-        a = (T[i, i+1] - T[i+1, i]) / 2
-        d[i] = d[i+1] = abs(a)
-        s = inv(sqrt(abs(a)))
-        phi[i] = phi[i+1] = s
-        phi[i+1] *= sign(a)
+    # the values and the scalings of the blocks, in pair ordering; the
+    # caller permutes to block ordering
+    a, phi = schurblockscaling(T, r; inverse = true)
+    # a zero block: the symplectic form is degenerate on the range of M, as
+    # on the span of x_1 and x_2 alone, and no symplectic matrix brings M to
+    # a diagonal form
+    if any(ak -> !(abs(ak) > 0), a)
+        throw(ArgumentError("The symplectic form is degenerate on the range of M, so it has no symplectic normal form."))
     end
+    d = repeat(abs.(a); inner = 2)
 
     S1 = L * Z * Diagonal(phi)
 
     # a full rank matrix is done; a rank deficient one is completed with
     # the symplectic complement
     if r == n
-        return (d=d, S=S1)
+        d, S = d, S1
     else
         S2 = symplectic_complement(Omega, S1)
-        return (d=vcat(d, zeros(eltype(d), 2 * (n - r))), S=hcat(S1, S2))
+        d, S = vcat(d, zeros(eltype(d), 2 * (n - r))), hcat(S1, S2)
     end
+    # a range on which the symplectic form is degenerate to rounding, such
+    # as that of the positions alone rotated, gives blocks at rounding level
+    # and can give a matrix S which is not symplectic; S takes the pair
+    # ordered form of its columns to Omega
+    if !isapprox(S * symplectic_form_pair(n) * transpose(S), Omega)
+        throw(ArgumentError("The symplectic form is degenerate on the range of M to working precision, so it has no symplectic normal form."))
+    end
+    return (d=d, S=S)
 end
 
 function cholesky_williamson(M::AbstractArray)
     # a pivoted Cholesky factorization with error checking off, robust
-    # against small negative eigenvalues from rounding
-    C = cholesky(M, RowMaximum(); check=false)
+    # against small negative eigenvalues from rounding, of the matrix taken
+    # as symmetric
+    C = cholesky(Symmetric(M), RowMaximum(); check=false)
 
     # the pivoted factorization sometimes reports a rank one larger than
     # the true (even) rank; an odd rank is reduced by one and the reduced
@@ -2399,9 +2483,15 @@ function cholesky_williamson(M::AbstractArray)
     L = C.L[invperm(C.p), 1:rankL]
 
     # if the factorization reports failure, or the rank was reduced, check
-    # that L*L' still reproduces the matrix
+    # that L*L' still reproduces the matrix; if only the factor of the
+    # reported, odd, rank does, the matrix is positive semi-definite of odd
+    # rank, which no symplectic normal form has
     if !issuccess(C) || isodd(C.rank)
         if !isapprox(M, L * L')
+            Lodd = C.L[invperm(C.p), 1:C.rank]
+            if isodd(C.rank) && isapprox(M, Lodd * Lodd')
+                throw(ArgumentError(lazy"The rank $(C.rank) of M is odd, so it has no symplectic normal form."))
+            end
             error(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite.")
         end
     end
@@ -2440,13 +2530,7 @@ function symplectic_complement(Omega, S1)
     F2 = schur(K2)
     T2 = Matrix(F2.T)
     Z2 = Matrix(F2.Z)
-    phi2 = zeros(eltype(T2), 2n - 2r)
-    for i in 1:2:(2n-2r)
-        a = (T2[i, i+1] - T2[i+1, i]) / 2
-        s = inv(sqrt(abs(a)))
-        phi2[i] = s
-        phi2[i+1] = s * sign(a)
-    end
+    _, phi2 = schurblockscaling(T2, n - r; inverse = true)
     # 2n × (2n-r)
     return S2 * Z2 * Diagonal(phi2)
 end
@@ -2478,14 +2562,7 @@ function symplectic_normal_form_pair(A::AbstractMatrix{<:Real})
     T = Matrix(F.T)
     Z = Matrix(F.Z)
 
-    # loop through the blocks
-    d = Vector{eltype(T)}(undef, n)
-    for i in 1:2:n
-        a = (T[i, i+1] - T[i+1, i]) / 2
-        s = sqrt(abs(a))
-        d[i] = s
-        d[i+1] = sign(a) * s
-    end
+    _, d = schurblockscaling(T, n ÷ 2; inverse = false)
 
     Q = Z * Diagonal(d)
     return Q
@@ -2568,11 +2645,15 @@ end
 
 
 """
-    autonne_takagi(M::AbstractMatrix)
+    autonne_takagi(M::AbstractMatrix; atol = 0, rtol = ...)
 
 Return a vector `Λ` and a unitary matrix `W` for a symmetric complex input
 matrix `M` such that `M == W*Diagonal(Λ)*transpose(W)` where `M` satisfies
 `M = transpose(M)`. Note that if `M` complex this means `M` is not Hermitian.
+`M` must be symmetric to the tolerances `atol` and `rtol` of `isapprox`
+(the default `rtol` is the square root of the machine epsilon of its
+element type, and zero when `atol` is given); its symmetric part
+`(M + transpose(M))/2` is factorized.
 
 They are returned as the tuple `(Λ, W)`, with `Λ` the singular values of
 `M` in decreasing order. `W` is `U*sqrt(Z)` for the singular value
@@ -2589,34 +2670,37 @@ Optics: Takagi/Autonne, Bloch-Messiah/Euler, Iwasawa, and Williamson,” Can.
 J. Phys., vol. 102, no. 10, pp. 497–507, Oct. 2024, doi: 10.1139/cjp-2024-0070.
 [3] https://github.com/XanaduAI/thewalrus/pull/403
 """
-function autonne_takagi(M::AbstractMatrix)
+function autonne_takagi(M::AbstractMatrix; atol::Real = 0,
+        rtol::Real = approxrtol(eltype(M), atol))
 
-    # an exact symmetry test
-    if !issymmetric(M)
-        error(lazy"M must be symmetric.")
-    end
     # `svd` has no method for a complex `Symmetric` matrix in Julia 1.10
     # and 1.11, so the plain matrix is factorized
-    F = svd(Matrix(M))
+    F = svd(symmetricpart(Matrix(M), atol, rtol))
+    # an empty matrix has nothing to rotate
+    isempty(F.S) && return F.S, F.U
     # this is how Chebotarev and Teretenkov 2014 define Z
     Z = F.U' * transpose(F.Vt)
 
+    # Z is unitary, so normal, and its complex Schur factor is diagonal up
+    # to rounding: the square root is that of its eigenvalues, rotated
+    # away from the branch cut and back
     E = schur(Z)
     optimum_angle, optimum_rotation = optimum_eigenvalue_angle(E.values)
     shift = exp(im * optimum_rotation)
     invshifto2 = exp(-im * optimum_rotation / 2)
-    Zsqrt = invshifto2 * E.vectors * sqrt(shift * E.Schur) * E.vectors'
+    Zsqrt = invshifto2 * E.vectors * Diagonal(sqrt.(shift .* E.values)) * E.vectors'
     W = F.U * Zsqrt
     return F.S, W
 end
 
 
 """
-    autonne_takagi(M::AbstractMatrix{<:Real})
+    autonne_takagi(M::AbstractMatrix{<:Real}; atol = 0, rtol = ...)
 
 Return a vector `Λ` and a unitary matrix `W` for input matrix `M` such that
 `M == W*Diagonal(Λ)*transpose(W)` where `M` is a symmetric real matrix
-`M = transpose(M)`.
+`M = transpose(M)`, to the tolerances `atol` and `rtol` as for a complex
+`M`; its symmetric part is factorized.
 
 They are returned as the named tuple `(Λ = Λ, M = W)`, with `Λ` the
 magnitudes of the eigenvalues of `M` in increasing order and each column of
@@ -2624,13 +2708,10 @@ magnitudes of the eigenvalues of `M` in increasing order and each column of
 eigenvalue (`1` for a zero eigenvalue).
 
 """
-function autonne_takagi(M::AbstractMatrix{<:Real})
+function autonne_takagi(M::AbstractMatrix{<:Real}; atol::Real = 0,
+        rtol::Real = approxrtol(eltype(M), atol))
 
-    # an exact symmetry test
-    if !issymmetric(M)
-        error(lazy"M must be symmetric.")
-    end
-    F = eigen(Symmetric(M); sortby=abs)
+    F = eigen(Symmetric(symmetricpart(M, atol, rtol)); sortby=abs)
 
     # M = V*Diagonal(λ)*transpose(V) with V real orthogonal, so each column
     # of V times the square root of the sign of its eigenvalue, 1 or im,
@@ -2651,7 +2732,7 @@ Return the Bloch-Messiah (Euler) decomposition  `O`, `D`, `Q` of the
 symplectic matrix `S = O*Diagonal(D)*Q` where `O` and `Q` are
 orthogonal-symplectic matrices and `Diagonal(D)` is a symplectic-diagonal and
 positive definite matrix. This is also called the symplectic singular value
-decomposition (SVD). The matrices are symplectric with respect to the block
+decomposition (SVD). The matrices are symplectic with respect to the block
 symplectic form `Ω`.
 
 This decomposition is unique up to permutations and or degeneracies of the
@@ -2673,8 +2754,6 @@ Optics: Takagi/Autonne, Bloch-Messiah/Euler, Iwasawa, and Williamson,” Can.
 J. Phys., vol. 102, no. 10, pp. 497–507, Oct. 2024, doi: 10.1139/cjp-2024-0070.
 """
 function bloch_messiah_block(S::AbstractMatrix{<:Real})
-
-    # check that S is square
 
     # get the size
     n = size(S, 1) ÷ 2
@@ -2723,6 +2802,15 @@ end
 
 """
     pre_iwasawa_block(S::AbstractMatrix)
+
+Return the pre-Iwasawa decomposition `E`, `D`, `F` of the symplectic matrix
+`S = [S11 S12; S21 S22]` in block operator order, `S = E*D*F`. With
+`A0 = sqrt(S11*transpose(S11) + S12*transpose(S12))`, `D = [A0 0; 0 inv(A0)]`
+is block diagonal, `E = [I 0; C0*inv(A0) I]` with
+`C0 = (S21*transpose(S11) + S22*transpose(S12))*inv(A0)` is lower block
+triangular with identity diagonal blocks, and `F = [X Y; -Y X]` with
+`X = inv(A0)*S11` and `Y = inv(A0)*S12` is symplectic, and orthogonal for
+a real `S`.
 
 # References
 [1] M. Houde, W. McCutcheon, and N. Quesada, “Matrix decompositions in Quantum
@@ -2773,9 +2861,10 @@ end
 
 Return the Iwasawa (KAN) decomposition `K`, `A`, `N` of the symplectic matrix
 `S`. `K` is a unitary symplectic matrix (maximal compact), `A` is a diagonal
-symplectic matrix (Abelian), and `N` is a upper triangular symplectric matrix
-(nilpotent). The symplectric matrices are symplectic with respect to the block
-symplectric form `Ω`. This decomposition is unique.
+symplectic matrix (Abelian), and `N` is a block upper triangular symplectic
+matrix whose first diagonal block is unit upper triangular (nilpotent). The
+matrices are symplectic with respect to the block symplectic form `Ω`. This
+decomposition is unique.
 
 # References
 [1] Arvind, B. Dutta, N. Mukunda, and R. Simon, “The real symplectic groups in
@@ -2875,10 +2964,6 @@ end
 function B_from_X_Y_quadrature(Omega::AbstractMatrix, X::AbstractMatrix{<:Real},
     Y::AbstractMatrix{<:Real})
 
-    # check that X and Y are the same size
-
-    # check that the size is even
-
     # Y must be positive semidefinite
     if !is_positive_semi_definite(Y)
         error(lazy"`Y` must be positive semi-definite.")
@@ -2933,7 +3018,7 @@ function B_from_X_Y_quadrature_pair(X::AbstractMatrix{<:Real},
 end
 
 """
-    X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+    X_Y_to_symplectic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
 Return a symplectic matrix `S` of `3n` modes, in pair operator order, whose
 restriction to the first `n` modes with an environment of `2n` modes in
@@ -2942,7 +3027,7 @@ quadrature transformation `X` and noise `Y` of `n` modes: `X` is the upper
 left `2n x 2n` block of `S`.
 
 """
-function X_Y_to_sympletic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+function X_Y_to_symplectic_pair(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
     # compute B from X and Y
     B = B_from_X_Y_quadrature_pair(X, Y)
@@ -2952,14 +3037,14 @@ end
 
 
 """
-    X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+    X_Y_to_symplectic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
-The block ordered form of [`X_Y_to_sympletic_pair`](@ref) for `X` and `Y`
+The block ordered form of [`X_Y_to_symplectic_pair`](@ref) for `X` and `Y`
 in block order: `S` is in the block order of all `3n` modes, so `X` is the
 submatrix of the rows and columns `[1:n; 3n+1:4n]` of `S`.
 
 """
-function X_Y_to_sympletic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
+function X_Y_to_symplectic_block(X::AbstractMatrix{<:Real}, Y::AbstractMatrix{<:Real})
 
     # compute B from X and Y
     B = B_from_X_Y_quadrature_block(X, Y)
@@ -2970,7 +3055,7 @@ end
 """
     X_Y_to_bogoliubov_pair(X::AbstractMatrix, Y::AbstractMatrix)
 
-The ladder form of [`X_Y_to_sympletic_pair`](@ref): return a Bogoliubov
+The ladder form of [`X_Y_to_symplectic_pair`](@ref): return a Bogoliubov
 matrix of `3n` modes, in pair operator order, which realizes the CPTP map
 of the ladder transformation `X` and noise `Y` of `n` modes with an
 environment in the vacuum.
@@ -2991,7 +3076,7 @@ end
 """
     X_Y_to_bogoliubov_block(X::AbstractMatrix, Y::AbstractMatrix)
 
-The ladder form of [`X_Y_to_sympletic_block`](@ref), with `X`, `Y` and
+The ladder form of [`X_Y_to_symplectic_block`](@ref), with `X`, `Y` and
 the Bogoliubov matrix returned in block operator order.
 
 """
@@ -3012,9 +3097,10 @@ end
 
 Return the Halmos dilation of the passive lossy scattering parameter matrix
 `S`. This converts a passive lossy scattering parameter matrix into a lossless
-(unitary) scattering parameter matrix with twice the number of ports,
-`[S sqrt(I - S*S'); sqrt(I - S'*S) -S']`, whose second half of ports carry
-the loss of `S`.
+(unitary) scattering parameter matrix, `[S sqrt(I - S*S'); sqrt(I - S'*S) -S']`,
+whose ports after the first `size(S, 1)` carry the loss of `S`. An `n` by
+`m` matrix `S` dilates to an `n + m` by `n + m` one, twice the number of
+ports for a square `S`.
 
 `S` is passive when none of its singular values exceeds one. A singular
 value above one by no more than `max(atol, rtol)`, as rounding leaves those
@@ -3043,21 +3129,32 @@ true
     ACTA SCIENTIARUM MATHEMATICARUM, vol. 15, pp. 87–92, 1954.
 """
 function halmos_dilation(S; atol::Real = 0, rtol::Real = defaultrtol(S, atol))
-    n = size(S, 1)
+    n, m = size(S)
+    k = min(n, m)
 
-    # the dilation U = [W 0; 0 V]*[σ sqrt(I-σ²); sqrt(I-σ²) -σ]*[V' 0; 0 W']
-    # from the singular value decomposition S = W σ V', which equals
+    # the dilation
+    # U = [W 0; 0 V]*[Σ sqrt(I-ΣΣ'); sqrt(I-Σ'Σ) -Σ']*[V' 0; 0 W']
+    # from the full singular value decomposition S = W Σ V', Σ n by m with
+    # the singular values on its diagonal, which equals
     # [S sqrt(I - S S'); sqrt(I - S' S) -S']
-    F = svd(S)
+    F = svd(S; full = true)
 
     σmax = isempty(F.S) ? zero(eltype(F.S)) : maximum(F.S)
     if σmax > 1 + max(atol, rtol)
         throw(ArgumentError(lazy"The largest singular value $(σmax) of `S` exceeds one by more than the tolerances, so `S` is not passive."))
     end
-    # sqrt(1 - σ^2), zero for a singular value within the tolerances above one
+    # sqrt(1 - σ^2), zero for a singular value within the tolerances above
+    # one, and one for the directions beyond the smaller dimension of S
     c = sqrt.(max.(1 .- F.S .^ 2, 0))
+    cn = [c; ones(eltype(c), n - k)]
+    cm = [c; ones(eltype(c), m - k)]
+    Σ = zeros(eltype(F.S), n, m)
+    for i in 1:k
+        Σ[i, i] = F.S[i]
+    end
 
-    U = [F.U 0*I(n); 0*I(n) F.V] * [Diagonal(F.S) Diagonal(c); Diagonal(c) -Diagonal(F.S)] * [F.Vt 0*I(n); 0*I(n) F.U']
+    Z = zeros(eltype(F.U), n, m)
+    U = [F.U Z; Z' F.V] * [Σ Diagonal(cn); Diagonal(cm) -Σ'] * [F.Vt Z'; Z F.U']
     return U
 end
 
@@ -3114,8 +3211,6 @@ tolerances of the rank decisions that construction makes.
 function A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix;
     atol::Real=0, rtol::Real=defaultrtol(A, atol))
 
-    type_out = promote_type(eltype(A), eltype(B))
-
     # the number of system modes
     n = size(A, 1) ÷ 2
 
@@ -3149,14 +3244,7 @@ function A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix;
     Q = F.Z
     T = F.T
 
-    # loop through the blocks
-    d = Vector{eltype(T)}(undef, 4 * n)
-    for i in 1:2:4*n
-        a = (T[i, i+1] - T[i+1, i]) / 2
-        s = inv(sqrt(abs(a)))
-        d[i] = s
-        d[i+1] = sign(a) * s
-    end
+    _, d = schurblockscaling(T, 2n; inverse = true)
 
     Sscale = Diagonal(d)
 
@@ -3170,12 +3258,14 @@ function A_B_to_symplectic_pair(A::AbstractMatrix, B::AbstractMatrix;
 end
 
 """
-    wmatrix(ws::AbstractRange{T}, wp::NTuple{N,T},
-        modes::AbstractVector{NTuple{N,Int}}) where {T,N}
+    wmatrix(ws::AbstractVector, wp::Tuple, modes::AbstractVector{<:Tuple})
 
 Return the `Nmodes` by `Nfreqs` matrix of frequencies for the signal, idlers,
-and sidebands given the signal frequencies `ws`, pump frequency `wp`, and
-modes `modes`.
+and sidebands given the signal frequencies `ws`, pump frequencies `wp`, and
+modes `modes`, each a tuple of as many integers as there are pumps: the
+frequency of mode `modes[i]` at signal frequency `ws[j]` is
+`ws[j] + sum(modes[i] .* wp)`. The element type is that of `ws` and `wp`
+promoted.
 
 # Examples
 ```jldoctest
@@ -3185,10 +3275,11 @@ julia> JosephsonCircuits.wmatrix(0.1:0.1:1.0,(1.0,),[(1,),(-1,)])
  -0.9  -0.8  -0.7  -0.6  -0.5  -0.4  -0.3  -0.2  -0.1  0.0
 ```
 """
-function wmatrix(ws::AbstractRange{T}, wp::NTuple{N,T},
-    modes::AbstractVector{NTuple{N,Int}}) where {T,N}
+function wmatrix(ws::AbstractVector, wp::NTuple{N,Number},
+    modes::AbstractVector{NTuple{N,Int}}) where {N}
     # the output is Nmodes by Nfreqs
-    w = zeros(T, length(modes), length(ws))
+    w = zeros(promote_type(eltype(ws), map(typeof, wp)...), length(modes),
+        length(ws))
 
     wmatrix!(w, ws, wp, modes)
 
@@ -3196,20 +3287,20 @@ function wmatrix(ws::AbstractRange{T}, wp::NTuple{N,T},
 end
 
 """
-    wmatrix!(w, ws::AbstractRange{T}, wp::NTuple{N,T},
-        modes::AbstractVector{NTuple{N,Int}}) where {T,N}
+    wmatrix!(w::AbstractMatrix, ws::AbstractVector, wp::Tuple,
+        modes::AbstractVector{<:Tuple})
 
 In place version of [`wmatrix`](@ref), writing into `w`, of size
 `(length(modes), length(ws))`, and returning it.
 """
-function wmatrix!(w::AbstractArray{T}, ws::AbstractRange{T}, wp::NTuple{N,T},
-    modes::AbstractVector{NTuple{N,Int}}) where {T,N}
+function wmatrix!(w::AbstractMatrix, ws::AbstractVector, wp::NTuple{N,Number},
+    modes::AbstractVector{NTuple{N,Int}}) where {N}
     if size(w) != (length(modes), length(ws))
         throw(DimensionMismatch(lazy"The size $(size(w)) of `w` must be the number of modes by the number of frequencies, $((length(modes), length(ws)))."))
     end
-    for j in eachindex(ws)
-        for i in eachindex(modes)
-            w[i, j] = ws[j] + dot(wp, modes[i])
+    for (j, wsj) in enumerate(ws)
+        for (i, mode) in enumerate(modes)
+            w[i, j] = wsj + dot(wp, mode)
         end
     end
     return w
@@ -3220,15 +3311,25 @@ end
         extrap = false, extrap_value = 0.0)
 
 Interpolate the scattering parameters `S`, an array of size
-`(nports, nports, length(w0))` tabulated at the frequencies `w0`, onto the
-frequencies `w`, interpolating the magnitude and the unwrapped phase of
-each entry separately, so that a phase which winds between the samples,
-as that of a delay does, is followed rather than cut across. `w` may be a
-matrix such as the one returned by [`wmatrix`](@ref), in which case the
-result has one matrix per entry of it. A negative frequency takes the
-complex conjugate of the value at its magnitude. With `extrap = true` a
-frequency whose magnitude is outside `w0` takes the value `extrap_value`
-(conjugated at a negative frequency); otherwise it is an error.
+`(nports, nports, length(w0))` tabulated at the strictly increasing
+frequencies `w0`, at least three of them, onto the frequencies `w`. `w` may
+be a matrix such as the one returned by [`wmatrix`](@ref), in which case
+the result has one matrix per entry of it.
+
+Each entry is interpolated as the product of a delay and a slowly varying
+complex function: the delay `tau` is the least squares slope of the
+unwrapped phase of the samples, and the real and imaginary parts of the
+undelayed samples `S*cis(w0*tau)` are interpolated quadratically, then
+multiplied by `cis(-w*tau)`. A delay line is then followed exactly however
+often its phase winds between the samples, and a transmission zero, where
+the magnitude has a kink and the phase a step, is crossed smoothly.
+
+A negative frequency takes the complex conjugate of the value at its
+magnitude. A frequency within rounding of an end of `w0`, such as an idler
+of `wmatrix` formed from the signal and the pump, takes the value at that
+end. With `extrap = true` a frequency whose magnitude is outside `w0`
+takes the value `extrap_value` (conjugated at a negative frequency);
+otherwise it is a `DomainError`.
 
 # Examples
 ```jldoctest
@@ -3254,34 +3355,52 @@ function interpolate_scattering(w0::AbstractVector, S::AbstractArray,
         error("The length of the third dimension of `S` must be equal to the number of frequencies.")
     end
 
+    # the quadratic interpolants need three samples, in order; a repeated
+    # frequency would put a zero interval under them
+    if length(w0) < 3
+        throw(ArgumentError(lazy"At least three frequencies are needed for the quadratic interpolation; got $(length(w0))."))
+    end
+    if !issorted(w0; lt = <=)
+        throw(ArgumentError("The frequencies `w0` must be strictly increasing."))
+    end
+
     # the first two dimensions are those of the scattering matrix; the rest
     # are those of `w`
     sizeout = NTuple{ndims(w) + 2,Int}(i == 1 || i == 2 ? size(S, i) : size(w, i - 2) for i in 1:(ndims(w)+2))
 
-    Sout = zeros(eltype(S), sizeout)
+    # complex, whatever the type of the samples, since the interpolant of a
+    # real entry carries a delay
+    Sout = zeros(complex(float(eltype(S))), sizeout)
 
-    # the band the samples cover; outside it the interpolants are an error
-    # unless `extrap` gives the value there
-    wmin, wmax = extrema(w0)
+    # the band the samples cover, and the rounding admitted at its edges
+    # (see edgetolerance); outside it the interpolants are an error unless
+    # `extrap` gives the value there
+    wmin, wmax = first(w0), last(w0)
+    edgetol = edgetolerance(w0)
+
+    # the undelayed samples of an entry
+    r = Vector{eltype(Sout)}(undef, length(w0))
 
     # interpolate each entry over frequency, conjugating at negative
     # frequencies
     for i in 1: size(S, 1)
         for j in 1:size(S, 2)
 
-            # interpolate the magnitude and the phase, unwrapped along the
-            # samples, separately
-            phase = unwrap(angle.(view(S, i, j, :)))
-            mag = abs.(view(S, i, j, :))
-            phase_interp = FastInterpolations.quadratic_interp(w0, phase)
-            mag_interp = FastInterpolations.quadratic_interp(w0, mag)
+            s = view(S, i, j, :)
+            tau = fitdelay(w0, s)
+            r .= s .* cis.(w0 .* tau)
+            real_interp = FastInterpolations.quadratic_interp(w0, real.(r))
+            imag_interp = FastInterpolations.quadratic_interp(w0, imag.(r))
 
             for c in CartesianIndices(axes(w))
                 wi = abs(w[c])
-                Sinterp = if extrap && !(wmin <= wi <= wmax)
+                Sinterp = if wmin - edgetol <= wi <= wmax + edgetol
+                    wi = clamp(wi, wmin, wmax)
+                    complex(real_interp(wi), imag_interp(wi)) * cis(-wi * tau)
+                elseif extrap
                     extrap_value
                 else
-                    mag_interp(wi) * cis(phase_interp(wi))
+                    throw(DomainError(w[c], lazy"The magnitude of the frequency is outside the band [$(wmin), $(wmax)] of the samples; pass `extrap = true` for the value `extrap_value` there."))
                 end
                 # conjugate at a negative frequency
                 if w[c] < 0
@@ -3294,4 +3413,19 @@ function interpolate_scattering(w0::AbstractVector, S::AbstractArray,
     end
 
     return Sout
+end
+
+# the delay of the samples `s` at the frequencies `w`, the least squares
+# slope of their unwrapped phase, negated
+function fitdelay(w, s)
+    phase = unwrap(angle.(s))
+    wmean = sum(w) / length(w)
+    phasemean = sum(phase) / length(phase)
+    num = zero(wmean * phasemean)
+    den = zero(wmean * wmean)
+    for k in eachindex(w, phase)
+        num += (w[k] - wmean) * (phase[k] - phasemean)
+        den += (w[k] - wmean)^2
+    end
+    return -num / den
 end

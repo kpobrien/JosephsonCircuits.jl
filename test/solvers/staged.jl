@@ -157,6 +157,19 @@ isdefined(Main, :recovery_solver) || include("recoveryfixture.jl")
         @test !r.solverinfo.converged
         @test length(r.solverinfo.stages) == 1
         @test isnan(r.solverinfo.sourcefold)
+        # what it returns is at the modes asked for, not at the coarse grid
+        # of its last attempt, with the operating point which a sensitivity
+        # through it reads
+        full = JosephsonCircuits.pumpmodeset((w1,w2), (8,4), (16,8);
+            dc = true, odd = true, even = true)[1].modes
+        @test r.modes == full
+        @test r.solverinfo.stages[end].grid != (8,4)
+        o = hbnlsolve((w1,w2), (8,4), src, circuit, defs; dc = true,
+            odd = true, even = true, method = Staged(maxattempts = 1),
+            returnoperatingpoint = true, warnnotconverged = false)
+        @test !o.solverinfo.converged
+        @test o.modes == full
+        @test o.operatingpoint.Nmodes == length(full)
         # the flag which silences a solve silences the schedule too
         q = @test_logs min_level=Base.CoreLogging.Warn hbnlsolve(
             (w1,w2), (8,4), src, circuit, defs; dc = true, odd = true,

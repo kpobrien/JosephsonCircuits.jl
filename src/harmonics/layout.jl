@@ -109,9 +109,7 @@ end
 # self conjugate mode contributes one real entry and every conjugate pair
 # two, `(real, imag)`, so a complex entry `a` of a matrix expands to the
 # block `[re -im; im re]` where both modes are pairs and to a single row or
-# column of it where one is self conjugate. The wider family (dense forms,
-# the mask entry points, a conjugated input, a scaling of the real modes)
-# lives in the tests as the reference these are checked against.
+# column of it where one is self conjugate.
 
 #  vectors
 
@@ -416,9 +414,10 @@ canonical state `u`, a copy.
 
 The `vdc` block has no internal counterpart and is left untouched, so a
 caller which keeps explicit direct current coordinates in `u` does not lose
-them here. A solve does not call this: it hands the harmonic system the
-internal block of `u` through [`internalpart`](@ref) and no copy is made.
-The interfaces which want a state of their own do.
+them here. A solve calls this to form its starting point, and iterates on
+the internal block of `u` through [`internalpart`](@ref) with no copy; the
+problem interface, which hands out states and residuals of its own, calls
+it for each.
 """
 function gathercanonical!(u::AbstractVector, rint::AbstractVector,
         L::CompositeLayout)
@@ -592,9 +591,6 @@ when it is explicit.
     block.
 - `blockrows`: the scattering blocks' own zero frequency rows, or `nothing`.
 - `dwork`: the resistor current the coupling drives into the nodes.
-- `nnodaldc`: where the zero frequency entries split. The first are the zero
-    frequency flux of each node, which the transport coupling drives; any
-    after them belong to auxiliary branch currents, which it does not.
 - `pinning`: the reference rows, or `nothing`. See [`DCPinning`](@ref).
 - `dcindex`, `dclocal`: the canonical positions of the direct current
     subsystem's unknowns, and the same positions local to the window.
@@ -604,6 +600,11 @@ when it is explicit.
 - `update`: the block in its matrix form, where the state lives, or
     `nothing` on the host and when there is no explicit block, where the
     scalar walk of `addtransportwindow!` is already the cheaper of the two.
+
+The constructor `CanonicalWork(L, proto; transport, blockrows, nnodaldc)`
+checks that the transport coupling drives only the first `nnodaldc` zero
+frequency entries, the flux of each node; any after them belong to
+auxiliary branch currents.
 """
 struct CanonicalWork{T,V<:AbstractVector{T},L<:CompositeLayout,TR,BR,I}
     layout::L
@@ -612,7 +613,6 @@ struct CanonicalWork{T,V<:AbstractVector{T},L<:CompositeLayout,TR,BR,I}
     transport::TR
     blockrows::BR
     dwork::Vector{Float64}
-    nnodaldc::Int
     pinning::Union{Nothing,DCPinning}
     dcindex::Vector{Int}
     dclocal::Vector{Int}
@@ -636,13 +636,13 @@ function CanonicalWork(L::CompositeLayout, proto::AbstractVector{T};
     bk = KernelAbstractions.get_backend(proto)
     window = tobackend(bk, windowindices(L))
     w = CanonicalWork(L, similar(proto, L.rdim), similar(proto, L.rdim),
-        transport, blockrows, zeros(Float64, nd), nnodaldc, nothing, Int[],
+        transport, blockrows, zeros(Float64, nd), nothing, Int[],
         Int[], window, similar(proto, nw), similar(proto, nw), nothing)
     isnothing(transport) && return w
     # the pinning is read off the subsystem this work describes, so it is
     # found once here and then carried
     full = CanonicalWork(L, w.xint, w.Fint, transport, blockrows, w.dwork,
-        nnodaldc, dcpinning(w), dcsubsystemindices(w), dcsubsystemlocal(w),
+        dcpinning(w), dcsubsystemindices(w), dcsubsystemlocal(w),
         window, w.Fwindow, w.uwindow, nothing)
     # the matrix form, on the backend the state is on. On the host the
     # scalar walk is the cheaper of the two, so it is built only where the
@@ -654,6 +654,6 @@ function CanonicalWork(L::CompositeLayout, proto::AbstractVector{T};
         tobackend(bk, up.colval), tobackend(bk, up.nzval),
         tobackend(bk, up.cresidual))
     return CanonicalWork(L, full.xint, full.Fint, transport, blockrows,
-        full.dwork, nnodaldc, full.pinning, full.dcindex, full.dclocal,
+        full.dwork, full.pinning, full.dcindex, full.dclocal,
         window, full.Fwindow, full.uwindow, dev)
 end

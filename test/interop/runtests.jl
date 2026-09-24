@@ -153,8 +153,7 @@ end
             atol = 1e-14,
             method = NewtonKrylov(linearsolver = JCX.KrylovJL(m)))
         @test s.solverinfo.converged
-        @test isapprox(maximum(abs.(s.nodeflux)),
-                       maximum(abs.(ref.nodeflux)); rtol = 1e-8)
+        @test isapprox(s.nodeflux, ref.nodeflux; rtol = 1e-8)
     end
     # with the full Jacobian as the preconditioner and with deflation
     # recycling, so that the extension's preconditioned path runs
@@ -163,8 +162,7 @@ end
             atol = 1e-14, method = NewtonKrylov(preconditioner = pc,
                 linearsolver = JCX.KrylovJL(:gmres)))
         @test s.solverinfo.converged
-        @test isapprox(maximum(abs.(s.nodeflux)),
-                       maximum(abs.(ref.nodeflux)); rtol = 1e-8)
+        @test isapprox(s.nodeflux, ref.nodeflux; rtol = 1e-8)
     end
     # a single precision iteration: the tolerances reach Krylov.jl in the
     # iteration's precision and the operators report it, so Krylov.jl
@@ -173,8 +171,9 @@ end
         src, circuit, defs; keyedarrays = false, method = NewtonKrylov(
             precision = Float32, linearsolver = JCX.KrylovJL(:gmres)))
     @test s32.solverinfo.converged
-    @test isapprox(maximum(abs.(s32.nodeflux)), maximum(abs.(ref.nodeflux));
-        rtol = 1e-4)
+    # to what a single precision residual determines on this amplifier,
+    # about 1e-4 of the solution, as with the package's own GMRES
+    @test isapprox(s32.nodeflux, ref.nodeflux; rtol = 1e-3)
     # the residual a Krylov.jl solve reports is its final one, not the
     # right hand side: a solve cut short by its iteration limit has made
     # progress and says so
@@ -189,6 +188,21 @@ end
         rtol = 1e-14, atol = 0.0, maxrestarts = 1)
     @test !out.converged
     @test 0 < out.residual < norm(F)
+    # the Krylov.jl workspace is made at the first solve of a system and
+    # kept for the next: a solve on a workspace of restart length 400
+    # allocates a small part of the basis Krylov.jl holds for it
+    nw = 2000
+    Aw = sprandn(MersenneTwister(1), nw, nw, 5/nw) + 10I
+    Fw = randn(MersenneTwister(2), nw)
+    wsw = JCX.GMRESWorkspace(nw, 400)
+    dw = zeros(nw)
+    solvew() = JCX.hblinearsolve!(JCX.KrylovJL(:gmres), dw, Aw, Fw, wsw,
+        nothing; rtol = 1e-10, atol = 0.0, maxrestarts = 1)
+    @test solvew().converged
+    @test Aw*dw ≈ Fw rtol = 1e-8
+    solvew()
+    @test (@allocated solvew()) < 400*nw*sizeof(Float64)/10
+    @test Aw*dw ≈ Fw rtol = 1e-8
 end
 
 

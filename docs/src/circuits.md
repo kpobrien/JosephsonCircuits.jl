@@ -9,9 +9,9 @@ their terminals. It is written in one of two forms, and both build the same
 Each entry is a tuple of the instance name, the node of every terminal in
 order, and the component: `(name, nodes..., component)`, as a line of a
 SPICE netlist. Names are symbols or strings, nodes are integers, strings or
-symbols, and node `0` (or `"0"`) is ground. Entries which name the same node
-share a net, and the nets take the node names, so they can be found again in
-the outputs.
+symbols, and node `0` (or `"0"`, or `Ground`) is ground. Entries which name
+the same node share a net, and the nets take the node names, so they can be
+found again in the outputs.
 
 ```julia
 using JosephsonCircuits
@@ -201,7 +201,10 @@ A [`PolynomialCPR`](@ref) is given by the coefficients of its expansion,
 element is the small signal inductance. It is the way to write an element
 whose junctions you do not want to wire up: a SNAIL, a SQUID, a Quarton,
 a kinetic inductor, or an array of `N` junctions in series, which divides
-the phase and so has the relation `N*sin(φ/N)`.
+the phase and so has the relation `N*sin(φ/N)`. A kinetic inductor whose
+inductance rises with its current as `L(I) = L0*(1 + I^2/Istar^2)` has the
+relation `[1, 0, -(IL/Istar)^2/3, 0, (IL/Istar)^4/3]`, with `IL = phi0/L0`
+the current scale of the element.
 
 The element is a junction to everything else. It makes the same branch,
 enters the same matrices, and is indexed with the junctions, so a circuit
@@ -243,9 +246,9 @@ often does not cover, and the noise of a lossy block reads the
 dissipation `I - S S'`, in which an error of the data or its interpolant
 appears roughly doubled. Measured data meant for those solvers is
 therefore best fitted once with [`RationalScattering`](@ref): the fit
-extrapolates as a passive rational function, is passive at every
-frequency by construction, and the same block runs in the frequency and
-the time domain solvers.
+extrapolates as a rational function, is stable by construction and made
+passive where it strays, then validated at every frequency, and the same
+block runs in the frequency and the time domain solvers.
 
 ```julia
 # a fit of tabulated data at as many poles as it might need; the poles it

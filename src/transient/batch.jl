@@ -135,13 +135,14 @@ end
 # factorization on the transposed pattern, built from the same values
 # through the permutation `tperm` when an adjoint first asks for it and
 # refreshed with the forward factor thereafter; on the host KLU solves
-# the transpose from the one factorization.
-struct GaussBatchFactor{J, F, X, B, S, I, IT}
+# the transpose from the one factorization. A device chunk's sweep holds
+# the solution and right hand side arrays of its `nrhs` columns per
+# condition, allocated when it is built; the host has no chunks.
+struct GaussBatchFactor{J, F, S, I, IT}
     ncolumns::Int
+    nrhs::Int
     jacobians::J
     factors::F
-    X::X
-    B::B
     scratch::S
     chunks::Vector{UnitRange{Int}}
     rowptr::I
@@ -165,7 +166,7 @@ function gaussbatchfactor(sys::TransientSystem, ncolumns::Int; nrhs::Int = 1)
             zeros(ComplexF64, nnzj)) for _ in 1:ncolumns]
         # the assembly scratch belongs to the factor, not to the system,
         # so that several batches of one circuit may step at once
-        return GaussBatchFactor(ncolumns, jacobians, Vector{Any}(nothing, ncolumns), nothing, nothing,
+        return GaussBatchFactor(ncolumns, nrhs, jacobians, Vector{Any}(nothing, ncolumns),
             zeros(Float64, nnzj), UnitRange{Int}[],
             nothing, nothing, sys.symmetric, Any[], nothing, nothing, nothing, nothing, Ref(true))
     end
@@ -173,8 +174,6 @@ function gaussbatchfactor(sys::TransientSystem, ncolumns::Int; nrhs::Int = 1)
     limit = uniformbatchlimit(nrhs)
     chunks = [first:min(first + limit - 1, ncolumns) for first in 1:limit:ncolumns]
     nzval = KernelAbstractions.zeros(backend, ComplexF64, nnzj, ncolumns)
-    X = KernelAbstractions.zeros(backend, ComplexF64, n, nrhs, ncolumns)
-    B = KernelAbstractions.zeros(backend, ComplexF64, n, nrhs, ncolumns)
     A = g.cjacobian
     hostrowptr, hostcolind = convert(Vector{Int}, rowpointer(A)), convert(Vector{Int}, columnindices(A))
     rowptr = tobackend(backend, convert(Vector{Int32}, hostrowptr))
@@ -191,9 +190,14 @@ function gaussbatchfactor(sys::TransientSystem, ncolumns::Int; nrhs::Int = 1)
         tperm = tobackend(backend, nonzeros(Kcsc))
         tnzval = KernelAbstractions.zeros(backend, ComplexF64, nnzj, ncolumns)
     end
-    return GaussBatchFactor(ncolumns, nzval, Vector{Any}(nothing, length(chunks)), X, B, nothing, chunks, rowptr, colind,
+    return GaussBatchFactor(ncolumns, nrhs, nzval, Vector{Any}(nothing, length(chunks)), nothing, chunks, rowptr, colind,
         sys.symmetric, Vector{Any}(nothing, length(chunks)), trowptr, tcolind, tperm, tnzval, Ref(true))
 end
+
+# the solution and right hand side arrays of a device sweep over the
+# conditions `chunk`, which it keeps
+sweeparrays(bf::GaussBatchFactor, sys::TransientSystem, chunk) =
+    ntuple(_ -> KernelAbstractions.zeros(sys.backend, ComplexF64, size(sys.jacobian, 1), bf.nrhs, length(chunk)), 2)
 
 # the transposed factors of a device batch from its current values, built
 # or refreshed when an adjoint asks and the forward factor has been
@@ -203,7 +207,7 @@ function gaussbatchtransposed!(bf::GaussBatchFactor, sys::TransientSystem)
     bf.tnzval .= view(bf.jacobians, bf.tperm, :)
     for (c, chunk) in enumerate(bf.chunks)
         if isnothing(bf.tfactors[c])
-            bf.tfactors[c] = _cudss_sweep(bf.trowptr, bf.tcolind, bf.tnzval[:, chunk], bf.X[:, :, chunk], bf.B[:, :, chunk];
+            bf.tfactors[c] = _cudss_sweep(bf.trowptr, bf.tcolind, bf.tnzval[:, chunk], sweeparrays(bf, sys, chunk)...;
                 sys.factorization.kwargs...)
         else
             copyto!(bf.tfactors[c].nzval, view(bf.tnzval, :, chunk))
@@ -224,7 +228,8 @@ end
 # refactorized to the factors they had; a chunk with none is left alone.
 # A column's factor therefore depends on its own refreshes alone. With
 # `fresh` the factorizations are new ones, their pivots chosen at these
-# values rather than kept from the first.
+# values rather than kept from the first; on the host a new one takes the
+# fill reducing ordering the system chose for the pattern.
 function gaussbatchjacobian!(bf::GaussBatchFactor, sys::TransientSystem, phi, cosphi, dwork, columns = nothing;
         fresh::Bool = false)
     isnothing(columns) || any(columns) || return bf
@@ -246,7 +251,7 @@ function gaussbatchjacobian!(bf::GaussBatchFactor, sys::TransientSystem, phi, co
             A = bf.jacobians[j]
             assemblerealjacobian!(bf.scratch, sys.plan, view(cosphi, :, j))
             nonzeros(A) .= bf.scratch .+ im .* g.imvals .+ g.rationalvals
-            bf.factors[j] = (fresh || isnothing(bf.factors[j])) ? factorize(sys.factorization, A) :
+            bf.factors[j] = (fresh || isnothing(bf.factors[j])) ? freshfactorization!(g.ordering, sys.factorization, A) :
                 refactorize!(sys.factorization, bf.factors[j], A)
         end
         return bf
@@ -264,7 +269,7 @@ function gaussbatchjacobian!(bf::GaussBatchFactor, sys::TransientSystem, phi, co
     for (c, chunk) in enumerate(bf.chunks)
         any(asked, chunk) || continue
         if fresh || isnothing(bf.factors[c])
-            bf.factors[c] = _cudss_sweep(rowptr, colind, nzval[:, chunk], bf.X[:, :, chunk], bf.B[:, :, chunk];
+            bf.factors[c] = _cudss_sweep(rowptr, colind, nzval[:, chunk], sweeparrays(bf, sys, chunk)...;
                 sys.factorization.kwargs...)
         else
             copyto!(bf.factors[c].nzval, view(nzval, :, chunk))
@@ -274,6 +279,16 @@ function gaussbatchjacobian!(bf::GaussBatchFactor, sys::TransientSystem, phi, co
     return bf
 end
 
+# the solve of the columns `first:first + nrhs - 1` of `R` into `Z` by a
+# condition's factor, which the batch holds untyped: the views are taken
+# past the dynamic call, where their types are known, so that the call
+# boxes none of them
+function solvecolumns!(Z, factor, R, first::Int, nrhs::Int)
+    block = first:first + nrhs - 1
+    matrixsolve!(view(Z, :, block), factor, view(R, :, block))
+    return nothing
+end
+
 # the solve of every condition's block of right hand sides, or of the
 # transposed operator's: the columns of `R` are `nrhs` per condition,
 # condition after condition
@@ -281,10 +296,9 @@ function gaussbatchsolve!(Z::AbstractMatrix, bf::GaussBatchFactor, R::AbstractMa
     n = size(R, 1)
     nrhs = size(R, 2) ÷ bf.ncolumns
     transposed = transposed && !bf.symmetric
-    if isnothing(bf.X)
+    if isempty(bf.chunks)
         for j in 1:bf.ncolumns
-            block = (j - 1)*nrhs + 1:j*nrhs
-            matrixsolve!(view(Z, :, block), transposed ? transpose(bf.factors[j]) : bf.factors[j], view(R, :, block))
+            solvecolumns!(Z, transposed ? transpose(bf.factors[j]) : bf.factors[j], R, (j - 1)*nrhs + 1, nrhs)
         end
         return Z
     end
@@ -352,13 +366,14 @@ end
 # the residual, which take it or nothing unspecialized
 abstract type AbstractRationalWork end
 
-# The host vectors of a stage solve over `m` columns, and the mask of
-# the columns still iterating on the backend as an `(m, 1)` array, which
-# the tangent and the adjoint keep so that their steps allocate none of
-# them.
+# The host vectors of a stage solve over `m` columns of `N` conditions,
+# the mask of the columns still iterating on the backend as an `(m, 1)`
+# array, and per condition whether its next correction's contraction is
+# measured and whether its operator is refreshed, which the tangent and
+# the adjoint keep so that their steps allocate none of them.
 struct StageSolveWork{M}
     scale::Vector{Float64}
-    first::Vector{Float64}
+    previous::Vector{Float64}
     current::Vector{Float64}
     floor::Vector{Float64}
     blockfloor::Vector{Float64}
@@ -366,9 +381,11 @@ struct StageSolveWork{M}
     between::Vector{Bool}
     activehost::Vector{Float64}
     activemask::M
+    measuring::Vector{Bool}
+    refresh::Vector{Bool}
 end
-stagesolvework(backend, m::Int) = StageSolveWork([zeros(m) for _ in 1:5]..., fill(false, m), fill(false, m), zeros(m),
-    KernelAbstractions.zeros(backend, Float64, m, 1))
+stagesolvework(backend, m::Int, N::Int) = StageSolveWork([zeros(m) for _ in 1:5]..., fill(false, m), fill(false, m), zeros(m),
+    KernelAbstractions.zeros(backend, Float64, m, 1), fill(false, N), fill(false, N))
 
 # The exact solve of the stage equations of every condition linearized at
 # its recorded stage phases, `J d = r` with the true stage Jacobian whose
@@ -379,21 +396,29 @@ stagesolvework(backend, m::Int) = StageSolveWork([zeros(m) for _ in 1:5]..., fil
 # A column iterates until it has converged and no further, so that its
 # solution does not depend on the columns beside it, and a response is
 # the same for a condition whatever batch or chunk it is stepped in.
-# Returns in `contraction` the contraction of the first correction of
-# each condition, the worst over its directions, the measure of how well
-# its frozen operator fits this step's two stiffnesses, for the caller to
-# decide whether to refresh it.
+# The contraction of each condition's first correction, the worst over
+# its directions, measures how well its frozen operator fits this step's
+# two stiffnesses. Where it leaves more than `stale` of the residual on an
+# operator not assembled at this step's phases, those not in `fresh`, a
+# vector per condition the solve adds to, the operator is refreshed at
+# them, with `cosphi` the work of their mean stiffness and a pumped
+# block's correction rebuilt on it, and the iteration goes on from where
+# it is, as the step's Newton refreshes when it drifts, so a response
+# solves wherever the forward solve did. Returns in `contraction` that of
+# the first correction on the operator each condition ends on, for the
+# caller to decide whether to refresh it at the next step.
 function gaussbatchstagesolve!(contraction, d, r, sys::TransientSystem, gc::GaussCoefficients, bf::GaussBatchFactor, phi,
         transposed::Bool, res, dd, cwork, gwork, lwork, jwork, dwork, rc, zc,
-        @nospecialize(rw::Union{Nothing, AbstractRationalWork}), sw::StageSolveWork; rtol = 1e-12, iterations = 100)
+        @nospecialize(rw::Union{Nothing, AbstractRationalWork}), sw::StageSolveWork, cosphi, fresh::Vector{Bool};
+        rtol, iterations, stale = 0.25)
     h = sys.h
     fill!(d, 0)
     # the convergence per column: each direction of each condition against
     # its own right hand side, so a weak direction is not left at the
     # tolerance of a strong one, down to the roundoff floor of the terms
     # the residual sums
-    scale, first, current, floor, blockfloor = sw.scale, sw.first, sw.current, sw.floor, sw.blockfloor
-    active, between = sw.active, sw.between
+    scale, previous, current, floor, blockfloor = sw.scale, sw.previous, sw.current, sw.floor, sw.blockfloor
+    active, between, measuring, refresh = sw.active, sw.between, sw.measuring, sw.refresh
     columnmax!(scale, r)
     scale .= max.(scale, floatmin(Float64))
     cmax, gmax = maximum(abs, gc.ainv2)/h^2, maximum(abs, gc.ainv)/h
@@ -411,10 +436,12 @@ function gaussbatchstagesolve!(contraction, d, r, sys::TransientSystem, gc::Gaus
     # every length.
     cs, gs, ls, js, _ = sys.rowsums
     rounding = 2cmax*cs + 2gmax*gs + ls + js*relationslope(sys, phi, dwork)
-    copyto!(first, scale)
+    copyto!(previous, scale)
     fill!(contraction, 0.0)
     fill!(blockfloor, 0.0)
+    fill!(measuring, true)
     ndir = length(scale) ÷ size(phi, 2)
+    nonlinear = length(sys.lmolj) > 0
     for iteration in 1:iterations
         for i in 1:2
             di = stage(d, i)
@@ -451,12 +478,6 @@ function gaussbatchstagesolve!(contraction, d, r, sys::TransientSystem, gc::Gaus
         end
         res .= r .- res
         columnmax!(current, res)
-        if iteration == 2
-            for k in eachindex(current)
-                j = (k - 1) ÷ ndir + 1
-                contraction[j] = max(contraction[j], current[k]/first[k])
-            end
-        end
         active .= current .> max.(rtol .* scale, floor)
         # the columns within the cheap bound and above their tolerance,
         # read row by row: at their floor when every row's residual lies
@@ -467,6 +488,23 @@ function gaussbatchstagesolve!(contraction, d, r, sys::TransientSystem, gc::Gaus
             active .|= between .& (excess .> rtol .* scale)
         end
         any(active) || return contraction
+        if iteration >= 2 && any(measuring)
+            # the contraction of the first correction on each condition's
+            # operator, and the refresh of those that drifted
+            for j in eachindex(measuring)
+                measuring[j] || continue
+                cols = (j - 1)*ndir + 1:j*ndir
+                contraction[j] = maximum(k -> current[k]/previous[k], cols)
+                refresh[j] = nonlinear && !fresh[j] && contraction[j] > stale && any(view(active, cols))
+            end
+            measuring .= refresh
+            if any(refresh)
+                gaussbatchjacobian!(bf, sys, phi, cosphi, dwork, refresh)
+                isnothing(rw) || stagefactors!(rw, sys, bf, gc, rc, zc, transposed)
+                fresh .|= refresh
+            end
+        end
+        copyto!(previous, current)
         gaussbatchtransform!(dd, res, bf, gc, rc, zc, transposed, sys)
         isnothing(rw) || stagecorrect!(dd, rw, sys)
         # the columns which have converged are left as they are
@@ -477,7 +515,7 @@ function gaussbatchstagesolve!(contraction, d, r, sys::TransientSystem, gc::Gaus
         end
         d .+= dd
     end
-    error("the stage equations of a Gauss-Legendre step did not converge in the tangent or the adjoint: the two stage stiffnesses differ too much from their mean; reduce dt.")
+    error("the stage equations of a Gauss-Legendre step did not converge in the tangent or the adjoint within stageiterations on an operator assembled at the step's own phases: the two stage stiffnesses differ too much from their mean; reduce dt or raise stageiterations of GaussLegendre.")
 end
 
 # The rounding of the products a stage residual sums, row by row, per
@@ -529,8 +567,10 @@ end
 
 # the largest residual of each column of `res` in a row where it exceeds
 # that row's rounding bound, zero where every row is within its bound,
-# on the host
+# on the host, or with `tol` the largest such residual over its row's
+# tolerance
 residualexcess(res, bound) = vec(Array(maximum(ifelse.(abs.(res) .> bound, abs.(res), 0.0); dims = (1, 3))))
+residualexcess(res, bound, tol) = vec(Array(maximum(ifelse.(abs.(res) .> bound, abs.(res) ./ tol, 0.0); dims = (1, 3))))
 
 # The excess of the stage solve's residual `res` over its rounding, row
 # by row (see `residualexcess`), each row's bound from its own terms: the
@@ -551,28 +591,21 @@ function stageresidualexcess!(bound, sys::TransientSystem, a2, a1, res, r, d, ph
 end
 
 # The largest magnitude of each column of `a`, over its rows and its
-# stages or other trailing dimension, and of `b` over its rows, into the
-# host vector `out`: a loop on the host, where a reduction over dimensions
-# would allocate its result at every call, and reductions on a device.
-function columnmax!(out::Vector{Float64}, a::AbstractArray{<:Any,3}, b::Union{Nothing,AbstractMatrix} = nothing)
-    if a isa Array && (isnothing(b) || b isa Array)
+# stages or other trailing dimension, into the host vector `out`: a loop
+# on the host, where a reduction over dimensions would allocate its
+# result at every call, and a reduction on a device.
+function columnmax!(out::Vector{Float64}, a::AbstractArray{<:Any,3})
+    if a isa Array
         @inbounds for col in axes(a, 2)
             m = 0.0
             for i in axes(a, 3), row in axes(a, 1)
                 m = max(m, abs(a[row, col, i]))
             end
-            if !isnothing(b)
-                for row in axes(b, 1)
-                    m = max(m, abs(b[row, col]))
-                end
-            end
             out[col] = m
         end
         return out
     end
-    c = vec(maximum(abs, a; dims = (1, 3), init = 0.0))
-    isnothing(b) || (c = max.(c, vec(maximum(abs, b; dims = 1, init = 0.0))))
-    copyto!(out, c)
+    copyto!(out, vec(maximum(abs, a; dims = (1, 3), init = 0.0)))
     return out
 end
 
@@ -862,7 +895,7 @@ struct EndpointWork{M}
     phi::Matrix{Float64}
     f::Matrix{Float64}
     RJ::SparseMatrixCSC{Float64, Int}
-    relations::JunctionRelations{Matrix{Float64}, Vector{Bool}}
+    relations::JunctionRelations{Matrix{Float64}, Vector{Int}}
     Q::SparseMatrixCSC{Float64, Int}
 end
 function endpointwork(cp, sys::TransientSystem, p::TransientProblem, N::Int, nobj::Int; forcing::Bool)
@@ -1049,7 +1082,7 @@ function gausstangentwork(sys::TransientSystem, N::Int, ndir::Int, nq::Int, nt::
         dwaves, ddlinevalues, dlinerates, linework, stencil, dstencil, linetables(p, backend), 0.0,
         rwt, zerostages, fullstages, jwork, phi, dwork, cosphi, rc, zc, stagecurrent, stageinjection, injectionall,
         voltage, incident, outgoing, coefficients, portwork, portmap, directwork, directall, outwork, reading, xs0, vs0,
-        bf, fill(true, N), zeros(N), stagesolvework(backend, m), pw, Zci, Qinji, pwork, pend, dterm, nothing)
+        bf, fill(true, N), zeros(N), stagesolvework(backend, m, N), pw, Zci, Qinji, pwork, pend, dterm, nothing)
 end
 
 # whether a kept tangent workspace has the shape asked for and the
@@ -1257,7 +1290,8 @@ end
 # with the current at the stage time read off the grid, the same for every
 # condition, the components' forcing of the stage and the lines' and the
 # blocks' terms, solved on the stage operator, refreshed at the recorded
-# phases when its first correction did not contract as the step's own did
+# phases before the solve when the last step's first correction did not
+# contract, and within it when this step's does not
 function tangentstep!(w::GaussTangentWork, sol::TransientBatchSolution, k::Int, window)
     sys, rwt, pwork, bf = w.sys, w.rwt, w.pwork, w.bf
     gc = sys.gauss.coefficients
@@ -1317,8 +1351,9 @@ function tangentstep!(w::GaussTangentWork, sol::TransientBatchSolution, k::Int, 
     else
         isnothing(rwt) || stagemultipliers!(rwt, sys)
     end
+    # the stale operators, just refreshed, are the fresh ones of the solve
     contraction = gaussbatchstagesolve!(w.contraction, w.d, w.r, sys, gc, bf, w.phi, false, w.res, w.dd, w.cwork, w.gwork, w.lwork,
-        w.jwork, w.dwork, w.rc, w.zc, rwt, w.sw)
+        w.jwork, w.dwork, w.rc, w.zc, rwt, w.sw, w.cosphi, w.stale; rtol = sys.gauss.stagertol, iterations = sys.gauss.stageiterations)
     w.stale .= (nj > 0) .& (contraction .> 0.25)
     if !isnothing(rwt)
         stage(w.fullstages, 1) .= w.dx .+ stage(w.d, 1)
@@ -1409,6 +1444,7 @@ function gaussbatchtangent(w::GaussTangentWork, sol::TransientBatchSolution, cur
         for window in windows
             isnothing(window.replay) || window.replay()
             for k in window.steps
+                checkchunks(k)
                 tangentstep!(w, sol, k, window)
                 tangentoutputs!(w, sol, k + 1, window, outputsink)
             end
@@ -1432,18 +1468,22 @@ function gaussbatchtangent(w::GaussTangentWork, sol::TransientBatchSolution, cur
 end
 
 # A workspace kept by a reuse holds its own arrays and factorizations
-# between calls, and of a call only the views of its result and, in its
-# stepper, the grid and the problems of the solution it last replayed,
-# which it reads and never writes: what a
-# call hands over and a workspace only reads while it runs, the host
-# currents of a tangent and the sink of an adjoint with whatever it
-# captured, the noise's accumulator among them, is released when the
-# call returns, on an error as well, in the reset as in the steps, so
-# that its lifetime is the call's.
+# between calls, and of a call only, in its stepper, the grid and the
+# problems of the solution it last replayed, which it reads and never
+# writes: what a call hands over and a workspace only reads or writes
+# while it runs, the host currents of a tangent, the views of the
+# result it writes the outputs or the currents into, and the sink of an
+# adjoint with whatever it captured, the noise's accumulator among them,
+# is released when the call returns, on an error as well, in the reset
+# as in the steps, so that its lifetime is the call's.
 function tangentrelease!(w::GaussTangentWork)
     w.dIh = zeros(size(w.dIh, 1), 0, size(w.dIh, 3))
+    w.voltage = w.incident = w.outgoing = emptyoutput(w.voltage)
     return w
 end
+
+# an empty output of the kind a workspace holds a view of the result as
+emptyoutput(a) = outputview(similar(parent(a), size(a, 1), 0, size(a, 3)), 1:size(a, 3))
 
 # The columns of an adjoint's currents at the recorded times are final a
 # few steps after a step first touches them, the trapezoidal step touching
@@ -1636,7 +1676,7 @@ function gaussadjointwork(sys::TransientSystem, N::Int, nobj::Int, nq::Int, nt::
     return GaussAdjointWork(sys, N, nobj, nq, nt, quantity, storing, injh, tp, perturbation, withstates, injectiont, portmapt,
         w, cv, cd, directwork, targetwork, objectivework, currents, CurrentRing(ringslots, ringcolumn, nothing, nothing),
         xbar, vbar, work, lmu, cmu, wst, mu, res, dd, cwork, gwork, lwork, jwork, phi, dwork, cosphi, rc, zc,
-        portwork, objectivestate, transposing, xf, wf, bf, fill(true, N), zeros(N), stagesolvework(backend, m),
+        portwork, objectivestate, transposing, xf, wf, bf, fill(true, N), zeros(N), stagesolvework(backend, m, N),
         abar, forcedbar, ratebar, linework, stencil, dstencil, linetables(p, backend), 0.0, rwa, xextra, pw, vrecbar,
         pwork, pcwork, pend, sensd, nothing, nothing)
 end
@@ -1688,6 +1728,7 @@ end
 # tangentrelease!): the sink of the call and what it captured go with it
 function adjointrelease!(w::GaussAdjointWork)
     w.ring = CurrentRing(w.ring.slots, w.ring.column, nothing, nothing)
+    w.currents = emptyoutput(w.currents)
     return w
 end
 
@@ -1831,8 +1872,9 @@ end
 # the adjoint's step from time `k + 1` back to `k` on the recorded stage
 # phases of the window: the cotangent of the wave that left each port at
 # the endpoint, the projection transposed, the stage multipliers on the
-# transposed stage operator, refreshed at the recorded phases when its
-# first correction did not contract, and the multipliers' pull on the
+# transposed stage operator, refreshed at the recorded phases before the
+# solve when the last step's first correction did not contract, and
+# within it when this step's does not, and the multipliers' pull on the
 # currents the stages read, the components, the lines and the state
 function adjointstep!(w::GaussAdjointWork, sol::TransientBatchSolution, k::Int, window, @nospecialize(stagesink))
     sys, rwa, pwork, bf = w.sys, w.rwa, w.pwork, w.bf
@@ -1880,8 +1922,9 @@ function adjointstep!(w::GaussAdjointWork, sol::TransientBatchSolution, k::Int, 
     else
         isnothing(rwa) || stagemultipliers!(rwa, sys)
     end
+    # the stale operators, just refreshed, are the fresh ones of the solve
     contraction = gaussbatchstagesolve!(w.contraction, w.mu, w.wst, sys, gc, bf, w.phi, true, w.res, w.dd, w.cwork, w.gwork, w.lwork,
-        w.jwork, w.dwork, w.rc, w.zc, rwa, w.sw)
+        w.jwork, w.dwork, w.rc, w.zc, rwa, w.sw, w.cosphi, w.stale; rtol = sys.gauss.stagertol, iterations = sys.gauss.stageiterations)
     w.stale .= (nj > 0) .& (contraction .> 0.25)
     # the states before the step: through the update, and through the
     # reflected waves the multipliers weigh, whose incident waves' value
@@ -1967,6 +2010,7 @@ function gaussbatchadjoint(w::GaussAdjointWork, sol::TransientBatchSolution, wh:
         for window in windows
             isnothing(window.replay) || window.replay()
             for k in reverse(window.steps)
+                checkchunks(k)
                 adjointstep!(w, sol, k, window, stagesink)
                 adjointoutput!(w, sol, k, window)
                 k + 3 <= nt && ringemit!(w.ring, k + 3)
@@ -2058,9 +2102,11 @@ function transientadjoint(b::TransientBatchSolution, weights::AbstractArray{<:Re
 end
 
 # the stage residual of a batch on `(n, N, 2)` stage
-# increments with the states as the columns of `x`, the norm per column
+# increments with the states as the columns of `x`, and its norm per
+# column weighted by the tolerance `rowtol` of each row (see
+# `weightedcolumnmax!`), `over` the host work of the rows over theirs
 function gaussbatchresidual!(norms, residual, sys::TransientSystem, gc::GaussCoefficients, delta, x, lx, X,
-        phi, junction, jwork, cwork, gwork, rhs, roundoff, colfloor, blockcol, tol, dwork,
+        phi, junction, jwork, cwork, gwork, rhs, roundoff, colfloor, blockcol, rowtol, over, dwork,
         @nospecialize(rw::Union{Nothing, AbstractRationalWork}))
     h = sys.h
     X .= x .+ delta
@@ -2086,44 +2132,73 @@ function gaussbatchresidual!(norms, residual, sys::TransientSystem, gc::GaussCoe
             (entry(gc.ainv, i, 1)/h) .* g1 .+ (entry(gc.ainv, i, 2)/h) .* g2
         isnothing(rw) || (stage(residual, i) .-= stage(rw.source, i))
     end
-    # the norm per column over both stages
-    columnmax!(norms, residual)
+    # the weighted norm per column over both stages
+    weightedcolumnmax!(norms, over, residual, rowtol)
     # the floor, on the products' work, which the residual no longer needs
-    gaussresidualroundoff!(roundoff, norms, tol, sys, gc, residual, delta, x, X, phi, jwork, rhs, cwork, gwork, colfloor, blockcol,
-        dwork, rw)
+    gaussresidualroundoff!(roundoff, norms, over, sys, gc, residual, delta, x, X, phi, jwork, rhs, rowtol, cwork, gwork, colfloor,
+        blockcol, dwork, rw)
     return nothing
 end
 
-# The roundoff floor of each column's residual just formed, which Newton
-# stops on where it cannot reach its tolerance, in two stages. The cheap
-# one bounds the rounding of every term by a row sum of its matrix times
-# the largest entry it multiplies, an upper bound of any row's rounding
-# from a few reductions of the column: the capacitance, conductance and
-# stiffness on the increments, the stiffness on the state, the junction
-# currents and the rounding of their phases, whose difference of node
-# fluxes may be far larger than the phase, the right hand side, and the
-# blocks' reflected waves. A column whose residual lies above it has not
-# converged, and one within its tolerance has. For a column in between,
-# the rounding is bounded row by row from each row's own terms (see
+# The residual `res` of each column weighted by the tolerance `tol` of
+# each of its rows, `max_i |r_i|/tol_i`, into `norms`, which is at most
+# one where every row is within its own tolerance, and the largest
+# residual of a row over its tolerance, zero where none is, into `over`,
+# both host vectors: a loop on the host, and reductions on a device.
+function weightedcolumnmax!(norms::Vector{Float64}, over::Vector{Float64}, res::AbstractArray{<:Any,3}, tol)
+    if res isa Array && tol isa Array
+        @inbounds for col in axes(res, 2)
+            m, e = 0.0, 0.0
+            for i in axes(res, 3), row in axes(res, 1)
+                r, t = abs(res[row, col, i]), tol[row, col, i]
+                m = max(m, r/t)
+                e = max(e, ifelse(r > t, r, 0.0))
+            end
+            norms[col], over[col] = m, e
+        end
+        return nothing
+    end
+    copyto!(norms, vec(mapreduce((r, t) -> abs(r)/t, max, res, tol; dims = (1, 3), init = 0.0)))
+    copyto!(over, vec(mapreduce((r, t) -> abs(r) > t ? abs(r) : 0.0, max, res, tol; dims = (1, 3), init = 0.0)))
+    return nothing
+end
+
+# The roundoff floor of each column's residual just formed, in the units
+# of its weighted norm, which Newton stops on where a row cannot reach
+# its tolerance: the column's norm where every row over its tolerance is
+# at its own rounding, and zero otherwise. It is decided in two stages.
+# The cheap one bounds the rounding of every term by a row sum of its
+# matrix times the largest entry it multiplies, an upper bound of any
+# row's rounding from a few reductions of the column: the capacitance,
+# conductance and stiffness on the increments, the stiffness on the
+# state, the junction currents and the rounding of their phases, whose
+# difference of node fluxes may be far larger than the phase, the right
+# hand side, and the blocks' reflected waves. A column with a row over
+# its tolerance by more than that has not converged, and one without a
+# row over its tolerance has. For a column in between, the rounding is
+# bounded row by row from each row's own terms (see
 # `stepresidualexcess!`), and the column is at its floor when every
-# row's residual lies within its tolerance or that row's own rounding:
-# its floor is then its residual, and zero otherwise. A quiet node with a
-# large capacitance, or a block's state far from another's, then sets the
-# threshold of its own rows and not of the others. Base and trial
-# evaluations keep separate floors, as they keep separate norms.
-function gaussresidualroundoff!(roundoff, norms, tol, sys::TransientSystem, gc::GaussCoefficients, residual, delta, x, X,
-        phi, jwork, rhs, bound, work, colfloor, blockcol, dwork, @nospecialize(rw::Union{Nothing, AbstractRationalWork}))
+# row's residual lies within its tolerance or that row's own rounding. A
+# quiet node with a large capacitance, or a block's state far from
+# another's, then sets the threshold of its own rows and not of the
+# others. Base and trial evaluations keep separate floors, as they keep
+# separate norms.
+function gaussresidualroundoff!(roundoff, norms, over, sys::TransientSystem, gc::GaussCoefficients, residual, delta, x, X,
+        phi, jwork, rhs, rowtol, bound, work, colfloor, blockcol, dwork, @nospecialize(rw::Union{Nothing, AbstractRationalWork}))
     cs, gs, ls, js, jr = sys.rowsums
     h = sys.h
     a2, a1 = maximum(abs, gc.ainv2)/h^2, maximum(abs, gc.ainv)/h
     isnothing(rw) ? fill!(blockcol, 0.0) : stackedscatterbound!(blockcol, rw, sys.gauss.coupling)
     gaussroundoffcolumns!(roundoff, 2a2*cs + 2a1*gs + ls, ls, jr, js*relationslope(sys, phi, dwork), delta, x, X, jwork,
         rhs, blockcol, colfloor, sys.backend)
-    any(j -> tol[j] < norms[j] <= roundoff[j], eachindex(norms)) || return nothing
-    excess = stepresidualexcess!(bound, sys, a2, a1, residual, delta, x, X, phi, jwork, rhs, work, dwork, rw)
+    between = j -> norms[j] > 1 && over[j] <= roundoff[j]
+    if !any(between, eachindex(norms))
+        fill!(roundoff, 0.0)
+        return nothing
+    end
+    excess = stepresidualexcess!(bound, sys, a2, a1, residual, delta, x, X, phi, jwork, rhs, work, dwork, rw, rowtol)
     for j in eachindex(norms)
-        tol[j] < norms[j] <= roundoff[j] || continue
-        roundoff[j] = excess[j] <= tol[j] ? norms[j] : 0.0
+        roundoff[j] = between(j) && excess[j] <= 1 ? norms[j] : 0.0
     end
     return nothing
 end
@@ -2161,10 +2236,11 @@ end
 # `stagerounding!` on the increments, the stiffness on the state, the
 # junction currents `|RJ'| |lmolj relation(phi)|` from `jwork`, which is
 # then overwritten, the rounding of the junction phases of the stage
-# values `X`, the right hand side, and the blocks' `|S| |y|`. `bound` and
-# `work` are `(n, N, 2)` work.
+# values `X`, the right hand side, and the blocks' `|S| |y|`, weighted by
+# the tolerance `rowtol` of each row. `bound` and `work` are `(n, N, 2)`
+# work.
 function stepresidualexcess!(bound, sys::TransientSystem, a2, a1, residual, delta, x, X, phi, jwork, rhs, work, dwork,
-        @nospecialize(rw::Union{Nothing, AbstractRationalWork}))
+        @nospecialize(rw::Union{Nothing, AbstractRationalWork}), rowtol)
     dsum, prod = stage(work, 1), stage(work, 2)
     stagerounding!(bound, sys, a2, a1, delta, false, dsum, prod)
     dsum .= abs.(x)
@@ -2184,7 +2260,7 @@ function stepresidualexcess!(bound, sys::TransientSystem, a2, a1, residual, delt
         reflectedwavesbound!(rw, sys.gauss.coupling)
         bound .+= sys.gauss.coupling.nstates*eps(Float64) .* rw.sbound
     end
-    return residualexcess(residual, bound)
+    return residualexcess(residual, bound, rowtol)
 end
 
 # The cheap bound per column, on the backend by reductions, into
@@ -2589,7 +2665,9 @@ function restingwaves(sys::TransientSystem, z, t)
 end
 
 # the drives of every condition at a time, as the scaled node currents in
-# the columns of `b`
+# the columns of `b`, and the drive values; one condition's in vectors,
+# the trapezoidal and backward Euler rules', whose problem is the solve's
+# and which the system holds only in its injection and its scale
 function batchdrivecurrent!(b, sys::TransientSystem, problems, values, hostvalues, t)
     drivevalues!(hostvalues, problems, t)
     values === hostvalues || copyto!(values, hostvalues)
@@ -2691,20 +2769,12 @@ function linestencil!(weights, s, tpre, h, accepted)
     end
     return i - half + 1, nst
 end
-# the same as the column before the first read and the weights, for
-# the tests of the stencil
-function linestencil(s, tpre, h, accepted)
-    weights = zeros(6)
-    first, nst = linestencil!(weights, s, tpre, h, accepted)
-    return first, weights[1:nst]
-end
-
 # the read of every port's far wave through its stencil, scaled, over
 # the ports and the conditions, and its transpose scattering a value
 # onto the samples it read, with a sign, accumulating; the columns in
-# the slots of the ring
-@kernel function wavegatherkernel!(values, @Const(waves), @Const(stencil), @Const(far), @Const(scale), nring)
-    row, j = @index(Global, NTuple)
+# the slots of the ring. Each port and condition is one item, whose body
+# the kernel and the host loop share.
+@inline function wavegatheritem!(values, waves, stencil, far, scale, nring, row, j)
     @inbounds begin
         f = far[row]
         first = Int(stencil[1, row])
@@ -2715,6 +2785,23 @@ end
         end
         values[row, j] = scale[row]*total
     end
+    return nothing
+end
+@inline function wavescatteritem!(wavesbar, values, stencil, far, scale, sign, nring, row, j)
+    @inbounds begin
+        f = far[row]
+        first = Int(stencil[1, row])
+        nst = Int(stencil[2, row])
+        v = sign*scale[row]*values[row, j]
+        for k in 1:nst
+            wavesbar[f, mod1(first + k, nring), j] += stencil[2 + k, row]*v
+        end
+    end
+    return nothing
+end
+@kernel function wavegatherkernel!(values, @Const(waves), @Const(stencil), @Const(far), @Const(scale), nring)
+    row, j = @index(Global, NTuple)
+    wavegatheritem!(values, waves, stencil, far, scale, nring, row, j)
 end
 function wavegather!(values, waves, stencil, far, scale, backend)
     isempty(values) && return values
@@ -2724,29 +2811,14 @@ end
 # on the host a loop: a kernel launch there costs more than the read
 function wavegather!(values, waves, stencil, far, scale, ::CPU)
     nring = size(waves, 2)
-    @inbounds for j in axes(values, 2), row in axes(values, 1)
-        f = far[row]
-        first = Int(stencil[1, row])
-        nst = Int(stencil[2, row])
-        total = 0.0
-        for k in 1:nst
-            total += stencil[2 + k, row]*waves[f, mod1(first + k, nring), j]
-        end
-        values[row, j] = scale[row]*total
+    for j in axes(values, 2), row in axes(values, 1)
+        wavegatheritem!(values, waves, stencil, far, scale, nring, row, j)
     end
     return values
 end
 @kernel function wavescatterkernel!(wavesbar, @Const(values), @Const(stencil), @Const(far), @Const(scale), sign, nring)
     row, j = @index(Global, NTuple)
-    @inbounds begin
-        f = far[row]
-        first = Int(stencil[1, row])
-        nst = Int(stencil[2, row])
-        v = sign*scale[row]*values[row, j]
-        for k in 1:nst
-            wavesbar[f, mod1(first + k, nring), j] += stencil[2 + k, row]*v
-        end
-    end
+    wavescatteritem!(wavesbar, values, stencil, far, scale, sign, nring, row, j)
 end
 function wavescatter!(wavesbar, values, stencil, far, scale, sign, backend)
     isempty(values) && return wavesbar
@@ -2755,14 +2827,8 @@ function wavescatter!(wavesbar, values, stencil, far, scale, sign, backend)
 end
 function wavescatter!(wavesbar, values, stencil, far, scale, sign, ::CPU)
     nring = size(wavesbar, 2)
-    @inbounds for j in axes(values, 2), row in axes(values, 1)
-        f = far[row]
-        first = Int(stencil[1, row])
-        nst = Int(stencil[2, row])
-        v = sign*scale[row]*values[row, j]
-        for k in 1:nst
-            wavesbar[f, mod1(first + k, nring), j] += stencil[2 + k, row]*v
-        end
+    for j in axes(values, 2), row in axes(values, 1)
+        wavescatteritem!(wavesbar, values, stencil, far, scale, sign, nring, row, j)
     end
     return wavesbar
 end
@@ -2808,6 +2874,14 @@ function linewaves!(st, c)
     return st.waves
 end
 
+# the drive values of a stepper's conditions at a time on its backend,
+# which the port waves of a saved time read
+function stepperdrives!(st, t)
+    drivevalues!(st.hostvalues, st.problems, t)
+    copyto!(st.values, st.hostvalues)
+    return st.values
+end
+
 # the currents of every condition's drives at a time, on the host
 function drivevalues!(hostvalues, problems, t)
     @inbounds for (j, p) in enumerate(problems), (k, d) in enumerate(p.drives)
@@ -2843,7 +2917,6 @@ mutable struct GaussStepper{S, P, A, M, C, F, W, B, R, T, E, U, K, HW, FI, NW}
     lx::M
     b1::M
     b2::M
-    bend::M
     phi::A
     jwork::A
     # the derivative of the relation at one stage, for a circuit which has
@@ -2885,13 +2958,19 @@ mutable struct GaussStepper{S, P, A, M, C, F, W, B, R, T, E, U, K, HW, FI, NW}
     lwork::M
     rw::Union{Nothing, RationalWork{M, A}}
     newtonwork::NW
+    # the tolerance of every row of every stage, set by the step, which the
+    # residual's norm is weighted by, and that of the weighted norm of each
+    # column, one
+    rowtol::A
     tolerance::Vector{Float64}
     roundoff::Tuple{Vector{Float64}, Vector{Float64}}
     rtol::Float64
     atol::Float64
     iterations::Int
     # per condition, whether the last step refreshed its factorization,
-    # which the next then refreshes before its first correction
+    # which the next then refreshes before its first correction, the
+    # refresh the step began with included (see `newtonsolve!`), and which
+    # `setstate!` clears
     stalefailed::Vector{Bool}
     # the indices of the conditions in the batch, which a failed step
     # names
@@ -2912,7 +2991,7 @@ function gaussstepper(sys::TransientSystem, problems, rtol, atol, iterations, bf
     x, v = allocate(n, N), allocate(n, N)
     X, delta, lastdelta, residual, trial, trialresidual, correction, rhs = [allocate(n, N, 2) for _ in 1:8]
     junction, trialjunction, cwork, gwork = [allocate(n, N, 2) for _ in 1:4]
-    xnew, cv, lx, b1, b2, bend = [allocate(n, N) for _ in 1:6]
+    xnew, cv, lx, b1, b2 = [allocate(n, N) for _ in 1:5]
     nj = length(sys.lmolj)
     phi, trialphi, jwork = [allocate(nj, N, 2) for _ in 1:3]
     dwork = allsinusoidal(sys.relations) ? allocate(nj, 0) : allocate(nj, N)
@@ -2925,13 +3004,14 @@ function gaussstepper(sys::TransientSystem, problems, rtol, atol, iterations, bf
     portwork = allocate(np, N)
     rw = isnothing(sys.gauss.coupling) ? nothing : rationalwork(p, backend, n, N)
     cell = RationalWorkCell{typeof(x), typeof(X)}(rw)
-    # the tolerance of each column, set by the step, which the floor
-    # reads, and the blocks' part of the floor on the host
-    tolerance, blockcol = zeros(N), zeros(N)
+    # the tolerance of each row, set by the step, the host work of the
+    # rows over theirs, and the blocks' part of the floor on the host
+    rowtol = allocate(n, N, 2)
+    over, blockcol = zeros(N), zeros(N)
     baseresidual! = (norms, r, D) -> gaussbatchresidual!(norms, r, sys, gc, D, x, lx, X, phi, junction, jwork, cwork, gwork, rhs,
-        roundoff[1], colfloor, blockcol, tolerance, dwork, cell.work)
+        roundoff[1], colfloor, blockcol, rowtol, over, dwork, cell.work)
     trialresidual! = (norms, r, D) -> gaussbatchresidual!(norms, r, sys, gc, D, x, lx, X, trialphi, trialjunction, jwork, cwork,
-        gwork, rhs, roundoff[2], colfloor, blockcol, tolerance, dwork, cell.work)
+        gwork, rhs, roundoff[2], colfloor, blockcol, rowtol, over, dwork, cell.work)
     # a new factorization of the frozen operator of the columns which
     # asked, and the stage correction of a pumped block rebuilt on it
     refresh! = columns -> (gaussbatchjacobian!(bf, sys, phi, cosphi, dwork, columns);
@@ -2944,11 +3024,11 @@ function gaussstepper(sys::TransientSystem, problems, rtol, atol, iterations, bf
     far, readscale, sqrtz = linetables(p, backend)
     npre = lineprehistory(p, sys.h)
     return GaussStepper(sys, problems, N, x, v, X, delta, lastdelta, residual, trial, trialresidual, correction, rhs,
-        junction, cwork, gwork, xnew, cv, lx, b1, b2, bend, phi, jwork, dwork, cosphi, rc, zc,
+        junction, cwork, gwork, xnew, cv, lx, b1, b2, phi, jwork, dwork, cosphi, rc, zc,
         hostvalues, values, portwork, bf, baseresidual!, trialresidual!, refresh!, solve!, accept!, pw,
         allocate(nl, linering(npre), N), npre, Float64[], 0, allocate(nl, N), zeros(8, nl), allocate(8, nl), far, readscale, sqrtz,
         allocate(nl, N), allocate(n, N), rw,
-        NewtonWork(backend, N), tolerance, roundoff, Float64(rtol), Float64(atol), Int(iterations), fill(false, N),
+        NewtonWork(backend, N), rowtol, ones(N), roundoff, Float64(rtol), Float64(atol), Int(iterations), fill(false, N),
         collect(Int, conditions), 0, 0)
 end
 
@@ -3084,11 +3164,22 @@ function advance!(st::GaussStepper, tprev, t, step)
     stage(st.rhs, 1) .= st.b1 .+ (gc.ainvone[1]/h) .* st.cv
     stage(st.rhs, 2) .= st.b2 .+ (gc.ainvone[2]/h) .* st.cv
     stepmul!(st.lx, sys.L, st.x)
-    # each column's tolerance relative to the terms its residual sums,
-    # with `atol` alone absolute: a weak drive is converged relative to
-    # itself, and a zero right hand side stops on the roundoff floor
-    columnmax!(st.tolerance, st.rhs, st.lx)
-    st.tolerance .= st.atol .+ st.rtol .* st.tolerance
+    # Each row's tolerance relative to the magnitudes of its own terms at
+    # the step's start, with `atol` alone absolute: its right hand side,
+    # the capacitive rate term and the stiffness on the state, each summed
+    # in magnitude, so that a row whose terms cancel, a node coupled to a
+    # moving one or a coupled inductor's current, is held to them rather
+    # than to their small net. A weak drive is then converged relative to
+    # itself, whatever a bias held on another row carries, and a zero
+    # right hand side stops on the roundoff floor. The stage drives' work
+    # is free once the right hand side holds them.
+    st.xnew .= abs.(st.v)
+    stepmul!(st.b1, sys.Cabs, st.xnew)
+    st.xnew .= abs.(st.x)
+    stepmul!(st.b2, sys.Labs, st.xnew)
+    for i in 1:2
+        stage(st.rowtol, i) .= st.atol .+ st.rtol .* max.(abs.(stage(st.rhs, i)), (abs(gc.ainvone[i])/h) .* st.b1, st.b2)
+    end
     copyto!(st.delta, st.lastdelta)
     converged, ncorr, _, _ = newtonsolve!(st.delta, st.correction, st.trial,
         st.residual, st.trialresidual, st.baseresidual!, st.trialresidual!, st.refresh!, st.solve!,
@@ -3208,7 +3299,7 @@ function gaussbatchoutputs(sys::TransientSystem, N, nsteps, saveevery, record, c
         zeroed(nj, 2, kept(savephases), N),
         zeroed(npj, kept(savephases && npj > 0), N),
         zeroed(npj, kept(savephases && npj > 0), N),
-        zeroed(nl, nl > 0 && (!savecheckpoints || !tails) ? nsteps + 1 : 0, N),
+        zeroed(nl, nl > 0 && (savephases || (savecheckpoints && !tails)) ? nsteps + 1 : 0, N),
         zeroed(nl, nl > 0 ? npre : 0, N),
         KernelAbstractions.allocate(backend, Float64, n, kept(savestates), N),
         KernelAbstractions.allocate(backend, Float64, n, kept(savestates), N),
@@ -3366,7 +3457,8 @@ chunkinitial(init, ch) = (; x0 = init.x0[:, ch], v0 = init.v0[:, ch], w0 = init.
 # or else the first other error
 function chunkerror(err::CompositeException)
     isempty(err.exceptions) && return err
-    errs = [chunkerror(e) for e in err.exceptions]
+    errs = [e for e in (chunkerror(e) for e in err.exceptions) if !(e isa ChunkAborted)]
+    isempty(errs) && return err
     all(e -> e isa TransientStepError, errs) || return first(e for e in errs if !(e isa TransientStepError))
     step = minimum(e -> e.step, errs)
     at = [e for e in errs if e.step == step]
@@ -3375,16 +3467,46 @@ end
 chunkerror(err::TaskFailedException) = chunkerror(err.task.result)
 chunkerror(err) = err
 
+# The chunks of one `runchunks` share a flag, the step past which none
+# goes on, kept in each chunk's task storage so that the stepping loops
+# read it without an argument (`checkchunks`). A chunk whose step fails
+# lowers it to that step: the others step on up to it, where a failure
+# of theirs would still be the first, and stop there rather than at the
+# end, so the error is the one the whole batch would meet. Any other
+# error lowers it to zero, and a chunk stopped by it throws
+# `ChunkAborted`, which the chunks' error leaves out.
+struct ChunkAborted <: Exception end
+const CHUNKFLAG = :transientchunkflag
+
+# the stop of a chunk at a step past the flag its task holds, if it holds
+# one; a step counts forward in a solve and a tangent and backward in an
+# adjoint, whose errors all lower the flag to zero
+function checkchunks(step::Integer)
+    flag = get(task_local_storage(), CHUNKFLAG, nothing)
+    flag isa Threads.Atomic{Int} && step > flag[] && throw(ChunkAborted())
+    return nothing
+end
+
 # `f(k, chunk)` for every chunk of conditions, returned as a vector: on
 # the calling task for one chunk, and otherwise each chunk on a task of
-# its own across the threads of the session, a failure thrown as the
-# chunks' error (see `chunkerror`)
+# its own across the threads of the session, which stop after a failure
+# as the flag above says, a failure thrown as the chunks' error (see
+# `chunkerror`)
 function runchunks(f, chunks)
     length(chunks) == 1 && return Any[f(1, only(chunks))]
     each = Vector{Any}(undef, length(chunks))
+    flag = Threads.Atomic{Int}(typemax(Int))
     try
         Base.Threads.@sync for (k, ch) in enumerate(chunks)
-            Base.Threads.@spawn each[k] = f(k, ch)
+            Base.Threads.@spawn begin
+                task_local_storage(CHUNKFLAG, flag)
+                try
+                    each[k] = f(k, ch)
+                catch err
+                    err isa ChunkAborted || Threads.atomic_min!(flag, err isa TransientStepError ? err.step : 0)
+                    rethrow()
+                end
+            end
         end
     catch err
         throw(chunkerror(err))
@@ -3454,21 +3576,23 @@ function gaussbatchrun!(out, sys::TransientSystem, problems, init, times, saveev
     # starts on its checkpoint as the replay starts it (see
     # `responsewindows`), so the replay retraces the solve's steps exactly
     setstate!(st, init.x0, init.v0, nothing; fresh = savecheckpoints)
-    # the history of the line waves before the start; the record of the
-    # waves leaving every port at every step, or with checkpoints the
-    # history before each of them
+    # the history of the line waves before the start; with a record of
+    # the phases or the states the waves leaving every port at every step,
+    # which the responses read, and with checkpoints the history before
+    # each of them, or those waves where that history would outweigh them
     tail = tobackend(backend, init.tailh)
     sethistory!(st, times, tail, 0)
     savehistory && copyto!(out.history, tail)
     savelinewaves && (view(out.linewaves, :, 1, :) .= tobackend(backend, init.w0))
     saveendphases && projectedphases!(st, st.x)
-    batchdrivecurrent!(st.bend, st, t0)
+    stepperdrives!(st, t0)
     saveoutputs!(1, t0)
     copyto!(out.initialflux, st.x)
     copyto!(out.initialrate, st.v)
     saved = 1
     tprev = t0
     for step in 1:nsteps
+        checkchunks(step)
         t = times[step + 1]
         if savecheckpoints && (step - 1) % K == 0
             c = (step - 1) ÷ K + 1
@@ -3486,7 +3610,7 @@ function gaussbatchrun!(out, sys::TransientSystem, problems, init, times, saveev
             view(st.waves, :, ringslot(npre + step, size(st.waves, 2)), :))
         if step % saveevery == 0 || step == nsteps
             saved += 1
-            batchdrivecurrent!(st.bend, st, t)
+            stepperdrives!(st, t)
             saveoutputs!(saved, t)
         end
     end

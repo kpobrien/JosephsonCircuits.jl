@@ -13,6 +13,80 @@ end)
 bound(cc) = JosephsonCircuits.bindvalues(cc,
     JosephsonCircuits.componentvaluestonumber(cc.componentvalues, Dict{Any,Any}()))
 
+# The nodal matrix of a group of components written from its definition,
+# `f` of each value stamped at its nodes in netlist order, with the modes
+# of a node adjacent; ground (node 1) has no row and a component whose
+# terminals are one node no stamp.
+function coordinatenodal(cc, vvn, group, f, Nmodes)
+    n = cc.Nnodes - 1
+    T = JosephsonCircuits.grouptype(vvn, group, true)
+    I, J, V = Int[], Int[], T[]
+    at(node, m) = (node - 1)*Nmodes + m
+    for i in group
+        n1, n2 = cc.nodeindices[1, i] - 1, cc.nodeindices[2, i] - 1
+        n1 == n2 && continue
+        v = f(vvn[i])
+        for m in 1:Nmodes
+            n1 > 0 && (push!(I, at(n1, m)); push!(J, at(n1, m)); push!(V, v))
+            n2 > 0 && (push!(I, at(n2, m)); push!(J, at(n2, m)); push!(V, v))
+            if n1 > 0 && n2 > 0
+                push!(I, at(n1, m)); push!(J, at(n2, m)); push!(V, -v)
+                push!(I, at(n2, m)); push!(J, at(n1, m)); push!(V, -v)
+            end
+        end
+    end
+    return sparse(I, J, V, Nmodes*n, Nmodes*n)
+end
+
+# The mutual inductance matrix written from its definition: K*sqrt(L1*L2)
+# between the branches of the two inductors, signed by whether each is
+# declared along its branch, which runs from its lower node to its higher.
+function coordinatemutual(cc, vvn)
+    nb = cc.topology.Nbranches
+    I, J, V = Int[], Int[], Float64[]
+    along(e) = e[1] < e[2] ? 1 : -1
+    for (k, i, j) in cc.couplings
+        ei = (cc.nodeindices[1, i], cc.nodeindices[2, i])
+        ej = (cc.nodeindices[1, j], cc.nodeindices[2, j])
+        bi = cc.topology.edge2indexdict[ei]
+        bj = cc.topology.edge2indexdict[ej]
+        M = along(ei)*along(ej)*(vvn[k]*sqrt(vvn[i]*vvn[j]))
+        append!(I, (bi, bj)); append!(J, (bj, bi)); append!(V, (M, M))
+    end
+    return sparse(I, J, V, nb, nb)
+end
+
+# The circuit matrices written from their definitions: the capacitance, the
+# conductance of the resistors and of the ports' terminations, the inverse
+# inductance of the inductors on branches no coupling touches, the branch
+# inductance of each branch (the reciprocal of its inductors' summed
+# reciprocals) and of each junction, repeated per mode, the mutual
+# inductances, and the mean of the inductances.
+function coordinatematrices(cc, vvn, Nmodes)
+    nodes(i) = (cc.nodeindices[1, i], cc.nodeindices[2, i])
+    branch(i) = cc.topology.edge2indexdict[nodes(i)]
+    nb = cc.topology.Nbranches
+    coupled = Set(minmax(nodes(i)...) for (_, i1, i2) in cc.couplings
+        for i in (i1, i2))
+    uncoupled = [i for i in cc.inductors if !(minmax(nodes(i)...) in coupled)]
+    reciprocals = Dict{Int,Float64}()
+    for i in cc.inductors
+        reciprocals[branch(i)] = get(reciprocals, branch(i), 0.0) + 1/vvn[i]
+    end
+    Lb = sparsevec(collect(keys(reciprocals)), 1 ./ collect(values(reciprocals)), nb)
+    Ljb = sparsevec([branch(i) for i in cc.junctions],
+        Float64[vvn[i] for i in cc.junctions], nb)
+    repeated(v) = sparsevec([(b - 1)*Nmodes + m for b in v.nzind for m in 1:Nmodes],
+        [x for x in v.nzval for m in 1:Nmodes], nb*Nmodes)
+    inductances = [vvn[i] for i in vcat(cc.inductors, cc.junctions)]
+    return (Cnm = coordinatenodal(cc, vvn, cc.capacitors, identity, Nmodes),
+        Gnm = coordinatenodal(cc, vvn, cc.resistors, inv, Nmodes),
+        invLnm = coordinatenodal(cc, vvn, uncoupled, inv, Nmodes),
+        Lb = Lb, Lbm = repeated(Lb), Ljb = Ljb, Ljbm = repeated(Ljb),
+        Mb = coordinatemutual(cc, vvn),
+        Lmean = isempty(inductances) ? 0.0 : sum(inductances)/length(inductances))
+end
+
 @testset verbose=true "binding and assembly" begin
 
     @testset "bound circuit and nodal assembly" begin
@@ -44,37 +118,17 @@ bound(cc) = JosephsonCircuits.bindvalues(cc,
         # the port environments carry the reference impedances
         @test [b.values[p.environment] for p in cc.ports] == [50.0, 1000.0]
 
-        # the planned assembly reproduces a coordinate assembly exactly,
-        # including the summation order of parallel components: the
-        # coordinate form written out here, the entries of every component
-        # pushed in netlist order, with the modes of a node adjacent
+        # the planned assembly reproduces the coordinate assembly exactly,
+        # including the summation order of parallel components, the entries
+        # of every component pushed in netlist order
         vvn = JC.componentvaluestonumber(cc.componentvalues, Dict{Any,Any}())
         pC = JC.nodalstampplan(cc, cc.capacitors, cc.Nnodes)
         pG = JC.nodalstampplan(cc, cc.resistors, cc.Nnodes; invert = true)
         same(A, B) = A.colptr == B.colptr && A.rowval == B.rowval &&
             A.nzval == B.nzval
-        coordinate(group, invert, Nmodes) = begin
-            n = cc.Nnodes - 1
-            T = JC.grouptype(vvn, group, true)
-            I, J, V = Int[], Int[], T[]
-            at(node, m) = (node - 1)*Nmodes + m
-            for i in group
-                v = invert ? 1/vvn[i] : vvn[i]
-                n1, n2 = cc.nodeindices[1, i] - 1, cc.nodeindices[2, i] - 1
-                for m in 1:Nmodes
-                    n1 > 0 && (push!(I, at(n1, m)); push!(J, at(n1, m)); push!(V, v))
-                    n2 > 0 && (push!(I, at(n2, m)); push!(J, at(n2, m)); push!(V, v))
-                    if n1 > 0 && n2 > 0
-                        push!(I, at(n1, m)); push!(J, at(n2, m)); push!(V, -v)
-                        push!(I, at(n2, m)); push!(J, at(n1, m)); push!(V, -v)
-                    end
-                end
-            end
-            sparse(I, J, V, Nmodes*n, Nmodes*n)
-        end
         for Nmodes in (1, 4, 8)
-            Cref = coordinate(cc.capacitors, false, Nmodes)
-            Gref = coordinate(cc.resistors, true, Nmodes)
+            Cref = coordinatenodal(cc, vvn, cc.capacitors, identity, Nmodes)
+            Gref = coordinatenodal(cc, vvn, cc.resistors, inv, Nmodes)
             @test same(JC.assemblenodal(eltype(Cref), pC, b.capacitors,
                 Nmodes), Cref)
             @test same(JC.assemblenodal(eltype(Gref), pG, b.resistors,
@@ -146,24 +200,24 @@ bound(cc) = JosephsonCircuits.bindvalues(cc,
         same(a, b) = a.colptr == b.colptr && a.rowval == b.rowval &&
             a.nzval == b.nzval
         samev(a, b) = a.n == b.n && a.nzind == b.nzind && a.nzval == b.nzval
-        function matricesagree(c; Nmodes = 8)
+        # the planned assembly gives the matrices written from their
+        # definitions (see `coordinatematrices`): the same patterns, the
+        # capacitance, conductance and junction entries exactly, and the
+        # entries formed from reciprocals and sums of inductances to
+        # rounding
+        function matchesdefinition(c; Nmodes = 8)
             cc = JC.compile(c); b = bound(cc)
-            vvn = JC.componentvaluestonumber(cc.componentvalues,
-                Dict{Any,Any}())
-            ref = numericmatrices(cc, vvn; Nmodes = Nmodes)
-            new = JC.assemblematrices(
+            nm = JC.assemblematrices(
                 JC.circuitmatrixplan(cc; Nmodes = Nmodes), b)
-            return same(new.Cnm, ref.Cnm) && same(new.Gnm, ref.Gnm) &&
-                same(new.invLnm, ref.invLnm) && same(new.Mb, ref.Mb) &&
-                same(new.Rbnm, ref.Rbnm) &&
-                samev(new.Lb, ref.Lb) && samev(new.Lbm, ref.Lbm) &&
-                samev(new.Ljb, ref.Ljb) && samev(new.Ljbm, ref.Ljbm) &&
-                new.Lmean == ref.Lmean &&
-                new.portindices == ref.portindices &&
-                new.portnumbers == ref.portnumbers &&
-                new.portimpedances == ref.portimpedances &&
-                new.portenvironmentindices == ref.portenvironmentindices &&
-                new.noiseportimpedanceindices == ref.noiseportimpedanceindices
+            ref = coordinatematrices(cc, b.values, Nmodes)
+            return same(nm.Cnm, ref.Cnm) && same(nm.Gnm, ref.Gnm) &&
+                nm.invLnm.colptr == ref.invLnm.colptr &&
+                nm.invLnm.rowval == ref.invLnm.rowval &&
+                nm.invLnm.nzval ≈ ref.invLnm.nzval && nm.Mb == ref.Mb &&
+                nm.Lb.nzind == ref.Lb.nzind && nm.Lb ≈ ref.Lb &&
+                nm.Lbm.nzind == ref.Lbm.nzind && nm.Lbm ≈ ref.Lbm &&
+                samev(nm.Ljb, ref.Ljb) && samev(nm.Ljbm, ref.Ljbm) &&
+                nm.Lmean ≈ ref.Lmean
         end
         # the same matrices refilled at other values are the matrices a
         # fresh assembly gives at those values, exactly, in the storage
@@ -189,11 +243,11 @@ bound(cc) = JosephsonCircuits.bindvalues(cc,
         end
 
         # a netlist with string names
-        @test matricesagree(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)), ("Lj1", "2", "0", JosephsonJunction(1e-9)), ("C2", "2", "0", Capacitor(1e-12))]))
+        @test matchesdefinition(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("C1", "1", "2", Capacitor(100e-15)), ("Lj1", "2", "0", JosephsonJunction(1e-9)), ("C2", "2", "0", Capacitor(1e-12))]))
 
         # two inductors on one branch combine as a parallel inductance, and a
         # complex capacitance must not make the resistances complex
-        @test matricesagree(Circuit(
+        @test matchesdefinition(Circuit(
             Any[:p1 => Port(1), :la => Inductor(2e-9), :lb => Inductor(3e-9),
                 :l2 => Inductor(5e-9), :jj => JosephsonJunction(1e-9),
                 :c1 => Capacitor(1e-13 + 1e-16im), :gnd => Ground()],
@@ -202,9 +256,8 @@ bound(cc) = JosephsonCircuits.bindvalues(cc,
                 [(:l2,2),(:jj,2),(:p1,2),(:c1,2),(:gnd,1)]]))
 
         # a node where four inductive branches meet, so the inverse
-        # inductance entries take more than two contributions and their
-        # summation order is observable
-        @test matricesagree(Circuit(
+        # inductance entries take more than two contributions
+        @test matchesdefinition(Circuit(
             Any[:p1 => Port(1), :la => Inductor(1e-9), :lb => Inductor(2.5e-9),
                 :lc => Inductor(7e-9), :ld => Inductor(0.3e-9),
                 :ca => Capacitor(1e-12), :cb => Capacitor(2e-12),
@@ -233,7 +286,7 @@ bound(cc) = JosephsonCircuits.bindvalues(cc,
         # mutually coupled branches are dropped from the inverse inductance
         # matrix and carried as auxiliary MNA currents instead, so no
         # inductance matrix is inverted anywhere in the assembly
-        @test matricesagree(Circuit(
+        @test matchesdefinition(Circuit(
             Any[:p1 => Port(1), :l1 => Inductor(1e-9), :l2 => Inductor(2e-9),
                 :l3 => Inductor(4e-9), :k => MutualInductor(0.9, :l1, :l2),
                 :c1 => Capacitor(1e-12), :gnd => Ground()],
@@ -242,12 +295,12 @@ bound(cc) = JosephsonCircuits.bindvalues(cc,
                 [(:l3,2),(:p1,2),(:c1,2),(:gnd,1)]]))
 
         # and a circuit with no inductance at all
-        @test matricesagree(Circuit(
+        @test matchesdefinition(Circuit(
             [:p1 => Port(1), :c1 => Capacitor(1e-12), :jj => JosephsonJunction(1e-9)],
             [[(:p1,1),(:c1,1),(:jj,1)], [(:p1,2),(:c1,2),(:jj,2),Ground]]))
 
         # at one mode as well as many
-        @test matricesagree(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("L1", "1", "2", Inductor(1e-9)), ("C2", "2", "0", Capacitor(1e-12))]); Nmodes = 1)
+        @test matchesdefinition(Circuit([("P1", "1", "0", Port(1; Z0 = 50.0)), ("L1", "1", "2", Inductor(1e-9)), ("C2", "2", "0", Capacitor(1e-12))]); Nmodes = 1)
     end
 end
 
@@ -260,6 +313,42 @@ end
     d = JosephsonCircuits.normalizedefinitions(Dict("La" => 1, :Lb => 2.0im,
         :note => "text"))
     @test d == Dict(:La => 1.0 + 0im, :Lb => 2.0im)
+end
+
+@testset "the sign of the mutual stamps" begin
+    JC = JosephsonCircuits
+    # the second inductor declared either way round, so the graph turns one
+    # of the two branches against the netlist in one case
+    chain(rev) = Circuit([(:p1, 1, 0, Port(1)), (:p2, 3, 0, Port(2)),
+        (:l1, 1, 2, Inductor(1e-9)),
+        (:l2, (rev ? 3 : 2), (rev ? 2 : 3), Inductor(2e-9)),
+        (:k, :l1, :l2, MutualInductor(0.3))])
+    # the planned and the in place assembly give the mutual matrix written
+    # from its definition, at the plan's own values and at new ones, with
+    # the plan built once at the first: K through zero and both signs, and
+    # each self inductance moved on its own, so that the mutual inductance
+    # is formed from the new values of all three
+    for rev in (false, true), Nmodes in (1, 4)
+        cc = JC.compile(chain(rev))
+        b = bound(cc)
+        vvn = b.values
+        plan = JC.circuitmatrixplan(cc; Nmodes = Nmodes)
+        ki, l1i, l2i = (cc.componentnamedict[n] for n in ("k", "l1", "l2"))
+        nm = JC.assemblematrices(plan, b)
+        @test nm.Mb == coordinatemutual(cc, vvn)
+        for (K, s1, s2) in ((0.3, 1.0, 1.0), (-0.3, 1.0, 1.0),
+                (0.0, 1.0, 1.0), (0.7, 2.5, 0.4), (0.3, 2.0, 1.0),
+                (0.3, 1.0, 0.5))
+            v2 = copy(vvn)
+            v2[ki] = K
+            v2[l1i] = s1*vvn[l1i]
+            v2[l2i] = s2*vvn[l2i]
+            b2 = JC.bindvalues(cc, v2)
+            ref = coordinatemutual(cc, v2)
+            @test JC.assemblematrices(plan, b2).Mb == ref
+            @test JC.assemblematrices!(nm, plan, b2).Mb == ref
+        end
+    end
 end
 
 @testset "resolved coupling and per-operation assembly storage" begin
@@ -297,18 +386,11 @@ end
         end
     end
     # a complex coupling promotes the mutual inductance matrix and leaves
-    # the inductances as they are, whichever way the matrices are built
+    # the inductances as they are
     v = Any[b.values...]; v[cc.couplings[1][1]] = 0.2+0.01im
-    direct = numericmatrices(cc, v)
-    @test eltype(direct.Lb) == Float64
-    @test eltype(direct.Mb) == ComplexF64
-    bp = JC.bindvalues(cc,v)
-    plan = JC.circuitmatrixplan(cc)
-    nm = JC.assemblematrices(plan,b)
-    work = JC.CircuitMatrixWorkspace(plan,nm)
-    promoted = JC.assemblematrices!(nm,plan,bp,work)
-    @test promoted.Mb == direct.Mb
-    @test eltype(promoted.Lb) == Float64
+    fresh = numericmatrices(cc, v)
+    @test eltype(fresh.Lb) == Float64
+    @test eltype(fresh.Mb) == ComplexF64
     # a plan is built from its compiled circuit alone: the ports in the
     # order of their numbers, whatever order the netlist gave them
     ports = Circuit([(:p2,2,0,Port(2)),(:p1,1,0,Port(1;termination=nothing))])
@@ -318,7 +400,7 @@ end
     @test JC.assemblematrices(pp,pb).portenvironmentindices[1] == 0
 end
 
-@testset "zero incidence weights and deferred inverse inductance" begin
+@testset "a self loop branch and the inverse inductance" begin
     JC = JosephsonCircuits
     for modes in (1,3), value in (1.,2.,Inf)
         c = Circuit([(:p,1,0,Port(1)),(:l,1,2,Inductor(1.0)),

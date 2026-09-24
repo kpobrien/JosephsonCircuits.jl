@@ -1,124 +1,3 @@
-
-"""
-    diagrepeat(A::AbstractVecOrMat, Nmodes::Integer)
-
-Return a matrix with each element of `A` duplicated along the diagonal
-`Nmodes` times.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.diagrepeat([1 2;3 4],2)
-4×4 Matrix{Int64}:
- 1  0  2  0
- 0  1  0  2
- 3  0  4  0
- 0  3  0  4
-
-julia> JosephsonCircuits.diagrepeat([1,2],2)
-4-element Vector{Int64}:
- 1
- 1
- 2
- 2
-```
-"""
-function diagrepeat(A::AbstractVecOrMat, Nmodes::Integer)
-    out = zeros(eltype(A),size(A).*Nmodes)
-    diagrepeat!(out,A,Nmodes)
-    return out
-end
-
-
-"""
-    diagrepeat(A::AbstractArray, Nmodes::Integer)
-
-Return a array with each element of the first two axes of `A` duplicated along
-the diagonal `Nmodes` times.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.diagrepeat([1 2;3 4;;;],2)
-4×4×1 Array{Int64, 3}:
-[:, :, 1] =
- 1  0  2  0
- 0  1  0  2
- 3  0  4  0
- 0  3  0  4
-```
-"""
-function diagrepeat(A::AbstractArray, Nmodes::Integer)
-    # only scale the first two dimensions
-    sizeout = NTuple{ndims(A),Int}(ifelse(i == 1 || i == 2, Nmodes*val, val) for (i,val) in enumerate(size(A)))
-    out = zeros(eltype(A),sizeout)
-    return diagrepeat!(out,A,Nmodes)
-end
-
-"""
-    diagrepeat!(out::AbstractVecOrMat, A::AbstractVecOrMat, Nmodes::Integer)
-
-Write the elements of `A`, each repeated `Nmodes` times along the
-diagonal, into `out`. Only the nonzero elements of `A` are written, so the
-other entries of `out` keep what they held, zero for the result to be the
-repeated matrix.
-
-# Examples
-```jldoctest
-julia> A = [1 2;3 4];out = zeros(eltype(A),4,4);JosephsonCircuits.diagrepeat!(out,A,2);out
-4×4 Matrix{Int64}:
- 1  0  2  0
- 0  1  0  2
- 3  0  4  0
- 0  3  0  4
-```
-"""
-function diagrepeat!(out::AbstractVecOrMat, A::AbstractVecOrMat, Nmodes::Integer)
-
-    if size(A).*Nmodes != size(out)
-        throw(DimensionMismatch(lazy"Sizes not consistent"))
-    end
-
-    @inbounds for coord in CartesianIndices(A)
-        if !iszero(A[coord])
-            for i in 1:Nmodes
-                out[CartesianIndex((coord.I .- 1).*Nmodes .+ i)] = A[coord]
-            end
-        end
-    end
-
-    return out
-end
-
-function diagrepeat!(out::AbstractArray, A::AbstractArray, Nmodes::Integer)
-    # use views to loop over the dimensions of the
-    # array higher than 2.
-    for i in CartesianIndices(axes(A)[3:end])
-        diagrepeat!(view(out,:,:,i),view(A,:,:,i),Nmodes)
-    end
-    return out
-end
-
-"""
-    diagrepeat(A::Diagonal, Nmodes::Integer)
-
-Return a diagonal matrix with each element of `A` duplicated along the
-diagonal `Nmodes` times.
-
-# Examples
-```jldoctest
-julia> JosephsonCircuits.diagrepeat(JosephsonCircuits.LinearAlgebra.Diagonal([1,2]),2)
-4×4 LinearAlgebra.Diagonal{Int64, Vector{Int64}}:
- 1  ⋅  ⋅  ⋅
- ⋅  1  ⋅  ⋅
- ⋅  ⋅  2  ⋅
- ⋅  ⋅  ⋅  2
-```
-"""
-function diagrepeat(A::Diagonal, Nmodes::Integer)
-    out = zeros(eltype(A),length(A.diag)*Nmodes)
-    diagrepeat!(out,A.diag,Nmodes)
-    return Diagonal(out)
-end
-
 """
     diagrepeat(A::SparseMatrixCSC, Nmodes::Integer)
 
@@ -370,12 +249,14 @@ end
 Perform `A += c*As*Ad` with `Ad` the implicit diagonal whose entry in column
 `i` is the signed mode frequency of that column raised to `power`,
 `wmodes[(i-1) % length(wmodes) + 1]^power`, with the mode index fastest over
-the nodes and any auxiliary variables. The stored value of `As` is complex
-conjugated in every column whose mode frequency is negative, and a
-frequency dependent entry is resolved at the mode frequency of its
-column. The frequency and the conjugation of a column are computed from its
-index rather than read from materialized diagonals, so the assembly loop of
-[`hblinsolve`](@ref) allocates nothing at a signal frequency.
+the nodes and any auxiliary variables. A frequency dependent entry is
+resolved at the magnitude of its column's mode frequency
+([`substitutefreq`](@ref)), and the value is complex conjugated in every
+column whose mode frequency is negative ([`modevalue`](@ref)). The frequency
+and the conjugation of a column are computed from its index rather than
+read from materialized diagonals, so a numeric `As` is added with no
+allocation; a frequency dependent entry allocates what its evaluation
+does.
 """
 function sparseaddconjsubst!(A::SparseMatrixCSC, c::Number,
     As::SparseMatrixCSC, indexmap, wmodes::AbstractVector, power::Integer)
@@ -469,32 +350,6 @@ by [`sparseaddconjsubst!`](@ref) (which applies it during assembly), and
 by `sensitivitystampvalue` (which applies it to the sensitivity stamps).
 """
 @inline modevalue(v, w) = real(w) < 0 ? conj(v) : v
-
-"""
-    conjnegfreq(A, wmodes)
-
-Take the complex conjugate of any element of `A` which would be negative when
-multipled from the right by a diagonal matrix consisting of `wmodes`
-replicated along the diagonal.
-
-Each axis of `A` should be an integer multiple of the length of `wmodes`.
-
-# Examples
-```jldoctest
-julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1,2], [1,1,2,2], [1+1im,1+1im,1+1im,1+1im],2,2);JosephsonCircuits.conjnegfreq(A,[-1,1])
-2×2 SparseArrays.SparseMatrixCSC{Complex{Int64}, Int64} with 4 stored entries:
- 1-1im  1+1im
- 1-1im  1+1im
-
-julia> A = JosephsonCircuits.SparseArrays.sparse([1,2,1,2], [1,1,2,2], [1im,1im,1im,1im],2,2);all(A*JosephsonCircuits.LinearAlgebra.Diagonal([-1,1]) .== JosephsonCircuits.conjnegfreq(A,[-1,1]))
-true
-```
-"""
-function conjnegfreq(A::SparseMatrixCSC, wmodes::Vector)
-    B = copy(A)
-    conjnegfreq!(B,wmodes)
-    return B
-end
 
 """
     conjnegfreq!(A, wmodes)

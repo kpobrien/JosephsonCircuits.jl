@@ -233,8 +233,9 @@ exactly the right component, so the correct action here is none.
 @kernel function backwardjosephsontransposekernel!(P, @Const(tbptr),
         @Const(tbnode), @Const(tbcoef), @Const(w), @Const(lptr),
         @Const(lwide), @Const(gtscale))
+    gid = @index(Global)
     backwardjosephsontransposeitem!(P, tbptr, tbnode, tbcoef, w, lptr, lwide,
-        gtscale, @index(Global))
+        gtscale, gid)
 end
 
 # the work item `q` of `backwardjosephsontransposekernel!`, which the host
@@ -271,8 +272,9 @@ it, and writes the single slot it owns.
 @kernel function forwardtransposekernel!(out, @Const(tfptr), @Const(tfslot),
         @Const(tfcoef), @Const(tfimag), @Const(Q), @Const(ktptr),
         @Const(ktrow), @Const(ktcoef), @Const(w))
+    gid = @index(Global)
     forwardtransposeitem!(out, tfptr, tfslot, tfcoef, tfimag, Q, ktptr, ktrow,
-        ktcoef, w, @index(Global))
+        ktcoef, w, gid)
 end
 
 # the work item `p` of `forwardtransposekernel!`

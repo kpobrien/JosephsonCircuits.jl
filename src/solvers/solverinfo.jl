@@ -9,10 +9,10 @@ vector of a `SolverInfo`. Each solver contributes its own concrete record
 type instead of adding fields to a shared struct: [`IterationInfo`](@ref)
 for the Newton family (with the Krylov linear-solve records where the
 solver is `nlsolvekrylov!`), `StagedStageInfo` for the source continuation
-driver, and future methods add their own. Every record follows three field
-conventions so generic reporting works across methods -- `label::String`,
-`converged::Bool` and `iterations::Int` -- and everything else belongs to
-the record type itself.
+driver, and future methods add their own. Every record follows two field
+conventions so generic reporting works across methods -- `converged::Bool`
+and `iterations::Int` -- and everything else belongs to the record type
+itself.
 """
 abstract type AbstractStageInfo end
 
@@ -29,8 +29,8 @@ Diagnostics describing the nonlinear solution process of
     The direct and Krylov solvers record one [`IterationInfo`](@ref);
     `method = Staged()` records one [`StagedStageInfo`](@ref) per
     attempted continuation stage, each carrying its inner solver records.
-    Every record has `label`, `converged` and `iterations` fields; the
-    rest is method specific.
+    Every record has `converged` and `iterations` fields; the rest is
+    method specific.
 - `initialresidual`: the norm of the residual at the initial value.
 - `finalresidual`: the norm of the residual at the returned solution.
 - `converged`: whether the solver reported convergence.
@@ -47,14 +47,13 @@ struct SolverInfo
 end
 
 """
-    IterationInfo(label, converged, iterations, normresidual, alpha,
-        backtracks, andersonaccepted, krylov, reason)
+    IterationInfo(converged, iterations, normresidual, alpha, backtracks,
+        andersonaccepted, krylov, reason)
 
 Diagnostics recorded for a call of [`nlsolve!`](@ref) or
 [`nlsolvekrylov!`](@ref).
 
 # Fields
-- `label`: the solver stage this invocation belongs to.
 - `converged`: whether the iterations converged.
 - `iterations`: the number of Newton iterations performed.
 - `normresidual`: the norm of the residual at the start of each iteration.
@@ -86,7 +85,6 @@ Diagnostics recorded for a call of [`nlsolve!`](@ref) or
     [`stallmessage`](@ref) spells each out.
 """
 struct IterationInfo <: AbstractStageInfo
-    label::String
     converged::Bool
     iterations::Int
     normresidual::Vector{Float64}
@@ -238,13 +236,13 @@ tracestalled(tr::NewtonTrace, start::Integer; remaining = nothing) =
     residualstalled(tr.normresidual, start; atol = tr.atol, remaining)
 
 """
-    IterationInfo(tr::NewtonTrace, label, krylov = [])
+    IterationInfo(tr::NewtonTrace, krylov = [])
 
 The record of a solve from its trace, with the Krylov records of
 [`nlsolvekrylov!`](@ref) when there are any.
 """
-function IterationInfo(tr::NewtonTrace, label, krylov = [])
-    return IterationInfo(label, tr.converged, length(tr.alpha),
+function IterationInfo(tr::NewtonTrace, krylov = [])
+    return IterationInfo(tr.converged, length(tr.alpha),
         tr.normresidual, tr.alpha, tr.backtracks, tr.andersonaccepted,
         krylov, tr.reason)
 end

@@ -58,6 +58,36 @@ end
 # an argument of a per frequency form: one value, or one per frequency
 const PerFrequency = Union{Number,AbstractArray}
 
+# the output of the kernel of an `n` port network is `n` by `n`
+function checkoutputsize(A, n)
+    if size(A,1) != n || size(A,2) != n
+        throw(ArgumentError(lazy"Size of output $(size(A)) must be ($(n), $(n))."))
+    end
+    return nothing
+end
+
+# the output of the kernel of an ideal element is an array of square
+# matrices, of any size
+function checksquarescattering(S)
+    # scattering matrices should be square.
+    if size(S,1) != size(S,2)
+        throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
+    end
+    # scattering matrices need to be matrices or higher dimensional arrays,
+    # not vectors
+    if ndims(S) < 2
+        throw(ArgumentError(lazy"The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
+    end
+    return nothing
+end
+
+# the voltage coefficients of transmission `α` and coupling `β` of a
+# directional coupler of coupling `couplingdB`
+function couplercoefficients(couplingdB::Number)
+    c = 10^(-couplingdB/20)
+    return sqrt(1-abs2(c)), c
+end
+
 ABCD_seriesZ(x1::AbstractArray) = perfrequency(ABCD_seriesZ!, ABCD_seriesZ, x1)
 ABCD_seriesZ!(y::AbstractArray, x1::PerFrequency) = perfrequency!(ABCD_seriesZ!, y, x1)
 ABCD_shuntY(x1::AbstractArray) = perfrequency(ABCD_shuntY!, ABCD_shuntY, x1)
@@ -147,9 +177,7 @@ julia> JosephsonCircuits.ABCD_seriesZ!(zeros(Complex{Float64},2,2),50)
 ```
 """
 function ABCD_seriesZ!(ABCD::AbstractMatrix,Z1::Number)
-    if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
-    end
+    checkoutputsize(ABCD, 2)
     ABCD[1,1] = one(eltype(ABCD))
     ABCD[1,2] = Z1
     ABCD[2,1] = zero(eltype(ABCD))
@@ -193,9 +221,7 @@ julia> JosephsonCircuits.Y_seriesY!(zeros(Complex{Float64},2,2),1/50)
 ```
 """
 function Y_seriesY!(Y::AbstractMatrix,Y1::Number)
-    if size(Y,1) != 2 || size(Y,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(Y)) must be (2, 2)."))
-    end
+    checkoutputsize(Y, 2)
     Y[1,1] = Y1
     Y[1,2] = -Y1
     Y[2,1] = -Y1
@@ -240,9 +266,7 @@ julia> JosephsonCircuits.ABCD_shuntY!(zeros(Complex{Float64},2,2),1/50)
 ```
 """
 function ABCD_shuntY!(ABCD::AbstractMatrix,Y1::Number)
-    if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
-    end
+    checkoutputsize(ABCD, 2)
     ABCD[1,1] = one(eltype(ABCD))
     ABCD[1,2] = zero(eltype(ABCD))
     ABCD[2,1] = Y1
@@ -287,9 +311,7 @@ julia> JosephsonCircuits.Z_shuntZ!(zeros(Complex{Float64},2,2),50)
 ```
 """
 function Z_shuntZ!(Z::AbstractMatrix,Z1::Number)
-    if size(Z,1) != 2 || size(Z,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(Z)) must be (2, 2)."))
-    end
+    checkoutputsize(Z, 2)
     Z[1,1] = Z1
     Z[1,2] = Z1
     Z[2,1] = Z1
@@ -334,9 +356,7 @@ julia> JosephsonCircuits.ABCD_PiY!(zeros(Complex{Float64},2,2),1,2,4)
 ```
 """
 function ABCD_PiY!(ABCD::AbstractMatrix,Y1::Number,Y2::Number,Y3::Number)
-    if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
-    end
+    checkoutputsize(ABCD, 2)
     ABCD[1,1] = 1+Y2/Y3
     ABCD[1,2] = 1/Y3
     ABCD[2,1] = Y1+Y2+Y1*Y2/Y3
@@ -382,9 +402,7 @@ julia> JosephsonCircuits.Y_PiY!(zeros(Complex{Float64},2,2),1.0,2.0,4.0)
 ```
 """
 function Y_PiY!(Y::AbstractMatrix,Y1::Number,Y2::Number,Y3::Number)
-    if size(Y,1) != 2 || size(Y,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(Y)) must be (2, 2)."))
-    end
+    checkoutputsize(Y, 2)
     Y[1,1] = Y1+Y3
     Y[1,2] = -Y3
     Y[2,1] = -Y3
@@ -429,9 +447,7 @@ julia> JosephsonCircuits.ABCD_TZ!(ones(Complex{Float64},2,2),1,2,4)
 ```
 """
 function ABCD_TZ!(ABCD::AbstractMatrix,Z1::Number,Z2::Number,Z3::Number)
-    if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
-    end
+    checkoutputsize(ABCD, 2)
     ABCD[1,1] = 1+Z1/Z3
     ABCD[1,2] = Z1+Z2+Z1*Z2/Z3
     ABCD[2,1] = 1/Z3
@@ -476,9 +492,7 @@ julia> JosephsonCircuits.Z_TZ!(ones(Complex{Float64},2,2),1,2,4)
 ```
 """
 function Z_TZ!(Z::AbstractMatrix,Z1::Number,Z2::Number,Z3::Number)
-    if size(Z,1) != 2 || size(Z,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(Z)) must be (2, 2)."))
-    end
+    checkoutputsize(Z, 2)
     Z[1,1] = Z1+Z3
     Z[1,2] = Z3
     Z[2,1] = Z3
@@ -601,9 +615,7 @@ julia> JosephsonCircuits.ABCD_tline!(ones(Complex{Float64},2,2),50, pi/4)
 ```
 """
 function ABCD_tline!(ABCD::AbstractMatrix,Z0::Number,theta::Number)
-    if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
-    end
+    checkoutputsize(ABCD, 2)
     ABCD[1,1] = cos(theta)
     ABCD[1,2] = im*Z0*sin(theta)
     ABCD[2,1] = im/Z0*sin(theta)
@@ -649,9 +661,7 @@ julia> JosephsonCircuits.Z_tline!(ones(Complex{Float64},2,2),50, pi/4)
 ```
 """
 function Z_tline!(Z::AbstractMatrix,Z0::Number,theta::Number)
-    if size(Z,1) != 2 || size(Z,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(Z)) must be (2, 2)."))
-    end
+    checkoutputsize(Z, 2)
     Z[1,1] = -im*Z0*cot(theta)
     Z[1,2] = -im*Z0*csc(theta)
     Z[2,1] = -im*Z0*csc(theta)
@@ -715,9 +725,7 @@ julia> JosephsonCircuits.ABCD_coupled_tline!(zeros(Complex{Float64},4,4),50,50,p
 """
 function ABCD_coupled_tline!(A::AbstractMatrix, Z0e::Number, Z0o::Number,
     thetae::Number, thetao::Number)
-    if size(A,1) != 4 || size(A,2) != 4
-        throw(ArgumentError(lazy"Size of output $(size(A)) must be (4, 4)."))
-    end
+    checkoutputsize(A, 4)
     A[1,1] = A[2,2] = A[3,3] = A[4,4] = 1/2*(cos(thetae) + cos(thetao))
     A[1,2] = A[2,1] = A[3,4] = A[4,3] = 1/2*(cos(thetae) - cos(thetao))
     A[1,3] = A[2,4] = im/2*(Z0e*sin(thetae) + Z0o*sin(thetao))
@@ -781,9 +789,7 @@ julia> JosephsonCircuits.Z_coupled_tline!(zeros(Complex{Float64},4,4),50,50,pi/4
 """
 function Z_coupled_tline!(Z::AbstractMatrix, Z0e::Number, Z0o::Number,
     thetae::Number, thetao::Number)
-    if size(Z,1) != 4 || size(Z,2) != 4
-        throw(ArgumentError(lazy"Size of output $(size(Z)) must be (4, 4)."))
-    end
+    checkoutputsize(Z, 4)
     Z[1,1] = Z[2,2] = Z[3,3] = Z[4,4] = -im/2*(Z0e*cot(thetae) + Z0o*cot(thetao))
     Z[1,2] = Z[2,1] = Z[3,4] = Z[4,3] = -im/2*(Z0e*cot(thetae) - Z0o*cot(thetao)) 
     Z[1,3] = Z[3,1] = Z[4,2] = Z[2,4] = -im/2*(Z0e*csc(thetae) + Z0o*csc(thetao))
@@ -839,6 +845,11 @@ Edition. Wiley, 2008.
 function A_coupled_tlines(L,Cmaxwell,l,omega)
 
     N = size(L,1)
+
+    # no frequencies give no chain matrices
+    if isempty(omega)
+        return zeros(Complex{Float64},2*N,2*N,0)
+    end
 
     # compute the basis for the coupled lines
     b = ZC_basis_coupled_tlines(L,Cmaxwell)
@@ -1345,6 +1356,13 @@ mode indices `ne`, `no`: a named tuple of the element values the model
 has, among the inductances `L1`, `L2`, the mutual inductance `M` and the
 capacitances `C1`, `C2`, `Cm`, each per unit length of the lines. The
 circuits 3, 8, 9 and 10 have a model.
+
+`L1`, `L2` and `M` are the self and mutual inductances of the two ports:
+at low frequency the impedance matrix of the circuit of length `l` is
+`im*w*l*[L1 M; M L2]` plus its capacitive part. In the circuits 3 and 10,
+`C1` and `C2` are the capacitances of each line to ground, the even mode
+capacitance `ne/(c*Z0e)`, and `Cm` the capacitance between the lines,
+half the difference of the odd and the even mode capacitances.
 """
 function canonical_coupled_line_circuits(i::Int, Z0e, Z0o, ne, no)
     c = JosephsonCircuits.speed_of_light
@@ -1377,14 +1395,14 @@ function canonical_coupled_line_circuits(i::Int, Z0e, Z0o, ne, no)
 end
 
 """
-    maxwell_combine(n::Int, d::Dict{NTuple{N, Int}, T}) where {N,T<:AbstractMatrix}
+    maxwell_combine(n::Int, d::AbstractDict)
 
 Return the Maxwell capacitance matrix for an `n` terminal system from the
 Maxwell capacitance matrices for sets of terminals stored in the dictionary
 `d`. The dictionary keys are tuples of the terminal numbers for the
-capacitance matrices and the values are the capacitance matrices. An entry
-given by several matrices is the mean of their values, and an entry given
-by none is zero.
+capacitance matrices, of any lengths, and the values are the capacitance
+matrices. An entry given by several matrices is the mean of their values,
+and an entry given by none is zero.
 
 # Examples
 ```jldoctest
@@ -1401,14 +1419,15 @@ julia> JosephsonCircuits.maxwell_combine(3, Dict((1,2,3)=>[1.0 2.0 3.0;4.0 5.0 6
  7.0  8.0  9.0
 ```
 """
-function maxwell_combine(n::Int, d::Dict{NTuple{N, Int}, T}) where {N,T<:AbstractMatrix}
+function maxwell_combine(n::Int,
+        d::AbstractDict{<:Tuple{Vararg{Int}},<:AbstractMatrix})
 
     # sum the values given for each entry and count them
-    C = zeros(typeof(zero(eltype(T))/1), n, n)
+    C = zeros(typeof(zero(eltype(valtype(d)))/1), n, n)
     counts = zeros(Int, n, n)
     for (key,val) in d
-        for j in 1:N
-            for i in 1:N
+        for j in eachindex(key)
+            for i in eachindex(key)
                 C[key[i],key[j]] += val[i,j]
                 counts[key[i],key[j]] += 1
             end
@@ -1445,15 +1464,7 @@ julia> JosephsonCircuits.S_splitter!(ones(3,3))
 """
 function S_splitter!(S::AbstractArray)
 
-    # scattering matrices should be square.
-    if size(S,1) != size(S,2)
-        throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
-    end
-    # scattering matrices need to be matrices or higher dimensional arrays,
-    # not vectors
-    if ndims(S) < 2
-        throw(ArgumentError(lazy"The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
-    end
+    checksquarescattering(S)
 
     # fill with 2/N where N is the size of the scattering matrix.
     fill!(S,2/size(S,1))
@@ -1489,28 +1500,7 @@ julia> JosephsonCircuits.S_short!(ones(2,2))
 ```
 """
 function S_short!(S::AbstractArray)
-
-    # scattering matrices should be square.
-    if size(S,1) != size(S,2)
-        throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
-    end
-    # scattering matrices need to be matrices or higher dimensional arrays,
-    # not vectors
-    if ndims(S) < 2
-        throw(ArgumentError(lazy"The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
-    end
-
-    # fill with zeros
-    fill!(S,zero(eltype(S)))
-  
-    # loop over the dimensions of the array greater than 2 and set the diagonals equal to -1
-    for k in CartesianIndices(axes(S)[3:end])
-        for i in 1:size(S,1)
-            S[i,i,k] = -one(eltype(S))
-        end
-    end
-
-    return S
+    return S_reflect!(S, -one(eltype(S)))
 end
 
 """
@@ -1532,24 +1522,23 @@ julia> JosephsonCircuits.S_open!(ones(2,2))
 ```
 """
 function S_open!(S::AbstractArray)
+    return S_reflect!(S, one(eltype(S)))
+end
 
-    # scattering matrices should be square.
-    if size(S,1) != size(S,2)
-        throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
-    end
-    # scattering matrices need to be matrices or higher dimensional arrays,
-    # not vectors
-    if ndims(S) < 2
-        throw(ArgumentError(lazy"The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
-    end
+# the scattering parameters of ports which each reflect with the
+# coefficient `r` and are not coupled, the diagonal of `r`
+function S_reflect!(S::AbstractArray, r)
+
+    checksquarescattering(S)
 
     # fill with zeros
     fill!(S,zero(eltype(S)))
-  
-    # loop over the dimensions of the array greater than 2 and set the diagonals equal to 1
+
+    # loop over the dimensions of the array greater than 2 and set the
+    # diagonals equal to r
     for k in CartesianIndices(axes(S)[3:end])
         for i in 1:size(S,1)
-            S[i,i,k] = one(eltype(S))
+            S[i,i,k] = r
         end
     end
 
@@ -1579,15 +1568,7 @@ julia> JosephsonCircuits.S_match!(ones(1,1,2))
 """
 function S_match!(S::AbstractArray)
 
-    # scattering matrices should be square.
-    if size(S,1) != size(S,2)
-        throw(ArgumentError(lazy"The sizes of the first two dimensions ($(size(S,1)),$(size(S,2))) of the scattering matrix `S` must be the same."))
-    end
-    # scattering matrices need to be matrices or higher dimensional arrays,
-    # not vectors
-    if ndims(S) < 2
-        throw(ArgumentError(lazy"The scattering matrix `S` with size $(size(S)) must have at least two dimensions."))
-    end
+    checksquarescattering(S)
 
     # fill with zeros
     fill!(S,zero(eltype(S)))
@@ -1604,10 +1585,7 @@ In-place version of [`S_directional_coupler`](@ref), writing into `S`, a
 """
 function S_directional_coupler!(S::AbstractMatrix, α::Number, β::Number,
     θ::Number, ϕ::Number)
-    # check if S is 4x4
-    if size(S,1) != 4 || size(S,2) != 4
-        throw(ArgumentError(lazy"Size of output $(size(S)) must be (4, 4)."))
-    end
+    checkoutputsize(S, 4)
 
     # fill with zeros
     fill!(S,zero(eltype(S)))
@@ -1618,15 +1596,8 @@ function S_directional_coupler!(S::AbstractMatrix, α::Number, β::Number,
     return S
 end
 
-function S_directional_coupler!(S::AbstractArray, α::Number, β::Number,
-    θ::Number, ϕ::Number)
-
-    # loop over the dimensions of the array greater than 2
-    for i in CartesianIndices(axes(S)[3:end])
-        S_directional_coupler!(view(S,:,:,i),α,β,θ,ϕ)
-    end
-    return S
-end
+S_directional_coupler!(S::AbstractArray, α::Number, β::Number, θ::Number,
+    ϕ::Number) = perfrequency!(S_directional_coupler!, S, α, β, θ, ϕ)
 
 """
     S_directional_coupler(α::Number, β::Number, θ::Number, ϕ::Number)
@@ -1707,9 +1678,7 @@ Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
 ISBN 9780470631553.
 """
 function S_directional_coupler_symmetric(couplingdB::Number)
-    c = 10^(-couplingdB/20)
-    β = c
-    α = sqrt(1-abs2(c))
+    α, β = couplercoefficients(couplingdB)
     return S_directional_coupler(α, β, pi/2, pi/2)
 end
 
@@ -1719,9 +1688,7 @@ end
 In-place version of [`S_directional_coupler_symmetric`](@ref), writing into `S`.
 """
 function S_directional_coupler_symmetric!(S, couplingdB::Number)
-    c = 10^(-couplingdB/20)
-    β = c
-    α = sqrt(1-abs2(c))
+    α, β = couplercoefficients(couplingdB)
     return S_directional_coupler!(S, α, β, pi/2, pi/2)
 end
 
@@ -1753,9 +1720,7 @@ Pozar, D. M. Microwave Engineering (4 ed.). John Wiley & Sons (2011)
 ISBN 9780470631553.
 """
 function S_directional_coupler_antisymmetric(couplingdB::Number)
-    c = 10^(-couplingdB/20)
-    β = c
-    α = sqrt(1-abs2(c))
+    α, β = couplercoefficients(couplingdB)
     return S_directional_coupler(α, β, 0.0, pi)
 end
 
@@ -1765,9 +1730,7 @@ end
 In-place version of [`S_directional_coupler_antisymmetric`](@ref), writing into `S`.
 """
 function S_directional_coupler_antisymmetric!(S, couplingdB::Number)
-    c = 10^(-couplingdB/20)
-    β = c
-    α = sqrt(1-abs2(c))
+    α, β = couplercoefficients(couplingdB)
     return S_directional_coupler!(S, α, β, 0.0, pi)
 end
 
@@ -1867,7 +1830,11 @@ A T and a Pi attenuator between the same impedances are the same two-port,
 so this is also the matrix of [`ABCD_attenuator_Pi`](@ref). With `A` the
 voltage attenuation `10^(-attenuationdB/20)`, it is
 `[c Z0*s; s/Z0 c]` with `c = (1+A^2)/(2A)` and `s = (1-A^2)/(2A)`, the
-identity at zero attenuation.
+identity at zero attenuation. A negative `attenuationdB` is accepted: it
+gives the matched two-port of that gain, of the same form but not passive.
+The forms between a source and a load impedance refuse an attenuation
+below the least a passive network between them has, which between equal
+impedances is zero.
 
 # Examples
 ```jldoctest
@@ -1912,7 +1879,8 @@ o----Rz-----o
 o-----------o
 ```
 A T and a Pi attenuator between the same impedances are the same two-port,
-so this is also the matrix of [`ABCD_attenuator_T`](@ref), which gives it.
+so this is also the matrix of [`ABCD_attenuator_T`](@ref), which gives it
+and what a negative attenuation gives.
 
 # Examples
 ```jldoctest
@@ -2066,9 +2034,7 @@ end
 
 function ABCD_attenuator!(ABCD::AbstractMatrix,Zsource::Number,Zload::Number,
     attenuationdB::Number)
-    if size(ABCD,1) != 2 || size(ABCD,2) != 2
-        throw(ArgumentError(lazy"Size of output $(size(ABCD)) must be (2, 2)."))
-    end
+    checkoutputsize(ABCD, 2)
     ABCD[1,1], ABCD[1,2], ABCD[2,1], ABCD[2,2] =
         ABCD_attenuator_entries(Zsource, Zload, attenuationdB)
     return ABCD
@@ -2105,10 +2071,7 @@ In-place version of [`S_circulator_clockwise`](@ref), writing into `S`, a
 `3 x 3` matrix or an array of them.
 """
 function S_circulator_clockwise!(S::AbstractMatrix)
-    # check if S is 3x3
-    if size(S,1) != 3 || size(S,2) != 3
-        throw(ArgumentError(lazy"Size of output $(size(S)) must be (3, 3)."))
-    end
+    checkoutputsize(S, 3)
 
     # fill with zeros
     fill!(S,zero(eltype(S)))
@@ -2117,14 +2080,8 @@ function S_circulator_clockwise!(S::AbstractMatrix)
     return S
 end
 
-function S_circulator_clockwise!(S::AbstractArray)
-
-    # loop over the dimensions of the array greater than 2
-    for i in CartesianIndices(axes(S)[3:end])
-        S_circulator_clockwise!(view(S,:,:,i))
-    end
-    return S
-end
+S_circulator_clockwise!(S::AbstractArray) =
+    perfrequency!(S_circulator_clockwise!, S)
 
 """
     S_circulator_counterclockwise()
@@ -2145,10 +2102,7 @@ In-place version of [`S_circulator_counterclockwise`](@ref), writing into
 `S`, a `3 x 3` matrix or an array of them.
 """
 function S_circulator_counterclockwise!(S::AbstractMatrix)
-    # check if S is 3x3
-    if size(S,1) != 3 || size(S,2) != 3
-        throw(ArgumentError(lazy"Size of output $(size(S)) must be (3, 3)."))
-    end
+    checkoutputsize(S, 3)
 
     # fill with zeros
     fill!(S,zero(eltype(S)))
@@ -2157,11 +2111,5 @@ function S_circulator_counterclockwise!(S::AbstractMatrix)
     return S
 end
 
-function S_circulator_counterclockwise!(S::AbstractArray)
-
-    # loop over the dimensions of the array greater than 2
-    for i in CartesianIndices(axes(S)[3:end])
-        S_circulator_counterclockwise!(view(S,:,:,i))
-    end
-    return S
-end
+S_circulator_counterclockwise!(S::AbstractArray) =
+    perfrequency!(S_circulator_counterclockwise!, S)

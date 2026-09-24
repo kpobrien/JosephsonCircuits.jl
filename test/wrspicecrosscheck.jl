@@ -32,6 +32,8 @@ using XicTools_jll
             @test spice.times == native.times
             @test isnothing(spice.flux)
             @test all(isnan, spice.finalflux)
+            # so a WRSPICE solution is no state to continue from
+            @test_throws ArgumentError transientstate(spice)
             # the port voltage trace and the outgoing wave
             @test maximum(abs, native.voltage .- spice.voltage) <
                 0.02*maximum(abs, native.voltage)

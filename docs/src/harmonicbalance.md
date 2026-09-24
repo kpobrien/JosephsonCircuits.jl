@@ -36,9 +36,10 @@ keeps, one count per pump.
 `hbnlsolve` returns a `NonlinearHB`, the operating point. Its main fields:
 
 - `nodeflux`: the node flux at every retained mode of every node, a keyed
-  array with axes `outputmode` and `node` (a plain matrix with
-  `keyedarrays = false`). The zero mode is the static flux; the voltage of
-  a mode at frequency `w` is `i*w*phi0` times its flux.
+  array with axes `outputmode` and `node` (with `keyedarrays = false` a
+  vector of length `Nmodes*(Nnodes - 1)`, the mode index varying
+  fastest). The zero mode is the static flux; the voltage of a mode at
+  frequency `w` is `i*w*phi0` times its flux.
 - `S`: the scattering parameters at the pump frequencies, which measure
   how much of each pump is reflected and converted.
 - `dcnodevoltage`: the average voltage of each node in volts, when the
@@ -124,8 +125,8 @@ transforms and a preconditioner, [`Automatic`](@ref) by default, which
 picks the full Jacobian with the backend's sparse factorization for one
 pump, and for two or more the full Jacobian in single precision block
 factors when they fit in half the free memory and a measured harmonic
-band when they do not. A preconditioner that stalls is grown, so the
-method is never less robust than a direct solve. [`Newton`](@ref) assembles the
+band when they do not. A preconditioner that stalls is grown, within the
+memory the grown factors are predicted to take. [`Newton`](@ref) assembles the
 exact real Jacobian and factorizes it, [`QuasiNewton`](@ref) uses the
 holomorphic approximation with Anderson acceleration, and
 [`Staged`](@ref) is source continuation on a ladder of harmonic grids,
@@ -199,10 +200,11 @@ sol.linearized.QE((0,), 1, (0,), 1, :) ./ sol.linearized.QEideal((0,), 1, (0,), 
 
 `sensitivitynames` names the components whose relative perturbation the
 scattering parameters are differentiated with respect to, by the
-adjoint method, at a fixed operating point or, with
-`sensitivityoperatingpoint = true`, including the shift of the pump
-operating point through the exact real Jacobian; near the gain peak of a
-strongly pumped amplifier the shift is the larger term.
+adjoint method, including by default the shift of the pump operating
+point through the exact real Jacobian (`sensitivityoperatingpoint =
+true`), or at a fixed operating point with `sensitivityoperatingpoint =
+false`; near the gain peak of a strongly pumped amplifier the shift is
+the larger term.
 [`designsensitivities`](@ref) differentiates with respect to the design
 parameters a circuit's values are written in terms of, by the chain
 rule through the components with the exact derivative of every value,
@@ -244,7 +246,9 @@ its transforms through the device FFT, its preconditioner through cuDSS
 or the batched block factorization; the linearized sweep assembles the
 system matrices of a batch of frequencies with one kernel and factorizes
 and solves them as a uniform batch, falling back to the host for what it
-cannot serve, a frequency dependent component value.
+cannot serve: a frequency dependent component value, and sensitivities
+with respect to the parameters of a scattering block, whose stamps are
+rebuilt at each frequency.
 
 ## Reuse across a sweep of values
 

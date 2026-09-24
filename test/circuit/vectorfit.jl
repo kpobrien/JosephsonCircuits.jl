@@ -11,6 +11,29 @@ using Test
 # What the fitted block then does in time is in transient/system.jl.
 @testset "a rational block fitted to scattering data" begin
     JC = JosephsonCircuits
+    # The response of a realization by a dense solve, and its largest
+    # singular value sampled densely, on a logarithmic grid past its
+    # poles and across every resonance: a check of passivity independent
+    # of the norm search the enforcement and the validation decide on.
+    response(A, B, C, D, w) = D .+ C*((im*w*I - A) \ B)
+    function densemax(A, B, C, D)
+        poles = eigvals(A)
+        mags = filter(>(0), abs.(poles))
+        ws = vcat(0.0, exp.(range(log(minimum(mags)/100), log(maximum(mags)*100); length = 4000)))
+        for l in poles
+            imag(l) > 0 && append!(ws, imag(l) .+ abs(real(l)) .* range(-8, 8; length = 401))
+        end
+        return maximum(w -> opnorm(response(A, B, C, D, w)), filter(>=(0), ws))
+    end
+    densemax(p::JC.RationalScatteringProvider) = densemax(p.A, p.B, p.C, p.D)
+    # the samples of a two port delay line of `delay` seconds
+    function delaydata(gs, delay)
+        S = zeros(ComplexF64, 2, 2, length(gs))
+        for (k, g) in enumerate(gs)
+            S[:, :, k] .= [0 cis(-2pi*g*delay); cis(-2pi*g*delay) 0]
+        end
+        return S
+    end
     # the scattering data of an RLC two-port, tabulated as the
     # linearized solver gives it, fitted by vector fitting at its
     # three poles and at more: the fit is exact, the poles the RLC's,
@@ -40,28 +63,42 @@ using Test
     fit = zeros(ComplexF64, 2, 2, length(fs))
     JC.evaluateprovider!(fit, fitted.provider, 2pi .* fs)
     @test maximum(abs.(fit .- hb.S)) < 1e-10
-    @test (JC.checkpassive(fitted.provider); true)
+    @test densemax(fitted.provider) <= 1 + 1e-10
     more = RationalScattering(data, 8; frequencies = fs)
     @test size(more.provider.A) == (3, 3)
     JC.evaluateprovider!(fit, more.provider, 2pi .* fs)
     @test maximum(abs.(fit .- hb.S)) < 1e-10
-    raw = RationalScattering(data, 4; passivity = false)
+    raw = RationalScattering(data, 4; passivity = nothing)
     @test size(raw.provider.A) == (3, 3)
-    @test (JC.checkpassive(raw.provider); true)
+    @test densemax(raw.provider) <= 1 + 1e-10
     @test_throws ArgumentError RationalScattering(data, 4; frequencies = reverse(fs))
     @test_throws ArgumentError RationalScattering(fitted, 4)
     @test_throws ArgumentError RationalScattering(data, 0)
     # The tolerances of the fit are the caller's, since a block with
-    # little loss needs them tighter than the defaults: the enforced
-    # margin, the rounds of enforcement, and how much error a dropped
-    # pole may cost. They are checked, and the exact fit above is
-    # reached whatever they are, since it needs no enforcement.
-    @test_throws ArgumentError RationalScattering(data, 3; margin = -1.0)
-    @test_throws ArgumentError RationalScattering(data, 3; margin = Inf)
-    @test_throws ArgumentError RationalScattering(data, 3; pruneslack = -0.5)
-    @test_throws ArgumentError RationalScattering(data, 3; rounds = 0)
-    @test_throws ArgumentError RationalScattering(data, 3; scalelimit = 0.5)
-    for kw in ((; margin = 1e-9), (; rounds = 40), (; scalelimit = 0.1), (; pruneslack = 0.0), (; pruneslack = 1.0))
+    # little loss needs them tighter than the defaults and a hard fit
+    # needs its relocation and its sweep for violations finer: the
+    # parameters of the fit and of the enforcement are option objects.
+    # They are checked, and the exact fit above is reached whatever they
+    # are, since it needs no enforcement.
+    @test_throws ArgumentError PassivityEnforcement(margin = -1.0)
+    @test_throws ArgumentError PassivityEnforcement(margin = Inf)
+    @test_throws ArgumentError PassivityEnforcement(rounds = 0)
+    @test_throws ArgumentError PassivityEnforcement(scalelimit = 0.5)
+    @test_throws ArgumentError PassivityEnforcement(rtol = 0.0)
+    @test_throws ArgumentError VectorFitting(pruneslack = -0.5)
+    @test_throws ArgumentError VectorFitting(iterations = 0)
+    @test_throws ArgumentError RationalScattering(data, 3; tol = -1.0)
+    # A fixed order is held to its data as the search is, against a
+    # tolerance of its own: two poles miss this RLC, which has three,
+    # and are refused unless a tolerance that loose is asked for, the
+    # fit returned then warning of the contraction it was made passive by
+    @test_throws ArgumentError RationalScattering(data, 2)
+    short = @test_logs (:warn,) RationalScattering(data, 2; tol = 1.0)
+    @test 1e-2 < JC.relativefiterror(short, hb.S, fs) <= 1.0
+    for kw in ((; passivity = PassivityEnforcement(margin = 1e-9, rounds = 40, scalelimit = 0.1)),
+            (; passivity = PassivityEnforcement(density = 40, rtol = 1e-7)),
+            (; fitting = VectorFitting(pruneslack = 0.0, settletol = 1e-12, stallpatience = 10)),
+            (; fitting = VectorFitting(pruneslack = 1.0, iterations = 60)))
         tuned = RationalScattering(data, 3; kw...)
         JC.evaluateprovider!(fit, tuned.provider, 2pi .* fs)
         @test maximum(abs.(fit .- hb.S)) < 1e-10
@@ -69,7 +106,7 @@ using Test
     # a pole is kept unless the fit is as close without it: the
     # permissive threshold of a factor of two would let the error grow
     # by that much at every pole it drops
-    @test size(RationalScattering(data, 8; pruneslack = 0.0).provider.A) == (3, 3)
+    @test size(RationalScattering(data, 8; fitting = VectorFitting(pruneslack = 0.0)).provider.A) == (3, 3)
     # A block which states what it does at zero frequency has the fit
     # meet it exactly, which nothing in the data can do when the
     # samples begin above zero. At zero this RLC is a shunt resistor
@@ -82,7 +119,7 @@ using Test
         dcmodel = JC.ScatteringDC(S0))
     told = RationalScattering(stated, 6)
     P = told.provider
-    reached = real.(P.D .+ P.C*((0.0*I - P.A) \ P.B))
+    reached = real.(response(P.A, P.B, P.C, P.D, 0.0))
     # exactly, and through the passivity enforcement, not only out of
     # the residue solve: the condition is carried into the correction
     @test reached ≈ S0 atol=1e-12
@@ -103,17 +140,21 @@ using Test
     Ce = [0.35 0.0; 0.0 0.35]
     De = [0.0 0.0; 0.0 0.0]
     wse = collect(range(0.05, 4.0; length = 160))
-    S0e = real.(De .+ Ce*((0.0*I - Ae) \ Be))
+    S0e = real.(response(Ae, Be, Ce, De, 0.0))
     @test first(JC.hinfnorm(Ae, Be, Ce, De)) > 1.3
     @test opnorm(S0e) < 1
-    held = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
-        Ae, Be, Ce, De, wse; dc = S0e)
-    @test real.(held[4] .+ held[3]*((0.0*I - held[1]) \ held[2])) ≈ S0e atol=1e-12
-    @test first(JC.hinfnorm(held...)) <= 1 + 1e-8
-    free = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
-        Ae, Be, Ce, De, wse)
-    @test first(JC.hinfnorm(free...)) <= 1
-    @test maximum(abs, real.(free[4] .+ free[3]*((0.0*I - free[1]) \ free[2])) .- S0e) > 0.05
+    # the enforcement returns the contraction its end applied, which the
+    # caller warns of for a fit it returns
+    held = JC.enforcepassivity(Ae, Be, Ce, De, wse; dc = S0e)
+    @test !isnothing(held[5])
+    @test real.(response(held[1:4]..., 0.0)) ≈ S0e atol=1e-12
+    # passive to the norm search's own tolerance, twice its rtol, at
+    # which the enforcement decides
+    @test densemax(held[1:4]...) <= 1 + 2e-8
+    free = JC.enforcepassivity(Ae, Be, Ce, De, wse)
+    @test !isnothing(free[5])
+    @test densemax(free[1:4]...) <= 1 + 2e-8
+    @test maximum(abs, real.(response(free[1:4]..., 0.0)) .- S0e) > 0.05
     # Contracting toward a statement is a different step from
     # contracting toward nothing, and the step is found on the path
     # rather than derived from a bound: the norm along the path is a
@@ -138,16 +179,16 @@ using Test
         Da = fill(1.001, 1, 1), S0a = fill(0.5, 1, 1)
         @test first(JC.hinfnorm(Aa, Ba, Ca, Da)) > 1
         got = JC.enforcepassivity(Aa, Ba, Ca, Da, [0.001, 0.01, 0.1]; dc = S0a)
-        @test first(JC.hinfnorm(got...)) <= 1 + 1e-8
-        @test only(real.(got[4] + got[3]*((0.0*I - got[1]) \ got[2]))) ≈ 0.5 atol=1e-12
+        @test densemax(got[1:4]...) <= 1 + 2e-8
+        @test only(real.(response(got[1:4]..., 0.0))) ≈ 0.5 atol=1e-12
         # and an anchor of unit norm is contracted toward, not
         # refused: `-1.001 + 2.001/(s + 1)` is anchored at
         # `S(0) = 1`, and `t = 2/2.001` takes it to
         # `(1 - s)/(1 + s)`, exactly all pass, holding the anchor
         got1 = JC.enforcepassivity(fill(-1.0, 1, 1), ones(1, 1), fill(2.001, 1, 1),
             fill(-1.001, 1, 1), [0.1, 1.0, 10.0]; dc = ones(1, 1))
-        @test first(JC.hinfnorm(got1...)) <= 1 + 1e-8
-        @test only(real.(got1[4] + got1[3]*((0.0*I - got1[1]) \ got1[2]))) ≈ 1 atol=1e-10
+        @test densemax(got1[1:4]...) <= 1 + 2e-8
+        @test only(real.(response(got1[1:4]..., 0.0))) ≈ 1 atol=1e-10
     end
     # A violation narrower than the grid the enforcement sweeps, a high Q
     # resonance standing above one, is found where its pole is and
@@ -155,13 +196,14 @@ using Test
     # and away from the resonance its response is where it was, where a
     # sweep which saw nothing left a contraction of the whole block, or
     # a refusal
-    Sat(A, B, C, D, w) = only(D .+ C*((im*w*I - A) \ B))
+    Sat(A, B, C, D, w) = only(response(A, B, C, D, w))
     for peak in (1.002, 1.05)
         Ar, Br = [0.0 1.0; -1.0 -2e-4], reshape([0.0, 1.0], 2, 1)
         Cr, Dr = reshape([0.0, (peak - 0.5)*2e-4], 1, 2), fill(0.5, 1, 1)
-        fixed = @test_logs JC.enforcepassivity(Ar, Br, Cr, Dr, collect(range(0.5, 1.5; length = 401)))
-        @test first(JC.hinfnorm(fixed...)) <= 1
-        @test maximum(abs(Sat(fixed..., w) - Sat(Ar, Br, Cr, Dr, w)) for w in (0.6, 0.9, 1.1, 1.4)) < 1e-4
+        fixed = JC.enforcepassivity(Ar, Br, Cr, Dr, collect(range(0.5, 1.5; length = 401)))
+        @test isnothing(fixed[5])
+        @test densemax(fixed[1:4]...) <= 1 + 2e-8
+        @test maximum(abs(Sat(fixed[1:4]..., w) - Sat(Ar, Br, Cr, Dr, w)) for w in (0.6, 0.9, 1.1, 1.4)) < 1e-4
     end
     # The correction is assembled one output port block at a time,
     # which rests on the normal matrix being the same block for
@@ -194,14 +236,12 @@ using Test
         Cd2 = [0.35 0.0; 0.0 0.35], Dd = [0.0 0.0; 0.0 0.0],
         wsd = collect(range(0.05, 4.0; length = 60))
         @test first(JC.hinfnorm(Ad, Bd, Cd2, Dd)) > 1
-        got = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
-            Ad, Bd, Cd2, Dd, wsd)
-        @test first(JC.hinfnorm(got...)) <= 1
-        S0d = real.(Dd .+ Cd2*((0.0*I - Ad) \ Bd))
-        held = @test_logs (:warn,) match_mode = :any JC.enforcepassivity(
-            Ad, Bd, Cd2, Dd, wsd; dc = S0d)
-        @test first(JC.hinfnorm(held...)) <= 1 + 1e-8
-        @test real.(held[4] .+ held[3]*((0.0*I - held[1]) \ held[2])) ≈ S0d atol=1e-12
+        got = JC.enforcepassivity(Ad, Bd, Cd2, Dd, wsd)
+        @test densemax(got[1:4]...) <= 1 + 2e-8
+        S0d = real.(response(Ad, Bd, Cd2, Dd, 0.0))
+        held = JC.enforcepassivity(Ad, Bd, Cd2, Dd, wsd; dc = S0d)
+        @test densemax(held[1:4]...) <= 1 + 2e-8
+        @test real.(response(held[1:4]..., 0.0)) ≈ S0d atol=1e-12
     end
     # A statement of unit norm, which a through, an open and a short
     # all are, pins the norm of any fit meeting it at one: there is
@@ -220,7 +260,7 @@ using Test
     # its poles do not go.
     wrong = ScatteringParameters((2pi .* fs, hb.S); nports = 2, zref = 50.0,
         dcmodel = JC.ThroughDC())
-    pw, rw, Dw = JC.vectorfit(hb.S, 2pi .* fs, 6, 30; pruneslack = 0.05,
+    pw, rw, Dw = JC.vectorfit(hb.S, 2pi .* fs, 6, VectorFitting();
         dc = JC.dcscatteringmatrix(JC.ThroughDC(), 2))
     Aw, Bw, Cw = JC.realization(pw, rw, 2)
     JC.evaluateprovider!(fit, JC.RationalScatteringProvider(Aw, Bw, Cw, Dw), 2pi .* fs)
@@ -236,11 +276,11 @@ using Test
     Sdc = zeros(ComplexF64, 2, 2, length(withdc))
     Sdc[:, :, 2:end] .= hb.S
     Sdc[:, :, 1] .= hb.S[:, :, 1]
-    pdc, rdc, Ddc = JC.vectorfit(Sdc, 2pi .* withdc, 6, 30; pruneslack = 0.05)
+    pdc, rdc, Ddc = JC.vectorfit(Sdc, 2pi .* withdc, 6, VectorFitting())
     @test all(isfinite, pdc) && all(isfinite, rdc) && all(isfinite, Ddc)
     @test all(p -> real(p) < 0, pdc)
     # and a fit with no positive frequency has no band to be scaled by
-    @test_throws ArgumentError JC.vectorfit(Sdc[:, :, 1:2], [0.0, 0.0], 4, 30)
+    @test_throws ArgumentError JC.vectorfit(Sdc[:, :, 1:2], [0.0, 0.0], 4, VectorFitting())
     # Zero frequency is data, and the public fits take it: a sample
     # there is the block's value at DC, and the coordinates the fit
     # works in are normalized by the lowest positive frequency
@@ -251,7 +291,7 @@ using Test
     wz = 2pi .* collect(range(0.0, 1.0; length = 20))
     Sz = zeros(ComplexF64, 1, 1, length(wz))
     for (k, w) in enumerate(wz)
-        Sz[1, 1, k] = only(Dz + Cz*((im*w*I - Az) \ Bz))
+        Sz[1, 1, k] = only(response(Az, Bz, Cz, Dz, w))
     end
     blkz = ScatteringParameters((wz, Sz); nports = 1, zref = 50.0)
     for got in (RationalScattering(blkz, 1), RationalScattering(blkz; tol = 1e-6))
@@ -298,21 +338,21 @@ using Test
     for (k, w) in enumerate(wsc)
         Sc[1, 1, k] = 1.5 - 1.2/(im*w + 1)
     end
-    praw, rraw, Draw = JC.vectorfit(Sc, wsc, 1, 30)
+    praw, rraw, Draw = JC.vectorfit(Sc, wsc, 1, VectorFitting())
     @test only(Draw) ≈ 1.5 rtol=1e-8
     @test only(praw) ≈ -1 rtol=1e-6
     @test only(rraw) ≈ -1.2 rtol=1e-6
     # and when it is asked for, the trigger and the target are the
     # caller's, not a threshold of the fit's own
-    _, _, Dc = JC.vectorfit(Sc, wsc, 1, 30; constanttol = 1e-8, constantmargin = 1e-6)
+    _, _, Dc = JC.vectorfit(Sc, wsc, 1, VectorFitting(); constanttol = 1e-8, constantmargin = 1e-6)
     @test only(Dc) ≈ 1 - 1e-6 rtol=1e-9
-    _, _, Dw = JC.vectorfit(Sc, wsc, 1, 30; constanttol = 1e-8, constantmargin = 1e-3)
+    _, _, Dw = JC.vectorfit(Sc, wsc, 1, VectorFitting(); constanttol = 1e-8, constantmargin = 1e-3)
     @test only(Dw) ≈ 1 - 1e-3 rtol=1e-9
     # a constant term under one is left alone whatever is asked
     @test JC.passiveconstant([0.5 0.0; 0.0 0.25]; tol = 1e-8)[2] == false
     # a value stated at zero frequency must be real, a real rational
     # function being real there
-    @test_throws ArgumentError JC.vectorfit(Sc, wsc, 1, 30; dc = fill(0.5 + 0.1im, 1, 1))
+    @test_throws ArgumentError JC.vectorfit(Sc, wsc, 1, VectorFitting(); dc = fill(0.5 + 0.1im, 1, 1))
     # More iterations of the pole relocation never return a worse
     # fit, because what it returns is the iterate measured to fit
     # best and not the last one, nor the one whose poles moved least
@@ -320,18 +360,15 @@ using Test
     # closest fit on a step where the poles happen to be moving
     # quickly. A delay, which no order fits exactly, shows it.
     gsr = 2pi .* collect(range(0.5e9, 12e9; length = 120))
-    Sdr = zeros(ComplexF64, 2, 2, length(gsr))
-    for (k, w) in enumerate(gsr)
-        ee = cis(-w*40e-12)
-        Sdr[:, :, k] .= [0 ee; ee 0]
-    end
+    Sdr = delaydata(gsr ./ 2pi, 40e-12)
     xsr = gsr ./ sqrt(first(gsr)*last(gsr))
     startr = ComplexF64[]
     for w in range(first(xsr), last(xsr); length = 3)
         push!(startr, complex(-0.01w, w))
         push!(startr, complex(-0.01w, -w))
     end
-    errsr = [JC.fiterror(Sdr, xsr, JC.converge(Sdr, xsr, copy(startr), it)) for it in 1:12]
+    errsr = [JC.fiterror(Sdr, xsr, JC.converge(Sdr, xsr, copy(startr), VectorFitting(iterations = it)))
+        for it in 1:12]
     @test all(k -> errsr[k + 1] <= errsr[k]*(1 + 1e-12), 1:length(errsr) - 1)
     @test minimum(errsr) == errsr[end]
     # The order can be searched for instead of given: the fewest poles
@@ -350,33 +387,6 @@ using Test
         got = RationalScattering(data; tol = tol)
         @test JC.relativefiterror(got, hb.S, fs) <= tol
         @test size(got.provider.A, 1) <= 3
-    end
-    # minpoles is a floor the search does not fit below, and maxpoles
-    # a ceiling: a tolerance no order up to it can meet is an error
-    # naming the closest fit found rather than a block quietly worse
-    # than was asked for
-    @test size(RationalScattering(data; tol = 1e-6, minpoles = 6).provider.A, 1) >= 3
-    # The search fits every order from `minpoles` up and returns the
-    # first which meets the tolerance, so whatever error some order
-    # achieves, the search asked for that error meets it and does so
-    # with no more states. This is the guarantee, and it needs the
-    # scan: more poles do not always fit better, so the orders
-    # meeting a tolerance are a window rather than a tail, and a
-    # search which skips orders can step over the window entirely.
-    # Whether any of these orders provokes the passivity enforcement on
-    # the way depends on roundoff, so the logs are captured to keep the
-    # suite quiet rather than asserted; that the enforcement warns when
-    # it perturbs is asserted above, on systems active by construction.
-    @test_logs match_mode = :any for np in 1:6
-        reachable = try
-            JC.relativefiterror(RationalScattering(data, np), hb.S, fs)
-        catch e
-            e isa ArgumentError ? Inf : rethrow()
-        end
-        isfinite(reachable) || continue
-        found = RationalScattering(data; tol = reachable, minpoles = 1, maxpoles = 6)
-        @test JC.relativefiterror(found, hb.S, fs) <= reachable
-        @test size(found.provider.A, 1) <= 2np
     end
     # One evaluator for the relocation's choice of iterate, the
     # pruning, and the acceptance: it measures in the spectral norm
@@ -412,8 +422,8 @@ using Test
         for w in range(xr[1], xr[end]; length = 5)
             push!(start, complex(-0.01w, w)); push!(start, complex(-0.01w, -w))
         end
-        settled = JC.converge(hb.S, xr, start, 30; dc = thru)
-        kept = JC.prunepoles(hb.S, xr, copy(settled), 30, 0.05; dc = thru)
+        settled = JC.converge(hb.S, xr, start, VectorFitting(); dc = thru)
+        kept = JC.prunepoles(hb.S, xr, copy(settled), VectorFitting(); dc = thru)
         @test !isempty(kept)
         resk, Dk = JC.fitresidues(hb.S, xr, kept; dc = thru)
         reached = real.(Dk .+ sum(resk[:, :, q] ./ (0.0 - kept[q]) for q in eachindex(kept)))
@@ -455,13 +465,8 @@ using Test
     # an order meets is found only by a scan. The orders and the
     # tolerances here are measured rather than written down, so this
     # does not depend on where roundoff puts the noise floor.
-    delay = 40e-12
     gs = collect(range(0.5e9, 12e9; length = 200))
-    Sdelay = zeros(ComplexF64, 2, 2, length(gs))
-    for (k, g) in enumerate(gs)
-        e = cis(-2pi*g*delay)
-        Sdelay[:, :, k] .= [0 e; e 0]
-    end
+    Sdelay = delaydata(gs, 40e-12)
     delayed = ScatteringParameters((2pi .* gs, Sdelay); nports = 2, zref = 50.0)
     # `pruneslack` is a budget for the pruning and not for each
     # deletion: measured per deletion, a run of them could each
@@ -472,16 +477,16 @@ using Test
         for w in range(xd[1], xd[end]; length = 8)
             push!(start, complex(-0.01w, w)); push!(start, complex(-0.01w, -w))
         end
-        settled = JC.converge(Sdelay, xd, start, 30)
+        settled = JC.converge(Sdelay, xd, start, VectorFitting())
         base = JC.fiterror(Sdelay, xd, settled)
         for slack in (0.0, 0.05, 0.5)
-            kept = JC.prunepoles(Sdelay, xd, copy(settled), 30, slack)
+            kept = JC.prunepoles(Sdelay, xd, copy(settled), VectorFitting(pruneslack = slack))
             @test length(kept) <= length(settled)
             @test JC.fiterror(Sdelay, xd, kept) <= (1 + slack)*base + JC.roundoff(Sdelay)
         end
     end
     reach = np -> try
-        JC.relativefiterror(RationalScattering(delayed, np), Sdelay, gs)
+        JC.relativefiterror(RationalScattering(delayed, np; tol = 1e3), Sdelay, gs)
     catch e
         e isa ArgumentError ? Inf : rethrow()
     end
@@ -490,15 +495,26 @@ using Test
     errs = @test_logs match_mode = :any [reach(np) for np in 1:16]
     window = [np for np in 2:15 if errs[np] < min(errs[np-1], errs[np+1])]
     @test !isempty(window)
-    # whether an order in the window warns on the way to its fit depends
-    # on roundoff, so the logs are captured rather than asserted
-    @test_logs match_mode = :any for np in window
-        # a tolerance between what this order reaches and what the
-        # better of its neighbours reaches: only this order meets it
-        tol = sqrt(errs[np]*min(errs[np-1], errs[np+1]))
-        got = RationalScattering(delayed; tol = tol, minpoles = np - 1, maxpoles = np + 1)
+    # The search fits every order from `minpoles` up and returns the
+    # first which meets the tolerance, so whatever error some order
+    # achieves, the search asked for that error meets it, with no more
+    # states than that order takes. This is the guarantee, and it needs
+    # the scan: a tolerance between what the first order of the window
+    # reaches and what the better of its neighbours reaches is met by
+    # that order alone. Whether it warns of a contraction on the way to
+    # its fit depends on roundoff, so the logs are captured.
+    let np = first(window), tol = sqrt(errs[np]*min(errs[np-1], errs[np+1]))
+        got = @test_logs match_mode = :any RationalScattering(delayed; tol = tol,
+            minpoles = np - 1, maxpoles = np + 1)
         @test JC.relativefiterror(got, Sdelay, gs) <= tol
+        @test size(got.provider.A, 1) <= 2np
     end
+    # minpoles is a floor the search does not fit below: this delay is
+    # met to 1e-3 at three poles, and from five the search returns five
+    # of them, ten states
+    @test errs[3] <= 1e-3 && errs[5] <= 1e-3
+    @test size((@test_logs match_mode = :any RationalScattering(delayed; tol = 1e-3,
+        minpoles = 5)).provider.A, 1) >= 10
     # The degree the samples determine budgets the search rather than
     # walling it. It is the numerical rank of a pencil built along
     # cycling directions from at most four hundred samples, with the
@@ -506,19 +522,21 @@ using Test
     # block needs; where the scan reaches it without meeting the
     # tolerance and the error is still falling, the search goes on.
     # This delay needs six poles and is estimated at four once the
-    # noise floor is put high enough, and the search finds the six.
+    # noise floor is put high enough, and the search finds the six. The
+    # orders it discards on the way are contracted to be made passive,
+    # and only the fit returned would warn of its contraction; this one
+    # has none.
     @test JC.supporteddegree(Sdelay, 2pi .* gs, 1e-2) == 4
-    expanded = @test_logs (:warn,) match_mode = :any RationalScattering(
-        delayed; tol = 1e-8, noisefloor = 1e-2)
+    expanded = @test_logs RationalScattering(delayed; tol = 1e-8, noisefloor = 1e-2)
     @test size(expanded.provider.A, 1) ÷ 2 > 4
     @test JC.relativefiterror(expanded, Sdelay, gs) <= 1e-8
     # a `maxpoles` given by the caller is a wall, because the caller
-    # made it one
-    @test_logs (:warn,) match_mode = :any @test_throws ArgumentError RationalScattering(
+    # made it one; a search which returns nothing warns of nothing
+    @test_logs @test_throws ArgumentError RationalScattering(
         delayed; tol = 1e-8, noisefloor = 1e-2, maxpoles = 4)
     # and the expansion stops rather than running to the sample count:
     # a tolerance nothing reaches is still reported
-    @test_logs (:warn,) match_mode = :any @test_throws ArgumentError RationalScattering(
+    @test_logs @test_throws ArgumentError RationalScattering(
         delayed; tol = 1e-16, maxpoles = 8)
     # The degree the samples determine is a property of the data and
     # not of the unit its frequencies are written in. The two halves
@@ -558,10 +576,37 @@ using Test
         sprint(showerror, e)
     end
     @test occursin("determine a degree of about", cannot)
-    # and it names why the orders which could not be fitted failed,
-    # since that is a different problem from a tolerance too tight
-    @test occursin("could not be fitted at all", cannot) ||
-          occursin("closest was", cannot)
+    # Below the degree the samples determine, an order which produces
+    # no fit has too few poles, and the search goes on past it: six
+    # coupled resonators between two ports, whose samples determine a
+    # degree of about twelve and whose orders seven to eleven are all
+    # refused, are fitted at thirteen.
+    let comps = Any[(:p1, 1, 0, Port(1))]
+        for r in 1:6
+            C0 = 1/((2pi*5e9*(1 + 0.02*(r - 3.5)))^2*1e-9)
+            append!(comps, [(Symbol(:L, r), r, 0, Inductor(1e-9)), (Symbol(:C, r), r, 0, Capacitor(C0)),
+                (Symbol(:R, r), r, 0, Resistor(2e4)), (Symbol(:Cc, r), r, r + 1, Capacitor(0.08e-12))])
+        end
+        push!(comps, (:p2, 7, 0, Port(2)))
+        fc = collect(range(4e9, 6e9; length = 120))
+        Sc = hblinsolve(2pi .* fc, Circuit(comps); keyedarrays = false).S
+        chain = ScatteringParameters((2pi .* fc, Sc); nports = 2, zref = 50.0)
+        @test JC.relativefiterror(RationalScattering(chain; tol = 1e-6), Sc, fc) <= 1e-6
+        # A search which misses names the closest fit and why the orders
+        # which could not be fitted failed, since that is a different
+        # problem from a tolerance too tight; one in which no order
+        # produced a fit says that, and has no closest fit to name.
+        message(; kw...) = try
+            RationalScattering(chain; tol = 1e-6, kw...); ""
+        catch e
+            e isa ArgumentError || rethrow()
+            sprint(showerror, e)
+        end
+        missed = message(minpoles = 5, maxpoles = 12)
+        @test occursin("closest was", missed) && occursin("could not be fitted at all", missed)
+        none = message(minpoles = 7, maxpoles = 11)
+        @test occursin("could be fitted at all", none) && !occursin("closest", none)
+    end
     # A block may be active, at zero frequency as at any other, so long
     # as it declares its own noise; without one an active statement is
     # refused by the block itself, before any fitting, and an active
@@ -586,7 +631,7 @@ using Test
     ampfs = collect(range(0.1e9, 40e9; length = 300))
     for ampfit in (RationalScattering(ampdata, 4; frequencies = ampfs),
             RationalScattering(ampdata; tol = 1e-6, minpoles = 1, maxpoles = 6, frequencies = ampfs),
-            RationalScattering(ampdata, 4; frequencies = ampfs, passivity = false))
+            RationalScattering(ampdata, 4; frequencies = ampfs, passivity = nothing))
         @test ampfit.noise isa JC.NoiseCovariance
         @test size(ampfit.provider.A) == (1, 1) && maximum(real.(eigvals(ampfit.provider.A))) < 0
         Sa = zeros(ComplexF64, 2, 2, 4)
@@ -634,10 +679,14 @@ using Test
         @test d1[1,1] ≈ 0.3 rtol=1e-8
         r2, d2 = JC.fitresidues(Sd, ws2, pol; constant = fill(0.1, 1, 1))
         @test d2[1,1] == 0.1
-        # the strictly proper part absorbs the difference
-        v1 = [d1[1,1] + sum(real(r1[1,1,q]/(im*w - pol[q])) for q in 1:2) for w in ws2]
-        v2 = [d2[1,1] + sum(real(r2[1,1,q]/(im*w - pol[q])) for q in 1:2) for w in ws2]
-        @test maximum(abs, v1 .- v2) < 0.25
+        # the strictly proper part absorbs the difference: refitted
+        # around the held constant, it is closer to the data than the
+        # residues fitted with the constant free, which miss by the
+        # whole difference once the constant is swapped
+        model(r, d, w) = d + sum(r[1,1,q]/(im*w - pol[q]) for q in 1:2)
+        refit = maximum(abs(model(r2, 0.1, w) - Sd[1,1,k]) for (k, w) in enumerate(ws2))
+        swapped = maximum(abs(model(r1, 0.1, w) - Sd[1,1,k]) for (k, w) in enumerate(ws2))
+        @test refit < swapped
     end
 
     # Every fit which is returned is passive over the whole imaginary
@@ -664,8 +713,10 @@ using Test
         hbl = hblinsolve(2pi .* gs, lossless; keyedarrays = false)
         dat = ScatteringParameters((2pi .* gs, hbl.S); nports = 2, zref = 50.0)
         for np in nps
+            # two poles miss this data, which is the fit that needs the
+            # enforcement most, so any fit is accepted
             f = try
-                RationalScattering(dat, np)
+                RationalScattering(dat, np; tol = 1.0)
             catch e
                 # a fit far from passive is refused rather than scaled
                 # into a block which transmits nothing
@@ -673,12 +724,10 @@ using Test
                 continue
             end
             q = f.provider
-            lower, _, level = JC.hinfnorm(q.A, q.B, q.C, q.D)
-            @test lower <= 1
+            @test densemax(q) <= 1 + 2e-8
             # and the level, which is what termination establishes, is
             # over one by no more than the search's own tolerance
-            @test level <= 1 + 4e-8
-            @test all(real.(eigvals(q.A)) .< 0)
+            @test JC.hinfnorm(q.A, q.B, q.C, q.D)[3] <= 1 + 4e-8
         end
     end
     # A network which is a perfect open at one port and a perfect
@@ -803,7 +852,7 @@ end
         core(w) = M/(1 + im*w/w3)
         turn(w) = Diagonal(cis.(-w .* taus3))
         data(w) = turn(w)*core(w)*turn(w)
-        multi = ScatteringParameters((2pi .* fs3, cat(data.(2pi .* fs3)...; dims = 3));
+        multi = ScatteringParameters((2pi .* fs3, stack(data.(2pi .* fs3)));
             zref = [40.0, 50.0, 60.0], dcmodel = ScatteringDC(M))
         for fit in (RationalScattering(multi, 4; delays = taus3),
                 RationalScattering(multi; tol = 1e-9, minpoles = 1, delays = taus3))
@@ -830,11 +879,11 @@ end
     C = [2.0 0.5; 0.5 2.0]
     stated = ScatteringParameters(cable; nports = 2, zref = 50.0,
         noise = NoiseCovariance((2pi .* fs, repeat(complex(C), 1, 1, length(fs)))))
-    even = RationalScattering(stated, 4; frequencies = fs, delays = taus, passivity = false)
+    even = RationalScattering(stated, 4; frequencies = fs, delays = taus, passivity = nothing)
     V = zeros(ComplexF64, 2, 2, 2)
     JC.evaluateprovider!(V, even.noise.provider, 2pi .* fs[2:3])
     @test maximum(abs.(V .- repeat(complex(C), 1, 1, 2))) < 1e-14
-    uneven = RationalScattering(stated, 4; frequencies = fs, delays = (tau, 0.0), passivity = false)
+    uneven = RationalScattering(stated, 4; frequencies = fs, delays = (tau, 0.0), passivity = nothing)
     JC.evaluateprovider!(V, uneven.noise.provider, 2pi .* fs[2:3])
     @test all(abs(V[1, 2, i] - C[1, 2]*cis(2pi*fs[i + 1]*tau)) < 1e-14 for i in 1:2)
     @test all(abs(V[1, 1, i] - C[1, 1]) < 1e-14 for i in 1:2)
@@ -864,7 +913,7 @@ end
     called = ScatteringParameters(cable; nports = 2, zref = 50.0,
         noise = NoiseCovariance(w -> complex(C)))
     for held in (realtable, called)
-        fit = RationalScattering(held, 4; frequencies = fs, delays = (tau, 0.0), passivity = false)
+        fit = RationalScattering(held, 4; frequencies = fs, delays = (tau, 0.0), passivity = nothing)
         JC.evaluateprovider!(V, fit.noise.provider, between)
         @test all(abs(V[1, 2, i] - C[1, 2]*cis(between[i]*tau)) < 1e-14 for i in 1:2)
     end
@@ -872,7 +921,7 @@ end
     # phase on the covariance the extrapolation states there
     narrow = ScatteringParameters(cable; nports = 2, zref = 50.0,
         noise = NoiseCovariance((2pi .* fs[1:20], repeat(complex(C), 1, 1, 20)); extrapolation = :constant))
-    beyond = RationalScattering(narrow, 4; frequencies = fs, delays = (tau, 0.0), passivity = false)
+    beyond = RationalScattering(narrow, 4; frequencies = fs, delays = (tau, 0.0), passivity = nothing)
     out = 2pi .* [fs[60], fs[80]]
     JC.evaluateprovider!(V, beyond.noise.provider, out)
     @test all(abs(V[1, 2, i] - C[1, 2]*cis(out[i]*tau)) < 1e-14 for i in 1:2)

@@ -153,6 +153,8 @@ end
 
 function HBNonlinearProblem(sys, ml, u0, J, parts; augmentation = nothing,
         atol::Real, rtol::Real = 0.0)
+    0 <= rtol < Inf || throw(ArgumentError(
+        lazy"`rtol` = $(rtol) must be finite and nonnegative."))
     fd = sys.phimatrix; td = sys.phitd
     # The transpose plan is built here rather than on first use so the field
     # is concretely typed. A `Ref{Any}` filled lazily makes every call into
@@ -210,20 +212,28 @@ function checklength(p::HBNonlinearProblem, x::AbstractVector, name)
 end
 
 """
-    hbnonlinearproblem(w, Nharmonics, sources, circuit, circuitdefs;
-        assemblejacobian = true, kwargs...)
+    hbnonlinearproblem(w, Nharmonics, sources, circuit,
+        circuitdefs = Dict{Symbol,Any}(); assemblejacobian = true, kwargs...)
 
 Build the harmonic balance system as an [`HBNonlinearProblem`](@ref)
 without solving it, by calling [`hbnlsolve`](@ref) with
-`returnsystem = true` and the remaining keywords. `assemblejacobian =
-false` leaves out the assembled real Jacobian, which a matrix-free solver
-does not need. The tolerance a solve would hold a root to, from `atol`
+`returnsystem = true` and the remaining keywords; `circuitdefs` is
+optional when every component value is numeric, as it is there. The
+problem lives on the host: a device `backend` is refused.
+`assemblejacobian = false` leaves out the assembled real Jacobian, which a
+matrix-free solver does not need. The tolerance a solve would hold a root to, from `atol`
 and `rtol`, is the problem's `atol`.
 """
-function hbnonlinearproblem(w, Nharmonics, sources, circuit, circuitdefs;
-        assemblejacobian::Bool = true, kwargs...)
+function hbnonlinearproblem(w, Nharmonics, sources, circuit,
+        circuitdefs = Dict{Symbol,Any}(); assemblejacobian::Bool = true,
+        kwargs...)
     get(kwargs, :method, nothing) isa Staged && throw(ArgumentError(
         "a `Staged` method solves a continuation of systems at its own truncations and drives, and has no single system to hand out; build the problem with the method of its stages."))
+    # the transposed gather maps and the drive scaling read the system's
+    # plans element by element, on the host
+    backend = get(kwargs, :backend, CPU())
+    backend isa CPU || throw(ArgumentError(
+        lazy"the problem interface is built on the host, and `backend` = $(backend) is not; build it with the default `backend = CPU()`."))
     d = hbnlsolve(w, Nharmonics, sources, circuit, circuitdefs;
         returnsystem = true, assemblejacobian = assemblejacobian, kwargs...)
     d.dcexplicit || return HBNonlinearProblem(d.sys, d.modelayout,
@@ -346,9 +356,10 @@ The Jacobian of `prob` at `u` as a linear operator.
 Implements `size`, `eltype`, `LinearAlgebra.mul!`, and the same for its
 `adjoint` and `transpose` (which are matrix free through the transposed
 gather maps; see [`hbvjp!`](@ref)). Construction sets the system's
-evaluation point ONCE -- one forward transform -- and `mul!` never touches
-it again, so the products inside a Krylov loop pay exactly two transforms
-each and nothing more. The operator keeps a copy of `u`, so moving `u`
+evaluation point ONCE -- one forward transform -- and neither `mul!`
+touches it again unless something else has moved it since, so the
+products inside a Krylov loop, in either direction, pay exactly two
+transforms each and nothing more. The operator keeps a copy of `u`, so moving `u`
 afterwards, in place or not, leaves it where it was; construct a new
 operator at the new point: that is the point update, and it is the same
 cost the internal solver pays once per Newton step.
@@ -441,12 +452,18 @@ Base.:*(J::JacobianOperator, v::StridedVector) =
 # wrappers are `AbstractMatrix`, and a generic `y::AbstractVector` is
 # ambiguous against packages which define `mul!` for their own element
 # types over all of `AbstractVecOrMat` (MutableArithmetics does).
+# Like the forward product, the transposed one sets the operator's point
+# only if the problem has moved since, so that a Krylov method alternating
+# the two pays for neither.
 for W in (:(LinearAlgebra.Adjoint), :(LinearAlgebra.Transpose))
     @eval begin
         function LinearAlgebra.mul!(y::AbstractVector{Float64},
                 Jt::$W{<:Any,<:JacobianOperator}, w::AbstractVector)
             J = parent(Jt)
-            return hbvjp!(y, J.prob, J.u, w)
+            checklength(J.prob, y, "y")
+            checklength(J.prob, w, "w")
+            _synchronize!(J)
+            return _hbvjpat!(y, J.prob, w)
         end
         Base.:*(Jt::$W{<:Any,<:JacobianOperator}, w::StridedVector) =
             mul!(similar(w, Float64, size(Jt,1)), Jt, w)
@@ -603,13 +620,6 @@ end
 # =====================================================================
 
 """
-    transposeplan(prob::HBNonlinearProblem)
-
-The [`NonlinearTermTransposePlan`](@ref) of `prob`.
-"""
-transposeplan(p::HBNonlinearProblem) = p.tplan
-
-"""
     hbvjp!(out, prob, u, w)
 
 The transposed product `transpose(J(u))*w`, matrix free.
@@ -628,17 +638,23 @@ function hbvjp!(out::AbstractVector{<:Real}, p::HBNonlinearProblem,
     checklength(p, out, "out")
     checklength(p, u, "u")
     checklength(p, w, "w")
+    isaugmented(p) ? _setcanonical!(p, u) : _movepoint!(p, u)
+    return _hbvjpat!(out, p, w)
+end
+
+# the transposed product at the point already set, which is what an
+# operator whose point is set wants
+function _hbvjpat!(out::AbstractVector, p::HBNonlinearProblem,
+        w::AbstractVector)
+    _ensurecos!(p.sys)
     if !isaugmented(p)
-        _movepoint!(p, u)
-        _ensurecos!(p.sys)
         # the transpose plan and the work buffers are concretely typed
         # fields built at construction, so nothing here dispatches
         # dynamically or allocates
         return _hbvjp!(out, p.sys, p.tplan, p.Pwork[], p.Qwork[],
             p.betawork[], w)
     end
-    a = _setcanonical!(p, u)
-    _ensurecos!(p.sys)
+    a = p.augmentation
     L = a.work.layout
     # The canonical Jacobian is `D G J S + M`, so its transpose is
     # `S' J' G' D + M'`: mask the direction by `D` first, take the harmonic

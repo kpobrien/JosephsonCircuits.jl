@@ -63,7 +63,8 @@ which a preconditioner implements when it has something to say:
 | `usescycleharvest(pc)`, `harvestcycle!(pc, ws, j)` | `false`, nothing | a deflation reading every cycle |
 | `seeddeflation!(pc, X; ...)` | nothing | a deflation taking physical candidates |
 | `isexactpreconditioner(pc)` | `false` | an exact factorization |
-| `deflationsize`, `candidatecount`, `deflationrebuilds`, `deflationproducts` | `0`, `0`, `0`, `0` | a deflation |
+| `deflationsize`, `candidatecount`, `deflationrebuilds` | `0`, `0`, `0` | a deflation |
+| `deflationproducts` | `0` | a deflation, a cluster probe |
 
 A preconditioner which wraps another subtypes
 [`AbstractWrappedPreconditioner`](@ref) and defines
@@ -164,9 +165,10 @@ the extra solves are exactly where the expensive failures hide.
     the recycled deflation, how many times it has been built, and the wall
     time spent applying the preconditioner in this solve.
 - `products`, `deflationproducts`: the exact operator products this linear
-    solve took, and the running count of those the deflation wrapper took
-    for its builds. The cost of a solve is in these, not in `iterations`
-    alone: every restart cycle recomputes the residual.
+    solve took, and the running count of those the preconditioner took
+    itself, a deflation wrapper for its builds and a [`Clusters`](@ref)
+    request for its probes. The cost of a solve is in these, not in
+    `iterations` alone: every restart cycle recomputes the residual.
 """
 Base.@kwdef struct KrylovSolveInfo
     iteration::Int
@@ -198,8 +200,9 @@ Base.@kwdef struct KrylovSolveInfo
     precondtime::Float64
     # exact operator products: those the linear solve took (Arnoldi steps,
     # the residual recomputed at every restart, a warm start) and, in the
-    # running count `deflationproducts`, those the deflation wrapper took
-    # for its builds; Arnoldi steps alone understate the cost of a restart
+    # running count `deflationproducts`, those the preconditioner took
+    # itself, for a deflation's builds and a cluster probe; Arnoldi steps
+    # alone understate the cost of a restart
     products::Int
     deflationproducts::Int
 end
@@ -355,8 +358,10 @@ deflationrebuilds(::AbstractPreconditioner) = 0
 """
     deflationproducts(pc)
 
-The number of Jacobian products a [`FloquetPreconditioner`](@ref) has taken
-itself, one per candidate at every build. Together with `products` in
+The number of Jacobian products the preconditioner `pc` has taken itself:
+a [`FloquetPreconditioner`](@ref)'s, one per candidate at every build, and
+a [`ModeCouplingPreconditioner`](@ref)'s with [`Clusters`](@ref), one per
+mode at every probe. Together with `products` in
 [`KrylovSolveInfo`](@ref) this is the exact cost of a solve.
 """
 deflationproducts(::AbstractPreconditioner) = 0

@@ -89,11 +89,7 @@ of two retained modes reach twice the retained set and fold out of it on
 a grid half again as large, but the leading nonlinearity of a junction is
 cubic and its products reach three times the set, which the three halves
 grid folds onto the tone itself. Twice the set dealiases the cubic
-products; only the transforms grow, the unknowns are the same. Measured
-on a 64 junction line with three tones retaining `(6, 4, 4)` against a
-grid four times the set, the unpadded grid is off by 1.5e-4 of the
-strongest mode in the fourth order modes, the three halves grid by
-1.8e-7, and twice by 2.7e-11.
+products; only the transforms grow, the unknowns are the same.
 
 ## The residual and its derivatives
 
@@ -155,21 +151,19 @@ solve. Any of them is factorized either by the backend's sparse solver
 or by the block factorization, which eliminates the circuit graph as
 supernodes of dense mode blocks ordered by KLU's analysis of the node
 graph, assembled straight from the Fourier coefficients with no sparse
-matrix formed, in single precision refined to double when asked; on
-three tones it is the fastest measured. [`Automatic`](@ref) chooses by
-the number of pumps and the memory the factors would take, sized from
-the symbolic analysis. A preconditioner that leaves the preconditioned
-operator nearly singular in a few directions stalls GMRES, and no per
-mode criterion predicts which directions those are, so the rescue is
-escalation: a band grows by one offset per pump and any other set to
-the full Jacobian, within the memory the grown factors are predicted to
-take, and a single precision full set escalates to double. This fires
-once or twice on a strongly pumped line and not at all otherwise. The
-Floquet deflation instead measures those directions, harvesting the
-singular directions of the residual image from the Arnoldi basis as
-physical correction vectors carried across the Newton path, which needs
-no sparse factorization at all; it is off by default, having measured a
-net loss against escalation on long lines.
+matrix formed, in single precision refined to double when asked.
+[`Automatic`](@ref) chooses by the number of pumps and the memory the
+factors would take, sized from the symbolic analysis. A preconditioner
+that leaves the preconditioned operator nearly singular in a few
+directions stalls GMRES, and no per mode criterion predicts which
+directions those are, so the rescue is escalation: a band grows by one
+offset per pump and any other set to the full Jacobian, within the
+memory the grown factors are predicted to take, and a single precision
+full set escalates to double. The Floquet deflation instead measures
+those directions, harvesting the singular directions of the residual
+image from the Arnoldi basis as physical correction vectors carried
+across the Newton path, which needs no sparse factorization at all; it
+is off by default.
 
 The preconditioner is rebuilt before every Newton step by default, a
 reproducible path; the probe policy measures the one-step reduction of
@@ -270,8 +264,9 @@ applied to the solution, is contracted against the forward and the
 transposed solutions, one product per component and frequency. The shift
 of the operating point follows from the implicit function theorem on the
 residual in the real representation, `dx/dr = -J^{-1} dF/dr` with the
-exact real Jacobian assembled and factorized once at the converged
-point; its effect on the scattering parameters is contracted either
+exact real Jacobian assembled at the converged point and factorized once
+for the forward contraction, and once per batch of frequencies for the
+reverse one, whose batches run in parallel; its effect on the scattering parameters is contracted either
 forward, one product per component, or in reverse, the output
 functionals pushed through the transposed pump Jacobian once per pair
 of output port modes, which is chosen when the components outnumber those
@@ -287,6 +282,7 @@ to machine precision, the auxiliary current formulation against the
 nodal one as a Schur complement identity, the noise of a resistor
 against a port of its impedance, the scattering blocks against their
 explicit networks, the sensitivities against finite differences, and the
-amplifiers against Keysight ADS and against Fourier analysis of WRspice
-in the reference below; the time domain solver's stationary limits are
-checked against these solvers in turn.
+amplifiers against Keysight ADS and against Fourier analysis of WRSPICE
+simulations, as reference 6 on the [home page](index.md) reports; the
+time domain solver's stationary limits are checked against these solvers
+in turn.

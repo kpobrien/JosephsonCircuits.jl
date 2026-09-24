@@ -113,6 +113,48 @@ function CMtokeyed(CM, outputmodes, outputportnumbers, w)
 end
 
 """
+    Cnoisetokeyed(Cnoise, outputmodes, outputportnumbers, w)
+
+Convert an added noise covariance array `Cnoise` vs frequency `w` to a
+keyed array. Both of its first two indices run over the output port
+modes: `Cnoise[i,j]` is the covariance of the noise at the output `i`
+with the conjugate of the noise at the output `j`, so the axes are
+`outputmode` and `outputport` for `i`, `conjoutputmode` and
+`conjoutputport` for `j`, and `freqindex`. Return the keyed array.
+
+# Examples
+```jldoctest
+julia> JosephsonCircuits.Cnoisetokeyed([11 12;21 22;;;],[(0,)],[1,2],[1.0])
+5-dimensional KeyedArray(NamedDimsArray(...)) with keys:
+↓   outputmode ∈ 1-element Vector{Tuple{Int64}}
+→   outputport ∈ 2-element Vector{Int64}
+◪   conjoutputmode ∈ 1-element Vector{Tuple{Int64}}
+▨   conjoutputport ∈ 2-element Vector{Int64}
+▨   freqindex ∈ 1-element UnitRange{Int64}
+And data, 1×2×1×2×1 Array{Int64, 5}:
+[:, :, 1, 1, 1] ~ (:, :, (0,), 1, 1):
+          (1)  (2)
+   (0,)    11   21
+
+[:, :, 1, 2, 1] ~ (:, :, (0,), 2, 1):
+          (1)  (2)
+   (0,)    12   22
+```
+"""
+function Cnoisetokeyed(Cnoise, outputmodes, outputportnumbers, w)
+    Nfrequencies = length(w)
+    return AxisKeys.KeyedArray(
+        reshape(Cnoise, length(outputmodes), length(outputportnumbers),
+            length(outputmodes), length(outputportnumbers), Nfrequencies),
+        outputmode = outputmodes,
+        outputport = outputportnumbers,
+        conjoutputmode = outputmodes,
+        conjoutputport = outputportnumbers,
+        freqindex = 1:Nfrequencies,
+    )
+end
+
+"""
     nodevariabletokeyed(nodevariable, outputmodes, nodenames)
 
 Convert a node variable array `nodevariable` (such as node flux or node

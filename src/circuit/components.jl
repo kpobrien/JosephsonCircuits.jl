@@ -54,7 +54,7 @@ struct Inductor{T} <: AbstractComponent
     # the analysis is run at; read only when the instance is dissipative
     temperature::Union{Nothing,Float64}
 end
-Inductor(L; temperature = nothing) = Inductor(L, checktemperature(temperature))
+Inductor(L; temperature = nothing) = Inductor(L, checktemperature(temperature, "an Inductor"))
 
 """
     Capacitor(C; temperature = nothing)
@@ -80,7 +80,7 @@ struct Capacitor{T} <: AbstractComponent
     # as for `Inductor`
     temperature::Union{Nothing,Float64}
 end
-Capacitor(C; temperature = nothing) = Capacitor(C, checktemperature(temperature))
+Capacitor(C; temperature = nothing) = Capacitor(C, checktemperature(temperature, "a Capacitor"))
 
 """
     Resistor(R; temperature = nothing)
@@ -106,14 +106,15 @@ struct Resistor{T} <: AbstractComponent
     # as for `Inductor`
     temperature::Union{Nothing,Float64}
 end
-Resistor(R; temperature = nothing) = Resistor(R, checktemperature(temperature))
+Resistor(R; temperature = nothing) = Resistor(R, checktemperature(temperature, "a Resistor"))
 
-# A temperature a component states: `nothing`, for the one the analysis
-# is run at, or a finite nonnegative number of Kelvin; a negative one
-# would give a mode a negative occupation.
-checktemperature(::Nothing) = nothing
-function checktemperature(t::Real)
-    (isfinite(t) && t >= 0) || throw(ArgumentError(lazy"a temperature is finite and nonnegative, in Kelvin; got $(t)."))
+# A temperature a component, a noise model or an analysis states:
+# `nothing`, for the one the analysis is run at, or a finite nonnegative
+# number of Kelvin, since a negative one would give a mode a negative
+# occupation. `what` says whose it is, for the message.
+checktemperature(::Nothing, what::AbstractString) = nothing
+function checktemperature(t::Real, what::AbstractString)
+    (isfinite(t) && t >= 0) || throw(ArgumentError(lazy"The temperature of $(what) is $(t) K; a temperature must be finite and nonnegative."))
     return Float64(t)
 end
 
@@ -311,7 +312,12 @@ Quarton, or kinetic inductor directly through its expansion coefficients
 without wiring up the underlying junction arrangement. An array of `N`
 identical junctions in series, for example, divides the phase and so has
 the relation `N*sin(φ/N)` with small signal inductance `N*Lj`, whose
-expansion is `[1, 0, -1/(6N^2), 0, 1/(120N^4), ...]`.
+expansion is `[1, 0, -1/(6N^2), 0, 1/(120N^4), ...]`. A kinetic inductor
+whose inductance rises with its current as `L(I) = L0*(1 + I^2/Istar^2)`
+carries the flux `L0*(I + I^3/(3*Istar^2))`, which inverted for the
+current is the relation `[1, 0, -(IL/Istar)^2/3, 0, (IL/Istar)^4/3, ...]`,
+with `IL = phi0/L0` the current scale of the element; the quintic term
+matters only as the current approaches `Istar`.
 
 The coefficients are taken as given. A polynomial is not periodic and not
 bounded, so where it leaves the range it was fitted on, and what the
@@ -378,10 +384,8 @@ Base.hash(p::PolynomialCPRDerivative, h::UInt) = hash(p.a, hash(:PolynomialCPRDe
 
 The derivative of a current-phase relation as a callable. `sin` gives
 `cos` and a [`PolynomialCPR`](@ref) gives its analytic derivative. Any
-other callable throws an `ArgumentError`: there is no automatic
-differentiation or finite difference fallback, so a user defined relation
-must supply its derivative through the three argument
-[`NonlinearInductor`](@ref) constructor.
+other callable throws an `ArgumentError`, since those two are the
+relations the solvers evaluate.
 """
 cprderivative(::typeof(sin)) = cos
 function cprderivative(p::PolynomialCPR{T}) where T
@@ -407,42 +411,44 @@ function differentiatecoefficients(a::Vector{T}) where T
     end
     return da
 end
-cprderivative(f) = throw(ArgumentError(lazy"No analytic derivative is known for the current-phase relation $(f). Supply it explicitly with NonlinearInductor(L0, f, df); automatic differentiation and finite differences are deliberately not used."))
+cprderivative(f) = throw(ArgumentError(lazy"No derivative is known for the current-phase relation $(f): the solvers evaluate the sinusoidal Josephson relation, sin, and a PolynomialCPR."))
 
 """
-    JunctionRelations(value, derivative, negsecond, third, sinusoidal,
-        anysinusoidal)
+    JunctionRelations(value, derivative, negsecond, third,
+        polynomialjunctions, sinusoidaljunctions)
 
 The current-phase relations of the Josephson junction branches of a
-circuit, in the order of the nonzero entries of the branch inductance
-vector `Ljb`, which is the order of the junction axis of every time domain
-array the solvers hold.
+circuit, whose junction axis is the order of the nonzero entries of the
+branch inductance vector `Ljb`, the order of the junction axis of every
+time domain array the solvers hold.
 
 A relation is either the sinusoidal Josephson one or a
-[`PolynomialCPR`](@ref). The polynomial coefficients of every junction sit
-in the rows of `value`, in `evalpoly` order along the second axis and
+[`PolynomialCPR`](@ref), and the junctions are grouped by kind once:
+`polynomialjunctions` and `sinusoidaljunctions` are the ascending
+positions on the junction axis of each, so that each relation is
+evaluated over its own junctions alone. The polynomial coefficients of
+the polynomial junctions sit in the rows of `value`, in the order of
+`polynomialjunctions`, in `evalpoly` order along the second axis and
 padded with zeros to one common degree, so that a single Horner loop
 evaluates them all; `derivative` and `negsecond` hold the coefficients of
 the first derivative and of the *negative* of the second, which is the
 combination the Hessian and the derivative of the linearized system with
 respect to the operating point are written in, and `third` those of the
 third derivative, which the trilinear form of the problem interface
-takes. `sinusoidal` is true for the junctions whose relation no
-polynomial represents, whose columns the evaluation writes over with the
-trigonometric one; `anysinusoidal` is whether any is, so that a circuit
-of polynomials alone skips that pass.
+takes.
 
 A circuit whose junctions are all sinusoidal, which is every circuit that
-does not ask for anything else, has no table at all: the solvers hold
-`nothing` and take the plain `sin` and `cos` they always did.
+does not ask for anything else, has the empty table (see
+[`allsinusoidal`](@ref)), and the solvers take the plain `sin` and `cos`
+of the Josephson relation.
 """
 struct JunctionRelations{M,V}
     value::M
     derivative::M
     negsecond::M
     third::M
-    sinusoidal::V
-    anysinusoidal::Bool
+    polynomialjunctions::V
+    sinusoidaljunctions::V
 end
 
 """
@@ -455,28 +461,38 @@ either `nothing` for the sinusoidal Josephson relation or a
 """
 function junctionrelations(cprs::AbstractVector)
     any(!isnothing, cprs) || return nothing
-    nj = length(cprs)
+    polynomial = findall(!isnothing, cprs)
     # one common degree, so that the Horner loop is the same length for
-    # every junction; a sinusoidal one contributes no terms
-    nterms = maximum(c -> isnothing(c) ? 0 : length(c.a), cprs)
-    value = zeros(Float64, nj, nterms)
-    derivative = zeros(Float64, nj, nterms)
-    negsecond = zeros(Float64, nj, nterms)
-    third = zeros(Float64, nj, nterms)
-    sinusoidal = fill(true, nj)
-    for (j, c) in enumerate(cprs)
-        isnothing(c) && continue
-        sinusoidal[j] = false
+    # every junction
+    nterms = maximum(j -> length(cprs[j].a), polynomial)
+    value = zeros(Float64, length(polynomial), nterms)
+    derivative = zeros(Float64, length(polynomial), nterms)
+    negsecond = zeros(Float64, length(polynomial), nterms)
+    third = zeros(Float64, length(polynomial), nterms)
+    for (row, j) in enumerate(polynomial)
+        c = cprs[j]
         d = cprderivative(c)
         d2 = cprderivative(d)
         d3 = cprderivative(d2)
-        copycoefficients!(value, j, c.a)
-        copycoefficients!(derivative, j, d.a)
-        copycoefficients!(negsecond, j, -1 .* d2.a)
-        copycoefficients!(third, j, d3.a)
+        copycoefficients!(value, row, c.a)
+        copycoefficients!(derivative, row, d.a)
+        copycoefficients!(negsecond, row, -1 .* d2.a)
+        copycoefficients!(third, row, d3.a)
     end
-    return JunctionRelations(value, derivative, negsecond, third, sinusoidal,
-        any(sinusoidal))
+    return JunctionRelations(value, derivative, negsecond, third, polynomial,
+        findall(isnothing, cprs))
+end
+
+"""
+    sinusoidalmask(r::JunctionRelations)
+
+Whether each junction of `r`, along the junction axis, has the sinusoidal
+Josephson relation, on the host.
+"""
+function sinusoidalmask(r::JunctionRelations)
+    mask = fill(false, length(r.polynomialjunctions) + length(r.sinusoidaljunctions))
+    mask[Array(r.sinusoidaljunctions)] .= true
+    return mask
 end
 
 """
@@ -508,26 +524,24 @@ derivativeat(r::JunctionRelations, phi) = derivativeinto!(similar(phi), r, phi)
     relationinto!(out, r::JunctionRelations, phi)
 
 [`relationat`](@ref) writing into `out`, which may not alias `phi`. A
-circuit whose junctions are all sinusoidal takes the single broadcast of
-`sin` it always did.
+circuit whose junctions are all sinusoidal takes a single broadcast of
+`sin`.
 """
 function relationinto!(out, r::JunctionRelations, phi)
     allsinusoidal(r) && return out .= sin.(phi)
-    return applyrelationfirst!(out, phi, r.value, r.sinusoidal,
-        r.anysinusoidal, sin)
+    return applyrelationfirst!(out, phi, r.value, r, sin)
 end
 
 """
     derivativeinto!(out, r::JunctionRelations, phi)
 
 [`derivativeat`](@ref) writing into `out`, which may not alias `phi`. A
-circuit whose junctions are all sinusoidal takes the single broadcast of
-`cos` it always did.
+circuit whose junctions are all sinusoidal takes a single broadcast of
+`cos`.
 """
 function derivativeinto!(out, r::JunctionRelations, phi)
     allsinusoidal(r) && return out .= cos.(phi)
-    return applyrelationfirst!(out, phi, r.derivative, r.sinusoidal,
-        r.anysinusoidal, cos)
+    return applyrelationfirst!(out, phi, r.derivative, r, cos)
 end
 
 """
@@ -543,8 +557,7 @@ negsecondat(r::JunctionRelations, phi) = negsecondinto!(similar(phi), r, phi)
 
 function negsecondinto!(out, r::JunctionRelations, phi)
     allsinusoidal(r) && return out .= sin.(phi)
-    return applyrelationfirst!(out, phi, r.negsecond, r.sinusoidal,
-        r.anysinusoidal, sin)
+    return applyrelationfirst!(out, phi, r.negsecond, r, sin)
 end
 
 """
@@ -557,14 +570,19 @@ order, which is what a projection onto part of the circuit reads.
 """
 hostrelations(r::JunctionRelations) = JunctionRelations(Array(r.value),
     Array(r.derivative), Array(r.negsecond), Array(r.third),
-    Array(r.sinusoidal), r.anysinusoidal)
+    Array(r.polynomialjunctions), Array(r.sinusoidaljunctions))
 
 function hostrelations(r::JunctionRelations, rows::AbstractVector{Int})
     allsinusoidal(r) && return hostrelations(r)
-    sub(m) = Array(m)[rows, :]
-    mask = Array(r.sinusoidal)[rows]
-    return JunctionRelations(sub(r.value), sub(r.derivative),
-        sub(r.negsecond), sub(r.third), mask, any(mask))
+    # the row of the tables each junction's coefficients are in, zero for
+    # a sinusoidal junction
+    polynomial = Array(r.polynomialjunctions)
+    tablerow = zeros(Int, length(polynomial) + length(r.sinusoidaljunctions))
+    tablerow[polynomial] .= eachindex(polynomial)
+    kept = [tablerow[j] for j in rows if tablerow[j] > 0]
+    sub(m) = Array(m)[kept, :]
+    return JunctionRelations(sub(r.value), sub(r.derivative), sub(r.negsecond),
+        sub(r.third), findall(j -> tablerow[j] > 0, rows), findall(j -> tablerow[j] == 0, rows))
 end
 
 """
@@ -585,7 +603,7 @@ what a circuit of sinusoidal junctions alone holds.
 """
 emptyrelations(A::AbstractArray) = JunctionRelations(similar(A, 0, 0),
     similar(A, 0, 0), similar(A, 0, 0), similar(A, 0, 0),
-    similar(A, Bool, 0), true)
+    similar(A, Int, 0), similar(A, Int, 0))
 
 """
     torelations(r, A::AbstractArray)
@@ -599,10 +617,10 @@ torelations(::Nothing, A::AbstractArray) = emptyrelations(A)
 function torelations(r::JunctionRelations, A::AbstractArray)
     T = real(eltype(A))
     move(m) = copyto!(similar(A, T, size(m)...), convert(Matrix{T}, m))
+    index(v) = copyto!(similar(A, Int, length(v)), v)
     return JunctionRelations(move(r.value), move(r.derivative),
-        move(r.negsecond), move(r.third),
-        copyto!(similar(A, Bool, length(r.sinusoidal)), r.sinusoidal),
-        r.anysinusoidal)
+        move(r.negsecond), move(r.third), index(r.polynomialjunctions),
+        index(r.sinusoidaljunctions))
 end
 
 function copycoefficients!(m::Matrix, j::Integer, a::AbstractVector)
@@ -612,25 +630,33 @@ function copycoefficients!(m::Matrix, j::Integer, a::AbstractVector)
     return m
 end
 
-# `out .= f.(src)` where `f` is the relation of each junction, given by the
-# rows of `c` as a polynomial in `evalpoly` order, and `trig` where the
-# junction is sinusoidal. The junction is the last axis of `src`, as it is
-# in every time domain array of harmonic balance, so a coefficient column
-# is reshaped to broadcast along it. Everything here is a broadcast of
-# whole arrays, which is what keeps it device generic: no kernel, no
-# scalar indexing, and one pass per degree rather than one per junction.
+# `out .= f.(src)` where `f` is the relation of each junction of `r`: a
+# polynomial, the row of `c` for the junction, in `evalpoly` order, and
+# `trig` for a sinusoidal junction, each evaluated over its own junctions
+# alone. The junction is the last axis of `src`, as it is in every time
+# domain array of harmonic balance, so a coefficient column is reshaped to
+# broadcast along it. Everything here is a broadcast of whole arrays or of
+# their views onto the junctions of one kind, which is what keeps it
+# device generic: no kernel, no scalar indexing, and one pass per degree
+# rather than one per junction. The relation `trig` is a type parameter,
+# since a function only passed on to a broadcast is not specialized on
+# and would be dispatched at run time.
 function applyrelationlast!(out::AbstractArray, src::AbstractArray,
-        c::AbstractMatrix, sinusoidal::AbstractVector, anysinusoidal::Bool, trig)
+        c::AbstractMatrix, r::JunctionRelations, trig::F) where F
+    s = r.sinusoidaljunctions
+    isempty(s) && return hornerlast!(out, src, c)
+    N, p = ndims(out), r.polynomialjunctions
+    hornerlast!(selectdim(out, N, p), selectdim(src, N, p), c)
+    selectdim(out, N, s) .= trig.(selectdim(src, N, s))
+    return out
+end
+function hornerlast!(out::AbstractArray, src::AbstractArray, c::AbstractMatrix)
     shape = ntuple(d -> d == ndims(out) ? size(c, 1) : 1, ndims(out))
     column(k) = reshape(view(c, :, k), shape)
     nterms = size(c, 2)
     out .= column(nterms)
     for k in nterms-1:-1:1
         out .= out .* src .+ column(k)
-    end
-    if anysinusoidal
-        mask = reshape(sinusoidal, shape)
-        out .= ifelse.(mask, trig.(src), out)
     end
     return out
 end
@@ -639,29 +665,31 @@ end
 # the first axis, `(junction,)` or `(junction, condition)`, against which a
 # coefficient column broadcasts as it is
 function applyrelationfirst!(out::AbstractArray, src::AbstractArray,
-        c::AbstractMatrix, sinusoidal::AbstractVector, anysinusoidal::Bool, trig)
+        c::AbstractMatrix, r::JunctionRelations, trig::F) where F
+    s = r.sinusoidaljunctions
+    isempty(s) && return hornerfirst!(out, src, c)
+    p = r.polynomialjunctions
+    hornerfirst!(selectdim(out, 1, p), selectdim(src, 1, p), c)
+    selectdim(out, 1, s) .= trig.(selectdim(src, 1, s))
+    return out
+end
+function hornerfirst!(out::AbstractArray, src::AbstractArray, c::AbstractMatrix)
     nterms = size(c, 2)
     out .= view(c, :, nterms)
     for k in nterms-1:-1:1
         out .= out .* src .+ view(c, :, k)
     end
-    if anysinusoidal
-        out .= ifelse.(sinusoidal, trig.(src), out)
-    end
     return out
 end
 
 """
-    NonlinearInductor(L0, cpr, dcpr)
     NonlinearInductor(L0, cpr)
 
 A two terminal nonlinear inductive element defined by its current-phase
 relation: `I(φ) = (phi0/L0)*cpr(φ)` where `φ` is the reduced branch phase,
 `L0` is the small signal inductance in Henries, and `cpr` is a callable with
-unit slope at zero. `dcpr` is the derivative of `cpr`, required by the
-harmonic balance Jacobian; it must be supplied explicitly for user defined
-callables, while built-in CPRs (`sin`, [`PolynomialCPR`](@ref)) provide
-analytic derivatives through [`cprderivative`](@ref).
+unit slope at zero. The solvers take its derivatives analytically, through
+[`cprderivative`](@ref).
 
 This supports specifying the effective nonlinearity of a SNAIL, SQUID, or
 Quarton directly, as an alternative to composing the underlying junctions.
@@ -681,12 +709,10 @@ and the linearization its noise is taken about.
 
 See also [`JosephsonJunction`](@ref).
 """
-struct NonlinearInductor{T,F,DF} <: AbstractComponent
+struct NonlinearInductor{T,F} <: AbstractComponent
     L0::T
     cpr::F
-    dcpr::DF
 end
-NonlinearInductor(L0, cpr) = NonlinearInductor(L0, cpr, cprderivative(cpr))
 
 """
     JosephsonJunction(Lj)
@@ -695,35 +721,35 @@ NonlinearInductor(L0, cpr) = NonlinearInductor(L0, cpr, cprderivative(cpr))
 A Josephson junction with junction inductance `Lj` in Henries, or
 equivalently critical current `Ic` in Amperes, and the sinusoidal
 current-phase relation `I(φ) = Ic*sin(φ)`. Equal to
-`NonlinearInductor(Lj, sin, cos)`.
+`NonlinearInductor(Lj, sin)`.
 
 # Examples
 ```jldoctest
-julia> JosephsonJunction(100e-12) == NonlinearInductor(100e-12, sin, cos)
+julia> JosephsonJunction(100e-12) == NonlinearInductor(100e-12, sin)
 true
 
 julia> JosephsonJunction(Ic = 3.29105976e-6).L0
 1.0e-10
 ```
 """
-JosephsonJunction(Lj) = NonlinearInductor(Lj, sin, cos)
-JosephsonJunction(; Ic) = NonlinearInductor(phi0/Ic, sin, cos)
+JosephsonJunction(Lj) = NonlinearInductor(Lj, sin)
+JosephsonJunction(; Ic) = NonlinearInductor(phi0/Ic, sin)
 
-# equal by their inductance and their relations, and hashed alike, so
+# equal by their inductance and their relation, and hashed alike, so
 # that `isequal`, sets and dictionaries of components agree with `==`
 Base.:(==)(a::NonlinearInductor, b::NonlinearInductor) =
-    isequal(a.L0, b.L0) && a.cpr == b.cpr && a.dcpr == b.dcpr
+    isequal(a.L0, b.L0) && a.cpr == b.cpr
 Base.hash(c::NonlinearInductor, h::UInt) =
-    hash(c.dcpr, hash(c.cpr, hash(c.L0, hash(:NonlinearInductor, h))))
+    hash(c.cpr, hash(c.L0, hash(:NonlinearInductor, h)))
 
 """
     issinusoidal(c::NonlinearInductor)
 
 Whether the current-phase relation of `c` is the sinusoidal Josephson
-relation `(sin, cos)`, in which case the component compiles to the `:Lj`
-type the solvers support.
+relation `sin`, in which case the component compiles to the `:Lj` type the
+solvers support.
 """
-issinusoidal(c::NonlinearInductor) = c.cpr === sin && c.dcpr === cos
+issinusoidal(c::NonlinearInductor) = c.cpr === sin
 
 """
     junctioncpr(c::NonlinearInductor, path)
@@ -1391,11 +1417,11 @@ The assertion is held to the block's `atol` (see
 [`checkblockcontract`](@ref)): when a constant, tabulated or rational
 block is built, at every sample of stored data and between and beyond
 them, and over every frequency of a realization, and it is an error if
-false. A callable is checked by a sweep at a sample of the frequencies
-it evaluates the block at and is otherwise taken on trust, and asserting
-it of a block which does absorb omits the noise the block should add,
-making the quantum efficiency and the commutation relations wrong by
-that much. A pumped block is checked when it is built and again over the
+false. A callable is checked by a sweep at every frequency it evaluates
+the block at and is otherwise taken on trust, and asserting it of a
+block which does absorb omits the noise the block should add, making
+the quantum efficiency and the commutation relations wrong by that
+much. A pumped block is checked when it is built and again over the
 modes of every solve which evaluates it, to the block's `atol`; a fit of
 a pumped block is not lossless to better than its error, and states the
 noise it needs instead (see [`NoiseCovariance`](@ref)).
@@ -1533,7 +1559,7 @@ it coincides with [`Passive`](@ref).
 struct ThermalEquilibrium{T}
     temperature::T
     function ThermalEquilibrium(temperature::Real)
-        checktemperature(temperature)
+        checktemperature(temperature, "a ThermalEquilibrium noise model")
         return new{typeof(temperature)}(temperature)
     end
 end
@@ -1621,10 +1647,13 @@ end
 function NoiseCovariance(V; interpolation::Symbol = :cubic,
         extrapolation::Symbol = :error, atol::Real = 1e-8, completed::Bool = false,
         padding::Integer = 4)
-    (isfinite(atol) && atol >= 0) || throw(ArgumentError("atol must be finite and nonnegative."))
+    checkatol(atol)
     padding >= 0 || throw(ArgumentError("padding must be nonnegative."))
     return NoiseCovariance(V, interpolation, extrapolation, Float64(atol), completed, Int(padding))
 end
+
+# a tolerance of a block's or a covariance's data
+checkatol(atol) = (isfinite(atol) && atol >= 0) || throw(ArgumentError("atol must be finite and nonnegative."))
 
 # === scattering block ===
 
@@ -1800,12 +1829,12 @@ end
 # realization: at every sample it stores, between and beyond them where
 # the data determines it, and in its zero frequency model.
 @noinline function checkedblock(provider, n::Int, zref::Vector{Float64}, grounded::Bool,
-        noise, negative_frequency, derivatives, dcmodel, atol::Real)
-    (isfinite(atol) && atol >= 0) || throw(ArgumentError("atol must be finite and nonnegative."))
+        noise, negative_frequency, derivatives, dcmodel, atol::Real; normtested::Bool = false)
+    checkatol(atol)
     block = ScatteringParameters(provider, n, zref, grounded, preparenoise(noise, n),
         negative_frequency, derivatives, dcmodel, Float64(atol))
     checkstoreddata(block)
-    checkbeyondsamples(block)
+    checkbeyondsamples(block; normtested)
     checkdcmodel(dcmodel, n, block.noise, block.atol)
     return block
 end
@@ -1862,20 +1891,28 @@ end
 preparenoise(noise, n::Int) = noise
 
 """
+    commutationmargin(V::AbstractMatrix, K::AbstractMatrix)
+
+The smallest eigenvalue of `V - K` and of `V + K`, which is nonnegative
+when the noise covariance `V` meets the commutation relations of the
+commutator `K`: `(V + K)/2` and `(V - K)/2` are then the covariances of
+the channels of either kind (see [`NoiseCovariance`](@ref)).
+"""
+commutationmargin(V::AbstractMatrix, K::AbstractMatrix) =
+    min(minimum(eigvals(Hermitian(V - K))), minimum(eigvals(Hermitian(V + K))))
+
+"""
     quantumnoisemargin(V::AbstractMatrix, S::AbstractMatrix)
 
-The smallest eigenvalue of `V - K` and of `V + K`, with `K = I - S S'`,
-which is nonnegative when the noise covariance `V` is one a block with
-the scattering matrix `S` can add without violating the commutation
-relations: `(V + K)/2` and `(V - K)/2` are then the covariances of its
-channels of either kind (see [`NoiseCovariance`](@ref)).
+The [`commutationmargin`](@ref) of the noise covariance `V` against
+`K = I - S S'`, which is nonnegative when `V` is one a block with the
+scattering matrix `S` can add without violating the commutation
+relations.
 """
 function quantumnoisemargin(V::AbstractMatrix, S::AbstractMatrix)
     n = size(S, 1)
     K = Matrix{Complex{Float64}}(I, n, n) - S*S'
-    Vh = Matrix{Complex{Float64}}(V)
-    return min(minimum(real.(eigvals(Hermitian(Vh - K)))),
-        minimum(real.(eigvals(Hermitian(Vh + K)))))
+    return commutationmargin(Matrix{Complex{Float64}}(V), K)
 end
 
 """
@@ -2203,12 +2240,13 @@ end
 # pencil of a level finds every crossing of it where a sample can miss
 # one. The search decides on a lower bound of the norm, so a block it
 # cannot settle either way is accepted, as a lossless block, whose norm
-# is one, has to be.
-function checkpassive(p::RationalScatteringProvider; atol = 1e-8)
+# is one, has to be. `normtested` leaves out the search, for a
+# realization the passivity enforcement has just measured by it.
+function checkpassive(p::RationalScatteringProvider; atol = 1e-8, normtested::Bool = false)
     A, B, C, D = p.A, p.B, p.C, p.D
     margin = passivitymargin(D)
     margin < -atol && throw(ArgumentError(lazy"The rational scattering block is not passive at infinite frequency: the minimum eigenvalue of I - D*D' is $(margin)."))
-    size(A, 1) == 0 && return nothing
+    (size(A, 1) == 0 || normtested) && return nothing
     verdict, worst, level, w = passivityassessment(A, B, C, D; atol = atol)
     verdict === :active && throw(ArgumentError(lazy"The rational scattering block is not passive: its largest singular value over all frequencies is at least $(worst), at $(w) rad/s, which is above the tolerance $(atol)."))
     return nothing
@@ -2271,18 +2309,13 @@ magnitudes the probe grid extends.
 function hinfnorm(A, B, C, D; rtol = 1e-8, span::Real = 8.0, refinements::Int = 32,
         pad::Real = 10.0)
     An, Bn, Cn, wscale = balancedrealization(A, B, C)
-    # A dense solve at every evaluation rather than held Schur
-    # factors: the search refines around each pole, which is where a
-    # quasi-triangular solve of `i w I - T` is at its worst, the
-    # diagonal block it inverts nearly singular with nothing to pivot,
-    # and the peak of a narrow resonance depends on those digits. The
-    # dense solve pivots, and the accuracy buys the answer.
-    S = w -> try
-        D .+ Cn*((im*w*I - An) \ Bn)
-    catch e
-        e isa SingularException ? fill(Inf, size(D)) : rethrow()
-    end
-    λs = eigvals(An)
+    # the largest singular value at `w`, through the Schur form of the
+    # balanced realization taken once (see ResolventFactors), and `Inf`
+    # where the realization is not finite, at a pole on the axis
+    rf = resolventfactors(An, Bn)
+    CZ, work, F = Cn*rf.Z, ResolventWorkspace(rf), similar(D, Complex{Float64})
+    sigma = w -> (rationaltransfer!(F, rf, CZ, D, w, work); all(isfinite, F) ? opnorm(F) : Inf)
+    λs = schureigenvalues(rf.T)
     # The grid spans the magnitudes of the poles the system has, not
     # fixed decades around one: a peak can lie far from every pole
     # frequency, as `k s/((s + a)(s + b))` peaking at `sqrt(a b)` shows,
@@ -2295,7 +2328,7 @@ function hinfnorm(A, B, C, D; rtol = 1e-8, span::Real = 8.0, refinements::Int = 
     sort!(probes)
     bound, where = opnorm(D), Inf
     for w in probes
-        s = opnorm(S(w))
+        s = sigma(w)
         isfinite(s) || return Inf, w*wscale, Inf
         s > bound && ((bound, where) = (s, w))
     end
@@ -2321,14 +2354,14 @@ function hinfnorm(A, B, C, D; rtol = 1e-8, span::Real = 8.0, refinements::Int = 
         b > a || continue
         φ = (sqrt(5) - 1)/2
         u, v = b - φ*(b - a), a + φ*(b - a)
-        fu, fv = opnorm(S(u)), opnorm(S(v))
+        fu, fv = sigma(u), sigma(v)
         for _ in 1:refinements
             if fu > fv
                 b, v, fv = v, u, fu
-                u = b - φ*(b - a); fu = opnorm(S(u))
+                u = b - φ*(b - a); fu = sigma(u)
             else
                 a, u, fu = u, v, fv
-                v = a + φ*(b - a); fv = opnorm(S(v))
+                v = a + φ*(b - a); fv = sigma(v)
             end
         end
         isfinite(fu) && isfinite(fv) || return Inf, a*wscale, Inf
@@ -2347,7 +2380,7 @@ function hinfnorm(A, B, C, D; rtol = 1e-8, span::Real = 8.0, refinements::Int = 
         # scales the pencil's determinant by a small constant, and a
         # singular value test on it would mistake that for singularity and
         # miss a peak between the samples
-        crossings, _ = pencilcrossings(An, Bn, Cn ./ level, D ./ level; singulartest = false)
+        crossings = pencilcrossings(An, Bn, Cn ./ level, D ./ level; singulartest = false)
         if length(crossings) < 2
             # no singular value reaches the level, anywhere
             ceiling = level
@@ -2356,7 +2389,7 @@ function hinfnorm(A, B, C, D; rtol = 1e-8, span::Real = 8.0, refinements::Int = 
         raised = false
         for k in 1:length(crossings) - 1
             w = (crossings[k] + crossings[k + 1])/2
-            s = opnorm(S(w))
+            s = sigma(w)
             isfinite(s) || return Inf, w*wscale, Inf
             s > bound*(1 + rtol) && ((bound, where, raised) = (s, w, true))
         end
@@ -2437,11 +2470,12 @@ finds the largest singular value.
 """
 function passivitycrossings(A, B, C, D)
     An, Bn, Cn, wscale = balancedrealization(A, B, C)
-    crossings, _ = pencilcrossings(An, Bn, Cn, D)
+    crossings = pencilcrossings(An, Bn, Cn, D)
     return isnothing(crossings) ? nothing : crossings .* wscale, wscale
 end
 
-# the crossings of one in the units of the balanced realization
+# the crossings of one in the units of the balanced realization, or
+# `nothing` for a singular pencil
 function pencilcrossings(An, Bn, Cn, D; singulartest::Bool = true)
     nz, m = size(An, 1), size(D, 1)
     Z = zeros
@@ -2454,7 +2488,7 @@ function pencilcrossings(An, Bn, Cn, D; singulartest::Bool = true)
     if singulartest
         for l0 in (complex(0.7, 1.3), complex(-1.1, 0.4))
             sv = svdvals(l0 .* E .- H)
-            sv[end] <= 1e-10*sv[1] && return nothing, 1.0
+            sv[end] <= 1e-10*sv[1] && return nothing
         end
     end
     lambda = eigvals(H, E)
@@ -2465,7 +2499,7 @@ function pencilcrossings(An, Bn, Cn, D; singulartest::Bool = true)
     for w in crossings
         (isempty(merged) || w - last(merged) > 1e-9*(w + 1)) && push!(merged, w)
     end
-    return merged, 1.0
+    return merged
 end
 
 """
@@ -2491,7 +2525,15 @@ it states. The realization is what a vector fit of measured or
 simulated data delivers; a lossless line is [`TransmissionLine`](@ref)
 instead, which needs no states.
 """
-function RationalScattering(A, B, C, D; zref = 50.0, grounded::Bool = true, noise = Passive(), atol::Real = 1e-8)
+RationalScattering(A, B, C, D; zref = 50.0, grounded::Bool = true, noise = Passive(), atol::Real = 1e-8) =
+    rationalblock(A, B, C, D; zref, grounded, noise, atol)
+
+# The block of a realization, validated as the constructor above says.
+# `normtested` is for a realization whose largest singular value the
+# passivity enforcement has just brought under one by the same search,
+# which the validation would repeat; its feedthrough is still checked.
+function rationalblock(A, B, C, D; zref, grounded::Bool, noise, atol::Real,
+        normtested::Bool = false)
     Am, Bm, Cm, Dm = Matrix{Float64}(A), Matrix{Float64}(B), Matrix{Float64}(C), Matrix{Float64}(D)
     n, nz = size(Dm, 1), size(Am, 1)
     size(Dm) == (n, n) && size(Am) == (nz, nz) && size(Bm) == (nz, n) && size(Cm) == (n, nz) || throw(DimensionMismatch(
@@ -2503,7 +2545,7 @@ function RationalScattering(A, B, C, D; zref = 50.0, grounded::Bool = true, nois
     abscissa < 0 || throw(ArgumentError(
         lazy"the realization is unstable: the largest real part of an eigenvalue of A is $(abscissa) per second."))
     return checkedblock(provider, n, zrefvector(zref, n), grounded, noise,
-        ConjugateSymmetry(), NamedTuple(), ScatteringLimit(), atol)
+        ConjugateSymmetry(), NamedTuple(), ScatteringLimit(), atol; normtested)
 end
 
 """
@@ -2533,31 +2575,32 @@ function unitaritybound(provider::AbstractMatrixProvider)
 end
 
 # How far a table's interpolant can be from unitary between its knots.
-# The chord between two knots is `(1 - t) A + t B`, whose deviation from
-# unitarity with `A` and `B` unitary is `t (1 - t) (A B' + B A' - 2 I)`,
-# largest at the midpoint, so the knots and the midpoints together bound
-# the chords. Two unitary knots do not make a unitary interpolant: `S = 1`
-# and `S = -1` interpolate to a perfect absorber halfway between. The
-# spline is the chord plus the curvature correction
-# `(h^2/6)((u^3 - u) M_k + (t^3 - t) M_(k+1))`, whose operator norm never
-# exceeds `(h^2/6)(2/(3 sqrt(3)))(|M_k| + |M_(k+1)|)`, and a perturbation
-# `E` of a matrix of norm at most one moves `I - S S'` by at most
-# `2 |E| + |E|^2`, so the midpoints and this bound together bound the
-# spline.
+# Two unitary knots do not make a unitary interpolant: `S = 1` and
+# `S = -1` interpolate to a perfect absorber halfway between. On the
+# segment between two knots the interpolant is a polynomial in the
+# fraction `t` of the segment, of degree one for the chord and three for
+# the spline, and `t` is real, so every entry of `I - S S'` is a
+# polynomial of twice that degree, `m`. A polynomial of degree `m` is
+# bounded on the segment by its largest value at the `m + 1` Chebyshev
+# points times their Lebesgue constant, which is at most
+# `(2/pi) log(m + 1) + 1` (Rivlin), 2.24 for the spline: the bound is
+# rigorous, and within that factor of the deviation it bounds, which for
+# a spline through unitary samples falls as the fourth power of their
+# spacing.
 function interpolantdeviation(p::TabulatedMatrixProvider)
+    m = p.interpolation == :linear ? 2 : 6
+    points = [(1 - cospi((2j + 1)/(2m + 2)))/2 for j in 0:m]
+    lebesgue = 2/pi*log(m + 1) + 1
+    f = p.frequencies
+    n = size(p.values, 1)
+    S = Matrix{eltype(p.values)}(undef, n, n)
     worst = 0.0
-    for k in 1:size(p.values,3)-1
-        mid = (view(p.values,:,:,k) .+ view(p.values,:,:,k+1))./2
-        if p.interpolation == :linear
-            worst = max(worst, unitaritydeviation(mid))
-        else
-            h = p.frequencies[k+1] - p.frequencies[k]
-            e = 2/(3*sqrt(3))/6*h^2*(opnorm(Matrix(view(p.curvatures,:,:,k))) +
-                opnorm(Matrix(view(p.curvatures,:,:,k+1))))
-            worst = max(worst, unitaritydeviation(mid) + 2e + e^2)
-        end
+    for k in 1:length(f) - 1, t in points
+        w = f[k] + t*(f[k + 1] - f[k])
+        p.interpolation == :linear ? lerpslices!(S, p, k, k + 1, w) : splineslices!(S, p, k, w)
+        worst = max(worst, unitaritydeviation(S))
     end
-    return worst
+    return lebesgue*worst
 end
 
 """
@@ -2607,10 +2650,10 @@ end
 # states its noise and unitary where it declares itself lossless, and a
 # table declared lossless between its knots and beyond them. A callable
 # is known only where it is evaluated.
-function checkbeyondsamples(block::ScatteringParameters)
+function checkbeyondsamples(block::ScatteringParameters; normtested::Bool = false)
     p, noise, atol = block.provider, block.noise, block.atol
     if p isa RationalScatteringProvider
-        noise isa NoiseCovariance || checkpassive(p; atol = atol)
+        noise isa NoiseCovariance || checkpassive(p; atol, normtested)
         (noise isa Lossless && !losslessnorms(p; atol = atol)) && throw(ArgumentError(lazy"noise = Lossless() says the scattering matrix is unitary at every frequency, but this rational block's largest singular value over all frequencies, or its inverse's, exceeds one by more than its atol of $(atol). Use the default Passive() noise model, which gives a dissipative block the noise its loss requires."))
     elseif noise isa Lossless && isstored(p)
         bound = unitaritybound(p)
@@ -2624,7 +2667,7 @@ function beyondsamples(p, bound, atol)
     p isa PiecewiseTabulatedProvider && return "between and beyond its bands it is zero, which absorbs everything"
     p.extrapolation == :zero && return "beyond its knots it is zero, which absorbs everything"
     p.extrapolation == :linear && return "beyond its knots it is continued linearly, which bounds nothing"
-    return "between its knots its interpolant can reach $(bound) in an entry of I - S S', above its atol of $(atol)"
+    return "between its knots its interpolant may depart from unitary by up to $(bound) in an entry of I - S S', above its atol of $(atol); a table sampled more finely is bounded more tightly"
 end
 
 """
@@ -2724,12 +2767,16 @@ end
 # siemens and ohms with YtoS and ZtoS. A version 2 file states them so; a
 # version 1 file states them normalized to its R, `z = Z/R` and `y = Y R`,
 # and the loader multiplies every entry of such a file by R, which gives
-# back an impedance but leaves an admittance at `Y R^2`. Hybrid H and G
-# parameters mix impedances, admittances and ratios and are refused.
+# back an impedance but leaves an admittance at `Y R^2`. In dB it
+# multiplies the decibels by R instead, which leaves nothing the data can
+# be read back from, so such a file is refused. Hybrid H and G parameters
+# mix impedances, admittances and ratios and are refused.
 function touchstonescattering(ts, path)
     parameter = lowercase(ts.parameter)
     N = Array{Complex{Float64},3}(ts.N)
     parameter == "s" && return N
+    (parameter in ("z", "y") && ts.version < 2 && lowercase(ts.format) == "db") && throw(ArgumentError(
+        lazy"The Touchstone file $(path) holds version 1 $(uppercase(ts.parameter)) parameters in dB, which the loader scales wrongly; write the data as RI or MA, or as a version 2 file."))
     z = collect(Float64, ts.reference)
     parameter == "z" && return ZtoS(N; portimpedances = z)
     parameter == "y" && return YtoS(ts.version < 2 ? N ./ ts.R^2 : N; portimpedances = z)
@@ -2859,9 +2906,11 @@ be a constant matrix, a callable of angular frequency (requires `nmodes`),
 or a tuple `(frequencies, values)` of tabulated data.
 
 Complete positivity, Y + (i/2)(Ω - X Ω X') ⪰ 0, and the symmetry of Y are
-validated pointwise at construction for constant and tabulated data with
-absolute tolerance `atol`; the worst margin is recorded in the `cp_margin`
-field (NaN when validation is deferred for callable providers).
+validated pointwise at construction for constant and tabulated data, the
+first with absolute tolerance `atol` and the second to `atol` of the
+largest entry of `Y`, or of one for a covariance of entries below one; the
+worst margin is recorded in the `cp_margin` field (NaN when validation is
+deferred for callable providers).
 
 Each mode is a two terminal port addressed like a port of a
 [`ScatteringParameters`](@ref), with the same `grounded` behavior.
@@ -2929,15 +2978,14 @@ function gaussianchannelmargin(Xp, Yp, atol)
     return isfinite(worst) ? worst : NaN
 end
 
-# check the symmetry of Y and complete positivity at one angular frequency
-# `w`, `nothing` for data which is the same at every frequency
+# check the symmetry of Y, to `atol` of its largest entry or of one for a
+# covariance of entries below one, and complete positivity, at one angular
+# frequency `w`, `nothing` for data which is the same at every frequency
 function checkchannelpoint(X, Y, atol, w)
     where_ = isnothing(w) ? "" : " at $(w) rad/s"
-    for j in axes(Y,2), i in axes(Y,1)
-        if abs(Y[i,j] - Y[j,i]) > atol
-            throw(ArgumentError(lazy"The added covariance Y must be symmetric$(where_)."))
-        end
-    end
+    skew = maximum(abs, Y .- transpose(Y); init = 0.0)
+    tol = atol*max(1.0, maximum(abs, Y; init = 0.0))
+    skew <= tol || throw(ArgumentError(lazy"The added covariance Y must be symmetric$(where_): the largest entry of Y - Y' is $(skew), against $(tol), atol of its largest entry."))
     margin = completepositivitymargin(X, Y)
     if margin < -atol
         throw(ArgumentError(lazy"The Gaussian channel is not completely positive$(where_): the minimum eigenvalue of Y + (i/2)(Ω - X Ω X') is $(margin)."))
@@ -3002,7 +3050,9 @@ The second form takes the harmonic transfer functions directly: `H` is a
 vector of providers, one per entry of `harmonics` (nonnegative, ascending,
 beginning with zero), each a matrix, a callable of the signed angular
 frequency, or a tuple `(frequencies, values)` tabulated over signed
-frequencies.
+frequencies. `H_0` is the response of a real system,
+`H_0(-nu) = conj(H_0(nu))`: a constant one must be real, and a table
+holding both signs of a frequency is checked for it there, to `atol`.
 
 The block is stamped by the harmonic balance solvers as a coupling
 between the modes of the circuit whose frequencies differ by its
@@ -3096,8 +3146,7 @@ function LinearizedScattering(H::AbstractVector, wp::Real; harmonics::AbstractVe
         nports::Integer, zref = 50.0, grounded::Bool = true, noise = Lossless(),
         phase::Real = 0.0, dcmodel::AbstractDCModel = ScatteringLimit(),
         envelope = nothing, atol::Real = 1e-6)
-    (isfinite(wp) && wp > 0) || throw(ArgumentError("the pump frequency must be positive and finite."))
-    (isfinite(atol) && atol >= 0) || throw(ArgumentError("atol must be finite and nonnegative."))
+    checkpumpoptions(wp, atol, phase)
     ks = collect(Int, harmonics)
     (!isempty(ks) && ks[1] == 0 && issorted(ks; lt = <=) && all(>=(0), ks)) || throw(ArgumentError(
         "the harmonics must be nonnegative, strictly increasing, and begin with zero."))
@@ -3109,13 +3158,15 @@ function LinearizedScattering(H::AbstractVector, wp::Real; harmonics::AbstractVe
         providersize(p) == n || throw(DimensionMismatch(lazy"a harmonic transfer function has dimension $(providersize(p)) but the block has $(n) ports."))
         push!(providers, p)
     end
+    checkrealresponse(providers[1], Float64(atol))
     if noise isa NoiseCovariance
         V = noise.provider
         (V isa AbstractVector && length(V) == length(ks)) || throw(ArgumentError(
             "the stated noise of a pumped block given by its harmonic transfer functions is one covariance provider per harmonic, V_k(nu) = <n(nu + k wp) n(nu)'> in the units of Cnoise."))
         vps = AbstractMatrixProvider[]
         for v in V
-            vp = matrixprovider(v, Complex{Float64}; n = n)
+            vp = matrixprovider(v, Complex{Float64}; n = n,
+                interpolation = noise.interpolation, extrapolation = noise.extrapolation)
             providersize(vp) == n || throw(DimensionMismatch(lazy"a harmonic covariance has dimension $(providersize(vp)) but the block has $(n) ports."))
             push!(vps, vp)
         end
@@ -3123,7 +3174,6 @@ function LinearizedScattering(H::AbstractVector, wp::Real; harmonics::AbstractVe
     else
         noise isa Lossless || throw(ArgumentError("a pumped block declares noise = Lossless(), or states its noise with a NoiseCovariance over its harmonics."))
     end
-    isfinite(phase) || throw(ArgumentError("the pump phase must be finite."))
     checkdcmodel(dcmodel, n, noise, Float64(atol))
     built = LinearizedScattering(ks, providers, Float64(wp), Float64(phase), n,
         zrefvector(zref, n), grounded, noise, dcmodel, envelope, Float64(atol))
@@ -3140,7 +3190,7 @@ function LinearizedScattering(H::AbstractVector, wp::Real; harmonics::AbstractVe
         append!(nus, tableknots(p))
     end
     isempty(nus) && ks == [0] && all(p -> unrotated(p) isa ConstantMatrixProvider, stored) && push!(nus, Float64(wp))
-    declared = noise isa NoiseCovariance ? max(Float64(atol), noise.atol) : Float64(atol)
+    declared = declaredtolerance(built)
     for nu in unique!(sort!(nus))
         rows, cols, K = pumpedfamily(built, (nu,))
         v = pumpedviolation(built, rows, cols, K)
@@ -3148,6 +3198,19 @@ function LinearizedScattering(H::AbstractVector, wp::Real; harmonics::AbstractVe
     end
     return built
 end
+
+# the pump frequency, the tolerance and the pump phase of a pumped block
+function checkpumpoptions(wp, atol, phase)
+    (isfinite(wp) && wp > 0) || throw(ArgumentError("the pump frequency must be positive and finite."))
+    checkatol(atol)
+    isfinite(phase) || throw(ArgumentError("the pump phase must be finite."))
+    return nothing
+end
+
+# the tolerance a pumped block's data is held to against what it
+# declares: its own, and a stated covariance's where that is looser
+declaredtolerance(block::LinearizedScattering) =
+    block.noise isa NoiseCovariance ? max(block.atol, block.noise.atol) : block.atol
 
 function LinearizedScattering(lin, wp::Real; ports = nothing, zref = 50.0,
         grounded::Bool = true, noise = Lossless(), phase::Real = 0.0,
@@ -3158,8 +3221,7 @@ function LinearizedScattering(lin, wp::Real; ports = nothing, zref = 50.0,
     S = lin.S
     S isa AxisKeys.KeyedArray || throw(ArgumentError(
         "the scattering matrix must be keyed by mode and port; solve with keyedarrays = true."))
-    (isfinite(wp) && wp > 0) || throw(ArgumentError("the pump frequency must be positive and finite."))
-    (isfinite(atol) && atol >= 0) || throw(ArgumentError("atol must be finite and nonnegative."))
+    checkpumpoptions(wp, atol, phase)
     noise isa Lossless || noise isa NoiseCovariance || throw(ArgumentError(
         "a pumped block declares noise = Lossless(), or states the covariance its solve reports with noise = NoiseCovariance(linearized.Cnoise)."))
     outmodes = collect(AxisKeys.axiskeys(S, 1))
@@ -3225,28 +3287,8 @@ function LinearizedScattering(lin, wp::Real; ports = nothing, zref = 50.0,
     # of them further apart than the widest step between those
     step = length(wv) > 1 ? maximum(diff(sort(wv))) : 0.0
     ks = sort!(collect(keys(samples)))
-    providers = AbstractMatrixProvider[]
-    for k in ks
-        list = sort!(samples[k]; by = first)
-        nus = Float64[]
-        mats = Matrix{Complex{Float64}}[]
-        for (nu, M) in list
-            if !isempty(nus) && samefrequency(nu, nus[end], wp)
-                # the same frequency reached from two mode pairs: one
-                # periodic steady state gives the same value from both
-                d = maximum(abs, M .- mats[end])
-                d <= atol*scale || throw(ArgumentError(lazy"the data is not that of one periodic steady state: the samples of the harmonic $(k) at $(nu) rad/s from two mode pairs differ by $(d) against the largest entry $(scale). A tighter mode truncation, or data not from the linearized solve of one pumped device, does this; atol admits a discrepancy."))
-                continue
-            end
-            push!(nus, nu)
-            push!(mats, M)
-        end
-        values = Array{Complex{Float64},3}(undef, n, n, length(nus))
-        for j in eachindex(nus)
-            values[:, :, j] .= mats[j]
-        end
-        push!(providers, piecewisetable(nus, values; interpolation = interpolation, step = step))
-    end
+    providers = harmonictables(samples, ks, n, wp, step, interpolation, atol*scale,
+        (k, nu, d) -> "the data is not that of one periodic steady state: the samples of the harmonic $(k) at $(nu) rad/s from two mode pairs differ by $(d) against the largest entry $(scale). A tighter mode truncation, or data not from the linearized solve of one pumped device, does this; atol admits a discrepancy.")
     # the stated noise: the covariance the solve reports, over the same
     # modes, ports and frequencies, as harmonic covariances
     # V_k(nu) = <n(nu + k wp) n(nu)'> for k >= 0, in the units of Cnoise,
@@ -3257,6 +3299,11 @@ function LinearizedScattering(lin, wp::Real; ports = nothing, zref = 50.0,
         C = noise.provider
         C isa AxisKeys.KeyedArray || throw(ArgumentError(
             "the stated noise of a pumped block is the keyed covariance its solve reports, noise = NoiseCovariance(linearized.Cnoise), from hbsolve with returnCnoise = true."))
+        # the covariance is tabulated band by band as the transfer
+        # functions are, zero between and beyond its bands, where the
+        # solve says nothing, so it extrapolates by no other rule
+        noise.extrapolation in (:error, :zero) || throw(ArgumentError(
+            lazy"the covariance of a solve is zero between and beyond its bands, as the transfer functions are, so it cannot be extrapolated by $(repr(noise.extrapolation)); leave extrapolation at its default."))
         (collect(AxisKeys.axiskeys(C, 1)) == outmodes && collect(AxisKeys.axiskeys(C, 2)) == outports &&
             collect(AxisKeys.axiskeys(C, 3)) == inmodes && collect(AxisKeys.axiskeys(C, 4)) == inports &&
             size(C, 5) == length(wv) && collect(AxisKeys.axiskeys(C, 5)) == collect(AxisKeys.axiskeys(S, 5))) || throw(ArgumentError(
@@ -3277,31 +3324,12 @@ function LinearizedScattering(lin, wp::Real; ports = nothing, zref = 50.0,
             end
         end
         vscale = max(1.0, maximum(abs, Ca))
-        vproviders = AbstractMatrixProvider[]
-        for k in ks
-            list = sort!(get(vsamples, k, Tuple{Float64,Matrix{Complex{Float64}}}[]); by = first)
-            nus = Float64[]
-            mats = Matrix{Complex{Float64}}[]
-            for (nu, M) in list
-                if !isempty(nus) && samefrequency(nu, nus[end], wp)
-                    d = maximum(abs, M .- mats[end])
-                    d <= noise.atol*vscale || throw(ArgumentError(lazy"the stated covariance is not Hermitian over the modes: the samples of the harmonic $(k) at $(nu) rad/s from two mode pairs differ by $(d) against the largest entry $(vscale)."))
-                    continue
-                end
-                push!(nus, nu)
-                push!(mats, M)
-            end
-            values = Array{Complex{Float64},3}(undef, n, n, length(nus))
-            for j in eachindex(nus)
-                values[:, :, j] .= mats[j]
-            end
-            push!(vproviders, piecewisetable(nus, values; interpolation = interpolation, step = step))
-        end
-        NoiseCovariance(vproviders, noise.interpolation, noise.extrapolation, noise.atol, noise.completed, noise.padding)
+        vproviders = harmonictables(vsamples, ks, n, wp, step, noise.interpolation, noise.atol*vscale,
+            (k, nu, d) -> "the stated covariance is not Hermitian over the modes: the samples of the harmonic $(k) at $(nu) rad/s from two mode pairs differ by $(d) against the largest entry $(vscale).")
+        NoiseCovariance(vproviders, noise.interpolation, :zero, noise.atol, noise.completed, noise.padding)
     else
         noise
     end
-    isfinite(phase) || throw(ArgumentError("the pump phase must be finite."))
     checkdcmodel(dcmodel, n, stated, Float64(atol))
     built = LinearizedScattering(ks, providers, wp, Float64(phase), n,
         zrefvector(zref, n), grounded, stated, dcmodel, envelope, Float64(atol))
@@ -3315,7 +3343,7 @@ function LinearizedScattering(lin, wp::Real; ports = nothing, zref = 50.0,
     # the discrepancy of the data, which atol admits and which is found
     # here, when the block is built, rather than at its first solve
     conjugateladder(built)
-    declared = stated isa NoiseCovariance ? max(Float64(atol), stated.atol) : Float64(atol)
+    declared = declaredtolerance(built)
     sq = Vector{Float64}(undef, nm)
     for i in eachindex(wv)
         sq .= wv[i] .+ modes .* wp
@@ -3323,6 +3351,62 @@ function LinearizedScattering(lin, wp::Real; ports = nothing, zref = 50.0,
         v <= declared || throw(ArgumentError(lazy"the block does not meet what it declares: at the frequency index $(i), over the modes of the solve, the violation of its losslessness or of the commutation relations of its stated covariance is $(v) of the square of its largest entry, against the $(declared) of atol and its noise model's. Declare its noise with noise = NoiseCovariance(linearized.Cnoise) from a solve with returnCnoise = true, leave a pump port out with the ports keyword, or raise atol to admit the discrepancy between the solves the tables hold at one frequency."))
     end
     return built
+end
+
+# The unconverted response of a pumped block is that of a real system,
+# `H_0(-nu) = conj(H_0(nu))`, which the block evaluates as given at signed
+# frequencies: a constant meets it only if it is real, and a table
+# holding frequencies of both signs is held to it at each of its knots
+# whose negative it also holds, to `atol` of its largest entry, or of one
+# for entries below one. A callable is taken as given.
+function checkrealresponse(p::AbstractMatrixProvider, atol::Float64)
+    if p isa ConstantMatrixProvider
+        d = maximum(x -> abs(imag(x)), p.A; init = 0.0)
+        d <= atol*max(1.0, maximum(abs, p.A; init = 0.0)) || throw(ArgumentError(lazy"a constant unconverted response H_0 is that of a real system, H_0(-nu) = conj(H_0(nu)), only if it is real, and this one has an imaginary part of $(d); state a response which depends on frequency as a table or a callable."))
+        return nothing
+    end
+    nus = filter(nu -> holdsdata(p, nu) && holdsdata(p, -nu), unique!(abs.(tableknots(p))))
+    isempty(nus) && return nothing
+    n = providersize(p)
+    A = Array{Complex{Float64},3}(undef, n, n, length(nus))
+    B = similar(A)
+    evaluateprovider!(A, p, nus)
+    evaluateprovider!(B, p, -nus)
+    scale = max(1.0, maximum(abs, A))
+    for i in eachindex(nus)
+        d = maximum(abs, view(B, :, :, i) .- conj.(view(A, :, :, i)))
+        d <= atol*scale || throw(ArgumentError(lazy"the unconverted response H_0 is that of a real system, H_0(-nu) = conj(H_0(nu)), but at $(nus[i]) rad/s the table differs from that by $(d) against its largest entry $(scale); raise atol to admit a discrepancy of the data."))
+    end
+    return nothing
+end
+
+# The samples `(nu, M)` of each harmonic in `ks`, from every mode pair of
+# a solve, as a table band by band (see piecewisetable): the samples at
+# one frequency from several mode pairs are one sample, which one
+# periodic steady state gives alike, so they must agree to `tol`, and
+# `mismatch(k, nu, d)` says where they do not.
+function harmonictables(samples, ks, n::Int, wp, step, interpolation::Symbol, tol, mismatch)
+    providers = AbstractMatrixProvider[]
+    for k in ks
+        list = sort!(samples[k]; by = first)
+        nus = Float64[]
+        mats = Matrix{Complex{Float64}}[]
+        for (nu, M) in list
+            if !isempty(nus) && samefrequency(nu, nus[end], wp)
+                d = maximum(abs, M .- mats[end])
+                d <= tol || throw(ArgumentError(mismatch(k, nu, d)))
+                continue
+            end
+            push!(nus, nu)
+            push!(mats, M)
+        end
+        values = Array{Complex{Float64},3}(undef, n, n, length(nus))
+        for j in eachindex(nus)
+            values[:, :, j] .= mats[j]
+        end
+        push!(providers, piecewisetable(nus, values; interpolation = interpolation, step = step))
+    end
+    return providers
 end
 
 """

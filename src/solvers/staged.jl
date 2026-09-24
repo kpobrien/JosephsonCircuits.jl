@@ -11,7 +11,6 @@ ran, including stalled steps and growth retreats, so the whole
 continuation walk can be examined afterwards.
 
 # Fields
-- `label`: `"staged"`.
 - `converged`: whether this attempt's inner solve converged.
 - `iterations`: total inner Newton iterations of the attempt.
 - `grid`: the harmonic truncation the attempt solved on.
@@ -32,7 +31,6 @@ continuation walk can be examined afterwards.
     [`NewtonKrylov`](@ref).
 """
 struct StagedStageInfo <: AbstractStageInfo
-    label::String
     converged::Bool
     iterations::Int
     grid::Tuple
@@ -152,8 +150,14 @@ and `solverinfo.sourcefold` holds the last converged drive fraction (it
 stays `NaN` for the other ways a schedule ends). No path throws: a
 schedule which cannot reach the point (its attempts spent, a carried
 point which does not reconverge, a first stage which converges at no
-drive down to the minimum step) warns, returns its last attempt marked
-not converged, and records the whole walk in `solverinfo.stages`.
+drive down to the minimum step) warns, returns not converged, and records
+the whole walk in `solverinfo.stages`. What it returns is at the modes of
+the finest grid, at full drive and with the keyed arrays and the
+operating point asked for, like the outcome of a direct method which
+does not converge: its last attempt when that was such a solve, and
+otherwise its last converged point, or its last attempt when nothing
+converged, carried to the finest grid and evaluated there by the inner
+method given no iterations.
 
 # Keywords
 - `grids = defaultgridladder(Nharmonics)`: the coarse to fine ladder of
@@ -242,7 +246,8 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     end
     scaled(s) = SourceTuple{N}[(mode = t.mode, port = t.port,
         current = s*t.current) for t in sources]
-    solve(state, s, x0, final) = hbnlsolve(w, scaled(s), state.freq,
+    solve(state, s, x0, final; steps = final ? iterations :
+            interioriterations) = hbnlsolve(w, scaled(s), state.freq,
         state.indices, psc, drivenmatrices(state.nm, psc.componenttypes, s);
         reuse = state.reuse,
         method = (final || interiorescalation) ? inner :
@@ -260,7 +265,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
         returnoperatingpoint = final ? returnoperatingpoint : false,
         backend = backend,
         atol = final ? atol : interioratol,
-        iterations = final ? iterations : interioriterations)
+        iterations = steps)
 
     gi = 1
     state = gridstate(grids[gi])   # what the stages of the current grid share
@@ -272,11 +277,12 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
     stagerecords = AbstractStageInfo[]
     pendinggrow = false
     last = nothing      # the most recent attempt, converged or not
+    lastfinal = false   # whether it was a solve at full drive on the finest grid
     gaveup = false      # the schedule ended without the requested point
     fold = NaN          # the last converged drive fraction below a fold
     record = function (cand, grid, sfrom, starget, action, accepted, secs)
         si = cand.solverinfo
-        push!(stagerecords, StagedStageInfo("staged", si.converged,
+        push!(stagerecords, StagedStageInfo(si.converged,
             sum(st -> st.iterations, si.stages; init = 0), grid,
             Float64(sfrom), Float64(starget), Float64(starget - sfrom),
             action, accepted, secs, Float64(si.finalresidual), si.stages))
@@ -293,7 +299,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
         final = gi == length(grids) && starget >= 1.0
         t0 = time_ns()
         cand = solve(state, starget, x, final)
-        last = cand
+        last, lastfinal = cand, final
         ok = cand.solverinfo.converged
         # the first solve after carrying a full drive point to a larger
         # grid is a growth, not a drive advance
@@ -354,7 +360,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
             for f in factors
                 t0 = time_ns()
                 re = solve(state, f*s, x, false)
-                last = re
+                last, lastfinal = re, false
                 record(re, grids[gi], s, f*s, :grow,
                     re.solverinfo.converged, (time_ns() - t0)/1e9)
                 verbose && println("staged: ", what, grids[gi], " at s=",
@@ -385,7 +391,7 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
             if starget < 1.0 && !isnothing(x)
                 t0 = time_ns()
                 jump = solve(state, 1.0, x, true)
-                last = jump
+                last, lastfinal = jump, true
                 record(jump, grids[gi], s, 1.0, :final,
                     jump.solverinfo.converged, (time_ns() - t0)/1e9)
                 verbose && println("staged: branch-end jump to s=1.0 |F|=",
@@ -402,10 +408,19 @@ function stagedhbnlsolve(inner::AbstractHBNonlinearSolver, m::Staged,
             break
         end
     end
-    # a schedule which gave up returns its last attempt, marked not
-    # converged whatever that attempt was, with the whole walk recorded;
-    # one which did not has its outcome checked, once
-    if gaveup
+    # a schedule which gave up returns not converged, with the whole walk
+    # recorded, and at the modes, the drive and with the outputs asked for:
+    # its last attempt when that was a solve at full drive on the finest
+    # grid, and otherwise its last converged point, or its last attempt when
+    # nothing converged, carried to the finest grid and evaluated there at
+    # full drive without a step. One which did not give up has its outcome
+    # checked, once
+    if gaveup && !lastfinal
+        finest = gi == length(grids) ? state : gridstate(grids[end])
+        out = solve(finest, 1.0,
+            stagedembed(something(out, last), finest.freq.modes), true;
+            steps = 0)
+    elseif gaveup
         out = last
     elseif warnnotconverged
         checkjunctioncurrents(out, psc)

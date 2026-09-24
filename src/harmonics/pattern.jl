@@ -1,8 +1,7 @@
 # The sparsity structures of the Jacobians on a backend: the real pattern
 # expanded from the complex one, the complex pattern of the Josephson
-# couplings, their transposes, the stored contributions grouped by the entry
-# they land in, and the sparse matrix whose values live on the device, with
-# its products.
+# couplings, their transposes, and the sparse matrix whose values live on
+# the device, with its products.
 #
 # `deviceexpandrealpattern` expands the complex pattern into the real one in
 # parallel: the number of real entries each complex index contributes is
@@ -69,37 +68,38 @@ end
 end
 
 """
-    deviceexpandrealpattern(outerptr, outerrowval, outerlayout::ModeLayout,
-        innerlayout::ModeLayout, n::Integer, backend)
+    deviceexpandrealpattern(outerptr, outerrowval, layout::ModeLayout,
+        n::Integer, backend)
 
-Expand a complex sparsity structure into the structure of its real
-representation, where each complex entry becomes a two by two real block, and
-return it on `backend` as a [`DeviceSparsePattern`](@ref).
+Expand the structure of a square complex matrix, whose rows and columns are
+both in `layout`, into the structure of its real representation, where each
+complex entry becomes a block of up to two by two real entries, and return it
+on `backend` as a [`DeviceSparsePattern`](@ref).
 
 The number of real entries a complex index contributes is the same for every
 one of its real columns, so the column pointer is a gather of per index counts
 followed by a prefix sum, and the row indices are then one work item per
 column with nothing to coordinate.
 """
-function deviceexpandrealpattern(outerptr, outerrowval,
-    outerlayout::ModeLayout, innerlayout::ModeLayout, n::Integer, backend)
+function deviceexpandrealpattern(outerptr, outerrowval, layout::ModeLayout,
+    n::Integer, backend)
 
     d = x -> tobackend(backend, convert(Vector{Int}, x))
     # a pattern built on the backend already is adopted rather than copied
     adopt = x -> x isa Vector ? d(x) : x
     douterptr, douterrowval = adopt(outerptr), adopt(outerrowval)
-    dinnerptr = d(collect(innerlayout.ptr))
-    douterinv = d(collect(outerlayout.inv))
+    dptr = d(collect(layout.ptr))
+    dinv = d(collect(layout.inv))
 
     widthsum = KernelAbstractions.allocate(backend, Int, n)
     outerwidthsumkernel!(backend, 64)(widthsum, douterptr, douterrowval,
-        dinnerptr; ndrange = n)
+        dptr; ndrange = n)
     KernelAbstractions.synchronize(backend)
 
     # every real column of complex index `o` holds `widthsum[o]` entries
-    rdim = outerlayout.rdim
+    rdim = layout.rdim
     wide = KernelAbstractions.allocate(backend, Int, rdim + 1)
-    copyto!(view(wide, 2:rdim+1), widthsum[douterinv])
+    copyto!(view(wide, 2:rdim+1), widthsum[dinv])
     copyto!(view(wide, 1:1), [1])
     cumsum!(wide, wide)
     nz = Int(Array(view(wide, rdim+1:rdim+1))[1]) - 1
@@ -109,11 +109,10 @@ function deviceexpandrealpattern(outerptr, outerrowval,
     Ti = nz < typemax(Int32) ? Int32 : Int
     colptr = Ti === Int ? wide : convert(typeof(similar(wide, Ti)), wide)
     rowval = KernelAbstractions.allocate(backend, Ti, nz)
-    expandpatternkernel!(backend, 64)(rowval, colptr, douterinv, douterptr,
-        douterrowval, dinnerptr; ndrange = rdim)
+    expandpatternkernel!(backend, 64)(rowval, colptr, dinv, douterptr,
+        douterrowval, dptr; ndrange = rdim)
     KernelAbstractions.synchronize(backend)
-    return DeviceSparsePattern{Ti,typeof(rowval)}(colptr, rowval,
-        innerlayout.rdim, rdim)
+    return DeviceSparsePattern{Ti,typeof(rowval)}(colptr, rowval, rdim, rdim)
 end
 
 # ---------------------------------------------------------------------------
@@ -315,8 +314,7 @@ function realjacobianstructure(Amatrixindices::Matrix,
         activemoderows(Nmodes, Amatrixindices, Amatrixconjindices),
         (invLnm, Gnm, Cnm), backend)
     Cx = transposed ? transposepattern(C, backend) : C
-    Pd = deviceexpandrealpattern(Cx.colptr, Cx.rowval, layout, layout, n,
-        backend)
+    Pd = deviceexpandrealpattern(Cx.colptr, Cx.rowval, layout, n, backend)
     P = backend isa CPU ?
         SparseMatrixCSC(Pd.m, Pd.n, Array(Pd.colptr), Array(Pd.rowval),
             zeros(T, nnz(Pd))) : Pd
@@ -336,8 +334,10 @@ travel with the destinations.
 The grouping is stable, which is what leaves the column indices of a
 transposed structure ascending within each row ([`transposepattern`](@ref)).
 A histogram with an atomic cursor is not stable, so the order the positions
-were emitted in is restored afterwards by sorting each segment, which is cheap
-because the segments are short.
+were emitted in is restored afterwards by sorting each segment. A segment is
+a row of the structure being transposed, and the sort costs its length
+times the displacement the cursor introduced, which is none on the CPU
+backend and depends on the scheduling on a device.
 """
 function segmentbydest!(seg::AbstractVector, perm::AbstractVector,
     dest::AbstractVector, backend)
@@ -396,8 +396,7 @@ end
 end
 
 # an insertion sort per segment, restoring the emission order the atomic
-# cursor above scrambled. The segments average between one and two entries, so
-# this is a handful of comparisons for the whole matrix.
+# cursor above scrambled; see `segmentbydest!` for its cost
 @kernel function sortsegments!(perm, @Const(seg))
     q = @index(Global)
     @inbounds begin

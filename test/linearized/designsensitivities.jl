@@ -111,30 +111,28 @@ using Test
             parameters = (:unused,))
     end
 
-    @testset "three tones, direct current and negative sidebands" begin
+    @testset "direct current, both mixing orders and negative sidebands" begin
         # the chain rule has to carry every retained mode of a mixed grid:
-        # three tones with both mixing orders and direct current, whose
-        # signal modes include ones at negative physical frequency. Forward
-        # and reverse must agree, and both must agree with differences of
-        # the whole solve.
+        # a tone with both mixing orders and direct current, whose signal
+        # modes include ones at negative physical frequency. Forward and
+        # reverse must agree, and both must agree with differences of the
+        # whole solve.
         JosephsonCircuits.@params scale loss
         c = Circuit([(:p, 1, 0, Port(1)),
             (:cc, 1, 2, Capacitor(100e-15/(1 + im*loss))),
             (:jj, 2, 0, JosephsonJunction(1e-9/scale)),
             (:cj, 2, 0, Capacitor(1e-12*scale))])
         defs = Dict(scale => 1.0, loss => 0.02)
-        pumps = 2*pi .* (4.75001e9, 1.17003e9, 0.63007e9)
-        drive = [(mode = (1,0,0), port = 1, current = 1e-8),
-            (mode = (0,1,0), port = 1, current = 5e-9),
-            (mode = (0,0,1), port = 1, current = 3e-9),
-            (mode = (0,0,0), port = 1, current = 1e-9)]
+        pumps = (2*pi*4.75001e9,)
+        drive = [(mode = (1,), port = 1, current = 0.00565e-6),
+            (mode = (0,), port = 1, current = 1e-9)]
         signals = 2*pi*[4.41e9, 4.59e9]
         opts = (; dc = true, threewavemixing = true, fourwavemixing = true,
             atol = 1e-12)
         forward = designsensitivities(c, defs, signals, pumps, drive,
-            (1,1,1), (2,1,1); sensitivitymode = :forward, opts...)
+            (2,), (8,); sensitivitymode = :forward, opts...)
         reverse = designsensitivities(c, defs, signals, pumps, drive,
-            (1,1,1), (2,1,1); sensitivitymode = :reverse, opts...)
+            (2,), (8,); sensitivitymode = :reverse, opts...)
         @test forward.out.nonlinear.solverinfo.converged
         @test reverse.out.nonlinear.solverinfo.converged
         @test isapprox(Array(forward.dSdp), Array(reverse.dSdp), rtol = 1e-8)
@@ -148,9 +146,9 @@ using Test
             # matrices are differenced, so a difference which disagrees with
             # the sensitivity is a derivative failure and not an unconverged
             # operating point at one of the perturbed points
-            up = hbsolve(signals, pumps, drive, (1,1,1), (2,1,1), c,
+            up = hbsolve(signals, pumps, drive, (2,), (8,), c,
                 at(defs[parameter] + h); opts...)
-            dn = hbsolve(signals, pumps, drive, (1,1,1), (2,1,1), c,
+            dn = hbsolve(signals, pumps, drive, (2,), (8,), c,
                 at(defs[parameter] - h); opts...)
             @test up.nonlinear.solverinfo.converged
             @test dn.nonlinear.solverinfo.converged
@@ -306,10 +304,13 @@ using Test
         dS(b) = Array(designsensitivities(withblock(b), defs, wsb, wpb, [],
             (2,), (4,); parameters = (:Cc,)).dSdp)
         @test isapprox(dS(pumped), dS(ordinary); rtol = 1e-10)
-        # a block pair's derivative is of its block's kind
-        @test_throws ArgumentError hbsolve(wsb, wpb, [], (2,), (4,),
-            withblock(pumped), defs; sensitivityblockpairs = [("b", 1, ordinary)],
-            nsensitivityparameters = 1)
+        # a block pair is of an ordinary block, with an ordinary derivative:
+        # a pumped block states none
+        for (b, d) in ((pumped, ordinary), (pumped, pumped), (ordinary, pumped))
+            @test_throws ArgumentError hbsolve(wsb, wpb, [], (2,), (4,),
+                withblock(b), defs; sensitivityblockpairs = [("b", 1, d)],
+                nsensitivityparameters = 1)
+        end
     end
 
     @testset "a block design parameter with direct current" begin

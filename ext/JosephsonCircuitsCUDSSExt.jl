@@ -18,12 +18,6 @@ using CUDSS
 using SparseArrays
 using LinearAlgebra
 
-# Replacing the values behind a solver was `cudss_set(solver, A)` in CUDSS
-# 0.4 and became `cudss_update` in later versions. Bind whichever this CUDSS
-# provides, so the extension works across both.
-const setmatrix! = isdefined(CUDSS, :cudss_update) ? CUDSS.cudss_update :
-    CUDSS.cudss_set
-
 import JosephsonCircuits: _cudss_factorize, _cudss_factorize!,
     _cudss_sweep, _cudss_sweepsolve!, _cudss_sweeprefactorize!, _cudss_sweepapply!,
     myldiv!, tobackend, cscvaluepermutation, rowpointer, columnindices
@@ -45,6 +39,51 @@ import JosephsonCircuits: _cudss_factorize, _cudss_factorize!,
 # `CuArray`, so they qualify, but a caller with anything else still gets a
 # correct answer through the staging path below.
 bindable(v, ::Type{T}, n::Integer) where {T} = v isa CuVector{T} && length(v) == n
+
+# Bind the solution and right hand side descriptors of a uniform batch to
+# `X` and `B`, `(n, nrhs, nbatch)` device arrays. A batch of one is not a
+# batch: cuDSS rejects the batched descriptors, so the single system's
+# matrices are bound directly.
+function bindbatch!(xdesc, bdesc, X::CuArray{T,3}, B::CuArray{T,3}) where {T}
+    if size(X, 3) > 1
+        CUDSS.cudss_update(xdesc, X)
+        CUDSS.cudss_update(bdesc, B)
+    else
+        CUDSS.cudss_update(xdesc, reshape(X, size(X, 1), :))
+        CUDSS.cudss_update(bdesc, reshape(B, size(B, 1), :))
+    end
+    return xdesc, bdesc
+end
+
+# The settings every factorization here is made with, then the caller's
+# own (the keywords of the factorization object), so that either can be
+# overridden. An ideal short scattering block has S = -1, so its
+# constitutive coefficient C = R^(1/2)(I + S) is exactly zero: the block's
+# auxiliary port current appears with a zero diagonal, a pure constraint
+# row. Host KLU pivots through that structure. cuDSS pivots within a
+# supernode, and on such systems it has returned a factorization whose
+# solves fall short of the host's, which stalls the Newton-Krylov solve,
+# and a batched factorization without a number; the matching which would
+# permute and scale the matrix ahead of the factorization is not supported
+# for a uniform batch. So pivots below a threshold are perturbed and two
+# steps of iterative refinement clean up after the perturbation. The
+# threshold is absolute, below the scaled Jacobian entries, which are of
+# order one, and below the entries of the frequency sweep, which divides
+# each row and then each column by its largest entry
+# (`SweepEquilibration`), so a well pivoted system is unaffected; the
+# transient batch carries the scale of
+# its own systems and asks for no refinement, since its Newton residual
+# check catches what a solve leaves (`transientfactorization`).
+#
+# https://docs.nvidia.com/cuda/cudss/advanced_features.html#numerical-pivoting
+function configure!(solver; kwargs...)
+    CUDSS.cudss_set(solver, "pivot_epsilon", 1e-8)
+    CUDSS.cudss_set(solver, "ir_n_steps", 2)
+    for (k, v) in kwargs
+        CUDSS.cudss_set(solver, string(k), v)
+    end
+    return solver
+end
 
 # ---------------------------------------------------------------------------
 # unbatched: one sparse system on the device, analysis reused across steps
@@ -108,29 +147,15 @@ end
 # The descriptors start bound to the owned buffers, which is what the
 # analysis and every later refactorization use. The keywords of the
 # factorization object are cuDSS configuration settings applied after the
-# defaults below, so a caller whose system needs none of the refinement
-# (the transient's diagonally dominant step matrix) can turn it off.
+# defaults (`configure!`), so a caller whose system needs none of the
+# refinement (the transient's diagonally dominant step matrix) can turn it
+# off.
 function _cudss_factorize(Agpu::CuSparseMatrixCSR{Tv},
     perm::Vector{Int} = Int[]; kwargs...) where {Tv}
     n = size(Agpu, 1)
     x = CUDA.zeros(Tv, n)
     b = CUDA.zeros(Tv, n)
-    solver = CudssSolver(Agpu, "G", 'F')
-    # An ideal short scattering block has S = -1, so its constitutive
-    # coefficient C = R^(1/2)(I + S) is exactly zero: the block's auxiliary
-    # port current appears with a zero diagonal, a pure constraint row.
-    # Host KLU pivots through that structure; on such systems cuDSS with
-    # its defaults has returned a factorization whose solves fall short of
-    # the host's, which stalls the Newton-Krylov solve. Pivots below a
-    # threshold are perturbed and two steps of iterative refinement clean
-    # up after the perturbation. The threshold is below the scaled Jacobian
-    # entries, which are of order one, so a well pivoted system is
-    # unaffected.
-    CUDSS.cudss_set(solver, "pivot_epsilon", 1e-8)
-    CUDSS.cudss_set(solver, "ir_n_steps", 2)
-    for (k, v) in kwargs
-        CUDSS.cudss_set(solver, string(k), v)
-    end
+    solver = configure!(CudssSolver(Agpu, "G", 'F'); kwargs...)
     xdesc = CudssMatrix(x)
     bdesc = CudssMatrix(b)
     cudss("analysis", solver, xdesc, bdesc)
@@ -162,26 +187,23 @@ end
 # last solve left them bound to the caller's vectors, which may since have
 # been freed. Rebind them to the owned buffers first.
 function refactorize!(F::CUDSSSolve)
-    setmatrix!(F.solver, F.A)
+    CUDSS.cudss_update(F.solver, F.A)
     CUDSS.cudss_update(F.xdesc, F.x)
     CUDSS.cudss_update(F.bdesc, F.b)
     cudss("refactorization", F.solver, F.xdesc, F.bdesc)
     return F
 end
 
+# the caller's vectors bound directly when they qualify, and otherwise
+# staged through the owned buffers
 function myldiv!(x::AbstractVector, F::CUDSSSolve, b::AbstractVector)
     T, n = eltype(F.x), length(F.x)
-    if bindable(x, T, n) && bindable(b, T, n)
-        CUDSS.cudss_update(F.xdesc, x)
-        CUDSS.cudss_update(F.bdesc, b)
-        cudss("solve", F.solver, F.xdesc, F.bdesc)
-    else
-        copyto!(F.b, b)
-        CUDSS.cudss_update(F.xdesc, F.x)
-        CUDSS.cudss_update(F.bdesc, F.b)
-        cudss("solve", F.solver, F.xdesc, F.bdesc)
-        copyto!(x, F.x)
-    end
+    direct = bindable(x, T, n) && bindable(b, T, n)
+    direct || copyto!(F.b, b)
+    CUDSS.cudss_update(F.xdesc, direct ? x : F.x)
+    CUDSS.cudss_update(F.bdesc, direct ? b : F.b)
+    cudss("solve", F.solver, F.xdesc, F.bdesc)
+    direct || copyto!(x, F.x)
     return x
 end
 
@@ -233,41 +255,11 @@ function _cudss_sweep(rowptr::CuVector{INT}, colind::CuVector{INT},
     nrhs, nbatch = size(X, 2), size(X, 3)
     size(nzval, 2) == nbatch || throw(DimensionMismatch(
         "the value matrix and the solution array must agree on the batch size."))
-    solver = CudssSolver(rowptr, colind, vec(nzval), "G", 'F')
-    # The settings of a batched solve, shared by the frequency sweep and
-    # the transient batch and applied before the caller's own so that
-    # either can be overridden. A scattering block's auxiliary port current
-    # can appear with a zero diagonal, a pure constraint row. cuDSS pivots
-    # within a supernode, and on such systems that search has left the
-    # batched factorization without a number, so pivots below a threshold
-    # are perturbed and two steps of iterative refinement clean up after
-    # the perturbation, as in the unbatched `_cudss_factorize`; the
-    # matching which would permute
-    # and scale the matrix ahead of the factorization is not supported for
-    # a uniform batch. The threshold is absolute, so it is meaningful
-    # against the size of the entries: the frequency sweep
-    # divides each column by its largest entry before the solve (see
-    # `ColumnEquilibration`), while the transient batch carries the scale
-    # of its own systems and asks for no refinement, since its Newton
-    # residual check catches what a solve leaves (`transientfactorization`).
-    #
-    # https://docs.nvidia.com/cuda/cudss/advanced_features.html#numerical-pivoting
-    cudss_set(solver, "pivot_epsilon", 1e-8)
-    cudss_set(solver, "ir_n_steps", 2)
-    for (k, v) in kwargs
-        cudss_set(solver, string(k), v)
-    end
-    # a batch of one is not a batch: cuDSS rejects the batched descriptors,
-    # so bind the single system's matrices directly
-    xdesc, bdesc = if nbatch > 1
-        cudss_set(solver, "ubatch_size", nbatch)
-        xd = CudssMatrix(T, n, nrhs; nbatch = nbatch)
-        bd = CudssMatrix(T, n, nrhs; nbatch = nbatch)
-        CUDSS.cudss_update(xd, X); CUDSS.cudss_update(bd, B)
-        xd, bd
-    else
-        CudssMatrix(reshape(X, n, nrhs)), CudssMatrix(reshape(B, n, nrhs))
-    end
+    solver = configure!(CudssSolver(rowptr, colind, vec(nzval), "G", 'F');
+        kwargs...)
+    nbatch > 1 && cudss_set(solver, "ubatch_size", nbatch)
+    xdesc, bdesc = bindbatch!(CudssMatrix(T, n, nrhs; nbatch = nbatch),
+        CudssMatrix(T, n, nrhs; nbatch = nbatch), X, B)
     cudss("analysis", solver, xdesc, bdesc)
     cudss("factorization", solver, xdesc, bdesc)
     return CUDSSSweep{T,INT,typeof(solver),typeof(xdesc)}(
@@ -289,22 +281,14 @@ end
 # `X` and `B`, `(n, nrhs, nbatch)` device arrays of the batch's shape, bound
 # for the call, with no synchronization
 function _cudss_sweeprefactorize!(S::CUDSSSweep)
-    setmatrix!(S.solver, S.rowptr, S.colind, vec(S.nzval))
-    if S.nbatch > 1
-        CUDSS.cudss_update(S.xdesc, S.X); CUDSS.cudss_update(S.bdesc, S.B)
-    else
-        CUDSS.cudss_update(S.xdesc, reshape(S.X, size(S.X, 1), :)); CUDSS.cudss_update(S.bdesc, reshape(S.B, size(S.B, 1), :))
-    end
+    CUDSS.cudss_update(S.solver, S.rowptr, S.colind, vec(S.nzval))
+    bindbatch!(S.xdesc, S.bdesc, S.X, S.B)
     cudss("refactorization", S.solver, S.xdesc, S.bdesc)
     return S
 end
 function _cudss_sweepapply!(S::CUDSSSweep, X::CuArray{T,3}, B::CuArray{T,3}) where {T}
     size(X) == size(S.X) && size(B) == size(S.B) || throw(DimensionMismatch("the batch solve takes arrays of the batch's shape."))
-    if S.nbatch > 1
-        CUDSS.cudss_update(S.xdesc, X); CUDSS.cudss_update(S.bdesc, B)
-    else
-        CUDSS.cudss_update(S.xdesc, reshape(X, size(X, 1), :)); CUDSS.cudss_update(S.bdesc, reshape(B, size(B, 1), :))
-    end
+    bindbatch!(S.xdesc, S.bdesc, X, B)
     cudss("solve", S.solver, S.xdesc, S.bdesc)
     return X
 end

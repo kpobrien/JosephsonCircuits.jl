@@ -51,6 +51,7 @@ end
 
         @test_throws ArgumentError Floquet(ranktol = 0.0)
         @test_throws ArgumentError Floquet(benefittol = -1.0)
+        @test_throws ArgumentError Floquet(size = 8, candidates = 4)
         @test_throws DimensionMismatch JC.seeddeflation!(pc, randn(7, 2))
         # a seed which changes the bank marks the active blocks stale even
         # when the bank's count does not change: with the bank full, an
@@ -124,7 +125,9 @@ end
         JC.seeddeflation!(pc, Q[:, 1:6]; source = :test)
         JC._rebuildfloquet!(pc)
         @test JC.deflationsize(pc) == nbad
-        @test all(JC.correctionstrengths(pc) .> 1.0)
+        # each direction kept is one the base misses: its correction
+        # strength, norm(x - B0*J*x)/norm(x), is above one
+        @test all(norm(x - B0*(J*x))/norm(x) > 1.0 for x in eachcol(pc.X))
 
         # every candidate handled by the base leaves an empty active set
         pc2 = JC.FloquetPreconditioner(Floquet(), DensePC(B0), jvp!, zeros(n))
@@ -508,70 +511,4 @@ end
         end
     end
 
-    # the whole path, on a driven Josephson chain
-    function chain(Ncell, Lj)
-        c = Any[(:P1, 1, 0, Port(1; Z0 = 50.0))]
-        for i in 1:Ncell
-            push!(c, (Symbol(:Lj, i), i, i + 1, JosephsonJunction(Lj)))
-            push!(c, (Symbol(:C, i), i, 0, Capacitor(40e-15)))
-        end
-        push!(c, (Symbol(:C, Ncell + 1), Ncell + 1, 0, Capacitor(40e-15)))
-        push!(c, (:R2, Ncell + 1, 0, Resistor(50.0)))
-        return Circuit(c)
-    end
-
-    @testset "the floquet form converges and harvests on a circuit" begin
-        w = (2*pi*8e9,); Nh = (6,)
-        src = [(mode = (1,), port = 1, current = 2.5e-6)]
-        circ = chain(12, 100e-12)
-
-        ref = JC.hbnlsolve(w, Nh, src, circ, Dict(); method = Newton(),
-            keyedarrays = false)
-        sol = JC.hbnlsolve(w, Nh, src, circ, Dict(); method = NewtonKrylov(preconditioner = Floquet(size = 8, harvest = 3),
-                escalate = false),
-            keyedarrays = false)
-        @test sol.solverinfo.converged
-        st = sol.solverinfo.stages[1]
-        @test !isempty(st.krylov)
-        # something was harvested and built into the preconditioner
-        @test any(k -> k.deflationrebuilds >= 1, st.krylov)
-        @test any(k -> k.deflationsize >= 1, st.krylov)
-        # and the answer is the one the direct solve gives
-        @test isapprox(sol.nodeflux, ref.nodeflux; rtol = 1e-6,
-            atol = 1e-12*maximum(abs, ref.nodeflux))
-
-        @test_throws ArgumentError Floquet(size = 8, candidates = 4)
-
-        # and the same through hbsolve, which forwards the deflation
-        # options
-        hs = JC.hbsolve(2*pi*8.1e9, w, src, (1,), Nh, circ, Dict();
-            method = NewtonKrylov(preconditioner = Floquet(size = 8, harvest = 3)),
-            keyedarrays = false)
-        @test hs.nonlinear.solverinfo.converged
-        @test any(k -> k.deflationsize > 0,
-            hs.nonlinear.solverinfo.stages[1].krylov)
-    end
-
-    @testset "the subspace is inherited across a cached sweep" begin
-        w = (2*pi*8e9,); Nh = (6,)
-        src = [(mode = (1,), port = 1, current = 2.5e-6)]
-        Ljs = range(100e-12, 102e-12; length = 3)
-        # the junction inductance as a parameter of the circuit
-        circ = chain(12, :Lj)
-
-        cache = JC.hbcache(w, Nh, src, circ, Dict(:Lj => Ljs[1]);
-            method = NewtonKrylov(preconditioner = Floquet(size = 8, harvest = 3),
-                escalate = false))
-        first = Int[]
-        for Lj in Ljs
-            nl = JC.hbsolve!(cache, (; Lj = Lj))
-            @test nl.solverinfo.converged
-            st = nl.solverinfo.stages[end]
-            push!(first, isempty(st.krylov) ? 0 : st.krylov[1].deflationsize)
-        end
-        # the first point starts cold; every later one starts from the
-        # directions its predecessor found
-        @test first[1] == 0
-        @test all(>(0), first[2:end])
-    end
 end

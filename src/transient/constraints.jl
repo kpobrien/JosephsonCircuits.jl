@@ -69,7 +69,7 @@ struct ConstraintProjection{M, MP, VP}
     # of `pj`. The projection evaluates them on the host, from `hphi`, and
     # moves the result where a device array needs it, so one host table
     # serves both.
-    relationsp::JunctionRelations{Matrix{Float64},Vector{Bool}}
+    relationsp::JunctionRelations{Matrix{Float64},Vector{Int}}
     ZLZ::Matrix{Float64}
     Zcinj::SparseMatrixCSC{Float64,Int}
     Zcconstant::Vector{Float64}

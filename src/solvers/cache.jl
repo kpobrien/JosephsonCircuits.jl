@@ -29,7 +29,9 @@ succeeded, and a solve which does not converge also warns with the reason
 it stopped and leaves the stored operating point as it was. Check it: a
 solve which does not converge returns a state that looks like a solution
 and is not one, and comparing timings or gradients against it is
-meaningless.
+meaningless. A cache is mutable and every solve through it rewrites what
+it holds, so it belongs to one solve at a time: do not share a cache
+between concurrent solves; build one per task.
 """
 mutable struct HBCache{N,K,P}
     compiled::CompiledCircuit
@@ -49,8 +51,8 @@ mutable struct HBCache{N,K,P}
     x::Union{Nothing,Vector{Complex{Float64}}}
     converged::Bool
     nsolves::Int
-    # the system, the preconditioner and the Krylov vectors of the last
-    # solve, rebound to each new point rather than rebuilt; see `HBReuse`
+    # the system of the last solve and what its method solves with,
+    # rebound to each new point rather than rebuilt; see `HBReuse`
     reuse::HBReuse
     # the circuit matrices of the last point, refilled at the next
     nm::Union{Nothing,CircuitMatrices}
@@ -266,17 +268,20 @@ Returns the [`NonlinearHB`](@ref) solution; `cache.converged` reports
 whether it converged. A name of `p` which the definitions of the
 cache do not hold is an `ArgumentError`.
 
-The compiled circuit and the mode grid are reused, and so are the system,
-the preconditioner and the Krylov vectors of the previous solve, rebound to
-the new component values (see [`HBReuse`](@ref)); only the numeric matrices
-and the solve itself are recomputed. The matrices are refilled on the
+The compiled circuit and the mode grid are reused, and so are the system
+of the previous solve and what its method solves with, rebound to the new
+component values (see [`HBReuse`](@ref)): under `NewtonKrylov` the
+preconditioner and the Krylov vectors, under `Newton` and `QuasiNewton`
+the assembled Jacobian and its factorization, whose fill reducing ordering
+and symbolic analysis are kept. Only the numeric matrices and the solve
+itself are recomputed. The matrices are refilled on the
 patterns of the compiled circuit, which do not depend on the values, and
 assembled anew when a value changes the element type of its group (a
 resistance or a capacitance turned complex). A solve which does not
 converge leaves the stored point as it was, so the next one starts from
 the last solution rather than from a non-solution or from nothing;
 `warmstart = false` starts cold without discarding the stored point,
-unlike [`reset!`](@ref).
+unlike [`JosephsonCircuits.reset!`](@ref).
 """
 function hbsolve!(cache::HBCache, p::NamedTuple; warmstart::Bool = true)
     vvn = componentvalues(cache, p)

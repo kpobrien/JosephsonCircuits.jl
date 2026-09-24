@@ -128,12 +128,19 @@ isdefined(Main, :testchaincircuit) || include(joinpath(@__DIR__, "..", "testcirc
     @test_throws TypeError NewtonKrylov(refresh = :always)
     @test_throws ArgumentError Floquet(size = 0)
     @test_throws ArgumentError Floquet(Floquet())
+    @test_throws ArgumentError HarmonicBand(-1)
+    @test_throws ArgumentError HarmonicBand((2, -1))
+    @test_throws ArgumentError Staged(grids = [(0,), (8,)])
+    # and the loop its tolerances
+    @test_throws ArgumentError JosephsonCircuits.nlsolvekrylov!(fj!, jvp!,
+        zeros(2), [1.0, 1.0], ExactP(zeros(2, 2), nothing); rtol = NaN)
 end
 
 @testset "a single precision solve at the default tolerance" begin
     # the rounding floor the tolerance is raised to is that of the
     # precision the residual is evaluated in, so a single precision solve
-    # stops where single precision does, at the double precision solve's
+    # stops where single precision does, above the default tolerance which
+    # a double precision solve reaches, at the double precision solve's
     # point to what single precision holds
     circuit, defs = testjpacircuit()
     wp = (2*pi*4.75001e9,)
@@ -144,7 +151,39 @@ end
         method = NewtonKrylov(precision = Float32))
     @test single.solverinfo.converged
     @test single.solverinfo.stages[end].iterations < 10
-    @test isapprox(single.nodeflux, ref.nodeflux; rtol = 1e-4)
+    @test single.solverinfo.finalresidual > 1e-8
+    @test isapprox(single.nodeflux, ref.nodeflux; rtol = 1e-3)
+end
+
+# The direct current block is held in Float64 whatever precision the
+# periodic solve runs in, because it is small, exactly solved, and the
+# worst conditioned part of the problem. A single precision solve is then
+# as accurate as single precision allows, and needs a tolerance it can
+# meet: the default is absolute and sized for double precision.
+@testset "a single precision solve carries the direct current block" begin
+    c = Circuit(
+        [:p1 => Port(1; Z0 = 50.0), :c1 => Capacitor(1.0e-12)],
+        [[(:p1,1),(:c1,1)], [(:p1,2),(:c1,2), Ground]])
+    src = [(mode=(0,), port=1, current=1e-6),
+           (mode=(1,), port=1, current=1e-6)]
+    go(P; kw...) = hbnlsolve((2*pi*5e9,), (4,), src, c, Dict{Any,Any}();
+        keyedarrays = false, dc = true, odd = true, even = true,
+        method = NewtonKrylov(precision = P), kw...)
+
+    a = go(Float64)
+    b = go(Float32; rtol = 1e-6)
+    @test a.solverinfo.converged
+    @test b.solverinfo.converged
+    # the same answer, to what single precision can hold
+    @test isapprox(only(a.dcnodevoltage), only(b.dcnodevoltage);
+        rtol = 1e-6)
+    # and it stops where single precision runs out rather than at the
+    # tolerance it was handed: `rtol` would accept a relative residual
+    # of 1e-6 and the arithmetic reaches a few times `eps(Float32)`, so
+    # the bound sits between them rather than at one ulp, which a
+    # residual summed over the modes does not land on exactly
+    r = b.solverinfo.finalresidual/b.solverinfo.initialresidual
+    @test r <= 4*eps(Float32)
 end
 
 @testset "every solve ends with a reason" begin
@@ -160,21 +199,23 @@ end
         @test !spent.solverinfo.converged
         @test spent.solverinfo.stages[end].reason == :iterations
     end
-    # a work budget of one Arnoldi step per Newton step, spent on the
-    # first. Whether the budget or the iteration count runs out first, or
-    # the one step is enough after all, is not fixed, so the warning the
-    # solver makes when it gives up is taken rather than asserted; a
-    # message at error level would still fail the test
-    work = @test_logs min_level=Logging.Error hbnlsolve((wp,), (8,), src, circuit, defs;
-        iterations = 2,
-        method = NewtonKrylov(linearsolver = GMRES(restart = 1, maxrestarts = 1)))
-    @test work.solverinfo.stages[end].reason in (:work, :iterations, :converged)
+    # a work budget of two Arnoldi steps, one restart length per Newton
+    # step, which a block diagonal preconditioner on a longer chain spends
+    # within its first two linear solves
+    long, _ = testchaincircuit(12)
+    work = @test_logs (:warn,) hbnlsolve((2*pi*8e9,), (8,),
+        [(mode=(1,), port=1, current=3.2e-6)], long, defs; iterations = 2,
+        method = NewtonKrylov(preconditioner = BlockDiagonal(),
+            escalate = false,
+            linearsolver = GMRES(restart = 1, maxrestarts = 20)))
+    @test !work.solverinfo.converged
+    @test work.solverinfo.stages[end].reason === :work
     # a drive far beyond the self oscillation threshold has no operating
     # point the direct solvers can reach: they stop and say so, well within
     # their budgets, rather than spending them
     hard = [(mode=(1,), port=1, current=60e-6)]
     for m in (NewtonKrylov(preconditioner = BlockDiagonal(), escalate = false),
-            NewtonKrylov(), Newton())
+            NewtonKrylov(), Newton(), QuasiNewton())
         r = @test_logs (:warn,) match_mode=:any hbnlsolve(
             (wp,), (8,), hard, circuit, defs; iterations = 400, method = m)
         @test !r.solverinfo.converged
@@ -182,6 +223,7 @@ end
         @test r.solverinfo.stages[end].iterations < 400
         # the direct loop judges its creep against the steps left too, so
         # it ends within a few stall windows rather than near its budget
-        m isa Newton && @test r.solverinfo.stages[end].iterations < 100
+        m isa Union{Newton,QuasiNewton} &&
+            @test r.solverinfo.stages[end].iterations < 100
     end
 end

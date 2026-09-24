@@ -90,11 +90,9 @@ withprecision(f::BlockFactorization, ::Type{T}) where {T<:AbstractFloat} =
     BlockFactorization(f.singletons, T, f.refine)
 
 # the sparse factorization of the singleton modes' block diagonal: the one
-# given, or the backend's default as `hbnlsolve` picks it
-function singletonfactorization(f::BlockFactorization, backend)
-    isnothing(f.singletons) || return f.singletons
-    return backend isa CPU ? KLUfactorization() : CUDSSFactorization()
-end
+# given, or the backend's default
+singletonfactorization(f::BlockFactorization, backend) =
+    something(f.singletons, defaultfactorization(backend))
 
 # Supernodes of a few hundred rows keep the dense kernels busy without
 # spending fill on merged zeros. A kernel size, not a numerical parameter.
@@ -258,8 +256,7 @@ end
         rri = Int(rslots[r])
         rci = Int(cslots[c])
         acc = realstructureentry(T, rri, rci, Nmodes, Nfreq, ami, amc,
-            pairptr, pairrow, pairjunc, paircoef, lmolj, rlinv, rlptr, rlinv,
-            rlptr, phimatrix)
+            pairptr, pairrow, pairjunc, paircoef, lmolj, rlinv, rlptr, phimatrix)
         ci = Int(rlinv[rri]); dr = rri - Int(rlptr[ci])
         cj = Int(rlinv[rci]); dc = rci - Int(rlptr[cj])
         lin = realblockterm(sparselookup(lcolptr, lrowval, lnzval, ci, cj),
@@ -316,6 +313,32 @@ end
         k = (gid - 1) ÷ (m*W) + 1
         X[idx[i], j, k] -= Z[i, j, k]
     end
+end
+
+# The gather and the subtracting scatter of the substitutions: the kernels
+# above on a device, plain loops on the host, where a launch costs more than
+# the rows it moves and allocates at every call (`hostloop`)
+function gatherrows!(Z::AbstractArray{<:Any,3}, R::AbstractArray{<:Any,3},
+    idx::AbstractVector, backend)
+    if hostloop(backend, length(Z))
+        @inbounds for k in axes(Z, 3), j in axes(Z, 2), i in axes(Z, 1)
+            Z[i, j, k] = R[idx[i], j, k]
+        end
+    else
+        blockgatherrowskernel!(backend, 256)(Z, R, idx; ndrange = length(Z))
+    end
+    return Z
+end
+function scattersubrows!(X::AbstractArray{<:Any,3}, Z::AbstractArray{<:Any,3},
+    idx::AbstractVector, backend)
+    if hostloop(backend, length(Z))
+        @inbounds for k in axes(Z, 3), j in axes(Z, 2), i in axes(Z, 1)
+            X[idx[i], j, k] -= Z[i, j, k]
+        end
+    else
+        blockscattersubrowskernel!(backend, 256)(X, Z, idx; ndrange = length(Z))
+    end
+    return X
 end
 
 # a batched identity: one work item per row of every slice
@@ -380,9 +403,18 @@ the host, one strided batched GEMM on a device (the CUDA extension).
 function batchedmul!(C::AbstractArray{T,3}, A::AbstractArray{T,3},
     B::AbstractArray{T,3}, alpha, beta, tA::Bool, tB::Bool, ::CPU) where {T}
     for k in axes(C, 3)
-        Ak = view(A, :, :, k); Bk = view(B, :, :, k)
-        mul!(view(C, :, :, k), tA ? transpose(Ak) : Ak, tB ? transpose(Bk) : Bk,
-            alpha, beta)
+        Ak = view(A, :, :, k); Bk = view(B, :, :, k); Ck = view(C, :, :, k)
+        # a branch per transposition, so that each `mul!` is resolved
+        # where it is compiled
+        if tA && tB
+            mul!(Ck, transpose(Ak), transpose(Bk), alpha, beta)
+        elseif tA
+            mul!(Ck, transpose(Ak), Bk, alpha, beta)
+        elseif tB
+            mul!(Ck, Ak, transpose(Bk), alpha, beta)
+        else
+            mul!(Ck, Ak, Bk, alpha, beta)
+        end
     end
     return C
 end
@@ -547,23 +579,20 @@ backward. The caller gathers into `Z` and scatters out of `Y` by `perm`.
 function substitute!(Y::AbstractArray{<:Any,3}, lu::BlockLU{T},
     Z::AbstractArray{<:Any,3}, Pw::AbstractArray{<:Any,3}, backend;
     transposed::Bool = false) where {T}
-    W = size(Z, 2); nb = size(Z, 3)
-    gather = blockgatherrowskernel!(backend, 256)
-    scattersub = blockscattersubrowskernel!(backend, 256)
     if !transposed
         for P in 1:lu.N
             m = length(lu.rowidx[P]); m == 0 && continue
             t = view(Pw, 1:m, :, :)
             batchedmul!(t, lu.L[P], view(Z, lu.range[P], :, :), one(T), zero(T),
                 false, false, backend)
-            scattersub(Z, t, lu.rowidx[P]; ndrange = m*W*nb)
+            scattersubrows!(Z, t, lu.rowidx[P], backend)
         end
         for P in lu.N:-1:1
             zP = view(Z, lu.range[P], :, :)
             m = length(lu.rowidx[P])
             if m > 0
                 t = view(Pw, 1:m, :, :)
-                gather(t, Y, lu.rowidx[P]; ndrange = m*W*nb)
+                gatherrows!(t, Y, lu.rowidx[P], backend)
                 batchedmul!(zP, lu.U[P], t, -one(T), one(T), false, false, backend)
             end
             batchedmul!(view(Y, lu.range[P], :, :), lu.Dinv[P], zP, one(T),
@@ -577,13 +606,13 @@ function substitute!(Y::AbstractArray{<:Any,3}, lu::BlockLU{T},
             m = length(lu.rowidx[P]); m == 0 && continue
             t = view(Pw, 1:m, :, :)
             batchedmul!(t, lu.U[P], yP, one(T), zero(T), true, false, backend)
-            scattersub(Z, t, lu.rowidx[P]; ndrange = m*W*nb)
+            scattersubrows!(Z, t, lu.rowidx[P], backend)
         end
         for P in lu.N:-1:1
             yP = view(Y, lu.range[P], :, :)
             m = length(lu.rowidx[P]); m == 0 && continue
             t = view(Pw, 1:m, :, :)
-            gather(t, Y, lu.rowidx[P]; ndrange = m*W*nb)
+            gatherrows!(t, Y, lu.rowidx[P], backend)
             batchedmul!(yP, lu.L[P], t, -one(T), one(T), true, false, backend)
         end
     end
@@ -925,6 +954,18 @@ function clustersolve!(x::AbstractVector, C::ClusterBlocks{T},
     r::AbstractVector, backend) where {T}
     lu = C.lu
     n = lu.n
+    if hostloop(backend, n)
+        # the gather and the scatter as loops over the vectors themselves
+        perm = lu.perm
+        @inbounds for i in 1:n
+            C.z[i, 1, 1] = r[perm[i]]
+        end
+        substitute!(C.w, lu, C.z, C.tmp, backend)
+        @inbounds for i in 1:n
+            x[perm[i]] = C.w[i, 1, 1]
+        end
+        return x
+    end
     gather = blockgatherrowskernel!(backend, 256)
     scatter = blockscatterrowskernel!(backend, 256)
     gather(C.z, reshape(r, :, 1), lu.perm; ndrange = n)
@@ -1013,22 +1054,25 @@ function circuitorder(sys, Rbnm::SparseMatrixCSC, Nmodes::Integer,
 end
 
 """
-    sparsefactorbytes(P::SparseMatrixCSC, ::Type{T})
+    sparsefactorbytes(P::SparseMatrixCSC, ::Type{T},
+        ordering = fillordering(KLUfactorization(), P))
 
 The bytes a sparse LU of the pattern `P` in precision `T` would hold,
-from KLU's symbolic analysis of the pattern (its block triangular form
-and fill-reducing order) and nothing numeric: the entries of L and U and
-of the off-diagonal blocks, each with its index. What escalation to a
-larger coupling set is budgeted against on any backend; a device
-factorization orders differently, but the fill of the same pattern is of
-the same size.
+each entry with its index, from the symbolic analysis alone: the entries
+of `L` and `U` under the fill reducing ordering a KLU factorization of `P`
+takes ([`fillordering`](@ref)), which are twice the fill that ordering
+predicts, `fill` entries each with the diagonal counted in both. What
+escalation to a larger coupling set is budgeted against on any backend; a
+device factorization orders differently, but the fill of the same pattern
+is of the same size. An `ordering` already chosen for `P` can be handed
+in.
 """
-function sparsefactorbytes(P::SparseMatrixCSC, ::Type{T}) where {T}
-    A = SparseMatrixCSC(size(P, 1), size(P, 2), Vector{Int64}(P.colptr),
-        Vector{Int64}(P.rowval), ones(Float64, nnz(P)))
-    K = KLU.KLUFactorization(A)
-    KLU.klu_analyze!(K)
-    sym = K.symbolic
-    entries = sym.lnz + sym.unz + sym.nzoff
-    return round(Int, entries*(sizeof(T) + sizeof(Int)))
+function sparsefactorbytes(P::SparseMatrixCSC, ::Type{T},
+    ordering::Union{Nothing,FillOrdering} =
+        fillordering(KLUfactorization(), P)) where {T}
+    # without an ordering, which only a pattern of one column or a failure
+    # of both orderings leaves, the natural order's fill bounds it
+    fillcount = isnothing(ordering) ?
+        first(symbolicfill(_symmetricpattern(P), 1:size(P, 1))) : ordering.fill
+    return 2*fillcount*(sizeof(T) + sizeof(Int))
 end

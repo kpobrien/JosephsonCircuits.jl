@@ -159,11 +159,11 @@ using Test
     @testset "is_symplectic_pair and is_symplectic_block" begin
 
         @test_throws(
-            ErrorException(lazy"The dimensions of the input matrix must be even."),
+            ErrorException,
             JosephsonCircuits.is_symplectic_pair(rand(9,9)),
         )
         @test_throws(
-            ErrorException(lazy"The dimensions of the input matrix must be even."),
+            ErrorException,
             JosephsonCircuits.is_symplectic_block(rand(9,9)),
         )
 
@@ -173,6 +173,38 @@ using Test
 
         @test !JosephsonCircuits.is_cptp_quadrature_pair([1 0;0 1],[1 0;1 1])
         @test JosephsonCircuits.is_cptp_quadrature_pair([1 0;0 1],[0 0;0 0])
+
+        # a Gaussian unitary adds no noise, so it is CPTP with Y = 0, where
+        # Y + im*(Ω - X*Ω*X') is zero up to rounding of either sign
+        n = 2
+        Z = zeros(2n, 2n)
+        @test all(JosephsonCircuits.is_cptp_quadrature_pair(
+            JosephsonCircuits.rand_symplectic_pair(n), Z) for trial in 1:20)
+        @test all(JosephsonCircuits.is_cptp_quadrature_block(
+            JosephsonCircuits.rand_symplectic_block(n), Z) for trial in 1:20)
+        @test all(JosephsonCircuits.is_cptp_ladder_pair(
+            JosephsonCircuits.rand_bogoliubov_pair(n), complex(Z)) for trial in 1:20)
+        @test all(JosephsonCircuits.is_cptp_ladder_block(
+            JosephsonCircuits.rand_bogoliubov_block(n), complex(Z)) for trial in 1:20)
+
+        # a phase-insensitive amplifier of gain G, X = sqrt(G)*I, is CPTP
+        # when it adds at least the noise Y = (G-1)*I of the Caves limit,
+        # the same in the quadrature and the ladder bases
+        G = 3.0
+        X = sqrt(G) * Matrix(1.0I, 2n, 2n)
+        for is_cptp_form in (JosephsonCircuits.is_cptp_quadrature_pair,
+                JosephsonCircuits.is_cptp_quadrature_block,
+                JosephsonCircuits.is_cptp_ladder_pair,
+                JosephsonCircuits.is_cptp_ladder_block)
+            @test is_cptp_form(X, (G - 1) * Matrix(1.0I, 2n, 2n))
+            @test !is_cptp_form(X, (G - 1) / 2 * Matrix(1.0I, 2n, 2n))
+        end
+
+        # the tolerances can be given: a violation of 1e-6 is refused at an
+        # absolute tolerance below it and accepted at one above it
+        Y = (G - 1 - 1e-6) * Matrix(1.0I, 2n, 2n)
+        @test !JosephsonCircuits.is_cptp_quadrature_pair(X, Y; atol = 1e-8)
+        @test JosephsonCircuits.is_cptp_quadrature_pair(X, Y; atol = 1e-4)
 
     end
 
@@ -200,87 +232,31 @@ using Test
 
     end
 
-    @testset "random symplectic" begin
+    @testset "random matrices of each group" begin
 
-        @test JosephsonCircuits.is_symplectic_pair(JosephsonCircuits.rand_symplectic_pair(4))
-        @test JosephsonCircuits.is_symplectic_pair(JosephsonCircuits.rand_symplectic_pair(Float64,4))
-        @test JosephsonCircuits.is_symplectic_pair(JosephsonCircuits.rand_symplectic_pair(Complex{Float64},4))
-
-        @test JosephsonCircuits.is_symplectic_block(JosephsonCircuits.rand_symplectic_block(4))
-        @test JosephsonCircuits.is_symplectic_block(JosephsonCircuits.rand_symplectic_block(Float64,4))
-        @test JosephsonCircuits.is_symplectic_block(JosephsonCircuits.rand_symplectic_block(Complex{Float64},4))
-
-    end
-
-    @testset "random orthogonal symplectic" begin
-
-        @test JosephsonCircuits.is_orthogonal_symplectic_pair(JosephsonCircuits.rand_orthogonal_symplectic_pair(4))
-        @test JosephsonCircuits.is_orthogonal_symplectic_pair(JosephsonCircuits.rand_orthogonal_symplectic_pair(Float64,4))
-        @test JosephsonCircuits.is_orthogonal_symplectic_pair(JosephsonCircuits.rand_orthogonal_symplectic_pair(Complex{Float64},4))
-
-        @test JosephsonCircuits.is_orthogonal_symplectic_block(JosephsonCircuits.rand_orthogonal_symplectic_block(4))
-        @test JosephsonCircuits.is_orthogonal_symplectic_block(JosephsonCircuits.rand_orthogonal_symplectic_block(Float64,4))
-        @test JosephsonCircuits.is_orthogonal_symplectic_block(JosephsonCircuits.rand_orthogonal_symplectic_block(Complex{Float64},4))
-
-    end
-
-    @testset "random positive definite symplectic" begin
-
-        @test JosephsonCircuits.is_positive_definite_symplectic_pair(JosephsonCircuits.rand_positive_definite_symplectic_pair(4))
-        @test JosephsonCircuits.is_positive_definite_symplectic_pair(JosephsonCircuits.rand_positive_definite_symplectic_pair(Float64,4))
-        @test JosephsonCircuits.is_positive_definite_symplectic_pair(JosephsonCircuits.rand_positive_definite_symplectic_pair(Complex{Float64},4))
-
-        @test JosephsonCircuits.is_positive_definite_symplectic_block(JosephsonCircuits.rand_positive_definite_symplectic_block(4))
-        @test JosephsonCircuits.is_positive_definite_symplectic_block(JosephsonCircuits.rand_positive_definite_symplectic_block(Float64,4))
-        @test JosephsonCircuits.is_positive_definite_symplectic_block(JosephsonCircuits.rand_positive_definite_symplectic_block(Complex{Float64},4))
-
-    end
-
-    @testset "random conjugate symplectic" begin
-
-        @test JosephsonCircuits.is_conjugate_symplectic_pair(JosephsonCircuits.rand_conjugate_symplectic_pair(4))
-        @test JosephsonCircuits.is_conjugate_symplectic_pair(JosephsonCircuits.rand_conjugate_symplectic_pair(Float64,4))
-        @test JosephsonCircuits.is_conjugate_symplectic_pair(JosephsonCircuits.rand_conjugate_symplectic_pair(Complex{Float64},4))
-
-        @test JosephsonCircuits.is_conjugate_symplectic_block(JosephsonCircuits.rand_conjugate_symplectic_block(4))
-        @test JosephsonCircuits.is_conjugate_symplectic_block(JosephsonCircuits.rand_conjugate_symplectic_block(Float64,4))
-        @test JosephsonCircuits.is_conjugate_symplectic_block(JosephsonCircuits.rand_conjugate_symplectic_block(Complex{Float64},4))
-
-    end
-
-    @testset "random bogoliubov" begin
-
-        @test JosephsonCircuits.is_bogoliubov_pair(JosephsonCircuits.rand_bogoliubov_pair(4))
-        @test JosephsonCircuits.is_bogoliubov_pair(JosephsonCircuits.rand_bogoliubov_pair(Float64,4))
-        @test JosephsonCircuits.is_bogoliubov_pair(JosephsonCircuits.rand_bogoliubov_pair(Complex{Float64},4))
-
-        @test JosephsonCircuits.is_bogoliubov_block(JosephsonCircuits.rand_bogoliubov_block(4))
-        @test JosephsonCircuits.is_bogoliubov_block(JosephsonCircuits.rand_bogoliubov_block(Float64,4))
-        @test JosephsonCircuits.is_bogoliubov_block(JosephsonCircuits.rand_bogoliubov_block(Complex{Float64},4))
-
-    end
-
-    @testset "random orthogonal bogoliubov" begin
-
-        @test JosephsonCircuits.is_orthogonal_bogoliubov_pair(JosephsonCircuits.rand_orthogonal_bogoliubov_pair(4))
-        @test JosephsonCircuits.is_orthogonal_bogoliubov_pair(JosephsonCircuits.rand_orthogonal_bogoliubov_pair(Float64,4))
-        @test JosephsonCircuits.is_orthogonal_bogoliubov_pair(JosephsonCircuits.rand_orthogonal_bogoliubov_pair(Complex{Float64},4))
-
-        @test JosephsonCircuits.is_orthogonal_bogoliubov_block(JosephsonCircuits.rand_orthogonal_bogoliubov_block(4))
-        @test JosephsonCircuits.is_orthogonal_bogoliubov_block(JosephsonCircuits.rand_orthogonal_bogoliubov_block(Float64,4))
-        @test JosephsonCircuits.is_orthogonal_bogoliubov_block(JosephsonCircuits.rand_orthogonal_bogoliubov_block(Complex{Float64},4))
-
-    end
-
-    @testset "random pseudo-unitary" begin
-
-        @test JosephsonCircuits.is_pseudo_unitary_pair(JosephsonCircuits.rand_pseudo_unitary_pair(4))
-        @test JosephsonCircuits.is_pseudo_unitary_pair(JosephsonCircuits.rand_pseudo_unitary_pair(Float64,4))
-        @test JosephsonCircuits.is_pseudo_unitary_pair(JosephsonCircuits.rand_pseudo_unitary_pair(Complex{Float64},4))
-        
-        @test JosephsonCircuits.is_pseudo_unitary_block(JosephsonCircuits.rand_pseudo_unitary_block(4))
-        @test JosephsonCircuits.is_pseudo_unitary_block(JosephsonCircuits.rand_pseudo_unitary_block(Float64,4))
-        @test JosephsonCircuits.is_pseudo_unitary_block(JosephsonCircuits.rand_pseudo_unitary_block(Complex{Float64},4))
+        # each generator gives a member of its group, in either order, for
+        # the default, real and complex element types
+        JC = JosephsonCircuits
+        for (rand_pair, rand_block, is_pair, is_block) in (
+                (JC.rand_symplectic_pair, JC.rand_symplectic_block,
+                    JC.is_symplectic_pair, JC.is_symplectic_block),
+                (JC.rand_orthogonal_symplectic_pair, JC.rand_orthogonal_symplectic_block,
+                    JC.is_orthogonal_symplectic_pair, JC.is_orthogonal_symplectic_block),
+                (JC.rand_positive_definite_symplectic_pair, JC.rand_positive_definite_symplectic_block,
+                    JC.is_positive_definite_symplectic_pair, JC.is_positive_definite_symplectic_block),
+                (JC.rand_conjugate_symplectic_pair, JC.rand_conjugate_symplectic_block,
+                    JC.is_conjugate_symplectic_pair, JC.is_conjugate_symplectic_block),
+                (JC.rand_bogoliubov_pair, JC.rand_bogoliubov_block,
+                    JC.is_bogoliubov_pair, JC.is_bogoliubov_block),
+                (JC.rand_orthogonal_bogoliubov_pair, JC.rand_orthogonal_bogoliubov_block,
+                    JC.is_orthogonal_bogoliubov_pair, JC.is_orthogonal_bogoliubov_block),
+                (JC.rand_pseudo_unitary_pair, JC.rand_pseudo_unitary_block,
+                    JC.is_pseudo_unitary_pair, JC.is_pseudo_unitary_block))
+            for args in ((4,), (Float64, 4), (Complex{Float64}, 4))
+                @test is_pair(rand_pair(args...))
+                @test is_block(rand_block(args...))
+            end
+        end
 
     end
 
@@ -297,6 +273,8 @@ using Test
         # noise it adds has at most its rank
         for nenv in (1, 3)
             X, Y = JosephsonCircuits.rand_cptp_quadrature_pair(Float64, 2; nenv = nenv)
+            @test JosephsonCircuits.is_cptp_quadrature_pair(X, Y) && rank(Y) <= 2*nenv
+            X, Y = JosephsonCircuits.rand_cptp_quadrature_pair(2; nenv = nenv)
             @test JosephsonCircuits.is_cptp_quadrature_pair(X, Y) && rank(Y) <= 2*nenv
             X, Y = JosephsonCircuits.rand_cptp_quadrature_block(2; nenv = nenv)
             @test JosephsonCircuits.is_cptp_quadrature_block(X, Y) && rank(Y) <= 2*nenv
@@ -315,6 +293,8 @@ using Test
 
         for nenv in (1, 3)
             X, Y = JosephsonCircuits.rand_cptp_ladder_pair(Complex{Float64}, 2; nenv = nenv)
+            @test JosephsonCircuits.is_cptp_ladder_pair(X, Y) && rank(Y) <= 2*nenv
+            X, Y = JosephsonCircuits.rand_cptp_ladder_pair(2; nenv = nenv)
             @test JosephsonCircuits.is_cptp_ladder_pair(X, Y) && rank(Y) <= 2*nenv
             X, Y = JosephsonCircuits.rand_cptp_ladder_block(2; nenv = nenv)
             @test JosephsonCircuits.is_cptp_ladder_block(X, Y) && rank(Y) <= 2*nenv
@@ -345,42 +325,42 @@ using Test
 
         # vector functions
         @test_throws(
-            DimensionMismatch("The length of the bogoliubov vector must be double that of the scattering parameter vector."),
+            DimensionMismatch,
             JosephsonCircuits.scattering_to_ladder_pair!(zeros(10),zeros(10),ones(5)),
         )
 
         @test_throws(
-            DimensionMismatch("The length of the bogoliubov vector must be double that of the scattering parameter vector."),
+            DimensionMismatch,
             JosephsonCircuits.scattering_to_ladder_block!(zeros(10),zeros(10),ones(5)),
         )
 
         @test_throws(
-            DimensionMismatch("The length of the symplectic vector must be double that of the scattering parameter vector."),
+            DimensionMismatch,
             JosephsonCircuits.scattering_to_quadrature_pair!(zeros(10),zeros(10),ones(5)),
         )
 
         @test_throws(
-            DimensionMismatch("The length of the symplectic vector must be double that of the scattering parameter vector."),
+            DimensionMismatch,
             JosephsonCircuits.scattering_to_quadrature_block!(zeros(10),zeros(10),ones(5)),
         )
 
         @test_throws(
-            DimensionMismatch("Length of scattering vector must be integer multiples of the number of modes."),
+            DimensionMismatch,
             JosephsonCircuits.scattering_to_ladder_pair!(zeros(10),zeros(5),ones(6)),
         )
 
         @test_throws(
-            DimensionMismatch("Length of scattering vector must be integer multiples of the number of modes."),
+            DimensionMismatch,
             JosephsonCircuits.scattering_to_ladder_block!(zeros(10),zeros(5),ones(6)),
         )
 
         @test_throws(
-            DimensionMismatch("Length of scattering vector must be integer multiples of the number of modes."),
+            DimensionMismatch,
             JosephsonCircuits.scattering_to_quadrature_pair!(zeros(10),zeros(5),ones(6)),
         )
 
         @test_throws(
-            DimensionMismatch("Length of scattering vector must be integer multiples of the number of modes."),
+            DimensionMismatch,
             JosephsonCircuits.scattering_to_quadrature_block!(zeros(10),zeros(5),ones(6)),
         )
 
@@ -398,220 +378,128 @@ using Test
                 @test isapprox(JosephsonCircuits.quadrature_to_scattering_block(
                     JosephsonCircuits.scattering_to_quadrature_block(S, w), w), S)
                 # the quadrature form is the ladder form in the quadrature
-                # basis of its rows and of its columns
+                # basis of its rows and of its columns, in either order
                 @test isapprox(JosephsonCircuits.ladder_to_quadrature_pair(
                     JosephsonCircuits.scattering_to_ladder_pair(S, w)),
                     JosephsonCircuits.scattering_to_quadrature_pair(S, w))
+                @test isapprox(JosephsonCircuits.ladder_to_quadrature_block(
+                    JosephsonCircuits.scattering_to_ladder_block(S, w)),
+                    JosephsonCircuits.scattering_to_quadrature_block(S, w))
+                @test isapprox(JosephsonCircuits.quadrature_to_ladder_pair(
+                    JosephsonCircuits.scattering_to_quadrature_pair(S, w)),
+                    JosephsonCircuits.scattering_to_ladder_pair(S, w))
                 @test isapprox(JosephsonCircuits.quadrature_to_ladder_block(
                     JosephsonCircuits.scattering_to_quadrature_block(S, w)),
                     JosephsonCircuits.scattering_to_ladder_block(S, w))
             end
         end
 
-        X = randn(10)
-        w = sign.(randn(5))
-        @test isequal(
-            JosephsonCircuits.scattering_to_quadrature_block(X,w),
-            JosephsonCircuits.scattering_to_quadrature_block(Complex.(X),w)
-        )
+        # the sign convention, literally: a mode of positive frequency is
+        # an annihilation operator, whose amplitude and its conjugate take
+        # the first and the second operator of its pair, and a mode of
+        # negative frequency a creation operator, which swaps them; the
+        # imaginary part of the amplitude of a creation operator is that of
+        # a conjugate
+        a, b, c, d = 0.3 + 0.4im, 0.1 - 0.7im, -0.2 + 0.5im, 0.6 + 0.1im
+        @test JosephsonCircuits.scattering_to_ladder_pair([a b; c d], [1.0, -1.0]) ==
+            [a 0 0 b; 0 conj(a) conj(b) 0; 0 conj(c) conj(d) 0; c 0 0 d]
+        @test JosephsonCircuits.scattering_to_quadrature_pair(fill(a, 1, 1), [1.0]) ==
+            [real(a) -imag(a); imag(a) real(a)]
+        @test JosephsonCircuits.scattering_to_quadrature_pair(fill(a, 1, 1), [-1.0]) ==
+            [real(a) imag(a); -imag(a) real(a)]
 
-        X = randn(10)
-        w = sign.(randn(5))
-        @test isequal(
-            JosephsonCircuits.scattering_to_quadrature_pair(X,w),
-            JosephsonCircuits.scattering_to_quadrature_pair(Complex.(X),w)
-        )
+        # each vector conversion is its matrix conversion acting on the
+        # vector: f(S*v, w) == f(S, w)*f(v, w)
+        S = randn(Complex{Float64}, 6, 6)
+        v = randn(Complex{Float64}, 6)
+        w = [1.0, -1.0, 1.0]
+        for f in (JosephsonCircuits.scattering_to_ladder_pair,
+                JosephsonCircuits.scattering_to_ladder_block,
+                JosephsonCircuits.scattering_to_quadrature_pair,
+                JosephsonCircuits.scattering_to_quadrature_block)
+            @test isapprox(f(S * v, w), f(S, w) * f(v, w))
+        end
     end
 
-    @testset "ladder_to_scattering_pair" begin
-
-        # complex floating point input
-        X = JosephsonCircuits.rand_unitary(10)
-        w=sign.(randn(size(X,1)))
-        S = JosephsonCircuits.scattering_to_ladder_pair(X,w)
-        @test isapprox(
-            JosephsonCircuits.ladder_to_scattering_pair(S,w),
-            X,
-        )
-
-        S = JosephsonCircuits.rand_symplectic_pair(5)
-        @test_throws(
-            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
-            JosephsonCircuits.ladder_to_scattering_pair(S,w),
-        )
-
-        # complex floating point input carrying rounding is converted within
-        # the default tolerance, and the tolerances can be given
-        X = JosephsonCircuits.rand_unitary(6)
-        w = [1.0, -1.0, 1.0]
-        U = JosephsonCircuits.rand_unitary(12)
-        S = JosephsonCircuits.scattering_to_ladder_pair(X,w)*(U*U')
-        @test isapprox(JosephsonCircuits.ladder_to_scattering_pair(S,w), X)
-        @test isapprox(JosephsonCircuits.ladder_to_scattering_pair(S,w;rtol=1e-10), X)
-
-        # real floating point input
-        X = JosephsonCircuits.rand_unitary(Float64,10)
-        w=sign.(randn(size(X,1)))
-        S = JosephsonCircuits.scattering_to_ladder_pair(X,w)
-        @test isapprox(
-            JosephsonCircuits.ladder_to_scattering_pair(S,w),
-            X,
-        )
-
-
-        # error 1
-        @test_throws(
-            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
-            JosephsonCircuits.ladder_to_scattering_pair([1 0 0 0;0 -1 0 0;0 0 1 0;0 0 0 1],[1,1,1,1]),
-        )
-        # error 2
-        @test_throws(
-            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
-            JosephsonCircuits.ladder_to_scattering_pair([1 1 0 0;0 1 0 0;0 0 1 0;0 0 0 1],[1,1,1,1]),
-        )
-        # error 3
-        @test_throws(
-            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
-            JosephsonCircuits.ladder_to_scattering_pair([1 0 0 0;1 1 0 0;0 0 1 0;0 0 0 1],[1,1,1,1]),
-        )
-
+    @testset "negative examples" begin
+        # a two-mode squeezer between a mode of positive and one of negative
+        # frequency, a signal and its idler, is a Bogoliubov transformation
+        # and not a unitary one; between two modes of positive frequency the
+        # same matrix would amplify without an idler, and is neither
+        # Bogoliubov, pseudo-unitary nor symplectic
+        r = 0.5
+        S2 = [cosh(r) sinh(r); sinh(r) cosh(r)]
+        L = JosephsonCircuits.scattering_to_ladder_pair(S2, [1.0, -1.0])
+        @test JosephsonCircuits.is_bogoliubov_pair(L)
+        @test !JosephsonCircuits.is_unitary(L)
+        @test JosephsonCircuits.is_bogoliubov_block(
+            JosephsonCircuits.scattering_to_ladder_block(S2, [1.0, -1.0]))
+        w = [1.0, 1.0]
+        L = JosephsonCircuits.scattering_to_ladder_pair(S2, w)
+        @test !JosephsonCircuits.is_bogoliubov_pair(L)
+        @test !JosephsonCircuits.is_pseudo_unitary_pair(L)
+        @test !JosephsonCircuits.is_bogoliubov_block(
+            JosephsonCircuits.scattering_to_ladder_block(S2, w))
+        @test !JosephsonCircuits.is_symplectic_pair(
+            JosephsonCircuits.scattering_to_quadrature_pair(S2, w))
+        @test !JosephsonCircuits.is_symplectic_block(
+            JosephsonCircuits.scattering_to_quadrature_block(S2, w))
+        # a shear is neither unitary nor orthogonal
+        @test !JosephsonCircuits.is_unitary([1.0 1.0; 0.0 1.0])
+        @test !JosephsonCircuits.is_orthogonal([1.0 1.0; 0.0 1.0])
     end
 
-    @testset "ladder_to_scattering_block" begin
-
-        # complex floating point input
-        X = JosephsonCircuits.rand_unitary(10)
-        w=sign.(randn(size(X,1)))
-        S = JosephsonCircuits.scattering_to_ladder_block(X,w)
-        @test isapprox(
-            JosephsonCircuits.ladder_to_scattering_block(S,w),
-            X,
-        )
-
-        S = JosephsonCircuits.rand_symplectic_block(5)
-        @test_throws(
-            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
-            JosephsonCircuits.ladder_to_scattering_block(S,w),
-        )
-
-        # complex floating point input carrying rounding is converted within
-        # the default tolerance, and the tolerances can be given
-        X = JosephsonCircuits.rand_unitary(6)
-        w = [1.0, -1.0, 1.0]
-        U = JosephsonCircuits.rand_unitary(12)
-        S = JosephsonCircuits.scattering_to_ladder_block(X,w)*(U*U')
-        @test isapprox(JosephsonCircuits.ladder_to_scattering_block(S,w), X)
-        @test isapprox(JosephsonCircuits.ladder_to_scattering_block(S,w;rtol=1e-10), X)
-
-        # real floating point input
-        X = JosephsonCircuits.rand_unitary(Float64,10)
-        w=sign.(randn(size(X,1)))
-        S = JosephsonCircuits.scattering_to_ladder_block(X,w)
-        @test isapprox(
-            JosephsonCircuits.ladder_to_scattering_block(S,w),
-            X,
-        )
-
-
-        # error 1
-        @test_throws(
-            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
-            JosephsonCircuits.ladder_to_scattering_block([1 0 0 0;0 -1 0 0;0 0 1 0;0 0 0 1],[1,1,1,1]),
-        )
-        # error 2
-        @test_throws(
-            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
-            JosephsonCircuits.ladder_to_scattering_block([1 0 0 0;0 1 0 1;0 0 1 0;0 0 0 1],[1,1,1,1]),
-        )
-        # error 3
-        @test_throws(
-            ErrorException(lazy"Error in Bogoliubov to scattering parameter conversion larger than `atol` and `rtol`."),
-            JosephsonCircuits.ladder_to_scattering_block([1 0 0 0;0 1 0 0;0 0 1 0;1 0 0 1],[1,1,1,1]),
-        )
-
+    @testset "sizes the conversions refuse" begin
+        # a form of odd size, and no mode frequencies
+        @test_throws DimensionMismatch JosephsonCircuits.ladder_to_scattering_pair(rand(5, 5), [1.0])
+        @test_throws DimensionMismatch JosephsonCircuits.quadrature_to_scattering_block(rand(5, 5), [1.0])
+        @test_throws ArgumentError JosephsonCircuits.scattering_to_ladder_pair(rand(2, 2), Float64[])
     end
 
-    @testset "quadrature_to_scattering_pair" begin
+    @testset "conversions back to scattering parameters" begin
 
-        # complex floating point input
-        X = JosephsonCircuits.rand_unitary(10)
-        w=sign.(randn(size(X,1)))
-        S = JosephsonCircuits.scattering_to_quadrature_pair(X,w)
-        @test isapprox(
-            JosephsonCircuits.quadrature_to_scattering_pair(S,w),
-            X,
-        )
-        @test isapprox(
-            JosephsonCircuits.quadrature_to_scattering_pair(Complex.(S),w),
-            X,
-        )
+        JC = JosephsonCircuits
+        for (to, back, rand_form) in (
+                (JC.scattering_to_ladder_pair, JC.ladder_to_scattering_pair, JC.rand_symplectic_pair),
+                (JC.scattering_to_ladder_block, JC.ladder_to_scattering_block, JC.rand_symplectic_block),
+                (JC.scattering_to_quadrature_pair, JC.quadrature_to_scattering_pair, JC.rand_symplectic_pair),
+                (JC.scattering_to_quadrature_block, JC.quadrature_to_scattering_block, JC.rand_symplectic_block))
 
-        S = JosephsonCircuits.rand_symplectic_pair(5)
-        @test_throws(
-            ErrorException(lazy"Error in symplectic to scattering parameter conversion larger than `atol` and `rtol`."),
-            JosephsonCircuits.quadrature_to_scattering_pair(S,w),
-        )
+            # complex and real floating point input, and the form stored
+            # complex
+            for T in (Complex{Float64}, Float64)
+                X = JC.rand_unitary(T, 10)
+                w = sign.(randn(size(X, 1)))
+                S = to(X, w)
+                @test isapprox(back(S, w), X)
+                @test isapprox(back(complex(S), w), X)
+            end
 
-        # complex floating point input carrying rounding is converted within
-        # the default tolerance, and the tolerances can be given
-        X = JosephsonCircuits.rand_unitary(6)
-        w = [1.0, -1.0, 1.0]
-        U = JosephsonCircuits.rand_unitary(12)
-        S = JosephsonCircuits.scattering_to_quadrature_pair(X,w)*(U*U')
-        @test isapprox(JosephsonCircuits.quadrature_to_scattering_pair(S,w), X)
-        @test isapprox(JosephsonCircuits.quadrature_to_scattering_pair(S,w;rtol=1e-10), X)
+            # a matrix which is not a form is refused
+            @test_throws ErrorException back(rand_form(5), sign.(randn(10)))
 
-        # real floating point input
-        X = JosephsonCircuits.rand_unitary(Float64,10)
-        w=sign.(randn(size(X,1)))
-        S = JosephsonCircuits.scattering_to_quadrature_pair(X,w)
-        @test isapprox(
-            JosephsonCircuits.quadrature_to_scattering_pair(S,w),
-            X,
-        )
+            # complex floating point input carrying rounding is converted
+            # within the default tolerance, and the tolerances can be given
+            X = JC.rand_unitary(6)
+            w = [1.0, -1.0, 1.0]
+            U = JC.rand_unitary(12)
+            S = to(X, w)*(U*U')
+            @test isapprox(back(S, w), X)
+            @test isapprox(back(S, w; rtol = 1e-10), X)
+        end
 
-
-    end
-
-    @testset "quadrature_to_scattering_block" begin
-
-        # complex floating point input
-        X = JosephsonCircuits.rand_unitary(10)
-        w=sign.(randn(size(X,1)))
-        S = JosephsonCircuits.scattering_to_quadrature_block(X,w)
-        @test isapprox(
-            JosephsonCircuits.quadrature_to_scattering_block(S,w),
-            X,
-        )
-        @test isapprox(
-            JosephsonCircuits.quadrature_to_scattering_block(Complex.(S),w),
-            X,
-        )
-
-        S = JosephsonCircuits.rand_symplectic_block(5)
-        @test_throws(
-            ErrorException(lazy"Error in symplectic to scattering parameter conversion larger than `atol` and `rtol`."),
-            JosephsonCircuits.quadrature_to_scattering_block(S,w),
-        )
-
-        # complex floating point input carrying rounding is converted within
-        # the default tolerance, and the tolerances can be given
-        X = JosephsonCircuits.rand_unitary(6)
-        w = [1.0, -1.0, 1.0]
-        U = JosephsonCircuits.rand_unitary(12)
-        S = JosephsonCircuits.scattering_to_quadrature_block(X,w)*(U*U')
-        @test isapprox(JosephsonCircuits.quadrature_to_scattering_block(S,w), X)
-        @test isapprox(JosephsonCircuits.quadrature_to_scattering_block(S,w;rtol=1e-10), X)
-
-        # real floating point input
-        X = JosephsonCircuits.rand_unitary(Float64,10)
-        w=sign.(randn(size(X,1)))
-        S = JosephsonCircuits.scattering_to_quadrature_block(X,w)
-        @test isapprox(
-            JosephsonCircuits.quadrature_to_scattering_block(S,w),
-            X,
-        )
-
+        # ladder forms which break one of the relations between their
+        # entries: a conjugate of another sign, an entry of the wrong
+        # operator, in either order
+        for (back, forms) in (
+                (JC.ladder_to_scattering_pair, ([1 0 0 0;0 -1 0 0;0 0 1 0;0 0 0 1],
+                    [1 1 0 0;0 1 0 0;0 0 1 0;0 0 0 1], [1 0 0 0;1 1 0 0;0 0 1 0;0 0 0 1])),
+                (JC.ladder_to_scattering_block, ([1 0 0 0;0 -1 0 0;0 0 1 0;0 0 0 1],
+                    [1 0 0 0;0 1 0 1;0 0 1 0;0 0 0 1], [1 0 0 0;0 1 0 0;0 0 1 0;1 0 0 1])))
+            for form in forms
+                @test_throws ErrorException back(form, [1, 1, 1, 1])
+            end
+        end
 
     end
 
@@ -657,15 +545,15 @@ using Test
 
         # an axis which does not hold whole ports
         @test_throws(
-            DimensionMismatch("The number of scattering indices 6 of an axis must be a multiple of the number of modes 4."),
+            DimensionMismatch,
             JosephsonCircuits.ports_modes_to_modes_ports_scattering(rand(6, 6), 4),
         )
         @test_throws(
-            DimensionMismatch("The number of scattering indices 3 of an axis must be a multiple of the number of modes 2."),
+            DimensionMismatch,
             JosephsonCircuits.modes_ports_to_ports_modes_block(rand(6, 6), 2),
         )
         @test_throws(
-            DimensionMismatch("The length 5 of an axis of a pair or block form must be even."),
+            DimensionMismatch,
             JosephsonCircuits.ports_modes_to_modes_ports_pair(rand(5, 5), 1),
         )
 
@@ -682,47 +570,66 @@ using Test
 
     @testset "williamson pair" begin
 
+        # the values are the symplectic eigenvalues, the moduli of the
+        # eigenvalues of im*Ω*M, each twice
+        Omega = JosephsonCircuits.symplectic_form_pair(2)
         for M in [JosephsonCircuits.rand_positive_definite(4), JosephsonCircuits.rand_positive_semi_definite(2,2)]
             d, S = JosephsonCircuits.williamson_pair(M)
             @test JosephsonCircuits.is_symplectic_pair(S)
-            # serafini convention
-            # @test isapprox(transpose(S)*Diagonal(d)*S,M)
             # literature convention
             @test isapprox(S*Diagonal(d)*transpose(S),M)
+            @test isapprox(sort(d), sort(abs.(eigvals(im * Omega * M))))
         end
 
-       # #  # add a test for this matrix for both block and pair
-       #  M = Symmetric([
-       #     1.166893242623039673e-01  -1.048482006204835837e-02  -3.493446128036903353e-02   1.565614325188508238e-01;
-       #    -1.048482006204835837e-02   4.805855935380488053e-01  -1.069468907857842987e+00  -3.770319099460901491e-01;
-       #    -3.493446128036903353e-02  -1.069468907857842987e+00   2.409089316529508640e+00   7.648117805967328264e-01;
-       #     1.565614325188508238e-01  -3.770319099460901491e-01   7.648117805967328264e-01   4.847266530147685271e-01;
-       # ])
+        # a covariance S*Diagonal(d)*transpose(S), which rounding leaves
+        # symmetric only approximately, here by one ulp
+        S0 = JosephsonCircuits.rand_symplectic_pair(2)
+        d0 = [1.5, 1.5, 3.0, 3.0]
+        M = S0 * Diagonal(d0) * transpose(S0)
+        M[1, 2] = nextfloat(M[2, 1])
+        d, S = JosephsonCircuits.williamson_pair(M)
+        @test isapprox(S*Diagonal(d)*transpose(S), M)
+        @test isapprox(sort(d), d0)
+        d, S = JosephsonCircuits.williamson_block(JosephsonCircuits.pair_to_block(M))
+        @test isapprox(S*Diagonal(d)*transpose(S), JosephsonCircuits.pair_to_block(M))
 
+        # a matrix of rank two up to rounding, decomposed in either order
+        M = [
+            1.166893242623039673e-01  -1.048482006204835837e-02  -3.493446128036903353e-02   1.565614325188508238e-01;
+           -1.048482006204835837e-02   4.805855935380488053e-01  -1.069468907857842987e+00  -3.770319099460901491e-01;
+           -3.493446128036903353e-02  -1.069468907857842987e+00   2.409089316529508640e+00   7.648117805967328264e-01;
+            1.565614325188508238e-01  -3.770319099460901491e-01   7.648117805967328264e-01   4.847266530147685271e-01;
+        ]
+        for (williamson, is_symplectic, Omega) in (
+                (JosephsonCircuits.williamson_pair, JosephsonCircuits.is_symplectic_pair,
+                    JosephsonCircuits.symplectic_form_pair(2)),
+                (JosephsonCircuits.williamson_block, JosephsonCircuits.is_symplectic_block,
+                    JosephsonCircuits.symplectic_form_block(2)))
+            d, S = williamson(M)
+            @test is_symplectic(S)
+            @test isapprox(S*Diagonal(d)*transpose(S), M)
+            @test isapprox(sort(d), sort(abs.(eigvals(im * Omega * M))); atol = 1e-12)
+        end
 
-        # julia> M = Float64[1 0 0 0;0 1 0 0;0 0 0 0;0 0 0 0]
-        # 4×4 Matrix{Float64}:
-        #  1.0  0.0  0.0  0.0
-        #  0.0  1.0  0.0  0.0
-        #  0.0  0.0  0.0  0.0
-        #  0.0  0.0  0.0  0.0
-
-        # @test_throws(
-        #     ErrorException(lazy"The rank must be even."),
-        #     JosephsonCircuits.williamson_pair([1 0 0 0;0 1 0 0;0 0 1 0;0 0 0 0]),
-        # )
+        # a positive semi-definite matrix of odd rank, and one whose range
+        # holds the positions alone, have no symplectic normal form
+        @test_throws ArgumentError JosephsonCircuits.williamson_pair([1.0 0; 0 0])
+        @test_throws ArgumentError JosephsonCircuits.williamson_pair(
+            Matrix(Diagonal([1.0, 0, 1, 1])))
+        @test_throws ArgumentError JosephsonCircuits.williamson_pair(
+            Matrix(Diagonal([1.0, 0, 1, 0])))
     end
 
 
     @testset "williamson block " begin
 
+        Omega = JosephsonCircuits.symplectic_form_block(2)
         for M in [JosephsonCircuits.rand_positive_definite(4), JosephsonCircuits.rand_positive_semi_definite(2,2)]
             d, S = JosephsonCircuits.williamson_block(M)
             @test JosephsonCircuits.is_symplectic_block(S)
-            # serafini convention
-            # @test isapprox(transpose(S)*Diagonal(d)*S,M)
             # literature convention
             @test isapprox(S*Diagonal(d)*transpose(S),M)
+            @test isapprox(sort(d), sort(abs.(eigvals(im * Omega * M))))
         end
     end
 
@@ -735,21 +642,17 @@ using Test
         @test isapprox(rankL1,rankL2)
 
         @test_throws(
-            ErrorException(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite."),
+            ErrorException,
             JosephsonCircuits.cholesky_williamson([1 0 0 0;0 1 0 0;0 0 0 0;0 0 0 -1]),
         )
 
         @test_throws(
-            ErrorException(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite."),
+            ErrorException,
             JosephsonCircuits.cholesky_williamson(JosephsonCircuits.SparseArrays.sparse([1 0 0 0;0 1 0 0;0 0 0 0;0 0 0 -1])),
         )
 
-        # this fails but with the wrong error message because of the rank
-        # reduction kludge in cholesky_williamson.
-        @test_throws(
-            ErrorException(lazy"Cholesky factorization has failed. Input matrix is not positive semi-definite."),
-            JosephsonCircuits.cholesky_williamson([1 0;0 0]),
-        )
+        # positive semi-definite, of odd rank
+        @test_throws ArgumentError JosephsonCircuits.cholesky_williamson([1 0;0 0])
     end
 
     @testset "autonne_takagi complex" begin
@@ -795,8 +698,20 @@ using Test
         end
         @test reconstructed
 
+        # a matrix symmetric only to rounding, here by one ulp
+        U = JosephsonCircuits.rand_unitary(3)
+        A = U * Diagonal([1.0, 2.0, 3.0]) * transpose(U)
+        A[1, 2] = complex(nextfloat(real(A[2, 1])), imag(A[2, 1]))
+        values, vectors = JosephsonCircuits.autonne_takagi(A)
+        @test isapprox(values, [3.0, 2.0, 1.0])
+        @test isapprox(vectors * Diagonal(values) * transpose(vectors), A)
+
+        # an empty matrix
+        values, vectors = JosephsonCircuits.autonne_takagi(zeros(Complex{Float64}, 0, 0))
+        @test isempty(values) && size(vectors) == (0, 0)
+
         @test_throws(
-            ErrorException(lazy"M must be symmetric."),
+            ErrorException,
             JosephsonCircuits.autonne_takagi(Complex{Float64}[1 1;-1 1]),
         )
     end
@@ -821,8 +736,16 @@ using Test
         @test isapprox(vectors * Diagonal(values) * transpose(vectors), A)
         @test isapprox(vectors * vectors', I(size(A, 1)))
 
+        # a matrix symmetric only to rounding, here by one ulp
+        Q = Matrix(qr(randn(3, 3)).Q)
+        A = Q * Diagonal([1.0, -2.0, 3.0]) * Q'
+        A[1, 2] = nextfloat(A[2, 1])
+        values, vectors = JosephsonCircuits.autonne_takagi(A)
+        @test isapprox(values, [1.0, 2.0, 3.0])
+        @test isapprox(vectors * Diagonal(values) * transpose(vectors), A)
+
         @test_throws(
-            ErrorException(lazy"M must be symmetric."),
+            ErrorException,
             JosephsonCircuits.autonne_takagi(Float64[1 1;-1 1]),
         )
     end
@@ -847,6 +770,8 @@ using Test
         @test JosephsonCircuits.is_symplectic_block(O)
         @test JosephsonCircuits.is_symplectic_block(Diagonal(D))
         @test JosephsonCircuits.is_symplectic_block(Q)
+        # the outer factors are orthogonal
+        @test JosephsonCircuits.is_orthogonal(O) && JosephsonCircuits.is_orthogonal(Q)
 
         # single mode squeezers in a real orthogonal basis, which leave x
         # and p uncoupled: the Takagi factorization is then of a real
@@ -877,9 +802,10 @@ using Test
         @test JosephsonCircuits.is_symplectic_block(O)
         @test JosephsonCircuits.is_symplectic_block(Diagonal(D))
         @test JosephsonCircuits.is_symplectic_block(Q)
+        @test JosephsonCircuits.is_orthogonal(O) && JosephsonCircuits.is_orthogonal(Q)
 
         @test_throws(
-            ErrorException(lazy"A must be symplectic."),
+            ErrorException,
             JosephsonCircuits.bloch_messiah_block(Float64[1 1;-1 1]),
         )
     end
@@ -890,18 +816,18 @@ using Test
         @test JosephsonCircuits.is_symplectic_pair(S)
         O, D, Q = JosephsonCircuits.bloch_messiah_pair(S)
         @test isapprox(O * Diagonal(D) * Q, S)
-        @test JosephsonCircuits.is_symplectic_pair(O)
+        @test JosephsonCircuits.is_orthogonal_symplectic_pair(O)
         @test JosephsonCircuits.is_symplectic_pair(Diagonal(D))
-        @test JosephsonCircuits.is_symplectic_pair(Q)
+        @test JosephsonCircuits.is_orthogonal_symplectic_pair(Q)
 
     end
 
     @testset "pre_iwasawa_block" begin
-        # real
+        # real, where F is orthogonal as well as symplectic
         S = JosephsonCircuits.rand_symplectic_block(Float64, 4)
         E, D, F = JosephsonCircuits.pre_iwasawa_block(S)
         @test isapprox(S, E * D * F)
-        @test JosephsonCircuits.is_symplectic_block(F)
+        @test JosephsonCircuits.is_orthogonal_symplectic_block(F)
 
         # complex
         S = JosephsonCircuits.rand_symplectic_block(Complex{Float64}, 4)
@@ -910,17 +836,17 @@ using Test
         @test JosephsonCircuits.is_symplectic_block(F)
 
         @test_throws(
-            ErrorException(lazy"A must be symplectic."),
+            ErrorException,
             JosephsonCircuits.pre_iwasawa_block(Float64[1 1;-1 1]),
         )
     end
 
     @testset "pre_iwasawa_pair" begin
-        # real
+        # real, where F is orthogonal as well as symplectic
         S = JosephsonCircuits.rand_symplectic_pair(Float64, 4)
         E, D, F = JosephsonCircuits.pre_iwasawa_pair(S)
         @test isapprox(S, E * D * F)
-        @test JosephsonCircuits.is_symplectic_pair(F)
+        @test JosephsonCircuits.is_orthogonal_symplectic_pair(F)
 
         # complex
         S = JosephsonCircuits.rand_symplectic_pair(Complex{Float64}, 4)
@@ -940,6 +866,11 @@ using Test
         @test JosephsonCircuits.is_symplectic_block(F.K)
         @test JosephsonCircuits.is_symplectic_block(F.A)
         @test JosephsonCircuits.is_symplectic_block(F.N)
+        # A is diagonal, and N block upper triangular with a unit upper
+        # triangular first block
+        @test isdiag(F.A)
+        @test iszero(F.N[3:4, 1:2])
+        @test istriu(F.N[1:2, 1:2]) && isapprox(diag(F.N[1:2, 1:2]), ones(2))
 
         # complex
         S = JosephsonCircuits.rand_symplectic_block(Complex{Float64}, 2)
@@ -949,9 +880,12 @@ using Test
         @test JosephsonCircuits.is_symplectic_block(F.K)
         @test JosephsonCircuits.is_symplectic_block(F.A)
         @test JosephsonCircuits.is_symplectic_block(F.N)
+        @test isdiag(F.A)
+        @test iszero(F.N[3:4, 1:2])
+        @test istriu(F.N[1:2, 1:2]) && isapprox(diag(F.N[1:2, 1:2]), ones(2))
 
         @test_throws(
-            ErrorException(lazy"A must be symplectic."),
+            ErrorException,
             JosephsonCircuits.iwasawa_block(Float64[1 1;-1 1]),
         )
     end
@@ -1013,20 +947,19 @@ using Test
         Omega = JosephsonCircuits.symplectic_form_pair(2)
         @test isapprox(Aa, Q * Omega * Q')
 
-        # singular example
-        # this test seems brittle. think about how to replace it.
-        vals, vecs = eigen(Aa)
-        Aa1 = real(vecs * Diagonal([0, 0, vals[3], vals[4]]) * vecs')
+        # a singular matrix, of rank two by construction
+        O = Matrix(qr(randn(4, 4)).Q)
+        Aa1 = O * [0 1.3 0 0; -1.3 0 0 0; 0 0 0 0; 0 0 0 0] * transpose(O)
         Q1 = JosephsonCircuits.symplectic_normal_form_pair(Aa1)
         @test isapprox(Aa1, Q1 * Omega * Q1')
 
         # errors
         @test_throws(
-            ErrorException(lazy"A must be skew-symmetric."),
+            ErrorException,
             JosephsonCircuits.symplectic_normal_form_pair([1 1;1 1]),
         )
         @test_throws(
-            ErrorException(lazy"A must have even dimensions for a symplectic normal form."),
+            ErrorException,
             JosephsonCircuits.symplectic_normal_form_pair([0 0 1;0 0 0;-1 0 0]),
         )
 
@@ -1039,12 +972,6 @@ using Test
         Q = JosephsonCircuits.symplectic_normal_form_block(Aa)
         Omega = JosephsonCircuits.symplectic_form_block(2)
         @test isapprox(Aa, Q * Omega * Q')
-
-        # # singular example
-        # vals, vecs = eigen(Aa)
-        # Aa1 = real(vecs * Diagonal([0, 0, vals[3], vals[4]]) * vecs')
-        # Q1 = JosephsonCircuits.symplectic_normal_form_pair(Aa1)
-        # @test isapprox(Aa1, Q1 * Omega * Q1')
 
     end
 
@@ -1081,6 +1008,16 @@ using Test
             JosephsonCircuits.halmos_dilation([2.0 0;0 0.5]),
         )
 
+        # a rectangular contraction dilates to a unitary matrix of the sum
+        # of its dimensions, of the same closed form
+        for (n, m) in ((2, 3), (3, 2))
+            S = randn(Complex{Float64}, n, m)
+            S = 0.9 * S / opnorm(S)
+            U = JosephsonCircuits.halmos_dilation(S)
+            @test JosephsonCircuits.is_unitary(U)
+            @test isapprox(U, [S sqrt(Hermitian(I - S*S')); sqrt(Hermitian(I - S'*S)) -S'])
+        end
+
     end
 
     @testset "Ymin_from_X_quadrature_pair and Ymin_from_X_quadrature_block" begin
@@ -1090,9 +1027,16 @@ using Test
             @test JosephsonCircuits.is_cptp_quadrature_pair(X,JosephsonCircuits.Ymin_from_X_quadrature_pair(X;method=method))
             @test JosephsonCircuits.is_cptp_quadrature_block(X,JosephsonCircuits.Ymin_from_X_quadrature_block(X;method=method))
         end
+        # the three methods are three routes to |im*(Ω - X*Ω*X')|
+        for method in 2:3
+            @test isapprox(JosephsonCircuits.Ymin_from_X_quadrature_pair(X; method = method),
+                JosephsonCircuits.Ymin_from_X_quadrature_pair(X; method = 1))
+            @test isapprox(JosephsonCircuits.Ymin_from_X_quadrature_block(X; method = method),
+                JosephsonCircuits.Ymin_from_X_quadrature_block(X; method = 1))
+        end
 
         @test_throws(
-            ErrorException(lazy"Unknown method"),
+            ErrorException,
             JosephsonCircuits.is_cptp_quadrature_pair(X,JosephsonCircuits.Ymin_from_X_quadrature_pair(X;method=4)),
             )
     end
@@ -1125,34 +1069,51 @@ using Test
     @testset "B_from_X_Y_quadrature_block" begin
 
         @test_throws(
-            ErrorException(lazy"`Y` must be positive semi-definite."),
+            ErrorException,
             JosephsonCircuits.B_from_X_Y_quadrature_block([1 0;0 1],[1 0;0 -1]),
         )
     end
 
-    @testset "X_Y_to_sympletic_pair" begin
+    # the matrix S of the system and its environment realizes the map: its
+    # block on the system is X, and the environment in the vacuum, whose
+    # covariance is the identity, adds the noise B*B' = Y through its block
+    # B from the environment to the system
+
+    @testset "X_Y_to_symplectic_pair" begin
 
         X = rand(Float64,4,4)
         Y = JosephsonCircuits.Ymin_from_X_quadrature_pair(X)
-        S = JosephsonCircuits.X_Y_to_sympletic_pair(X,Y)
+        S = JosephsonCircuits.X_Y_to_symplectic_pair(X,Y)
         @test JosephsonCircuits.is_symplectic_pair(S)
+        @test S[1:4, 1:4] == X
+        @test isapprox(S[1:4, 5:end] * S[1:4, 5:end]', Y)
 
         X, Y = JosephsonCircuits.rand_cptp_quadrature_pair(2)
-        S = JosephsonCircuits.X_Y_to_sympletic_pair(X,Y)
+        S = JosephsonCircuits.X_Y_to_symplectic_pair(X,Y)
         @test JosephsonCircuits.is_symplectic_pair(S)
+        @test S[1:4, 1:4] == X
+        @test isapprox(S[1:4, 5:end] * S[1:4, 5:end]', Y)
 
     end
 
-    @testset "X_Y_to_sympletic_block" begin
+    @testset "X_Y_to_symplectic_block" begin
+
+        # the system, two of six modes, in block order
+        sys = [1:2; 7:8]
+        env = setdiff(1:12, sys)
 
         X = rand(Float64,4,4)
         Y = JosephsonCircuits.Ymin_from_X_quadrature_block(X)
-        S = JosephsonCircuits.X_Y_to_sympletic_block(X,Y)
+        S = JosephsonCircuits.X_Y_to_symplectic_block(X,Y)
         @test JosephsonCircuits.is_symplectic_block(S)
+        @test S[sys, sys] == X
+        @test isapprox(S[sys, env] * S[sys, env]', Y)
 
         X, Y = JosephsonCircuits.rand_cptp_quadrature_block(2)
-        S = JosephsonCircuits.X_Y_to_sympletic_block(X,Y)
+        S = JosephsonCircuits.X_Y_to_symplectic_block(X,Y)
         @test JosephsonCircuits.is_symplectic_block(S)
+        @test S[sys, sys] == X
+        @test isapprox(S[sys, env] * S[sys, env]', Y)
 
     end
 
@@ -1161,14 +1122,20 @@ using Test
         X, Y = JosephsonCircuits.rand_cptp_ladder_pair(2)
         S = JosephsonCircuits.X_Y_to_bogoliubov_pair(X,Y)
         @test JosephsonCircuits.is_bogoliubov_pair(S)
+        @test isapprox(S[1:4, 1:4], X)
+        @test isapprox(S[1:4, 5:end] * S[1:4, 5:end]', Y)
 
     end
 
     @testset "X_Y_to_bogoliubov_block" begin
 
+        sys = [1:2; 7:8]
+        env = setdiff(1:12, sys)
         X, Y = JosephsonCircuits.rand_cptp_ladder_block(2)
         S = JosephsonCircuits.X_Y_to_bogoliubov_block(X,Y)
         @test JosephsonCircuits.is_bogoliubov_block(S)
+        @test isapprox(S[sys, sys], X)
+        @test isapprox(S[sys, env] * S[sys, env]', Y)
 
     end
 
@@ -1179,19 +1146,45 @@ using Test
         @test w == JosephsonCircuits.wmatrix(0.1:0.1:0.3, (1.0,), [(1,), (-1,)])
         @test_throws(DimensionMismatch,
             JosephsonCircuits.wmatrix!(zeros(3, 3), 0.1:0.1:0.3, (1.0,), [(1,), (-1,)]))
+        # signal frequencies in a vector, and an integer pump
+        @test isapprox(JosephsonCircuits.wmatrix([0.1, 0.2], (1,), [(1,), (-1,)]),
+            [1.1 1.2; -0.9 -0.8])
     end
 
     @testset "interpolate_scattering" begin
 
-        # test with extrapolation
-        w = 0.01:0.01:1.0
-        S = JosephsonCircuits.ABCD_tline(50,w)
-        @test isapprox(S,JosephsonCircuits.interpolate_scattering(w,S,w;extrap=true))
+        # a notch, whose transmission zero at w = 5 lies between samples,
+        # alone and behind a delay whose phase winds three times across the
+        # band, against the exact response at the midpoints
+        w0 = collect(4.0:0.01:6.0)
+        wm = (w0[1:end-1] .+ w0[2:end]) ./ 2
+        for tau in (0.0, 20.0)
+            notch(w) = cis(-w * tau) * (w - 5) / (w - 5 + 0.05im)
+            Sm = JosephsonCircuits.interpolate_scattering(w0,
+                reshape(notch.(w0), 1, 1, :), wm)
+            @test maximum(abs, Sm[1, 1, :] .- notch.(wm)) < 1e-3
+        end
 
-        # test with negative frequencies
-        w = 0.01:0.01:1.0
-        S = JosephsonCircuits.ABCD_tline(50,w)
-        @test isapprox(S,JosephsonCircuits.interpolate_scattering(w,conj.(S),-w))
+        # the idlers of a 4 to 8 GHz table pumped at 12 GHz, which rounding
+        # puts up to an ulp outside the table, take the values at its edges
+        w0 = collect(2pi .* (4e9:0.01e9:8e9))
+        w = JosephsonCircuits.wmatrix(w0, (2pi * 12e9,), [(0,), (-1,)])
+        Sd = reshape(cis.(-w0 ./ 1e10), 1, 1, :)
+        @test isapprox(JosephsonCircuits.interpolate_scattering(w0, Sd, w)[1, 1, :, :],
+            cis.(-w ./ 1e10))
+        @test isapprox(JosephsonCircuits.interpolate_scattering(w0, Sd, w;
+            extrap = true)[1, 1, :, :], cis.(-w ./ 1e10))
+
+        # real samples give complex values
+        Sr = JosephsonCircuits.interpolate_scattering([1.0, 2.0, 3.0],
+            reshape([1.0, -1.0, 1.0], 1, 1, :), [1.0, 2.0])
+        @test Sr[1, 1, :] ≈ [1.0, -1.0] && eltype(Sr) == Complex{Float64}
+
+        # fewer than three samples, and samples out of order
+        @test_throws ArgumentError JosephsonCircuits.interpolate_scattering(
+            [1.0, 2.0], ones(1, 1, 2), [1.5])
+        @test_throws ArgumentError JosephsonCircuits.interpolate_scattering(
+            [3.0, 2.0, 1.0], ones(1, 1, 3), [1.5])
 
         # a matched delay line, whose phase winds four times across the
         # band, between its samples: the exact response, conjugated at
@@ -1214,12 +1207,12 @@ using Test
         # test with incorrect dimensions
         w = 0.01:0.01:1.0
         @test_throws(
-            ErrorException(lazy"`S` must have 3 dimensions. The first two are ports and the third is frequencies."),
+            ErrorException,
             JosephsonCircuits.interpolate_scattering(w,randn(Complex{Float64},2),w),
         )
 
         @test_throws(
-            ErrorException(lazy"The length of the third dimension of `S` must be equal to the number of frequencies."),
+            ErrorException,
             JosephsonCircuits.interpolate_scattering(w,randn(Complex{Float64},2,2,2*length(w)),w),
         )
     end

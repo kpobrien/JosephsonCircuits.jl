@@ -139,9 +139,13 @@ increment, with the Jacobian
 assembled by the real Jacobian plan of harmonic balance at one mode,
 whose pattern and symbolic analysis are fixed for the whole solve. A
 factorization is kept across steps while each correction with it
-contracts the residual by at least a quarter, and refreshed at the
+reduces the residual to a quarter or less, and refreshed at the
 current iterate when one does not, so a linear circuit factorizes once
-and a junction driven moderately nearly so.
+and a junction driven moderately nearly so. A step after a refresh
+refreshes at its predictor before its first correction, so a circuit
+whose phases move within every step factorizes once a step until a
+predictor converges without a correction; a checkpoint, where the solve
+and its replay start afresh, ends that run.
 
 A Gauss-Legendre step solves the two stage equations of the collocation
 together, on the stage increments. The stage matrix of the tableau has
@@ -160,7 +164,10 @@ adjoint differentiate the full stage equations, with the two stage
 stiffnesses the solve recorded as `phases`, and the projection of the
 endpoint where the circuit has an algebraic direction to project, with
 the endpoint phases of its junctions recorded as `endphases`, and solve
-them exactly by iteration on the same complex factorization; a current
+them exactly by iteration on the same complex factorization, refreshed
+at the step's recorded phases where its first correction leaves more
+than a quarter of the residual, as the solve's Newton refreshes, to the
+tolerance and within the bound the rule states; a current
 on the recorded grid is read at the stage times through a cubic Lagrange
 stencil, so a smooth current keeps the fourth order, through the line
 between the step's grid values on a record shorter than four points,
@@ -185,14 +192,20 @@ polynomial. The next step's stages start on the collocation polynomial
 extrapolated. The frozen operator of the Newton iteration is the complex
 matrix `(mu/h)^2 C + (mu/h) G + L + J*` with `mu` the eigenvalue of the
 tableau's inverse and `J*` the mean stiffness, factorized once and
-reused while the first correction of a step contracts the residual by
-more than a quarter. The residual is evaluated per condition and per
-direction against its own right hand side down to a roundoff floor set
-by the magnitudes of the terms it sums, so a weak direction is not left
-at the tolerance of a strong one.
+reused while the first correction of a step reduces the residual to a
+quarter or less. The residual is converged row by row: each row of
+each condition to `atol` plus `rtol` times the magnitudes of the terms it
+sums at the start of the step, its drive and capacitive rate term, its
+stiffness on the state, and under the trapezoidal and backward Euler
+rules also its junction currents and the step matrix on a step of the
+rate, and under the Gauss-Legendre rule down to a roundoff floor set by
+the magnitudes of the terms each row sums. A weak signal is then not
+left at the tolerance of a strong one or of a bias on another node, and
+a row whose terms cancel, a node coupled to a moving one, is held to its
+terms rather than to their small net.
 
-The Newton engine of a batch accepts per condition: each column has its
-own tolerance from the size of its right hand side, a rejected
+The Newton engine of a batch accepts per condition: each column
+converges on the tolerances of its own rows, a rejected
 correction is retried from its base point after a fresh factorization,
 and a step that does not converge on every condition throws rather than
 proceed. The factorization of a batch is one per condition, KLU on the

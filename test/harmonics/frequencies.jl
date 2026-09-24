@@ -135,6 +135,15 @@ using SpecialFunctions
     end
 
 
+    # the transform to the time domain, `f` applied there, and the transform
+    # back, allocating, for the checks against analytic expansions below
+    function applynl(fd::Array{Complex{Float64}}, f)
+        td, irfftplan, rfftplan = JosephsonCircuits.plan_applynl(fd)
+        out = copy(fd)
+        JosephsonCircuits.applynl!(out, td, f, irfftplan, rfftplan)
+        return out
+    end
+
     @testset "applynl: cos(z*cos(theta))" begin
         # test against Jacobi-Anger expansion for cos(z*cos(theta))
         z = 0.9
@@ -147,13 +156,13 @@ using SpecialFunctions
         am[2] = z/2*exp(im*(theta)) # z*cos(theta)
 
         @test isapprox(
-            JosephsonCircuits.applynl(am,(x)->cos(x))[1:2:2*mmax],
+            applynl(am,(x)->cos(x))[1:2:2*mmax],
             # Jacobi-Anger expansion for cos(z*cos(theta))
             [(-1)^m*SpecialFunctions.besselj(2*m,z)*exp(1im*2*m*theta) for m=0:mmax-1],
             atol = tolerance)
 
         @test isapprox(
-            JosephsonCircuits.applynl(am,(x)->cos(x))[2:2:2*mmax],
+            applynl(am,(x)->cos(x))[2:2:2*mmax],
             zeros(Complex{Float64},mmax),
             atol = tolerance)
     end
@@ -170,13 +179,13 @@ using SpecialFunctions
         am[2] = z/2*exp(im*(theta-pi/2)) # z*sin(theta)
 
         @test isapprox(
-            JosephsonCircuits.applynl(am,(x)->sin(x))[2:2:2*mmax],
+            applynl(am,(x)->sin(x))[2:2:2*mmax],
             # Jacobi-Anger expansion for sin(z*sin(theta))
             [SpecialFunctions.besselj(2*m-1,z)*-im*exp(1im*(2*m-1)*theta) for m=1:mmax],
             atol = tolerance)
 
         @test isapprox(
-            JosephsonCircuits.applynl(am,(x)->sin(x))[1:2:2*mmax],
+            applynl(am,(x)->sin(x))[1:2:2*mmax],
             zeros(Complex{Float64},mmax),
             atol = tolerance)
     end
@@ -195,7 +204,7 @@ using SpecialFunctions
         am[1,2,1] = z2/2*exp(im*theta2)
         am[1,N,1] = z2/2*exp(-im*theta2)
 
-        am2 = JosephsonCircuits.applynl(am,(x)->x-x^3/6)[:,:,1]
+        am2 = applynl(am,(x)->x-x^3/6)[:,:,1]
 
         d = Dict(
             CartesianIndex(2,1) => (z1-(3*z1^3/4+3*z1*z2^2/2)/6)*exp(im*theta1)/2, 
@@ -232,7 +241,7 @@ using SpecialFunctions
         am[1,2,1] = z2/2*exp(im*theta2)
         am[1,N,1] = z2/2*exp(-im*theta2)
 
-        am2 = JosephsonCircuits.applynl(am,(x)->1-x^2/2)[:,:,1]
+        am2 = applynl(am,(x)->1-x^2/2)[:,:,1]
 
         d = Dict(
             CartesianIndex(1, 1) => 1-(z1^2/2+z2^2/2)/2,
@@ -253,7 +262,7 @@ using SpecialFunctions
 
     @testset "applynl" begin
         out1 = ComplexF64[0.9603982266595633 + 0.0im; -8.831900994670556e-8 + 0.0im; -0.01973466311703025 + 0.0im; 6.61351077009899e-5 + 0.0im;;]
-        out2 = JosephsonCircuits.applynl([[0, 0.2+0.0im, 0, 0];;],cos)
+        out2 = applynl([[0, 0.2+0.0im, 0, 0];;],cos)
         @test isapprox(out1,out2)
     end
 
